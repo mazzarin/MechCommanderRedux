@@ -125,9 +125,11 @@ void MCSoundResource::TryHdStream(uint64_t sourceFrames)
 
     auto flac = MCFlac::Open(*path);
 
-    // A file cut short falls back before playback starts; the check decodes only the last frame, so a track change
-    // doesn't hold the frame up. A bad frame further in plays as silence.
-    if (!flac || !MCHdAudio::MatchesLength(*flac, sourceFrames, Format.nSamplesPerSec) || !flac->CheckEnd())
+    // A file cut short falls back before playback starts; the check decodes only the last frame, once a file (ahead,
+    // as the sound system prepares), so a track change doesn't hold the frame up. A bad frame further in plays as
+    // silence.
+    if (!flac || !MCHdAudio::MatchesLength(*flac, sourceFrames, Format.nSamplesPerSec) ||
+        !MCHdAudio::MusicEndPlays(*path, *flac))
     {
         return;
     }

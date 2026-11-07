@@ -68,9 +68,17 @@ public:
     /// Decodes the replacements of <paramref name="waves"/> on a thread of their own, ahead of their first plays, and
     /// keeps them, beyond the budget, while the pack is in use: the sound file's effects, Betty's samples and the
     /// radio's static, which play the moment they are asked for. A wave played before its turn is decoded as it plays
-    /// (or, when the thread is on it, waits for it): the same sound either way. Nothing with HD audio off.
+    /// (or, when the thread is on it, waits for it): the same sound either way. Then (Port) checks the ends of the
+    /// pack's replacements of the <paramref name="music"/> tracks (the sound file's names), for
+    /// <see cref="MusicEndPlays"/>. Nothing with HD audio off.
     /// </summary>
-    static void Prepare(std::vector<std::vector<uint8_t>> waves);
+    static void Prepare(std::vector<std::vector<uint8_t>> waves, std::span<const std::string> music = {});
+    /// <summary>
+    /// Port: whether the pack's music track at <paramref name="path"/>, opened as <paramref name="flac"/>, isn't cut
+    /// short (MCFlac::CheckEnd), checked once a file (a file changed since is checked again): ahead by
+    /// <see cref="Prepare"/>, else now.
+    /// </summary>
+    static bool MusicEndPlays(const std::filesystem::path& path, MCFlac& flac);
     /// <summary>Whether there is nothing to <see cref="Prepare"/>: HD audio is off, or it was for the pack in use.</summary>
     static bool Prepared();
     /// <summary>

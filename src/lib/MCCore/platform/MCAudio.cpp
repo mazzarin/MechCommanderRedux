@@ -26,7 +26,7 @@ struct MCAudioCore
     /// <summary>Mixes everything into <paramref name="out"/>, overwriting it.</summary>
     void Render(std::span<float> out);
 
-    /// <summary>Drops the entries of buffers and streams that are gone. Called with the lock held.</summary>
+    /// <summary>Drops the entries of buffers and streams that are gone. Called with the lock held, as one is made.</summary>
     void Sweep();
 };
 
@@ -179,11 +179,14 @@ void MCAudioCore::MixStream(MCAudioStream& stream, std::span<float> out) const
     gainLeft *= Master;
     gainRight *= Master;
 
-    std::deque<float>& samples = stream._Samples;
+    // The played samples stay at the queue's front for the game's side to drop (MCAudioStream::_Head): the mixer
+    // frees nothing.
+    const std::deque<float>& queue = stream._Samples;
+    size_t& head = stream._Head;
 
     for (size_t i = 0; i < frames; ++i)
     {
-        const size_t queued = samples.size() / static_cast<size_t>(channels);
+        const size_t queued = (queue.size() - head) / static_cast<size_t>(channels);
 
         if (queued == 0)
         {
@@ -197,12 +200,12 @@ void MCAudioCore::MixStream(MCAudioStream& stream, std::span<float> out) const
 
         if (channels == 2)
         {
-            left = samples[0] + (samples[next] - samples[0]) * frac;
-            right = samples[1] + (samples[next + 1] - samples[1]) * frac;
+            left = queue[head] + (queue[head + next] - queue[head]) * frac;
+            right = queue[head + 1] + (queue[head + next + 1] - queue[head + 1]) * frac;
         }
         else
         {
-            left = right = samples[0] + (samples[next] - samples[0]) * frac;
+            left = right = queue[head] + (queue[head + next] - queue[head]) * frac;
         }
 
         out[i * 2] += left * gainLeft;
@@ -210,18 +213,14 @@ void MCAudioCore::MixStream(MCAudioStream& stream, std::span<float> out) const
 
         stream._Phase += step;
 
-        while (stream._Phase >= 1.0 && !samples.empty())
+        while (stream._Phase >= 1.0 && head < queue.size())
         {
-            for (int c = 0; c < channels; ++c)
-            {
-                samples.pop_front();
-            }
-
+            head = std::min(head + static_cast<size_t>(channels), queue.size());
             stream._Phase -= 1.0;
             ++stream._Played;
         }
 
-        if (samples.empty())
+        if (head == queue.size())
         {
             stream._Phase = 0.0;
         }
@@ -233,8 +232,9 @@ void MCAudioCore::Render(std::span<float> out)
     std::ranges::fill(out, 0.0f);
 
     {
+        // Expired entries are skipped here and swept out as buffers and streams are made, so the mixer frees
+        // nothing under the lock.
         std::scoped_lock lock(Lock);
-        Sweep();
 
         for (const std::weak_ptr<MCSoundBuffer>& entry : Buffers)
         {
@@ -461,13 +461,16 @@ void MCAudioStream::Queue(std::span<const uint8_t> pcm)
     }
 
     std::scoped_lock lock(_Core->Lock);
+    // What the mixer played is dropped here, on the queuing side.
+    _Samples.erase(_Samples.begin(), _Samples.begin() + static_cast<ptrdiff_t>(_Head));
+    _Head = 0;
     _Samples.insert(_Samples.end(), converted.begin(), converted.end());
 }
 
 uint64_t MCAudioStream::QueuedFrames() const
 {
     std::scoped_lock lock(_Core->Lock);
-    return _Samples.size() / _Format.Channels;
+    return (_Samples.size() - _Head) / _Format.Channels;
 }
 
 uint64_t MCAudioStream::PlayedFrames() const
@@ -480,6 +483,7 @@ void MCAudioStream::Clear()
 {
     std::scoped_lock lock(_Core->Lock);
     _Samples.clear();
+    _Head = 0;
     _Phase = 0.0;
     _Played = 0;
 }

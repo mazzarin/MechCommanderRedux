@@ -358,6 +358,39 @@ TEST_CASE("HD audio: corrupt and wrong-duration music fall back before playback"
     CHECK_EQ(wrongLength.DurationMs, uint32_t{40});
 }
 
+TEST_CASE("HD audio: a music track's end is checked once a file, ahead as the sounds are prepared")
+{
+    Fixture fixture;
+    const auto source = fixture.Root / "MUSIC02.WAV";
+    const auto music = fixture.Root / "audio/music/stereo/MUSIC02.flac";
+    const auto cutCopy = fixture.Root / "cut.flac";
+    Write(source, Original());
+    Write(music, Flac());
+    auto cut = Flac();
+    cut.resize(cut.size() - 4);
+    Write(cutCopy, cut);
+
+    // Checked ahead (the names without a replacement, as the sound file's NONE, are passed over): asked again, the
+    // answer is the check's, whatever reader is handed in (a cut-short one here would fail its own check).
+    const std::array names = {std::string("MUSIC02"), std::string("NONE"), std::string("MUSIC02")};
+    MCHdAudio::Prepare({}, names);
+    MCHdAudio::FinishPreparing();
+    const std::unique_ptr<MCFlac> cutReader = MCFlac::Open(cutCopy);
+    REQUIRE(cutReader != nullptr);
+    CHECK(!cutReader->CheckEnd());
+    CHECK(MCHdAudio::MusicEndPlays(music, *cutReader));
+    MCSoundResource played(MCSoundResourceType::Stream, source.string());
+    CHECK_EQ(played.Format.nSamplesPerSec, uint32_t{48000});
+
+    // The file changed: checked again, now.
+    Write(music, cut);
+    const std::unique_ptr<MCFlac> again = MCFlac::Open(music);
+    REQUIRE(again != nullptr);
+    CHECK(!MCHdAudio::MusicEndPlays(music, *again));
+    MCSoundResource fellBack(MCSoundResourceType::Stream, source.string());
+    CHECK_EQ(fellBack.Format.nSamplesPerSec, uint32_t{22050});
+}
+
 TEST_CASE("HD audio: OFF plays the game's own sounds with a pack in place")
 {
     Fixture fixture;
@@ -952,6 +985,30 @@ TEST_CASE(
     std::filesystem::remove(thunder);
     sound->UpdateThunder(Heard, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{1});
+    sound->PurgeSoundSystem();
+    Write(thunder, Flac());
+
+    // Decoded as the mission loads, a clap queues it from memory (nothing decoded at the clap): the same sound as a
+    // clap that reads the file.
+    const auto clapHeard = [&](bool loaded)
+    {
+        sound->PurgeSoundSystem();
+
+        if (loaded)
+        {
+            GHdWeather = HdWeatherDownpour;
+            sound->PrepareThunder();
+            GHdWeather = shownWeather;
+        }
+
+        sound->UpdateThunder(Heard, near);
+        mixer.Render(out);
+        return out;
+    };
+
+    const std::vector<float> streamed = clapHeard(false);
+    CHECK(std::ranges::any_of(streamed, [](float sample) { return sample != 0.0f; }));
+    CHECK(clapHeard(true) == streamed);
     sound->PurgeSoundSystem();
 
     // Only a downpour has lightning; nothing is heard while no rain is drawn.

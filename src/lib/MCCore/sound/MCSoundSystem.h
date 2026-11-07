@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lib/MCOptionalRef.h"
+#include "platform/MCAudio.h"
 #include "sound/MCRadio.h"
 #include "sound/MCRadioMessage.h"
 
@@ -198,7 +199,7 @@ public:
     void UpdateThunder(float heard, MCOptionalRef<const MCWeather::MCThunderClap> clap);
     /// <summary>
     /// Port-only (HD weather): reads the pack's thunder for a mission whose weather shown strikes lightning, under its
-    /// loading bar, so its first clap reads nothing (it is kept till the purge).
+    /// loading bar, and decodes it whole, so a clap reads and decodes nothing (it is kept till the purge).
     /// </summary>
     void PrepareThunder();
     /// <summary>How many claps of thunder are rolling (one fading out under a newer one counts).</summary>
@@ -354,6 +355,8 @@ private:
     void StopRain();
     /// <summary>Reads the pack's thunder whole, once till the purge (none when the pack has none).</summary>
     void ReadThunder();
+    /// <summary>Decodes the thunder read into _ThunderPcm, once till the purge (nothing past ThunderMostBytes).</summary>
+    void DecodeThunder();
     /// <summary>
     /// Starts <paramref name="clap"/>'s thunder as loud as <paramref name="heard"/> at the nearest, from the thunder's
     /// file read once till the purge.
@@ -367,13 +370,19 @@ private:
     /// </summary>
     struct MCThunderRoll
     {
+        /// <summary>The thunder's reader; none when it plays the thunder decoded at the load (_ThunderPcm).</summary>
         std::unique_ptr<MCFlac> File;
+        /// <summary>Port: how far into _ThunderPcm it has queued, without a reader.</summary>
+        size_t PcmAt = 0;
         std::shared_ptr<MCAudioStream> Stream;
         float Level = 0.0f;
         bool Read = false;
         bool Fading = false;
         float Left = 1.0f;
     };
+
+    /// <summary>The format <paramref name="roll"/> reads the thunder in: its reader's, or the decoded thunder's.</summary>
+    const MCSoundFormat& RollFormat(const MCThunderRoll& roll) const;
 
     /// <summary>The renderer the channels belong to.</summary>
     MCSoundRenderer& _Renderer;
@@ -429,6 +438,12 @@ private:
     std::shared_ptr<const std::vector<uint8_t>> _ThunderBytes;
     /// <summary>Where it was read from (none: the pack has no thunder).</summary>
     std::optional<std::filesystem::path> _ThunderPath;
+    /// <summary>
+    /// Port: the thunder decoded whole as a mission whose weather strikes loads (PrepareThunder), and its format: a
+    /// clap queues it from memory (empty: claps read their own reader).
+    /// </summary>
+    std::vector<uint8_t> _ThunderPcm;
+    MCSoundFormat _ThunderFormat{};
     /// <summary>Set once the pack had no thunder that plays: none is looked for again till the purge.</summary>
     bool _ThunderMissing = false;
 };

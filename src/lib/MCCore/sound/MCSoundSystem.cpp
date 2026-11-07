@@ -64,6 +64,17 @@ namespace
     constexpr float ThunderPanMost = 600.0f;
     /// <summary>The seconds a clap still rolling takes to fade out under a newer one.</summary>
     constexpr float ThunderFadeOut = 1.5f;
+    /// <summary>The most the pack's thunder may decode to as a mission loads (its 23 s are 4.5 MB); past it, it streams.
+    /// </summary>
+    constexpr uint64_t ThunderMostBytes = 32u * 1024u * 1024u;
+
+    /// <summary>A stream of sound in <paramref name="format"/> played at <paramref name="speed"/> times its rate.</summary>
+    std::expected<std::shared_ptr<MCAudioStream>, std::string> StreamAtSpeed(MCAudio& mixer, MCSoundFormat format,
+                                                                             float speed)
+    {
+        format.Rate = static_cast<uint32_t>(std::lround(static_cast<float>(format.Rate) * speed));
+        return mixer.CreateStream(format);
+    }
 
     /// <summary>
     /// A stream playing <paramref name="file"/> (the HD audio pack's sound at <paramref name="path"/>, opened; null: the
@@ -79,9 +90,7 @@ namespace
 
         if (file != nullptr && file->Frames() > 0)
         {
-            MCSoundFormat format = file->Format();
-            format.Rate = static_cast<uint32_t>(std::lround(static_cast<float>(format.Rate) * speed));
-            stream = mixer.CreateStream(format);
+            stream = StreamAtSpeed(mixer, file->Format(), speed);
         }
 
         if (!stream.has_value())
@@ -351,7 +360,7 @@ void MCSoundSystem::PrepareHdSounds()
         readAll(noise);
     }
 
-    MCHdAudio::Prepare(std::move(waves));
+    MCHdAudio::Prepare(std::move(waves), DigitalMusicIds);
 }
 
 bool MCSoundSystem::PreloadSoundBite(int32_t biteId)
@@ -544,6 +553,7 @@ void MCSoundSystem::PurgeSoundSystem()
     _ThunderMissing = false;
     _ThunderBytes.reset();
     _ThunderPath.reset();
+    _ThunderPcm.clear();
     // The radios go (their pilots keep pointers to them, as in the original), and the files they shared.
     _Radios.clear();
 
@@ -1038,10 +1048,21 @@ void MCSoundSystem::UpdateThunder(float heard, MCOptionalRef<const MCWeather::MC
         roll.Left = roll.Fading ? std::max(roll.Left - fade, 0.0f) : roll.Left;
         roll.Stream->SetVolume(
             MCSoundChannel::BufferVolume(ChannelVolume(DigitalMasterVolume) * roll.Level * roll.Left));
-        const uint64_t ahead = uint64_t{PackAheadSeconds} * roll.File->Format().Rate;
+        const uint64_t ahead = uint64_t{PackAheadSeconds} * RollFormat(roll).Rate;
 
         while (!roll.Read && roll.Stream->QueuedFrames() < ahead)
         {
+            // From the thunder decoded as the mission loaded, in the chunks a reader gives: the same sound, nothing
+            // decoded on the game's thread.
+            if (roll.File == nullptr)
+            {
+                const size_t queued = std::min(_ThunderChunk.size(), _ThunderPcm.size() - roll.PcmAt);
+                roll.Stream->Queue(std::span(_ThunderPcm).subspan(roll.PcmAt, queued));
+                roll.PcmAt += queued;
+                roll.Read = queued < _ThunderChunk.size() || roll.PcmAt == _ThunderPcm.size();
+                continue;
+            }
+
             const size_t read = roll.File->Read(_ThunderChunk);
             roll.Stream->Queue(std::span(_ThunderChunk).first(read));
             roll.Read = read < _ThunderChunk.size();
@@ -1067,17 +1088,60 @@ void MCSoundSystem::PrepareThunder()
     if (UseSound != 0 && MCWeather::LookOf(MCWeather::Shown()).Strikes > 0.0f)
     {
         ReadThunder();
+        DecodeThunder();
     }
+}
+
+void MCSoundSystem::DecodeThunder()
+{
+    if (_ThunderBytes == nullptr || !_ThunderPcm.empty())
+    {
+        return;
+    }
+
+    const std::unique_ptr<MCFlac> file = MCFlac::Open(_ThunderBytes);
+
+    if (file == nullptr || file->Frames() == 0 || file->Format().BlockAlign() == 0 ||
+        file->Frames() > ThunderMostBytes / file->Format().BlockAlign())
+    {
+        return;
+    }
+
+    // As a reader gives it: a corrupt frame ends it there, as it ends a streamed clap.
+    _ThunderPcm.resize(static_cast<size_t>(file->Frames()) * file->Format().BlockAlign());
+    _ThunderPcm.resize(file->Read(_ThunderPcm));
+    _ThunderFormat = file->Format();
+}
+
+const MCSoundFormat& MCSoundSystem::RollFormat(const MCThunderRoll& roll) const
+{
+    return roll.File != nullptr ? roll.File->Format() : _ThunderFormat;
 }
 
 void MCSoundSystem::StartThunder(float heard, const MCWeather::MCThunderClap& clap)
 {
-    // The thunder is read once (each clap's reader reads it from memory), till the purge.
+    // The thunder is read once (each clap's reader reads it from memory), till the purge; decoded as the mission
+    // loaded (PrepareThunder), a clap plays that.
     ReadThunder();
     MCThunderRoll roll;
-    roll.File = MCFlac::Open(_ThunderBytes);
-    roll.Stream = StreamPackSound(_Renderer.Mixer(), _ThunderPath, "thunder",
-                                  std::lerp(ThunderNearSpeed, ThunderFarSpeed, clap.Far), roll.File);
+    const float speed = std::lerp(ThunderNearSpeed, ThunderFarSpeed, clap.Far);
+
+    if (!_ThunderPcm.empty())
+    {
+        std::expected<std::shared_ptr<MCAudioStream>, std::string> stream =
+            StreamAtSpeed(_Renderer.Mixer(), _ThunderFormat, speed);
+        roll.Stream = stream.has_value() ? std::move(*stream) : nullptr;
+
+        if (!stream.has_value())
+        {
+            SDL_Log("MCSoundSystem: the decoded thunder won't play: %s", stream.error().c_str());
+        }
+    }
+    else
+    {
+        roll.File = MCFlac::Open(_ThunderBytes);
+        roll.Stream = StreamPackSound(_Renderer.Mixer(), _ThunderPath, "thunder", speed, roll.File);
+    }
 
     if (roll.Stream == nullptr)
     {
@@ -1090,7 +1154,7 @@ void MCSoundSystem::StartThunder(float heard, const MCWeather::MCThunderClap& cl
         older.Fading = true;
     }
 
-    _ThunderChunk.resize(PackChunkFrames * roll.File->Format().BlockAlign());
+    _ThunderChunk.resize(PackChunkFrames * RollFormat(roll).BlockAlign());
     roll.Level = heard * std::lerp(1.0f, ThunderFarLevel, clap.Far);
     roll.Stream->SetPan(static_cast<int32_t>(std::lround(clap.Side * ThunderPanMost)));
     _ThunderRolls.push_back(std::move(roll));

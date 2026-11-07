@@ -32,12 +32,40 @@ namespace
         std::optional<std::list<uint64_t>::iterator> Place;
     };
 
-    /// <summary>A wave handed to the decoding thread, and whether its replacement is kept beyond the budget.</summary>
+    /// <summary>
+    /// A wave handed to the decoding thread, and whether its replacement is kept beyond the budget; or (Port: no wave)
+    /// a music track of the pack whose end to check (MCHdAudio::MusicEndPlays).
+    /// </summary>
     struct MCDecodeJob
     {
         std::vector<uint8_t> Wave;
         bool Keep = false;
+        std::filesystem::path Music;
     };
+
+    /// <summary>
+    /// Port: a music track's file as its end was checked: its path, size and last write (a file changed since is
+    /// checked again).
+    /// </summary>
+    struct MCMusicFile
+    {
+        std::filesystem::path Path;
+        uintmax_t Size = 0;
+        std::filesystem::file_time_type Written;
+
+        auto operator<=>(const MCMusicFile&) const = default;
+    };
+
+    /// <summary>The file at <paramref name="path"/> as it is now; none when it can't be looked at.</summary>
+    std::optional<MCMusicFile> MusicFileOf(const std::filesystem::path& path)
+    {
+        std::error_code sizeError;
+        std::error_code timeError;
+        MCMusicFile file{.Path = path,
+                         .Size = std::filesystem::file_size(path, sizeError),
+                         .Written = std::filesystem::last_write_time(path, timeError)};
+        return sizeError || timeError ? std::nullopt : std::optional(std::move(file));
+    }
 
     /// <summary>
     /// What was found in the pack in use: whether it is one, the samples looked up or decoded ahead so far, and the
@@ -63,6 +91,8 @@ namespace
         std::list<uint64_t> Order;
         /// <summary>The bytes of the replacements in Order (the kept ones aren't counted against the budget).</summary>
         size_t Bytes = 0;
+        /// <summary>Port: whether each music track's last frame decodes (MCHdAudio::MusicEndPlays).</summary>
+        std::map<MCMusicFile, bool> MusicEnds;
         /// <summary>The waves being decoded, by either thread: a play of one waits for it.</summary>
         std::unordered_set<uint64_t> Decoding;
         /// <summary>The waves waiting for the decoding thread, and the pack folder they are found in.</summary>
@@ -110,6 +140,7 @@ namespace
                 state.Order.clear();
                 state.Bytes = 0;
                 state.Decoding.clear();
+                state.MusicEnds.clear();
                 state.Jobs.clear();
                 ++state.Generation;
             }
@@ -268,6 +299,25 @@ namespace
             const std::filesystem::path folder = state.JobsFolder;
             state.Working = true;
             lock.unlock();
+
+            // A music track's end, checked once ahead of its first play.
+            if (!job.Music.empty())
+            {
+                const std::optional<MCMusicFile> file = MusicFileOf(job.Music);
+                const std::unique_ptr<MCFlac> flac = file.has_value() ? MCFlac::Open(job.Music) : nullptr;
+                const bool plays = flac != nullptr && flac->CheckEnd();
+                lock.lock();
+
+                if (file.has_value() && state.Generation == generation)
+                {
+                    state.MusicEnds.emplace(*file, plays);
+                }
+
+                state.Working = false;
+                state.Changed.notify_all();
+                continue;
+            }
+
             const auto parsed = MCAudio::ParseWave(job.Wave);
             const std::optional<uint64_t> key = parsed ? std::optional(IdOf(*parsed)) : std::nullopt;
             lock.lock();
@@ -421,7 +471,7 @@ std::shared_ptr<const MCHdAudio::Decoded> MCHdAudio::Sample(std::span<const uint
     return decoded;
 }
 
-void MCHdAudio::Prepare(std::vector<std::vector<uint8_t>> waves)
+void MCHdAudio::Prepare(std::vector<std::vector<uint8_t>> waves, std::span<const std::string> music)
 {
     if (!Active())
     {
@@ -431,14 +481,51 @@ void MCHdAudio::Prepare(std::vector<std::vector<uint8_t>> waves)
     State& state = Current();
     state.PreparedVersion = state.Version;
     std::vector<MCDecodeJob> jobs;
-    jobs.reserve(waves.size());
+    jobs.reserve(waves.size() + music.size());
 
     for (std::vector<uint8_t>& wave : waves)
     {
         jobs.push_back({.Wave = std::move(wave), .Keep = true});
     }
 
+    // After the waves, which play the moment they are asked for: the music tracks' ends, each once.
+    std::set<std::filesystem::path> tracks;
+
+    for (const std::string& name : music)
+    {
+        if (std::optional<std::filesystem::path> track = Music(name); track.has_value() && tracks.insert(*track).second)
+        {
+            jobs.push_back({.Music = std::move(*track)});
+        }
+    }
+
     Enqueue(state, std::move(jobs));
+}
+
+bool MCHdAudio::MusicEndPlays(const std::filesystem::path& path, MCFlac& flac)
+{
+    State& state = Current();
+    const std::optional<MCMusicFile> file = MusicFileOf(path);
+
+    if (file.has_value())
+    {
+        std::scoped_lock lock(state.Lock);
+
+        if (const auto found = state.MusicEnds.find(*file); found != state.MusicEnds.end())
+        {
+            return found->second;
+        }
+    }
+
+    const bool plays = flac.CheckEnd();
+
+    if (file.has_value())
+    {
+        std::scoped_lock lock(state.Lock);
+        state.MusicEnds.emplace(*file, plays);
+    }
+
+    return plays;
 }
 
 bool MCHdAudio::Prepared()

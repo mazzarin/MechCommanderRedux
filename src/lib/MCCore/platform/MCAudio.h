@@ -250,6 +250,11 @@ private:
     // Guarded by the core's lock.
     /// <summary>Queued samples, converted to float, interleaved by the stream's channel count.</summary>
     std::deque<float> _Samples;
+    /// <summary>
+    /// Port: the samples at the queue's front the mixer has played, which Queue and Clear drop: the mixer's thread
+    /// frees nothing under the lock.
+    /// </summary>
+    size_t _Head = 0;
     /// <summary>Fraction of a source frame the mixer has consumed past the queue's front.</summary>
     double _Phase = 0.0;
     uint64_t _Played = 0;

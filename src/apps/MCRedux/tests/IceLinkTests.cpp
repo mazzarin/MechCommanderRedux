@@ -21,6 +21,13 @@ namespace
     constexpr size_t LargestSend = 40 * 1024;
     /// <summary>Twice what a link holds unread (1 MB).</summary>
     constexpr size_t FloodBytes = 2u << 20;
+    /// <summary>
+    /// IPv6's loopback, and its name: what a lookup of "localhost" finds first on a Mac (RFC 6724's order).
+    /// </summary>
+    constexpr std::string_view Ipv6Loopback = "::1";
+    constexpr std::string_view LoopbackName = "localhost";
+    /// <summary>How long a link offered only names is watched: a link on one machine opens in well under a second.</summary>
+    constexpr auto NamedLinkWatch = std::chrono::seconds(3);
 
     /// <summary>
     /// Passes each end's signals to the other and reads what each received, until <paramref name="done"/> or the
@@ -187,4 +194,55 @@ TEST_CASE("ice: a link fails when the other end sends more than this end holds u
     }
 
     CHECK(host->GetState() == MCIceLink::State::Failed);
+}
+
+TEST_CASE("ice: a link never looks up a name the other end offers as its address")
+{
+    // Each end offers its address by a name, as a game that isn't this one could offer any name (libdatachannel would
+    // look each up on a thread of its own, asking the name servers): here the loopback's, which a lookup finds, so a
+    // link that looked them up would open. Both ends on IPv6's loopback, the name's first address.
+    const MCIceLink::Settings onIpv6{.BindAddress = std::string(Ipv6Loopback)};
+    const std::unique_ptr<MCIceLink> guest = MCIceLink::Offer(onIpv6);
+    const std::unique_ptr<MCIceLink> host = MCIceLink::Answer(onIpv6);
+    REQUIRE(guest != nullptr && host != nullptr);
+    const std::string address = std::format(" {} ", Ipv6Loopback);
+    const std::string name = std::format(" {} ", LoopbackName);
+    size_t named = 0;
+    const auto byName = [&](MCIceLink::Signal signal)
+    {
+        for (size_t at = 0; (at = signal.Text.find(address, at)) != std::string::npos; at += name.size())
+        {
+            signal.Text.replace(at, address.size(), name);
+            named++;
+        }
+
+        return signal;
+    };
+
+    bool opened = false;
+    const auto until = std::chrono::steady_clock::now() + NamedLinkWatch;
+
+    while (!opened && std::chrono::steady_clock::now() < until)
+    {
+        for (const MCIceLink::Signal& signal : guest->TakeSignals())
+        {
+            host->Heard(byName(signal));
+        }
+
+        for (const MCIceLink::Signal& signal : host->TakeSignals())
+        {
+            guest->Heard(byName(signal));
+        }
+
+        opened = guest->GetState() == MCIceLink::State::Open || host->GetState() == MCIceLink::State::Open;
+        std::this_thread::sleep_for(PumpStep);
+    }
+
+    // Both ends offered their addresses (by name), and neither tried them.
+    CHECK(named >= 2);
+    CHECK(guest->OfferedThere().Host);
+    CHECK(host->OfferedThere().Host);
+    CHECK(!opened);
+    CHECK(!guest->FoundPath());
+    CHECK(!host->FoundPath());
 }

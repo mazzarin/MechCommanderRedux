@@ -389,14 +389,23 @@ struct MCIceLink::Impl
     }
 
     /// <summary>
-    /// Whether this end tries <paramref name="candidate"/>, an address the other end offered. Relay only, it tries the
-    /// other end's relay alone: its checks to any other address would tell that end this one's (libdatachannel's
-    /// policy only keeps this end's own addresses out of its signals). Not yet enough against a game that isn't this
-    /// one: libjuice checks every pair from this end's own socket too, so an address offered as a relay's that isn't
-    /// one still learns this end's (PLAN.md, step 3: before public games).
+    /// Whether this end tries <paramref name="candidate"/>, an address the other end offered: only an address as such.
+    /// A name libdatachannel looks up, each on a thread of its own, so the other end could have this machine ask the
+    /// name servers whatever it likes (a name server it runs learns the player's, a public game's player's too); a
+    /// game offers only addresses. Relay only, it tries the other end's relay alone: its checks to any other address
+    /// would tell that end this one's (libdatachannel's policy only keeps this end's own addresses out of its
+    /// signals). Not yet enough against a game that isn't this one: libjuice checks every pair from this end's own
+    /// socket too, so an address offered as a relay's that isn't one still learns this end's (PLAN.md, step 3: before
+    /// public games).
     /// </summary>
-    bool Tries(const rtc::Candidate& candidate) const
+    bool Tries(rtc::Candidate& candidate) const
     {
+        // As libdatachannel reads it first: an address, never a lookup (a name stays unresolved).
+        if (!candidate.resolve(rtc::Candidate::ResolveMode::Simple))
+        {
+            return false;
+        }
+
         return !RelayOnly || candidate.type() == rtc::Candidate::Type::Relayed;
     }
 

@@ -435,6 +435,9 @@
     <ClCompile Include="lib\MCSha256.cpp">
       <Filter>lib</Filter>
     </ClCompile>
+    <ClCompile Include="lib\MCWorkers.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
     <ClCompile Include="linkup\MCFidpGroup.cpp">
       <Filter>linkup</Filter>
     </ClCompile>
@@ -1793,6 +1796,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCVector3D.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCWorkers.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="linkup\MCFidpGroup.h">

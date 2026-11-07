@@ -123,6 +123,19 @@ namespace MCParticles
     /// </summary>
     void AddMarks(std::span<const MCParticleCommand> commands, std::span<const int32_t> depths);
 
+    /// <summary>Port-only (HD weather): a part of a frame's marks, made apart: each command at its depth.</summary>
+    struct MCMarkPart
+    {
+        std::span<const MCParticleCommand> Commands;
+        std::span<const int32_t> Depths;
+    };
+
+    /// <summary>
+    /// <see cref="AddMarks"/> of the marks <paramref name="parts"/> hold, one part's after another's, as if they were
+    /// made together in that order (the HD weather's marks, made in parts by MCWeather::Draw's helpers).
+    /// </summary>
+    void AddMarks(std::span<const MCMarkPart> parts);
+
     /// <summary>
     /// Moves the particles on to the game's time and adds those in <paramref name="camera"/>'s view to the frame's draw list
     /// (MCCamera::Render, once the objects have added theirs, before the list is sorted); makes what this frame's
@@ -180,6 +193,14 @@ namespace MCParticles
     /// </summary>
     void DrawnRound(float x, float y, float z, const MCCamera& camera,
                     std::span<const std::pair<int32_t, int32_t>> offsets, std::span<MCDrawnPixel> pixels);
+
+    /// <summary>
+    /// Port-only (HD weather): reads in every tile and overlay <paramref name="camera"/>'s terrain window draws that
+    /// isn't read yet (the tile cache reads them as they're first looked up), so <see cref="GroundDrawnAt"/> and
+    /// <see cref="DrawnRound"/> only read from then on, until the window moves: MCWeather's helpers find the ground
+    /// under the drops landing on several threads at once.
+    /// </summary>
+    void ReadDrawnTiles(const MCCamera& camera);
 
     /// <summary>
     /// Whether a bridge spans the map's tile at world point (<paramref name="x"/>, <paramref name="y"/>): its road is

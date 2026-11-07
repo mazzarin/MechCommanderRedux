@@ -20,6 +20,7 @@
 #include "terrain/MCTerrainWindow.h"
 #include "vfx/MCVfxFunctions.h"
 
+#include <limits>
 #include <map>
 #include <numbers>
 #include <numeric>
@@ -1867,8 +1868,34 @@ auto MCParticles::AddMark(const MCParticleCommand& command, int32_t depth) -> vo
 
 auto MCParticles::AddMarks(std::span<const MCParticleCommand> commands, std::span<const int32_t> depths) -> void
 {
-    SDL_assert(commands.size() == depths.size());
-    const size_t count = std::min(commands.size(), depths.size());
+    const std::array<MCMarkPart, 1> whole{{{commands, depths}}};
+    AddMarks(whole);
+}
+
+auto MCParticles::AddMarks(std::span<const MCMarkPart> parts) -> void
+{
+    const auto marksIn = [](const MCMarkPart& part)
+    {
+        SDL_assert(part.Commands.size() == part.Depths.size());
+        return std::min(part.Commands.size(), part.Depths.size());
+    };
+
+    size_t count = 0;
+    int32_t lowest = std::numeric_limits<int32_t>::max();
+    int32_t highest = std::numeric_limits<int32_t>::min();
+
+    for (const MCMarkPart& part : parts)
+    {
+        const size_t marks = marksIn(part);
+
+        for (const int32_t depth : part.Depths.first(marks))
+        {
+            lowest = std::min(lowest, depth);
+            highest = std::max(highest, depth);
+        }
+
+        count += marks;
+    }
 
     if (count == 0)
     {
@@ -1882,16 +1909,18 @@ auto MCParticles::AddMarks(std::span<const MCParticleCommand> commands, std::spa
     };
 
     // Each depth's marks in their order: a bucket a depth when they span few depths, else sorted (stably) by depth.
-    const auto [lowest, highest] = std::ranges::minmax(depths.first(count));
     const int64_t spanned = int64_t{highest} - lowest + 1;
 
     if (spanned <= MaxBucketedDepths)
     {
         std::vector<uint32_t> sizes(static_cast<size_t>(spanned), 0);
 
-        for (size_t i = 0; i < count; ++i)
+        for (const MCMarkPart& part : parts)
         {
-            ++sizes[static_cast<size_t>(depths[i] - lowest)];
+            for (const int32_t depth : part.Depths.first(marksIn(part)))
+            {
+                ++sizes[static_cast<size_t>(depth - lowest)];
+            }
         }
 
         std::vector<std::vector<MCParticleCommand>> buckets(sizes.size());
@@ -1901,9 +1930,12 @@ auto MCParticles::AddMarks(std::span<const MCParticleCommand> commands, std::spa
             buckets[bucket].reserve(sizes[bucket]);
         }
 
-        for (size_t i = 0; i < count; ++i)
+        for (const MCMarkPart& part : parts)
         {
-            buckets[static_cast<size_t>(depths[i] - lowest)].push_back(commands[i]);
+            for (size_t i = 0, marks = marksIn(part); i < marks; ++i)
+            {
+                buckets[static_cast<size_t>(part.Depths[i] - lowest)].push_back(part.Commands[i]);
+            }
         }
 
         for (size_t bucket = 0; bucket < buckets.size(); ++bucket)
@@ -1917,9 +1949,22 @@ auto MCParticles::AddMarks(std::span<const MCParticleCommand> commands, std::spa
         return;
     }
 
+    // Spread over more depths than that: the parts' marks one list, sorted.
+    std::vector<MCParticleCommand> commands;
+    std::vector<int32_t> depths;
+    commands.reserve(count);
+    depths.reserve(count);
+
+    for (const MCMarkPart& part : parts)
+    {
+        const auto marks = static_cast<ptrdiff_t>(marksIn(part));
+        commands.insert(commands.end(), part.Commands.begin(), part.Commands.begin() + marks);
+        depths.insert(depths.end(), part.Depths.begin(), part.Depths.begin() + marks);
+    }
+
     std::vector<uint32_t> order(count);
     std::iota(order.begin(), order.end(), 0u);
-    std::ranges::stable_sort(order, {}, [depths](uint32_t i) { return depths[i]; });
+    std::ranges::stable_sort(order, {}, [&depths](uint32_t i) { return depths[i]; });
 
     for (size_t first = 0; first < count;)
     {
@@ -1960,6 +2005,32 @@ auto MCParticles::DrawnRound(float x, float y, float z, const MCCamera& camera,
     -> void
 {
     FindDrawn(x, y, z, camera, true, offsets, pixels);
+}
+
+auto MCParticles::ReadDrawnTiles(const MCCamera& camera) -> void
+{
+    const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (window == nullptr || window->Vertices.empty() || terrain == nullptr || terrain->MapBlocks == nullptr ||
+        terrain->Tiles == nullptr)
+    {
+        return;
+    }
+
+    // Every corner FindDrawn may look at: the window's rows and columns but its last.
+    const int32_t side = window->Side();
+
+    for (int32_t r = 0; r <= side - 2; ++r)
+    {
+        for (int32_t c = 0; c <= side - 2; ++c)
+        {
+            const MCPrecompVertex& vertex =
+                terrain->MapBlocks->Vertex(window->Vertices[static_cast<size_t>(r) * side + c].MapVertex);
+            std::ignore = terrain->Tiles->Lookup(vertex.TextureData);
+            std::ignore = terrain->Tiles->Lookup(vertex.OverlayData);
+        }
+    }
 }
 
 auto MCParticles::BridgedAt(float x, float y) -> bool

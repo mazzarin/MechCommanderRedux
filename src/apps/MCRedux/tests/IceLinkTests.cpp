@@ -19,8 +19,8 @@ namespace
     constexpr size_t GuestBytes = 300 * 1024;
     constexpr size_t HostBytes = 70 * 1024;
     constexpr size_t LargestSend = 40 * 1024;
-    /// <summary>More than a link holds unread (8 MB).</summary>
-    constexpr size_t FloodBytes = 9u << 20;
+    /// <summary>Twice what a link holds unread (1 MB).</summary>
+    constexpr size_t FloodBytes = 2u << 20;
 
     /// <summary>
     /// Passes each end's signals to the other and reads what each received, until <paramref name="done"/> or the
@@ -131,7 +131,7 @@ TEST_CASE("ice: two games' ends open a link and carry bytes both ways in order")
     CHECK(!host->Send(Pattern(1, 0)));
 }
 
-TEST_CASE("ice: a link fails on a signal out of turn or one that doesn't parse")
+TEST_CASE("ice: a link fails on a signal out of turn, one that doesn't parse, or too many addresses")
 {
     // An offer heard by the offering end.
     const std::unique_ptr<MCIceLink> guest = MCIceLink::Offer(OnThisMachine);
@@ -150,6 +150,20 @@ TEST_CASE("ice: a link fails on a signal out of turn or one that doesn't parse")
     REQUIRE(other != nullptr);
     other->Heard({"hello", "", {}});
     CHECK(other->GetState() == MCIceLink::State::Failed);
+    CHECK(other->CutOff());
+
+    // More addresses than a game offers, before its description even: a link that isn't this game's.
+    constexpr int tooManyCandidates = 65;
+    const std::unique_ptr<MCIceLink> flooded = MCIceLink::Offer(OnThisMachine);
+    REQUIRE(flooded != nullptr);
+
+    for (int i = 0; i < tooManyCandidates; i++)
+    {
+        flooded->Heard({"candidate", "candidate:1 1 UDP 2122317823 127.0.0.1 50000 typ host", "0"});
+    }
+
+    CHECK(flooded->GetState() == MCIceLink::State::Failed);
+    CHECK(flooded->CutOff());
 }
 
 TEST_CASE("ice: a link fails when the other end sends more than this end holds unread")

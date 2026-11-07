@@ -15,12 +15,14 @@
 // Everything is polled: each call first moves the service's signals and the links' bytes along. Thread-safe.
 
 #include "lib/MCOptionalRef.h"
+#include "main/MCTelemetry.h"
 #include "platform/MCIceLink.h"
 #include "platform/MCSocket.h"
 
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -88,8 +90,15 @@ public:
         std::chrono::milliseconds Idle{30000};
     };
 
+    /// <summary>
+    /// Where each link's report goes as it ends: the game's reports, or a test's. Called under the transport's lock, on
+    /// whichever thread pumps it.
+    /// </summary>
+    using LinkReports = std::function<void(const MCTelemetry::MCLink&)>;
+
     explicit MCIceTransport(std::shared_ptr<MCIceSignaling> signaling);
-    MCIceTransport(std::shared_ptr<MCIceSignaling> signaling, Deadlines deadlines);
+    MCIceTransport(std::shared_ptr<MCIceSignaling> signaling, Deadlines deadlines,
+                   LinkReports reports = MCTelemetry::LinkEnded);
     ~MCIceTransport() override;
     MCIceTransport(const MCIceTransport&) = delete;
     MCIceTransport& operator=(const MCIceTransport&) = delete;
@@ -175,7 +184,12 @@ private:
         /// <summary>The other end's address here (the game's, or the guest link's).</summary>
         uint32_t Ip = 0;
         std::chrono::steady_clock::time_point Started;
+        /// <summary>A signal came from the other end (a host end's link starts with the guest's offer).</summary>
+        bool Heard = false;
+        /// <summary>A pump saw it open (it may open and close between two: MCIceLink::OpenedAt says).</summary>
         bool WasOpen = false;
+        /// <summary>The path it opened on, as the pump that saw it open read it.</summary>
+        MCIceLink::Path Path = MCIceLink::Path::None;
         /// <summary>Since when it has carried no connection (a host end's: <see cref="Deadlines::Idle"/>).</summary>
         std::chrono::steady_clock::time_point IdleSince;
         /// <summary>Since when nothing has used it: it closes once what was sent has gone, or after a while.</summary>
@@ -198,8 +212,10 @@ private:
     bool HandleFrame(uint32_t id, Link& link, uint8_t kind, std::span<const uint8_t> body);
     /// <summary>Sends a frame now, or once the link opens.</summary>
     static void SendFrame(Link& link, uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes = {});
-    /// <summary>Ends a link: its streams break, and it goes.</summary>
-    void EndLink(uint32_t id, std::string_view why);
+    /// <summary>Ends a link: its streams break, it goes, and the reports learn how it went.</summary>
+    void EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::string_view why);
+    /// <summary>How a link that never opened ended: how far it got.</summary>
+    static MCTelemetry::MCLinkEnd Unopened(const Link& link);
     /// <summary>Closes the links nothing keeps any more (under the lock).</summary>
     void DropUnused();
     /// <summary>This game's link to the game at <paramref name="ip"/>, opened if it has none.</summary>
@@ -216,6 +232,7 @@ private:
 
     std::shared_ptr<MCIceSignaling> _Signaling;
     Deadlines _Deadlines;
+    LinkReports _Reports;
     mutable std::mutex _Lock;
     std::map<MCSocket::Handle, Socket> _Sockets;
     std::map<uint32_t, Link> _Links;

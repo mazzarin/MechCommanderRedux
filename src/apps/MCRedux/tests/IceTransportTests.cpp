@@ -4,7 +4,8 @@
 #include "platform/MCIceTransport.h"
 
 // The internet games' network (platform/MCIceTransport): MCNetTransport over ICE links, two games' transports in one
-// process, the service's signals passed by the fake board, every link on the loopback (IceLinkTests.cpp says why).
+// process, the service's signals passed by the fake board, every link on the loopback (IceLinkTests.cpp says why), and
+// each link's report as it ends.
 
 namespace
 {
@@ -23,14 +24,62 @@ namespace
     /// <summary>Frames as a game sends them (MCIceTransport.cpp's): a connection, and its bytes.</summary>
     constexpr uint8_t ConnectFrame = 2;
     constexpr uint8_t DataFrame = 5;
-    /// <summary>A flood: more than a host holds unread for a connection (8 MB), in frames of 16 KB.</summary>
-    constexpr size_t FloodBytes = 9u << 20;
+    /// <summary>A flood: twice what a host holds unread for a connection (1 MB), in frames of 16 KB.</summary>
+    constexpr size_t FloodBytes = 2u << 20;
     constexpr size_t FloodFrameBytes = 16 * 1024;
     constexpr size_t GuestBytes = 3u << 20;
     constexpr size_t HostBytes = 70 * 1024;
     constexpr size_t LargestSend = 40 * 1024;
     /// <summary>The raw link's number, as its guest numbers it.</summary>
     constexpr uint32_t RawLink = 7;
+
+    /// <summary>The kind of a host's answer, the signal that carries its certificate's fingerprint.</summary>
+    constexpr std::string_view AnswerKind = "answer";
+    constexpr std::string_view FingerprintLine = "a=fingerprint:";
+
+    using MCTelemetry::MCLinkEnd;
+    constexpr bool GuestEnd = true;
+    constexpr bool HostEnd = false;
+
+    /// <summary>The links' reports a test's transports make, from whichever thread pumps them.</summary>
+    class MCLinkLog
+    {
+    public:
+        /// <summary>Where a transport's reports go: here.</summary>
+        MCIceTransport::LinkReports Reports()
+        {
+            return [this](const MCTelemetry::MCLink& link)
+            {
+                const std::scoped_lock lock(_Lock);
+                _Ended.push_back(link);
+            };
+        }
+
+        /// <summary>The reports of the guest ends' links, or of the host ends', in the order they ended.</summary>
+        std::vector<MCTelemetry::MCLink> Of(bool guest) const
+        {
+            const std::scoped_lock lock(_Lock);
+            std::vector<MCTelemetry::MCLink> ended;
+            std::ranges::copy_if(_Ended, std::back_inserter(ended),
+                                 [&](const MCTelemetry::MCLink& link) { return link.Guest == guest; });
+            return ended;
+        }
+
+    private:
+        mutable std::mutex _Lock;
+        std::vector<MCTelemetry::MCLink> _Ended;
+    };
+
+    /// <summary>Changes the certificate's fingerprint in <paramref name="description"/>: its last hex digit.</summary>
+    void ChangeFingerprint(std::string& description)
+    {
+        const size_t line = description.find(FingerprintLine);
+        REQUIRE(line != std::string::npos);
+        const size_t end = description.find_first_of("\r\n", line);
+        REQUIRE(end != std::string::npos);
+        char& digit = description[end - 1];
+        digit = digit == '0' ? '1' : '0';
+    }
 
     std::span<const uint8_t> Bytes(std::string_view text)
     {
@@ -190,10 +239,11 @@ namespace
 
 TEST_CASE("ice transport: a guest's datagrams and connection reach the game it names, over one link")
 {
+    MCLinkLog links;
     MCFakeSignalBoard board;
     board.Host(GameCode, "host");
-    MCIceTransport host(board.Endpoint("host"));
-    MCIceTransport guest(board.Endpoint("guest"));
+    MCIceTransport host(board.Endpoint("host"), {}, links.Reports());
+    MCIceTransport guest(board.Endpoint("guest"), {}, links.Reports());
     const MCSocket::Handle listener = host.ListenTcp(GamePort);
     const MCSocket::Handle hostUdp = host.OpenUdp(GamePort);
     REQUIRE(listener != MCSocket::InvalidHandle);
@@ -299,14 +349,36 @@ TEST_CASE("ice transport: a guest's datagrams and connection reach the game it n
             Pump(host);
             return guest.Links() == 0 && host.Links() == 0;
         }));
+
+    // Each end reported its link as it ended: its path, what it carried (libdatachannel's counts) and how it ended.
+    const std::vector<MCTelemetry::MCLink> guestLinks = links.Of(GuestEnd);
+    const std::vector<MCTelemetry::MCLink> hostLinks = links.Of(HostEnd);
+    REQUIRE_EQ(guestLinks.size(), size_t{1});
+    REQUIRE_EQ(hostLinks.size(), size_t{1});
+    const MCTelemetry::MCLink& guestLink = guestLinks[0];
+    const MCTelemetry::MCLink& hostLink = hostLinks[0];
+    CHECK(guestLink.Opened);
+    CHECK(guestLink.Path == MCIceLink::Path::DirectIpv4);
+    CHECK(guestLink.Open.count() > 0);
+    CHECK(guestLink.Carried.BytesSent >= GuestBytes);
+    CHECK(guestLink.Carried.BytesReceived >= HostBytes);
+    CHECK(guestLink.Carried.RoundTrip.has_value());
+    CHECK((guestLink.Here == MCIceLink::Offered{.Host = true}));
+    CHECK((guestLink.There == MCIceLink::Offered{.Host = true}));
+    CHECK(guestLink.End == MCLinkEnd::Unused);
+    CHECK(hostLink.Opened);
+    CHECK(hostLink.Path == MCIceLink::Path::DirectIpv4);
+    CHECK(hostLink.Carried.BytesReceived >= GuestBytes);
+    CHECK(hostLink.End == MCLinkEnd::Closed);
 }
 
 TEST_CASE("ice transport: a link to a game the service doesn't have, or whose host never answers, fails")
 {
+    MCLinkLog links;
     MCFakeSignalBoard board;
     // A host whose game never takes its signals.
     board.Host("MUTE", "nobody");
-    MCIceTransport guest(board.Endpoint("guest"), {.Open = ShortOpenDeadline});
+    MCIceTransport guest(board.Endpoint("guest"), {.Open = ShortOpenDeadline}, links.Reports());
 
     // No such game: the service says so, and the connection fails at once.
     const std::optional<uint32_t> missing = guest.Resolve("NONE");
@@ -315,6 +387,10 @@ TEST_CASE("ice transport: a link to a game the service doesn't have, or whose ho
     CHECK_EQ(guest.ConnectTcp({*missing, GamePort}, ConnectMs), MCSocket::InvalidHandle);
     CHECK(std::chrono::steady_clock::now() - asked < std::chrono::milliseconds(ConnectMs));
     CHECK_EQ(guest.Links(), size_t{0});
+    REQUIRE_EQ(links.Of(GuestEnd).size(), size_t{1});
+    CHECK(!links.Of(GuestEnd)[0].Opened);
+    CHECK((links.Of(GuestEnd)[0].There == MCIceLink::Offered{}));
+    CHECK(links.Of(GuestEnd)[0].End == MCLinkEnd::NoGame);
 
     // A host that never answers: the link waits out its deadline, then goes, and the next datagram tries again.
     const std::optional<uint32_t> mute = guest.Resolve("MUTE");
@@ -328,15 +404,23 @@ TEST_CASE("ice transport: a link to a game the service doesn't have, or whose ho
             Pump(guest);
             return guest.Links() == 0;
         }));
+    REQUIRE_EQ(links.Of(GuestEnd).size(), size_t{2});
+    const MCTelemetry::MCLink unanswered = links.Of(GuestEnd)[1];
+    CHECK(!unanswered.Opened);
+    CHECK(unanswered.Setup >= ShortOpenDeadline);
+    CHECK((unanswered.Here == MCIceLink::Offered{.Host = true}));
+    CHECK((unanswered.There == MCIceLink::Offered{}));
+    CHECK(unanswered.End == MCLinkEnd::Unanswered);
     REQUIRE(guest.SendTo(udp, {*mute, GamePort}, Bytes("query")));
     CHECK_EQ(guest.Links(), size_t{1});
 }
 
 TEST_CASE("ice transport: a host closes the link of a guest that sends what isn't a frame")
 {
+    MCLinkLog links;
     MCFakeSignalBoard board;
     board.Host(GameCode, "host");
-    MCIceTransport host(board.Endpoint("host"));
+    MCIceTransport host(board.Endpoint("host"), {}, links.Reports());
 
     // A guest's offer is answered only while the game listens.
     const std::shared_ptr<MCIceSignaling> raw = board.Endpoint("raw");
@@ -366,13 +450,17 @@ TEST_CASE("ice transport: a host closes the link of a guest that sends what isn'
             return link.GetState() != MCIceLink::State::Open;
         }));
     CHECK_EQ(host.Links(), size_t{0});
+    REQUIRE_EQ(links.Of(HostEnd).size(), size_t{1});
+    CHECK(links.Of(HostEnd)[0].Opened);
+    CHECK(links.Of(HostEnd)[0].End == MCLinkEnd::CutOff);
 }
 
 TEST_CASE("ice transport: a host cuts off a guest that floods a connection the game doesn't read")
 {
+    MCLinkLog links;
     MCFakeSignalBoard board;
     board.Host(GameCode, "host");
-    MCIceTransport host(board.Endpoint("host"));
+    MCIceTransport host(board.Endpoint("host"), {}, links.Reports());
     const MCSocket::Handle listener = host.ListenTcp(GamePort);
     REQUIRE(listener != MCSocket::InvalidHandle);
     RawGuest guest(board, 1);
@@ -418,6 +506,69 @@ TEST_CASE("ice transport: a host cuts off a guest that floods a connection the g
             return link.GetState() != MCIceLink::State::Open;
         }));
     CHECK_EQ(host.Links(), size_t{0});
+    REQUIRE_EQ(links.Of(HostEnd).size(), size_t{1});
+    CHECK(links.Of(HostEnd)[0].End == MCLinkEnd::CutOff);
+}
+
+TEST_CASE(
+    "ice transport: a link that finds no path, or whose channel won't open on the path found, says how far it got")
+{
+    MCLinkLog links;
+    MCFakeSignalBoard board;
+    board.Host(GameCode, "host");
+    MCIceTransport host(board.Endpoint("host"), {.Open = ShortOpenDeadline}, links.Reports());
+    REQUIRE(host.ListenTcp(GamePort) != MCSocket::InvalidHandle);
+    const auto refused = [&](MCIceTransport& guest)
+    {
+        const std::optional<uint32_t> game = guest.Resolve(GameCode);
+        REQUIRE(game.has_value());
+        CHECK_EQ(WithPumped(host, [&] { return guest.ConnectTcp({*game, GamePort}, ConnectMs); }),
+                 MCSocket::InvalidHandle);
+        CHECK(Until(
+            [&]
+            {
+                Pump(guest);
+                Pump(host);
+                return guest.Links() == 0 && host.Links() == 0;
+            }));
+    };
+
+    // A guest that may take only the relays' path, and has none: it offers no address and never tries the host's own
+    // (its checks would tell the host its address), so no path is found.
+    {
+        MCIceTransport guest(board.Endpoint("relayed", {.RelayOnly = true, .BindAddress = "127.0.0.1"}),
+                             {.Open = ShortOpenDeadline}, links.Reports());
+        refused(guest);
+    }
+
+    REQUIRE_EQ(links.Of(GuestEnd).size(), size_t{1});
+    const MCTelemetry::MCLink relayed = links.Of(GuestEnd)[0];
+    CHECK(!relayed.Opened);
+    CHECK((relayed.Here == MCIceLink::Offered{}));
+    CHECK((relayed.There == MCIceLink::Offered{.Host = true}));
+    CHECK(relayed.End == MCLinkEnd::NoPath);
+    REQUIRE_EQ(links.Of(HostEnd).size(), size_t{1});
+    CHECK((links.Of(HostEnd)[0].There == MCIceLink::Offered{}));
+    CHECK(links.Of(HostEnd)[0].End == MCLinkEnd::NoPath);
+
+    // A service that changes the host's certificate's fingerprint on its way: ICE finds the path, the encryption
+    // refuses the certificate the host shows, and the channel never opens.
+    board.TamperToGuests(
+        [](MCIceLink::Signal& signal)
+        {
+            if (signal.Kind == AnswerKind)
+            {
+                ChangeFingerprint(signal.Text);
+            }
+        });
+    {
+        MCIceTransport guest(board.Endpoint("guest"), {.Open = ShortOpenDeadline}, links.Reports());
+        refused(guest);
+    }
+
+    REQUIRE_EQ(links.Of(GuestEnd).size(), size_t{2});
+    CHECK(!links.Of(GuestEnd)[1].Opened);
+    CHECK(links.Of(GuestEnd)[1].End == MCLinkEnd::NoChannel);
 }
 
 TEST_CASE("ice transport: a host keeps two links to a guest at most, and closes those that carry no connection")

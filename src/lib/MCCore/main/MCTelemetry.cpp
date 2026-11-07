@@ -14,6 +14,7 @@ namespace
 {
     using MCTelemetry::MCBackend;
     using MCTelemetry::MCCrash;
+    using MCTelemetry::MCLinkEnd;
     using MCTelemetry::MCMachine;
     using MCTelemetry::MCPrompt;
     using Clock = std::chrono::steady_clock;
@@ -48,6 +49,11 @@ namespace
     constexpr double SecondsPerMinute = 60.0;
     /// <summary>A crash report's frames, at most.</summary>
     constexpr size_t MaxCrashFrames = 40;
+    /// <summary>
+    /// The links' reports a run sends at most: a match has 6 players, so a few links; a stranger with the game's code
+    /// can open link after link, and the reports stop.
+    /// </summary>
+    constexpr int32_t MaxLinkReports = 32;
     /// <summary>What the server is given of a string from the system (a model's name, a frame), at most.</summary>
     constexpr size_t MaxTextLength = 200;
 
@@ -249,6 +255,8 @@ namespace
     std::optional<Clock::time_point> LastFrame;
     /// <summary>The share of the HD weather's pieces the frame being measured threw (1: all, or it threw none).</summary>
     float FrameWeather = 1.0f;
+    /// <summary>The links reported this run.</summary>
+    int32_t LinkReports = 0;
     /// <summary>The black box: in the backend's mapped file, or here without one.</summary>
     MCBlackBox MemoryBox{};
     std::reference_wrapper<MCBlackBox> Box = MemoryBox;
@@ -743,6 +751,72 @@ namespace
         SendReport(report);
     }
 
+    /// <summary>A link's path as its report says it.</summary>
+    std::string_view PathName(MCIceLink::Path path)
+    {
+        switch (path)
+        {
+            case MCIceLink::Path::DirectIpv6:
+                return "direct6";
+            case MCIceLink::Path::DirectIpv4:
+                return "direct4";
+            case MCIceLink::Path::Relay:
+                return "relay";
+            case MCIceLink::Path::None:
+                break;
+        }
+
+        return "none";
+    }
+
+    /// <summary>How a link ended, as its report says it.</summary>
+    std::string_view EndName(MCLinkEnd end)
+    {
+        switch (end)
+        {
+            case MCLinkEnd::NoGame:
+                return "noGame";
+            case MCLinkEnd::Unanswered:
+                return "unanswered";
+            case MCLinkEnd::GuestLeft:
+                return "guestLeft";
+            case MCLinkEnd::NoPath:
+                return "noPath";
+            case MCLinkEnd::NoChannel:
+                return "noChannel";
+            case MCLinkEnd::Closed:
+                return "closed";
+            case MCLinkEnd::Lost:
+                return "lost";
+            case MCLinkEnd::Unused:
+                return "unused";
+            case MCLinkEnd::CutOff:
+                return "cutOff";
+            case MCLinkEnd::Left:
+                return "left";
+        }
+
+        return "unknown";
+    }
+
+    /// <summary>The kinds of address an end offered, as WebRTC's stats name them ("host,srflx,relay"; "" none).</summary>
+    std::string OfferedNames(const MCIceLink::Offered& offered)
+    {
+        std::string names;
+
+        for (const auto& [taken, name] : {std::pair{offered.Host, "host"}, std::pair{offered.Reflexive, "srflx"},
+                                          std::pair{offered.Relay, "relay"}})
+        {
+            if (taken)
+            {
+                names += names.empty() ? "" : ",";
+                names += name;
+            }
+        }
+
+        return names;
+    }
+
     std::string_view PhaseName(MCPhase phase)
     {
         switch (phase)
@@ -952,6 +1026,7 @@ auto MCTelemetry::SetBackend(std::unique_ptr<MCBackend> backend) -> void
     Play = {};
     Pending = MCPrompt::None;
     LastFrame.reset();
+    LinkReports = 0;
 }
 
 auto MCTelemetry::Available() -> bool
@@ -1193,6 +1268,46 @@ auto MCTelemetry::MovieFellBehind() -> void
 auto MCTelemetry::WeatherDrawn(float share) -> void
 {
     FrameWeather = share;
+}
+
+auto MCTelemetry::LinkEnded(const MCLink& link) -> void
+{
+    if (!Reporting())
+    {
+        return;
+    }
+
+    if (LinkReports >= MaxLinkReports)
+    {
+        if (LinkReports++ == MaxLinkReports)
+        {
+            SDL_Log("Reports: %d links reported this run: no more are", MaxLinkReports);
+        }
+
+        return;
+    }
+
+    LinkReports++;
+    MCJsonObject json;
+    json.Text("role", link.Guest ? "guest" : "host").Flag("opened", link.Opened);
+
+    if (link.Opened)
+    {
+        json.Text("path", PathName(link.Path));
+    }
+
+    json.Integer("setupMs", link.Setup.count())
+        .Number("openMinutes", std::chrono::duration<double>(link.Open).count() / SecondsPerMinute)
+        .Integer("bytesSent", static_cast<int64_t>(link.Carried.BytesSent))
+        .Integer("bytesReceived", static_cast<int64_t>(link.Carried.BytesReceived));
+
+    if (link.Carried.RoundTrip.has_value())
+    {
+        json.Integer("rttMs", link.Carried.RoundTrip->count());
+    }
+
+    json.Text("here", OfferedNames(link.Here)).Text("there", OfferedNames(link.There)).Text("end", EndName(link.End));
+    SendReport(ReportStart("link", Machine.AppVersion).Raw("link", json.Close()).Close());
 }
 
 auto MCTelemetry::MessageIn(uint16_t type, size_t bytes) -> void

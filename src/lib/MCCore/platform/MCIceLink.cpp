@@ -27,19 +27,27 @@ namespace
 {
     /// <summary>The one data channel's name, as both ends make it.</summary>
     constexpr std::string_view ChannelLabel = "mc";
-    /// <summary>A candidate's signal (MCIceLink::Signal::Kind); a description's is its type, "offer" or "answer".</summary>
+    /// <summary>A candidate's signal (MCIceLink::Signal::Kind); a description's is its type, an offer or an answer.</summary>
     constexpr std::string_view CandidateKind = "candidate";
+    constexpr std::string_view OfferKind = "offer";
+    constexpr std::string_view AnswerKind = "answer";
+    /// <summary>
+    /// The addresses the other end may offer (a game offers a few: its own, its router's, its relay's, each family's);
+    /// more, and it isn't this game.
+    /// </summary>
+    constexpr size_t MaxHeardCandidates = 64;
     /// <summary>
     /// The most bytes a message carries: the channel keeps each message whole, and a stream's bytes are cut to fit any
     /// end's limit (libdatachannel's own is 256 KB; WebRTC's safe size is 16 KB).
     /// </summary>
     constexpr size_t MessageBytes = 16 * 1024;
     /// <summary>
-    /// The bytes received and not yet read a link holds: as many as a game keeps for one peer before dropping it
-    /// (MCDirectPlay's own limit). libdatachannel hands on every message as it comes, so nothing slows the other end:
-    /// more than this, and it isn't this game, or is flooding it, and the link fails.
+    /// The bytes received and not yet read a link holds. libdatachannel hands on every message as it comes, so nothing
+    /// slows the other end: more than this, and it isn't this game, or is flooding it, and the link fails. A game's
+    /// largest message is 5 KB (MsgBufferSize) and the game reads its links every frame, so this is a flood's size,
+    /// never a game's: libdatachannel's own SCTP window is as big, and a Mac's TCP takes at most 4 MB unread.
     /// </summary>
-    constexpr size_t MaxReceivedBytes = 8u << 20;
+    constexpr size_t MaxReceivedBytes = 1u << 20;
     /// <summary>What libdatachannel logs into the game's log: its warnings and errors.</summary>
     constexpr rtc::LogLevel LoggedLevel = rtc::LogLevel::Warning;
 
@@ -79,6 +87,44 @@ namespace
 
         return configuration;
     }
+
+    /// <summary>
+    /// A signal's kind as the log may name it: the other end's text is anything it likes (an address, even), so only the
+    /// kinds this game sends.
+    /// </summary>
+    std::string_view KindShown(std::string_view kind)
+    {
+        for (const std::string_view known : {CandidateKind, OfferKind, AnswerKind})
+        {
+            if (kind == known)
+            {
+                return known;
+            }
+        }
+
+        return "unknown";
+    }
+
+    /// <summary>Notes the kind of address <paramref name="candidate"/> is in <paramref name="offered"/>.</summary>
+    void NoteOffered(MCIceLink::Offered& offered, const rtc::Candidate& candidate)
+    {
+        switch (candidate.type())
+        {
+            case rtc::Candidate::Type::Host:
+                offered.Host = true;
+                break;
+            case rtc::Candidate::Type::ServerReflexive:
+                offered.Reflexive = true;
+                break;
+            case rtc::Candidate::Type::Relayed:
+                offered.Relay = true;
+                break;
+            case rtc::Candidate::Type::PeerReflexive:
+            case rtc::Candidate::Type::Unknown:
+                // Learned from the other end's packets, or no kind at all: never offered.
+                break;
+        }
+    }
 }
 
 /// <summary>What libdatachannel's threads and the game's share: the queues and the state, under one lock.</summary>
@@ -87,6 +133,14 @@ struct MCIceShared
     mutable std::mutex Lock;
     MCIceLink::State State = MCIceLink::State::Connecting;
     std::vector<MCIceLink::Signal> Outgoing;
+    /// <summary>The kinds of address this end has offered (libdatachannel's threads gather them).</summary>
+    MCIceLink::Offered Here;
+    /// <summary>ICE found a path (libdatachannel's ICE state reached connected).</summary>
+    bool FoundPath = false;
+    /// <summary>This end failed the link for what the other end sent.</summary>
+    bool CutOff = false;
+    /// <summary>When the channel opened, as libdatachannel's threads saw it (it may close before the game looks).</summary>
+    std::optional<std::chrono::steady_clock::time_point> OpenedAt;
     std::deque<uint8_t> Received;
     std::shared_ptr<rtc::DataChannel> Channel;
 
@@ -95,6 +149,24 @@ struct MCIceShared
     {
         const std::scoped_lock lock(Lock);
         EndLocked(state, why);
+    }
+
+    /// <summary>Fails the link for what the other end sent (under the lock): it can't be trusted.</summary>
+    void CutLocked(std::string_view why)
+    {
+        if (State == MCIceLink::State::Connecting || State == MCIceLink::State::Open)
+        {
+            CutOff = true;
+        }
+
+        EndLocked(MCIceLink::State::Failed, why);
+    }
+
+    /// <summary>CutLocked, taking the lock.</summary>
+    void Cut(std::string_view why)
+    {
+        const std::scoped_lock lock(Lock);
+        CutLocked(why);
     }
 
     /// <summary>End, under the lock.</summary>
@@ -112,12 +184,20 @@ struct MCIceShared
 struct MCIceLink::Impl
 {
     bool Offers = false;
+    /// <summary>Settings::RelayOnly: the other end's own addresses are never tried.</summary>
+    bool RelayOnly = false;
     std::shared_ptr<MCIceShared> Shared = std::make_shared<MCIceShared>();
     std::shared_ptr<rtc::PeerConnection> Peer;
     /// <summary>Whether the other end's description is in: its candidates wait for it.</summary>
     bool HeardDescription = false;
     std::vector<Signal> EarlyCandidates;
+    /// <summary>The addresses the other end has offered, in its candidates and its description.</summary>
+    size_t HeardCandidates = 0;
+    /// <summary>The kinds of address the other end has offered (its signals, heard on the game's thread).</summary>
+    Offered There;
     mutable std::optional<Path> KnownPath;
+    /// <summary>libdatachannel's counts as last read (the game's thread's).</summary>
+    mutable Traffic Kept;
 
     /// <summary>The channel's own callbacks, onto the shared queues (never onto this, which may be gone).</summary>
     static void Watch(const std::shared_ptr<rtc::DataChannel>& channel, const std::weak_ptr<MCIceShared>& weak)
@@ -132,6 +212,7 @@ struct MCIceLink::Impl
                     if (shared->State == State::Connecting)
                     {
                         shared->State = State::Open;
+                        shared->OpenedAt = std::chrono::steady_clock::now();
                     }
                 }
             });
@@ -173,8 +254,7 @@ struct MCIceLink::Impl
 
                     if (shared->Received.size() + bytes->size() > MaxReceivedBytes)
                     {
-                        shared->EndLocked(
-                            State::Failed,
+                        shared->CutLocked(
                             std::format("the other end sent over {} bytes this end hadn't read", MaxReceivedBytes));
                         return;
                     }
@@ -186,13 +266,14 @@ struct MCIceLink::Impl
                 }
                 else
                 {
-                    shared->End(State::Failed, "the other end sent text, not bytes");
+                    shared->Cut("the other end sent text, not bytes");
                 }
             });
     }
 
     void Start(const Settings& settings)
     {
+        RelayOnly = settings.RelayOnly;
         Peer = std::make_shared<rtc::PeerConnection>(ConfigurationOf(settings));
         const std::weak_ptr<MCIceShared> weak = Shared;
         Peer->onLocalDescription(
@@ -201,6 +282,12 @@ struct MCIceLink::Impl
                 if (const std::shared_ptr<MCIceShared> shared = weak.lock())
                 {
                     const std::scoped_lock lock(shared->Lock);
+
+                    for (const rtc::Candidate& candidate : description.candidates())
+                    {
+                        NoteOffered(shared->Here, candidate);
+                    }
+
                     shared->Outgoing.push_back({description.typeString(), std::string(description), {}});
                 }
             });
@@ -210,7 +297,20 @@ struct MCIceLink::Impl
                 if (const std::shared_ptr<MCIceShared> shared = weak.lock())
                 {
                     const std::scoped_lock lock(shared->Lock);
+                    NoteOffered(shared->Here, candidate);
                     shared->Outgoing.push_back({std::string(CandidateKind), std::string(candidate), candidate.mid()});
+                }
+            });
+        Peer->onIceStateChange(
+            [weak](rtc::PeerConnection::IceState state)
+            {
+                const std::shared_ptr<MCIceShared> shared = weak.lock();
+
+                if (shared != nullptr && (state == rtc::PeerConnection::IceState::Connected ||
+                                          state == rtc::PeerConnection::IceState::Completed))
+                {
+                    const std::scoped_lock lock(shared->Lock);
+                    shared->FoundPath = true;
                 }
             });
         Peer->onStateChange(
@@ -282,12 +382,34 @@ struct MCIceLink::Impl
                     if (channel->isOpen() && shared->State == State::Connecting)
                     {
                         shared->State = State::Open;
+                        shared->OpenedAt = std::chrono::steady_clock::now();
                     }
                 });
         }
     }
 
-    void AddCandidate(const Signal& signal) { Peer->addRemoteCandidate(rtc::Candidate(signal.Text, signal.Mid)); }
+    /// <summary>
+    /// Whether this end tries <paramref name="candidate"/>, an address the other end offered. Relay only, it tries the
+    /// other end's relay alone: its checks to any other address would tell that end this one's (libdatachannel's
+    /// policy only keeps this end's own addresses out of its signals). Not yet enough against a game that isn't this
+    /// one: libjuice checks every pair from this end's own socket too, so an address offered as a relay's that isn't
+    /// one still learns this end's (PLAN.md, step 3: before public games).
+    /// </summary>
+    bool Tries(const rtc::Candidate& candidate) const
+    {
+        return !RelayOnly || candidate.type() == rtc::Candidate::Type::Relayed;
+    }
+
+    void AddCandidate(const Signal& signal)
+    {
+        rtc::Candidate candidate(signal.Text, signal.Mid);
+        NoteOffered(There, candidate);
+
+        if (Tries(candidate))
+        {
+            Peer->addRemoteCandidate(std::move(candidate));
+        }
+    }
 };
 
 MCIceLink::MCIceLink(std::unique_ptr<Impl> impl) : _Impl(std::move(impl))
@@ -351,12 +473,18 @@ void MCIceLink::Heard(const Signal& signal)
 
     Impl& impl = *_Impl;
     // The other end's description is the answer to this end's offer, or the offer this end answers.
-    const std::string_view expected = impl.Offers ? "answer" : "offer";
+    const std::string_view expected = impl.Offers ? AnswerKind : OfferKind;
 
     try
     {
         if (signal.Kind == CandidateKind)
         {
+            if (++impl.HeardCandidates > MaxHeardCandidates)
+            {
+                impl.Shared->Cut(std::format("the other end offered over {} addresses", MaxHeardCandidates));
+                return;
+            }
+
             if (impl.HeardDescription)
             {
                 impl.AddCandidate(signal);
@@ -368,7 +496,27 @@ void MCIceLink::Heard(const Signal& signal)
         }
         else if (signal.Kind == expected && !impl.HeardDescription)
         {
-            impl.Peer->setRemoteDescription(rtc::Description(signal.Text, signal.Kind));
+            rtc::Description description(signal.Text, signal.Kind);
+            std::vector<rtc::Candidate> candidates = description.extractCandidates();
+            impl.HeardCandidates += candidates.size();
+
+            if (impl.HeardCandidates > MaxHeardCandidates)
+            {
+                impl.Shared->Cut(std::format("the other end offered over {} addresses", MaxHeardCandidates));
+                return;
+            }
+
+            for (rtc::Candidate& candidate : candidates)
+            {
+                NoteOffered(impl.There, candidate);
+
+                if (impl.Tries(candidate))
+                {
+                    description.addCandidate(std::move(candidate));
+                }
+            }
+
+            impl.Peer->setRemoteDescription(std::move(description));
             impl.HeardDescription = true;
 
             for (const Signal& early : std::exchange(impl.EarlyCandidates, {}))
@@ -378,12 +526,14 @@ void MCIceLink::Heard(const Signal& signal)
         }
         else
         {
-            impl.Shared->End(State::Failed, std::format("a signal out of turn (\"{}\")", signal.Kind));
+            impl.Shared->Cut(std::format("a signal out of turn (\"{}\")", KindShown(signal.Kind)));
         }
     }
-    catch (const std::exception& error)
+    catch (const std::exception&)
     {
-        impl.Shared->End(State::Failed, std::format("the other end's {} didn't parse: {}", signal.Kind, error.what()));
+        // What libdatachannel says of it can quote the address ("Invalid candidate address ..."), which the log
+        // never holds.
+        impl.Shared->Cut(std::format("the other end's {} didn't parse", KindShown(signal.Kind)));
     }
 }
 
@@ -423,6 +573,51 @@ MCIceLink::Path MCIceLink::GetPath() const
     }
 
     return *_Impl->KnownPath;
+}
+
+MCIceLink::Offered MCIceLink::OfferedHere() const
+{
+    const std::scoped_lock lock(_Impl->Shared->Lock);
+    return _Impl->Shared->Here;
+}
+
+MCIceLink::Offered MCIceLink::OfferedThere() const
+{
+    return _Impl->There;
+}
+
+bool MCIceLink::FoundPath() const
+{
+    const std::scoped_lock lock(_Impl->Shared->Lock);
+    return _Impl->Shared->FoundPath;
+}
+
+std::optional<std::chrono::steady_clock::time_point> MCIceLink::OpenedAt() const
+{
+    const std::scoped_lock lock(_Impl->Shared->Lock);
+    return _Impl->Shared->OpenedAt;
+}
+
+bool MCIceLink::CutOff() const
+{
+    const std::scoped_lock lock(_Impl->Shared->Lock);
+    return _Impl->Shared->CutOff;
+}
+
+MCIceLink::Traffic MCIceLink::Carried() const
+{
+    Traffic& kept = _Impl->Kept;
+    rtc::PeerConnection& peer = *_Impl->Peer;
+    // The counts only grow while the transports last, and read 0 once they're gone: the most seen is the last.
+    kept.BytesSent = std::max<uint64_t>(kept.BytesSent, peer.bytesSent());
+    kept.BytesReceived = std::max<uint64_t>(kept.BytesReceived, peer.bytesReceived());
+
+    if (const std::optional<std::chrono::milliseconds> roundTrip = peer.rtt())
+    {
+        kept.RoundTrip = roundTrip;
+    }
+
+    return kept;
 }
 
 bool MCIceLink::Send(std::span<const uint8_t> bytes)

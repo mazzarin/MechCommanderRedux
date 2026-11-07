@@ -44,10 +44,11 @@ namespace
     /// <summary>The links one guest keeps with a host at once: its link, and a new one while the old one closes.</summary>
     constexpr size_t MaxLinksPerGuest = 2;
     /// <summary>
-    /// A connection's bytes the game hasn't read: as many as a game keeps for one peer before dropping it
-    /// (MCDirectPlay's own limit). A game reads everything each frame, so more is a flood: the link is cut.
+    /// A connection's bytes the game hasn't read. A game's largest message is 5 KB (MsgBufferSize) and the game reads
+    /// everything each frame, so more is a flood, and the link is cut: as much as the link itself holds unread
+    /// (MCIceLink's), and a Mac's TCP takes at most 4 MB.
     /// </summary>
-    constexpr size_t MaxUnreadBytes = 8u << 20;
+    constexpr size_t MaxUnreadBytes = 1u << 20;
     /// <summary>How long a link nothing uses waits for what was sent on it to go before it closes, as TCP's close.</summary>
     constexpr auto LingerDeadline = std::chrono::seconds(2);
     /// <summary>The connections one link carries at once (a guest makes one).</summary>
@@ -126,8 +127,12 @@ MCIceTransport::MCIceTransport(std::shared_ptr<MCIceSignaling> signaling)
 {
 }
 
-MCIceTransport::MCIceTransport(std::shared_ptr<MCIceSignaling> signaling, Deadlines deadlines)
-    : _Signaling(std::move(signaling)), _Deadlines(deadlines), _NextPort(FirstEphemeralPort), _NextIp(FirstLinkIp)
+MCIceTransport::MCIceTransport(std::shared_ptr<MCIceSignaling> signaling, Deadlines deadlines, LinkReports reports)
+    : _Signaling(std::move(signaling))
+    , _Deadlines(deadlines)
+    , _Reports(std::move(reports))
+    , _NextPort(FirstEphemeralPort)
+    , _NextIp(FirstLinkIp)
 {
 }
 
@@ -135,7 +140,11 @@ MCIceTransport::~MCIceTransport()
 {
     // Each link closes as it goes, so the other ends see it closed.
     const std::scoped_lock lock(_Lock);
-    _Links.clear();
+
+    while (!_Links.empty())
+    {
+        EndLink(_Links.begin()->first, MCTelemetry::MCLinkEnd::Left, "this game left");
+    }
 }
 
 size_t MCIceTransport::Links() const
@@ -485,14 +494,22 @@ void MCIceTransport::Pump()
 
         const MCIceLink::State state = link.Ice->GetState();
 
+        const auto now = std::chrono::steady_clock::now();
+
         if (state == MCIceLink::State::Open && !link.WasOpen)
         {
             link.WasOpen = true;
-            link.IdleSince = std::chrono::steady_clock::now();
-            const auto took =
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - link.Started);
+            link.IdleSince = now;
+            link.Path = link.Ice->GetPath();
+            const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(now - link.Started);
             SDL_Log("MCIceTransport: %s opened in %lld ms, %s", LinkName(link.Guest, link.Peer).c_str(),
-                    static_cast<long long>(took.count()), PathText(link.Ice->GetPath()));
+                    static_cast<long long>(took.count()), PathText(link.Path));
+        }
+
+        // Read while the link lives: libdatachannel's counts go with its transports as it ends.
+        if (link.WasOpen)
+        {
+            link.Ice->Carried();
         }
 
         if (state == MCIceLink::State::Open && !link.Early.empty())
@@ -504,16 +521,20 @@ void MCIceTransport::Pump()
         // What arrived before a close is read first: a connection's last bytes, then its close.
         if (!ReadFrames(id, link))
         {
-            EndLink(id, "it sent what this game can't take");
+            EndLink(id, MCTelemetry::MCLinkEnd::CutOff, "it sent what this game can't take");
         }
         else if (state == MCIceLink::State::Failed || state == MCIceLink::State::Closed)
         {
-            EndLink(id, state == MCIceLink::State::Failed ? "it failed" : "it closed");
+            const bool failed = state == MCIceLink::State::Failed;
+            const MCTelemetry::MCLinkEnd end = failed && link.Ice->CutOff() ? MCTelemetry::MCLinkEnd::CutOff
+                                               : !link.Ice->OpenedAt()      ? Unopened(link)
+                                               : failed                     ? MCTelemetry::MCLinkEnd::Lost
+                                                                            : MCTelemetry::MCLinkEnd::Closed;
+            EndLink(id, end, failed ? "it failed" : "it closed");
         }
-        else if (state == MCIceLink::State::Connecting &&
-                 std::chrono::steady_clock::now() - link.Started > _Deadlines.Open)
+        else if (state == MCIceLink::State::Connecting && now - link.Started > _Deadlines.Open)
         {
-            EndLink(id, "it didn't open in time");
+            EndLink(id, Unopened(link), "it didn't open in time");
         }
     }
 
@@ -531,7 +552,7 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
 
         for (const auto& [id, link] : _Links)
         {
-            if (link.Guest != fromGuest && link.Peer == heard.Peer && !link.WasOpen)
+            if (link.Guest != fromGuest && link.Peer == heard.Peer && !link.Ice->OpenedAt())
             {
                 ended.push_back(id);
             }
@@ -539,7 +560,14 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
 
         for (const uint32_t id : ended)
         {
-            EndLink(id, fromGuest ? "the guest left the service" : "the service has no such game");
+            if (fromGuest)
+            {
+                EndLink(id, MCTelemetry::MCLinkEnd::GuestLeft, "the guest left the service");
+            }
+            else
+            {
+                EndLink(id, MCTelemetry::MCLinkEnd::NoGame, "the service has no such game");
+            }
         }
 
         return;
@@ -552,6 +580,7 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
 
         if (found != _Links.end() && found->second.Guest && found->second.Peer == heard.Peer)
         {
+            found->second.Heard = true;
             found->second.Ice->Heard(*heard.Signal);
         }
 
@@ -600,6 +629,7 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
         link.Number = heard.Link;
         link.Ip = _NextIp++;
         link.Started = std::chrono::steady_clock::now();
+        link.Heard = true;
         found = _Links.emplace(id, std::move(link)).first;
     }
 
@@ -795,7 +825,7 @@ void MCIceTransport::SendFrame(Link& link, uint8_t kind, std::span<const uint8_t
     }
 }
 
-void MCIceTransport::EndLink(uint32_t id, std::string_view why)
+void MCIceTransport::EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::string_view why)
 {
     const auto found = _Links.find(id);
 
@@ -808,6 +838,20 @@ void MCIceTransport::EndLink(uint32_t id, std::string_view why)
 
     SDL_Log("MCIceTransport: %s ended: %.*s", LinkName(link.Guest, link.Peer).c_str(), static_cast<int>(why.size()),
             why.data());
+    const auto now = std::chrono::steady_clock::now();
+    // Opened as libdatachannel saw it: a link can open and end between two pumps.
+    const std::optional<std::chrono::steady_clock::time_point> openedAt = link.Ice->OpenedAt();
+    _Reports({
+        .Guest = link.Guest,
+        .Opened = openedAt.has_value(),
+        .Path = link.WasOpen ? link.Path : link.Ice->GetPath(),
+        .Setup = std::chrono::duration_cast<std::chrono::milliseconds>(openedAt.value_or(now) - link.Started),
+        .Open = std::chrono::duration_cast<std::chrono::milliseconds>(now - openedAt.value_or(now)),
+        .Carried = link.Ice->Carried(),
+        .Here = link.Ice->OfferedHere(),
+        .There = link.Ice->OfferedThere(),
+        .End = end,
+    });
 
     for (auto& [handle, socket] : _Sockets)
     {
@@ -861,8 +905,18 @@ void MCIceTransport::DropUnused()
 
     for (const auto& [id, why] : unused)
     {
-        EndLink(id, why);
+        EndLink(id, MCTelemetry::MCLinkEnd::Unused, why);
     }
+}
+
+MCTelemetry::MCLinkEnd MCIceTransport::Unopened(const Link& link)
+{
+    if (link.Ice->FoundPath())
+    {
+        return MCTelemetry::MCLinkEnd::NoChannel;
+    }
+
+    return link.Heard ? MCTelemetry::MCLinkEnd::NoPath : MCTelemetry::MCLinkEnd::Unanswered;
 }
 
 std::optional<uint32_t> MCIceTransport::LinkToGame(uint32_t ip)

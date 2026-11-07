@@ -424,6 +424,55 @@ TEST_CASE("reports: a match of two minutes or more is reported at its end, with 
     CHECK(Holds(reports.Log->Requests[1].second, R"("first":false)"));
 }
 
+TEST_CASE("reports: an internet game's link is reported as it ends, with no address, and at most 32 a run")
+{
+    MCFakeReports reports;
+    using MCTelemetry::MCLinkEnd;
+    using std::chrono::milliseconds;
+
+    // Nothing before the player has seen what the reports hold.
+    MCTelemetry::LinkEnded({});
+    CHECK(reports.Log->Requests.empty());
+
+    StartReporting(reports);
+    MCTelemetry::LinkEnded({.Guest = true,
+                            .Opened = true,
+                            .Path = MCIceLink::Path::Relay,
+                            .Setup = milliseconds(840),
+                            .Open = milliseconds(90'000),
+                            .Carried = {.BytesSent = 123'456, .BytesReceived = 7'890, .RoundTrip = milliseconds(64)},
+                            .Here = {.Host = true, .Reflexive = true},
+                            .There = {.Host = true, .Reflexive = true, .Relay = true},
+                            .End = MCLinkEnd::Closed});
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+    CHECK_EQ(reports.Log->Requests[0].first, std::string("report"));
+    const std::string& report = reports.Log->Requests[0].second;
+    CHECK(report.starts_with(R"j({"v":1,"kind":"link","first":true,"platform":"mac","app":"0.2.1 (468)")j"));
+    CHECK(Holds(report, R"("model":"MacBookAir10,1")"));
+    CHECK(Holds(report, R"("link":{"role":"guest","opened":true,"path":"relay","setupMs":840,"openMinutes":1.50,)"
+                        R"("bytesSent":123456,"bytesReceived":7890,"rttMs":64,"here":"host,srflx",)"
+                        R"("there":"host,srflx,relay","end":"closed"}})"));
+    CHECK(!Holds(report, R"("play")"));
+
+    // A link that never opened has no path and no time open; no round trip measured, none said.
+    MCTelemetry::LinkEnded({.Setup = milliseconds(15'000), .End = MCLinkEnd::NoPath});
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{2});
+    CHECK(Holds(reports.Log->Requests[1].second,
+                R"("link":{"role":"host","opened":false,"setupMs":15000,"openMinutes":0.00,"bytesSent":0,)"
+                R"("bytesReceived":0,"here":"","there":"","end":"noPath"}})"));
+
+    // A stranger with the game's code can open link after link: the reports stop at 32 a run.
+    constexpr int32_t manyLinks = 40;
+    constexpr size_t mostLinks = 32;
+
+    for (int32_t i = 0; i < manyLinks; i++)
+    {
+        MCTelemetry::LinkEnded({.End = MCLinkEnd::GuestLeft});
+    }
+
+    CHECK_EQ(reports.Log->Requests.size(), mostLinks);
+}
+
 TEST_CASE("reports: missions are reported at the first, then a week or more after, each report holding all since")
 {
     MCFakeReports reports;

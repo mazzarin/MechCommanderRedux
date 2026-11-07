@@ -10,9 +10,11 @@
 // end's queues. This header holds only standard types, so code that includes it never meets the system's socket headers
 // (libdatachannel's), which the game's Win32 stand-ins can't.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -36,7 +38,11 @@ public:
         /// <summary>STUN servers ("host:port"), which tell a game its address as the internet sees it.</summary>
         std::vector<std::string> Stun;
         std::vector<Relay> Relays;
-        /// <summary>Only the relay's path, so neither game learns the other's address (a public game's).</summary>
+        /// <summary>
+        /// Only the relays' path, so neither game learns the other's address (a public game's): this end offers only its
+        /// relay's address, and tries only what the other end offers as its relay's (which a game that isn't this one
+        /// can fake: MCIceLink.cpp's Tries).
+        /// </summary>
         bool RelayOnly = false;
         /// <summary>
         /// The one address of this machine the link uses, its only candidate (none: every address). The tests' loopback:
@@ -79,6 +85,28 @@ public:
         Relay,
     };
 
+    /// <summary>The kinds of address an end offered the other (its candidates' types), for the reports: never the addresses.</summary>
+    struct Offered
+    {
+        /// <summary>The machine's own: behind a router, or a public IPv6 one ("host").</summary>
+        bool Host = false;
+        /// <summary>Its router's, as the internet sees it: a STUN server's answer ("srflx").</summary>
+        bool Reflexive = false;
+        /// <summary>The relay's, held for it ("relay").</summary>
+        bool Relay = false;
+
+        friend bool operator==(const Offered&, const Offered&) = default;
+    };
+
+    /// <summary>What a link carried, as libdatachannel counts it (its SCTP association's).</summary>
+    struct Traffic
+    {
+        uint64_t BytesSent = 0;
+        uint64_t BytesReceived = 0;
+        /// <summary>A message's time there and back (SCTP's smoothed estimate): none until measured.</summary>
+        std::optional<std::chrono::milliseconds> RoundTrip;
+    };
+
     /// <summary>
     /// The end that opens the link (a guest): it makes the offer, its first signal. None if libdatachannel refused to
     /// start one (logged).
@@ -105,6 +133,30 @@ public:
 
     /// <summary>The path the open link took (None until it is open).</summary>
     Path GetPath() const;
+
+    /// <summary>The kinds of address this end has offered the other so far.</summary>
+    Offered OfferedHere() const;
+
+    /// <summary>The kinds of address the other end has offered this one so far.</summary>
+    Offered OfferedThere() const;
+
+    /// <summary>Whether ICE found a path between the ends, even if the encrypted channel never opened over it.</summary>
+    bool FoundPath() const;
+
+    /// <summary>When the channel opened (none: it never did), even if it has closed since.</summary>
+    std::optional<std::chrono::steady_clock::time_point> OpenedAt() const;
+
+    /// <summary>
+    /// Whether this end failed the link for what the other end sent: more than it holds unread, text, or a signal out
+    /// of turn or that doesn't parse.
+    /// </summary>
+    bool CutOff() const;
+
+    /// <summary>
+    /// What the link has carried: libdatachannel's counts as read now, or as last read once they're gone (they go with
+    /// its transports, as the link ends). Read it while the link lives to keep it current.
+    /// </summary>
+    Traffic Carried() const;
 
     /// <summary>
     /// Sends <paramref name="bytes"/> after everything sent before; false unless the link is open. The bytes the

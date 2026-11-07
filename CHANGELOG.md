@@ -18,10 +18,16 @@ only the characters on a keyboard. The release script takes the entry under the 
 
 ## 0.5.0
 
-The first release: on Windows as well as the Mac, with MechCommander Gold included and the HD pack.
+The first release of Redux HD, on Windows and the Mac, with MechCommander Gold included.
 
-- UPDATE on the main menu updates the game and its files together, downloading only what changed.
-- Snow.
-- MATCH OPTIONS for multiplayer: the weather, the time of day, and rules such as no artillery.
-- Units block the headlights at night.
-- HD PACK in HD OPTIONS gets or removes the pack.
+- HD art, sound and movies: the units, buildings, ground, effects and menus sharper, from the HD pack.
+- Light: shots, fires and explosions light the battlefield; dusk and night, with headlights; the sun's relief,
+  softer shadows, drifting clouds and forests swaying in the wind.
+- Weather: rain, thunder and lightning, snow and blizzards, with puddles and settling snow.
+- Effects: flecks, debris, smoke, splashes and screen shake; footprints and craters that stay.
+- Mechs turn smoothly, and BRAKING brings them to a halt as the original's art draws it.
+- MATCH OPTIONS for multiplayer: the weather and time of day everyone plays in, braking, and artillery, probes,
+  sensors and mines on or off.
+- The Mission Editor sets a mission's time of day and weather.
+- UPDATE on the main menu updates the game and its files together, downloading only what changed; INTERFACE SIZE
+  on the Preferences screen.

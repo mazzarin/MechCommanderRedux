@@ -24,6 +24,7 @@ and the HD pack:
 The first start downloads the game's files (0.6 GB) and, if you chose it, the HD pack (5.8 GB). Neither installer is
 signed yet: on the Mac, click Open Anyway in System Settings' Privacy & Security; on Windows, More info, then Run
 anyway. Once installed, the game updates itself: when a new version is out, UPDATE on the main menu turns amber.
+What each version brought: [CHANGELOG.md](CHANGELOG.md).
 
 Without the pack the units, ground, menus, movies and sound are the original's; the light, weather and effects show
 all the same. MechCommander Redux's own [download](https://github.com/RevenantBob/MechCommanderRedux/releases/latest)
@@ -45,6 +46,7 @@ not on Discord.
   - [What Redux HD Adds](#what-redux-hd-adds)
   - [Coming](#coming)
   - [Reports](#reports)
+  - [What Each Version Brought](CHANGELOG.md)
   - [Changes, Bug Fixes and Known Issues](CHANGES.md)
   - [Legal Notice](#legal-notice)
   - [Running the Game](#running-the-game)

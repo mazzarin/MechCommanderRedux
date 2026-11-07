@@ -165,6 +165,8 @@ SelectDirLabel3=Setup downloads the game into a folder of its own, or installs {
 [CustomMessages]
 DownloadGame=&Download it
 UseMyCopy=&Use my copy of MechCommander Gold
+TakeoverChoice=Redux HD takes over this copy. To leave it as it is, choose Download it instead. Uninstalling Redux HD puts your copy back the way it was.
+TakeoverCopy=Redux HD takes over this copy. Uninstalling Redux HD puts your copy back the way it was.
 HdChoice=Redux &HD art, sound and movies
 GameSize=%1 (%2 GB)
 HdSize=%1 (%2 GB more)
@@ -270,6 +272,8 @@ var
   // The folder page's questions: the game downloaded or the player's copy, and HD; and the folder each choice shows.
   GameDownload, GameCopy: TNewRadioButton;
   HdBox: TNewCheckBox;
+  // Under them, while the player's copy is chosen: that Redux HD takes it over, and how to leave it as it is.
+  TakeoverNote: TNewStaticText;
   DownloadFolder, CopyFolder: String;
   CopyShown: Boolean;
   // Whether the install ran the game's download, and whether that ended with the content in place.
@@ -417,6 +421,7 @@ begin
     DownloadFolder := WizardForm.DirEdit.Text;
 
   CopyShown := GameCopy.Checked;
+  TakeoverNote.Visible := CopyShown;
 
   if CopyShown then
     WizardForm.DirEdit.Text := CopyFolder
@@ -476,6 +481,27 @@ begin
   end;
 
   HdBox.Top := WizardForm.DirEdit.Top + WizardForm.DirEdit.Height + ScaleY(16);
+
+  TakeoverNote := TNewStaticText.Create(WizardForm);
+  TakeoverNote.Parent := Page.Surface;
+  TakeoverNote.Left := GameDownload.Left;
+  TakeoverNote.AutoSize := False;
+  TakeoverNote.WordWrap := True;
+  TakeoverNote.Width := GameDownload.Width;
+
+  // Without the download to choose instead, the note says only what the install and the uninstall do.
+  if AsksDownloads then
+  begin
+    TakeoverNote.Caption := CustomMessage('TakeoverChoice');
+    TakeoverNote.Top := HdBox.Top + HdBox.Height + ScaleY(16);
+  end
+  else
+  begin
+    TakeoverNote.Caption := CustomMessage('TakeoverCopy');
+    TakeoverNote.Top := WizardForm.DirEdit.Top + WizardForm.DirEdit.Height + ScaleY(16);
+  end;
+
+  TakeoverNote.AutoSize := True;
 end;
 
 function DownloadFolderDefault: String; forward;
@@ -526,6 +552,7 @@ begin
 
   GameCopy.Checked := CopyShown;
   GameDownload.Checked := not CopyShown;
+  TakeoverNote.Visible := CopyShown;
 
   if WizardForm.PrevAppDir = '' then
   begin

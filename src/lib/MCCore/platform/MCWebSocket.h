@@ -5,6 +5,7 @@
 // service's certificate is checked against the system's own roots and the system's proxy settings apply. (libdatachannel's
 // WebSocket checks no certificate on Windows, and on the Mac only against roots the game would ship.)
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -41,7 +42,12 @@ public:
     virtual State GetState() const = 0;
     /// <summary>Why it closed (the close's code and reason, or the system's error), for the log: never an address.</summary>
     virtual std::string WhyClosed() const = 0;
-    /// <summary>Closes it: what was sent goes first, as the system's close does.</summary>
+    /// <summary>The bytes sent and not yet gone to the network, so a sender can wait (the transport's window).</summary>
+    virtual size_t Unsent() const = 0;
+    /// <summary>
+    /// Closes it. What's still waiting to go may not: the service tells the other players this one left, which ends
+    /// their links to it.
+    /// </summary>
     virtual void Close() = 0;
 };
 

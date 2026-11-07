@@ -195,6 +195,7 @@ struct MCIceLink::Impl
     size_t HeardCandidates = 0;
     /// <summary>The kinds of address the other end has offered (its signals, heard on the game's thread).</summary>
     Offered There;
+    /// <summary>The path last read while the link was open (GetPath's, so a closed link still says it).</summary>
     mutable std::optional<Path> KnownPath;
     /// <summary>libdatachannel's counts as last read (the game's thread's).</summary>
     mutable Traffic Kept;
@@ -545,34 +546,19 @@ MCIceLink::State MCIceLink::GetState() const
 
 MCIceLink::Path MCIceLink::GetPath() const
 {
-    if (_Impl->KnownPath.has_value())
-    {
-        return *_Impl->KnownPath;
-    }
-
-    if (GetState() != State::Open)
-    {
-        return Path::None;
-    }
-
     rtc::Candidate local;
     rtc::Candidate remote;
 
-    if (!_Impl->Peer->getSelectedCandidatePair(&local, &remote))
+    if (GetState() == State::Open && _Impl->Peer->getSelectedCandidatePair(&local, &remote))
     {
-        return Path::None;
+        const bool relayed =
+            local.type() == rtc::Candidate::Type::Relayed || remote.type() == rtc::Candidate::Type::Relayed;
+        _Impl->KnownPath = relayed                                          ? Path::Relay
+                           : local.family() == rtc::Candidate::Family::Ipv6 ? Path::DirectIpv6
+                                                                            : Path::DirectIpv4;
     }
 
-    if (local.type() == rtc::Candidate::Type::Relayed || remote.type() == rtc::Candidate::Type::Relayed)
-    {
-        _Impl->KnownPath = Path::Relay;
-    }
-    else
-    {
-        _Impl->KnownPath = local.family() == rtc::Candidate::Family::Ipv6 ? Path::DirectIpv6 : Path::DirectIpv4;
-    }
-
-    return *_Impl->KnownPath;
+    return _Impl->KnownPath.value_or(Path::None);
 }
 
 MCIceLink::Offered MCIceLink::OfferedHere() const

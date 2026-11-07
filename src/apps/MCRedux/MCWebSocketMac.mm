@@ -3,6 +3,7 @@
 
 #import <Foundation/Foundation.h>
 
+#include <algorithm>
 #include <format>
 #include <memory>
 #include <mutex>
@@ -29,6 +30,8 @@ namespace
         std::vector<NSURLSessionWebSocketMessage*> Waiting;
         std::string Why;
         NSURLSessionWebSocketTask* Task = nil;
+        /// <summary>The bytes sent (or waiting to) whose send hasn't completed.</summary>
+        size_t Unsent = 0;
 
         /// <summary>Ends it (under the lock), with the first reason given.</summary>
         void End(std::string why)
@@ -47,15 +50,31 @@ namespace
         return std::format("{} error {}", error.domain.UTF8String, static_cast<long>(error.code));
     }
 
-    void Send(MCShared& shared, NSURLSessionWebSocketMessage* message)
+    size_t MessageBytes(NSURLSessionWebSocketMessage* message)
     {
-        [shared.Task sendMessage:message
-               completionHandler:^(NSError* _Nullable error) {
-                 if (error != nil)
-                 {
-                     NSLog(@"MCWebSocket: a send failed: %s", ErrorText(error).c_str());
-                 }
-               }];
+        return message.type == NSURLSessionWebSocketMessageTypeData
+                   ? message.data.length
+                   : [message.string lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    }
+
+    /// <summary>Sends <paramref name="message"/> (under the lock): its bytes count as unsent until its send completes.</summary>
+    void Send(const std::shared_ptr<MCShared>& shared, NSURLSessionWebSocketMessage* message)
+    {
+        const size_t bytes = MessageBytes(message);
+        const std::weak_ptr<MCShared> weak = shared;
+        [shared->Task sendMessage:message
+                completionHandler:^(NSError* _Nullable error) {
+                  if (error != nil)
+                  {
+                      NSLog(@"MCWebSocket: a send failed: %s", ErrorText(error).c_str());
+                  }
+
+                  if (const std::shared_ptr<MCShared> owner = weak.lock())
+                  {
+                      const std::scoped_lock lock(owner->Lock);
+                      owner->Unsent -= std::min(owner->Unsent, bytes);
+                  }
+                }];
     }
 
     /// <summary>Takes the next message, and again after each, until the socket ends.</summary>
@@ -146,7 +165,7 @@ namespace
 
         for (NSURLSessionWebSocketMessage* message : shared->Waiting)
         {
-            Send(*shared, message);
+            Send(shared, message);
         }
 
         shared->Waiting.clear();
@@ -247,6 +266,12 @@ namespace
             return _Shared->Why;
         }
 
+        size_t Unsent() const override
+        {
+            const std::scoped_lock lock(_Shared->Lock);
+            return _Shared->Unsent;
+        }
+
         void Close() override
         {
             const std::scoped_lock lock(_Shared->Lock);
@@ -266,10 +291,12 @@ namespace
 
             if (_Shared->State == State::Open)
             {
-                Send(*_Shared, message);
+                _Shared->Unsent += MessageBytes(message);
+                Send(_Shared, message);
             }
             else if (_Shared->State == State::Opening)
             {
+                _Shared->Unsent += MessageBytes(message);
                 _Shared->Waiting.push_back(message);
             }
         }

@@ -25,6 +25,8 @@ namespace
     constexpr auto ShortServiceDeadline = std::chrono::milliseconds(300);
     /// <summary>What a link the service carries takes each way: a lobby's worth and more.</summary>
     constexpr size_t ServiceBytes = 200 * 1024;
+    /// <summary>The unsent bytes past which a connection's sends wait (MCIceTransport.cpp's SendWindowBytes).</summary>
+    constexpr size_t ServiceWindowBytes = 1u << 20;
     /// <summary>Frames as a game sends them (MCIceTransport.cpp's): a connection, and its bytes.</summary>
     constexpr uint8_t ConnectFrame = 2;
     constexpr uint8_t DataFrame = 5;
@@ -649,6 +651,12 @@ TEST_CASE("ice transport: a link that finds no path goes through the service, an
     CHECK(atGuest == fromHost);
     CHECK_EQ(guest.Links(), size_t{1});
     CHECK_EQ(host.Links(), size_t{1});
+
+    // A service holding a window's worth unsent holds the connection's sends, as a full ICE link does.
+    board.HoldUnsent(ServiceWindowBytes);
+    CHECK_EQ(guest.Send(stream, Bytes("held")), 0);
+    board.HoldUnsent(0);
+    CHECK_EQ(guest.Send(stream, Bytes("goes")), 4);
 
     // Once nothing uses it, the guest closes it, and the service tells the host's end.
     guest.Close(stream);

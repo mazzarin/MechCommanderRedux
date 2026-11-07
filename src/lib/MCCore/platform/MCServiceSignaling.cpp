@@ -194,6 +194,7 @@ namespace
         std::vector<Message> Take() override { return {}; }
         State GetState() const override { return State::Closed; }
         std::string WhyClosed() const override { return _Why; }
+        size_t Unsent() const override { return 0; }
         void Close() override {}
 
     private:
@@ -328,6 +329,19 @@ void MCServiceSignaling::BytesToGuest(std::string_view guest, uint32_t link, std
     _Host->Ws->SendBinary(message);
 }
 
+size_t MCServiceSignaling::Unsent()
+{
+    const std::scoped_lock lock(_Lock);
+    size_t unsent = _Host.has_value() ? _Host->Ws->Unsent() : 0;
+
+    for (const auto& [game, socket] : _Games)
+    {
+        unsent += socket.Ws->Unsent();
+    }
+
+    return unsent;
+}
+
 std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
 {
     const std::scoped_lock lock(_Lock);
@@ -341,10 +355,16 @@ std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
             HearHost(message, heard);
         }
 
+        // The guests can't be reached through the service now: as far as the links it carries can tell, they're gone.
         if (_Host->Ws->GetState() == MCWebSocket::State::Closed && !_Host->Told)
         {
             _Host->Told = true;
             SDL_Log("MCServiceSignaling: the hosted game's socket closed: %s", _Host->Ws->WhyClosed().c_str());
+
+            for (const std::string& guest : std::exchange(_Guests, {}))
+            {
+                heard.push_back({.Sender = From::Guest, .Peer = guest});
+            }
         }
 
         Ping(*_Host, now);
@@ -415,8 +435,10 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
 
         const std::string_view data(message.Data);
         const std::string_view bytes = data.substr(2 * Uint32Bytes);
+        std::string guest = std::format("{}{}", GuestPrefix, U32(data, 0));
+        _Guests.insert(guest);
         heard.push_back({.Sender = From::Guest,
-                         .Peer = std::format("{}{}", GuestPrefix, U32(data, 0)),
+                         .Peer = std::move(guest),
                          .Link = U32(data, Uint32Bytes),
                          .Bytes = {bytes.begin(), bytes.end()}});
         return;
@@ -453,6 +475,7 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
 
         if (guest && GuestNumber(*guest) && link && signal)
         {
+            _Guests.insert(*guest);
             heard.push_back({.Sender = From::Guest, .Peer = *guest, .Link = *link, .Signal = std::move(signal)});
             return;
         }
@@ -463,6 +486,7 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
 
         if (guest && GuestNumber(*guest))
         {
+            _Guests.erase(*guest);
             heard.push_back({.Sender = From::Guest, .Peer = *guest});
             return;
         }

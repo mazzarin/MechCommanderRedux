@@ -522,10 +522,12 @@ void MCIceTransport::Pump()
                     static_cast<long long>(took.count()), PathText(link.Path));
         }
 
-        // Read while the link lives: libdatachannel's counts go with its transports as it ends.
+        // Read while the link lives: libdatachannel's counts go with its transports as it ends, and ICE may move the
+        // link to a better pair after it opens (the report says the last).
         if (link.WasOpen)
         {
             link.Ice->Carried();
+            link.Path = link.Ice->GetPath();
         }
 
         if (state == MCIceLink::State::Open && !link.Early.empty())
@@ -810,7 +812,7 @@ bool MCIceTransport::IsOpen(const Link& link)
 
 size_t MCIceTransport::Unsent(const Link& link)
 {
-    return link.ServiceSince.has_value() ? 0 : link.Ice->Unsent();
+    return link.ServiceSince.has_value() ? _Signaling->Unsent() : link.Ice->Unsent();
 }
 
 bool MCIceTransport::ReadFrames(uint32_t id, Link& link)

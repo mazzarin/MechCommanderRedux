@@ -27,6 +27,9 @@ public:
     /// <summary>The endpoint <paramref name="endpoint"/> hosts the game <paramref name="game"/>: its guests' signals go there.</summary>
     void Host(std::string_view game, std::string_view endpoint);
 
+    /// <summary>Every endpoint says it holds <paramref name="bytes"/> unsent, as a service that stopped reading would.</summary>
+    void HoldUnsent(size_t bytes);
+
 private:
     struct Board;
     class Point;

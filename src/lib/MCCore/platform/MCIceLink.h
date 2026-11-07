@@ -133,7 +133,10 @@ public:
 
     State GetState() const;
 
-    /// <summary>The path the open link took (None until it is open).</summary>
+    /// <summary>
+    /// The path the open link takes now (ICE may move it to a better pair after it opens); once it's closed, the last
+    /// one read; None until it opens.
+    /// </summary>
     Path GetPath() const;
 
     /// <summary>The kinds of address this end has offered the other so far.</summary>

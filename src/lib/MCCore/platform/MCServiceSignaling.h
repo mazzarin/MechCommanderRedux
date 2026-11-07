@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -47,6 +48,7 @@ public:
     void ToGuest(std::string_view guest, uint32_t link, const MCIceLink::Signal& signal) override;
     void BytesToHost(std::string_view game, uint32_t link, std::span<const uint8_t> bytes) override;
     void BytesToGuest(std::string_view guest, uint32_t link, std::span<const uint8_t> bytes) override;
+    size_t Unsent() override;
     std::vector<Heard> Take() override;
 
 private:
@@ -75,5 +77,7 @@ private:
     MCIceLink::Settings _Settings;
     std::optional<Socket> _Host;
     std::optional<std::string> _HostedCode;
+    /// <summary>The hosted game's guests heard from (and not gone): told gone if the hosted game's socket closes.</summary>
+    std::set<std::string, std::less<>> _Guests;
     std::map<std::string, Socket, std::less<>> _Games;
 };

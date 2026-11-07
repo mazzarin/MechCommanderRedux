@@ -8,6 +8,7 @@ struct MCFakeSignalBoard::Board
     std::map<std::string, std::string, std::less<>> Hosts;
     std::map<std::string, std::vector<MCIceSignaling::Heard>, std::less<>> Inboxes;
     std::function<void(MCIceLink::Signal&)> TamperToGuests;
+    size_t Unsent = 0;
 };
 
 /// <summary>One game's view of the service.</summary>
@@ -48,6 +49,12 @@ public:
     {
         const std::scoped_lock lock(_Board->Lock);
         PassToGuest(guest, link, std::nullopt, {bytes.begin(), bytes.end()});
+    }
+
+    size_t Unsent() override
+    {
+        const std::scoped_lock lock(_Board->Lock);
+        return _Board->Unsent;
     }
 
     std::vector<Heard> Take() override
@@ -106,6 +113,12 @@ void MCFakeSignalBoard::TamperToGuests(std::function<void(MCIceLink::Signal&)> t
 {
     const std::scoped_lock lock(_Board->Lock);
     _Board->TamperToGuests = std::move(tamper);
+}
+
+void MCFakeSignalBoard::HoldUnsent(size_t bytes)
+{
+    const std::scoped_lock lock(_Board->Lock);
+    _Board->Unsent = bytes;
 }
 
 void MCFakeSignalBoard::Host(std::string_view game, std::string_view endpoint)

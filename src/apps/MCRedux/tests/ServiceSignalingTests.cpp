@@ -36,11 +36,13 @@ namespace
         std::vector<Message> Take() override { return std::exchange(Arrived, {}); }
         State GetState() const override { return Now; }
         std::string WhyClosed() const override { return "closed (1000)"; }
+        size_t Unsent() const override { return Waiting; }
         void Close() override { Now = State::Closed; }
 
         std::vector<Message> Sent;
         std::vector<Message> Arrived;
         State Now = State::Open;
+        size_t Waiting = 0;
     };
 
     /// <summary>Opens scripted sockets, keeping each by its address for the test.</summary>
@@ -228,4 +230,34 @@ TEST_CASE("service signaling: a socket the service closes says its game is gone,
     // Joining again opens a new socket.
     signaling.Join(GameCode);
     CHECK_EQ(service.Opened.size(), size_t{2});
+}
+
+TEST_CASE("service signaling: the hosted game's socket closing says each guest heard from is gone, and unsent adds up")
+{
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), false);
+    signaling.Host();
+    MCScriptedSocket& host = service.At("wss://service.test/host");
+    host.Arrived.push_back(Text(HostedMessage));
+    host.Arrived.push_back(Text(R"({"t":"signal","guest":"g3","link":1,"kind":"offer","text":"v=0","mid":""})"));
+    host.Arrived.push_back(Binary({5, LinkNumber}, "abc"));
+    CHECK_EQ(signaling.Take().size(), size_t{2});
+
+    // What the sockets hold unsent, together: the transport's window for the links the service carries.
+    signaling.Join(GameCode);
+    host.Waiting = 100;
+    service.At("wss://service.test/join/K7QF").Waiting = 20;
+    CHECK_EQ(signaling.Unsent(), size_t{120});
+
+    // The guests can't be reached through the service now: each is heard as gone, once.
+    host.Now = MCWebSocket::State::Closed;
+    std::vector<MCIceSignaling::Heard> heard = signaling.Take();
+    std::erase_if(heard, [](const MCIceSignaling::Heard& one) { return one.Sender != MCIceSignaling::From::Guest; });
+    REQUIRE_EQ(heard.size(), size_t{2});
+    CHECK_EQ(heard[0].Peer, std::string(Guest));
+    CHECK_EQ(heard[1].Peer, std::string("g5"));
+    CHECK(std::ranges::none_of(heard, [](const MCIceSignaling::Heard& one)
+                               { return one.Signal.has_value() || !one.Bytes.empty(); }));
+    CHECK(std::ranges::none_of(signaling.Take(), [](const MCIceSignaling::Heard& one)
+                               { return one.Sender == MCIceSignaling::From::Guest; }));
 }

@@ -82,6 +82,12 @@ public:
     /// <summary>A link's bytes through the service, to the guest <paramref name="guest"/> (see <see cref="BytesToHost"/>).</summary>
     virtual void BytesToGuest(std::string_view guest, uint32_t link, std::span<const uint8_t> bytes) = 0;
 
+    /// <summary>
+    /// The bytes given to the service and not yet gone to the network: the links it carries hold their sends while it's
+    /// past their window, as an ICE link's are held (MCIceLink::Unsent).
+    /// </summary>
+    virtual size_t Unsent() = 0;
+
     /// <summary>What was heard since the last call.</summary>
     virtual std::vector<Heard> Take() = 0;
 };
@@ -254,8 +260,8 @@ private:
     bool HearBytes(Link& link, std::span<const uint8_t> bytes);
     /// <summary>Whether the link carries bytes now (ICE's channel open, or the service carrying it).</summary>
     static bool IsOpen(const Link& link);
-    /// <summary>What the link holds unsent (the service's path holds nothing here).</summary>
-    static size_t Unsent(const Link& link);
+    /// <summary>What the link holds unsent: its ICE link's, or for the service's path, the service's.</summary>
+    size_t Unsent(const Link& link);
     /// <summary>Ends a link: its streams break, it goes, and the reports learn how it went.</summary>
     void EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::string_view why);
     /// <summary>How a link that never opened ended: how far it got.</summary>

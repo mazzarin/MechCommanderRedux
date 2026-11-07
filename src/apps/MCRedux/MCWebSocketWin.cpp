@@ -510,7 +510,9 @@ namespace
             {
                 _State = State::Closed;
                 _Why = std::move(why);
+                // Nothing waits to go now (Unsent): a count left would hold the service's other sockets' sends.
                 _Outbox.clear();
+                _UnsentBytes = 0;
             }
         }
 

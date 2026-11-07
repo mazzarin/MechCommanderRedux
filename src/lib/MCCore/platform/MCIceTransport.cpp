@@ -68,6 +68,11 @@ namespace
     constexpr auto ConnectStep = std::chrono::milliseconds(2);
     /// <summary>The bytes read from a link at once.</summary>
     constexpr size_t ReadChunkBytes = 16 * 1024;
+    /// <summary>
+    /// How often an open link's pair is asked for its report: the ask (libjuice's pair as text, parsed again) costs ten
+    /// times what the rest of a pump does with the link, and the game pumps a link several times a frame.
+    /// </summary>
+    constexpr auto PathReadEvery = std::chrono::seconds(1);
     /// <summary>A link's first signal from a guest (MCIceLink's offer).</summary>
     constexpr std::string_view OfferKind = "offer";
     /// <summary>
@@ -528,17 +533,23 @@ void MCIceTransport::Pump()
             link.WasOpen = true;
             link.IdleSince = now;
             link.Path = link.Ice->GetPath();
+            link.PathReadAt = now;
             const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(now - link.Started);
             SDL_Log("MCIceTransport: %s opened in %lld ms, %s", LinkName(link.Guest, link.Peer).c_str(),
                     static_cast<long long>(took.count()), PathText(link.Path));
         }
 
         // Read while the link lives: libdatachannel's counts go with its transports as it ends, and ICE may move the
-        // link to a better pair after it opens (the report says the last).
+        // link to a better pair after it opens (the report says the last, read a second apart at most).
         if (link.WasOpen)
         {
             link.Ice->Carried();
-            link.Path = link.Ice->GetPath();
+
+            if (now - link.PathReadAt >= PathReadEvery)
+            {
+                link.Path = link.Ice->GetPath();
+                link.PathReadAt = now;
+            }
         }
 
         if (state == MCIceLink::State::Open && !link.Early.empty())
@@ -834,7 +845,8 @@ size_t MCIceTransport::Unsent(const Link& link)
 
 bool MCIceTransport::ReadFrames(uint32_t id, Link& link)
 {
-    std::array<uint8_t, ReadChunkBytes> chunk{};
+    // Not zeroed: only what Receive wrote is read, and zeroing it was most of an idle link's read.
+    std::array<uint8_t, ReadChunkBytes> chunk;
 
     for (size_t got = 0; (got = link.Ice->Receive(chunk)) != 0;)
     {
@@ -849,18 +861,15 @@ bool MCIceTransport::ReadFrames(uint32_t id, Link& link)
         const uint8_t kind = input[at];
         const uint32_t size = U32(input, at + 1);
 
-        if (size > MaxFrameBody)
-        {
-            return false;
-        }
-
-        if (input.size() - at - FrameHeadBytes < size)
+        if (input.size() - at - FrameHeadBytes < size && size <= MaxFrameBody)
         {
             break;
         }
 
-        if (!HandleFrame(id, link, kind, input.subspan(at + FrameHeadBytes, size)))
+        if (size > MaxFrameBody || !HandleFrame(id, link, kind, input.subspan(at + FrameHeadBytes, size)))
         {
+            // Nothing after it is read, and what came before was handled once: a later read finds nothing.
+            link.Input.clear();
             return false;
         }
 
@@ -1038,13 +1047,22 @@ void MCIceTransport::EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::strin
             why.data());
     const auto now = std::chrono::steady_clock::now();
     const bool service = link.ServiceSince.has_value();
+
+    // The service brings a link's last bytes and its end in one batch: what came whole is the game's to read before
+    // the close, as an ICE link's is (Pump).
+    if (service && !ReadFrames(id, link))
+    {
+        SDL_Log("MCIceTransport: %s's last bytes through the service held what isn't a frame",
+                LinkName(link.Guest, link.Peer).c_str());
+    }
+
     // Opened as libdatachannel saw it (a link can open and end between two pumps), or as the service took it.
     const std::optional<std::chrono::steady_clock::time_point> openedAt =
         service ? link.ServiceSince : link.Ice->OpenedAt();
     _Reports({
         .Guest = link.Guest,
         .Opened = openedAt.has_value(),
-        .Path = link.WasOpen ? link.Path : link.Ice->GetPath(),
+        .Path = service ? link.Path : link.Ice->GetPath(),
         .Setup = std::chrono::duration_cast<std::chrono::milliseconds>(openedAt.value_or(now) - link.Started),
         .Open = std::chrono::duration_cast<std::chrono::milliseconds>(now - openedAt.value_or(now)),
         .Carried = service ? link.ServiceCarried : link.Ice->Carried(),

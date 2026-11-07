@@ -290,7 +290,8 @@ namespace
         size_t Unsent() const override
         {
             const std::scoped_lock lock(_Shared->Lock);
-            return _Shared->Unsent;
+            // Nothing waits to go once it's closed, whatever its cancelled sends' handlers have yet to say.
+            return _Shared->State == State::Closed ? 0 : _Shared->Unsent;
         }
 
         void Close() override

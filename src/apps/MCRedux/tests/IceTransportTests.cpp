@@ -668,17 +668,26 @@ TEST_CASE("ice transport: a link that finds no path goes through the service, an
             return !answer.empty();
         }));
     CHECK_EQ(answer, std::string("kept"));
+    atHost.clear();
+    REQUIRE(Drain(host, accepted, atHost));
+    CHECK(std::ranges::equal(atHost, Bytes("goes")));
 
-    // Once nothing uses it, the guest closes it, and the service tells the host's end.
+    // Once nothing uses it, the guest closes it, and the service tells the host's end. The guest's last bytes, its
+    // connection's close and the link's reach the host in one batch: the bytes are the host's to read, then the close.
+    const std::span<const uint8_t> lastWords = Bytes("last words");
+    CHECK_EQ(guest.Send(stream, lastWords), static_cast<int>(lastWords.size()));
     guest.Close(stream);
     guest.Close(guestUdp);
-    CHECK(Until(
+    REQUIRE(Until(
         [&]
         {
             Pump(guest);
-            Pump(host);
-            return guest.Links() == 0 && host.Links() == 0;
+            return guest.Links() == 0;
         }));
+    atHost.clear();
+    CHECK(!Drain(host, accepted, atHost));
+    CHECK(std::ranges::equal(atHost, lastWords));
+    CHECK_EQ(host.Links(), size_t{0});
 
     // Both ends report the service's path, what it carried, and no round trip (the service's isn't measured).
     REQUIRE_EQ(links.Of(GuestEnd).size(), size_t{1});

@@ -219,8 +219,9 @@ private:
         MCIceLink::Traffic ServiceCarried;
         /// <summary>A pump saw it open (it may open and close between two: MCIceLink::OpenedAt says).</summary>
         bool WasOpen = false;
-        /// <summary>The path it opened on, as the pump that saw it open read it.</summary>
+        /// <summary>The path it's on, as a pump last read it (once it opened), and when.</summary>
         MCIceLink::Path Path = MCIceLink::Path::None;
+        std::chrono::steady_clock::time_point PathReadAt;
         /// <summary>Since when it has carried no connection (a host end's: <see cref="Deadlines::Idle"/>).</summary>
         std::chrono::steady_clock::time_point IdleSince;
         /// <summary>Since when nothing has used it: it closes once what was sent has gone, or after a while.</summary>

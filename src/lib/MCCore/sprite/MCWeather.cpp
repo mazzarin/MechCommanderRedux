@@ -1540,7 +1540,7 @@ namespace
     /// What <paramref name="drop"/> lands on, as <paramref name="ground"/> is drawn, with <paramref name="puddles"/>: a
     /// flake, the water drawn (not under a bridge) or not (Hard, for any land or a unit's top); a drop, a unit's top
     /// (Metal) or what GroundUnder takes the ground for. It changes nothing, and once the ground's tiles are read in
-    /// (MCParticles::MCDrawnGround::ReadTiles) it only reads: the helpers find many at once (Landings).
+    /// (MCParticles::MCDrawnGround::ReadTiles) it only reads, so the helpers find many at once (Landings).
     /// </summary>
     MCWeather::MCSplashGround LandsOn(const Puddles& puddles, const MCParticles::MCDrawnGround& ground,
                                       const Drop& drop)
@@ -1711,6 +1711,11 @@ namespace
     /// </summary>
     void Land(State& state, const MCWeather::MCWeatherLook& look, const MCCamera& camera)
     {
+        if (state.Landing.empty())
+        {
+            return;
+        }
+
         const Puddles puddles = PuddlesOf(state, look);
         const MCParticles::MCDrawnGround ground(camera);
 
@@ -2316,7 +2321,10 @@ namespace
         return speckle;
     }
 
-    /// <summary>The threads that help the game's thread make the marks (AddMarks), started with the first that do.</summary>
+    /// <summary>
+    /// The threads that help the game's thread make the marks and find what the landed drops land on (AddMarks,
+    /// Landings), started with the first that do.
+    /// </summary>
     MCWorkers& Helpers()
     {
         static MCWorkers helpers(MCWorkers::HelpersFor(MostHelpers));
@@ -2329,11 +2337,14 @@ namespace
         return (pieces + size - 1) / size;
     }
 
-    /// <summary>Part <paramref name="part"/> of <paramref name="pieces"/>, PartPieces of them (the last part the rest).</summary>
-    template <typename T> std::span<const T> PartOf(std::span<const T> pieces, size_t part)
+    /// <summary>
+    /// Part <paramref name="part"/> of <paramref name="pieces"/>, <paramref name="size"/> of them (the last part the
+    /// rest).
+    /// </summary>
+    template <typename T> std::span<T> PartOf(std::span<T> pieces, size_t part, size_t size)
     {
-        const size_t first = part * PartPieces;
-        return pieces.subspan(first, std::min(PartPieces, pieces.size() - first));
+        const size_t first = part * size;
+        return pieces.subspan(first, std::min(size, pieces.size() - first));
     }
 
     /// <summary>
@@ -2365,11 +2376,11 @@ namespace
 
                           if (part < splashParts)
                           {
-                              AddSplashes(marks, PartOf(splashes, part), camera, catching, palest);
+                              AddSplashes(marks, PartOf(splashes, part, PartPieces), camera, catching, palest);
                           }
                           else
                           {
-                              AddDrops(marks, PartOf(drops, part - splashParts), camera, catching, palest);
+                              AddDrops(marks, PartOf(drops, part - splashParts, PartPieces), camera, catching, palest);
                           }
                       });
         std::vector<MCParticles::MCMarkPart> marks;
@@ -2414,13 +2425,9 @@ namespace
         Helpers().Run(parts,
                       [&](size_t part)
                       {
-                          const size_t first = part * LandingPart;
-                          const size_t end = std::min(first + LandingPart, landed.size());
-
-                          for (size_t i = first; i < end; ++i)
-                          {
-                              grounds[i] = LandsOn(puddles, ground, landed[i]);
-                          }
+                          std::ranges::transform(PartOf(landed, part, LandingPart),
+                                                 PartOf(grounds, part, LandingPart).begin(),
+                                                 [&](const Drop& drop) { return LandsOn(puddles, ground, drop); });
                       });
         return grounds;
     }

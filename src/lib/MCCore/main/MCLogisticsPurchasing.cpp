@@ -14,7 +14,9 @@
 #include "logistics/MCPurVehicleList.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
+#include "main/MCWeaponBans.h"
 #include "mission/MCMission.h"
+#include "network/MCMultiPlayer.h"
 
 namespace
 {
@@ -319,7 +321,55 @@ auto MCLogistics::SetUpMPPurchasing(std::string_view purchaseFile) -> void
         }
     }
 
+    // Port: the match's MOST SKILLED PILOT takes those more skilled off the shop, its weapon bans the banned weapons.
+    HidePilotsAbove(MCMostSkilledPilot(MultiPlayer()->Played.Rules.value_or(0)));
+    HideBannedWeapons(MCPlayedWeaponBans());
     purchasing.Close();
+}
+
+auto MCLogistics::HideBannedWeapons(uint32_t bans) const -> void
+{
+    if (bans == 0)
+    {
+        return;
+    }
+
+    // The banned components aren't sold.
+    std::erase_if(PurchaseComponents->Items, [bans](const std::shared_ptr<MCLogInventoryItem>& item)
+                  { return MCComponentBanned(item->MasterID, bans); });
+
+    // A mech for sale comes without them, and costs that much less: their space is free for others.
+    for (const std::shared_ptr<MCPurMech>& mech : PurMechList->Mechs)
+    {
+        for (const std::unique_ptr<MCPurMechData>& variant : mech->Variants)
+        {
+            if (variant != nullptr && variant->Inventory != nullptr)
+            {
+                variant->Cost -= MCRemoveBanned(*variant->Inventory, bans);
+                variant->CalcBR();
+            }
+        }
+    }
+
+    // A vehicle can't be refitted, so one carrying a banned weapon isn't sold.
+    std::erase_if(PurVehicleList->Vehicles,
+                  [bans](const std::shared_ptr<MCPurVehicle>& vehicle)
+                  {
+                      return std::ranges::any_of(vehicle->Data->Inventory->Items,
+                                                 [bans](const std::shared_ptr<MCLogInventoryItem>& item)
+                                                 { return MCComponentBanned(item->MasterID, bans); });
+                  });
+}
+
+auto MCLogistics::HidePilotsAbove(MCPilotRank most) const -> void
+{
+    for (const std::shared_ptr<MCPurPilotData>& pilot : PurPilotList->Pilots)
+    {
+        if (pilot->Rank > static_cast<int32_t>(most) && pilot->Status == MCPurPilotData::ForHire)
+        {
+            pilot->Status = MCPurPilotData::OffShop;
+        }
+    }
 }
 
 auto MCLogistics::SetUpPurchasing(MCPacketFile& file) -> void

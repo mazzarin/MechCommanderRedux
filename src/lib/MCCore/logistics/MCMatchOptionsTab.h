@@ -34,8 +34,9 @@ enum class MCSessionTab : uint8_t
 /// <summary>
 /// Makes the session screen's tabs as the briefing's multiplayer pictures draw them (lsbdw02 with MULTIPLAYER CHAT in
 /// front, lsbdw03 behind), MISSION BRIEFING lettered <see cref="MatchOptionsWord"/>, with <paramref name="front"/>'s tab
-/// in front: for MULTIPLAYER CHAT only the tab behind it (the background has the one in front). Null when the art isn't
-/// the tabs' as expected.
+/// in front: for MULTIPLAYER CHAT only the tab behind it (the background has the one in front). With HD art on, the HD
+/// art pack's copy is made the same way of the pack's copies of the tabs' pictures (MCHdArt::KeepPicture). Null when
+/// the art isn't the tabs' as expected.
 /// </summary>
 std::shared_ptr<MCLogPort> MakeMatchTabs(MCSessionTab front);
 

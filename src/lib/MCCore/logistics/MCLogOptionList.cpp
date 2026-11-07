@@ -162,8 +162,8 @@ auto MCLogOptionList::Relayout() -> void
     {
         const auto option = static_cast<int32_t>(row);
         _Slots.push_back(Slot{.Row = option});
-        // The first line is the row's own; the rest go two to a slot under it.
-        const auto further = std::max(static_cast<int32_t>(_HeldLines[row].size()) - 1, 0);
+        // An option's first line is its own; the rest (a heading's every line) go two to a slot under it.
+        const auto further = std::max(static_cast<int32_t>(_HeldLines[row].size()) - FirstHeldMore(option), 0);
 
         for (int32_t part = 1; part <= (further + LinesPerRow - 1) / LinesPerRow; part++)
         {
@@ -183,7 +183,26 @@ auto MCLogOptionList::SlotOf(int32_t row) const -> int32_t
 
 auto MCLogOptionList::HeldReason(int32_t row) const -> std::string_view
 {
-    return _Held[static_cast<size_t>(row)];
+    if (!_Held[static_cast<size_t>(row)].empty() || _Rows[static_cast<size_t>(row)].IsHeading())
+    {
+        return _Held[static_cast<size_t>(row)];
+    }
+
+    // An option under a held heading is held by it.
+    for (int32_t above = row - 1; above >= 0; above--)
+    {
+        if (_Rows[static_cast<size_t>(above)].IsHeading())
+        {
+            return _Held[static_cast<size_t>(above)];
+        }
+    }
+
+    return {};
+}
+
+auto MCLogOptionList::FirstHeldMore(int32_t row) const -> int32_t
+{
+    return _Rows[static_cast<size_t>(row)].IsHeading() ? 0 : 1;
 }
 
 auto MCLogOptionList::Description(int32_t row) const -> std::string
@@ -321,6 +340,11 @@ auto MCLogOptionList::SettingLeft() -> int32_t
     return ScrollBarLeft() - SettingGap - _SettingWidth;
 }
 
+auto MCLogOptionList::NameWidth() -> int32_t
+{
+    return SettingLeft() - SettingGap - NameLeft;
+}
+
 auto MCLogOptionList::LineWidth() -> int32_t
 {
     return _WideDescriptions ? ScrollBarLeft() - SettingGap / 2 - NameLeft : SettingLeft() - SettingGap - NameLeft;
@@ -413,8 +437,10 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
     const std::string_view held = HeldReason(row);
     const std::string_view lacks = Lacks(row);
     const bool shows = lacks.empty() && held.empty();
+    // Held by its heading, the heading says why: its own line still says what it does.
+    const bool heldHere = !_Held[static_cast<size_t>(row)].empty();
     const int32_t settingLeft = SettingLeft();
-    const int32_t nameWidth = settingLeft - SettingGap - NameLeft;
+    const int32_t nameWidth = NameWidth();
     Write(NameLeft, top + TextOffset, option.Label, shows ? NameColor : DimColor, nameWidth);
 
     // What it does; when it can't show, what it needs first (VULKAN, or another setting); when held, why instead (in the
@@ -422,13 +448,13 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
     int32_t left = NameLeft;
     const int32_t descriptionRight = NameLeft + LineWidth();
 
-    if (!held.empty())
+    if (heldHere)
     {
         Write(left, top + LineHeight + TextOffset, HeldLines(row).front(), _HeadingColor, descriptionRight - left);
     }
     else
     {
-        if (!lacks.empty())
+        if (!lacks.empty() && held.empty())
         {
             left += Write(left, top + LineHeight + TextOffset, std::format("NEEDS {}. ", lacks), NeedsColor, nameWidth);
         }
@@ -453,8 +479,9 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
 auto MCLogOptionList::DrawHeldMore(const Slot& slot, int32_t top) -> void
 {
     const std::span<const std::string> lines = HeldLines(slot.Row);
-    // Part 1 holds the reason's second and third lines (its first is on the row), and so on.
-    const int32_t first = (slot.Part - 1) * LinesPerRow + 1;
+    // Part 1 holds an option's reason's second and third lines (its first is on the row; a heading's first two), and
+    // so on.
+    const int32_t first = (slot.Part - 1) * LinesPerRow + FirstHeldMore(slot.Row);
 
     for (int32_t line = 0; line < LinesPerRow && first + line < static_cast<int32_t>(lines.size()); line++)
     {

@@ -2,8 +2,10 @@
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCLogOptionList.h"
 #include "linkup/MCFidpPlayer.h"
+#include "main/MCWeaponBans.h"
 #include "logistics/MCLogPort.h"
 #include "network/MCMultiPlayer.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
 #include "vfx/MCVfxFunctions.h"
@@ -114,27 +116,31 @@ namespace
         std::copy(sourceRow.begin() + face.first, sourceRow.begin() + face.second + 1, targetRow.begin() + face.first);
     }
 
-    /// <summary>
-    /// The two tabs with the bottom one's word <see cref="MatchOptionsWord"/>, in front (<paramref name="front"/>: as
-    /// lsbdw03, MULTIPLAYER CHAT behind) or behind (as lsbdw02); null when the art isn't the tabs' as expected.
-    /// </summary>
-    std::shared_ptr<MCLogPort> LetterTabs(bool front)
+    /// <summary>A row of a tab's face put into the lettered tabs: row <c>From</c> of a picture as row <c>To</c>.</summary>
+    struct FaceRow
     {
-        const std::shared_ptr<MCLogPort> target = LogScreenArt(front ? ChatBehind : ChatInFront);
+        std::string_view Picture;
+        int32_t From = 0;
+        int32_t To = 0;
+    };
 
-        if (!IsTabsPicture(*target))
-        {
-            SDL_Log("MATCH OPTIONS: the tabs' picture is %dx%d, not %dx%d; no tab drawn", target->Width(),
-                    target->Height(), TabsWidth, TabsHeight);
-            return nullptr;
-        }
+    /// <summary>
+    /// The picture the lettered tabs are made on, with MATCH OPTIONS in front (<paramref name="front"/>: lsbdw03,
+    /// MULTIPLAYER CHAT behind) or behind (lsbdw02).
+    /// </summary>
+    std::string_view TabsPictureFor(bool front)
+    {
+        return front ? ChatBehind : ChatInFront;
+    }
 
-        auto tabs = std::make_shared<MCLogPort>();
-        tabs->Init(TabsWidth, TabsHeight);
-        std::ranges::copy(target->Pixels(), tabs->Pixels().begin());
-        const std::pair<int32_t, int32_t> face = front ? FrontFace : BehindFace;
-
-        // MISSION BRIEFING wiped with rows of the face left blank above and below it.
+    /// <summary>
+    /// The face rows that letter <see cref="MatchOptionsWord"/> on <see cref="TabsPictureFor"/>'s picture: MISSION
+    /// BRIEFING wiped with rows of the face left blank above and below it, then the letters, the word centred where
+    /// the old one was.
+    /// </summary>
+    std::vector<FaceRow> LetteredRows(bool front)
+    {
+        const std::string_view tabs = TabsPictureFor(front);
         std::vector<int32_t> blankRows;
 
         for (const auto& [first, last] : BlankFaceRows)
@@ -145,53 +151,163 @@ namespace
             }
         }
 
+        std::vector<FaceRow> rows;
+
         for (int32_t row = OldWordTop; row <= OldWordBottom; row++)
         {
-            CopyFaceRow(*target, blankRows[static_cast<size_t>(row - OldWordTop) % blankRows.size()], *tabs, row, face);
+            rows.push_back({tabs, blankRows[static_cast<size_t>(row - OldWordTop) % blankRows.size()], row});
         }
 
-        // The letters in their place, the word centred where the old one was.
-        int32_t rows = 0;
+        int32_t letterRows = 0;
 
         for (const TabLetters& letters : MatchOptionsLetters)
         {
-            rows += letters.Rows;
+            letterRows += letters.Rows;
         }
 
-        int32_t row = (OldWordTop + OldWordBottom + 1 - rows) / 2;
+        int32_t row = (OldWordTop + OldWordBottom + 1 - letterRows) / 2;
 
         for (const TabLetters& letters : MatchOptionsLetters)
         {
             if (letters.Word.has_value())
             {
-                const std::shared_ptr<MCLogPort> source = LogScreenArt(PictureOf(*letters.Word, front));
-
-                if (!IsTabsPicture(*source))
-                {
-                    SDL_Log("MATCH OPTIONS: %.*s's picture isn't a tabs picture; no tab drawn",
-                            static_cast<int>(letters.Letters.size()), letters.Letters.data());
-                    return nullptr;
-                }
-
                 for (int32_t offset = 0; offset < letters.Rows; offset++)
                 {
-                    CopyFaceRow(*source, letters.Top + offset, *tabs, row + offset, face);
+                    rows.push_back({PictureOf(*letters.Word, front), letters.Top + offset, row + offset});
                 }
             }
 
             row += letters.Rows;
         }
 
-        if (front)
+        return rows;
+    }
+
+    /// <summary>The pictures the lettered tabs are made of, by name.</summary>
+    using TabsArt = std::map<std::string_view, std::shared_ptr<MCLogPort>>;
+
+    /// <summary>
+    /// <paramref name="tabs"/>' picture and those <paramref name="rows"/> are from; none (logged) when one isn't a tabs
+    /// picture.
+    /// </summary>
+    std::optional<TabsArt> ArtOf(std::string_view tabs, std::span<const FaceRow> rows)
+    {
+        TabsArt art{{tabs, nullptr}};
+
+        for (const FaceRow& row : rows)
         {
-            return tabs;
+            art.emplace(row.Picture, nullptr);
+        }
+
+        for (auto& [name, picture] : art)
+        {
+            picture = LogScreenArt(name);
+
+            if (!IsTabsPicture(*picture))
+            {
+                SDL_Log("MATCH OPTIONS: %.*s is %dx%d, not %dx%d as the tabs' pictures are; no tab drawn",
+                        static_cast<int>(name.size()), name.data(), picture->Width(), picture->Height(), TabsWidth,
+                        TabsHeight);
+                return std::nullopt;
+            }
+        }
+
+        return art;
+    }
+
+    /// <summary>
+    /// Port-only: gives the lettered tabs (<paramref name="tabs"/>, the rows from <paramref name="top"/> down of
+    /// <paramref name="base"/>'s picture with <paramref name="rows"/>' faces put in) an HD copy, made as they are of
+    /// the HD art pack's copies of their pictures, for the pack's pictures to show (MCHdArt::KeepPicture). None while HD
+    /// art is off, or when the pack lacks one of the pictures: the tabs show as they are.
+    /// </summary>
+    void KeepHdTabs(const MCLogPort& tabs, int32_t top, const TabsArt& art, std::string_view base,
+                    std::span<const FaceRow> rows, std::pair<int32_t, int32_t> face)
+    {
+        std::map<std::string_view, std::shared_ptr<const MCHdArt::Frame>> hd;
+
+        for (const auto& [name, picture] : art)
+        {
+            std::shared_ptr<const MCHdArt::Frame> frame =
+                MCHdArt::FindPicture(picture->Pixels(), picture->Width(), picture->Height());
+
+            if (frame == nullptr)
+            {
+                return;
+            }
+
+            hd.emplace(name, std::move(frame));
+        }
+
+        const MCHdArt::Frame& made = *hd.at(base);
+        MCHdArt::Frame lettered = made;
+        const int32_t faceWidth = face.second - face.first + 1;
+        const auto copied = [&](const MCHdArt::Frame& from, int32_t x, int32_t y, int32_t width, int32_t height,
+                                MCHdArt::Frame& to, int32_t toX, int32_t toY)
+        {
+            if (MCHdArt::CopyArea(from, x, y, width, height, to, toX, toY))
+            {
+                return true;
+            }
+
+            SDL_Log(
+                "MATCH OPTIONS: the HD art pack's tabs at %dx (format %d) can't be lettered from %dx (format %d); the "
+                "tab shows as it is",
+                to.Scale, static_cast<int>(to.Format), from.Scale, static_cast<int>(from.Format));
+            return false;
+        };
+
+        for (const FaceRow& row : rows)
+        {
+            if (!copied(*hd.at(row.Picture), face.first, row.From, faceWidth, 1, lettered, face.first, row.To))
+            {
+                return;
+            }
+        }
+
+        MCHdArt::Frame shown = MCHdArt::BlankFrame(made, TabsWidth, TabsHeight - top);
+
+        if (!copied(lettered, 0, top, TabsWidth, TabsHeight - top, shown, 0, 0))
+        {
+            return;
+        }
+
+        MCHdArt::KeepPicture(tabs.Pixels(), tabs.Width(), tabs.Height(), std::move(shown));
+    }
+
+    /// <summary>
+    /// The two tabs with the bottom one's word <see cref="MatchOptionsWord"/>, in front (<paramref name="front"/>: as
+    /// lsbdw03, MULTIPLAYER CHAT behind) or behind (as lsbdw02), and their HD copy (KeepHdTabs); null when the art isn't
+    /// the tabs' as expected.
+    /// </summary>
+    std::shared_ptr<MCLogPort> LetterTabs(bool front)
+    {
+        const std::string_view base = TabsPictureFor(front);
+        const std::vector<FaceRow> rows = LetteredRows(front);
+        const std::optional<TabsArt> art = ArtOf(base, rows);
+
+        if (!art.has_value())
+        {
+            return nullptr;
+        }
+
+        const std::pair<int32_t, int32_t> face = front ? FrontFace : BehindFace;
+        MCLogPort lettered;
+        lettered.Init(TabsWidth, TabsHeight);
+        std::ranges::copy(art->at(base)->Pixels(), lettered.Pixels().begin());
+
+        for (const FaceRow& row : rows)
+        {
+            CopyFaceRow(*art->at(row.Picture), row.From, lettered, row.To, face);
         }
 
         // Behind MULTIPLAYER CHAT only the bottom tab is drawn: the background has the one in front.
-        auto behind = std::make_shared<MCLogPort>();
-        behind->Init(TabsWidth, TabsHeight - BehindTop);
-        std::ranges::copy(tabs->Pixels().subspan(static_cast<size_t>(BehindTop * TabsWidth)), behind->Pixels().begin());
-        return behind;
+        const int32_t top = front ? 0 : BehindTop;
+        auto tabs = std::make_shared<MCLogPort>();
+        tabs->Init(TabsWidth, TabsHeight - top);
+        std::ranges::copy(lettered.Pixels().subspan(static_cast<size_t>(top * TabsWidth)), tabs->Pixels().begin());
+        KeepHdTabs(*tabs, top, *art, base, rows, face);
+        return tabs;
     }
 
     /// <summary>The rows' values: a weather or time of day (<see cref="MissionOwn"/>: the mission's own), braking on.</summary>
@@ -203,6 +319,14 @@ namespace
     int ProbesValue = 1;
     int SensorsValue = 1;
     int MinesValue = 1;
+    int PilotValue = static_cast<int>(MCPilotRank::Elite);
+    /// <summary>Each weapon family's row (WeaponFamilies' order): 1 ON, the original's, 0 OFF, banned.</summary>
+    std::array<int, WeaponFamilies.size()> WeaponValues = []
+    {
+        std::array<int, WeaponFamilies.size()> on{};
+        on.fill(1);
+        return on;
+    }();
 
     /// <summary>
     /// Whether the room plays <typeparamref name="Option"/>'s value <typeparamref name="Value"/> at some version (every
@@ -235,6 +359,11 @@ namespace
                                         ChoiceOf<MCMatchOption::TimeOfDay, MCTimeOfDay::Dusk>("DUSK"),
                                         ChoiceOf<MCMatchOption::TimeOfDay, MCTimeOfDay::Night>("NIGHT")};
     constexpr std::array OffOn = {Choice{"OFF", 0}, Choice{"ON", 1}};
+    /// <summary>The ranks in the game's own words, the most skilled (any pilot, the original's) first.</summary>
+    constexpr std::array PilotChoices = {Choice{"ELITE", static_cast<int32_t>(MCPilotRank::Elite)},
+                                         Choice{"VETERAN", static_cast<int32_t>(MCPilotRank::Veteran)},
+                                         Choice{"REGULAR", static_cast<int32_t>(MCPilotRank::Regular)},
+                                         Choice{"GREEN", static_cast<int32_t>(MCPilotRank::Green)}};
 
     /// <summary>
     /// The host's change of one option (<paramref name="change"/> of its match options and its game): into its options,
@@ -285,6 +414,16 @@ namespace
             });
     }
 
+    void PilotChanged(int32_t value)
+    {
+        HostChanges(
+            [value](MCMatchOptions& options, const MCMultiPlayer& game)
+            {
+                options.Rules =
+                    (game.WantedRules() & ~MCMatchRule::PilotRanks) | MCPilotRankRules(static_cast<MCPilotRank>(value));
+            });
+    }
+
     /// <summary>A row's value (1 ON, 0 OFF) for an option played by <paramref name="rule"/> in <paramref name="rules"/>.</summary>
     int OnOf(uint32_t rules, uint32_t rule, bool onPlays)
     {
@@ -331,6 +470,16 @@ namespace
     /// <summary>The headings' amber in the session screen's palette (the preferences' is dark there).</summary>
     constexpr uint8_t HeadingColor = 0xac;
 
+    /// <summary>Weapon family <typeparamref name="Family"/>'s row (WeaponFamilies): ON sells and fields it, OFF bans it.</summary>
+    template <size_t Family> constexpr Row WeaponRow()
+    {
+        return Row{.Label = WeaponFamilies[Family].Label,
+                   .Description = WeaponFamilies[Family].Description,
+                   .Value = WeaponValues[Family],
+                   .Choices = OffOn,
+                   .Changed = RuleChanged<WeaponFamilies[Family].Rule, false>};
+    }
+
     constexpr std::array Rows = {
         Row{.Label = "PLAY"},
         Row{.Label = MCCapabilityOf(MCMatchOption::Weather).Name,
@@ -368,7 +517,26 @@ namespace
             .Value = MinesValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoMines, false>},
+        Row{.Label = MCCapabilityOf(MCMatchOption::MostSkilledPilot).Name,
+            .Description = "NONE MORE SKILLED FOR HIRE.",
+            .Value = PilotValue,
+            .Choices = PilotChoices,
+            .Changed = PilotChanged},
+        Row{.Label = MCCapabilityOf(MCMatchOption::Weapons).Name},
+        WeaponRow<0>(),
+        WeaponRow<1>(),
+        WeaponRow<2>(),
+        WeaponRow<3>(),
+        WeaponRow<4>(),
+        WeaponRow<5>(),
+        WeaponRow<6>(),
+        WeaponRow<7>(),
+        WeaponRow<8>(),
+        WeaponRow<9>(),
+        WeaponRow<10>(),
     };
+
+    static_assert(WeaponFamilies.size() == 11, "a row for each weapon family");
 
     /// <summary>Each option's row, and the option (what it needs of a game's build: MCOptionCapabilities).</summary>
     struct RuleRow
@@ -377,10 +545,14 @@ namespace
         MCMatchOption Option = MCMatchOption::Weather;
     };
 
-    constexpr std::array RuleRows = {RuleRow{1, MCMatchOption::Weather}, RuleRow{2, MCMatchOption::TimeOfDay},
-                                     RuleRow{3, MCMatchOption::Braking}, RuleRow{4, MCMatchOption::Artillery},
-                                     RuleRow{5, MCMatchOption::Probes},  RuleRow{6, MCMatchOption::Sensors},
-                                     RuleRow{7, MCMatchOption::Mines}};
+    /// <summary>The WEAPONS heading's row, its families' rows after it: a heading held holds them all.</summary>
+    constexpr int32_t WeaponsRow = 9;
+    constexpr std::array RuleRows = {
+        RuleRow{1, MCMatchOption::Weather},         RuleRow{2, MCMatchOption::TimeOfDay},
+        RuleRow{3, MCMatchOption::Braking},         RuleRow{4, MCMatchOption::Artillery},
+        RuleRow{5, MCMatchOption::Probes},          RuleRow{6, MCMatchOption::Sensors},
+        RuleRow{7, MCMatchOption::Mines},           RuleRow{8, MCMatchOption::MostSkilledPilot},
+        RuleRow{WeaponsRow, MCMatchOption::Weapons}};
 
     static_assert(RuleRows.size() == MCOptionCapabilities.size(), "Every option of the capability map has its row");
 
@@ -393,7 +565,8 @@ namespace
     static_assert(Edits(Rows[RuleRows[0].Row], WeatherValue) && Edits(Rows[RuleRows[1].Row], TimeValue) &&
                   Edits(Rows[RuleRows[2].Row], BrakingValue) && Edits(Rows[RuleRows[3].Row], ArtilleryValue) &&
                   Edits(Rows[RuleRows[4].Row], ProbesValue) && Edits(Rows[RuleRows[5].Row], SensorsValue) &&
-                  Edits(Rows[RuleRows[6].Row], MinesValue));
+                  Edits(Rows[RuleRows[6].Row], MinesValue) && Edits(Rows[RuleRows[7].Row], PilotValue) &&
+                  Rows[WeaponsRow].IsHeading() && Edits(Rows[WeaponsRow + 1], WeaponValues[0]));
 }
 
 auto MakeMatchTabs(MCSessionTab front) -> std::shared_ptr<MCLogPort>
@@ -467,6 +640,13 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
     ProbesValue = OnOf(rules, MCMatchRule::NoProbes, false);
     SensorsValue = OnOf(rules, MCMatchRule::NoSensors, false);
     MinesValue = OnOf(rules, MCMatchRule::NoMines, false);
+    PilotValue = static_cast<int>(MCMostSkilledPilot(rules));
+
+    for (size_t family = 0; family < WeaponFamilies.size(); family++)
+    {
+        WeaponValues[family] = OnOf(rules, WeaponFamilies[family].Rule, false);
+    }
+
     const bool host = game->IsHost != 0;
     list.SetLocked(!host, LockedHint);
 

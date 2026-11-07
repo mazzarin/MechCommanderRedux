@@ -218,6 +218,8 @@ there is no ready room: the players wait in the session screen, where the host c
 | `-matchprobes <on\|off>`              | **Redux HD.** Off: commanders get no sensor probes or camera drones. On without it. |
 | `-matchsensors <on\|off>`             | **Redux HD.** Off: units find their foes by sight alone: no unit's or sensor tower's sensors (a commander's sensor probe still senses). On without it. |
 | `-matchmines <on\|off>`               | **Redux HD.** Off: no mines: the map's minefields are cleared and mine layers lay none. On without it. |
+| `-matchpilot <rank>`                  | **Redux HD.** The most skilled pilot for hire: `elite` (the original's, without it), `veteran`, `regular` or `green`. |
+| `-matchlrms`, `-matchsrms`, `-matchthunderbolts`, `-matchppcs`, `-matchlasers`, `-matchpulselasers`, `-matchflamers`, `-matchautocannons`, `-matchgauss`, `-matchmachineguns`, `-matchlongtoms` `<on\|off>` | **Redux HD.** Off: no weapon of that family, Inner Sphere's or Clan's (SRMs with Streaks, autocannons with Ultras and LB-Xs, Gauss rifles with the Rail Gun, Long Toms with the Sniper): none sold, a mech comes without them (their tonnage free for others, its price that much less), a vehicle carrying one isn't sold, and every unit dropped loses any it still has. On without it. |
 
 The players in the session must be exactly the ones named, and the host must be among them. If one is missing, an extra
 player joined, the host lacks the `.mpk`, or a guest says it lacks it (or doesn't answer within 15 seconds), the host is
@@ -226,11 +228,13 @@ its own points and tech bases. The game checks only that each player has a file 
 same file, so a launcher should check the files match.
 
 **Redux HD.** The match options are also the host's own on the session screen's **MATCH OPTIONS** tab (under MULTIPLAYER CHAT:
-WEATHER, TIME OF DAY, BRAKING, ARTILLERY, PROBES, SENSORS and MINES), and a host started with them but no `-matchmap` opens the
+WEATHER, TIME OF DAY, BRAKING, ARTILLERY, PROBES, SENSORS, MINES and MOST SKILLED PILOT, then WEAPONS, a row for each
+family), and a host started with them but no `-matchmap` opens the
 session screen with them chosen. Each is played only if every player's game has it: every build says what it has when
 the session screen opens (and when asked for a mission file), the host passes on what each said, and while a player's
-game lacks an option, the match plays the mission's own (braking off; artillery, probes, sensors and mines on) and
-every player's MATCH OPTIONS tells the players whose games lack it to upgrade, by name while the names fit the line. A game that says nothing, as the original's, lacks them all. A player with
+game lacks an option, the match plays the mission's own (braking off; artillery, probes, sensors, mines, elite pilots
+and every weapon on) and every player's MATCH OPTIONS tells the players whose games lack it to upgrade, every one named
+(under WEAPONS once for all its rows). A game that says nothing, as the original's, lacks them all. A player with
 WEATHER or HD LIGHTING off (on the HD OPTIONS page) still sees the original's clear day.
 
 ### Saves and Settings

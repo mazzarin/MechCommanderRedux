@@ -827,6 +827,43 @@ std::string MCRefusedText(std::string_view options)
     return std::format(RefusedFormat, shown.empty() ? std::string("OPTIONS") : shown);
 }
 
+namespace
+{
+    /// <summary>Each rank's ban, from the most skilled down: a rank is for hire while neither it nor one under it is banned.</summary>
+    constexpr std::array<std::pair<MCPilotRank, uint32_t>, 3> RankBans = {
+        std::pair{MCPilotRank::Elite, MCMatchRule::NoElitePilots},
+        std::pair{MCPilotRank::Veteran, MCMatchRule::NoVeteranPilots},
+        std::pair{MCPilotRank::Regular, MCMatchRule::NoRegularPilots}};
+}
+
+MCPilotRank MCMostSkilledPilot(uint32_t rules)
+{
+    // The rank under the lowest banned.
+    MCPilotRank most = MCPilotRank::Elite;
+
+    for (const auto& [rank, ban] : RankBans)
+    {
+        if ((rules & ban) != 0)
+        {
+            most = static_cast<MCPilotRank>(static_cast<int32_t>(rank) - 1);
+        }
+    }
+
+    return most;
+}
+
+uint32_t MCPilotRankRules(MCPilotRank rank)
+{
+    uint32_t rules = 0;
+
+    for (const auto& [banned, ban] : RankBans)
+    {
+        rules |= banned > rank ? ban : 0;
+    }
+
+    return rules;
+}
+
 MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed)
 {
     // The host's weather and time of day play at the latest version every player's build plays (the capability map's),

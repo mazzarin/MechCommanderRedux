@@ -440,6 +440,19 @@ namespace
         }
     }
 
+    /// <summary>The copies of <paramref name="inventory"/>'s components whose form passes <paramref name="test"/>.</summary>
+    template <typename Test> uint8_t CountInventoryItems(const MCInventoryList& inventory, Test test)
+    {
+        size_t copies = 0;
+
+        for (const std::shared_ptr<MCLogInventoryItem>& entry : inventory.Items)
+        {
+            copies += test(MasterComponentList[entry->MasterID].Form) ? entry->Stats.size() : 0;
+        }
+
+        return static_cast<uint8_t>(copies);
+    }
+
     /// <summary>The other equipment: neither a weapon nor ammo.</summary>
     bool IsOtherForm(MCComponentForm form)
     {
@@ -1113,6 +1126,12 @@ namespace MCMissionLogisticsBridge
             file.WriteIdUChar("CurArmorPoints", vehicle.CurArmorPoints[location]);
         }
 
+        // Port: the counts are the inventory's, as the mech's writer counts them: a match's weapon bans can take items
+        // off (MCWeaponBans.h), and a vehicle from a deploy message has the sender's items under its stock counts.
+        // Where they were the inventory's (every vehicle before), the file is as before.
+        vehicle.NumOther = CountInventoryItems(*vehicle.Inventory, IsOtherForm);
+        vehicle.NumWeapons = CountInventoryItems(*vehicle.Inventory, IsWeaponForm);
+        vehicle.NumAmmo = CountInventoryItems(*vehicle.Inventory, IsAmmoForm);
         file.WriteBlock("InventoryInfo");
         file.WriteIdUChar("NumOther", vehicle.NumOther);
         file.WriteIdUChar("NumWeapons", vehicle.NumWeapons);

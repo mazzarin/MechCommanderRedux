@@ -63,7 +63,7 @@ struct MPGameConfiguration
     int8_t Team1TechBase = 0;
     int8_t Team2TechBase = 0;
     std::vector<MPGamePlayer> Roster;
-    /// <summary>The match's weather, time of day and rules (-matchweather, -matchtime, -matchbraking).</summary>
+    /// <summary>The match's weather, time of day and rules (-matchweather, -matchtime, -matchbraking, -matchpilot, the bans).</summary>
     MCMatchOptions Options;
 
     /// <summary>Whether the configuration can be run, or why not (<paramref name="why"/>).</summary>
@@ -80,6 +80,18 @@ inline constexpr std::string_view MatchArtilleryFlag = "-matchartillery";
 inline constexpr std::string_view MatchSensorsFlag = "-matchsensors";
 inline constexpr std::string_view MatchProbesFlag = "-matchprobes";
 inline constexpr std::string_view MatchMinesFlag = "-matchmines";
+inline constexpr std::string_view MatchPilotFlag = "-matchpilot";
+inline constexpr std::string_view MatchLrmsFlag = "-matchlrms";
+inline constexpr std::string_view MatchSrmsFlag = "-matchsrms";
+inline constexpr std::string_view MatchThunderboltsFlag = "-matchthunderbolts";
+inline constexpr std::string_view MatchPpcsFlag = "-matchppcs";
+inline constexpr std::string_view MatchLasersFlag = "-matchlasers";
+inline constexpr std::string_view MatchPulseLasersFlag = "-matchpulselasers";
+inline constexpr std::string_view MatchFlamersFlag = "-matchflamers";
+inline constexpr std::string_view MatchAutocannonsFlag = "-matchautocannons";
+inline constexpr std::string_view MatchGaussFlag = "-matchgauss";
+inline constexpr std::string_view MatchMachineGunsFlag = "-matchmachineguns";
+inline constexpr std::string_view MatchLongTomsFlag = "-matchlongtoms";
 
 /// <summary>Whether <paramref name="word"/> is one of the command line's match option flags.</summary>
 bool MPIsMatchOptionFlag(std::string_view word);
@@ -87,8 +99,11 @@ bool MPIsMatchOptionFlag(std::string_view word);
 /// <summary>
 /// Reads a match option of the command line into <paramref name="options"/>: <paramref name="flag"/> -matchweather
 /// (clear, rain, downpour, lightsnow, snow or blizzard), -matchtime (day, dusk or night), -matchbraking (on or off),
-/// any of them <c>mission</c> (or for braking <c>prefs</c>) for the choice it would have without, or -matchartillery,
-/// -matchsensors or -matchmines (on, as the original, or off), in any case.
+/// any of them <c>mission</c> (or for braking <c>prefs</c>) for the choice it would have without, -matchpilot (elite, as
+/// the original, veteran, regular or green: the most skilled pilot for hire), or an on/off ban flag (-matchartillery,
+/// -matchprobes, -matchsensors, -matchmines, and each weapon family's: -matchlrms, -matchsrms, -matchthunderbolts,
+/// -matchppcs, -matchlasers, -matchpulselasers, -matchflamers, -matchautocannons, -matchgauss, -matchmachineguns, -matchlongtoms: on,
+/// as the original, or off), in any case.
 /// </summary>
 /// <returns>Whether <paramref name="value"/> was one of the flag's; another is logged and changes nothing.</returns>
 bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOptions& options);

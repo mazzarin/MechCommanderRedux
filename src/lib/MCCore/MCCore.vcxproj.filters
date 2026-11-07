@@ -756,6 +756,9 @@
     <ClCompile Include="main\MCUpdater.cpp">
       <Filter>main</Filter>
     </ClCompile>
+    <ClCompile Include="main\MCWeaponBans.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
     <ClCompile Include="MCPort.cpp" />
     <ClCompile Include="mission\MCDifficultySettings.cpp">
       <Filter>mission</Filter>
@@ -2096,6 +2099,9 @@
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCUpdater.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="main\MCWeaponBans.h">
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="MCCore.h" />

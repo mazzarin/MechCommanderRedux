@@ -778,6 +778,49 @@ TEST_CASE("sprites: a mech's drawn facing eases toward its own the short way rou
     CHECK_EQ(MCEaseFacing(0.0f, -150.0f, Step, Lag), -60.0f);
 }
 
+/// <summary>
+/// Port-only (HD art's walk in-betweens): legs part of the way through a frame show the step of the way to the next frame
+/// they show: at 60 a second (the frame time summed as the game sums it) the 15-a-second art's frame, then its three
+/// in-betweens; from a looping gesture's last frame toward its first; played backwards, from the frame before, the rest
+/// of the way; none past the end of a gesture that gives way there.
+/// </summary>
+TEST_CASE("sprites: legs part of the way to their next frame show that step's in-between of the way")
+{
+    constexpr int32_t Frames = 23;
+    constexpr float ArtRate = 15.0f;
+    constexpr float FrameSeconds60 = 1.0f / 60.0f;
+    float seconds = 0.0f;
+
+    for (int32_t step = 0; step < LegsInBetweenSteps; ++step)
+    {
+        const std::optional<MCLegsStep> shown = MCLegsStepOf(5, Frames, seconds * ArtRate, false, true);
+        MCTest::Scope scope(std::format("step {}", step));
+
+        if (step == 0)
+        {
+            CHECK(!shown.has_value());
+        }
+        else
+        {
+            CHECK((shown == MCLegsStep{5, 6, step}));
+            CHECK((MCLegsStepOf(5, Frames, seconds * ArtRate, true, true) ==
+                   MCLegsStep{4, 5, LegsInBetweenSteps - step}));
+        }
+
+        seconds += FrameSeconds60;
+    }
+
+    constexpr float Quarter = 0.25f;
+    CHECK((MCLegsStepOf(Frames - 1, Frames, Quarter, false, true) == MCLegsStep{Frames - 1, 0, 1}));
+    CHECK(!MCLegsStepOf(Frames - 1, Frames, Quarter, false, false).has_value());
+    CHECK((MCLegsStepOf(0, Frames, Quarter, true, true) == MCLegsStep{Frames - 1, 0, LegsInBetweenSteps - 1}));
+    CHECK(!MCLegsStepOf(0, Frames, Quarter, true, false).has_value());
+    // A share past the frame's end (frames stepped late) keeps to its last step; a lone frame has nowhere to go.
+    CHECK((MCLegsStepOf(5, Frames, 1.5f, false, true) == MCLegsStep{5, 6, LegsInBetweenSteps - 1}));
+    CHECK(!MCLegsStepOf(0, 1, Quarter, false, true).has_value());
+    CHECK(!MCLegsStepOf(Frames, Frames, Quarter, false, true).has_value());
+}
+
 TEST_CASE("sprites: a mech's transitions come from its own table when it has one")
 {
     SpriteFiles files({}, {}, {Fit(MechFit(true))});

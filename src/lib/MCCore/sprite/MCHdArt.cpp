@@ -613,10 +613,18 @@ namespace
             return frame;
         }
 
-        const std::string stepName = step == TurnStep           ? std::string(TurnName)
-                                     : step == TurnMirroredStep ? std::string(TurnMirroredName)
-                                                                : std::to_string(step);
-        return std::format("{}{}{}", frame, InBetweenSeparator, stepName);
+        // A turn middle, or (HD art's walk in-betweens) a turn middle's in-between toward the next frame's.
+        if (step >= TurnStep)
+        {
+            const uint64_t between = step >> TurnBetweenShift & ((uint64_t{1} << TurnBetweenShift) - 1);
+            const uint64_t turn = step & ~(((uint64_t{1} << TurnBetweenShift) - 1) << TurnBetweenShift);
+            const std::string_view turnName = turn == TurnMirroredStep ? TurnMirroredName : TurnName;
+            return between == 0
+                       ? std::format("{}{}{}", frame, InBetweenSeparator, turnName)
+                       : std::format("{}{}{}{}{}", frame, InBetweenSeparator, turnName, InBetweenSeparator, between);
+        }
+
+        return std::format("{}{}{}", frame, InBetweenSeparator, step);
     }
 
     /// <summary>The name a hash gives a frame: 16 hex digits.</summary>

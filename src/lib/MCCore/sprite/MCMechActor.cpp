@@ -1340,60 +1340,207 @@ auto MCEaseFacing(float shown, float facing, float maxTurn, float lagMost) -> fl
     return wrap(facing - std::clamp(gap - turned, -lagMost, lagMost));
 }
 
-auto MCMechActor::LegsTurnMiddle(int32_t gesture, int32_t frameNow, float facing, const MCShape& legs)
-    -> std::optional<MCInBetween>
+namespace
+{
+    /// <summary>
+    /// The float error a frame time's sum may carry: a step of the legs' in-betweens is taken this much early, so 60 a
+    /// second lands on each step's start rather than just short of it.
+    /// </summary>
+    constexpr float LegsStepSlack = 1e-3f;
+
+    /// <summary>A frame's box round its hot spot: its first column and row, and those past its last.</summary>
+    struct FrameBox
+    {
+        float MinX = 0.0f;
+        float MinY = 0.0f;
+        float MaxX = 0.0f;
+        float MaxY = 0.0f;
+    };
+
+    /// <summary>
+    /// The box of frame <paramref name="frame"/> of <paramref name="table"/>, <paramref name="mirrored"/> about the hot
+    /// spot (spanning -xMax..-xMin, as AGShapeTransform draws it); none for an empty frame.
+    /// </summary>
+    std::optional<FrameBox> BoxOf(std::span<const uint8_t> table, int32_t frame, bool mirrored)
+    {
+        const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+
+        if (bounds.Width <= 0.0f || bounds.Height <= 0.0f)
+        {
+            return std::nullopt;
+        }
+
+        const float minX = mirrored ? -(bounds.MinX + bounds.Width - 1.0f) : bounds.MinX;
+        return FrameBox{minX, bounds.MinY, minX + bounds.Width, bounds.MinY + bounds.Height};
+    }
+
+    /// <summary>The box round both <paramref name="a"/> and <paramref name="b"/>.</summary>
+    FrameBox Together(const FrameBox& a, const FrameBox& b)
+    {
+        return {std::min(a.MinX, b.MinX), std::min(a.MinY, b.MinY), std::max(a.MaxX, b.MaxX), std::max(a.MaxY, b.MaxY)};
+    }
+
+    /// <summary>Where an in-between over <paramref name="box"/> lies round the frame boxed by <paramref name="own"/>.</summary>
+    MCInBetweenBounds BoundsRound(const FrameBox& own, const FrameBox& box)
+    {
+        return {static_cast<int32_t>(own.MinX - box.MinX), static_cast<int32_t>(own.MinY - box.MinY),
+                static_cast<int32_t>(box.MaxX - box.MinX), static_cast<int32_t>(box.MaxY - box.MinY)};
+    }
+} // namespace
+
+auto MCLegsStepOf(int32_t frame, int32_t frames, float share, bool backwards, bool loops) -> std::optional<MCLegsStep>
+{
+    if (frames < 2 || frame < 0 || frame >= frames)
+    {
+        return std::nullopt;
+    }
+
+    const int32_t step =
+        std::clamp(static_cast<int32_t>(std::floor(share * static_cast<float>(LegsInBetweenSteps) + LegsStepSlack)), 0,
+                   LegsInBetweenSteps - 1);
+
+    if (step == 0)
+    {
+        return std::nullopt;
+    }
+
+    const auto shown = [&](int32_t at) -> std::optional<int32_t>
+    {
+        if (at >= 0 && at < frames)
+        {
+            return at;
+        }
+
+        return loops ? std::optional((at % frames + frames) % frames) : std::nullopt;
+    };
+
+    if (backwards)
+    {
+        const std::optional<int32_t> from = shown(frame - 1);
+        return from.has_value() ? std::optional(MCLegsStep{*from, frame, LegsInBetweenSteps - step}) : std::nullopt;
+    }
+
+    const std::optional<int32_t> to = shown(frame + 1);
+    return to.has_value() ? std::optional(MCLegsStep{frame, *to, step}) : std::nullopt;
+}
+
+auto MCMechActor::LegsStepNow(int32_t frame, int32_t frames) const -> std::optional<MCLegsStep>
+{
+    // Port-only (MechBraking): at the rate the legs play (Update's legsRate).
+    const float rate = FrameRate[MCMechPart::Legs] * StrideRate;
+
+    if (SingleStepMode != 0 || GestureDone || LyingStill || !(rate > 0.0f))
+    {
+        return std::nullopt;
+    }
+
+    // The legs loop but in a transition, where past either end the next gesture's frame comes next (Update).
+    return MCLegsStepOf(frame, frames, CurrentTime[MCMechPart::Legs] * rate, PlayBackwards, !InTransition);
+}
+
+auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing, const MCShape& legs, bool asPlayed)
+    -> MCLegsDrawn
 {
     DrawnLegs = MechTree->DrawnFacing(gesture, 0, facing);
     DrawnLegsGesture = gesture;
-    const std::optional<MCTurnMiddle> middle =
-        GHdTurns != 0 && MCHdArt::Active() ? MechTree->TurnMiddle(gesture, facing) : std::nullopt;
-
-    if (!middle.has_value() || !DrawnLegs.has_value())
-    {
-        return std::nullopt;
-    }
-
-    int32_t reverse = 0;
-    float frameRate = 0.0f;
-    const std::shared_ptr<MCShape> toward =
-        MechTree->GetGesture(gesture, 0, middle->TowardRotation, reverse, frameRate, true);
-
-    if (toward == nullptr)
-    {
-        return std::nullopt;
-    }
-
     const std::span<const uint8_t> table = legs.FrameList();
     const int32_t frame = MCClampShapeFrame(table, frameNow);
+
+    if (!MCHdArt::Active() || !DrawnLegs.has_value())
+    {
+        return {frame, std::nullopt};
+    }
+
+    // HDTurns: the turn middle, and the shape of the facing it is halfway to.
+    std::optional<MCTurnMiddle> middle = GHdTurns != 0 ? MechTree->TurnMiddle(gesture, facing) : std::nullopt;
+    std::shared_ptr<MCShape> toward;
+
+    if (middle.has_value())
+    {
+        int32_t reverse = 0;
+        float frameRate = 0.0f;
+        toward = MechTree->GetGesture(gesture, 0, middle->TowardRotation, reverse, frameRate, true);
+
+        if (toward == nullptr)
+        {
+            middle.reset();
+        }
+    }
+
     const auto frames = static_cast<int32_t>(MechTree->Gestures[gesture].NumFrames);
-    // A mirrored neighbour leads with the other leg: in a stride, its frame half a cycle on leads with this one's (as
-    // tools/upscale/make_turn_middles.py pairs them).
-    const bool halfOn = middle->TowardMirrored && MCStrideGesture(gesture) && frames > 0;
-    const int32_t towardFrame = MCClampShapeFrame(toward->FrameList(), halfOn ? (frame + frames / 2) % frames : frame);
-    const MCFrameBounds own = MCShapeFrameBounds(table, frame);
-    const MCFrameBounds other = MCShapeFrameBounds(toward->FrameList(), towardFrame);
 
-    if (own.Width <= 0.0f || own.Height <= 0.0f || other.Width <= 0.0f || other.Height <= 0.0f)
+    // The box frame at draws over: its own, or with the turn middle's neighbour (in a stride, a mirrored neighbour leads
+    // with the other leg: its frame half a cycle on leads with this one's, as tools/upscale/make_turn_middles.py pairs
+    // them).
+    const auto boxOf = [&](int32_t at) -> std::optional<FrameBox>
     {
-        return std::nullopt;
+        const std::optional<FrameBox> own = BoxOf(table, at, false);
+
+        if (!own.has_value() || !middle.has_value())
+        {
+            return own;
+        }
+
+        const bool halfOn = middle->TowardMirrored && MCStrideGesture(gesture) && frames > 0;
+        const int32_t towardFrame = MCClampShapeFrame(toward->FrameList(), halfOn ? (at + frames / 2) % frames : at);
+        const std::optional<FrameBox> other = BoxOf(toward->FrameList(), towardFrame, middle->TowardMirrored);
+        return other.has_value() ? std::optional(Together(*own, *other)) : std::nullopt;
+    };
+
+    // The pack's in-between of frame at named step over box, if it has it.
+    const auto found = [&](int32_t at, int32_t next, int32_t step, const FrameBox& box) -> std::optional<MCInBetween>
+    {
+        const std::optional<FrameBox> own = BoxOf(table, at, false);
+
+        if (!own.has_value())
+        {
+            return std::nullopt;
+        }
+
+        const MCInBetweenBounds bounds = BoundsRound(*own, box);
+
+        if (MCHdArt::Find(table, at, bounds.Width, bounds.Height, step) == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        if (middle.has_value())
+        {
+            DrawnLegs->Degrees = middle->Degrees;
+        }
+
+        return MCInBetween{at, next, step, bounds};
+    };
+
+    // On the way to the next frame: the in-between over both frames' boxes (or their turn middles'). Only where the GPU
+    // draws the pack's frames: drawn by the CPU, the frame itself (played backwards, not the one before it).
+    const bool gpuDraws = MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+
+    if (const std::optional<MCLegsStep> step = asPlayed && gpuDraws ? LegsStepNow(frame, frames) : std::nullopt;
+        step.has_value())
+    {
+        const std::optional<FrameBox> from = boxOf(step->From);
+        const std::optional<FrameBox> to = boxOf(step->To);
+
+        if (from.has_value() && to.has_value())
+        {
+            const int32_t name = middle.has_value() ? TurnBetweenStep(middle->Step, step->Step) : step->Step;
+
+            if (const std::optional<MCInBetween> between = found(step->From, step->To, name, Together(*from, *to));
+                between.has_value())
+            {
+                return {step->From, between};
+            }
+        }
     }
 
-    // Mirrored, a frame spans -xMax..-xMin round the hot spot (AGShapeTransform).
-    const float otherMinX = middle->TowardMirrored ? -(other.MinX + other.Width - 1.0f) : other.MinX;
-    const float minX = std::min(own.MinX, otherMinX);
-    const float minY = std::min(own.MinY, other.MinY);
-    const float maxX = std::max(own.MinX + own.Width, otherMinX + other.Width);
-    const float maxY = std::max(own.MinY + own.Height, other.MinY + other.Height);
-    const MCInBetweenBounds bounds{static_cast<int32_t>(own.MinX - minX), static_cast<int32_t>(own.MinY - minY),
-                                   static_cast<int32_t>(maxX - minX), static_cast<int32_t>(maxY - minY)};
-
-    if (MCHdArt::Find(table, frame, bounds.Width, bounds.Height, middle->Step) == nullptr)
+    if (!middle.has_value())
     {
-        return std::nullopt;
+        return {frame, std::nullopt};
     }
 
-    DrawnLegs->Degrees = middle->Degrees;
-    return MCInBetween{frame, frame, middle->Step, bounds};
+    const std::optional<FrameBox> box = boxOf(frame);
+    return {frame, box.has_value() ? found(frame, frame, middle->Step, *box) : std::nullopt};
 }
 
 auto MCMechActor::Render(int32_t depthFixup) -> int32_t
@@ -1529,7 +1676,8 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     ElementList().OpenGroup(partsDepth, true);
     // Port-only (HD lighting's headlights): the parts stand on the mech's feet.
     const std::optional<float> feet = MCSceneLights::FeetRow(*this, mech->Position);
-    // Port-only (HDTurns): the legs' turn middle as drawn, which their sun shadow casts too.
+    // Port-only (HD art): the legs' in-between as drawn (a turn middle, or on the way to the next frame), which their sun
+    // shadow casts too.
     std::optional<MCInBetween> legsMiddle;
 
     for (int32_t i = 0; i < MechPartCount; i++)
@@ -1593,13 +1741,23 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             continue;
         }
 
+        // Port-only (HD art): the legs as the pack's in-between, a turn middle or the way to the next frame (drawn as
+        // they play, the frame before when played backwards).
+        if (part == MCMechPart::Legs)
+        {
+            const bool asPlayed = drawnShape[part] == shapes[part] && drawnFrame[part] == CurrentFrame[part];
+            const MCLegsDrawn legs =
+                LegsInBetween(DrawnGesture(), drawnFrame[part], facing, *drawnShape[part], asPlayed);
+            drawnFrame[part] = legs.Frame;
+            legsMiddle = legs.InBetween;
+        }
+
         auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
                                                          drawnFrame[part], drawnReverse[part], fadeTable, 1);
         element.Feet = feet;
 
         if (part == MCMechPart::Legs)
         {
-            legsMiddle = LegsTurnMiddle(DrawnGesture(), drawnFrame[part], facing, *drawnShape[part]);
             element.InBetween = legsMiddle;
         }
         else if (part == MCMechPart::RightArm || part == MCMechPart::LeftArm)

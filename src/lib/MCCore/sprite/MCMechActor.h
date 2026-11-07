@@ -35,6 +35,35 @@ struct MCDrawnArm
     int32_t Reverse = 0;
 };
 
+/// <summary>Port-only (HD art): the legs' frame drawn and the HD art pack's in-between drawn over it, if any.</summary>
+struct MCLegsDrawn
+{
+    int32_t Frame = 0;
+    std::optional<MCInBetween> InBetween;
+};
+
+/// <summary>
+/// Port-only (HD art): the in-between of a mech's legs on their way between two frames: from frame
+/// <see cref="From"/> toward <see cref="To"/>, step <see cref="Step"/> of <see cref="LegsInBetweenSteps"/>.
+/// </summary>
+struct MCLegsStep
+{
+    int32_t From = 0;
+    int32_t To = 0;
+    int32_t Step = 0;
+
+    bool operator==(const MCLegsStep&) const = default;
+};
+
+/// <summary>
+/// Port-only (HD art): legs at frame <paramref name="frame"/> of <paramref name="frames"/>, <paramref name="share"/> of
+/// the way through it (0 to 1), the in-between of the way to the next frame they show (<see cref="LegsInBetweenSteps"/>):
+/// from the frame toward the one after it; played <paramref name="backwards"/>, from the frame before it toward it, the
+/// rest of the way. Past either end, round to the other end when the gesture <paramref name="loops"/>, else none (the
+/// next gesture's frame comes next). None in a frame's first step.
+/// </summary>
+std::optional<MCLegsStep> MCLegsStepOf(int32_t frame, int32_t frames, float share, bool backwards, bool loops);
+
 /// <summary>
 /// Port-only (HDStops): a stride drawn on while its mech stands with its move held up: each part's frame as last drawn,
 /// moved on by the ground the mech covers, so that the mech stops mid-stride and picks its stride up where it stopped;
@@ -200,12 +229,22 @@ public:
     void RenderJump();
 
     /// <summary>
-    /// Port-only (HDTurns): notes how the legs (shape <paramref name="legs"/>, in gesture <paramref name="gesture"/> at
-    /// frame <paramref name="frame"/>) are drawn at <paramref name="facing"/> (<see cref="DrawnLegs"/>), and with
-    /// HDTurns, the turn middle to draw them as (MCSpriteTree::TurnMiddle) when the HD art pack has it, where it lies
-    /// round their frame (its bounds and the frame's neighbour's together).
+    /// Port-only (HD art): notes how the legs (shape <paramref name="legs"/>, in gesture <paramref name="gesture"/> at
+    /// frame <paramref name="frame"/>) are drawn at <paramref name="facing"/> (<see cref="DrawnLegs"/>), and the frame
+    /// and HD art pack's in-between to draw them as, where the pack has it: with HDTurns, the turn middle
+    /// (MCSpriteTree::TurnMiddle); and drawn as they play (<paramref name="asPlayed"/>), the in-between of the way
+    /// through their frame toward the next (<see cref="LegsStepNow"/>), of the turn middle too, so the foot they stand
+    /// on stays put while the mech moves between frames. Each with where it lies round its frame.
     /// </summary>
-    std::optional<MCInBetween> LegsTurnMiddle(int32_t gesture, int32_t frame, float facing, const MCShape& legs);
+    MCLegsDrawn LegsInBetween(int32_t gesture, int32_t frame, float facing, const MCShape& legs, bool asPlayed);
+
+    /// <summary>
+    /// Port-only (HD art): playing <paramref name="frames"/> frames, at frame <paramref name="frame"/>, the step of the
+    /// way to the next frame its legs show (<see cref="LegsInBetweenSteps"/>), from the frame toward it; played
+    /// backwards, from the frame before toward this one, the rest of the way. None in a frame's first step, when the
+    /// next frame shown is the next gesture's, or stepped by hand.
+    /// </summary>
+    std::optional<MCLegsStep> LegsStepNow(int32_t frame, int32_t frames) const;
 
     /// <summary>
     /// The jump's or fall's height per frame of the legs: the mech type's gesture outline of

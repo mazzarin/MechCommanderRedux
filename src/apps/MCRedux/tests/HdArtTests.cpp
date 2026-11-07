@@ -19432,11 +19432,13 @@ TEST_CASE_ISOLATED("tool: --hd-walk pictures a mech walking")
 }
 
 /// <summary>
-/// A mech's legs turning (HDTurns: MCMechActor::LegsTurnMiddle's in-between, which says where the middle lies) show the
+/// A mech's legs turning (HDTurns: MCMechActor::LegsInBetween's in-between, which says where the middle lies) show the
 /// pack's turn middle round their frame, over the frame's own indices: on the screen, drawn by the GPU over mission 1, a
 /// 4 x 4 frame shows red alone; within the scope of its middle (6 x 4, the frame 2 columns in), the middle's colour
 /// from 2 columns before the frame as it is, and mirrored about the hot spot (as the frame is) to 2 columns past the
-/// mirrored frame: blue for the middle toward the next facing, green for the one toward the next facing mirrored.
+/// mirrored frame: blue for the middle toward the next facing, green for the one toward the next facing mirrored. And
+/// (HD art's walk in-betweens) the way to the next frame's, named by step: yellow for the frame's step 2, cyan for the
+/// turn middle's step 1, magenta for the mirrored one's step 3.
 /// </summary>
 TEST_CASE_ISOLATED("game: a mech's legs turning show the pack's turn middle round their frame")
 {
@@ -19489,6 +19491,13 @@ TEST_CASE_ISOLATED("game: a mech's legs turning show the pack's turn middle roun
     WriteSteppedFrame(folder / "0", Side, Side, Scale, Red, everywhere);
     WriteSteppedFrame(folder / "0_turn", Together, Side, Scale, Blue, everywhere);
     WriteSteppedFrame(folder / "0_turnm", Together, Side, Scale, Green, everywhere);
+    // (HD art's walk in-betweens: the way to the next frame, of the frame and of each turn middle.)
+    constexpr SDL_Color Yellow = {200, 200, 0, 255};
+    constexpr SDL_Color Cyan = {0, 200, 200, 255};
+    constexpr SDL_Color Magenta = {200, 0, 200, 255};
+    WriteSteppedFrame(folder / "0_2", Together, Side, Scale, Yellow, everywhere);
+    WriteSteppedFrame(folder / "0_turn_1", Together, Side, Scale, Cyan, everywhere);
+    WriteSteppedFrame(folder / "0_turnm_3", Together, Side, Scale, Magenta, everywhere);
     WritePaletteRgb(pack, colors);
 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
@@ -19535,7 +19544,19 @@ TEST_CASE_ISOLATED("game: a mech's legs turning show the pack's turn middle roun
     // x - (c - 2) mirrored; column c of the frame at x + c, or x - c.
     for (const bool mirrored : {false, true})
     {
-        for (const int32_t step : {0, TurnStep, TurnMirroredStep})
+        const int32_t walkStep = 2;
+        const int32_t turnBetween = TurnBetweenStep(TurnStep, 1);
+        const int32_t turnMirroredBetween = TurnBetweenStep(TurnMirroredStep, 3);
+        const auto colourOf = [&](int32_t step)
+        {
+            return step == TurnStep           ? Blue
+                   : step == TurnMirroredStep ? Green
+                   : step == walkStep         ? Yellow
+                   : step == turnBetween      ? Cyan
+                                              : Magenta;
+        };
+
+        for (const int32_t step : {0, TurnStep, TurnMirroredStep, walkStep, turnBetween, turnMirroredBetween})
         {
             const std::optional<MCInBetween> inBetween =
                 step == 0 ? std::nullopt : std::optional(MCInBetween{0, 0, step, bounds});
@@ -19554,7 +19575,7 @@ TEST_CASE_ISOLATED("game: a mech's legs turning show the pack's turn middle roun
 
                     if (step != 0)
                     {
-                        CHECK(same(pixel, step == TurnStep ? Blue : Green));
+                        CHECK(same(pixel, colourOf(step)));
                     }
                     else if (placed >= 1 && placed < Side - 1)
                     {

@@ -20,7 +20,9 @@ class MCShape;
 /// the HD pixels it would have recoloured. A frame that holds a translucent shape's blended pixels too (an effect's,
 /// <see cref="Frame::Blended"/>) has premultiplied colours instead, and its index picture's blue is 255. A legs
 /// frame's turn middles (HDTurns: halfway to a neighbouring facing) lie beside it as <c>&lt;frame&gt;_turn</c> and
-/// <c>&lt;frame&gt;_turnm</c> (sprite/MCInBetween.h's TurnStep, TurnMirroredStep).</para>
+/// <c>&lt;frame&gt;_turnm</c> (sprite/MCInBetween.h's TurnStep, TurnMirroredStep), and its walk's in-betweens (the
+/// way to the next frame, LegsInBetweenSteps) as <c>&lt;frame&gt;_&lt;step&gt;</c>, over a turn middle
+/// <c>&lt;frame&gt;_turn_&lt;step&gt;</c> (TurnBetweenStep), each over both frames' bounds.</para>
 /// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.hdf</c> (or a PNG pair) likewise, named by
 /// their pixels' hash (<see cref="PictureHash"/>).</para>
 /// <para>Every other appearance's shapes (vehicles, Elementals, buildings, trees, terrain objects...) come from its own

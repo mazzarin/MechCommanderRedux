@@ -45,6 +45,45 @@ namespace
     constexpr size_t FramesAhead = 12;
     constexpr size_t RgbaBytes = 4;
 
+    /// <summary>
+    /// A factor of SDL's YUV conversion as its table writes it (yuv_rgb_internal.h's V: 6-bit fixed point, rounded up
+    /// from a half; a negative one is a positive one's negation).
+    /// </summary>
+    constexpr int32_t Fixed(double value)
+    {
+        constexpr double FixedOne = 64.0;
+        constexpr double Half = 0.5;
+        return static_cast<int16_t>(value * FixedOne + Half);
+    }
+
+    /// <summary>SDL's table's rows (its YCbCrType), and a limited range's black, where its Y starts.</summary>
+    enum class YuvRow : uint8_t
+    {
+        Bt601Full,
+        Bt601Limited,
+        Bt709Full,
+        Bt709Limited,
+        Bt2020Full,
+        Rows
+    };
+
+    constexpr int32_t Black = 16;
+
+    /// <summary>SDL's table (YUV2RGB): ITU-T T.871 for full-range BT.601, then the ITU-R ones.</summary>
+    constexpr std::array<MCYuvFactors, static_cast<size_t>(YuvRow::Rows)> SdlYuvTable = {{
+        {0, Fixed(1.0), Fixed(1.402), -Fixed(0.3441), -Fixed(0.7141), Fixed(1.772)},
+        {Black, Fixed(1.1644), Fixed(1.596), -Fixed(0.3918), -Fixed(0.813), Fixed(2.0172)},
+        {0, Fixed(1.0), Fixed(1.581), -Fixed(0.1881), -Fixed(0.47), Fixed(1.8629)},
+        {Black, Fixed(1.1644), Fixed(1.7927), -Fixed(0.2132), -Fixed(0.5329), Fixed(2.1124)},
+        {0, Fixed(1.0), Fixed(1.4760), -Fixed(0.1647), -Fixed(0.5719), Fixed(1.8832)},
+    }};
+
+    /// <summary>SDL's factors for <paramref name="row"/>.</summary>
+    constexpr MCYuvFactors RowOf(YuvRow row)
+    {
+        return SdlYuvTable[static_cast<size_t>(row)];
+    }
+
     uint16_t Le16(std::span<const uint8_t> bytes, size_t at)
     {
         return static_cast<uint16_t>(bytes[at] | bytes[at + 1] << 8);
@@ -94,7 +133,7 @@ namespace
         ~Picture() { dav1d_picture_unref(&Value); }
     };
 
-    /// <summary>A frame decoded ahead: its three planes, one after another, as SDL converts them.</summary>
+    /// <summary>A frame decoded ahead: its three planes, one after another (MCHdArt::ColorFormat::Yuv420).</summary>
     struct Decoded
     {
         std::vector<uint8_t> Planes;
@@ -107,6 +146,8 @@ struct MCHdMovie::Impl
 {
     std::ifstream File;
     std::string Name;
+    /// <summary>The movie's number, which its frames carry (MCHdArt::Frame::Movie).</summary>
+    uint64_t Id = MCHdArt::NewFrameId();
     Dav1dContext* Decoder = nullptr;
     /// <summary>The frame read last, until dav1d has taken all of it.</summary>
     Dav1dData Pending{};
@@ -281,7 +322,7 @@ struct MCHdMovie::Impl
             return std::unexpected(fits.error());
         }
 
-        // SDL converts the three planes one after another (IYUV); dav1d keeps them apart, each with its own stride.
+        // The frame keeps the three planes one after another (IYUV); dav1d keeps them apart, each with its own stride.
         const auto lumaWidth = static_cast<size_t>(width);
         const auto lumaHeight = static_cast<size_t>(height);
         const size_t chromaWidth = (lumaWidth + 1) / 2;
@@ -474,7 +515,7 @@ auto MCHdMovie::Next(std::span<const uint8_t> original, int32_t width, int32_t h
                                            height, original.size()));
     }
 
-    const std::expected<std::optional<Decoded>, std::string> decoded =
+    std::expected<std::optional<Decoded>, std::string> decoded =
         impl.Take(impl.Taken == 0 ? std::nullopt : std::optional(wait));
     ++impl.Taken;
 
@@ -491,22 +532,24 @@ auto MCHdMovie::Next(std::span<const uint8_t> original, int32_t width, int32_t h
         return std::unexpected(decoded ? std::format("{} has no more frames", impl.Name) : decoded.error());
     }
 
-    const Decoded& planes = **decoded;
+    Decoded& planes = **decoded;
+
+    if (!Factors(planes.Colorspace).has_value())
+    {
+        return std::unexpected(std::format("{}'s frames are in a colour space that can't be shown (SDL's {:#x})",
+                                           impl.Name, static_cast<uint32_t>(planes.Colorspace)));
+    }
+
+    // The planes as decoded: the GPU makes the colours (MCVulkanRenderer's movie pictures).
     auto frame = std::make_shared<MCHdArt::Frame>();
     frame->Id = MCHdArt::NewFrameId();
     frame->Width = _Width;
     frame->Height = _Height;
     frame->Scale = *scale;
-    frame->Format = MCHdArt::ColorFormat::Rgba8;
-    frame->Colors.resize(static_cast<size_t>(_Width) * _Height * RgbaBytes);
-
-    // Opaque, so the colours are premultiplied as they are.
-    if (!SDL_ConvertPixelsAndColorspace(_Width, _Height, SDL_PIXELFORMAT_IYUV, planes.Colorspace, 0,
-                                        planes.Planes.data(), _Width, SDL_PIXELFORMAT_RGBA32, SDL_COLORSPACE_SRGB, 0,
-                                        frame->Colors.data(), _Width * static_cast<int>(RgbaBytes)))
-    {
-        return std::unexpected(std::format("{}: SDL couldn't convert a frame ({})", impl.Name, SDL_GetError()));
-    }
+    frame->Format = MCHdArt::ColorFormat::Yuv420;
+    frame->Colors = std::move(planes.Planes);
+    frame->Colorspace = planes.Colorspace;
+    frame->Movie = impl.Id;
 
     frame->Indices.resize(static_cast<size_t>(width) * height * MCHdArt::IndexBytes);
 
@@ -543,4 +586,53 @@ auto MCHdMovie::Validate() -> std::expected<uint32_t, std::string>
 
         ++frames;
     }
+}
+
+auto MCHdMovie::Factors(SDL_Colorspace colorspace) -> std::optional<MCYuvFactors>
+{
+    // As SDL picks its table's row (SDL_yuv.c's GetYUVConversionType).
+    const bool limited = SDL_ISCOLORSPACE_LIMITED_RANGE(colorspace);
+
+    if (SDL_ISCOLORSPACE_MATRIX_BT601(colorspace))
+    {
+        return RowOf(limited ? YuvRow::Bt601Limited : YuvRow::Bt601Full);
+    }
+
+    if (SDL_ISCOLORSPACE_MATRIX_BT709(colorspace))
+    {
+        return RowOf(limited ? YuvRow::Bt709Limited : YuvRow::Bt709Full);
+    }
+
+    if (SDL_ISCOLORSPACE_MATRIX_BT2020_NCL(colorspace) && SDL_ISCOLORSPACE_FULL_RANGE(colorspace))
+    {
+        return RowOf(YuvRow::Bt2020Full);
+    }
+
+    return std::nullopt;
+}
+
+auto MCHdMovie::Rgba(const MCHdArt::Frame& frame) -> std::expected<std::vector<uint8_t>, std::string>
+{
+    const auto width = static_cast<size_t>(frame.Width);
+    const auto height = static_cast<size_t>(frame.Height);
+    const size_t planes = width * height + 2 * ((width + 1) / 2) * ((height + 1) / 2);
+
+    if (frame.Format != MCHdArt::ColorFormat::Yuv420 || frame.Colors.size() != planes)
+    {
+        return std::unexpected(std::format("a {}x{} frame of {} bytes isn't a movie's planes", frame.Width,
+                                           frame.Height, frame.Colors.size()));
+    }
+
+    std::vector<uint8_t> colors(width * height * RgbaBytes);
+
+    // Opaque, so the colours are premultiplied as they are.
+    if (!SDL_ConvertPixelsAndColorspace(frame.Width, frame.Height, SDL_PIXELFORMAT_IYUV, frame.Colorspace, 0,
+                                        frame.Colors.data(), frame.Width, SDL_PIXELFORMAT_RGBA32, SDL_COLORSPACE_SRGB,
+                                        0, colors.data(), frame.Width * static_cast<int>(RgbaBytes)))
+    {
+        return std::unexpected(
+            std::format("SDL couldn't convert a {}x{} frame ({})", frame.Width, frame.Height, SDL_GetError()));
+    }
+
+    return colors;
 }

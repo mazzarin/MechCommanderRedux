@@ -76,9 +76,20 @@ namespace
         return bytes;
     }
 
-    /// <summary>The pixels of <paramref name="colors"/> (RGBA) not opaque and near <paramref name="color"/>.</summary>
-    size_t OffColor(std::span<const uint8_t> colors, const std::array<uint8_t, 3>& color)
+    /// <summary>
+    /// The pixels of <paramref name="frame"/>'s colours (made from its planes as the GPU makes them,
+    /// <see cref="MCHdMovie::Rgba"/>) not opaque and near <paramref name="color"/>; all of them when it has none.
+    /// </summary>
+    size_t OffColor(const MCHdArt::Frame& frame, const std::array<uint8_t, 3>& color)
     {
+        const std::expected<std::vector<uint8_t>, std::string> made = MCHdMovie::Rgba(frame);
+
+        if (!made)
+        {
+            FAIL(made.error());
+        }
+
+        const std::vector<uint8_t>& colors = *made;
         size_t off = 0;
 
         for (size_t at = 0; at + RgbaBytes <= colors.size(); at += RgbaBytes)
@@ -106,8 +117,9 @@ namespace
 
 /// <summary>
 /// The fixture's three frames come out in order as frames the GPU takes: their size, the scale over a half-size
-/// original, opaque RGBA in the frame's colour (red, green, blue), the original's indices, and a number of their own;
-/// then the movie has no more.
+/// original, their Y, U and V planes in the movie's colour space (BT.709, limited range), which make opaque colours in
+/// the frame's colour (red, green, blue), the original's indices, a number of their own and the movie's, the same for
+/// each; then the movie has no more.
 /// </summary>
 TEST_CASE("hd art: an HD movie's frames decode in order, in their colours, over the original's indices")
 {
@@ -127,6 +139,9 @@ TEST_CASE("hd art: an HD movie's frames decode in order, in their colours, over 
 
     const std::vector<uint8_t> original = Original();
     uint64_t lastId = 0;
+    uint64_t movieId = 0;
+    constexpr size_t Planes = static_cast<size_t>(MCHdMovieFixture::Width) * MCHdMovieFixture::Height +
+                              2 * static_cast<size_t>(MCHdMovieFixture::Width / 2) * (MCHdMovieFixture::Height / 2);
 
     for (uint32_t index = 0; index < MCHdMovieFixture::Frames; ++index)
     {
@@ -137,13 +152,16 @@ TEST_CASE("hd art: an HD movie's frames decode in order, in their colours, over 
         CHECK_EQ(frame.Width, MCHdMovieFixture::Width);
         CHECK_EQ(frame.Height, MCHdMovieFixture::Height);
         CHECK_EQ(frame.Scale, 2);
-        CHECK(frame.Format == MCHdArt::ColorFormat::Rgba8);
+        CHECK(frame.Format == MCHdArt::ColorFormat::Yuv420);
+        CHECK(frame.Colorspace == SDL_COLORSPACE_BT709_LIMITED);
         CHECK(!frame.Blended);
         CHECK(frame.Id > lastId);
         lastId = frame.Id;
-        REQUIRE_EQ(frame.Colors.size(),
-                   static_cast<size_t>(MCHdMovieFixture::Width) * MCHdMovieFixture::Height * RgbaBytes);
-        CHECK_EQ(OffColor(frame.Colors, MCHdMovieFixture::Colors[index]), size_t{0});
+        CHECK(frame.Movie != 0);
+        CHECK((index == 0 || frame.Movie == movieId));
+        movieId = frame.Movie;
+        REQUIRE_EQ(frame.Colors.size(), Planes);
+        CHECK_EQ(OffColor(frame, MCHdMovieFixture::Colors[index]), size_t{0});
         REQUIRE_EQ(frame.Indices.size(), static_cast<size_t>(OriginalWidth) * OriginalHeight * MCHdArt::IndexBytes);
         size_t wrong = 0;
 
@@ -187,7 +205,7 @@ TEST_CASE("hd art: an HD movie longer than its frames decoded ahead comes out wh
         {
             const auto next = movie.Next(original, OriginalWidth, OriginalHeight, OriginalPitch, TestWait);
             REQUIRE(next.has_value());
-            wrong += OffColor((*next)->Colors, MCHdMovieFixture::Colors[index % MCHdMovieFixture::Frames]) == 0 ? 0 : 1;
+            wrong += OffColor(**next, MCHdMovieFixture::Colors[index % MCHdMovieFixture::Frames]) == 0 ? 0 : 1;
         }
 
         CHECK_EQ(wrong, 0u);

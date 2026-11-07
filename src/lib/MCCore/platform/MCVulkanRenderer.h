@@ -4,6 +4,7 @@
 #include "platform/MCSdlHandle.h"
 #include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
+#include "sprite/MCHdMovie.h"
 
 #include <bitset>
 #include <unordered_set>
@@ -230,6 +231,14 @@ public:
 
     /// <summary>The shapes drawn from the HD art pack so far (<see cref="MCHdArt"/>).</summary>
     int64_t HdDrawn() const { return _HdDrawn; }
+
+    /// <summary>
+    /// Port-only (HD movies), for the tests: the colours the GPU made of movie frame <paramref name="frame"/>
+    /// (<see cref="MCHdArt::ColorFormat::Yuv420"/>; RGBA8 rows, its size), read back, waiting for the GPU. The frame
+    /// must have been drawn, and its frame run, and be its movie's latest.
+    /// </summary>
+    std::expected<std::vector<uint8_t>, std::string> MovieColors(const MCHdArt::Frame& frame);
+
     /// <summary>Whether the ground is drawn with the HD art pack's colours (it has an HD terrain atlas).</summary>
     bool HdTerrain() const { return _TerrainMesh.HdAtlas.Handle != nullptr; }
 
@@ -807,6 +816,17 @@ private:
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
     /// <summary>
+    /// Port-only (HD movies): <see cref="HdPictureOf"/> for a movie's frame (<see cref="MCHdArt::ColorFormat::Yuv420"/>):
+    /// its movie's picture (<see cref="MoviePicture"/>), made the first time, with the frame's planes and indices
+    /// uploaded into it and its colours made from them (<see cref="ConvertMovies"/>) when it holds another frame.
+    /// </summary>
+    std::optional<uint32_t> MoviePictureOf(const MCHdArt::Frame& frame);
+    /// <summary>
+    /// Port-only (HD movies): makes the colours of each movie picture given a frame this frame from its planes
+    /// (shaders/movie.pshader), a render pass each, after the frame's uploads and before its draws.
+    /// </summary>
+    void ConvertMovies(SDL_GPUCommandBuffer& commands);
+    /// <summary>
     /// Port-only: how HD art frame <paramref name="frame"/> of shape table <paramref name="table"/> draws its edges: its
     /// own when it holds its blended pixels (an effect's) or its table keeps them (MCHdArt::KeepsFrameEdges), else
     /// smooth.
@@ -1002,6 +1022,12 @@ private:
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
         std::span<const std::reference_wrapper<const Surface>> surfaces);
+    /// <summary>
+    /// Reads <paramref name="textures"/> back whole, <paramref name="bytesPerPixel"/> bytes a pixel (each its rows one
+    /// after another), waiting for the GPU.
+    /// </summary>
+    std::expected<std::vector<std::vector<uint8_t>>, std::string> DownloadTextures(
+        std::span<const std::reference_wrapper<const Texture>> textures, uint32_t bytesPerPixel);
 
     /// <summary>The presenter's device; every GPU object holds it.</summary>
     std::shared_ptr<SDL_GPUDevice> _Device;
@@ -1059,6 +1085,12 @@ private:
     MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundPipeline;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundOverPipeline;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundIndexPipeline;
+    /// <summary>
+    /// Port-only (HD movies): the movie conversion's shader and pipeline (quad.vshader and shaders/movie.pshader, onto
+    /// one RGBA8 target, opaque).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _MovieShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _MoviePipeline;
     std::vector<TerrainDraw> _TerrainDraws;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
@@ -1186,6 +1218,29 @@ private:
     size_t _HdPictureBytes = 0;
     /// <summary>The HD art frames the GPU couldn't take (logged once each, then drawn from the 1x shape).</summary>
     std::unordered_set<uint64_t> _HdRefused;
+
+    /// <summary>
+    /// Port-only (HD movies): a movie's frames on the GPU, kept while it shows, each frame put in place of the one
+    /// before: its planes (Y, then U and V at half the size each way; R8), uploaded as a frame comes, and made into its
+    /// colours (RGBA8, the frame's size: <see cref="ConvertMovies"/>), which its draws read as they read any HD art
+    /// frame's, with the frame's indices (R8G8, the original's size).
+    /// </summary>
+    struct MoviePicture
+    {
+        /// <summary>The frame's indices (Texture) and colours (HdColors), as an HD art frame's picture.</summary>
+        Picture Shown;
+        Texture Luma;
+        Texture Blue;
+        Texture Red;
+        /// <summary>The frame it holds (MCHdArt::Frame::Id), and how its planes make colours.</summary>
+        uint64_t Frame = 0;
+        MCYuvFactors Factors;
+        /// <summary>Whether its colours are made from its planes this frame (a frame was uploaded).</summary>
+        bool Convert = false;
+    };
+
+    /// <summary>Port-only (HD movies): the movies' pictures, by their movies' numbers (MCHdArt::Frame::Movie).</summary>
+    std::unordered_map<uint64_t, MoviePicture> _HdMovies;
     /// <summary>Port-only: the glyphs redrawn sharp (RGBA8, MCSharpText), by their bytes' hash, and their bytes.</summary>
     std::unordered_map<uint64_t, Picture> _SharpGlyphs;
     size_t _SharpGlyphBytes = 0;
@@ -1230,6 +1285,12 @@ private:
 
     /// <summary>Drops the HD art frame <paramref name="id"/>'s picture now (a movie frame shown for the last time).</summary>
     void ForgetHdPicture(uint64_t id);
+    /// <summary>
+    /// Drops what the GPU keeps for <paramref name="shown"/>, a frame shown over a texture's pixels
+    /// (<see cref="MCRenderer::ShowHdPicture"/>) for the last time, before <paramref name="next"/> (none: nothing more):
+    /// its picture, or (port-only, HD movies) its movie's once the next isn't a frame of that movie.
+    /// </summary>
+    void ForgetShownHd(const MCHdArt::Frame& shown, MCOptionalRef<const MCHdArt::Frame> next = std::nullopt);
 
     /// <summary>Marks <paramref name="picture"/> used this frame; returns its frame picture index.</summary>
     uint32_t UsePicture(Picture& picture);

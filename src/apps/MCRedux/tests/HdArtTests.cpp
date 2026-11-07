@@ -129,6 +129,7 @@
 #include "logistics/MCUpdatePage.h"
 #define MC_AUDIT_CONTROLS 1
 #endif
+#include <random>
 #if __has_include(<execinfo.h>) && __has_include(<dlfcn.h>)
 #include <dlfcn.h>
 #include <execinfo.h>
@@ -17436,6 +17437,162 @@ TEST_CASE_ISOLATED("game: a sharp screen shows a movie's HD frame over the part 
     }
 
     CHECK_EQ(kept, Width * Height);
+    MCRenderer::DestroyTexture(*window);
+    std::filesystem::remove_all(scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// A frame of a movie (<paramref name="movie"/>) of random planes in <paramref name="colorspace"/>, every byte as
+    /// likely (so the sums SDL's table can't hold come up too), <paramref name="width"/> x <paramref name="height"/> at
+    /// <paramref name="scale"/> HD pixels an original's, over the original's indices <paramref name="indices"/>.
+    /// </summary>
+    std::shared_ptr<MCHdArt::Frame> RandomMovieFrame(std::mt19937& random, uint64_t movie, SDL_Colorspace colorspace,
+                                                     int32_t width, int32_t height, int32_t scale, uint8_t indices)
+    {
+        auto frame = std::make_shared<MCHdArt::Frame>();
+        frame->Id = MCHdArt::NewFrameId();
+        frame->Movie = movie;
+        frame->Width = width;
+        frame->Height = height;
+        frame->Scale = scale;
+        frame->Format = MCHdArt::ColorFormat::Yuv420;
+        frame->Colorspace = colorspace;
+        const auto chroma = static_cast<size_t>((width + 1) / 2) * ((height + 1) / 2);
+        frame->Colors.resize(static_cast<size_t>(width) * height + 2 * chroma);
+        std::uniform_int_distribution<int> bytes(0, UINT8_MAX);
+        std::ranges::generate(frame->Colors, [&] { return static_cast<uint8_t>(bytes(random)); });
+
+        for (int32_t pixel = 0; pixel < frame->OriginalWidth() * frame->OriginalHeight(); ++pixel)
+        {
+            frame->Indices.push_back(indices);
+            frame->Indices.push_back(MCHdArt::HasIndex);
+        }
+
+        return frame;
+    }
+}
+
+/// <summary>
+/// Port-only (HD movies): the GPU makes a movie's HD frame's colours from its planes byte for byte as the CPU made them
+/// (SDL's conversion, <see cref="MCHdMovie::Rgba"/>), with each frame shown over a window copied onto a sharp screen:
+/// frames of random planes in each colour space SDL converts, of odd sizes (the last column and row take a half
+/// block's U and V), one after another in one movie's textures, then at another size; and the test movie's frames as
+/// dav1d decodes them.
+/// </summary>
+TEST_CASE_ISOLATED("game: the GPU makes a movie's HD frame's colours from its planes as the CPU made them")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // The window is larger than the frames, which lie in from its corner, as a movie's pane does.
+    constexpr int32_t Width = 48;
+    constexpr int32_t Height = 32;
+    constexpr int32_t FrameX = 4;
+    constexpr int32_t FrameY = 2;
+    constexpr uint8_t Color = 0x30;
+    constexpr uint32_t Seed = 0x4d4f5649;
+    constexpr std::array<SDL_Colorspace, 5> Colorspaces = {SDL_COLORSPACE_BT601_LIMITED, SDL_COLORSPACE_BT601_FULL,
+                                                           SDL_COLORSPACE_BT709_LIMITED, SDL_COLORSPACE_BT709_FULL,
+                                                           SDL_COLORSPACE_BT2020_FULL};
+    const std::shared_ptr<MCWindow> window = MCWindow::Make(Width, Height);
+    std::ranges::fill(window->Bytes(), Color);
+    MCRenderer::CreateTexture(*window, MCTextureUse::Static);
+    const std::shared_ptr<MCTexture> texture = window->Texture.lock();
+    REQUIRE(texture != nullptr);
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_movie_gpu";
+    std::filesystem::remove_all(scratch);
+    MCHdMovieFixture::Write(scratch / "MOVIE.ivf", MCHdMovieFixture::Bytes());
+    // HD art on (a pack of nothing else) makes the screen sharp, as when the game finds a movie's HD frames.
+    std::filesystem::create_directories(scratch / "pack");
+    const MCHdArtOn on(scratch / "pack");
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+    GamePaused = true;
+    MCTestGame::RunFrame(FrameSeconds);
+
+    struct Compared
+    {
+        int32_t Frames = 0;
+        size_t Bytes = 0;
+        size_t Differing = 0;
+        int Largest = 0;
+    };
+
+    Compared compared;
+
+    // The frame shown over the window and the window copied onto the screen (the frame's draw), that frame run; then
+    // the colours the GPU made of the frame against the CPU's.
+    const auto compare = [&](const std::shared_ptr<const MCHdArt::Frame>& frame)
+    {
+        MCTest::Scope scope(std::format("frame {} ({}x{}, colour space {:#x})", compared.Frames, frame->Width,
+                                        frame->Height, static_cast<uint32_t>(frame->Colorspace)));
+        MCRenderer::ShowHdPicture(*texture, frame, FrameX, FrameY);
+        const int64_t before = renderer->HdDrawn();
+        VfxPaneCopy(MCPane::Over(window), 0, 0, screen, left, top, VfxNoColor);
+        CHECK_EQ(renderer->HdDrawn() - before, 1);
+        MCTestGame::RunFrame(FrameSeconds);
+        const std::expected<std::vector<uint8_t>, std::string> gpu = renderer->MovieColors(*frame);
+        const std::expected<std::vector<uint8_t>, std::string> cpu = MCHdMovie::Rgba(*frame);
+
+        if (!gpu || !cpu)
+        {
+            FAIL(std::format("no colours to compare: {}", !gpu ? gpu.error() : cpu.error()));
+        }
+
+        REQUIRE_EQ(gpu->size(), cpu->size());
+        ++compared.Frames;
+        compared.Bytes += gpu->size();
+
+        for (size_t at = 0; at < gpu->size(); ++at)
+        {
+            const int difference = std::abs((*gpu)[at] - (*cpu)[at]);
+            compared.Differing += difference != 0 ? 1 : 0;
+            compared.Largest = std::max(compared.Largest, difference);
+        }
+    };
+
+    std::mt19937 random(Seed);
+    const uint64_t movie = MCHdArt::NewFrameId();
+
+    for (const SDL_Colorspace colorspace : Colorspaces)
+    {
+        compare(RandomMovieFrame(random, movie, colorspace, 37, 21, 1, Color));
+    }
+
+    compare(RandomMovieFrame(random, movie, SDL_COLORSPACE_BT709_LIMITED, 38, 22, 2, Color));
+
+    auto decoded = MCHdMovie::Open(scratch / "MOVIE.ivf");
+    REQUIRE(decoded.has_value());
+
+    for (uint32_t index = 0; index < MCHdMovieFixture::Frames; ++index)
+    {
+        const auto frame = (*decoded)->Next(window->Bytes().subspan(static_cast<size_t>(FrameY) * Width + FrameX),
+                                            MCHdMovieFixture::Width / 2, MCHdMovieFixture::Height / 2, Width,
+                                            std::chrono::seconds(10));
+        REQUIRE(frame.has_value());
+        compare(*frame);
+    }
+
+    MCRenderer::ShowHdPicture(*texture, nullptr, 0, 0);
+    GamePaused = false;
+    std::cout << std::format("  {} frames, {} colour bytes: {} differ, the largest by {}\n", compared.Frames,
+                             compared.Bytes, compared.Differing, compared.Largest);
+    CHECK_EQ(compared.Frames,
+             static_cast<int32_t>(Colorspaces.size()) + 1 + static_cast<int32_t>(MCHdMovieFixture::Frames));
+    CHECK_EQ(compared.Differing, size_t{0});
     MCRenderer::DestroyTexture(*window);
     std::filesystem::remove_all(scratch);
 }

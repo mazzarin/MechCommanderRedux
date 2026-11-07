@@ -760,18 +760,31 @@ namespace
 
     constexpr int32_t AllHazed = -1;
 
-    /// <summary>The quad shader's uniforms (shaders/quad.vshader, cbuffer Quad).</summary>
+    /// <summary>The quad shader's uniforms (shaders/quad.vshader, cbuffer Quad), and the vertices it draws.</summary>
     struct QuadUniforms
     {
         float Rect[4];
         float TargetSize[4];
     };
 
+    constexpr uint32_t QuadVertices = 6;
+
     /// <summary>Port-only: the kept ground's copy's uniforms (shaders/ground.pshader, cbuffer Ground).</summary>
     struct GroundUniforms
     {
         int32_t Shift[4];
     };
+
+    /// <summary>Port-only (HD movies): the movie conversion's uniforms (shaders/movie.pshader, cbuffer Movie).</summary>
+    struct MovieUniforms
+    {
+        int32_t Factors[4];
+        int32_t BlueFactors[4];
+        int32_t Sizes[4];
+    };
+
+    /// <summary>Port-only (HD movies): the textures a movie's frame takes: its three planes, colours and indices.</summary>
+    constexpr size_t MovieTextures = 5;
 
     /// <summary>The terrain shader's vertex uniforms (shaders/terrain.vshader, cbuffer Terrain).</summary>
     struct TerrainUniforms
@@ -944,9 +957,11 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
     renderer->_TerrainShader = std::move(*terrain);
 
-    // Port-only: the kept ground's copy (KeepGround): a rectangle of the target, with its own fragment shader.
+    // Port-only: the kept ground's copy (KeepGround): a rectangle of the target, with its own fragment shader; and
+    // (HD movies) the movie conversion, the same way.
     for (auto [info, shader] : {std::pair{&MCVulkanShaders::Quad, &renderer->_QuadShader},
-                                std::pair{&MCVulkanShaders::GroundFragment, &renderer->_GroundShader}})
+                                std::pair{&MCVulkanShaders::GroundFragment, &renderer->_GroundShader},
+                                std::pair{&MCVulkanShaders::MovieFragment, &renderer->_MovieShader}})
     {
         auto loaded = MCVulkanShaders::Load(device, *info);
 
@@ -1069,6 +1084,27 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
     }
 
+    // Port-only (HD movies): the movie conversion writes a movie picture's colours alone, every pixel.
+    {
+        SDL_GPUColorTargetDescription colors{};
+        colors.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader = renderer->_QuadShader.get();
+        pipeline.fragment_shader = renderer->_MovieShader.get();
+        pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        pipeline.target_info.num_color_targets = 1;
+        pipeline.target_info.color_target_descriptions = &colors;
+        renderer->_MoviePipeline = MCGpuHandle<SDL_GPUGraphicsPipeline>(
+            SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline), MCGpuRelease{device});
+
+        if (renderer->_MoviePipeline == nullptr)
+        {
+            return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(movie)"));
+        }
+    }
+
     SDL_GPUSamplerCreateInfo sampler{};
     sampler.min_filter = SDL_GPU_FILTER_NEAREST;
     sampler.mag_filter = SDL_GPU_FILTER_NEAREST;
@@ -1134,6 +1170,8 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(picture.HdColors);
     }
 
+    _HdMovies.clear();
+
     for (auto& [key, picture] : _SharpGlyphs)
     {
         Release(picture.Texture);
@@ -1168,6 +1206,8 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _ShadowPipeline.reset();
     _TerrainPipeline.reset();
     _TerrainSeamPipeline.reset();
+    _MoviePipeline.reset();
+    _MovieShader.reset();
     _VertexShader.reset();
     _FragmentShader.reset();
     _BasicFragmentShader.reset();
@@ -1304,6 +1344,24 @@ void MCVulkanRenderer::ForgetHdPicture(uint64_t id)
     if (const auto found = _HdPictures.find(id); found != _HdPictures.end())
     {
         DropPicture(_HdPictures, found, _HdPictureBytes, HdRgbaBytes);
+    }
+}
+
+void MCVulkanRenderer::ForgetShownHd(const MCHdArt::Frame& shown, MCOptionalRef<const MCHdArt::Frame> next)
+{
+    // Port-only (HD movies): a movie's picture stays for its next frame, which takes its place (its textures go once
+    // nothing of the frame recorded holds them).
+    if (shown.Movie == 0)
+    {
+        ForgetHdPicture(shown.Id);
+        return;
+    }
+
+    _HdRefused.erase(shown.Id);
+
+    if (!next || next->get().Movie != shown.Movie)
+    {
+        _HdMovies.erase(shown.Movie);
     }
 }
 
@@ -2819,6 +2877,12 @@ auto MCVulkanRenderer::HdEdgesOf(const MCHdArt::Frame& frame, std::span<const ui
 std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& frame)
 {
     BeginRecording();
+
+    if (frame.Format == MCHdArt::ColorFormat::Yuv420)
+    {
+        return MoviePictureOf(frame);
+    }
+
     auto found = _HdPictures.find(frame.Id);
 
     if (found == _HdPictures.end() && _HdRefused.contains(frame.Id))
@@ -2896,6 +2960,111 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
     }
 
     return UsePicture(found->second);
+}
+
+std::optional<uint32_t> MCVulkanRenderer::MoviePictureOf(const MCHdArt::Frame& frame)
+{
+    const auto width = static_cast<uint32_t>(frame.Width);
+    const auto height = static_cast<uint32_t>(frame.Height);
+    const uint32_t chromaWidth = (width + 1) / 2;
+    const uint32_t chromaHeight = (height + 1) / 2;
+    const size_t lumaBytes = static_cast<size_t>(width) * height;
+    const size_t chromaBytes = static_cast<size_t>(chromaWidth) * chromaHeight;
+    const auto originalWidth = static_cast<uint32_t>(frame.OriginalWidth());
+    const auto originalHeight = static_cast<uint32_t>(frame.OriginalHeight());
+    const std::optional<MCYuvFactors> factors = MCHdMovie::Factors(frame.Colorspace);
+
+    if (frame.Movie == 0 || !factors.has_value() || frame.Colors.size() != lumaBytes + 2 * chromaBytes ||
+        frame.Indices.size() != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes)
+    {
+        NotSupported("an HD movie frame whose planes don't match its size or colour space");
+        return std::nullopt;
+    }
+
+    if (_HdRefused.contains(frame.Id))
+    {
+        return std::nullopt;
+    }
+
+    MoviePicture& movie = _HdMovies[frame.Movie];
+
+    // Made with the movie's first frame, and kept: each frame after goes up into the same textures.
+    if (movie.Frame != frame.Id)
+    {
+        constexpr SDL_GPUTextureUsageFlags sampled = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        constexpr SDL_GPUTextureUsageFlags drawnInto = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+        const std::array<std::expected<void, std::string>, MovieTextures> made = {
+            EnsureTexture(movie.Shown.Texture, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, sampled, originalWidth,
+                          originalHeight),
+            EnsureTexture(movie.Shown.HdColors, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, drawnInto, width, height),
+            EnsureTexture(movie.Luma, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, width, height),
+            EnsureTexture(movie.Blue, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, chromaWidth, chromaHeight),
+            EnsureTexture(movie.Red, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, chromaWidth, chromaHeight)};
+
+        if (const auto failed = std::ranges::find_if(made, [](const auto& one) { return !one.has_value(); });
+            failed != made.end())
+        {
+            SDL_Log("MCVulkanRenderer: HD movie frame %ux%u: %s", width, height, failed->error().c_str());
+            _HdMovies.erase(frame.Movie);
+            _HdRefused.insert(frame.Id);
+            return std::nullopt;
+        }
+
+        const std::span<const uint8_t> planes = frame.Colors;
+        std::ranges::copy(frame.Indices, QueueUpload(movie.Shown.Texture.Handle, 0, 0, originalWidth, originalHeight,
+                                                     static_cast<uint32_t>(MCHdArt::IndexBytes))
+                                             .begin());
+        std::ranges::copy(planes.first(lumaBytes), QueueUpload(movie.Luma.Handle, 0, 0, width, height, 1).begin());
+        std::ranges::copy(planes.subspan(lumaBytes, chromaBytes),
+                          QueueUpload(movie.Blue.Handle, 0, 0, chromaWidth, chromaHeight, 1).begin());
+        std::ranges::copy(planes.subspan(lumaBytes + chromaBytes, chromaBytes),
+                          QueueUpload(movie.Red.Handle, 0, 0, chromaWidth, chromaHeight, 1).begin());
+        movie.Frame = frame.Id;
+        movie.Factors = *factors;
+        movie.Convert = true;
+        ++_FrameUploads.Pictures;
+        _FrameUploads.PictureBytes += static_cast<int64_t>(frame.Indices.size() + planes.size());
+    }
+
+    return UsePicture(movie.Shown);
+}
+
+void MCVulkanRenderer::ConvertMovies(SDL_GPUCommandBuffer& commands)
+{
+    for (MoviePicture& movie : _HdMovies | std::views::values)
+    {
+        if (!movie.Convert)
+        {
+            continue;
+        }
+
+        movie.Convert = false;
+        const Texture& colors = movie.Shown.HdColors;
+        const MCYuvFactors& factors = movie.Factors;
+        const QuadUniforms quad{{0.0f, 0.0f, static_cast<float>(colors.Width), static_cast<float>(colors.Height)},
+                                {static_cast<float>(colors.Width), static_cast<float>(colors.Height), 0.0f, 0.0f}};
+        const MovieUniforms uniforms{{factors.YShift, factors.YFactor, factors.VRed, factors.UGreen},
+                                     {factors.VGreen, factors.UBlue, 0, 0},
+                                     {static_cast<int32_t>(movie.Luma.Width), static_cast<int32_t>(movie.Luma.Height),
+                                      static_cast<int32_t>(movie.Blue.Width), static_cast<int32_t>(movie.Blue.Height)}};
+        const SDL_GPUTextureSamplerBinding planes[] = {{movie.Luma.Handle.get(), _Nearest.get()},
+                                                       {movie.Blue.Handle.get(), _Nearest.get()},
+                                                       {movie.Red.Handle.get(), _Nearest.get()}};
+        // Every pixel is drawn: what the colours held needn't be kept, and while a frame in flight still reads them
+        // SDL draws into another texture of the same (cycled).
+        SDL_GPUColorTargetInfo target{};
+        target.texture = colors.Handle.get();
+        target.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        target.store_op = SDL_GPU_STOREOP_STORE;
+        target.cycle = true;
+        SDL_GPURenderPass* const pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(pass, _MoviePipeline.get());
+        SDL_BindGPUFragmentSamplers(pass, 0, planes, static_cast<uint32_t>(std::size(planes)));
+        SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
+        SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
+        SDL_DrawGPUPrimitives(pass, QuadVertices, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    }
 }
 
 bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> font, std::span<const uint8_t> glyph,
@@ -5986,7 +6155,7 @@ void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURen
     SDL_BindGPUFragmentSamplers(&pass, 0, bindings, 2);
     SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
     SDL_PushGPUFragmentUniformData(&commands, 0, &ground, sizeof(ground));
-    SDL_DrawGPUPrimitives(&pass, 6, 1, 0, 0);
+    SDL_DrawGPUPrimitives(&pass, QuadVertices, 1, 0, 0);
 
     // The draws that follow read their own buffer, bound again. SDL's Metal driver takes this draw, which reads none,
     // as having bound one, and binds a buffer again only when it is another: so the terrain's goes first.
@@ -6314,6 +6483,9 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             }
         }
     }
+
+    // Port-only (HD movies): the movies' new frames' colours, from the planes just uploaded, before any draw reads them.
+    ConvertMovies(commands);
 
     // The kept surfaces first (the fog of war, which the terrain layer reads), then those shown as underlays (the
     // screen's see-through draws read them finished), then the rest.
@@ -6918,7 +7090,7 @@ void MCVulkanRenderer::OnShowHdPicture(MCTexture& texture, std::shared_ptr<const
     // A movie shows each frame once: the one shown before leaves the GPU now rather than when unused for a while.
     if (state.ShownHd != nullptr && state.ShownHd != frame)
     {
-        ForgetHdPicture(state.ShownHd->Id);
+        ForgetShownHd(*state.ShownHd, MCOptionalOf(frame));
     }
 
     state.ShownHd = std::move(frame);
@@ -6937,7 +7109,7 @@ void MCVulkanRenderer::OnTextureReleased(MCTexture& texture)
 
     if (state.ShownHd != nullptr)
     {
-        ForgetHdPicture(state.ShownHd->Id);
+        ForgetShownHd(*state.ShownHd);
     }
 
     if (state.Copy.Handle != nullptr)
@@ -7054,9 +7226,43 @@ std::expected<void, std::string> MCVulkanRenderer::Flush(std::span<const MCUnder
 auto MCVulkanRenderer::Download(std::span<const std::reference_wrapper<const Surface>> surfaces)
     -> std::expected<std::vector<std::vector<uint8_t>>, std::string>
 {
-    std::vector<std::vector<uint8_t>> pixels(surfaces.size());
+    std::vector<std::reference_wrapper<const Texture>> textures;
 
-    if (surfaces.empty())
+    for (const Surface& surface : surfaces)
+    {
+        textures.emplace_back(surface.Index);
+    }
+
+    auto downloaded = DownloadTextures(textures, IndexPixelBytes);
+
+    if (!downloaded)
+    {
+        return downloaded;
+    }
+
+    // The palette indices: each pixel's R.
+    for (std::vector<uint8_t>& pixels : *downloaded)
+    {
+        const size_t size = pixels.size() / IndexPixelBytes;
+
+        for (size_t pixel = 0; pixel < size; ++pixel)
+        {
+            pixels[pixel] = pixels[pixel * IndexPixelBytes];
+        }
+
+        pixels.resize(size);
+    }
+
+    return downloaded;
+}
+
+auto MCVulkanRenderer::DownloadTextures(std::span<const std::reference_wrapper<const Texture>> textures,
+                                        uint32_t bytesPerPixel)
+    -> std::expected<std::vector<std::vector<uint8_t>>, std::string>
+{
+    std::vector<std::vector<uint8_t>> pixels(textures.size());
+
+    if (textures.empty())
     {
         return pixels;
     }
@@ -7064,10 +7270,10 @@ auto MCVulkanRenderer::Download(std::span<const std::reference_wrapper<const Sur
     std::vector<uint32_t> offsets;
     uint32_t total = 0;
 
-    for (const Surface& surface : surfaces)
+    for (const Texture& texture : textures)
     {
         offsets.push_back(total);
-        total += surface.Index.Width * surface.Index.Height * IndexPixelBytes;
+        total += texture.Width * texture.Height * bytesPerPixel;
     }
 
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(_Device.get());
@@ -7090,19 +7296,19 @@ auto MCVulkanRenderer::Download(std::span<const std::reference_wrapper<const Sur
 
     SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(commands);
 
-    for (size_t i = 0; i < surfaces.size(); ++i)
+    for (size_t i = 0; i < textures.size(); ++i)
     {
         SDL_GPUTextureRegion source{};
-        const Surface& surface = surfaces[i];
-        source.texture = surface.Index.Handle.get();
-        source.w = surface.Index.Width;
-        source.h = surface.Index.Height;
+        const Texture& texture = textures[i];
+        source.texture = texture.Handle.get();
+        source.w = texture.Width;
+        source.h = texture.Height;
         source.d = 1;
         SDL_GPUTextureTransferInfo destination{};
         destination.transfer_buffer = buffer;
         destination.offset = offsets[i];
-        destination.pixels_per_row = surface.Index.Width;
-        destination.rows_per_layer = surface.Index.Height;
+        destination.pixels_per_row = texture.Width;
+        destination.rows_per_layer = texture.Height;
         SDL_DownloadFromGPUTexture(pass, &source, &destination);
     }
 
@@ -7127,23 +7333,38 @@ auto MCVulkanRenderer::Download(std::span<const std::reference_wrapper<const Sur
 
     const std::span<const uint8_t> mapped(static_cast<const uint8_t*>(memory), total);
 
-    for (size_t i = 0; i < surfaces.size(); ++i)
+    for (size_t i = 0; i < textures.size(); ++i)
     {
-        // The palette indices: each pixel's R.
-        const Surface& surface = surfaces[i];
-        const size_t size = static_cast<size_t>(surface.Index.Width) * surface.Index.Height;
-        const std::span<const uint8_t> surfacePixels = mapped.subspan(offsets[i], size * IndexPixelBytes);
-        pixels[i].resize(size);
-
-        for (size_t pixel = 0; pixel < size; ++pixel)
-        {
-            pixels[i][pixel] = surfacePixels[pixel * IndexPixelBytes];
-        }
+        const Texture& texture = textures[i];
+        const std::span<const uint8_t> bytes =
+            mapped.subspan(offsets[i], static_cast<size_t>(texture.Width) * texture.Height * bytesPerPixel);
+        pixels[i].assign(bytes.begin(), bytes.end());
     }
 
     SDL_UnmapGPUTransferBuffer(_Device.get(), buffer);
     SDL_ReleaseGPUTransferBuffer(_Device.get(), buffer);
     return pixels;
+}
+
+auto MCVulkanRenderer::MovieColors(const MCHdArt::Frame& frame) -> std::expected<std::vector<uint8_t>, std::string>
+{
+    const auto found = _HdMovies.find(frame.Movie);
+
+    if (frame.Format != MCHdArt::ColorFormat::Yuv420 || found == _HdMovies.end() || found->second.Frame != frame.Id ||
+        found->second.Convert)
+    {
+        return std::unexpected(std::format("movie frame {} isn't on the GPU", frame.Id));
+    }
+
+    const std::array<std::reference_wrapper<const Texture>, 1> colors{found->second.Shown.HdColors};
+    auto downloaded = DownloadTextures(colors, HdRgbaBytes);
+
+    if (!downloaded)
+    {
+        return std::unexpected(downloaded.error());
+    }
+
+    return std::move(downloaded->front());
 }
 
 auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnderlay> underlays)

@@ -2580,7 +2580,9 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
         }
     }
 
-    return found->second.has_value() ? MCHdArt::FindShape(*found->second, frame, width, height, step) : nullptr;
+    return found->second.has_value()
+               ? MCHdArt::FindShape(*found->second, frame, width, height, step, VfxShapeCount(table))
+               : nullptr;
 }
 
 auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum, const MCHdArt::Frame& hd)

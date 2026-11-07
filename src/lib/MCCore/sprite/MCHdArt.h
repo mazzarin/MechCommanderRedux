@@ -52,7 +52,10 @@ class MCShape;
 /// DEFLATE-packed or stored), the nearest of the folder's own and its parents'. An update writes a changed archive anew
 /// (its patch applied in full, lib/MCFilePatch.h), so each is one file. At most 128 archives' files are kept open; the
 /// others keep their directories and open again when read.</para>
-/// <para>Frames are read when first drawn and kept while there is room (<see cref="CacheBudget"/>).</para>
+/// <para>Frames are read when first drawn and kept while there is room (<see cref="CacheBudget"/>). Port-only: once a
+/// numbered folder's frame in an archive is drawn the first time (an animation's), a thread of its own reads the frames
+/// drawn after it (the rest of its in-betweens or turn middle's, then the next frame's), so that the game's thread
+/// seldom reads one; a frame drawn before it is read ahead is read as drawn.</para>
 /// </remarks>
 namespace MCHdArt
 {
@@ -404,10 +407,11 @@ namespace MCHdArt
     /// The HD copy of frame <paramref name="frame"/> of the shape table whose bytes hash to <paramref name="hash"/>
     /// (<see cref="ShapeTableHash"/>; the frame's bounds <paramref name="width"/> x <paramref name="height"/>), read from
     /// the pack the first time; null when HD art is off or the pack has none. A <paramref name="step"/> asks for an
-    /// in-between, as <see cref="Find"/>'s does.
+    /// in-between, as <see cref="Find"/>'s does. Given the table's <paramref name="frames"/>, the frames drawn after it
+    /// are read ahead, as Find's are.
     /// </summary>
     std::shared_ptr<const Frame> FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
-                                           int32_t step = 0);
+                                           int32_t step = 0, int32_t frames = 0);
 
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's
@@ -463,10 +467,19 @@ namespace MCHdArt
     std::chrono::nanoseconds ReadTime();
     size_t CachedBytes();
 
+    /// <summary>Port-only: how many of the frames read the reading thread read ahead.</summary>
+    size_t FramesReadAhead();
+
+    /// <summary>For the tests: waits until the reading thread has read ahead all it was handed.</summary>
+    void WaitForReadAhead();
+
     /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
     size_t ArchivesOpen();
 
-    /// <summary>How many of the open archives' files are open now (at most 128: the rest open again when read).</summary>
+    /// <summary>
+    /// How many of the open archives' files are open now, the reading thread's own among them (at most 128: the rest open
+    /// again when read).
+    /// </summary>
     size_t ArchiveFilesOpen();
 }
 

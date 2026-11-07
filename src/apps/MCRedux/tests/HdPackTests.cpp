@@ -8,6 +8,7 @@
 #include "lib/MCLz.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCInBetween.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCUtf8Path.h"
@@ -352,13 +353,27 @@ namespace
         return {reinterpret_cast<const uint8_t*>(text.data()), text.size()};
     }
 
-    /// <summary><paramref name="data"/> as one stored DEFLATE block (a packed entry that packs nothing).</summary>
+    /// <summary>
+    /// <paramref name="data"/> as stored DEFLATE blocks (a packed entry that packs nothing), each up to a stored block's
+    /// most bytes, the last marked final.
+    /// </summary>
     std::vector<uint8_t> StoredDeflate(std::span<const uint8_t> data)
     {
-        const auto length = static_cast<uint16_t>(data.size());
-        std::vector<uint8_t> stream = {1, static_cast<uint8_t>(length), static_cast<uint8_t>(length >> 8),
-                                       static_cast<uint8_t>(~length), static_cast<uint8_t>(~length >> 8)};
-        stream.insert(stream.end(), data.begin(), data.end());
+        constexpr size_t MostStored = 0xffff;
+        std::vector<uint8_t> stream;
+        size_t at = 0;
+
+        do
+        {
+            const auto length = static_cast<uint16_t>(std::min(MostStored, data.size() - at));
+            const uint8_t last = at + length == data.size() ? 1 : 0;
+            stream.insert(stream.end(), {last, static_cast<uint8_t>(length), static_cast<uint8_t>(length >> 8),
+                                         static_cast<uint8_t>(~length), static_cast<uint8_t>(~length >> 8)});
+            stream.insert(stream.end(), data.begin() + static_cast<ptrdiff_t>(at),
+                          data.begin() + static_cast<ptrdiff_t>(at + length));
+            at += length;
+        } while (at < data.size());
+
         return stream;
     }
 
@@ -944,6 +959,286 @@ TEST_CASE("hd art: no more than 128 archive files stay open, a closed one openin
     }
 
     CHECK(MCHdArt::FindTerrainTile(tiles[2], TileWidth, TileHeight) == nullptr);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+namespace
+{
+    /// <summary>
+    /// The read-ahead tests' shape table: the hash naming its folder (<c>shapes/&lt;hash&gt;</c>, an archive), its frames,
+    /// the steps each frame has in the pack (the frame and its in-betweens; a turn middle and its in-betweens), and the
+    /// frames' size and scale: a mech's, at the most scale, so a read takes a while.
+    /// </summary>
+    constexpr uint64_t AheadTable = 0x0123456789abcdefull;
+    constexpr int32_t AheadFrames = 4;
+    constexpr int32_t AheadSteps = 3;
+    constexpr int32_t AheadTurnSteps = 2;
+    constexpr int32_t AheadWidth = 60;
+    constexpr int32_t AheadHeight = 50;
+    constexpr int32_t AheadScale = 8;
+
+    /// <summary>A frame of the read-ahead pack: its number and step, as MCHdArt::FindShape takes them.</summary>
+    using AheadKey = std::pair<int32_t, int32_t>;
+
+    /// <summary>Every frame of the read-ahead pack, frame by frame, each frame's own steps then its turn middle's.</summary>
+    std::vector<AheadKey> AheadKeys()
+    {
+        std::vector<AheadKey> keys;
+
+        for (int32_t frame = 0; frame < AheadFrames; ++frame)
+        {
+            for (int32_t step = 0; step < AheadSteps; ++step)
+            {
+                keys.emplace_back(frame, step);
+            }
+
+            for (int32_t step = 0; step < AheadTurnSteps; ++step)
+            {
+                keys.emplace_back(frame, TurnBetweenStep(TurnStep, step));
+            }
+        }
+
+        return keys;
+    }
+
+    /// <summary>The name of <paramref name="key"/>'s frame file in its folder (MCHdArt.h): 3, 3_1, 3_turn, 3_turn_1.</summary>
+    std::string AheadName(const AheadKey& key)
+    {
+        const auto [frame, step] = key;
+
+        if (step < TurnStep)
+        {
+            return step == 0 ? std::to_string(frame) : std::format("{}_{}", frame, step);
+        }
+
+        const int32_t between = (step - TurnStep) >> TurnBetweenShift;
+        return between == 0 ? std::format("{}_turn", frame) : std::format("{}_turn_{}", frame, between);
+    }
+
+    /// <summary>
+    /// <paramref name="key"/>'s frame file in a read-ahead pack made with <paramref name="seed"/>: BC7 blocks of bytes
+    /// no other key's (or seed's) has, and indices.
+    /// </summary>
+    std::vector<uint8_t> AheadFile(const AheadKey& key, uint8_t seed)
+    {
+        constexpr int32_t KeyFrameMix = 31;
+        constexpr int32_t KeyStepMix = 3;
+        constexpr int32_t ByteMix = 7;
+        MCHdArt::Frame frame;
+        frame.Scale = AheadScale;
+        frame.Width = AheadWidth * AheadScale;
+        frame.Height = AheadHeight * AheadScale;
+        frame.Format = MCHdArt::ColorFormat::Bc7;
+        frame.Colors.resize(static_cast<size_t>(MCBc7::Padded(frame.Width) / MCBc7::BlockSide) *
+                            static_cast<size_t>(MCBc7::Padded(frame.Height) / MCBc7::BlockSide) * MCBc7::BlockBytes);
+        const int32_t mix = key.first * KeyFrameMix + key.second * KeyStepMix + seed;
+
+        for (size_t at = 0; at < frame.Colors.size(); ++at)
+        {
+            frame.Colors[at] = static_cast<uint8_t>(static_cast<int32_t>(at) * ByteMix + mix);
+        }
+
+        frame.Indices.resize(static_cast<size_t>(AheadWidth) * AheadHeight * MCHdArt::IndexBytes);
+
+        for (size_t at = 0; at < frame.Indices.size(); at += MCHdArt::IndexBytes)
+        {
+            frame.Indices[at] = static_cast<uint8_t>(mix);
+            frame.Indices[at + 1] = MCHdArt::HasIndex;
+        }
+
+        return MCHdArt::EncodeHdf(frame);
+    }
+
+    /// <summary>
+    /// Writes the read-ahead pack made with <paramref name="seed"/> into <paramref name="pack"/>: the table's folder as
+    /// an archive, the even frames' entries packed (DEFLATE), the odd ones' stored.
+    /// </summary>
+    void WriteAheadPack(const std::filesystem::path& pack, uint8_t seed)
+    {
+        std::vector<ArchiveEntry> entries;
+
+        for (const AheadKey& key : AheadKeys())
+        {
+            std::vector<uint8_t> file = AheadFile(key, seed);
+            std::string name = AheadName(key) + ".hdf";
+            const size_t size = file.size();
+            entries.push_back(key.first % 2 == 0
+                                  ? ArchiveEntry{std::move(name), StoredDeflate(file), size, std::nullopt}
+                                  : Raw(std::move(name), std::move(file)));
+        }
+
+        const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(AheadTable);
+        std::filesystem::create_directories(folder.parent_path());
+        WriteBytes(std::filesystem::path(folder).concat(".hda"), BuildArchive(entries));
+    }
+
+    /// <summary><paramref name="key"/>'s frame as the read-ahead pack made with <paramref name="seed"/> holds it.</summary>
+    MCHdArt::Frame AheadFrame(const AheadKey& key, uint8_t seed)
+    {
+        auto decoded = MCHdArt::DecodeHdf(AheadFile(key, seed), AheadWidth, AheadHeight);
+        REQUIRE(decoded.has_value());
+        return std::move(*decoded);
+    }
+
+    /// <summary>The read-ahead table's frame <paramref name="key"/> as drawn (the table's frames given).</summary>
+    std::shared_ptr<const MCHdArt::Frame> FindAhead(const AheadKey& key)
+    {
+        return MCHdArt::FindShape(AheadTable, key.first, AheadWidth, AheadHeight, key.second, AheadFrames);
+    }
+
+    /// <summary>Whether two frames are the same but for their Ids.</summary>
+    bool SameFrame(const MCHdArt::Frame& a, const MCHdArt::Frame& b)
+    {
+        return a.Width == b.Width && a.Height == b.Height && a.Scale == b.Scale && a.Format == b.Format &&
+               a.Blended == b.Blended && a.PaintedShadow == b.PaintedShadow && a.Colors == b.Colors &&
+               a.Indices == b.Indices;
+    }
+}
+
+/// <summary>
+/// Port-only: once a numbered folder's frame is drawn the first time, the reading thread reads the frames drawn after it
+/// (the rest of its in-betweens, then the next frame's, looping round; a turn middle's likewise), and they are drawn as
+/// the game's thread would have read them: the same frames, refused at a size they weren't made for, one dropped for
+/// room and read ahead again keeping its Id. Nothing is read twice, and the reading thread's handle on the archive's
+/// file is closed once it has read.
+/// </summary>
+TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read when drawn")
+{
+    const ScratchFolder scratch("read-ahead");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const auto drawn = [](const AheadKey& key)
+    {
+        MCTest::Scope scope(std::format("frame {}", AheadName(key)));
+        std::shared_ptr<const MCHdArt::Frame> frame = FindAhead(key);
+        REQUIRE(frame != nullptr);
+        CHECK(SameFrame(*frame, AheadFrame(key, 0)));
+        return frame;
+    };
+
+    // Frame 0, drawn the first time, is read as drawn; the rest of its steps and frame 1's are read ahead meanwhile.
+    const size_t read = MCHdArt::FramesRead();
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    drawn({0, 0});
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead);
+    MCHdArt::WaitForReadAhead();
+    std::shared_ptr<const MCHdArt::Frame> second;
+
+    for (const AheadKey& key : {AheadKey{0, 1}, AheadKey{0, 2}, AheadKey{1, 0}, AheadKey{1, 1}, AheadKey{1, 2}})
+    {
+        const std::shared_ptr<const MCHdArt::Frame> frame = drawn(key);
+        second = key == AheadKey{1, 0} ? frame : second;
+    }
+
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 5);
+
+    // On round the loop, each frame's read ahead as the one before it is drawn; frame 0 comes again drawn already.
+    for (int32_t frame = 2; frame < AheadFrames; ++frame)
+    {
+        MCHdArt::WaitForReadAhead();
+
+        for (int32_t step = 0; step < AheadSteps; ++step)
+        {
+            drawn({frame, step});
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read + AheadFrames * AheadSteps);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + AheadFrames * AheadSteps - 1);
+    // The reading thread's own handle on the archive is closed once it has read.
+    MCHdArt::WaitForReadAhead();
+    CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{1});
+
+    // A turn middle: its in-between, then the next frame's turn middle and its in-between.
+    drawn({0, TurnStep});
+    const size_t turned = MCHdArt::FramesReadAhead();
+    MCHdArt::WaitForReadAhead();
+    drawn({0, TurnBetweenStep(TurnStep, 1)});
+    drawn({1, TurnStep});
+    drawn({1, TurnBetweenStep(TurnStep, 1)});
+    CHECK_EQ(MCHdArt::FramesReadAhead(), turned + 3);
+
+    // Asked for at a size it wasn't made for, a frame read ahead is refused, as read when drawn it is.
+    MCHdArt::WaitForReadAhead();
+    CHECK(MCHdArt::FindShape(AheadTable, 2, AheadWidth + 1, AheadHeight, TurnStep, AheadFrames) == nullptr);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), turned + 3);
+
+    // With room for one frame, frame 1 goes; drawn again after frame 0 is, it is read ahead again with its Id.
+    REQUIRE(second != nullptr);
+    const uint64_t id = second->Id;
+    MCHdArt::SetCacheBudget(1);
+    drawn({0, 0});
+    const size_t dropped = MCHdArt::FramesReadAhead();
+    MCHdArt::WaitForReadAhead();
+    const std::shared_ptr<const MCHdArt::Frame> again = drawn({1, 0});
+    CHECK_EQ(MCHdArt::FramesReadAhead(), dropped + 1);
+    CHECK(again != second);
+    CHECK_EQ(again->Id, id);
+    MCHdArt::SetCacheBudget(0);
+
+    // Drawn first, with the pack set again, frame 1 is read as drawn: the frame read ahead.
+    MCHdArt::SetPackFolder(scratch.Path());
+    const size_t fresh = MCHdArt::FramesReadAhead();
+    const std::shared_ptr<const MCHdArt::Frame> first = drawn({1, 0});
+    CHECK_EQ(MCHdArt::FramesReadAhead(), fresh);
+    CHECK(SameFrame(*first, *again));
+
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only: when another pack is set while the reading thread reads ahead from one, nothing it read is drawn for the
+/// new pack's frames of the same names: every frame drawn is the new pack's, wherever the thread was in its reads (a
+/// little further each round).
+/// </summary>
+TEST_CASE("hd art: frames read ahead from one pack are never drawn from the next")
+{
+    constexpr int32_t Rounds = 32;
+    constexpr auto RoundDelay = std::chrono::microseconds(25);
+    constexpr uint8_t NextSeed = 101;
+    const ScratchFolder scratch("read-ahead-packs");
+    const std::filesystem::path first = scratch.Path() / "first";
+    const std::filesystem::path next = scratch.Path() / "next";
+    WriteAheadPack(first, 0);
+    WriteAheadPack(next, NextSeed);
+    std::map<AheadKey, MCHdArt::Frame> expected;
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        expected.emplace(key, AheadFrame(key, NextSeed));
+    }
+
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    int32_t wrong = 0;
+
+    for (int32_t round = 0; round < Rounds; ++round)
+    {
+        MCHdArt::SetPackFolder(first);
+        REQUIRE(FindAhead({0, 0}) != nullptr);
+        const auto until = std::chrono::steady_clock::now() + RoundDelay * round;
+
+        while (std::chrono::steady_clock::now() < until)
+        {
+        }
+
+        MCHdArt::SetPackFolder(next);
+
+        for (const AheadKey& key : AheadKeys())
+        {
+            const std::shared_ptr<const MCHdArt::Frame> frame = FindAhead(key);
+            wrong += frame == nullptr || !SameFrame(*frame, expected.at(key)) ? 1 : 0;
+        }
+    }
+
+    CHECK_EQ(wrong, 0);
+    CHECK(MCHdArt::FramesReadAhead() > ahead);
+    MCHdArt::WaitForReadAhead();
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }

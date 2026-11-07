@@ -20,6 +20,14 @@ namespace
 
         return key;
     }
+
+    /// <summary><paramref name="entry"/>'s stored bytes, read through <paramref name="file"/>.</summary>
+    std::vector<uint8_t> StoredBytes(const MCFileEntry& entry, MCDiskFile& file)
+    {
+        std::vector<uint8_t> stored(static_cast<size_t>(std::max(entry.Size, 0)));
+        stored.resize(file.ReadAt(static_cast<uint32_t>(entry.Offset), stored));
+        return stored;
+    }
 }
 
 std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::string_view fileName)
@@ -94,25 +102,33 @@ std::optional<int32_t> MCFastFile::Find(std::string_view gamePath) const
     return std::nullopt;
 }
 
+std::optional<MCDiskFile> MCFastFile::OpenAnother() const
+{
+    // A file changed since (another written in its place) would be read by the old directory's offsets.
+    std::error_code error;
+    const std::filesystem::file_time_type written = std::filesystem::last_write_time(_Path, error);
+
+    if (error || written != _Written)
+    {
+        return std::nullopt;
+    }
+
+    std::optional<MCDiskFile> file = MCDiskFile::Open(_Path, MCDiskFileMode::Read);
+
+    if (file.has_value() && file->Length() != _Length)
+    {
+        file.reset();
+    }
+
+    return file;
+}
+
 MCOptionalRef<MCDiskFile> MCFastFile::File()
 {
     if (!_Handle.has_value())
     {
-        // Released: a file changed since (another written in its place) would be read by the old directory's offsets.
-        std::error_code error;
-        const std::filesystem::file_time_type written = std::filesystem::last_write_time(_Path, error);
-
-        if (error || written != _Written)
-        {
-            return std::nullopt;
-        }
-
-        _Handle = MCDiskFile::Open(_Path, MCDiskFileMode::Read);
-
-        if (_Handle.has_value() && _Handle->Length() != _Length)
-        {
-            _Handle.reset();
-        }
+        // Released: opened again only if it is the file the directory was read from.
+        _Handle = OpenAnother();
     }
 
     return _Handle.has_value() ? MCOptionalRef<MCDiskFile>(*_Handle) : std::nullopt;
@@ -122,16 +138,12 @@ std::vector<uint8_t> MCFastFile::ReadStored(int32_t index)
 {
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
     const MCOptionalRef<MCDiskFile> opened = File();
+    return opened ? StoredBytes(entry, *opened) : std::vector<uint8_t>();
+}
 
-    if (!opened)
-    {
-        return {};
-    }
-
-    MCDiskFile& file = *opened;
-    std::vector<uint8_t> stored(static_cast<size_t>(std::max(entry.Size, 0)));
-    stored.resize(file.ReadAt(static_cast<uint32_t>(entry.Offset), stored));
-    return stored;
+std::vector<uint8_t> MCFastFile::ReadStored(int32_t index, MCDiskFile& file) const
+{
+    return StoredBytes(_Entries.at(static_cast<size_t>(index)), file);
 }
 
 int32_t MCFastFile::ReadEntry(int32_t index, std::span<uint8_t> data)

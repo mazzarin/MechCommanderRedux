@@ -19,6 +19,7 @@
     <ClCompile Include="MCGameFolder.cpp" />
     <ClCompile Include="MCHttpGetWin.cpp" />
     <ClCompile Include="MCTelemetryWin.cpp" />
+    <ClCompile Include="MCWebSocketWin.cpp" />
     <ClCompile Include="stdafx.cpp" />
     <ClCompile Include="tests\AblRuntimeTests.cpp">
       <Filter>tests</Filter>
@@ -299,6 +300,9 @@
     <ClCompile Include="tests\WeatherPaceTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\WebSocketTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ZoomTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -311,6 +315,7 @@
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="tests\fakes\MCFakeSignaling.h">

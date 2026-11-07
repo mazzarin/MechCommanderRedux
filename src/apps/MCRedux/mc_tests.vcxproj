@@ -71,6 +71,9 @@
     <ClCompile Include="MCTelemetryWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="MCWebSocketWin.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
@@ -169,6 +172,7 @@
     <ClCompile Include="tests\VfxTransformTests.cpp" />
     <ClCompile Include="tests\VideoWindowTests.cpp" />
     <ClCompile Include="tests\WeatherPaceTests.cpp" />
+    <ClCompile Include="tests\WebSocketTests.cpp" />
     <ClCompile Include="tests\ZoomTests.cpp" />
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCContentAtStart.h" />
@@ -177,6 +181,7 @@
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="tests\fakes\MCFakeSignaling.h" />

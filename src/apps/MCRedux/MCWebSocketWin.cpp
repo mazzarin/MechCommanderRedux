@@ -287,10 +287,19 @@ namespace
                 }
                 case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
                 {
-                    Fail(_SecureFailure != 0
-                             ? std::format("the service's certificate wasn't trusted (WinHTTP flags {:#x})",
-                                           _SecureFailure)
-                             : Failed(event.Handle == _Socket ? "The socket" : "Reaching the service", event.Error));
+                    if (_SecureFailure != 0)
+                    {
+                        Fail(std::format("{} (WinHTTP flags {:#x})", MCWebSocketUntrusted, _SecureFailure));
+                    }
+                    else if (event.Error == ERROR_WINHTTP_SECURE_FAILURE)
+                    {
+                        Fail(std::format("{} (WinHTTP error {})", MCWebSocketUntrusted, event.Error));
+                    }
+                    else
+                    {
+                        Fail(Failed(event.Handle == _Socket ? "The socket" : "Reaching the service", event.Error));
+                    }
+
                     return;
                 }
                 default:

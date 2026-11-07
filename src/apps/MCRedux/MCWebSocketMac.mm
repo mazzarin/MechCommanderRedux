@@ -45,9 +45,30 @@ namespace
         }
     };
 
+    /// <summary>Whether <paramref name="error"/> is the system refusing the server's certificate.</summary>
+    bool RefusedCertificate(NSError* error)
+    {
+        if (![error.domain isEqualToString:NSURLErrorDomain])
+        {
+            return false;
+        }
+
+        switch (error.code)
+        {
+            case NSURLErrorServerCertificateHasBadDate:
+            case NSURLErrorServerCertificateUntrusted:
+            case NSURLErrorServerCertificateHasUnknownRoot:
+            case NSURLErrorServerCertificateNotYetValid:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     std::string ErrorText(NSError* error)
     {
-        return std::format("{} error {}", error.domain.UTF8String, static_cast<long>(error.code));
+        const std::string text = std::format("{} error {}", error.domain.UTF8String, static_cast<long>(error.code));
+        return RefusedCertificate(error) ? std::format("{} ({})", MCWebSocketUntrusted, text) : text;
     }
 
     size_t MessageBytes(NSURLSessionWebSocketMessage* message)

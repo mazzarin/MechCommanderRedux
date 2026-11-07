@@ -14,6 +14,12 @@
 #include <string_view>
 #include <vector>
 
+/// <summary>
+/// How <see cref="MCWebSocket::WhyClosed"/> starts when the service's certificate was refused (expired, for another
+/// name, or from no root the system trusts), on every platform.
+/// </summary>
+inline constexpr std::string_view MCWebSocketUntrusted = "the service's certificate wasn't trusted";
+
 /// <summary>One WebSocket, opened by <see cref="MCWebSocketOpener"/>: sends queue until it opens. Thread-safe.</summary>
 class MCWebSocket
 {

@@ -38,8 +38,8 @@ PROJECTS = [
                                        "MCCrashTrace.cpp", "MCCrashTrace.h", "MCFirstStart.cpp", "MCFirstStart.h",
                                        "MCGameFolder.cpp", "MCGameFolder.h",
                                        "MCHttpGet.h", "MCHttpGetWin.cpp",
-                                       "MCTelemetryBackend.h", "MCTelemetryWin.cpp", "MCWinHttp.h", "stdafx.cpp",
-                                       "stdafx.h", "tests/"]),
+                                       "MCTelemetryBackend.h", "MCTelemetryWin.cpp", "MCWebSocketOpen.h",
+                                       "MCWebSocketWin.cpp", "MCWinHttp.h", "stdafx.cpp", "stdafx.h", "tests/"]),
     ("apps/MCEditor/MCEditor.vcxproj", "tree"),
     ("apps/MCXLauncher/MCXLauncher.vcxproj", "tree"),
 ]

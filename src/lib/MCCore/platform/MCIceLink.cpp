@@ -496,11 +496,9 @@ struct MCIceLink::Impl
     /// Whether this end tries <paramref name="candidate"/>, an address the other end offered: only an address as such.
     /// A name libdatachannel looks up, each on a thread of its own, so the other end could have this machine ask the
     /// name servers whatever it likes (a name server it runs learns the player's, a public game's player's too); a
-    /// game offers only addresses. Relay only, it tries the other end's relay alone: its checks to any other address
-    /// would tell that end this one's (libdatachannel's policy only keeps this end's own addresses out of its
-    /// signals). Not yet enough against a game that isn't this one: libjuice checks every pair from this end's own
-    /// socket too, so an address offered as a relay's that isn't one still learns this end's (PLAN.md, step 3: before
-    /// public games).
+    /// game offers only addresses. Relay only, it tries the other end's relay alone, and libjuice's relay policy (the
+    /// game carries its pull request #363: tools/vendor/README.md) sends every check from this end's own relay, so
+    /// an address offered as a relay's that isn't one learns only the relay's.
     /// </summary>
     bool Tries(rtc::Candidate& candidate) const
     {

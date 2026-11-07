@@ -40,8 +40,8 @@ public:
         std::vector<Relay> Relays;
         /// <summary>
         /// Only the relays' path, so neither game learns the other's address (a public game's): this end offers only its
-        /// relay's address, and tries only what the other end offers as its relay's (which a game that isn't this one
-        /// can fake: MCIceLink.cpp's Tries).
+        /// relay's address, tries only what the other end offers as its relay's, and sends only from its own relay (a
+        /// game that isn't this one can fake its relay's address: MCIceLink.cpp's Tries).
         /// </summary>
         bool RelayOnly = false;
         /// <summary>

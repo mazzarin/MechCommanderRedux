@@ -165,8 +165,8 @@ SelectDirLabel3=Setup downloads the game into a folder of its own, or installs {
 [CustomMessages]
 DownloadGame=&Download it
 UseMyCopy=&Use my copy of MechCommander Gold
-TakeoverChoice=Redux HD takes over this copy. To leave it as it is, choose Download it instead. Uninstalling Redux HD puts your copy back the way it was.
-TakeoverCopy=Redux HD takes over this copy. Uninstalling Redux HD puts your copy back the way it was.
+TakeoverChoice=Redux HD takes over this copy. To keep it unchanged, choose Download it instead.%nUninstalling Redux HD restores your copy.
+TakeoverCopy=Redux HD takes over this copy.%nUninstalling Redux HD restores your copy.
 HdChoice=Redux &HD art, sound and movies
 GameSize=%1 (%2 GB)
 HdSize=%1 (%2 GB more)
@@ -492,12 +492,12 @@ begin
   // Without the download to choose instead, the note says only what the install and the uninstall do.
   if AsksDownloads then
   begin
-    TakeoverNote.Caption := CustomMessage('TakeoverChoice');
+    TakeoverNote.Caption := FmtMessage(CustomMessage('TakeoverChoice'), []);
     TakeoverNote.Top := HdBox.Top + HdBox.Height + ScaleY(16);
   end
   else
   begin
-    TakeoverNote.Caption := CustomMessage('TakeoverCopy');
+    TakeoverNote.Caption := FmtMessage(CustomMessage('TakeoverCopy'), []);
     TakeoverNote.Top := WizardForm.DirEdit.Top + WizardForm.DirEdit.Height + ScaleY(16);
   end;
 

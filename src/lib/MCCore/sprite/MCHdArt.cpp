@@ -9,7 +9,9 @@
 #include "sprite/MCBc7.h"
 #include "sprite/MCInBetween.h"
 #include "sprite/MCShape.h"
+#include "vfx/MCVfxFunctions.h"
 
+#include <condition_variable>
 #include <unordered_set>
 
 int GHdArt = 0;
@@ -59,6 +61,17 @@ namespace
     /// while the Mac gives an app started from the Finder 256 open files and Windows' C runtime 512.
     /// </summary>
     constexpr size_t MaxOpenArchiveFiles = 128;
+    /// <summary>
+    /// Port-only (HD art): once one of a numbered folder's frames is drawn the first time, the reading thread reads the
+    /// rest of its steps (its in-betweens, or its turn middle's), then this many frames on with theirs.
+    /// </summary>
+    constexpr int32_t FramesAhead = 1;
+    /// <summary>The most first draws waiting for the reading thread to read after (the oldest left out past it).</summary>
+    constexpr size_t MaxFollows = 256;
+    /// <summary>The most bytes of frames read ahead and not taken yet (the oldest dropped past it).</summary>
+    constexpr size_t MaxAheadBytes = 32u * 1024u * 1024u;
+    /// <summary>A shape table's header up to its frame count (VfxShapeCount reads it at byte 4).</summary>
+    constexpr size_t ShapeCountEnd = 8;
 
     /// <summary>An open archive, and the first folders of its entries' names (upper-cased).</summary>
     struct MCHdArchive
@@ -196,6 +209,57 @@ namespace
         uint64_t Id = 0;
     };
 
+    /// <summary>
+    /// Port-only (HD art): a numbered folder's frame drawn the first time, whose next ones the reading thread reads: its
+    /// key, its shape table's frame count, and copies of what its folder says (the folder may go while it reads): its
+    /// archive, its entries' start there, and whether its frames' baked shadows are marked.
+    /// </summary>
+    struct Follow
+    {
+        FrameKey Key;
+        int32_t Frames = 0;
+        std::shared_ptr<MCHdArchive> Archive;
+        std::string Prefix;
+        bool BakedShadows = false;
+    };
+
+    /// <summary>A frame read ahead (numbered when the game's thread takes it), and its place in ReadAhead::Order.</summary>
+    struct ReadyFrame
+    {
+        std::shared_ptr<MCHdArt::Frame> Frame;
+        std::list<FrameKey>::iterator InOrder;
+    };
+
+    /// <summary>
+    /// Port-only (HD art): what the game's thread and the reading thread share, under Lock. The game's thread hands it
+    /// each numbered frame it draws the first time (Follows) and takes what it read when a frame is first drawn; the
+    /// reading thread reads the frames drawn after each, those the game's thread hasn't looked at (Known).
+    /// </summary>
+    struct ReadAhead
+    {
+        std::mutex Lock;
+        /// <summary>Told of every frame read ahead, follow ended and change of what was found.</summary>
+        std::condition_variable_any Changed;
+        std::deque<Follow> Follows;
+        /// <summary>
+        /// The frames the game's thread has looked at (kept, missing from the pack, unusable, or being read by it), which
+        /// the reading thread leaves alone.
+        /// </summary>
+        std::unordered_set<FrameKey, FrameKeyHash> Known;
+        /// <summary>The frame the reading thread reads now: the game's thread waits for it rather than read it too.</summary>
+        std::optional<FrameKey> Reading;
+        /// <summary>The frames read ahead, the oldest first in Order, and their bytes.</summary>
+        std::unordered_map<FrameKey, ReadyFrame, FrameKeyHash> Ready;
+        std::list<FrameKey> Order;
+        size_t Bytes = 0;
+        /// <summary>Counts the times what was found was forgotten (the pack set): a read begun before is dropped.</summary>
+        uint64_t Generation = 0;
+        /// <summary>Set while the reading thread works on a follow.</summary>
+        bool Working = false;
+        /// <summary>The reading thread, started with the first follow; last, so it stops before the rest goes.</summary>
+        std::jthread Reader;
+    };
+
     struct State
     {
         /// <summary>The folder set (empty: the default), and whether the folder in use exists (unknown: not looked).</summary>
@@ -219,6 +283,8 @@ namespace
         /// <summary>The budget set (0: none, the machine's).</summary>
         size_t Budget = 0;
         size_t Read = 0;
+        /// <summary>How many of those the reading thread read (ReadAhead).</summary>
+        size_t TakenAhead = 0;
         std::chrono::nanoseconds ReadTime{0};
         /// <summary>The folders whose problems were logged (once each).</summary>
         std::set<std::filesystem::path> Logged;
@@ -237,6 +303,11 @@ namespace
         /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
         std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>
+        /// Guards the archives' files (MCFastFile's reads, Release and IsOpen) and the two below, which the reading thread
+        /// uses too: a file's stream can't be read from two threads, and either thread's read may close another's file.
+        /// </summary>
+        std::mutex ArchiveFiles;
+        /// <summary>
         /// The archives' files kept open, the most recently read first (at most MaxOpenArchiveFiles), and each one's
         /// place there.
         /// </summary>
@@ -248,6 +319,8 @@ namespace
         std::set<std::pair<MCAddressKey, int32_t>> LineArtFrames;
         /// <summary>The pictures the game made of the pack's (MCHdArt::KeepPicture), by their pixels' hash.</summary>
         std::unordered_map<uint64_t, std::shared_ptr<const MCHdArt::Frame>> KeptPictures;
+        /// <summary>The frames read ahead; last, so its thread stops before the rest it reads goes.</summary>
+        ReadAhead Ahead;
     };
 
     State& TheState()
@@ -401,7 +474,7 @@ namespace
 
     /// <summary>
     /// Notes that <paramref name="file"/> was just opened or read, closing the least recently read of the archives' files
-    /// past MaxOpenArchiveFiles.
+    /// past MaxOpenArchiveFiles. Call with State::ArchiveFiles held.
     /// </summary>
     void KeepOpen(const std::shared_ptr<MCFastFile>& file)
     {
@@ -459,7 +532,11 @@ namespace
 
         auto archive = std::make_shared<MCHdArchive>();
         archive->File = std::move(*file);
-        KeepOpen(archive->File);
+
+        {
+            std::scoped_lock lock(TheState().ArchiveFiles);
+            KeepOpen(archive->File);
+        }
 
         for (const MCFileEntry& entry : archive->File->GetEntries())
         {
@@ -508,6 +585,50 @@ namespace
     }
 
     /// <summary>
+    /// Entry <paramref name="index"/> of <paramref name="archive"/> (named <paramref name="name"/>, for what is wrong),
+    /// a <c>.hdf</c> file, inflated when packed, as a frame for a shape of <paramref name="width"/> x
+    /// <paramref name="height"/> (0 x 0: any). From either thread: the file is read under State::ArchiveFiles, the rest
+    /// without it.
+    /// </summary>
+    std::expected<MCHdArt::Frame, std::string> ReadEntry(const MCHdArchive& archive, int32_t index,
+                                                         std::string_view name, int32_t width, int32_t height)
+    {
+        const MCFileEntry& entry = archive.File->GetEntries()[static_cast<size_t>(index)];
+
+        if (entry.RealSize < 0 || static_cast<size_t>(entry.RealSize) > MaxHdfBytes)
+        {
+            return std::unexpected(std::format("{} is too large", name));
+        }
+
+        std::vector<uint8_t> stored;
+
+        {
+            std::scoped_lock lock(TheState().ArchiveFiles);
+            stored = archive.File->ReadStored(index);
+            KeepOpen(archive.File);
+        }
+
+        if (stored.size() != static_cast<size_t>(entry.Size))
+        {
+            return std::unexpected(std::format("{} can't be read", name));
+        }
+
+        if (entry.Size != entry.RealSize)
+        {
+            auto inflated = MCInflate::Inflate(stored, static_cast<size_t>(entry.RealSize));
+
+            if (!inflated)
+            {
+                return std::unexpected(std::format("{} doesn't unpack: {}", name, inflated.error()));
+            }
+
+            stored = std::move(*inflated);
+        }
+
+        return MCHdArt::DecodeHdf(stored, width, height);
+    }
+
+    /// <summary>
     /// The frame <paramref name="frame"/> of <paramref name="folder"/> from its archive (ArchiveOf): its entry
     /// <c>&lt;the rest of the folder's path&gt;\&lt;frame&gt;.hdf</c>, inflated when packed; none when there is no such
     /// entry.
@@ -528,34 +649,7 @@ namespace
                 return std::optional<MCHdArt::Frame>();
             }
 
-            const MCFileEntry& entry = archive->File->GetEntries()[static_cast<size_t>(*index)];
-
-            if (entry.RealSize < 0 || static_cast<size_t>(entry.RealSize) > MaxHdfBytes)
-            {
-                return std::unexpected(std::format("{} is too large", name));
-            }
-
-            std::vector<uint8_t> stored = archive->File->ReadStored(*index);
-            KeepOpen(archive->File);
-
-            if (stored.size() != static_cast<size_t>(entry.Size))
-            {
-                return std::unexpected(std::format("{} can't be read", name));
-            }
-
-            if (entry.Size != entry.RealSize)
-            {
-                auto inflated = MCInflate::Inflate(stored, static_cast<size_t>(entry.RealSize));
-
-                if (!inflated)
-                {
-                    return std::unexpected(std::format("{} doesn't unpack: {}", name, inflated.error()));
-                }
-
-                stored = std::move(*inflated);
-            }
-
-            auto decoded = MCHdArt::DecodeHdf(stored, width, height);
+            auto decoded = ReadEntry(*archive, *index, name, width, height);
 
             if (!decoded)
             {
@@ -602,6 +696,36 @@ namespace
     }
 
     /// <summary>
+    /// The steps a numbered frame's step goes with (sprite/MCInBetween.h): the frame's own and its in-betweens toward
+    /// the next frame (an effect's, a walk's), or (HDTurns) a legs frame's turn middle and its in-betweens. Its members
+    /// are numbered from the frame's own (or the turn middle's), 0.
+    /// </summary>
+    struct StepFamily
+    {
+        /// <summary>The turn middle's step (TurnStep or TurnMirroredStep); 0: the frame's own.</summary>
+        int32_t Turn = 0;
+        /// <summary>The member a step is, and how many members there may be.</summary>
+        int32_t Member = 0;
+        int32_t Members = MaxInBetweenSteps;
+
+        /// <summary>The step that names member <paramref name="member"/>.</summary>
+        int32_t StepOf(int32_t member) const { return Turn == 0 ? member : TurnBetweenStep(Turn, member); }
+    };
+
+    /// <summary>The family <paramref name="step"/> (a numbered frame key's, NumberedKey) is of, and its member.</summary>
+    StepFamily FamilyOf(uint64_t step)
+    {
+        if (step < static_cast<uint64_t>(TurnStep))
+        {
+            return {0, static_cast<int32_t>(step), MaxInBetweenSteps};
+        }
+
+        constexpr uint64_t BetweenMask = (uint64_t{1} << TurnBetweenShift) - 1;
+        return {static_cast<int32_t>(step & ~(BetweenMask << TurnBetweenShift)),
+                static_cast<int32_t>(step >> TurnBetweenShift & BetweenMask), LegsInBetweenSteps};
+    }
+
+    /// <summary>
     /// The name of a numbered folder's frame <paramref name="key"/> (<see cref="NumberedKey"/>): its number, and an
     /// in-between's step (a turn middle's name) after <see cref="InBetweenSeparator"/>.
     /// </summary>
@@ -616,14 +740,12 @@ namespace
         }
 
         // A turn middle, or (HD art's walk in-betweens) a turn middle's in-between toward the next frame's.
-        if (step >= TurnStep)
+        if (const StepFamily family = FamilyOf(step); family.Turn != 0)
         {
-            const uint64_t between = step >> TurnBetweenShift & ((uint64_t{1} << TurnBetweenShift) - 1);
-            const uint64_t turn = step & ~(((uint64_t{1} << TurnBetweenShift) - 1) << TurnBetweenShift);
-            const std::string_view turnName = turn == TurnMirroredStep ? TurnMirroredName : TurnName;
-            return between == 0
-                       ? std::format("{}{}{}", frame, InBetweenSeparator, turnName)
-                       : std::format("{}{}{}{}{}", frame, InBetweenSeparator, turnName, InBetweenSeparator, between);
+            const std::string_view turnName = family.Turn == TurnMirroredStep ? TurnMirroredName : TurnName;
+            return family.Member == 0 ? std::format("{}{}{}", frame, InBetweenSeparator, turnName)
+                                      : std::format("{}{}{}{}{}", frame, InBetweenSeparator, turnName,
+                                                    InBetweenSeparator, family.Member);
         }
 
         return std::format("{}{}{}", frame, InBetweenSeparator, step);
@@ -652,15 +774,15 @@ namespace
     }
 
     /// <summary>
-    /// A frame just read from <paramref name="folder"/>: numbered <paramref name="id"/>, its baked shadow marked if it
-    /// is an object's, else whether the pack marked one (MCHdArt::Frame::PaintedShadow).
+    /// A frame just read: numbered <paramref name="id"/>, its baked shadow marked if it is an object's (its folder's
+    /// <paramref name="bakedShadows"/>), else whether the pack marked one (MCHdArt::Frame::PaintedShadow).
     /// </summary>
-    std::shared_ptr<const MCHdArt::Frame> Finished(MCHdArt::Frame&& frame, const FrameFolder& folder, uint64_t id)
+    std::shared_ptr<MCHdArt::Frame> Finished(MCHdArt::Frame&& frame, bool bakedShadows, uint64_t id)
     {
         auto made = std::make_shared<MCHdArt::Frame>(std::move(frame));
         made->Id = id;
 
-        if (folder.BakedShadows)
+        if (bakedShadows)
         {
             MCHdArt::MarkBakedShadows(*made);
         }
@@ -727,7 +849,7 @@ namespace
                     return nullptr;
                 }
 
-                return Finished(std::move(**archived), folder, id);
+                return Finished(std::move(**archived), folder.BakedShadows, id);
             }
 
             // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
@@ -758,16 +880,21 @@ namespace
             return std::unexpected(std::format("frame {}: {}", frame, read.error()));
         }
 
-        return Finished(std::move(*read), folder, id);
+        return Finished(std::move(*read), folder.BakedShadows, id);
     }
 
-    /// <summary>Drops the kept frame <paramref name="cached"/>; its entry stays, to be read again with its Id.</summary>
-    void Drop(State& state, Cached& cached)
+    /// <summary>
+    /// Drops the kept frame <paramref name="key"/> (<paramref name="cached"/>); its entry stays, to be read again (or read
+    /// ahead again) with its Id.
+    /// </summary>
+    void Drop(State& state, const FrameKey& key, Cached& cached)
     {
         state.Order.erase(cached.InOrder);
         state.Bytes -= cached.Frame->Bytes();
         cached.Frame.reset();
         cached.Looked = false;
+        std::scoped_lock lock(state.Ahead.Lock);
+        state.Ahead.Known.erase(key);
     }
 
     /// <summary>
@@ -783,13 +910,247 @@ namespace
         {
             if (const auto oldest = state.Frames.find(state.Order.front()); oldest != state.Frames.end())
             {
-                Drop(state, oldest->second);
+                Drop(state, oldest->first, oldest->second);
             }
             else
             {
                 state.Order.pop_front();
             }
         }
+    }
+
+    /// <summary>The frames in the shape table starting at <paramref name="table"/>; 0 when it isn't one.</summary>
+    int32_t FramesIn(std::span<const uint8_t> table)
+    {
+        return table.size() >= ShapeCountEnd && VfxIsShapeTable(table) ? VfxShapeCount(table) : 0;
+    }
+
+    /// <summary>A frame for the reading thread to read: its name, its entry in the follow's archive and that's name.</summary>
+    struct AheadEntry
+    {
+        uint64_t Name = 0;
+        int32_t Index = 0;
+        std::string Entry;
+    };
+
+    /// <summary>
+    /// The frames drawn after <paramref name="follow"/>'s that its archive holds, the soonest drawn first: the rest of its
+    /// step's family (its in-betweens, or its turn middle's), then each of the next FramesAhead frames' (looping round to
+    /// the first), each family up to the first member the archive lacks.
+    /// </summary>
+    std::vector<AheadEntry> NextFrames(const Follow& follow)
+    {
+        const auto frame = static_cast<int32_t>(follow.Key.Name & FrameNumberMask);
+        const StepFamily family = FamilyOf(follow.Key.Name >> InBetweenNameShift);
+        std::vector<AheadEntry> next;
+
+        // Frame at's family from member from on, up to the first member the archive lacks.
+        const auto addFamily = [&](int32_t at, int32_t from)
+        {
+            for (int32_t member = from; member < family.Members; ++member)
+            {
+                const uint64_t name = NumberedKey(at, family.StepOf(member));
+                std::string entry = follow.Prefix + NumberedName(name) + std::string(HdfExtension);
+                const std::optional<int32_t> index = follow.Archive->File->Find(entry);
+
+                if (!index.has_value())
+                {
+                    return;
+                }
+
+                next.push_back(AheadEntry{name, *index, std::move(entry)});
+            }
+        };
+
+        addFamily(frame, family.Member + 1);
+
+        for (int32_t on = 1; on <= FramesAhead && on < follow.Frames; ++on)
+        {
+            addFamily((frame + on) % follow.Frames, 0);
+        }
+
+        return next;
+    }
+
+    /// <summary>
+    /// Keeps <paramref name="frame"/>, read ahead as <paramref name="key"/>, for the game's thread, dropping the oldest
+    /// kept past MaxAheadBytes. Call with ReadAhead::Lock held.
+    /// </summary>
+    void Hold(ReadAhead& ahead, const FrameKey& key, std::shared_ptr<MCHdArt::Frame>&& frame)
+    {
+        const size_t bytes = frame->Bytes();
+
+        if (!ahead.Ready.try_emplace(key, ReadyFrame{std::move(frame), ahead.Order.end()}).second)
+        {
+            return;
+        }
+
+        ahead.Bytes += bytes;
+        ahead.Ready.at(key).InOrder = ahead.Order.insert(ahead.Order.end(), key);
+
+        while (ahead.Bytes > MaxAheadBytes && ahead.Order.size() > 1)
+        {
+            if (const auto oldest = ahead.Ready.find(ahead.Order.front()); oldest != ahead.Ready.end())
+            {
+                ahead.Bytes -= oldest->second.Frame->Bytes();
+                ahead.Ready.erase(oldest);
+            }
+
+            ahead.Order.pop_front();
+        }
+    }
+
+    /// <summary>
+    /// The reading thread: takes the follows in turn and reads the frames drawn after each (NextFrames) that the game's
+    /// thread hasn't looked at and that aren't read already, one at a time, without the lock, as the game's thread
+    /// would for a shape of any size (taking one, it checks the size it asks for). A read that fails is left to the
+    /// game's thread, which logs why; a read begun before what was found was forgotten is dropped.
+    /// </summary>
+    void ReadFramesAhead(std::stop_token stop)
+    {
+        ReadAhead& ahead = TheState().Ahead;
+        std::unique_lock lock(ahead.Lock);
+
+        while (ahead.Changed.wait(lock, stop, [&ahead] { return !ahead.Follows.empty(); }))
+        {
+            const Follow follow = std::move(ahead.Follows.front());
+            ahead.Follows.pop_front();
+            const uint64_t generation = ahead.Generation;
+            ahead.Working = true;
+            lock.unlock();
+            // The archive's directory never changes once read, so it is looked in without a lock.
+            const std::vector<AheadEntry> next = NextFrames(follow);
+            lock.lock();
+
+            for (const AheadEntry& entry : next)
+            {
+                const FrameKey key{follow.Key.Folder, entry.Name};
+
+                if (stop.stop_requested() || ahead.Generation != generation)
+                {
+                    break;
+                }
+
+                if (ahead.Known.contains(key) || ahead.Ready.contains(key))
+                {
+                    continue;
+                }
+
+                ahead.Reading = key;
+                lock.unlock();
+                auto read = ReadEntry(*follow.Archive, entry.Index, entry.Entry, 0, 0);
+                std::shared_ptr<MCHdArt::Frame> frame =
+                    read.has_value() ? Finished(std::move(*read), follow.BakedShadows, 0) : nullptr;
+                lock.lock();
+                ahead.Reading.reset();
+
+                if (frame != nullptr && ahead.Generation == generation)
+                {
+                    Hold(ahead, key, std::move(frame));
+                }
+
+                ahead.Changed.notify_all();
+            }
+
+            ahead.Working = false;
+            ahead.Changed.notify_all();
+        }
+    }
+
+    /// <summary>
+    /// Hands the reading thread <paramref name="key"/>, a frame just drawn the first time, to read the frames drawn after
+    /// it (starting the thread the first time): only a numbered folder's frame in an archive (not loose files, which
+    /// are a generator's, not a player's), and of a shape table of <paramref name="frames"/> frames.
+    /// </summary>
+    void FollowAhead(const FrameKey& key, int32_t frames)
+    {
+        State& state = TheState();
+        const FrameFolder& folder = state.Folders.at(key.Folder);
+
+        if (frames <= 0 || (key.Name & FrameNumberMask) >= static_cast<uint64_t>(frames) ||
+            folder.Names != Naming::Number || folder.Loose != std::optional(false) || !folder.Archived.has_value() ||
+            folder.Archived->Archive == nullptr)
+        {
+            return;
+        }
+
+        ReadAhead& ahead = state.Ahead;
+        std::scoped_lock lock(ahead.Lock);
+
+        // Past the most, the oldest is left out: the game has drawn on since.
+        if (ahead.Follows.size() >= MaxFollows)
+        {
+            ahead.Follows.pop_front();
+        }
+
+        ahead.Follows.push_back(
+            Follow{key, frames, folder.Archived->Archive, folder.Archived->Prefix, folder.BakedShadows});
+
+        if (!ahead.Reader.joinable())
+        {
+            ahead.Reader = std::jthread(ReadFramesAhead);
+        }
+
+        ahead.Changed.notify_all();
+    }
+
+    /// <summary>
+    /// The frame <paramref name="key"/> if the reading thread read it ahead (waiting while it reads it), taken from it;
+    /// null when it didn't, and then it never will: the game's thread looks at it now.
+    /// </summary>
+    std::shared_ptr<MCHdArt::Frame> TakeAhead(const FrameKey& key)
+    {
+        ReadAhead& ahead = TheState().Ahead;
+        std::unique_lock lock(ahead.Lock);
+        ahead.Changed.wait(lock, [&] { return ahead.Reading != key; });
+        ahead.Known.insert(key);
+        const auto found = ahead.Ready.find(key);
+
+        if (found == ahead.Ready.end())
+        {
+            return nullptr;
+        }
+
+        std::shared_ptr<MCHdArt::Frame> frame = std::move(found->second.Frame);
+        ahead.Bytes -= frame->Bytes();
+        ahead.Order.erase(found->second.InOrder);
+        ahead.Ready.erase(found);
+        return frame;
+    }
+
+    /// <summary>Forgets the frames read ahead and those to read, and drops any read begun (the pack is set).</summary>
+    void ForgetAhead()
+    {
+        ReadAhead& ahead = TheState().Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        ahead.Follows.clear();
+        ahead.Known.clear();
+        ahead.Reading.reset();
+        ahead.Ready.clear();
+        ahead.Order.clear();
+        ahead.Bytes = 0;
+        ++ahead.Generation;
+        ahead.Changed.notify_all();
+    }
+
+    /// <summary>
+    /// The frame <paramref name="key"/> as ReadFrame reads it, numbered <paramref name="id"/>: the reading thread's when
+    /// it read it ahead and it fits the shape of <paramref name="width"/> x <paramref name="height"/> asked for (0 x 0:
+    /// any, as MCHdArt::DecodeHdf takes them), else read now.
+    /// </summary>
+    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadOrTake(const FrameKey& key, int32_t width,
+                                                                                 int32_t height, uint64_t id)
+    {
+        if (std::shared_ptr<MCHdArt::Frame> ahead = TakeAhead(key);
+            ahead != nullptr &&
+            ((width == 0 && height == 0) || (ahead->OriginalWidth() == width && ahead->OriginalHeight() == height)))
+        {
+            ahead->Id = id;
+            ++TheState().TakenAhead;
+            return ahead;
+        }
+
+        return ReadFrame(key, width, height, id);
     }
 }
 
@@ -860,8 +1221,12 @@ auto MCHdArt::FrameFromPngs(const std::filesystem::path& colorPath, const std::f
 
 namespace
 {
-    /// <summary>The frame <paramref name="key"/>, from the cache or read the first time it is asked for.</summary>
-    std::shared_ptr<const MCHdArt::Frame> Cache(const FrameKey& key, int32_t width, int32_t height)
+    /// <summary>
+    /// The frame <paramref name="key"/>, from the cache or read the first time it is asked for (or taken from the reading
+    /// thread). A numbered frame of a shape table of <paramref name="frames"/> frames (none: 0) has the frames drawn after
+    /// it read ahead then.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> Cache(const FrameKey& key, int32_t width, int32_t height, int32_t frames = 0)
     {
         State& state = TheState();
         Cached& cached = state.Frames[key];
@@ -880,7 +1245,7 @@ namespace
             }
 
             const auto started = std::chrono::steady_clock::now();
-            auto read = ReadFrame(key, width, height, cached.Id);
+            auto read = ReadOrTake(key, width, height, cached.Id);
             state.ReadTime += std::chrono::steady_clock::now() - started;
 
             if (!read)
@@ -894,6 +1259,7 @@ namespace
                 state.Bytes += cached.Frame->Bytes();
                 ++state.Read;
                 std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
+                FollowAhead(key, frames);
                 Trim();
                 return kept;
             }
@@ -1153,6 +1519,8 @@ std::filesystem::path MCHdArt::PackFolder()
 
 void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
 {
+    // First, so nothing read ahead from the old pack is taken for the new one's frames of the same keys.
+    ForgetAhead();
     State& state = TheState();
     state.Folder = folder;
     state.FoundFolder.reset();
@@ -1170,8 +1538,13 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Logged.clear();
     state.MadeWith.reset();
     state.PaletteLooked = false;
-    state.OpenFiles.clear();
-    state.OpenAt.clear();
+
+    {
+        std::scoped_lock lock(state.ArchiveFiles);
+        state.OpenFiles.clear();
+        state.OpenAt.clear();
+    }
+
     state.Archives.clear();
     state.KeptPictures.clear();
     ++state.Version;
@@ -1521,7 +1894,7 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(std::span<const uint8_t> tab
         return nullptr;
     }
 
-    return Cache(FrameKey{found->second.Folder, NumberedKey(frame, step)}, width, height);
+    return Cache(FrameKey{found->second.Folder, NumberedKey(frame, step)}, width, height, FramesIn(table));
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindInFolder(const std::filesystem::path& folder, int32_t frame,
@@ -1793,7 +2166,7 @@ std::filesystem::path MCHdArt::ShapeTableFolder(uint64_t hash)
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
-                                                         int32_t step)
+                                                         int32_t step, int32_t frames)
 {
     if (!Active())
     {
@@ -1807,7 +2180,7 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t 
         folder->second = FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number);
     }
 
-    return Cache(FrameKey{folder->second, NumberedKey(frame, step)}, width, height);
+    return Cache(FrameKey{folder->second, NumberedKey(frame, step)}, width, height, frames);
 }
 
 uint64_t MCHdArt::NewFrameId()
@@ -1842,6 +2215,18 @@ size_t MCHdArt::FramesRead()
     return TheState().Read;
 }
 
+size_t MCHdArt::FramesReadAhead()
+{
+    return TheState().TakenAhead;
+}
+
+void MCHdArt::WaitForReadAhead()
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::unique_lock lock(ahead.Lock);
+    ahead.Changed.wait(lock, [&ahead] { return ahead.Follows.empty() && !ahead.Working; });
+}
+
 void MCHdArt::DropGround()
 {
     State& state = TheState();
@@ -1860,7 +2245,7 @@ void MCHdArt::DropGround()
     {
         if (cached.Frame != nullptr && std::ranges::contains(folders, key.Folder))
         {
-            Drop(state, cached);
+            Drop(state, key, cached);
         }
     }
 }
@@ -1892,7 +2277,9 @@ size_t MCHdArt::ArchivesOpen()
 
 size_t MCHdArt::ArchiveFilesOpen()
 {
-    return static_cast<size_t>(std::ranges::count_if(TheState().OpenFiles,
+    State& state = TheState();
+    std::scoped_lock lock(state.ArchiveFiles);
+    return static_cast<size_t>(std::ranges::count_if(state.OpenFiles,
                                                      [](const std::weak_ptr<MCFastFile>& kept)
                                                      {
                                                          const std::shared_ptr<MCFastFile> file = kept.lock();

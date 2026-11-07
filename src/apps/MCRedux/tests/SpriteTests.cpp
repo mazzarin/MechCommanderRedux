@@ -3,6 +3,8 @@
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "fixtures/MCRegisteredData.h"
+#include "ai/MCMoveChunk.h"
+#include "ai/MCMoveGeometry.h"
 #include "ai/MCMovePath.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -11,8 +13,10 @@
 #include "fixtures/MCRetailData.h"
 #include "lib/MCFile.h"
 #include "lib/MCPacketFile.h"
+#include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
+#include "network/MCMultiPlayer.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
 #include "object/MCMechGameSystem.h"
@@ -1639,4 +1643,87 @@ TEST_CASE_ISOLATED("game: with HDStops a mech held up mid-stride holds its strid
 
     GHdStops = 0;
     GMechBraking = 0;
+}
+
+/// <summary>
+/// With HDStops a multiplayer guest holds the stride of a mech held up mid-move, not of one at its move's end: the
+/// server sends each mover's next cells (up to four, its own first), ever fewer as it closes on its move's end, then its
+/// own cell alone; a mover held up (its path paused) sends its own cell straight after a full chunk. The guest takes the
+/// move as held up while the latest chunk with a cell to go was full, and as there once one showed the end; a chunk of
+/// its own cell alone keeps the last word. A mech yet to move isn't held up. With MechBraking the guest fits a stop only
+/// to the end a chunk showed, and keeps that end past a chunk of the step being walked into.
+/// </summary>
+TEST_CASE_ISOLATED("game: a multiplayer guest takes a mech's move as going on when the server's moves stop short, and "
+                   "as ending where they count down to (held strides let go, braking fitted to that end)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x200));
+    REQUIRE(mech != nullptr);
+    // A guest's game: a multiplayer game that isn't the server.
+    MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
+    REQUIRE(MultiPlayer()->IsServer == 0);
+
+    // Whether the guest takes the move as going on past the server's chunk of <cells> cells on east, from <from> cells
+    // east of the mech's own: held up (HDStops), and so not ending there (MechBraking: no stop planned at its end).
+    constexpr int32_t East = 2;
+    const MCMovePath steps{};
+    const auto goesOn = [&](int32_t cells, int32_t from)
+    {
+        MCMoveChunk chunk;
+        chunk.Build(*mech);
+        const int32_t column = chunk.StepPos[0][1] * MapCellDim + chunk.StepPos[0][3] + from;
+        chunk.StepPos[0][1] = column / MapCellDim;
+        chunk.StepPos[0][3] = column % MapCellDim;
+        chunk.NumSteps = cells;
+        chunk.StepRelPos.fill(East);
+        chunk.Pack(*mech);
+        mech->HandleMoveChunk(chunk.Data);
+        REQUIRE(mech->MoveChunk.NumSteps == cells);
+        const bool heldUp = mech->MoveHeldUp();
+        CHECK_EQ(mech->MoveEndsWith(steps), !heldUp);
+        return heldUp;
+    };
+
+    // The guest's path's last step, as the server's latest chunk left it.
+    const auto pathEnd = [&] { return mech->GetPilot()->GetMovePath().Goal; };
+    const auto endShownAt = [&](const MCVector3D& at)
+    { return mech->ChunkMoveEnd.has_value() && mech->ChunkMoveEnd->X == at.X && mech->ChunkMoveEnd->Y == at.Y; };
+
+    constexpr int32_t Full = MCMoveChunk::MaxSteps;
+    CHECK(!mech->MoveHeldUp());
+    CHECK(mech->MoveEndsWith(steps));
+    CHECK(!mech->ChunkMoveEnd.has_value());
+    CHECK(!goesOn(1, 0));
+
+    // Moving on, then held up: its own cell straight after a full chunk, for as long as it waits.
+    CHECK(goesOn(Full, 0));
+    CHECK(!mech->ChunkMoveEnd.has_value());
+    CHECK(goesOn(1, 1));
+    CHECK(goesOn(1, 1));
+
+    // Going on, then counting down to the move's end (three cells east), and there. The end stays where braking
+    // fits the stop to, past a chunk of the step being walked into (a leg's end) or of the cell it stands in.
+    CHECK(goesOn(Full, 0));
+    CHECK(!goesOn(3, 1));
+    const MCVector3D end = pathEnd();
+    CHECK(endShownAt(end));
+    CHECK(!goesOn(1, 2));
+    CHECK(pathEnd().X != end.X);
+    CHECK(endShownAt(end));
+    CHECK(!goesOn(2, 2));
+    CHECK(!goesOn(1, 3));
+    CHECK(endShownAt(end));
+
+    // A move shorter than a chunk from the start, there; then a long move again, its end not shown.
+    CHECK(!goesOn(2, 0));
+    CHECK(!goesOn(1, 1));
+    CHECK(goesOn(Full, 1));
+    CHECK(!mech->ChunkMoveEnd.has_value());
+
+    MCGameContext::Current().SetMultiPlayer(nullptr);
 }

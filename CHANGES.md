@@ -313,6 +313,10 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - **Redux HD.** A tree a mech knocks over no longer vanishes for a moment as it starts to fall. The expansion's trees
   fall and crumble from an empty first frame, which the original's frame lock (15 a second) steps past; the fall now
   starts as it does there at any frame rate.
+- **Redux HD.** In multiplayer, a guest's screen no longer freezes a mech mid-stride for three seconds when it reaches
+  the end of its move, and with BRAKING a guest's mechs no longer quicken and slow their stride as they walk, braking
+  for stops the host's don't make: they stop as on the host's. A mech made to wait for a unit in its way keeps its
+  stride, as before, but in its move's last few steps a guest's screen shows it standing.
 - Text shows ´ ¨ ° ¿ « » § ² º and ½, which the game's fonts listed but left blank: the marks are cut from the fonts'
   own é, ë and å, ¿ « » are made from ? < >, and the rest are drawn in the fonts' style.
 

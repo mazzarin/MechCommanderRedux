@@ -1032,36 +1032,28 @@ namespace
     }
 
     /// <summary>
-    /// Port-only (MechBraking): whether <paramref name="warrior"/>'s move ends where its path does: no jump left on the
-    /// way, and (but on a multiplayer client) it goes on no further (<see cref="MoveGoesOn"/>).
-    /// </summary>
-    auto MoveEndsHere(const MCMechWarrior& warrior, const MCMovePath& path) -> bool
-    {
-        for (int32_t step = path.CurStep; step < path.NumSteps; ++step)
-        {
-            if (static_cast<int8_t>(path.StepList[static_cast<size_t>(step)].Direction) > 7)
-            {
-                return false;
-            }
-        }
-
-        return MultiPlayerClient() || !MoveGoesOn(warrior, path);
-    }
-
-    /// <summary>
     /// Port-only (MechBraking): the metres from <paramref name="position"/> along <paramref name="path"/>'s steps left to
-    /// its end, as walked (from step to step; the steps' own distances to the goal count cells).
+    /// its end, as walked (from step to step; the steps' own distances to the goal count cells), then on to
+    /// <paramref name="end"/> when given (a multiplayer client's move's end, past the server's latest steps).
     /// </summary>
-    auto WalkLeft(const MCMovePath& path, const MCVector3D& position) -> float
+    auto WalkLeft(const MCMovePath& path, const MCVector3D& position, const std::optional<MCVector3D>& end) -> float
     {
         double units = 0.0;
         MCVector3D from = position;
+        const auto walk = [&](const MCVector3D& to)
+        {
+            units += std::hypot(static_cast<double>(to.X) - from.X, static_cast<double>(to.Y) - from.Y);
+            from = to;
+        };
 
         for (int32_t step = path.CurStep; step < path.NumSteps; ++step)
         {
-            const MCVector3D& to = path.StepList[static_cast<size_t>(step)].Destination;
-            units += std::hypot(static_cast<double>(to.X) - from.X, static_cast<double>(to.Y) - from.Y);
-            from = to;
+            walk(path.StepList[static_cast<size_t>(step)].Destination);
+        }
+
+        if (end.has_value())
+        {
+            walk(*end);
         }
 
         return static_cast<float>(units * MetersPerWorldUnit);
@@ -1073,21 +1065,49 @@ auto MCBattleMech::PlanStop(int32_t& newGestureStateGoal) -> void
     auto& actor = static_cast<MCMechActor&>(*Appearance);
     std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
     const MCMovePath& path = warrior->GetMovePath();
-    const bool moving = path.NumSteps > 0 && path.CurStep < path.NumSteps;
+    // A multiplayer client's path is the server's latest steps, which may end at the step being walked into: its walk
+    // goes on to the move's end the chunks showed.
+    const std::optional<MCVector3D> end = MultiPlayerClient() && ChunkShowedMoveEnd ? ChunkMoveEnd : std::nullopt;
+    const bool stepsLeft = path.NumSteps > 0 && path.CurStep < path.NumSteps;
     // Only a stride the mover keeps going is fitted to a stop (not one it limps, jumps or halts).
     const bool keepsGoing = newGestureStateGoal == MCStopState::Walk || newGestureStateGoal == MCStopState::Run;
     std::optional<float> metresLeft;
 
-    // The move ends where the original would stop it: within its last step's margin of error (metres) of the end.
-    if (moving && (keepsGoing || actor.PlannedStop) && MoveEndsHere(*warrior, path))
+    if ((stepsLeft || end.has_value()) && (keepsGoing || actor.PlannedStop) && MoveEndsWith(path))
     {
-        metresLeft = WalkLeft(path, Position) - MoveMarginOfError[1];
+        // The move ends where the original would stop it: within its last step's margin of error (metres) of the end.
+        const float walkLeft = WalkLeft(path, Position, end) - MoveMarginOfError[1];
+
+        if (stepsLeft || walkLeft > 0.0f)
+        {
+            metresLeft = walkLeft;
+        }
     }
 
     if (actor.FitStop(metresLeft))
     {
         newGestureStateGoal = MCStopState::Stand;
     }
+}
+
+auto MCBattleMech::MoveEndsWith(const MCMovePath& path) const -> bool
+{
+    for (int32_t step = path.CurStep; step < path.NumSteps; ++step)
+    {
+        if (static_cast<int8_t>(path.StepList[static_cast<size_t>(step)].Direction) > 7)
+        {
+            return false;
+        }
+    }
+
+    // A multiplayer client's path is the server's latest steps: the move ends there once they counted down to its end.
+    if (MultiPlayerClient())
+    {
+        return ChunkShowedMoveEnd;
+    }
+
+    const std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
+    return warrior != nullptr && !MoveGoesOn(*warrior, path);
 }
 
 auto MCBattleMech::LastStepMargin() const -> float
@@ -1105,10 +1125,10 @@ auto MCBattleMech::MoveHeldUp() const -> bool
 {
     const std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
 
-    // A multiplayer client's path is the server's latest steps: it can't tell a mech held up from one there.
+    // A multiplayer client's path is the server's latest steps: held up unless they counted down to the move's end.
     if (MultiPlayerClient())
     {
-        return true;
+        return !ChunkShowedMoveEnd;
     }
 
     if (warrior == nullptr)

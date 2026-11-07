@@ -5,6 +5,7 @@
 #include "object/MCPilotOrders.h"
 
 class MCFitIniFile;
+class MCMovePath;
 class MCSmoke;
 
 /// <summary>A BattleMech: legs and torso, arms, jump jets, heat, and the mech's movement and combat.</summary>
@@ -149,9 +150,16 @@ public:
     /// </summary>
     float LastStepMargin() const;
     /// <summary>
+    /// Port-only (MechBraking): whether the mech's move ends where <paramref name="path"/> (its move path) does: no jump
+    /// left on the way, and it goes on no further. On a multiplayer client, whose path is the server's latest steps,
+    /// when the server's chunks showed the move's end (<see cref="ChunkShowedMoveEnd"/>).
+    /// </summary>
+    bool MoveEndsWith(const MCMovePath& path) const;
+    /// <summary>
     /// Port-only (HDStops): whether the mech's move still has somewhere to go: its path paused with steps left (yielding
-    /// to a unit in its way), a path asked for, or a next leg, path or way point; always on a multiplayer client, whose
-    /// path is the server's latest steps. Reads the orders as they stand (MCMechWarrior::GetMovePath would move them on).
+    /// to a unit in its way), a path asked for, or a next leg, path or way point. On a multiplayer client, whose path is
+    /// the server's latest steps, unless the server's chunks showed the move's end (<see cref="ChunkShowedMoveEnd"/>).
+    /// Reads the orders as they stand (MCMechWarrior::GetMovePath would move them on).
     /// </summary>
     bool MoveHeldUp() const;
     /// <summary>Turns the torso toward the target (or back to straight) at the dynamics' rate.</summary>
@@ -258,6 +266,20 @@ public:
     int32_t NameIndex = 0;
     /// <summary>"NameVariant".</summary>
     int32_t NameVariant = 0;
+    /// <summary>
+    /// Port-only (HDStops, MechBraking): on a multiplayer client, whether the server's latest move chunk with a step to go
+    /// held the move's end (fewer steps than a chunk carries). A mech closing on its move's end is sent ever fewer steps,
+    /// then its own cell; one held up is sent its own cell straight after a full chunk. A chunk of one cell keeps the
+    /// last word: near the end it may be the step being walked into at a leg's end, or a wait (which then reads as there:
+    /// the mech stands, as in the original). True for a mech yet to move.
+    /// </summary>
+    bool ChunkShowedMoveEnd = true;
+    /// <summary>
+    /// Port-only (MechBraking): on a multiplayer client, where the move ends as the server's chunks showed it (the end
+    /// cell's middle, as its path's steps are): a stop is fitted to end there, as the chunks after it may hold only the
+    /// step being walked into. None while the end isn't shown.
+    /// </summary>
+    std::optional<MCVector3D> ChunkMoveEnd;
 
 private:
     /// <summary>

@@ -694,6 +694,14 @@ auto MCBattleMech::HandleMoveChunk(uint32_t chunk) -> int32_t
         MCMovePath& path = GetPilot()->GetMovePath();
         path.SetMoveChunk(MoveChunk);
 
+        // Port-only (HDStops, MechBraking): whether the chunks showed the move's end, and where; a chunk of one cell keeps
+        // the last word.
+        if (MoveChunk.NumSteps > 1)
+        {
+            ChunkShowedMoveEnd = MoveChunk.NumSteps < MCMoveChunk::MaxSteps;
+            ChunkMoveEnd = ChunkShowedMoveEnd ? std::optional(path.Goal) : std::nullopt;
+        }
+
         // Skip ahead to the step nearest the mech.
         if (path.NumStepsWhenNotPaused > 1)
         {

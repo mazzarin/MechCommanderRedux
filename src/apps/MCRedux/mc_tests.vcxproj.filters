@@ -158,9 +158,6 @@
     <ClCompile Include="tests\InterfaceTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
-    <ClCompile Include="tests\LauncherTests.cpp">
-      <Filter>tests</Filter>
-    </ClCompile>
     <ClCompile Include="tests\LibTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

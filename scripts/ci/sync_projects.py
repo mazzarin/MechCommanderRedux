@@ -41,7 +41,6 @@ PROJECTS = [
                                        "MCTelemetryBackend.h", "MCTelemetryWin.cpp", "MCWinHttp.h", "stdafx.cpp",
                                        "stdafx.h", "tests/"]),
     ("apps/MCEditor/MCEditor.vcxproj", "tree"),
-    ("apps/MCXLauncher/MCXLauncher.vcxproj", "tree"),
 ]
 
 ITEM = re.compile(r'[ \t]*<(ClCompile|ClInclude) Include="([^"]+)"\s*(?:/>|>(.*?)</\1>)[ \t]*\r?\n?', re.S)

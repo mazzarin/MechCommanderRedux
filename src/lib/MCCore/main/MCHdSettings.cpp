@@ -64,7 +64,7 @@ namespace
         // HDStops has a mech stopped mid-stride with its move held up hold its stride (sprite/MCMechActor.h).
         MCSetting{.Key = "HDStops", .Value = GHdStops},
         // MechBraking (gameplay) has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
-        MCSetting{.Key = "MechBraking", .Value = GMechBraking},
+        MCSetting{.Key = "MechBraking", .Value = GMechBraking, .Gameplay = true},
         // Reports sends reports of the computer, how the game runs, its settings and its crashes, under a random ID, once
         // the player has seen what they hold (main/MCTelemetry.h): off until then, whatever the build.
         MCSetting{.Key = "Reports", .Value = GReports, .Personal = 0, .Player = true},
@@ -72,6 +72,8 @@ namespace
 
     /// <summary>The defaults are the personal build's (<see cref="UseHdByDefault"/>).</summary>
     bool PersonalDefaults = false;
+    /// <summary>The gameplay settings' defaults are the personal build's (<see cref="UsePersonalGameplay"/>).</summary>
+    bool PersonalGameplay = false;
 
     /// <summary>A look DEFAULTS and ORIGINAL set (not the player's own answer, as REPORTS is).</summary>
     bool IsLook(const MCSetting& setting)
@@ -83,6 +85,11 @@ namespace
 void UseHdByDefault()
 {
     PersonalDefaults = true;
+}
+
+void UsePersonalGameplay()
+{
+    PersonalGameplay = true;
 }
 
 auto MCHdSettings::All() -> std::span<const MCSetting>
@@ -104,7 +111,7 @@ auto MCHdSettings::Find(std::string_view key) -> const MCSetting&
 
 auto MCHdSettings::Default(const MCSetting& setting) -> int32_t
 {
-    return PersonalDefaults ? setting.Personal : setting.Original;
+    return PersonalDefaults || (setting.Gameplay && PersonalGameplay) ? setting.Personal : setting.Original;
 }
 
 auto MCHdSettings::Read(MCFitIniFile& file) -> void

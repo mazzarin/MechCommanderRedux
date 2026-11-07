@@ -87,6 +87,10 @@ namespace
 
         bool HostUnreachable() const override { return _Inner->HostUnreachable(); }
 
+        void UseMirrors(std::span<const std::string> mirrors) override { _Inner->UseMirrors(mirrors); }
+
+        bool PassOver(std::string_view name) override { return _Inner->PassOver(name); }
+
     private:
         std::unique_ptr<MCContentStage::MCSource> _Inner;
         MCUpdateWork::MCProgress& _Progress;
@@ -134,20 +138,72 @@ std::string MCUpdateWork::TimeLeftText(std::chrono::seconds left)
     return rest == 0 ? std::format("ABOUT {} HR LEFT", hours) : std::format("ABOUT {} HR {} MIN LEFT", hours, rest);
 }
 
-void MCUpdateWork::MCRate::Add(MCClock::time_point at, uint64_t networkBytes)
+void MCUpdateWork::MCRate::MCAverage::Add(double value, double seconds, std::chrono::seconds smoothing)
 {
-    _Samples.emplace_back(at, networkBytes);
+    const double kept = std::exp(-seconds / std::chrono::duration<double>(smoothing).count());
+    Sum = Sum * kept + value * (1 - kept);
+    Weight = Weight * kept + (1 - kept);
+}
 
-    // The oldest kept is the last one at or before the window's start, so the speed spans the whole window.
-    while (_Samples.size() > 2 && _Samples[1].first <= at - SpeedWindow)
+void MCUpdateWork::MCRate::Add(MCClock::time_point at, uint64_t networkBytes, uint64_t left)
+{
+    if (!_Start)
     {
-        _Samples.pop_front();
+        _Start = at;
+        _Last = at;
+        _LastBytesAt = at;
+        _Bytes = networkBytes;
+        return;
+    }
+
+    if (at - _Last < SampleEvery)
+    {
+        return;
+    }
+
+    const double seconds = std::chrono::duration<double>(at - _Last).count();
+    const uint64_t got = networkBytes - std::min(networkBytes, _Bytes);
+    const double perSecond = static_cast<double>(got) / seconds;
+    _Speed.Add(perSecond, seconds, SpeedSmoothing);
+    _SteadySpeed.Add(perSecond, seconds, TimeLeftSmoothing);
+    _Last = at;
+    _Bytes = networkBytes;
+
+    if (got > 0)
+    {
+        _LastBytesAt = at;
+    }
+
+    if (Stalled() || _SteadySpeed.Value() <= 0)
+    {
+        _Countdown.reset();
+        return;
+    }
+
+    // The countdown goes on a second a second; a new estimate replaces it only once it strays past the tolerance.
+    const double estimate = static_cast<double>(left) / _SteadySpeed.Value();
+    const double tolerance =
+        std::max(TimeLeftTolerance * estimate, std::chrono::duration<double>(TimeLeftToleranceFloor).count());
+
+    if (_Countdown)
+    {
+        *_Countdown = std::max(0.0, *_Countdown - seconds);
+    }
+
+    if (!_Countdown || std::abs(estimate - *_Countdown) > tolerance)
+    {
+        _Countdown = estimate;
     }
 }
 
 MCUpdateWork::MCRate::MCClock::duration MCUpdateWork::MCRate::Span() const
 {
-    return _Samples.size() < 2 ? MCClock::duration::zero() : _Samples.back().first - _Samples.front().first;
+    return _Start ? _Last - *_Start : MCClock::duration::zero();
+}
+
+bool MCUpdateWork::MCRate::Stalled() const
+{
+    return _Last - _LastBytesAt >= StalledAfter;
 }
 
 std::optional<double> MCUpdateWork::MCRate::BytesPerSecond() const
@@ -157,24 +213,20 @@ std::optional<double> MCUpdateWork::MCRate::BytesPerSecond() const
         return std::nullopt;
     }
 
-    const double seconds = std::chrono::duration<double>(Span()).count();
-    const uint64_t bytes = _Samples.back().second - std::min(_Samples.back().second, _Samples.front().second);
-    return static_cast<double>(bytes) / seconds;
+    return Stalled() ? 0.0 : _Speed.Value();
 }
 
-std::optional<std::chrono::seconds> MCUpdateWork::MCRate::TimeLeft(uint64_t left) const
+std::optional<std::chrono::seconds> MCUpdateWork::MCRate::TimeLeft() const
 {
-    const std::optional<double> speed = BytesPerSecond();
-
-    if (Span() < TimeLeftAfter || !speed || *speed <= 0)
+    if (Span() < TimeLeftAfter || !_Countdown)
     {
         return std::nullopt;
     }
 
-    return std::chrono::seconds(static_cast<int64_t>(std::ceil(static_cast<double>(left) / *speed)));
+    return std::chrono::seconds(static_cast<int64_t>(std::ceil(*_Countdown)));
 }
 
-std::string MCUpdateWork::MCRate::Text(uint64_t left) const
+std::string MCUpdateWork::MCRate::Text() const
 {
     const std::optional<double> speed = BytesPerSecond();
 
@@ -183,7 +235,7 @@ std::string MCUpdateWork::MCRate::Text(uint64_t left) const
         return {};
     }
 
-    const std::optional<std::chrono::seconds> time = TimeLeft(left);
+    const std::optional<std::chrono::seconds> time = TimeLeft();
     return time ? std::format("{}{}{}", SpeedText(*speed), LineSeparator, TimeLeftText(*time)) : SpeedText(*speed);
 }
 

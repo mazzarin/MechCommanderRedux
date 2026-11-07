@@ -274,7 +274,7 @@ namespace
         // Once all is in (the files flushed, the update armed), there's no speed to tell.
         if (!shown.Stopping && !checking && received < expected)
         {
-            const std::string rate = shown.Rate.Text(expected - received);
+            const std::string rate = shown.Rate.Text();
             SDL_RenderDebugText(renderer, Margin, RateTop, rate.c_str());
         }
 
@@ -302,7 +302,8 @@ namespace
             return;
         }
 
-        rate.Add(std::chrono::steady_clock::now(), progress.Network());
+        rate.Add(std::chrono::steady_clock::now(), progress.Network(),
+                 report.Expected - std::min(report.Received, report.Expected));
     }
 
     /// <summary><see cref="MCFirstStart::Run"/> in a window open already.</summary>

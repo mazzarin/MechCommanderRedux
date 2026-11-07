@@ -259,6 +259,77 @@ TEST_CASE("update files: a rollout reaches its share of copies and no others; wi
     CHECK(!MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(tooMuch)).has_value());
 }
 
+TEST_CASE("update files: release.json's mirrors are read and kept; a file naming them reads as one without them, as "
+          "every build passes by a key it doesn't know")
+{
+    // release.json as the release script writes it with mirrors (tools/release/make_release.py), and the earlier
+    // releases still supported, which the mirrors' sync reads: a key this build doesn't know, as "mirrors" is to every
+    // build before it.
+    constexpr std::string_view Written = R"({
+  "format": 1,
+  "issue": 4,
+  "current": {
+    "release": 3,
+    "version": "0.2.3",
+    "notes": "Fixes.",
+    "programs": {
+      "mac": {"build": 640, "size": 7000000}
+    },
+    "content": {"list": "3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b", "size": 1203}
+  },
+  "mirrors": ["https://mirror.example/redux", "https://another.example/mc/"],
+  "supported": [{"release": 2, "list": "4a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b", "size": 1202}]
+})";
+    const std::vector<std::string> mirrors = {"https://mirror.example/redux", "https://another.example/mc/"};
+    auto read = MCReleaseFile::ReadReleases(Written);
+    REQUIRE(read.has_value());
+    CHECK(read->Mirrors == mirrors);
+    CHECK_EQ(read->Current.Number, uint64_t{3});
+
+    // As a build before mirrors read it: the file without the keys it doesn't know reads the same.
+    MCUpdateJson::MCJson older = MCUpdateJson::Object(Written);
+    older.erase("mirrors");
+    older.erase("supported");
+    const auto olderRead = MCReleaseFile::ReadReleases(older.dump());
+    REQUIRE(olderRead.has_value());
+    CHECK(olderRead->Mirrors.empty());
+    MCReleaseFile::MCReleases withoutMirrors = *read;
+    withoutMirrors.Mirrors.clear();
+    CHECK_EQ(MCReleaseFile::ReleasesPayload(*olderRead), MCReleaseFile::ReleasesPayload(withoutMirrors));
+    CHECK(!MCUpdateJson::Object(MCReleaseFile::ReleasesPayload(withoutMirrors)).contains("mirrors"));
+
+    // Written and read back; checked as signed, they come with the release.
+    const auto again = MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(*read));
+    REQUIRE(again.has_value());
+    CHECK(again->Mirrors == mirrors);
+    const KeyPair root(13);
+    const KeyPair key(14);
+    const std::array<MCSignedFile::MCPublicKey, 1> roots = {root.Public};
+    const auto taken = MCReleaseFile::Check(KeyList(root, 1, {key.Public}),
+                                            key.Envelope(MCSignedFile::ReleaseType, std::string(Written)), roots, {});
+    REQUIRE(taken.has_value());
+    CHECK(taken->Releases.Mirrors == mirrors);
+
+    // Kept in update.json with the issues, for a change of sets; one from before mirrors reads with none.
+    const MCReleaseFile::MCKept kept = MCReleaseFile::Keep({}, *taken);
+    CHECK(kept.Mirrors == mirrors);
+    const auto keptRead = MCReleaseFile::ReadKept(MCReleaseFile::KeptText(kept));
+    REQUIRE(keptRead.has_value());
+    CHECK(*keptRead == kept);
+    const auto keptBefore = MCReleaseFile::ReadKept(R"({"keyListIssue": 1, "releaseIssue": 4, "epoch": 0})");
+    REQUIRE(keptBefore.has_value());
+    CHECK(keptBefore->Mirrors.empty());
+    CHECK(!MCUpdateJson::Object(MCReleaseFile::KeptText(*keptBefore)).contains("mirrors"));
+
+    // More than release.json may name, or one that isn't a string, is refused.
+    MCReleaseFile::MCReleases tooMany = *read;
+    tooMany.Mirrors.assign(MCReleaseFile::MaxMirrors + 1, "https://mirror.example/redux");
+    CHECK(!MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(tooMany)).has_value());
+    MCUpdateJson::MCJson numbered = MCUpdateJson::Object(Written);
+    numbered["mirrors"] = {"https://mirror.example/redux", 7};
+    CHECK(!MCReleaseFile::ReadReleases(numbered.dump()).has_value());
+}
+
 TEST_CASE("update files: a key list of a later epoch starts release.json's issues again and its releases come after "
           "any earlier; an earlier epoch, or a key list below the build's lowest issue, is refused")
 {
@@ -596,15 +667,15 @@ TEST_CASE("content plan: on Windows the program's own files are left to it, neve
 {
     const ScratchFolder scratch("plan-program");
     const std::filesystem::path& root = scratch.Path();
-    // The Windows setup put the launcher in MCX.EXE's place and Redux's editor in MCEditor.exe's; the release lists the
-    // original's, and an earlier copy recorded the launcher as placed.
-    WriteText(root / "MCX.EXE", "the launcher");
+    // The Windows setup put the game in MCX.EXE's place and Redux's editor in MCEditor.exe's; the release lists the
+    // original's, and an earlier copy recorded the game's MCX.EXE as placed.
+    WriteText(root / "MCX.EXE", "the game");
     WriteText(root / "MCEditor.exe", "Redux's editor");
     WriteText(root / "data" / "m01.fit", "mission v1");
     MCInstalled::MCRecord installed;
     installed.Release = 1;
     installed.Sets = GameOnly;
-    installed.Files["MCX.EXE"] = {.Path = "MCX.EXE", .Set = "game", .Sha256 = MCSha256::Of("the launcher"), .Size = 12};
+    installed.Files["MCX.EXE"] = {.Path = "MCX.EXE", .Set = "game", .Sha256 = MCSha256::Of("the game"), .Size = 8};
     MCContentList::MCList list{.Format = 1, .Release = 2};
     list.Zips = {{"base-1.zip", 1000, MCSha256::Of("z1")}};
     list.Files.push_back(Listed("MCX.EXE", "the original", "base-1.zip"));

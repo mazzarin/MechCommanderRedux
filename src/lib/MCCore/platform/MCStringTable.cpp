@@ -8,6 +8,53 @@ namespace
     /// <summary>The resource type of string blocks.</summary>
     constexpr uint32_t RT_STRING_TYPE = 6;
 
+    /// <summary>The text file's comment lines start with this.</summary>
+    constexpr char TextComment = '#';
+
+    /// <summary>The text file's escapes: the letter after a backslash, and what it stands for.</summary>
+    constexpr std::array<std::pair<char, char>, 4> TextEscapes{{{'\\', '\\'}, {'n', '\n'}, {'r', '\r'}, {'t', '\t'}}};
+
+    /// <summary>A text file's line in Windows-1252, its escapes undone, or why it can't be.</summary>
+    std::expected<std::string, std::string> unescapeText(std::string_view escaped)
+    {
+        std::string text;
+        text.reserve(escaped.size());
+        const char* cursor = escaped.data();
+        size_t left = escaped.size();
+
+        while (left > 0)
+        {
+            if (*cursor == '\\')
+            {
+                const auto escape = left < 2 ? TextEscapes.end()
+                                             : std::ranges::find(TextEscapes, cursor[1], &std::pair<char, char>::first);
+
+                if (escape == TextEscapes.end())
+                {
+                    return std::unexpected("an unknown escape");
+                }
+
+                text.push_back(escape->second);
+                cursor += 2;
+                left -= 2;
+                continue;
+            }
+
+            // An invalid sequence comes back as U+FFFD, which Windows-1252 lacks: '?', as Parse's unmapped characters.
+            const Uint32 code = SDL_StepUTF8(&cursor, &left);
+
+            if (code == 0)
+            {
+                return std::unexpected("a NUL character");
+            }
+
+            const int windows = MCInput::CodePointToWindows1252(code);
+            text.push_back(static_cast<char>(windows < 0 ? '?' : windows));
+        }
+
+        return text;
+    }
+
     /// <summary>A bounds-checked little-endian reader over the image.</summary>
     struct MCImageReader
     {
@@ -266,12 +313,109 @@ int32_t MCStringTable::LoadString(uint32_t id, std::span<char> buffer) const
     return static_cast<int32_t>(count);
 }
 
+std::expected<MCStringTable, std::string> MCStringTable::ParseText(std::string_view text)
+{
+    MCStringTable table;
+    size_t lineNumber = 0;
+
+    while (!text.empty())
+    {
+        const size_t end = text.find('\n');
+        std::string_view line = text.substr(0, end);
+        text = end == std::string_view::npos ? std::string_view() : text.substr(end + 1);
+        lineNumber++;
+
+        if (line.ends_with('\r'))
+        {
+            line.remove_suffix(1);
+        }
+
+        if (line.empty() || line.front() == TextComment)
+        {
+            continue;
+        }
+
+        const size_t tab = line.find('\t');
+        const std::string_view number = line.substr(0, tab == std::string_view::npos ? 0 : tab);
+        uint32_t id = 0;
+        const auto [numberEnd, numberError] = std::from_chars(number.data(), number.data() + number.size(), id);
+
+        if (number.empty() || numberError != std::errc() || numberEnd != number.data() + number.size())
+        {
+            return std::unexpected(std::format("line {}: not a number, a tab and a text", lineNumber));
+        }
+
+        auto unescaped = unescapeText(line.substr(tab + 1));
+
+        if (!unescaped)
+        {
+            return std::unexpected(std::format("line {}: {}", lineNumber, unescaped.error()));
+        }
+
+        if (!table._Strings.emplace(id, std::move(*unescaped)).second)
+        {
+            return std::unexpected(std::format("line {}: text {} again", lineNumber, id));
+        }
+    }
+
+    return table;
+}
+
+std::expected<MCStringTable, std::string> MCStringTable::LoadText(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+
+    if (!file)
+    {
+        return std::unexpected("can't open " + MCFileSystem::ToUtf8(path));
+    }
+
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    auto table = ParseText(text);
+
+    if (!table)
+    {
+        return std::unexpected(MCFileSystem::ToUtf8(path) + ", " + table.error());
+    }
+
+    return table;
+}
+
+std::expected<MCStringTable, std::string> MCStringTable::LoadGame(const std::filesystem::path& exe,
+                                                                  const std::filesystem::path& text)
+{
+    auto fromExe = Load(exe);
+
+    if (fromExe && fromExe->Count() > 0)
+    {
+        return fromExe;
+    }
+
+    auto fromText = LoadText(text);
+
+    if (!fromText)
+    {
+        const std::string exeProblem =
+            fromExe ? MCFileSystem::ToUtf8(exe) + " holds no text" : MCFileSystem::ToUtf8(exe) + ": " + fromExe.error();
+        return std::unexpected(std::format("{}, and {}", exeProblem, fromText.error()));
+    }
+
+    return fromText;
+}
+
 const MCStringTable& MCStringTable::Game()
 {
     static const MCStringTable table = []()
     {
-        auto loaded = Load(MCFileSystem::Resolve("MCX.EXE"));
-        return loaded ? std::move(*loaded) : MCStringTable();
+        auto loaded = LoadGame(MCFileSystem::Resolve("MCX.EXE"), MCFileSystem::Resolve(TextFileName));
+
+        if (!loaded)
+        {
+            SDL_Log("Strings: the game's texts can't be read: %s", loaded.error().c_str());
+            return MCStringTable();
+        }
+
+        return std::move(*loaded);
     }();
     return table;
 }

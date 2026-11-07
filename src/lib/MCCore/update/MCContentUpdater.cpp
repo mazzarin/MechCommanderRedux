@@ -191,8 +191,17 @@ namespace
         {
             const std::string name = std::format("{}/{}", ListsFolder, ListFileName(list.Hash));
             // No more than release.json signs for it, when it says.
-            auto fetched = source.Read(
-                name, list.Size ? static_cast<size_t>(std::min<uint64_t>(*list.Size, MostListBytes)) : MostListBytes);
+            const size_t most =
+                list.Size ? static_cast<size_t>(std::min<uint64_t>(*list.Size, MostListBytes)) : MostListBytes;
+            auto fetched = source.Read(name, most);
+
+            // One not as named is read again from another host while the source has one.
+            while (fetched && !IsList(*fetched, list) && source.PassOver(name))
+            {
+                SDL_Log("Updates: %s isn't the list release %llu names: read again from another host", name.c_str(),
+                        static_cast<unsigned long long>(list.Release));
+                fetched = source.Read(name, most);
+            }
 
             if (!fetched)
             {
@@ -334,8 +343,9 @@ namespace
 
     /// <summary>
     /// The key list and <c>release.json</c> read from <paramref name="source"/> and checked, kept in
-    /// <c>update.json</c>, and the release this copy's rollout number gives it. What's kept is written durably before the
-    /// game acts on the release: if it can't be, the check fails.
+    /// <c>update.json</c>, and the release this copy's rollout number gives it; the source then fetches the content from
+    /// release.json's mirrors too. What's kept is written durably before the game acts on the release: if it can't be,
+    /// the check fails.
     /// </summary>
     std::expected<MCReleaseFor, MCFailure> ReleaseFor(const MCSetup& setup, MCUpdateDisk& disk,
                                                       MCContentStage::MCSource& source)
@@ -386,6 +396,7 @@ namespace
             }
         }
 
+        source.UseMirrors(kept.Mirrors);
         return MCReleaseFor{MCReleaseFile::For(trusted->Releases, *kept.RolloutNumber), kept};
     }
 
@@ -451,7 +462,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         return std::nullopt;
     }
 
-    MCOffer offer{.Release = release};
+    MCOffer offer{.Release = release, .Mirrors = chosen->Kept.Mirrors};
 
     if (const auto program = release.Programs.find(setup.Platform);
         program != release.Programs.end() && program->second.Build > setup.RunningBuild)
@@ -581,6 +592,17 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return offer;
     }
 
+    // The mirrors of the release.json last taken: the release installed reads none.
+    if (const auto kept = ReadKept(setup, disk); kept)
+    {
+        offer.Mirrors = kept->Mirrors;
+        source.UseMirrors(offer.Mirrors);
+    }
+    else
+    {
+        SDL_Log("Updates: the change of sets comes from the release's host alone: %s", kept.error().c_str());
+    }
+
     auto content =
         PlanContent(setup, disk, source, {installed->List, std::nullopt, installed->Release, installed->Epoch},
                     *installed, sets, setup.RunningBuild, goOn);
@@ -677,7 +699,7 @@ namespace
             return std::unexpected(OtherFailure(planned.error()));
         }
 
-        MCOffer offer{.Release = release};
+        MCOffer offer{.Release = release, .Mirrors = chosen->Kept.Mirrors};
         offer.Content = std::move(*content);
         return offer;
     }
@@ -781,6 +803,7 @@ std::expected<void, MCFailure> MCContentUpdater::Stage(const MCSetup& setup, MCU
         return std::unexpected(OtherFailure(std::move(placed.error())));
     }
 
+    source.UseMirrors(offer.Mirrors);
     return MCContentStage::Stage(disk, source, setup.GameFolder, offer.Content->Plan, offer.Content->List, progress);
 }
 

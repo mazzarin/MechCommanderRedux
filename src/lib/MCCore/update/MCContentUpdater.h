@@ -11,9 +11,10 @@ class MCUpdateDisk;
 /// Port-only: the game's own updater, an update's content half (SPEC-install-and-updates.md's Releases and Applying an
 /// update), worked off the main thread by main/MCUpdater. The check reads the key list and <c>release.json</c> from the
 /// release's host and takes them only when signed as they must be and no older than those read before (the user
-/// folder's <c>update.json</c>, which also keeps the copy's rollout number and the release the player skipped); then it
-/// picks this copy's release and plans its content. Staging fetches the content; arming it, once the program's half is
-/// in too, has the next start swap it in.
+/// folder's <c>update.json</c>, which also keeps the copy's rollout number, the release the player skipped and
+/// release.json's mirrors); then it picks this copy's release and plans its content. The lists and staging come from the
+/// host and its mirrors (update/MCHttpSource.h). Staging fetches the content; arming it, once the program's half is in
+/// too, has the next start swap it in.
 /// </summary>
 namespace MCContentUpdater
 {
@@ -81,6 +82,11 @@ namespace MCContentUpdater
         uint64_t ProgramBytes = 0;
         /// <summary>The content (none: a list in a format this game can't read, so the program comes alone).</summary>
         std::shared_ptr<const MCContent> Content;
+        /// <summary>
+        /// The mirrors its content may come from besides the release's host (release.json's, kept in
+        /// <c>update.json</c> for a change of sets), handed to the source that stages it (MCSource::UseMirrors).
+        /// </summary>
+        std::vector<std::string> Mirrors;
 
         /// <summary>What the content downloads.</summary>
         uint64_t ContentBytes() const;

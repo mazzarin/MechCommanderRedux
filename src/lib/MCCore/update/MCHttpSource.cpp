@@ -4,6 +4,9 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <numeric>
+#include <random>
+#include <set>
 
 namespace
 {
@@ -267,17 +270,74 @@ namespace
         std::string _Text;
     };
 
+    /// <summary>
+    /// The hosts a file may come from (indices into a source's hosts, ours 0), in the order they're tried, and where a
+    /// try stands among them: which host is next, which are out for the file (a failure that won't pass), and the round
+    /// under way (every host still in tried once), after which the source waits to try again.
+    /// </summary>
+    class MCRound
+    {
+    public:
+        explicit MCRound(std::vector<size_t> order)
+            : _Order(std::move(order)), _Out(_Order.size()), _Tried(_Order.size())
+        {
+        }
+
+        size_t Host() const { return _Order[_Next]; }
+
+        /// <summary>Whether a host is out for the file: it answered, so the hosts aren't all out of reach.</summary>
+        bool AnyOut() const { return std::ranges::contains(_Out, true); }
+
+        /// <summary>The host tried failed: out for the file when the failure won't pass.</summary>
+        /// <returns>Whether any host is left in.</returns>
+        bool Failed(bool lasting)
+        {
+            _Tried[_Next] = true;
+            _Out[_Next] = _Out[_Next] || lasting;
+            return std::ranges::contains(_Out, false);
+        }
+
+        /// <summary>On to the next host still in.</summary>
+        /// <returns>Whether that ends the round: every host still in has been tried since it began.</returns>
+        bool Next()
+        {
+            do
+            {
+                _Next = (_Next + 1) % _Order.size();
+            } while (_Out[_Next]);
+
+            for (size_t at = 0; at < _Order.size(); ++at)
+            {
+                if (!_Out[at] && !_Tried[at])
+                {
+                    return false;
+                }
+            }
+
+            std::ranges::fill(_Tried, false);
+            return true;
+        }
+
+    private:
+        std::vector<size_t> _Order;
+        std::vector<bool> _Out;
+        std::vector<bool> _Tried;
+        size_t _Next = 0;
+    };
+
     class MCSource final : public MCContentStage::MCSource
     {
     public:
-        MCSource(std::string address, MCHttpSource::MCGetMaker makeGet, std::unique_ptr<MCHttpSource::MCGet> get,
-                 std::shared_ptr<MCStopper> parent, std::vector<std::chrono::milliseconds> waits)
-            : _Address(std::move(address))
+        MCSource(std::vector<std::string> hosts, MCHttpSource::MCGetMaker makeGet,
+                 std::unique_ptr<MCHttpSource::MCGet> get, std::shared_ptr<MCStopper> parent,
+                 std::vector<std::chrono::milliseconds> waits, MCHttpSource::MCPick pick)
+            : _Hosts(std::move(hosts))
             , _MakeGet(std::move(makeGet))
             , _Get(std::move(get))
             , _Stopper(std::make_shared<MCStopper>(*_Get))
             , _Parent(std::move(parent))
             , _Waits(std::move(waits))
+            , _Pick(std::move(pick))
         {
             if (_Parent != nullptr)
             {
@@ -299,17 +359,26 @@ namespace
         std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
                                                const std::function<bool(std::span<const char>)>& received) override
         {
-            return Tried(name, [&](bool& progressed) { return FetchOnce(name, to, size, received, progressed); });
+            // A download from its first byte: no host's bytes are in it yet.
+            if (std::error_code error;
+                !std::filesystem::exists(to, error) || std::filesystem::file_size(to, error) == 0)
+            {
+                _Sent.erase(std::string(name));
+            }
+
+            return Tried(name, [&](const std::string& host, bool& progressed)
+                         { return FetchOnce(host, name, to, size, received, progressed); });
         }
 
         std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
         {
             std::string text;
+            _Sent.erase(std::string(name));
             const auto read = Tried(name,
-                                    [&](bool&) -> std::expected<void, MCFailure>
+                                    [&](const std::string& host, bool& progressed) -> std::expected<void, MCFailure>
                                     {
                                         MCTextReply reply(most);
-                                        const auto got = _Get->Get(Url(name), 0, reply);
+                                        const auto got = _Get->Get(Url(host, name), 0, reply);
 
                                         if (reply.Failure())
                                         {
@@ -321,6 +390,7 @@ namespace
                                             return std::unexpected(TransferFailure(got.error()));
                                         }
 
+                                        progressed = true;
                                         text = std::move(reply.Text());
                                         return {};
                                     });
@@ -344,23 +414,125 @@ namespace
                 return nullptr;
             }
 
-            return std::make_unique<MCSource>(_Address, _MakeGet, std::move(get), _Stopper, _Waits);
+            return std::make_unique<MCSource>(_Hosts, _MakeGet, std::move(get), _Stopper, _Waits, _Pick);
         }
 
         bool HostUnreachable() const override { return _Unreachable; }
 
+        void UseMirrors(std::span<const std::string> mirrors) override
+        {
+            std::vector<std::string> hosts = {_Hosts.front()};
+
+            for (const std::string& mirror : mirrors)
+            {
+                auto address = MCHttpSource::FolderAddress(mirror);
+
+                if (!address)
+                {
+                    SDL_Log("Updates: the mirror is left out: %s", address.error().c_str());
+                }
+                else if (!std::ranges::contains(hosts, *address))
+                {
+                    hosts.push_back(std::move(*address));
+                }
+            }
+
+            if (hosts != _Hosts)
+            {
+                SDL_Log("Updates: the content comes from %zu hosts", hosts.size());
+                _Hosts = std::move(hosts);
+            }
+        }
+
+        bool PassOver(std::string_view name) override
+        {
+            const std::string key(name);
+            const auto sent = _Sent.find(key);
+
+            // No host here sent its bytes (they were there before, or it has none): no host to pass over for it.
+            if (sent == _Sent.end() || sent->second.empty())
+            {
+                _Sent.erase(key);
+                return false;
+            }
+
+            std::set<std::string, std::less<>> passed = _PassedOver[key];
+            passed.merge(sent->second);
+            _Sent.erase(key);
+
+            if (std::ranges::all_of(HostsFor(name), [&](size_t host) { return passed.contains(_Hosts[host]); }))
+            {
+                _PassedOver.erase(key);
+                return false;
+            }
+
+            _PassedOver[key] = std::move(passed);
+            return true;
+        }
+
     private:
-        std::string Url(std::string_view name) const { return std::format("{}/{}", _Address, Escaped(name)); }
+        static std::string Url(const std::string& host, std::string_view name)
+        {
+            return std::format("{}/{}", host, Escaped(name));
+        }
+
+        /// <summary>The hosts <paramref name="name"/> may come from: every one for a mirrored file, else ours alone.</summary>
+        std::vector<size_t> HostsFor(std::string_view name) const
+        {
+            if (!MCHttpSource::Mirrored(name))
+            {
+                return {0};
+            }
+
+            std::vector<size_t> hosts(_Hosts.size());
+            std::iota(hosts.begin(), hosts.end(), size_t{0});
+            return hosts;
+        }
 
         /// <summary>
-        /// Runs <paramref name="attempt"/> (given whether it brought bytes) until it succeeds, tries again after a
-        /// failure that may pass, waiting longer each time, and gives up on any other, or once the waits run out. Giving
-        /// up, it keeps whether the host was out of reach (HostUnreachable); succeeding, it clears it.
+        /// The hosts <paramref name="name"/> is tried from, in order: those it may come from, less those passed over for
+        /// it, from one picked (at random without a pick) round to the one before it.
+        /// </summary>
+        std::vector<size_t> Order(std::string_view name)
+        {
+            std::vector<size_t> hosts = HostsFor(name);
+
+            if (const auto passed = _PassedOver.find(name); passed != _PassedOver.end())
+            {
+                std::erase_if(hosts, [&](size_t host) { return passed->second.contains(_Hosts[host]); });
+
+                // Every host passed over (the mirrors changed since): all of them again.
+                if (hosts.empty())
+                {
+                    _PassedOver.erase(passed);
+                    hosts = HostsFor(name);
+                }
+            }
+
+            if (hosts.size() > 1)
+            {
+                const size_t first = _Pick ? _Pick(hosts.size()) % hosts.size()
+                                           : std::uniform_int_distribution<size_t>(0, hosts.size() - 1)(_Random);
+                std::ranges::rotate(hosts, hosts.begin() + static_cast<std::ptrdiff_t>(first));
+            }
+
+            return hosts;
+        }
+
+        /// <summary>
+        /// Runs <paramref name="attempt"/> (given the host to try and whether it brought bytes) until it succeeds. A
+        /// failure moves on to the next host; one that won't pass leaves that host out for the file, which fails once
+        /// every host is out. Once every host still in has failed (a round), it waits longer each time before the next
+        /// round, and gives up once the waits run out. Giving up, it keeps whether the hosts were out of reach
+        /// (HostUnreachable: every try of the last round, and none out for answering); succeeding, it clears it.
         /// </summary>
         template <typename MCAttempt>
         std::expected<void, std::string> Tried(std::string_view name, const MCAttempt& attempt)
         {
+            MCRound round(Order(name));
+            const bool several = _Hosts.size() > 1;
             size_t failed = 0;
+            bool roundUnreachable = true;
 
             for (;;)
             {
@@ -369,8 +541,14 @@ namespace
                     return std::unexpected(std::string(StoppedError));
                 }
 
+                const std::string& host = _Hosts[round.Host()];
                 bool progressed = false;
-                const std::expected<void, MCFailure> done = attempt(progressed);
+                const std::expected<void, MCFailure> done = attempt(host, progressed);
+
+                if (progressed)
+                {
+                    _Sent[std::string(name)].insert(host);
+                }
 
                 if (done)
                 {
@@ -388,21 +566,36 @@ namespace
                     failed = 0;
                 }
 
-                if (done.error().Kind == MCKind::Lasting)
+                const bool lasting = done.error().Kind == MCKind::Lasting;
+                roundUnreachable = roundUnreachable && !lasting && done.error().Unreachable;
+
+                if (several)
+                {
+                    SDL_Log("Updates: %.*s from %s: %s", static_cast<int>(name.size()), name.data(), host.c_str(),
+                            done.error().Reason.c_str());
+                }
+
+                if (!round.Failed(lasting))
                 {
                     _Unreachable = false;
                     return std::unexpected(done.error().Reason);
                 }
 
+                if (!round.Next())
+                {
+                    continue;
+                }
+
                 if (failed == _Waits.size())
                 {
-                    _Unreachable = done.error().Unreachable;
+                    _Unreachable = roundUnreachable && !round.AnyOut();
                     SDL_Log("Updates: %.*s: %s; given up, %zu tries since its last bytes",
                             static_cast<int>(name.size()), name.data(), done.error().Reason.c_str(), failed + 1);
                     return std::unexpected(done.error().Reason);
                 }
 
                 const std::chrono::milliseconds wait = _Waits[failed++];
+                roundUnreachable = true;
                 SDL_Log("Updates: %.*s: %s; tried again in %lld ms", static_cast<int>(name.size()), name.data(),
                         done.error().Reason.c_str(), static_cast<long long>(wait.count()));
 
@@ -413,8 +606,9 @@ namespace
             }
         }
 
-        /// <summary>One try at a download, from the bytes already in its file on.</summary>
-        std::expected<void, MCFailure> FetchOnce(std::string_view name, const std::filesystem::path& to, uint64_t size,
+        /// <summary>One try at a download from <paramref name="host"/>, from the bytes already in its file on.</summary>
+        std::expected<void, MCFailure> FetchOnce(const std::string& host, std::string_view name,
+                                                 const std::filesystem::path& to, uint64_t size,
                                                  const std::function<bool(std::span<const char>)>& received,
                                                  bool& progressed)
         {
@@ -441,7 +635,7 @@ namespace
             }
 
             MCFileReply reply(out, at, size, received);
-            const auto got = _Get->Get(Url(name), at, reply);
+            const auto got = _Get->Get(Url(host, name), at, reply);
             out.close();
             progressed = reply.At() > at;
 
@@ -471,15 +665,22 @@ namespace
             return {};
         }
 
-        std::string _Address;
+        /// <summary>The hosts: ours first, then the mirrors (UseMirrors).</summary>
+        std::vector<std::string> _Hosts;
         MCHttpSource::MCGetMaker _MakeGet;
         std::unique_ptr<MCHttpSource::MCGet> _Get;
         std::shared_ptr<MCStopper> _Stopper;
         /// <summary>The source this one was made from (none: made by Make), whose Cancel reaches this one.</summary>
         std::shared_ptr<MCStopper> _Parent;
-        /// <summary>The waits before each try again (MCHttpSource::RetryWaits).</summary>
+        /// <summary>The waits before each round again (MCHttpSource::RetryWaits).</summary>
         std::vector<std::chrono::milliseconds> _Waits;
-        /// <summary>Whether the last fetch or read given up on failed with the host out of reach.</summary>
+        /// <summary>Picks the host each file starts from (none: _Random).</summary>
+        MCHttpSource::MCPick _Pick;
+        std::mt19937 _Random{std::random_device{}()};
+        /// <summary>Each file's hosts whose bytes are in its copy here, and those passed over for it (PassOver).</summary>
+        std::map<std::string, std::set<std::string, std::less<>>, std::less<>> _Sent;
+        std::map<std::string, std::set<std::string, std::less<>>, std::less<>> _PassedOver;
+        /// <summary>Whether the last fetch or read given up on failed with the hosts out of reach.</summary>
         std::atomic<bool> _Unreachable = false;
     };
 }
@@ -555,9 +756,12 @@ std::optional<std::pair<std::string, std::string>> MCHttpSource::SchemeAndHost(s
     return std::pair{Lower(url.substr(0, schemeEnd)), Lower(host)};
 }
 
-std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSource::Make(std::string_view address,
-                                                                                         MCGetMaker makeGet,
-                                                                                         const MCRetries& retries)
+bool MCHttpSource::Mirrored(std::string_view name)
+{
+    return std::ranges::any_of(MirroredFolders, [&](std::string_view folder) { return name.starts_with(folder); });
+}
+
+std::expected<std::string, std::string> MCHttpSource::FolderAddress(std::string_view address)
 {
     const auto parts = SchemeAndHost(address);
 
@@ -578,6 +782,21 @@ std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSour
         address.remove_suffix(1);
     }
 
+    return std::string(address);
+}
+
+std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSource::Make(std::string_view address,
+                                                                                         MCGetMaker makeGet,
+                                                                                         const MCRetries& retries,
+                                                                                         MCPick pick)
+{
+    auto folder = FolderAddress(address);
+
+    if (!folder)
+    {
+        return std::unexpected(std::move(folder.error()));
+    }
+
     std::unique_ptr<MCGet> get = makeGet ? makeGet() : nullptr;
 
     if (get == nullptr)
@@ -585,6 +804,6 @@ std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSour
         return std::unexpected("this build has no transfer");
     }
 
-    return std::make_unique<MCSource>(std::string(address), std::move(makeGet), std::move(get), nullptr,
-                                      RetryWaits(retries));
+    return std::make_unique<MCSource>(std::vector{std::move(*folder)}, std::move(makeGet), std::move(get), nullptr,
+                                      RetryWaits(retries), std::move(pick));
 }

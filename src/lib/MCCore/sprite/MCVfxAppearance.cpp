@@ -327,6 +327,13 @@ auto MCVfxAppearance::Update() -> int32_t
 
     // Faithful: the state's frame rate, even in a sub-state.
     CurrentTime = FrameLength + CurrentTime;
+
+    // OB-187 (fixed): a state started as under the frame lock takes the lock's whole frame for its first step.
+    if (startFrame == -1 && StartsAsLocked)
+    {
+        CurrentTime = std::max(CurrentTime, LockedFrameLength);
+    }
+
     const float frames = CurrentTime * data.FrameRate;
     const int32_t played = LastFrame;
 
@@ -536,6 +543,7 @@ auto MCVfxAppearance::SetTypeId(MCActorState state, uint8_t subState) -> void
         LastFrame = 0;
         FrameShare = 0.0f;
         Looped = false;
+        StartsAsLocked = false;
         CurrentSubState = NoSubState;
 
         if (state != MCActorState::Normal)

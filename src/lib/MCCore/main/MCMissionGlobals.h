@@ -12,6 +12,9 @@ extern int32_t Turn;
 /// <summary>Seconds this frame covers (0.05 to begin with).</summary>
 extern float FrameLength;
 
+/// <summary>The frames' length under the original's frame lock (Ctrl+Alt+S): 15 a second.</summary>
+inline constexpr float LockedFrameLength = 1.0f / 15.0f;
+
 /// <summary>World units per meter (3.34 until a scenario's game system file sets it).</summary>
 extern float WorldUnitsPerMeter;
 

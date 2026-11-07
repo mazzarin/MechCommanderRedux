@@ -78,6 +78,12 @@ public:
     float FrameShare = 0.0f;
     /// <summary>Port-only (HD art's in-betweens): whether the current state's animation has gone back to its start.</summary>
     bool Looped = false;
+    /// <summary>
+    /// OB-187 (fixed): the state <see cref="SetTypeId"/> set last starts as under the original's frame lock: its
+    /// first step is at least <see cref="LockedFrameLength"/> long. The expansion's trees fall and crumble from an
+    /// empty first frame that the lock's first step passes; with faster frames the tree vanished until the next.
+    /// </summary>
+    bool StartsAsLocked = false;
     /// <summary>The frame the animation loops back to at <see cref="LoopEnd"/>.</summary>
     int32_t LoopStart = -1;
     /// <summary>The frame at which the animation goes back to <see cref="LoopStart"/> (-1: loop the whole state).</summary>

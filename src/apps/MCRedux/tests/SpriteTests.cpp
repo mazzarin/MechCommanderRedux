@@ -19,6 +19,10 @@
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCMoverMath.h"
+#include "object/MCObjectList.h"
+#include "object/MCObjectSystem.h"
+#include "object/MCTree.h"
+#include "object/MCTreeType.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
@@ -395,6 +399,114 @@ TEST_CASE("sprites: a VFX appearance shows damage as blowing up 1, then 2, then 
 
     CHECK_EQ(appearance.StateExists(MCActorState::BlowingUp2), 3);
     CHECK_EQ(appearance.StateExists(MCActorState::FallenDamaged), 0);
+}
+
+/// <summary>
+/// OB-187: a VFX state started as under the original's frame lock (StartsAsLocked) takes the lock's 15th of a second for
+/// its first step. A state of 15 frames a second then starts on its second frame at any frame rate, as the lock's
+/// first step draws it, and plays out when the lock's does (within a frame); started as before, frames faster than the
+/// lock's draw its first frame first.
+/// </summary>
+TEST_CASE("sprites: a VFX state started as under the frame lock takes the lock's frame for its first step (OB-187)")
+{
+    constexpr std::string_view SlowRate = "f FrameRate = 10.0";
+    std::string fit(VfxFit);
+    fit.replace(fit.find(SlowRate, fit.find("[State1]")), SlowRate.size(), "f FrameRate = 15.0");
+    SpriteFiles files({FortyShapes()}, {{}}, {Fit(fit)});
+
+    struct RestoreFrameLength
+    {
+        float Saved = FrameLength;
+        ~RestoreFrameLength() { FrameLength = Saved; }
+    } restore;
+
+    // Blowing up 1 has 4 frames: under the lock it plays out three 15ths after its first step.
+    constexpr int32_t BlowingUpFrames = 4;
+    constexpr float LockPlayedOut = static_cast<float>(BlowingUpFrames - 1) * LockedFrameLength;
+    constexpr float Slack = 1e-4f;
+    constexpr int32_t MostSteps = 100;
+
+    for (const float length : {1.0f / 60.0f, 1.0f / 30.0f, LockedFrameLength, 1.0f / 10.0f})
+    {
+        for (const bool locked : {true, false})
+        {
+            MCTest::Scope scope(
+                std::format("frames of {:.4f} s, {}", length, locked ? "started as locked" : "as before"));
+            MCVfxAppearance appearance;
+            appearance.Init(AppearanceTypeList().GetAppearance(0x02000000));
+            REQUIRE(appearance.AppearType != nullptr);
+            appearance.SetTypeId(MCActorState::BlowingUp1, NoSubState);
+            appearance.StartsAsLocked = locked;
+            FrameLength = length;
+            appearance.Update();
+            CHECK_EQ(appearance.CurrentFrame, locked || LockedFrameLength <= length ? 1 : 0);
+
+            if (!locked)
+            {
+                continue;
+            }
+
+            // Update gives 0 as the state loops: the step that plays it out.
+            int32_t steps = 1;
+
+            while (appearance.Update() != 0)
+            {
+                ++steps;
+                REQUIRE(steps < MostSteps);
+            }
+
+            const float playedOut = static_cast<float>(steps) * length;
+            CHECK(LockPlayedOut - Slack <= playedOut);
+            CHECK(playedOut <= LockPlayedOut + length + Slack);
+        }
+    }
+
+    // A state set again starts as before unless asked.
+    MCVfxAppearance appearance;
+    appearance.Init(AppearanceTypeList().GetAppearance(0x02000000));
+    appearance.StartsAsLocked = true;
+    appearance.SetTypeId(MCActorState::BlowingUp1, NoSubState);
+    CHECK(!appearance.StartsAsLocked);
+}
+
+/// <summary>
+/// OB-187: a tree a mech knocks over starts its fall as under the original's frame lock: with frames of a 30th of a
+/// second the first it draws is the fall's second (the expansion's trees' first is empty), as the lock's first step draws.
+/// </summary>
+TEST_CASE_ISOLATED("game: a knocked-over tree starts its fall as under the original's frame lock (OB-187)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    constexpr float FrameSeconds = 1.0f / 30.0f;
+    const std::shared_ptr<MCMover> mech = GetMoverFromPartId(0x200);
+    REQUIRE(mech != nullptr);
+    std::shared_ptr<MCTree> tree;
+
+    for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
+    {
+        for (const std::shared_ptr<MCBaseObject> object : *list)
+        {
+            if (tree == nullptr && object != nullptr && object->ObjectClass == MCObjectClass::Tree)
+            {
+                tree = std::static_pointer_cast<MCTree>(object);
+            }
+        }
+    }
+
+    REQUIRE(tree != nullptr);
+    Eye()->SetPosition(tree->GetPosition());
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(!tree->Falling);
+    REQUIRE(!tree->Burnt);
+    tree->TypeAs<MCTreeType>().HandleCollision(*tree, *mech);
+    REQUIRE(tree->Falling);
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK(tree->Appearance->CurrentState == MCActorState::BlowingUp1);
+    CHECK_EQ(tree->Appearance->CurrentFrame, 1);
 }
 
 TEST_CASE(
@@ -1011,7 +1123,7 @@ TEST_CASE("game: every mech sprite tree in the retail sprite PAK loads and finds
 
 namespace
 {
-    /// <summary>A frame of a mech's move to a halt: its gesture, legs frame, speed and where it is.</summary>
+    /// <summary>A frame of a mech's move to a halt: its gesture, legs frame, speed, where it is and each part's frame.</summary>
     struct StopFrame
     {
         int32_t Gesture = 0;
@@ -1019,6 +1131,13 @@ namespace
         float Speed = 0.0f;
         float StrideRate = 1.0f;
         MCVector3D Position;
+        MCMechParts<int32_t> Parts{};
+
+        /// <summary>Whether the torso and arms show the legs' frame.</summary>
+        bool InStep() const
+        {
+            return std::ranges::all_of(Parts, [this](int32_t part) { return part == Frame; });
+        }
     };
 
     /// <summary>
@@ -1069,7 +1188,8 @@ namespace
             }
 
             frames.push_back({actor->CurrentGesture, actor->CurrentFrame[MCMechPart::Legs],
-                              actor->GetVelocityMagnitude(), actor->StrideRate, mech->GetPosition()});
+                              actor->GetVelocityMagnitude(), actor->StrideRate, mech->GetPosition(),
+                              actor->CurrentFrame});
             moved = moved || actor->CurrentGesture != MCStopGesture::Stand;
             still = moved && actor->CurrentGesture == MCStopGesture::Stand && !actor->InTransition ? still + 1 : 0;
         }
@@ -1104,7 +1224,9 @@ namespace
 /// (the walk's end or its frame for the stop, the run's frame for its run to walk or, without, its end), it never
 /// drops from a stride to standing, it only slows from there, it stands where the original stops (within the slack),
 /// and its stride is never fitted beyond the rate bounds; without, it plays no stop, its legs dropping from the stride
-/// to standing as the original's.
+/// to standing as the original's. Braking, a torso and arms in step with the legs stay in step through a gesture, its
+/// end too (they looped to the gesture's first frame as the legs held its last: the stop's forward lean flashed as it
+/// ended).
 /// </summary>
 TEST_CASE_ISOLATED("game: with MechBraking a mech brakes to a halt through its stopping art where its move ends")
 {
@@ -1163,6 +1285,17 @@ TEST_CASE_ISOLATED("game: with MechBraking a mech brakes to a halt through its s
             }
 
             REQUIRE(played);
+
+            // A torso and arms in step with the legs stay in step through a gesture, its end too.
+            for (size_t i = 1; i < frames.size(); ++i)
+            {
+                if (frames[i].Gesture == frames[i - 1].Gesture && frames[i - 1].InStep())
+                {
+                    MCTest::Scope at(std::format("frame {} (gesture {}, parts {} after {})", i, frames[i].Gesture,
+                                                 frames[i].Parts, frames[i - 1].Parts));
+                    CHECK(frames[i].InStep());
+                }
+            }
 
             for (size_t i = 1; i < frames.size(); ++i)
             {

@@ -132,6 +132,9 @@ auto MCTreeType::HandleCollision(MCGameObject& collidee, MCGameObject& collider)
         }
     }
 
+    // OB-187 (fixed): the fall or crumble starts as under the frame lock, past the expansion's trees' empty first frame.
+    treeAppearance.StartsAsLocked = true;
+
     if (UseSound != 0 && SoundSystem() != nullptr && 1 < static_cast<int32_t>(numFrames))
     {
         SoundSystem()->PlayDigitalSample(0xe, 1, tree, false, false);

@@ -2212,6 +2212,13 @@ auto MCMechActor::Update() -> int32_t
             step = -1;
         }
 
+        // Port-only (MechBraking): whether the legs play a planned stop's gesture out this step. The parts that reach
+        // its end with them hold its last frame too: looped, the torso and arms showed its first frame for a step (the
+        // stop's forward lean again as it ended).
+        const int32_t legsStepped = CurrentFrame[MCMechPart::Legs] + (PlayBackwards ? -step : step);
+        const bool legsPlayOut = PlannedStop && InTransition &&
+                                 static_cast<int32_t>(tree->Gestures[CurrentGesture].NumFrames) <= legsStepped;
+
         for (int32_t i = 0; i < MechPartCount; i++)
         {
             const MCMechPart part = PartOrder[i];
@@ -2268,12 +2275,16 @@ auto MCMechActor::Update() -> int32_t
             CurrentFrame[part] += delta;
             const uint32_t numFrames = tree->Gestures[CurrentGesture].NumFrames;
             // Port-only (MechBraking): in a planned stop the legs alone move the gestures on (a part half a stride off
-            // them, mirrored, would cut their stride short); the other parts loop.
+            // them, mirrored, would cut their stride short); the other parts loop, or hold the end with the legs.
             const bool leads = !PlannedStop || part == MCMechPart::Legs;
 
             if (static_cast<int32_t>(numFrames) <= CurrentFrame[part])
             {
-                if (!InTransition || !leads)
+                if (legsPlayOut && !leads)
+                {
+                    CurrentFrame[part] = static_cast<int32_t>(numFrames) - 1;
+                }
+                else if (!InTransition || !leads)
                 {
                     // Loop.
                     CurrentFrame[part] = static_cast<int32_t>(static_cast<uint32_t>(CurrentFrame[part]) % numFrames);

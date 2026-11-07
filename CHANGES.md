@@ -310,6 +310,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - A mech icon part for a location without armor no longer divides by zero when it picks its colour. It shows red, as
   in the original.
 - The health bar over popup turrets and gates is green, yellow and red again instead of black.
+- **Redux HD.** A tree a mech knocks over no longer vanishes for a moment as it starts to fall. The expansion's trees
+  fall and crumble from an empty first frame, which the original's frame lock (15 a second) steps past; the fall now
+  starts as it does there at any frame rate.
 - Text shows ´ ¨ ° ¿ « » § ² º and ½, which the game's fonts listed but left blank: the marks are cut from the fonts'
   own é, ë and å, ¿ « » are made from ? < >, and the rest are drawn in the fonts' style.
 

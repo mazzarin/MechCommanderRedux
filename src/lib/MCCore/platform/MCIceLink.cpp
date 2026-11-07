@@ -236,6 +236,27 @@ struct MCIceShared
         OpenedAt = std::chrono::steady_clock::now();
     }
 
+    /// <summary>
+    /// Queues a signal this end says (under the lock), while the link lasts. One longer than the service passes would
+    /// have the service refuse the socket that sent it, the host's every link with it: the other end's description
+    /// made it so (its part's name, repeated in the answer and each candidate), and the link is cut.
+    /// </summary>
+    void SayLocked(MCIceLink::Signal signal)
+    {
+        if (State != MCIceLink::State::Connecting && State != MCIceLink::State::Open)
+        {
+            return;
+        }
+
+        if (!signal.Fits())
+        {
+            CutLocked(std::format("this end's {} would be longer than the service passes", signal.Kind));
+            return;
+        }
+
+        Outgoing.push_back(std::move(signal));
+    }
+
     /// <summary>End, under the lock.</summary>
     void EndLocked(MCIceLink::State state, std::string_view why)
     {
@@ -356,7 +377,7 @@ struct MCIceLink::Impl
                         NoteOffered(shared->Here, candidate);
                     }
 
-                    shared->Outgoing.push_back({description.typeString(), std::string(description), {}});
+                    shared->SayLocked({description.typeString(), std::string(description), {}});
                 }
             });
         Peer->onLocalCandidate(
@@ -366,7 +387,7 @@ struct MCIceLink::Impl
                 {
                     const std::scoped_lock lock(shared->Lock);
                     NoteOffered(shared->Here, candidate);
-                    shared->Outgoing.push_back({std::string(CandidateKind), std::string(candidate), candidate.mid()});
+                    shared->SayLocked({std::string(CandidateKind), std::string(candidate), candidate.mid()});
                 }
             });
         Peer->onIceStateChange(

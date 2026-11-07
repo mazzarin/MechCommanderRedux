@@ -55,10 +55,21 @@ public:
     /// <summary>What one end tells the other through the service, in the order it says them.</summary>
     struct Signal
     {
+        /// <summary>
+        /// The most each part holds: the service passes nothing longer (a description with every candidate is a few
+        /// KB, a part's name "0").
+        /// </summary>
+        static constexpr size_t MostKind = 16;
+        static constexpr size_t MostText = 32 * 1024;
+        static constexpr size_t MostMid = 64;
+
         /// <summary>"offer" or "answer" (Text its description), or "candidate" (Text one address, Mid its part).</summary>
         std::string Kind;
         std::string Text;
         std::string Mid;
+
+        /// <summary>Whether every part is within its most, so the service passes it.</summary>
+        bool Fits() const { return Kind.size() <= MostKind && Text.size() <= MostText && Mid.size() <= MostMid; }
 
         friend bool operator==(const Signal&, const Signal&) = default;
     };

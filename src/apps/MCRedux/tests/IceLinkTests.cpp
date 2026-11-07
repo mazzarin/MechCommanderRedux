@@ -252,6 +252,74 @@ TEST_CASE("ice: a relay-only link fails on a description hiding addresses behind
     CHECK(tabbed->CutOff());
 }
 
+TEST_CASE("ice: a link fails rather than say a signal longer than the service passes, as an offer's part name makes")
+{
+    // The answer and every candidate repeat the offer's part name (its mid): one longer than the service passes would
+    // have it refuse the host's socket, every guest's link with it. Past the most a candidate's mid holds, and past the
+    // most an answer's text holds (the name twice, the offer's once: no BUNDLE line in the offer).
+    struct Case
+    {
+        size_t Length;
+        bool Bundled;
+    };
+
+    for (const Case c : {Case{MCIceLink::Signal::MostMid + 1, true}, Case{MCIceLink::Signal::MostText * 5 / 8, false}})
+    {
+        const std::unique_ptr<MCIceLink> guest = MCIceLink::Offer(OnThisMachine);
+        const std::unique_ptr<MCIceLink> host = MCIceLink::Answer(OnThisMachine);
+        REQUIRE(guest != nullptr && host != nullptr);
+        std::optional<MCIceLink::Signal> offer;
+        const auto made = std::chrono::steady_clock::now() + NamedLinkWatch;
+
+        while (!offer.has_value() && std::chrono::steady_clock::now() < made)
+        {
+            for (MCIceLink::Signal& signal : guest->TakeSignals())
+            {
+                if (signal.Kind == "offer")
+                {
+                    offer = std::move(signal);
+                }
+            }
+
+            std::this_thread::sleep_for(PumpStep);
+        }
+
+        REQUIRE(offer.has_value());
+        const std::string mid(c.Length, 'm');
+        constexpr std::string_view bundle = "a=group:BUNDLE 0\r\n";
+        constexpr std::string_view part = "a=mid:0\r\n";
+        const size_t bundleAt = offer->Text.find(bundle);
+        REQUIRE(bundleAt != std::string::npos);
+        offer->Text.replace(bundleAt, bundle.size(), c.Bundled ? std::format("a=group:BUNDLE {}\r\n", mid) : "");
+        const size_t partAt = offer->Text.find(part);
+        REQUIRE(partAt != std::string::npos);
+        offer->Text.replace(partAt, part.size(), std::format("a=mid:{}\r\n", mid));
+        REQUIRE(offer->Fits());
+        host->Heard(*offer);
+
+        bool allFit = true;
+        const auto watched = std::chrono::steady_clock::now() + NamedLinkWatch;
+
+        while (!host->CutOff() && std::chrono::steady_clock::now() < watched)
+        {
+            for (const MCIceLink::Signal& signal : host->TakeSignals())
+            {
+                allFit = allFit && signal.Fits();
+            }
+
+            std::this_thread::sleep_for(PumpStep);
+        }
+
+        for (const MCIceLink::Signal& signal : host->TakeSignals())
+        {
+            allFit = allFit && signal.Fits();
+        }
+
+        CHECK(allFit);
+        CHECK(host->CutOff());
+    }
+}
+
 TEST_CASE("ice: a link fails when the other end sends more than this end holds unread")
 {
     const std::unique_ptr<MCIceLink> guest = MCIceLink::Offer(OnThisMachine);

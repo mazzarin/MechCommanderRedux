@@ -17,10 +17,10 @@ namespace
     /// <summary>A guest as the service names it: "g" and its number.</summary>
     constexpr char GuestPrefix = 'g';
     constexpr size_t Uint32Bytes = 4;
-    /// <summary>A signal's description, with every candidate, is a few KB; the service passes none longer than this.</summary>
-    constexpr size_t MaxSignalText = 32 * 1024;
-    constexpr size_t MaxSignalKind = 16;
-    constexpr size_t MaxMid = 64;
+    /// <summary>A signal's parts, as the service passes them (and a short field's, a kind's).</summary>
+    constexpr size_t MaxSignalText = MCIceLink::Signal::MostText;
+    constexpr size_t MaxSignalKind = MCIceLink::Signal::MostKind;
+    constexpr size_t MaxMid = MCIceLink::Signal::MostMid;
     /// <summary>The service's STUN and relays: a handful of each, their names and credentials short.</summary>
     constexpr size_t MaxIceServers = 8;
     constexpr size_t MaxIceText = 512;

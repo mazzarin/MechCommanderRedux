@@ -137,8 +137,10 @@ adds are in the [README](README.md#what-redux-hd-adds).
   Once everyone has joined, the game goes straight from "Waiting for Players" to the mech bay, without the ready room or
   the map selector. See the [README](README.md#premade-matches).
 - **Redux HD.** With `MechBraking` in `PREFS.CFG`, mechs brake to a halt through the stopping art the original drew for every mech
-  (its walk to stand and run to walk), instead of dropping from mid-stride to standing where a move ends. They stop
-  where the original stops them. The expansion's mechs' stops are given the slowing their data leaves out (OB-186). In
+  (its walk to stand and run to walk), instead of dropping from mid-stride to standing where a move ends. Six of the
+  expansion's mechs have no run to walk drawn (the Wendigo, Turkina, BushWhacker and Mauler none, the ShadowCat and
+  FireFalcon a blank one, so they vanished as they slowed from a run): theirs is made from their own run and walk, cut
+  where the two look most alike. They stop where the original stops them. The expansion's mechs' stops are given the slowing their data leaves out (OB-186). In
   multiplayer the host's choice applies (MATCH OPTIONS' BRAKING, its `MechBraking` until it changes it) once every
   player's build has it; with an older build in the match, mechs stop as the original's.
 - **Redux HD.** The session screen has a second tab under MULTIPLAYER CHAT, **MATCH OPTIONS**, where the host picks

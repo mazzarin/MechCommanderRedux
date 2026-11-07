@@ -106,16 +106,46 @@ struct MCGestureVelocities
 /// Port-only (MechBraking): the gesture at <paramref name="step"/> of the transition from state
 /// <paramref name="state"/> to goal <paramref name="goal"/> while a mech brakes to a halt (<paramref name="braking"/>):
 /// a walk to a stand plays out its stride, then the stop (5, 2); a run, the run to walk, a stride, then the stop (8, 4,
-/// 5, 2); a run to a walk, the run to walk (8, 4); as madcat's tree has them, for every tree with that art. Else the
+/// 5, 2); a run to a walk, the run to walk (8, 4); as madcat's tree has them, for every tree with that art. Without a
+/// run to walk drawn, the run goes into the walk by the one made (4, 5, 2; 4: <see cref="MCRunToWalkMade"/>). Else the
 /// tree's own (MCSpriteTree::Transition).
 /// </summary>
 [[nodiscard]] int32_t MCStopTransition(MCSpriteTree& tree, int32_t goal, int32_t state, int32_t step, bool braking);
 
 /// <summary>
 /// Port-only (MechBraking): whether <paramref name="tree"/> has gesture <paramref name="gesture"/> drawn: every part's
-/// shape has its frames (the expansion's Wendigo, Turkina, BushWhacker and Mauler lack a run to walk).
+/// shape has its frames, and draws (the expansion's Wendigo, Turkina, BushWhacker and Mauler list a run to walk with
+/// no shapes; ShadowCat and FireFalcon one whose shapes are blank). Looked at once a tree.
 /// </summary>
 [[nodiscard]] bool MCHasGestureArt(MCSpriteTree& tree, int32_t gesture);
+
+/// <summary>
+/// Port-only (MechBraking): a run to walk made from a tree's own run and walk, for a tree with none drawn: the run plays
+/// on to <see cref="RunFrame"/>, then the walk goes on from <see cref="WalkFrame"/>, the frame after the walk's frame
+/// most like the run's there, so the cut goes on as the walk does.
+/// </summary>
+struct MCMadeRunToWalk
+{
+    /// <summary>The run's last frame shown.</summary>
+    uint32_t RunFrame = 0;
+    /// <summary>The walk's first frame shown.</summary>
+    uint32_t WalkFrame = 0;
+
+    bool operator==(const MCMadeRunToWalk&) const = default;
+};
+
+/// <summary>
+/// Port-only (MechBraking): the run to walk made for <paramref name="tree"/> (<see cref="MCMakeRunToWalk"/>, worked
+/// out once a tree, as its gestures preload); none when it has its own drawn, or without <paramref name="braking"/>.
+/// </summary>
+[[nodiscard]] std::optional<MCMadeRunToWalk> MCRunToWalkMade(MCSpriteTree& tree, bool braking);
+
+/// <summary>
+/// Port-only (MechBraking): the run frame and walk frame of <paramref name="tree"/> most alike, the legs' and torso's
+/// pixels at every facing taken together (the pixels both draw over those either draws), as its run to walk's cut;
+/// none without a run and a walk drawn.
+/// </summary>
+[[nodiscard]] std::optional<MCMadeRunToWalk> MCMakeRunToWalk(MCSpriteTree& tree);
 
 /// <summary>
 /// Port-only (MechBraking): the run's frame a run to walk starts after (FIT RunToRWFrame). The expansion's mechs leave

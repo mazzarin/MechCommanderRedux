@@ -228,6 +228,9 @@ auto MCSpriteTree::PreloadGestures() -> void
     }
 
     GesturesPreloaded = true;
+    // Port-only (MechBraking): the run to walk made for a tree without one drawn, worked out now the run and walk are
+    // in, not as a mech first slows.
+    static_cast<void>(MCRunToWalkMade(*this, true));
 }
 
 auto MCSpriteTree::PrepareHdArt() const -> void

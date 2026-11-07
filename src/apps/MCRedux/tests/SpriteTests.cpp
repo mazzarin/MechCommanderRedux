@@ -1293,7 +1293,7 @@ namespace
 /// original mech, one that leaves its stride part way for the stop (commando), one with its own stops in its table
 /// (madcat), and expansion mechs whose stops never slow in their data (OB-186), with (ShadowCat) and without (Turkina)
 /// a run to walk, walks 120 metres or runs 240 and halts. Braking, its stride gives way to the stop where that starts
-/// (the walk's end or its frame for the stop, the run's frame for its run to walk or, without, its end), it never
+/// (the walk's end or its frame for the stop, the run's frame for its run to walk or, without, the made one's), it never
 /// drops from a stride to standing, it only slows from there, it stands where the original stops (within the slack),
 /// and its stride is never fitted beyond the rate bounds; without, it plays no stop, its legs dropping from the stride
 /// to standing as the original's. Braking, a torso and arms in step with the legs stay in step through a gesture, its
@@ -1385,10 +1385,23 @@ TEST_CASE_ISOLATED("game: with MechBraking a mech brakes to a halt through its s
             const auto strideFrames = static_cast<int32_t>(tree->Gestures[strideGesture].NumFrames);
             const int32_t walkGivesWay =
                 info.WalkToWSFrame != NoFrame ? static_cast<int32_t>(info.WalkToWSFrame) : strideFrames - 1;
+            const std::optional<MCMadeRunToWalk> made = MCRunToWalkMade(*tree, true);
             const int32_t runGivesWay = frames[first].Gesture == MCStopGesture::RunToWalk && info.RunToRWFrame != 0
                                             ? static_cast<int32_t>(info.RunToRWFrame)
-                                            : strideFrames - 1;
+                                        : made.has_value() ? static_cast<int32_t>(made->RunFrame)
+                                                           : strideFrames - 1;
             CHECK_EQ(frames[first - 1].Frame, run ? runGivesWay : walkGivesWay);
+
+            // Without a run to walk drawn, the walk goes on from the made one's walk frame (shown as an update steps:
+            // at 15 frames a second, up to two on).
+            if (run && made.has_value())
+            {
+                constexpr int32_t UpdateStep = 2;
+                CHECK_EQ(frames[first].Gesture, MCStopGesture::Walk);
+                const auto walkFrames = static_cast<int32_t>(tree->Gestures[MCStopGesture::Walk].NumFrames);
+                CHECK((frames[first].Frame - static_cast<int32_t>(made->WalkFrame) + walkFrames) % walkFrames <=
+                      UpdateStep);
+            }
 
             for (size_t i = first + 1; i < frames.size(); ++i)
             {
@@ -1411,6 +1424,167 @@ TEST_CASE_ISOLATED("game: with MechBraking a mech brakes to a halt through its s
     }
 
     GMechBraking = 0;
+}
+
+namespace
+{
+    /// <summary>The pixels a frame of a shape draws, as offsets from its hot spot, in order.</summary>
+    using PixelSet = std::vector<std::pair<int32_t, int32_t>>;
+
+    PixelSet FramePixelSet(const MCShape& shape, int32_t frame)
+    {
+        PixelSet pixels;
+        VfxShapeVisit(shape.FrameList(), frame, [&](int32_t x, int32_t y, uint8_t) { pixels.emplace_back(x, y); });
+        std::ranges::sort(pixels);
+        pixels.erase(std::ranges::unique(pixels).begin(), pixels.end());
+        return pixels;
+    }
+
+    /// <summary>The pixels two frames both draw, and those either does.</summary>
+    std::pair<int64_t, int64_t> SharedAndEither(const PixelSet& a, const PixelSet& b)
+    {
+        PixelSet both;
+        std::ranges::set_intersection(a, b, std::back_inserter(both));
+        const auto shared = static_cast<int64_t>(both.size());
+        return {shared, static_cast<int64_t>(a.size() + b.size()) - shared};
+    }
+} // namespace
+
+/// <summary>
+/// With MechBraking the mechs without a run to walk drawn (the expansion's Wendigo, Turkina, BushWhacker and Mauler list
+/// one with no shapes; ShadowCat's and FireFalcon's are blank, so a ShadowCat slowing from a run vanished) slow from a
+/// run by one made from their own run and walk: the run frame and walk frame most alike, the legs' and torso's pixels at
+/// the sixteen facings taken together (counted here pixel by pixel), the run shown to that frame and the walk going on
+/// from the next of its own. Every other mech has its own; none is made without braking. Against the steps into and out
+/// of it, the cut changes the legs and torso less than the cut without one does (the run's last frame into the walk's
+/// first, as the original goes from a run to a walk): 0.9 to 1.9 times the steps beside it, against 1.3 to 2.6.
+/// </summary>
+TEST_CASE_ISOLATED("game: with MechBraking a mech without a run to walk drawn slows from a run by one made from its "
+                   "own run and walk, cut where the two are most alike")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::set<std::string_view> without = {"Wendigo", "Turkina",   "BushWhacker",
+                                                "Mauler",  "ShadowCat", "FireFalcon"};
+    constexpr int32_t Facings = 16;
+    constexpr float Turn = 360.0f;
+    std::set<std::string> seen;
+    int32_t cuts = 0;
+
+    for (const auto& [treeName, packet] : MCTestGame::MechTrees())
+    {
+        if (!seen.insert(treeName).second)
+        {
+            continue;
+        }
+
+        MCTest::Scope scope(treeName);
+        const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree(treeName);
+        REQUIRE(tree != nullptr);
+        const bool lacks = without.contains(treeName);
+        CHECK(MCHasGestureArt(*tree, MCStopGesture::RunToWalk) == !lacks);
+        CHECK(!MCRunToWalkMade(*tree, false).has_value());
+        const std::optional<MCMadeRunToWalk> cut = MCRunToWalkMade(*tree, true);
+        REQUIRE(cut.has_value() == lacks);
+
+        if (!cut.has_value())
+        {
+            continue;
+        }
+
+        // Each pair's shared and either pixels over every facing, legs and torso.
+        const auto runFrames = static_cast<int32_t>(tree->Gestures[MCStopGesture::Run].NumFrames);
+        const auto walkFrames = static_cast<int32_t>(tree->Gestures[MCStopGesture::Walk].NumFrames);
+        std::vector<std::pair<int64_t, int64_t>> pairs(static_cast<size_t>(runFrames * walkFrames));
+        std::vector<std::pair<int64_t, int64_t>> walkSteps(static_cast<size_t>(walkFrames));
+        std::vector<std::pair<int64_t, int64_t>> runSteps(static_cast<size_t>(runFrames));
+
+        for (int32_t facing = 0; facing < Facings; ++facing)
+        {
+            for (const int32_t part : {0, 1})
+            {
+                int32_t reverse = 0;
+                float rate = 0.0f;
+                const float rotation = Turn * static_cast<float>(facing) / Facings;
+                const std::shared_ptr<MCShape> run =
+                    tree->GetGesture(MCStopGesture::Run, part, rotation, reverse, rate, true);
+                const std::shared_ptr<MCShape> walk =
+                    tree->GetGesture(MCStopGesture::Walk, part, rotation, reverse, rate, true);
+                REQUIRE(run != nullptr);
+                REQUIRE(walk != nullptr);
+                std::vector<PixelSet> runs;
+                std::vector<PixelSet> walks;
+
+                for (int32_t r = 0; r < runFrames; ++r)
+                {
+                    runs.push_back(FramePixelSet(*run, r));
+                }
+
+                for (int32_t w = 0; w < walkFrames; ++w)
+                {
+                    walks.push_back(FramePixelSet(*walk, w));
+                }
+
+                for (int32_t r = 0; r < runFrames; ++r)
+                {
+                    for (int32_t w = 0; w < walkFrames; ++w)
+                    {
+                        const auto [shared, either] = SharedAndEither(runs[r], walks[w]);
+                        pairs[static_cast<size_t>(r * walkFrames + w)].first += shared;
+                        pairs[static_cast<size_t>(r * walkFrames + w)].second += either;
+                    }
+                }
+
+                for (int32_t w = 0; w < walkFrames; ++w)
+                {
+                    const auto [shared, either] = SharedAndEither(walks[w], walks[(w + 1) % walkFrames]);
+                    walkSteps[static_cast<size_t>(w)].first += shared;
+                    walkSteps[static_cast<size_t>(w)].second += either;
+                }
+
+                for (int32_t r = 0; r < runFrames; ++r)
+                {
+                    const auto [shared, either] = SharedAndEither(runs[r], runs[(r + 1) % runFrames]);
+                    runSteps[static_cast<size_t>(r)].first += shared;
+                    runSteps[static_cast<size_t>(r)].second += either;
+                }
+            }
+        }
+
+        const auto likeness = [](std::pair<int64_t, int64_t> counts)
+        { return counts.second > 0 ? static_cast<double>(counts.first) / static_cast<double>(counts.second) : 0.0; };
+        const auto best =
+            std::ranges::max_element(pairs, [&](const auto& a, const auto& b) { return likeness(a) < likeness(b); });
+        const auto at = static_cast<int32_t>(std::distance(pairs.begin(), best));
+        CHECK_EQ(cut->RunFrame, static_cast<uint32_t>(at / walkFrames));
+        CHECK_EQ(cut->WalkFrame, static_cast<uint32_t>((at % walkFrames + 1) % walkFrames));
+
+        // How much the cut changes the legs and torso (the run's frame into the walk's next) over the steps into and
+        // out of it, against the cut without one (the run's last frame into the walk's first).
+        const auto pairAt = [&](int32_t r, int32_t w)
+        { return likeness(pairs[static_cast<size_t>(r * walkFrames + w)]); };
+        const auto change = [&](int32_t r, int32_t w)
+        {
+            const double into = 1.0 - likeness(runSteps[static_cast<size_t>((r + runFrames - 1) % runFrames)]);
+            const double outOf = 1.0 - likeness(walkSteps[static_cast<size_t>(w)]);
+            return (1.0 - pairAt(r, w)) / ((into + outOf) / 2.0);
+        };
+
+        const double made = change(static_cast<int32_t>(cut->RunFrame), static_cast<int32_t>(cut->WalkFrame));
+        const double plain = change(runFrames - 1, 0);
+        std::cout << std::format(
+            "  {}: run frame {} into walk frame {} (most alike {:.2f}): it changes {:.2f} times the "
+            "steps beside it, without one {:.2f}\n",
+            treeName, cut->RunFrame, cut->WalkFrame, likeness(*best), made, plain);
+        CHECK(made < plain);
+        cuts++;
+    }
+
+    CHECK_EQ(cuts, static_cast<int32_t>(without.size()));
 }
 
 namespace

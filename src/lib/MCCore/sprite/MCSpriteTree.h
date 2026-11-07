@@ -1,6 +1,7 @@
 #pragma once
 
 #include "appear/MCAppearanceType.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCSpriteManager.h"
 
 /// <summary>A mech gesture (FIT "Gestures%d").</summary>
@@ -208,6 +209,11 @@ public:
     std::optional<MCTransitionTable> TransitionArray;
     /// <summary>Whether <see cref="PreloadGestures"/> has run.</summary>
     bool GesturesPreloaded = false;
+    /// <summary>Port-only (MechBraking): whether each gesture looked at has its art drawn (MCHasGestureArt).</summary>
+    std::map<int32_t, bool> GestureArtDrawn;
+    /// <summary>Port-only (MechBraking): the run to walk made from the run and walk (MCRunToWalkMade), once worked out.</summary>
+    std::optional<MCMadeRunToWalk> MadeRunToWalk;
+    bool MadeRunToWalkKnown = false;
 };
 
 /// <summary>The number of entries of a tree's shape list (all four parts).</summary>

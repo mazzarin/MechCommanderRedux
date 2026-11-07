@@ -241,6 +241,14 @@ namespace
             }
             case MCStopGesture::Run:
             {
+                // Without a run to walk drawn, braking, into the walk by the one made (shown to its cut frame).
+                if (const std::optional<MCMadeRunToWalk> made = MCRunToWalkMade(tree, MCMechBrakingInForce());
+                    made.has_value())
+                {
+                    return MCDrawnStep{MCStopGesture::Walk, static_cast<int32_t>(made->RunFrame) + 1,
+                                       static_cast<int32_t>(made->WalkFrame)};
+                }
+
                 const std::optional<uint32_t> runToWalk = MCRunToWalkFrame(tree, MCMechBrakingInForce());
                 const int32_t at = runToWalk.has_value() ? static_cast<int32_t>(*runToWalk) : end(MCStopGesture::Run);
                 return MCHasGestureArt(tree, MCStopGesture::RunToWalk)
@@ -662,10 +670,10 @@ namespace
 {
     /// <summary>
     /// Port-only (MechBraking): the legs' frame gesture <paramref name="gesture"/> gives way at in a stop whose next
-    /// gesture is <paramref name="next"/>, as update tests it: a walk's frame to stand from, a run's to walk from, else
-    /// its end.
+    /// gesture is <paramref name="next"/>, as update tests it: a walk's frame to stand from, a run's to walk from, the
+    /// frame after a made run to walk's run frame, else its end.
     /// </summary>
-    auto StopStepFrame(const MCSpriteTree& tree, int32_t gesture, int32_t next) -> int32_t
+    auto StopStepFrame(MCSpriteTree& tree, int32_t gesture, int32_t next) -> int32_t
     {
         const auto frames = static_cast<int32_t>(tree.Gestures[static_cast<size_t>(gesture)].NumFrames);
         const MCMechSpecialInfo& info = tree.SpecialInfo;
@@ -683,7 +691,33 @@ namespace
             }
         }
 
+        // Without a run to walk drawn, past the made one's run frame: it shows for its whole frame, at running speed.
+        if (gesture == MCStopGesture::Run && next == MCStopGesture::Walk)
+        {
+            if (const std::optional<MCMadeRunToWalk> made = MCRunToWalkMade(tree, true); made.has_value())
+            {
+                return static_cast<int32_t>(made->RunFrame) + 1;
+            }
+        }
+
         return frames;
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): the frame gesture <paramref name="gesture"/> of a stop starts at after
+    /// <paramref name="previous"/>, as update starts it: a walk after a run the made run to walk's walk frame, else 0.
+    /// </summary>
+    auto StopStartFrame(MCSpriteTree& tree, int32_t previous, int32_t gesture) -> float
+    {
+        if (previous == MCStopGesture::Run && gesture == MCStopGesture::Walk)
+        {
+            if (const std::optional<MCMadeRunToWalk> made = MCRunToWalkMade(tree, true); made.has_value())
+            {
+                return static_cast<float>(made->WalkFrame);
+            }
+        }
+
+        return 0.0f;
     }
 
     /// <summary>
@@ -700,16 +734,20 @@ namespace
 
     /// <summary>
     /// Port-only (MechBraking): the metres a planned stop's gestures from step <paramref name="step"/> of its transition
-    /// (from state <paramref name="state"/>) on cover, each played from its start to where it gives way.
+    /// (from state <paramref name="state"/>) on cover, each played from where it starts to where it gives way.
     /// </summary>
     auto StopMetresFrom(MCSpriteTree& tree, int32_t state, int32_t step) -> float
     {
         float metres = 0.0f;
+        int32_t previous = step > 0 ? MCStopTransition(tree, MCStopState::Stand, state, step - 1, true)
+                                    : StateGesture(state).value_or(-1);
 
         for (int32_t gesture = MCStopTransition(tree, MCStopState::Stand, state, step, true); gesture != -1;)
         {
             const int32_t next = MCStopTransition(tree, MCStopState::Stand, state, ++step, true);
-            metres += MetresUntil(tree, gesture, 0.0f, StopStepFrame(tree, gesture, next));
+            metres +=
+                MetresUntil(tree, gesture, StopStartFrame(tree, previous, gesture), StopStepFrame(tree, gesture, next));
+            previous = gesture;
             gesture = next;
         }
 
@@ -1722,11 +1760,9 @@ auto MCMechActor::Update() -> int32_t
     // Start the transition to the goal: the table lists the gestures from the state to it. Port-only (MechBraking): a
     // planned stop, and a run slowing to a walk, through the stopping art (MCStopTransition).
     int32_t goal = GestureGoal;
+    const auto braking = [&] { return goal == MCStopState::Stand ? PlannedStop : MCMechBrakingInForce(); };
     const auto transition = [&](int32_t step)
-    {
-        const bool braking = goal == MCStopState::Stand ? PlannedStop : MCMechBrakingInForce();
-        return MCStopTransition(*tree, goal, CurrentStateGesture, step, braking);
-    };
+    { return MCStopTransition(*tree, goal, CurrentStateGesture, step, braking()); };
 
     if (goal != -1 && !InTransition && NextGesture == -1)
     {
@@ -1751,7 +1787,12 @@ auto MCMechActor::Update() -> int32_t
 
     if (InTransition && GestureDone)
     {
-        // The last gesture played out: on to the next one.
+        // The last gesture played out: on to the next one. Port-only (MechBraking): a run into the walk by the one made
+        // for a tree without a run to walk drawn goes on at its walk frame.
+        const std::optional<MCMadeRunToWalk> madeCut =
+            CurrentGesture == MCStopGesture::Run && NextGesture == MCStopGesture::Walk
+                ? MCRunToWalkMade(*tree, braking())
+                : std::nullopt;
         const int32_t prevGesture = CurrentGesture;
         CurrentGesture = NextGesture;
         TransitionStep++;
@@ -1879,6 +1920,11 @@ auto MCMechActor::Update() -> int32_t
                 if (prevGesture == 3 && info.SWToWalkFrame != NoFrame)
                 {
                     startFrame = static_cast<int32_t>(info.SWToWalkFrame);
+                }
+
+                if (madeCut.has_value())
+                {
+                    startFrame = static_cast<int32_t>(madeCut->WalkFrame);
                 }
                 break;
             }
@@ -2218,6 +2264,15 @@ auto MCMechActor::Update() -> int32_t
         const int32_t legsStepped = CurrentFrame[MCMechPart::Legs] + (PlayBackwards ? -step : step);
         const bool legsPlayOut = PlannedStop && InTransition &&
                                  static_cast<int32_t>(tree->Gestures[CurrentGesture].NumFrames) <= legsStepped;
+        // Port-only (MechBraking): a run going into the walk by the one made for a tree without a run to walk drawn
+        // goes on round to the frame it's cut at, and gives way there.
+        const std::optional<MCMadeRunToWalk> madeCut =
+            InTransition && !PlayBackwards && CurrentGesture == MCStopGesture::Run && NextGesture == MCStopGesture::Walk
+                ? MCRunToWalkMade(*tree, braking())
+                : std::nullopt;
+        // Already on that frame, the legs hold it as it gives way; the parts they lead hold it with them, in step.
+        const bool cutHeld = madeCut.has_value() && step != 0 &&
+                             CurrentFrame[MCMechPart::Legs] == static_cast<int32_t>(madeCut->RunFrame);
 
         for (int32_t i = 0; i < MechPartCount; i++)
         {
@@ -2272,11 +2327,36 @@ auto MCMechActor::Update() -> int32_t
             }
 
             const int32_t delta = PlayBackwards ? -step : step;
+            const int32_t from = CurrentFrame[part];
             CurrentFrame[part] += delta;
             const uint32_t numFrames = tree->Gestures[CurrentGesture].NumFrames;
             // Port-only (MechBraking): in a planned stop the legs alone move the gestures on (a part half a stride off
             // them, mirrored, would cut their stride short); the other parts loop, or hold the end with the legs.
             const bool leads = !PlannedStop || part == MCMechPart::Legs;
+
+            if (cutHeld && !leads)
+            {
+                CurrentFrame[part] = from;
+                continue;
+            }
+
+            if (madeCut.has_value() && leads)
+            {
+                const auto count = static_cast<int32_t>(numFrames);
+                const auto cutAt = static_cast<int32_t>(madeCut->RunFrame);
+
+                if (((cutAt - from) % count + count) % count <= delta)
+                {
+                    CurrentFrame[part] = cutAt;
+                    GestureDone = true;
+                }
+                else
+                {
+                    CurrentFrame[part] %= count;
+                }
+
+                continue;
+            }
 
             if (static_cast<int32_t>(numFrames) <= CurrentFrame[part])
             {

@@ -172,8 +172,9 @@ namespace
         {
             {
                 const std::scoped_lock lock(_Lock);
-                // An open socket's close is sent first (Leaving): the service then knows its player left.
-                _Leaving = _State == State::Open;
+                // An open socket's close is sent first (Leaving): the service then knows its player left. A second
+                // Close (the destructor's) keeps the first's.
+                _Leaving = _Leaving || _State == State::Open;
                 End("this game closed it");
             }
 
@@ -265,8 +266,8 @@ namespace
                     return false;
                 }
 
+                // Asynchronous either way: it has gone once WinHTTP says so (SHUTDOWN_COMPLETE), as a send has.
                 _LeaveSent = true;
-                _LeaveDone = error == NO_ERROR;
             }
 
             return !_LeaveDone && now < *_LeaveBy;

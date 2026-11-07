@@ -159,6 +159,58 @@ target_compile_definitions(mc_sodium PRIVATE CONFIGURED=1 NATIVE_LITTLE_ENDIAN=1
 target_compile_options(mc_sodium PRIVATE -w)
 target_include_directories(mc_sodium PRIVATE ${MC_SODIUM_DIR}/include/sodium PUBLIC ${MC_SODIUM_DIR}/include)
 target_link_libraries(MCCore PUBLIC mc_sodium)
+# The internet games' networking (SPEC-in-game-lobby.md): libdatachannel's data channels over Mbed TLS, usrsctp and
+# libjuice, with plog's header-only logging. Each a library of its own, of every file MCCore.vcxproj lists
+# (tools/vendor/ice_itemgroups.py writes them), with the settings its own CMake gives it on the Mac under
+# libdatachannel's (their README.md files).
+function(mc_vendored_items out folder extension)
+  string(REPLACE "." "\\." pattern "${folder}")
+  mc_vcxproj_items(items ${MC_SRC}/lib/MCCore/MCCore.vcxproj "" ClCompile
+                   "\\$\\(MCLibDir\\)${pattern}[^\"]+\\.${extension}")
+  list(TRANSFORM items REPLACE "^/\\$\\(MCLibDir\\)" "${MC_SRC}/lib/")
+  set(${out} ${items} PARENT_SCOPE)
+endfunction()
+
+set(MC_MBEDTLS_DIR ${MC_SRC}/lib/mbedtls-3.6.7)
+mc_vendored_items(MC_MBEDTLS_ITEMS mbedtls-3.6.7 c)
+add_library(mc_mbedtls STATIC ${MC_MBEDTLS_ITEMS})
+# The game's additions to its configuration (mc/mc_mbedtls_config.h: its locks), for everything that includes it.
+target_compile_definitions(mc_mbedtls PUBLIC "MBEDTLS_USER_CONFIG_FILE=<mc_mbedtls_config.h>")
+target_compile_options(mc_mbedtls PRIVATE -w)
+target_include_directories(mc_mbedtls PRIVATE ${MC_MBEDTLS_DIR}/library PUBLIC ${MC_MBEDTLS_DIR}/include
+                                                                              ${MC_MBEDTLS_DIR}/mc)
+
+set(MC_USRSCTP_DIR ${MC_SRC}/lib/usrsctp-fec583d5/usrsctplib)
+mc_vendored_items(MC_USRSCTP_ITEMS usrsctp-fec583d5 c)
+add_library(mc_usrsctp STATIC ${MC_USRSCTP_ITEMS})
+# Its CMake's settings, and what its checks find on macOS.
+target_compile_definitions(mc_usrsctp PRIVATE __Userspace__ SCTP_SIMPLE_ALLOCATOR SCTP_PROCESS_LEVEL_LOCKS
+                                              __APPLE_USE_RFC_2292 HAVE_SYS_QUEUE_H HAVE_NET_ROUTE_H
+                                              HAVE_NETINET_IP_ICMP_H HAVE_STDATOMIC_H HAVE_SA_LEN HAVE_SIN_LEN
+                                              HAVE_SIN6_LEN HAVE_SCONN_LEN)
+target_compile_options(mc_usrsctp PRIVATE -w)
+target_include_directories(mc_usrsctp PUBLIC ${MC_USRSCTP_DIR})
+
+set(MC_JUICE_DIR ${MC_SRC}/lib/libjuice-1.7.4)
+mc_vendored_items(MC_JUICE_ITEMS libjuice-1.7.4 c)
+add_library(mc_juice STATIC ${MC_JUICE_ITEMS})
+target_compile_definitions(mc_juice PRIVATE JUICE_EXPORTS USE_NETTLE=0 NO_SERVER RELEASE=1 PUBLIC JUICE_STATIC)
+target_compile_options(mc_juice PRIVATE -w)
+target_include_directories(mc_juice PRIVATE ${MC_JUICE_DIR}/include/juice PUBLIC ${MC_JUICE_DIR}/include)
+
+set(MC_DATACHANNEL_DIR ${MC_SRC}/lib/libdatachannel-0.24.6)
+mc_vendored_items(MC_DATACHANNEL_ITEMS libdatachannel-0.24.6 cpp)
+add_library(mc_datachannel STATIC ${MC_DATACHANNEL_ITEMS})
+set_target_properties(mc_datachannel PROPERTIES CXX_STANDARD 17)
+target_compile_definitions(mc_datachannel PRIVATE RTC_EXPORTS USE_MBEDTLS=1 USE_GNUTLS=0 USE_NICE=0 RTC_SYSTEM_JUICE=0
+                                                  RTC_SYSTEM_SRTP=0
+                                          PUBLIC RTC_STATIC RTC_ENABLE_MEDIA=0 RTC_ENABLE_WEBSOCKET=1)
+target_compile_options(mc_datachannel PRIVATE -w)
+target_include_directories(mc_datachannel PRIVATE ${MC_DATACHANNEL_DIR}/include/rtc ${MC_DATACHANNEL_DIR}/src
+                                                  ${MC_SRC}/lib/plog-94899e0b/include
+                                          PUBLIC ${MC_DATACHANNEL_DIR}/include)
+target_link_libraries(mc_datachannel PUBLIC mc_mbedtls PRIVATE mc_usrsctp mc_juice)
+target_link_libraries(MCCore PUBLIC mc_datachannel)
 # JSON for Modern C++ (update/'s files), header-only; the tests write and read updates' files too.
 target_include_directories(MCCore PUBLIC ${MC_SRC}/lib/nlohmann-json-3.12.0/single_include)
 # dr_flac: one portable C decoder, outside MCCore's precompiled C++ header, as on Windows.

@@ -1156,6 +1156,9 @@
     <ClCompile Include="platform\MCFrameLog.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCIceLink.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCInput.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -1199,6 +1202,9 @@
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCStringTable.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCTlsThreading.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCVulkanPresenter.cpp">
@@ -2487,6 +2493,9 @@
     <ClInclude Include="platform\MCFrameLog.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCIceLink.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCInput.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2530,6 +2539,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCStringTable.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCTlsThreading.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCUtf8Path.h">

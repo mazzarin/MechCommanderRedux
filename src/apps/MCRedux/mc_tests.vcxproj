@@ -117,6 +117,7 @@
     <ClCompile Include="tests\HdMovieTests.cpp" />
     <ClCompile Include="tests\HdOptionsTests.cpp" />
     <ClCompile Include="tests\HdPackTests.cpp" />
+    <ClCompile Include="tests\IceLinkTests.cpp" />
     <ClCompile Include="tests\IniFileTests.cpp" />
     <ClCompile Include="tests\InputTests.cpp" />
     <ClCompile Include="tests\InterfaceTests.cpp" />

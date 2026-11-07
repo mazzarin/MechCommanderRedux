@@ -694,11 +694,13 @@ auto MCBattleMech::HandleMoveChunk(uint32_t chunk) -> int32_t
         MCMovePath& path = GetPilot()->GetMovePath();
         path.SetMoveChunk(MoveChunk);
 
-        // Port-only (HDStops, MechBraking): whether the chunks showed the move's end, and where; a chunk of one cell keeps
-        // the last word.
-        if (MoveChunk.NumSteps > 1)
+        // Port-only (HDStops, MechBraking): whether the chunks showed the move's end, and where. A server that says so
+        // (MCChunkWord, OB-189) is taken at its word; an older one's chunk with room left shows the end, and one of a
+        // single cell keeps the last word.
+        if (MoveChunk.Word != MCChunkWord::None || MoveChunk.NumSteps > 1)
         {
-            ChunkShowedMoveEnd = MoveChunk.NumSteps < MCMoveChunk::MaxSteps;
+            ChunkShowedMoveEnd = MoveChunk.Word == MCChunkWord::None ? MoveChunk.NumSteps < MCMoveChunk::MaxSteps
+                                                                     : MoveChunk.Word == MCChunkWord::EndsHere;
             ChunkMoveEnd = ChunkShowedMoveEnd ? std::optional(path.Goal) : std::nullopt;
         }
 

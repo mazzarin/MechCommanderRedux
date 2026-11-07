@@ -1010,28 +1010,6 @@ namespace
     }
 
     /// <summary>
-    /// Port-only (MechBraking, HDStops): whether <paramref name="warrior"/>'s move goes on past <paramref name="path"/>'s
-    /// end: a next leg of a global path, a next path, or a queued way point to go on to.
-    /// </summary>
-    auto MoveGoesOn(const MCMechWarrior& warrior, const MCMovePath& path) -> bool
-    {
-        const MCMoveOrders& orders = warrior.MoveOrders;
-
-        if (orders.PathType == 2 && path.GlobalStep < orders.NumGlobalSteps - 1)
-        {
-            return true;
-        }
-
-        if (orders.Path[1] != nullptr && orders.Path[1]->NumStepsWhenNotPaused > 0)
-        {
-            return true;
-        }
-
-        MCVector3D nextPoint;
-        return warrior.GetNextWayPoint(nextPoint, 0) != 0;
-    }
-
-    /// <summary>
     /// Port-only (MechBraking): the metres from <paramref name="position"/> along <paramref name="path"/>'s steps left to
     /// its end, as walked (from step to step; the steps' own distances to the goal count cells), then on to
     /// <paramref name="end"/> when given (a multiplayer client's move's end, past the server's latest steps).
@@ -1107,7 +1085,7 @@ auto MCBattleMech::MoveEndsWith(const MCMovePath& path) const -> bool
     }
 
     const std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
-    return warrior != nullptr && !MoveGoesOn(*warrior, path);
+    return warrior != nullptr && !warrior->MoveGoesOnPast(path);
 }
 
 auto MCBattleMech::LastStepMargin() const -> float
@@ -1149,7 +1127,7 @@ auto MCBattleMech::MoveHeldUp() const -> bool
         return true;
     }
 
-    return path != nullptr && MoveGoesOn(*warrior, *path);
+    return path != nullptr && warrior->MoveGoesOnPast(*path);
 }
 
 auto MCBattleMech::UpdateTorso(float newRotatePerSec) -> void

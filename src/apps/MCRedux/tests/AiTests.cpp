@@ -539,6 +539,62 @@ TEST_CASE("move chunk: steps pack into one word and unpack to the same cells")
 }
 
 /// <summary>
+/// A chunk of fewer than four steps leaves its last step direction unused: the server's word on the move past it rides
+/// there (it ends there, or goes on), changing no other bit, so the steps unpack as an older build reads them; an older
+/// server's chunk (0 there) carries no word, and a full chunk's last direction is a step's.
+/// </summary>
+TEST_CASE("move chunk: a chunk with room left carries the server's word on the move past it in its unused direction")
+{
+    const auto mover = std::make_shared<MCMover>();
+    constexpr int32_t East = 2;
+    constexpr uint32_t DirectionBits = 7;
+    const auto packed = [&](int32_t steps, MCChunkWord word)
+    {
+        MCMoveChunk chunk;
+        chunk.Reset();
+        chunk.StepPos[0] = {10, 20, 1, 2};
+        chunk.StepRelPos = {};
+        std::fill_n(chunk.StepRelPos.begin(), steps - 1, East);
+        chunk.NumSteps = steps;
+        chunk.Word = word;
+        chunk.Pack(*mover);
+        return chunk.Data;
+    };
+
+    const auto unpacked = [&](uint32_t data)
+    {
+        MCMoveChunk received;
+        received.Reset();
+        received.Data = data;
+        REQUIRE(received.Unpack(*mover));
+        return received;
+    };
+
+    for (int32_t steps = 1; steps < MCMoveChunk::MaxSteps; ++steps)
+    {
+        const uint32_t plain = packed(steps, MCChunkWord::None);
+        const MCMoveChunk older = unpacked(plain);
+        CHECK(older.Word == MCChunkWord::None);
+
+        for (const MCChunkWord word : {MCChunkWord::EndsHere, MCChunkWord::GoesOn})
+        {
+            MCTest::Scope scope(std::format("{} steps, word {}", steps, static_cast<int32_t>(word)));
+            const uint32_t data = packed(steps, word);
+            CHECK_EQ(data & ~DirectionBits, plain & ~DirectionBits);
+            const MCMoveChunk received = unpacked(data);
+            CHECK(received.Word == word);
+            CHECK_EQ(received.NumSteps, steps);
+            CHECK(std::equal(received.StepPos.begin(), received.StepPos.begin() + steps, older.StepPos.begin()));
+        }
+    }
+
+    // A full chunk's last direction is its last step's.
+    const MCMoveChunk full = unpacked(packed(MCMoveChunk::MaxSteps, MCChunkWord::GoesOn));
+    CHECK(full.Word == MCChunkWord::None);
+    CHECK_EQ(full.StepRelPos[MCMoveChunk::LastDirection], East);
+}
+
+/// <summary>
 /// The direction from a cell to a neighbour, clockwise from north (0) to north-west (7), across tile edges; the cell
 /// itself and a cell further away have none (-2).
 /// </summary>

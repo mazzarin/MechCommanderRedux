@@ -478,6 +478,22 @@ int32_t MCMultiPlayer::SendMoverUpdate()
     return 0;
 }
 
+bool MCMultiPlayer::MoverCellsAwaited() const
+{
+    for (int32_t i = 0; i < NumMovers; i++)
+    {
+        const std::shared_ptr<MCMover> mover = RosterMover(i);
+        const std::shared_ptr<MCMechWarrior> pilot = mover != nullptr ? mover->GetPilot() : nullptr;
+
+        if (pilot != nullptr && mover->GetMoveChunk().AwaitsMore(*pilot))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 int32_t MCMultiPlayer::SendTurretUpdate()
 {
     if (NumTurrets == 0)
@@ -732,6 +748,15 @@ int32_t MCMultiPlayer::UpdateClients()
     {
         SendMoverUpdate();
         NextMoverUpdateTime += MoverUpdateFrequency;
+    }
+    else if (const float lastUpdate = NextMoverUpdateTime - MoverUpdateFrequency;
+             ScenarioTime >= lastUpdate + MoverUpdateFrequency * EarlyMoverUpdateShare && MoverCellsAwaited())
+    {
+        // OB-189 (fixed): a mover's next path or leg is planned, or its wait is over: its guests are sent it now. The
+        // original sent it at the update's time, and a guest's mech walked to the end of the chunk before and stood there
+        // till then, though the server's walked on.
+        SendMoverUpdate();
+        NextMoverUpdateTime = ScenarioTime + MoverUpdateFrequency;
     }
 
     if (NextTurretUpdateTime < ScenarioTime)

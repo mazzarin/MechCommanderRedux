@@ -896,6 +896,24 @@ auto MCMechWarrior::GetNextWayPoint(MCVector3D& nextPoint, int incWayPoint) cons
     return 0;
 }
 
+auto MCMechWarrior::MoveGoesOnPast(const MCMovePath& path) const -> bool
+{
+    if (MoveOrders.PathType == 2 && path.GlobalStep < MoveOrders.NumGlobalSteps - 1)
+    {
+        return true;
+    }
+
+    const std::unique_ptr<MCMovePath>& next = MoveOrders.Path[1];
+
+    if (next != nullptr && next.get() != &path && next->NumStepsWhenNotPaused > 0)
+    {
+        return true;
+    }
+
+    MCVector3D nextPoint;
+    return GetNextWayPoint(nextPoint, 0) != 0;
+}
+
 auto MCMechWarrior::CalcWithdrawGoal(float withdrawRange) const -> MCVector3D
 {
     const auto mover = std::static_pointer_cast<MCMover>(LockObject(Vehicle));

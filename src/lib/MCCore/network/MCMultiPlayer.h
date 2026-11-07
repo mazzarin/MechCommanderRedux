@@ -387,6 +387,13 @@ public:
     /// <summary>Broadcasts every rostered mover's move chunk, status chunk and its pilot's order id.</summary>
     int32_t SendMoverUpdate();
 
+    /// <summary>
+    /// Port-only: whether a rostered mover's last move chunk said its move goes on past it and its pilot's paths have
+    /// changed since (MCMoveChunk::AwaitsMore): its next path or leg planned, or its wait over. The server then sends the
+    /// next mover update now, not at its time, so the guests' mechs don't reach that chunk's end first and stop there.
+    /// </summary>
+    bool MoverCellsAwaited() const;
+
     int32_t SendTurretUpdate();
 
     int32_t SendMoverWeaponFireUpdate();
@@ -568,6 +575,11 @@ public:
     float NextMoverUpdateTime = 0;
     /// <summary>Seconds between mover updates.</summary>
     float MoverUpdateFrequency = 0;
+    /// <summary>
+    /// Port-only: the share of <see cref="MoverUpdateFrequency"/> since the last mover update before a mover awaiting
+    /// more of its move (<see cref="MoverCellsAwaited"/>) has the next sent early: at most three a regular interval.
+    /// </summary>
+    static constexpr float EarlyMoverUpdateShare = 1.0f / 3.0f;
     /// <summary>The number of the next mover update (receivers drop older ones).</summary>
     uint16_t MoverUpdateSequence = 0;
     float NextTurretUpdateTime = 0;

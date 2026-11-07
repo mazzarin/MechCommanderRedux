@@ -64,6 +64,7 @@ namespace
         text += std::format("stepRelPos = {}, {}, {}\n", chunk.StepRelPos[0], chunk.StepRelPos[1], chunk.StepRelPos[2]);
         text += std::format("numSteps = {}\n", chunk.NumSteps);
         text += std::format("run = {}\n", chunk.Run != 0 ? 'T' : 'F');
+        text += std::format("word = {}\n", static_cast<int32_t>(chunk.Word));
         return text;
     }
 }
@@ -105,9 +106,32 @@ auto DebugMoveChunk(MCMover& mover, const MCMoveChunk& chunk1, std::optional<MCM
     SaveChunkDebugMsg("mvchunk.dbg");
 }
 
+auto MCChunkPaths::Of(const MCMechWarrior& pilot) -> MCChunkPaths
+{
+    MCChunkPaths paths;
+    paths.Asked = pilot.MovePathRequest.lock() != nullptr;
+
+    if (const std::unique_ptr<MCMovePath>& path = pilot.MoveOrders.Path[0]; path != nullptr)
+    {
+        paths.Steps = path->NumSteps;
+        paths.StepsWhenNotPaused = path->NumStepsWhenNotPaused;
+        paths.Leg = path->GlobalStep;
+    }
+
+    if (const std::unique_ptr<MCMovePath>& next = pilot.MoveOrders.Path[1]; next != nullptr)
+    {
+        paths.NextSteps = next->NumStepsWhenNotPaused;
+        paths.NextLeg = next->GlobalStep;
+    }
+
+    return paths;
+}
+
 auto MCMoveChunk::Build(MCMover& mover, const MCMovePath& path1, const MCMovePath& path2) -> void
 {
     SetChunkAtMover(*this, mover);
+    Word = MCChunkWord::None;
+    bool nextShown = false;
 
     if (path1.NumSteps > 0)
     {
@@ -175,17 +199,32 @@ auto MCMoveChunk::Build(MCMover& mover, const MCMovePath& path1, const MCMovePat
             }
 
             NumSteps = extraSteps + NumSteps;
+            nextShown = extraSteps > 0;
             Assert(NumSteps < MaxSteps + 1, static_cast<uint32_t>(index),
                    " MoveChunk.build: path2 and bad curStep > MOVECHUNK_NUM_STEPS ");
         }
     }
 
     FinishBuild(mover);
+
+    // Port-only: a chunk with room left says whether the move goes on past it: held up (its path paused: its own cell
+    // alone), a path asked for, or more of the move than the chunk's paths.
+    const MCMechWarrior& pilot = *mover.GetPilot();
+    Paths = MCChunkPaths::Of(pilot);
+
+    if (NumSteps < MaxSteps)
+    {
+        const bool heldUp = path1.NumSteps < path1.NumStepsWhenNotPaused && path1.CurStep < path1.NumStepsWhenNotPaused;
+        const bool goesOn = heldUp || Paths->Asked || pilot.MoveGoesOnPast(nextShown ? path2 : path1);
+        Word = goesOn ? MCChunkWord::GoesOn : MCChunkWord::EndsHere;
+    }
 }
 
 auto MCMoveChunk::Build(MCMover& mover) -> void
 {
     SetChunkAtMover(*this, mover);
+    Word = MCChunkWord::None;
+    Paths.reset();
     FinishBuild(mover);
 }
 
@@ -212,6 +251,8 @@ auto MCMoveChunk::Build(MCMover& /*mover*/, MCVector3D jumpGoal) -> void
     StepRelPos = {};
     NumSteps = 1;
     Run = 0;
+    Word = MCChunkWord::None;
+    Paths.reset();
 }
 
 auto MCMoveChunk::Pack(MCMover& mover) -> void
@@ -227,9 +268,10 @@ auto MCMoveChunk::Pack(MCMover& mover) -> void
     }
 
     // Original behaviour (OB-029): a direction of -2 (MoveChunk::build found no neighbour) spills into the upper
-    // bits.
+    // bits. Port-only: a chunk with room left carries its word in the last direction.
+    const int32_t lastDirection = stepCount < MaxSteps ? static_cast<int32_t>(Word) : StepRelPos[LastDirection];
     packed = ((packed << 3 | static_cast<uint32_t>(StepRelPos[0])) << 3 | static_cast<uint32_t>(StepRelPos[1])) << 3 |
-             static_cast<uint32_t>(StepRelPos[2]);
+             static_cast<uint32_t>(lastDirection);
     Data = packed;
 
     if (stepCount < 1 || stepCount > MaxSteps)
@@ -255,6 +297,13 @@ auto MCMoveChunk::Unpack(MCMover& /*mover*/) -> bool
     Data = cellRow; // as the original: the packed word is left holding the start cell row
     StepPos[0][0] = static_cast<int32_t>(cellRow / MapCellDim);
     StepPos[0][2] = static_cast<int32_t>(cellRow % MapCellDim);
+
+    // Port-only: a chunk with room left carries its word in the last direction (an older server's 0, no word).
+    const int32_t word = StepRelPos[LastDirection];
+    Word = NumSteps < MaxSteps && (word == static_cast<int32_t>(MCChunkWord::EndsHere) ||
+                                   word == static_cast<int32_t>(MCChunkWord::GoesOn))
+               ? static_cast<MCChunkWord>(word)
+               : MCChunkWord::None;
 
     for (int32_t i = 0; i < NumSteps - 1; i++)
     {
@@ -283,7 +332,7 @@ auto MCMoveChunk::OnMap() const -> bool
 
 auto MCMoveChunk::EqualTo(MCMover& mover, const MCMoveChunk& chunk) const -> bool
 {
-    bool equal = NumSteps == chunk.NumSteps && Run == chunk.Run;
+    bool equal = NumSteps == chunk.NumSteps && Run == chunk.Run && Word == chunk.Word;
 
     for (int32_t i = 0; equal && i < NumSteps; i++)
     {
@@ -301,4 +350,9 @@ auto MCMoveChunk::EqualTo(MCMover& mover, const MCMoveChunk& chunk) const -> boo
     }
 
     return equal;
+}
+
+auto MCMoveChunk::AwaitsMore(const MCMechWarrior& pilot) const -> bool
+{
+    return Word == MCChunkWord::GoesOn && Paths.has_value() && *Paths != MCChunkPaths::Of(pilot);
 }

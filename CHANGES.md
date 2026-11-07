@@ -318,7 +318,10 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - **Redux HD.** In multiplayer, a guest's screen no longer freezes a mech mid-stride for three seconds when it reaches
   the end of its move, and with BRAKING a guest's mechs no longer quicken and slow their stride as they walk, braking
   for stops the host's don't make: they stop as on the host's. A mech made to wait for a unit in its way keeps its
-  stride, as before, but in its move's last few steps a guest's screen shows it standing.
+  stride on a guest's screen too, even in its move's last few steps, and a guest's mechs no longer stop for a moment
+  at a way point or a turn in a long move where the host's walk on (OB-189): the host says in its moves' messages
+  whether a move ends there, and sends a mech's next steps as soon as they're planned. With an older host, guests see
+  these as before.
 - **Redux HD.** Sensor contacts' blips spin at the same pace at any frame rate, showing every frame of their art, and
   ping once each time round. A turret's, train car's or elemental's spun and pinged four times as fast at 60 frames a
   second, and the others' skipped frames or slowed with the frame rate.

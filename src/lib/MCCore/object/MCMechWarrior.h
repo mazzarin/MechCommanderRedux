@@ -204,6 +204,12 @@ public:
     /// <summary>The first way point of a queued move order, if the next queued order is one.</summary>
     int GetNextWayPoint(MCVector3D& nextPoint, int incWayPoint) const;
     /// <summary>
+    /// Port-only (MechBraking, HDStops, the server's move chunks): whether the move goes on past
+    /// <paramref name="path"/>'s end: a next leg of a global path, a next path planned (other than
+    /// <paramref name="path"/>), or a queued way point to go on to.
+    /// </summary>
+    bool MoveGoesOnPast(const MCMovePath& path) const;
+    /// <summary>
     /// Per weapon, whether it can fire at the target now (the attack chance, or -1 not ready, -2 no ammo, -3 out
     /// of range, -4 not locked, -5 no chance); returns how many can, or -1 can't fire, -2 no target, -3 out of range.
     /// </summary>

@@ -588,6 +588,45 @@ TEST_CASE("network: a client hands each mover its move and status chunks and dro
 }
 
 /// <summary>
+/// The server sends the next mover update early once a mover whose last chunk said its move goes on past it has more of
+/// it planned: its next path or leg, or its wait over (its paths changed since). A chunk that said the move ends there,
+/// or a mover whose paths stand as they were, waits for the update's time.
+/// </summary>
+TEST_CASE("network: the server sends a mover's next cells early once the move it said goes on has more planned")
+{
+    ClientGame server;
+    MCMultiPlayer& game = *server.Game;
+    game.IsServer = true;
+    const auto mover = std::make_shared<FakeMover>();
+    game.AddToMoverRoster(mover);
+    MCMechWarrior& pilot = *mover->FakePilot;
+    CHECK(!game.MoverCellsAwaited());
+
+    mover->MoveChunk.Word = MCChunkWord::GoesOn;
+    mover->MoveChunk.Paths = MCChunkPaths::Of(pilot);
+    CHECK(!game.MoverCellsAwaited());
+
+    // The next leg planned.
+    constexpr int32_t LegSteps = 5;
+    pilot.MoveOrders.Path[1]->NumStepsWhenNotPaused = LegSteps;
+    CHECK(game.MoverCellsAwaited());
+
+    // Sent: the chunk it gets now is built from the paths as they stand.
+    mover->MoveChunk.Paths = MCChunkPaths::Of(pilot);
+    CHECK(!game.MoverCellsAwaited());
+
+    // A wait over: the path paused, then walked on.
+    pilot.MoveOrders.Path[0]->NumStepsWhenNotPaused = LegSteps;
+    mover->MoveChunk.Paths = MCChunkPaths::Of(pilot);
+    pilot.MoveOrders.Path[0]->NumSteps = LegSteps;
+    CHECK(game.MoverCellsAwaited());
+
+    // A chunk that said the move ends there is no reason to send early.
+    mover->MoveChunk.Word = MCChunkWord::EndsHere;
+    CHECK(!game.MoverCellsAwaited());
+}
+
+/// <summary>
 /// A client points each rostered turret at the mover the server's turret update names by roster index; 0xff is no
 /// target. Outside a mission with company, the update is ignored.
 /// </summary>

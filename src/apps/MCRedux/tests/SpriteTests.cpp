@@ -1939,7 +1939,10 @@ TEST_CASE_ISOLATED(
 /// own cell alone; a mover held up (its path paused) sends its own cell straight after a full chunk. The guest takes the
 /// move as held up while the latest chunk with a cell to go was full, and as there once one showed the end; a chunk of
 /// its own cell alone keeps the last word. A mech yet to move isn't held up. With MechBraking the guest fits a stop only
-/// to the end a chunk showed, and keeps that end past a chunk of the step being walked into.
+/// to the end a chunk showed, and keeps that end past a chunk of the step being walked into. A server that says so in a
+/// chunk with room left (MCChunkWord) is taken at its word: a mech held up in its move's last cells is sent its own cell
+/// with the move going on, and a chunk ending at a leg's end before the next leg is planned goes on too (the guest's
+/// mech once stood there, or braked to a halt the host's never made); its own cell where the move ends is there.
 /// </summary>
 TEST_CASE_ISOLATED("game: a multiplayer guest takes a mech's move as going on when the server's moves stop short, and "
                    "as ending where they count down to (held strides let go, braking fitted to that end)")
@@ -1960,10 +1963,11 @@ TEST_CASE_ISOLATED("game: a multiplayer guest takes a mech's move as going on wh
     // east of the mech's own: held up (HDStops), and so not ending there (MechBraking: no stop planned at its end).
     constexpr int32_t East = 2;
     const MCMovePath steps{};
-    const auto goesOn = [&](int32_t cells, int32_t from)
+    const auto goesOn = [&](int32_t cells, int32_t from, MCChunkWord word = MCChunkWord::None)
     {
         MCMoveChunk chunk;
         chunk.Build(*mech);
+        chunk.Word = word;
         const int32_t column = chunk.StepPos[0][1] * MapCellDim + chunk.StepPos[0][3] + from;
         chunk.StepPos[0][1] = column / MapCellDim;
         chunk.StepPos[0][3] = column % MapCellDim;
@@ -2013,5 +2017,184 @@ TEST_CASE_ISOLATED("game: a multiplayer guest takes a mech's move as going on wh
     CHECK(goesOn(Full, 1));
     CHECK(!mech->ChunkMoveEnd.has_value());
 
+    // The server's word. Counting down to the end, then held up in the last cells: its own cell, going on; walking on,
+    // the end shown again.
+    constexpr MCChunkWord EndsHere = MCChunkWord::EndsHere;
+    constexpr MCChunkWord GoesOn = MCChunkWord::GoesOn;
+    CHECK(!goesOn(3, 1, EndsHere));
+    const MCVector3D shown = pathEnd();
+    CHECK(endShownAt(shown));
+    CHECK(goesOn(1, 2, GoesOn));
+    CHECK(!mech->ChunkMoveEnd.has_value());
+    CHECK(!goesOn(2, 2, EndsHere));
+    CHECK(endShownAt(shown));
+
+    // A leg's last cells before the next leg is planned: going on, then the next leg's cells.
+    CHECK(goesOn(Full, 0));
+    CHECK(goesOn(3, 1, GoesOn));
+    CHECK(goesOn(1, 3, GoesOn));
+    CHECK(!mech->ChunkMoveEnd.has_value());
+    CHECK(goesOn(Full, 3));
+
+    // Stopped short of what was shown: its own cell, where the move ends.
+    CHECK(!goesOn(1, 1, EndsHere));
+    CHECK(endShownAt(pathEnd()));
+
     MCGameContext::Current().SetMultiPlayer(nullptr);
+}
+
+/// <summary>
+/// The server's chunk with room left says whether the mech's move ends at its last step or goes on past it
+/// (MCChunkWord): mission 1's mech walking a short move is sent ever fewer cells, each ending the move, then its own
+/// cell where it stands; held up on the way (its path paused, as for a unit in its way), mid-move or in its last cells,
+/// its own cell with the move going on, and the server sends again early once it walks on (MCMoveChunk::AwaitsMore);
+/// with a way point queued after it, or a next leg of a long move not planned yet, the chunks ending at the path's end
+/// go on. A full chunk says nothing (it shows the move going on).
+/// </summary>
+TEST_CASE_ISOLATED("game: a server's move chunk with room left says whether the mech's move ends at its last cell or "
+                   "goes on past it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x200));
+    REQUIRE(mech != nullptr);
+    const std::shared_ptr<MCMechWarrior> pilot = mech->GetPilot();
+    const MCMoveChunk& chunk = mech->MoveChunk;
+    constexpr float FrameSeconds = 1.0f / 15.0f;
+    constexpr int32_t SettleFrames = 15;
+    constexpr int32_t MostFrames = 900;
+    constexpr int32_t Full = MCMoveChunk::MaxSteps;
+
+    for (int32_t frame = 0; frame < SettleFrames; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    const auto orderMove = [&](float metres)
+    {
+        const MCVector3D from = mech->GetPosition();
+        pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player,
+                                MCVector3D(from.X + metres * WorldUnitsPerMeter, from.Y, from.Z), -1, 0);
+    };
+
+    // Held up for a moment (its path paused, as for a unit in its way): its own cell, the move going on; walking on,
+    // the server has more to send.
+    const auto heldUp = [&]
+    {
+        pilot->PausePath();
+        mech->BuildMoveChunk();
+        CHECK_EQ(chunk.NumSteps, 1);
+        CHECK(chunk.Word == MCChunkWord::GoesOn);
+        CHECK(!chunk.AwaitsMore(*pilot));
+        pilot->ResumePath();
+        CHECK(chunk.AwaitsMore(*pilot));
+        mech->BuildMoveChunk();
+    };
+
+    // A short move, held up once mid-move and once in its last cells.
+    constexpr float ShortMetres = 60.0f;
+    orderMove(ShortMetres);
+    bool heldMidMove = false;
+    bool heldNearEnd = false;
+    int32_t endsHere = 0;
+    int32_t frame = 0;
+
+    for (; frame < MostFrames; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        mech->BuildMoveChunk();
+
+        if (chunk.NumSteps == Full)
+        {
+            CHECK(chunk.Word == MCChunkWord::None);
+
+            if (!heldMidMove)
+            {
+                heldUp();
+                CHECK_EQ(chunk.NumSteps, Full);
+                heldMidMove = true;
+            }
+
+            continue;
+        }
+
+        if (!heldMidMove)
+        {
+            continue;
+        }
+
+        CHECK(chunk.Word == MCChunkWord::EndsHere);
+        endsHere++;
+
+        if (chunk.NumSteps > 1 && !heldNearEnd)
+        {
+            heldUp();
+            CHECK(chunk.Word == MCChunkWord::EndsHere);
+            heldNearEnd = true;
+        }
+
+        if (pilot->GetMovePath().NumSteps == 0)
+        {
+            break;
+        }
+    }
+
+    CHECK(heldMidMove);
+    CHECK(heldNearEnd);
+    CHECK(endsHere > 1);
+    REQUIRE(frame < MostFrames);
+    CHECK_EQ(chunk.NumSteps, 1);
+    CHECK(chunk.Word == MCChunkWord::EndsHere);
+
+    // Two way points queued (the first starts at once): the chunks ending at the first's path's end go on; the queue
+    // cleared, they end there.
+    const auto wayPoint = [&](float metres)
+    {
+        const MCVector3D from = mech->GetPosition();
+        MCTacticalOrder order;
+        order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::MoveToPoint, 0);
+        order.SetWayPoint(0, MCVector3D(from.X + metres * WorldUnitsPerMeter, from.Y, from.Z));
+        order.Pack();
+        return order;
+    };
+
+    REQUIRE_EQ(pilot->AddQueuedTacOrder(wayPoint(-ShortMetres)), 0);
+    REQUIRE_EQ(pilot->AddQueuedTacOrder(wayPoint(-2.0f * ShortMetres)), 0);
+    bool endInView = false;
+
+    for (frame = 0; frame < MostFrames && !endInView; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        mech->BuildMoveChunk();
+        endInView = chunk.NumSteps > 1 && chunk.NumSteps < Full;
+    }
+
+    REQUIRE(endInView);
+    CHECK(chunk.Word == MCChunkWord::GoesOn);
+    pilot->ClearTacOrderQueue();
+    mech->BuildMoveChunk();
+    CHECK(chunk.Word == MCChunkWord::EndsHere);
+
+    // The last cells of a long move's leg, its next leg not planned yet.
+    MCMoveOrders& orders = pilot->MoveOrders;
+    MCMovePath& path = *orders.Path[0];
+    const int8_t keptType = orders.PathType;
+    const int8_t keptLegs = orders.NumGlobalSteps;
+    const int32_t keptLeg = path.GlobalStep;
+    orders.PathType = 2;
+    orders.NumGlobalSteps = 2;
+    path.GlobalStep = 0;
+    orders.Path[1]->NumStepsWhenNotPaused = 0;
+    mech->BuildMoveChunk();
+    CHECK(chunk.Word == MCChunkWord::GoesOn);
+    path.GlobalStep = 1;
+    mech->BuildMoveChunk();
+    CHECK(chunk.Word == MCChunkWord::EndsHere);
+    orders.PathType = keptType;
+    orders.NumGlobalSteps = keptLegs;
+    path.GlobalStep = keptLeg;
 }

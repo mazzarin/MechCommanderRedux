@@ -268,10 +268,12 @@ public:
     int32_t NameVariant = 0;
     /// <summary>
     /// Port-only (HDStops, MechBraking): on a multiplayer client, whether the server's latest move chunk with a step to go
-    /// held the move's end (fewer steps than a chunk carries). A mech closing on its move's end is sent ever fewer steps,
-    /// then its own cell; one held up is sent its own cell straight after a full chunk. A chunk of one cell keeps the
-    /// last word: near the end it may be the step being walked into at a leg's end, or a wait (which then reads as there:
-    /// the mech stands, as in the original). True for a mech yet to move.
+    /// held the move's end. The server says so in a chunk with room left (MCChunkWord): the move ends there, or goes on
+    /// (the mech held up, or its next path or leg yet to be planned). An older server's doesn't: a mech closing on its
+    /// move's end is sent ever fewer steps, then its own cell; one held up is sent its own cell straight after a full
+    /// chunk; so fewer steps than a chunk carries show the end, and a chunk of one cell keeps the last word (near the end
+    /// it may be the step being walked into at a leg's end, or a wait, which then reads as there: the mech stands, as in
+    /// the original). True for a mech yet to move.
     /// </summary>
     bool ChunkShowedMoveEnd = true;
     /// <summary>

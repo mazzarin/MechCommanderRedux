@@ -103,6 +103,9 @@ namespace MCReleaseFile
         auto operator<=>(const MCOrder&) const = default;
     };
 
+    /// <summary>The most mirrors <c>release.json</c> may name.</summary>
+    constexpr size_t MaxMirrors = 16;
+
     /// <summary><c>release.json</c>.</summary>
     struct MCReleases
     {
@@ -113,6 +116,14 @@ namespace MCReleaseFile
         /// <summary>A newer release going to a share of copies, and the share (0 to 100).</summary>
         std::optional<MCRelease> Rollout;
         double RolloutShare = 0.0;
+        /// <summary>
+        /// The mirrors: other hosts serving the content (<c>lists/</c>, <c>zips/</c>, <c>patches/</c>) at the paths
+        /// ours does, each an https address (none: ours alone; SPEC-install-and-updates.md's Mirrors). The key list and
+        /// <c>release.json</c> come from ours alone, so a mirror can't hold a copy on an old release, and every file is
+        /// checked against the signed list, so a mirror can only fail to serve one. The file may also name the earlier
+        /// releases still supported (<c>supported</c>), which the mirrors' sync reads and the game doesn't.
+        /// </summary>
+        std::vector<std::string> Mirrors;
     };
 
     /// <summary>What the game keeps of the files it has read, and of the copy (the user folder's <c>update.json</c>).</summary>
@@ -127,6 +138,11 @@ namespace MCReleaseFile
         std::optional<uint32_t> RolloutNumber;
         /// <summary>The release the player skipped (0: none): it isn't offered again, and a higher one is.</summary>
         uint64_t Skipped = 0;
+        /// <summary>
+        /// The mirrors of the <c>release.json</c> last taken (<see cref="MCReleases::Mirrors"/>), for a change of sets
+        /// planned against the release installed, which reads no <c>release.json</c>.
+        /// </summary>
+        std::vector<std::string> Mirrors;
 
         bool operator==(const MCKept&) const = default;
     };
@@ -160,8 +176,8 @@ namespace MCReleaseFile
                                                 uint64_t lowestKeyListIssue = 0);
 
     /// <summary>
-    /// What <paramref name="kept"/> becomes once <paramref name="trusted"/> is taken: the higher issues; under a key list
-    /// of a later epoch, that epoch, its release.json's issue and no skip.
+    /// What <paramref name="kept"/> becomes once <paramref name="trusted"/> is taken: the higher issues and release.json's
+    /// mirrors; under a key list of a later epoch, that epoch, its release.json's issue and no skip.
     /// </summary>
     MCKept Keep(const MCKept& kept, const MCTrusted& trusted);
 

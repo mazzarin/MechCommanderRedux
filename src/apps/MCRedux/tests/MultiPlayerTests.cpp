@@ -1010,9 +1010,9 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
     constexpr uint32_t pilotsAndWeapons = MCMatchRule::NoElitePilots | MCMatchRule::NoLrms | MCMatchRule::NoLongToms;
     constexpr uint32_t firstRules = MCMatchRule::Supported & ~(MCMatchRule::PilotRanks | MCMatchRule::WeaponBans);
     CHECK(MCPlayedOptions(MCMatchOptions{}, bans | pilotsAndWeapons, MCMatchRule::Supported) ==
-          MCMatchOptions{.Rules = bans | pilotsAndWeapons | weatherPlay});
+          MCMatchOptions{.Rules = bans | pilotsAndWeapons | weatherPlay | nightLights});
     CHECK(MCPlayedOptions(MCMatchOptions{}, bans | pilotsAndWeapons, firstRules) ==
-          MCMatchOptions{.Rules = bans | weatherPlay});
+          MCMatchOptions{.Rules = bans | weatherPlay | nightLights});
     CHECK(MCPlayedOptions(chosen, braking, 0) == MCMatchOptions{.Rules = 0u});
 
     const std::map<uint32_t, uint32_t> said = {

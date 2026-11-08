@@ -20,22 +20,22 @@ void MCNetSwitch::BeginInternet(std::shared_ptr<MCNetTransport> internet)
 
 void MCNetSwitch::EndInternet()
 {
-    EndIf(nullptr);
+    EndIf();
 }
 
 void MCNetSwitch::EndInternet(const MCNetTransport& internet)
 {
-    EndIf(&internet);
+    EndIf(internet);
 }
 
-void MCNetSwitch::EndIf(const MCNetTransport* only)
+void MCNetSwitch::EndIf(MCOptionalRef<const MCNetTransport> only)
 {
     std::shared_ptr<MCNetTransport> ended;
 
     {
         const std::scoped_lock lock(_Lock);
 
-        if (_Internet == nullptr || (only != nullptr && _Internet.get() != only))
+        if (_Internet == nullptr || (only.has_value() && _Internet.get() != &only->get()))
         {
             return;
         }

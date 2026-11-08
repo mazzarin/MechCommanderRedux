@@ -73,7 +73,7 @@ private:
     };
 
     /// <summary>Ends the internet game's network on now, if any (and if it's <paramref name="only"/>, when given).</summary>
-    void EndIf(const MCNetTransport* only);
+    void EndIf(MCOptionalRef<const MCNetTransport> only = std::nullopt);
     /// <summary>The network new sockets go on now (its handle unset).</summary>
     Route Current();
     /// <summary>The network <paramref name="socket"/> is on and its handle there; none for one that's gone.</summary>

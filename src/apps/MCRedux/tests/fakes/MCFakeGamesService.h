@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
 #include "platform/MCServiceSignaling.h"
 #include "platform/MCWebSocket.h"
 
@@ -143,7 +144,7 @@ namespace MCFakeGames
                 Json signal = message;
                 signal["guest"] = from.Guest;
 
-                if (Line* const host = HostLine())
+                if (const MCOptionalRef<Line> host = HostLine())
                 {
                     Say(*host, signal.dump());
                 }
@@ -177,7 +178,7 @@ namespace MCFakeGames
 
             if (!line.Host)
             {
-                if (Line* const host = HostLine())
+                if (const MCOptionalRef<Line> host = HostLine())
                 {
                     Say(*host, Json{{"t", "left"}, {"guest", line.Guest}}.dump());
                 }
@@ -242,11 +243,11 @@ namespace MCFakeGames
 
         static Json NoRelays() { return Json{{"stun", Json::array()}, {"relays", Json::array()}}; }
 
-        Line* HostLine()
+        MCOptionalRef<Line> HostLine()
         {
             const auto host =
                 std::ranges::find_if(_Lines, [](const auto& line) { return line.second.Open && line.second.Host; });
-            return host != _Lines.end() ? &host->second : nullptr;
+            return host != _Lines.end() ? MCOptionalRef<Line>(host->second) : std::nullopt;
         }
 
         void Open(int id, Line& line, std::string_view path)
@@ -280,9 +281,9 @@ namespace MCFakeGames
             }
 
             const std::string join = std::format("/join/{}?", GameCode);
-            Line* const host = HostLine();
+            const MCOptionalRef<Line> host = HostLine();
 
-            if (!path.starts_with(join) || host == nullptr)
+            if (!path.starts_with(join) || !host.has_value())
             {
                 const bool away = path.starts_with(join) &&
                                   std::ranges::any_of(_Lines, [](const auto& other) { return other.second.KeptPlace; });

@@ -46,59 +46,71 @@ namespace
                                    .FirstTry = std::chrono::milliseconds(0),
                                    .LongestWait = std::chrono::milliseconds(0)};
 
-    /// <summary>A socket the test plays the service's end of.</summary>
-    class MCScriptedSocket final : public MCWebSocket
+    /// <summary>
+    /// The service's end of a scripted socket, which the test plays: what the game sent, what arrives for it, its state.
+    /// The socket and the test share it, so it outlives a socket the signaling lets go.
+    /// </summary>
+    struct MCScriptedEnd
     {
-    public:
-        void SendText(std::string_view text) override { Sent.push_back({false, std::string(text)}); }
-        void SendBinary(std::span<const uint8_t> bytes) override
-        {
-            Sent.push_back({true, {bytes.begin(), bytes.end()}});
-        }
-
-        std::vector<Message> Take() override { return std::exchange(Arrived, {}); }
-        State GetState() const override { return Now; }
-        std::string WhyClosed() const override { return "closed (1000)"; }
-        size_t Unsent() const override { return Waiting; }
-        void Close() override { Now = State::Closed; }
-
-        void CloseAway() override
-        {
-            Now = State::Closed;
-            Away = true;
-        }
-
-        std::vector<Message> Sent;
-        std::vector<Message> Arrived;
-        State Now = State::Open;
+        std::vector<MCWebSocket::Message> Sent;
+        std::vector<MCWebSocket::Message> Arrived;
+        MCWebSocket::State Now = MCWebSocket::State::Open;
         size_t Waiting = 0;
         /// <summary>Closed as a drop (CloseAway), its place kept.</summary>
         bool Away = false;
     };
 
-    /// <summary>Opens scripted sockets, keeping each by its address for the test.</summary>
+    /// <summary>A socket whose far end the test plays (<see cref="MCScriptedEnd"/>).</summary>
+    class MCScriptedSocket final : public MCWebSocket
+    {
+    public:
+        explicit MCScriptedSocket(std::shared_ptr<MCScriptedEnd> end) : _End(std::move(end)) {}
+
+        void SendText(std::string_view text) override { _End->Sent.push_back({false, std::string(text)}); }
+        void SendBinary(std::span<const uint8_t> bytes) override
+        {
+            _End->Sent.push_back({true, {bytes.begin(), bytes.end()}});
+        }
+
+        std::vector<Message> Take() override { return std::exchange(_End->Arrived, {}); }
+        State GetState() const override { return _End->Now; }
+        std::string WhyClosed() const override { return "closed (1000)"; }
+        size_t Unsent() const override { return _End->Waiting; }
+        void Close() override { _End->Now = State::Closed; }
+
+        void CloseAway() override
+        {
+            _End->Now = State::Closed;
+            _End->Away = true;
+        }
+
+    private:
+        std::shared_ptr<MCScriptedEnd> _End;
+    };
+
+    /// <summary>Opens scripted sockets, keeping each one's far end by its address for the test.</summary>
     struct MCScriptedService
     {
-        /// <summary>Each socket opened, by its address; the signaling owns them.</summary>
-        std::vector<std::pair<std::string, std::reference_wrapper<MCScriptedSocket>>> Opened;
+        /// <summary>Each socket opened, by its address: the signaling owns the sockets, the test shares their ends.</summary>
+        std::vector<std::pair<std::string, std::shared_ptr<MCScriptedEnd>>> Opened;
 
         MCWebSocketOpener Opener()
         {
             return [this](const std::string& url)
             {
-                auto socket = std::make_unique<MCScriptedSocket>();
-                Opened.emplace_back(url, std::ref(*socket));
-                return socket;
+                auto end = std::make_shared<MCScriptedEnd>();
+                Opened.emplace_back(url, end);
+                return std::make_unique<MCScriptedSocket>(std::move(end));
             };
         }
 
-        /// <summary>The latest socket opened to <paramref name="url"/>.</summary>
-        MCScriptedSocket& At(std::string_view url)
+        /// <summary>The far end of the latest socket opened to <paramref name="url"/>.</summary>
+        MCScriptedEnd& At(std::string_view url)
         {
             const auto found = std::ranges::find_if(Opened.rbegin(), Opened.rend(),
                                                     [&](const auto& entry) { return entry.first == url; });
             REQUIRE(found != Opened.rend());
-            return found->second.get();
+            return *found->second;
         }
 
         size_t OpenedTo(std::string_view url) const
@@ -149,7 +161,7 @@ TEST_CASE(
     MCScriptedService service;
     MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true);
     signaling.Host();
-    MCScriptedSocket& host = service.At(HostUrl);
+    MCScriptedEnd& host = service.At(HostUrl);
     CHECK(!signaling.HostedCode().has_value());
 
     // The room set before the service answered goes once the game is made.
@@ -256,7 +268,7 @@ TEST_CASE("service signaling: a guest joins by the code, and what isn't the serv
     MCScriptedService service;
     MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, false);
     signaling.Join(GameCode);
-    MCScriptedSocket& game = service.At(JoinUrl);
+    MCScriptedEnd& game = service.At(JoinUrl);
     CHECK(!signaling.Joined(GameCode));
 
     // Nothing without its token is a join.
@@ -350,7 +362,7 @@ TEST_CASE("service signaling: a guest's socket dropping says its game is gone on
 
     // Its next try goes back to its place with its token; it's in once the service says so, its relays kept.
     CHECK(signaling.Take().empty());
-    MCScriptedSocket& back = service.At(BackUrl);
+    MCScriptedEnd& back = service.At(BackUrl);
     CHECK(!signaling.Joined(GameCode));
     back.Arrived.push_back(Text(R"({"t":"back","guest":"g1"})"));
     CHECK(signaling.Take().empty());
@@ -363,7 +375,7 @@ TEST_CASE("service signaling: a guest's socket dropping says its game is gone on
     back.Now = MCWebSocket::State::Closed;
     CHECK_EQ(signaling.Take().size(), size_t{1});
     CHECK(signaling.Take().empty());
-    MCScriptedSocket& again = service.At(BackUrl);
+    MCScriptedEnd& again = service.At(BackUrl);
     again.Arrived.push_back(Text(R"({"t":"expired"})"));
     again.Now = MCWebSocket::State::Closed;
     CHECK_EQ(signaling.Take().size(), size_t{1});
@@ -440,7 +452,7 @@ TEST_CASE(
     MCScriptedService service;
     MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, false, AtOnce);
     signaling.Host();
-    MCScriptedSocket& host = service.At(HostUrl);
+    MCScriptedEnd& host = service.At(HostUrl);
     host.Arrived.push_back(Text(HostedMessage));
     host.Arrived.push_back(Text(GuestMessage));
     host.Arrived.push_back(Text(R"({"t":"signal","guest":"g3","link":1,"kind":"offer","text":"v=0","mid":""})"));
@@ -470,7 +482,7 @@ TEST_CASE(
                                { return one.Sender == MCIceSignaling::From::Guest; }));
 
     // Back in its place: the same code, the guests' relays kept, the room said again.
-    MCScriptedSocket& back = service.At(BackUrl);
+    MCScriptedEnd& back = service.At(BackUrl);
     back.Arrived.push_back(Text(R"({"t":"back"})"));
     CHECK(signaling.Take().empty());
     CHECK(signaling.HostedCode() == std::optional<std::string>(GameCode));
@@ -486,7 +498,7 @@ TEST_CASE("service signaling: a host restarting leaves its place as a drop, and 
         MCScriptedService service;
         MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true);
         signaling.Host();
-        MCScriptedSocket& host = service.At(HostUrl);
+        MCScriptedEnd& host = service.At(HostUrl);
         CHECK(!signaling.HostedToken().has_value());
         host.Arrived.push_back(Text(HostedMessage));
         CHECK(signaling.Take().empty());
@@ -503,7 +515,7 @@ TEST_CASE("service signaling: a host restarting leaves its place as a drop, and 
     MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true, AtOnce);
     signaling.HostAgain(GameCode, Token);
     CHECK_EQ(service.OpenedTo(HostUrl), size_t{0});
-    MCScriptedSocket& back = service.At(BackUrl);
+    MCScriptedEnd& back = service.At(BackUrl);
     signaling.SetRoom({.Name = "BOB'S GAME", .Public = true, .Max = 4, .Players = {"BOB"}});
     CHECK(!signaling.HostedCode().has_value());
     CHECK(back.Sent.empty());
@@ -517,7 +529,7 @@ TEST_CASE("service signaling: a host restarting leaves its place as a drop, and 
     // A place gone (past its 5 minutes, or the game over) is refused: no other game is made in its stead.
     MCServiceSignaling late(std::string(Service), service.Opener(), Identity, true, AtOnce);
     late.HostAgain(GameCode, Token);
-    MCScriptedSocket& expired = service.At(BackUrl);
+    MCScriptedEnd& expired = service.At(BackUrl);
     expired.Arrived.push_back(Text(R"({"t":"expired"})"));
     expired.Now = MCWebSocket::State::Closed;
     late.Take();
@@ -545,7 +557,7 @@ TEST_CASE("service signaling: a room's names go as the service takes them, plain
     MCScriptedService service;
     MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true);
     signaling.Host();
-    MCScriptedSocket& host = service.At(HostUrl);
+    MCScriptedEnd& host = service.At(HostUrl);
     host.Arrived.push_back(Text(HostedMessage));
     CHECK(signaling.Take().empty());
     signaling.SetRoom({.Name = "  ",

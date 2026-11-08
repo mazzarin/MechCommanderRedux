@@ -42,6 +42,17 @@ auto MCLogLabel::InitAt(int32_t xPos, int32_t yPos) -> void
     SetTransparent(true);
 }
 
+auto MCLogLabel::SetText(std::string_view text) -> void
+{
+    if (text == _Text)
+    {
+        return;
+    }
+
+    _Text = text;
+    InitAt(X(), Y());
+}
+
 auto MCLogLabel::Draw() -> void
 {
     if (_Font != nullptr)

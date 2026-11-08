@@ -465,6 +465,9 @@
     <ClCompile Include="linkup\MCSessionManagerSend.cpp">
       <Filter>linkup</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCArtWords.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCBriefingBox.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -496,6 +499,9 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCHdOptionsPanel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCInternetMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCInventoryBlock.cpp">
@@ -1849,6 +1855,9 @@
     <ClInclude Include="linkup\MCSessionManager.h">
       <Filter>linkup</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCArtWords.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCBriefingBox.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -1880,6 +1889,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCHdOptionsPanel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCInternetMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCInventoryBlock.h">

@@ -12,6 +12,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCInternetMenu.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLoadSaveMenu.h"
@@ -276,6 +277,10 @@ auto MCLogistics::Start() -> void
         const std::optional<std::string> userName = MyGetUserName();
         MakeScreen(MultiplayerScreen, "mpscreen", " No Connection Screen FIT File ",
                    " Unable to start connect screen ");
+        // Port (Redux HD): MULTIPLAYER ACCESS's LAN and INTERNET, and the INTERNET screen in the LAN screen's layout.
+        SetUpAccessScreen(*MultiplayerScreen);
+        MakeScreen(InternetScreen, "lanscreen", " No LAN Screen FIT File ", " Unable to start internet screen ");
+        SetUpInternetScreen(*InternetScreen);
 
         {
             MakeScreen(LanScreen, "lanscreen", " No LAN Screen FIT File ", " Unable to start lanScreen screen ");

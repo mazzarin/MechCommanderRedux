@@ -7,6 +7,7 @@
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCInternetMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogToolButton.h"
@@ -33,7 +34,8 @@ namespace
             case 14:
                 return ShowLanScreen;
             case 15:
-                return ShowInternet;
+                // Port (Redux HD): the INTERNET screen (the original asked about the lobbies of 1999).
+                return ShowInternetScreen;
             case 16:
                 return CancelToConnect;
             case 17:
@@ -327,6 +329,16 @@ auto MCSplashScreen::OnDestroy() -> void
 
 auto MCSplashScreen::ShowGuiWindow(bool show) -> void
 {
+    // Port (Redux HD): MULTIPLAYER ACCESS's count and INTERNET CONNECTION's list stop as they go out of sight.
+    if (!show && GlobalLog()->MultiplayerScreen.Is(*this))
+    {
+        AccessScreenHidden();
+    }
+    else if (!show && GlobalLog()->InternetScreen.Is(*this))
+    {
+        InternetScreenHidden();
+    }
+
     // The connection screens poll while shown: the connect screen through its element 3.
     if (GlobalLog()->ConnectScreen.Is(*this))
     {

@@ -1,10 +1,9 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "fakes/MCServiceScript.h"
 #include "network/MCInternetLobby.h"
 
 #include <nlohmann/json.hpp>
-
-#include <condition_variable>
 
 // The INTERNET screens' view of the games service (network/MCInternetLobby): the list's socket fed by a script of the
 // service's messages (its protocol as tools/cloudflare/games/README.md in the workspace has it), the count's request
@@ -28,124 +27,22 @@ namespace
     constexpr std::chrono::minutes NewYork = -std::chrono::hours(5);
     constexpr std::chrono::minutes Kolkata = std::chrono::hours(5) + std::chrono::minutes(30);
 
-    /// <summary>The service's side of the list's sockets: what each says, and what the test has it hear.</summary>
-    struct ListScript
-    {
-        std::vector<std::string> Opened;
-        std::vector<std::string> Said;
-        std::vector<MCWebSocket::Message> Inbox;
-        MCWebSocket::State State = MCWebSocket::State::Open;
-        bool ClosedByGame = false;
-
-        void Send(const Json& message) { Inbox.push_back({false, message.dump()}); }
-    };
-
-    class ScriptedSocket final : public MCWebSocket
-    {
-    public:
-        explicit ScriptedSocket(ListScript& script) : _Script(script) {}
-
-        void SendText(std::string_view text) override { _Script.Said.emplace_back(text); }
-        void SendBinary(std::span<const uint8_t>) override {}
-        std::vector<Message> Take() override { return std::exchange(_Script.Inbox, {}); }
-        State GetState() const override { return _Script.State; }
-        std::string WhyClosed() const override { return "closed (1006)"; }
-        size_t Unsent() const override { return 0; }
-
-        void Close() override
-        {
-            _Script.ClosedByGame = true;
-            _Script.State = State::Closed;
-        }
-
-    private:
-        ListScript& _Script;
-    };
-
-    /// <summary>A stand-in transfer: answers with <c>Body</c>, or fails, or holds the request until it's cancelled.</summary>
-    class StandInGet final : public MCHttpSource::MCGet
-    {
-    public:
-        enum class Kind
-        {
-            Answer,
-            Fail,
-            Hold,
-        };
-
-        StandInGet(Kind kind, std::string body, std::string& asked) : _Kind(kind), _Body(std::move(body)), _Asked(asked)
-        {
-        }
-
-        std::expected<void, MCHttpSource::MCGetError> Get(const std::string& url, uint64_t,
-                                                          MCHttpSource::MCReply& reply) override
-        {
-            _Asked = url;
-
-            if (_Kind == Kind::Fail)
-            {
-                return std::unexpected(MCHttpSource::MCGetError{.Unreachable = true, .Reason = "no connection"});
-            }
-
-            if (_Kind == Kind::Hold)
-            {
-                std::unique_lock lock(_Lock);
-                _Cancelled.wait(lock, [&] { return _WasCancelled; });
-                return std::unexpected(MCHttpSource::MCGetError{.Reason = "stopped"});
-            }
-
-            if (reply.Status(200, {}))
-            {
-                reply.Body(_Body);
-            }
-
-            return {};
-        }
-
-        void Cancel() override
-        {
-            const std::scoped_lock lock(_Lock);
-            _WasCancelled = true;
-            _Cancelled.notify_all();
-        }
-
-    private:
-        Kind _Kind;
-        std::string _Body;
-        std::string& _Asked;
-        std::mutex _Lock;
-        std::condition_variable _Cancelled;
-        bool _WasCancelled = false;
-    };
+    using MCServiceScript::ListScript;
+    using MCServiceScript::StandInGet;
 
     /// <summary>The list's sockets scripted by <paramref name="script"/> and the count's transfer, for the test's time.</summary>
-    class LobbySetupScope
+    class LobbySetupScope : public MCServiceScript::SetupScope
     {
     public:
         LobbySetupScope(ListScript& script, std::function<std::unique_ptr<MCHttpSource::MCGet>()> get)
+            : SetupScope(MCServiceScript::ListOpener(script), std::move(get), Service, Version)
         {
-            MCInternetGame::Setup({.Open = [&script](const std::string& url) -> std::unique_ptr<MCWebSocket>
-                                   {
-                                       script.Opened.push_back(url);
-                                       script.State = MCWebSocket::State::Open;
-                                       script.ClosedByGame = false;
-                                       return std::make_unique<ScriptedSocket>(script);
-                                   },
-                                   .Get = std::move(get),
-                                   .Version = std::string(Version),
-                                   .Service = std::string(Service)});
         }
-
-        ~LobbySetupScope() { MCInternetGame::Setup({}); }
-        LobbySetupScope(const LobbySetupScope&) = delete;
-        LobbySetupScope& operator=(const LobbySetupScope&) = delete;
     };
 
     Json ListedGame(std::string_view code, std::string_view name, Json battleSeconds)
     {
-        return Json{
-            {"code", code},       {"name", name},   {"players", {"BOB", "ANN"}}, {"max", 6},
-            {"mission", nullptr}, {"region", "EU"}, {"version", Version},        {"battleSeconds", battleSeconds}};
+        return MCServiceScript::ListedGame(code, name, {"BOB", "ANN"}, 6, std::move(battleSeconds), Version);
     }
 
     /// <summary>A week whose busiest hours are Friday to Sunday, 19:00 to 23:00 UTC (others quieter, some unseen).</summary>

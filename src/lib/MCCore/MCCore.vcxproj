@@ -175,6 +175,7 @@
     <ClCompile Include="linkup\MCSessionManagerPlayers.cpp" />
     <ClCompile Include="linkup\MCSessionManagerReceive.cpp" />
     <ClCompile Include="linkup\MCSessionManagerSend.cpp" />
+    <ClCompile Include="logistics\MCArtWords.cpp" />
     <ClCompile Include="logistics\MCBriefingBox.cpp" />
     <ClCompile Include="logistics\MCBriefingScreen.cpp" />
     <ClCompile Include="logistics\MCCompInventoryBlock.cpp" />
@@ -186,6 +187,7 @@
     <ClCompile Include="logistics\MCGameList.cpp" />
     <ClCompile Include="logistics\MCGenericScreen.cpp" />
     <ClCompile Include="logistics\MCHdOptionsPanel.cpp" />
+    <ClCompile Include="logistics\MCInternetMenu.cpp" />
     <ClCompile Include="logistics\MCInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCLoadSaveMenu.cpp" />
     <ClCompile Include="logistics\MCLogButton.cpp" />
@@ -659,6 +661,7 @@
     <ClInclude Include="linkup\MCFidpSession.h" />
     <ClInclude Include="linkup\MCLinkupMessages.h" />
     <ClInclude Include="linkup\MCSessionManager.h" />
+    <ClInclude Include="logistics\MCArtWords.h" />
     <ClInclude Include="logistics\MCBriefingBox.h" />
     <ClInclude Include="logistics\MCBriefingScreen.h" />
     <ClInclude Include="logistics\MCCompInventoryBlock.h" />
@@ -670,6 +673,7 @@
     <ClInclude Include="logistics\MCGameList.h" />
     <ClInclude Include="logistics\MCGenericScreen.h" />
     <ClInclude Include="logistics\MCHdOptionsPanel.h" />
+    <ClInclude Include="logistics\MCInternetMenu.h" />
     <ClInclude Include="logistics\MCInventoryBlock.h" />
     <ClInclude Include="logistics\MCLoadSaveMenu.h" />
     <ClInclude Include="logistics\MCLogButton.h" />

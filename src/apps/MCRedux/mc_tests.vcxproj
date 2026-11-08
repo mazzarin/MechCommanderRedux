@@ -131,6 +131,7 @@
     <ClCompile Include="tests\InterfaceTests.cpp" />
     <ClCompile Include="tests\InternetGameTests.cpp" />
     <ClCompile Include="tests\InternetLobbyTests.cpp" />
+    <ClCompile Include="tests\InternetScreenTests.cpp" />
     <ClCompile Include="tests\LibTests.cpp" />
     <ClCompile Include="tests\LinkupTests.cpp" />
     <ClCompile Include="tests\LobbyUpdateTests.cpp" />
@@ -194,6 +195,7 @@
     <ClInclude Include="tests\fakes\MCMemoryFileSource.h" />
     <ClInclude Include="tests\fakes\MCNullAudioDevice.h" />
     <ClInclude Include="tests\fakes\MCScriptedRandom.h" />
+    <ClInclude Include="tests\fakes\MCServiceScript.h" />
     <ClInclude Include="tests\fixtures\MCRegisteredData.h" />
     <ClInclude Include="tests\fixtures\MCRetailData.h" />
     <ClInclude Include="tests\fixtures\MCTerrainGeometryScope.h" />

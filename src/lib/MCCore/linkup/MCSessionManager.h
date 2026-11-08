@@ -231,6 +231,12 @@ public:
     // ---- internet games ----
 
     /// <summary>
+    /// Port (Redux HD): begins an internet game on the game's network, ending any before: hosted on the service (a
+    /// public one listed, its links relayed) or joined by <paramref name="code"/>. It moves along with
+    /// <see cref="MCInternetGame::Update"/> (the INTERNET screen's timer). False when this game has no internet games.
+    /// </summary>
+    bool BeginInternet(bool host, std::string_view code, bool isPublic);
+    /// <summary>
     /// Port (Redux HD): ends the internet game, if any, once DirectPlay has let go of its links, waiting up to
     /// <paramref name="wait"/> for its leaving to reach the service (a quitting game's, which the process's end cuts off).
     /// </summary>

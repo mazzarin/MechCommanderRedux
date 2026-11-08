@@ -8,6 +8,7 @@
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCGenericScreen.h"
+#include "logistics/MCInternetMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogMenus.h"
@@ -139,10 +140,18 @@ void ConnectScreen()
     // of which exists now; it shows only when this machine can't use the network at all.
     if (MultiPlayer()->SessionManager != nullptr && MultiPlayer()->SessionManager->IsTcpAvailable())
     {
+        // Port (Redux HD): LAN and INTERNET, when this game has internet games.
+        if (HasInternetGames())
+        {
+            ShowAccessScreen();
+            return;
+        }
+
         ShowLanScreen();
         return;
     }
 
+    ShowOriginalAccessButtons();
     GlobalLog()->MultiplayerScreen->ShowGuiWindow(true);
     GlobalLog()->SetCurrentScreen(GlobalLog()->MultiplayerScreen);
     GlobalLog()->LogisticsState = 10;
@@ -183,6 +192,8 @@ void CancelToConnect()
     const bool fromRoom = GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
     const bool fromLanGame = (fromRoom || GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen) &&
                              (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx);
+    // Port (Redux HD): an internet game's room goes back to the INTERNET screen.
+    const bool fromInternetGame = fromRoom && MultiPlayer()->SessionManager->Internet != nullptr;
     WhackTimer = true;
     GlobalLog()->LanScreen->ShowBlock(0);
     GlobalLog()->ModemScreen->ShowBlock(0);
@@ -206,11 +217,25 @@ void CancelToConnect()
 
     if (fromGames)
     {
+        // Port (Redux HD): back to LAN and INTERNET, when this game has internet games.
+        if (HasInternetGames())
+        {
+            GlobalLog()->LanScreen->ShowGuiWindow(false);
+            ShowAccessScreen();
+            return;
+        }
+
         Cancel();
         return;
     }
 
     GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+
+    if (fromInternetGame)
+    {
+        ShowInternetScreen();
+        return;
+    }
 
     if (fromLanGame)
     {

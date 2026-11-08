@@ -177,6 +177,9 @@
     <ClCompile Include="tests\InternetLobbyTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\InternetScreenTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\LibTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -340,6 +343,9 @@
       <Filter>tests\fakes</Filter>
     </ClInclude>
     <ClInclude Include="tests\fakes\MCScriptedRandom.h">
+      <Filter>tests\fakes</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\fakes\MCServiceScript.h">
       <Filter>tests\fakes</Filter>
     </ClInclude>
     <ClInclude Include="tests\fixtures\MCRegisteredData.h">

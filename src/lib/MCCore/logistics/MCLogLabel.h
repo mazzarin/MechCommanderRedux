@@ -38,6 +38,9 @@ public:
     /// <summary>The text.</summary>
     const std::string& Text() const { return _Text; }
 
+    /// <summary>Port (Redux HD): shows <paramref name="text"/> instead, its top left corner where the label is.</summary>
+    void SetText(std::string_view text);
+
 private:
     /// <summary>The text.</summary>
     std::string _Text;

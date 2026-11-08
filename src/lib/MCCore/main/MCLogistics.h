@@ -491,6 +491,8 @@ public:
     MCGuiHandle<MCSplashScreen> ConnectScreen;
     MCGuiHandle<MCSplashScreen> ModemScreen;
     MCGuiHandle<MCSplashScreen> LanScreen;
+    /// <summary>Port (Redux HD): INTERNET CONNECTION, the LAN screen's layout over the service's games (MCInternetMenu).</summary>
+    MCGuiHandle<MCSplashScreen> InternetScreen;
     MCGuiHandle<MCSplashScreen> MainScreen;
     MCGuiHandle<MCSplashScreen> MultiplayerScreen;
     MCGuiHandle<MCSplashScreen> LoadScreen;

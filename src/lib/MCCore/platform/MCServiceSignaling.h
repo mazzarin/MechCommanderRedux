@@ -185,7 +185,10 @@ public:
     /// minutes, a host's game with them, for a socket that comes back with its token. None comes back from here.
     /// </summary>
     void LeaveAway();
-    /// <summary>Whether every socket has closed (its leaving gone to the service, as far as the system can say).</summary>
+    /// <summary>
+    /// Whether every socket has closed and finished (its leaving gone to the service, as far as the system can say:
+    /// MCWebSocket::Finished).
+    /// </summary>
     bool AllClosed();
     /// <summary>
     /// The links bind to <paramref name="address"/> alone (MCIceLink::Settings::BindAddress): the tests' loopback, which

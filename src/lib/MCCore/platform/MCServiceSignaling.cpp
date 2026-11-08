@@ -565,7 +565,8 @@ std::optional<std::string> MCServiceSignaling::WhyClosed(std::string_view game)
 bool MCServiceSignaling::AllClosed()
 {
     const std::scoped_lock lock(_Lock);
-    const auto closed = [](const Socket& socket) { return socket.Ws->GetState() == MCWebSocket::State::Closed; };
+    // Through with the network: a close still going (Windows' waits for it) isn't closed yet.
+    const auto closed = [](const Socket& socket) { return socket.Ws->Finished(); };
     return (!_Host.has_value() || closed(*_Host)) &&
            std::ranges::all_of(_Games, [&](const auto& game) { return closed(game.second); });
 }

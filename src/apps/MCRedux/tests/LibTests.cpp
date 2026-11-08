@@ -15,6 +15,7 @@
 #include "lib/MCPacketFile.h"
 #include "lib/MCPriorityQueue.h"
 #include "lib/MCRetryDelay.h"
+#include "lib/MCThreadKeeper.h"
 #include "main/MCGameContext.h"
 #include "platform/MCFileSystem.h"
 
@@ -1164,4 +1165,65 @@ TEST_CASE(
     const MCRetryDelay atOnce{};
     CHECK_EQ(atOnce.Wait(0, none).count(), 0);
     CHECK_EQ(atOnce.Wait(MCRetryDelay::MostDoublings, all).count(), 0);
+}
+
+TEST_CASE("thread keeper: a thread handed over is joined off the caller's thread, and JoinAll joins what's left")
+{
+    constexpr auto Patience = std::chrono::seconds(5);
+    constexpr auto Step = std::chrono::milliseconds(1);
+    constexpr auto Released = std::chrono::milliseconds(50);
+    MCThreadKeeper keeper;
+
+    // A thread that ends at once: joined soon after, with no one waiting for it.
+    std::atomic<bool> ran = false;
+    keeper.Keep(std::thread([&] { ran = true; }));
+    const auto deadline = std::chrono::steady_clock::now() + Patience;
+
+    while (keeper.Kept() > 0 && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(Step);
+    }
+
+    CHECK_EQ(keeper.Kept(), size_t{0});
+    CHECK(ran);
+
+    // A thread still running (until another lets it go): Keep returns at once, and JoinAll waits for its end.
+    std::mutex lock;
+    std::condition_variable changed;
+    bool release = false;
+    std::atomic<bool> ended = false;
+    keeper.Keep(std::thread(
+        [&]
+        {
+            std::unique_lock held(lock);
+            changed.wait(held, [&] { return release; });
+            ended = true;
+        }));
+    CHECK(!ended);
+    CHECK_EQ(keeper.Kept(), size_t{1});
+    std::thread releaser(
+        [&]
+        {
+            std::this_thread::sleep_for(Released);
+
+            {
+                const std::scoped_lock released(lock);
+                release = true;
+            }
+
+            changed.notify_all();
+        });
+    keeper.JoinAll();
+    CHECK(ended);
+    CHECK_EQ(keeper.Kept(), size_t{0});
+    releaser.join();
+
+    // It keeps threads after a JoinAll as before; one not running isn't kept.
+    std::atomic<int> later = 0;
+    keeper.Keep(std::thread([&] { later++; }));
+    keeper.Keep(std::thread([&] { later++; }));
+    keeper.Keep(std::thread());
+    keeper.JoinAll();
+    CHECK_EQ(later.load(), 2);
+    CHECK_EQ(keeper.Kept(), size_t{0});
 }

@@ -4,6 +4,7 @@
 #ifdef _WIN32
 
 #include "MCWinHttp.h"
+#include "lib/MCThreadKeeper.h"
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -13,6 +14,7 @@
 #include <condition_variable>
 #include <deque>
 #include <format>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -40,7 +42,8 @@ namespace
     constexpr DWORD SwitchingProtocols = 101;
     /// <summary>
     /// The game's own close of an open socket sends the service its close (1000, its player leaving) and waits this long
-    /// at most for it to go before the handles close.
+    /// at most for it to go before the handles close: on the socket's thread, which a socket destroyed meanwhile leaves
+    /// to the thread keeper, so the game never waits for it.
     /// </summary>
     constexpr auto LeaveWait = std::chrono::seconds(1);
     /// <summary>
@@ -120,60 +123,52 @@ namespace
         events.Changed.notify_all();
     }
 
+    using State = MCWebSocket::State;
+    using Message = MCWebSocket::Message;
+
     /// <summary>
     /// A WebSocket over WinHTTP, asynchronous: one thread of its own makes every WinHTTP call on it and closes its
     /// handles, acting on what the callback queues, so no handle is used by one thread as another closes it, and no
-    /// send waits on the network. The game's calls only queue and read, under the socket's lock.
+    /// send waits on the network. The game's calls only queue and read, under the socket's lock. Shared by the socket
+    /// and its thread, which finishes the close after the socket is destroyed.
     /// </summary>
-    class MCWebSocketWin final : public MCWebSocket
+    class MCSocketWork final
     {
     public:
-        explicit MCWebSocketWin(const std::string& url) : _Worker([this, url] { Run(url); }) {}
+        void Send(Message message) { Queue(std::move(message)); }
 
-        ~MCWebSocketWin() override
-        {
-            Close();
-            _Worker.join();
-        }
-
-        void SendText(std::string_view text) override { Queue({.Binary = false, .Data = std::string(text)}); }
-
-        void SendBinary(std::span<const uint8_t> bytes) override
-        {
-            Queue({.Binary = true, .Data = std::string(bytes.begin(), bytes.end())});
-        }
-
-        std::vector<Message> Take() override
+        std::vector<Message> Take()
         {
             const std::scoped_lock lock(_Lock);
             _InboxBytes = 0;
             return std::exchange(_Inbox, {});
         }
 
-        State GetState() const override
+        State GetState() const
         {
             const std::scoped_lock lock(_Lock);
             return _State;
         }
 
-        std::string WhyClosed() const override
+        bool Finished() const
+        {
+            const std::scoped_lock lock(_Lock);
+            return _Finished;
+        }
+
+        std::string WhyClosed() const
         {
             const std::scoped_lock lock(_Lock);
             return _Why;
         }
 
-        size_t Unsent() const override
+        size_t Unsent() const
         {
             const std::scoped_lock lock(_Lock);
             return _UnsentBytes;
         }
 
-        void Close() override { CloseWith(WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS); }
-
-        void CloseAway() override { CloseWith(MCWebSocketAwayCode); }
-
-    private:
-        /// <summary>Closes it with <paramref name="status"/>, once (the destructor's Close keeps an earlier one's).</summary>
+        /// <summary>Closes it with <paramref name="status"/>, once (a later close keeps the first's).</summary>
         void CloseWith(USHORT status)
         {
             {
@@ -193,7 +188,10 @@ namespace
             Wake();
         }
 
-        /// <summary>The socket's thread: opens it, then acts on the callback's events until its handles are closed.</summary>
+        /// <summary>
+        /// The socket's thread: opens it, then acts on the callback's events until its handles are closed, and then
+        /// it's finished.
+        /// </summary>
         void Run(const std::string& url)
         {
             if (!Start(url))
@@ -234,6 +232,8 @@ namespace
 
                 if (Done())
                 {
+                    const std::scoped_lock lock(_Lock);
+                    _Finished = true;
                     return;
                 }
 
@@ -244,6 +244,7 @@ namespace
             }
         }
 
+    private:
         /// <summary>
         /// The game's own close of an open socket, from the socket's thread: its close (1000) sent once no send is under
         /// way (WinHTTP takes one at a time); true while it's going, up to <see cref="LeaveWait"/>.
@@ -623,6 +624,8 @@ namespace
         /// <summary>The game's side, under the lock.</summary>
         mutable std::mutex _Lock;
         State _State = State::Opening;
+        /// <summary>Its handles closed and said their last: nothing of it goes to the network any more.</summary>
+        bool _Finished = false;
         std::string _Why;
         std::vector<Message> _Inbox;
         size_t _InboxBytes = 0;
@@ -649,7 +652,48 @@ namespace
         bool _LeaveDone = false;
         std::optional<std::chrono::steady_clock::time_point> _LeaveBy;
         MCEvents _Events;
-        /// <summary>Last, so it starts once everything it uses is made.</summary>
+    };
+
+    /// <summary>
+    /// The game's WebSocket: its working part (MCSocketWork) on a thread of its own, which owns it too. Destroyed, it
+    /// closes and hands its thread to the thread keeper, which joins it once its close has gone (up to
+    /// <see cref="LeaveWait"/> when the network stalls), so the game's thread never waits for the network.
+    /// </summary>
+    class MCWebSocketWin final : public MCWebSocket
+    {
+    public:
+        explicit MCWebSocketWin(const std::string& url)
+            : _Work(std::make_shared<MCSocketWork>()), _Worker([work = _Work, url] { work->Run(url); })
+        {
+        }
+
+        ~MCWebSocketWin() override
+        {
+            Close();
+            MCThreadKeeper::Process().Keep(std::move(_Worker));
+        }
+
+        MCWebSocketWin(const MCWebSocketWin&) = delete;
+        MCWebSocketWin& operator=(const MCWebSocketWin&) = delete;
+
+        void SendText(std::string_view text) override { _Work->Send({.Binary = false, .Data = std::string(text)}); }
+
+        void SendBinary(std::span<const uint8_t> bytes) override
+        {
+            _Work->Send({.Binary = true, .Data = std::string(bytes.begin(), bytes.end())});
+        }
+
+        std::vector<Message> Take() override { return _Work->Take(); }
+        State GetState() const override { return _Work->GetState(); }
+        bool Finished() const override { return _Work->Finished(); }
+        std::string WhyClosed() const override { return _Work->WhyClosed(); }
+        size_t Unsent() const override { return _Work->Unsent(); }
+        void Close() override { _Work->CloseWith(WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS); }
+        void CloseAway() override { _Work->CloseWith(MCWebSocketAwayCode); }
+
+    private:
+        std::shared_ptr<MCSocketWork> _Work;
+        /// <summary>Last, so it starts once its working part is made.</summary>
         std::thread _Worker;
     };
 }

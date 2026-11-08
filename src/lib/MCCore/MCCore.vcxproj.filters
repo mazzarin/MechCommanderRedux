@@ -435,6 +435,9 @@
     <ClCompile Include="lib\MCSha256.cpp">
       <Filter>lib</Filter>
     </ClCompile>
+    <ClCompile Include="lib\MCThreadKeeper.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
     <ClCompile Include="lib\MCWorkers.cpp">
       <Filter>lib</Filter>
     </ClCompile>
@@ -1835,6 +1838,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCSha256.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCThreadKeeper.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCVector2D.h">

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "fakes/MCServiceScript.h"
+#include "lib/MCThreadKeeper.h"
 #include "network/MCInternetLobby.h"
 
 #include <nlohmann/json.hpp>
@@ -245,6 +246,9 @@ TEST_CASE("internet lobby: the count asked once by the service's plain request, 
         CHECK(!count->Done());
         const auto before = Clock::now();
         count.reset();
+        CHECK(Clock::now() - before < AnswerPatience);
+        // Its thread, the request stopped, ends on its own: the keeper joins it.
+        MCThreadKeeper::Process().JoinAll();
         CHECK(Clock::now() - before < AnswerPatience);
     }
 

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "network/MCInternetLobby.h"
 
+#include "lib/MCThreadKeeper.h"
 #include "platform/MCServices.h"
 
 #include <nlohmann/json.hpp>
@@ -657,13 +658,24 @@ std::unique_ptr<MCInternetCount> MCInternetCount::Ask()
     return std::unique_ptr<MCInternetCount>(new MCInternetCount(std::move(get), std::move(*url)));
 }
 
-MCInternetCount::MCInternetCount(std::unique_ptr<MCHttpSource::MCGet> get, std::string url) : _Get(std::move(get))
+struct MCInternetCount::MCAsking
 {
-    _Asking = std::thread(
-        [this, url = std::move(url)]
+    std::mutex Lock;
+    /// <summary>Set once, before the thread starts.</summary>
+    std::unique_ptr<MCHttpSource::MCGet> Get;
+    bool Done = false;
+    std::optional<int32_t> Online;
+};
+
+MCInternetCount::MCInternetCount(std::unique_ptr<MCHttpSource::MCGet> get, std::string url)
+    : _Asking(std::make_shared<MCAsking>())
+{
+    _Asking->Get = std::move(get);
+    _Thread = std::thread(
+        [asking = _Asking, url = std::move(url)]
         {
             CountReply reply;
-            const std::expected<void, MCHttpSource::MCGetError> got = _Get->Get(url, 0, reply);
+            const std::expected<void, MCHttpSource::MCGetError> got = asking->Get->Get(url, 0, reply);
             std::optional<int32_t> online;
 
             if (!got.has_value())
@@ -690,26 +702,27 @@ MCInternetCount::MCInternetCount(std::unique_ptr<MCHttpSource::MCGet> get, std::
                 }
             }
 
-            const std::scoped_lock lock(_Lock);
-            _Online = online;
-            _Done = true;
+            const std::scoped_lock lock(asking->Lock);
+            asking->Online = online;
+            asking->Done = true;
         });
 }
 
 MCInternetCount::~MCInternetCount()
 {
-    _Get->Cancel();
-    _Asking.join();
+    // The transfer stops; its thread ends on its own, joined off the game's thread.
+    _Asking->Get->Cancel();
+    MCThreadKeeper::Process().Keep(std::move(_Thread));
 }
 
 bool MCInternetCount::Done()
 {
-    const std::scoped_lock lock(_Lock);
-    return _Done;
+    const std::scoped_lock lock(_Asking->Lock);
+    return _Asking->Done;
 }
 
 std::optional<int32_t> MCInternetCount::Online()
 {
-    const std::scoped_lock lock(_Lock);
-    return _Online;
+    const std::scoped_lock lock(_Asking->Lock);
+    return _Asking->Online;
 }

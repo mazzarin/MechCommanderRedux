@@ -10,7 +10,6 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -117,7 +116,8 @@ private:
 
 /// <summary>
 /// The count online, asked once (MULTIPLAYER ACCESS): GET /count on a thread of its own, the answer read on the game's.
-/// Destroying it stops the transfer under way.
+/// Destroying it stops the transfer under way and returns at once: the thread, which owns what it uses, ends on its own
+/// and the thread keeper (lib/MCThreadKeeper) joins it.
 /// </summary>
 class MCInternetCount
 {
@@ -135,11 +135,12 @@ public:
     std::optional<int32_t> Online();
 
 private:
+    /// <summary>What the asking thread and the count share: the transfer, and the answer once it's in.</summary>
+    struct MCAsking;
+
     MCInternetCount(std::unique_ptr<MCHttpSource::MCGet> get, std::string url);
 
-    std::mutex _Lock;
-    std::unique_ptr<MCHttpSource::MCGet> _Get;
-    bool _Done = false;
-    std::optional<int32_t> _Online;
-    std::thread _Asking;
+    std::shared_ptr<MCAsking> _Asking;
+    /// <summary>Last, so it starts once what it shares is made.</summary>
+    std::thread _Thread;
 };

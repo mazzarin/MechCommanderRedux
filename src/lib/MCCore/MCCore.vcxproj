@@ -165,6 +165,7 @@
     <ClCompile Include="lib\MCPacketFile.cpp" />
     <ClCompile Include="lib\MCPriorityQueue.cpp" />
     <ClCompile Include="lib\MCSha256.cpp" />
+    <ClCompile Include="lib\MCThreadKeeper.cpp" />
     <ClCompile Include="lib\MCWorkers.cpp" />
     <ClCompile Include="linkup\MCFidpGroup.cpp" />
     <ClCompile Include="linkup\MCFidpMessage.cpp" />
@@ -655,6 +656,7 @@
     <ClInclude Include="lib\MCRandomId.h" />
     <ClInclude Include="lib\MCRetryDelay.h" />
     <ClInclude Include="lib\MCSha256.h" />
+    <ClInclude Include="lib\MCThreadKeeper.h" />
     <ClInclude Include="lib\MCVector2D.h" />
     <ClInclude Include="lib\MCVector3D.h" />
     <ClInclude Include="lib\MCWorkers.h" />

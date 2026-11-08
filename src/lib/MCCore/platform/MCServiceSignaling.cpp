@@ -105,6 +105,8 @@ namespace
     constexpr std::string_view UnlistedNotice = "unlisted";
     /// <summary>A guest's: the game's guests are at the cap (to a join, a refusal; to a socket coming back, a wait).</summary>
     constexpr std::string_view FullType = "full";
+    /// <summary>The service's rate limit (shared by a network's players): a socket coming back tries again later.</summary>
+    constexpr std::string_view SlowType = "slow";
 
     std::optional<MCServiceRefusal> RefusalNamed(std::string_view type)
     {
@@ -1107,13 +1109,14 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
         TellGone(game, heard);
         return;
     }
-    else if (type == FullType && !socket.In && !socket.Token.empty())
+    else if ((type == FullType || type == SlowType) && !socket.In && !socket.Token.empty())
     {
-        // A socket coming back to its place while the game's guests are at the cap: the service closes it, and it tries
-        // again (Tend) while its place waits.
+        // A socket coming back to its place while the game's guests are at the cap, or past the service's rate limit
+        // (a network's players share it): the service closes it, and it tries again (Tend, its waits doubling) while
+        // its place waits.
         SDL_Log(
-            "MCServiceSignaling: game \"%.*s\" is full as its socket comes back: trying again while its place waits",
-            static_cast<int>(game.size()), game.data());
+            "MCServiceSignaling: game \"%.*s\" said %s as its socket comes back: trying again while its place waits",
+            static_cast<int>(game.size()), game.data(), type->c_str());
         return;
     }
     else if (const std::optional<MCServiceRefusal> refusal = type ? RefusalNamed(*type) : std::nullopt)

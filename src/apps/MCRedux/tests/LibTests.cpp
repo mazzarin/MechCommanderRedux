@@ -1227,3 +1227,56 @@ TEST_CASE("thread keeper: a thread handed over is joined off the caller's thread
     CHECK_EQ(later.load(), 2);
     CHECK_EQ(keeper.Kept(), size_t{0});
 }
+
+TEST_CASE("thread keeper: a thread handed over while JoinAll waits is waited for too, and one kept before never missed")
+{
+    constexpr auto Settling = std::chrono::milliseconds(50);
+    MCThreadKeeper keeper;
+    std::mutex lock;
+    std::condition_variable changed;
+    int released = 0;
+    std::atomic<int> ended = 0;
+    // Each ends once `released` reaches its turn.
+    const auto waiter = [&](int turn)
+    {
+        return std::thread(
+            [&, turn]
+            {
+                std::unique_lock held(lock);
+                changed.wait(held, [&] { return released >= turn; });
+                ended++;
+            });
+    };
+
+    const auto release = [&](int turn)
+    {
+        {
+            const std::scoped_lock held(lock);
+            released = turn;
+        }
+
+        changed.notify_all();
+    };
+
+    // The reaper joins the first while the second waits queued; JoinAll starts; a third is kept meanwhile.
+    keeper.Keep(waiter(1));
+    keeper.Keep(waiter(3));
+    std::atomic<bool> joined = false;
+    std::thread joiner(
+        [&]
+        {
+            keeper.JoinAll();
+            joined = true;
+        });
+    std::this_thread::sleep_for(Settling);
+    keeper.Keep(waiter(2));
+    release(2);
+    std::this_thread::sleep_for(Settling);
+    CHECK_EQ(ended.load(), 2);
+    CHECK(!joined);
+    release(3);
+    joiner.join();
+    CHECK(joined);
+    CHECK_EQ(ended.load(), 3);
+    CHECK_EQ(keeper.Kept(), size_t{0});
+}

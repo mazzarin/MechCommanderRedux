@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "network/MCLobbyUpdate.h"
+#include "gui/MCGuiStartup.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
@@ -286,7 +287,15 @@ namespace
     /// </summary>
     std::optional<std::string> RoomCommandLine()
     {
-        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+        const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+        if (game == nullptr || game->SessionManager == nullptr)
+        {
+            SDL_Log("Lobby updates: no multiplayer session to come back to after the restart");
+            return std::nullopt;
+        }
+
+        MCSessionManager& manager = *game->SessionManager;
 
         if (LobbyLaunchArgs.Active)
         {
@@ -332,23 +341,6 @@ namespace
         }
 
         return MCRejoinNote::InternetRoomCommandLine(room);
-    }
-
-    /// <summary>Port (Redux HD): <paramref name="words"/> for the log: a host's place's token left out.</summary>
-    std::string WithoutToken(std::string_view words)
-    {
-        constexpr std::string_view Place = "-place ";
-        std::string logged(words);
-        const size_t place = logged.find(Place);
-        const size_t token = place != std::string::npos ? logged.find(' ', place + Place.size()) : std::string::npos;
-
-        if (token != std::string::npos)
-        {
-            const size_t end = logged.find(' ', token + 1);
-            logged.replace(token + 1, (end == std::string::npos ? logged.size() : end) - token - 1, "(token)");
-        }
-
-        return logged;
     }
 
     /// <summary>
@@ -837,7 +829,8 @@ auto MCLobbyUpdate::Restart() -> bool
         }
     }
 
-    SDL_Log("Lobby updates: restarting into the update, to start again as %s", WithoutToken(commandLine).c_str());
+    // What it starts, not its words: a host's place's token is among them (and a room's name may hold anything).
+    SDL_Log("Lobby updates: restarting into the update, to start again %s", LobbyStartLogged(commandLine).c_str());
     RestartAt = Now() + SendTime;
     return true;
 }

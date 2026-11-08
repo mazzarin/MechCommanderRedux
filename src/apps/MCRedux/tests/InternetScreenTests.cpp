@@ -498,6 +498,19 @@ TEST_CASE_ISOLATED("game: INTERNET CONNECTION's list stays where it's scrolled t
     CHECK(games->Lport()->Height() == games->Height());
     CHECK(games->FirstPixel == 0);
     CHECK(!games->ScrollTab->ShowWindow);
+
+    // The thumb held while a list that fits comes: a rebuild leaves a held thumb alone, and once it's let go the
+    // screen's timer puts it where the list stands (gone).
+    list.Send(listing(ManyGames, ManyGames + 3));
+    REQUIRE(SettleUntil(countsAre(ManyGames + 3)));
+    REQUIRE(games->ScrollTab->ShowWindow);
+    GuiSystem().Grab(games->ScrollTab.Lock());
+    list.Send(listing(FewGames, FewGames + 1));
+    REQUIRE(SettleUntil(countsAre(FewGames + 1)));
+    CHECK(games->ScrollTab->ShowWindow);
+    GuiSystem().Release();
+    Settle();
+    CHECK(!games->ScrollTab->ShowWindow);
 }
 
 /// <summary>

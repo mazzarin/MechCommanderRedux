@@ -47,6 +47,12 @@ void AccessScreenHidden();
 void InternetScreenHidden();
 
 /// <summary>
+/// Port-only: the game quitting, the screens' requests to the service let go (MULTIPLAYER ACCESS's count, INTERNET
+/// CONNECTION's list) before the GUI goes, so their threads are kept (lib/MCThreadKeeper.h) before the quit joins them.
+/// </summary>
+void ReleaseInternetMenus();
+
+/// <summary>
 /// For the tests: MULTIPLAYER ACCESS's count as shown (empty while it isn't), INTERNET CONNECTION's counts as shown, and
 /// whether a game hosted there is public.
 /// </summary>
@@ -81,6 +87,12 @@ public:
 
     void ClearPick();
 
+    /// <summary>
+    /// The scroll bar's thumb put where the list stands, if a rebuild came while it was held (a rebuild doesn't move a
+    /// held thumb): the screen's timer, each tick.
+    /// </summary>
+    void SettleScrollTab();
+
     /// <summary>Whether <paramref name="game"/> can be joined: open, not full, on a version this game plays.</summary>
     static bool Joinable(const MCInternetListing::Game& game);
 
@@ -95,4 +107,6 @@ private:
     std::vector<MCInternetListing::Game> _Games;
     std::optional<std::string> _PickedCode;
     std::vector<std::string> _Lines;
+    /// <summary>A rebuild came while the thumb was held: it's put in place once let go.</summary>
+    bool _TabStale = false;
 };

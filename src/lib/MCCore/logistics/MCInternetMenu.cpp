@@ -712,6 +712,7 @@ namespace
                 ShowListing();
             }
 
+            Games->SettleScrollTab();
             UpdateJoinButton();
             TendPending();
             return;
@@ -874,6 +875,16 @@ void MCInternetGameList::Rebuild()
     Lport()->Resize(Lport()->Width(), std::max(NumLines * RowHeight(), Height()));
     FirstPixel = std::clamp(scrolled, 0, Lport()->Height() - Height());
     PositionScrollTab();
+    _TabStale = ScrollTab.Lock() != nullptr && GuiSystem().GrabbedObject() == ScrollTab.Lock();
+}
+
+void MCInternetGameList::SettleScrollTab()
+{
+    if (_TabStale && GuiSystem().GrabbedObject() != ScrollTab.Lock())
+    {
+        _TabStale = false;
+        PositionScrollTab();
+    }
 }
 
 void MCInternetGameList::ShowPick()
@@ -1143,6 +1154,13 @@ void InternetScreenHidden()
     {
         EndPending({});
     }
+}
+
+void ReleaseInternetMenus()
+{
+    Count.reset();
+    List.reset();
+    ListAway = false;
 }
 
 std::string AccessCountShown()

@@ -34,7 +34,9 @@ public:
     /// <summary>Takes <paramref name="thread"/>, to join once it finishes, and returns at once (nothing kept for one not running).</summary>
     void Keep(std::thread thread);
 
-    /// <summary>Joins every thread kept before the call, waiting as long as they take (the game's quit).</summary>
+    /// <summary>
+    /// Waits until every thread kept is joined, those kept while it waits too, as long as they take (the game's quit).
+    /// </summary>
     void JoinAll();
 
     /// <summary>The threads kept and not yet joined.</summary>
@@ -47,9 +49,11 @@ private:
     std::mutex _Lock;
     /// <summary>Told when a thread is kept (and when the keeper's thread is asked to stop).</summary>
     std::condition_variable_any _Kept;
+    /// <summary>Told when the last thread kept has been joined: none queued, none being joined.</summary>
+    std::condition_variable _Drained;
     std::deque<std::thread> _Threads;
     /// <summary>The thread being joined now (out of the queue, its join under way without the lock): 0 or 1.</summary>
     size_t _Joining = 0;
-    /// <summary>The keeper's thread, started with the first thread kept (and again after a JoinAll); last, so it goes first.</summary>
+    /// <summary>The keeper's thread, started with the first thread kept, for the keeper's life; last, so it goes first.</summary>
     std::jthread _Reaper;
 };

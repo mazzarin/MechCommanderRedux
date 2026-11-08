@@ -12,7 +12,12 @@
 /// starts and runs it, then stops and deletes it.
 /// </summary>
 /// <returns>0, or -4 when the game didn't start.</returns>
-int RunGame(std::string_view commandLine);
+/// <remarks>
+/// Port-only: before the GUI stops, an internet game ends, waiting up to <paramref name="internetLeaveWait"/> for its
+/// leaving to reach the service, and the internet screens let go of their requests (the program's quit; the tests'
+/// none).
+/// </remarks>
+int RunGame(std::string_view commandLine, std::chrono::milliseconds internetLeaveWait = {});
 
 /// <summary>
 /// Reads the command line's switches: <c>-mission n</c> (or <c>+ n</c>), <c>-network file</c>, <c>-load file</c>, and

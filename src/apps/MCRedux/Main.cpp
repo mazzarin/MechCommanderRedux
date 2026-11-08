@@ -691,14 +691,8 @@ int main(int argc, char** argv)
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));
     MCInternetGame::Setup({.Open = MCOpenWebSocket, .Get = MCMakeHttpGet, .Version = MC_VERSION_SHOWN});
-    const int result = RunGame(options->GameCommandLine);
-
-    // An internet game's leaving reaches the service before the process ends (its place freed, a host's game ended).
-    if (const std::shared_ptr<MCMultiPlayer> multiPlayer = MultiPlayer();
-        multiPlayer != nullptr && multiPlayer->SessionManager != nullptr)
-    {
-        multiPlayer->SessionManager->EndInternet(InternetLeaveWait);
-    }
+    // An internet game's leaving reaches the service before the GUI stops (RunGame ends it, waiting up to this).
+    const int result = RunGame(options->GameCommandLine, InternetLeaveWait);
 
     // The threads let go of as their objects went (a socket's finishing its close, a request's stopping) are joined:
     // each ends within its own wait (a socket's close a second at most).

@@ -12,6 +12,7 @@
 #include "linkup/MCSessionManager.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCInternetMenu.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameSession.h"
 #include "mission/MCMission.h"
@@ -696,7 +697,7 @@ auto ParseCommandLine(std::string_view commandLine) -> void
     }
 }
 
-auto RunGame(std::string_view commandLine) -> int
+auto RunGame(std::string_view commandLine, std::chrono::milliseconds internetLeaveWait) -> int
 {
     // The original noted the stack top and warned when the page file was under 48,000,000 bytes (GlobalMemoryStatus,
     // string 0x355), and refused a second instance; none of that applies.
@@ -743,6 +744,15 @@ auto RunGame(std::string_view commandLine) -> int
         exitCode = quit.ExitCode;
     }
 
+    // Port (Redux HD): an internet game's leaving reaches the service before the session goes (its place freed, a
+    // host's game ended or handed on), and the internet screens let go of their requests.
+    if (const std::shared_ptr<MCMultiPlayer> multiPlayer = MultiPlayer();
+        multiPlayer != nullptr && multiPlayer->SessionManager != nullptr)
+    {
+        multiPlayer->SessionManager->EndInternet(internetLeaveWait);
+    }
+
+    ReleaseInternetMenus();
     GuiSystem().Stop();
     context.SetGuiSystem(nullptr);
     return exitCode;

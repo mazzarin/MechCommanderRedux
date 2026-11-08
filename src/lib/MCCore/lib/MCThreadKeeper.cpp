@@ -6,6 +6,7 @@
 MCThreadKeeper::~MCThreadKeeper()
 {
     JoinAll();
+    // The reaper, asked to stop by its jthread's destruction, finds none queued and returns.
 }
 
 MCThreadKeeper& MCThreadKeeper::Process()
@@ -34,19 +35,10 @@ void MCThreadKeeper::Keep(std::thread thread)
 
 void MCThreadKeeper::JoinAll()
 {
-    std::jthread reaper;
-
-    {
-        const std::scoped_lock lock(_Lock);
-        reaper = std::move(_Reaper);
-    }
-
-    // Asked to stop, it joins every thread still queued first.
-    if (reaper.joinable())
-    {
-        reaper.request_stop();
-        reaper.join();
-    }
+    // The reaper goes on joining; this waits until none is queued or being joined, those kept meanwhile too (one reaper
+    // only, so no thread kept before the call is joined by another that this could miss).
+    std::unique_lock lock(_Lock);
+    _Drained.wait(lock, [this] { return _Threads.empty() && _Joining == 0; });
 }
 
 size_t MCThreadKeeper::Kept()
@@ -76,5 +68,10 @@ void MCThreadKeeper::Reap(std::stop_token stop)
         next.join();
         lock.lock();
         _Joining--;
+
+        if (_Threads.empty() && _Joining == 0)
+        {
+            _Drained.notify_all();
+        }
     }
 }

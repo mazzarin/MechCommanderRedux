@@ -178,6 +178,9 @@ jobs:
             src/build/bin/x64/Release/MCRedux.exe
             src/build/bin/x64/Release/SDL3.dll
             src/build/bin/x64/Release/MCEditor.exe
+            src/build/bin/x64/Release/MCRedux.pdb
+            src/build/bin/x64/Release/MCEditor.pdb
+            src/build/bin/x64/Release/SDL3.pdb
             src/build/bin/x64/Release/mc_tests.exe
             src/build/generated/MCVersion.h
             dist/MechCommander-Redux-Setup.exe

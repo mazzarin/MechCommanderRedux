@@ -12,22 +12,17 @@ only the characters on a keyboard. The release script takes the entry under the 
 
 ## 0.6.0
 
-Multiplayer over the internet, and nights that change the battle.
+Nights that change the battle.
 
-- INTERNET on the multiplayer screen: host a game, listed for anyone or joined by its code, or pick one from the list.
-  Games connect wherever you play, and a listed game never shows a player another's address.
-- Rooms take players until START, with no ready room. A game missing one of the room's options is told which, and to
-  update.
-- When the host leaves, another player takes over the room or the match. A player who drops out hands their units to
-  a teammate.
-- REMATCH after a match plays the same room again.
-- MATCH OPTIONS: MOST SKILLED PILOT, and a ban on each kind of weapon.
 - At night headlights change sight: units see half as far, and a lit unit sees and is seen further. LIGHTS (N) turns
   the selected units' headlights off or on. The night shows without HD LIGHTING too.
+- MATCH OPTIONS: MOST SKILLED PILOT, and a ban on each kind of weapon.
 - Smoother: mechs' legs between frames at any frame rate, guests' mechs walking as the host's do, a falling tree that
   no longer vanishes, sensor blips at the original's pace.
 - Faster: the HD movies, art, weather and sound do more of their work away from the game.
 - Fixed: a right-click on a mech or vehicle in your inventory crashed the game.
+- Multiplayer cleanup: rooms take players until START, a match goes on when the host or a player leaves, REMATCH, and
+  games over the internet.
 
 ## 0.5.1
 

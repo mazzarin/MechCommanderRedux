@@ -91,6 +91,12 @@ TEST_CASE("lobby updates: an internet room the menus opened comes back by a host
         MCRejoinNote::InternetRoomCommandLine({.Code = "K7QF", .PlayerName = "Ann", .SessionName = "Big Bob's game"});
     CHECK_EQ(guest, std::string("-join K7QF -internet -player Ann -menus -rejoin"));
     CHECK_EQ(LobbyWords(guest), guest);
+
+    // A public game's guest comes back through relays only, as it played it.
+    const std::string relayed =
+        MCRejoinNote::InternetRoomCommandLine({.Code = "K7QF", .Public = true, .PlayerName = "Ann"});
+    CHECK_EQ(relayed, std::string("-join K7QF -internet -public -player Ann -menus -rejoin"));
+    CHECK_EQ(LobbyWords(relayed), relayed);
 }
 
 /// <summary>

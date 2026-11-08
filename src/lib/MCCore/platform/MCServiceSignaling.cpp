@@ -541,7 +541,7 @@ bool MCServiceSignaling::GamePublic(std::string_view game)
 {
     const std::scoped_lock lock(_Lock);
     const auto found = _Games.find(game);
-    return found == _Games.end() || found->second.Public;
+    return _RelayOnly || found == _Games.end() || found->second.Public;
 }
 
 std::optional<std::string> MCServiceSignaling::WhyClosed(std::string_view game)
@@ -978,15 +978,19 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
 
         if (token && IsToken(*token) && ice)
         {
+            // A socket in before (back in its place) keeps what the service said then: public is never lowered.
+            const bool wasIn = !socket.Token.empty();
             socket.Code = std::string(game);
             socket.Token = *token;
             socket.Settings = std::move(*ice);
             // A game the service doesn't say is private is public: its links take relays only.
             const auto isPublic = parsed.find("public");
-            socket.Public = isPublic == parsed.end() || !isPublic->is_boolean() || isPublic->get<bool>();
+            const bool saidPublic = isPublic == parsed.end() || !isPublic->is_boolean() || isPublic->get<bool>();
+            socket.Public = saidPublic || (wasIn && socket.Public);
             socket.In = true;
-            SDL_Log("MCServiceSignaling: joined game \"%.*s\" (%zu relays, %s)", static_cast<int>(game.size()),
-                    game.data(), socket.Settings->Relays.size(), socket.Public ? "public" : "private");
+            SDL_Log("MCServiceSignaling: joined game \"%.*s\" (%zu relays, %s%s)", static_cast<int>(game.size()),
+                    game.data(), socket.Settings->Relays.size(), saidPublic ? "public" : "private",
+                    _RelayOnly || socket.Public ? ", relays only" : "");
             return;
         }
     }

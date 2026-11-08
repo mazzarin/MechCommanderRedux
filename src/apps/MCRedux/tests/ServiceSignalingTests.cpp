@@ -30,6 +30,7 @@ namespace
     const std::string HostUrl = std::format("{}/host{}", Service, Query);
     const std::string JoinUrl = std::format("{}/join/K7QF{}", Service, Query);
     const std::string BackUrl = std::format("{}/game/K7QF{}&token={}", Service, Query, Token);
+    const std::string TakeoverUrl = std::format("{}/takeover/K7QF{}&token={}", Service, Query, Token);
 
     constexpr std::string_view HostedMessage =
         R"({"t":"hosted","game":"K7QF","token":"0123456789abcdef0123456789abcdef",)"
@@ -41,6 +42,14 @@ namespace
         R"({"t":"joined","game":"K7QF","guest":"g1","token":"0123456789abcdef0123456789abcdef",)"
         R"("ice":{"stun":["stun.cloudflare.com:3478"],)"
         R"("relays":[{"host":"turn.cloudflare.com","port":443,"user":"u2","password":"p2"}]}})";
+    /// <summary>The joined message saying the game is public, or private (the host's room's as the guest joins).</summary>
+    std::string JoinedSaying(bool isPublic)
+    {
+        std::string joined(JoinedMessage);
+        joined.insert(joined.size() - 1, std::format(R"(,"public":{})", isPublic));
+        return joined;
+    }
+
     /// <summary>A dropped socket tries to come back at once, and its place waits long past the test.</summary>
     const MCServiceComeback AtOnce{.PlaceKept = std::chrono::hours(1),
                                    .FirstTry = std::chrono::milliseconds(0),
@@ -254,13 +263,60 @@ TEST_CASE("service signaling: a joined game's links take relays only, unless the
     REQUIRE(signaling.Joined(GameCode));
     CHECK(!signaling.LinkSettings(GameCode).RelayOnly);
 
-    // A game that relays every link takes them through relays only, whatever the service says.
+    // A game that relays every link takes them through relays only, whatever the service says: a guest that knew its
+    // game public (picked from the list) too.
     MCServiceSignaling always(std::string(Service), service.Opener(), Identity, true);
     always.Join(GameCode);
     service.At(JoinUrl).Arrived.push_back(Text(joined));
     CHECK(always.Take().empty());
     REQUIRE(always.Joined(GameCode));
     CHECK(always.LinkSettings(GameCode).RelayOnly);
+    CHECK(always.GamePublic(GameCode));
+}
+
+/// <summary>
+/// What the service said of a game's being public is never lowered: a guest's socket dropping and coming back to its
+/// place keeps its links relayed, though the service answers it as private (its host made the room private since); and
+/// a public game's guest taking it over as its host relays its own guests' links.
+/// </summary>
+TEST_CASE("service signaling: a public game's guest stays relay-only as its socket comes back, and as it takes over")
+{
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, false, AtOnce);
+    signaling.Join(GameCode);
+    service.At(JoinUrl).Arrived.push_back(Text(JoinedSaying(true)));
+    CHECK(signaling.Take().empty());
+    REQUIRE(signaling.Joined(GameCode));
+    CHECK(signaling.LinkSettings(GameCode).RelayOnly);
+
+    // Dropped, and back in its place: "back", or a service that answers with joined again and says private.
+    service.At(JoinUrl).Now = MCWebSocket::State::Closed;
+    CHECK_EQ(signaling.Take().size(), size_t{1});
+    CHECK(signaling.Take().empty());
+    service.At(BackUrl).Arrived.push_back(Text(R"({"t":"back","guest":"g1"})"));
+    CHECK(signaling.Take().empty());
+    REQUIRE(signaling.Joined(GameCode));
+    CHECK(signaling.LinkSettings(GameCode).RelayOnly);
+    CHECK(signaling.GamePublic(GameCode));
+
+    service.At(BackUrl).Now = MCWebSocket::State::Closed;
+    CHECK_EQ(signaling.Take().size(), size_t{1});
+    CHECK(signaling.Take().empty());
+    REQUIRE_EQ(service.OpenedTo(BackUrl), size_t{2});
+    service.At(BackUrl).Arrived.push_back(Text(JoinedSaying(false)));
+    CHECK(signaling.Take().empty());
+    REQUIRE(signaling.Joined(GameCode));
+    CHECK(signaling.LinkSettings(GameCode).RelayOnly);
+    CHECK(signaling.GamePublic(GameCode));
+
+    // Its session rolled over to it: it hosts the game, the links to its guests through relays only.
+    REQUIRE(signaling.TakeOver(GameCode));
+    service.At(TakeoverUrl).Arrived.push_back(Text(HostedMessage));
+    service.At(TakeoverUrl).Arrived.push_back(Text(GuestMessage));
+    signaling.Take();
+    CHECK(signaling.HostedCode() == std::optional<std::string>(GameCode));
+    CHECK(signaling.LinkSettings(Guest).RelayOnly);
+    CHECK(signaling.LinkSettings("g4").RelayOnly);
 }
 
 TEST_CASE("service signaling: a guest joins by the code, and what isn't the service's protocol is left alone")

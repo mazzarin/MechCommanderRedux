@@ -6,6 +6,7 @@
 #include "TestGame.h"
 #include "MCFakeUpdaterBackend.h"
 #include "fakes/MCFakeGamesService.h"
+#include "fakes/MCLoopbackTransport.h"
 #include "fakes/MCServiceScript.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
@@ -26,7 +27,11 @@
 #include "network/MCRejoinNote.h"
 #include "network/MCRoomEnd.h"
 #include "main/MCLogistics.h"
+#include "network/MCInternetGame.h"
 #include "network/MCMultiPlayer.h"
+#include "platform/MCNetSwitch.h"
+
+#include <thread>
 
 // The multiplayer menu's internet screens (logistics/MCInternetMenu) in the test game, through a scripted games service
 // (tests/fakes/MCServiceScript.h) and a stand-in for its games (tests/fakes/MCFakeGamesService.h): MULTIPLAYER ACCESS's
@@ -181,6 +186,77 @@ namespace
     {
         const MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
         return dialog.ShowWindow ? dialog.Text : std::string();
+    }
+
+    /// <summary>How long a link on the loopback gets to open: one that can't (relays only, and none) fails soon.</summary>
+    constexpr auto LoopbackOpen = std::chrono::milliseconds(1500);
+    constexpr auto HostStep = std::chrono::milliseconds(5);
+
+    /// <summary>The internet games' links on the loopback, the service never carrying one (the stand-in has no relays).</summary>
+    void LinksOnLoopback()
+    {
+        MCInternetSetup setup = MCInternetGame::SetupNow();
+        setup.BindAddress = "127.0.0.1";
+        setup.Deadlines = {.Open = LoopbackOpen, .Service = std::nullopt};
+        MCInternetGame::Setup(std::move(setup));
+    }
+
+    /// <summary>The game's port on its host (MCDirectPlay's), where a host's game listens.</summary>
+    constexpr uint16_t GamePort = 28800;
+
+    /// <summary>
+    /// Bob's game, on another machine (its own network, here in the process), hosted on the stand-in service, private:
+    /// none of its links relayed. It listens on the game's port, as its DirectPlay does (a host answers links then).
+    /// </summary>
+    struct MCBobsGame
+    {
+        MCNetSwitch Net{std::make_unique<MCLoopbackTransport>()};
+        std::unique_ptr<MCInternetGame> Game = MCInternetGame::Host(Net, false);
+
+        MCBobsGame()
+        {
+            REQUIRE(Game != nullptr);
+            REQUIRE(Net.ListenTcp(GamePort) != MCSocket::InvalidHandle);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+
+            while (Game->Update() != MCInternetGame::Stage::Ready && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(HostStep);
+            }
+
+            REQUIRE(Game->Update() == MCInternetGame::Stage::Ready);
+        }
+    };
+
+    /// <summary>Clicks the middle of <paramref name="button"/>, the game not yet run on.</summary>
+    void Press(MCGuiObject& button)
+    {
+        Click(button.GlobalX() + button.Width() / 2, button.GlobalY() + button.Height() / 2);
+    }
+
+    /// <summary>
+    /// JOIN GAME, run on until the join fails with <paramref name="failure"/>: whether this game's internet game was
+    /// public (its links relayed) every frame it was there, and there at all.
+    /// </summary>
+    bool JoinsRelayedOnly(MCGuiObject& join, std::string_view failure)
+    {
+        Press(join);
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+        bool there = false;
+        bool relayed = true;
+        REQUIRE(SettleUntil(
+            [&]
+            {
+                if (manager.Internet != nullptr)
+                {
+                    there = true;
+                    relayed = relayed && manager.Internet->Public();
+                }
+
+                return DialogText() == failure;
+            }));
+        ClickButton(*GlobalLog()->MessageDialog->OkButton);
+        return there && relayed;
     }
 }
 
@@ -629,7 +705,8 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
     const std::optional<std::string> note =
         MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NextBuild, MCRejoinNote::Now());
     REQUIRE(note.has_value());
-    CHECK_EQ(*note, std::string("-join W8ZE -internet -player Commander -menus"));
+    // Picked from the service's list: public, so the new version's links take relays only.
+    CHECK_EQ(*note, std::string("-join W8ZE -internet -public -player Commander -menus"));
 }
 
 /// <summary>
@@ -682,4 +759,93 @@ TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the
     CHECK(!GlobalLog()->SessionScreen->MissionFile.empty());
     CHECK(DialogText().empty());
     SaveShot("internet 14 rematch", ScreenHash());
+}
+
+/// <summary>
+/// A game joined from INTERNET CONNECTION's list is public: picked, or its code typed while the list shows it, its
+/// links take relays only though the service says its host made it private (Bob's here, which isn't), so its host never
+/// learns this player's address; the stand-in has no relays, so such a link can't open on the loopback. A code typed for
+/// a game the list doesn't show joins as the service says, its links direct.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a game joined from INTERNET CONNECTION's list takes relays only, though its host says it's private")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    service.JoinedPublic = false;
+    const MCServicesScope scope(list, service);
+    LinksOnLoopback();
+    REQUIRE(MCTestGame::StartLogistics());
+    MCSplashScreen& screen = OpenInternetScreen(list);
+    MCBobsGame bob;
+    list.Send(EveryKindOfGame(37, 12));
+    REQUIRE(SettleUntil([] { return InternetCountsShown() == "37 ONLINE, 12 IN GAMES"; }));
+    auto games = screen.Element<MCInternetGameList>(GameList);
+    auto join = screen.Element<MCLogButton>(JoinButton);
+    constexpr std::string_view NotReached = "COULDN'T CONNECT TO BOB'S GAME. TRY AGAIN.";
+
+    // Picked from the list.
+    games->Pick("K7QF");
+    Settle();
+    REQUIRE(!join->Disabled);
+    CHECK(JoinsRelayedOnly(*join, NotReached));
+
+    // Its code typed while the list shows it.
+    Click(CodeX, CodeY);
+    Type("k7qf");
+    REQUIRE(!join->Disabled);
+    CHECK(JoinsRelayedOnly(*join, NotReached));
+    CHECK(!service.GuestSignals().empty());
+    CHECK(!service.GuestOfferedOwnAddress());
+
+    // The list no longer shows it: the typed code joins as the service says (private), its link direct and open.
+    list.Send(Listing(Json::array(), 1, 0));
+    REQUIRE(SettleUntil([] { return InternetCountsShown() == "1 ONLINE, 0 IN GAMES"; }));
+    REQUIRE(!join->Disabled);
+    Press(*join);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            bob.Game->Update();
+            return manager.Internet != nullptr && manager.Internet->Update() == MCInternetGame::Stage::Ready;
+        }));
+    CHECK(!manager.Internet->Public());
+    CHECK(service.GuestOfferedOwnAddress());
+    ClickButton(*GlobalLog()->MessageDialog->OkButton);
+    CHECK(manager.Internet == nullptr);
+}
+
+/// <summary>
+/// A public game's guest restarting into an update leaves the rejoin note with -public, and its new version, started
+/// from the note, joins the game again through relays only, though the service now says the game is private.
+/// </summary>
+TEST_CASE_ISOLATED("game: a public game's guest, started again from the rejoin note, joins it through relays only")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    service.JoinedPublic = false;
+    const MCServicesScope scope(list, service);
+    LinksOnLoopback();
+    const MCBobsGame bob;
+    const std::string note = MCRejoinNote::InternetRoomCommandLine(
+        {.Code = std::string(MCFakeGames::GameCode), .Public = true, .PlayerName = "Commander"});
+    CHECK_EQ(note, std::format("-join {} -internet -public -player Commander -menus -rejoin", MCFakeGames::GameCode));
+    REQUIRE(StartFromNote(note));
+    CHECK(!LobbyLaunchArgs.IsHost);
+    CHECK(LobbyLaunchArgs.Public);
+    CHECK(std::ranges::any_of(service.Paths, [](const std::string& path)
+                              { return path.starts_with(std::format("/join/{}?", MCFakeGames::GameCode)); }));
+    CHECK(!service.GuestSignals().empty());
+    CHECK(!service.GuestOfferedOwnAddress());
 }

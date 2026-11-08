@@ -157,6 +157,8 @@ namespace MCLobbyUpdate
         /// <summary>The game's name, as the page says it.</summary>
         std::string Name;
         std::string PlayerName;
+        /// <summary>Picked from the service's list: public, so the new version's links take relays only.</summary>
+        bool RelayOnly = false;
     };
 
     /// <summary>
@@ -193,6 +195,8 @@ namespace MCLobbyUpdate
         /// <summary>A LAN host's address, or an internet game's code.</summary>
         std::string Address;
         bool Internet = false;
+        /// <summary>An internet game this guest knew public: joined again, its links take relays only.</summary>
+        bool RelayOnly = false;
         /// <summary>The name this guest joins with.</summary>
         std::string PlayerName;
         /// <summary>What the wait says ("REJOINING BOB'S GAME FOR A REMATCH...").</summary>

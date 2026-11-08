@@ -156,7 +156,10 @@ public:
     /// joined it (another guest took it over): links to it from before go nowhere.
     /// </summary>
     int32_t HostMoves(std::string_view game);
-    /// <summary>Whether the game <paramref name="game"/> this one joined is public, as the service said (or didn't).</summary>
+    /// <summary>
+    /// Whether the game <paramref name="game"/> this one joined is public: this game knew it was (relays only), or the
+    /// service said so (or didn't say) at any time since it joined.
+    /// </summary>
     bool GamePublic(std::string_view game);
     /// <summary>Why the host's socket or <paramref name="game"/>'s closed, if it did (for the log and the trial).</summary>
     std::optional<std::string> WhyClosed(std::string_view game = {});
@@ -205,7 +208,10 @@ private:
         std::string Token;
         /// <summary>A game reached: the relays its links start with (joined's).</summary>
         std::optional<MCIceLink::Settings> Settings;
-        /// <summary>A game reached is public (joined's; one the service doesn't say is): its links take relays only.</summary>
+        /// <summary>
+        /// A game reached is public (joined's; one the service doesn't say is): its links take relays only. Taken as
+        /// public until the service says, and never lowered once it has said so.
+        /// </summary>
         bool Public = true;
         /// <summary>Why the service ended it: no coming back.</summary>
         std::optional<MCServiceRefusal> Refusal;

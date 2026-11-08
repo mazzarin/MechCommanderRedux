@@ -232,7 +232,7 @@ namespace
         "--port",  "-matchmap", "-team1rp", "-team2rp",  "-team1tech",  "-team2tech"};
     /// <summary>Port (Redux HD): an internet game's switches: hosted on the service or joined by its code, and listed.</summary>
     constexpr std::string_view InternetSwitch = "-internet";
-    constexpr std::string_view PublicSwitch = "-public";
+    constexpr std::string_view PublicSwitch = MCRejoinNote::PublicSwitch;
     /// <summary>
     /// Port (Redux HD): a restarted host's place on the service, and the words it takes (its code and token); a room the
     /// menus opened (network/MCRejoinNote.h).

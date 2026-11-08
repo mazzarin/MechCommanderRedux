@@ -20,6 +20,12 @@ namespace MCRejoinNote
     /// <summary>The switch a note's command line carries: the start is a rejoin, which says why it fails.</summary>
     inline constexpr std::string_view RejoinSwitch = "-rejoin";
 
+    /// <summary>
+    /// Port (Redux HD): an internet game's switch for a public game: a host's listed, its links relayed; a guest's links
+    /// relayed (gui/MCGuiStartup's -public).
+    /// </summary>
+    inline constexpr std::string_view PublicSwitch = "-public";
+
     /// <summary>What a note holds.</summary>
     struct MCNote
     {
@@ -45,6 +51,7 @@ namespace MCRejoinNote
         /// <summary>The game's code; a host's place's token too.</summary>
         std::string Code;
         std::string Token;
+        /// <summary>A host's game is public (listed, its links relayed); a guest's is, as it knew it (relays only).</summary>
         bool Public = false;
         std::string PlayerName;
         std::string SessionName;
@@ -56,7 +63,7 @@ namespace MCRejoinNote
     /// <summary>
     /// Port (Redux HD): the words a restart starts with to come back to <paramref name="room"/>: a host's game back in
     /// its place (-place), a guest joining it by its code, either the menus' again once in (-menus), with
-    /// <see cref="RejoinSwitch"/>.
+    /// <see cref="RejoinSwitch"/>; a public game's with <see cref="PublicSwitch"/>, a guest's too (relays only).
     /// </summary>
     std::string InternetRoomCommandLine(const MCInternetRoom& room);
 

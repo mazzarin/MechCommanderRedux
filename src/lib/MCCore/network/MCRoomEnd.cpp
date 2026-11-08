@@ -62,6 +62,7 @@ namespace
         std::string PlayerName;
         /// <summary>A LAN host's own address (where it hosts again), a LAN guest's host's; an internet game's code.</summary>
         std::string Address;
+        /// <summary>An internet game is public: a host's listed and relayed, a guest's relayed (as it knew it).</summary>
         bool Public = false;
         /// <summary>A host's internet game's place on the service, kept through its rematch's leave.</summary>
         std::optional<MCInternetPlace> Place;
@@ -522,6 +523,7 @@ auto MCRoomEnd::HostSaid(uint32_t fromId, int32_t how) -> bool
         Rejoin = MCRejoin{.From = room->From,
                           .Room = {.Address = room->Address,
                                    .Internet = room->From == MCGames::Internet,
+                                   .RelayOnly = room->Public,
                                    .PlayerName = room->PlayerName,
                                    .Text = std::format(RejoiningFormat, HostName(*game))}};
         RejoinHeard = true;

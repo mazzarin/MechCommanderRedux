@@ -92,21 +92,23 @@ auto MCRejoinNote::InternetRoomCommandLine(const MCInternetRoom& room) -> std::s
 {
     std::vector<std::string> words;
 
+    words = room.Hosting ? std::vector<std::string>{"-host", "-internet"}
+                         : std::vector<std::string>{"-join", room.Code, "-internet"};
+
+    // A public game's guest comes back to it through relays only, as it played it.
+    if (room.Public)
+    {
+        words.emplace_back(PublicSwitch);
+    }
+
     if (room.Hosting)
     {
-        words = {"-host", "-internet"};
-
-        if (room.Public)
-        {
-            words.emplace_back("-public");
-        }
-
         words.insert(words.end(), {"-player", room.PlayerName, "-session", room.SessionName, "-maxplayers",
                                    std::to_string(room.MaxPlayers), "-place", room.Code, room.Token});
     }
     else
     {
-        words = {"-join", room.Code, "-internet", "-player", room.PlayerName};
+        words.insert(words.end(), {"-player", room.PlayerName});
     }
 
     words.emplace_back("-menus");

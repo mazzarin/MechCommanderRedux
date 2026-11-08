@@ -98,6 +98,8 @@ namespace
         std::string PlayerName;
         /// <summary>An internet game's code: the host comes back to it (its place kept on the service).</summary>
         std::optional<std::string> Code;
+        /// <summary>The internet game is public, as this guest knew it: each try's links take relays only.</summary>
+        bool RelayOnly = false;
         /// <summary>Where the room is looked for again: the code, or the host's address.</summary>
         std::string Address;
     };
@@ -284,12 +286,23 @@ namespace
     /// </summary>
     std::optional<std::string> RoomCommandLine()
     {
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+
         if (LobbyLaunchArgs.Active)
         {
+            // A lobby's guest of a game it found public comes back to it through relays only, as it played it.
+            if (!LobbyLaunchArgs.IsHost && !LobbyLaunchArgs.Public && manager.Internet != nullptr &&
+                manager.Internet->Public())
+            {
+                MCLobbyLaunchArgs args = LobbyLaunchArgs;
+                args.CommandLine = std::format("{} {}", args.CommandLine, MCRejoinNote::PublicSwitch);
+                args.Public = true;
+                return MCRejoinNote::LobbyCommandLine(args);
+            }
+
             return MCRejoinNote::LobbyCommandLine(LobbyLaunchArgs);
         }
 
-        MCSessionManager& manager = *MultiPlayer()->SessionManager;
         const std::shared_ptr<MCFidpSession> session = manager.CurrentSession();
         const std::shared_ptr<MCFidpPlayer> self = manager.MyPlayer();
 
@@ -384,9 +397,11 @@ namespace
         MCSessionManager& manager = *game.SessionManager;
         const std::shared_ptr<MCFidpPlayer> host = manager.GetPlayer(hostId);
         const std::string name = host != nullptr ? host->Name : std::string("THE HOST");
-        // Port (Redux HD): an internet game's host comes back to the same code, its place kept on the service.
+        // Port (Redux HD): an internet game's host comes back to the same code, its place kept on the service; a public
+        // game's guest joins it again through relays only.
         std::optional<std::string> code =
             manager.Internet != nullptr ? std::optional(manager.Internet->Code()) : std::nullopt;
+        const bool relayOnly = manager.Internet != nullptr && manager.Internet->Public();
         const std::string address = code.value_or(RoomAddress());
         const std::shared_ptr<MCFidpPlayer> self = manager.MyPlayer();
         const std::string playerName = LobbyLaunchArgs.Active || self == nullptr ? PlayerName() : self->Name;
@@ -418,6 +433,7 @@ namespace
                               .NextTry = now,
                               .PlayerName = playerName,
                               .Code = std::move(code),
+                              .RelayOnly = relayOnly,
                               .Address = address};
     }
 
@@ -445,13 +461,15 @@ namespace
     {
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
 
-        if (manager.Internet == nullptr && !manager.BeginInternet(false, *HostWait->Code, false))
+        if (manager.Internet == nullptr && !manager.BeginInternet(false, *HostWait->Code, HostWait->RelayOnly))
         {
             HostWait->NextTry = now + InternetTryEvery;
             return false;
         }
 
         const MCInternetGame::Stage stage = manager.Internet->Update();
+        // What the service said of the game goes with each try after this one.
+        HostWait->RelayOnly = HostWait->RelayOnly || manager.Internet->Public();
 
         if (stage == MCInternetGame::Stage::Ready)
         {
@@ -754,8 +772,10 @@ auto MCLobbyUpdate::Restart() -> bool
         // Port (Redux HD): a game the INTERNET screen picked, joined by the new version (the page then installs).
         if (const std::optional<uint64_t> build = MCUpdater::ExpectedBuild(); JoinAfter.has_value() && build)
         {
-            const std::string words = MCRejoinNote::InternetRoomCommandLine(
-                {.Code = JoinAfter->Code, .PlayerName = JoinAfter->PlayerName, .Rejoin = false});
+            const std::string words = MCRejoinNote::InternetRoomCommandLine({.Code = JoinAfter->Code,
+                                                                             .Public = JoinAfter->RelayOnly,
+                                                                             .PlayerName = JoinAfter->PlayerName,
+                                                                             .Rejoin = false});
 
             if (const auto written = MCRejoinNote::Write(
                     MCFileSystem::UserRoot(), {.CommandLine = words, .Build = *build, .Time = MCRejoinNote::Now()});
@@ -1115,5 +1135,6 @@ auto MCLobbyUpdate::WaitForRoom(const MCRoomAgain& room) -> void
                           .NextTry = now,
                           .PlayerName = room.PlayerName,
                           .Code = room.Internet ? std::optional(room.Address) : std::nullopt,
+                          .RelayOnly = room.Internet && room.RelayOnly,
                           .Address = room.Address};
 }

@@ -543,7 +543,8 @@ namespace
 
     /// <summary>
     /// Begins joining (<paramref name="code"/>) or hosting a game, "CONNECTING TO ..." shown meanwhile: the screen's
-    /// timer moves it along.
+    /// timer moves it along. A public game (<paramref name="isPublic"/>: a host's choice, or a guest's game from the
+    /// service's list) takes relays only.
     /// </summary>
     void BeginPending(PendingGame pending, std::string_view code, bool isPublic)
     {
@@ -600,24 +601,29 @@ namespace
 
         PendingGame pending{.PlayerName = PlayerName()};
         std::string code;
+        // A game on the service's list is public: its links take relays only, whatever the service says after (its
+        // host can't make it private for those who found it there).
+        bool listed = false;
 
         if (const std::optional<std::string> typed = TypedCode())
         {
             code = *typed;
-            const std::optional<MCInternetListing::Game> listed = ListedGame(code);
-            pending.Shown = listed.has_value() ? Upper(listed->Name) : std::format(CodeGameFormat, code);
+            const std::optional<MCInternetListing::Game> game = ListedGame(code);
+            listed = game.has_value();
+            pending.Shown = listed ? Upper(game->Name) : std::format(CodeGameFormat, code);
         }
         else if (const std::optional<MCInternetListing::Game> picked = Games->Picked();
                  picked.has_value() && MCInternetGameList::Joinable(*picked))
         {
             code = picked->Code;
+            listed = true;
             pending.Shown = Upper(picked->Name);
         }
         else if (picked.has_value() && UpdateBrings(*picked))
         {
             // A newer game: the update first, its new version joining the game (network/MCLobbyUpdate.h).
             MCLobbyUpdate::JoinAfterUpdate(MCLobbyUpdate::MCJoinAfter{
-                .Code = picked->Code, .Name = picked->Name, .PlayerName = pending.PlayerName});
+                .Code = picked->Code, .Name = picked->Name, .PlayerName = pending.PlayerName, .RelayOnly = true});
             ShowUpdatePageOver(InternetScreen());
             return;
         }
@@ -626,7 +632,7 @@ namespace
             return;
         }
 
-        BeginPending(std::move(pending), code, false);
+        BeginPending(std::move(pending), code, listed);
     }
 
     void HostInternetGame()

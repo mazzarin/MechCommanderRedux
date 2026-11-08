@@ -207,7 +207,7 @@ TEST_CASE("internet game: a host's game made on the service, a guest's link open
     REQUIRE(listener != MCSocket::InvalidHandle);
 
     // The code in either case; the link open before the game's own search or connection asks for it.
-    std::unique_ptr<MCInternetGame> guest = MCInternetGame::Join(guestNet, "k7qf");
+    std::unique_ptr<MCInternetGame> guest = MCInternetGame::Join(guestNet, "k7qf", false);
     REQUIRE(guest != nullptr);
     CHECK_EQ(guest->Code(), std::string(Code));
     REQUIRE(Until(*host, *guest,
@@ -238,6 +238,9 @@ TEST_CASE("internet game: a host's game made on the service, a guest's link open
     REQUIRE(stream != MCSocket::InvalidHandle);
     REQUIRE(accepted != MCSocket::InvalidHandle);
 
+    // A guest of a game that isn't public offers its own addresses (the loopback's here).
+    CHECK(!guest->Public());
+    CHECK(service.GuestOfferedOwnAddress());
     REQUIRE_EQ(guestNet.Send(stream, Bytes("hello")), 5);
     CHECK_EQ(Read(hostNet, accepted, 5), "hello");
     REQUIRE_EQ(hostNet.Send(accepted, Bytes("there")), 5);
@@ -268,10 +271,41 @@ TEST_CASE("internet game: a guest of a public game, or one the service doesn't s
         std::unique_ptr<MCInternetGame> guest;
         REQUIRE(Until(*host, *host, [&] { return host->Update() == MCInternetGame::Stage::Ready; }));
         REQUIRE(hostNet.ListenTcp(GamePort) != MCSocket::InvalidHandle);
-        guest = MCInternetGame::Join(guestNet, Code);
+        guest = MCInternetGame::Join(guestNet, Code, false);
         CHECK(Until(*host, *guest, [&] { return guest->Update() == MCInternetGame::Stage::Failed; }));
         CHECK(guest->Refusal() == std::optional(MCServiceRefusal::Unreachable));
+        // What a game made again for it passes on (a rejoin, a rematch, a takeover).
+        CHECK(guest->Public());
+        CHECK(!service.GuestSignals().empty());
+        CHECK(!service.GuestOfferedOwnAddress());
     }
+}
+
+/// <summary>
+/// A guest that knows its game is public (picked from the service's list, or its guest before a rejoin) offers only its
+/// relays, though the service says the game is private (its host made it so after it was listed): the guest's
+/// knowledge is never lowered, so no host learns its address.
+/// </summary>
+TEST_CASE(
+    "internet game: a guest that knew its game public offers only its relays, though the service says it's private")
+{
+    MCFakeGamesService service;
+    service.JoinedPublic = false;
+    const MCInternetSetupScope setup(service);
+    MCNetSwitch hostNet(std::make_unique<MCLoopbackTransport>());
+    MCNetSwitch guestNet(std::make_unique<MCLoopbackTransport>());
+    std::unique_ptr<MCInternetGame> host = MCInternetGame::Host(hostNet, false);
+    REQUIRE(Until(*host, *host, [&] { return host->Update() == MCInternetGame::Stage::Ready; }));
+    REQUIRE(hostNet.ListenTcp(GamePort) != MCSocket::InvalidHandle);
+
+    std::unique_ptr<MCInternetGame> guest = MCInternetGame::Join(guestNet, Code, true);
+    REQUIRE(guest != nullptr);
+    CHECK(guest->Public());
+    CHECK(Until(*host, *guest, [&] { return guest->Update() == MCInternetGame::Stage::Failed; }));
+    CHECK(guest->Refusal() == std::optional(MCServiceRefusal::Unreachable));
+    CHECK(guest->Public());
+    CHECK(!service.GuestSignals().empty());
+    CHECK(!service.GuestOfferedOwnAddress());
 }
 
 /// <summary>
@@ -290,7 +324,7 @@ TEST_CASE("internet game: a join whose host goes away before its link opens fail
     REQUIRE(Until(*host, *host, [&] { return host->Update() == MCInternetGame::Stage::Ready; }));
 
     // The service takes the guest in, then the host's game quits keeping its place, before the guest hears either.
-    std::unique_ptr<MCInternetGame> guest = MCInternetGame::Join(guestNet, Code);
+    std::unique_ptr<MCInternetGame> guest = MCInternetGame::Join(guestNet, Code, false);
     REQUIRE(guest != nullptr);
     host->KeepPlace(true);
     host->End();
@@ -306,7 +340,7 @@ TEST_CASE("internet game: a code no game has is refused, and a service that neve
     MCFakeGamesService service;
     const MCInternetSetupScope setup(service);
     MCNetSwitch net(std::make_unique<MCLoopbackTransport>());
-    std::unique_ptr<MCInternetGame> lost = MCInternetGame::Join(net, "ZZZZ");
+    std::unique_ptr<MCInternetGame> lost = MCInternetGame::Join(net, "ZZZZ", false);
     REQUIRE(lost != nullptr);
     CHECK(Until(*lost, *lost, [&] { return lost->Update() == MCInternetGame::Stage::Failed; }));
     CHECK(lost->Refusal() == std::optional(MCServiceRefusal::NoGame));
@@ -317,7 +351,7 @@ TEST_CASE("internet game: a code no game has is refused, and a service that neve
                            .Version = std::string(Version),
                            .Copy = std::string(Copy),
                            .ServiceWait = SilentServiceWait});
-    std::unique_ptr<MCInternetGame> unanswered = MCInternetGame::Join(net, Code);
+    std::unique_ptr<MCInternetGame> unanswered = MCInternetGame::Join(net, Code, false);
     REQUIRE(unanswered != nullptr);
     CHECK(Until(*unanswered, *unanswered, [&] { return unanswered->Update() == MCInternetGame::Stage::Failed; }));
     CHECK(unanswered->Refusal() == std::optional(MCServiceRefusal::Unreachable));
@@ -344,10 +378,10 @@ TEST_CASE("internet game: a guest takes the game over on the service as its host
     // The game's DirectPlay listens on each machine: the host's on the game's port, each guest's on one of its own.
     const MCSocket::Handle hostsListener = hostNet.ListenTcp(GamePort);
     REQUIRE(hostsListener != MCSocket::InvalidHandle);
-    std::unique_ptr<MCInternetGame> ann = MCInternetGame::Join(annNet, Code);
+    std::unique_ptr<MCInternetGame> ann = MCInternetGame::Join(annNet, Code, false);
     REQUIRE(ann != nullptr);
     REQUIRE(Until(*host, *ann, [&] { return ann->Update() == MCInternetGame::Stage::Ready; }));
-    std::unique_ptr<MCInternetGame> cat = MCInternetGame::Join(catNet, Code);
+    std::unique_ptr<MCInternetGame> cat = MCInternetGame::Join(catNet, Code, false);
     REQUIRE(cat != nullptr);
     REQUIRE(Until(*host, *cat, [&] { return cat->Update() == MCInternetGame::Stage::Ready; }));
     const MCSocket::Handle annsListener = annNet.ListenTcp(annsPort);

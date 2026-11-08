@@ -79,8 +79,12 @@ public:
     /// restarted into an update (<see cref="KeepPlace"/>): the same code, its players joining it again.
     /// </summary>
     static std::unique_ptr<MCInternetGame> HostAgain(MCNetSwitch& net, bool isPublic, const MCInternetPlace& place);
-    /// <summary>Joins the game whose code is <paramref name="code"/> (either case) on <paramref name="net"/>.</summary>
-    static std::unique_ptr<MCInternetGame> Join(MCNetSwitch& net, std::string_view code);
+    /// <summary>
+    /// Joins the game whose code is <paramref name="code"/> (either case) on <paramref name="net"/>. A game this one
+    /// knows is public (<paramref name="relayOnly"/>: picked from the service's list, or a guest of it before) takes
+    /// relays only, whatever the service says; one it doesn't, once the service says the game is public.
+    /// </summary>
+    static std::unique_ptr<MCInternetGame> Join(MCNetSwitch& net, std::string_view code, bool relayOnly);
     /// <summary>A code as the service and the links name it, typed in either case.</summary>
     static std::string CodeOf(std::string_view typed);
 
@@ -91,7 +95,11 @@ public:
     /// <summary>Moves it along (the service's answer, a guest's link): how far it has got.</summary>
     Stage Update();
     bool Hosting() const { return _Hosting; }
-    /// <summary>Whether a hosted game is public (listed, its links relayed).</summary>
+    /// <summary>
+    /// Whether the game is public: a host's, listed and its links relayed; a guest's, its links relayed, as this game
+    /// knew it (Join's relayOnly) or the service said (never lowered after). What a game made again for it (a rejoin, a
+    /// rematch, a takeover) passes on.
+    /// </summary>
     bool Public() const { return _Public; }
     /// <summary>The game's code: a host's once the service gave it (empty before), a guest's as asked for.</summary>
     const std::string& Code() const { return _Code; }

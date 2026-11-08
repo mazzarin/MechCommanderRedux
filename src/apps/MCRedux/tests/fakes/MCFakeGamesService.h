@@ -101,6 +101,25 @@ namespace MCFakeGames
             _Lines[_NextId++] = Line{.Open = false, .Host = true, .KeptPlace = true};
         }
 
+        /// <summary>
+        /// The texts of the signals the guests sent (their descriptions and candidates): what each offered of its own
+        /// addresses ("typ host" in a candidate's).
+        /// </summary>
+        std::vector<std::string> GuestSignals()
+        {
+            const std::scoped_lock lock(_Lock);
+            return _GuestSignals;
+        }
+
+        /// <summary>Whether a guest offered any address of its own (a host candidate) in the signals it sent.</summary>
+        bool GuestOfferedOwnAddress()
+        {
+            constexpr std::string_view OwnAddress = "typ host";
+            const std::scoped_lock lock(_Lock);
+            return std::ranges::any_of(_GuestSignals,
+                                       [&](const std::string& text) { return text.contains(OwnAddress); });
+        }
+
         /// <summary>Sockets open now.</summary>
         size_t OpenLines()
         {
@@ -149,6 +168,7 @@ namespace MCFakeGames
             {
                 Json signal = message;
                 signal["guest"] = from.Guest;
+                _GuestSignals.push_back(message.at("text").get<std::string>());
 
                 if (const MCOptionalRef<Line> host = HostLine())
                 {
@@ -359,6 +379,7 @@ namespace MCFakeGames
         std::mutex _Lock;
         std::map<int, Line> _Lines;
         std::optional<Json> _Room;
+        std::vector<std::string> _GuestSignals;
         int _NextId = 1;
     };
 

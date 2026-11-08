@@ -510,7 +510,7 @@ bool MCSessionManager::BeginInternet(bool host, std::string_view code, bool isPu
     }
 
     EndInternet();
-    Internet = !host   ? MCInternetGame::Join(net->get(), code)
+    Internet = !host   ? MCInternetGame::Join(net->get(), code, isPublic)
                : place ? MCInternetGame::HostAgain(net->get(), isPublic, *place)
                        : MCInternetGame::Host(net->get(), isPublic);
 

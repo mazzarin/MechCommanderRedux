@@ -92,7 +92,7 @@ std::unique_ptr<MCInternetGame> MCInternetGame::HostAgain(MCNetSwitch& net, bool
     return game;
 }
 
-std::unique_ptr<MCInternetGame> MCInternetGame::Join(MCNetSwitch& net, std::string_view code)
+std::unique_ptr<MCInternetGame> MCInternetGame::Join(MCNetSwitch& net, std::string_view code, bool relayOnly)
 {
     const MCInternetSetup setup = SetupNow();
 
@@ -102,9 +102,9 @@ std::unique_ptr<MCInternetGame> MCInternetGame::Join(MCNetSwitch& net, std::stri
     }
 
     std::string upper = CodeOf(code);
-    auto game = std::unique_ptr<MCInternetGame>(new MCInternetGame(net, setup, false, false, upper));
+    auto game = std::unique_ptr<MCInternetGame>(new MCInternetGame(net, setup, false, relayOnly, upper));
     game->_Signaling->Join(upper);
-    SDL_Log("Internet game: joining game %s", upper.c_str());
+    SDL_Log("Internet game: joining game %s%s", upper.c_str(), relayOnly ? ", known public: relays only" : "");
     return game;
 }
 
@@ -122,7 +122,7 @@ MCInternetGame::MCInternetGame(MCNetSwitch& net, const MCInternetSetup& setup, b
     , _Signaling(std::make_shared<MCServiceSignaling>(
           setup.Service, setup.Open,
           MCServiceIdentity{.Copy = setup.Copy.empty() ? MCInternetCopyId() : setup.Copy, .Version = setup.Version},
-          hosting && isPublic))
+          isPublic))
     , _Hosting(hosting)
     , _Public(isPublic)
     , _Code(std::move(code))
@@ -166,6 +166,12 @@ MCInternetGame::Stage MCInternetGame::Update()
     if (!_Hosting && _Stage != Stage::Ready && _Signaling->HostAway(_Code))
     {
         return Fail(MCServiceRefusal::HostAway, "its host went away from the service");
+    }
+
+    // What the service says of a joined game only ever adds to what this game knew (its socket back in its place too).
+    if (!_Hosting && !_Public && _Signaling->Joined(_Code))
+    {
+        _Public = _Signaling->GamePublic(_Code);
     }
 
     switch (_Stage)
@@ -284,7 +290,8 @@ void MCInternetGame::TakeOver()
         return;
     }
 
-    _Public = _Signaling->GamePublic(_Code);
+    // A public game's guest taking it over stays public: its links relayed, its room listed as the old host's was.
+    _Public = _Public || _Signaling->GamePublic(_Code);
 
     if (_Signaling->TakeOver(_Code))
     {

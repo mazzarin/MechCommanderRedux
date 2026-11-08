@@ -54,7 +54,10 @@ struct MCLobbyLaunchArgs
     /// through network/MCInternetGame.
     /// </summary>
     bool Internet = false;
-    /// <summary>Port (Redux HD): a hosted internet game is public (-public): listed, its links through relays only.</summary>
+    /// <summary>
+    /// Port (Redux HD): an internet game is public (-public): a host's listed and its links through relays only; a
+    /// guest's links through relays only (it knew the game public: from the list, or a guest of it before).
+    /// </summary>
     bool Public = false;
     /// <summary>
     /// Port (Redux HD): a host's internet game comes back to its place on the service (-place code token, from the
@@ -263,9 +266,10 @@ public:
 
     /// <summary>
     /// Port (Redux HD): begins an internet game on the game's network, ending any before: hosted on the service (a
-    /// public one listed, its links relayed) or joined by <paramref name="code"/>. It moves along with
-    /// <see cref="MCInternetGame::Update"/> (the INTERNET screen's timer). False when this game has no internet games.
-    /// A host with <paramref name="place"/> comes back to the place it left (a restart into an update).
+    /// public one listed, its links relayed) or joined by <paramref name="code"/> (a game known public, its links
+    /// relayed whatever the service says). It moves along with <see cref="MCInternetGame::Update"/> (the INTERNET
+    /// screen's timer). False when this game has no internet games. A host with <paramref name="place"/> comes back to
+    /// the place it left (a restart into an update).
     /// </summary>
     bool BeginInternet(bool host, std::string_view code, bool isPublic, std::optional<MCInternetPlace> place = {});
     /// <summary>

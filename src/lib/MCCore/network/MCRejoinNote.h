@@ -38,6 +38,26 @@ namespace MCRejoinNote
     /// </summary>
     std::string LobbyCommandLine(const MCLobbyLaunchArgs& args);
 
+    /// <summary>Port (Redux HD): an internet game's room the menus opened, as a restart into an update comes back to it.</summary>
+    struct MCInternetRoom
+    {
+        bool Hosting = false;
+        /// <summary>The game's code; a host's place's token too.</summary>
+        std::string Code;
+        std::string Token;
+        bool Public = false;
+        std::string PlayerName;
+        std::string SessionName;
+        int32_t MaxPlayers = 0;
+    };
+
+    /// <summary>
+    /// Port (Redux HD): the words a restart starts with to come back to <paramref name="room"/>: a host's game back in
+    /// its place (-place), a guest joining it by its code, either the menus' again once in (-menus), with
+    /// <see cref="RejoinSwitch"/>.
+    /// </summary>
+    std::string InternetRoomCommandLine(const MCInternetRoom& room);
+
     /// <summary>Writes <paramref name="note"/> in <paramref name="userFolder"/>, over any before.</summary>
     /// <returns>Nothing, or why it couldn't be written.</returns>
     std::expected<void, std::string> Write(const std::filesystem::path& userFolder, const MCNote& note);

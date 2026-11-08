@@ -77,6 +77,21 @@ std::unique_ptr<MCInternetGame> MCInternetGame::Host(MCNetSwitch& net, bool isPu
     return game;
 }
 
+std::unique_ptr<MCInternetGame> MCInternetGame::HostAgain(MCNetSwitch& net, bool isPublic, const MCInternetPlace& place)
+{
+    const MCInternetSetup setup = SetupNow();
+
+    if (!setup.Open)
+    {
+        return nullptr;
+    }
+
+    auto game = std::unique_ptr<MCInternetGame>(new MCInternetGame(net, setup, true, isPublic, {}));
+    game->_Signaling->HostAgain(place.Code, place.Token);
+    SDL_Log("Internet game: hosting game %s again, back in its place", place.Code.c_str());
+    return game;
+}
+
 std::unique_ptr<MCInternetGame> MCInternetGame::Join(MCNetSwitch& net, std::string_view code)
 {
     const MCInternetSetup setup = SetupNow();
@@ -237,6 +252,19 @@ void MCInternetGame::SetRoom(MCServiceRoom room)
     }
 }
 
+std::optional<MCInternetPlace> MCInternetGame::Place()
+{
+    if (!_Hosting || _Signaling == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    std::optional<std::string> code = _Signaling->HostedCode();
+    std::optional<std::string> token = _Signaling->HostedToken();
+    return code && token ? std::optional(MCInternetPlace{.Code = std::move(*code), .Token = std::move(*token)})
+                         : std::nullopt;
+}
+
 bool MCInternetGame::NameRefused()
 {
     return _Signaling != nullptr && _Signaling->NameRefused();
@@ -256,7 +284,15 @@ void MCInternetGame::End(std::chrono::milliseconds wait)
         _Transport.reset();
     }
 
-    _Signaling->Leave();
+    if (_KeepPlace)
+    {
+        _Signaling->LeaveAway();
+    }
+    else
+    {
+        _Signaling->Leave();
+    }
+
     const auto deadline = Clock::now() + wait;
 
     while (!_Signaling->AllClosed() && Clock::now() < deadline)

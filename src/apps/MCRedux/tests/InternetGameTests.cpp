@@ -49,6 +49,7 @@ namespace
         std::string WhyClosed() const override { return "closed (1000)"; }
         size_t Unsent() const override { return 0; }
         void Close() override { _Closed = true; }
+        void CloseAway() override { _Closed = true; }
 
     private:
         std::atomic<bool> _Closed = false;

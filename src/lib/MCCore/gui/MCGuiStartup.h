@@ -1,5 +1,9 @@
 #pragma once
 
+#include <span>
+#include <string>
+#include <string_view>
+
 // The program's start (gui\asystem.cpp): the data paths, the GUI system's life, and the command line.
 
 /// <summary>
@@ -26,3 +30,9 @@ bool StartsInLobby(std::string_view commandLine);
 /// rejoin note (network/MCRejoinNote.h): any other word is left out, and logged.
 /// </summary>
 std::string LobbyWords(std::string_view commandLine);
+
+/// <summary>
+/// Port (Redux HD): <paramref name="words"/> as a command line ParseCommandLine reads back the same (a word with a space,
+/// or none, in double quotes).
+/// </summary>
+std::string LobbyCommandWords(std::span<const std::string> words);

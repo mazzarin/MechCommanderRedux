@@ -296,17 +296,28 @@ namespace
 
         void Close() override
         {
+            CloseWith(NSURLSessionWebSocketCloseCodeNormalClosure);
+        }
+
+        void CloseAway() override
+        {
+            CloseWith(static_cast<NSURLSessionWebSocketCloseCode>(MCWebSocketAwayCode));
+        }
+
+    private:
+        /// <summary>Closes it with <paramref name="code"/>, once (the destructor's Close keeps an earlier one's).</summary>
+        void CloseWith(NSURLSessionWebSocketCloseCode code)
+        {
             const std::scoped_lock lock(_Shared->Lock);
 
             if (_Shared->Task != nil && _Shared->State != State::Closed)
             {
-                [_Shared->Task cancelWithCloseCode:NSURLSessionWebSocketCloseCodeNormalClosure reason:nil];
+                [_Shared->Task cancelWithCloseCode:code reason:nil];
             }
 
             _Shared->End("this game closed it");
         }
 
-    private:
         void Queue(NSURLSessionWebSocketMessage* message)
         {
             const std::scoped_lock lock(_Shared->Lock);

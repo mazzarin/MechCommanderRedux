@@ -23,6 +23,11 @@ enum class MCRoomRefusal : uint8_t;
 //   goes, and the room is told (MCMPMessageType::RestartOff), dropping the place it keeps; a host keeps its guests'
 //   places, as they left to wait for it.
 // - A rejoin that fails (the room gone, full or started) says so, and its OK ends the game.
+// - Port (Redux HD): an internet game's room the menus opened (the INTERNET screen's) restarts and comes back alike:
+//   its rejoin note starts the new version as a lobby would (MCRejoinNote::InternetRoomCommandLine), and back in the
+//   room the game is the menus' again (BackToMenus). A host's game keeps its place on the service through the restart
+//   (its socket closed as a drop) and comes back to it with its token, so its code stays and its guests, trying the
+//   code, find it again. A failed rejoin says so over the INTERNET screen.
 
 namespace MCLobbyUpdate
 {
@@ -133,7 +138,14 @@ namespace MCLobbyUpdate
 
     /// <summary>
     /// The lobby's join (or a host's room) at the game's start failed: a guest's rejoin (from the note) says why, a
-    /// host's that it couldn't open the room again, another start the original's message; each OK ends the game.
+    /// host's that it couldn't open the room again, another start the original's message; each OK ends the game. Port
+    /// (Redux HD): a room the menus opened (-menus) says it over the INTERNET screen instead.
     /// </summary>
     void JoinFailed();
+
+    /// <summary>
+    /// Port (Redux HD): a start from the rejoin note of a room the menus opened (-menus), back in it: the game is the
+    /// menus' again, its room's EXIT going back to the games and its match's end to the menus, not the lobby's.
+    /// </summary>
+    void BackToMenus();
 }

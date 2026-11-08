@@ -233,6 +233,13 @@ namespace
     /// <summary>Port (Redux HD): an internet game's switches: hosted on the service or joined by its code, and listed.</summary>
     constexpr std::string_view InternetSwitch = "-internet";
     constexpr std::string_view PublicSwitch = "-public";
+    /// <summary>
+    /// Port (Redux HD): a restarted host's place on the service, and the words it takes (its code and token); a room the
+    /// menus opened (network/MCRejoinNote.h).
+    /// </summary>
+    constexpr std::string_view PlaceSwitch = "-place";
+    constexpr size_t PlaceWords = 2;
+    constexpr std::string_view MenusSwitch = "-menus";
     /// <summary>The lobby's -slot and the words it takes: the player, the team and the slot.</summary>
     constexpr std::string_view SlotSwitch = "-slot";
     constexpr size_t SlotWords = 3;
@@ -253,9 +260,14 @@ namespace
         }
 
         if (MCIEquals(word, MCRejoinNote::RejoinSwitch) || MCIEquals(word, InternetSwitch) ||
-            MCIEquals(word, PublicSwitch))
+            MCIEquals(word, PublicSwitch) || MCIEquals(word, MenusSwitch))
         {
             return 0;
+        }
+
+        if (MCIEquals(word, PlaceSwitch))
+        {
+            return at + PlaceWords < words.size() ? std::optional<size_t>(PlaceWords) : std::nullopt;
         }
 
         if (MCIEquals(word, SlotSwitch))
@@ -290,6 +302,18 @@ namespace
             line += word;
         }
     }
+}
+
+auto LobbyCommandWords(std::span<const std::string> words) -> std::string
+{
+    std::string line;
+
+    for (const std::string& word : words)
+    {
+        AddWord(line, word);
+    }
+
+    return line;
 }
 
 auto StartsInLobby(std::string_view commandLine) -> bool
@@ -418,6 +442,19 @@ auto ParseCommandLine(std::string_view commandLine) -> void
         else if (MCIEquals(word, PublicSwitch))
         {
             LobbyLaunchArgs.Public = true;
+        }
+        else if (MCIEquals(word, PlaceSwitch))
+        {
+            // Port (Redux HD): a host's internet game back in its place (network/MCRejoinNote.h).
+            if (i + PlaceWords < words.size())
+            {
+                LobbyLaunchArgs.Place = MCInternetPlace{.Code = words[i + 1], .Token = words[i + 2]};
+                i += PlaceWords;
+            }
+        }
+        else if (MCIEquals(word, MenusSwitch))
+        {
+            LobbyLaunchArgs.FromMenus = true;
         }
         else if (MCIEquals(word, "-matchmap"))
         {

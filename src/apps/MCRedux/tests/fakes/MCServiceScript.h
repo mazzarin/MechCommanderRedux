@@ -20,6 +20,8 @@ namespace MCServiceScript
         std::vector<MCWebSocket::Message> Inbox;
         MCWebSocket::State State = MCWebSocket::State::Open;
         bool ClosedByGame = false;
+        /// <summary>The game closed it as a drop (CloseAway).</summary>
+        bool ClosedAway = false;
 
         void Send(const nlohmann::json& message) { Inbox.push_back({false, message.dump()}); }
     };
@@ -42,6 +44,12 @@ namespace MCServiceScript
             _Script.State = State::Closed;
         }
 
+        void CloseAway() override
+        {
+            Close();
+            _Script.ClosedAway = true;
+        }
+
     private:
         ListScript& _Script;
     };
@@ -54,6 +62,7 @@ namespace MCServiceScript
             script.Opened.push_back(url);
             script.State = MCWebSocket::State::Open;
             script.ClosedByGame = false;
+            script.ClosedAway = false;
             return std::make_unique<ScriptedSocket>(script);
         };
     }

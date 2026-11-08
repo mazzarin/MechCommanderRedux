@@ -20,6 +20,12 @@
 /// </summary>
 inline constexpr std::string_view MCWebSocketUntrusted = "the service's certificate wasn't trusted";
 
+/// <summary>
+/// The close code <see cref="MCWebSocket::CloseAway"/> sends: the application's own (4000 to 4999), which the service
+/// takes as a drop, as any but 1000 and 1001.
+/// </summary>
+inline constexpr uint16_t MCWebSocketAwayCode = 4100;
+
 /// <summary>One WebSocket, opened by <see cref="MCWebSocketOpener"/>: sends queue until it opens. Thread-safe.</summary>
 class MCWebSocket
 {
@@ -55,6 +61,11 @@ public:
     /// their links to it.
     /// </summary>
     virtual void Close() = 0;
+    /// <summary>
+    /// Closes it as a drop, not a leaving (<see cref="MCWebSocketAwayCode"/>): the service keeps its player's place for
+    /// a socket to come back to it (a game restarting into an update). Close's otherwise.
+    /// </summary>
+    virtual void CloseAway() = 0;
 };
 
 /// <summary>Opens a WebSocket to <c>wss://</c> <paramref name="url"/> (this platform's, or a test's).</summary>

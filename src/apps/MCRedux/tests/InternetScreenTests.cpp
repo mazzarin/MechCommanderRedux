@@ -3,6 +3,7 @@
 #include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "MCFakeUpdaterBackend.h"
 #include "fakes/MCFakeGamesService.h"
 #include "fakes/MCServiceScript.h"
 #include "linkup/MCSessionManager.h"
@@ -16,6 +17,11 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdatePage.h"
+#include "gui/MCGuiStartup.h"
+#include "logistics/MCLogTextButton.h"
+#include "network/MCLobbyUpdate.h"
+#include "network/MCRejoinNote.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 
@@ -125,14 +131,53 @@ namespace
         return screen;
     }
 
-    /// <summary>HOST GAME, then CREATE GAME: the room.</summary>
-    void HostFrom(MCSplashScreen& screen)
+    /// <summary>HOST GAME, then CREATE GAME: the room. The game's name.</summary>
+    std::string HostFrom(MCSplashScreen& screen)
     {
         Click(HostX, HostY);
         Settle();
+        std::string gameName = ElementText(screen, GameNameEntry);
         screen.Element<MCLogTextObject>(PlayersEntry)->SetStringBuffer("4");
         ClickButton(*screen.Element<MCLogButton>(CreateButton));
         REQUIRE(SettleUntil([] { return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen; }));
+        return gameName;
+    }
+
+    /// <summary>The update the restart tests find, and the build it brings.</summary>
+    constexpr std::string_view NewVersion = "0.6.1 (830)";
+    constexpr uint64_t NewBuild = 830;
+
+    /// <summary>An update found, downloaded and ready to install.</summary>
+    void UpdateReady()
+    {
+        MCUpdater::Found(std::string(NewVersion), "Rooms come back after an update.");
+        MCUpdater::Answer(MCUpdater::MCAnswer::Install);
+        MCUpdater::Ready();
+        Settle();
+    }
+
+    /// <summary>The rejoin note a host of "Commander's game" (Commander, 4 players, public) leaves as it restarts.</summary>
+    std::string HostNote(std::string_view gameName)
+    {
+        return MCRejoinNote::InternetRoomCommandLine({.Hosting = true,
+                                                      .Code = std::string(MCFakeGames::GameCode),
+                                                      .Token = std::string(MCFakeGames::GameToken),
+                                                      .Public = true,
+                                                      .PlayerName = "Commander",
+                                                      .SessionName = std::string(gameName),
+                                                      .MaxPlayers = 4});
+    }
+
+    /// <summary>Boots the game as its new version does after a restart: the note's words, as the app takes them.</summary>
+    bool StartFromNote(std::string_view note)
+    {
+        const std::filesystem::path user = MCTestGame::UserFolder();
+        std::filesystem::create_directories(user);
+        REQUIRE(MCRejoinNote::Write(
+            user, {.CommandLine = std::string(note), .Build = NewBuild, .Time = MCRejoinNote::Now()}));
+        const std::optional<std::string> line = MCRejoinNote::TakeAtStart(user, NewBuild, MCRejoinNote::Now());
+        REQUIRE(line.has_value());
+        return MCTestGame::StartLobby(*line);
     }
 
     /// <summary>The player moves the mouse: input, which the idle check sees.</summary>
@@ -433,4 +478,112 @@ TEST_CASE_ISOLATED("game: a player away from an internet game is asked STILL THE
     CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
     CHECK_EQ(service.OpenLines(), 0u);
     MCIdleCheck::SetClock({});
+}
+
+/// <summary>
+/// RESTART in an internet game's room the INTERNET screen opened: the host's update page offers it ("THE ROOM OPENS
+/// AGAIN"), and taking it leaves the rejoin note to come back to the same game (its place's code and token, the menus'
+/// again) and keeps the game's place on the service: its socket closes as a drop.
+/// </summary>
+TEST_CASE_ISOLATED("game: an internet room's host restarts into an update, keeping its game's place on the service")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestUpdater::MCFakeUpdater updater;
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    const MCServicesScope scope(list, service);
+    REQUIRE(MCTestGame::StartLogistics());
+    MCSplashScreen& screen = OpenInternetScreen(list);
+    const std::string gameName = HostFrom(screen);
+    MCSessionScreen& room = *GlobalLog()->SessionScreen;
+    REQUIRE(SettleUntil([&] { return service.Room().has_value(); }));
+
+    // The update ready: the room's page offers RESTART, which brings the room back.
+    UpdateReady();
+    CHECK(MCLobbyUpdate::InRoom());
+    ShowUpdatePageOver(room);
+    Settle();
+    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(room, "RESTART");
+    REQUIRE(restart != nullptr);
+    CHECK(restart->IsShowing());
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, THE ROOM OPENS AGAIN."));
+    SaveShot("internet 9 restart", ScreenHash());
+
+    // RESTART: the note to come back by, the update installing, the game's place kept.
+    ClickButton(*restart);
+    REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
+    CHECK(updater.Log->Answers.back() == MCUpdater::MCAnswer::Install);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    REQUIRE(manager.Internet != nullptr);
+    CHECK(manager.Internet->KeepsPlace());
+    const std::optional<std::string> note =
+        MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NewBuild, MCRejoinNote::Now());
+    REQUIRE(note.has_value());
+    CHECK_EQ(*note, HostNote(gameName));
+
+    // The game quits: its socket goes as a drop, and the service keeps the game for it.
+    manager.EndInternet();
+    CHECK(service.HostPlaceKept());
+    CHECK_EQ(service.OpenLines(), 0u);
+}
+
+/// <summary>
+/// A host's new version, started from the rejoin note: it comes back to its game's place on the service (the same code,
+/// none hosted afresh), straight into the room, and is the menus' again: the room's EXIT goes back to the INTERNET
+/// screen rather than ending the game.
+/// </summary>
+TEST_CASE_ISOLATED("game: a host's new version comes back to its internet game's place, and is the menus' again")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    service.KeepHostPlace();
+    const MCServicesScope scope(list, service);
+    constexpr std::string_view GameName = "Commander's game";
+    REQUIRE(StartFromNote(HostNote(GameName)));
+    REQUIRE(SettleUntil([] { return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen; }));
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    CHECK(manager.HostedInternetCode() == std::optional<std::string>(MCFakeGames::GameCode));
+    CHECK(!service.HostPlaceKept());
+    CHECK(std::ranges::none_of(service.Paths, [](const std::string& path) { return path.starts_with("/host?"); }));
+    REQUIRE(SettleUntil([&] { return service.Room().has_value(); }));
+    CHECK(service.Room()->at("name") == GameName);
+    CHECK(service.Room()->at("public") == true);
+    CHECK(!LaunchedFromLobby);
+    CHECK(!LobbyLaunchArgs.Active);
+    SaveShot("internet 10 back", ScreenHash());
+
+    ClickButton(*GlobalLog()->SessionScreen->ExitButton);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
+    CHECK(manager.Internet == nullptr);
+    CHECK_EQ(service.OpenLines(), 0u);
+}
+
+/// <summary>A host's new version whose game's place has gone says so over the INTERNET screen, and the game goes on.</summary>
+TEST_CASE_ISOLATED("game: a host's new version whose internet game's place has gone says so over the INTERNET screen")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    const MCServicesScope scope(list, service);
+    REQUIRE(StartFromNote(HostNote("Commander's game")));
+    REQUIRE(SettleUntil([] { return DialogText() == "Couldn't open the room again."; }));
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
+    CHECK(!LaunchedFromLobby);
+    SaveShot("internet 11 place gone", ScreenHash());
+    ClickButton(*GlobalLog()->MessageDialog->OkButton);
+    CHECK(DialogText().empty());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
 }

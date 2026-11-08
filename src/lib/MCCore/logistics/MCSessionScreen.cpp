@@ -464,11 +464,12 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     UpdateMatchTabs();
     FrontTab = MCSessionTab::Chat;
 
-    // Port-only (the personal build): a lobby's game is offered the update here.
-    if (LaunchedFromLobby && MCUpdater::Available())
+    // Port-only (the personal build): a lobby's game is offered the update here; port (Redux HD): so is an internet
+    // game's room the menus opened, which comes back after a restart too (network/MCLobbyUpdate.h).
+    if (MCUpdater::Available())
     {
         UpdateLine = AddUpdateLine(*this, MCGenericScreen::PaletteFromArt(BackgroundArt), UpdateLineLeft, UpdateLineTop,
-                                   UpdateLineWidth, UpdateLineHeight);
+                                   UpdateLineWidth, UpdateLineHeight, [] { return MCLobbyUpdate::InRoom(); });
     }
 
     SetBackground(BackgroundArt);

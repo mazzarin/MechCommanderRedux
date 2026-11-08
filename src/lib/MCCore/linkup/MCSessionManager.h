@@ -12,6 +12,7 @@
 
 #include "linkup/MCFidpNetworkProtocol.h"
 #include "linkup/MCLinkupMessages.h"
+#include "network/MCInternetPlace.h"
 
 class MCDirectPlay;
 class MCInternetGame;
@@ -55,6 +56,16 @@ struct MCLobbyLaunchArgs
     bool Internet = false;
     /// <summary>Port (Redux HD): a hosted internet game is public (-public): listed, its links through relays only.</summary>
     bool Public = false;
+    /// <summary>
+    /// Port (Redux HD): a host's internet game comes back to its place on the service (-place code token, from the
+    /// rejoin note of a host restarting into an update): the same code, its guests joining it again.
+    /// </summary>
+    std::optional<MCInternetPlace> Place;
+    /// <summary>
+    /// Port (Redux HD): the room was one the menus opened (-menus, from the rejoin note): once the game is back in it, the
+    /// game is the menus' again, its room's EXIT going back to the games rather than ending the game.
+    /// </summary>
+    bool FromMenus = false;
 };
 
 extern MCLobbyLaunchArgs LobbyLaunchArgs;
@@ -234,8 +245,9 @@ public:
     /// Port (Redux HD): begins an internet game on the game's network, ending any before: hosted on the service (a
     /// public one listed, its links relayed) or joined by <paramref name="code"/>. It moves along with
     /// <see cref="MCInternetGame::Update"/> (the INTERNET screen's timer). False when this game has no internet games.
+    /// A host with <paramref name="place"/> comes back to the place it left (a restart into an update).
     /// </summary>
-    bool BeginInternet(bool host, std::string_view code, bool isPublic);
+    bool BeginInternet(bool host, std::string_view code, bool isPublic, std::optional<MCInternetPlace> place = {});
     /// <summary>
     /// Port (Redux HD): ends the internet game, if any, once DirectPlay has let go of its links, waiting up to
     /// <paramref name="wait"/> for its leaving to reach the service (a quitting game's, which the process's end cuts off).

@@ -38,6 +38,7 @@ namespace MCFakeGames
         std::string WhyClosed() const override { return "closed (1000)"; }
         size_t Unsent() const override { return 0; }
         void Close() override;
+        void CloseAway() override;
 
     private:
         MCFakeGamesService& _Service;
@@ -46,8 +47,9 @@ namespace MCFakeGames
 
     /// <summary>
     /// The games service's protocol for one game, in the process: hosting, joining by the code, the signals passed
-    /// with each guest's tag, pings, the room kept, a guest's leaving told to its host and a host's to its guests.
-    /// No relays (the links are on the loopback) and no WebSocket path.
+    /// with each guest's tag, pings, the room kept, a guest's leaving told to its host and a host's to its guests; a
+    /// host's drop keeps its place (its guests told it's away, a join answered hostaway) for a socket that comes back
+    /// with its token. No relays (the links are on the loopback) and no WebSocket path.
     /// </summary>
     class MCFakeGamesService
     {
@@ -76,6 +78,20 @@ namespace MCFakeGames
         {
             const std::scoped_lock lock(_Lock);
             return _Room;
+        }
+
+        /// <summary>Whether the host's socket dropped, its place kept for it to come back to.</summary>
+        bool HostPlaceKept()
+        {
+            const std::scoped_lock lock(_Lock);
+            return std::ranges::any_of(_Lines, [](const auto& line) { return line.second.KeptPlace; });
+        }
+
+        /// <summary>A host's place as a host that dropped left it (a game restarted into an update), to come back to.</summary>
+        void KeepHostPlace()
+        {
+            const std::scoped_lock lock(_Lock);
+            _Lines[_NextId++] = Line{.Open = false, .Host = true, .KeptPlace = true};
         }
 
         /// <summary>Sockets open now.</summary>
@@ -146,6 +162,40 @@ namespace MCFakeGames
             return _Lines.at(id).Open ? MCWebSocket::State::Open : MCWebSocket::State::Closed;
         }
 
+        /// <summary>A socket closed as a drop (CloseAway): a host's place kept, its guests told it's away.</summary>
+        void Dropped(int id)
+        {
+            const std::scoped_lock lock(_Lock);
+            Line& line = _Lines.at(id);
+
+            if (!line.Open)
+            {
+                return;
+            }
+
+            line.Open = false;
+
+            if (!line.Host)
+            {
+                if (Line* const host = HostLine())
+                {
+                    Say(*host, Json{{"t", "left"}, {"guest", line.Guest}}.dump());
+                }
+
+                return;
+            }
+
+            line.KeptPlace = true;
+
+            for (auto& [other, peer] : _Lines)
+            {
+                if (peer.Open)
+                {
+                    Say(peer, R"({"t":"away"})");
+                }
+            }
+        }
+
         void Closed(int id)
         {
             const std::scoped_lock lock(_Lock);
@@ -182,6 +232,8 @@ namespace MCFakeGames
         {
             bool Open = true;
             bool Host = false;
+            /// <summary>A host's socket dropped: its place waits for one that comes back with its token.</summary>
+            bool KeptPlace = false;
             std::string Guest;
             std::vector<MCWebSocket::Message> Inbox;
         };
@@ -206,12 +258,35 @@ namespace MCFakeGames
                 return;
             }
 
+            // A dropped host back in its place with its token.
+            if (path.starts_with("/game/"))
+            {
+                const auto kept =
+                    std::ranges::find_if(_Lines, [](const auto& other) { return other.second.KeptPlace; });
+                const bool itsToken = path.starts_with(std::format("/game/{}?", GameCode)) &&
+                                      path.contains(std::format("token={}", GameToken));
+
+                if (kept == _Lines.end() || !itsToken)
+                {
+                    Say(line, R"({"t":"expired"})");
+                    line.Open = false;
+                    return;
+                }
+
+                kept->second.KeptPlace = false;
+                line.Host = true;
+                Say(line, R"({"t":"back"})");
+                return;
+            }
+
             const std::string join = std::format("/join/{}?", GameCode);
             Line* const host = HostLine();
 
             if (!path.starts_with(join) || host == nullptr)
             {
-                Say(line, R"({"t":"nogame"})");
+                const bool away = path.starts_with(join) &&
+                                  std::ranges::any_of(_Lines, [](const auto& other) { return other.second.KeptPlace; });
+                Say(line, away ? R"({"t":"hostaway"})" : R"({"t":"nogame"})");
                 line.Open = false;
                 return;
             }
@@ -253,5 +328,10 @@ namespace MCFakeGames
     inline void MCServiceLine::Close()
     {
         _Service.Closed(_Id);
+    }
+
+    inline void MCServiceLine::CloseAway()
+    {
+        _Service.Dropped(_Id);
     }
 }

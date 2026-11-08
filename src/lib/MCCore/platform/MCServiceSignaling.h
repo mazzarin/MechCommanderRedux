@@ -119,8 +119,16 @@ public:
 
     /// <summary>Hosts a game on the service: its code comes with the service's answer (<see cref="HostedCode"/>).</summary>
     void Host();
-    /// <summary>The code of the game this one hosts, once the service gave it.</summary>
+    /// <summary>
+    /// Hosts the game <paramref name="code"/> again, back in the place its host's socket dropped from (a game restarting
+    /// into an update) with the place's <paramref name="token"/>: <see cref="HostedCode"/> once the service takes it back,
+    /// or refused (PlaceGone) when the place has gone.
+    /// </summary>
+    void HostAgain(std::string_view code, std::string_view token);
+    /// <summary>The code of the game this one hosts, once the service gave it (or took it back).</summary>
     std::optional<std::string> HostedCode();
+    /// <summary>The hosted game's token: what its host comes back to its place with (<see cref="HostAgain"/>).</summary>
+    std::optional<std::string> HostedToken();
     /// <summary>The hosted game's room as it stands now, for the service's list (sent when it changes).</summary>
     void SetRoom(const MCServiceRoom& room);
     /// <summary>Whether the service won't list the room by its name (the host picks another).</summary>
@@ -138,6 +146,11 @@ public:
     /// (as when it's destroyed). None comes back.
     /// </summary>
     void Leave();
+    /// <summary>
+    /// Closes every socket as a drop (a game restarting into an update): the service keeps this game's places for 5
+    /// minutes, a host's game with them, for a socket that comes back with its token. None comes back from here.
+    /// </summary>
+    void LeaveAway();
     /// <summary>Whether every socket has closed (its leaving gone to the service, as far as the system can say).</summary>
     bool AllClosed();
     /// <summary>
@@ -163,6 +176,8 @@ private:
         std::unique_ptr<MCWebSocket> Ws;
         /// <summary>The service's hosted, joined or back came: links have their relays.</summary>
         bool In = false;
+        /// <summary>A host's: the service has hosted its game (or taken it back), so its code is the game's.</summary>
+        bool Hosted = false;
         /// <summary>This socket's closing was passed on (as the peer gone), so it's said once a socket.</summary>
         bool Told = false;
         Clock::time_point LastPing;

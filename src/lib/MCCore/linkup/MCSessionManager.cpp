@@ -497,7 +497,8 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
     }
 }
 
-bool MCSessionManager::BeginInternet(bool host, std::string_view code, bool isPublic)
+bool MCSessionManager::BeginInternet(bool host, std::string_view code, bool isPublic,
+                                     std::optional<MCInternetPlace> place)
 {
     const MCOptionalRef<MCNetSwitch> net = MCNetSwitch::Of(MCGameContext::Current().Net());
 
@@ -508,7 +509,9 @@ bool MCSessionManager::BeginInternet(bool host, std::string_view code, bool isPu
     }
 
     EndInternet();
-    Internet = host ? MCInternetGame::Host(net->get(), isPublic) : MCInternetGame::Join(net->get(), code);
+    Internet = !host   ? MCInternetGame::Join(net->get(), code)
+               : place ? MCInternetGame::HostAgain(net->get(), isPublic, *place)
+                       : MCInternetGame::Host(net->get(), isPublic);
     return Internet != nullptr;
 }
 
@@ -517,7 +520,8 @@ uint32_t MCSessionManager::StartLobbyInternetGame()
     // The code alone: a port after it is DirectPlay's (the game's port on its host), not the service's.
     const std::string_view address = LobbyLaunchArgs.Address;
 
-    if (!BeginInternet(LobbyLaunchArgs.IsHost, address.substr(0, address.find(':')), LobbyLaunchArgs.Public))
+    if (!BeginInternet(LobbyLaunchArgs.IsHost, address.substr(0, address.find(':')), LobbyLaunchArgs.Public,
+                       LobbyLaunchArgs.Place))
     {
         LastRoomRefusal = MCRoomRefusal::Gone;
         return LobbyLaunchArgs.IsHost ? DPERR_CANTCREATESESSION : DPERR_NOSESSIONS;

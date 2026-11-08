@@ -62,10 +62,18 @@ namespace
         size_t Unsent() const override { return Waiting; }
         void Close() override { Now = State::Closed; }
 
+        void CloseAway() override
+        {
+            Now = State::Closed;
+            Away = true;
+        }
+
         std::vector<Message> Sent;
         std::vector<Message> Arrived;
         State Now = State::Open;
         size_t Waiting = 0;
+        /// <summary>Closed as a drop (CloseAway), its place kept.</summary>
+        bool Away = false;
     };
 
     /// <summary>Opens scripted sockets, keeping each by its address for the test.</summary>
@@ -469,6 +477,53 @@ TEST_CASE(
     CHECK_EQ(signaling.LinkSettings(Guest).Relays.size(), size_t{1});
     REQUIRE_EQ(back.Sent.size(), size_t{1});
     CHECK_EQ(back.Sent[0].Data, roomSaid);
+}
+
+TEST_CASE("service signaling: a host restarting leaves its place as a drop, and comes back to it with its token")
+{
+    // Hosting: the game's place, its code and token, to come back to.
+    {
+        MCScriptedService service;
+        MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true);
+        signaling.Host();
+        MCScriptedSocket& host = service.At(HostUrl);
+        CHECK(!signaling.HostedToken().has_value());
+        host.Arrived.push_back(Text(HostedMessage));
+        CHECK(signaling.Take().empty());
+        CHECK(signaling.HostedToken() == std::optional<std::string>(Token));
+
+        // Leaving away: its socket closes as a drop, which the service keeps the place for.
+        signaling.LeaveAway();
+        CHECK(host.Away);
+        CHECK(signaling.AllClosed());
+    }
+
+    // The new version comes back to the place: the same code once the service takes it back, and its room said again.
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true, AtOnce);
+    signaling.HostAgain(GameCode, Token);
+    CHECK_EQ(service.OpenedTo(HostUrl), size_t{0});
+    MCScriptedSocket& back = service.At(BackUrl);
+    signaling.SetRoom({.Name = "BOB'S GAME", .Public = true, .Max = 4, .Players = {"BOB"}});
+    CHECK(!signaling.HostedCode().has_value());
+    CHECK(back.Sent.empty());
+    back.Arrived.push_back(Text(R"({"t":"back"})"));
+    CHECK(signaling.Take().empty());
+    CHECK(signaling.HostedCode() == std::optional<std::string>(GameCode));
+    CHECK(signaling.HostedToken() == std::optional<std::string>(Token));
+    REQUIRE_EQ(back.Sent.size(), size_t{1});
+    CHECK(back.Sent[0].Data.contains(R"("t":"room")"));
+
+    // A place gone (past its 5 minutes, or the game over) is refused: no other game is made in its stead.
+    MCServiceSignaling late(std::string(Service), service.Opener(), Identity, true, AtOnce);
+    late.HostAgain(GameCode, Token);
+    MCScriptedSocket& expired = service.At(BackUrl);
+    expired.Arrived.push_back(Text(R"({"t":"expired"})"));
+    expired.Now = MCWebSocket::State::Closed;
+    late.Take();
+    CHECK(late.Refusal() == std::optional<MCServiceRefusal>(MCServiceRefusal::PlaceGone));
+    CHECK(!late.HostedCode().has_value());
+    CHECK_EQ(service.OpenedTo(HostUrl), size_t{0});
 }
 
 TEST_CASE("service signaling: a room's names go as the service takes them, plain ASCII within its lengths")

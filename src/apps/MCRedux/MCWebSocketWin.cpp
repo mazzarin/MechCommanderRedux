@@ -168,20 +168,31 @@ namespace
             return _UnsentBytes;
         }
 
-        void Close() override
+        void Close() override { CloseWith(WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS); }
+
+        void CloseAway() override { CloseWith(MCWebSocketAwayCode); }
+
+    private:
+        /// <summary>Closes it with <paramref name="status"/>, once (the destructor's Close keeps an earlier one's).</summary>
+        void CloseWith(USHORT status)
         {
             {
                 const std::scoped_lock lock(_Lock);
-                // An open socket's close is sent first (Leaving): the service then knows its player left. A second
-                // Close (the destructor's) keeps the first's.
-                _Leaving = _Leaving || _State == State::Open;
+
+                // An open socket's close is sent first (Leaving): the service then knows its player left, or (away)
+                // that its place waits. A second Close (the destructor's) keeps the first's.
+                if (!_Leaving && _State == State::Open)
+                {
+                    _Leaving = true;
+                    _CloseStatus = status;
+                }
+
                 End("this game closed it");
             }
 
             Wake();
         }
 
-    private:
         /// <summary>The socket's thread: opens it, then acts on the callback's events until its handles are closed.</summary>
         void Run(const std::string& url)
         {
@@ -257,8 +268,7 @@ namespace
 
             if (!_LeaveSent && !sending)
             {
-                const DWORD error =
-                    WinHttpWebSocketShutdown(_Socket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+                const DWORD error = WinHttpWebSocketShutdown(_Socket, _CloseStatus, nullptr, 0);
 
                 if (error != NO_ERROR && error != ERROR_IO_PENDING)
                 {
@@ -633,6 +643,8 @@ namespace
         DWORD _SecureFailure = 0;
         /// <summary>The game closed it while open (under the lock); its close sent, and gone; the most it waits.</summary>
         bool _Leaving = false;
+        /// <summary>The close Leaving sends: the player's leaving, or its drop (CloseAway).</summary>
+        USHORT _CloseStatus = WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS;
         bool _LeaveSent = false;
         bool _LeaveDone = false;
         std::optional<std::chrono::steady_clock::time_point> _LeaveBy;

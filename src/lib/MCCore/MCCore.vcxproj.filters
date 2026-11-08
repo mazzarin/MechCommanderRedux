@@ -2199,6 +2199,9 @@
     <ClInclude Include="network\MCInternetLobby.h">
       <Filter>network</Filter>
     </ClInclude>
+    <ClInclude Include="network\MCInternetPlace.h">
+      <Filter>network</Filter>
+    </ClInclude>
     <ClInclude Include="network\MCLobbyUpdate.h">
       <Filter>network</Filter>
     </ClInclude>

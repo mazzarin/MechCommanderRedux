@@ -88,6 +88,31 @@ auto MCRejoinNote::LobbyCommandLine(const MCLobbyLaunchArgs& args) -> std::strin
     return words.empty() ? std::string(RejoinSwitch) : std::format("{} {}", words, RejoinSwitch);
 }
 
+auto MCRejoinNote::InternetRoomCommandLine(const MCInternetRoom& room) -> std::string
+{
+    std::vector<std::string> words;
+
+    if (room.Hosting)
+    {
+        words = {"-host", "-internet"};
+
+        if (room.Public)
+        {
+            words.emplace_back("-public");
+        }
+
+        words.insert(words.end(), {"-player", room.PlayerName, "-session", room.SessionName, "-maxplayers",
+                                   std::to_string(room.MaxPlayers), "-place", room.Code, room.Token});
+    }
+    else
+    {
+        words = {"-join", room.Code, "-internet", "-player", room.PlayerName};
+    }
+
+    words.insert(words.end(), {"-menus", std::string(RejoinSwitch)});
+    return LobbyCommandWords(words);
+}
+
 auto MCRejoinNote::Write(const std::filesystem::path& userFolder, const MCNote& note)
     -> std::expected<void, std::string>
 {

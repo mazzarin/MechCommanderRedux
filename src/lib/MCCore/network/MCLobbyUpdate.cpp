@@ -4,6 +4,8 @@
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCInternetMenu.h"
+#include "logistics/MCLogMenus.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCReusableDialog.h"
@@ -13,6 +15,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCInternetGame.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "network/MCRejoinNote.h"
 #include "platform/MCDirectPlay.h"
@@ -72,11 +75,21 @@ namespace
         std::string Name;
     };
 
+    /// <summary>
+    /// How often a guest of an internet game tries its restarting host's code: the service lets an address try 30 codes
+    /// a minute.
+    /// </summary>
+    constexpr std::chrono::milliseconds InternetTryEvery{2000};
+
     /// <summary>A guest's wait for its host, restarting into an update.</summary>
     struct MCHostWait
     {
         Clock::time_point Until;
         Clock::time_point NextTry;
+        /// <summary>The name this guest joins with again.</summary>
+        std::string PlayerName;
+        /// <summary>An internet game's code: the host comes back to it (its place kept on the service).</summary>
+        std::optional<std::string> Code;
     };
 
     /// <summary>RESTART was taken: when the update installs; this game then quits.</summary>
@@ -231,6 +244,90 @@ namespace
         MultiPlayer()->SessionManager->SendPlainMessage(0, LinkupBytes(message));
     }
 
+    /// <summary>
+    /// Port (Redux HD): whether this game is in an internet game's room the menus opened (the INTERNET screen's), which
+    /// restarts into an update and comes back as a lobby's does.
+    /// </summary>
+    bool InMenusInternetRoom()
+    {
+        const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+        return !LobbyLaunchArgs.Active && game != nullptr && game->SessionManager != nullptr &&
+               game->SessionManager->Internet != nullptr;
+    }
+
+    /// <summary>
+    /// The words a restart into an update starts with to come back to the room: a lobby's own, or an internet room's the
+    /// menus opened (a host's game back in its place on the service); none when the room can't be named yet.
+    /// </summary>
+    std::optional<std::string> RoomCommandLine()
+    {
+        if (LobbyLaunchArgs.Active)
+        {
+            return MCRejoinNote::LobbyCommandLine(LobbyLaunchArgs);
+        }
+
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+        const std::shared_ptr<MCFidpSession> session = manager.CurrentSession();
+        const std::shared_ptr<MCFidpPlayer> self = manager.MyPlayer();
+
+        if (manager.Internet == nullptr || session == nullptr || self == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        MCRejoinNote::MCInternetRoom room{.Hosting = MultiPlayer()->IsHost != 0,
+                                          .Code = manager.Internet->Code(),
+                                          .Public = manager.Internet->Public(),
+                                          .PlayerName = self->Name,
+                                          .SessionName = session->Name,
+                                          .MaxPlayers = static_cast<int32_t>(session->SessionDesc.dwMaxPlayers)};
+
+        if (room.Hosting)
+        {
+            const std::optional<MCInternetPlace> place = manager.Internet->Place();
+
+            if (!place.has_value())
+            {
+                return std::nullopt;
+            }
+
+            room.Code = place->Code;
+            room.Token = place->Token;
+        }
+
+        return MCRejoinNote::InternetRoomCommandLine(room);
+    }
+
+    /// <summary>Port (Redux HD): <paramref name="words"/> for the log: a host's place's token left out.</summary>
+    std::string WithoutToken(std::string_view words)
+    {
+        constexpr std::string_view Place = "-place ";
+        std::string logged(words);
+        const size_t place = logged.find(Place);
+        const size_t token = place != std::string::npos ? logged.find(' ', place + Place.size()) : std::string::npos;
+
+        if (token != std::string::npos)
+        {
+            const size_t end = logged.find(' ', token + 1);
+            logged.replace(token + 1, (end == std::string::npos ? logged.size() : end) - token - 1, "(token)");
+        }
+
+        return logged;
+    }
+
+    /// <summary>
+    /// A host's internet game keeps its place on the service through a restart (its sockets close as drops), or no
+    /// longer does (the restart called off).
+    /// </summary>
+    void KeepInternetPlace(bool kept)
+    {
+        if (const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+            game != nullptr && game->IsHost && game->SessionManager->Internet != nullptr)
+        {
+            game->SessionManager->Internet->KeepPlace(kept);
+        }
+    }
+
     /// <summary>The name this game takes in the room (as SetupLobbyConnection takes it).</summary>
     std::string PlayerName()
     {
@@ -261,36 +358,113 @@ namespace
     void WaitForHost(uint32_t hostId)
     {
         MCMultiPlayer& game = *MultiPlayer();
-        const std::shared_ptr<MCFidpPlayer> host = game.SessionManager->GetPlayer(hostId);
+        MCSessionManager& manager = *game.SessionManager;
+        const std::shared_ptr<MCFidpPlayer> host = manager.GetPlayer(hostId);
         const std::string name = host != nullptr ? host->Name : std::string("THE HOST");
-        SDL_Log("Lobby updates: the host %s restarts into an update; joining %s again", name.c_str(),
-                RoomAddress().c_str());
+        // Port (Redux HD): an internet game's host comes back to the same code, its place kept on the service.
+        std::optional<std::string> code =
+            manager.Internet != nullptr ? std::optional(manager.Internet->Code()) : std::nullopt;
+        const std::string address = code.value_or(RoomAddress());
+        const std::shared_ptr<MCFidpPlayer> self = manager.MyPlayer();
+        const std::string playerName = LobbyLaunchArgs.Active || self == nullptr ? PlayerName() : self->Name;
+        SDL_Log("Lobby updates: the host %s restarts into an update; joining %s again", name.c_str(), address.c_str());
         // Known: the room is this game's (Updating takes only a room's).
-        RoomLeft = game.SessionManager->CurrentSession()->SessionDesc.guidInstance;
+        RoomLeft = manager.CurrentSession()->SessionDesc.guidInstance;
         GlobalLog()->DestroyMultiplayer();
         game.LeaveSession();
         game.PlayerRules.clear();
         // The places this guest saw kept: the room's guests back (or not) while it is away go unseen. Which places the
         // room has kept stands until this guest knows whether it comes back to the same room (TryHostAgain).
         Coming.clear();
-        game.SessionManager->ConnectTcp(RoomAddress());
-        ShowWaitingScreen();
+        manager.ConnectTcp(address);
+
+        // A lobby's game waits on the lobby's waiting screen; the menus' on the INTERNET screen it came from.
+        if (LobbyLaunchArgs.Active)
+        {
+            ShowWaitingScreen();
+        }
+        else
+        {
+            GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+            ShowInternetScreen();
+        }
+
         ShowWaitingDialog(UpdatingText(name));
         const Clock::time_point now = Now();
-        HostWait = MCHostWait{.Until = now + MCLobbyUpdate::RejoinWait, .NextTry = now};
+        HostWait = MCHostWait{.Until = now + MCLobbyUpdate::RejoinWait,
+                              .NextTry = now,
+                              .PlayerName = playerName,
+                              .Code = std::move(code)};
     }
 
-    /// <summary>Says a join failed with <paramref name="text"/>; its OK ends the game, back to the lobby.</summary>
+    /// <summary>
+    /// Says a join failed with <paramref name="text"/>: a lobby's game's OK ends the game, back to the lobby; the menus'
+    /// says it over the INTERNET screen.
+    /// </summary>
     void ShowJoinFailed(std::string_view text)
     {
-        ShowOkDialog(*GlobalLog()->MessageDialog, text, CancelToMPlayer);
+        if (LobbyLaunchArgs.Active)
+        {
+            ShowOkDialog(*GlobalLog()->MessageDialog, text, CancelToMPlayer);
+            return;
+        }
+
+        GlobalLog()->MessageDialog->Deactivate(0);
+        ShowMenuMessage(text);
+    }
+
+    /// <summary>
+    /// Port (Redux HD): an internet guest's try at its host's code: the service's answer and the link, across frames,
+    /// before the room is looked for over it. Whether the link is open; otherwise the next try is set.
+    /// </summary>
+    bool ReachHost(Clock::time_point now)
+    {
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+
+        if (manager.Internet == nullptr && !manager.BeginInternet(false, *HostWait->Code, false))
+        {
+            HostWait->NextTry = now + InternetTryEvery;
+            return false;
+        }
+
+        const MCInternetGame::Stage stage = manager.Internet->Update();
+
+        if (stage == MCInternetGame::Stage::Ready)
+        {
+            return true;
+        }
+
+        // The host still away (the service says so), or no link: tried again afresh.
+        if (stage == MCInternetGame::Stage::Failed)
+        {
+            manager.EndInternet();
+            HostWait->NextTry = now + InternetTryEvery;
+            return false;
+        }
+
+        HostWait->NextTry = now;
+        return false;
     }
 
     /// <summary>The guest's next try at joining its host's room again, or the end of its wait.</summary>
     void TryHostAgain(Clock::time_point now)
     {
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
-        const MCLobbyJoin tried = manager.TryLobbyJoin(PlayerName());
+
+        if (HostWait->Code.has_value() && !ReachHost(now))
+        {
+            if (now >= HostWait->Until)
+            {
+                SDL_Log("Lobby updates: the host's game didn't come back");
+                manager.EndInternet();
+                HostWait.reset();
+                ShowJoinFailed(MCLobbyUpdate::RejoinFailedText(MCRoomRefusal::Gone));
+            }
+
+            return;
+        }
+
+        const MCLobbyJoin tried = manager.TryLobbyJoin(HostWait->PlayerName);
 
         if (tried == MCLobbyJoin::Joined)
         {
@@ -328,7 +502,8 @@ namespace
         // A room that refused the join (the host's old one, closed, still answering) is asked again afresh.
         if (tried == MCLobbyJoin::Refused)
         {
-            manager.ConnectTcp(RoomAddress());
+            manager.EndInternet();
+            manager.ConnectTcp(HostWait->Code.value_or(RoomAddress()));
         }
 
         if (now < HostWait->Until)
@@ -339,6 +514,7 @@ namespace
 
         const MCRoomRefusal refusal = manager.LobbyRoomRefusal();
         SDL_Log("Lobby updates: the host's room didn't come back");
+        manager.EndInternet();
         HostWait.reset();
         ShowJoinFailed(MCLobbyUpdate::RejoinFailedText(refusal));
     }
@@ -401,6 +577,7 @@ namespace
         RestartAt.reset();
         Restarting = false;
         MCRejoinNote::Withdraw(MCFileSystem::UserRoot());
+        KeepInternetPlace(false);
 
         if (!MCLobbyUpdate::InRoom())
         {
@@ -437,7 +614,8 @@ namespace
 auto MCLobbyUpdate::InRoom() -> bool
 {
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
-    return LobbyLaunchArgs.Active && game != nullptr && game->SessionManager->CurrentSession() != nullptr;
+    return (LobbyLaunchArgs.Active || InMenusInternetRoom()) && game != nullptr &&
+           game->SessionManager->CurrentSession() != nullptr;
 }
 
 auto MCLobbyUpdate::MatchUnderWay() -> bool
@@ -455,9 +633,10 @@ auto MCLobbyUpdate::ReadyText() -> std::string
         return {};
     }
 
+    // A lobby's game exits after the match, installing it; the menus' installs it as it restarts or quits.
     if (!CanRestart())
     {
-        return std::string(AfterMatchText);
+        return LobbyLaunchArgs.Active ? std::string(AfterMatchText) : std::string();
     }
 
     if (!MultiPlayer()->IsHost)
@@ -531,10 +710,14 @@ auto MCLobbyUpdate::Restart() -> bool
 
     // Known: CanRestart.
     const uint64_t build = *MCUpdater::ExpectedBuild();
-    const std::string commandLine = MCRejoinNote::LobbyCommandLine(LobbyLaunchArgs);
+    const std::optional<std::string> roomWords = RoomCommandLine();
+    const std::string commandLine = roomWords.value_or(std::string());
 
-    if (const auto written = MCRejoinNote::Write(
-            MCFileSystem::UserRoot(), {.CommandLine = commandLine, .Build = build, .Time = MCRejoinNote::Now()});
+    if (const auto written =
+            roomWords.has_value()
+                ? MCRejoinNote::Write(MCFileSystem::UserRoot(),
+                                      {.CommandLine = commandLine, .Build = build, .Time = MCRejoinNote::Now()})
+                : std::expected<void, std::string>(std::unexpected("the room's game isn't on the service yet"));
         !written)
     {
         SDL_Log(
@@ -543,6 +726,9 @@ auto MCLobbyUpdate::Restart() -> bool
         NoteUnwritten = true;
         return true;
     }
+
+    // Port (Redux HD): a host's internet game keeps its place on the service, for the new version to come back to.
+    KeepInternetPlace(true);
 
     // Every game in the room: the host's guests wait for it, a guest's place is kept.
     SendToRoom(MCMPMessageType::Updating);
@@ -556,7 +742,7 @@ auto MCLobbyUpdate::Restart() -> bool
         }
     }
 
-    SDL_Log("Lobby updates: restarting into the update, to start again as %s", commandLine.c_str());
+    SDL_Log("Lobby updates: restarting into the update, to start again as %s", WithoutToken(commandLine).c_str());
     RestartAt = Now() + SendTime;
     return true;
 }
@@ -763,20 +949,31 @@ auto MCLobbyUpdate::RejoinFailedText(MCRoomRefusal refusal) -> std::string
 auto MCLobbyUpdate::JoinFailed() -> void
 {
     // Port: a host that refused this game at the door said why.
-    if (MultiPlayer()->SessionManager->LastRoomRefusal == MCRoomRefusal::Lacks)
+    const MCRoomRefusal refusal = MultiPlayer()->SessionManager->LastRoomRefusal;
+    const std::string text = refusal == MCRoomRefusal::Lacks ? RejoinFailedText(MCRoomRefusal::Lacks)
+                             : !LobbyLaunchArgs.Rejoin       ? LoadGameString(JoinFailedString, StringBuffer)
+                             : LobbyLaunchArgs.IsHost        ? std::string(RoomNotReopenedText)
+                                                             : RejoinFailedText(refusal);
+
+    // Port (Redux HD): a room the menus opened that the game couldn't come back to: the INTERNET screen, saying why.
+    if (LobbyLaunchArgs.FromMenus)
     {
-        ShowJoinFailed(RejoinFailedText(MCRoomRefusal::Lacks));
+        BackToMenus();
+        GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
+        ShowInternetScreen();
+        GlobalLog()->ShowLogScreen(true, true);
+        ShowMenuMessage(text);
+        return;
     }
-    else if (!LobbyLaunchArgs.Rejoin)
-    {
-        ShowJoinFailed(LoadGameString(JoinFailedString, StringBuffer));
-    }
-    else if (LobbyLaunchArgs.IsHost)
-    {
-        ShowJoinFailed(RoomNotReopenedText);
-    }
-    else
-    {
-        ShowJoinFailed(RejoinFailedText(MultiPlayer()->SessionManager->LastRoomRefusal));
-    }
+
+    ShowJoinFailed(text);
+}
+
+auto MCLobbyUpdate::BackToMenus() -> void
+{
+    SDL_Log("Lobby updates: the room was the menus': the game is the menus' again");
+    LaunchedFromLobby = false;
+    LobbyLaunchArgs.Active = false;
+    LobbyLaunchArgs.FromMenus = false;
+    LobbyLaunchArgs.Place.reset();
 }

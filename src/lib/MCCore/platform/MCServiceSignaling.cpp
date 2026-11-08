@@ -296,6 +296,7 @@ namespace
         std::string WhyClosed() const override { return _Why; }
         size_t Unsent() const override { return 0; }
         void Close() override {}
+        void CloseAway() override {}
 
     private:
         std::string _Why;
@@ -326,6 +327,22 @@ void MCServiceSignaling::Leave()
     const std::scoped_lock lock(_Lock);
     _Left = true;
     CloseAll();
+}
+
+void MCServiceSignaling::LeaveAway()
+{
+    const std::scoped_lock lock(_Lock);
+    _Left = true;
+
+    if (_Host.has_value())
+    {
+        _Host->Ws->CloseAway();
+    }
+
+    for (auto& [game, socket] : _Games)
+    {
+        socket.Ws->CloseAway();
+    }
 }
 
 void MCServiceSignaling::CloseAll()
@@ -365,11 +382,37 @@ void MCServiceSignaling::Host()
     }
 }
 
+void MCServiceSignaling::HostAgain(std::string_view code, std::string_view token)
+{
+    const std::scoped_lock lock(_Lock);
+    const Clock::time_point now = Clock::now();
+    // A dropped host's socket, coming back to its place (Tend tries again while the place waits).
+    _Host = Socket{.Ws = Opened(std::format("{}{}", BackPath, code), token),
+                   .LastPing = now,
+                   .Code = std::string(code),
+                   .Token = std::string(token),
+                   .DroppedAt = now,
+                   .NextTry = now + _Comeback.FirstTry,
+                   .Tries = 1};
+    _Guests.clear();
+    _GuestSettings.clear();
+    _NameRefused = false;
+    SDL_Log("MCServiceSignaling: hosting game \"%.*s\" again, back in its place", static_cast<int>(code.size()),
+            code.data());
+}
+
 std::optional<std::string> MCServiceSignaling::HostedCode()
 {
     const std::scoped_lock lock(_Lock);
-    return _Host.has_value() && !_Host->Code.empty() && !_Host->Refusal.has_value() ? std::optional(_Host->Code)
-                                                                                    : std::nullopt;
+    return _Host.has_value() && _Host->Hosted && !_Host->Refusal.has_value() ? std::optional(_Host->Code)
+                                                                             : std::nullopt;
+}
+
+std::optional<std::string> MCServiceSignaling::HostedToken()
+{
+    const std::scoped_lock lock(_Lock);
+    return _Host.has_value() && _Host->Hosted && !_Host->Refusal.has_value() ? std::optional(_Host->Token)
+                                                                             : std::nullopt;
 }
 
 void MCServiceSignaling::SetRoom(const MCServiceRoom& room)
@@ -762,6 +805,7 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
             _Host->Code = *code;
             _Host->Token = *token;
             _Host->In = true;
+            _Host->Hosted = true;
             SDL_Log("MCServiceSignaling: hosting game \"%s\"", code->c_str());
             SendRoom();
             return;
@@ -770,6 +814,7 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
     else if (type == "back" && !_Host->In && !_Host->Token.empty())
     {
         _Host->In = true;
+        _Host->Hosted = true;
         _Host->DroppedAt.reset();
         _Host->Tries = 0;
         SDL_Log("MCServiceSignaling: the hosted game's socket is back in its place");

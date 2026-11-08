@@ -859,13 +859,16 @@ namespace
     class MCUpdateNotice : public MCLogObject
     {
     public:
-        MCUpdateNotice(uint8_t color, bool opensPage) : _Color(color), _OpensPage(opensPage) {}
+        MCUpdateNotice(uint8_t color, bool opensPage, std::function<bool()> shown = nullptr)
+            : _Color(color), _OpensPage(opensPage), _Shown(std::move(shown))
+        {
+        }
 
         void Draw() override
         {
             const std::string text = NoticeText(MCUpdater::Status());
 
-            if (text.empty() || UpdatePageShown())
+            if (text.empty() || UpdatePageShown() || !Shown())
             {
                 return;
             }
@@ -890,7 +893,7 @@ namespace
 
         std::shared_ptr<MCGuiObject> FindObject(int32_t xPos, int32_t yPos) override
         {
-            if (!_OpensPage || !MCUpdater::Waiting() || UpdatePageShown())
+            if (!_OpensPage || !MCUpdater::Waiting() || UpdatePageShown() || !Shown())
             {
                 return nullptr;
             }
@@ -911,8 +914,11 @@ namespace
         }
 
     private:
+        bool Shown() const { return !_Shown || _Shown(); }
+
         uint8_t _Color;
         bool _OpensPage;
+        std::function<bool()> _Shown;
     };
 
     /// <summary>The UPDATE button.</summary>
@@ -1071,7 +1077,7 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
 }
 
 MCGuiHandle<MCLogObject> AddUpdateLine(MCGuiObject& screen, std::span<const uint8_t> palette, int32_t xPos,
-                                       int32_t yPos, int32_t width, int32_t height)
+                                       int32_t yPos, int32_t width, int32_t height, std::function<bool()> shown)
 {
     return screen.CreateChild<MCUpdateNotice>(
         [&](MCUpdateNotice& line)
@@ -1080,7 +1086,7 @@ MCGuiHandle<MCLogObject> AddUpdateLine(MCGuiObject& screen, std::span<const uint
             line.SetTransparent(true);
             line.ShowGuiWindow(true);
         },
-        Nearest(palette, Amber), true);
+        Nearest(palette, Amber), true, std::move(shown));
 }
 
 void ShowUpdatePageOver(MCGuiObject& screen)

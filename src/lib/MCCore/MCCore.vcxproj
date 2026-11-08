@@ -777,6 +777,7 @@
     <ClInclude Include="network\MCInternetCopy.h" />
     <ClInclude Include="network\MCInternetGame.h" />
     <ClInclude Include="network\MCInternetLobby.h" />
+    <ClInclude Include="network\MCInternetPlace.h" />
     <ClInclude Include="network\MCLobbyUpdate.h" />
     <ClInclude Include="network\MCMPGameConfiguration.h" />
     <ClInclude Include="network\MCMultiPlayer.h" />

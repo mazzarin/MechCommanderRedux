@@ -43,10 +43,12 @@ void ShowUpdatePage();
 /// Adds to <paramref name="screen"/> the line saying an update waits, for the session screen of a game a lobby started
 /// (which never shows the main menu), at (<paramref name="xPos"/>, <paramref name="yPos"/>), <paramref name="width"/> x
 /// <paramref name="height"/>: a field in UPDATE's amber, <paramref name="palette"/> the screen's (6-bit RGB); a click on
-/// it opens the page over that screen. Shown while an update waits.
+/// it opens the page over that screen. Shown while an update waits. Port (Redux HD): <paramref name="shown"/> says when
+/// it shows (always, without one).
 /// </summary>
 MCGuiHandle<MCLogObject> AddUpdateLine(MCGuiObject& screen, std::span<const uint8_t> palette, int32_t xPos,
-                                       int32_t yPos, int32_t width, int32_t height);
+                                       int32_t yPos, int32_t width, int32_t height,
+                                       std::function<bool()> shown = nullptr);
 
 /// <summary>The page shows over <paramref name="screen"/>, in front of what is on it.</summary>
 void ShowUpdatePageOver(MCGuiObject& screen);

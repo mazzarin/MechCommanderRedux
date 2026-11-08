@@ -67,6 +67,33 @@ TEST_CASE("lobby updates: the rejoin note holds the words the lobby started the 
 }
 
 /// <summary>
+/// An internet game's room the menus opened comes back after a restart by its own words: a host's game back in its
+/// place on the service (its code and token), a guest's by the code, each the menus' again once in; the note keeps
+/// them all.
+/// </summary>
+TEST_CASE("lobby updates: an internet room the menus opened comes back by a host's place or a guest's code")
+{
+    constexpr std::string_view Token = "0123456789abcdef0123456789abcdef";
+    const std::string host = MCRejoinNote::InternetRoomCommandLine({.Hosting = true,
+                                                                    .Code = "K7QF",
+                                                                    .Token = std::string(Token),
+                                                                    .Public = true,
+                                                                    .PlayerName = "Big Bob",
+                                                                    .SessionName = "Big Bob's game",
+                                                                    .MaxPlayers = 4});
+    CHECK_EQ(host, std::format("-host -internet -public -player \"Big Bob\" -session \"Big Bob's game\" -maxplayers 4 "
+                               "-place K7QF {} -menus -rejoin",
+                               Token));
+    CHECK_EQ(LobbyWords(host), host);
+    CHECK(StartsInLobby(host));
+
+    const std::string guest =
+        MCRejoinNote::InternetRoomCommandLine({.Code = "K7QF", .PlayerName = "Ann", .SessionName = "Big Bob's game"});
+    CHECK_EQ(guest, std::string("-join K7QF -internet -player Ann -menus -rejoin"));
+    CHECK_EQ(LobbyWords(guest), guest);
+}
+
+/// <summary>
 /// The rejoin note starts the game again with no command line of its own, so it holds the lobby's words alone, each
 /// with the words it takes: the game's other switches (a file written, a folder dumped to, a mission or a save loaded)
 /// are left out when it is written, and again when it is read, as anything that writes the user folder can write one.

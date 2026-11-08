@@ -381,14 +381,26 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
 
         if (MultiPlayer()->SetupLobbyGame() != 0)
         {
-            // The original's message; port (personal): a rejoin's says why (network/MCLobbyUpdate.h). OK ends the game.
+            // The original's message; port (personal): a rejoin's says why (network/MCLobbyUpdate.h). OK ends the game
+            // (port, Redux HD: a room the menus opened says it over the INTERNET screen).
+            const bool fromMenus = LobbyLaunchArgs.FromMenus;
             MCLobbyUpdate::JoinFailed();
-            GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
-            GlobalLog()->LogisticsState = 1;
-            GlobalLog()->ShowLogScreen(false, false);
+
+            if (!fromMenus)
+            {
+                GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
+                GlobalLog()->LogisticsState = 1;
+                GlobalLog()->ShowLogScreen(false, false);
+            }
         }
         else
         {
+            // Port (Redux HD): a room the menus opened, come back to after an update: the menus' again.
+            if (LobbyLaunchArgs.FromMenus)
+            {
+                MCLobbyUpdate::BackToMenus();
+            }
+
             // Port-only (the personal build): straight into the room, as a LAN game's hosting and joining go (the
             // original waited in the ready room for the host's GO).
             GlobalLog()->SetUpSessionScreen();

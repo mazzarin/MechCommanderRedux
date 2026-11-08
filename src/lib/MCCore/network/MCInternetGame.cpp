@@ -283,6 +283,17 @@ bool MCInternetGame::NameRefused()
     return _Signaling != nullptr && _Signaling->NameRefused();
 }
 
+bool MCInternetGame::TakeUnlistedNotice()
+{
+    if (!_Hosting || _UnlistedTold || _Signaling == nullptr || !_Signaling->Unlisted())
+    {
+        return false;
+    }
+
+    _UnlistedTold = true;
+    return true;
+}
+
 void MCInternetGame::TakeOver()
 {
     if (_Hosting || _Signaling == nullptr || _Stage != Stage::Ready)

@@ -316,6 +316,46 @@ auto LobbyCommandWords(std::span<const std::string> words) -> std::string
     return line;
 }
 
+auto LobbyStartLogged(std::string_view commandLine) -> std::string
+{
+    constexpr std::string_view Starting = "starting";
+    constexpr std::string_view Hosting = "hosting";
+    constexpr std::string_view Joining = "joining";
+    constexpr std::string_view HostingAgainFormat = "hosting {} again";
+    const std::vector<std::string> words = CommandLineWords(commandLine);
+    std::string_view action = Starting;
+    std::string room;
+    std::optional<std::string> place;
+
+    for (size_t i = 0; i < words.size(); i++)
+    {
+        const bool hasRoom = i + 1 < words.size() && !words[i + 1].empty() && words[i + 1][0] != '-';
+
+        if (IsHostSwitch(words[i]))
+        {
+            action = Hosting;
+        }
+        else if (IsJoinSwitch(words[i]))
+        {
+            action = Joining;
+            room = hasRoom ? words[i + 1] : std::string();
+        }
+        else if (MCIEquals(words[i], PlaceSwitch) && i + PlaceWords < words.size())
+        {
+            // Its code alone, not its token.
+            place = words[i + 1];
+            i += PlaceWords;
+        }
+    }
+
+    if (action == Hosting && place.has_value())
+    {
+        return std::format(HostingAgainFormat, *place);
+    }
+
+    return room.empty() ? std::string(action) : std::format("{} {}", action, room);
+}
+
 auto StartsInLobby(std::string_view commandLine) -> bool
 {
     return std::ranges::any_of(CommandLineWords(commandLine),

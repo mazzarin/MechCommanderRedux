@@ -5,6 +5,8 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCServiceSignaling.h"
 
+#include <nlohmann/json.hpp>
+
 #include <filesystem>
 #include <fstream>
 
@@ -234,6 +236,81 @@ TEST_CASE(
     CHECK(signaling.NameRefused());
     signaling.SetRoom({.Name = "ANOTHER", .Public = true, .Max = 4, .Players = {"BOB"}});
     CHECK(!signaling.NameRefused());
+
+    // The host's network lists enough public games: this one plays by its code, unlisted, and stays public.
+    CHECK(!signaling.Unlisted());
+    host.Sent.clear();
+    host.Arrived.push_back(Text(R"({"t":"unlisted"})"));
+    CHECK(signaling.Take().empty());
+    CHECK(signaling.Unlisted());
+    CHECK(!signaling.Refusal().has_value());
+    signaling.SetRoom({.Name = "ANOTHER", .Public = true, .Max = 4, .Players = {"BOB", "ANN"}});
+    REQUIRE_EQ(host.Sent.size(), size_t{1});
+    CHECK(host.Sent[0].Data.contains(R"("public":true)"));
+    CHECK(signaling.LinkSettings(Guest).RelayOnly);
+}
+
+/// <summary>
+/// The host's room goes as the service takes it (its budget: 8 at once, then one a second; past twice that it closes
+/// the host): a burst of changes sends the first 8, and the rest wait, the latest kept, sent as the pace allows though
+/// nothing changes after, so the service's last room is the room as it stands.
+/// </summary>
+TEST_CASE("service signaling: the host's room is paced as the service takes it, the latest sent as the pace allows")
+{
+    constexpr int32_t Changes = 20;
+    const auto every = MCServiceRoomPace::DefaultEvery;
+    std::chrono::steady_clock::time_point now{};
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true, {},
+                                 {.Now = [&now] { return now; }});
+    signaling.Host();
+    MCScriptedEnd& host = service.At(HostUrl);
+    host.Arrived.push_back(Text(HostedMessage));
+    CHECK(signaling.Take().empty());
+    const auto room = [](int32_t change)
+    {
+        return MCServiceRoom{
+            .Name = "BOB'S GAME", .Public = true, .Max = 4, .Players = {"BOB"}, .Mission = std::format("M{}", change)};
+    };
+
+    const auto lastMission = [&host]
+    {
+        REQUIRE(!host.Sent.empty());
+        return nlohmann::json::parse(host.Sent.back().Data).at("mission").get<std::string>();
+    };
+
+    for (int32_t change = 1; change <= Changes; change++)
+    {
+        signaling.SetRoom(room(change));
+    }
+
+    REQUIRE_EQ(host.Sent.size(), static_cast<size_t>(MCServiceRoomPace::DefaultBurst));
+    CHECK_EQ(lastMission(), std::string("M8"));
+    signaling.Take();
+    CHECK_EQ(host.Sent.size(), static_cast<size_t>(MCServiceRoomPace::DefaultBurst));
+
+    // A second on, the latest goes, though nothing changed since; then nothing more is due.
+    now += every - std::chrono::milliseconds(1);
+    signaling.Take();
+    CHECK_EQ(host.Sent.size(), static_cast<size_t>(MCServiceRoomPace::DefaultBurst));
+    now += std::chrono::milliseconds(1);
+    signaling.Take();
+    REQUIRE_EQ(host.Sent.size(), static_cast<size_t>(MCServiceRoomPace::DefaultBurst + 1));
+    CHECK_EQ(lastMission(), std::string("M20"));
+    now += every;
+    signaling.Take();
+    CHECK_EQ(host.Sent.size(), static_cast<size_t>(MCServiceRoomPace::DefaultBurst + 1));
+
+    // One a second from here: a change goes at once, the next two wait, the later of them sent a second on.
+    signaling.SetRoom(room(Changes + 1));
+    signaling.SetRoom(room(Changes + 2));
+    signaling.SetRoom(room(Changes + 3));
+    REQUIRE_EQ(host.Sent.size(), static_cast<size_t>(MCServiceRoomPace::DefaultBurst + 2));
+    CHECK_EQ(lastMission(), std::format("M{}", Changes + 1));
+    now += every;
+    signaling.Take();
+    REQUIRE_EQ(host.Sent.size(), static_cast<size_t>(MCServiceRoomPace::DefaultBurst + 3));
+    CHECK_EQ(lastMission(), std::format("M{}", Changes + 3));
 }
 
 TEST_CASE("service signaling: a joined game's links take relays only, unless the service says the game is private")
@@ -457,9 +534,38 @@ TEST_CASE("service signaling: a dropped socket that can't come back while its pl
     CHECK_EQ(service.OpenedTo(BackUrl), size_t{0});
 }
 
+/// <summary>
+/// A guest's socket coming back to its place while the game's guests are at the cap: the service refuses it as full
+/// (closing it), and it tries again while its place waits, rather than giving the game up.
+/// </summary>
+TEST_CASE("service signaling: a guest's socket coming back to a full game tries again while its place waits")
+{
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, false, AtOnce);
+    signaling.Join(GameCode);
+    service.At(JoinUrl).Arrived.push_back(Text(JoinedMessage));
+    CHECK(signaling.Take().empty());
+    service.At(JoinUrl).Now = MCWebSocket::State::Closed;
+    CHECK_EQ(signaling.Take().size(), size_t{1});
+    CHECK(signaling.Take().empty());
+    REQUIRE_EQ(service.OpenedTo(BackUrl), size_t{1});
+
+    MCScriptedEnd& full = service.At(BackUrl);
+    full.Arrived.push_back(Text(R"({"t":"full"})"));
+    full.Now = MCWebSocket::State::Closed;
+    signaling.Take();
+    CHECK(!signaling.Refusal(GameCode).has_value());
+    CHECK_EQ(service.OpenedTo(BackUrl), size_t{2});
+
+    service.At(BackUrl).Arrived.push_back(Text(R"({"t":"back","guest":"g1"})"));
+    CHECK(signaling.Take().empty());
+    CHECK(signaling.Joined(GameCode));
+    CHECK(!signaling.Refusal(GameCode).has_value());
+}
+
 TEST_CASE("service signaling: the service's refusals, each its reason, none tried again")
 {
-    const std::array<std::pair<std::string_view, MCServiceRefusal>, 7> refusals{{
+    const std::array<std::pair<std::string_view, MCServiceRefusal>, 8> refusals{{
         {"nogame", MCServiceRefusal::NoGame},
         {"hostaway", MCServiceRefusal::HostAway},
         {"battle", MCServiceRefusal::InBattle},
@@ -467,6 +573,7 @@ TEST_CASE("service signaling: the service's refusals, each its reason, none trie
         {"banned", MCServiceRefusal::Banned},
         {"slow", MCServiceRefusal::TooManyTries},
         {"update", MCServiceRefusal::Update},
+        {"crowded", MCServiceRefusal::Crowded},
     }};
 
     for (const auto& [type, refusal] : refusals)

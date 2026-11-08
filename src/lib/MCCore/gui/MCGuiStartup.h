@@ -36,3 +36,9 @@ std::string LobbyWords(std::string_view commandLine);
 /// or none, in double quotes).
 /// </summary>
 std::string LobbyCommandWords(std::span<const std::string> words);
+
+/// <summary>
+/// Port (Redux HD): what a lobby's words in <paramref name="commandLine"/> start, for the log: hosting or joining, and
+/// the room's address or code ("joining K7QF", "hosting K7QF again"); never a place's token or anything else.
+/// </summary>
+std::string LobbyStartLogged(std::string_view commandLine);

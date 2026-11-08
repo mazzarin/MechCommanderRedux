@@ -6,12 +6,14 @@
 // signals, and the bytes of a link it carries (the WebSocket path), and makes the relays' credentials for each guest's
 // links, the host's for that guest and the guest's own. A socket that drops comes back to its place with its token
 // (/game/<code>), which the service keeps 5 minutes; the links it carried are gone, the others go on. The host says
-// its room for the service's list. Every message from the service is checked before it's used.
+// its room for the service's list, paced to the service's budget for it. Every message from the service is checked
+// before it's used.
 
 #include "platform/MCIceTransport.h"
 #include "platform/MCWebSocket.h"
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -60,6 +62,8 @@ enum class MCServiceRefusal
     TooManyTries,
     /// <summary>The service speaks another protocol: this game must update.</summary>
     Update,
+    /// <summary>The joiner's network already holds too many relay credentials in live games.</summary>
+    Crowded,
     /// <summary>Anything else the service refused.</summary>
     Refused,
     /// <summary>The service couldn't be reached, or a dropped socket couldn't come back while its place waited.</summary>
@@ -92,6 +96,24 @@ inline constexpr std::string_view MCServicePing = "ping";
 inline constexpr std::string_view MCServicePong = "pong";
 inline constexpr std::chrono::seconds MCServicePingEvery{30};
 
+/// <summary>The most public games one network lists at once (the service's MOST_LISTED_ROOMS): more play by their code.</summary>
+inline constexpr int32_t MCServiceListedPerNetwork = 3;
+
+/// <summary>
+/// The host's room as the service takes it (its ROOM_BUDGET, a token bucket): so many at once, then one each
+/// <see cref="Every"/>. The service closes a host that goes far past it.
+/// </summary>
+struct MCServiceRoomPace
+{
+    static constexpr int32_t DefaultBurst = 8;
+    static constexpr std::chrono::milliseconds DefaultEvery{1000};
+
+    int32_t Burst = DefaultBurst;
+    std::chrono::milliseconds Every = DefaultEvery;
+    /// <summary>The clock the pace goes by: none, the steady clock (a test's own).</summary>
+    std::function<std::chrono::steady_clock::time_point()> Now;
+};
+
 /// <summary>How long a dropped socket's place waits (the service's 5 minutes), and the tries at coming back to it.</summary>
 struct MCServiceComeback
 {
@@ -106,13 +128,14 @@ class MCServiceSignaling final : public MCIceSignaling
 public:
     /// <summary>
     /// The service at <paramref name="service"/> (<c>wss://host</c>), its sockets opened by <paramref name="open"/>,
-    /// saying this game is <paramref name="identity"/>. A public game's links take the relays' path only
-    /// (MCIceLink::Settings::RelayOnly): a game it hosts is public with <paramref name="relayOnly"/>, a game it joins
-    /// when the service says so (or doesn't say), and every link takes the relays only with
-    /// <paramref name="relayOnly"/>.
+    /// saying this game is <paramref name="identity"/>, its room said at <paramref name="pace"/>. A public game's links
+    /// take the relays' path only (MCIceLink::Settings::RelayOnly), so no player learns another's address: with
+    /// <paramref name="relayOnly"/> every link does (a game it hosts is public; a game it joins this game knew was, as
+    /// picked from the service's list), and a game it joins once the service says it's public (or doesn't say), which
+    /// nothing the service says after lowers.
     /// </summary>
     MCServiceSignaling(std::string service, MCWebSocketOpener open, MCServiceIdentity identity, bool relayOnly,
-                       MCServiceComeback comeback = {});
+                       MCServiceComeback comeback = {}, MCServiceRoomPace pace = {});
     ~MCServiceSignaling() override;
     MCServiceSignaling(const MCServiceSignaling&) = delete;
     MCServiceSignaling& operator=(const MCServiceSignaling&) = delete;
@@ -129,10 +152,18 @@ public:
     std::optional<std::string> HostedCode();
     /// <summary>The hosted game's token: what its host comes back to its place with (<see cref="HostAgain"/>).</summary>
     std::optional<std::string> HostedToken();
-    /// <summary>The hosted game's room as it stands now, for the service's list (sent when it changes).</summary>
+    /// <summary>
+    /// The hosted game's room as it stands now, for the service's list: sent when it changes, within the service's pace
+    /// for it; one past the pace waits, the latest kept, and goes when the pace allows (<see cref="Take"/>).
+    /// </summary>
     void SetRoom(const MCServiceRoom& room);
     /// <summary>Whether the service won't list the room by its name (the host picks another).</summary>
     bool NameRefused();
+    /// <summary>
+    /// Whether the service plays the public room by its code alone, unlisted: the host's network already lists
+    /// <see cref="MCServiceListedPerNetwork"/> public games. The room stays public (its guests' links relayed).
+    /// </summary>
+    bool Unlisted();
     /// <summary>Whether this game's socket to its host's game is in (the service sent the relays for its links).</summary>
     bool Joined(std::string_view game);
     /// <summary>Opens this game's socket to the game <paramref name="game"/> (the first signal to it would too).</summary>
@@ -242,7 +273,10 @@ private:
     /// <summary>The peers a closed or away socket's links through the service went to: each heard as gone.</summary>
     void TellGone(std::string_view game, std::vector<Heard>& heard);
     void Ping(Socket& socket, Clock::time_point now);
+    /// <summary>The room, when it's due and the pace allows (under the lock).</summary>
     void SendRoom();
+    /// <summary>Takes one of the room's pace's sends, if one is left (refilled to now).</summary>
+    bool TakeRoomSend();
     /// <summary>A link's settings as this game takes them: relays only when <paramref name="relayOnly"/> or always.</summary>
     MCIceLink::Settings WithPolicy(MCIceLink::Settings settings, bool relayOnly) const;
     void HearHost(const MCWebSocket::Message& message, std::vector<Heard>& heard);
@@ -254,6 +288,7 @@ private:
     MCServiceIdentity _Identity;
     bool _RelayOnly = false;
     MCServiceComeback _Comeback;
+    MCServiceRoomPace _Pace;
     std::mutex _Lock;
     std::string _BindAddress;
     /// <summary>This game left (<see cref="Leave"/>): its sockets don't come back.</summary>
@@ -264,6 +299,14 @@ private:
     /// <summary>The relays the service made for each guest's links, by the guest's number.</summary>
     std::map<uint32_t, MCIceLink::Settings> _GuestSettings;
     std::optional<MCServiceRoom> _Room;
+    /// <summary>The room changed (or the host's socket came in) since the service was last told it.</summary>
+    bool _RoomDue = false;
+    /// <summary>The room's pace: its credit (a send costs one Every, up to Burst of them), as of when.</summary>
+    Clock::duration _RoomCredit{};
+    Clock::time_point _RoomCreditAt;
+    /// <summary>A room is waiting for the pace (said once in the log, as it starts waiting).</summary>
+    bool _RoomHeld = false;
     bool _NameRefused = false;
+    bool _Unlisted = false;
     std::map<std::string, Socket, std::less<>> _Games;
 };

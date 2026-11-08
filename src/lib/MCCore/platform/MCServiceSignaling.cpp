@@ -89,7 +89,7 @@ namespace
     constexpr std::string_view TakeoverPath = "/takeover/";
 
     /// <summary>What the service's refusals and endings are called in its messages.</summary>
-    constexpr std::array<std::pair<std::string_view, MCServiceRefusal>, 10> Refusals{{
+    constexpr std::array<std::pair<std::string_view, MCServiceRefusal>, 11> Refusals{{
         {"nogame", MCServiceRefusal::NoGame},
         {"hostaway", MCServiceRefusal::HostAway},
         {"battle", MCServiceRefusal::InBattle},
@@ -100,7 +100,13 @@ namespace
         {"slow", MCServiceRefusal::TooManyTries},
         {"update", MCServiceRefusal::Update},
         {"refused", MCServiceRefusal::Refused},
+        {"crowded", MCServiceRefusal::Crowded},
     }};
+    /// <summary>The service's notices to a host: its room's name isn't listed, its public room isn't listed at all.</summary>
+    constexpr std::string_view NameNotice = "name";
+    constexpr std::string_view UnlistedNotice = "unlisted";
+    /// <summary>A guest's: the game's guests are at the cap (to a join, a refusal; to a socket coming back, a wait).</summary>
+    constexpr std::string_view FullType = "full";
 
     std::optional<MCServiceRefusal> RefusalNamed(std::string_view type)
     {
@@ -309,13 +315,22 @@ namespace
 }
 
 MCServiceSignaling::MCServiceSignaling(std::string service, MCWebSocketOpener open, MCServiceIdentity identity,
-                                       bool relayOnly, MCServiceComeback comeback)
+                                       bool relayOnly, MCServiceComeback comeback, MCServiceRoomPace pace)
     : _Service(std::move(service))
     , _Open(std::move(open))
     , _Identity(std::move(identity))
     , _RelayOnly(relayOnly)
     , _Comeback(comeback)
+    , _Pace(std::move(pace))
 {
+    if (!_Pace.Now)
+    {
+        _Pace.Now = [] { return Clock::now(); };
+    }
+
+    // As the service's own: full at the first room.
+    _RoomCredit = _Pace.Every * _Pace.Burst;
+    _RoomCreditAt = _Pace.Now();
 }
 
 MCServiceSignaling::~MCServiceSignaling()
@@ -381,6 +396,7 @@ void MCServiceSignaling::Host()
         _Guests.clear();
         _GuestSettings.clear();
         _NameRefused = false;
+        _Unlisted = false;
     }
 }
 
@@ -399,6 +415,7 @@ void MCServiceSignaling::HostAgain(std::string_view code, std::string_view token
     _Guests.clear();
     _GuestSettings.clear();
     _NameRefused = false;
+    _Unlisted = false;
     SDL_Log("MCServiceSignaling: hosting game \"%.*s\" again, back in its place", static_cast<int>(code.size()),
             code.data());
 }
@@ -432,6 +449,7 @@ void MCServiceSignaling::SetRoom(const MCServiceRoom& room)
     }
 
     _Room = room;
+    _RoomDue = true;
     SendRoom();
 }
 
@@ -441,12 +459,51 @@ bool MCServiceSignaling::NameRefused()
     return _NameRefused;
 }
 
+bool MCServiceSignaling::Unlisted()
+{
+    const std::scoped_lock lock(_Lock);
+    return _Unlisted;
+}
+
+bool MCServiceSignaling::TakeRoomSend()
+{
+    // In whole clock ticks, so a send a second on is never a rounding short.
+    const Clock::time_point now = _Pace.Now();
+    const Clock::duration full = _Pace.Every * _Pace.Burst;
+    _RoomCredit = std::min(full, _RoomCredit + std::max(now - _RoomCreditAt, Clock::duration::zero()));
+    _RoomCreditAt = now;
+
+    if (_RoomCredit < _Pace.Every)
+    {
+        return false;
+    }
+
+    _RoomCredit -= _Pace.Every;
+    return true;
+}
+
 void MCServiceSignaling::SendRoom()
 {
-    if (!_Room.has_value() || !_Host.has_value() || !_Host->In)
+    if (!_RoomDue || !_Room.has_value() || !_Host.has_value() || !_Host->In)
     {
         return;
     }
+
+    // Past the service's pace for the room, the latest waits (Take sends it as the pace allows): the service would
+    // close a host that kept on.
+    if (!TakeRoomSend())
+    {
+        if (!std::exchange(_RoomHeld, true))
+        {
+            SDL_Log("MCServiceSignaling: game \"%s\"'s room changes faster than the service takes it: the latest waits",
+                    _Host->Code.c_str());
+        }
+
+        return;
+    }
+
+    _RoomDue = false;
+    _RoomHeld = false;
 
     // The game's names as the service takes them (it closes the host's socket on a room it can't read).
     std::vector<std::string> players;
@@ -523,6 +580,7 @@ bool MCServiceSignaling::TakeOver(std::string_view game)
     _Guests.clear();
     _GuestSettings.clear();
     _NameRefused = false;
+    _Unlisted = false;
     // Its place is the host's now: the socket to the game goes, never coming back to it.
     joined.TakenOver = true;
     joined.Ws->Close();
@@ -688,6 +746,8 @@ std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
 
         Tend(*_Host, {}, now, heard);
         Ping(*_Host, now);
+        // A room that waited for the pace goes once it allows, whether or not the room changes again.
+        SendRoom();
     }
 
     for (auto& [game, socket] : _Games)
@@ -860,6 +920,7 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
             _Host->In = true;
             _Host->Hosted = true;
             SDL_Log("MCServiceSignaling: hosting game \"%s\"", code->c_str());
+            _RoomDue = true;
             SendRoom();
             return;
         }
@@ -871,6 +932,7 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
         _Host->DroppedAt.reset();
         _Host->Tries = 0;
         SDL_Log("MCServiceSignaling: the hosted game's socket is back in its place");
+        _RoomDue = true;
         SendRoom();
         return;
     }
@@ -917,10 +979,21 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
             return;
         }
     }
-    else if (type == "name")
+    else if (type == NameNotice)
     {
         SDL_Log("MCServiceSignaling: the service won't list the room by its name");
         _NameRefused = true;
+        return;
+    }
+    else if (type == UnlistedNotice)
+    {
+        // The game stays public (its guests' links relayed); it plays by its code alone.
+        if (!std::exchange(_Unlisted, true))
+        {
+            SDL_Log("MCServiceSignaling: game \"%s\" isn't listed: the host's network already lists %d public games",
+                    _Host->Code.c_str(), MCServiceListedPerNetwork);
+        }
+
         return;
     }
     else if (const std::optional<MCServiceRefusal> refusal = type ? RefusalNamed(*type) : std::nullopt)
@@ -1031,6 +1104,15 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
                 game.data());
         socket.HostAway = true;
         TellGone(game, heard);
+        return;
+    }
+    else if (type == FullType && !socket.In && !socket.Token.empty())
+    {
+        // A socket coming back to its place while the game's guests are at the cap: the service closes it, and it tries
+        // again (Tend) while its place waits.
+        SDL_Log(
+            "MCServiceSignaling: game \"%.*s\" is full as its socket comes back: trying again while its place waits",
+            static_cast<int>(game.size()), game.data());
         return;
     }
     else if (const std::optional<MCServiceRefusal> refusal = type ? RefusalNamed(*type) : std::nullopt)

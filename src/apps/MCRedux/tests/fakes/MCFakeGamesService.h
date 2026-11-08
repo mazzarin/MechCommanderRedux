@@ -65,6 +65,8 @@ namespace MCFakeGames
         /// token), its guests told the host is away; off, the game ends with its host (as before the rollover).
         /// </summary>
         bool HostLeaveHandsOver = false;
+        /// <summary>What a join is refused with ("crowded"...), whatever the game: none, and joins go as usual.</summary>
+        std::optional<std::string> RefuseJoinsWith;
 
         MCWebSocketOpener Opener()
         {
@@ -118,6 +120,17 @@ namespace MCFakeGames
             const std::scoped_lock lock(_Lock);
             return std::ranges::any_of(_GuestSignals,
                                        [&](const std::string& text) { return text.contains(OwnAddress); });
+        }
+
+        /// <summary>Says <paramref name="text"/> to the host's socket (the service's notices: "unlisted"...).</summary>
+        void TellHost(std::string_view text)
+        {
+            const std::scoped_lock lock(_Lock);
+
+            if (const MCOptionalRef<Line> host = HostLine())
+            {
+                Say(*host, text);
+            }
         }
 
         /// <summary>Sockets open now.</summary>
@@ -347,6 +360,13 @@ namespace MCFakeGames
                     }
                 }
 
+                return;
+            }
+
+            if (path.starts_with("/join/") && RefuseJoinsWith.has_value())
+            {
+                Say(line, Json{{"t", *RefuseJoinsWith}}.dump());
+                line.Open = false;
                 return;
             }
 

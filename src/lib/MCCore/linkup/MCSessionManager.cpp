@@ -5,6 +5,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "lib/MCFatal.h"
+#include "logistics/MCLogChat.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCSessionScreen.h"
 #include "main/MCGameContext.h"
@@ -33,6 +34,10 @@ namespace
 
     /// <summary>How often a lobby's internet game is moved along while it starts (the service, the link).</summary>
     constexpr uint32_t LobbyInternetEveryMs = 50;
+
+    /// <summary>Port (Redux HD): the room's chat when the service plays a public room by its code alone.</summary>
+    constexpr std::string_view UnlistedFormat =
+        "YOUR NETWORK ALREADY HAS {} PUBLIC GAMES, SO THIS ONE ISN'T LISTED. PLAYERS CAN JOIN WITH ITS CODE.";
 
     /// <summary>The enumeration flags GetSessions and Dial ask DirectPlay for.</summary>
     constexpr uint32_t EnumSessionFlags =
@@ -606,6 +611,11 @@ void MCSessionManager::TendInternet()
     if (!IsHost || session == nullptr)
     {
         return;
+    }
+
+    if (Internet->TakeUnlistedNotice() && GlobalLog() != nullptr && GlobalLog()->Chat != nullptr)
+    {
+        GlobalLog()->Chat->AddLine(std::format(UnlistedFormat, MCServiceListedPerNetwork));
     }
 
     // The room as the service's list shows it, with the mission the host picked on its room's screen.

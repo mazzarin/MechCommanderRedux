@@ -144,6 +144,7 @@ namespace
     constexpr std::string_view UpdateText = "UPDATE YOUR GAME TO PLAY OVER THE INTERNET.";
     constexpr std::string_view TooManyText = "TOO MANY TRIES. WAIT A MINUTE AND TRY AGAIN.";
     constexpr std::string_view BannedText = "THIS COPY OF THE GAME IS BLOCKED FROM INTERNET GAMES.";
+    constexpr std::string_view CrowdedText = "TOO MANY PLAYERS ON YOUR NETWORK ARE IN GAMES RIGHT NOW.";
     constexpr std::string_view NoInternetText = "THIS VERSION CAN'T PLAY INTERNET GAMES.";
 
     /// <summary>The continents Cloudflare names a host's location by.</summary>
@@ -443,6 +444,8 @@ namespace
                 return std::string(TooManyText);
             case MCServiceRefusal::Banned:
                 return std::string(BannedText);
+            case MCServiceRefusal::Crowded:
+                return std::string(CrowdedText);
             // Anything else the service refused reads as the game not reached or not set up.
             default:
                 return pending.Hosting ? std::string(NotHostedText) : std::format(UnreachableFormat, pending.Shown);

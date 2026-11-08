@@ -186,7 +186,8 @@ auto MCRejoinNote::TakeAtStart(const std::filesystem::path& userFolder, uint64_t
     }
 
     Delete(path, "taken");
-    SDL_Log("Rejoin: starting as the note says: %s", words.c_str());
+    // What it starts, not its words: a host's place's token is among them.
+    SDL_Log("Rejoin: starting as the note says: %s", LobbyStartLogged(words).c_str());
     return words;
 }
 

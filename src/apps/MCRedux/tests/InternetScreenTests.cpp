@@ -437,6 +437,21 @@ TEST_CASE_ISOLATED(
     CHECK(room.at("battle") == false);
     CHECK(room.at("mission") == "");
 
+    // The host's network lists enough public games: the room's chat says this one isn't listed; it stays public.
+    service.TellHost(R"({"t":"unlisted"})");
+    const auto unlisted = [](const MCLogChat::HistoryLine& line) { return line.Text.contains("ISN'T LISTED"); };
+    REQUIRE(SettleUntil([&] { return std::ranges::any_of(GlobalLog()->Chat->Lines, unlisted); }));
+    CHECK(std::ranges::any_of(GlobalLog()->Chat->Lines,
+                              [](const MCLogChat::HistoryLine& line)
+                              {
+                                  return line.Text.contains(
+                                      "YOUR NETWORK ALREADY HAS 3 PUBLIC GAMES, SO THIS ONE ISN'T "
+                                      "LISTED. PLAYERS CAN JOIN WITH ITS CODE.");
+                              }));
+    Settle();
+    CHECK_EQ(std::ranges::count_if(GlobalLog()->Chat->Lines, unlisted), 1);
+    CHECK(service.Room()->at("public") == true);
+
     // A mission picked: the list shows it.
     MCSessionScreen& roomScreen = *GlobalLog()->SessionScreen;
     // (The host is alone, so the file check is done at once, its message closing itself.)
@@ -473,6 +488,14 @@ TEST_CASE_ISOLATED(
     ClickButton(*GlobalLog()->MessageDialog->OkButton);
     CHECK(DialogText().empty());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
+
+    // The player's network holds too many relays in live games: the join is refused, and the screen says why.
+    service.RefuseJoinsWith = "crowded";
+    ClickButton(*join);
+    REQUIRE(SettleUntil([] { return DialogText() == "TOO MANY PLAYERS ON YOUR NETWORK ARE IN GAMES RIGHT NOW."; }));
+    CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
+    ClickButton(*GlobalLog()->MessageDialog->OkButton);
+    CHECK(DialogText().empty());
 }
 
 /// <summary>

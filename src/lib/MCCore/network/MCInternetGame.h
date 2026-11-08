@@ -117,6 +117,11 @@ public:
     void SetRoom(MCServiceRoom room);
     /// <summary>Whether the service won't list the room by its name.</summary>
     bool NameRefused();
+    /// <summary>
+    /// A host's: true once, when the service has said its public room isn't listed (its network lists enough public
+    /// games): the room's chat says so. The game stays public.
+    /// </summary>
+    bool TakeUnlistedNotice();
 
     /// <summary>
     /// Port-only (Redux HD), a guest: its session rolled over to this game (SPEC-host-rollover.md), which takes the game
@@ -152,6 +157,7 @@ private:
     bool _Hosting = false;
     bool _Public = false;
     bool _KeepPlace = false;
+    bool _UnlistedTold = false;
     std::string _Code;
     Stage _Stage = Stage::Service;
     std::optional<MCServiceRefusal> _Refusal;

@@ -128,6 +128,30 @@ TEST_CASE("lobby updates: the rejoin note keeps only the lobby's words, written 
 }
 
 /// <summary>
+/// The log says what a rejoin note starts, its action and the room's address or code, never its words: a host's place's
+/// token is among them.
+/// </summary>
+TEST_CASE("lobby updates: a rejoin note's start is logged by what it starts, never a place's token")
+{
+    constexpr std::string_view Token = "0123456789abcdef0123456789abcdef";
+    const std::string host = MCRejoinNote::InternetRoomCommandLine({.Hosting = true,
+                                                                    .Code = "K7QF",
+                                                                    .Token = std::string(Token),
+                                                                    .Public = true,
+                                                                    .PlayerName = "Big Bob",
+                                                                    .SessionName = "Big Bob's game",
+                                                                    .MaxPlayers = 4});
+    CHECK_EQ(LobbyStartLogged(host), std::string("hosting K7QF again"));
+    CHECK(!LobbyStartLogged(host).contains(Token));
+    CHECK_EQ(
+        LobbyStartLogged(MCRejoinNote::InternetRoomCommandLine({.Code = "K7QF", .Public = true, .PlayerName = "Ann"})),
+        std::string("joining K7QF"));
+    CHECK_EQ(LobbyStartLogged("-host -port 28800 -player BOB -rejoin"), std::string("hosting"));
+    CHECK_EQ(LobbyStartLogged("-join 192.168.1.5:28801 -player \"Ann Lee\" -rejoin"),
+             std::string("joining 192.168.1.5:28801"));
+}
+
+/// <summary>
 /// A host starting again (a restart into an update) takes its port at once, though its last run's end of each link
 /// waits out TIME_WAIT (the host's end closes first): the listener reuses the address.
 /// </summary>

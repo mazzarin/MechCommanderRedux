@@ -8,6 +8,7 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFile.h"
+#include "linkup/MCFidpGroup.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
@@ -1097,8 +1098,15 @@ namespace
             }));
         const uint32_t ann = PlayerNamed("ANN")->Id;
         const uint32_t cat = PlayerNamed("CAT")->Id;
-        // The test's CAT doesn't join the group the inquiries go to as ANN's game does.
+        // The test's CAT doesn't join the group the inquiries go to as ANN's game does (as the host's setup reaches it:
+        // the mission waits for that, or ANN would never be asked).
         REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, cat));
+        REQUIRE(SettleLong(
+            [&]
+            {
+                const std::shared_ptr<MCFidpGroup> everyone = manager.GetGroup(MultiPlayer()->AllPlayerGroupID);
+                return everyone != nullptr && std::ranges::contains(everyone->Players, ann);
+            }));
         room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
         room.AssignPlayer(ann, 2, 0, false);
         room.AssignPlayer(cat, 2, 1, false);

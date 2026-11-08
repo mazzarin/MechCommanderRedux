@@ -27,6 +27,49 @@ namespace
     constexpr size_t MaxSignalText = MCIceLink::Signal::MostText;
     constexpr size_t MaxSignalKind = MCIceLink::Signal::MostKind;
     constexpr size_t MaxMid = MCIceLink::Signal::MostMid;
+    /// <summary>A room's texts the service would refuse empty: what stands in for them.</summary>
+    constexpr std::string_view GameNameFallback = "GAME";
+    constexpr std::string_view PlayerNameFallback = "PLAYER";
+    /// <summary>Printable ASCII, and Windows-1252's letters from À on as their plain ones (× x, ÷ nothing).</summary>
+    constexpr char FirstPrintable = 0x20;
+    constexpr char LastPrintable = 0x7e;
+    constexpr uint8_t FirstLatinLetter = 0xc0;
+    constexpr std::array<std::string_view, 64> LatinLetters{
+        "A", "A", "A", "A", "A", "A", "AE", "C", "E", "E", "E", "E", "I", "I", "I",  "I",
+        "D", "N", "O", "O", "O", "O", "O",  "x", "O", "U", "U", "U", "U", "Y", "TH", "ss",
+        "a", "a", "a", "a", "a", "a", "ae", "c", "e", "e", "e", "e", "i", "i", "i",  "i",
+        "d", "n", "o", "o", "o", "o", "o",  "",  "o", "u", "u", "u", "u", "y", "th", "y"};
+    /// <summary>Windows-1252's other letters (0x80 to 0xBF) with plain ones, and its no-break space.</summary>
+    constexpr std::array<std::pair<uint8_t, std::string_view>, 8> OtherLetters{{
+        {0x8a, "S"},
+        {0x8c, "OE"},
+        {0x8e, "Z"},
+        {0x9a, "s"},
+        {0x9c, "oe"},
+        {0x9e, "z"},
+        {0x9f, "Y"},
+        {0xa0, " "},
+    }};
+
+    /// <summary>The plain ASCII for Windows-1252's <paramref name="c"/>: itself, its letter's, or nothing.</summary>
+    std::string_view PlainOf(const char& c)
+    {
+        if (c >= FirstPrintable && c <= LastPrintable)
+        {
+            return {&c, 1};
+        }
+
+        const auto code = static_cast<uint8_t>(c);
+
+        if (code >= FirstLatinLetter)
+        {
+            return LatinLetters[code - FirstLatinLetter];
+        }
+
+        const auto other = std::ranges::find(OtherLetters, code, &std::pair<uint8_t, std::string_view>::first);
+        return other != OtherLetters.end() ? other->second : std::string_view();
+    }
+
     /// <summary>The service's STUN and relays: a handful of each, their names and credentials short.</summary>
     constexpr size_t MaxIceServers = 8;
     constexpr size_t MaxIceText = 512;
@@ -360,12 +403,16 @@ void MCServiceSignaling::SendRoom()
         return;
     }
 
+    // The game's names as the service takes them (it closes the host's socket on a room it can't read).
+    std::vector<std::string> players;
+    std::ranges::transform(_Room->Players, std::back_inserter(players), [](const std::string& player)
+                           { return MCServiceName(player, MCServicePlayerNameMost, PlayerNameFallback); });
     _Host->Ws->SendText(Dumped({{"t", "room"},
-                                {"name", _Room->Name},
+                                {"name", MCServiceName(_Room->Name, MCServiceGameNameMost, GameNameFallback)},
                                 {"public", _Room->Public},
                                 {"max", _Room->Max},
-                                {"players", _Room->Players},
-                                {"mission", _Room->Mission},
+                                {"players", players},
+                                {"mission", MCServiceName(_Room->Mission, MCServiceMissionMost, {})},
                                 {"battle", _Room->Battle}}));
 }
 
@@ -891,6 +938,32 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
 
     SDL_Log("MCServiceSignaling: game \"%.*s\"'s socket got a message it doesn't take (%zu bytes)",
             static_cast<int>(game.size()), game.data(), message.Data.size());
+}
+
+std::string MCServiceName(std::string_view text, size_t most, std::string_view fallback)
+{
+    std::string name;
+
+    for (const char& c : text)
+    {
+        for (const char plain : PlainOf(c))
+        {
+            // Runs of spaces as one, none leading.
+            if (plain != ' ' || (!name.empty() && name.back() != ' '))
+            {
+                name.push_back(plain);
+            }
+        }
+    }
+
+    name.resize(std::min(name.size(), most));
+
+    while (!name.empty() && name.back() == ' ')
+    {
+        name.pop_back();
+    }
+
+    return name.empty() ? std::string(fallback) : name;
 }
 
 bool MCIsGameCode(std::string_view text)

@@ -6,6 +6,7 @@
 #include "linkup/MCFidpSession.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCRegistrySettings.h"
+#include "logistics/MCSessionScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"
@@ -586,10 +587,15 @@ void MCSessionManager::TendInternet()
         return;
     }
 
-    // The room as the service's list shows it; the mission comes with the INTERNET screen, whose list shows it.
+    // The room as the service's list shows it, with the mission the host picked on its room's screen.
     MCServiceRoom room{.Name = session->Name,
                        .Max = static_cast<int32_t>(session->SessionDesc.dwMaxPlayers),
                        .Battle = GameStarted || _SessionLocked};
+
+    if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
+    {
+        room.Mission = GlobalLog()->SessionScreen->MissionName;
+    }
 
     for (const std::shared_ptr<MCFidpPlayer>& player : Players)
     {

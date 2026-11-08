@@ -298,10 +298,21 @@ TEST_CASE_ISOLATED(
     CHECK(room.at("max") == 4);
     CHECK(room.at("players") == Json::array({"Commander"}));
     CHECK(room.at("battle") == false);
+    CHECK(room.at("mission") == "");
+
+    // A mission picked: the list shows it.
+    MCSessionScreen& roomScreen = *GlobalLog()->SessionScreen;
+    // (The host is alone, so the file check is done at once, its message closing itself.)
+    roomScreen.LoadMission("ARENA");
+    REQUIRE(SettleUntil([] { return DialogText().empty(); }));
+    REQUIRE(!roomScreen.MissionName.empty());
+    REQUIRE(SettleUntil([&] { return service.Room()->at("mission") != ""; }));
+    CHECK(service.Room()->at("mission") ==
+          MCServiceName(roomScreen.MissionName, MCServiceMissionMost, std::string_view()));
     SaveShot("internet 6 room", ScreenHash());
 
     // The room's EXIT: the internet games' screen again, the game and its socket gone.
-    ClickButton(*GlobalLog()->SessionScreen->ExitButton);
+    ClickButton(*roomScreen.ExitButton);
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
     CHECK(screen.IsShowing());
     REQUIRE(MultiPlayer() != nullptr);

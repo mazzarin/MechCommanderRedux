@@ -72,6 +72,18 @@ bool MCIsGameCode(std::string_view text);
 /// <summary>The refusal the service's message type <paramref name="type"/> names ("nogame", "update"...), if it names one.</summary>
 std::optional<MCServiceRefusal> MCServiceRefusalNamed(std::string_view type);
 
+/// <summary>The service's lengths for a game's name, a player's and a mission's (its protocol.js).</summary>
+inline constexpr size_t MCServiceGameNameMost = 24;
+inline constexpr size_t MCServicePlayerNameMost = 16;
+inline constexpr size_t MCServiceMissionMost = 48;
+
+/// <summary>
+/// <paramref name="text"/> (the game's Windows-1252) as the service takes a name, which it refuses otherwise, closing
+/// the host's socket: printable ASCII, an accented letter as its plain one ("é" e, "ß" ss), what has none left out,
+/// runs of spaces as one, trimmed, cut to <paramref name="most"/>; <paramref name="fallback"/> when nothing is left.
+/// </summary>
+std::string MCServiceName(std::string_view text, size_t most, std::string_view fallback);
+
 /// <summary>The service's protocol this game speaks (each socket's URL says it).</summary>
 inline constexpr int MCServiceProtocol = 1;
 

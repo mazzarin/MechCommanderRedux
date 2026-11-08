@@ -30,9 +30,9 @@ namespace
     constexpr size_t MostListed = 100;
     constexpr size_t MostPlayers = 6;
     constexpr int32_t FewestPlayers = 2;
-    constexpr size_t MostGameName = 24;
-    constexpr size_t MostPlayerName = 16;
-    constexpr size_t MostMission = 48;
+    constexpr size_t MostGameName = MCServiceGameNameMost;
+    constexpr size_t MostPlayerName = MCServicePlayerNameMost;
+    constexpr size_t MostMission = MCServiceMissionMost;
     constexpr size_t MostVersion = 32;
     constexpr size_t MostRegion = 8;
     constexpr size_t MostType = 16;

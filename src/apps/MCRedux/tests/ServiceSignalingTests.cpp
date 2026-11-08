@@ -471,6 +471,40 @@ TEST_CASE(
     CHECK_EQ(back.Sent[0].Data, roomSaid);
 }
 
+TEST_CASE("service signaling: a room's names go as the service takes them, plain ASCII within its lengths")
+{
+    // The game's Windows-1252: accented letters as plain ones, what has none left out, spaces run together and trimmed,
+    // cut to the service's length; nothing left, the fallback.
+    CHECK_EQ(MCServiceName("Pil\xf3to", MCServicePlayerNameMost, "PLAYER"), std::string("Piloto"));
+    CHECK_EQ(MCServiceName("\xc6sir \xdf\x9c \xbfy\xbd?", 24, {}), std::string("AEsir ssoe y?"));
+    CHECK_EQ(MCServiceName("  two   spaces\t ", 24, {}), std::string("two spaces"));
+    CHECK_EQ(MCServiceName("\xa0\xa0"
+                           "Edge\xa0",
+                           24, {}),
+             std::string("Edge"));
+    CHECK_EQ(MCServiceName("ABCDEFGHIJKLMNO PQRSTUVWX", MCServicePlayerNameMost, {}), std::string("ABCDEFGHIJKLMNO"));
+    CHECK_EQ(MCServiceName("\xd7\xf7", 24, "GAME"), std::string("x"));
+    CHECK_EQ(MCServiceName("\xf7\x81", 24, "GAME"), std::string("GAME"));
+    CHECK_EQ(MCServiceName("", MCServiceMissionMost, {}), std::string());
+
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true);
+    signaling.Host();
+    MCScriptedSocket& host = service.At(HostUrl);
+    host.Arrived.push_back(Text(HostedMessage));
+    CHECK(signaling.Take().empty());
+    signaling.SetRoom({.Name = "  ",
+                       .Public = true,
+                       .Max = 4,
+                       .Players = {"Ren\xe9"
+                                   "e",
+                                   "\xbf\xbf"},
+                       .Mission = "Escape from  \xc9lan"});
+    REQUIRE_EQ(host.Sent.size(), size_t{1});
+    CHECK_EQ(host.Sent[0].Data, std::string(R"({"battle":false,"max":4,"mission":"Escape from Elan","name":"GAME",)"
+                                            R"("players":["Renee","PLAYER"],"public":true,"t":"room"})"));
+}
+
 TEST_CASE("internet copy: an ID made once and kept in internet.cfg, and one that isn't an ID made again")
 {
     const std::filesystem::path file = MCFileSystem::UserRoot() / "internet.cfg";

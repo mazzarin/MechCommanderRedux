@@ -1,8 +1,10 @@
 #include "stdafx.h"
 #include "logistics/MCArtWords.h"
 #include "logistics/MCLogPort.h"
+#include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 
+#include <deque>
 #include <functional>
 #include <map>
 #include <set>
@@ -40,6 +42,20 @@ namespace
     constexpr size_t SerialA = 4;
     constexpr size_t SerialL = 5;
     constexpr size_t InternetN = 1;
+    /// <summary>
+    /// A big button letter's HD copy (HdLetterOwners): its strokes are the HD pixels at least half as far from their row's
+    /// face (the largest colour channel's difference) as the word's farthest (a grayed button's letters lie nearer
+    /// their face), its soft edges the others at least this far, two original pixels at most from the letter. A stroke is
+    /// one letter's when three quarters of its pixels on the word's letters are on that letter's.
+    /// </summary>
+    constexpr int32_t StrokeShare = 2;
+    constexpr int32_t EdgeDifference = 8;
+    constexpr int32_t EdgeReach = 2;
+    constexpr size_t OwnStrokeShare = 3;
+    constexpr size_t OwnStrokeOf = 4;
+    constexpr size_t RgbaBytes = 4;
+    constexpr size_t RgbBytes = 3;
+    constexpr int32_t ChannelMax = 255;
 
     /// <summary>
     /// The multiplayer panels (290 x 339), which share one background behind their titles; the LAN screen's is the
@@ -221,6 +237,246 @@ namespace
     }
 
     /// <summary>
+    /// An HD frame's colours as RGBA8, read and written by HD pixel: a BC7 frame's decoded, and only its changed blocks
+    /// encoded again, so the rest stays as the pack has it.
+    /// </summary>
+    class HdColors
+    {
+    public:
+        /// <summary>The colours of <paramref name="frame"/>; none for a frame kept other than as RGBA8 or BC7.</summary>
+        static std::optional<HdColors> Of(const MCHdArt::Frame& frame)
+        {
+            HdColors colors;
+            colors._Width = frame.Width;
+            colors._Height = frame.Height;
+            colors._Bc7 = frame.Format == MCHdArt::ColorFormat::Bc7;
+
+            if (colors._Bc7)
+            {
+                colors._Rgba = MCBc7::Decode(frame.Colors, frame.Width, frame.Height);
+            }
+            else if (frame.Format == MCHdArt::ColorFormat::Rgba8)
+            {
+                colors._Rgba = frame.Colors;
+            }
+
+            if (colors._Rgba.size() != static_cast<size_t>(frame.Width) * static_cast<size_t>(frame.Height) * RgbaBytes)
+            {
+                return std::nullopt;
+            }
+
+            return colors;
+        }
+
+        int32_t Width() const { return _Width; }
+        int32_t Height() const { return _Height; }
+
+        std::span<const uint8_t, RgbaBytes> At(int32_t x, int32_t y) const
+        {
+            return std::span<const uint8_t, RgbaBytes>(_Rgba.data() + Index(x, y), RgbaBytes);
+        }
+
+        void Set(int32_t x, int32_t y, std::span<const uint8_t, RgbaBytes> color)
+        {
+            std::ranges::copy(color, _Rgba.begin() + static_cast<ptrdiff_t>(Index(x, y)));
+            _Changed.emplace(x / MCBc7::BlockSide, y / MCBc7::BlockSide);
+        }
+
+        /// <summary>Puts the colours back in <paramref name="frame"/> (the frame they were read from).</summary>
+        void WriteTo(MCHdArt::Frame& frame) const
+        {
+            if (!_Bc7)
+            {
+                frame.Colors = _Rgba;
+                return;
+            }
+
+            constexpr size_t BlockRgbaBytes = MCBc7::BlockSide * MCBc7::BlockSide * RgbaBytes;
+            const int32_t blocksWide = MCBc7::Padded(_Width) / MCBc7::BlockSide;
+
+            for (const auto [blockX, blockY] : _Changed)
+            {
+                // Past the frame's right and bottom edges, transparent black, as MCBc7::Encode pads.
+                std::array<uint8_t, BlockRgbaBytes> pixels{};
+
+                for (int32_t y = 0; y < MCBc7::BlockSide; y++)
+                {
+                    for (int32_t x = 0; x < MCBc7::BlockSide; x++)
+                    {
+                        const int32_t fromX = blockX * MCBc7::BlockSide + x;
+                        const int32_t fromY = blockY * MCBc7::BlockSide + y;
+
+                        if (fromX < _Width && fromY < _Height)
+                        {
+                            std::ranges::copy(At(fromX, fromY),
+                                              pixels.begin() +
+                                                  static_cast<ptrdiff_t>((y * MCBc7::BlockSide + x) * RgbaBytes));
+                        }
+                    }
+                }
+
+                const size_t at = static_cast<size_t>(blockY * blocksWide + blockX) * MCBc7::BlockBytes;
+                MCBc7::EncodeBlock(pixels,
+                                   std::span<uint8_t, MCBc7::BlockBytes>(frame.Colors.data() + at, MCBc7::BlockBytes));
+            }
+        }
+
+    private:
+        size_t Index(int32_t x, int32_t y) const
+        {
+            return (static_cast<size_t>(y) * static_cast<size_t>(_Width) + static_cast<size_t>(x)) * RgbaBytes;
+        }
+
+        int32_t _Width = 0;
+        int32_t _Height = 0;
+        bool _Bc7 = false;
+        std::vector<uint8_t> _Rgba;
+        std::set<Pixel> _Changed;
+    };
+
+    /// <summary>The largest of two HD pixels' colour channels' differences.</summary>
+    int32_t Difference(std::span<const uint8_t, RgbaBytes> a, std::span<const uint8_t, RgbaBytes> b)
+    {
+        int32_t most = 0;
+
+        for (size_t channel = 0; channel < RgbBytes; channel++)
+        {
+            most = std::max(most, std::abs(static_cast<int32_t>(a[channel]) - static_cast<int32_t>(b[channel])));
+        }
+
+        return most;
+    }
+
+    /// <summary>The HD column a big button's face is read at, each row's: the middle of <see cref="ButtonPlainX"/>.</summary>
+    int32_t FaceColumn(int32_t scale)
+    {
+        return ButtonPlainX * scale + scale / 2;
+    }
+
+    /// <summary>
+    /// Which letter of <paramref name="word"/> (a big button's word, as pieces of its up picture) each HD pixel of
+    /// <paramref name="colors"/> (a button's HD copy, <paramref name="scale"/> HD pixels an original one) belongs to,
+    /// row by row (-1: none). A letter's are its strokes, each joined run of HD pixels far from their row's face most of
+    /// whose pixels lie on the letter's original pixels (a run two letters share split by the letter each pixel lies
+    /// nearest), and its soft edges, the other pixels off the face on its original pixels or on the face's nearest them.
+    /// So a letter's HD copy comes whole, past its original pixels where the HD art's edges reach, and holds nothing of a
+    /// neighbour's stroke that reaches into them.
+    /// </summary>
+    std::vector<int32_t> HdLetterOwners(const HdColors& colors, int32_t scale, std::span<const Piece> word)
+    {
+        const Area area = {.Left = ButtonFace.Left * scale,
+                           .Top = ButtonFace.Top * scale,
+                           .Right = (ButtonFace.Right + 1) * scale - 1,
+                           .Bottom = (ButtonFace.Bottom + 1) * scale - 1};
+        const int32_t faceX = FaceColumn(scale);
+        const auto offFace = [&](int32_t x, int32_t y) { return Difference(colors.At(x, y), colors.At(faceX, y)); };
+        int32_t farthest = 0;
+
+        for (int32_t y = area.Top; y <= area.Bottom; y++)
+        {
+            for (int32_t x = area.Left; x <= area.Right; x++)
+            {
+                farthest = std::max(farthest, offFace(x, y));
+            }
+        }
+
+        const int32_t strokeDifference = std::max(EdgeDifference, farthest / StrokeShare);
+        const auto at = [&](int32_t x, int32_t y)
+        { return static_cast<size_t>(y) * static_cast<size_t>(colors.Width()) + static_cast<size_t>(x); };
+        // Each original pixel's letter; and each HD pixel's nearest letter (its original pixels') and how far, in steps.
+        std::map<Pixel, int32_t> letterAt;
+        std::vector<std::pair<int32_t, int32_t>> nearest(
+            static_cast<size_t>(colors.Width()) * static_cast<size_t>(colors.Height()), {-1, 0});
+        std::deque<Pixel> out;
+
+        for (size_t letter = 0; letter < word.size(); letter++)
+        {
+            for (const auto [x, y] : word[letter].Pixels)
+            {
+                letterAt[{x, y}] = static_cast<int32_t>(letter);
+
+                for (int32_t hdY = y * scale; hdY < (y + 1) * scale; hdY++)
+                {
+                    for (int32_t hdX = x * scale; hdX < (x + 1) * scale; hdX++)
+                    {
+                        nearest[at(hdX, hdY)] = {static_cast<int32_t>(letter), 0};
+                        out.emplace_back(hdX, hdY);
+                    }
+                }
+            }
+        }
+
+        while (!out.empty())
+        {
+            const auto [x, y] = out.front();
+            out.pop_front();
+            const auto [letter, steps] = nearest[at(x, y)];
+
+            for (const auto [nx, ny] : std::array<Pixel, 4>{{{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}}})
+            {
+                if (area.Holds(nx, ny) && nearest[at(nx, ny)].first < 0)
+                {
+                    nearest[at(nx, ny)] = {letter, steps + 1};
+                    out.emplace_back(nx, ny);
+                }
+            }
+        }
+
+        const auto originalOf = [&](int32_t x, int32_t y) { return Pixel{x / scale, y / scale}; };
+        std::vector<int32_t> owners(static_cast<size_t>(colors.Width()) * static_cast<size_t>(colors.Height()), -1);
+        const auto ownerAt = [&](int32_t x, int32_t y) -> int32_t& { return owners[at(x, y)]; };
+
+        for (const Piece& stroke :
+             PiecesOf(area, [&](int32_t x, int32_t y) { return offFace(x, y) > strokeDifference; }))
+        {
+            std::map<int32_t, size_t> onLetters;
+            size_t onWord = 0;
+
+            for (const auto [x, y] : stroke.Pixels)
+            {
+                if (const auto found = letterAt.find(originalOf(x, y)); found != letterAt.end())
+                {
+                    onLetters[found->second]++;
+                    onWord++;
+                }
+            }
+
+            if (onWord == 0)
+            {
+                continue;
+            }
+
+            const auto [letter, count] =
+                *std::ranges::max_element(onLetters, {}, [](const auto& on) { return on.second; });
+            const bool own = count * OwnStrokeOf >= onWord * OwnStrokeShare;
+
+            for (const auto [x, y] : stroke.Pixels)
+            {
+                ownerAt(x, y) = own || nearest[at(x, y)].first < 0 ? letter : nearest[at(x, y)].first;
+            }
+        }
+
+        // The soft edges.
+        for (int32_t y = area.Top; y <= area.Bottom; y++)
+        {
+            for (int32_t x = area.Left; x <= area.Right; x++)
+            {
+                if (ownerAt(x, y) >= 0 || offFace(x, y) <= EdgeDifference)
+                {
+                    continue;
+                }
+
+                if (const auto [letter, steps] = nearest[at(x, y)]; letter >= 0 && steps <= EdgeReach * scale)
+                {
+                    ownerAt(x, y) = letter;
+                }
+            }
+        }
+
+        return owners;
+    }
+
+    /// <summary>
     /// A picture being made of others' pixels, each pixel's origin kept, so its HD copy is made of theirs the same way.
     /// </summary>
     class Canvas
@@ -269,6 +525,37 @@ namespace
             _Origins[Index(x, y)] = {source, fromX, fromY};
         }
 
+        /// <summary>
+        /// Wipes <paramref name="word"/> (the big button's own word, as pieces of its up picture, this picture's base) from
+        /// the HD copy by its HD pixels (HdLetterOwners), each to its row's face: the original pixels are wiped with
+        /// <see cref="Put"/>, but the HD art's edges reach past them.
+        /// </summary>
+        void WipeButtonWord(std::span<const Piece> word) { _WipedWord.assign(word.begin(), word.end()); }
+
+        /// <summary>
+        /// Lays letter <paramref name="letter"/> of <paramref name="word"/> (a big button's word, as pieces of its up
+        /// picture), cut from <paramref name="from"/> (the button in this picture's state), moved <paramref name="shift"/>
+        /// columns. Its pixels are put as <see cref="Put"/> puts them; its HD copy is the letter's HD pixels in the pack's
+        /// copy of <paramref name="from"/> (HdLetterOwners), its soft edges whole, laid on the face this picture's HD copy
+        /// has there.
+        /// </summary>
+        void LayButtonLetter(std::span<const Piece> word, size_t letter, const std::shared_ptr<MCLogPort>& from,
+                             int32_t shift)
+        {
+            const int32_t source = SourceOf(from);
+
+            for (const auto [x, y] : word[letter].Pixels)
+            {
+                if (x + shift >= 0 && x + shift < _Width && y >= 0 && y < _Height)
+                {
+                    _Pixels[Index(x + shift, y)] = PixelOf(*from, x, y);
+                }
+            }
+
+            _ButtonLetters.push_back(
+                {.Source = source, .Word = std::vector(word.begin(), word.end()), .Letter = letter, .Shift = shift});
+        }
+
         /// <summary>The picture made, with its HD copy kept when the pack has its sources' (<paramref name="what"/> for the log).</summary>
         std::shared_ptr<MCLogPort> Made(std::string_view what) const
         {
@@ -287,7 +574,132 @@ namespace
             int32_t Y = 0;
         };
 
+        /// <summary>A big button's letter laid by its HD pixels (<see cref="LayButtonLetter"/>).</summary>
+        struct ButtonLetter
+        {
+            int32_t Source = 0;
+            std::vector<Piece> Word;
+            size_t Letter = 0;
+            int32_t Shift = 0;
+        };
+
         size_t Index(int32_t x, int32_t y) const { return static_cast<size_t>(y * _Width + x); }
+
+        /// <summary>
+        /// Wipes <see cref="_WipedWord"/> from <paramref name="shown"/> (the HD copy, its other pixels made) and lays
+        /// <see cref="_ButtonLetters"/> on it from <paramref name="hd"/> (the sources' HD copies, the base's first): each
+        /// HD pixel of a letter as far from the face it lies on as it was from its own button's face, and its original
+        /// pixels' indices. False when a frame isn't kept as RGBA8 or BC7.
+        /// </summary>
+        bool LayHdLetters(MCHdArt::Frame& shown, std::span<const std::shared_ptr<const MCHdArt::Frame>> hd) const
+        {
+            std::optional<HdColors> to = HdColors::Of(shown);
+
+            if (!to.has_value())
+            {
+                return false;
+            }
+
+            const int32_t scale = shown.Scale;
+            const int32_t faceX = FaceColumn(scale);
+
+            if (!_WipedWord.empty())
+            {
+                const std::optional<HdColors> base = HdColors::Of(*hd[0]);
+
+                if (!base.has_value() || hd[0]->Scale != scale)
+                {
+                    return false;
+                }
+
+                const std::vector<int32_t> owners = HdLetterOwners(*base, scale, _WipedWord);
+
+                for (int32_t y = 0; y < base->Height() && y < to->Height(); y++)
+                {
+                    for (int32_t x = 0; x < base->Width() && x < to->Width(); x++)
+                    {
+                        if (owners[static_cast<size_t>(y) * static_cast<size_t>(base->Width()) +
+                                   static_cast<size_t>(x)] >= 0)
+                        {
+                            const auto face = to->At(faceX, y);
+                            to->Set(x, y, std::array<uint8_t, RgbaBytes>{face[0], face[1], face[2], face[RgbBytes]});
+                        }
+                    }
+                }
+            }
+
+            // Each source's colours and owners, found once for its letters.
+            std::map<int32_t, std::pair<HdColors, std::vector<int32_t>>> sources;
+
+            for (const ButtonLetter& letter : _ButtonLetters)
+            {
+                const MCHdArt::Frame& fromFrame = *hd[static_cast<size_t>(letter.Source)];
+                auto found = sources.find(letter.Source);
+
+                if (found == sources.end())
+                {
+                    std::optional<HdColors> colors = HdColors::Of(fromFrame);
+
+                    if (!colors.has_value() || fromFrame.Scale != scale)
+                    {
+                        return false;
+                    }
+
+                    std::vector<int32_t> owners = HdLetterOwners(*colors, scale, letter.Word);
+                    found = sources.try_emplace(letter.Source, std::move(*colors), std::move(owners)).first;
+                }
+
+                const auto& [from, owners] = found->second;
+                const int32_t toShift = letter.Shift * scale;
+
+                for (int32_t y = 0; y < from.Height() && y < to->Height(); y++)
+                {
+                    for (int32_t x = 0; x < from.Width(); x++)
+                    {
+                        if (owners[static_cast<size_t>(y) * static_cast<size_t>(from.Width()) +
+                                   static_cast<size_t>(x)] != static_cast<int32_t>(letter.Letter) ||
+                            x + toShift < 0 || x + toShift >= to->Width())
+                        {
+                            continue;
+                        }
+
+                        const auto pixel = from.At(x, y);
+                        const auto fromFace = from.At(faceX, y);
+                        const auto toFace = to->At(faceX, y);
+                        std::array<uint8_t, RgbaBytes> color{};
+
+                        for (size_t channel = 0; channel < RgbBytes; channel++)
+                        {
+                            color[channel] = static_cast<uint8_t>(
+                                std::clamp(static_cast<int32_t>(toFace[channel]) + pixel[channel] - fromFace[channel],
+                                           0, ChannelMax));
+                        }
+
+                        color[RgbBytes] = pixel[RgbBytes];
+                        to->Set(x + toShift, y, color);
+                    }
+                }
+
+                const int32_t fromWidth = fromFrame.OriginalWidth();
+                const int32_t toWidth = shown.OriginalWidth();
+
+                for (const auto [x, y] : letter.Word[letter.Letter].Pixels)
+                {
+                    const size_t fromAt = static_cast<size_t>(y * fromWidth + x) * MCHdArt::IndexBytes;
+                    const size_t toAt = static_cast<size_t>(y * toWidth + x + letter.Shift) * MCHdArt::IndexBytes;
+
+                    if (fromAt + MCHdArt::IndexBytes <= fromFrame.Indices.size() &&
+                        toAt + MCHdArt::IndexBytes <= shown.Indices.size())
+                    {
+                        std::copy_n(fromFrame.Indices.begin() + static_cast<ptrdiff_t>(fromAt), MCHdArt::IndexBytes,
+                                    shown.Indices.begin() + static_cast<ptrdiff_t>(toAt));
+                    }
+                }
+            }
+
+            to->WriteTo(shown);
+            return true;
+        }
 
         /// <summary>
         /// Gives <paramref name="made"/> an HD copy made of the pack's copies of its sources, as it was of them. None
@@ -337,6 +749,15 @@ namespace
                 }
             }
 
+            if ((!_ButtonLetters.empty() || !_WipedWord.empty()) && !LayHdLetters(shown, hd))
+            {
+                SDL_Log(
+                    "%.*s: the HD art pack's pictures (format %d) can't be lettered by their HD pixels; it shows as it "
+                    "is",
+                    static_cast<int>(what.size()), what.data(), static_cast<int>(shown.Format));
+                return;
+            }
+
             MCHdArt::KeepPicture(made.Pixels(), made.Width(), made.Height(), std::move(shown));
         }
 
@@ -345,6 +766,8 @@ namespace
         std::vector<uint8_t> _Pixels;
         std::vector<Origin> _Origins;
         std::vector<std::shared_ptr<MCLogPort>> _Sources;
+        std::vector<Piece> _WipedWord;
+        std::vector<ButtonLetter> _ButtonLetters;
     };
 
     /// <summary>A big button's picture in <paramref name="state"/>, and whether it's the size the buttons are.</summary>
@@ -465,10 +888,11 @@ std::optional<MCButtonPictures> MCLanButtonPictures()
             }
         }
 
-        const std::array<CutLetter, 3> letters = {CutLetter{serial[SerialL], serialArt},
-                                                  CutLetter{serial[SerialA], serialArt},
-                                                  CutLetter{internet[InternetN], internetArt}};
-        Lay(canvas, letters, shifts);
+        canvas.WipeButtonWord(network);
+
+        canvas.LayButtonLetter(serial, SerialL, serialArt, shifts[0]);
+        canvas.LayButtonLetter(serial, SerialA, serialArt, shifts[1]);
+        canvas.LayButtonLetter(internet, InternetN, internetArt, shifts[2]);
         made[i] = canvas.Made(std::format("LAN button ({})", state));
     }
 

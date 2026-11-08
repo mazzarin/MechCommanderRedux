@@ -26,6 +26,7 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPurchaseDlg.h"
+#include "logistics/MCControlsPanel.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCFileScrollPane.h"
@@ -528,11 +529,13 @@ auto MCMission::Run() -> int32_t
                 Logistics->ShowLogScreen(true, false);
             }
 
-            // Port (personal): the reports' notice or question, once due and the main menu is free; a lobby's room
-            // through a restart into an update (network/MCLobbyUpdate.h); an internet game's room asking a player
-            // away whether it's still there (logistics/MCIdleCheck.h); port-only (Redux HD): a host's room ending
-            // once its guests have left on its word (network/MCRoomEnd.h).
+            // Port (personal): the reports' notice or question, once due and the main menu is free; then a key for
+            // a command whose new default key the player uses for another (logistics/MCControlsPanel.h); a lobby's
+            // room through a restart into an update (network/MCLobbyUpdate.h); an internet game's room asking a
+            // player away whether it's still there (logistics/MCIdleCheck.h); port-only (Redux HD): a host's room
+            // ending once its guests have left on its word (network/MCRoomEnd.h).
             ShowReportsNotice();
+            AskGivenWayKeys();
             MCLobbyUpdate::Frame();
             MCIdleCheck::Frame();
             MCRoomEnd::Frame();

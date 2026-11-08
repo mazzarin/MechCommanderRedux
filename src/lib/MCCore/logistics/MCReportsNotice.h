@@ -11,5 +11,10 @@
 /// </summary>
 void ShowReportsNotice();
 
+/// <summary>
+/// Whether the main menu, or the session screen, is up with no dialog or UPDATE page over it: where a notice can show.
+/// </summary>
+bool NoticeScreenFree();
+
 /// <summary>What the main menu says for <paramref name="prompt"/>: a notice's text, or the question's; none, nothing.</summary>
 std::string_view ReportsText(MCTelemetry::MCPrompt prompt);

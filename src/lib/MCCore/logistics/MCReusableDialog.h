@@ -63,6 +63,13 @@ public:
     int32_t TimeoutResult = 0;
     /// <summary>When set, the next <see cref="Deactivate"/> keeps the callbacks (and clears this flag).</summary>
     bool KeepCallbacks = false;
+    /// <summary>
+    /// Port-only: when set, the dialog asks for a key. A key pressed while it shows (but Enter, Escape and a modifier
+    /// alone) goes here in a binding's form (<see cref="MCKeyBindings::FromKeyEvent"/>); true closes the dialog as OK
+    /// does (its callback with 0). Cleared with the callbacks. Whoever sets it gives the dialog the keyboard
+    /// (<c>MCGuiSystem::SetText</c>, over a chat line's), which <see cref="Deactivate"/> gives back.
+    /// </summary>
+    std::function<bool(uint32_t key)> KeyTaker;
     /// <summary>The OK button (a child).</summary>
     MCGuiHandle<MCLogDialogButton> OkButton;
     /// <summary>The Cancel button (a child).</summary>

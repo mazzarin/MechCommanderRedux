@@ -540,6 +540,13 @@ namespace
         return keys;
     }
 
+    /// <summary>The defaults the last ReadPrefs left without a key, not yet taken (MCKeyBindings::TakeGivenWay).</summary>
+    std::vector<MCKeyBindings::MCGivenWay>& GivenWayKeys()
+    {
+        static std::vector<MCKeyBindings::MCGivenWay> givenWay;
+        return givenWay;
+    }
+
     /// <summary>Calls <paramref name="visit"/> with each command a player can bind, in the CONTROLS screen's order.</summary>
     template <typename F> void ForEachListedCommand(F&& visit)
     {
@@ -824,6 +831,7 @@ void MCKeyBindings::ReadPrefs(MCFitIniFile& file)
     MCKeyTable keys = Defaults();
     // The commands PREFS gives a key: the player's own choices.
     std::array<bool, NumKeyCommands> chosen{};
+    GivenWayKeys().clear();
 
     if (file.SeekBlock(PrefsBlock) == 0)
     {
@@ -881,10 +889,25 @@ void MCKeyBindings::ReadPrefs(MCFitIniFile& file)
                             static_cast<int>(otherId.size()), otherId.data(), static_cast<int>(otherId.size()),
                             otherId.data());
                     otherKey = NoKey;
+                    GivenWayKeys().push_back({.Command = other, .Key = key, .Owner = command});
                 });
         });
 
     SetPlayer(keys);
+}
+
+auto MCKeyBindings::TakeGivenWay() -> std::optional<MCGivenWay>
+{
+    std::vector<MCGivenWay>& givenWay = GivenWayKeys();
+
+    if (givenWay.empty())
+    {
+        return std::nullopt;
+    }
+
+    const MCGivenWay next = givenWay.front();
+    givenWay.erase(givenWay.begin());
+    return next;
 }
 
 void MCKeyBindings::WritePrefs(MCFitIniFile& file)

@@ -11,6 +11,8 @@
 #include "logistics/MCLogKeyList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCReusableDialog.h"
+#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
@@ -121,6 +123,54 @@ namespace
         Frames();
     }
 
+    /// <summary>The test user's PREFS.</summary>
+    std::filesystem::path PrefsPath()
+    {
+        return MCFileSystem::UserRoot() / "prefs.cfg";
+    }
+
+    /// <summary>The player's LIGHTS key.</summary>
+    uint32_t LightsKey()
+    {
+        return MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Lights)];
+    }
+
+    /// <summary>Reads the test user's PREFS as the game's start does.</summary>
+    void ReadPrefsFile()
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(PrefsPath())), 0);
+        ReadPreferences(prefs);
+    }
+
+    /// <summary>A PREFS from before LIGHTS, its player's EJECT on N, read as a start reads it, then a few frames.</summary>
+    void StartWithOldPrefs()
+    {
+        {
+            MCFitIniFile prefs;
+            REQUIRE_EQ(prefs.Create(MCFileSystem::ToUtf8(PrefsPath())), 0);
+            prefs.WriteBlock("MechCommander");
+            prefs.WriteIdLong("Difficulty", 1);
+            prefs.WriteBlock("Controls");
+            prefs.WriteIdString(
+                "Eject", MCKeyBindings::KeyName(MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Lights)]));
+        }
+
+        ReadPrefsFile();
+        Frames();
+    }
+
+    /// <summary>The LIGHTS key PREFS keeps.</summary>
+    MCFitResult<std::string> SavedLights()
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(PrefsPath())), 0);
+        REQUIRE_EQ(prefs.SeekBlock("Controls"), 0);
+        return prefs.Read<std::string>("Lights");
+    }
+
+    /// <summary>A key no default binds (Y), for LIGHTS.</summary>
+    constexpr uint32_t FreeKey = 0x15;
 }
 
 /// <summary>
@@ -414,28 +464,98 @@ TEST_CASE_ISOLATED("game: PREFS keeps the changed keys and reads them back")
 
     // A key the player gave a command before a default came on it (PREFS from before LIGHTS took N) stays theirs:
     // the default gives way and is left without a key.
-    const uint32_t lightsKey = MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Lights)];
-    {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Create(MCFileSystem::ToUtf8(prefsPath)), 0);
-        prefs.WriteBlock("MechCommander");
-        prefs.WriteIdLong("Difficulty", 1);
-        prefs.WriteBlock("Controls");
-        prefs.WriteIdString("Eject", MCKeyBindings::KeyName(lightsKey));
-    }
-
-    {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
-        ReadPreferences(prefs);
-    }
-
-    CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Eject)], lightsKey);
-    CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Lights)], MCKeyBindings::NoKey);
+    StartWithOldPrefs();
+    CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Eject)],
+             MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Lights)]);
+    CHECK_EQ(LightsKey(), MCKeyBindings::NoKey);
     CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Stop)],
              MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Stop)]);
 
     std::filesystem::remove(prefsPath);
+}
+
+/// <summary>
+/// A player whose PREFS (from before LIGHTS) gave LIGHTS' N to another command is asked once, on the main menu, for a
+/// key for LIGHTS: a key in use is refused, the message saying whose it is; a free one is LIGHTS' key, and PREFS keeps
+/// it, so the next start asks nothing. OK instead leaves LIGHTS without a key, kept as such.
+/// </summary>
+TEST_CASE_ISOLATED("game: a player who uses LIGHTS' new key for another command is asked once for a LIGHTS key")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    StartWithOldPrefs();
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    REQUIRE(dialog.IsShowing());
+    CHECK_EQ(dialog.Text, std::string("LIGHTS is new and takes N, but N is your EJECT key. Press a key for LIGHTS, or "
+                                      "OK to leave it without one: CONTROLS can set it later."));
+    CHECK_EQ(LightsKey(), MCKeyBindings::NoKey);
+
+    // JUMP's key is refused.
+    MCScreenInput::RealKey(SDL_SCANCODE_J);
+    CHECK(dialog.IsShowing());
+    CHECK_EQ(dialog.Text,
+             std::string("J is your JUMP key. Press another key for LIGHTS, or OK to leave it without one."));
+    CHECK_EQ(LightsKey(), MCKeyBindings::NoKey);
+
+    // A free key is LIGHTS' key, kept in PREFS.
+    REQUIRE_EQ(MCKeyBindings::FindCommand(MCKeyBindings::Player(), FreeKey, MCKeyCommand::Unused),
+               MCKeyCommand::Unused);
+    MCScreenInput::RealKey(SDL_SCANCODE_Y);
+    Frames();
+    CHECK(!dialog.IsShowing());
+    CHECK_EQ(LightsKey(), FreeKey);
+    CHECK_EQ(SavedLights(), MCFitResult<std::string>("Y"));
+
+    // The next start keeps it and asks nothing.
+    ReadPrefsFile();
+    Frames();
+    CHECK(!dialog.IsShowing());
+    CHECK_EQ(LightsKey(), FreeKey);
+
+    // OK leaves LIGHTS without a key, and PREFS keeps that too.
+    StartWithOldPrefs();
+    REQUIRE(dialog.IsShowing());
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    Frames();
+    CHECK(!dialog.IsShowing());
+    CHECK_EQ(LightsKey(), MCKeyBindings::NoKey);
+    CHECK_EQ(SavedLights(), MCFitResult<std::string>("NONE"));
+    ReadPrefsFile();
+    Frames();
+    CHECK(!dialog.IsShowing());
+
+    std::filesystem::remove(PrefsPath());
+}
+
+/// <summary>
+/// A game a lobby starts never shows the main menu: its room (the session screen) asks for the LIGHTS key, taking the
+/// keyboard from the room's chat line while it does.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's session screen asks for a LIGHTS key")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLobby("-host -port 28975 -player BOB"));
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    StartWithOldPrefs();
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    REQUIRE(dialog.IsShowing());
+    CHECK(dialog.Text.starts_with("LIGHTS is new and takes N"));
+    REQUIRE_EQ(MCKeyBindings::FindCommand(MCKeyBindings::Player(), FreeKey, MCKeyCommand::Unused),
+               MCKeyCommand::Unused);
+    MCScreenInput::RealKey(SDL_SCANCODE_Y);
+    Frames();
+    CHECK(!dialog.IsShowing());
+    CHECK_EQ(LightsKey(), FreeKey);
+    CHECK_EQ(SavedLights(), MCFitResult<std::string>("Y"));
+    std::filesystem::remove(PrefsPath());
 }
 
 /// <summary>

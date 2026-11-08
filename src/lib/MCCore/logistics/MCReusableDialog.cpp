@@ -2,6 +2,7 @@
 #include "logistics/MCReusableDialog.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
+#include "iface/MCKeyBindings.h"
 #include "lib/MCFatal.h"
 #include "main/MCGameStrings.h"
 
@@ -158,6 +159,17 @@ auto MCReusableDialog::HandleEvent(MCGuiEvent& event) -> void
             OkButton->RunCallback();
             Deactivate(0);
         }
+        else if (KeyTaker && event.ScanCode != 0 && !MCKeyBindings::IsModifierKey(event.ScanCode))
+        {
+            // Port-only: the key the dialog asks for.
+            if (KeyTaker(MCKeyBindings::FromKeyEvent(event.ScanCode, event.ShiftKey != 0, event.CtrlKey != 0,
+                                                     event.AltKey != 0)))
+            {
+                Deactivate(0);
+            }
+
+            return;
+        }
     }
     else if (event.Type == MCGuiEventType::Timer)
     {
@@ -200,6 +212,12 @@ auto MCReusableDialog::Deactivate(int32_t dialogResult) -> void
     GuiSystem().Release();
     ShowGuiWindow(false);
 
+    // Port-only: the keyboard a dialog asking for a key held (KeyTaker) goes back.
+    if (GuiSystem().HasText(*this))
+    {
+        GuiSystem().ReleaseText();
+    }
+
     // The original also skipped a callback pointer IsBadReadPtr rejected.
     if (Callback)
     {
@@ -213,6 +231,7 @@ auto MCReusableDialog::Deactivate(int32_t dialogResult) -> void
     }
 
     Callback = nullptr;
+    KeyTaker = nullptr;
     OkButton->Callback().SetExec(nullptr);
     CancelButton->Callback().SetExec(nullptr);
     GuiSystem().RemoveTimer(*this, TimeoutTimer);

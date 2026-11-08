@@ -125,9 +125,27 @@ namespace MCKeyBindings
     /// <summary>
     /// Reads the player's bindings from <paramref name="file"/>'s Controls block over the defaults (none: the
     /// defaults). A command or key PREFS names that isn't one is left as it was, and logged. A default on a key PREFS
-    /// gives another command is left without a key (port-only: a default added later never takes a player's key).
+    /// gives another command is left without a key (port-only: a default added later never takes a player's key), and
+    /// kept for <see cref="TakeGivenWay"/>.
     /// </summary>
     void ReadPrefs(MCFitIniFile& file);
+
+    /// <summary>A default <see cref="ReadPrefs"/> left without a key, as the player gave its key to another command.</summary>
+    struct MCGivenWay
+    {
+        /// <summary>The command left without a key.</summary>
+        MCKeyCommand Command = MCKeyCommand::Unused;
+        /// <summary>Its default key.</summary>
+        uint32_t Key = NoKey;
+        /// <summary>The command the player gave that key.</summary>
+        MCKeyCommand Owner = MCKeyCommand::Unused;
+    };
+
+    /// <summary>
+    /// Port-only: the next default the last <see cref="ReadPrefs"/> left without a key, taken off its list (none once
+    /// all are taken), for the player to choose a key (logistics/MCControlsPanel.h's <c>AskGivenWayKeys</c>).
+    /// </summary>
+    std::optional<MCGivenWay> TakeGivenWay();
 
     /// <summary>Writes the Controls block: the bindings of <see cref="Player"/> that differ from the defaults.</summary>
     void WritePrefs(MCFitIniFile& file);

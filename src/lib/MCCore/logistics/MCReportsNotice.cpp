@@ -45,16 +45,23 @@ namespace
     }
 }
 
+bool NoticeScreenFree()
+{
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    return logistics != nullptr && OnNoticeScreen(*logistics) && !logistics->MessageDialog->IsShowing() &&
+           !logistics->QuestionDialog->IsShowing() && !UpdatePageShown();
+}
+
 void ShowReportsNotice()
 {
     const MCPrompt prompt = MCTelemetry::Prompt();
-    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-    if (prompt == MCPrompt::None || logistics == nullptr || !OnNoticeScreen(*logistics) ||
-        logistics->MessageDialog->IsShowing() || logistics->QuestionDialog->IsShowing() || UpdatePageShown())
+    if (prompt == MCPrompt::None || !NoticeScreenFree())
     {
         return;
     }
+
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
     if (prompt == MCPrompt::Ask)
     {

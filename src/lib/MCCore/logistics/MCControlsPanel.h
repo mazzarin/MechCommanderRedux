@@ -36,3 +36,10 @@ MCKeyBindings::MCKeyTable& EditedKeys();
 
 /// <summary>The CONTROLS panel's list, or null before the panel is made.</summary>
 std::shared_ptr<MCLogKeyList> ControlsList();
+
+/// <summary>
+/// Port-only: once the main menu, or a lobby's session screen, is free, asks the player for a key for each command whose
+/// new default key they use for another (<see cref="MCKeyBindings::TakeGivenWay"/>, as LIGHTS' N came after players could
+/// bind N): the next key not in use is its key, OK leaves it without one; PREFS keeps either, so it's asked once.
+/// </summary>
+void AskGivenWayKeys();

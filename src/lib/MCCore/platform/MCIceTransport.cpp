@@ -175,6 +175,55 @@ size_t MCIceTransport::Links() const
     return _Links.size();
 }
 
+void MCIceTransport::Tend()
+{
+    const std::scoped_lock lock(_Lock);
+    Pump();
+}
+
+void MCIceTransport::Reach(std::string_view host)
+{
+    const std::optional<uint32_t> ip = Resolve(host);
+
+    if (!ip.has_value())
+    {
+        return;
+    }
+
+    const std::scoped_lock lock(_Lock);
+    Pump();
+    const std::optional<uint32_t> id = LinkToGame(*ip);
+    _Reaches[*ip] = !id.has_value();
+
+    if (id.has_value())
+    {
+        _Links.at(*id).Reached = true;
+    }
+}
+
+MCIceTransport::Reaching MCIceTransport::Reached(std::string_view host)
+{
+    const std::scoped_lock lock(_Lock);
+    Pump();
+    const auto ip = _GameIps.find(host);
+    const auto reach = ip != _GameIps.end() ? _Reaches.find(ip->second) : _Reaches.end();
+
+    if (reach == _Reaches.end() || reach->second)
+    {
+        return Reaching::Failed;
+    }
+
+    const auto link = std::ranges::find_if(_Links, [&](const auto& entry)
+                                           { return entry.second.Guest && entry.second.Ip == ip->second; });
+
+    if (link == _Links.end())
+    {
+        return Reaching::Failed;
+    }
+
+    return IsOpen(link->second) ? Reaching::Open : Reaching::Opening;
+}
+
 bool MCIceTransport::Startup()
 {
     return true;
@@ -247,6 +296,8 @@ MCSocket::Handle MCIceTransport::ConnectTcp(const MCSocket::Address& to, int tim
         }
 
         Link& link = _Links.at(*id);
+        // The connection keeps the link from now (a link Reach opened was kept for it).
+        link.Reached = false;
         handle = Open(Kind::Stream, 0);
         Socket& stream = _Sockets.at(handle);
         stream.Link = *id;
@@ -1045,6 +1096,13 @@ void MCIceTransport::EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::strin
 
     SDL_Log("MCIceTransport: %s ended: %.*s", LinkName(link.Guest, link.Peer).c_str(), static_cast<int>(why.size()),
             why.data());
+
+    // A game reached over it is out of reach now.
+    if (const auto reach = _Reaches.find(link.Ip); link.Guest && reach != _Reaches.end())
+    {
+        reach->second = true;
+    }
+
     const auto now = std::chrono::steady_clock::now();
     const bool service = link.ServiceSince.has_value();
 
@@ -1108,7 +1166,7 @@ void MCIceTransport::DropUnused()
 
         const bool idle = !link.Guest && link.WasOpen && !carries && now - link.IdleSince > _Deadlines.Idle;
 
-        if (!idle && (carries || (link.Guest ? !link.Senders.empty() : listening)))
+        if (!idle && (carries || (link.Guest ? !link.Senders.empty() || link.Reached : listening)))
         {
             link.UnusedSince.reset();
             continue;

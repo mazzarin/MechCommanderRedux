@@ -81,6 +81,10 @@ TEST_CASE("lobby updates: the rejoin note keeps only the lobby's words, written 
     CHECK_EQ(MCRejoinNote::LobbyCommandLine(host),
              std::string("-host -port 28800 -player BOB -matchweather rain -slot BOB 1 0 -rejoin"));
 
+    // An internet game's switches are the lobby's too: a guest's rejoin finds the game by its code again.
+    const MCLobbyLaunchArgs guest{.Active = true, .CommandLine = "-join PXYL -internet -fps -player ANN -public"};
+    CHECK_EQ(MCRejoinNote::LobbyCommandLine(guest), std::string("-join PXYL -internet -player ANN -public -rejoin"));
+
     // A lobby's switch keeps the word it takes, whatever it says; a -slot short of its words is nothing.
     const MCScratchFolder folder(ScratchGroup, "lobby words");
     WriteNote(folder, NoteBuild, WrittenAt,

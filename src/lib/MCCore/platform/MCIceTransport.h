@@ -133,6 +133,28 @@ public:
     /// <summary>Links open or opening now (the tests').</summary>
     size_t Links() const;
 
+    /// <summary>Moves the service's signals and the links' bytes along, for a game with no other call to make yet.</summary>
+    void Tend();
+
+    /// <summary>How far this game's link to a game it reaches has got (<see cref="Reach"/>).</summary>
+    enum class Reaching
+    {
+        Opening,
+        /// <summary>It carries bytes: a search over it finds the game at once.</summary>
+        Open,
+        /// <summary>It couldn't open, or it ended (its host gone, or it closed it).</summary>
+        Failed,
+    };
+
+    /// <summary>
+    /// Opens this game's link to the game named <paramref name="host"/> (Resolve's) now, before the game searches over
+    /// it, so a join waits for nothing on the game's own thread. The link waits for the game's connection over it; the
+    /// host closes one that carries none (<see cref="Deadlines::Idle"/>).
+    /// </summary>
+    void Reach(std::string_view host);
+    /// <summary>How far the link <see cref="Reach"/> opened to <paramref name="host"/> has got (Failed without one).</summary>
+    Reaching Reached(std::string_view host);
+
     bool Startup() override;
     /// <summary>The address of the game named <paramref name="host"/> on the service (the same each time).</summary>
     std::optional<uint32_t> Resolve(std::string_view host) override;
@@ -235,6 +257,8 @@ private:
         std::vector<uint8_t> Input;
         /// <summary>A guest end: the UDP sockets that sent over it (with its streams, what keeps it).</summary>
         std::set<MCSocket::Handle> Senders;
+        /// <summary>A guest end <see cref="Reach"/> opened: kept until a connection goes over it.</summary>
+        bool Reached = false;
         uint32_t NextStream = 1;
     };
 
@@ -293,6 +317,8 @@ private:
     /// <summary>The games' names by their addresses here, and back.</summary>
     std::map<uint32_t, std::string> _GameNames;
     std::map<std::string, uint32_t, std::less<>> _GameIps;
+    /// <summary>The games <see cref="Reach"/> reached, by their addresses here: whether that link failed.</summary>
+    std::map<uint32_t, bool> _Reaches;
     MCSocket::Handle _NextHandle = 1;
     uint16_t _NextPort;
     uint32_t _NextLink = 1;

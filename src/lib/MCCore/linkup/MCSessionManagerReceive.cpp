@@ -42,6 +42,8 @@ void MCSessionManager::ProcessMessages()
         return;
     }
 
+    TendInternet();
+
     if (HasPlayerNumber && Players.size() > 1 && IsHost)
     {
         const uint32_t now = static_cast<uint32_t>(MCPort::PerformanceCounter());

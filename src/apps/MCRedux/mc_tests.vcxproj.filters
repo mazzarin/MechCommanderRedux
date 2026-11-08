@@ -171,6 +171,9 @@
     <ClCompile Include="tests\InterfaceTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\InternetGameTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\LauncherTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

@@ -24,6 +24,7 @@
 #include "lib/MCFastFileSet.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrain.h"
+#include "platform/MCNetSwitch.h"
 #include "platform/MCNeverDestroyed.h"
 
 namespace
@@ -40,7 +41,8 @@ namespace
                 context->SetRandom(std::make_unique<MCCrtRandom>());
                 context->SetFiles(std::make_unique<MCDiskFileSource>());
                 context->SetAudio(std::make_unique<MCSdlAudioDevice>());
-                context->SetNet(std::make_unique<MCSocketTransport>());
+                // The system's sockets, or an internet game's links while one is on.
+                context->SetNet(std::make_unique<MCNetSwitch>(std::make_unique<MCSocketTransport>()));
                 context->SetFastFiles(std::make_unique<MCFastFileSet>());
                 return context;
             }());

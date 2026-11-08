@@ -14,6 +14,7 @@
 #include "linkup/MCLinkupMessages.h"
 
 class MCDirectPlay;
+class MCInternetGame;
 class MCFidpGroup;
 class MCFidpMessage;
 class MCFidpPlayer;
@@ -47,6 +48,13 @@ struct MCLobbyLaunchArgs
     /// update starts again with it: network/MCRejoinNote.h).
     /// </summary>
     std::string CommandLine;
+    /// <summary>
+    /// Port (Redux HD): an internet game (-internet): hosted on the service, or joined by its code (the Address),
+    /// through network/MCInternetGame.
+    /// </summary>
+    bool Internet = false;
+    /// <summary>Port (Redux HD): a hosted internet game is public (-public): listed, its links through relays only.</summary>
+    bool Public = false;
 };
 
 extern MCLobbyLaunchArgs LobbyLaunchArgs;
@@ -220,6 +228,16 @@ public:
     /// <summary>Whether a modem is installed (looked for on every call, as the original did).</summary>
     bool IsModemAvailable();
 
+    // ---- internet games ----
+
+    /// <summary>
+    /// Port (Redux HD): ends the internet game, if any, once DirectPlay has let go of its links, waiting up to
+    /// <paramref name="wait"/> for its leaving to reach the service (a quitting game's, which the process's end cuts off).
+    /// </summary>
+    void EndInternet(std::chrono::milliseconds wait = {});
+    /// <summary>Port (Redux HD): the code of the internet game this machine hosts, once the service gave it.</summary>
+    std::optional<std::string> HostedInternetCode() const;
+
     // ---- the per-frame pump ----
 
     /// <summary>
@@ -336,12 +354,24 @@ public:
     std::function<void(MCFidpMessage& msg)> SystemCallback;
     /// <summary>The DirectPlay object (the port's stand-in).</summary>
     std::unique_ptr<MCDirectPlay> DirectPlay;
+    /// <summary>
+    /// Port (Redux HD): this machine's internet game while it hosts or joins one (network/MCInternetGame): its links
+    /// stand in for the system's sockets under DirectPlay. Leaving the session ends it.
+    /// </summary>
+    std::unique_ptr<MCInternetGame> Internet;
     /// <summary>The <see cref="MCNetProtocol"/> bits of the connections found.</summary>
     uint32_t AvailableProtocols = 0;
     /// <summary>Player numbers 0-5 sorted by latency (the server's ping; reset to 0-5 by LeaveSession).</summary>
     std::array<int32_t, MaxLinkupPlayers> PlayersByLatency{0, 1, 2, 3, 4, 5};
 
 private:
+    /// <summary>
+    /// Port (Redux HD): the lobby's internet game started (LobbyLaunchArgs.Internet): hosted on the service, or this
+    /// game's link to the host open, waiting as the lobby's join does; DP_OK, or why not.
+    /// </summary>
+    uint32_t StartLobbyInternetGame();
+    /// <summary>Port (Redux HD): the internet game moved along, and a host's room said to the service.</summary>
+    void TendInternet();
     /// <summary>Creates the DirectPlay object if needed and enumerates the connections.</summary>
     void CreateDirectPlayInterface();
     /// <summary>Whether <paramref name="player"/> is this machine's player.</summary>

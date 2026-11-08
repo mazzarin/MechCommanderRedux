@@ -6,6 +6,7 @@
 #include "MCWebSocketOpen.h"
 #include "lib/MCRandomId.h"
 #include "main/MCTelemetry.h"
+#include "network/MCInternetGame.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCIceTransport.h"
 #include "platform/MCServiceSignaling.h"
@@ -27,8 +28,9 @@ namespace
 {
     using Clock = std::chrono::steady_clock;
 
-    /// <summary>The internet games' service (tools/cloudflare/games in the workspace).</summary>
-    constexpr std::string_view DefaultService = "wss://mechcommander-redux-games.mazzarin.workers.dev";
+    /// <summary>The trial's room: private, so the service lists nothing and its guests take relays only when told to.</summary>
+    constexpr std::string_view TrialRoomName = "ICE TRIAL";
+    constexpr int32_t TrialPlayers = 2;
     constexpr std::string_view HostWord = "host";
     constexpr std::string_view JoinWord = "join";
     constexpr std::string_view RelayOnlyOption = "--relay-only";
@@ -95,7 +97,7 @@ namespace
         std::string Code;
         bool RelayOnly = false;
         std::optional<int> Seconds;
-        std::string Service = std::string(DefaultService);
+        std::string Service = std::string(MCInternetService);
         std::string Out;
     };
 
@@ -215,6 +217,8 @@ namespace
             return 1;
         }
 
+        // A game the service isn't told is private is public, and its guests' links take relays only.
+        signaling.SetRoom({.Name = std::string(TrialRoomName), .Public = false, .Max = TrialPlayers});
         const MCSocket::Handle listener = transport.ListenTcp(GamePort);
 
         if (listener == MCSocket::InvalidHandle)

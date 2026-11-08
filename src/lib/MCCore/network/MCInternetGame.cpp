@@ -25,13 +25,6 @@ namespace
         return *setup;
     }
 
-    /// <summary>What internet games are made with now: a copy, as a game made meanwhile may outlive a change.</summary>
-    MCInternetSetup SetupNow()
-    {
-        const std::scoped_lock lock(SetupLock);
-        return TheSetup();
-    }
-
     const char* StageText(MCInternetGame::Stage stage)
     {
         switch (stage)
@@ -54,6 +47,13 @@ void MCInternetGame::Setup(MCInternetSetup setup)
 {
     const std::scoped_lock lock(SetupLock);
     TheSetup() = std::move(setup);
+}
+
+MCInternetSetup MCInternetGame::SetupNow()
+{
+    // A copy, as a game made meanwhile may outlive a change.
+    const std::scoped_lock lock(SetupLock);
+    return TheSetup();
 }
 
 bool MCInternetGame::Available()

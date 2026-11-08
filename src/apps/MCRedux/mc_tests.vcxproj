@@ -130,6 +130,7 @@
     <ClCompile Include="tests\InputTests.cpp" />
     <ClCompile Include="tests\InterfaceTests.cpp" />
     <ClCompile Include="tests\InternetGameTests.cpp" />
+    <ClCompile Include="tests\InternetLobbyTests.cpp" />
     <ClCompile Include="tests\LibTests.cpp" />
     <ClCompile Include="tests\LinkupTests.cpp" />
     <ClCompile Include="tests\LobbyUpdateTests.cpp" />

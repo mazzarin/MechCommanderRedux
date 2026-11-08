@@ -689,7 +689,7 @@ int main(int argc, char** argv)
     }
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));
-    MCInternetGame::Setup({.Open = MCOpenWebSocket, .Version = MC_VERSION_SHOWN});
+    MCInternetGame::Setup({.Open = MCOpenWebSocket, .Get = MCMakeHttpGet, .Version = MC_VERSION_SHOWN});
     const int result = RunGame(options->GameCommandLine);
 
     // An internet game's leaving reaches the service before the process ends (its place freed, a host's game ended).

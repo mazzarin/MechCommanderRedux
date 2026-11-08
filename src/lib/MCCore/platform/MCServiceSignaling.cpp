@@ -14,8 +14,7 @@ namespace
 {
     using Json = nlohmann::json;
 
-    /// <summary>The service's protocol this game speaks (its README's).</summary>
-    constexpr int ProtocolVersion = 1;
+    constexpr int ProtocolVersion = MCServiceProtocol;
     /// <summary>A game's code: four characters with no lookalikes (no 0 and O, 1 and I), as the service makes them.</summary>
     constexpr std::string_view CodeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
     constexpr size_t CodeLength = 4;
@@ -37,9 +36,9 @@ namespace
     /// <summary>STUN before the service answers (and the service's own), as host:port.</summary>
     constexpr std::string_view DefaultStun = "stun.cloudflare.com:3478";
     /// <summary>The service's keep-alive, which it answers itself: an idle socket through a router or proxy stays open.</summary>
-    constexpr std::string_view PingText = "ping";
-    constexpr std::string_view PongText = "pong";
-    constexpr auto PingEvery = std::chrono::seconds(30);
+    constexpr std::string_view PingText = MCServicePing;
+    constexpr std::string_view PongText = MCServicePong;
+    constexpr auto PingEvery = MCServicePingEvery;
     constexpr std::string_view HostPath = "/host";
     constexpr std::string_view JoinPath = "/join/";
     constexpr std::string_view BackPath = "/game/";
@@ -892,4 +891,14 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
 
     SDL_Log("MCServiceSignaling: game \"%.*s\"'s socket got a message it doesn't take (%zu bytes)",
             static_cast<int>(game.size()), game.data(), message.Data.size());
+}
+
+bool MCIsGameCode(std::string_view text)
+{
+    return IsCode(text);
+}
+
+std::optional<MCServiceRefusal> MCServiceRefusalNamed(std::string_view type)
+{
+    return RefusalNamed(type);
 }

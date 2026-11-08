@@ -288,6 +288,7 @@
     <ClCompile Include="network\MCGameDataHash.cpp" />
     <ClCompile Include="network\MCInternetCopy.cpp" />
     <ClCompile Include="network\MCInternetGame.cpp" />
+    <ClCompile Include="network\MCInternetLobby.cpp" />
     <ClCompile Include="network\MCLobbyUpdate.cpp" />
     <ClCompile Include="network\MCMPGameConfiguration.cpp" />
     <ClCompile Include="network\MCMultiPlayer.cpp" />
@@ -769,6 +770,7 @@
     <ClInclude Include="network\MCGameDataHash.h" />
     <ClInclude Include="network\MCInternetCopy.h" />
     <ClInclude Include="network\MCInternetGame.h" />
+    <ClInclude Include="network\MCInternetLobby.h" />
     <ClInclude Include="network\MCLobbyUpdate.h" />
     <ClInclude Include="network\MCMPGameConfiguration.h" />
     <ClInclude Include="network\MCMultiPlayer.h" />

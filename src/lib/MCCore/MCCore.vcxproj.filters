@@ -802,6 +802,9 @@
     <ClCompile Include="network\MCInternetGame.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCInternetLobby.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCLobbyUpdate.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -2173,6 +2176,9 @@
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCInternetGame.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCInternetLobby.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCLobbyUpdate.h">

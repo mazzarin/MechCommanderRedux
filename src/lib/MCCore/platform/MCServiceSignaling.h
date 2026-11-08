@@ -66,6 +66,20 @@ enum class MCServiceRefusal
     Unreachable,
 };
 
+/// <summary>Whether <paramref name="text"/> is a game's code as the service makes them (four characters, no lookalikes).</summary>
+bool MCIsGameCode(std::string_view text);
+
+/// <summary>The refusal the service's message type <paramref name="type"/> names ("nogame", "update"...), if it names one.</summary>
+std::optional<MCServiceRefusal> MCServiceRefusalNamed(std::string_view type);
+
+/// <summary>The service's protocol this game speaks (each socket's URL says it).</summary>
+inline constexpr int MCServiceProtocol = 1;
+
+/// <summary>The service's keep-alive, which it answers itself (a socket silent 5 minutes is closed).</summary>
+inline constexpr std::string_view MCServicePing = "ping";
+inline constexpr std::string_view MCServicePong = "pong";
+inline constexpr std::chrono::seconds MCServicePingEvery{30};
+
 /// <summary>How long a dropped socket's place waits (the service's 5 minutes), and the tries at coming back to it.</summary>
 struct MCServiceComeback
 {

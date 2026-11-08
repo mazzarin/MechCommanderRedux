@@ -9,8 +9,10 @@
 
 #include "platform/MCIceTransport.h"
 #include "platform/MCServiceSignaling.h"
+#include "update/MCHttpTransfer.h"
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,6 +28,8 @@ struct MCInternetSetup
 {
     /// <summary>Opens a socket to the service: none, and there are no internet games.</summary>
     MCWebSocketOpener Open;
+    /// <summary>Makes a transfer for the service's plain requests (the count online): none, and none is asked.</summary>
+    std::function<std::unique_ptr<MCHttpSource::MCGet>()> Get;
     /// <summary>The build's version, which every socket says (MC_VERSION_SHOWN).</summary>
     std::string Version;
     /// <summary>The copy's ID every socket says: empty, the one kept in the user folder (MCInternetCopyId).</summary>
@@ -61,6 +65,8 @@ public:
     static void Setup(MCInternetSetup setup);
     /// <summary>Whether internet games can be made (a socket opener is set).</summary>
     static bool Available();
+    /// <summary>What internet games are made with now (a copy: the INTERNET screens' list and count use it too).</summary>
+    static MCInternetSetup SetupNow();
 
     /// <summary>
     /// Hosts a game on <paramref name="net"/>: a public one is listed and its links take relays only, so no player

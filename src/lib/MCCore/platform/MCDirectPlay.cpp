@@ -92,8 +92,14 @@ namespace
     /// for the session's other machines to come back, and a joiner keeps a connection to it before it takes over.
     /// </summary>
     constexpr uint64_t RolloverWaitMs = 10000;
-    /// <summary>Port-only (Redux HD): how long each try at connecting to the machine taking over may take.</summary>
+    /// <summary>
+    /// Port-only (Redux HD): how long each try at connecting to the machine taking over may hold the game up: over the
+    /// internet (a link already open, the connection a round trip through it), and on a LAN, where a machine there
+    /// answers at once; and how often a LAN try comes, so a machine that can't be reached stalls no frame for long.
+    /// </summary>
     constexpr int RolloverConnectMs = 1000;
+    constexpr int LanRolloverConnectMs = 200;
+    constexpr uint64_t LanRolloverTryEveryMs = 500;
     /// <summary>Port-only (Redux HD): the bytes of the key a machine proves itself with as it resumes.</summary>
     constexpr size_t MachineKeyBytes = 32;
     /// <summary>
@@ -589,6 +595,8 @@ struct MCDirectPlay::Impl
         /// <summary>Where it is reached: its own listener, at its address or (an internet game) the game's.</summary>
         MCSocket::Address Address;
         uint64_t Until = 0;
+        /// <summary>When it next tries to connect.</summary>
+        uint64_t NextTry = 0;
         /// <summary>The key this machine comes back with next time, once this one is taken.</summary>
         MachineKey NextKey{};
     };
@@ -1869,7 +1877,16 @@ struct MCDirectPlay::Impl
                 return;
             }
 
-            const MCSocket::Handle socket = MCSocket::ConnectTcp(roll.Address, RolloverConnectMs);
+            // An internet game's try comes once its link is open; a LAN game's, every LanRolloverTryEveryMs.
+            if (NowMs() < roll.NextTry)
+            {
+                return;
+            }
+
+            const bool lan = !RolloverReady;
+            roll.NextTry = NowMs() + (lan ? LanRolloverTryEveryMs : 0);
+            const MCSocket::Handle socket =
+                MCSocket::ConnectTcp(roll.Address, lan ? LanRolloverConnectMs : RolloverConnectMs);
 
             if (socket == MCSocket::InvalidHandle)
             {

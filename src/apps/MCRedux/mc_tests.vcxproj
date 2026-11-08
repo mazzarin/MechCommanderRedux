@@ -154,6 +154,7 @@
     <ClCompile Include="tests\PortTests.cpp" />
     <ClCompile Include="tests\PresenterTests.cpp" />
     <ClCompile Include="tests\PurchaseTests.cpp" />
+    <ClCompile Include="tests\RoomEndTests.cpp" />
     <ClCompile Include="tests\ScenarioTests.cpp" />
     <ClCompile Include="tests\ScreenInput.cpp" />
     <ClCompile Include="tests\ServiceSignalingTests.cpp" />

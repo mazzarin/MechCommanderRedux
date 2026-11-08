@@ -240,6 +240,9 @@
     <ClCompile Include="tests\PurchaseTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\RoomEndTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ScenarioTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

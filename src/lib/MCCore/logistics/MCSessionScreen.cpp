@@ -33,6 +33,7 @@
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMPGameConfiguration.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRoomEnd.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
@@ -1662,6 +1663,8 @@ auto MCSessionScreen::PublishMatchState() const -> void
     // As the mech bay read the typed points before: the text's buffer.
     match.Team1Points = std::atoi(Team1RPText->Buffer.c_str());
     match.Team2Points = std::atoi(Team2RPText->Buffer.c_str());
+    // Port-only (Redux HD): the room the match is played from, which its end goes back to (network/MCRoomEnd.h).
+    MCRoomEnd::MatchStarts();
 }
 
 auto MCSessionScreen::CheckGoodToGo() -> void

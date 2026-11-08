@@ -88,7 +88,13 @@ enum class MCMPMessageType : uint16_t
     /// to everyone (mission/MCNightLights.h). Sent only in a match whose rules have MCMatchRule::NightLights, so every
     /// game in it knows it.
     /// </summary>
-    Lights = 53
+    Lights = 53,
+    /// <summary>
+    /// Port-only (Redux HD): the host's room ends (<c>MCMPLongMessage</c>, its value an <c>MCRoomEnd::MCHow</c>): the host
+    /// closes it (its EXIT), or hosts it again for a rematch (REMATCH at the results), which its guests join again
+    /// (network/MCRoomEnd.h). Sent to everyone; a build without MCMatchRule::Rematch ignores it.
+    /// </summary>
+    RoomEnds = 55
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>

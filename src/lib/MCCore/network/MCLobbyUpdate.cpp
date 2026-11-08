@@ -1052,6 +1052,8 @@ auto MCLobbyUpdate::BackToMenus() -> void
 {
     SDL_Log("Lobby updates: the room was the menus': the game is the menus' again");
     LaunchedFromLobby = false;
+    // Port-only (Redux HD): nor is it a lobby's game after its match (the results' timeout, the game's end).
+    IsMPlayerGame = false;
     LobbyLaunchArgs.Active = false;
     LobbyLaunchArgs.FromMenus = false;
     LobbyLaunchArgs.Place.reset();

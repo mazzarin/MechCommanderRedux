@@ -466,8 +466,11 @@ private:
     void GivePlayerAnID(MCFidpPlayer& player);
     /// <summary>A DirectPlay create-player/group system message: adds it (numbered by the server).</summary>
     void AddPlayerOrGroup(uint32_t playerType, uint32_t id, const DPNAME& name, uint32_t flags);
-    /// <summary>A player or group is leaving (system message before the deletion).</summary>
-    void PlayerOrGroupLeaving(uint32_t playerType, uint32_t id);
+    /// <summary>
+    /// A player or group is leaving (system message before the deletion), with the DPPLAYER_* <paramref name="flags"/>
+    /// it had.
+    /// </summary>
+    void PlayerOrGroupLeaving(uint32_t playerType, uint32_t id, uint32_t flags);
     /// <summary>A DirectPlay destroy-player/group system message: removes and deletes it.</summary>
     void DeletePlayerOrGroup(uint32_t playerType, uint32_t id);
     /// <summary>Adds player <paramref name="playerID"/> to group <paramref name="groupID"/> as a message said.</summary>

@@ -398,7 +398,8 @@ namespace MCTestGuest
         /// <summary>
         /// Answers <paramref name="message"/> from player <paramref name="from"/> if it is a file inquiry (the file
         /// report: <see cref="AnswerFiles"/>'s value and the name asked about), and counts a load mission. The host sends
-        /// a guaranteed message again until it is acknowledged, which this guest never does: each is taken once.
+        /// a guaranteed message again until it is acknowledged, which this guest never does: each is taken once from
+        /// its sender (a room rolled over to another host may send the same bytes again).
         /// </summary>
         void Answer(uint32_t from, std::span<const uint8_t> message)
         {
@@ -416,8 +417,11 @@ namespace MCTestGuest
                 return;
             }
 
-            if (type == static_cast<uint16_t>(MCMPMessageType::SwitchScreen) &&
-                _Taken.emplace(message.begin(), message.end()).second)
+            std::vector<uint8_t> taken(sizeof(from));
+            std::memcpy(taken.data(), &from, sizeof(from));
+            taken.insert(taken.end(), message.begin(), message.end());
+
+            if (type == static_cast<uint16_t>(MCMPMessageType::SwitchScreen) && _Taken.insert(taken).second)
             {
                 _SessionScreens++;
                 return;
@@ -425,7 +429,7 @@ namespace MCTestGuest
 
             if ((type != static_cast<uint16_t>(MCMPMessageType::LoadMission) &&
                  type != static_cast<uint16_t>(MCMPMessageType::FileInquiry)) ||
-                !_Taken.emplace(message.begin(), message.end()).second)
+                !_Taken.insert(taken).second)
             {
                 return;
             }

@@ -516,3 +516,79 @@ TEST_CASE("linkup: a joiner leaves out a seventh player a host announces, where 
         CHECK_EQ(listed->PlayerNumber, i + 2);
     }
 }
+
+/// <summary>
+/// Port-only (Redux HD): the host's game gone without a word (its machine off), DirectPlay's stand-in rolls the session
+/// over to Ann's machine, the earliest joined (MCDirectPlay.h), and on every machine left Ann's player is the next
+/// server, though the host's pings had ranked Cat's first: the server and the hub stay one machine. The players keep
+/// their numbers and groups, and a guaranteed message reaches the new server.
+/// </summary>
+TEST_CASE("linkup: the host's game gone, the machine the session rolls over to has the next server, numbers kept")
+{
+    MCTestContextScope scope;
+    scope.Context().SetNet(std::make_unique<MCLoopbackTransport>());
+    constexpr std::string_view address = "127.0.0.1:28966";
+    std::optional<MCSessionManager> host(std::in_place, TestApplication);
+    host->ConnectTcp(address);
+    MCFidpSession hosted(TestApplication);
+    hosted.SetName("Rolling");
+    REQUIRE_EQ(host->HostSession(hosted, "Bob"), 0);
+    uint32_t group = 0;
+    host->CreateGroup(group, "InnerSphereGroup", {}, 0);
+    CHECK(host->AddPlayerToGroup(group, 0));
+
+    MCSessionManager ann(TestApplication);
+    MCSessionManager cat(TestApplication);
+
+    for (MCSessionManager& joiner : {std::ref(ann), std::ref(cat)})
+    {
+        joiner.ConnectTcp(address);
+        const std::shared_ptr<MCFidpSession> found = FindSession(*host, joiner);
+        REQUIRE(found != nullptr);
+        const _GUID instance = found->SessionDesc.guidInstance;
+        REQUIRE_EQ(WhilePumping(*host, [&] { return joiner.JoinSession(instance, &joiner == &ann ? "Ann" : "Cat"); }),
+                   0);
+        REQUIRE(Exchange(*host, joiner, [&] { return joiner.HasPlayerNumber; }));
+    }
+
+    CHECK(ann.AddPlayerToGroup(group, 0));
+    const uint32_t bob = host->MyPlayerID;
+    REQUIRE(Exchange(ann, cat,
+                     [&]
+                     {
+                         host->ProcessMessages();
+                         const auto annOnCat = cat.GetPlayer(ann.MyPlayerID);
+                         return ann.Players.size() == 3 && cat.Players.size() == 3 && annOnCat != nullptr &&
+                                annOnCat->IsInGroup(group);
+                     }));
+    CHECK_EQ(ann.MyPlayer()->PlayerNumber, 1);
+    CHECK_EQ(cat.MyPlayer()->PlayerNumber, 2);
+
+    // The host's pings ranked Cat's machine the fastest: the original's choice would be Cat.
+    ann.PlayersByLatency = {0, 2, 1, 3, 4, 5};
+    cat.PlayersByLatency = {0, 2, 1, 3, 4, 5};
+    host.reset();
+
+    REQUIRE(
+        Exchange(ann, cat, [&] { return ann.IsHost && cat.ServerID == ann.MyPlayerID && cat.Players.size() == 2; }));
+    CHECK_EQ(ann.ServerID, ann.MyPlayerID);
+    CHECK(!cat.IsHost);
+    CHECK(ann.GetPlayer(bob) == nullptr);
+    CHECK(ann.SpeaksForSession(ann.MyPlayerID));
+    CHECK(cat.SpeaksForSession(ann.MyPlayerID));
+    CHECK_EQ(cat.GetPlayer(ann.MyPlayerID)->PlayerNumber, 1);
+    CHECK_EQ(ann.GetPlayer(cat.MyPlayerID)->PlayerNumber, 2);
+    REQUIRE(ann.GetGroup(group) != nullptr);
+    CHECK(std::ranges::contains(ann.GetGroup(group)->Players, ann.MyPlayerID));
+    CHECK(cat.GetPlayer(ann.MyPlayerID)->IsInGroup(group));
+
+    std::vector<std::vector<uint8_t>> annReceived;
+    ann.ApplicationCallback = [&](MCFidpMessage& msg)
+    { annReceived.emplace_back(msg.Bytes().begin(), msg.Bytes().end()); };
+    MCFIValueMessage hello;
+    hello.Header = FIMSG_GUARANTEED | 20;
+    hello.Value = 0x2468;
+    cat.SendMessageToServerGuaranteed(LinkupBytes(hello));
+    REQUIRE(Exchange(ann, cat, [&] { return !annReceived.empty(); }));
+    CHECK_EQ(ReadLinkupMessage<MCFIValueMessage>(annReceived[0]).Value, 0x2468u);
+}

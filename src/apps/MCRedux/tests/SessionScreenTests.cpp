@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
+#include "MCScratchFolder.h"
 #include "MCTestGuest.h"
 #include "TestGame.h"
 #include "gui/MCGuiFont.h"
@@ -1011,4 +1012,243 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()) && sentTime(dan, MCTimeOfDay::Night, false); }));
     CHECK(room.Team2Players[0] == ann.Id());
     CHECK_EQ(list.HeldReason(ArtilleryRow), std::string("TELL ANN AND DAN TO UPGRADE."));
+}
+
+namespace
+{
+    /// <summary>The rollover room test's port, and its host's role and the folder its two games signal through.</summary>
+    constexpr std::string_view RolloverHostAddress = "127.0.0.1:28967";
+    constexpr std::string_view RolloverRoleOption = "rollover-role";
+    constexpr std::string_view RolloverFolderOption = "rollover-folder";
+    /// <summary>The files the two games signal by: the host has picked; the guest has seen the picks.</summary>
+    constexpr std::string_view PickedSignal = "picked";
+    constexpr std::string_view SeenSignal = "seen";
+    /// <summary>The mission the room's host picks.</summary>
+    constexpr std::string_view RolloverMission = "ARENA";
+    /// <summary>How long a game waits for the other process (it boots the game first).</summary>
+    constexpr std::chrono::seconds PeerWait{90};
+
+    /// <summary>Runs frames until <paramref name="done"/>, for <see cref="PeerWait"/> at most; whether it did.</summary>
+    bool SettleLong(const std::function<bool()>& done)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + PeerWait;
+
+        while (!done())
+        {
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+
+            MCTestGuest::Step();
+        }
+
+        return true;
+    }
+
+    /// <summary>The player of the session named <paramref name="name"/>, if one is.</summary>
+    std::shared_ptr<MCFidpPlayer> PlayerNamed(std::string_view name)
+    {
+        for (const auto& player : MultiPlayer()->SessionManager->GetPlayers(nullptr))
+        {
+            if (player != nullptr && player->Name == name)
+            {
+                return player;
+            }
+        }
+
+        return nullptr;
+    }
+
+    /// <summary>Whether the room's chat has a line holding <paramref name="text"/>.</summary>
+    bool ChatSays(std::string_view text)
+    {
+        return std::ranges::any_of(GlobalLog()->Chat->Lines, [&](const MCLogChat::HistoryLine& line)
+                                   { return line.Text.find(text) != std::string::npos; });
+    }
+
+    /// <summary>
+    /// The rollover room test's host, BOB, in a process of its own: hosts a LAN room, waits for ANN's game and the
+    /// test's CAT, picks the teams (BOB on team 1, ANN and CAT on team 2), the mission and the points, says so, and once
+    /// ANN's game has seen it all, leaves the room with EXIT.
+    /// </summary>
+    void HostTheRollingRoom(const std::filesystem::path& folder)
+    {
+        REQUIRE(MCTestGame::StartLogistics());
+        ConnectScreen();
+        Settle();
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+        manager.ConnectTcp(RolloverHostAddress);
+        MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
+        lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("BOB");
+        lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Rolling room");
+        lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
+        CreateSession();
+        Settle();
+        REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+        MCSessionScreen& room = *GlobalLog()->SessionScreen;
+        REQUIRE(SettleLong(
+            [&]
+            {
+                const auto ann = PlayerNamed("ANN");
+                const auto cat = PlayerNamed("CAT");
+                return ann != nullptr && cat != nullptr && MCTestGuest::RoomShows(ann->Id) &&
+                       MCTestGuest::RoomShows(cat->Id);
+            }));
+        const uint32_t ann = PlayerNamed("ANN")->Id;
+        const uint32_t cat = PlayerNamed("CAT")->Id;
+        // The test's CAT doesn't join the group the inquiries go to as ANN's game does.
+        REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, cat));
+        room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
+        room.AssignPlayer(ann, 2, 0, false);
+        room.AssignPlayer(cat, 2, 1, false);
+        room.SetTeamTechBase(2, 1);
+        room.LoadMission(RolloverMission);
+        REQUIRE(SettleLong([&] { return !GlobalLog()->MessageDialog->IsShowing() && !room.MissionFile.empty(); }));
+        room.SetTeam1RP(12000);
+        room.SetTeam2RP(9000);
+        Settle();
+        std::ofstream(folder / PickedSignal).put('1');
+        REQUIRE(SettleLong([&] { return std::filesystem::exists(folder / SeenSignal); }));
+        LeaveRoom();
+        Settle();
+    }
+}
+
+/// <summary>
+/// Port-only (Redux HD): a LAN room whose host leaves (its EXIT) rolls over to the earliest joined guest's game
+/// (SPEC-host-rollover.md). The host, BOB, is another process (this test in its host's role); this game is ANN, and the
+/// test's CAT joined after it. ANN's game hosts the room as it stood: BOB gone from it, ANN and CAT where BOB put them,
+/// the points and the mission, the chat saying BOB left and that ANN is the server now; CAT's game is shown the room
+/// again from ANN's, its player the same. ANN's controls are the host's: CAT moved to team 1 lights START, which plays,
+/// closing the room through the session's new hub.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a LAN room whose host leaves rolls over to the earliest guest, whose game hosts it as it stood")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    if (const auto folder = MCTest::Option(RolloverFolderOption);
+        folder.has_value() && MCTest::Option(RolloverRoleOption) == "host")
+    {
+        HostTheRollingRoom(std::filesystem::path(*folder));
+        return;
+    }
+
+    MCScratchFolder folder("mc_tests_rollover", "room");
+
+    /// <summary>The host's process, told to go on (it waits for ANN's game to have seen its picks) as the test ends.</summary>
+    struct HostProcess
+    {
+        explicit HostProcess(const std::filesystem::path& folder)
+            : Folder(folder)
+            , End(MCTest::StartPeer(MCTest::CurrentTestName(),
+                                    {{std::string(RolloverRoleOption), "host"},
+                                     {std::string(RolloverFolderOption), MCFileSystem::ToUtf8(folder)}}))
+        {
+        }
+
+        ~HostProcess()
+        {
+            Seen();
+
+            if (End.valid())
+            {
+                Passed();
+            }
+        }
+
+        HostProcess(const HostProcess&) = delete;
+        HostProcess& operator=(const HostProcess&) = delete;
+
+        void Seen() const { std::ofstream(Folder / SeenSignal).put('1'); }
+
+        /// <summary>Whether its test passed (once it has ended), printing what it said when it didn't.</summary>
+        bool Passed()
+        {
+            const MCTest::PeerResult result = End.get();
+
+            if (!result.first)
+            {
+                std::cout << "  the room's host's process:\n" << result.second;
+            }
+
+            return result.first;
+        }
+
+        std::filesystem::path Folder;
+        std::future<MCTest::PeerResult> End;
+    } bob(folder.Path());
+
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(RolloverHostAddress);
+    std::shared_ptr<MCFidpSession> found;
+    REQUIRE(SettleLong(
+        [&]
+        {
+            const auto sessions = manager.GetSessions();
+            found = sessions.has_value() && !sessions->empty() ? sessions->front() : nullptr;
+            return found != nullptr;
+        }));
+    const _GUID instance = found->SessionDesc.guidInstance;
+    REQUIRE_EQ(manager.JoinSession(instance, "ANN"), 0);
+    GlobalLog()->SetUpSessionScreen();
+    const uint32_t ann = manager.MyPlayerID;
+    Guest cat("CAT", MCMatchRule::Supported);
+    MCDirectPlay noHostHere;
+    REQUIRE(cat.Join(noHostHere, RolloverHostAddress));
+    cat.AnswerFiles(MCMissionDataHash(GamePath(SavePath, RolloverMission, ".mpk")));
+    REQUIRE(SettleLong([&] { return std::filesystem::exists(folder.Path() / PickedSignal); }));
+
+    MCSessionScreen& room = *GlobalLog()->SessionScreen;
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            return room.Team2Players[0] == ann && room.Team2Players[1] == cat.Id() &&
+                   std::string(room.Team1RPText->Text()) == "12000" && !room.MissionName.empty();
+        }));
+    const std::string missionName = room.MissionName;
+    const std::shared_ptr<MCFidpPlayer> host = PlayerNamed("BOB");
+    REQUIRE(host != nullptr);
+    const uint32_t bobId = host->Id;
+    CHECK(room.Team1Players[0] == bobId);
+    CHECK(!MultiPlayer()->IsHost);
+    const int32_t catScreens = cat.SessionScreens();
+    bob.Seen();
+
+    // BOB's EXIT: the room is ANN's game's now, as it stood.
+    REQUIRE(SettleLong([&] { return MultiPlayer()->IsHost && !MCTestGuest::RoomShows(bobId); }));
+    REQUIRE(SettleUntil([&] { return cat.SessionScreens() > catScreens && !GlobalLog()->MessageDialog->IsShowing(); }));
+    Settle();
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    CHECK_EQ(manager.ServerID, ann);
+    CHECK(manager.GetPlayer(bobId) == nullptr);
+    CHECK(MCSameGuid(manager.CurrentSession()->SessionDesc.guidInstance, instance));
+    CHECK(MCTestGuest::RoomShows(cat.Id()));
+    CHECK(room.Team1Players[0] == MCSessionScreen::NoPlayer);
+    CHECK(room.Team2Players[0] == ann);
+    CHECK(room.Team2Players[1] == cat.Id());
+    CHECK_EQ(room.Team2TechBase, 1);
+    CHECK_EQ(std::string(room.Team1RPText->Text()), "12000");
+    CHECK_EQ(std::string(room.Team2RPText->Text()), "9000");
+    CHECK(!room.MissionFile.empty());
+    CHECK_EQ(room.MissionName, missionName);
+    CHECK(ChatSays("BOB has left the game."));
+    CHECK(ChatSays("is now the server."));
+
+    // ANN's controls are the host's: CAT to team 1, and START plays, closing the room at the session's new hub.
+    room.AssignPlayer(cat.Id(), 1, 0, false);
+    Settle();
+    REQUIRE(!room.StartButton->Disabled);
+    ClickButton(*room.StartButton);
+    CHECK(GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen);
+    CHECK(manager.SessionLocked());
+    CHECK_EQ(manager.DirectPlay->SetSessionDesc(manager.CurrentSession()->SessionDesc, 0), uint32_t{DP_OK});
+    CHECK(bob.Passed());
 }

@@ -13,6 +13,7 @@
 #include <exception>
 #include <expected>
 #include <filesystem>
+#include <future>
 #include <iostream>
 #include <mutex>
 #include <source_location>
@@ -396,6 +397,47 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>This program, as it was started (its first argument): what peers and isolated tests run.</summary>
+    std::string& ProgramPath()
+    {
+        static std::string path;
+        return path;
+    }
+
+    /// <summary>The peers started so far, which names each one's temporary folder.</summary>
+    std::atomic<int32_t> PeersStarted = 0;
+}
+
+std::future<MCTest::PeerResult> MCTest::StartPeer(std::string_view name,
+                                                  std::vector<std::pair<std::string, std::string>> options)
+{
+    std::error_code error;
+    const std::filesystem::path folder =
+        std::filesystem::temp_directory_path(error) / std::format("mc_tests_peer_{}", PeersStarted++);
+    std::filesystem::create_directories(folder, error);
+    std::string command = std::format("\"{}\" --only \"{}\"", ProgramPath(), name);
+
+    for (const auto& [key, value] : Options())
+    {
+        command += std::format(" --{} {}", key, Quoted(value));
+    }
+
+    for (const auto& [key, value] : options)
+    {
+        command += std::format(" --{} {}", key, Quoted(value));
+    }
+
+    command += std::format(" {} {}", TempFolderOption, Quoted(MCFileSystem::ToUtf8(folder)));
+#ifdef _WIN32
+    // cmd.exe drops the first and last quote of a command that starts with one.
+    command = "\"" + command + "\"";
+#endif
+    command += " 2>&1";
+    return std::async(std::launch::async, [command] { return RunCaptured(command, Echo::No); });
+}
+
 /// <summary>
 /// Runs the registered tests. Arguments are name filters (a test runs when its name holds any of them, ignoring case);
 /// <c>--list</c> prints the names instead, and <c>--only &lt;name&gt;</c> runs the one test of exactly that name in this
@@ -434,6 +476,8 @@ int main(int argc, char** argv)
         // A path converts the wide argument to UTF-8; on other systems it is UTF-8 already.
         arguments.push_back(MCFileSystem::ToUtf8(std::filesystem::path(argv[i])));
     }
+
+    ProgramPath() = arguments[0];
 
     std::vector<std::string> filters;
     bool list = false;

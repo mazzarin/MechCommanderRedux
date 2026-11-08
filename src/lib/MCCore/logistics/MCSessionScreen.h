@@ -121,6 +121,13 @@ public:
     /// </summary>
     void RemovePlayer(uint32_t playerId);
 
+    /// <summary>
+    /// Port-only (Redux HD): the room's host has gone and its session rolled over to this game, which hosts the room
+    /// now: the host's controls come to this screen, the match options are what the room played, and the room as it
+    /// stands (every player's picks, the mission) is shown to everyone again from here.
+    /// </summary>
+    void TakeOverRoom();
+
     /// <summary>Loads mission <paramref name="fileName"/> chosen by the host and tells the others.</summary>
     void LoadMission(std::string_view fileName);
 
@@ -300,7 +307,12 @@ private:
     uint32_t _PingUntil = 0;
     /// <summary>The screen still pings.</summary>
     bool _Pinging = false;
-    /// <summary>Port-only (the personal build): the name the host loaded its mission by, while one is loaded.</summary>
+    /// <summary>Port-only (Redux HD): the room has rolled over to this game, whose next look takes it (TakeOverRoom).</summary>
+    bool _TakingOver = false;
+    /// <summary>
+    /// Port-only (the personal build): the name the host loaded its mission by, while one is loaded (Port-only, Redux HD:
+    /// on a guest too, for a room rolled over to it).
+    /// </summary>
     std::string _LoadedMission;
     /// <summary>Port-only (the personal build): the loaded mission fixes its points and tech bases (its Lock block).</summary>
     bool _MissionLocked = false;

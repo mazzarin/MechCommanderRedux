@@ -442,6 +442,8 @@ struct MCDirectPlay::Impl
     std::vector<Link> Joiners;
     /// <summary>Joiner: the connection to the host.</summary>
     Link Server;
+    /// <summary>Joiner: the host's address, as it was reached (MCDirectPlay::JoinedAddress).</summary>
+    std::optional<MCSocket::Address> ServerAddress;
 
     /// <summary>Sessions that answered queries, by instance GUID.</summary>
     std::vector<FoundSession> Found;
@@ -1444,6 +1446,7 @@ struct MCDirectPlay::Impl
         Joiners.clear();
         MCSocket::Close(Server.Socket);
         Server = Link{};
+        ServerAddress.reset();
         MCSocket::Close(Listener);
         Listener = MCSocket::InvalidHandle;
 
@@ -1753,8 +1756,17 @@ uint32_t MCDirectPlay::Open(const DPSESSIONDESC2& desc, uint32_t flags)
         return result;
     }
 
+    impl.ServerAddress = found->Address;
     SDL_Log("MCDirectPlay: joined \"%s\" at %s", impl.Session.Name.c_str(), MCSocket::ToString(found->Address).c_str());
     return DP_OK;
+}
+
+std::optional<std::string> MCDirectPlay::JoinedAddress() const
+{
+    const Impl& impl = *_Impl;
+    return impl.State == Impl::Mode::Joiner && impl.ServerAddress.has_value()
+               ? std::optional(MCSocket::ToString(*impl.ServerAddress))
+               : std::nullopt;
 }
 
 uint32_t MCDirectPlay::Close()

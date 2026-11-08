@@ -7,6 +7,7 @@
 #include "MCFakeUpdaterBackend.h"
 #include "fakes/MCFakeGamesService.h"
 #include "fakes/MCServiceScript.h"
+#include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCIdleCheck.h"
@@ -23,6 +24,7 @@
 #include "logistics/MCLogTextButton.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCRejoinNote.h"
+#include "network/MCRoomEnd.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 
@@ -628,4 +630,56 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
         MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NextBuild, MCRejoinNote::Now());
     REQUIRE(note.has_value());
     CHECK_EQ(*note, std::string("-join W8ZE -internet -player Commander -menus"));
+}
+
+/// <summary>
+/// Port-only (Redux HD): an internet host's REMATCH (network/MCRoomEnd.h): its game keeps its place on the service
+/// through the match's session's end and comes back to it (the same code, no game hosted afresh), and its room is
+/// hosted again, a new session with the same name and the match's mission.
+/// </summary>
+TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the same code")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    const MCServicesScope scope(list, service);
+    REQUIRE(MCTestGame::StartLogistics());
+    MCSplashScreen& screen = OpenInternetScreen(list);
+    const std::string gameName = HostFrom(screen);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    REQUIRE(SettleUntil([&] { return service.Room().has_value(); }));
+    GlobalLog()->SessionScreen->LoadMission("ARENA");
+    REQUIRE(SettleUntil([] { return DialogText().empty(); }));
+    // The match's session, kept: the rematch's room is another (a host's session has no instance of its own here).
+    const std::shared_ptr<MCFidpSession> firstRoom = manager.CurrentSession();
+    const auto hosted = [&service]
+    {
+        return std::ranges::count_if(service.Paths, [](const std::string& path) { return path.starts_with("/host?"); });
+    };
+
+    REQUIRE_EQ(hosted(), 1);
+
+    // The match starts (its hook alone: START needs a player on each team), and the host's REMATCH at its results.
+    MCRoomEnd::MatchStarts();
+    MCRoomEnd::Rematch();
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen && manager.CurrentSession() != nullptr &&
+                   manager.CurrentSession() != firstRoom;
+        }));
+    Settle();
+    CHECK(manager.HostedInternetCode() == std::optional<std::string>(MCFakeGames::GameCode));
+    CHECK_EQ(hosted(), 1);
+    CHECK(std::ranges::any_of(service.Paths, [](const std::string& path)
+                              { return path.starts_with(std::format("/game/{}?", MCFakeGames::GameCode)); }));
+    CHECK(!service.HostPlaceKept());
+    CHECK_EQ(manager.CurrentSession()->Name, gameName);
+    CHECK(!GlobalLog()->SessionScreen->MissionFile.empty());
+    CHECK(DialogText().empty());
+    SaveShot("internet 14 rematch", ScreenHash());
 }

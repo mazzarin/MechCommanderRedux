@@ -339,6 +339,12 @@ public:
     uint32_t Close();
 
     /// <summary>
+    /// Port-only (Redux HD): a joiner's host as it reached it ("address:port"), while in its session; none otherwise. A
+    /// guest found on the LAN joins its host's next room there (network/MCRoomEnd.h's REMATCH).
+    /// </summary>
+    std::optional<std::string> JoinedAddress() const;
+
+    /// <summary>
     /// Creates a player of this machine with <paramref name="data"/> as its data; <paramref name="playerID"/> receives
     /// its id. (DirectPlay's event HANDLE, signalled on arrivals, has no counterpart.)
     /// </summary>

@@ -904,7 +904,14 @@ auto MCSessionScreen::ShowRoomAgain() -> void
 
     placeAgain(1, team1);
     placeAgain(2, team2);
+    // Port-only (Redux HD): a rematch's player back in its slot (network/MCRoomEnd.h).
+    MCRoomEnd::PlaceReturning(*this);
+    SetTeamsAgain(techBases, points);
+}
 
+auto MCSessionScreen::SetTeamsAgain(const std::array<int8_t, 2>& techBases, const std::array<int32_t, 2>& points)
+    -> void
+{
     if (_MissionLocked)
     {
         return;
@@ -920,6 +927,77 @@ auto MCSessionScreen::ShowRoomAgain() -> void
     // The timer sends them (each team's last sent is 0 now); the mission's load sends them again after its own.
     SetTeam1RP(points[0]);
     SetTeam2RP(points[1]);
+}
+
+auto MCSessionScreen::Picks() const -> MCRoomPicks
+{
+    MCRoomPicks picks;
+    picks.Mission = MissionFile.empty() ? std::string() : _LoadedMission;
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    const auto names =
+        [&manager](const std::array<uint32_t, TeamSlots>& players, std::array<std::string, TeamSlots>& into)
+    {
+        for (size_t slot = 0; slot < TeamSlots; ++slot)
+        {
+            const std::shared_ptr<MCFidpPlayer> player =
+                players[slot] != NoPlayer ? manager.GetPlayer(players[slot]) : nullptr;
+            into[slot] = player != nullptr ? player->Name : std::string();
+        }
+    };
+
+    names(Team1Players, picks.Team1);
+    names(Team2Players, picks.Team2);
+    picks.TechBases = {Team1TechBase, Team2TechBase};
+    picks.Points = {ReadPoints(*Team1RPText), ReadPoints(*Team2RPText)};
+    return picks;
+}
+
+auto MCSessionScreen::TakePicks(const MCRoomPicks& picks) -> void
+{
+    if (!picks.Mission.empty())
+    {
+        LoadMission(picks.Mission);
+    }
+
+    PlaceByName(picks);
+    SetTeamsAgain(picks.TechBases, picks.Points);
+}
+
+auto MCSessionScreen::PlaceByName(const MCRoomPicks& picks) -> void
+{
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+
+    for (int8_t team = 1; team <= 2; ++team)
+    {
+        const std::array<std::string, TeamSlots>& names = team == 1 ? picks.Team1 : picks.Team2;
+
+        for (size_t slot = 0; slot < TeamSlots; ++slot)
+        {
+            const std::array<uint32_t, TeamSlots>& players = team == 1 ? Team1Players : Team2Players;
+
+            if (names[slot].empty() || players[slot] != NoPlayer)
+            {
+                continue;
+            }
+
+            // The player of that name on the screen, on no team yet.
+            const auto& inRoom = manager.GetPlayers(nullptr);
+            const auto named = std::ranges::find_if(inRoom,
+                                                    [&](const std::shared_ptr<MCFidpPlayer>& player)
+                                                    {
+                                                        return player != nullptr && player->Name == names[slot] &&
+                                                               NameOf(player->Id) != nullptr &&
+                                                               FindSlot(Team1Players, player->Id) < 0 &&
+                                                               FindSlot(Team2Players, player->Id) < 0;
+                                                    });
+
+            if (named != inRoom.end())
+            {
+                SDL_Log("Session screen: %s back in team %d's slot %zu", names[slot].c_str(), team, slot);
+                AssignPlayer((*named)->Id, team, static_cast<int8_t>(slot), false);
+            }
+        }
+    }
 }
 
 auto MCSessionScreen::AllShown() -> bool

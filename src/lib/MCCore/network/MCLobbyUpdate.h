@@ -171,4 +171,38 @@ namespace MCLobbyUpdate
     /// menus' again, its room's EXIT going back to the games and its match's end to the menus, not the lobby's.
     /// </summary>
     void BackToMenus();
+
+    /// <summary>Port-only (Redux HD): a guest of the room that has gone, whose place a room hosted again keeps.</summary>
+    struct MCPlace
+    {
+        /// <summary>Its id in the room before.</summary>
+        uint32_t Id = 0;
+        std::string Name;
+    };
+
+    /// <summary>
+    /// Port-only (Redux HD): a host's room hosted again for a rematch (network/MCRoomEnd.h) keeps
+    /// <paramref name="guests"/>' places for <see cref="RejoinWait"/>, as it does for guests away updating: START asks
+    /// before it starts without them ("ANN ISN'T BACK YET. START WITHOUT ANN?"), and each is back as it joins.
+    /// </summary>
+    void KeepPlacesFor(std::span<const MCPlace> guests);
+
+    /// <summary>Port-only (Redux HD): the room a guest joins again (<see cref="WaitForRoom"/>).</summary>
+    struct MCRoomAgain
+    {
+        /// <summary>A LAN host's address, or an internet game's code.</summary>
+        std::string Address;
+        bool Internet = false;
+        /// <summary>The name this guest joins with.</summary>
+        std::string PlayerName;
+        /// <summary>What the wait says ("REJOINING BOB'S GAME FOR A REMATCH...").</summary>
+        std::string Text;
+    };
+
+    /// <summary>
+    /// Port-only (Redux HD): this guest's host hosts its room again (network/MCRoomEnd.h's REMATCH): the game, out of the
+    /// session and over its games screen, says <paramref name="room"/>'s text and joins it again for
+    /// <see cref="RejoinWait"/>, as a guest whose host restarts into an update does; a room that doesn't come back says so.
+    /// </summary>
+    void WaitForRoom(const MCRoomAgain& room);
 }

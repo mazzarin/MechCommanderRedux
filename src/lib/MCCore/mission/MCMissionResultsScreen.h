@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gui/MCGuiButton.h"
 #include "gui/MCGuiRef.h"
 #include "gui/MCGuiSystem.h"
 #include "mission/MCMissionResults.h"
@@ -18,6 +19,25 @@ struct MCResultsIcon
 {
     std::weak_ptr<MCMechWarrior> Warrior;
     std::unique_ptr<MCGuiPort> Portrait;
+};
+
+/// <summary>
+/// Port-only (Redux HD): the multiplayer results' REMATCH (network/MCRoomEnd.h), beside the move-on button and made
+/// like it: that button's own face, its lettering covered by each row's face colour, and the word written over it.
+/// </summary>
+class MCRematchButton final : public MCGuiButton
+{
+public:
+    /// <summary>The button, and the move-on button's faces (up, and down while held) it is drawn from.</summary>
+    int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
+    using MCGuiObject::Init;
+    void OnDestroy() override;
+    /// <summary>The face, its lettering covered, and REMATCH over it (shifted a pixel while held).</summary>
+    void Draw() override;
+
+private:
+    std::unique_ptr<MCGuiPort> _UpFace;
+    std::unique_ptr<MCGuiPort> _DownFace;
 };
 
 /// <summary>The steps the single-player results screen counts through, each drawn a line at a time.</summary>
@@ -156,6 +176,8 @@ private:
     MCGuiHandle<MCGuiButton> _MoveOnButton;
     /// <summary>Multiplayer only: the button switching the pilot list's page.</summary>
     MCGuiHandle<MCGuiButton> _PilotSwitchButton;
+    /// <summary>Port-only (Redux HD): multiplayer only, the host's REMATCH, shown when it can be had (network/MCRoomEnd.h).</summary>
+    MCGuiHandle<MCRematchButton> _RematchButton;
     /// <summary>The scroll-up button's hot spot, in window coordinates.</summary>
     tagRECT _ScrollUpRect{};
     /// <summary>The scroll-down button's hot spot.</summary>

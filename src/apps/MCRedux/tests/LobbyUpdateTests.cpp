@@ -793,6 +793,54 @@ namespace
 }
 
 /// <summary>
+/// A lobby's host's RESTART waits for its guests' games to take the room's word, or a guest would find its link gone
+/// with the word unread and take the host's leave for a lost connection (seen live, 7 Nov): RESTART shows once the
+/// newest guest's game is up (it pinged; the page says what RESTART will do meanwhile), and the update goes in once the
+/// guests have left to wait for the host.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's host's RESTART waits for its guests' games to open the room, and to leave it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28931";
+    MCLobbyClock clock;
+    MCFakeUpdater updater;
+    Guest ann("ANN");
+    REQUIRE(HostLobbyRoom(Port, {ann}));
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    ann.SendRules(hostId, MCMatchRule::Supported);
+
+    // CAL has joined, its rules known from its join card; its game hasn't opened the room yet.
+    Guest cal("CAL", MCMatchRule::Supported);
+    REQUIRE(cal.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", Port), false));
+    UpdateReady();
+    const std::shared_ptr<MCLogTextButton> restart = RestartOnPage(screen);
+    REQUIRE(restart != nullptr);
+    CHECK(MultiPlayer()->PlayerRules.contains(cal.Id()));
+    CHECK(!MCLobbyUpdate::CanRestart());
+    CHECK(!restart->IsShowing());
+    CHECK_EQ(MCLobbyUpdate::ReadyText(), std::string("DOWNLOADED. RESTART TO INSTALL IT; EVERYONE WILL REJOIN."));
+
+    // Its game is up: RESTART shows.
+    cal.Ping();
+    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
+    CHECK(MCLobbyUpdate::CanRestart());
+
+    // RESTART: the room told, and the update in once both guests have left to wait for the host.
+    ClickOn(*restart);
+    REQUIRE(SettleUntil([&] { return ann.Updatings() == 1 && cal.Updatings() == 1; }));
+    clock.Pass(MCLobbyUpdate::SendTime);
+    CHECK_EQ(updater.Log->Answers.size(), size_t{1});
+    ann.Leave();
+    cal.Leave();
+    REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
+}
+
+/// <summary>
 /// RESTART brings a lobby's game back to its room only with the rejoin note, which names the build it starts as: with
 /// the update's build unknown, or the note unwritable, the page says the update installs after the match, and the
 /// room is told nothing.
@@ -872,13 +920,16 @@ TEST_CASE_ISOLATED("game: a lobby's host whose update fails after RESTART keeps 
     REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
     ClickOn(*restart);
     REQUIRE(SettleUntil([&] { return ann.Updatings() == 1 && cal.Updatings() == 1; }));
-    clock.Pass(MCLobbyUpdate::SendTime);
-    REQUIRE_EQ(updater.Log->Answers.size(), size_t{2});
     CHECK(std::filesystem::exists(GameNotePath()));
 
-    // ANN's game has gone to wait for the host; CAL's is still on its way out.
+    // The update waits for the guests to leave to wait for the host: ANN's game has gone; CAL's is still on its way
+    // out, and the update goes in without it after LeaveWait.
+    clock.Pass(MCLobbyUpdate::SendTime);
     ann.Leave();
     Settle();
+    CHECK_EQ(updater.Log->Answers.size(), size_t{1});
+    clock.Pass(MCLobbyUpdate::LeaveWait);
+    REQUIRE_EQ(updater.Log->Answers.size(), size_t{2});
     MCUpdater::Failed("the disk is full");
     REQUIRE(SettleUntil([&] { return cal.RestartOffs() == 1; }));
     CHECK(!std::filesystem::exists(GameNotePath()));

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCHdMovieFixture.h"
+#include "MCInternetSpots.h"
 #include "fakes/MCNullAudioDevice.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
@@ -31,6 +32,8 @@
 #include "logistics/MCBriefingScreen.h"
 #include "main/MCInventoryList.h"
 #include "logistics/MCCompInventoryBlock.h"
+#include "logistics/MCInternetMenu.h"
+#include "logistics/MCLogTextObject.h"
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCPurMechList.h"
@@ -12506,18 +12509,80 @@ namespace
     }
 #endif
 
-    /// <summary>The multiplayer screens, hosting a LAN game on the loopback as the session screen tests do.</summary>
+    /// <summary>
+    /// The multiplayer screens: MULTIPLAYER ACCESS and INTERNET CONNECTION through a scripted games service (its count,
+    /// and a list of every kind of game: tests/MCInternetSpots.h), then the LAN games, hosting a LAN game on the loopback
+    /// as the session screen tests do.
+    /// </summary>
     void TourMultiplayer(const std::function<void(const std::string&)>& shoot)
     {
+        using namespace MCInternetSpots;
         constexpr std::string_view HostAddress = "127.0.0.1:28877";
-        // MULTIPLAYER opens the LAN games (the personal build); the connection screen shows only without a network.
+        constexpr std::string_view ServiceUrl = "wss://games.test";
+        constexpr int32_t ClickFrames = 30;
+        constexpr int32_t AnswerFrames = 150;
+        constexpr int ListedOnline = 37;
+        constexpr int ListedInGames = 12;
+        MCServiceScript::ListScript list;
+        std::string asked;
+        const MCServiceScript::SetupScope service(MCServiceScript::ListOpener(list),
+                                                  MCServiceScript::Answering(R"({"online":37})", asked), ServiceUrl,
+                                                  Version);
+        const auto click = [](int32_t x, int32_t y)
+        {
+            MCScreenInput::Click(x, y);
+            RunFrames(ClickFrames);
+        };
+
+        // MULTIPLAYER: INTERNET (the count online under it) and LAN; the original's connection screen only without a
+        // network.
         ConnectScreen();
+
+        if (GlobalLog()->CurrentScreen() != GlobalLog()->MultiplayerScreen)
+        {
+            shoot("mp_connect");
+            std::cout << "  no network: the internet, LAN and session screens are left out\n";
+            return;
+        }
+
+        RunUntil([] { return !AccessCountShown().empty(); }, AnswerFrames);
+        shoot("mp_access");
+
+        // INTERNET CONNECTION: the list, a game picked (its players and where it is), one in battle picked, and the
+        // host block, PUBLIC then PRIVATE.
+        click(InternetX, InternetY);
+
+        if (GlobalLog()->CurrentScreen() != GlobalLog()->InternetScreen)
+        {
+            std::cout << "  INTERNET didn't open INTERNET CONNECTION: the internet screens are left out\n";
+            return;
+        }
+
+        list.Send(EveryKindOfGame(ListedOnline, ListedInGames));
+        RunUntil([] { return !InternetCountsShown().empty(); }, AnswerFrames);
+        MCSplashScreen& internet = *GlobalLog()->InternetScreen;
+        internet.Element<MCLogTextObject>(PlayerNameEntry)->SetStringBuffer("Commander");
+        const auto games = internet.Element<MCInternetGameList>(GameList);
+        games->Pick("K7QF");
+        shoot("mp_internet");
+        games->Pick("Q4RT");
+        shoot("mp_internet_in_battle");
+        games->ClearPick();
+        click(HostX, HostY);
+        shoot("mp_internet_host");
+        click(PrivacyX, PrivacyY);
+        shoot("mp_internet_private");
+        click(PrivacyX, PrivacyY);
+
+        // CANCEL to the games, then to MULTIPLAYER ACCESS, whose LAN opens the LAN games.
+        click(CancelX, CancelY);
+        click(CancelX, CancelY);
+        click(LanX, LanY);
 
         if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr ||
             GlobalLog()->CurrentScreen() != GlobalLog()->LanScreen)
         {
-            shoot("mp_connect");
-            std::cout << "  no network: the LAN and session screens are left out\n";
+            std::cout << "  LAN didn't open the LAN games: the LAN and session screens are left out\n";
             return;
         }
 

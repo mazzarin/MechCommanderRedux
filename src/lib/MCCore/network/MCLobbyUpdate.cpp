@@ -228,6 +228,17 @@ namespace
         return said != MultiPlayer()->PlayerRules.end() && (said->second & MCMatchRule::RejoinsHost) != 0;
     }
 
+    /// <summary>
+    /// Whether every guest's game is up to hear the room's word: on the host, each has pinged from its room's screen
+    /// (MCFidpPlayer::HeardPing). A joiner's game still opening the room would miss the host's restart, and take its
+    /// leave for a lost connection.
+    /// </summary>
+    bool GuestsUp()
+    {
+        return !MultiPlayer()->IsHost || std::ranges::all_of(Others(), [](const std::shared_ptr<MCFidpPlayer>& player)
+                                                             { return player->HeardPing; });
+    }
+
     /// <summary>Whether this game is a guest whose room has kept its place once already (OwnPlaceKept).</summary>
     bool OwnPlaceUsed()
     {
@@ -631,6 +642,21 @@ auto MCLobbyUpdate::MatchUnderWay() -> bool
            (game->InLogistics || game->InMission || (logistics != nullptr && logistics->MultiplayerInitialized));
 }
 
+namespace
+{
+    /// <summary>
+    /// Whether the room can restart into the update, but for a guest's game still opening it (GuestsUp): a guest away
+    /// updating can't be told, so the room restarts only once it is back; the new version comes back only with the
+    /// note, which needs the build it starts as; a room keeps a guest's place once.
+    /// </summary>
+    bool RoomRejoins()
+    {
+        return MCLobbyUpdate::InRoom() && !MCLobbyUpdate::MatchUnderWay() && Coming.empty() && !NoteUnwritten &&
+               !OwnPlaceUsed() && MCUpdater::ExpectedBuild().has_value() &&
+               std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
+    }
+}
+
 auto MCLobbyUpdate::ReadyText() -> std::string
 {
     if (!InRoom())
@@ -640,8 +666,9 @@ auto MCLobbyUpdate::ReadyText() -> std::string
                    : std::string();
     }
 
-    // A lobby's game exits after the match, installing it; the menus' installs it as it restarts or quits.
-    if (!CanRestart())
+    // A lobby's game exits after the match, installing it; the menus' installs it as it restarts or quits. A joiner's
+    // game still opening the room holds RESTART back for a moment, the text as it will be.
+    if (!RoomRejoins())
     {
         return LobbyLaunchArgs.Active ? std::string(AfterMatchText) : std::string();
     }
@@ -656,11 +683,7 @@ auto MCLobbyUpdate::ReadyText() -> std::string
 
 auto MCLobbyUpdate::CanRestart() -> bool
 {
-    // A guest away updating can't be told: the room restarts only once it is back. The new version comes back only
-    // with the note, which needs the build it starts as. A room keeps a guest's place once.
-    return InRoom() && !MatchUnderWay() && Coming.empty() && !NoteUnwritten && !OwnPlaceUsed() &&
-           MCUpdater::ExpectedBuild().has_value() &&
-           std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
+    return RoomRejoins() && GuestsUp();
 }
 
 namespace
@@ -772,22 +795,48 @@ auto MCLobbyUpdate::Restart() -> bool
     return true;
 }
 
+namespace
+{
+    /// <summary>The guests in a host's room at its RESTART still in it (none have left to wait for it yet).</summary>
+    std::string GuestsStaying()
+    {
+        const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+        return game == nullptr ? std::string()
+                               : MCNamedPlayers(
+                                     RoomAtRestart, [&game](const MCComing& guest)
+                                     { return game->SessionManager->GetPlayer(guest.Id) != nullptr; },
+                                     [](const MCComing& guest) { return Upper(guest.Name); });
+    }
+}
+
 auto MCLobbyUpdate::Frame() -> void
 {
     const Clock::time_point now = Now();
 
+    // A host's restart waits for its guests to leave to wait for it (LeaveWait at most): one whose game takes the word
+    // late would find its link gone with the word unread.
     if (RestartAt.has_value() && now >= *RestartAt)
     {
-        // The room may have changed meanwhile: its match started (a guest's RESTART crossing the host's START).
-        if (!CanRestart())
+        const std::string staying = GuestsStaying();
+
+        if (staying.empty() || now >= *RestartAt + LeaveWait)
         {
-            CallOff("the room can't rejoin now");
-        }
-        else
-        {
-            RestartAt.reset();
-            MCUpdater::Answer(MCUpdater::MCAnswer::Install);
-            Restarting = true;
+            if (!staying.empty())
+            {
+                SDL_Log("Lobby updates: installing without waiting longer for %s to leave", staying.c_str());
+            }
+
+            // The room may have changed meanwhile: its match started (a guest's RESTART crossing the host's START).
+            if (!CanRestart())
+            {
+                CallOff("the room can't rejoin now");
+            }
+            else
+            {
+                RestartAt.reset();
+                MCUpdater::Answer(MCUpdater::MCAnswer::Install);
+                Restarting = true;
+            }
         }
     }
 

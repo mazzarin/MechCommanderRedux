@@ -491,6 +491,13 @@ std::optional<MCServiceRefusal> MCServiceSignaling::Refusal(std::string_view gam
     return found != _Games.end() ? found->second.Refusal : std::nullopt;
 }
 
+bool MCServiceSignaling::HostAway(std::string_view game)
+{
+    const std::scoped_lock lock(_Lock);
+    const auto found = _Games.find(game);
+    return found != _Games.end() && found->second.HostAway;
+}
+
 std::optional<std::string> MCServiceSignaling::WhyClosed(std::string_view game)
 {
     const std::scoped_lock lock(_Lock);
@@ -963,6 +970,7 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
         // The host's socket dropped: the links the service carried are gone, the others go on.
         SDL_Log("MCServiceSignaling: game \"%.*s\"'s host is away from the service", static_cast<int>(game.size()),
                 game.data());
+        socket.HostAway = true;
         TellGone(game, heard);
         return;
     }

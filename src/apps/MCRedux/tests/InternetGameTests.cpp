@@ -274,6 +274,33 @@ TEST_CASE("internet game: a guest of a public game, or one the service doesn't s
     }
 }
 
+/// <summary>
+/// A join whose host's socket goes away before the guest's link opens (the host's game restarting into an update) fails
+/// at once, as the service's own answer to a join then: the service never says when the host is back, so the guest
+/// tries again rather than wait out its link's open deadline. Seen live (7 Nov): the service's joined and away came
+/// together, before the guest's link was made.
+/// </summary>
+TEST_CASE("internet game: a join whose host goes away before its link opens fails at once, to be tried again")
+{
+    MCFakeGamesService service;
+    const MCInternetSetupScope setup(service);
+    MCNetSwitch hostNet(std::make_unique<MCLoopbackTransport>());
+    MCNetSwitch guestNet(std::make_unique<MCLoopbackTransport>());
+    std::unique_ptr<MCInternetGame> host = MCInternetGame::Host(hostNet, false);
+    REQUIRE(Until(*host, *host, [&] { return host->Update() == MCInternetGame::Stage::Ready; }));
+
+    // The service takes the guest in, then the host's game quits keeping its place, before the guest hears either.
+    std::unique_ptr<MCInternetGame> guest = MCInternetGame::Join(guestNet, Code);
+    REQUIRE(guest != nullptr);
+    host->KeepPlace(true);
+    host->End();
+    REQUIRE(service.HostPlaceKept());
+    const auto away = Clock::now();
+    REQUIRE(Until(*guest, *guest, [&] { return guest->Update() == MCInternetGame::Stage::Failed; }));
+    CHECK(guest->Refusal() == std::optional(MCServiceRefusal::HostAway));
+    CHECK(Clock::now() - away < OpenDeadline);
+}
+
 TEST_CASE("internet game: a code no game has is refused, and a service that never answers fails the join")
 {
     MCFakeGamesService service;

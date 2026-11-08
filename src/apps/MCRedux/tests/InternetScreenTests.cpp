@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "MCInternetSpots.h"
 #include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -34,40 +35,16 @@ using namespace MCScreenInput;
 using MCTestGuest::Settle;
 using MCTestGuest::SettleUntil;
 using MCTestGuest::Step;
+using namespace MCInternetSpots;
 using Json = nlohmann::json;
 
 namespace
 {
     constexpr std::string_view Service = MCFakeGames::ServiceUrl;
     constexpr std::string_view ListPath = "/list";
-    constexpr std::string_view Version = "0.6.0 (812)";
-    constexpr std::string_view NewerVersion = "0.7.0 (900)";
     constexpr std::string_view CountUrl = "https://games.test/count";
-
-    /// <summary>Where to click: the middles of MULTIPLAYER ACCESS's two buttons, and of INTERNET CONNECTION's.</summary>
-    constexpr int32_t InternetX = 477;
-    constexpr int32_t InternetY = 166;
-    constexpr int32_t LanX = 477;
-    constexpr int32_t LanY = 228;
-    constexpr int32_t HostX = 558;
-    constexpr int32_t HostY = 325;
-    constexpr int32_t CancelX = 580;
-    constexpr int32_t CancelY = 116;
-    constexpr int32_t PrivacyX = 390;
-    constexpr int32_t PrivacyY = 335;
-    constexpr int32_t CodeX = 494;
-    constexpr int32_t CodeY = 315;
     constexpr size_t CodeLength = 4;
     constexpr uint8_t Backspace = 8;
-
-    /// <summary>INTERNET CONNECTION's elements (the LAN screen's).</summary>
-    constexpr int32_t GameList = 2;
-    constexpr int32_t PlayerList = 3;
-    constexpr int32_t PlayerNameEntry = 4;
-    constexpr int32_t JoinButton = 6;
-    constexpr int32_t CreateButton = 9;
-    constexpr int32_t GameNameEntry = 10;
-    constexpr int32_t PlayersEntry = 11;
 
     /// <summary>A list's line <paramref name="line"/> (from 0), its text as the screen draws it.</summary>
     std::string LineOf(MCLogScrollTextObject& list, int32_t line)
@@ -86,11 +63,6 @@ namespace
         }
 
         return text;
-    }
-
-    Json Listing(Json games, int online, int inGames)
-    {
-        return Json{{"t", "list"}, {"online", online}, {"inGames", inGames}, {"games", std::move(games)}};
     }
 
     /// <summary>Clicks the middle of <paramref name="button"/>, as a player does, and lets the game settle.</summary>
@@ -251,12 +223,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     CHECK(join->Disabled);
 
     // Its games, open ones first: one with room, a full one; then one in battle; and one on a newer version.
-    list.Send(Listing(
-        {MCServiceScript::ListedGame("K7QF", "Bob's game", {"Bob", "Ann"}, 6, nullptr, Version),
-         MCServiceScript::ListedGame("PXYL", "Full house", {"A", "B", "C", "D"}, 4, nullptr, Version, "NA"),
-         MCServiceScript::ListedGame("Q4RT", "Night raid", {"Cat", "Dan"}, 4, 720, Version, "AS", "Lost Outpost"),
-         MCServiceScript::ListedGame("W8ZE", "Next version", {"Eve"}, 6, nullptr, NewerVersion, "OC")},
-        37, 12));
+    list.Send(EveryKindOfGame(37, 12));
     REQUIRE(SettleUntil([] { return InternetCountsShown() == "37 ONLINE, 12 IN GAMES"; }));
     CHECK(LineOf(*games, 0) == "BOB'S GAME\t2/6");
     CHECK(LineOf(*games, 1) == "FULL HOUSE\tFULL");

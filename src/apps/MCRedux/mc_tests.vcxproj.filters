@@ -378,6 +378,9 @@
     <ClInclude Include="tests\MCHdMovieFixture.h">
       <Filter>tests</Filter>
     </ClInclude>
+    <ClInclude Include="tests\MCInternetSpots.h">
+      <Filter>tests</Filter>
+    </ClInclude>
     <ClInclude Include="tests\MCMock.h">
       <Filter>tests</Filter>
     </ClInclude>

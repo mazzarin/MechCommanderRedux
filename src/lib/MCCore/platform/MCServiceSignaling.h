@@ -139,6 +139,11 @@ public:
     void Join(std::string_view game);
     /// <summary>Why the service ended the host's socket or <paramref name="game"/>'s, if it did.</summary>
     std::optional<MCServiceRefusal> Refusal(std::string_view game = {});
+    /// <summary>
+    /// Whether the service said <paramref name="game"/>'s host is away since this game's socket joined it. The service
+    /// never says when the host is back, so a join still under way can't finish: it tries again.
+    /// </summary>
+    bool HostAway(std::string_view game);
     /// <summary>Why the host's socket or <paramref name="game"/>'s closed, if it did (for the log and the trial).</summary>
     std::optional<std::string> WhyClosed(std::string_view game = {});
     /// <summary>
@@ -190,6 +195,8 @@ private:
         bool Public = true;
         /// <summary>Why the service ended it: no coming back.</summary>
         std::optional<MCServiceRefusal> Refusal;
+        /// <summary>A guest's: the service said its game's host is away (and never says when it's back).</summary>
+        bool HostAway = false;
         /// <summary>Since its socket dropped, while it tries to come back; the next try.</summary>
         std::optional<Clock::time_point> DroppedAt;
         Clock::time_point NextTry;

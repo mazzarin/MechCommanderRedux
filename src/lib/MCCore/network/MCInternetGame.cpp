@@ -161,6 +161,13 @@ MCInternetGame::Stage MCInternetGame::Update()
         return Fail(*refusal, "the service refused it");
     }
 
+    // A join whose host went away from the service before its link opened can't finish (the host's game restarting
+    // into an update, say): as the service's own answer to a join then, the guest tries again.
+    if (!_Hosting && _Stage != Stage::Ready && _Signaling->HostAway(_Code))
+    {
+        return Fail(MCServiceRefusal::HostAway, "its host went away from the service");
+    }
+
     switch (_Stage)
     {
         case Stage::Service:

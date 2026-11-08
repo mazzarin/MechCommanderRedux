@@ -970,15 +970,26 @@ void AccessScreenHidden()
     GuiSystem().RemoveTimer(*GlobalLog()->MultiplayerScreen, AccessTimer);
 }
 
+namespace
+{
+    /// <summary>
+    /// The panel retitled INTERNET CONNECTION (as it was, if the art isn't the original's), with its HD copy: made again
+    /// as the screen shows, as HD art may have come on since.
+    /// </summary>
+    void RetitlePanel(MCSplashScreen& screen)
+    {
+        if (std::shared_ptr<MCLogPort> panel = MCInternetPanel(); panel != nullptr)
+        {
+            screen.Element<MCLogImage>(PanelImage)->Art = std::move(panel);
+        }
+    }
+}
+
 void SetUpInternetScreen(MCSplashScreen& screen)
 {
     screen.SetEventRoutine(InternetScreenHandleEvent);
 
-    // The panel retitled INTERNET CONNECTION (as it was, if the art isn't the original's).
-    if (std::shared_ptr<MCLogPort> panel = MCInternetPanel(); panel != nullptr)
-    {
-        screen.Element<MCLogImage>(PanelImage)->Art = std::move(panel);
-    }
+    RetitlePanel(screen);
 
     // The service's games in the LAN list's place.
     const std::shared_ptr<MCGuiObject> lanList = screen.Element<MCGuiObject>(GameListElement);
@@ -1049,6 +1060,7 @@ void SetUpInternetScreen(MCSplashScreen& screen)
 void ShowInternetScreen()
 {
     MCSplashScreen& screen = InternetScreen();
+    RetitlePanel(screen);
     GlobalLog()->MultiplayerScreen->ShowGuiWindow(false);
     screen.ShowGuiWindow(true);
     GlobalLog()->SetCurrentScreen(screen);

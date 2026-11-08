@@ -206,6 +206,7 @@
     <ClInclude Include="tests\MCFakeUpdaterBackend.h" />
     <ClInclude Include="tests\MCFilePatchFixture.h" />
     <ClInclude Include="tests\MCHdMovieFixture.h" />
+    <ClInclude Include="tests\MCInternetSpots.h" />
     <ClInclude Include="tests\MCMock.h" />
     <ClInclude Include="tests\MCScratchFolder.h" />
     <ClInclude Include="tests\MCTest.h" />

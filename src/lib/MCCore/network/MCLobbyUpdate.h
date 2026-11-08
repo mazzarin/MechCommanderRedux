@@ -41,6 +41,12 @@ namespace MCLobbyUpdate
     /// sending and taking messages each frame meanwhile).
     /// </summary>
     inline constexpr std::chrono::milliseconds SendTime{500};
+    /// <summary>
+    /// How long a host's RESTART waits at most, after SendTime, for its guests to leave to wait for it. A guest's game
+    /// busy a moment takes the word late (a screen's fade presents frames without reading the network): a host gone
+    /// sooner closes its link with the word unread there, and the guest takes it for a lost connection.
+    /// </summary>
+    inline constexpr std::chrono::milliseconds LeaveWait{5000};
     /// <summary>How often a guest waiting for its host tries to join again.</summary>
     inline constexpr std::chrono::milliseconds TryEvery{500};
 
@@ -55,7 +61,8 @@ namespace MCLobbyUpdate
 
     /// <summary>
     /// Whether RESTART brings this game back to its room now: before the match, with every other game there able to
-    /// rejoin and none away updating. Otherwise the update installs as the game exits after the match.
+    /// rejoin, up to hear it (a joiner's game opening the room holds it back a moment), and none away updating.
+    /// Otherwise the update installs as the game exits after the match.
     /// </summary>
     bool CanRestart();
 

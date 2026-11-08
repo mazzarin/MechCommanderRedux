@@ -32,6 +32,8 @@ namespace
     /// <summary>The trial's room: private, so the service lists nothing and its guests take relays only when told to.</summary>
     constexpr std::string_view TrialRoomName = "ICE TRIAL";
     constexpr int32_t TrialPlayers = 2;
+    /// <summary>The room's one player: the service ends a game whose room lists none, as the game's own rooms always list their host.</summary>
+    constexpr std::string_view TrialHostName = "HOST";
     constexpr std::string_view HostWord = "host";
     constexpr std::string_view JoinWord = "join";
     constexpr std::string_view RelayOnlyOption = "--relay-only";
@@ -219,7 +221,10 @@ namespace
         }
 
         // A game the service isn't told is private is public, and its guests' links take relays only.
-        signaling.SetRoom({.Name = std::string(TrialRoomName), .Public = false, .Max = TrialPlayers});
+        signaling.SetRoom({.Name = std::string(TrialRoomName),
+                           .Public = false,
+                           .Max = TrialPlayers,
+                           .Players = {std::string(TrialHostName)}});
         const MCSocket::Handle listener = transport.ListenTcp(GamePort);
 
         if (listener == MCSocket::InvalidHandle)

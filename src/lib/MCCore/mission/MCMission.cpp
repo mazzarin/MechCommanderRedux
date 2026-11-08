@@ -13,6 +13,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCTelemetry.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCIdleCheck.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "camera/MCCamera.h"
@@ -515,9 +516,11 @@ auto MCMission::Run() -> int32_t
             }
 
             // Port (personal): the reports' notice or question, once due and the main menu is free; a lobby's room
-            // through a restart into an update (network/MCLobbyUpdate.h).
+            // through a restart into an update (network/MCLobbyUpdate.h); an internet game's room asking a player
+            // away whether it's still there (logistics/MCIdleCheck.h).
             ShowReportsNotice();
             MCLobbyUpdate::Frame();
+            MCIdleCheck::Frame();
 
             EscapedSmackerMovie = 0;
             MovieOver = 0;

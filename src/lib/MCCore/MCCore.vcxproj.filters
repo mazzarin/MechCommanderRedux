@@ -501,6 +501,9 @@
     <ClCompile Include="logistics\MCHdOptionsPanel.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCIdleCheck.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCInternetMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -1889,6 +1892,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCHdOptionsPanel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCIdleCheck.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCInternetMenu.h">

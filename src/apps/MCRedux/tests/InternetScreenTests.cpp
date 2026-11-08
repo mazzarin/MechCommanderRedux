@@ -7,6 +7,7 @@
 #include "fakes/MCServiceScript.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCIdleCheck.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogChat.h"
@@ -89,6 +90,57 @@ namespace
             Step();
         }
 
+        Settle();
+    }
+
+    /// <summary>The list's socket scripted and the games' sockets to <paramref name="service"/>, for the test's time.</summary>
+    class MCServicesScope
+    {
+    public:
+        MCServicesScope(MCServiceScript::ListScript& list, MCFakeGames::MCFakeGamesService& service)
+            : _Scope([toList = MCServiceScript::ListOpener(list), toGames = service.Opener(),
+                      listUrl = std::format("{}{}", Service, ListPath)](const std::string& url)
+                     { return url.starts_with(listUrl) ? toList(url) : toGames(url); },
+                     MCServiceScript::Answering(R"({"online":1})", _Asked), Service, Version)
+        {
+        }
+
+    private:
+        std::string _Asked;
+        MCServiceScript::SetupScope _Scope;
+    };
+
+    /// <summary>Opens INTERNET CONNECTION, its list answered with no games, the player's name set.</summary>
+    MCSplashScreen& OpenInternetScreen(MCServiceScript::ListScript& list)
+    {
+        ConnectScreen();
+        Settle();
+        Click(InternetX, InternetY);
+        Settle();
+        REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
+        list.Send(Listing(Json::array(), 1, 0));
+        REQUIRE(SettleUntil([] { return InternetCountsShown() == "1 ONLINE, 0 IN GAMES"; }));
+        MCSplashScreen& screen = *GlobalLog()->InternetScreen;
+        screen.Element<MCLogTextObject>(PlayerNameEntry)->SetStringBuffer("Commander");
+        return screen;
+    }
+
+    /// <summary>HOST GAME, then CREATE GAME: the room.</summary>
+    void HostFrom(MCSplashScreen& screen)
+    {
+        Click(HostX, HostY);
+        Settle();
+        screen.Element<MCLogTextObject>(PlayersEntry)->SetStringBuffer("4");
+        ClickButton(*screen.Element<MCLogButton>(CreateButton));
+        REQUIRE(SettleUntil([] { return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen; }));
+    }
+
+    /// <summary>The player moves the mouse: input, which the idle check sees.</summary>
+    void Nudge()
+    {
+        constexpr int32_t SpotX = 100;
+        constexpr int32_t SpotY = 100;
+        SendMouse(MCGuiEventType::MouseMove, SpotX, SpotY, false);
         Settle();
     }
 
@@ -255,23 +307,9 @@ TEST_CASE_ISOLATED(
     // The list's socket scripted, the games' sockets to the stand-in service.
     MCServiceScript::ListScript list;
     MCFakeGames::MCFakeGamesService service;
-    MCWebSocketOpener toList = MCServiceScript::ListOpener(list);
-    MCWebSocketOpener toGames = service.Opener();
-    const std::string listUrl = std::format("{}{}", Service, ListPath);
-    std::string asked;
-    MCServiceScript::SetupScope scope([&](const std::string& url)
-                                      { return url.starts_with(listUrl) ? toList(url) : toGames(url); },
-                                      MCServiceScript::Answering(R"({"online":1})", asked), Service, Version);
+    const MCServicesScope scope(list, service);
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
-    Click(InternetX, InternetY);
-    Settle();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
-    list.Send(Listing(Json::array(), 1, 0));
-    REQUIRE(SettleUntil([] { return InternetCountsShown() == "1 ONLINE, 0 IN GAMES"; }));
-    MCSplashScreen& screen = *GlobalLog()->InternetScreen;
-    screen.Element<MCLogTextObject>(PlayerNameEntry)->SetStringBuffer("Commander");
+    MCSplashScreen& screen = OpenInternetScreen(list);
 
     // HOST GAME, then CREATE GAME: the room, the host alone in it, and the game's code in the chat.
     Click(HostX, HostY);
@@ -336,4 +374,63 @@ TEST_CASE_ISOLATED(
     ClickButton(*GlobalLog()->MessageDialog->OkButton);
     CHECK(DialogText().empty());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
+}
+
+/// <summary>
+/// A player away from an internet game: INTERNET CONNECTION lets its list go (not counted online) until the next input;
+/// the room asks "STILL THERE?" after 10 minutes without input, any input answers it, and a minute without one has the
+/// player leave the room, as its EXIT does (the host's game ends), and says why.
+/// </summary>
+TEST_CASE_ISOLATED("game: a player away from an internet game is asked STILL THERE?, and leaves without an answer")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    const MCServicesScope scope(list, service);
+    REQUIRE(MCTestGame::StartLogistics());
+    auto now = std::chrono::steady_clock::now();
+    MCIdleCheck::SetClock([&now] { return now; });
+    MCSplashScreen& screen = OpenInternetScreen(list);
+    auto games = screen.Element<MCInternetGameList>(GameList);
+
+    // Away on the games: the list's socket goes, and comes back with the player.
+    now += MCIdleCheck::AwayTime;
+    REQUIRE(SettleUntil([&] { return list.ClosedByGame; }));
+    CHECK(LineOf(*games, 0) == "LOOKING FOR GAMES...");
+    CHECK(InternetCountsShown().empty());
+    Nudge();
+    REQUIRE(SettleUntil([&] { return list.Opened.size() == 2; }));
+    list.Send(Listing(Json::array(), 1, 0));
+    REQUIRE(SettleUntil([] { return InternetCountsShown() == "1 ONLINE, 0 IN GAMES"; }));
+
+    // In the room: asked after 10 minutes, and an answer keeps the player in.
+    HostFrom(screen);
+    now += MCIdleCheck::AwayTime - std::chrono::seconds(1);
+    Settle();
+    CHECK(DialogText().empty());
+    now += std::chrono::seconds(1);
+    REQUIRE(SettleUntil([] { return DialogText() == "STILL THERE?"; }));
+    CHECK(MCIdleCheck::Asking());
+    SaveShot("internet 8 still there", ScreenHash());
+    now += MCIdleCheck::AnswerTime - std::chrono::seconds(1);
+    Nudge();
+    REQUIRE(SettleUntil([] { return DialogText().empty(); }));
+    CHECK(!MCIdleCheck::Asking());
+    now += MCIdleCheck::AnswerTime;
+    Settle();
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+
+    // Asked again, and no answer: the player leaves, the game ends on the service, and the games say why.
+    now += MCIdleCheck::AwayTime;
+    REQUIRE(SettleUntil([] { return DialogText() == "STILL THERE?"; }));
+    now += MCIdleCheck::AnswerTime;
+    REQUIRE(SettleUntil([] { return GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen; }));
+    CHECK(DialogText() == "YOU WERE AWAY, SO YOU LEFT THE GAME.");
+    CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
+    CHECK_EQ(service.OpenLines(), 0u);
+    MCIdleCheck::SetClock({});
 }

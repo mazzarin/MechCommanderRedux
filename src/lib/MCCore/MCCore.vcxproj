@@ -187,6 +187,7 @@
     <ClCompile Include="logistics\MCGameList.cpp" />
     <ClCompile Include="logistics\MCGenericScreen.cpp" />
     <ClCompile Include="logistics\MCHdOptionsPanel.cpp" />
+    <ClCompile Include="logistics\MCIdleCheck.cpp" />
     <ClCompile Include="logistics\MCInternetMenu.cpp" />
     <ClCompile Include="logistics\MCInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCLoadSaveMenu.cpp" />
@@ -673,6 +674,7 @@
     <ClInclude Include="logistics\MCGameList.h" />
     <ClInclude Include="logistics\MCGenericScreen.h" />
     <ClInclude Include="logistics\MCHdOptionsPanel.h" />
+    <ClInclude Include="logistics\MCIdleCheck.h" />
     <ClInclude Include="logistics\MCInternetMenu.h" />
     <ClInclude Include="logistics\MCInventoryBlock.h" />
     <ClInclude Include="logistics\MCLoadSaveMenu.h" />

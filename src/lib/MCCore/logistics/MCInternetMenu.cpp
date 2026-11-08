@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCInternetMenu.h"
+#include "logistics/MCIdleCheck.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
@@ -211,6 +212,8 @@ namespace
     MCGuiHandle<MCLogTextButton> PublicButton;
     MCGuiHandle<MCLogTextButton> PrivateButton;
     std::unique_ptr<MCInternetList> List;
+    /// <summary>The list let go while the player is away (logistics/MCIdleCheck.h), opened again at the next input.</summary>
+    bool ListAway = false;
     bool HostsPublic = true;
     int32_t ShownBlock = BrowseBlock;
 
@@ -633,6 +636,21 @@ namespace
     {
         if (event.Type == MCGuiEventType::Timer && event.Data == InternetTimer)
         {
+            // A player away isn't counted online: the list's socket goes until the next input.
+            if (MCIdleCheck::Away() && List != nullptr && !Pending.has_value())
+            {
+                SDL_Log("INTERNET CONNECTION: the player is away: the list closes until the next input");
+                List.reset();
+                ListAway = true;
+                ShowListing();
+            }
+            else if (ListAway && !MCIdleCheck::Away())
+            {
+                List = MCInternetList::Open();
+                ListAway = false;
+                ShowListing();
+            }
+
             if (List != nullptr && List->Update())
             {
                 ShowListing();
@@ -996,6 +1014,7 @@ void ShowInternetScreen()
 
     // The list, kept open while the screen shows.
     List = MCInternetList::Open();
+    ListAway = false;
     ShowListing();
     GuiSystem().AddTimer(screen.weak_from_this(), InternetTimer, InternetTimerMs, 0, 0, false);
 }
@@ -1009,6 +1028,7 @@ void InternetScreenHidden()
 
     // Its socket's close takes it off the service's count; a game joined is counted as it plays.
     List.reset();
+    ListAway = false;
     GuiSystem().RemoveTimer(*GlobalLog()->InternetScreen, InternetTimer);
 
     if (Pending.has_value())

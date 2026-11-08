@@ -17,6 +17,7 @@
 #include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCIdleCheck.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCTeam.h"
 #include "sound/MCSoundSystem.h"
@@ -439,6 +440,17 @@ namespace
     /// original's 480 (the battlefield crosses the screen as fast as at 640x480: 2.25 at 1080 lines), times the choice
     /// (AUTO: 1).
     /// </summary>
+    /// <summary>Whether an event of <paramref name="type"/> is the player's own: a click, a key, the mouse moving.</summary>
+    bool IsPlayerInput(int32_t type)
+    {
+        constexpr std::array PlayerInputs{MCGuiEventType::LeftButtonDown,  MCGuiEventType::LeftButtonUp,
+                                          MCGuiEventType::RightButtonDown, MCGuiEventType::RightButtonUp,
+                                          MCGuiEventType::MouseMove,       MCGuiEventType::KeyDown,
+                                          MCGuiEventType::KeyUp,           MCGuiEventType::Character,
+                                          MCGuiEventType::LeftDoubleClick, MCGuiEventType::RightDoubleClick};
+        return std::ranges::contains(PlayerInputs, type);
+    }
+
     float ScrollSpeedFactor()
     {
         const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
@@ -461,6 +473,12 @@ auto DispatchGuiEvent(MCGuiEvent& event) -> void
     }
 
     const int32_t type = event.Type;
+
+    // Port (Redux HD): the player's own input, which an internet game's idle check watches (logistics/MCIdleCheck.h).
+    if (IsPlayerInput(type))
+    {
+        MCIdleCheck::Input();
+    }
 
     if (type == MCGuiEventType::Timer || (type >= MCGuiEventType::FirstPosted && type < 0x2401))
     {

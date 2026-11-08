@@ -21,6 +21,7 @@
 #include "network/MCMultiPlayerHandlers.h"
 #include "object/MCArtilleryChunk.h"
 #include "object/MCCommander.h"
+#include "object/MCForces.h"
 #include "object/MCBattleMech.h"
 #include "object/MCEffectSystem.h"
 #include "object/MCFire.h"
@@ -1972,6 +1973,91 @@ TEST_CASE(
                         {
                             return std::ranges::contains(
                                 served, std::pair(cat.MyPlayerID, static_cast<uint16_t>(MCMPMessageType::PlayerOrder)));
+                        }));
+    NumLanPlayers = 1;
+}
+
+/// <summary>
+/// Port-only (Redux HD): the host's game gone mid-match, the game its session rolls over to, its teammate's, is the
+/// server, and hands the host's own units to a teammate still playing as it would any player's (network/MCMechHandover.h):
+/// Ann's game takes BOB's mechs into Ann's roster as her own, and Cat's game (the other side) is told.
+/// </summary>
+TEST_CASE("network: the host's game gone mid-match, its mechs go to the teammate whose game takes the session over")
+{
+    MCTestContextScope scope;
+    scope.Context().SetNet(std::make_unique<MCLoopbackTransport>());
+    scope.Context().SetScenario(std::make_unique<MCScenario>());
+    scope.Context().SetForces(std::make_unique<MCForces>(true));
+    Forces().MakeCommanders(MaxLinkupPlayers);
+    MCMultiPlayer& game = InstallGame(scope);
+    REQUIRE_EQ(game.Start(), 0);
+    MCSessionManager& ann = *game.SessionManager;
+    constexpr std::string_view address = "127.0.0.1:28972";
+    std::optional<MCSessionManager> bob(std::in_place, MultiPlayerAppGuid);
+    bob->ConnectTcp(address);
+    MCFidpSession hosted(MultiPlayerAppGuid);
+    hosted.SetName("Rolling handover");
+    REQUIRE_EQ(bob->HostSession(hosted, "BOB"), 0);
+    MCSessionManager cat(MultiPlayerAppGuid);
+    REQUIRE(JoinRolling(ann, *bob, address, "ANN"));
+    REQUIRE(ExchangeAmong({*bob, ann}, [&] { return ann.HasPlayerNumber; }));
+    REQUIRE(JoinRolling(cat, *bob, address, "CAT"));
+    REQUIRE(ExchangeAmong({*bob, ann, cat},
+                          [&] { return cat.HasPlayerNumber && ann.Players.size() == 3 && cat.Players.size() == 3; }));
+    const int32_t bobs = bob->MyPlayer()->PlayerNumber;
+    const int32_t anns = ann.MyPlayer()->PlayerNumber;
+    const int32_t cats = cat.MyPlayer()->PlayerNumber;
+
+    // BOB and Ann on one side, Cat on the other; BOB's game the server, Ann's holding the units as its updates left them.
+    CommanderById(bobs)->SetTeam(InnerSphereTeam());
+    CommanderById(anns)->SetTeam(InnerSphereTeam());
+    CommanderById(cats)->SetTeam(ClanTeam());
+    NumLanPlayers = 3;
+    game.InMission = true;
+    game.ServerID = bob->MyPlayerID;
+    game.HostID = bob->MyPlayerID;
+    game.CheckInId = anns;
+    const auto annsMech = std::make_shared<ControlledMover>();
+    annsMech->PartId = MCMover::FirstPartId;
+    annsMech->SetCommanderId(anns);
+    std::array<std::shared_ptr<ControlledMover>, 2> bobsMechs;
+
+    for (int32_t i = 0; i < std::ssize(bobsMechs); i++)
+    {
+        bobsMechs[static_cast<size_t>(i)] = std::make_shared<ControlledMover>();
+        bobsMechs[static_cast<size_t>(i)]->PartId = MCMover::FirstPartId + 1 + i;
+        bobsMechs[static_cast<size_t>(i)]->SetCommanderId(bobs);
+        game.AddToMoverRoster(bobsMechs[static_cast<size_t>(i)]);
+        game.AddToPlayerMoverRoster(bobs, bobsMechs[static_cast<size_t>(i)]);
+    }
+
+    game.AddToMoverRoster(annsMech);
+    game.AddToPlayerMoverRoster(anns, annsMech);
+    game.AddToLocalMovers(annsMech);
+    std::vector<std::pair<uint32_t, uint16_t>> catHeard;
+    cat.ApplicationCallback = [&](MCFidpMessage& msg)
+    { catHeard.emplace_back(msg.FromID, static_cast<uint16_t>(msg.Type())); };
+
+    bob.reset();
+    REQUIRE(ExchangeAmong({ann, cat}, [&] { return game.IsServer && cat.ServerID == ann.MyPlayerID; }));
+
+    // BOB's units are Ann's now, after her own, and hers to order; his roster is empty; they keep their commander.
+    CHECK(LockObject(game.PlayerMoverRoster[static_cast<size_t>(anns)][0]) == annsMech);
+    CHECK(LockObject(game.PlayerMoverRoster[static_cast<size_t>(anns)][1]) == bobsMechs[0]);
+    CHECK(LockObject(game.PlayerMoverRoster[static_cast<size_t>(anns)][2]) == bobsMechs[1]);
+    CHECK(std::ranges::none_of(game.PlayerMoverRoster[static_cast<size_t>(bobs)],
+                               [](const std::weak_ptr<MCMover>& slot) { return LockObject(slot) != nullptr; }));
+    CHECK_EQ(bobsMechs[0]->NetPlayerId, 1);
+    CHECK_EQ(bobsMechs[1]->NetPlayerId, 2);
+    CHECK_EQ(game.NumLocalMovers, 3);
+    CHECK_EQ(bobsMechs[0]->GetCommanderId(), bobs);
+
+    // Cat's game hears the handover from the new server.
+    CHECK(ExchangeAmong({ann, cat},
+                        [&]
+                        {
+                            return std::ranges::contains(
+                                catHeard, std::pair(ann.MyPlayerID, static_cast<uint16_t>(MCMPMessageType::Handover)));
                         }));
     NumLanPlayers = 1;
 }

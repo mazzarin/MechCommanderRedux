@@ -230,6 +230,9 @@ namespace
     constexpr std::array<std::string_view, 13> LobbyValueSwitches{
         "-player", "--player",  "-session", "--session", "-maxplayers", "--maxplayers", "-port",
         "--port",  "-matchmap", "-team1rp", "-team2rp",  "-team1tech",  "-team2tech"};
+    /// <summary>Port (Redux HD): an internet game's switches: hosted on the service or joined by its code, and listed.</summary>
+    constexpr std::string_view InternetSwitch = "-internet";
+    constexpr std::string_view PublicSwitch = "-public";
     /// <summary>The lobby's -slot and the words it takes: the player, the team and the slot.</summary>
     constexpr std::string_view SlotSwitch = "-slot";
     constexpr size_t SlotWords = 3;
@@ -249,7 +252,8 @@ namespace
             return hasArgument != 0 && !words[at + 1].empty() && words[at + 1][0] != '-' ? 1 : 0;
         }
 
-        if (MCIEquals(word, MCRejoinNote::RejoinSwitch))
+        if (MCIEquals(word, MCRejoinNote::RejoinSwitch) || MCIEquals(word, InternetSwitch) ||
+            MCIEquals(word, PublicSwitch))
         {
             return 0;
         }
@@ -405,6 +409,15 @@ auto ParseCommandLine(std::string_view commandLine) -> void
         {
             // Port-only (the personal build): a lobby's start again from the rejoin note (network/MCRejoinNote.h).
             LobbyLaunchArgs.Rejoin = true;
+        }
+        else if (MCIEquals(word, InternetSwitch))
+        {
+            // Port (Redux HD): -host or -join an internet game, the code -join's address (network/MCInternetGame.h).
+            LobbyLaunchArgs.Internet = true;
+        }
+        else if (MCIEquals(word, PublicSwitch))
+        {
+            LobbyLaunchArgs.Public = true;
         }
         else if (MCIEquals(word, "-matchmap"))
         {

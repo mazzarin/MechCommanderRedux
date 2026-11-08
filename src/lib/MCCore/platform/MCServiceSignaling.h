@@ -81,7 +81,9 @@ public:
     /// <summary>
     /// The service at <paramref name="service"/> (<c>wss://host</c>), its sockets opened by <paramref name="open"/>,
     /// saying this game is <paramref name="identity"/>. A public game's links take the relays' path only
-    /// (<paramref name="relayOnly"/>: MCIceLink::Settings::RelayOnly).
+    /// (MCIceLink::Settings::RelayOnly): a game it hosts is public with <paramref name="relayOnly"/>, a game it joins
+    /// when the service says so (or doesn't say), and every link takes the relays only with
+    /// <paramref name="relayOnly"/>.
     /// </summary>
     MCServiceSignaling(std::string service, MCWebSocketOpener open, MCServiceIdentity identity, bool relayOnly,
                        MCServiceComeback comeback = {});
@@ -105,6 +107,18 @@ public:
     std::optional<MCServiceRefusal> Refusal(std::string_view game = {});
     /// <summary>Why the host's socket or <paramref name="game"/>'s closed, if it did (for the log and the trial).</summary>
     std::optional<std::string> WhyClosed(std::string_view game = {});
+    /// <summary>
+    /// Closes every socket, as this game's player leaving: the service frees its places, and a host's ends its game
+    /// (as when it's destroyed). None comes back.
+    /// </summary>
+    void Leave();
+    /// <summary>Whether every socket has closed (its leaving gone to the service, as far as the system can say).</summary>
+    bool AllClosed();
+    /// <summary>
+    /// The links bind to <paramref name="address"/> alone (MCIceLink::Settings::BindAddress): the tests' loopback, which
+    /// the Mac's firewall never holds.
+    /// </summary>
+    void BindLinksTo(std::string address);
 
     MCIceLink::Settings LinkSettings(std::string_view peer) override;
     void ToHost(std::string_view game, uint32_t link, const MCIceLink::Signal& signal) override;
@@ -131,6 +145,8 @@ private:
         std::string Token;
         /// <summary>A game reached: the relays its links start with (joined's).</summary>
         std::optional<MCIceLink::Settings> Settings;
+        /// <summary>A game reached is public (joined's; one the service doesn't say is): its links take relays only.</summary>
+        bool Public = true;
         /// <summary>Why the service ended it: no coming back.</summary>
         std::optional<MCServiceRefusal> Refusal;
         /// <summary>Since its socket dropped, while it tries to come back; the next try.</summary>
@@ -140,6 +156,8 @@ private:
     };
 
     Socket& GameSocket(std::string_view game);
+    /// <summary>Closes every socket (under the lock).</summary>
+    void CloseAll();
     /// <summary>A socket to the service's <paramref name="path"/>, or one closed at once when the system can't open it.</summary>
     std::unique_ptr<MCWebSocket> Opened(std::string_view path, std::string_view token = {});
     /// <summary>A closed socket's end told once, and its coming back tried while its place waits.</summary>
@@ -148,7 +166,8 @@ private:
     void TellGone(std::string_view game, std::vector<Heard>& heard);
     void Ping(Socket& socket, Clock::time_point now);
     void SendRoom();
-    MCIceLink::Settings WithPolicy(MCIceLink::Settings settings) const;
+    /// <summary>A link's settings as this game takes them: relays only when <paramref name="relayOnly"/> or always.</summary>
+    MCIceLink::Settings WithPolicy(MCIceLink::Settings settings, bool relayOnly) const;
     void HearHost(const MCWebSocket::Message& message, std::vector<Heard>& heard);
     void HearGame(std::string_view game, Socket& socket, const MCWebSocket::Message& message,
                   std::vector<Heard>& heard);
@@ -159,6 +178,9 @@ private:
     bool _RelayOnly = false;
     MCServiceComeback _Comeback;
     std::mutex _Lock;
+    std::string _BindAddress;
+    /// <summary>This game left (<see cref="Leave"/>): its sockets don't come back.</summary>
+    bool _Left = false;
     std::optional<Socket> _Host;
     /// <summary>The hosted game's guests heard from (and not gone): told gone if the hosted game's socket closes.</summary>
     std::set<std::string, std::less<>> _Guests;

@@ -207,6 +207,42 @@ TEST_CASE(
     CHECK(!signaling.NameRefused());
 }
 
+TEST_CASE("service signaling: a joined game's links take relays only, unless the service says the game is private")
+{
+    // Before the service answers, and once it says the game is public, or says nothing of it: relays only.
+    for (const std::string_view said : {std::string_view(R"(,"public":true)"), std::string_view()})
+    {
+        MCScriptedService service;
+        MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, false);
+        signaling.Join(GameCode);
+        CHECK(signaling.LinkSettings(GameCode).RelayOnly);
+        std::string joined(JoinedMessage);
+        joined.insert(joined.size() - 1, said);
+        service.At(JoinUrl).Arrived.push_back(Text(joined));
+        CHECK(signaling.Take().empty());
+        REQUIRE(signaling.Joined(GameCode));
+        CHECK(signaling.LinkSettings(GameCode).RelayOnly);
+    }
+
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, false);
+    signaling.Join(GameCode);
+    std::string joined(JoinedMessage);
+    joined.insert(joined.size() - 1, R"(,"public":false)");
+    service.At(JoinUrl).Arrived.push_back(Text(joined));
+    CHECK(signaling.Take().empty());
+    REQUIRE(signaling.Joined(GameCode));
+    CHECK(!signaling.LinkSettings(GameCode).RelayOnly);
+
+    // A game that relays every link takes them through relays only, whatever the service says.
+    MCServiceSignaling always(std::string(Service), service.Opener(), Identity, true);
+    always.Join(GameCode);
+    service.At(JoinUrl).Arrived.push_back(Text(joined));
+    CHECK(always.Take().empty());
+    REQUIRE(always.Joined(GameCode));
+    CHECK(always.LinkSettings(GameCode).RelayOnly);
+}
+
 TEST_CASE("service signaling: a guest joins by the code, and what isn't the service's protocol is left alone")
 {
     MCScriptedService service;
@@ -222,7 +258,8 @@ TEST_CASE("service signaling: a guest joins by the code, and what isn't the serv
     game.Arrived.push_back(Text(JoinedMessage));
     CHECK(signaling.Take().empty());
     CHECK(signaling.Joined(GameCode));
-    CHECK(!signaling.LinkSettings(GameCode).RelayOnly);
+    // A game the service doesn't say is private is public: its links take relays only.
+    CHECK(signaling.LinkSettings(GameCode).RelayOnly);
     REQUIRE_EQ(signaling.LinkSettings(GameCode).Relays.size(), size_t{1});
     CHECK_EQ(signaling.LinkSettings(GameCode).Relays[0].Port, uint16_t{443});
 

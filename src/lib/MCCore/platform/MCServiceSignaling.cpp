@@ -276,7 +276,18 @@ MCServiceSignaling::MCServiceSignaling(std::string service, MCWebSocketOpener op
 MCServiceSignaling::~MCServiceSignaling()
 {
     const std::scoped_lock lock(_Lock);
+    CloseAll();
+}
 
+void MCServiceSignaling::Leave()
+{
+    const std::scoped_lock lock(_Lock);
+    _Left = true;
+    CloseAll();
+}
+
+void MCServiceSignaling::CloseAll()
+{
     // A socket's own close is its player's leaving: the service frees its place (the host's ends its game).
     if (_Host.has_value())
     {
@@ -409,9 +420,29 @@ std::optional<std::string> MCServiceSignaling::WhyClosed(std::string_view game)
     return found != _Games.end() ? why(found->second) : std::nullopt;
 }
 
-MCIceLink::Settings MCServiceSignaling::WithPolicy(MCIceLink::Settings settings) const
+bool MCServiceSignaling::AllClosed()
 {
-    settings.RelayOnly = _RelayOnly;
+    const std::scoped_lock lock(_Lock);
+    const auto closed = [](const Socket& socket) { return socket.Ws->GetState() == MCWebSocket::State::Closed; };
+    return (!_Host.has_value() || closed(*_Host)) &&
+           std::ranges::all_of(_Games, [&](const auto& game) { return closed(game.second); });
+}
+
+void MCServiceSignaling::BindLinksTo(std::string address)
+{
+    const std::scoped_lock lock(_Lock);
+    _BindAddress = std::move(address);
+}
+
+MCIceLink::Settings MCServiceSignaling::WithPolicy(MCIceLink::Settings settings, bool relayOnly) const
+{
+    settings.RelayOnly = _RelayOnly || relayOnly;
+
+    if (!_BindAddress.empty())
+    {
+        settings.BindAddress = _BindAddress;
+    }
+
     return settings;
 }
 
@@ -423,17 +454,18 @@ MCIceLink::Settings MCServiceSignaling::LinkSettings(std::string_view peer)
     {
         if (const auto found = _GuestSettings.find(*guest); found != _GuestSettings.end())
         {
-            return WithPolicy(found->second);
+            return WithPolicy(found->second, false);
         }
     }
     else if (const auto found = _Games.find(peer); found != _Games.end() && found->second.Settings.has_value())
     {
-        return WithPolicy(*found->second.Settings);
+        return WithPolicy(*found->second.Settings, found->second.Public);
     }
 
+    // No relays from the service yet: STUN alone, and a game reached taken as public until the service says.
     MCIceLink::Settings settings;
     settings.Stun.emplace_back(DefaultStun);
-    return WithPolicy(std::move(settings));
+    return WithPolicy(std::move(settings), !GuestNumber(peer).has_value());
 }
 
 void MCServiceSignaling::ToHost(std::string_view game, uint32_t link, const MCIceLink::Signal& signal)
@@ -498,6 +530,12 @@ std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
     const std::scoped_lock lock(_Lock);
     const auto now = Clock::now();
     std::vector<Heard> heard;
+
+    // Left: no socket comes back.
+    if (_Left)
+    {
+        return heard;
+    }
 
     if (_Host.has_value())
     {
@@ -799,9 +837,12 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
             socket.Code = std::string(game);
             socket.Token = *token;
             socket.Settings = std::move(*ice);
+            // A game the service doesn't say is private is public: its links take relays only.
+            const auto isPublic = parsed.find("public");
+            socket.Public = isPublic == parsed.end() || !isPublic->is_boolean() || isPublic->get<bool>();
             socket.In = true;
-            SDL_Log("MCServiceSignaling: joined game \"%.*s\" (%zu relays)", static_cast<int>(game.size()), game.data(),
-                    socket.Settings->Relays.size());
+            SDL_Log("MCServiceSignaling: joined game \"%.*s\" (%zu relays, %s)", static_cast<int>(game.size()),
+                    game.data(), socket.Settings->Relays.size(), socket.Public ? "public" : "private");
             return;
         }
     }

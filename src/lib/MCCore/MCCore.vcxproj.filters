@@ -799,6 +799,9 @@
     <ClCompile Include="network\MCInternetCopy.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCInternetGame.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCLobbyUpdate.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -1172,6 +1175,9 @@
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCInput.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCNetSwitch.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCPresenter.cpp">
@@ -2166,6 +2172,9 @@
     <ClInclude Include="network\MCInternetCopy.h">
       <Filter>network</Filter>
     </ClInclude>
+    <ClInclude Include="network\MCInternetGame.h">
+      <Filter>network</Filter>
+    </ClInclude>
     <ClInclude Include="network\MCLobbyUpdate.h">
       <Filter>network</Filter>
     </ClInclude>
@@ -2527,6 +2536,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCInput.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCNetSwitch.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCNeverDestroyed.h">

@@ -75,6 +75,8 @@ namespace
 {
     /// <summary>The logistics screens while they exist (<see cref="GlobalLog"/>).</summary>
     std::weak_ptr<MCLogistics> GlobalLogistics;
+    /// <summary>Port (Redux HD): the room's chat line telling an internet game's host the code its players join by.</summary>
+    constexpr std::string_view InternetCodeFormat = "THIS GAME'S CODE: {}";
 }
 
 auto GlobalLog() -> std::shared_ptr<MCLogistics>
@@ -1296,6 +1298,16 @@ auto MCLogistics::SetUpSessionScreen() -> int32_t
     ShowLogScreen(true, true);
     LogisticsState = 8;
     SessionScreen->Activate(false);
+
+    // Port (Redux HD): an internet game's host passes its code on to its players.
+    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
+    {
+        if (const std::optional<std::string> code = MultiPlayer()->SessionManager->HostedInternetCode())
+        {
+            Chat->AddLine(std::format(InternetCodeFormat, *code));
+        }
+    }
+
     return 0;
 }
 

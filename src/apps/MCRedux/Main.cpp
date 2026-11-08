@@ -8,11 +8,15 @@
 #include "MCRestart.h"
 #include "MCTelemetryBackend.h"
 #include "MCVersion.h"
+#include "MCWebSocketOpen.h"
 #include "abl/MCAblRuntime.h"
 #include "gui/MCGuiStartup.h"
 #include "main/MCHdSettings.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCUpdater.h"
+#include "linkup/MCSessionManager.h"
+#include "network/MCInternetGame.h"
+#include "network/MCMultiPlayer.h"
 #include "network/MCRejoinNote.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
@@ -57,6 +61,11 @@ namespace
 
     /// <summary>What the game's messages are titled: its name.</summary>
     constexpr std::string_view MessageTitle = "MechCommander Redux HD";
+    /// <summary>
+    /// How long a quitting game waits for its internet game's leaving to reach the service (the trial's wait; the
+    /// service frees a place it isn't told of after 5 minutes).
+    /// </summary>
+    constexpr auto InternetLeaveWait = std::chrono::milliseconds(500);
 
     /// <summary>
     /// The release's host for the game's own updater: the downloads Worker (tools/cloudflare/downloads in the
@@ -114,6 +123,9 @@ namespace
         "  -load <file>   - Load a saved game\n"
         "  -host [port]   - Host a multiplayer game (default port 28800)\n"
         "  -join <addr>   - Join a multiplayer game at host[:port]\n"
+        "  -internet      - With -host: host an internet game (its code in the room's\n"
+        "                   chat); with -join <code>: join the internet game with that code\n"
+        "  -public        - With -host -internet: list the game, its links through relays only\n"
         "  -player <name> - Player callsign / name\n"
         "  -session <name>- Session / room name\n"
         "  -maxplayers <n>- Maximum players for host (2..6)\n"
@@ -677,7 +689,16 @@ int main(int argc, char** argv)
     }
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));
+    MCInternetGame::Setup({.Open = MCOpenWebSocket, .Version = MC_VERSION_SHOWN});
     const int result = RunGame(options->GameCommandLine);
+
+    // An internet game's leaving reaches the service before the process ends (its place freed, a host's game ended).
+    if (const std::shared_ptr<MCMultiPlayer> multiPlayer = MultiPlayer();
+        multiPlayer != nullptr && multiPlayer->SessionManager != nullptr)
+    {
+        multiPlayer->SessionManager->EndInternet(InternetLeaveWait);
+    }
+
     // A clean quit: staging stops (what's staged stays for the next try), and the reports' black box marks the run as
     // ended.
     MCUpdater::Quit();

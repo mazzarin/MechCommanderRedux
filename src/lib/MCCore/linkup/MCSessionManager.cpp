@@ -6,9 +6,12 @@
 #include "linkup/MCFidpSession.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCRegistrySettings.h"
+#include "main/MCGameContext.h"
 #include "main/MCLogistics.h"
+#include "network/MCInternetGame.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCInput.h"
+#include "platform/MCNetSwitch.h"
 #include "platform/MCSocket.h"
 #include "platform/MCWin32Defs.h"
 
@@ -27,9 +30,36 @@ namespace
     constexpr uint32_t LobbyJoinEveryMs = 500;
     constexpr int32_t LobbyJoinTries = 30;
 
+    /// <summary>How often a lobby's internet game is moved along while it starts (the service, the link).</summary>
+    constexpr uint32_t LobbyInternetEveryMs = 50;
+
     /// <summary>The enumeration flags GetSessions and Dial ask DirectPlay for.</summary>
     constexpr uint32_t EnumSessionFlags =
         DPENUMSESSIONS_AVAILABLE | DPENUMSESSIONS_ASYNC | DPENUMSESSIONS_PASSWORDREQUIRED | DPENUMSESSIONS_RETURNSTATUS;
+
+    /// <summary>
+    /// Waits up to <paramref name="ms"/> with the window kept responsive: false when the player gave up (Escape, or
+    /// closing the window).
+    /// </summary>
+    bool KeepWaiting(uint32_t ms)
+    {
+        const bool open = MCInput::WaitMessage(ms);
+        return open && (MCInput::GetAsyncKeyState(VK_ESCAPE) & 0x8001) == 0;
+    }
+
+    /// <summary>Why a lobby's room can't be joined, for an internet game the service refused or couldn't reach.</summary>
+    MCRoomRefusal RoomRefusalOf(std::optional<MCServiceRefusal> refusal)
+    {
+        switch (refusal.value_or(MCServiceRefusal::Unreachable))
+        {
+            case MCServiceRefusal::Full:
+                return MCRoomRefusal::Full;
+            case MCServiceRefusal::InBattle:
+                return MCRoomRefusal::Started;
+            default:
+                return MCRoomRefusal::Gone;
+        }
+    }
 }
 
 uint32_t MCSessionManager::TicksPerMs()
@@ -49,6 +79,8 @@ MCSessionManager::MCSessionManager(const _GUID& appGUID) : _AppGuid(appGUID)
 MCSessionManager::~MCSessionManager()
 {
     std::scoped_lock lock(CriticalSection);
+    // Port (Redux HD): an internet game ends here, while the network it's on is sure to be there.
+    EndInternet();
     DestroyDirectPlayInterface();
 }
 
@@ -339,7 +371,18 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
     {
         std::string sessionName =
             !LobbyLaunchArgs.SessionName.empty() ? LobbyLaunchArgs.SessionName : (playerName + "'s game");
+
+        // Port (Redux HD): an internet game's made on the service once the connection is chosen (choosing it again
+        // would leave a session, and the game with it).
         ConnectTcp(LobbyLaunchArgs.Address);
+
+        if (LobbyLaunchArgs.Internet)
+        {
+            if (const uint32_t started = StartLobbyInternetGame(); started != DP_OK)
+            {
+                return started;
+            }
+        }
 
         MCFidpSession session(_AppGuid);
         session.SetName(sessionName);
@@ -350,6 +393,7 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
         if (result != 0)
         {
             SDL_Log("SetupLobbyConnection: failed to host session (result %d)", result);
+            EndInternet();
             return DPERR_CANTCREATESESSION;
         }
 
@@ -360,9 +404,15 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
     }
     else
     {
+        // Port (Redux HD): an internet game's code is its address, as the service and its links name it.
         std::string targetAddr = !LobbyLaunchArgs.Address.empty() ? LobbyLaunchArgs.Address : "127.0.0.1";
+
+        if (LobbyLaunchArgs.Internet)
+        {
+            targetAddr = MCInternetGame::CodeOf(targetAddr);
+        }
+
         ConnectTcp(targetAddr);
-        SDL_Log("SetupLobbyConnection: connecting to %s as \"%s\"...", targetAddr.c_str(), playerName.c_str());
 
         if (showStatus)
         {
@@ -371,6 +421,22 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
 
         // A press from before the wait doesn't cancel it.
         MCInput::GetAsyncKeyState(VK_ESCAPE);
+
+        // Port (Redux HD): an internet game's link to its host opens before the search.
+        if (LobbyLaunchArgs.Internet)
+        {
+            if (const uint32_t started = StartLobbyInternetGame(); started != DP_OK)
+            {
+                if (hideStatus)
+                {
+                    hideStatus();
+                }
+
+                return started;
+            }
+        }
+
+        SDL_Log("SetupLobbyConnection: connecting to %s as \"%s\"...", targetAddr.c_str(), playerName.c_str());
 
         for (int32_t attempt = 0; attempt < LobbyJoinTries; ++attempt)
         {
@@ -396,19 +462,24 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
                 }
 
                 // A session that refuses the join (full, or gone) is not tried again.
-                return tried == MCLobbyJoin::Joined ? DP_OK : DPERR_NOSESSIONS;
+                if (tried != MCLobbyJoin::Joined)
+                {
+                    EndInternet();
+                    return DPERR_NOSESSIONS;
+                }
+
+                return DP_OK;
             }
 
             // The window stays responsive while it waits, and Escape (or closing it) gives up.
-            const bool open = MCInput::WaitMessage(LobbyJoinEveryMs);
-
-            if (!open || (MCInput::GetAsyncKeyState(VK_ESCAPE) & 0x8001) != 0)
+            if (!KeepWaiting(LobbyJoinEveryMs))
             {
                 if (hideStatus)
                 {
                     hideStatus();
                 }
 
+                EndInternet();
                 return DPERR_USERCANCEL;
             }
         }
@@ -420,8 +491,108 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
 
         SDL_Log("SetupLobbyConnection: timed out connecting to %s", targetAddr.c_str());
         LastRoomRefusal = LobbyRoomRefusal();
+        EndInternet();
         return DPERR_NOSESSIONS;
     }
+}
+
+uint32_t MCSessionManager::StartLobbyInternetGame()
+{
+    const MCOptionalRef<MCNetSwitch> net = MCNetSwitch::Of(MCGameContext::Current().Net());
+
+    if (!net || !MCInternetGame::Available())
+    {
+        SDL_Log("SetupLobbyConnection: this game has no internet games");
+        LastRoomRefusal = MCRoomRefusal::Gone;
+        return LobbyLaunchArgs.IsHost ? DPERR_CANTCREATESESSION : DPERR_NOSESSIONS;
+    }
+
+    // The code alone: a port after it is DirectPlay's (the game's port on its host), not the service's.
+    const std::string_view address = LobbyLaunchArgs.Address;
+    Internet = LobbyLaunchArgs.IsHost ? MCInternetGame::Host(net->get(), LobbyLaunchArgs.Public)
+                                      : MCInternetGame::Join(net->get(), address.substr(0, address.find(':')));
+
+    if (Internet == nullptr)
+    {
+        LastRoomRefusal = MCRoomRefusal::Gone;
+        return LobbyLaunchArgs.IsHost ? DPERR_CANTCREATESESSION : DPERR_NOSESSIONS;
+    }
+
+    for (;;)
+    {
+        const MCInternetGame::Stage stage = Internet->Update();
+
+        if (stage == MCInternetGame::Stage::Ready)
+        {
+            return DP_OK;
+        }
+
+        if (stage == MCInternetGame::Stage::Failed)
+        {
+            LastRoomRefusal = RoomRefusalOf(Internet->Refusal());
+            EndInternet();
+            return LobbyLaunchArgs.IsHost ? DPERR_CANTCREATESESSION : DPERR_NOSESSIONS;
+        }
+
+        if (!KeepWaiting(LobbyInternetEveryMs))
+        {
+            EndInternet();
+            return DPERR_USERCANCEL;
+        }
+    }
+}
+
+void MCSessionManager::EndInternet(std::chrono::milliseconds wait)
+{
+    if (Internet == nullptr)
+    {
+        return;
+    }
+
+    // DirectPlay lets go of its sockets first: they're on the game's links.
+    if (DirectPlay != nullptr)
+    {
+        DirectPlay->Close();
+    }
+
+    Internet->End(wait);
+    Internet.reset();
+}
+
+std::optional<std::string> MCSessionManager::HostedInternetCode() const
+{
+    return Internet != nullptr && Internet->Hosting() && !Internet->Code().empty() ? std::optional(Internet->Code())
+                                                                                   : std::nullopt;
+}
+
+void MCSessionManager::TendInternet()
+{
+    if (Internet == nullptr)
+    {
+        return;
+    }
+
+    // A game whose service socket ended (the service refused it, or it can't come back) plays on over its links: only
+    // its place on the service is gone (Update says why in the log).
+    Internet->Update();
+    const std::shared_ptr<MCFidpSession> session = CurrentSession();
+
+    if (!IsHost || session == nullptr)
+    {
+        return;
+    }
+
+    // The room as the service's list shows it; the mission comes with the INTERNET screen, whose list shows it.
+    MCServiceRoom room{.Name = session->Name,
+                       .Max = static_cast<int32_t>(session->SessionDesc.dwMaxPlayers),
+                       .Battle = GameStarted || _SessionLocked};
+
+    for (const std::shared_ptr<MCFidpPlayer>& player : Players)
+    {
+        room.Players.push_back(player->Name);
+    }
+
+    Internet->SetRoom(std::move(room));
 }
 
 MCLobbyJoin MCSessionManager::TryLobbyJoin(std::string_view playerName)
@@ -735,6 +906,8 @@ bool MCSessionManager::LeaveSession()
     _MyPlayer.reset();
     DirectPlay->Close();
     DestroyDirectPlayInterface();
+    // Port (Redux HD): an internet game ends with its session (its links, its place on the service).
+    EndInternet();
     CreateDirectPlayInterface();
     PlayersByLatency = {0, 1, 2, 3, 4, 5};
     return true;

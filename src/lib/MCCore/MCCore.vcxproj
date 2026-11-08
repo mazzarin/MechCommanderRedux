@@ -287,6 +287,7 @@
     <ClCompile Include="mission\MCWeatherPlay.cpp" />
     <ClCompile Include="network\MCGameDataHash.cpp" />
     <ClCompile Include="network\MCInternetCopy.cpp" />
+    <ClCompile Include="network\MCInternetGame.cpp" />
     <ClCompile Include="network\MCLobbyUpdate.cpp" />
     <ClCompile Include="network\MCMPGameConfiguration.cpp" />
     <ClCompile Include="network\MCMultiPlayer.cpp" />
@@ -416,6 +417,7 @@
     </ClCompile>
     <ClCompile Include="platform\MCIceTransport.cpp" />
     <ClCompile Include="platform\MCInput.cpp" />
+    <ClCompile Include="platform\MCNetSwitch.cpp" />
     <ClCompile Include="platform\MCPresenter.cpp" />
     <ClCompile Include="platform\MCRegisteredBlock.cpp" />
     <ClCompile Include="platform\MCRegistry.cpp" />
@@ -766,6 +768,7 @@
     <ClInclude Include="mission\MCWeatherPlay.h" />
     <ClInclude Include="network\MCGameDataHash.h" />
     <ClInclude Include="network\MCInternetCopy.h" />
+    <ClInclude Include="network\MCInternetGame.h" />
     <ClInclude Include="network\MCLobbyUpdate.h" />
     <ClInclude Include="network\MCMPGameConfiguration.h" />
     <ClInclude Include="network\MCMultiPlayer.h" />
@@ -887,6 +890,7 @@
     <ClInclude Include="platform\MCIceLink.h" />
     <ClInclude Include="platform\MCIceTransport.h" />
     <ClInclude Include="platform\MCInput.h" />
+    <ClInclude Include="platform\MCNetSwitch.h" />
     <ClInclude Include="platform\MCNeverDestroyed.h" />
     <ClInclude Include="platform\MCPresenter.h" />
     <ClInclude Include="platform\MCRegisteredBlock.h" />

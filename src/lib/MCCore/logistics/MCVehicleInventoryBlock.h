@@ -70,6 +70,10 @@ private:
     /// <summary>The vehicle the block refers to (<see cref="Vehicle"/>).</summary>
     std::weak_ptr<MCLogVehicle> _Vehicle;
 
-    /// <summary>Offers the vehicle for sale unless the mission requires it; true when the dialog opened.</summary>
-    bool OfferSale();
+    /// <summary>
+    /// Offers <paramref name="vehicle"/> for sale unless the mission requires it, its <paramref name="picture"/> in the
+    /// dialog: both as the event that offers it took them, since its refresh can drop this row first. True when the
+    /// dialog opened.
+    /// </summary>
+    bool OfferSale(const std::shared_ptr<MCLogVehicle>& vehicle, const std::shared_ptr<MCLogPort>& picture);
 };

@@ -70,8 +70,8 @@ namespace MCMechHandover
     /// Every game: moves each of <paramref name="units"/> from player <paramref name="leaver"/>'s roster into its new
     /// slot. The receiver's game (its check-in id the unit's new player) makes it its own, as the scenario's load makes
     /// a player's own: its local mover at that slot (Mover::NetPlayerId, by which its orders name it) and a button on
-    /// the mech bar, after its own. A unit not in the leaver's roster, or a slot already taken, is skipped (logged): the
-    /// rosters disagree.
+    /// the mech bar, after its own, and Betty says "New MechWarriors available.". A unit not in the leaver's roster, or a
+    /// slot already taken, is skipped (logged): the rosters disagree.
     /// </summary>
     /// <returns>How many were moved.</returns>
     int32_t Apply(MCMultiPlayer& game, int32_t leaver, std::span<const MCHanded> units);

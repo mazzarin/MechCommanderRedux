@@ -7,9 +7,16 @@
 #include "network/MCMultiPlayer.h"
 #include "object/MCForces.h"
 #include "object/MCMover.h"
+#include "sound/MCSoundSystem.h"
 
 namespace
 {
+    /// <summary>
+    /// Betty's "New MechWarriors available." (the original's for pilots to hire between missions): the receiver's game
+    /// says so once its teammate's units are its own. Betty has no line for reinforcements.
+    /// </summary>
+    constexpr uint32_t UnitsReceivedSample = 0x20;
+
     /// <summary>Whether <paramref name="player"/> is a player number a roster has.</summary>
     bool IsPlayerNumber(int32_t player)
     {
@@ -241,11 +248,16 @@ namespace MCMechHandover
             }
         }
 
-        // The new buttons dance into place after the player's own.
+        // The new buttons dance into place after the player's own, and Betty says so.
         if (const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
             madeOwn && iface != nullptr && iface->MechBar != nullptr)
         {
             iface->MechBar->PlaceButtons(true);
+        }
+
+        if (const std::shared_ptr<MCSoundSystem> sound = SoundSystem(); madeOwn && sound != nullptr)
+        {
+            sound->PlayBettySample(UnitsReceivedSample);
         }
 
         return moved;

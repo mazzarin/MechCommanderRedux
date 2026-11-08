@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <format>
 #include <fstream>
 #include <string>
@@ -343,6 +344,12 @@ namespace
             return std::chrono::duration_cast<std::chrono::seconds>(
                        std::chrono::system_clock::now().time_since_epoch())
                 .count();
+        }
+
+        std::chrono::nanoseconds Awake() override
+        {
+            // The uptime clock stops while the Mac sleeps; steady_clock's (CLOCK_MONOTONIC_RAW) runs on.
+            return std::chrono::nanoseconds(clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
         }
 
         void Request(std::string path, std::string body,

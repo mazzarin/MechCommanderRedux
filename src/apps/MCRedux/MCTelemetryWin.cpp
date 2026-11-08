@@ -106,6 +106,31 @@ namespace
         return {performance, static_cast<int32_t>(classes.size()) - performance};
     }
 
+    /// <summary>QueryUnbiasedInterruptTimePrecise's unit: 100 ns.</summary>
+    constexpr int64_t NanosecondsPerInterruptTick = 100;
+
+    /// <summary>
+    /// Windows' unbiased interrupt time (QueryUnbiasedInterruptTimePrecise), which stops while the PC sleeps or
+    /// hibernates: looked up, as kernel32.lib needn't list it (Mincore.lib does). Null where it isn't found.
+    /// </summary>
+    using AwakeTimeFunction = VOID(WINAPI*)(PULONGLONG);
+
+    AwakeTimeFunction FindAwakeTime()
+    {
+        for (const wchar_t* library : {L"kernel32.dll", L"kernelbase.dll"})
+        {
+            if (const HMODULE module = GetModuleHandleW(library); module != nullptr)
+            {
+                if (const FARPROC found = GetProcAddress(module, "QueryUnbiasedInterruptTimePrecise"); found != nullptr)
+                {
+                    return reinterpret_cast<AwakeTimeFunction>(found);
+                }
+            }
+        }
+
+        return nullptr;
+    }
+
     /// <summary>Windows' version, as RtlGetVersion gives it (GetVersionEx answers for the manifest's version).</summary>
     std::string SystemVersion()
     {
@@ -287,6 +312,18 @@ namespace
                 .count();
         }
 
+        std::chrono::nanoseconds Awake() override
+        {
+            if (_AwakeTime == nullptr)
+            {
+                return MCTelemetry::MCBackend::Awake();
+            }
+
+            ULONGLONG ticks = 0;
+            _AwakeTime(&ticks);
+            return std::chrono::nanoseconds(static_cast<int64_t>(ticks) * NanosecondsPerInterruptTick);
+        }
+
         void Request(std::string path, std::string body,
                      std::function<void(int32_t status, std::string reply)> done) override
         {
@@ -373,6 +410,7 @@ namespace
         /// <summary>The server's address, ending in a slash.</summary>
         std::string _Server;
         std::filesystem::path _UserFolder;
+        AwakeTimeFunction _AwakeTime = FindAwakeTime();
         HANDLE _File = INVALID_HANDLE_VALUE;
         HANDLE _Mapping = nullptr;
         void* _View = nullptr;

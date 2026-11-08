@@ -9,6 +9,7 @@
 // its room for the service's list, paced to the service's budget for it. Every message from the service is checked
 // before it's used.
 
+#include "lib/MCRetryDelay.h"
 #include "platform/MCIceTransport.h"
 #include "platform/MCWebSocket.h"
 
@@ -114,12 +115,26 @@ struct MCServiceRoomPace
     std::function<std::chrono::steady_clock::time_point()> Now;
 };
 
+/// <summary>
+/// Pings the service over <paramref name="ws"/> when it's open and <see cref="MCServicePingEvery"/> has passed since
+/// <paramref name="lastPing"/>, which then moves to <paramref name="now"/>: every socket to the service keeps alive so.
+/// </summary>
+void MCServicePingIfDue(MCWebSocket& ws, std::chrono::steady_clock::time_point& lastPing,
+                        std::chrono::steady_clock::time_point now);
+
+/// <summary>
+/// A socket to the service coming back after a drop (the INTERNET screen's list, a game's socket to its place): from a
+/// second, doubling up to half a minute, the first anywhere in its first 3 s (the service's deploy drops every socket
+/// at once).
+/// </summary>
+inline constexpr MCRetryDelay MCServiceComebackTries{
+    .First = std::chrono::seconds(1), .Most = std::chrono::seconds(30), .FirstSpread = std::chrono::seconds(3)};
+
 /// <summary>How long a dropped socket's place waits (the service's 5 minutes), and the tries at coming back to it.</summary>
 struct MCServiceComeback
 {
     std::chrono::milliseconds PlaceKept = std::chrono::minutes(5);
-    std::chrono::milliseconds FirstTry = std::chrono::seconds(1);
-    std::chrono::milliseconds LongestWait = std::chrono::seconds(30);
+    MCRetryDelay Tries = MCServiceComebackTries;
 };
 
 /// <summary>The service's signals and a link's bytes, over its WebSockets. Thread-safe.</summary>
@@ -204,7 +219,10 @@ public:
     /// minutes, a host's game with them, for a socket that comes back with its token. None comes back from here.
     /// </summary>
     void LeaveAway();
-    /// <summary>Whether every socket has closed (its leaving gone to the service, as far as the system can say).</summary>
+    /// <summary>
+    /// Whether every socket has closed and finished (its leaving gone to the service, as far as the system can say:
+    /// MCWebSocket::Finished).
+    /// </summary>
     bool AllClosed();
     /// <summary>
     /// The links bind to <paramref name="address"/> alone (MCIceLink::Settings::BindAddress): the tests' loopback, which
@@ -257,7 +275,7 @@ private:
         /// back (its place is the host's now).
         /// </summary>
         bool TakenOver = false;
-        /// <summary>Since its socket dropped, while it tries to come back; the next try.</summary>
+        /// <summary>Since its socket dropped, while it tries to come back; the next try, and the tries since.</summary>
         std::optional<Clock::time_point> DroppedAt;
         Clock::time_point NextTry;
         int32_t Tries = 0;
@@ -272,7 +290,6 @@ private:
     void Tend(Socket& socket, std::string_view game, Clock::time_point now, std::vector<Heard>& heard);
     /// <summary>The peers a closed or away socket's links through the service went to: each heard as gone.</summary>
     void TellGone(std::string_view game, std::vector<Heard>& heard);
-    void Ping(Socket& socket, Clock::time_point now);
     /// <summary>The room, when it's due and the pace allows (under the lock).</summary>
     void SendRoom();
     /// <summary>Takes one of the room's pace's sends, if one is left (refilled to now).</summary>

@@ -5,6 +5,7 @@
 #include "MCVersion.h"
 #include "MCWebSocketOpen.h"
 #include "lib/MCRandomId.h"
+#include "lib/MCThreadKeeper.h"
 #include "main/MCTelemetry.h"
 #include "network/MCInternetGame.h"
 #include "platform/MCFileSystem.h"
@@ -431,8 +432,9 @@ int MCIceTrial::Run(std::span<const std::string_view> arguments)
     }
 
     // The sockets close as their player leaving, so the service frees the places at once: the closes go before the
-    // process ends.
+    // process ends (Windows' on the threads the keeper joins).
     signaling.reset();
+    MCThreadKeeper::Process().JoinAll();
     std::this_thread::sleep_for(CloseWait);
     out.Line(result == 0 ? "done" : "done, FAILED");
     return result;

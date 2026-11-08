@@ -25,6 +25,16 @@ namespace
     constexpr int TooManyStatus = 429;
     constexpr std::string_view StoppedError = "stopped";
     constexpr std::string_view ContentRangeUnit = "bytes ";
+    /// <summary>Each wait to try again at least a millisecond, so the waits always add up to the ride-out.</summary>
+    constexpr std::chrono::milliseconds ShortestRetryWait{1};
+
+    /// <summary>The waits <paramref name="retries"/> says, each at least <see cref="ShortestRetryWait"/>.</summary>
+    MCRetryDelay DelayOf(const MCHttpSource::MCRetries& retries)
+    {
+        return {.First = std::max(retries.First, ShortestRetryWait),
+                .Most = std::max(retries.Longest, ShortestRetryWait),
+                .Jitter = retries.Jitter};
+    }
 
     std::string Lower(std::string_view text)
     {
@@ -330,13 +340,14 @@ namespace
     public:
         MCSource(std::vector<std::string> hosts, MCHttpSource::MCGetMaker makeGet,
                  std::unique_ptr<MCHttpSource::MCGet> get, std::shared_ptr<MCStopper> parent,
-                 std::vector<std::chrono::milliseconds> waits, MCHttpSource::MCPick pick)
+                 MCHttpSource::MCRetries retries, MCHttpSource::MCPick pick)
             : _Hosts(std::move(hosts))
             , _MakeGet(std::move(makeGet))
             , _Get(std::move(get))
             , _Stopper(std::make_shared<MCStopper>(*_Get))
             , _Parent(std::move(parent))
-            , _Waits(std::move(waits))
+            , _Retries(retries)
+            , _Delay(DelayOf(retries))
             , _Pick(std::move(pick))
         {
             if (_Parent != nullptr)
@@ -414,7 +425,7 @@ namespace
                 return nullptr;
             }
 
-            return std::make_unique<MCSource>(_Hosts, _MakeGet, std::move(get), _Stopper, _Waits, _Pick);
+            return std::make_unique<MCSource>(_Hosts, _MakeGet, std::move(get), _Stopper, _Retries, _Pick);
         }
 
         bool HostUnreachable() const override { return _Unreachable; }
@@ -523,8 +534,8 @@ namespace
         /// Runs <paramref name="attempt"/> (given the host to try and whether it brought bytes) until it succeeds. A
         /// failure moves on to the next host; one that won't pass leaves that host out for the file, which fails once
         /// every host is out. Once every host still in has failed (a round), it waits longer each time before the next
-        /// round, and gives up once the waits run out. Giving up, it keeps whether the hosts were out of reach
-        /// (HostUnreachable: every try of the last round, and none out for answering); succeeding, it clears it.
+        /// round, and gives up once its waits add up to the ride-out. Giving up, it keeps whether the hosts were out of
+        /// reach (HostUnreachable: every try of the last round, and none out for answering); succeeding, it clears it.
         /// </summary>
         template <typename MCAttempt>
         std::expected<void, std::string> Tried(std::string_view name, const MCAttempt& attempt)
@@ -532,6 +543,7 @@ namespace
             MCRound round(Order(name));
             const bool several = _Hosts.size() > 1;
             size_t failed = 0;
+            std::chrono::milliseconds waited{0};
             bool roundUnreachable = true;
 
             for (;;)
@@ -564,6 +576,7 @@ namespace
                 if (progressed)
                 {
                     failed = 0;
+                    waited = {};
                 }
 
                 const bool lasting = done.error().Kind == MCKind::Lasting;
@@ -586,7 +599,7 @@ namespace
                     continue;
                 }
 
-                if (failed == _Waits.size())
+                if (waited >= _Retries.RideOut)
                 {
                     _Unreachable = roundUnreachable && !round.AnyOut();
                     SDL_Log("Updates: %.*s: %s; given up, %zu tries since its last bytes",
@@ -594,7 +607,10 @@ namespace
                     return std::unexpected(done.error().Reason);
                 }
 
-                const std::chrono::milliseconds wait = _Waits[failed++];
+                const std::chrono::milliseconds wait =
+                    std::max(_Delay.Wait(static_cast<int32_t>(std::min<size_t>(failed++, MCRetryDelay::MostDoublings))),
+                             ShortestRetryWait);
+                waited += wait;
                 roundUnreachable = true;
                 SDL_Log("Updates: %.*s: %s; tried again in %lld ms", static_cast<int>(name.size()), name.data(),
                         done.error().Reason.c_str(), static_cast<long long>(wait.count()));
@@ -672,8 +688,9 @@ namespace
         std::shared_ptr<MCStopper> _Stopper;
         /// <summary>The source this one was made from (none: made by Make), whose Cancel reaches this one.</summary>
         std::shared_ptr<MCStopper> _Parent;
-        /// <summary>The waits before each round again (MCHttpSource::RetryWaits).</summary>
-        std::vector<std::chrono::milliseconds> _Waits;
+        /// <summary>The waits before each round again, and how long they ride out (MCHttpSource::RetryWaits).</summary>
+        MCHttpSource::MCRetries _Retries;
+        MCRetryDelay _Delay;
         /// <summary>Picks the host each file starts from (none: _Random).</summary>
         MCHttpSource::MCPick _Pick;
         std::mt19937 _Random{std::random_device{}()};
@@ -689,17 +706,13 @@ std::vector<std::chrono::milliseconds> MCHttpSource::RetryWaits(const MCRetries&
 {
     std::vector<std::chrono::milliseconds> waits;
     std::chrono::milliseconds waited{0};
-    // Each wait at least a millisecond, so the waits always come to an end.
-    constexpr std::chrono::milliseconds Shortest{1};
-    const std::chrono::milliseconds longest = std::max(retries.Longest, Shortest);
-    std::chrono::milliseconds next = std::max(retries.First, Shortest);
+    const MCRetryDelay delay = DelayOf(retries);
 
-    while (waited < retries.RideOut)
+    for (int32_t tries = 0; waited < retries.RideOut; tries = std::min(tries + 1, MCRetryDelay::MostDoublings))
     {
-        const std::chrono::milliseconds wait = std::min(next, longest);
+        const std::chrono::milliseconds wait = delay.Longest(tries);
         waits.push_back(wait);
         waited += wait;
-        next = wait * 2;
     }
 
     return waits;
@@ -805,5 +818,5 @@ std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSour
     }
 
     return std::make_unique<MCSource>(std::vector{std::move(*folder)}, std::move(makeGet), std::move(get), nullptr,
-                                      RetryWaits(retries), std::move(pick));
+                                      retries, std::move(pick));
 }

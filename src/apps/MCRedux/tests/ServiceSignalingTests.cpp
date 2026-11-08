@@ -53,9 +53,7 @@ namespace
     }
 
     /// <summary>A dropped socket tries to come back at once, and its place waits long past the test.</summary>
-    const MCServiceComeback AtOnce{.PlaceKept = std::chrono::hours(1),
-                                   .FirstTry = std::chrono::milliseconds(0),
-                                   .LongestWait = std::chrono::milliseconds(0)};
+    const MCServiceComeback AtOnce{.PlaceKept = std::chrono::hours(1), .Tries = {}};
 
     /// <summary>
     /// The service's end of a scripted socket, which the test plays: what the game sent, what arrives for it, its state.

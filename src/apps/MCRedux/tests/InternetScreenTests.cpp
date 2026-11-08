@@ -391,6 +391,116 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
 }
 
 /// <summary>
+/// INTERNET CONNECTION's list longer than its view: scrolled to the bottom, a game picked there by a click on its row,
+/// and the list's updates, keep it where it's scrolled (a pick only lights its row); a shorter list holds the scroll to
+/// its new length, and one that fits shows its top with no scroll bar.
+/// </summary>
+TEST_CASE_ISOLATED("game: INTERNET CONNECTION's list stays where it's scrolled through a pick and the list's updates")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    std::string asked;
+    MCServiceScript::SetupScope scope(MCServiceScript::ListOpener(list),
+                                      MCServiceScript::Answering(R"({"online":1})", asked), Service, Version);
+    REQUIRE(MCTestGame::StartLogistics());
+    MCSplashScreen& screen = OpenInternetScreen(list);
+    auto games = screen.Element<MCInternetGameList>(GameList);
+
+    // Open games, each its own code ("GAM" and a letter of the codes' own).
+    constexpr std::string_view CodeLetters = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const auto codeOf = [&](int32_t game) { return std::format("GAM{}", CodeLetters[static_cast<size_t>(game)]); };
+    const auto listing = [&](int32_t count, int online)
+    {
+        Json listed = Json::array();
+
+        for (int32_t game = 0; game < count; game++)
+        {
+            listed.push_back(
+                MCServiceScript::ListedGame(codeOf(game), std::format("Game {}", game), {"Bob"}, 6, nullptr, Version));
+        }
+
+        return Listing(std::move(listed), online, 0);
+    };
+
+    const auto countsAre = [](int online)
+    { return [online] { return InternetCountsShown() == std::format("{} ONLINE, 0 IN GAMES", online); }; };
+
+    // More games than the list shows at once.
+    constexpr int32_t ManyGames = 30;
+    list.Send(listing(ManyGames, ManyGames));
+    REQUIRE(SettleUntil(countsAre(ManyGames)));
+    REQUIRE(games->NumLines == ManyGames);
+    REQUIRE(games->Lport()->Height() > games->Height());
+    const int32_t rowHeight = games->Lport()->Height() / games->NumLines;
+    CHECK(games->ScrollTab->ShowWindow);
+    SaveShot("internet scroll 0 top", ScreenHash());
+
+    // Scrolled to the bottom, a notch of the wheel a row.
+    CHECK(games->MouseWheel(ManyGames, 0, 0));
+    Settle();
+    const int32_t bottom = games->Lport()->Height() - games->Height();
+    REQUIRE(bottom > 0);
+    REQUIRE(games->FirstPixel == bottom);
+    const int32_t tabAtBottom = games->ScrollTab->Y();
+
+    // The last game, below the fold until scrolled: a click on its row picks it, and the list stays put.
+    const int32_t last = ManyGames - 1;
+    Click(games->GlobalX() + games->Width() / 2,
+          games->GlobalY() + last * rowHeight - games->FirstPixel + rowHeight / 2);
+    Settle();
+    REQUIRE(games->Picked().has_value());
+    CHECK(games->Picked()->Code == codeOf(last));
+    CHECK(games->HighlightLine[0] == last);
+    CHECK(games->FirstPixel == bottom);
+    CHECK(games->ScrollTab->Y() == tabAtBottom);
+    CHECK(LineOf(*games, last) == std::format("GAME {}\t1/6", last));
+    SaveShot("internet scroll 1 picked at the bottom", ScreenHash());
+
+    // The list's updates keep it there, and the pick.
+    list.Send(listing(ManyGames, ManyGames + 1));
+    REQUIRE(SettleUntil(countsAre(ManyGames + 1)));
+    CHECK(games->FirstPixel == bottom);
+    CHECK(games->ScrollTab->Y() == tabAtBottom);
+    CHECK(games->HighlightLine[0] == last);
+
+    // Scrolled back a few rows, a pick there and an update keep that too.
+    constexpr int32_t RowsBack = 4;
+    CHECK(games->MouseWheel(-RowsBack, 0, 0));
+    Settle();
+    const int32_t between = bottom - RowsBack * rowHeight;
+    REQUIRE(games->FirstPixel == between);
+    games->Pick(codeOf(last - 1));
+    Settle();
+    CHECK(games->FirstPixel == between);
+    CHECK(games->HighlightLine[0] == last - 1);
+    list.Send(listing(ManyGames, ManyGames + 2));
+    REQUIRE(SettleUntil(countsAre(ManyGames + 2)));
+    CHECK(games->FirstPixel == between);
+
+    // A shorter list: the scroll held to its new length (the picked game gone with it).
+    constexpr int32_t FewerGames = ManyGames - 2 * RowsBack;
+    list.Send(listing(FewerGames, FewerGames));
+    REQUIRE(SettleUntil(countsAre(FewerGames)));
+    REQUIRE(games->NumLines == FewerGames);
+    CHECK(games->Lport()->Height() == std::max(FewerGames * rowHeight, games->Height()));
+    CHECK(games->FirstPixel == std::max(games->Lport()->Height() - games->Height(), 0));
+    CHECK(!games->Picked().has_value());
+    CHECK(games->HighlightLine[0] == -1);
+
+    // One that fits: its top, and no scroll bar.
+    constexpr int32_t FewGames = 3;
+    list.Send(listing(FewGames, FewGames));
+    REQUIRE(SettleUntil(countsAre(FewGames)));
+    CHECK(games->Lport()->Height() == games->Height());
+    CHECK(games->FirstPixel == 0);
+    CHECK(!games->ScrollTab->ShowWindow);
+}
+
+/// <summary>
 /// Hosting and joining from INTERNET CONNECTION, through a stand-in for the games service: a game hosted goes into its
 /// room (the session screen), the service told the room and the players its code; the room's EXIT comes back to the
 /// games; a code no game has is refused with a message, and nothing is left open.

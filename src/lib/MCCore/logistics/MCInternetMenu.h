@@ -62,7 +62,8 @@ public:
 
     /// <summary>
     /// Lists <paramref name="listing"/>'s games (none yet: <paramref name="waiting"/>; none open:
-    /// <paramref name="empty"/>), keeping the pick on its game; the screen hears when the pick goes.
+    /// <paramref name="empty"/>), keeping the pick on its game and the list where it's scrolled (held to its new
+    /// length); the screen hears when the pick goes.
     /// </summary>
     void Show(const std::optional<MCInternetListing>& listing, std::string_view waiting, std::string_view empty);
 
@@ -72,7 +73,10 @@ public:
     /// <summary>The picked game, while it's listed.</summary>
     std::optional<MCInternetListing::Game> Picked() const;
 
-    /// <summary>Picks the game with <paramref name="code"/> (as a click does), if it's listed.</summary>
+    /// <summary>
+    /// Picks the game with <paramref name="code"/> (as a click does), if it's listed: only the rows' highlight and
+    /// colours change, the list staying where it's scrolled.
+    /// </summary>
     void Pick(std::string_view code);
 
     void ClearPick();
@@ -81,7 +85,12 @@ public:
     static bool Joinable(const MCInternetListing::Game& game);
 
 private:
+    /// <summary>A row's height: the list's font's and its gap.</summary>
+    int32_t RowHeight() const;
+    /// <summary>The lines again from the games or the note, the scroll kept (held to the new length).</summary>
     void Rebuild();
+    /// <summary>The games' rows coloured, and the pick highlighted, as the pick stands.</summary>
+    void ShowPick();
 
     std::vector<MCInternetListing::Game> _Games;
     std::optional<std::string> _PickedCode;

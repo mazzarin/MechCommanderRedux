@@ -781,6 +781,8 @@ namespace
 int32_t MCInternetGameList::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view text)
 {
     const int32_t result = MCLogScrollTextObject::Init(xPos, yPos, width, height, text);
+    // It scrolls (made without text, a list doesn't): the service lists up to 100 games, more than the view shows.
+    Scrolling = true;
     TabColumn = SlotsColumn;
     HighlightColor[0] = PickedHighlight;
     FontIndex = ListFont;
@@ -824,8 +826,15 @@ void MCInternetGameList::Show(const std::optional<MCInternetListing>& listing, s
     Rebuild();
 }
 
+int32_t MCInternetGameList::RowHeight() const
+{
+    return Fonts[0][FontIndex]->Height() + RowGap;
+}
+
 void MCInternetGameList::Rebuild()
 {
+    // The list stays where the player scrolled it (Clear tops it), held to its new length below.
+    const int32_t scrolled = FirstPixel;
     Clear();
 
     // Why there are none, wrapped to the list's width.
@@ -850,13 +859,33 @@ void MCInternetGameList::Rebuild()
         }
     }
 
-    // "name <tab> players/most", or FULL; one that can't be joined greyed; the pick highlighted.
-    for (size_t i = 0; i < _Games.size(); i++)
+    // "name <tab> players/most", or FULL, coloured as the pick stands.
+    for (const MCInternetListing::Game& game : _Games)
     {
-        const MCInternetListing::Game& game = _Games[i];
         const auto players = static_cast<int32_t>(game.Players.size());
         const std::string slots = players >= game.Max ? "FULL" : std::format("{}/{}", players, game.Max);
-        const std::string line = std::format("{}\t{}", Upper(game.Name), slots);
+        Print(std::format("{}\t{}", Upper(game.Name), slots), GameColor);
+    }
+
+    ShowPick();
+
+    // The port as tall as the lines (never under the view, nor taller than they need), so the scroll bar's range and
+    // thumb are the list's as it stands now.
+    Lport()->Resize(Lport()->Width(), std::max(NumLines * RowHeight(), Height()));
+    FirstPixel = std::clamp(scrolled, 0, Lport()->Height() - Height());
+    PositionScrollTab();
+}
+
+void MCInternetGameList::ShowPick()
+{
+    HighlightLine[0] = -1;
+    size_t lineStart = 0;
+
+    // The games are the list's lines, in order (there's no note when there are games): each line's colour is its
+    // first byte. The pick highlighted, one that can't be joined greyed.
+    for (size_t i = 0; i < _Games.size() && lineStart < Text.size(); i++)
+    {
+        const MCInternetListing::Game& game = _Games[i];
         const bool picked = _PickedCode == game.Code;
 
         if (picked)
@@ -864,7 +893,15 @@ void MCInternetGameList::Rebuild()
             HighlightLine[0] = static_cast<int32_t>(i);
         }
 
-        Print(line, picked ? PickedColor : Joinable(game) ? GameColor : GreyedColor);
+        Text[lineStart] = static_cast<char>(picked ? PickedColor : Joinable(game) ? GameColor : GreyedColor);
+        const size_t lineEnd = Text.find('\n', lineStart);
+
+        if (lineEnd == std::string::npos)
+        {
+            break;
+        }
+
+        lineStart = lineEnd + 1;
     }
 }
 
@@ -875,7 +912,7 @@ void MCInternetGameList::HandleEvent(MCGuiEvent& event)
         return;
     }
 
-    const int32_t rowHeight = Fonts[0][FontIndex]->Height() + RowGap;
+    const int32_t rowHeight = RowHeight();
     const int32_t clickX = event.X - GlobalX();
     const int32_t clickY = FirstPixel + event.Y - GlobalY();
 
@@ -910,8 +947,9 @@ void MCInternetGameList::Pick(std::string_view code)
         return;
     }
 
+    // Only the rows' colours and the highlight change: the list stays where it's scrolled.
     _PickedCode = std::string(code);
-    Rebuild();
+    ShowPick();
     MCGuiEvent picked;
     picked.Type = MCGuiEventType::Focus;
     picked.Data = MCLogNotice::GameSelected;
@@ -921,7 +959,7 @@ void MCInternetGameList::Pick(std::string_view code)
 void MCInternetGameList::ClearPick()
 {
     _PickedCode.reset();
-    Rebuild();
+    ShowPick();
 }
 
 bool HasInternetGames()

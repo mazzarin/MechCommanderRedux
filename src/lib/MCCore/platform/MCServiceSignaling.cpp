@@ -78,10 +78,8 @@ namespace
     constexpr size_t MaxGuestSettings = 64;
     /// <summary>STUN before the service answers (and the service's own), as host:port.</summary>
     constexpr std::string_view DefaultStun = "stun.cloudflare.com:3478";
-    /// <summary>The service's keep-alive, which it answers itself: an idle socket through a router or proxy stays open.</summary>
-    constexpr std::string_view PingText = MCServicePing;
+    /// <summary>The service's answer to its keep-alive (MCServicePingIfDue).</summary>
     constexpr std::string_view PongText = MCServicePong;
-    constexpr auto PingEvery = MCServicePingEvery;
     constexpr std::string_view HostPath = "/host";
     constexpr std::string_view JoinPath = "/join/";
     constexpr std::string_view BackPath = "/game/";
@@ -404,14 +402,16 @@ void MCServiceSignaling::HostAgain(std::string_view code, std::string_view token
 {
     const std::scoped_lock lock(_Lock);
     const Clock::time_point now = Clock::now();
-    // A dropped host's socket, coming back to its place (Tend tries again while the place waits).
+    // A dropped host's socket, coming back to its place: its first try made now, Tend's the others while the place
+    // waits.
+    constexpr int32_t TriesMade = 1;
     _Host = Socket{.Ws = Opened(std::format("{}{}", BackPath, code), token),
                    .LastPing = now,
                    .Code = std::string(code),
                    .Token = std::string(token),
                    .DroppedAt = now,
-                   .NextTry = now + _Comeback.FirstTry,
-                   .Tries = 1};
+                   .NextTry = now + _Comeback.Tries.Wait(TriesMade),
+                   .Tries = TriesMade};
     _Guests.clear();
     _GuestSettings.clear();
     _NameRefused = false;
@@ -623,7 +623,8 @@ std::optional<std::string> MCServiceSignaling::WhyClosed(std::string_view game)
 bool MCServiceSignaling::AllClosed()
 {
     const std::scoped_lock lock(_Lock);
-    const auto closed = [](const Socket& socket) { return socket.Ws->GetState() == MCWebSocket::State::Closed; };
+    // Through with the network: a close still going (Windows' waits for it) isn't closed yet.
+    const auto closed = [](const Socket& socket) { return socket.Ws->Finished(); };
     return (!_Host.has_value() || closed(*_Host)) &&
            std::ranges::all_of(_Games, [&](const auto& game) { return closed(game.second); });
 }
@@ -745,7 +746,7 @@ std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
         }
 
         Tend(*_Host, {}, now, heard);
-        Ping(*_Host, now);
+        MCServicePingIfDue(*_Host->Ws, _Host->LastPing, now);
         // A room that waited for the pace goes once it allows, whether or not the room changes again.
         SendRoom();
     }
@@ -758,7 +759,7 @@ std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
         }
 
         Tend(socket, game, now, heard);
-        Ping(socket, now);
+        MCServicePingIfDue(*socket.Ws, socket.LastPing, now);
     }
 
     return heard;
@@ -812,8 +813,8 @@ void MCServiceSignaling::Tend(Socket& socket, std::string_view game, Clock::time
     if (!socket.DroppedAt.has_value())
     {
         socket.DroppedAt = now;
-        socket.NextTry = now + _Comeback.FirstTry;
         socket.Tries = 0;
+        socket.NextTry = now + _Comeback.Tries.Wait(socket.Tries);
         return;
     }
 
@@ -829,14 +830,12 @@ void MCServiceSignaling::Tend(Socket& socket, std::string_view game, Clock::time
         return;
     }
 
-    // Back to its place: each try waits twice the last, up to the longest wait.
+    // Back to its place: each try waits up to twice the last, up to the longest wait (MCServiceComeback::Tries).
     socket.Ws = Opened(std::format("{}{}", BackPath, socket.Code), socket.Token);
     socket.In = false;
     socket.Told = false;
     socket.Tries++;
-    const auto wait = std::min<std::chrono::milliseconds>(_Comeback.FirstTry * (1LL << std::min(socket.Tries, 16)),
-                                                          _Comeback.LongestWait);
-    socket.NextTry = now + wait;
+    socket.NextTry = now + _Comeback.Tries.Wait(socket.Tries);
     SDL_Log("MCServiceSignaling: %s coming back to its place (try %d)", what.c_str(), socket.Tries);
 }
 
@@ -868,12 +867,14 @@ std::unique_ptr<MCWebSocket> MCServiceSignaling::Opened(std::string_view path, s
     return ws != nullptr ? std::move(ws) : std::make_unique<MCClosedWebSocket>("the system couldn't open the socket");
 }
 
-void MCServiceSignaling::Ping(Socket& socket, Clock::time_point now)
+void MCServicePingIfDue(MCWebSocket& ws, std::chrono::steady_clock::time_point& lastPing,
+                        std::chrono::steady_clock::time_point now)
 {
-    if (socket.Ws->GetState() == MCWebSocket::State::Open && now - socket.LastPing >= PingEvery)
+    // The service answers it itself: an idle socket through a router or proxy stays open.
+    if (ws.GetState() == MCWebSocket::State::Open && now - lastPing >= MCServicePingEvery)
     {
-        socket.Ws->SendText(PingText);
-        socket.LastPing = now;
+        ws.SendText(MCServicePing);
+        lastPing = now;
     }
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCRetryDelay.h"
 #include "update/MCContentStage.h"
 #include "update/MCHttpTransfer.h"
 
@@ -12,7 +13,8 @@
 /// Only https, but for http to this machine (the tests' server): what arrives is checked against the signed files
 /// whatever carries it, and https keeps what a player fetches private. A failure that may pass (a lost connection, a
 /// timeout, the host's 5xx, 408 or 429) goes to the next host at once, and once every host has failed it is tried
-/// again, waiting longer each time and resuming where the bytes stopped, through an outage of a couple of minutes
+/// again, waiting longer each time (a wait drawn at random from the last part of its longest, so players cut off at
+/// once don't all come back at once) and resuming where the bytes stopped, through an outage of a couple of minutes
 /// (<see cref="MCRetries"/>); any other (a missing file, one not as the list has it) leaves that host out for the file,
 /// and fails it once every host is out.
 /// </summary>
@@ -25,7 +27,8 @@ namespace MCHttpSource
 
     /// <summary>
     /// How a source tries again after failures that may pass, each a round of the hosts that all failed: waits doubling
-    /// from <see cref="First"/> up to <see cref="Longest"/>, until they add up to <see cref="RideOut"/>. A try that
+    /// from <see cref="First"/> up to <see cref="Longest"/> (MCRetryDelay), each drawn from the last
+    /// <see cref="Jitter"/> share of its longest, until the waits made add up to <see cref="RideOut"/>. A try that
     /// brought bytes starts them over, so a long download survives many cuts.
     /// </summary>
     struct MCRetries
@@ -33,9 +36,13 @@ namespace MCHttpSource
         std::chrono::milliseconds First = FirstRetryWait;
         std::chrono::milliseconds Longest = LongestRetryWait;
         std::chrono::milliseconds RideOut = OutageRiddenOut;
+        double Jitter = MCRetryDelay::DefaultJitter;
     };
 
-    /// <summary>The waits before each try again after a run of failures, in order: then the source gives up.</summary>
+    /// <summary>
+    /// The longest each wait before a try again after a run of failures is, in order, until they add up to the
+    /// ride-out: the waits a source makes without jitter, after which it gives up (with jitter it makes more, shorter).
+    /// </summary>
     std::vector<std::chrono::milliseconds> RetryWaits(const MCRetries& retries = {});
 
     /// <summary>The first byte a part's Content-Range names ("bytes 100-199/1000": 100), or none.</summary>

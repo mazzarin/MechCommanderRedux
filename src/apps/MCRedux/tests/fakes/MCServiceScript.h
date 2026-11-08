@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCThreadKeeper.h"
 #include "network/MCInternetGame.h"
 
 #include <nlohmann/json.hpp>
@@ -145,7 +146,16 @@ namespace MCServiceScript
                                    .Service = std::string(service)});
         }
 
-        ~SetupScope() { MCInternetGame::Setup({}); }
+        /// <summary>
+        /// The setup gone, and the threads let go of meanwhile (a count's request) joined: what the stand-ins refer to
+        /// (the URL asked) outlives them.
+        /// </summary>
+        ~SetupScope()
+        {
+            MCInternetGame::Setup({});
+            MCThreadKeeper::Process().JoinAll();
+        }
+
         SetupScope(const SetupScope&) = delete;
         SetupScope& operator=(const SetupScope&) = delete;
     };

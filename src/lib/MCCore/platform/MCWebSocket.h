@@ -26,7 +26,10 @@ inline constexpr std::string_view MCWebSocketUntrusted = "the service's certific
 /// </summary>
 inline constexpr uint16_t MCWebSocketAwayCode = 4100;
 
-/// <summary>One WebSocket, opened by <see cref="MCWebSocketOpener"/>: sends queue until it opens. Thread-safe.</summary>
+/// <summary>
+/// One WebSocket, opened by <see cref="MCWebSocketOpener"/>: sends queue until it opens. Thread-safe. Destroying it
+/// closes it and returns at once, whatever its close still has to do (see <see cref="Finished"/>).
+/// </summary>
 class MCWebSocket
 {
 public:
@@ -52,6 +55,11 @@ public:
     /// <summary>The messages that arrived since the last call, in order.</summary>
     virtual std::vector<Message> Take() = 0;
     virtual State GetState() const = 0;
+    /// <summary>
+    /// Whether it's closed and through with the network: a close it was sending has gone, or been given up on (Windows'
+    /// waits for its close to go, on a thread of its own). Closed, for a socket with nothing to finish after its close.
+    /// </summary>
+    virtual bool Finished() const { return GetState() == State::Closed; }
     /// <summary>Why it closed (the close's code and reason, or the system's error), for the log: never an address.</summary>
     virtual std::string WhyClosed() const = 0;
     /// <summary>The bytes sent and not yet gone to the network, so a sender can wait (the transport's window).</summary>

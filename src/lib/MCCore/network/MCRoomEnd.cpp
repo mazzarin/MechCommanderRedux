@@ -415,6 +415,10 @@ auto MCRoomEnd::GamesOf() -> MCGames
 auto MCRoomEnd::ShowGames(MCGames games, std::string_view line) -> void
 {
     MCLogistics& logistics = *GlobalLog();
+    // Back at the games, no rematch is pending (JoinAgain has taken its own before).
+    Rejoin.reset();
+    RejoinHeard = false;
+    JoinAfterResults = false;
 
     // The games screens find and join games through the multiplayer game, as MULTIPLAYER makes it.
     if (MultiPlayer() == nullptr)
@@ -560,6 +564,19 @@ auto MCRoomEnd::SessionLost() -> bool
     if (games == MCGames::None)
     {
         return false;
+    }
+
+    // The host said REMATCH while this game was still in the battle, then hosted its room again: the end is that, and
+    // this game joins the room once its scenario has ended (AfterMatch), as it would from its results.
+    if (RejoinHeard && Rejoin.has_value() && (game->PrepareScenarioReceived || game->InMission))
+    {
+        SDL_Log("Room end: the host's room went for its rematch; joining it after the battle");
+        RejoinHeard = false;
+        JoinAfterResults = true;
+        game->InMission = false;
+        game->LeaveSession();
+        Mission()->EndScenario();
+        return true;
     }
 
     const std::string host = HostName(*game);

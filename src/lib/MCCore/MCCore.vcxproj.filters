@@ -2178,6 +2178,9 @@
     <ClInclude Include="mission\MCNightLights.h">
       <Filter>mission</Filter>
     </ClInclude>
+    <ClInclude Include="mission\MCRematchLetters.h">
+      <Filter>mission</Filter>
+    </ClInclude>
     <ClInclude Include="mission\MCScenario.h">
       <Filter>mission</Filter>
     </ClInclude>

@@ -770,6 +770,7 @@
     <ClInclude Include="mission\MCMissionResults.h" />
     <ClInclude Include="mission\MCMissionResultsScreen.h" />
     <ClInclude Include="mission\MCNightLights.h" />
+    <ClInclude Include="mission\MCRematchLetters.h" />
     <ClInclude Include="mission\MCScenario.h" />
     <ClInclude Include="mission\MCScenarioObjectives.h" />
     <ClInclude Include="mission\MCScenarioPart.h" />

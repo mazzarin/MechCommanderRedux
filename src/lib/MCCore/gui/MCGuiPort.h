@@ -3,6 +3,9 @@
 #include "platform/MCRenderer.h"
 #include "vfx/MCVfxView.h"
 
+/// <summary>Port-only (Redux HD): a TGA's colour map, its 256 colours as the file holds them.</summary>
+using MCTgaColors = std::array<SDL_Color, 256>;
+
 /// <summary>
 /// An 8-bit drawing surface: a VFX window (the bitmap) and a pane covering all of it. Every GUI object draws into one
 /// and copies it to the screen; pictures (TGA files, GIF packets of the art file) are loaded into them. A port can
@@ -36,10 +39,12 @@ public:
 
     /// <summary>
     /// Loads TGA file <paramref name="fileName"/> under <c>ArtPath</c> (the planet's <c>x</c> variant first on
-    /// planet 1). A file that can't be read is fatal (<c>GeneralMsg</c>).
+    /// planet 1). A file that can't be read is fatal (<c>GeneralMsg</c>). Port-only (Redux HD): its colour map goes in
+    /// <paramref name="colors"/> when given (what the game makes of the picture, in colours the screen showing it may
+    /// not hold).
     /// </summary>
     /// <returns>0.</returns>
-    int32_t Init(std::string_view fileName);
+    int32_t Init(std::string_view fileName, MCOptionalRef<MCTgaColors> colors = std::nullopt);
 
     /// <summary>Port: makes the screen port: a <paramref name="width"/> x <paramref name="height"/> window without pixels.</summary>
     void InitScreen(int32_t width, int32_t height);

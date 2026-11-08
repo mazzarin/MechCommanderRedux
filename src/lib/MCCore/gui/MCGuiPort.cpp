@@ -166,7 +166,7 @@ auto MCGuiPort::Init(int32_t artPacket) -> int32_t
     return 0;
 }
 
-auto MCGuiPort::Init(std::string_view fileName) -> int32_t
+auto MCGuiPort::Init(std::string_view fileName, MCOptionalRef<MCTgaColors> colors) -> int32_t
 {
     std::string path;
     MCFile file;
@@ -222,6 +222,22 @@ auto MCGuiPort::Init(std::string_view fileName) -> int32_t
     const std::shared_ptr<MCTexture> texture = _Window->Texture.lock();
     std::memcpy(MCRenderer::LockTexture(*texture).data(), data.data() + 0x312, static_cast<size_t>(height * width));
     MCRenderer::UnlockTexture(*texture);
+
+    // Port-only (Redux HD): the palette, from +0x12: 256 colours of blue, green and red.
+    if (colors.has_value())
+    {
+        constexpr size_t ColorMap = 0x12;
+        constexpr size_t ColorBytes = 3;
+        constexpr uint8_t Opaque = 0xff;
+        MCTgaColors& map = colors->get();
+
+        for (size_t entry = 0; entry < map.size(); entry++)
+        {
+            const uint8_t* color = data.data() + ColorMap + entry * ColorBytes;
+            map[entry] = SDL_Color{color[2], color[1], color[0], Opaque};
+        }
+    }
+
     return 0;
 }
 

@@ -23,6 +23,7 @@
 #include "linkup/MCSessionManager.h"
 #include "main/MCGameStrings.h"
 #include "mission/MCMission.h"
+#include "mission/MCRematchLetters.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCRoomEnd.h"
@@ -188,7 +189,7 @@ namespace
         }
     }
 
-    /// <summary>Port-only (Redux HD): the move-on button's faces, which REMATCH is drawn from.</summary>
+    /// <summary>Port-only (Redux HD): the move-on button's faces, which REMATCH is made from.</summary>
     constexpr std::string_view MoveOnUpFace = "mr_ms01.tga";
     constexpr std::string_view MoveOnDownFace = "mr_ms02.tga";
     /// <summary>The move-on button's place and size, and REMATCH's left of it.</summary>
@@ -206,7 +207,151 @@ namespace
     constexpr int32_t LetteringRight = 0x67;
     constexpr int32_t LetteringTop = 2;
     constexpr int32_t LetteringBottom = 0xf;
-    constexpr std::string_view RematchWord = "REMATCH";
+    /// <summary>Port-only (Redux HD): the palette's grey ramp, black to white, the faces' and their words' greys.</summary>
+    constexpr uint8_t GreyRampFirst = 0x10;
+    constexpr uint8_t GreyRampLast = 0x1f;
+
+    /// <summary>Port-only (Redux HD): how a face's word is inked: darker than the face (up) or lighter (held).</summary>
+    enum class MCInk
+    {
+        Dark,
+        Light
+    };
+
+    /// <summary>Port-only (Redux HD): a colour's red, green and blue.</summary>
+    constexpr std::array<int64_t, 3> Channels(const SDL_Color& color)
+    {
+        return {color.r, color.g, color.b};
+    }
+
+    /// <summary>Port-only (Redux HD): how bright a grey is (its channels' sum).</summary>
+    constexpr int32_t Brightness(const SDL_Color& color)
+    {
+        return color.r + color.g + color.b;
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD): of <paramref name="face"/>, <paramref name="ink"/> and the grey ramp, the entry of
+    /// <paramref name="colors"/> nearest <paramref name="face"/>'s colour blended with <paramref name="ink"/>'s by
+    /// <paramref name="coverage"/> (of MCRematchLetters::Full); the first of equals. In whole numbers, so every machine
+    /// picks the same.
+    /// </summary>
+    uint8_t NearestBlend(const MCTgaColors& colors, uint8_t face, uint8_t ink, int32_t coverage)
+    {
+        const std::array<int64_t, 3> from = Channels(colors[face]);
+        const std::array<int64_t, 3> to = Channels(colors[ink]);
+        std::array<int64_t, 3> target{};
+
+        for (size_t channel = 0; channel < target.size(); channel++)
+        {
+            target[channel] = from[channel] * (MCRematchLetters::Full - coverage) + to[channel] * coverage;
+        }
+
+        uint8_t nearest = face;
+        int64_t distance = std::numeric_limits<int64_t>::max();
+        const auto weigh = [&](uint8_t candidate)
+        {
+            const std::array<int64_t, 3> channels = Channels(colors[candidate]);
+            int64_t away = 0;
+
+            for (size_t channel = 0; channel < target.size(); channel++)
+            {
+                const int64_t difference = channels[channel] * MCRematchLetters::Full - target[channel];
+                away += difference * difference;
+            }
+
+            if (away < distance)
+            {
+                distance = away;
+                nearest = candidate;
+            }
+        };
+
+        weigh(face);
+        weigh(ink);
+
+        for (int32_t grey = GreyRampFirst; grey <= GreyRampLast; grey++)
+        {
+            weigh(static_cast<uint8_t>(grey));
+        }
+
+        return nearest;
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD): REMATCH's face made from the move-on button's <paramref name="file"/>, its word inked as
+    /// <paramref name="ink"/> says (see RematchFaces); null when the face can't be read.
+    /// </summary>
+    std::shared_ptr<MCGuiPort> RematchFace(std::string_view file, MCInk ink)
+    {
+        MCTgaColors colors{};
+        auto face = std::make_shared<MCGuiPort>();
+
+        if (face->Init(file, colors) != 0 || face->Width() <= LetteringRight || face->Height() <= LetteringBottom ||
+            face->Width() < MCRematchLetters::Left + MCRematchLetters::Width ||
+            face->Height() < MCRematchLetters::Top + MCRematchLetters::Rows)
+        {
+            SDL_Log("Results: REMATCH has no face: %.*s didn't load as NEXT MISSION's (%dx%d)",
+                    static_cast<int>(file.size()), file.data(), face->Width(), face->Height());
+            return nullptr;
+        }
+
+        const int32_t width = face->Width();
+        std::vector<uint8_t> pixels(face->Pixels().begin(), face->Pixels().end());
+        const auto at = [&](int32_t x, int32_t y) -> uint8_t&
+        { return pixels[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)]; };
+
+        // The art's ink (its word's darkest pixel on the up face, its brightest on the held one), and the word wiped:
+        // each row the face column's colour.
+        uint8_t inkColor = at(FaceColumn, LetteringTop);
+
+        for (int32_t y = LetteringTop; y <= LetteringBottom; y++)
+        {
+            const uint8_t faceColor = at(FaceColumn, y);
+
+            for (int32_t x = FaceColumn + 1; x <= LetteringRight; x++)
+            {
+                const int32_t brightness = Brightness(colors[at(x, y)]);
+                const int32_t inkBrightness = Brightness(colors[inkColor]);
+
+                if (ink == MCInk::Dark ? brightness < inkBrightness : brightness > inkBrightness)
+                {
+                    inkColor = at(x, y);
+                }
+
+                at(x, y) = faceColor;
+            }
+        }
+
+        // REMATCH laid on.
+        for (int32_t row = 0; row < MCRematchLetters::Rows; row++)
+        {
+            for (int32_t column = 0; column < MCRematchLetters::Width; column++)
+            {
+                const int32_t coverage =
+                    MCRematchLetters::Coverage[static_cast<size_t>(row)][static_cast<size_t>(column)];
+
+                if (coverage != 0)
+                {
+                    uint8_t& pixel = at(MCRematchLetters::Left + column, MCRematchLetters::Top + row);
+                    pixel = NearestBlend(colors, pixel, inkColor, coverage);
+                }
+            }
+        }
+
+        const std::shared_ptr<MCTexture> texture = face->Bitmap().Texture.lock();
+
+        if (texture == nullptr)
+        {
+            SDL_Log("Results: REMATCH has no face: %.*s's picture has no texture", static_cast<int>(file.size()),
+                    file.data());
+            return nullptr;
+        }
+
+        std::ranges::copy(pixels, MCRenderer::LockTexture(*texture).begin());
+        MCRenderer::UnlockTexture(*texture);
+        return face;
+    }
 
     /// <summary>Port-only (Redux HD): REMATCH's event routine: on release, the rematch begins, and the button goes.</summary>
     void RematchButtonHandleEvent(MCGuiObject& object, MCGuiEvent& event)
@@ -258,11 +403,7 @@ auto MCMissionResultsScreen::Init() -> int32_t
     // Port-only (Redux HD): the host's REMATCH, shown when the results come (network/MCRoomEnd.h).
     if (MultiPlayer() != nullptr)
     {
-        _RematchButton = CreateChild<MCRematchButton>(
-            [](MCRematchButton& button) { button.Init(RematchX, MoveOnY, MoveOnWidth, MoveOnHeight, {}); });
-        _RematchButton->SetEventRoutine(RematchButtonHandleEvent);
-        _RematchButton->SetTransparent(true);
-        _RematchButton->ShowGuiWindow(false);
+        _RematchButton = AddRematchButton(*this, RematchX, MoveOnY);
     }
 
     if (MultiPlayer() != nullptr)
@@ -1181,79 +1322,23 @@ auto MCMissionResultsScreen::Activate() -> int32_t
     return 0;
 }
 
-auto MCRematchButton::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) -> int32_t
+MCRematchFaces RematchFaces()
 {
-    const int32_t result = MCGuiButton::Init(xPos, yPos, width, height, name);
-    _UpFace = std::make_unique<MCGuiPort>();
-    _DownFace = std::make_unique<MCGuiPort>();
-
-    if (_UpFace->Init(MoveOnUpFace) != 0 || _DownFace->Init(MoveOnDownFace) != 0)
-    {
-        SDL_Log("Results: REMATCH has no face: %.*s or %.*s didn't load", static_cast<int>(MoveOnUpFace.size()),
-                MoveOnUpFace.data(), static_cast<int>(MoveOnDownFace.size()), MoveOnDownFace.data());
-        _UpFace.reset();
-        _DownFace.reset();
-    }
-
-    return result;
+    return {.Up = RematchFace(MoveOnUpFace, MCInk::Dark), .Down = RematchFace(MoveOnDownFace, MCInk::Light)};
 }
 
-auto MCRematchButton::OnDestroy() -> void
+MCGuiHandle<MCGuiButton> AddRematchButton(MCGuiObject& parent, int32_t xPos, int32_t yPos)
 {
-    _UpFace.reset();
-    _DownFace.reset();
-    MCGuiButton::OnDestroy();
-}
-
-auto MCRematchButton::Draw() -> void
-{
-    MCGuiButton::Draw();
-    const bool held = GuiSystem().Grabs(*this);
-    const std::unique_ptr<MCGuiPort>& face = held ? _DownFace : _UpFace;
-
-    if (face == nullptr)
-    {
-        return;
-    }
-
-    // The face pixel by pixel (no picture of the move-on button's, which the HD art would draw as its own), each row's
-    // lettering covered by the face column's colour.
-    const MCPane& from = face->Frame();
-    const std::shared_ptr<MCWindow> pixels = from.Window.lock();
-    const MCPane& to = DisplayPort->Frame();
-    const int32_t width = std::min(Width(), face->Width());
-    const int32_t height = std::min(Height(), face->Height());
-
-    if (pixels == nullptr || pixels->Pixels == nullptr)
-    {
-        return;
-    }
-
-    const std::span<const uint8_t> bytes = pixels->Bytes();
-    const auto stride = static_cast<size_t>(pixels->XMax + 1);
-
-    for (int32_t y = 0; y < height; y++)
-    {
-        const std::span<const uint8_t> row = bytes.subspan(
-            static_cast<size_t>(from.Y0 + y) * stride + static_cast<size_t>(from.X0), static_cast<size_t>(width));
-        const bool lettered = y >= LetteringTop && y <= LetteringBottom;
-
-        for (int32_t x = 0; x < width; x++)
+    MCGuiHandle<MCGuiButton> button = parent.CreateChild<MCGuiButton>(
+        [&](MCGuiButton& made)
         {
-            const bool covered = lettered && x > FaceColumn && x <= LetteringRight;
-            VfxPixelWrite(to, x, y, row[static_cast<size_t>(covered ? FaceColumn : x)]);
-        }
-    }
-
-    // Dark on the face, light on the held one's (as the move-on button's lettering), doubled a pixel across to be as
-    // heavy as the art's.
-    MCGuiFont& font = held ? *LgWhiteFont : *LgBlackFont;
-    const int32_t shift = held ? 1 : 0;
-    const int32_t left = (width - font.Width(RematchWord) - 1) / 2 + shift;
-    const int32_t top = (height - font.Height()) / 2 + shift;
-
-    for (int32_t heavy = 0; heavy <= 1; heavy++)
-    {
-        font.WriteString(to, left + heavy, top, RematchWord);
-    }
+            made.Init(xPos, yPos, MoveOnWidth, MoveOnHeight, {});
+            const MCRematchFaces faces = RematchFaces();
+            made.UpPicture = faces.Up;
+            made.DownPicture = faces.Down;
+        });
+    button->SetEventRoutine(RematchButtonHandleEvent);
+    button->SetTransparent(true);
+    button->ShowGuiWindow(false);
+    return button;
 }

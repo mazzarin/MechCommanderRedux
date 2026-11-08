@@ -21,6 +21,7 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSmackerWindow.h"
+#include "gui/MCGuiButton.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCHardwareCursor.h"
 #include "iface/MCMechBar.h"
@@ -10737,9 +10738,10 @@ namespace
 /// pictures of the port's text buttons (MCLogTextButton: the preferences' CONTROLS and the CONTROLS panel's), named as
 /// the art's buttons are (<c>textbutton\b&lt;state&gt;_text_&lt;word&gt;.tga</c>, the state's letter h up, g pressed, n
 /// grayed); the main menu's UPDATE button (logistics/MCUpdatePage.h) as the menu's own are named
-/// (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>); and the session screen's MATCH OPTIONS tabs
+/// (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>); the session screen's MATCH OPTIONS tabs
 /// (logistics/MCMatchOptionsTab.h: <c>matchtabs\lsbdw02_match.tga</c> behind MULTIPLAYER CHAT,
-/// <c>matchtabs\lsbdw03_match.tga</c> in front).
+/// <c>matchtabs\lsbdw03_match.tga</c> in front); and the results screen's REMATCH (mission/MCMissionResultsScreen.h),
+/// named as the faces it is made from (<c>rematchbutton\mr_ms01_rematch.tga</c> up, <c>mr_ms02_rematch.tga</c> held).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD art generator")
 {
@@ -10764,6 +10766,11 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     std::optional<std::array<SDL_Color, 256>> cinemaColors;
     constexpr std::string_view tabsPicture = "lsbdw02.tga";
     std::optional<std::array<SDL_Color, 256>> tabsColors;
+    // REMATCH in its faces' own colours, as it is made: its up face's picture and its held one's.
+    constexpr std::string_view rematchUp = "mr_ms01.tga";
+    constexpr std::string_view rematchDown = "mr_ms02.tga";
+    std::map<std::string, std::optional<std::array<SDL_Color, 256>>, std::less<>> rematchColors = {
+        {std::string(rematchUp), std::nullopt}, {std::string(rematchDown), std::nullopt}};
     ForEachPicture(colors, skipped,
                    [&](std::string_view source, std::span<const uint8_t> pixels, int32_t width, int32_t height,
                        std::span<const SDL_Color, 256> pictureColors)
@@ -10784,6 +10791,11 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
                        {
                            tabsColors.emplace();
                            std::ranges::copy(pictureColors, tabsColors->begin());
+                       }
+
+                       if (const auto face = rematchColors.find(file); face != rematchColors.end())
+                       {
+                           std::ranges::copy(pictureColors, face->second.emplace().begin());
                        }
                    });
 
@@ -10808,6 +10820,21 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
         const std::shared_ptr<MCLogPort> tabs = MakeMatchTabs(front);
         REQUIRE(tabs != nullptr);
         WritePicture(folder, manifest, name, tabs->Pixels(), tabs->Width(), tabs->Height(), *tabsColors, written);
+        ++pictures;
+    }
+
+    // The results screen's REMATCH (mission/MCMissionResultsScreen.h), named as the faces it's made from.
+    const MCRematchFaces rematch = RematchFaces();
+    REQUIRE(rematch.Up != nullptr);
+    REQUIRE(rematch.Down != nullptr);
+
+    for (const auto& [picture, face] : {std::pair{rematch.Up, rematchUp}, std::pair{rematch.Down, rematchDown}})
+    {
+        const std::optional<std::array<SDL_Color, 256>>& faceColors = rematchColors.at(std::string(face));
+        REQUIRE(faceColors.has_value());
+        const std::string name = std::format("rematchbutton\\{}_rematch.tga", face.substr(0, face.find('.')));
+        WritePicture(folder, manifest, name, picture->Pixels(), picture->Width(), picture->Height(), *faceColors,
+                     written);
         ++pictures;
     }
 
@@ -18899,6 +18926,75 @@ TEST_CASE_ISOLATED("game: HD art letters the LAN button by its letters' HD pixel
         CHECK_EQ(wrongIndices, 0);
     }
 
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+/// <summary>
+/// Port-only (Redux HD): with HD art on and a pack holding REMATCH's faces (mission/MCMissionResultsScreen.h: pictures
+/// the game makes, which the pack has as --hd-extract-menus writes them), the button draws each from the pack, up and
+/// held: its face's copies are drawn sharp, keeping the screen's indices.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws REMATCH's faces from the pack's copies of them, up and held")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
+    REQUIRE(renderer != nullptr);
+    // The briefing, still (its operation movie, which it starts with, left for the mission tab).
+    SettleLogistics();
+    GlobalLog()->BriefingScreen->SetUpMission();
+    constexpr int32_t ButtonX = 0x100;
+    constexpr int32_t ButtonY = 0x100;
+    const MCGuiHandle<MCGuiButton> button = AddRematchButton(*GlobalLog()->BriefingScreen, ButtonX, ButtonY);
+    button->ShowGuiWindow(true);
+    const std::shared_ptr<MCGuiPort> up = button->GetUpPicture();
+    const std::shared_ptr<MCGuiPort> held = button->GetDownPicture();
+    REQUIRE(up != nullptr);
+    REQUIRE(held != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_rematch");
+    std::filesystem::create_directories(PictureFolderOf(pack));
+
+    for (const std::shared_ptr<MCGuiPort>& face : {up, held})
+    {
+        DecodedFrame frame;
+        frame.Width = face->Width();
+        frame.Height = face->Height();
+        frame.Index.assign(face->Pixels().begin(), face->Pixels().end());
+        frame.Drawn.assign(frame.Index.size(), 1);
+        WriteFramePngs(PictureFolderOf(pack) /
+                           MCHdArt::PictureName(MCHdArt::PictureHash(face->Pixels(), face->Width(), face->Height())),
+                       frame, colors, TestPackScale, Inverted, false);
+    }
+
+    // Each state's frames: the face's copies, and how many were drawn sharp.
+    const auto drawn = [&](const MCGuiPort& face, std::string_view state)
+    {
+        MCTest::Scope scope(state);
+        int32_t copies = 0;
+        int32_t sharp = 0;
+        CheckSharpKeepsIndices(pack, *renderer,
+                               [&](const MCVulkanRenderer::AuditedDraw& draw)
+                               {
+                                   if (draw.Command == "Copy" && draw.From.has_value() &&
+                                       &draw.From->get() == &face.Bitmap())
+                                   {
+                                       ++copies;
+                                       sharp += draw.Sharp ? 1 : 0;
+                                   }
+                               });
+        CHECK(copies > 0);
+        CHECK_EQ(sharp, copies);
+    };
+
+    drawn(*up, "up");
+    GuiSystem().Grab(button.Lock());
+    drawn(*held, "held");
+    GuiSystem().Release();
     std::filesystem::remove_all(pack.parent_path());
 }
 

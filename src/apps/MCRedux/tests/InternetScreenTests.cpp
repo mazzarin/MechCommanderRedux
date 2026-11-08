@@ -555,7 +555,7 @@ TEST_CASE_ISOLATED("game: a host's new version comes back to its internet game's
     CHECK(!service.HostPlaceKept());
     CHECK(std::ranges::none_of(service.Paths, [](const std::string& path) { return path.starts_with("/host?"); }));
     REQUIRE(SettleUntil([&] { return service.Room().has_value(); }));
-    CHECK(service.Room()->at("name") == GameName);
+    CHECK(service.Room()->at("name").get<std::string>() == GameName);
     CHECK(service.Room()->at("public") == true);
     CHECK(!LaunchedFromLobby);
     CHECK(!LobbyLaunchArgs.Active);

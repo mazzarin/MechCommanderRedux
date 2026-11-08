@@ -41,6 +41,7 @@
 #include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCRoomEnd.h"
 #include "network/MCMultiPlayer.h"
 #include "main/MCGameContext.h"
 #include "object/MCGameSystemReader.h"
@@ -529,10 +530,12 @@ auto MCMission::Run() -> int32_t
 
             // Port (personal): the reports' notice or question, once due and the main menu is free; a lobby's room
             // through a restart into an update (network/MCLobbyUpdate.h); an internet game's room asking a player
-            // away whether it's still there (logistics/MCIdleCheck.h).
+            // away whether it's still there (logistics/MCIdleCheck.h); port-only (Redux HD): a host's room ending
+            // once its guests have left on its word (network/MCRoomEnd.h).
             ShowReportsNotice();
             MCLobbyUpdate::Frame();
             MCIdleCheck::Frame();
+            MCRoomEnd::Frame();
 
             EscapedSmackerMovie = 0;
             MovieOver = 0;
@@ -572,6 +575,9 @@ auto MCMission::Run() -> int32_t
             {
                 MultiPlayer()->ProcessReceiveList();
             }
+
+            // Port-only (Redux HD): the room's end from the results (network/MCRoomEnd.h).
+            MCRoomEnd::Frame();
             break;
         }
         case MCMissionState::Scenario:
@@ -1085,6 +1091,12 @@ auto MCMission::EndScenario() -> void
         logistics.SetCurrentScreen(logistics.MainScreen);
         logistics.LogisticsState = 1;
         logistics.ShowLogScreen(true, true);
+
+        // Port-only (Redux HD): a game the menus took to its room goes back to its games screen (network/MCRoomEnd.h).
+        if (MCRoomEnd::AfterMatch())
+        {
+            return;
+        }
 
         if (MultiPlayer()->InMission != 0)
         {

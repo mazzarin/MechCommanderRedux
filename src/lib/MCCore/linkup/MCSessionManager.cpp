@@ -261,6 +261,7 @@ void MCSessionManager::ConnectTcp(std::string_view ipAddress)
     if (InitializeConnection(elements) == 0)
     {
         CurrentConnection = MCNetProtocol::TcpIp;
+        _TcpAddress = std::string(ipAddress);
     }
 }
 

@@ -94,7 +94,13 @@ enum class MCMPMessageType : uint16_t
     /// server to everyone as the player's leave reaches it in a mission (network/MCMechHandover.h): each unit's new
     /// player and slot. A build without it ignores it, and goes on showing the units as the dropped player's.
     /// </summary>
-    Handover = 54
+    Handover = 54,
+    /// <summary>
+    /// Port-only (Redux HD): the host's room ends (<c>MCMPLongMessage</c>, its value an <c>MCRoomEnd::MCHow</c>): the host
+    /// closes it (its EXIT), or hosts it again for a rematch (REMATCH at the results), which its guests join again
+    /// (network/MCRoomEnd.h). Sent to everyone; a build without MCMatchRule::Rematch ignores it.
+    /// </summary>
+    RoomEnds = 55
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>

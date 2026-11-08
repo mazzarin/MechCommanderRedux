@@ -82,6 +82,25 @@ namespace MCTestGuest
         /// <summary>The messages saying another game's restart into an update is off, so far.</summary>
         int32_t RestartOffs() const { return _RestartOffs; }
 
+        /// <summary>
+        /// Says to player <paramref name="to"/> that this player's room ends, <paramref name="how"/> (an
+        /// MCRoomEnd::MCHow's value), as a host's game does (network/MCRoomEnd.h).
+        /// </summary>
+        void SendRoomEnds(uint32_t to, int32_t how)
+        {
+            MCMPLongMessage message{};
+            message.Header = PlainHeader(MCMPMessageType::RoomEnds);
+            message.Value = how;
+            Send(to, message);
+        }
+
+        /// <summary>What each host's word that its room ends said (an MCRoomEnd::MCHow's value), so far.</summary>
+        std::vector<int32_t> RoomEnds()
+        {
+            const std::lock_guard lock(_Mutex);
+            return _RoomEnds;
+        }
+
     protected:
         Peer() = default;
         virtual ~Peer() { StopListening(); }
@@ -161,9 +180,19 @@ namespace MCTestGuest
             _ToSend.emplace_back(to, std::vector<uint8_t>(bytes.begin(), bytes.end()));
         }
 
-        /// <summary>Counts <paramref name="type"/> if it is an Updating or a RestartOff; whether it was one.</summary>
-        bool Counted(uint16_t type)
+        /// <summary>
+        /// Counts <paramref name="message"/> of <paramref name="type"/> if it is an Updating or a RestartOff, and keeps
+        /// what a RoomEnds says; whether it was one of them.
+        /// </summary>
+        bool Counted(uint16_t type, std::span<const uint8_t> message)
         {
+            if (type == static_cast<uint16_t>(MCMPMessageType::RoomEnds) && message.size() >= sizeof(MCMPLongMessage))
+            {
+                const std::lock_guard lock(_Mutex);
+                _RoomEnds.push_back(ReadLinkupMessage<MCMPLongMessage>(message).Value);
+                return true;
+            }
+
             if (type == static_cast<uint16_t>(MCMPMessageType::Updating))
             {
                 _Updatings++;
@@ -222,6 +251,8 @@ namespace MCTestGuest
         std::vector<std::pair<uint32_t, std::vector<uint8_t>>> _ToSend;
         std::atomic<int32_t> _Updatings = 0;
         std::atomic<int32_t> _RestartOffs = 0;
+        /// <summary>What each RoomEnds said (guarded by <see cref="_Mutex"/>).</summary>
+        std::vector<int32_t> _RoomEnds;
     };
 
     /// <summary>
@@ -453,7 +484,7 @@ namespace MCTestGuest
 
             const uint16_t type = ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type();
 
-            if (Counted(type))
+            if (Counted(type, message))
             {
                 return;
             }
@@ -660,7 +691,7 @@ namespace MCTestGuest
 
             if (message.size() >= sizeof(MCFIGuaranteedMessageHeader))
             {
-                Counted(ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type());
+                Counted(ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type(), message);
             }
         }
 

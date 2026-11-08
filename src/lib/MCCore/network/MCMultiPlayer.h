@@ -122,6 +122,12 @@ namespace MCMatchRule
     /// </summary>
     inline constexpr uint32_t RejoinsHost = 1u << 24;
     /// <summary>
+    /// Not a rule the match plays by: Port-only (Redux HD): the build takes its host's word that the room ends
+    /// (MCMPMessageType::RoomEnds, network/MCRoomEnd.h): it leaves as the host closes its room, and after the host's
+    /// REMATCH at the results it joins the room hosted again. A host offers REMATCH only with a guest whose build says so.
+    /// </summary>
+    inline constexpr uint32_t Rematch = 1u << 27;
+    /// <summary>
     /// Not a rule, never sent: in the host's chosen rules (MCMatchOptions::Rules, from the command line), braking as the
     /// host's PREFS say (MCWantedRules), with the other rules chosen.
     /// </summary>
@@ -129,7 +135,7 @@ namespace MCMatchRule
     /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
     inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
                                           NoMines | NoProbes | PilotRanks | WeaponBans | DataHash | RejoinsHost |
-                                          NightLights | MechHandover;
+                                          NightLights | MechHandover | Rematch;
 } // namespace MCMatchRule
 
 /// <summary>A pilot's rank (MCPurPilotData::Rank, MCLogWarrior's): the purchase files' PilotCosts order.</summary>

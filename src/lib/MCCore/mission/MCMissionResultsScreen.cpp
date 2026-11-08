@@ -25,6 +25,8 @@
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRoomEnd.h"
+#include "vfx/MCVfxFunctions.h"
 #include "object/MCForces.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
@@ -179,9 +181,40 @@ namespace
     /// <summary>The move-on button's event routine: on release, closes the results screen.</summary>
     void MoveOnButtonHandleEvent(MCGuiObject&, MCGuiEvent& event)
     {
-        if (event.Type == MouseUpEvent)
+        // Port-only (Redux HD): a rematch under way closes them itself (network/MCRoomEnd.h).
+        if (event.Type == MouseUpEvent && !MCRoomEnd::Rematching())
         {
             Mission()->CloseResultsScreen();
+        }
+    }
+
+    /// <summary>Port-only (Redux HD): the move-on button's faces, which REMATCH is drawn from.</summary>
+    constexpr std::string_view MoveOnUpFace = "mr_ms01.tga";
+    constexpr std::string_view MoveOnDownFace = "mr_ms02.tga";
+    /// <summary>The move-on button's place and size, and REMATCH's left of it.</summary>
+    constexpr int16_t MoveOnX = 0x1bc;
+    constexpr int16_t MoveOnY = 6;
+    constexpr int16_t MoveOnWidth = 0x6b;
+    constexpr int16_t MoveOnHeight = 0x12;
+    constexpr int16_t ButtonGap = 6;
+    constexpr int16_t RematchX = MoveOnX - MoveOnWidth - ButtonGap;
+    /// <summary>
+    /// The face's lettering lies within these columns and rows (inside its bevel); the face column left of it gives each
+    /// row's colour (the face's shading and its two lines).
+    /// </summary>
+    constexpr int32_t FaceColumn = 3;
+    constexpr int32_t LetteringRight = 0x67;
+    constexpr int32_t LetteringTop = 2;
+    constexpr int32_t LetteringBottom = 0xf;
+    constexpr std::string_view RematchWord = "REMATCH";
+
+    /// <summary>Port-only (Redux HD): REMATCH's event routine: on release, the rematch begins, and the button goes.</summary>
+    void RematchButtonHandleEvent(MCGuiObject& object, MCGuiEvent& event)
+    {
+        if (event.Type == MouseUpEvent)
+        {
+            object.ShowGuiWindow(false);
+            MCRoomEnd::Rematch();
         }
     }
 
@@ -215,12 +248,22 @@ auto MCMissionResultsScreen::Init() -> int32_t
     _MoveOnButton = CreateChild<MCGuiButton>(
         [](MCGuiButton& button)
         {
-            button.Init(0x1bc, 6, 0x6b, 0x12, {});
-            button.SetUpPicture(const_cast<char*>("mr_ms01.tga"));
-            button.SetDownPicture(const_cast<char*>("mr_ms02.tga"));
+            button.Init(MoveOnX, MoveOnY, MoveOnWidth, MoveOnHeight, {});
+            button.SetUpPicture(MoveOnUpFace);
+            button.SetDownPicture(MoveOnDownFace);
         });
     _MoveOnButton->SetEventRoutine(MoveOnButtonHandleEvent);
     _MoveOnButton->SetTransparent(true);
+
+    // Port-only (Redux HD): the host's REMATCH, shown when the results come (network/MCRoomEnd.h).
+    if (MultiPlayer() != nullptr)
+    {
+        _RematchButton = CreateChild<MCRematchButton>(
+            [](MCRematchButton& button) { button.Init(RematchX, MoveOnY, MoveOnWidth, MoveOnHeight, {}); });
+        _RematchButton->SetEventRoutine(RematchButtonHandleEvent);
+        _RematchButton->SetTransparent(true);
+        _RematchButton->ShowGuiWindow(false);
+    }
 
     if (MultiPlayer() != nullptr)
     {
@@ -1121,6 +1164,89 @@ auto MCMissionResultsScreen::Activate() -> int32_t
         MultiPlayer()->InMission = true;
     }
 
+    // Port-only (Redux HD): the host's REMATCH, when a guest still in the session can have it (network/MCRoomEnd.h).
+    if (_RematchButton != nullptr)
+    {
+        _RematchButton->ShowGuiWindow(MCRoomEnd::OffersRematch());
+    }
+
     SomethingOnFire = 0;
     return 0;
+}
+
+auto MCRematchButton::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) -> int32_t
+{
+    const int32_t result = MCGuiButton::Init(xPos, yPos, width, height, name);
+    _UpFace = std::make_unique<MCGuiPort>();
+    _DownFace = std::make_unique<MCGuiPort>();
+
+    if (_UpFace->Init(MoveOnUpFace) != 0 || _DownFace->Init(MoveOnDownFace) != 0)
+    {
+        SDL_Log("Results: REMATCH has no face: %.*s or %.*s didn't load", static_cast<int>(MoveOnUpFace.size()),
+                MoveOnUpFace.data(), static_cast<int>(MoveOnDownFace.size()), MoveOnDownFace.data());
+        _UpFace.reset();
+        _DownFace.reset();
+    }
+
+    return result;
+}
+
+auto MCRematchButton::OnDestroy() -> void
+{
+    _UpFace.reset();
+    _DownFace.reset();
+    MCGuiButton::OnDestroy();
+}
+
+auto MCRematchButton::Draw() -> void
+{
+    MCGuiButton::Draw();
+    const bool held = GuiSystem().Grabs(*this);
+    const std::unique_ptr<MCGuiPort>& face = held ? _DownFace : _UpFace;
+
+    if (face == nullptr)
+    {
+        return;
+    }
+
+    // The face pixel by pixel (no picture of the move-on button's, which the HD art would draw as its own), each row's
+    // lettering covered by the face column's colour.
+    const MCPane& from = face->Frame();
+    const std::shared_ptr<MCWindow> pixels = from.Window.lock();
+    const MCPane& to = DisplayPort->Frame();
+    const int32_t width = std::min(Width(), face->Width());
+    const int32_t height = std::min(Height(), face->Height());
+
+    if (pixels == nullptr || pixels->Pixels == nullptr)
+    {
+        return;
+    }
+
+    const std::span<const uint8_t> bytes = pixels->Bytes();
+    const auto stride = static_cast<size_t>(pixels->XMax + 1);
+
+    for (int32_t y = 0; y < height; y++)
+    {
+        const std::span<const uint8_t> row = bytes.subspan(
+            static_cast<size_t>(from.Y0 + y) * stride + static_cast<size_t>(from.X0), static_cast<size_t>(width));
+        const bool lettered = y >= LetteringTop && y <= LetteringBottom;
+
+        for (int32_t x = 0; x < width; x++)
+        {
+            const bool covered = lettered && x > FaceColumn && x <= LetteringRight;
+            VfxPixelWrite(to, x, y, row[static_cast<size_t>(covered ? FaceColumn : x)]);
+        }
+    }
+
+    // Dark on the face, light on the held one's (as the move-on button's lettering), doubled a pixel across to be as
+    // heavy as the art's.
+    MCGuiFont& font = held ? *LgWhiteFont : *LgBlackFont;
+    const int32_t shift = held ? 1 : 0;
+    const int32_t left = (width - font.Width(RematchWord) - 1) / 2 + shift;
+    const int32_t top = (height - font.Height()) / 2 + shift;
+
+    for (int32_t heavy = 0; heavy <= 1; heavy++)
+    {
+        font.WriteString(to, left + heavy, top, RematchWord);
+    }
 }

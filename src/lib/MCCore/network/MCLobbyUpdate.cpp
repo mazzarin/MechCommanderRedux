@@ -58,6 +58,9 @@ namespace
     constexpr std::string_view StartWithoutThemFormat = "{} ARE UPDATING. START WITHOUT THEM?";
     /// <summary>What START asks of one guest away updating, after UpdatingText.</summary>
     constexpr std::string_view StartWithoutOneFormat = "{} START WITHOUT {}?";
+    /// <summary>Port-only (Redux HD): what START asks of a rematch's guest not back yet, and of several.</summary>
+    constexpr std::string_view NotBackYetFormat = "{} ISN'T BACK YET. START WITHOUT {}?";
+    constexpr std::string_view NotBackYetThemFormat = "{} AREN'T BACK YET. START WITHOUT THEM?";
     /// <summary>What the room's other games say of player <paramref name="name"/> whose restart into an update is off.</summary>
     constexpr std::string_view UpdateOffFormat = "{} ISN'T UPDATING AFTER ALL.";
     /// <summary>What the room's games say of player <paramref name="name"/> whose time to rejoin is over.</summary>
@@ -69,6 +72,8 @@ namespace
         uint32_t Id = 0;
         std::string Name;
         Clock::time_point Until;
+        /// <summary>Port-only (Redux HD): a rematch's guest (MCLobbyUpdate::KeepPlacesFor), not one away updating.</summary>
+        bool Rematch = false;
     };
 
     /// <summary>A guest whose place the room has kept, by its id and its name (it comes back with another id).</summary>
@@ -93,6 +98,8 @@ namespace
         std::string PlayerName;
         /// <summary>An internet game's code: the host comes back to it (its place kept on the service).</summary>
         std::optional<std::string> Code;
+        /// <summary>Where the room is looked for again: the code, or the host's address.</summary>
+        std::string Address;
     };
 
     /// <summary>RESTART was taken: when the update installs; this game then quits.</summary>
@@ -410,7 +417,8 @@ namespace
         HostWait = MCHostWait{.Until = now + MCLobbyUpdate::RejoinWait,
                               .NextTry = now,
                               .PlayerName = playerName,
-                              .Code = std::move(code)};
+                              .Code = std::move(code),
+                              .Address = address};
     }
 
     /// <summary>
@@ -499,7 +507,18 @@ namespace
 
             RoomLeft.reset();
             HostWait.reset();
-            MultiPlayer()->StartLobbyGame();
+
+            // A lobby's game is the lobby's again; port-only (Redux HD): the menus' is theirs, as their JOIN GAME leaves
+            // it (the host's setup names its host and server).
+            if (LobbyLaunchArgs.Active)
+            {
+                MultiPlayer()->StartLobbyGame();
+            }
+            else
+            {
+                NumLanPlayers = static_cast<int32_t>(manager.GetPlayers(nullptr).size());
+            }
+
             DestroyConnectStatusWindow();
             // Straight into the room, which its host shows again with this guest in it.
             GlobalLog()->SetUpSessionScreen();
@@ -519,7 +538,7 @@ namespace
         if (tried == MCLobbyJoin::Refused)
         {
             manager.EndInternet();
-            manager.ConnectTcp(HostWait->Code.value_or(RoomAddress()));
+            manager.ConnectTcp(HostWait->Address);
         }
 
         if (now < HostWait->Until)
@@ -709,6 +728,14 @@ auto MCLobbyUpdate::StartQuestion() -> std::string
     }
 
     const std::string names = ComingNames();
+
+    // Port-only (Redux HD): a rematch's guests aren't updating.
+    if (Coming.front().Rematch)
+    {
+        return Coming.size() == 1 ? std::format(NotBackYetFormat, names, names)
+                                  : std::format(NotBackYetThemFormat, names);
+    }
+
     return Coming.size() == 1 ? std::format(StartWithoutOneFormat, UpdatingText(Coming.front().Name), names)
                               : std::format(StartWithoutThemFormat, names);
 }
@@ -1052,7 +1079,41 @@ auto MCLobbyUpdate::BackToMenus() -> void
 {
     SDL_Log("Lobby updates: the room was the menus': the game is the menus' again");
     LaunchedFromLobby = false;
+    // Port-only (Redux HD): nor is it a lobby's game after its match (the results' timeout, the game's end).
+    IsMPlayerGame = false;
     LobbyLaunchArgs.Active = false;
     LobbyLaunchArgs.FromMenus = false;
     LobbyLaunchArgs.Place.reset();
+}
+
+auto MCLobbyUpdate::KeepPlacesFor(std::span<const MCPlace> guests) -> void
+{
+    const Clock::time_point until = Now() + RejoinWait;
+
+    for (const MCPlace& guest : guests)
+    {
+        SDL_Log("Lobby updates: the room keeps %s's place for the rematch", guest.Name.c_str());
+        Coming.push_back({.Id = guest.Id, .Name = guest.Name, .Until = until, .Rematch = true});
+    }
+
+    PlacesChanged();
+}
+
+auto MCLobbyUpdate::WaitForRoom(const MCRoomAgain& room) -> void
+{
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    SDL_Log("Lobby updates: joining the host's room at %s again", room.Address.c_str());
+    // A new room, which has kept no one's place.
+    RoomLeft.reset();
+    Coming.clear();
+    KeptOnce.clear();
+    OwnPlaceKept = false;
+    manager.ConnectTcp(room.Address);
+    ShowWaitingDialog(room.Text);
+    const Clock::time_point now = Now();
+    HostWait = MCHostWait{.Until = now + RejoinWait,
+                          .NextTry = now,
+                          .PlayerName = room.PlayerName,
+                          .Code = room.Internet ? std::optional(room.Address) : std::nullopt,
+                          .Address = room.Address};
 }

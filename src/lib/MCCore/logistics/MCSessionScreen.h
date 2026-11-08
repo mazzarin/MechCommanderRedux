@@ -11,6 +11,7 @@
 
 class MCGuiEvent;
 enum class MCFileCheck : uint8_t;
+struct MCRoomPicks;
 
 /// <summary>
 /// The multiplayer session screen: the players and the two teams, each team's resource points and tech base, the
@@ -85,6 +86,21 @@ public:
 
     /// <summary>Port-only (the personal build): whether every player in the session is on the screen.</summary>
     bool AllShown();
+
+    /// <summary>Port-only (Redux HD): the host's picks as they stand, the players by name (a rematch's, network/MCRoomEnd.h).</summary>
+    MCRoomPicks Picks() const;
+
+    /// <summary>
+    /// Port-only (Redux HD): the host's room, hosted again, takes <paramref name="picks"/>: the mission (asked of everyone
+    /// there), the points and tech bases unless it fixes them, and each player there back in its slot by name.
+    /// </summary>
+    void TakePicks(const MCRoomPicks& picks);
+
+    /// <summary>
+    /// Port-only (Redux HD): each player on the screen whose name has a slot in <paramref name="picks"/>, on no team, goes
+    /// back to it if it is free, told to everyone.
+    /// </summary>
+    void PlaceByName(const MCRoomPicks& picks);
 
     /// <summary>
     /// The session's player ids for the name slots: <paramref name="ids"/> ascending, the empty slots
@@ -274,6 +290,12 @@ private:
     /// <summary>The spinners' and tech toggles' live state (the host's, or an unlocked mission's).</summary>
     void SetTeamControls(bool live) const;
 
+    /// <summary>
+    /// Port-only (the personal build): the host's tech bases (told to everyone) and points again, unless the mission
+    /// fixes them.
+    /// </summary>
+    void SetTeamsAgain(const std::array<int8_t, 2>& techBases, const std::array<int32_t, 2>& points);
+
     /// <summary>Shows <paramref name="text"/> in the message dialog with one button running <paramref name="onOk"/>.</summary>
     static void ShowDialog(std::string_view text, std::function<void()> onOk, std::string_view upArt,
                            std::string_view downArt, std::function<void(int32_t)> onResult);
@@ -311,4 +333,19 @@ private:
     std::set<uint32_t> _ShownReady;
     /// <summary>Port-only (the personal build): when (the game clock) the host first saw each player in the session.</summary>
     std::map<uint32_t, uint32_t> _SeenSince;
+};
+
+/// <summary>
+/// Port-only (Redux HD): the host's picks for its room, its players by name: a rematch's room, hosted again, takes them
+/// (network/MCRoomEnd.h), each player back in its slot as it returns.
+/// </summary>
+struct MCRoomPicks
+{
+    /// <summary>The mission, as the host loaded it (MCSessionScreen::LoadMission's name); empty: none.</summary>
+    std::string Mission;
+    /// <summary>Each team's players' names by slot; empty: no one.</summary>
+    std::array<std::string, MCSessionScreen::TeamSlots> Team1;
+    std::array<std::string, MCSessionScreen::TeamSlots> Team2;
+    std::array<int8_t, 2> TechBases = {1, -1};
+    std::array<int32_t, 2> Points = {};
 };

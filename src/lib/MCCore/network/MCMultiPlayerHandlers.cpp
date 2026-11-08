@@ -2,6 +2,7 @@
 #include "network/MCMultiPlayerHandlers.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCRoomEnd.h"
 #include "abl/MCAblDebugger.h"
 #include "ai/MCMoveSystem.h"
 #include "ai/MCRefit.h"
@@ -1364,6 +1365,13 @@ void HandleLocalPlayerRemoved()
     MCMultiPlayer& game = Game();
     LastConnectionType = game.SessionManager->CurrentConnection;
 
+    // Port-only (Redux HD): at the results the battle is over, and a game the menus took to its room goes back to its
+    // games screen, saying why (network/MCRoomEnd.h).
+    if (MCRoomEnd::SessionLost())
+    {
+        return;
+    }
+
     if (!game.PrepareScenarioReceived && !game.InMission)
     {
         game.InLogistics = false;
@@ -1813,6 +1821,19 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         {
             // Port (personal): the sender's restart is off after all: it stays (network/MCLobbyUpdate.h).
             MCLobbyUpdate::RestartOff(fromID);
+            break;
+        }
+
+        case MCMPMessageType::RoomEnds:
+        {
+            // Port-only (Redux HD): the host's room ends (network/MCRoomEnd.h): closed, this game leaves as it does
+            // when the session is lost, saying why.
+            if (bytes.size() >= sizeof(MCMPLongMessage) &&
+                MCRoomEnd::HostSaid(fromID, ReadLinkupMessage<MCMPLongMessage>(bytes).Value))
+            {
+                HandleLocalPlayerRemoved();
+            }
+
             break;
         }
 

@@ -22,6 +22,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRoomEnd.h"
 #include "main/MCGameContext.h"
 #include "lib/MCFatal.h"
 #include "main/MCGameSession.h"
@@ -256,6 +257,12 @@ void CancelToMPlayer()
 
 void LeaveRoom()
 {
+    // Port-only (Redux HD): a host tells its guests the room closes, and leaves once they have (network/MCRoomEnd.h).
+    if (MCRoomEnd::CloseRoom())
+    {
+        return;
+    }
+
     const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
 
     if (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx)

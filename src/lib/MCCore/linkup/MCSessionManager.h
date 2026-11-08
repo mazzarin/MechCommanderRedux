@@ -174,6 +174,11 @@ public:
     void ConnectIpx();
     /// <summary>Initializes a TCP/IP connection to <paramref name="ipAddress"/> ("" = search the LAN).</summary>
     void ConnectTcp(std::string_view ipAddress);
+    /// <summary>
+    /// Port-only (Redux HD): the address of the last TCP/IP connection chosen (<see cref="ConnectTcp"/>): a host's
+    /// port, where its next room is hosted again (network/MCRoomEnd.h's REMATCH).
+    /// </summary>
+    const std::string& TcpAddress() const { return _TcpAddress; }
     /// <summary>Initializes a modem connection dialing <paramref name="phoneNumber"/> on <paramref name="modemName"/>.</summary>
     int32_t ConnectModem(std::string_view phoneNumber, std::string_view modemName);
     /// <summary>Initializes a serial connection with the given port settings.</summary>
@@ -506,6 +511,8 @@ private:
     std::array<uint32_t, MaxLinkupPlayers> _NewPlayerNumbers{};
     /// <summary>Set once the host locked the session (no new players).</summary>
     bool _SessionLocked = false;
+    /// <summary>Port-only (Redux HD): the last TCP/IP connection's address (<see cref="TcpAddress"/>).</summary>
+    std::string _TcpAddress;
     /// <summary>Port: the host's reason for refusing the last join at the door (RefusalReason).</summary>
     std::string _Refusal;
     /// <summary>RemovePlayerFromGame's re-entry guard.</summary>

@@ -35,10 +35,12 @@ namespace
     constexpr int32_t SerialButton = 3;
     constexpr int32_t LanButton = 4;
     constexpr int32_t InternetButton = 5;
-    /// <summary>Where its fit puts the buttons: the first two places take LAN and INTERNET, the last two are the original's.</summary>
+    /// <summary>
+    /// Where its fit puts the buttons. INTERNET takes the first place, its count the second's room, and LAN stays in
+    /// NETWORK's place; the original's INTERNET is the fourth.
+    /// </summary>
     constexpr int32_t ButtonsLeft = 390;
     constexpr int32_t FirstPlaceTop = 152;
-    constexpr int32_t SecondPlaceTop = 183;
     constexpr int32_t NetworkPlaceTop = 214;
     constexpr int32_t InternetPlaceTop = 245;
     constexpr int32_t BigButtonWidth = 175;
@@ -669,7 +671,7 @@ namespace
         GuiSystem().RemoveTimer(*GlobalLog()->MultiplayerScreen, AccessTimer);
     }
 
-    /// <summary>Lays the access screen's buttons: LAN and INTERNET in the first two places, or the original's four.</summary>
+    /// <summary>Lays the access screen's buttons: INTERNET first, its count, then LAN; or the original's four.</summary>
     void LayAccessButtons(bool lanAndInternet)
     {
         MCSplashScreen& screen = *GlobalLog()->MultiplayerScreen;
@@ -677,10 +679,10 @@ namespace
         screen.Element<MCGuiObject>(SerialButton)->ShowGuiWindow(!lanAndInternet);
         auto lan = screen.Element<MCLogButton>(LanButton);
         auto internet = screen.Element<MCLogButton>(InternetButton);
-        lan->MoveTo(ButtonsLeft, lanAndInternet ? FirstPlaceTop : NetworkPlaceTop);
-        internet->MoveTo(ButtonsLeft, lanAndInternet ? SecondPlaceTop : InternetPlaceTop);
-        CountLine->MoveTo(CountLine->X(),
-                          (lanAndInternet ? SecondPlaceTop : InternetPlaceTop) + BigButtonHeight + CountGap);
+        const int32_t internetTop = lanAndInternet ? FirstPlaceTop : InternetPlaceTop;
+        lan->MoveTo(ButtonsLeft, NetworkPlaceTop);
+        internet->MoveTo(ButtonsLeft, internetTop);
+        CountLine->MoveTo(CountLine->X(), internetTop + BigButtonHeight + CountGap);
 
         // LAN's pictures are made of the art's letters (and their HD copies, made again as HD art may have come on).
         std::optional<MCButtonPictures> pictures = lanAndInternet ? MCLanButtonPictures() : std::nullopt;

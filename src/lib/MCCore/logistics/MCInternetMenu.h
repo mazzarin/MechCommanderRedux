@@ -1,7 +1,7 @@
 #pragma once
 
 // Port (Redux HD): the multiplayer menu's internet screens (SPEC-in-game-lobby.md's "What the player sees"):
-// MULTIPLAYER ACCESS, LAN and INTERNET with the count online under INTERNET, and INTERNET CONNECTION, the LAN screen's
+// MULTIPLAYER ACCESS, INTERNET (the count online under it) and LAN, and INTERNET CONNECTION, the LAN screen's
 // layout over the service's list: its public games (open ones first, then those in battle, greyed), its counts, the
 // picked game's players and where it is, a game joined from the list or by its code, a game hosted public or private.
 // Joining and hosting move along on the screen's timer, "CONNECTING TO BOB'S GAME..." shown meanwhile with a way out:
@@ -18,7 +18,7 @@ class MCSplashScreen;
 /// <summary>Whether MULTIPLAYER shows the access screen: this game has internet games (MCInternetGame::Available).</summary>
 bool HasInternetGames();
 
-/// <summary>MULTIPLAYER ACCESS: LAN and INTERNET, the count online asked as it opens.</summary>
+/// <summary>MULTIPLAYER ACCESS: INTERNET and LAN, the count online asked as it opens.</summary>
 void ShowAccessScreen();
 
 /// <summary>Sets up MULTIPLAYER ACCESS (made from mpscreen.fit): its count's line and its timer's events.</summary>

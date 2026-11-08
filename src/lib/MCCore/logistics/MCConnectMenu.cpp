@@ -140,7 +140,7 @@ void ConnectScreen()
     // of which exists now; it shows only when this machine can't use the network at all.
     if (MultiPlayer()->SessionManager != nullptr && MultiPlayer()->SessionManager->IsTcpAvailable())
     {
-        // Port (Redux HD): LAN and INTERNET, when this game has internet games.
+        // Port (Redux HD): INTERNET and LAN, when this game has internet games.
         if (HasInternetGames())
         {
             ShowAccessScreen();
@@ -217,7 +217,7 @@ void CancelToConnect()
 
     if (fromGames)
     {
-        // Port (Redux HD): back to LAN and INTERNET, when this game has internet games.
+        // Port (Redux HD): back to INTERNET and LAN, when this game has internet games.
         if (HasInternetGames())
         {
             GlobalLog()->LanScreen->ShowGuiWindow(false);

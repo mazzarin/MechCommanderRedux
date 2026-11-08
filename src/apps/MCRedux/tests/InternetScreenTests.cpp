@@ -30,10 +30,10 @@ namespace
     constexpr std::string_view CountUrl = "https://games.test/count";
 
     /// <summary>Where to click: the middles of MULTIPLAYER ACCESS's two buttons, and of INTERNET CONNECTION's.</summary>
-    constexpr int32_t LanX = 477;
-    constexpr int32_t LanY = 166;
     constexpr int32_t InternetX = 477;
-    constexpr int32_t InternetY = 197;
+    constexpr int32_t InternetY = 166;
+    constexpr int32_t LanX = 477;
+    constexpr int32_t LanY = 228;
     constexpr int32_t HostX = 558;
     constexpr int32_t HostY = 325;
     constexpr int32_t CancelX = 580;
@@ -62,7 +62,7 @@ namespace
     }
 }
 
-TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers LAN and INTERNET, and INTERNET lists the service's public games")
+TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERNET lists the service's public games")
 {
     if (!MCTestGame::Available())
     {
@@ -75,7 +75,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers LAN and INTERNET, and INTERN
                                       MCServiceScript::Answering(R"({"online":37})", asked), Service, Version);
     REQUIRE(MCTestGame::StartLogistics());
 
-    // MULTIPLAYER: LAN and INTERNET, the count under INTERNET once the service answers.
+    // MULTIPLAYER: INTERNET and LAN, the count under INTERNET once the service answers.
     ConnectScreen();
     REQUIRE(SettleUntil([] { return AccessCountShown() == "37 ONLINE"; }));
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MultiplayerScreen);

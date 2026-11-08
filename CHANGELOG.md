@@ -12,11 +12,9 @@ only the characters on a keyboard. The release script takes the entry under the 
 
 ## 0.6.0
 
-Nights that change the battle.
-
 - Fixed: a right-click on a mech or vehicle in your inventory crashed the game.
-- At night headlights change sight: units see half as far, and a lit unit sees and is seen further. LIGHTS (N) turns
-  the selected units' headlights off or on. The night shows without HD LIGHTING too.
+- Night mode is in testing, to see how the community likes it: at night units see half as far, and their headlights
+  light the way but show them to the enemy. LIGHTS (N) turns the selected units' headlights off or on.
 - MATCH OPTIONS: MOST SKILLED PILOT, and a ban on each kind of weapon.
 - Smoother: mechs' legs between frames at any frame rate, guests' mechs walking as the host's do, a falling tree that
   no longer vanishes, sensor blips at the original's pace.

@@ -4,6 +4,7 @@
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiEvent.h"
+#include "gui/MCGuiPort.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
@@ -15,6 +16,8 @@
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
+#include "mission/MCMissionResultsScreen.h"
+#include "mission/MCRematchLetters.h"
 #include "network/MCGameDataHash.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMultiPlayer.h"
@@ -376,4 +379,136 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host has a rematch joins its room ag
     REQUIRE(SettleUntil([] { return DialogText() == "Couldn't join the room again: it has closed."; }));
     CHECK(OnScreen(GlobalLog()->LanScreen));
     CHECK(!InSession());
+}
+
+/// <summary>
+/// The results' REMATCH (mission/MCMissionResultsScreen.h) is NEXT MISSION's faces (mr_ms01 up, mr_ms02 held) lettered
+/// REMATCH in the art's font (mission/MCRematchLetters.h): outside the lettering each face as it is; in it, where the
+/// word doesn't reach, each row the face's own colour (nothing of NEXT MISSION or of another font left), and where it
+/// does, the face's colour blended with the art's ink (its word's darkest pixel up, its brightest held) by the word's
+/// coverage, to within half the grey ramp's widest step; the word on the art's word's rows, centred where it is.
+/// </summary>
+TEST_CASE_ISOLATED("game: REMATCH is NEXT MISSION's faces lettered REMATCH in the art's font, up and held")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The faces' lettering (inclusive: inside their bevels) and the column whose colour is each row's face.
+    constexpr int32_t FaceColumn = 3;
+    constexpr int32_t LetteringLeft = 4;
+    constexpr int32_t LetteringRight = 0x67;
+    constexpr int32_t LetteringTop = 2;
+    constexpr int32_t LetteringBottom = 0xf;
+    // The palette's grey ramp steps up to 20 at a time, and the faces' rows are tinted a little (4): a blend's nearest
+    // grey is this near it on each channel.
+    constexpr int32_t BlendTolerance = 14;
+    REQUIRE(MCTestGame::StartLogistics());
+    const MCRematchFaces faces = RematchFaces();
+
+    for (const auto& [made, file, darkInk] :
+         {std::tuple{faces.Up, "mr_ms01.tga", true}, std::tuple{faces.Down, "mr_ms02.tga", false}})
+    {
+        MCTest::Scope scope(file);
+        REQUIRE(made != nullptr);
+        MCTgaColors colors{};
+        MCGuiPort art;
+        REQUIRE(art.Init(file, colors) == 0);
+        REQUIRE_EQ(made->Width(), art.Width());
+        REQUIRE_EQ(made->Height(), art.Height());
+        const int32_t width = art.Width();
+        const auto pixel = [&](const MCGuiPort& port, int32_t x, int32_t y)
+        { return port.Pixels()[static_cast<size_t>(y * width + x)]; };
+        const auto brightness = [&](uint8_t index) { return colors[index].r + colors[index].g + colors[index].b; };
+        const auto lettering = [&](int32_t x, int32_t y)
+        { return x >= LetteringLeft && x <= LetteringRight && y >= LetteringTop && y <= LetteringBottom; };
+
+        // The art's ink: its word's darkest or brightest pixel.
+        uint8_t ink = pixel(art, FaceColumn, LetteringTop);
+
+        for (int32_t y = LetteringTop; y <= LetteringBottom; ++y)
+        {
+            for (int32_t x = LetteringLeft; x <= LetteringRight; ++x)
+            {
+                const uint8_t at = pixel(art, x, y);
+                ink = (darkInk ? brightness(at) < brightness(ink) : brightness(at) > brightness(ink)) ? at : ink;
+            }
+        }
+
+        // Every pixel against the face and the word's coverage there, and where each word is inked over half (nearer
+        // the ink than its row's face): its rows and its columns' ends.
+        int32_t faceChanged = 0;
+        int32_t notWiped = 0;
+        int32_t offBlend = 0;
+        std::array<MCRect, 2> inked{};
+        inked.fill(MCRect{width, art.Height(), -1, -1});
+        const auto markInked = [&](const MCGuiPort& port, int32_t x, int32_t y, MCRect& box)
+        {
+            const int32_t at = brightness(pixel(port, x, y));
+
+            if (std::abs(at - brightness(ink)) < std::abs(at - brightness(pixel(art, FaceColumn, y))))
+            {
+                box = MCRect{std::min(box.X0, x), std::min(box.Y0, y), std::max(box.X1, x), std::max(box.Y1, y)};
+            }
+        };
+
+        for (int32_t y = 0; y < art.Height(); ++y)
+        {
+            const SDL_Color face = colors[pixel(art, FaceColumn, y)];
+
+            for (int32_t x = 0; x < width; ++x)
+            {
+                const uint8_t shown = pixel(*made, x, y);
+
+                if (!lettering(x, y))
+                {
+                    faceChanged += shown == pixel(art, x, y) ? 0 : 1;
+                    continue;
+                }
+
+                markInked(art, x, y, inked[0]);
+                markInked(*made, x, y, inked[1]);
+
+                const int32_t column = x - MCRematchLetters::Left;
+                const int32_t row = y - MCRematchLetters::Top;
+                const int32_t coverage =
+                    column >= 0 && column < MCRematchLetters::Width && row >= 0 && row < MCRematchLetters::Rows
+                        ? MCRematchLetters::Coverage[static_cast<size_t>(row)][static_cast<size_t>(column)]
+                        : 0;
+
+                if (coverage == 0)
+                {
+                    notWiped += shown == pixel(art, FaceColumn, y) ? 0 : 1;
+                    continue;
+                }
+
+                const SDL_Color& inkColor = colors[ink];
+                const SDL_Color& seen = colors[shown];
+                const auto off = [&](uint8_t faceChannel, uint8_t inkChannel, uint8_t seenChannel)
+                {
+                    const int32_t blend = (faceChannel * (MCRematchLetters::Full - coverage) + inkChannel * coverage +
+                                           MCRematchLetters::Full / 2) /
+                                          MCRematchLetters::Full;
+                    return std::abs(seenChannel - blend) > BlendTolerance;
+                };
+
+                offBlend += off(face.r, inkColor.r, seen.r) || off(face.g, inkColor.g, seen.g) ||
+                                    off(face.b, inkColor.b, seen.b)
+                                ? 1
+                                : 0;
+            }
+        }
+
+        std::cout << std::format("  {}: the art's word inked over columns {}-{}, rows {}-{}; REMATCH's {}-{}, {}-{}\n",
+                                 file, inked[0].X0, inked[0].X1, inked[0].Y0, inked[0].Y1, inked[1].X0, inked[1].X1,
+                                 inked[1].Y0, inked[1].Y1);
+        CHECK_EQ(faceChanged, 0);
+        CHECK_EQ(notWiped, 0);
+        CHECK_EQ(offBlend, 0);
+        CHECK_EQ(inked[1].Y0, inked[0].Y0);
+        CHECK_EQ(inked[1].Y1, inked[0].Y1);
+        // Centred: the columns' ends' sums (twice the centres) a column apart at most.
+        CHECK(std::abs((inked[1].X0 + inked[1].X1) - (inked[0].X0 + inked[0].X1)) <= 1);
+    }
 }

@@ -21,24 +21,27 @@ struct MCResultsIcon
     std::unique_ptr<MCGuiPort> Portrait;
 };
 
-/// <summary>
-/// Port-only (Redux HD): the multiplayer results' REMATCH (network/MCRoomEnd.h), beside the move-on button and made
-/// like it: that button's own face, its lettering covered by each row's face colour, and the word written over it.
-/// </summary>
-class MCRematchButton final : public MCGuiButton
+/// <summary>Port-only (Redux HD): REMATCH's pictures, up and held (none where a face can't be read).</summary>
+struct MCRematchFaces
 {
-public:
-    /// <summary>The button, and the move-on button's faces (up, and down while held) it is drawn from.</summary>
-    int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    using MCGuiObject::Init;
-    void OnDestroy() override;
-    /// <summary>The face, its lettering covered, and REMATCH over it (shifted a pixel while held).</summary>
-    void Draw() override;
-
-private:
-    std::unique_ptr<MCGuiPort> _UpFace;
-    std::unique_ptr<MCGuiPort> _DownFace;
+    std::shared_ptr<MCGuiPort> Up;
+    std::shared_ptr<MCGuiPort> Down;
 };
+
+/// <summary>
+/// Port-only (Redux HD): the multiplayer results' REMATCH (network/MCRoomEnd.h) beside the move-on button, made of its
+/// faces (NEXT MISSION's, up and held): the word wiped, each row the face's colour, and REMATCH laid on in the art's
+/// lettering (mission/MCRematchLetters.h) and the art's ink, dark on the up face and light on the held one, each pixel
+/// the palette's grey nearest the face blended with the ink by the word's coverage. Made in the faces' files' own
+/// colours, each face is the same picture on any screen, so the HD art pack's copy (found by its pixels) shows.
+/// </summary>
+MCRematchFaces RematchFaces();
+
+/// <summary>
+/// Port-only (Redux HD): REMATCH on <paramref name="parent"/> at (<paramref name="xPos"/>, <paramref name="yPos"/>),
+/// hidden: a button showing <see cref="RematchFaces"/>, whose release hides it and begins the rematch.
+/// </summary>
+MCGuiHandle<MCGuiButton> AddRematchButton(MCGuiObject& parent, int32_t xPos, int32_t yPos);
 
 /// <summary>The steps the single-player results screen counts through, each drawn a line at a time.</summary>
 enum class MCResultsStep : int32_t
@@ -177,7 +180,7 @@ private:
     /// <summary>Multiplayer only: the button switching the pilot list's page.</summary>
     MCGuiHandle<MCGuiButton> _PilotSwitchButton;
     /// <summary>Port-only (Redux HD): multiplayer only, the host's REMATCH, shown when it can be had (network/MCRoomEnd.h).</summary>
-    MCGuiHandle<MCRematchButton> _RematchButton;
+    MCGuiHandle<MCGuiButton> _RematchButton;
     /// <summary>The scroll-up button's hot spot, in window coordinates.</summary>
     tagRECT _ScrollUpRect{};
     /// <summary>The scroll-down button's hot spot.</summary>

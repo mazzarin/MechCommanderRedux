@@ -89,9 +89,14 @@ namespace
     constexpr uint32_t RolloverVersion = 1;
     /// <summary>
     /// Port-only (Redux HD): how long a rollover waits: a joiner for the machine taking over to answer it, the new hub
-    /// for the session's other machines to come back, and a joiner keeps a connection to it before it takes over.
+    /// for the session's other machines to come back, and a joiner keeps a connection to it before it takes over. A
+    /// machine gone without a word is found by each link's keepalive (MCSocket::LinkKeepAlive), on one machine up to its
+    /// whole time later than on another, so each waits that long for the others.
     /// </summary>
-    constexpr uint64_t RolloverWaitMs = 10000;
+    constexpr uint64_t RolloverWaitMs =
+        uint64_t{MCSocket::LinkKeepAlive.IdleSeconds +
+                 MCSocket::LinkKeepAlive.IntervalSeconds * MCSocket::LinkKeepAlive.Probes} *
+        1000;
     /// <summary>
     /// Port-only (Redux HD): how long each try at connecting to the machine taking over may hold the game up: over the
     /// internet (a link already open, the connection a round trip through it), and on a LAN, where a machine there
@@ -1969,12 +1974,20 @@ struct MCDirectPlay::Impl
     void Reconcile(SessionInfo session, std::map<uint32_t, Entity> entities)
     {
         std::map<uint32_t, Entity> was = std::move(Entities);
+        // An id both hold for another player or group (one the old hub made that never reached the new hub, which gave
+        // its id to another): the old one goes and the new one comes.
+        const auto sameOne = [&](uint32_t id, const Entity& before)
+        {
+            const auto now = entities.find(id);
+            return now != entities.end() && now->second.Type == before.Type && now->second.Machine == before.Machine &&
+                   now->second.ShortName == before.ShortName;
+        };
 
         for (const uint32_t type : {uint32_t{DPPLAYERTYPE_PLAYER}, uint32_t{DPPLAYERTYPE_GROUP}})
         {
             for (const auto& [id, entity] : was)
             {
-                if (entity.Type != type || entities.contains(id))
+                if (entity.Type != type || sameOne(id, entity))
                 {
                     continue;
                 }
@@ -1995,7 +2008,7 @@ struct MCDirectPlay::Impl
         {
             const auto before = was.find(id);
 
-            if (before == was.end())
+            if (before == was.end() || !sameOne(id, before->second))
             {
                 if (!LocalPlayers.contains(id))
                 {
@@ -2020,11 +2033,18 @@ struct MCDirectPlay::Impl
 
             const auto before = was.find(id);
             const std::vector<uint32_t> none;
-            const std::vector<uint32_t>& members = before != was.end() ? before->second.Members : none;
+            const std::vector<uint32_t>& members =
+                before != was.end() && sameOne(id, before->second) ? before->second.Members : none;
+            // A member another player now (made again above) joins the group anew.
+            const auto heldBefore = [&](uint32_t member)
+            {
+                const auto player = was.find(member);
+                return std::ranges::contains(members, member) && player != was.end() && sameOne(member, player->second);
+            };
 
             for (const uint32_t member : group.Members)
             {
-                if (!std::ranges::contains(members, member))
+                if (!heldBefore(member))
                 {
                     QueueMembership(DPSYS_ADDPLAYERTOGROUP, id, member);
                 }

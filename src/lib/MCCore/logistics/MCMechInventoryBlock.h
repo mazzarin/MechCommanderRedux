@@ -74,6 +74,9 @@ private:
     /// <summary>The mech the block refers to (<see cref="Mech"/>).</summary>
     std::weak_ptr<MCLogMech> _Mech;
 
-    /// <summary>Offers the mech for sale (unless the mission requires it).</summary>
-    void OfferSale();
+    /// <summary>
+    /// Offers <paramref name="mech"/> for sale (unless the mission requires it), its <paramref name="diagram"/> in
+    /// the dialog: both as the event that offers it took them, since its refresh can drop this row first.
+    /// </summary>
+    void OfferSale(const std::shared_ptr<MCLogMech>& mech, const std::optional<DiagramLook>& diagram);
 };

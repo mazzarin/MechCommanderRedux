@@ -21,6 +21,7 @@
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCUnitLimits.h"
+#include "logistics/MCVehicleInventoryBlock.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCMainMenu.h"
@@ -926,4 +927,130 @@ TEST_CASE_ISOLATED("game: a mech picked up from the inventory shows in the repai
     CHECK(ForceSlotsInOrder());
     CHECK(GlobalLog()->RepairScreen->SelectedMech() == mech);
     CHECK(UnitPaneHash() != before);
+}
+
+namespace
+{
+    /// <summary>
+    /// A right-click on <paramref name="item"/>'s row in the shown screen's inventory list: pressed on the row, a frame,
+    /// let go there, as the game's input code sends them, and the screen settled.
+    /// </summary>
+    template <typename Row, typename Item> void RightClickRow(const Item& item)
+    {
+        // The row's place only: the row isn't kept through the click, as nothing but the list keeps it in play.
+        const auto [x, y] = [&]
+        {
+            const std::shared_ptr<MCLogInvScreen> screen = MCLogInvScreen::Of(*GlobalLog()->CurrentScreen());
+            REQUIRE(screen != nullptr);
+            const std::shared_ptr<Row> row = screen->InventoryPane->RowOf<Row>(item);
+            REQUIRE(row != nullptr);
+            return std::pair{row->GlobalX() + 40, row->GlobalY() + row->Height() / 2};
+        }();
+        SendMouse(7, x, y, false);
+        SendMouse(MCGuiEventType::RightButtonDown, x, y, false);
+        MCTestGame::RunFrame(1.0f / 15.0f);
+        SendMouse(MCGuiEventType::RightButtonUp, x, y, false);
+        Settle();
+    }
+}
+
+TEST_CASE_ISOLATED("game: a right-click on an inventory mech or vehicle offers it for sale in the store and puts it in "
+                   "the force on the repair screen")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    NewCampaign();
+    Settle();
+
+    // The campaign starts with every unit in the force: two mechs and two vehicles bought for the inventory.
+    GlobalLog()->SetUpPurchaseScreen(true);
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
+    ResourcePoints = 1000000;
+
+    for (const auto& variant : GlobalLog()->PurMechList->Mechs.front()->Variants)
+    {
+        variant->NumAvailable = 3;
+    }
+
+    BuyFirst();
+    Accept();
+    BuyFirst();
+    Accept();
+    Click(200, 350);
+    Settle();
+    GlobalLog()->PurVehicleList->Vehicles.front()->Data->NumAvailable = 3;
+    BuyFirst();
+    Accept();
+    BuyFirst();
+    Accept();
+
+    // The row is picked up and put down: the unit leaves the inventory for the force, its row goes with it, and the
+    // sale is offered; accepted, the unit is gone. (Release 2 crashed here: the sale read the unit from the row the
+    // list had just dropped.)
+    {
+        MCTest::Scope scope("vehicle sale");
+        const int32_t vehicles = GlobalLog()->VehicleList->GetVehicleCount();
+        const int32_t forceVehicles = GlobalLog()->ForceVehicleList->GetVehicleCount();
+        REQUIRE(vehicles >= 2);
+        RightClickRow<MCVehicleInventoryBlock>(*GlobalLog()->VehicleList->Vehicles.front());
+        Accept();
+        CHECK_EQ(GlobalLog()->VehicleList->GetVehicleCount(), vehicles - 1);
+        CHECK_EQ(GlobalLog()->ForceVehicleList->GetVehicleCount(), forceVehicles);
+    }
+
+    {
+        MCTest::Scope scope("mech sale");
+        Click(200, 120);
+        Settle();
+        const int32_t mechs = GlobalLog()->MechList->GetMechCount();
+        const int32_t forceMechs = GlobalLog()->ForceMechList->GetMechCount();
+        const int32_t points = ResourcePoints;
+        std::shared_ptr<MCLogMech> sold = FirstInventoryMech(*GlobalLog()->MechList);
+        REQUIRE(sold != nullptr);
+        sold->CalcMechCost(false);
+        const int32_t value = sold->ResourcePoints;
+        RightClickRow<MCMechInventoryBlock>(*sold);
+        // Let go before the sale, as the player holds nothing of it.
+        sold.reset();
+        Accept();
+        CHECK_EQ(GlobalLog()->MechList->GetMechCount(), mechs - 1);
+        CHECK_EQ(GlobalLog()->ForceMechList->GetMechCount(), forceMechs);
+        CHECK_EQ(ResourcePoints, points + value / 2);
+    }
+
+    // On the repair screen the unit put down joins the force.
+    GlobalLog()->SetUpRepairScreen(true);
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->RepairScreen);
+
+    {
+        MCTest::Scope scope("mech into the force");
+        Click(200, 120);
+        Settle();
+        const std::shared_ptr<MCLogMech> mech = FirstInventoryMech(*GlobalLog()->MechList);
+        REQUIRE(mech != nullptr);
+        const int32_t forceMechs = GlobalLog()->ForceMechList->GetMechCount();
+        RightClickRow<MCMechInventoryBlock>(*mech);
+        CHECK(mech->Assigned);
+        CHECK_EQ(GlobalLog()->ForceMechList->GetMechCount(), forceMechs + 1);
+        CHECK(GlobalLog()->RepairScreen->SelectedMech() == mech);
+    }
+
+    {
+        MCTest::Scope scope("vehicle into the force");
+        Click(200, 350);
+        Settle();
+        REQUIRE(GlobalLog()->VehicleList->GetVehicleCount() > 0);
+        const std::shared_ptr<MCLogVehicle> vehicle = GlobalLog()->VehicleList->Vehicles.front();
+        const int32_t forceVehicles = GlobalLog()->ForceVehicleList->GetVehicleCount();
+        RightClickRow<MCVehicleInventoryBlock>(*vehicle);
+        CHECK(vehicle->Assigned);
+        CHECK_EQ(GlobalLog()->ForceVehicleList->GetVehicleCount(), forceVehicles + 1);
+    }
 }

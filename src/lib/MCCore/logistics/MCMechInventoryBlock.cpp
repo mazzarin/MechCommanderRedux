@@ -127,10 +127,9 @@ auto MCMechInventoryBlock::DrawMechInfo(const MCLogMech& mech, MCOptionalRef<con
     DrawInfoDescription(port, 0xc3, 0x26, mech.Description, 8, 0x1b3);
 }
 
-auto MCMechInventoryBlock::OfferSale() -> void
+auto MCMechInventoryBlock::OfferSale(const std::shared_ptr<MCLogMech>& mech, const std::optional<DiagramLook>& diagram)
+    -> void
 {
-    const std::shared_ptr<MCLogMech> mech = Mech();
-
     if (mech->Required != 0)
     {
         return;
@@ -145,10 +144,10 @@ auto MCMechInventoryBlock::OfferSale() -> void
     picture.Init(DiagramWidth, DiagramHeight);
     VfxPaneWipe(picture.Frame(), DiagramBack);
 
-    if (Diagram.has_value())
+    if (diagram.has_value())
     {
-        MCLogBlockPort diagram(picture.Frame(), 2, 0, DiagramWidth, DiagramHeight, true);
-        PaintDiagram(*mech, *Diagram, diagram);
+        MCLogBlockPort shown(picture.Frame(), 2, 0, DiagramWidth, DiagramHeight, true);
+        PaintDiagram(*mech, *diagram, shown);
     }
 
     // The answer goes to the mech, not this row (the list can drop the row while the dialog is open); the dialog keeps
@@ -220,22 +219,33 @@ auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
         return;
     }
 
+    // The mech and its diagram, taken once for the whole event: a list refresh below drops this row once its mech
+    // leaves the inventory (put down with the right button, the mech joins the force before the sale or the force's
+    // listing reads it), and a dropped row has neither. A row already dropped takes no events.
+    const std::shared_ptr<MCLogMech> mech = Mech();
+
+    if (mech == nullptr)
+    {
+        return;
+    }
+
+    const std::optional<DiagramLook> diagram = Diagram;
     std::shared_ptr<MCLogInvScreen> screen = Screen();
 
     if (MechDrag.Idle())
     {
         // The info block: the row's diagram, tonnage, classes, speed and description.
         MCLogInvScreen::DrawBlankInvInfoBlock(-1);
-        PrepareInfoDescription(Mech()->Description);
+        PrepareInfoDescription(mech->Description);
         // Shown while the mech lives (the box went blank with the mech's block before), whatever happens to the row.
         screen->ShowDetails(
             MCInvInfoBox::Kind::Mech,
-            [weak = std::weak_ptr<MCLogMech>(Mech()), diagram = Diagram](MCLogPort& port)
+            [weak = std::weak_ptr<MCLogMech>(mech), diagram](MCLogPort& port)
             {
-                if (const std::shared_ptr<MCLogMech> mech = weak.lock(); mech != nullptr)
+                if (const std::shared_ptr<MCLogMech> shown = weak.lock(); shown != nullptr)
                 {
-                    DrawMechInfo(*mech, diagram.has_value() ? MCOptionalRef<const DiagramLook>(*diagram) : std::nullopt,
-                                 port);
+                    DrawMechInfo(*shown,
+                                 diagram.has_value() ? MCOptionalRef<const DiagramLook>(*diagram) : std::nullopt, port);
                 }
             });
 
@@ -247,7 +257,7 @@ auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             GuiSystem().Grab(weak_from_this());
             MechDrag.Dragging = true;
             MakeDragIcon(MechDrag, event);
-            Mech()->Assigned = true;
+            mech->Assigned = true;
             GlobalLog()->ReorderMechs();
             MCLogInvScreen::CreateMechInvBlock();
             screen->SetUpMechInv(false, false);
@@ -262,7 +272,7 @@ auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
     // Back to the inventory.
     auto backToInventory = [&]
     {
-        Mech()->Assigned = false;
+        mech->Assigned = false;
         GlobalLog()->ReorderMechs();
         MCLogInvScreen::CreateMechInvBlock();
         screen->SetUpMechInv(false, true);
@@ -272,8 +282,8 @@ auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
     auto joinForce = [&]
     {
         BumpDeploySlots(false);
-        GlobalLog()->RepairScreen->AddMechToList(*Mech());
-        GlobalLog()->RepairScreen->SelectMech(Mech());
+        GlobalLog()->RepairScreen->AddMechToList(*mech);
+        GlobalLog()->RepairScreen->SelectMech(mech);
     };
 
     switch (event.Type)
@@ -340,7 +350,7 @@ auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
                 {
                     // Dropped on the store: offer to sell it.
                     PlayLogSound(0x34);
-                    OfferSale();
+                    OfferSale(mech, diagram);
                     break;
                 }
 
@@ -368,7 +378,7 @@ auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             GuiSystem().SetCursorVisible(true);
             GuiSystem().Release();
             MCDragIcon::Remove();
-            Mech()->Assigned = true;
+            mech->Assigned = true;
             GlobalLog()->ReorderMechs();
             MCLogInvScreen::CreateMechInvBlock();
             screen->SetUpMechInv(false, true);
@@ -389,7 +399,7 @@ auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
                 break;
             }
 
-            OfferSale();
+            OfferSale(mech, diagram);
             break;
         }
 

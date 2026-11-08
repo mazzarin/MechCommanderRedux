@@ -109,7 +109,13 @@ auto MCRejoinNote::InternetRoomCommandLine(const MCInternetRoom& room) -> std::s
         words = {"-join", room.Code, "-internet", "-player", room.PlayerName};
     }
 
-    words.insert(words.end(), {"-menus", std::string(RejoinSwitch)});
+    words.emplace_back("-menus");
+
+    if (room.Rejoin)
+    {
+        words.emplace_back(RejoinSwitch);
+    }
+
     return LobbyCommandWords(words);
 }
 

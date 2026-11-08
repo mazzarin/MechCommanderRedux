@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCIdleCheck.h"
+#include "logistics/MCUpdatePage.h"
+#include "main/MCUpdater.h"
+#include "network/MCLobbyUpdate.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
@@ -126,6 +129,7 @@ namespace
     constexpr std::string_view InBattleLine = "IN BATTLE";
     constexpr std::string_view MinutesFormat = "{} MIN";
     constexpr std::string_view NeedsFormat = "NEEDS {}";
+    constexpr std::string_view JoinUpdatesLine = "JOIN GAME UPDATES";
     constexpr std::string_view ConnectingFormat = "CONNECTING TO {}...";
     constexpr std::string_view HostingText = "MAKING YOUR GAME...";
     constexpr std::string_view CodeGameFormat = "GAME {}";
@@ -197,6 +201,23 @@ namespace
         return theirs.has_value() && ours.has_value() && *theirs > *ours;
     }
 
+    /// <summary>
+    /// Whether the update this game has found brings <paramref name="game"/>'s release or a later one, so JOIN GAME
+    /// updates first (the UPDATE page over the screen, the new version joining the game).
+    /// </summary>
+    bool UpdateBrings(const MCInternetListing::Game& game)
+    {
+        if (!NeedsNewer(game.Version) || !MCUpdater::Available() || !MCUpdater::Waiting() ||
+            MCUpdater::Status().Stage == MCUpdater::MCStage::Failed)
+        {
+            return false;
+        }
+
+        const std::optional<std::vector<int32_t>> theirs = ReleaseOf(game.Version);
+        const std::optional<std::vector<int32_t>> update = ReleaseOf(MCUpdater::Status().Version);
+        return theirs.has_value() && update.has_value() && *update >= *theirs;
+    }
+
     // ---- the screens' state ----
 
     /// <summary>MULTIPLAYER ACCESS's count's line, and the count being asked.</summary>
@@ -216,6 +237,8 @@ namespace
     bool ListAway = false;
     bool HostsPublic = true;
     int32_t ShownBlock = BrowseBlock;
+    /// <summary>Whether the player list says JOIN GAME UPDATES (drawn again when the update is found after a pick).</summary>
+    bool ShownUpdateBrings = false;
 
     /// <summary>A game being joined or hosted, moving along on the screen's timer.</summary>
     struct PendingGame
@@ -261,6 +284,7 @@ namespace
     {
         auto players = InternetScreen().Element<MCLogScrollTextObject>(PlayerListElement);
         players->Clear();
+        ShownUpdateBrings = false;
         const std::optional<MCInternetListing::Game> game = Games->Picked();
 
         if (!game.has_value())
@@ -295,6 +319,12 @@ namespace
         if (NeedsNewer(game->Version))
         {
             details.push_back(std::format(NeedsFormat, game->Version.substr(0, game->Version.find(' '))));
+
+            if (UpdateBrings(*game))
+            {
+                details.emplace_back(JoinUpdatesLine);
+                ShownUpdateBrings = true;
+            }
         }
 
         for (const std::string& detail : details)
@@ -311,12 +341,22 @@ namespace
         return static_cast<int32_t>(code.size()) == CodeLength ? std::optional(code) : std::nullopt;
     }
 
-    /// <summary>JOIN GAME takes a code typed, or a game picked that can be joined.</summary>
+    /// <summary>
+    /// JOIN GAME takes a code typed, or a game picked that can be joined (or that the update this game found brings).
+    /// </summary>
     void UpdateJoinButton()
     {
         const std::optional<MCInternetListing::Game> picked = Games->Picked();
+        const bool updateBrings = picked.has_value() && UpdateBrings(*picked);
         InternetScreen().Element<MCLogButton>(JoinButton)->Disabled =
-            !TypedCode().has_value() && !(picked.has_value() && MCInternetGameList::Joinable(*picked));
+            !TypedCode().has_value() &&
+            !(picked.has_value() && (MCInternetGameList::Joinable(*picked) || updateBrings));
+
+        // The updater found (or lost) the update that brings the picked game since the list was drawn.
+        if (updateBrings != ShownUpdateBrings)
+        {
+            ShowPickedPlayers();
+        }
     }
 
     /// <summary>The list and the counts as the service last said them.</summary>
@@ -573,6 +613,14 @@ namespace
         {
             code = picked->Code;
             pending.Shown = Upper(picked->Name);
+        }
+        else if (picked.has_value() && UpdateBrings(*picked))
+        {
+            // A newer game: the update first, its new version joining the game (network/MCLobbyUpdate.h).
+            MCLobbyUpdate::JoinAfterUpdate(MCLobbyUpdate::MCJoinAfter{
+                .Code = picked->Code, .Name = picked->Name, .PlayerName = pending.PlayerName});
+            ShowUpdatePageOver(InternetScreen());
+            return;
         }
         else
         {
@@ -1026,9 +1074,11 @@ void InternetScreenHidden()
         return;
     }
 
-    // Its socket's close takes it off the service's count; a game joined is counted as it plays.
+    // Its socket's close takes it off the service's count; a game joined is counted as it plays. A newer game picked to
+    // join after the update is no longer.
     List.reset();
     ListAway = false;
+    MCLobbyUpdate::JoinAfterUpdate(std::nullopt);
     GuiSystem().RemoveTimer(*GlobalLog()->InternetScreen, InternetTimer);
 
     if (Pending.has_value())

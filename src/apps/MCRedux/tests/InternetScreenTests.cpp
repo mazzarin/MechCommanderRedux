@@ -587,3 +587,79 @@ TEST_CASE_ISOLATED("game: a host's new version whose internet game's place has g
     CHECK(DialogText().empty());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
 }
+
+/// <summary>
+/// A game on a newer version, picked: its players and "NEEDS 0.7.0", and once this game has found the update that
+/// brings it, JOIN GAME updates first: the UPDATE page over the screen says the new version joins the game, and RESTART
+/// leaves the rejoin note that has it join.
+/// </summary>
+TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, and the new version joins it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestUpdater::MCFakeUpdater updater;
+    MCServiceScript::ListScript list;
+    std::string asked;
+    MCServiceScript::SetupScope scope(MCServiceScript::ListOpener(list),
+                                      MCServiceScript::Answering(R"({"online":2})", asked), Service, Version);
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    Click(InternetX, InternetY);
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
+    MCSplashScreen& screen = *GlobalLog()->InternetScreen;
+    screen.Element<MCLogTextObject>(PlayerNameEntry)->SetStringBuffer("Commander");
+    list.Send(
+        Listing({MCServiceScript::ListedGame("W8ZE", "Next version", {"Eve"}, 6, nullptr, NewerVersion, "OC")}, 2, 1));
+    REQUIRE(SettleUntil([] { return InternetCountsShown() == "2 ONLINE, 1 IN GAMES"; }));
+    auto games = screen.Element<MCInternetGameList>(GameList);
+    auto players = screen.Element<MCLogScrollTextObject>(PlayerList);
+    auto join = screen.Element<MCLogButton>(JoinButton);
+    const auto playerLines = [&]
+    {
+        std::string lines;
+
+        for (int32_t line = 0; line < players->NumLines; line++)
+        {
+            lines += LineOf(*players, line) + "|";
+        }
+
+        return lines;
+    };
+
+    // No update known: it needs one, and can't be joined.
+    games->Pick("W8ZE");
+    Settle();
+    CHECK(join->Disabled);
+    CHECK_EQ(playerLines(), std::string("EVE||OCEANIA|NEEDS 0.7.0|"));
+
+    // The update that brings it found: JOIN GAME updates first.
+    MCUpdater::Found(std::string(NewerVersion), "Rooms come back after an update.");
+    REQUIRE(SettleUntil([&] { return !join->Disabled; }));
+    CHECK(playerLines().contains("NEEDS 0.7.0|JOIN GAME"));
+    SaveShot("internet 12 newer picked", ScreenHash());
+    ClickButton(*join);
+    REQUIRE(UpdatePageShown());
+    MCUpdater::Answer(MCUpdater::MCAnswer::Install);
+    MCUpdater::Ready();
+    Settle();
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, YOU JOIN NEXT VERSION."));
+    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
+    REQUIRE(restart != nullptr);
+    REQUIRE(restart->IsShowing());
+    SaveShot("internet 13 update to join", ScreenHash());
+
+    // RESTART: the update installs, and the new version joins the game, the menus' again once in.
+    ClickButton(*restart);
+    REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
+    CHECK(updater.Log->Answers.back() == MCUpdater::MCAnswer::Install);
+    constexpr uint64_t NextBuild = 900;
+    const std::optional<std::string> note =
+        MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NextBuild, MCRejoinNote::Now());
+    REQUIRE(note.has_value());
+    CHECK_EQ(*note, std::string("-join W8ZE -internet -player Commander -menus"));
+}

@@ -49,6 +49,8 @@ namespace MCRejoinNote
         std::string PlayerName;
         std::string SessionName;
         int32_t MaxPlayers = 0;
+        /// <summary>The start comes back to a room it was in (a join that fails says the room has gone).</summary>
+        bool Rejoin = true;
     };
 
     /// <summary>

@@ -40,6 +40,9 @@ namespace
     /// <summary>What a host's rejoin that failed says: it couldn't host the room on its port again.</summary>
     constexpr std::string_view RoomNotReopenedText = "Couldn't open the room again.";
 
+    /// <summary>The UPDATE page's line for an update ready to join a game the INTERNET screen picked.</summary>
+    constexpr std::string_view JoinAfterFormat = "DOWNLOADED: ON RESTART, YOU JOIN {}.";
+
     /// <summary>The UPDATE page's line for an update ready in a room (MCLobbyUpdate::ReadyText).</summary>
     constexpr std::string_view AfterMatchText = "DOWNLOADED: IT INSTALLS AFTER THE MATCH.";
     constexpr std::string_view GuestRestartText = "DOWNLOADED: ON RESTART, YOU REJOIN THIS ROOM.";
@@ -124,6 +127,8 @@ namespace
     /// let it go (its leave is told before then), so it no longer counts for START.
     /// </summary>
     bool AwayLeft = false;
+    /// <summary>A game the INTERNET screen picked that needs the update: the new version joins it.</summary>
+    std::optional<MCLobbyUpdate::MCJoinAfter> JoinAfter;
     /// <summary>The tests' clock, when one is set (MCLobbyUpdate::SetClock).</summary>
     MCLobbyUpdate::MCClock TestClock;
 
@@ -630,7 +635,9 @@ auto MCLobbyUpdate::ReadyText() -> std::string
 {
     if (!InRoom())
     {
-        return {};
+        return JoinAfter.has_value() && MCUpdater::ExpectedBuild().has_value()
+                   ? std::format(JoinAfterFormat, Upper(JoinAfter->Name))
+                   : std::string();
     }
 
     // A lobby's game exits after the match, installing it; the menus' installs it as it restarts or quits.
@@ -694,6 +701,24 @@ auto MCLobbyUpdate::Restart() -> bool
 {
     if (!InRoom())
     {
+        // Port (Redux HD): a game the INTERNET screen picked, joined by the new version (the page then installs).
+        if (const std::optional<uint64_t> build = MCUpdater::ExpectedBuild(); JoinAfter.has_value() && build)
+        {
+            const std::string words = MCRejoinNote::InternetRoomCommandLine(
+                {.Code = JoinAfter->Code, .PlayerName = JoinAfter->PlayerName, .Rejoin = false});
+
+            if (const auto written = MCRejoinNote::Write(
+                    MCFileSystem::UserRoot(), {.CommandLine = words, .Build = *build, .Time = MCRejoinNote::Now()});
+                !written)
+            {
+                SDL_Log("Lobby updates: the game to join after the update isn't noted (%s)", written.error().c_str());
+            }
+            else
+            {
+                SDL_Log("Lobby updates: restarting into the update, to join game %s", JoinAfter->Code.c_str());
+            }
+        }
+
         return false;
     }
 
@@ -967,6 +992,11 @@ auto MCLobbyUpdate::JoinFailed() -> void
     }
 
     ShowJoinFailed(text);
+}
+
+auto MCLobbyUpdate::JoinAfterUpdate(std::optional<MCJoinAfter> game) -> void
+{
+    JoinAfter = std::move(game);
 }
 
 auto MCLobbyUpdate::BackToMenus() -> void

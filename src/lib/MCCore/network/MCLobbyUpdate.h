@@ -143,6 +143,22 @@ namespace MCLobbyUpdate
     /// </summary>
     void JoinFailed();
 
+    /// <summary>Port (Redux HD): a game on the INTERNET screen that needs the update, to join once it's in.</summary>
+    struct MCJoinAfter
+    {
+        std::string Code;
+        /// <summary>The game's name, as the page says it.</summary>
+        std::string Name;
+        std::string PlayerName;
+    };
+
+    /// <summary>
+    /// Port (Redux HD): the game picked on the INTERNET screen that needs the update (JOIN GAME opens the UPDATE page for
+    /// it): RESTART leaves the rejoin note so the new version joins it, as the page says; none, and RESTART only
+    /// restarts.
+    /// </summary>
+    void JoinAfterUpdate(std::optional<MCJoinAfter> game);
+
     /// <summary>
     /// Port (Redux HD): a start from the rejoin note of a room the menus opened (-menus), back in it: the game is the
     /// menus' again, its room's EXIT going back to the games and its match's end to the menus, not the lobby's.

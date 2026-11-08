@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "MCMock.h"
+#include "fakes/MCLoopbackTransport.h"
 #include "TestGame.h"
 #include "ai/MCScenarioMap.h"
 #include "fakes/MCMemoryFileSource.h"
@@ -8,6 +9,9 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
 #include "linkup/MCFidpMessage.h"
+#include "linkup/MCFidpPlayer.h"
+#include "linkup/MCFidpSession.h"
+#include "linkup/MCSessionManager.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "mission/MCScenario.h"
@@ -1817,4 +1821,155 @@ TEST_CASE("network: the retail game's gameplay data are the files play reads, no
 
     CHECK(MCMissionDataHash("data\\savegame\\ARENA.MPK") != 0u);
     CHECK(MCMissionDataHash("data\\savegame\\ARENA.MPK") != MCMissionDataHash("data\\savegame\\FORT.MPK"));
+}
+
+namespace
+{
+    /// <summary>
+    /// A mover whose control the test can watch (TakeOverMovers gives it the server's), with no pilot (one needs its
+    /// unit in a mission to clear its orders).
+    /// </summary>
+    class ControlledMover : public FakeMover
+    {
+    public:
+        int32_t SetControl(uint32_t controlType, uint32_t, int32_t) override
+        {
+            Controls(controlType);
+            return 0;
+        }
+
+        std::shared_ptr<MCMechWarrior> GetPilot() override { return nullptr; }
+
+        MCMock::Calls<uint32_t> Controls;
+    };
+
+    /// <summary>The control type of a unit the server runs (MCMover::SetControl's).</summary>
+    constexpr uint32_t ServerControl = 2;
+
+    /// <summary>Pumps <paramref name="machines"/>' session managers until <paramref name="done"/> (at most four seconds).</summary>
+    bool ExchangeAmong(std::initializer_list<std::reference_wrapper<MCSessionManager>> machines,
+                       const std::function<bool()>& done)
+    {
+        constexpr int32_t rounds = 800;
+        constexpr uint32_t roundMs = 5;
+
+        for (int32_t round = 0; round < rounds; round++)
+        {
+            for (MCSessionManager& machine : machines)
+            {
+                machine.ProcessMessages();
+            }
+
+            if (done())
+            {
+                return true;
+            }
+
+            SDL_Delay(roundMs);
+        }
+
+        return false;
+    }
+
+    /// <summary>Has <paramref name="joiner"/> join the session at <paramref name="address"/> that <paramref name="host"/> hosts.</summary>
+    bool JoinRolling(MCSessionManager& joiner, MCSessionManager& host, std::string_view address, std::string_view name)
+    {
+        constexpr int32_t looks = 40;
+        joiner.ConnectTcp(address);
+        std::shared_ptr<MCFidpSession> found;
+
+        for (int32_t look = 0; look < looks && found == nullptr; look++)
+        {
+            const auto sessions = joiner.GetSessions();
+            found = sessions.has_value() && !sessions->empty() ? sessions->front() : nullptr;
+            host.DirectPlay->Pump();
+            SDL_Delay(5);
+        }
+
+        if (found == nullptr)
+        {
+            return false;
+        }
+
+        std::atomic<bool> stop = false;
+        std::thread pumper(
+            [&]
+            {
+                while (!stop)
+                {
+                    host.DirectPlay->Pump();
+                    SDL_Delay(1);
+                }
+            });
+        const int32_t joined = joiner.JoinSession(found->SessionDesc.guidInstance, name);
+        stop = true;
+        pumper.join();
+        return joined == 0;
+    }
+}
+
+/// <summary>
+/// Port-only (Redux HD): the host's game gone mid-match (its machine off), the session rolls over to Ann's machine, the
+/// earliest joined (SPEC-host-rollover.md), and Ann's game serves the match: it is the server, and every unit, which it
+/// holds as the old server's updates left it, is its to run (the original's TakeOverMovers); Cat's orders go to it
+/// through the session's new hub.
+/// </summary>
+TEST_CASE(
+    "network: the host's game gone mid-match, the game its session rolls over to runs every unit and takes orders")
+{
+    MCTestContextScope scope;
+    scope.Context().SetNet(std::make_unique<MCLoopbackTransport>());
+    scope.Context().SetScenario(std::make_unique<MCScenario>());
+    MCMultiPlayer& game = InstallGame(scope);
+    REQUIRE_EQ(game.Start(), 0);
+    MCSessionManager& ann = *game.SessionManager;
+    constexpr std::string_view address = "127.0.0.1:28968";
+    std::optional<MCSessionManager> bob(std::in_place, MultiPlayerAppGuid);
+    bob->ConnectTcp(address);
+    MCFidpSession hosted(MultiPlayerAppGuid);
+    hosted.SetName("Rolling battle");
+    REQUIRE_EQ(bob->HostSession(hosted, "BOB"), 0);
+    MCSessionManager cat(MultiPlayerAppGuid);
+    REQUIRE(JoinRolling(ann, *bob, address, "ANN"));
+    REQUIRE(ExchangeAmong({*bob, ann}, [&] { return ann.HasPlayerNumber; }));
+    REQUIRE(JoinRolling(cat, *bob, address, "CAT"));
+    REQUIRE(ExchangeAmong({*bob, ann, cat},
+                          [&] { return cat.HasPlayerNumber && ann.Players.size() == 3 && cat.Players.size() == 3; }));
+
+    // In the match, BOB's game the server: Ann's game holds the units as the server's updates leave them.
+    NumLanPlayers = 3;
+    game.InMission = true;
+    game.ServerID = bob->MyPlayerID;
+    game.HostID = bob->MyPlayerID;
+    const auto annsMech = std::make_shared<ControlledMover>();
+    const auto catsMech = std::make_shared<ControlledMover>();
+    game.AddToMoverRoster(annsMech);
+    game.AddToMoverRoster(catsMech);
+    std::vector<std::pair<uint32_t, uint16_t>> served;
+    ann.ApplicationCallback = [&](MCFidpMessage& msg)
+    {
+        served.emplace_back(msg.FromID, static_cast<uint16_t>(msg.Type()));
+        MultiPlayerApplicationCallback(msg);
+    };
+
+    bob.reset();
+    REQUIRE(ExchangeAmong({ann, cat}, [&] { return game.IsServer && cat.ServerID == ann.MyPlayerID; }));
+    CHECK(ann.IsHost);
+    CHECK_EQ(game.ServerID, ann.MyPlayerID);
+    CHECK_EQ(game.HostID, ann.MyPlayerID);
+    CHECK_CALLED_WITH(annsMech->Controls, ServerControl);
+    CHECK_CALLED_WITH(catsMech->Controls, ServerControl);
+
+    // Cat's order (here for a unit no commander has: the game drops it after reading it) reaches the new server.
+    MCMPPlayerOrderMessage order{};
+    order.Header = GuaranteedHeader(MCMPMessageType::PlayerOrder);
+    order.CheckInId = static_cast<int8_t>(cat.MyPlayer()->PlayerNumber);
+    cat.SendMessageToServerGuaranteed(LinkupBytes(order));
+    CHECK(ExchangeAmong({ann, cat},
+                        [&]
+                        {
+                            return std::ranges::contains(
+                                served, std::pair(cat.MyPlayerID, static_cast<uint16_t>(MCMPMessageType::PlayerOrder)));
+                        }));
+    NumLanPlayers = 1;
 }

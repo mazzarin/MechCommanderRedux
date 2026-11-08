@@ -22,9 +22,9 @@ and the HD pack:
   MechCommander Gold, or downloads the game.
 
 The first start downloads the game's files (0.6 GB) and, if you chose it, the HD pack (5.8 GB). Neither installer is
-signed yet: on the Mac, click Open Anyway in System Settings' Privacy & Security; on Windows, More info, then Run
-anyway. Once installed, the game updates itself: when a new version is out, UPDATE on the main menu turns amber.
-What each version brought: [CHANGELOG.md](CHANGELOG.md).
+signed yet, so macOS and Windows stop it the first time: [Installing](#installing) has the steps. Once installed,
+the game updates itself: when a new version is out, UPDATE on the main menu turns amber. What each version brought:
+[CHANGELOG.md](CHANGELOG.md).
 
 Without the pack the units, ground, menus, movies and sound are the original's; the light, weather and effects show
 all the same. MechCommander Redux's own [download](https://github.com/RevenantBob/MechCommanderRedux/releases/latest)
@@ -135,15 +135,41 @@ modifies it.
 
 ### Installing
 
-**Redux HD:** on a Mac, open the [download](#download)'s `.pkg` and follow its steps; it puts the game in
-Applications, and its first start downloads the game's files. The app alone: unzip the `-mac.zip`, drag
-`MechCommander Redux.app` to your Applications folder and open it. The first time, macOS stops either, as neither is
-signed by an Apple developer account: open System Settings → Privacy & Security and click **Open Anyway**.
+Neither installer is signed yet (by an Apple developer account, or a Windows code signing certificate), so macOS and
+Windows stop it the first time. Nothing is wrong with it: they stop any program that isn't signed.
 
-**Redux HD:** on Windows, run the download's `-setup.exe`. It installs into your MechCommander Gold folder (the one
-containing `SYSTEM.CFG`), or downloads the game into a folder of its own; Windows' SmartScreen asks first (More info,
-then Run anyway). Or [build it](#building), then either put `MCRedux.exe` and `SDL3.dll` in your MechCommander Gold
-folder, or run it from anywhere with `--data` (see below).
+**Redux HD on a Mac**, the [download](#download)'s `.pkg`:
+
+1. Double-click the `.pkg`. macOS stops it: *"MechCommander-Redux-....pkg" Not Opened*. Click **Done**. Don't click
+   **Move to Trash**, and don't press Return: that deletes the installer.
+2. Open **System Settings**, click **Privacy & Security**, scroll down to **Security**, and click **Open Anyway** next
+   to the installer. Click **Open Anyway** again, and type your Mac's password if it asks.
+3. In the installer, click **Continue**, then **Agree**. Leave **Redux HD art, sound and movies** ticked for the HD
+   pack, or untick it. Click **Install** and type your Mac's password. It puts the **MechCommander Redux HD** folder in
+   Applications.
+4. Open Applications, then **MechCommander Redux HD**, and double-click **MechCommander Redux HD**. The first time, a
+   small window shows the game's files downloading, then the main menu opens.
+
+The app alone, the `-mac.zip`, plays your own copy of MechCommander Gold: unzip it, drag `MechCommander Redux.app` to
+your Applications folder and open it from there. macOS stops it the same way: click **Done**, then **Open Anyway** in
+Privacy & Security as above.
+
+**Redux HD on Windows**, the download's `-setup.exe`:
+
+1. If your browser says the file isn't commonly downloaded, keep it (in Edge: **...**, **Keep**, then **Show more**,
+   **Keep anyway**).
+2. Run it. Windows shows *Windows protected your PC*: click **More info**, then **Run anyway**.
+3. Choose **Download it**, or **Use my copy of MechCommander Gold** and its folder (the one containing `SYSTEM.CFG`).
+   Leave **Redux HD art, sound and movies** ticked for the HD pack, or untick it. Click **Next**, then **Install**;
+   the setup downloads the game's files before it finishes.
+
+If Windows says *Smart App Control blocked* the setup instead, there's no Run anyway: Windows 11's Smart App Control
+runs only signed programs. It runs with Smart App Control off (Windows Security, **App & browser control**, **Smart
+App Control settings**, **Off**), but older versions of Windows 11 can't turn it back on without resetting Windows, so
+that choice is yours.
+
+Or [build it](#building), then either put `MCRedux.exe` and `SDL3.dll` in your MechCommander Gold folder, or run it
+from anywhere with `--data` (see below).
 
 **Redux HD:** the HD pack is a folder named `HD` in your game folder. One in your user folder (see
 [Saves and Settings](#saves-and-settings)) is used instead, if there is one.

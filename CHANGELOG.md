@@ -10,6 +10,10 @@ only the characters on a keyboard. The release script takes the entry under the 
 (version.json) and refuses a release without one.
 -->
 
+## 0.5.2
+
+- Fixed: a right-click on a mech or vehicle in your inventory crashed the game.
+
 ## 0.5.1
 
 - An overhaul of the code underneath, with bug fixes, courtesy of RevenantBob.

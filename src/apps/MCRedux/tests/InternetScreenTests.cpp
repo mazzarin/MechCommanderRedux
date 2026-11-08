@@ -3,18 +3,25 @@
 #include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "fakes/MCFakeGamesService.h"
 #include "fakes/MCServiceScript.h"
+#include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLogButton.h"
+#include "logistics/MCLogChat.h"
+#include "logistics/MCLogMenus.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCReusableDialog.h"
+#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 
 // The multiplayer menu's internet screens (logistics/MCInternetMenu) in the test game, through a scripted games service
-// (tests/fakes/MCServiceScript.h): MULTIPLAYER ACCESS's two buttons and its count, and INTERNET CONNECTION's list, picks,
-// CODE box and host block. --shots saves each step's screen.
+// (tests/fakes/MCServiceScript.h) and a stand-in for its games (tests/fakes/MCFakeGamesService.h): MULTIPLAYER ACCESS's
+// two buttons and its count, and INTERNET CONNECTION's list, picks, CODE box and host block, a game hosted into its room
+// and a code no game has. --shots saves each step's screen.
 
 using namespace MCScreenInput;
 using MCTestGuest::Settle;
@@ -24,7 +31,8 @@ using Json = nlohmann::json;
 
 namespace
 {
-    constexpr std::string_view Service = "wss://games.test";
+    constexpr std::string_view Service = MCFakeGames::ServiceUrl;
+    constexpr std::string_view ListPath = "/list";
     constexpr std::string_view Version = "0.6.0 (812)";
     constexpr std::string_view NewerVersion = "0.7.0 (900)";
     constexpr std::string_view CountUrl = "https://games.test/count";
@@ -48,7 +56,11 @@ namespace
     /// <summary>INTERNET CONNECTION's elements (the LAN screen's).</summary>
     constexpr int32_t GameList = 2;
     constexpr int32_t PlayerList = 3;
+    constexpr int32_t PlayerNameEntry = 4;
     constexpr int32_t JoinButton = 6;
+    constexpr int32_t CreateButton = 9;
+    constexpr int32_t GameNameEntry = 10;
+    constexpr int32_t PlayersEntry = 11;
 
     /// <summary>A list's line <paramref name="line"/> (from 0), its text as the screen draws it.</summary>
     std::string LineOf(MCLogScrollTextObject& list, int32_t line)
@@ -59,6 +71,32 @@ namespace
     Json Listing(Json games, int online, int inGames)
     {
         return Json{{"t", "list"}, {"online", online}, {"inGames", inGames}, {"games", std::move(games)}};
+    }
+
+    /// <summary>Clicks the middle of <paramref name="button"/>, as a player does, and lets the game settle.</summary>
+    void ClickButton(MCGuiObject& button)
+    {
+        Click(button.GlobalX() + button.Width() / 2, button.GlobalY() + button.Height() / 2);
+        Settle();
+    }
+
+    /// <summary>Types <paramref name="text"/> into the entry that has the keys.</summary>
+    void Type(std::string_view text)
+    {
+        for (const char c : text)
+        {
+            SendKey(static_cast<uint8_t>(c));
+            Step();
+        }
+
+        Settle();
+    }
+
+    /// <summary>The message dialog's text, when it shows.</summary>
+    std::string DialogText()
+    {
+        const MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        return dialog.ShowWindow ? dialog.Text : std::string();
     }
 }
 
@@ -147,14 +185,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     Settle();
     CHECK(join->Disabled);
     Click(CodeX, CodeY);
-
-    for (const char c : std::string_view("k7qf"))
-    {
-        SendKey(static_cast<uint8_t>(c));
-        Step();
-    }
-
-    Settle();
+    Type("k7qf");
     CHECK(!join->Disabled);
 
     for (size_t i = 0; i < CodeLength; i++)
@@ -206,4 +237,92 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     REQUIRE(SettleUntil([] { return InternetCountsShown() == "3 ONLINE, 0 IN GAMES"; }));
     CHECK(LineOf(*games, 0).starts_with("NO OPEN GAMES."));
     SaveShot("internet 5 empty", ScreenHash());
+}
+
+/// <summary>
+/// Hosting and joining from INTERNET CONNECTION, through a stand-in for the games service: a game hosted goes into its
+/// room (the session screen), the service told the room and the players its code; the room's EXIT comes back to the
+/// games; a code no game has is refused with a message, and nothing is left open.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: INTERNET CONNECTION hosts a game into its room, its EXIT comes back, and a wrong code is refused")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The list's socket scripted, the games' sockets to the stand-in service.
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    MCWebSocketOpener toList = MCServiceScript::ListOpener(list);
+    MCWebSocketOpener toGames = service.Opener();
+    const std::string listUrl = std::format("{}{}", Service, ListPath);
+    std::string asked;
+    MCServiceScript::SetupScope scope([&](const std::string& url)
+                                      { return url.starts_with(listUrl) ? toList(url) : toGames(url); },
+                                      MCServiceScript::Answering(R"({"online":1})", asked), Service, Version);
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    Click(InternetX, InternetY);
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
+    list.Send(Listing(Json::array(), 1, 0));
+    REQUIRE(SettleUntil([] { return InternetCountsShown() == "1 ONLINE, 0 IN GAMES"; }));
+    MCSplashScreen& screen = *GlobalLog()->InternetScreen;
+    screen.Element<MCLogTextObject>(PlayerNameEntry)->SetStringBuffer("Commander");
+
+    // HOST GAME, then CREATE GAME: the room, the host alone in it, and the game's code in the chat.
+    Click(HostX, HostY);
+    Settle();
+    const std::string gameName = ElementText(screen, GameNameEntry);
+    CHECK(!gameName.empty());
+    screen.Element<MCLogTextObject>(PlayersEntry)->SetStringBuffer("4");
+    ClickButton(*screen.Element<MCLogButton>(CreateButton));
+    REQUIRE(SettleUntil([] { return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen; }));
+    REQUIRE(MultiPlayer() != nullptr);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    REQUIRE(manager.Internet != nullptr);
+    CHECK(manager.HostedInternetCode() == std::optional<std::string>(MCFakeGames::GameCode));
+    CHECK(DialogText().empty());
+    const std::string codeLine = std::format("THIS GAME'S CODE: {}", MCFakeGames::GameCode);
+    CHECK(std::ranges::any_of(GlobalLog()->Chat->Lines,
+                              [&](const MCLogChat::HistoryLine& line) { return line.Text.contains(codeLine); }));
+
+    // The service has the room as the list will show it: public (the host block's default), its name, its players.
+    REQUIRE(SettleUntil([&] { return service.Room().has_value(); }));
+    const Json room = *service.Room();
+    CHECK(room.at("public") == true);
+    CHECK(room.at("name") == gameName);
+    CHECK(room.at("max") == 4);
+    CHECK(room.at("players") == Json::array({"Commander"}));
+    CHECK(room.at("battle") == false);
+    SaveShot("internet 6 room", ScreenHash());
+
+    // The room's EXIT: the internet games' screen again, the game and its socket gone.
+    ClickButton(*GlobalLog()->SessionScreen->ExitButton);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
+    CHECK(screen.IsShowing());
+    REQUIRE(MultiPlayer() != nullptr);
+    CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
+    CHECK(MultiPlayer()->SessionManager->CurrentSession() == nullptr);
+    CHECK_EQ(service.OpenLines(), 0u);
+    CHECK_EQ(ElementText(screen, PlayerNameEntry), "Commander");
+
+    // A code no game has: JOIN GAME tries it, and the service's answer is said.
+    constexpr std::string_view NoSuchCode = "M3VD";
+    Click(CodeX, CodeY);
+    Type(NoSuchCode);
+    auto join = screen.Element<MCLogButton>(JoinButton);
+    REQUIRE(!join->Disabled);
+    ClickButton(*join);
+    REQUIRE(SettleUntil([] { return DialogText() == "NO GAME WITH THAT CODE."; }));
+    CHECK(service.Paths.back().starts_with(std::format("/join/{}", NoSuchCode)));
+    CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
+    CHECK_EQ(service.OpenLines(), 0u);
+    SaveShot("internet 7 no game", ScreenHash());
+    ClickButton(*GlobalLog()->MessageDialog->OkButton);
+    CHECK(DialogText().empty());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
 }

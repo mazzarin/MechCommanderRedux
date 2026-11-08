@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "fakes/MCFakeGamesService.h"
 #include "fakes/MCLoopbackTransport.h"
 #include "network/MCInternetGame.h"
 #include "platform/MCNetSwitch.h"
@@ -11,23 +12,21 @@
 
 // An internet game on this machine (network/MCInternetGame): its network switched in under the game's sockets
 // (platform/MCNetSwitch), a host's game made and a guest's link to it opened by its code, through a stand-in for the
-// games service in the process (its protocol as tools/cloudflare/games/README.md in the workspace has it), the links
-// real ICE links on the loopback. The real service is checked by its own checks and the trials; the service's
-// signals, malformed ones too, by the ServiceSignaling tests.
+// games service in the process (tests/fakes/MCFakeGamesService.h), the links real ICE links on the loopback. The real
+// service is checked by its own checks and the trials; the service's signals, malformed ones too, by the
+// ServiceSignaling tests.
 
 namespace
 {
     using Json = nlohmann::json;
     using Clock = std::chrono::steady_clock;
 
-    constexpr std::string_view Service = "wss://games.test";
-    constexpr std::string_view Code = "K7QF";
-    constexpr std::string_view Token = "0123456789abcdef0123456789abcdef";
+    using MCFakeGames::MCFakeGamesService;
+    constexpr std::string_view Service = MCFakeGames::ServiceUrl;
+    constexpr std::string_view Code = MCFakeGames::GameCode;
     /// <summary>The copy's ID and version the games say: the test's own, so nothing is kept in a user folder.</summary>
     constexpr std::string_view Copy = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
     constexpr std::string_view Version = "0.6.0 (812)";
-    constexpr std::string_view PingText = "ping";
-    constexpr std::string_view PongText = "pong";
     /// <summary>The game's port on its host (MCDirectPlay's).</summary>
     constexpr uint16_t GamePort = 28800;
     /// <summary>A link on the loopback opens in well under a second; a failing one waits out the open deadline.</summary>
@@ -38,233 +37,6 @@ namespace
     constexpr size_t ReadBytes = 64;
     /// <summary>How long a join waits for a service that never answers.</summary>
     constexpr auto SilentServiceWait = std::chrono::milliseconds(200);
-
-    class MCFakeGamesService;
-
-    /// <summary>A socket to the stand-in service: what it sends goes to the service at once, what it hears waits.</summary>
-    class MCServiceLine final : public MCWebSocket
-    {
-    public:
-        MCServiceLine(MCFakeGamesService& service, int id) : _Service(service), _Id(id) {}
-
-        void SendText(std::string_view text) override;
-        void SendBinary(std::span<const uint8_t>) override {}
-        std::vector<Message> Take() override;
-        State GetState() const override;
-        std::string WhyClosed() const override { return "closed (1000)"; }
-        size_t Unsent() const override { return 0; }
-        void Close() override;
-
-    private:
-        MCFakeGamesService& _Service;
-        int _Id;
-    };
-
-    /// <summary>
-    /// The games service's protocol for one game, in the process: hosting, joining by the code, the signals passed
-    /// with each guest's tag, pings, the room kept, a guest's leaving told to its host and a host's to its guests.
-    /// No relays (the links are on the loopback) and no WebSocket path.
-    /// </summary>
-    class MCFakeGamesService
-    {
-    public:
-        /// <summary>What joined says of the game's being public: none, and it says nothing (an older service).</summary>
-        std::optional<bool> JoinedPublic = false;
-
-        MCWebSocketOpener Opener()
-        {
-            return [this](const std::string& url) -> std::unique_ptr<MCWebSocket>
-            {
-                const std::scoped_lock lock(_Lock);
-                const int id = _NextId++;
-                Line& line = _Lines[id];
-                Open(id, line, std::string_view(url).substr(Service.size()));
-                return std::make_unique<MCServiceLine>(*this, id);
-            };
-        }
-
-        /// <summary>The host's room as it last said it.</summary>
-        std::optional<Json> Room()
-        {
-            const std::scoped_lock lock(_Lock);
-            return _Room;
-        }
-
-        /// <summary>Sockets open now.</summary>
-        size_t OpenLines()
-        {
-            const std::scoped_lock lock(_Lock);
-            return static_cast<size_t>(
-                std::ranges::count_if(_Lines, [](const auto& line) { return line.second.Open; }));
-        }
-
-        void Heard(int id, std::string_view text)
-        {
-            const std::scoped_lock lock(_Lock);
-            Line& from = _Lines.at(id);
-
-            if (!from.Open)
-            {
-                return;
-            }
-
-            if (text == PingText)
-            {
-                Say(from, PongText);
-                return;
-            }
-
-            const Json message = Json::parse(text);
-
-            if (from.Host && message.at("t") == "room")
-            {
-                _Room = message;
-            }
-            else if (from.Host && message.at("t") == "signal")
-            {
-                Json signal = message;
-                const std::string guest = signal.at("guest");
-                signal.erase("guest");
-
-                for (auto& [other, line] : _Lines)
-                {
-                    if (line.Open && line.Guest == guest)
-                    {
-                        Say(line, signal.dump());
-                    }
-                }
-            }
-            else if (!from.Host && message.at("t") == "signal")
-            {
-                Json signal = message;
-                signal["guest"] = from.Guest;
-
-                if (Line* const host = HostLine())
-                {
-                    Say(*host, signal.dump());
-                }
-            }
-        }
-
-        std::vector<MCWebSocket::Message> Take(int id)
-        {
-            const std::scoped_lock lock(_Lock);
-            return std::exchange(_Lines.at(id).Inbox, {});
-        }
-
-        MCWebSocket::State StateOf(int id)
-        {
-            const std::scoped_lock lock(_Lock);
-            return _Lines.at(id).Open ? MCWebSocket::State::Open : MCWebSocket::State::Closed;
-        }
-
-        void Closed(int id)
-        {
-            const std::scoped_lock lock(_Lock);
-            Line& line = _Lines.at(id);
-
-            if (!line.Open)
-            {
-                return;
-            }
-
-            line.Open = false;
-
-            for (auto& [other, peer] : _Lines)
-            {
-                if (!peer.Open)
-                {
-                    continue;
-                }
-
-                if (line.Host)
-                {
-                    Say(peer, R"({"t":"gone"})");
-                    peer.Open = false;
-                }
-                else if (peer.Host)
-                {
-                    Say(peer, Json{{"t", "left"}, {"guest", line.Guest}}.dump());
-                }
-            }
-        }
-
-    private:
-        struct Line
-        {
-            bool Open = true;
-            bool Host = false;
-            std::string Guest;
-            std::vector<MCWebSocket::Message> Inbox;
-        };
-
-        static void Say(Line& line, std::string_view text) { line.Inbox.push_back({false, std::string(text)}); }
-
-        static Json NoRelays() { return Json{{"stun", Json::array()}, {"relays", Json::array()}}; }
-
-        Line* HostLine()
-        {
-            const auto host =
-                std::ranges::find_if(_Lines, [](const auto& line) { return line.second.Open && line.second.Host; });
-            return host != _Lines.end() ? &host->second : nullptr;
-        }
-
-        void Open(int id, Line& line, std::string_view path)
-        {
-            if (path.starts_with("/host?"))
-            {
-                line.Host = true;
-                Say(line, Json{{"t", "hosted"}, {"game", Code}, {"token", Token}, {"ice", NoRelays()}}.dump());
-                return;
-            }
-
-            const std::string join = std::format("/join/{}?", Code);
-            Line* const host = HostLine();
-
-            if (!path.starts_with(join) || host == nullptr)
-            {
-                Say(line, R"({"t":"nogame"})");
-                line.Open = false;
-                return;
-            }
-
-            line.Guest = std::format("g{}", id);
-            Say(*host, Json{{"t", "guest"}, {"guest", line.Guest}, {"ice", NoRelays()}}.dump());
-            Json joined{{"t", "joined"}, {"game", Code}, {"guest", line.Guest}, {"token", Token}, {"ice", NoRelays()}};
-
-            if (JoinedPublic.has_value())
-            {
-                joined["public"] = *JoinedPublic;
-            }
-
-            Say(line, joined.dump());
-        }
-
-        std::mutex _Lock;
-        std::map<int, Line> _Lines;
-        std::optional<Json> _Room;
-        int _NextId = 1;
-    };
-
-    void MCServiceLine::SendText(std::string_view text)
-    {
-        _Service.Heard(_Id, text);
-    }
-
-    std::vector<MCWebSocket::Message> MCServiceLine::Take()
-    {
-        return _Service.Take(_Id);
-    }
-
-    MCWebSocket::State MCServiceLine::GetState() const
-    {
-        return _Service.StateOf(_Id);
-    }
-
-    void MCServiceLine::Close()
-    {
-        _Service.Closed(_Id);
-    }
 
     /// <summary>A socket to a service that never answers.</summary>
     class MCSilentSocket final : public MCWebSocket

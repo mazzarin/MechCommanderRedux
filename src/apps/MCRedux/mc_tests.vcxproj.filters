@@ -327,6 +327,9 @@
     <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="tests\fakes\MCFakeGamesService.h">
+      <Filter>tests\fakes</Filter>
+    </ClInclude>
     <ClInclude Include="tests\fakes\MCFakeSignaling.h">
       <Filter>tests\fakes</Filter>
     </ClInclude>

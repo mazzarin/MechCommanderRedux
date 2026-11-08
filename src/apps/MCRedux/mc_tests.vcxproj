@@ -189,6 +189,7 @@
     <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="tests\fakes\MCFakeGamesService.h" />
     <ClInclude Include="tests\fakes\MCFakeSignaling.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h" />
     <ClInclude Include="tests\fakes\MCManualClock.h" />

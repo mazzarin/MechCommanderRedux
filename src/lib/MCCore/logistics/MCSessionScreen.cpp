@@ -877,7 +877,8 @@ auto MCSessionScreen::ShowRoomAgain() -> void
     const std::array<uint32_t, TeamSlots> team2 = Team2Players;
     const std::array<int8_t, 2> techBases = {Team1TechBase, Team2TechBase};
     const std::array<int32_t, 2> points = {ReadPoints(*Team1RPText), ReadPoints(*Team2RPText)};
-    const std::string mission = MissionFile.empty() ? std::string() : _LoadedMission;
+    // The host's own mission, or (Port-only, Redux HD) a room's taken over, whose host loaded it (TakeOverRoom).
+    const std::string mission = _LoadedMission;
     SDL_Log("Session screen: showing the room to %zu players again%s",
             MultiPlayer()->SessionManager->GetPlayers(nullptr).size(),
             mission.empty() ? "" : ", its mission asked of everyone again");
@@ -1019,6 +1020,24 @@ auto MCSessionScreen::WatchRoom() -> void
 
     MCSessionManager& manager = *game.SessionManager;
     const auto& players = manager.GetPlayers(nullptr);
+
+    // Port-only (Redux HD): a room rolled over to this game (TakeOverRoom). The host's choices were what the room played,
+    // as far as every game in it plays them; this game's own (its command line's) are no longer the room's.
+    if (std::exchange(_TakingOver, false))
+    {
+        SDL_Log("Session screen: this game hosts the room now (its host has gone), %zu players in it", players.size());
+        game.MatchOptions = game.Played;
+
+        // The names are laid out afresh for the players left: one fewer than the screen showed, so a name past them
+        // would keep its player's id (Activate sets only as many as there are).
+        for (const auto& name : PlayerNames)
+        {
+            name->SetPlayerId(NoPlayer);
+        }
+
+        ShowRoomAgain();
+        return;
+    }
 
     // Port: a configured match (MPGameConfiguration) goes on as soon as every player it named has joined, straight to
     // the mech bay: no map screen or settings wait. A problem leaves the host here, with START.
@@ -1274,6 +1293,12 @@ auto MCSessionScreen::RemovePlayer(uint32_t playerId) -> void
     {
         FilesAnswered();
     }
+}
+
+auto MCSessionScreen::TakeOverRoom() -> void
+{
+    // On the screen's next look (WatchRoom), once the host's leave is through.
+    _TakingOver = true;
 }
 
 auto MCSessionScreen::SetTeam1RP(int32_t resourcePoints) const -> void
@@ -1694,6 +1719,15 @@ auto MCSessionScreen::LoadMission(std::string_view fileName) -> void
                 // Port-only (the personal build): with no ready room the host may be alone in the room, and then nobody
                 // answers: the check is done at once.
                 FilesAnswered();
+            }
+            else
+            {
+                // Port-only (Redux HD): a guest keeps the mission's name as its host loads it (the path's file name,
+                // without the extension), for its game to load it as the room's host should the room roll over to it.
+                const size_t folderEnd = fileName.find_last_of("/\\");
+                const std::string_view name =
+                    folderEnd == std::string_view::npos ? fileName : fileName.substr(folderEnd + 1);
+                _LoadedMission = std::string(name.substr(0, name.rfind('.')));
             }
 
             return;

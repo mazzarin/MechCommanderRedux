@@ -181,9 +181,10 @@ TEST_CASE_ISOLATED("game: a LAN guest whose room ends goes back to the LAN games
 }
 
 /// <summary>
-/// The host's EXIT from a LAN room: it tells the guests whose builds take its word that the room closes, and leaves once
-/// they have (an older build's guest is told nothing, and loses the session as before); a guest that doesn't leave is
-/// waited for only a moment.
+/// The host's EXIT from a LAN room: a guest's game takes the room over (MCDirectPlay::HasSuccessor), so the host leaves
+/// at once, telling no one. Where no game can take it over (here the host's leave set not to hand on), it tells the
+/// guests whose builds take its word that the room closes, and leaves once they have (an older build's guest is told
+/// nothing, and loses the session as before); a guest that doesn't leave is waited for only a moment.
 /// </summary>
 TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, and leaves once they have")
 {
@@ -192,11 +193,25 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
         return;
     }
 
+    constexpr std::string_view RollingPort = "28955";
     constexpr std::string_view Port = "28952";
     const std::string address = std::format("127.0.0.1:{}", Port);
     REQUIRE(MCTestGame::StartLogistics());
     ConnectScreen();
     Settle();
+
+    // A room another game can take over: EXIT leaves it to them at once, the room told nothing.
+    HostFromLan(RollingPort);
+    Guest eve("EVE", MCMatchRule::Supported);
+    REQUIRE(eve.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", RollingPort)));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(eve.Id()); }));
+    ClickButton(*GlobalLog()->SessionScreen->ExitButton);
+    REQUIRE(SettleUntil([] { return OnScreen(GlobalLog()->LanScreen); }));
+    CHECK(!InSession());
+    CHECK(eve.RoomEnds().empty());
+    eve.Leave();
+
+    // A room no game can take over.
     HostFromLan(Port);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     Guest ann("ANN", MCMatchRule::Supported);
@@ -205,6 +220,7 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     REQUIRE(cal.Join(*manager.DirectPlay, address));
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && MCTestGuest::RoomShows(cal.Id()); }));
     MCSessionScreen& room = *GlobalLog()->SessionScreen;
+    manager.HandsOn = false;
 
     // EXIT: the room is told (CAL's older game ignores the word); the room waits for ANN to go, not for CAL.
     ClickButton(*room.ExitButton);
@@ -226,6 +242,7 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     Guest dan("DAN", MCMatchRule::Supported);
     REQUIRE(dan.Join(*MultiPlayer()->SessionManager->DirectPlay, address));
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()); }));
+    MultiPlayer()->SessionManager->HandsOn = false;
     ClickButton(*GlobalLog()->SessionScreen->ExitButton);
     REQUIRE(SettleUntil([&] { return !dan.RoomEnds().empty(); }));
     Settle();

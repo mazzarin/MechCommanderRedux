@@ -513,6 +513,14 @@ bool MCSessionManager::BeginInternet(bool host, std::string_view code, bool isPu
     Internet = !host   ? MCInternetGame::Join(net->get(), code)
                : place ? MCInternetGame::HostAgain(net->get(), isPublic, *place)
                        : MCInternetGame::Host(net->get(), isPublic);
+
+    // Port-only (Redux HD): a session rolling over reaches its new host once the service says the game is its.
+    if (Internet != nullptr && DirectPlay != nullptr)
+    {
+        DirectPlay->SetRolloverReach([this] { return Internet != nullptr && Internet->HostReached(); },
+                                     InternetRolloverWait);
+    }
+
     return Internet != nullptr;
 }
 
@@ -559,10 +567,18 @@ void MCSessionManager::EndInternet(std::chrono::milliseconds wait)
         return;
     }
 
-    // DirectPlay lets go of its sockets first: they're on the game's links.
+    // DirectPlay lets go of its sockets first: they're on the game's links. (Port-only, Redux HD: a host's session rolls
+    // over to another machine, unless its game restarts into an update, its place kept: its guests wait for it.)
     if (DirectPlay != nullptr)
     {
-        DirectPlay->Close();
+        if (Internet->KeepsPlace() || !HandsOn)
+        {
+            DirectPlay->Close();
+        }
+        else
+        {
+            DirectPlay->Leave();
+        }
     }
 
     Internet->End(wait);
@@ -866,6 +882,8 @@ int32_t MCSessionManager::JoinSession(const _GUID& sessionGUID, std::string_view
     }
 
     _CurrentSession = session;
+    // Port-only (Redux HD): the game's say at the door too, should the session roll over to this machine.
+    DirectPlay->SetAdmission(Admission);
     int32_t result = static_cast<int32_t>(DirectPlay->Open(session->SessionDesc, DPOPEN_JOIN | DPOPEN_RETURNSTATUS));
 
     if (result == 0)
@@ -906,8 +924,15 @@ bool MCSessionManager::LockSession()
     return true;
 }
 
+bool MCSessionManager::LeaveHandsOn() const
+{
+    return HandsOn && DirectPlay != nullptr && DirectPlay->HasSuccessor();
+}
+
 bool MCSessionManager::LeaveSession()
 {
+    const bool handOn = std::exchange(HandsOn, true);
+
     if (CurrentSession() == nullptr || MyPlayer() == nullptr)
     {
         return false;
@@ -919,7 +944,18 @@ bool MCSessionManager::LeaveSession()
     HasPlayerNumber = false;
     _CurrentSession.reset();
     _MyPlayer.reset();
-    DirectPlay->Close();
+
+    // Port-only (Redux HD): a host leaving hands its session on to another machine, as DirectPlay migrated a host
+    // (MCDirectPlay::Leave), unless its battle is over (HandsOn).
+    if (handOn)
+    {
+        DirectPlay->Leave();
+    }
+    else
+    {
+        DirectPlay->Close();
+    }
+
     DestroyDirectPlayInterface();
     // Port (Redux HD): an internet game ends with its session (its links, its place on the service).
     EndInternet();

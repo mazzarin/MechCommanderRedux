@@ -16,8 +16,19 @@
 // - Everything is polled from the game's own calls (Receive, Send, EnumSessions, ...): no thread.
 // - A session flagged DPSESSION_KEEPALIVE (the game's are) has the operating system watch each link to it
 //   (MCSocket::KeepAlive): a machine that vanishes is dropped within about half a minute, as DirectPlay dropped it.
-// Differences from DirectPlay: every message is delivered in order (TCP), the guaranteed flag changes nothing; the
-// host cannot migrate (when it leaves, the others get DPSYS_SESSIONLOST); only the TCP/IP and IPX connections exist
+// - Port-only (Redux HD): a session flagged DPSESSION_MIGRATEHOST (the game's are) rolls over, as DirectPlay migrated
+//   its host (SPEC-host-rollover.md). The hub numbers the machines as they join and shares them with the joiners: each
+//   machine's build, the address it saw it at with the port the machine listens on from its join, and the hash of a
+//   key the machine made. When the hub's link ends without the session ending (Close's), every joiner picks the same
+//   new hub, the earliest-joined machine left whose build rolls over: that machine takes the session over as it stands
+//   (its instance, players, groups and ids, numbered on from the highest) and the others connect to it and come back
+//   as themselves, their key proving it (an internet game's reach it by the game's name, MCIceTransport). Each game
+//   then hears the old hub's players leave (DPSYS_DESTROYPLAYERORGROUP, flagged DPPLAYER_SERVERPLAYER), and the new
+//   hub's DPSYS_HOST, as DirectPlay's did. What the old hub hadn't relayed is lost; the game sends its guaranteed
+//   messages again until answered. A machine that can't reach the new hub in time, a session whose hub is an older
+//   build, and an older build's joiner lose the session (DPSYS_SESSIONLOST), as before.
+// Differences from DirectPlay: every message is delivered in order (TCP), the guaranteed flag changes nothing; a host
+// that closes the session ends it for everyone (Leave hands it over); only the TCP/IP and IPX connections exist
 // (both are this transport; IPX means "search the LAN"); there is no lobby.
 // The port's types hold their strings and data (DirectPlay's pointers are strings, spans and std::function callbacks),
 // and a received system message gives offsets into itself where DirectPlay's held pointers into the receive buffer.
@@ -343,6 +354,28 @@ public:
     /// guest found on the LAN joins its host's next room there (network/MCRoomEnd.h's REMATCH).
     /// </summary>
     std::optional<std::string> JoinedAddress() const;
+
+    /// <summary>
+    /// Port-only (Redux HD): leaves the session; a host's rolls over to another machine (see the top of this header)
+    /// where Close ends it, as DirectPlay migrated a host that left.
+    /// </summary>
+    uint32_t Leave();
+
+    /// <summary>Port-only (Redux HD), a joiner: its hub has gone, and it is coming back to the machine taking over.</summary>
+    bool RollingOver() const;
+
+    /// <summary>
+    /// Port-only (Redux HD), a host: whether another machine in its session takes the session over should this one leave
+    /// (<see cref="Leave"/>): a build that rolls over, which takes connections.
+    /// </summary>
+    bool HasSuccessor() const;
+
+    /// <summary>
+    /// Port-only (Redux HD): whether the machine a rollover goes to can be connected to now (<paramref name="ready"/>:
+    /// an internet game's link to the game's new host open), asked before each try; none, at once. A rollover then
+    /// waits up to <paramref name="wait"/>, for the machines coming back and for the machine taking over.
+    /// </summary>
+    void SetRolloverReach(std::function<bool()> ready, std::chrono::milliseconds wait);
 
     /// <summary>
     /// Creates a player of this machine with <paramref name="data"/> as its data; <paramref name="playerID"/> receives

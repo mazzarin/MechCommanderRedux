@@ -50,7 +50,8 @@ namespace MCFakeGames
     /// The games service's protocol for one game, in the process: hosting, joining by the code, the signals passed
     /// with each guest's tag, pings, the room kept, a guest's leaving told to its host and a host's to its guests; a
     /// host's drop keeps its place (its guests told it's away, a join answered hostaway) for a socket that comes back
-    /// with its token. No relays (the links are on the loopback) and no WebSocket path.
+    /// with its token; a guest takes a game whose host is away (or left, HostLeaveHandsOver) over. No relays (the links
+    /// are on the loopback) and no WebSocket path.
     /// </summary>
     class MCFakeGamesService
     {
@@ -59,6 +60,11 @@ namespace MCFakeGames
         std::optional<bool> JoinedPublic = false;
         /// <summary>The paths its sockets opened, in order.</summary>
         std::vector<std::string> Paths;
+        /// <summary>
+        /// Port-only (Redux HD): the host's leaving keeps the game for a guest to take over (/takeover, with its place's
+        /// token), its guests told the host is away; off, the game ends with its host (as before the rollover).
+        /// </summary>
+        bool HostLeaveHandsOver = false;
 
         MCWebSocketOpener Opener()
         {
@@ -216,7 +222,11 @@ namespace MCFakeGames
                     continue;
                 }
 
-                if (line.Host)
+                if (line.Host && HostLeaveHandsOver)
+                {
+                    Say(peer, R"({"t":"away"})");
+                }
+                else if (line.Host)
                 {
                     Say(peer, R"({"t":"gone"})");
                     peer.Open = false;
@@ -236,6 +246,8 @@ namespace MCFakeGames
             /// <summary>A host's socket dropped: its place waits for one that comes back with its token.</summary>
             bool KeptPlace = false;
             std::string Guest;
+            /// <summary>A guest's place's token (each guest's own: the takeover finds the guest by it).</summary>
+            std::string Token;
             std::vector<MCWebSocket::Message> Inbox;
         };
 
@@ -280,6 +292,44 @@ namespace MCFakeGames
                 return;
             }
 
+            // Port-only (Redux HD): a guest, by its place's token, takes the game over while its host is away or gone:
+            // its new socket is the host's, the other guests told there's a new host and the host given their relays.
+            if (path.starts_with(std::format("/takeover/{}?", GameCode)))
+            {
+                const auto taker =
+                    std::ranges::find_if(_Lines,
+                                         [&](const auto& other)
+                                         {
+                                             return other.second.Open && !other.second.Host &&
+                                                    !other.second.Token.empty() &&
+                                                    path.contains(std::format("token={}", other.second.Token));
+                                         });
+
+                if (HostLine().has_value() || taker == _Lines.end())
+                {
+                    Say(line, R"({"t":"refused"})");
+                    line.Open = false;
+                    return;
+                }
+
+                const std::string token = taker->second.Token;
+                taker->second.Open = false;
+                std::ranges::for_each(_Lines, [](auto& other) { other.second.KeptPlace = false; });
+                line.Host = true;
+                Say(line, Json{{"t", "hosted"}, {"game", GameCode}, {"token", token}, {"ice", NoRelays()}}.dump());
+
+                for (auto& [other, guest] : _Lines)
+                {
+                    if (guest.Open && !guest.Host)
+                    {
+                        Say(line, Json{{"t", "guest"}, {"guest", guest.Guest}, {"ice", NoRelays()}}.dump());
+                        Say(guest, R"({"t":"host"})");
+                    }
+                }
+
+                return;
+            }
+
             const std::string join = std::format("/join/{}?", GameCode);
             const MCOptionalRef<Line> host = HostLine();
 
@@ -293,9 +343,10 @@ namespace MCFakeGames
             }
 
             line.Guest = std::format("g{}", id);
+            line.Token = std::format("{:032x}", id);
             Say(*host, Json{{"t", "guest"}, {"guest", line.Guest}, {"ice", NoRelays()}}.dump());
             Json joined{
-                {"t", "joined"}, {"game", GameCode}, {"guest", line.Guest}, {"token", GameToken}, {"ice", NoRelays()}};
+                {"t", "joined"}, {"game", GameCode}, {"guest", line.Guest}, {"token", line.Token}, {"ice", NoRelays()}};
 
             if (JoinedPublic.has_value())
             {

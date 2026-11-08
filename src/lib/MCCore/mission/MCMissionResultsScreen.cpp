@@ -1158,6 +1158,13 @@ auto MCMissionResultsScreen::Activate() -> int32_t
         SoundSystem()->PlayBettySample(HomeSideLost(ScenarioResult, HomeTeam()->Alignment) ? 0xb : 0x12);
     }
 
+    // Port-only (Redux HD): a battle over, this game's leave ends its session for everyone, as the original's sessions
+    // ended with each battle; a game that quit a battle still going on hands its session on (MCSessionManager::HandsOn).
+    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
+    {
+        MultiPlayer()->SessionManager->HandsOn = Mission()->EndScenarioRequested < 0;
+    }
+
     if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr && Mission()->EndScenarioRequested != 0)
     {
         MultiPlayer()->LeaveSession();

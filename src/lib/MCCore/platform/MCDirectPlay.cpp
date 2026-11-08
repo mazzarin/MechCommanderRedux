@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCDirectPlay.h"
+#include "lib/MCOptionalRef.h"
+#include "lib/MCSha256.h"
 #include "platform/MCSocket.h"
 
 #include <random>
@@ -46,7 +48,18 @@ namespace
         /// <summary>Host to joiner: a player or group was created (the entity).</summary>
         Created,
         /// <summary>Host to joiner: a player or group was destroyed (its id).</summary>
-        Destroyed
+        Destroyed,
+        /// <summary>Port-only (Redux HD): host to joiner: the hub's machine and the session's machines (the rollover).</summary>
+        Machines,
+        /// <summary>Port-only (Redux HD): host to joiner: the session ends with the host (Close): it doesn't roll over.</summary>
+        Ending,
+        /// <summary>
+        /// Port-only (Redux HD): a joiner to the machine taking over from its hub: magic, application GUID, session
+        /// GUID, its machine, its key and the hash of its next one, its rollover version and listening port.
+        /// </summary>
+        Resume,
+        /// <summary>Port-only (Redux HD): the new hub to a joiner resuming: as JoinReply.</summary>
+        ResumeReply
     };
 
     /// <summary>Largest frame a peer may announce (anything bigger means the stream is garbage).</summary>
@@ -69,6 +82,27 @@ namespace
     constexpr uint64_t EnumListenMs = 60;
     /// <summary>How long an answering session stays listed without answering again.</summary>
     constexpr uint64_t SessionExpiryMs = 4000;
+    /// <summary>
+    /// Port-only (Redux HD): the rollover this build plays, which its join and its join's answer say (an older build
+    /// says none, and never takes a session over).
+    /// </summary>
+    constexpr uint32_t RolloverVersion = 1;
+    /// <summary>
+    /// Port-only (Redux HD): how long a rollover waits: a joiner for the machine taking over to answer it, the new hub
+    /// for the session's other machines to come back, and a joiner keeps a connection to it before it takes over.
+    /// </summary>
+    constexpr uint64_t RolloverWaitMs = 10000;
+    /// <summary>Port-only (Redux HD): how long each try at connecting to the machine taking over may take.</summary>
+    constexpr int RolloverConnectMs = 1000;
+    /// <summary>Port-only (Redux HD): the bytes of the key a machine proves itself with as it resumes.</summary>
+    constexpr size_t MachineKeyBytes = 32;
+    /// <summary>
+    /// Port-only (Redux HD): the addresses of an internet game's links (0.0.0.0/8, platform/MCIceTransport): a machine
+    /// seen at one is reached by the game's own name, where its hub was.
+    /// </summary>
+    constexpr uint32_t LinkAddressMask = 0xff000000u;
+
+    using MachineKey = std::array<uint8_t, MachineKeyBytes>;
 
     /// <summary>The connection data EnumConnections hands out and InitializeConnection takes (the port's own layout).</summary>
     struct ConnectionData
@@ -276,6 +310,8 @@ namespace
         std::vector<uint32_t> Members;
         /// <summary>Host only: the index of the joiner connection that owns this player, -1 for the host's own.</summary>
         int Owner = -1;
+        /// <summary>Port-only (Redux HD): the machine it is of (every machine's mirror: the rollover's).</summary>
+        uint32_t Machine = 0;
 
         void Write(Writer& out) const
         {
@@ -322,6 +358,66 @@ namespace
         DPNAME Name() const { return DPNAME{ShortName, LongName}; }
     };
 
+    /// <summary>
+    /// Port-only (Redux HD): a machine of the session, as its hub shares them for a rollover (see the header's top).
+    /// </summary>
+    struct Machine
+    {
+        /// <summary>The hub numbers machines as they join (its own the first): the earliest joined takes over.</summary>
+        uint32_t Id = 0;
+        /// <summary>The rollover its join said it plays (0: an older build, which never takes over or comes back).</summary>
+        uint32_t Version = 0;
+        /// <summary>Where it takes connections: its listener's port, at the address its hub saw it at (port 0: none).</summary>
+        MCSocket::Address Address;
+        /// <summary>The hash of the key it proves itself with as it comes back.</summary>
+        MCSha256::MCDigest KeyHash{};
+
+        /// <summary>Whether it can take the session over: a build that rolls over, which takes connections.</summary>
+        bool TakesOver() const { return Version >= RolloverVersion && Address.Port != 0; }
+
+        void Write(Writer& out) const
+        {
+            out.U32(Id);
+            out.U32(Version);
+            out.U32(Address.Ip);
+            out.U16(Address.Port);
+            out.Blob(KeyHash);
+        }
+
+        void Read(Reader& in)
+        {
+            Id = in.U32();
+            Version = in.U32();
+            Address.Ip = in.U32();
+            Address.Port = in.U16();
+            const std::vector<uint8_t> hash = in.Blob();
+
+            if (hash.size() == KeyHash.size())
+            {
+                std::ranges::copy(hash, KeyHash.begin());
+            }
+            else
+            {
+                in.Ok = false;
+            }
+        }
+    };
+
+    /// <summary>A new key for a machine to prove itself with (the system's random source).</summary>
+    MachineKey NewKey()
+    {
+        std::random_device device;
+        MachineKey key{};
+
+        for (size_t i = 0; i < key.size(); i += sizeof(uint32_t))
+        {
+            const uint32_t word = device();
+            std::memcpy(key.data() + i, &word, sizeof(word));
+        }
+
+        return key;
+    }
+
     /// <summary>A message waiting in <see cref="MCDirectPlay::Receive"/>'s queue.</summary>
     struct Incoming
     {
@@ -353,6 +449,14 @@ namespace
         /// <summary>Close once <see cref="Output"/> is written (a refused join).</summary>
         bool CloseWhenFlushed = false;
         bool Dead = false;
+        /// <summary>Port-only (Redux HD), host side: the machine on it, and the address it was accepted from.</summary>
+        uint32_t Machine = 0;
+        MCSocket::Address From;
+        /// <summary>
+        /// Port-only (Redux HD), a new hub's: a slot with no connection yet, kept until then for a machine of the
+        /// session to come back to (its players' messages held in <see cref="Output"/> meanwhile).
+        /// </summary>
+        std::optional<uint64_t> ResumeBy;
     };
 
     /// <summary>A session that answered a query.</summary>
@@ -440,9 +544,9 @@ struct MCDirectPlay::Impl
     MCSocket::Handle Udp = MCSocket::InvalidHandle;
     /// <summary>Host: one per joiner (slots are never reused while hosting, so owners stay valid).</summary>
     std::vector<Link> Joiners;
-    /// <summary>Joiner: the connection to the host.</summary>
+    /// <summary>Joiner: the connection to the host, and (Port-only, Redux HD) the address it was made to.</summary>
     Link Server;
-    /// <summary>Joiner: the host's address, as it was reached (MCDirectPlay::JoinedAddress).</summary>
+    /// <summary>Joiner: the host's address, as it was reached (MCDirectPlay::JoinedAddress); after a rollover, the new hub's.</summary>
     std::optional<MCSocket::Address> ServerAddress;
 
     /// <summary>Sessions that answered queries, by instance GUID.</summary>
@@ -459,6 +563,40 @@ struct MCDirectPlay::Impl
     MCDirectPlay::Admission Admit;
     /// <summary>Joiner: why the host refused its last player (MCDirectPlay::LastRefusal).</summary>
     std::string Refusal;
+
+    // Port-only (Redux HD): the rollover (see the header's top).
+
+    /// <summary>The session's machines as its hub shares them, by id (the hub's own the first).</summary>
+    std::vector<Machine> Machines;
+    /// <summary>This machine's id in the session, and the hub's.</summary>
+    uint32_t SelfMachine = 0;
+    uint32_t HubMachine = 0;
+    /// <summary>Host: the id the next machine to join gets.</summary>
+    uint32_t NextMachine = 1;
+    /// <summary>The key this machine proves itself with, should it come back to a new hub.</summary>
+    MachineKey Key{};
+    /// <summary>Joiner: its hub plays the rollover (its join's answer named this machine).</summary>
+    bool RollsOver = false;
+    /// <summary>Joiner: its hub said the session ends with it (MCDirectPlay::Close).</summary>
+    bool Ending = false;
+    /// <summary>The port this machine takes connections on: a host's session port, a joiner's own (for a rollover).</summary>
+    uint16_t ListenPort = 0;
+
+    /// <summary>A joiner whose hub has gone, coming back to the machine taking over.</summary>
+    struct Rolling
+    {
+        uint32_t Successor = 0;
+        /// <summary>Where it is reached: its own listener, at its address or (an internet game) the game's.</summary>
+        MCSocket::Address Address;
+        uint64_t Until = 0;
+        /// <summary>The key this machine comes back with next time, once this one is taken.</summary>
+        MachineKey NextKey{};
+    };
+
+    std::optional<Rolling> Roll;
+    /// <summary>Whether the machine taking over can be connected to (MCDirectPlay::SetRolloverReach), and the wait.</summary>
+    std::function<bool()> RolloverReady;
+    uint64_t RolloverWait = RolloverWaitMs;
 
     ~Impl()
     {
@@ -498,8 +636,25 @@ struct MCDirectPlay::Impl
         }
     }
 
+    /// <summary>
+    /// Port-only (Redux HD): queues a frame on a link that has sent nothing yet, ahead of <paramref name="held"/> (frames
+    /// kept for it while it had no connection), which go after it.
+    /// </summary>
+    static void QueueAhead(Link& link, FrameType type, const Writer& payload, std::vector<uint8_t> held)
+    {
+        Queue(link, type, payload);
+        link.Output.insert(link.Output.end(), held.begin(), held.end());
+        Flush(link);
+    }
+
     static void Flush(Link& link)
     {
+        // Port-only (Redux HD): a link with no connection yet (a rollover's) keeps what it is given until it has one.
+        if (link.Socket == MCSocket::InvalidHandle)
+        {
+            return;
+        }
+
         while (!link.Dead && !link.Output.empty())
         {
             const int sent = MCSocket::Send(link.Socket, link.Output);
@@ -655,6 +810,93 @@ struct MCDirectPlay::Impl
         return false;
     }
 
+    /// <summary>
+    /// Writes the session as a join's (or a rollover's resume's) answer gives it: its description, then every player and
+    /// group, then (Port-only, Redux HD: after what an older joiner reads) the rollover this hub plays, the joiner's
+    /// machine <paramref name="machine"/>, and each player's and group's machine in the same order.
+    /// </summary>
+    void WriteSessionState(Writer& out, uint32_t machine)
+    {
+        Session.Desc.dwCurrentPlayers = PlayerCount();
+        Session.Write(out, false);
+        out.U32(static_cast<uint32_t>(Entities.size()));
+
+        for (const auto& [id, entity] : Entities)
+        {
+            entity.Write(out);
+        }
+
+        out.U32(RolloverVersion);
+        out.U32(machine);
+
+        for (const auto& [id, entity] : Entities)
+        {
+            out.U32(entity.Machine);
+        }
+    }
+
+    /// <summary>The session as <see cref="WriteSessionState"/> wrote it (an older host's says no rollover).</summary>
+    struct SessionState
+    {
+        SessionInfo Session;
+        std::map<uint32_t, Entity> Entities;
+        bool RollsOver = false;
+        /// <summary>The joiner's machine, when the hub rolls over.</summary>
+        uint32_t Machine = 0;
+    };
+
+    static std::optional<SessionState> ReadSessionState(Reader& in)
+    {
+        SessionState state;
+        state.Session.Read(in);
+        const uint32_t count = in.U32();
+        std::vector<uint32_t> order;
+
+        for (uint32_t i = 0; i < count && in.Ok; i++)
+        {
+            Entity entity;
+            entity.Read(in);
+            entity.Owner = -1;
+            order.push_back(entity.Id);
+            state.Entities[entity.Id] = std::move(entity);
+        }
+
+        if (!in.Ok)
+        {
+            return std::nullopt;
+        }
+
+        // An older host's answer ends here: its session never rolls over.
+        const uint32_t version = in.U32();
+        const uint32_t machine = in.U32();
+        std::vector<uint32_t> machines;
+
+        for (size_t i = 0; i < order.size() && in.Ok; i++)
+        {
+            machines.push_back(in.U32());
+        }
+
+        if (in.Ok && version >= RolloverVersion)
+        {
+            state.RollsOver = true;
+            state.Machine = machine;
+
+            for (size_t i = 0; i < order.size(); i++)
+            {
+                state.Entities[order[i]].Machine = machines[i];
+            }
+        }
+
+        return state;
+    }
+
+    /// <summary>Port-only (Redux HD): the machine <paramref name="id"/> of the session's, if it has it.</summary>
+    MCOptionalRef<Machine> MachineOf(uint32_t id)
+    {
+        const auto found = std::ranges::find(Machines, id, &Machine::Id);
+        return found != Machines.end() ? MCOptionalRef<Machine>(*found) : std::nullopt;
+    }
+
     /// <summary>Removes <paramref name="id"/> and, for a player, its group memberships (in the local state).</summary>
     std::optional<Entity> RemoveEntity(uint32_t id)
     {
@@ -690,6 +932,7 @@ struct MCDirectPlay::Impl
     {
         entity.Id = NextId++;
         entity.Owner = origin;
+        entity.Machine = origin < 0 ? SelfMachine : Joiners[origin].Machine;
 
         // Only the host's own players are marked as the host's; a joiner can't claim it (issue #25).
         if (entity.Type == DPPLAYERTYPE_PLAYER && origin < 0)
@@ -703,6 +946,8 @@ struct MCDirectPlay::Impl
 
         Writer note;
         entity.Write(note);
+        // Port-only (Redux HD): its machine after it (an older joiner reads the entity alone).
+        note.U32(entity.Machine);
         Broadcast(FrameType::Created, note, origin);
 
         if (origin >= 0)
@@ -845,6 +1090,99 @@ struct MCDirectPlay::Impl
         }
     }
 
+    /// <summary>
+    /// Port-only (Redux HD), the hub: tells the joiners that roll over the session's machines (each joining, coming
+    /// back or leaving), for a rollover. An older joiner is told nothing.
+    /// </summary>
+    void ShareMachines()
+    {
+        Writer note;
+        note.U32(HubMachine);
+        note.U32(static_cast<uint32_t>(Machines.size()));
+
+        for (const Machine& machine : Machines)
+        {
+            machine.Write(note);
+        }
+
+        for (Link& joiner : Joiners)
+        {
+            const MCOptionalRef<Machine> machine = MachineOf(joiner.Machine);
+
+            if (joiner.Joined && !joiner.Dead && machine && machine->get().Version >= RolloverVersion)
+            {
+                Queue(joiner, FrameType::Machines, note);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD), a new hub: the connection <paramref name="index"/> asks to come back as a machine of the
+    /// session (<see cref="FrameType::Resume"/>). It takes the slot kept for that machine, its players and groups and
+    /// the messages held for them, once its key's hash is the one its old hub shared; anything else is refused.
+    /// </summary>
+    void HostResume(int index, Reader& in)
+    {
+        Link& link = Joiners[index];
+        const uint32_t magic = in.U32();
+        const _GUID application = in.Guid();
+        const _GUID instance = in.Guid();
+        const uint32_t machineId = in.U32();
+        const std::vector<uint8_t> key = in.Blob();
+        const std::vector<uint8_t> nextHash = in.Blob();
+        const uint32_t version = in.U32();
+        const uint16_t port = in.U16();
+        const MCOptionalRef<Machine> machine = MachineOf(machineId);
+        const auto slot = std::ranges::find_if(Joiners, [&](const Link& kept)
+                                               { return kept.ResumeBy.has_value() && kept.Machine == machineId; });
+        uint32_t result = DP_OK;
+
+        if (!in.Ok || magic != ProtocolMagic || !MCSameGuid(application, Session.Desc.guidApplication) ||
+            !MCSameGuid(instance, Session.Desc.guidInstance) || nextHash.size() != MCSha256::MCDigest{}.size())
+        {
+            result = DPERR_NOSESSIONS;
+        }
+        else if (!machine || slot == Joiners.end() || MCSha256::Of(key) != machine->get().KeyHash)
+        {
+            // Nobody but the machine itself takes its players: its key is its own.
+            result = DPERR_ACCESSDENIED;
+        }
+
+        Writer reply;
+        reply.U32(result);
+
+        if (result != DP_OK)
+        {
+            SDL_Log("MCDirectPlay: refused machine %u coming back to \"%s\" (0x%08x)", machineId, Session.Name.c_str(),
+                    result);
+            link.CloseWhenFlushed = true;
+            Queue(link, FrameType::ResumeReply, reply);
+            return;
+        }
+
+        const int kept = static_cast<int>(slot - Joiners.begin());
+
+        for (auto& [id, entity] : Entities)
+        {
+            if (entity.Owner == kept)
+            {
+                entity.Owner = index;
+            }
+        }
+
+        std::vector<uint8_t> held = std::move(Joiners[kept].Output);
+        Joiners[kept] = Link{};
+        link.Joined = true;
+        link.Machine = machineId;
+        machine->get().Version = version;
+        machine->get().Address = MCSocket::Address{link.From.Ip, port};
+        std::ranges::copy(nextHash, machine->get().KeyHash.begin());
+        WriteSessionState(reply, machineId);
+        QueueAhead(link, FrameType::ResumeReply, reply, std::move(held));
+        SDL_Log("MCDirectPlay: machine %u came back to \"%s\"", machineId, Session.Name.c_str());
+        ShareMachines();
+    }
+
     void HostHandle(int index, FrameType type, std::span<const uint8_t> payload)
     {
         Link& link = Joiners[index];
@@ -852,6 +1190,13 @@ struct MCDirectPlay::Impl
 
         if (!link.Joined)
         {
+            // Port-only (Redux HD): a machine of the session coming back to it under this new hub.
+            if (type == FrameType::Resume)
+            {
+                HostResume(index, in);
+                return;
+            }
+
             if (type != FrameType::JoinRequest)
             {
                 link.Dead = true;
@@ -862,9 +1207,25 @@ struct MCDirectPlay::Impl
             const _GUID application = in.Guid();
             const _GUID instance = in.Guid();
             const std::string password = in.String();
+            const bool requestOk = in.Ok;
+            // Port-only (Redux HD): the rollover the joiner plays, after what an older build sends.
+            Machine joiner;
+            joiner.Version = in.U32();
+            joiner.Address = MCSocket::Address{link.From.Ip, in.U16()};
+            const std::vector<uint8_t> keyHash = in.Blob();
+
+            if (!in.Ok || keyHash.size() != joiner.KeyHash.size())
+            {
+                joiner = Machine{};
+            }
+            else
+            {
+                std::ranges::copy(keyHash, joiner.KeyHash.begin());
+            }
+
             uint32_t result = DP_OK;
 
-            if (!in.Ok || magic != ProtocolMagic || !MCSameGuid(application, Session.Desc.guidApplication) ||
+            if (!requestOk || magic != ProtocolMagic || !MCSameGuid(application, Session.Desc.guidApplication) ||
                 !MCSameGuid(instance, Session.Desc.guidInstance))
             {
                 result = DPERR_NOSESSIONS;
@@ -884,15 +1245,10 @@ struct MCDirectPlay::Impl
 
             if (result == DP_OK)
             {
-                Session.Desc.dwCurrentPlayers = PlayerCount();
-                Session.Write(reply, false);
-                reply.U32(static_cast<uint32_t>(Entities.size()));
-
-                for (const auto& [id, entity] : Entities)
-                {
-                    entity.Write(reply);
-                }
-
+                link.Machine = NextMachine++;
+                joiner.Id = link.Machine;
+                Machines.push_back(joiner);
+                WriteSessionState(reply, link.Machine);
                 link.Joined = true;
             }
             else
@@ -901,6 +1257,12 @@ struct MCDirectPlay::Impl
             }
 
             Queue(link, FrameType::JoinReply, reply);
+
+            if (result == DP_OK)
+            {
+                ShareMachines();
+            }
+
             return;
         }
 
@@ -1019,7 +1381,11 @@ struct MCDirectPlay::Impl
         }
     }
 
-    void HostPump()
+    /// <summary>
+    /// Takes the connections waiting on <see cref="Listener"/> as joiners' links, not yet joined: a host's, or (Port-only,
+    /// Redux HD) a joiner's own, kept for when it takes the session over.
+    /// </summary>
+    void AcceptJoiners()
     {
         MCSocket::Address from;
 
@@ -1045,14 +1411,16 @@ struct MCDirectPlay::Impl
             Link link;
             link.Socket = socket;
             link.AcceptedAt = NowMs();
+            link.From = from;
 
-            // A closed slot nothing in the session still belongs to is reused (owners are slot indexes).
+            // A closed slot nothing in the session still belongs to is reused (owners are slot indexes); one kept for a
+            // machine coming back is its.
             const auto reusable = std::ranges::find_if(
                 Joiners,
                 [&](const Link& joiner)
                 {
                     const auto slot = static_cast<int>(&joiner - Joiners.data());
-                    return joiner.Socket == MCSocket::InvalidHandle &&
+                    return joiner.Socket == MCSocket::InvalidHandle && !joiner.ResumeBy.has_value() &&
                            std::ranges::none_of(Entities, [&](const auto& item) { return item.second.Owner == slot; });
                 });
 
@@ -1065,9 +1433,54 @@ struct MCDirectPlay::Impl
                 Joiners.push_back(std::move(link));
             }
         }
+    }
+
+    /// <summary>
+    /// Host: a joiner's link has gone (or, Port-only, Redux HD, its machine never came back to a new hub): its players
+    /// leave, and it is no longer one of the session's machines.
+    /// </summary>
+    void DropJoiner(size_t index)
+    {
+        Link& joiner = Joiners[index];
+        MCSocket::Close(joiner.Socket);
+        const uint32_t machine = joiner.Machine;
+        const bool wasMachine = joiner.Joined || joiner.ResumeBy.has_value();
+        joiner = Link{};
+        std::vector<uint32_t> owned;
+
+        for (const auto& [id, entity] : Entities)
+        {
+            if (entity.Type == DPPLAYERTYPE_PLAYER && entity.Owner == static_cast<int>(index))
+            {
+                owned.push_back(id);
+            }
+        }
+
+        for (uint32_t id : owned)
+        {
+            HostDestroyPlayer(id);
+        }
+
+        if (wasMachine && std::erase_if(Machines, [&](const Machine& known) { return known.Id == machine; }) != 0)
+        {
+            ShareMachines();
+        }
+    }
+
+    void HostPump()
+    {
+        AcceptJoiners();
 
         for (size_t i = 0; i < Joiners.size(); i++)
         {
+            // Port-only (Redux HD): a machine that hasn't come back to this new hub in time has left.
+            if (Joiners[i].ResumeBy.has_value() && NowMs() > *Joiners[i].ResumeBy)
+            {
+                SDL_Log("MCDirectPlay: machine %u never came back to \"%s\"", Joiners[i].Machine, Session.Name.c_str());
+                DropJoiner(i);
+                continue;
+            }
+
             if (Joiners[i].Socket == MCSocket::InvalidHandle)
             {
                 continue;
@@ -1086,23 +1499,7 @@ struct MCDirectPlay::Impl
 
             if (Joiners[i].Dead)
             {
-                MCSocket::Close(Joiners[i].Socket);
-                Joiners[i].Socket = MCSocket::InvalidHandle;
-                Joiners[i].Joined = false;
-                std::vector<uint32_t> owned;
-
-                for (const auto& [id, entity] : Entities)
-                {
-                    if (entity.Type == DPPLAYERTYPE_PLAYER && entity.Owner == static_cast<int>(i))
-                    {
-                        owned.push_back(id);
-                    }
-                }
-
-                for (uint32_t id : owned)
-                {
-                    HostDestroyPlayer(id);
-                }
+                DropJoiner(i);
             }
         }
 
@@ -1112,6 +1509,12 @@ struct MCDirectPlay::Impl
     /// <summary>Host: answers the UDP session queries for this game.</summary>
     void AnswerQueries()
     {
+        // Port-only (Redux HD): a new hub that couldn't take the session's search port answers no searches.
+        if (Udp == MCSocket::InvalidHandle)
+        {
+            return;
+        }
+
         std::array<uint8_t, 1500> datagram{};
         MCSocket::Address from;
 
@@ -1153,7 +1556,8 @@ struct MCDirectPlay::Impl
             Writer reply;
             reply.U32(ProtocolMagic);
             reply.U8(DatagramReply);
-            reply.U16(Port);
+            // The port it takes joins on: the session's, or (Port-only, Redux HD) a new hub's own.
+            reply.U16(ListenPort);
             Session.Desc.dwCurrentPlayers = PlayerCount();
             Session.Write(reply, false);
             std::vector<std::reference_wrapper<const Entity>> players;
@@ -1201,8 +1605,12 @@ struct MCDirectPlay::Impl
             {
                 Entity entity;
                 entity.Read(in);
+                const bool read = in.Ok;
+                // Port-only (Redux HD): its machine after it (an older hub's is its own).
+                const uint32_t machine = in.U32();
+                entity.Machine = in.Ok ? machine : HubMachine;
 
-                if (in.Ok && !Entities.contains(entity.Id))
+                if (read && !Entities.contains(entity.Id))
                 {
                     entity.Owner = -1;
                     QueueCreated(entity);
@@ -1295,6 +1703,33 @@ struct MCDirectPlay::Impl
                 break;
             }
 
+            case FrameType::Machines:
+            {
+                const uint32_t hub = in.U32();
+                const uint32_t count = in.U32();
+                std::vector<Machine> machines;
+
+                for (uint32_t i = 0; i < count && in.Ok; i++)
+                {
+                    machines.emplace_back().Read(in);
+                }
+
+                if (in.Ok)
+                {
+                    HubMachine = hub;
+                    std::ranges::sort(machines, {}, &Machine::Id);
+                    Machines = std::move(machines);
+                }
+
+                break;
+            }
+
+            case FrameType::Ending:
+            {
+                Ending = true;
+                break;
+            }
+
             default:
             {
                 break;
@@ -1304,8 +1739,37 @@ struct MCDirectPlay::Impl
 
     void JoinerPump()
     {
-        if (Server.Socket == MCSocket::InvalidHandle || Lost)
+        if (Server.Socket == MCSocket::InvalidHandle && !Roll.has_value())
         {
+            return;
+        }
+
+        if (Lost)
+        {
+            return;
+        }
+
+        // Port-only (Redux HD): connections to this machine's own listener wait for it to take the session over.
+        if (Listener != MCSocket::InvalidHandle)
+        {
+            AcceptJoiners();
+            std::erase_if(Joiners,
+                          [this](Link& held)
+                          {
+                              const bool stale = NowMs() - held.AcceptedAt > RolloverWait;
+
+                              if (stale)
+                              {
+                                  MCSocket::Close(held.Socket);
+                              }
+
+                              return stale;
+                          });
+        }
+
+        if (Roll.has_value())
+        {
+            PumpRollover();
             return;
         }
 
@@ -1315,11 +1779,349 @@ struct MCDirectPlay::Impl
 
         if (Server.Dead)
         {
-            Lost = true;
+            // Port-only (Redux HD): a hub gone without ending the session hands it on (see the header's top).
+            if (!Ending && RollsOver && (Session.Desc.dwFlags & DPSESSION_MIGRATEHOST) != 0)
+            {
+                StartRollover();
+            }
+            else
+            {
+                LoseSession("its host has gone");
+            }
+        }
+    }
+
+    /// <summary>Joiner: the session is lost (DPSYS_SESSIONLOST): everything fails until Close.</summary>
+    void LoseSession(std::string_view why)
+    {
+        SDL_Log("MCDirectPlay: lost \"%s\": %.*s", Session.Name.c_str(), static_cast<int>(why.size()), why.data());
+        Lost = true;
+        Roll.reset();
+        Incoming message;
+        message.SystemType = DPSYS_SESSIONLOST;
+        QueueSystem(std::move(message));
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD), a joiner whose hub has gone: the session's earliest-joined machine left that takes over is
+    /// its new hub, which every joiner picks alike from the machines its hub shared. This machine takes it over itself,
+    /// or comes back to it (<see cref="PumpRollover"/>).
+    /// </summary>
+    void StartRollover()
+    {
+        const uint32_t gone = HubMachine;
+        const MCSocket::Address hubAddress = ServerAddress.value_or(MCSocket::Address{});
+        MCSocket::Close(Server.Socket);
+        // What it hadn't sent goes with it: the game sends its guaranteed messages again until they're answered.
+        Server = Link{};
+        std::erase_if(Machines, [&](const Machine& machine) { return machine.Id == gone; });
+        const auto successor = std::ranges::find_if(Machines, &Machine::TakesOver);
+
+        if (successor == Machines.end())
+        {
+            LoseSession("its host has gone, and no machine can take over");
+            return;
+        }
+
+        if (successor->Id == SelfMachine)
+        {
+            TakeOver(gone);
+            return;
+        }
+
+        Rolling roll;
+        roll.Successor = successor->Id;
+        roll.Address = successor->Address;
+
+        // An internet game's machine is reached by the game's name, as its hub was (MCIceTransport), at its own port.
+        if ((roll.Address.Ip & LinkAddressMask) == 0)
+        {
+            roll.Address.Ip = hubAddress.Ip;
+        }
+
+        roll.Until = NowMs() + RolloverWait;
+        roll.NextKey = NewKey();
+        Roll = roll;
+        SDL_Log("MCDirectPlay: the host of \"%s\" has gone; machine %u takes over, at %s", Session.Name.c_str(),
+                roll.Successor, MCSocket::ToString(roll.Address).c_str());
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD), a joiner coming back to the machine taking over: connects, says who it is, and takes the
+    /// session as the new hub has it (<see cref="Resumed"/>); what the game sends meanwhile follows. It fails to
+    /// DPSYS_SESSIONLOST when the new hub can't be reached in time or turns it away.
+    /// </summary>
+    void PumpRollover()
+    {
+        Rolling& roll = *Roll;
+
+        if (Server.Socket == MCSocket::InvalidHandle)
+        {
+            if (NowMs() > roll.Until)
+            {
+                LoseSession("the machine taking over can't be reached");
+                return;
+            }
+
+            // An internet game's new host is reached once the service says the game is its (MCSessionManager).
+            if (RolloverReady && !RolloverReady())
+            {
+                return;
+            }
+
+            const MCSocket::Handle socket = MCSocket::ConnectTcp(roll.Address, RolloverConnectMs);
+
+            if (socket == MCSocket::InvalidHandle)
+            {
+                return;
+            }
+
+            Server.Socket = socket;
+            ServerAddress = roll.Address;
+            KeepAliveIfAsked(Session.Desc, socket);
+            Writer resume;
+            resume.U32(ProtocolMagic);
+            resume.Guid(Session.Desc.guidApplication);
+            resume.Guid(Session.Desc.guidInstance);
+            resume.U32(SelfMachine);
+            resume.Blob(Key);
+            resume.Blob(MCSha256::Of(roll.NextKey));
+            resume.U32(RolloverVersion);
+            resume.U16(ListenPort);
+            std::vector<uint8_t> held = std::move(Server.Output);
+            Server.Output.clear();
+            QueueAhead(Server, FrameType::Resume, resume, std::move(held));
+        }
+
+        Flush(Server);
+        ReadFrames(Server,
+                   [&](FrameType type, std::span<const uint8_t> payload)
+                   {
+                       if (!Roll.has_value())
+                       {
+                           JoinerHandle(type, payload);
+                       }
+                       else if (type == FrameType::ResumeReply)
+                       {
+                           Resumed(payload);
+                       }
+                   });
+        Flush(Server);
+
+        if (Roll.has_value() && (Server.Dead || NowMs() > Roll->Until))
+        {
+            LoseSession(Server.Dead ? "the machine taking over turned it away"
+                                    : "the machine taking over never answered");
+        }
+        else if (!Roll.has_value() && !Lost && Server.Dead)
+        {
+            // The new hub went straight after taking it back: the next one takes over.
+            JoinerPump();
+        }
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD): the new hub's answer to this machine coming back: the session as it has it, which the
+    /// game learns of as DirectPlay's messages (<see cref="Reconcile"/>), or a refusal.
+    /// </summary>
+    void Resumed(std::span<const uint8_t> payload)
+    {
+        Reader in(payload);
+        const uint32_t result = in.U32();
+        std::optional<SessionState> state = result == DP_OK ? ReadSessionState(in) : std::nullopt;
+
+        if (!state.has_value() || !state->RollsOver || state->Machine != SelfMachine)
+        {
+            LoseSession(result == DP_OK ? "the machine taking over sent what it can't read"
+                                        : "the machine taking over turned it away");
+            return;
+        }
+
+        HubMachine = Roll->Successor;
+        Key = Roll->NextKey;
+        Roll.reset();
+        SDL_Log("MCDirectPlay: came back to \"%s\" under machine %u", Session.Name.c_str(), HubMachine);
+        Reconcile(std::move(state->Session), std::move(state->Entities));
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD): the session becomes <paramref name="session"/> and <paramref name="entities"/>, a new hub's,
+    /// and the game hears of each change as DirectPlay's messages: what went with the old hub (its players, out of their
+    /// groups first) destroyed, what came meanwhile created, the groups' members and data and the description as now.
+    /// </summary>
+    void Reconcile(SessionInfo session, std::map<uint32_t, Entity> entities)
+    {
+        std::map<uint32_t, Entity> was = std::move(Entities);
+
+        for (const uint32_t type : {uint32_t{DPPLAYERTYPE_PLAYER}, uint32_t{DPPLAYERTYPE_GROUP}})
+        {
+            for (const auto& [id, entity] : was)
+            {
+                if (entity.Type != type || entities.contains(id))
+                {
+                    continue;
+                }
+
+                for (const auto& [groupID, group] : was)
+                {
+                    if (group.Type == DPPLAYERTYPE_GROUP && std::ranges::contains(group.Members, id))
+                    {
+                        QueueMembership(DPSYS_DELETEPLAYERFROMGROUP, groupID, id);
+                    }
+                }
+
+                QueueDestroyed(entity);
+            }
+        }
+
+        for (const auto& [id, entity] : entities)
+        {
+            const auto before = was.find(id);
+
+            if (before == was.end())
+            {
+                if (!LocalPlayers.contains(id))
+                {
+                    QueueCreated(entity);
+                }
+            }
+            else if (entity.Data != before->second.Data)
+            {
+                Incoming message;
+                message.SystemType = DPSYS_SETPLAYERORGROUPDATA;
+                message.Subject = entity;
+                QueueSystem(std::move(message));
+            }
+        }
+
+        for (const auto& [id, group] : entities)
+        {
+            if (group.Type != DPPLAYERTYPE_GROUP)
+            {
+                continue;
+            }
+
+            const auto before = was.find(id);
+            const std::vector<uint32_t> none;
+            const std::vector<uint32_t>& members = before != was.end() ? before->second.Members : none;
+
+            for (const uint32_t member : group.Members)
+            {
+                if (!std::ranges::contains(members, member))
+                {
+                    QueueMembership(DPSYS_ADDPLAYERTOGROUP, id, member);
+                }
+            }
+
+            for (const uint32_t member : members)
+            {
+                if (!std::ranges::contains(group.Members, member) && entities.contains(member))
+                {
+                    QueueMembership(DPSYS_DELETEPLAYERFROMGROUP, id, member);
+                }
+            }
+        }
+
+        std::erase_if(LocalPlayers, [&](uint32_t id) { return !entities.contains(id); });
+        Entities = std::move(entities);
+        // The count of players aside, which the game reads from its own list.
+        Writer before;
+        Writer after;
+        Session.Desc.dwCurrentPlayers = session.Desc.dwCurrentPlayers;
+        Session.Write(before, false);
+        session.Write(after, false);
+        Session = std::move(session);
+
+        if (before.Bytes != after.Bytes)
+        {
             Incoming message;
-            message.SystemType = DPSYS_SESSIONLOST;
+            message.SystemType = DPSYS_SETSESSIONDESC;
+            message.Session = Session;
             QueueSystem(std::move(message));
         }
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD), the joiner the session rolls over to: it becomes the hub, the session as it stands (the
+    /// same instance, players, groups and ids, numbered on from the highest), with a slot kept for each machine to come
+    /// back to; machine <paramref name="gone"/>'s players leave, and an older build's (which never comes back), and
+    /// this machine's game is told it hosts (DPSYS_HOST).
+    /// </summary>
+    void TakeOver(uint32_t gone)
+    {
+        SDL_Log("MCDirectPlay: the host of \"%s\" has gone; this machine (%u) takes over", Session.Name.c_str(),
+                SelfMachine);
+        State = Mode::Host;
+        HubMachine = SelfMachine;
+        // The LAN's searches for the session are answered on its port, when it's free here.
+        MCSocket::Close(Udp);
+        Udp = MCSocket::OpenUdp(Port);
+        uint32_t highest = 0;
+
+        for (const auto& [id, entity] : Entities)
+        {
+            highest = std::max(highest, id);
+        }
+
+        NextId = highest + 1;
+
+        for (const Machine& machine : Machines)
+        {
+            NextMachine = std::max(NextMachine, machine.Id + 1);
+
+            if (machine.Id != SelfMachine && machine.Version >= RolloverVersion)
+            {
+                Link& slot = Joiners.emplace_back();
+                slot.Machine = machine.Id;
+                slot.ResumeBy = NowMs() + RolloverWait;
+            }
+        }
+
+        std::vector<uint32_t> leaving;
+
+        for (auto& [id, entity] : Entities)
+        {
+            const auto slot = std::ranges::find_if(
+                Joiners, [&](const Link& kept) { return kept.ResumeBy.has_value() && kept.Machine == entity.Machine; });
+            entity.Owner = slot != Joiners.end() ? static_cast<int>(slot - Joiners.begin()) : -1;
+
+            if (entity.Type == DPPLAYERTYPE_GROUP)
+            {
+                // Groups stay, the old hub's this one's (the game's teams are the host's).
+                if (entity.Owner < 0)
+                {
+                    entity.Machine = SelfMachine;
+                }
+
+                continue;
+            }
+
+            if (entity.Machine == SelfMachine)
+            {
+                entity.Flags |= DPPLAYER_SERVERPLAYER;
+            }
+            else if (entity.Owner < 0)
+            {
+                // The old hub's (its game hears the hub's player left, flagged as the hub's), or an older build's.
+                leaving.push_back(id);
+            }
+            else
+            {
+                entity.Flags &= ~static_cast<uint32_t>(DPPLAYER_SERVERPLAYER);
+            }
+        }
+
+        std::erase_if(Machines, [&](const Machine& machine)
+                      { return machine.Id != SelfMachine && machine.Version < RolloverVersion; });
+
+        for (const uint32_t id : leaving)
+        {
+            HostDestroyPlayer(id);
+        }
+
+        Incoming host;
+        host.SystemType = DPSYS_HOST;
+        QueueSystem(std::move(host));
     }
 
     /// <summary>Joiner: pumps until the host answers with <paramref name="type"/> (and the token, for creates).</summary>
@@ -1464,6 +2266,14 @@ struct MCDirectPlay::Impl
         LocalPlayers.clear();
         Inbox.clear();
         Replies.clear();
+        Machines.clear();
+        SelfMachine = 0;
+        HubMachine = 0;
+        NextMachine = 1;
+        RollsOver = false;
+        Ending = false;
+        ListenPort = 0;
+        Roll.reset();
     }
 };
 
@@ -1687,6 +2497,10 @@ uint32_t MCDirectPlay::Open(const DPSESSIONDESC2& desc, uint32_t flags)
         // given out.
         impl.NextId = 0x00010000u + (NewGuid().Data1 & 0x0fff0000u);
         impl.State = Impl::Mode::Host;
+        // Port-only (Redux HD): the host is the session's first machine (the rollover's).
+        impl.ListenPort = impl.Port;
+        impl.Key = NewKey();
+        impl.Machines = {Machine{impl.SelfMachine, RolloverVersion, MCSocket::Address{}, MCSha256::Of(impl.Key)}};
         SDL_Log("MCDirectPlay: hosting \"%s\" on port %u", impl.Session.Name.c_str(), impl.Port);
         return DP_OK;
     }
@@ -1714,13 +2528,26 @@ uint32_t MCDirectPlay::Open(const DPSESSIONDESC2& desc, uint32_t flags)
     }
 
     Impl::KeepAliveIfAsked(found->Info.Desc, impl.Server.Socket);
+    impl.ServerAddress = found->Address;
 
+    // Port-only (Redux HD): a session that can migrate its host rolls over to a joiner, which takes connections from
+    // its join on a port of its own (so a firewall asks as it joins, never mid-battle).
+    if ((found->Info.Desc.dwFlags & DPSESSION_MIGRATEHOST) != 0)
+    {
+        impl.Listener = MCSocket::ListenTcp(0);
+        impl.ListenPort = impl.Listener != MCSocket::InvalidHandle ? MCSocket::LocalPort(impl.Listener) : uint16_t{0};
+    }
+
+    impl.Key = NewKey();
     impl.State = Impl::Mode::Joiner;
     Writer request;
     request.U32(ProtocolMagic);
     request.Guid(desc.guidApplication);
     request.Guid(desc.guidInstance);
     request.String(desc.Password.value_or(""));
+    request.U32(RolloverVersion);
+    request.U16(impl.ListenPort);
+    request.Blob(MCSha256::Of(impl.Key));
     Impl::Queue(impl.Server, FrameType::JoinRequest, request);
     std::optional<std::vector<uint8_t>> reply = impl.WaitForReply(FrameType::JoinReply, std::nullopt);
     uint32_t result = DPERR_TIMEOUT;
@@ -1732,18 +2559,22 @@ uint32_t MCDirectPlay::Open(const DPSESSIONDESC2& desc, uint32_t flags)
 
         if (result == DP_OK)
         {
-            impl.Session.Read(in);
-            const uint32_t count = in.U32();
+            std::optional<Impl::SessionState> state = Impl::ReadSessionState(in);
 
-            for (uint32_t i = 0; i < count && in.Ok; i++)
+            if (state.has_value())
             {
-                Entity entity;
-                entity.Read(in);
-                entity.Owner = -1;
-                impl.Entities[entity.Id] = std::move(entity);
-            }
+                impl.Session = std::move(state->Session);
 
-            if (!in.Ok)
+                // Merged: what the host announced as its answer came is kept.
+                for (auto& [id, entity] : state->Entities)
+                {
+                    impl.Entities.insert_or_assign(id, std::move(entity));
+                }
+
+                impl.RollsOver = state->RollsOver;
+                impl.SelfMachine = state->Machine;
+            }
+            else
             {
                 result = DPERR_GENERIC;
             }
@@ -1756,7 +2587,6 @@ uint32_t MCDirectPlay::Open(const DPSESSIONDESC2& desc, uint32_t flags)
         return result;
     }
 
-    impl.ServerAddress = found->Address;
     SDL_Log("MCDirectPlay: joined \"%s\" at %s", impl.Session.Name.c_str(), MCSocket::ToString(found->Address).c_str());
     return DP_OK;
 }
@@ -1776,8 +2606,44 @@ uint32_t MCDirectPlay::Close()
         return DPERR_NOSESSIONS;
     }
 
+    // Port-only (Redux HD): the host's joiners are told the session ends with it, so none takes it over.
+    if (_Impl->State == Impl::Mode::Host)
+    {
+        _Impl->Broadcast(FrameType::Ending, Writer{}, -1);
+    }
+
     _Impl->Shutdown();
     return DP_OK;
+}
+
+uint32_t MCDirectPlay::Leave()
+{
+    if (_Impl->State == Impl::Mode::None)
+    {
+        return DPERR_NOSESSIONS;
+    }
+
+    _Impl->Shutdown();
+    return DP_OK;
+}
+
+bool MCDirectPlay::RollingOver() const
+{
+    return _Impl->Roll.has_value();
+}
+
+bool MCDirectPlay::HasSuccessor() const
+{
+    const Impl& impl = *_Impl;
+    return impl.State == Impl::Mode::Host && (impl.Session.Desc.dwFlags & DPSESSION_MIGRATEHOST) != 0 &&
+           std::ranges::any_of(impl.Machines, [&](const auto& machine)
+                               { return machine.Id != impl.SelfMachine && machine.TakesOver(); });
+}
+
+void MCDirectPlay::SetRolloverReach(std::function<bool()> ready, std::chrono::milliseconds wait)
+{
+    _Impl->RolloverReady = std::move(ready);
+    _Impl->RolloverWait = static_cast<uint64_t>(wait.count());
 }
 
 std::string MCDirectPlay::LastRefusal() const
@@ -1847,6 +2713,7 @@ uint32_t MCDirectPlay::CreatePlayer(uint32_t& playerID, const DPNAME& name, std:
     }
 
     entity.Id = id;
+    entity.Machine = impl.SelfMachine;
     impl.Entities[id] = std::move(entity);
     impl.LocalPlayers.insert(id);
     playerID = id;
@@ -1896,6 +2763,7 @@ uint32_t MCDirectPlay::CreateGroup(uint32_t& groupID, const DPNAME& name, std::s
     }
 
     entity.Id = id;
+    entity.Machine = impl.SelfMachine;
     impl.Entities[id] = std::move(entity);
     groupID = id;
     return DP_OK;

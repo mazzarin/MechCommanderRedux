@@ -1030,6 +1030,7 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
     }
 
     const bool wasServer = IsServer;
+    const bool wasHost = IsHost;
     // Port-only (Redux HD): the leaver's number, for the handover below (the session keeps the player until the leave is
     // handled, its number no longer counted).
     const std::shared_ptr<MCFidpPlayer> leaving = SessionManager->GetPlayer(playerID);
@@ -1050,15 +1051,16 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
         if (const auto player = SessionManager->GetPlayer(playerID);
             player != nullptr && !MCLobbyUpdate::LeftToUpdate(playerID))
         {
-            std::string text = MCFormatPrintf(LoadGameString(0x382, 0xfe).c_str(), player->Name.c_str());
+            HandleOwnMessages = true;
+            SendChat(0, MCFormatPrintf(LoadGameString(0x382, 0xfe).c_str(), player->Name.c_str()));
 
+            // Port-only (Redux HD): the new server says so on a line of its own, the original's for a new server
+            // (SetServer's, as DirectPlay's games said it), where the original ran "I have become the server." on.
             if (!wasServer)
             {
-                text += LoadGameString(899, 0xfe);
+                SendChat(0, LoadGameString(0x378, 0xfe));
             }
 
-            HandleOwnMessages = true;
-            SendChat(0, text);
             HandleOwnMessages = false;
         }
     }
@@ -1106,6 +1108,13 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
             // screen (the host's chat said it left); a host left alone waits for others. The original ended the room
             // for everyone ("... has left the game").
             GlobalLog()->SessionScreen->RemovePlayer(playerID);
+
+            // Port-only (Redux HD): the room's host gone, its session rolled over to this game (MCDirectPlay.h): the
+            // room is this game's now, as everyone picked it.
+            if (IsHost && !wasHost && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen)
+            {
+                GlobalLog()->SessionScreen->TakeOverRoom();
+            }
         }
 
         return;

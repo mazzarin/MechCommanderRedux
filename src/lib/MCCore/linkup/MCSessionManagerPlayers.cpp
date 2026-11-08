@@ -5,6 +5,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "lib/MCFatal.h"
+#include "network/MCInternetGame.h"
 #include "platform/MCDirectPlay.h"
 
 // Players and groups coming and going (DirectPlay's system messages), the numbering the server hands out, and the
@@ -193,7 +194,7 @@ void MCSessionManager::AddPlayerOrGroup(uint32_t playerType, uint32_t id, const 
     SendPlayersInGroupMessages(player->Id);
 }
 
-void MCSessionManager::PlayerOrGroupLeaving(uint32_t playerType, uint32_t id)
+void MCSessionManager::PlayerOrGroupLeaving(uint32_t playerType, uint32_t id, uint32_t flags)
 {
     if (playerType != DPPLAYERTYPE_PLAYER)
     {
@@ -216,6 +217,24 @@ void MCSessionManager::PlayerOrGroupLeaving(uint32_t playerType, uint32_t id)
 
     // The server left: the next player by the server's latency order takes over.
     std::shared_ptr<MCFidpPlayer> next;
+
+    // Port-only (Redux HD): the session's hub left with it, and DirectPlay's stand-in rolled the session over to another
+    // machine (MCDirectPlay.h): that machine's player is the next server on every machine, so the server and the hub
+    // that numbers, admits and locks the session stay one machine.
+    if ((flags & DPPLAYER_SERVERPLAYER) != 0 && DirectPlay != nullptr)
+    {
+        const auto hub = std::ranges::find_if(Players,
+                                              [&](const std::shared_ptr<MCFidpPlayer>& candidate)
+                                              {
+                                                  return candidate->Id != id && candidate->HasPlayerNumber &&
+                                                         DirectPlay->IsSessionHostPlayer(candidate->Id);
+                                              });
+
+        if (hub != Players.end())
+        {
+            next = *hub;
+        }
+    }
 
     // Port fix: bounded to the six numbers (the original ran on past the array when nobody was left).
     for (int32_t i = 0; next == nullptr && i < MaxLinkupPlayers; i++)
@@ -298,7 +317,13 @@ void MCSessionManager::HandlePreSystemMessage(MCFidpMessage& msg)
     else if (type == DPSYS_DESTROYPLAYERORGROUP)
     {
         const auto destroyed = ReadLinkupMessage<DPMSG_DESTROYPLAYERORGROUP>(buffer);
-        PlayerOrGroupLeaving(destroyed.dwPlayerType, destroyed.dpId);
+        PlayerOrGroupLeaving(destroyed.dwPlayerType, destroyed.dpId, destroyed.dwFlags);
+    }
+    else if (type == DPSYS_HOST && Internet != nullptr)
+    {
+        // Port-only (Redux HD): the session rolled over to this machine (MCDirectPlay.h): its internet game is the
+        // game's host on the service now, and the game's other guests reach it there.
+        Internet->TakeOver();
     }
     else if (type == DPSYS_SETSESSIONDESC && LaunchedFromLobby)
     {

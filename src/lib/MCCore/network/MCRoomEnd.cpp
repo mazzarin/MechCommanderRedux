@@ -455,6 +455,13 @@ auto MCRoomEnd::CloseRoom() -> bool
         return false;
     }
 
+    // The room goes on under another game when one can take it over (MCDirectPlay::HasSuccessor): nothing to tell.
+    if (game->SessionManager->LeaveHandsOn())
+    {
+        SDL_Log("Room end: the host's EXIT hands the room on");
+        return false;
+    }
+
     std::vector<uint32_t> told;
 
     for (const std::shared_ptr<MCFidpPlayer>& player : game->SessionManager->GetPlayers(nullptr))

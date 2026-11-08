@@ -4,10 +4,12 @@
 #include <cstdint>
 #include <format>
 #include <functional>
+#include <future>
 #include <optional>
 #include <source_location>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 /// <summary>
@@ -54,6 +56,16 @@ namespace MCTest
     /// <c>--game E:\mc2\MCX Original</c>), or none when it wasn't given. Isolated tests get the same options.
     /// </summary>
     std::optional<std::string_view> Option(std::string_view name);
+
+    /// <summary>A peer process's end: whether its test passed, and what it printed.</summary>
+    using PeerResult = std::pair<bool, std::string>;
+
+    /// <summary>
+    /// Starts this program's test <paramref name="name"/> in a process of its own, as another machine for the test that
+    /// starts it (a multiplayer game's other player): the run's options and <paramref name="options"/> go with it, and
+    /// its temporary folder (so its user folder) is its own. The future holds its end.
+    /// </summary>
+    std::future<PeerResult> StartPeer(std::string_view name, std::vector<std::pair<std::string, std::string>> options);
 
     /// <summary>The name of the test running in this process, or an empty string between tests.</summary>
     std::string_view CurrentTestName();

@@ -104,6 +104,12 @@ class MCSessionManager
 {
 public:
     /// <summary>
+    /// Port-only (Redux HD): how long an internet game's rollover waits (MCDirectPlay::SetRolloverReach): the new host
+    /// taking the game over on the service, then each guest's link to it through the relays.
+    /// </summary>
+    static constexpr std::chrono::milliseconds InternetRolloverWait{30000};
+
+    /// <summary>
     /// Makes the session manager for application <paramref name="appGUID"/>: creates the DirectPlay object and
     /// enumerates the connections.
     /// </summary>
@@ -150,9 +156,18 @@ public:
     /// <summary>The host closes the session to new players.</summary>
     /// <returns>Whether it was locked (false when not hosting).</returns>
     bool LockSession();
-    /// <summary>Closes this machine's player and the session, and recreates the DirectPlay object.</summary>
+    /// <summary>
+    /// Closes this machine's player and the session, and recreates the DirectPlay object. Port-only (Redux HD): a host's
+    /// session goes on under another machine (MCDirectPlay::Leave) while <see cref="HandsOn"/>, else it ends for
+    /// everyone (MCDirectPlay::Close); <see cref="HandsOn"/> is set again for the next session.
+    /// </summary>
     /// <returns>Whether a session was left.</returns>
     bool LeaveSession();
+    /// <summary>
+    /// Port-only (Redux HD), a host: its leave hands the session on (<see cref="HandsOn"/>) and a machine takes it over
+    /// (MCDirectPlay::HasSuccessor).
+    /// </summary>
+    bool LeaveHandsOn() const;
     /// <summary>
     /// Creates group <paramref name="groupName"/> with <paramref name="data"/> attached; DirectPlay puts its id in
     /// <paramref name="groupID"/>.
@@ -384,6 +399,12 @@ public:
     std::unique_ptr<MCInternetGame> Internet;
     /// <summary>The <see cref="MCNetProtocol"/> bits of the connections found.</summary>
     uint32_t AvailableProtocols = 0;
+    /// <summary>
+    /// Port-only (Redux HD): whether this game's leave hands its session on (while its room or battle goes on), or ends
+    /// it for everyone (a battle ended, its results up: the original's session ends with each battle). Set again by
+    /// each leave.
+    /// </summary>
+    bool HandsOn = true;
     /// <summary>Player numbers 0-5 sorted by latency (the server's ping; reset to 0-5 by LeaveSession).</summary>
     std::array<int32_t, MaxLinkupPlayers> PlayersByLatency{0, 1, 2, 3, 4, 5};
 
@@ -471,8 +492,11 @@ private:
     void GivePlayerAnID(MCFidpPlayer& player);
     /// <summary>A DirectPlay create-player/group system message: adds it (numbered by the server).</summary>
     void AddPlayerOrGroup(uint32_t playerType, uint32_t id, const DPNAME& name, uint32_t flags);
-    /// <summary>A player or group is leaving (system message before the deletion).</summary>
-    void PlayerOrGroupLeaving(uint32_t playerType, uint32_t id);
+    /// <summary>
+    /// A player or group is leaving (system message before the deletion), with the DPPLAYER_* <paramref name="flags"/>
+    /// it had.
+    /// </summary>
+    void PlayerOrGroupLeaving(uint32_t playerType, uint32_t id, uint32_t flags);
     /// <summary>A DirectPlay destroy-player/group system message: removes and deletes it.</summary>
     void DeletePlayerOrGroup(uint32_t playerType, uint32_t id);
     /// <summary>Adds player <paramref name="playerID"/> to group <paramref name="groupID"/> as a message said.</summary>

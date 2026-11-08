@@ -104,6 +104,12 @@ class MCSessionManager
 {
 public:
     /// <summary>
+    /// Port-only (Redux HD): how long an internet game's rollover waits (MCDirectPlay::SetRolloverReach): the new host
+    /// taking the game over on the service, then each guest's link to it through the relays.
+    /// </summary>
+    static constexpr std::chrono::milliseconds InternetRolloverWait{30000};
+
+    /// <summary>
     /// Makes the session manager for application <paramref name="appGUID"/>: creates the DirectPlay object and
     /// enumerates the connections.
     /// </summary>

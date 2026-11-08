@@ -85,6 +85,8 @@ namespace
     constexpr std::string_view HostPath = "/host";
     constexpr std::string_view JoinPath = "/join/";
     constexpr std::string_view BackPath = "/game/";
+    /// <summary>Port-only (Redux HD): a guest's socket taking its game over as its host (with its place's token).</summary>
+    constexpr std::string_view TakeoverPath = "/takeover/";
 
     /// <summary>What the service's refusals and endings are called in its messages.</summary>
     constexpr std::array<std::pair<std::string_view, MCServiceRefusal>, 10> Refusals{{
@@ -498,6 +500,50 @@ bool MCServiceSignaling::HostAway(std::string_view game)
     return found != _Games.end() && found->second.HostAway;
 }
 
+bool MCServiceSignaling::TakeOver(std::string_view game)
+{
+    const std::scoped_lock lock(_Lock);
+    const auto found = _Games.find(game);
+
+    if (found == _Games.end() || !found->second.In || found->second.Token.empty() || _Left)
+    {
+        SDL_Log("MCServiceSignaling: can't take game \"%.*s\" over: this game isn't in it",
+                static_cast<int>(game.size()), game.data());
+        return false;
+    }
+
+    Socket& joined = found->second;
+    const Clock::time_point now = Clock::now();
+    // A public game's links take relays only, the host's too.
+    _RelayOnly = _RelayOnly || joined.Public;
+    _Host = Socket{.Ws = Opened(std::format("{}{}", TakeoverPath, game), joined.Token),
+                   .LastPing = now,
+                   .Code = std::string(game),
+                   .Token = joined.Token};
+    _Guests.clear();
+    _GuestSettings.clear();
+    _NameRefused = false;
+    // Its place is the host's now: the socket to the game goes, never coming back to it.
+    joined.TakenOver = true;
+    joined.Ws->Close();
+    SDL_Log("MCServiceSignaling: taking game \"%.*s\" over as its host", static_cast<int>(game.size()), game.data());
+    return true;
+}
+
+int32_t MCServiceSignaling::HostMoves(std::string_view game)
+{
+    const std::scoped_lock lock(_Lock);
+    const auto found = _Games.find(game);
+    return found != _Games.end() ? found->second.HostMoves : 0;
+}
+
+bool MCServiceSignaling::GamePublic(std::string_view game)
+{
+    const std::scoped_lock lock(_Lock);
+    const auto found = _Games.find(game);
+    return found == _Games.end() || found->second.Public;
+}
+
 std::optional<std::string> MCServiceSignaling::WhyClosed(std::string_view game)
 {
     const std::scoped_lock lock(_Lock);
@@ -691,7 +737,7 @@ void MCServiceSignaling::Tend(Socket& socket, std::string_view game, Clock::time
         TellGone(game, heard);
     }
 
-    if (socket.Refusal.has_value())
+    if (socket.Refusal.has_value() || socket.TakenOver)
     {
         return;
     }
@@ -964,6 +1010,15 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
                 {.Sender = From::Host, .Peer = std::string(game), .Link = *link, .Signal = std::move(signal)});
             return;
         }
+    }
+    else if (type == "host" && socket.In)
+    {
+        // Port-only (Redux HD): another guest took the game over as its host (SPEC-host-rollover.md): links to the old
+        // one are gone, and a new one reaches the new host.
+        SDL_Log("MCServiceSignaling: game \"%.*s\" has a new host", static_cast<int>(game.size()), game.data());
+        socket.HostAway = false;
+        socket.HostMoves++;
+        return;
     }
     else if (type == "away" && socket.In)
     {

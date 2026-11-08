@@ -144,6 +144,20 @@ public:
     /// never says when the host is back, so a join still under way can't finish: it tries again.
     /// </summary>
     bool HostAway(std::string_view game);
+    /// <summary>
+    /// Port-only (Redux HD): takes the game <paramref name="game"/> this one joined over as its host (its host's socket
+    /// away or gone, the session rolled over to this game: SPEC-host-rollover.md), the same code: a socket to the
+    /// service's /takeover with this game's place's token, its socket to the game closing. <see cref="HostedCode"/> once
+    /// the service has made it the host; the service tells the game's other guests to reach it. Whether it asked.
+    /// </summary>
+    bool TakeOver(std::string_view game);
+    /// <summary>
+    /// Port-only (Redux HD): how many times the service said <paramref name="game"/> has a new host since this game
+    /// joined it (another guest took it over): links to it from before go nowhere.
+    /// </summary>
+    int32_t HostMoves(std::string_view game);
+    /// <summary>Whether the game <paramref name="game"/> this one joined is public, as the service said (or didn't).</summary>
+    bool GamePublic(std::string_view game);
     /// <summary>Why the host's socket or <paramref name="game"/>'s closed, if it did (for the log and the trial).</summary>
     std::optional<std::string> WhyClosed(std::string_view game = {});
     /// <summary>
@@ -195,8 +209,17 @@ private:
         bool Public = true;
         /// <summary>Why the service ended it: no coming back.</summary>
         std::optional<MCServiceRefusal> Refusal;
-        /// <summary>A guest's: the service said its game's host is away (and never says when it's back).</summary>
+        /// <summary>
+        /// A guest's: the service said its game's host is away (and never says when it's back, but for a new host).
+        /// </summary>
         bool HostAway = false;
+        /// <summary>Port-only (Redux HD), a guest's: the times the service said its game has a new host.</summary>
+        int32_t HostMoves = 0;
+        /// <summary>
+        /// Port-only (Redux HD): this game took the game it reached over (TakeOver): the socket closes, never coming
+        /// back (its place is the host's now).
+        /// </summary>
+        bool TakenOver = false;
         /// <summary>Since its socket dropped, while it tries to come back; the next try.</summary>
         std::optional<Clock::time_point> DroppedAt;
         Clock::time_point NextTry;

@@ -277,6 +277,51 @@ bool MCInternetGame::NameRefused()
     return _Signaling != nullptr && _Signaling->NameRefused();
 }
 
+void MCInternetGame::TakeOver()
+{
+    if (_Hosting || _Signaling == nullptr || _Stage != Stage::Ready)
+    {
+        return;
+    }
+
+    _Public = _Signaling->GamePublic(_Code);
+
+    if (_Signaling->TakeOver(_Code))
+    {
+        _Hosting = true;
+        SDL_Log("Internet game %s: taking it over as its host", _Code.c_str());
+    }
+}
+
+bool MCInternetGame::HostReached()
+{
+    if (_Hosting || _Signaling == nullptr || _Transport == nullptr)
+    {
+        return false;
+    }
+
+    // Not until the service has said the game has a new host: a link from before goes to the host that's gone. Each new
+    // host gets a link of its own.
+    const int32_t moves = _Signaling->HostMoves(_Code);
+
+    if (moves == 0 || _Signaling->HostAway(_Code))
+    {
+        return false;
+    }
+
+    const MCIceTransport::Reaching reached =
+        _ReachedFor == moves ? _Transport->Reached(_Code) : MCIceTransport::Reaching::Failed;
+
+    if (reached == MCIceTransport::Reaching::Failed)
+    {
+        _ReachedFor = moves;
+        _Transport->Reach(_Code);
+        return false;
+    }
+
+    return reached == MCIceTransport::Reaching::Open;
+}
+
 void MCInternetGame::End(std::chrono::milliseconds wait)
 {
     if (_Signaling == nullptr)

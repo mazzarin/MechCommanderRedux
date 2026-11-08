@@ -5,6 +5,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "lib/MCFatal.h"
+#include "network/MCInternetGame.h"
 #include "platform/MCDirectPlay.h"
 
 // Players and groups coming and going (DirectPlay's system messages), the numbering the server hands out, and the
@@ -317,6 +318,12 @@ void MCSessionManager::HandlePreSystemMessage(MCFidpMessage& msg)
     {
         const auto destroyed = ReadLinkupMessage<DPMSG_DESTROYPLAYERORGROUP>(buffer);
         PlayerOrGroupLeaving(destroyed.dwPlayerType, destroyed.dpId, destroyed.dwFlags);
+    }
+    else if (type == DPSYS_HOST && Internet != nullptr)
+    {
+        // Port-only (Redux HD): the session rolled over to this machine (MCDirectPlay.h): its internet game is the
+        // game's host on the service now, and the game's other guests reach it there.
+        Internet->TakeOver();
     }
     else if (type == DPSYS_SETSESSIONDESC && LaunchedFromLobby)
     {

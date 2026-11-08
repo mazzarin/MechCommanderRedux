@@ -359,6 +359,13 @@ public:
     bool RollingOver() const;
 
     /// <summary>
+    /// Port-only (Redux HD): whether the machine a rollover goes to can be connected to now (<paramref name="ready"/>:
+    /// an internet game's link to the game's new host open), asked before each try; none, at once. A rollover then
+    /// waits up to <paramref name="wait"/>, for the machines coming back and for the machine taking over.
+    /// </summary>
+    void SetRolloverReach(std::function<bool()> ready, std::chrono::milliseconds wait);
+
+    /// <summary>
     /// Creates a player of this machine with <paramref name="data"/> as its data; <paramref name="playerID"/> receives
     /// its id. (DirectPlay's event HANDLE, signalled on arrivals, has no counterpart.)
     /// </summary>

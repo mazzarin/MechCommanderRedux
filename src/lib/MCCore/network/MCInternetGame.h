@@ -111,6 +111,17 @@ public:
     bool NameRefused();
 
     /// <summary>
+    /// Port-only (Redux HD), a guest: its session rolled over to this game (SPEC-host-rollover.md), which takes the game
+    /// over on the service as its host, the same code: it hosts it from now, its room listed as the old host's was.
+    /// </summary>
+    void TakeOver();
+    /// <summary>
+    /// Port-only (Redux HD), a guest whose session is rolling over to another guest's game: whether its link to the
+    /// game's new host is open, opening one once the service says the game has a new host.
+    /// </summary>
+    bool HostReached();
+
+    /// <summary>
     /// Ends it: its links close, and its sockets close as its player leaving (or as drops, its place kept:
     /// <see cref="KeepPlace"/>), waiting up to <paramref name="wait"/> for their closes to go (a quitting game's, which
     /// the process's end would cut off).
@@ -138,6 +149,8 @@ private:
     std::optional<MCServiceRefusal> _Refusal;
     Clock::time_point _AskedAt;
     std::chrono::milliseconds _ServiceWait;
+    /// <summary>Port-only (Redux HD), a guest: the new host (the service's count of them) its link was opened for.</summary>
+    int32_t _ReachedFor = 0;
     /// <summary>A guest's link to its host: when it began opening, and how long it may take (the transport's own wait, and more).</summary>
     Clock::time_point _ReachingSince;
     std::chrono::milliseconds _ReachWait;

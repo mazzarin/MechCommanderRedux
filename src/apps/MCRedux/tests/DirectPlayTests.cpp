@@ -685,6 +685,9 @@ namespace
         bytes.insert(bytes.end(), blob.begin(), blob.end());
     }
 
+    /// <summary>A rollover's wait in the tests that set one: long enough for the test's steps.</summary>
+    constexpr auto RolloverTestWait = std::chrono::milliseconds(10000);
+
     /// <summary>The frame types the raw tests send and read (MCDirectPlay.cpp's FrameType).</summary>
     constexpr uint8_t JoinRequestFrame = 1;
     constexpr uint8_t JoinReplyFrame = 2;
@@ -1005,4 +1008,36 @@ TEST_CASE("directplay: an older build's joiner loses the session as its host goe
     CHECK(Listed(session.CatMachine, false) == players);
     CHECK(RawClosed(older, {}));
     MCSocket::Close(older);
+}
+
+/// <summary>
+/// A rollover whose new hub can't be connected to yet (SetRolloverReach: an internet game's link to the game's new host
+/// not yet open) waits for it, within its wait: Cat's machine comes back only once it can, and its game hears nothing
+/// meanwhile; one that can't within the wait loses the session.
+/// </summary>
+TEST_CASE("directplay: a rollover waits until the machine taking over can be reached, within its wait")
+{
+    constexpr auto shortWait = std::chrono::milliseconds(400);
+    ThreeMachines session(28969);
+    std::atomic<bool> reachable = false;
+    session.CatMachine.SetRolloverReach([&] { return reachable.load(); }, RolloverTestWait);
+    session.Host.reset();
+    CHECK(SystemTypes(Drain(session.AnnMachine, {})) ==
+          (std::vector<uint32_t>{uint32_t{DPSYS_DELETEPLAYERFROMGROUP}, uint32_t{DPSYS_DESTROYPLAYERORGROUP},
+                                 uint32_t{DPSYS_HOST}}));
+    CHECK(Drain(session.CatMachine, {session.AnnMachine}).empty());
+    CHECK(session.CatMachine.RollingOver());
+    reachable = true;
+    CHECK(HubLeft(Drain(session.CatMachine, {session.AnnMachine}), session.Bob, session.Team));
+    CHECK(!session.CatMachine.RollingOver());
+
+    ThreeMachines unreached(28970);
+    unreached.CatMachine.SetRolloverReach([] { return false; }, shortWait);
+    unreached.Host.reset();
+    Drain(unreached.AnnMachine, {});
+    CHECK(Drain(unreached.CatMachine, {unreached.AnnMachine}).empty());
+    CHECK(unreached.CatMachine.RollingOver());
+    SDL_Delay(static_cast<uint32_t>(shortWait.count()));
+    CHECK(SystemTypes(Drain(unreached.CatMachine, {unreached.AnnMachine})) ==
+          std::vector<uint32_t>{uint32_t{DPSYS_SESSIONLOST}});
 }

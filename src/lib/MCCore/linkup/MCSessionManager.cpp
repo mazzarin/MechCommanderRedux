@@ -512,6 +512,14 @@ bool MCSessionManager::BeginInternet(bool host, std::string_view code, bool isPu
     Internet = !host   ? MCInternetGame::Join(net->get(), code)
                : place ? MCInternetGame::HostAgain(net->get(), isPublic, *place)
                        : MCInternetGame::Host(net->get(), isPublic);
+
+    // Port-only (Redux HD): a session rolling over reaches its new host once the service says the game is its.
+    if (Internet != nullptr && DirectPlay != nullptr)
+    {
+        DirectPlay->SetRolloverReach([this] { return Internet != nullptr && Internet->HostReached(); },
+                                     InternetRolloverWait);
+    }
+
     return Internet != nullptr;
 }
 
@@ -558,10 +566,18 @@ void MCSessionManager::EndInternet(std::chrono::milliseconds wait)
         return;
     }
 
-    // DirectPlay lets go of its sockets first: they're on the game's links.
+    // DirectPlay lets go of its sockets first: they're on the game's links. (Port-only, Redux HD: a host's session rolls
+    // over to another machine, unless its game restarts into an update, its place kept: its guests wait for it.)
     if (DirectPlay != nullptr)
     {
-        DirectPlay->Close();
+        if (Internet->KeepsPlace())
+        {
+            DirectPlay->Close();
+        }
+        else
+        {
+            DirectPlay->Leave();
+        }
     }
 
     Internet->End(wait);

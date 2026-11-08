@@ -322,3 +322,75 @@ TEST_CASE("internet game: a code no game has is refused, and a service that neve
     CHECK(Until(*unanswered, *unanswered, [&] { return unanswered->Update() == MCInternetGame::Stage::Failed; }));
     CHECK(unanswered->Refusal() == std::optional(MCServiceRefusal::Unreachable));
 }
+
+/// <summary>
+/// Port-only (Redux HD): the host's game leaves (SPEC-host-rollover.md): the service keeps the game, its guests told the
+/// host is away, and Ann's game, which the session rolled over to, takes it over as its host, the same code, its room
+/// for the list its own; Cat's game is told the game has a new host and reaches it there by the code, a new link, which
+/// carries a connection to Ann's game's own listener (where its DirectPlay takes the session's machines back).
+/// </summary>
+TEST_CASE("internet game: a guest takes the game over on the service as its host leaves, and another guest reaches it")
+{
+    constexpr uint16_t annsPort = 28971;
+    MCFakeGamesService service;
+    service.HostLeaveHandsOver = true;
+    const MCInternetSetupScope setup(service);
+    MCNetSwitch hostNet(std::make_unique<MCLoopbackTransport>());
+    MCNetSwitch annNet(std::make_unique<MCLoopbackTransport>());
+    MCNetSwitch catNet(std::make_unique<MCLoopbackTransport>());
+    std::unique_ptr<MCInternetGame> host = MCInternetGame::Host(hostNet, false);
+    REQUIRE(host != nullptr);
+    REQUIRE(Until(*host, *host, [&] { return host->Update() == MCInternetGame::Stage::Ready; }));
+    // The game's DirectPlay listens on each machine: the host's on the game's port, each guest's on one of its own.
+    const MCSocket::Handle hostsListener = hostNet.ListenTcp(GamePort);
+    REQUIRE(hostsListener != MCSocket::InvalidHandle);
+    std::unique_ptr<MCInternetGame> ann = MCInternetGame::Join(annNet, Code);
+    REQUIRE(ann != nullptr);
+    REQUIRE(Until(*host, *ann, [&] { return ann->Update() == MCInternetGame::Stage::Ready; }));
+    std::unique_ptr<MCInternetGame> cat = MCInternetGame::Join(catNet, Code);
+    REQUIRE(cat != nullptr);
+    REQUIRE(Until(*host, *cat, [&] { return cat->Update() == MCInternetGame::Stage::Ready; }));
+    const MCSocket::Handle annsListener = annNet.ListenTcp(annsPort);
+    REQUIRE(annsListener != MCSocket::InvalidHandle);
+
+    // Before the host has gone, no new host to reach.
+    CHECK(!cat->HostReached());
+    host->End();
+    REQUIRE(Until(*ann, *cat, [&] { return service.OpenLines() == 2; }));
+    CHECK(!cat->HostReached());
+
+    ann->TakeOver();
+    CHECK(ann->Hosting());
+    REQUIRE(Until(*ann, *cat, [&] { return ann->Place().has_value(); }));
+    CHECK_EQ(ann->Place()->Code, std::string(Code));
+    CHECK(ann->Update() == MCInternetGame::Stage::Ready);
+    ann->SetRoom({.Name = "ANN'S GAME", .Public = true, .Max = 4, .Players = {"ANN", "CAT"}});
+    const std::optional<Json> room = service.Room();
+    REQUIRE(room.has_value());
+    CHECK_EQ(room->at("name"), "ANN'S GAME");
+    CHECK_EQ(room->at("public"), false);
+
+    REQUIRE(Until(*ann, *cat, [&] { return cat->HostReached(); }));
+    std::atomic<MCSocket::Handle> accepted = MCSocket::InvalidHandle;
+    std::jthread taker(
+        [&](std::stop_token stop)
+        {
+            while (!stop.stop_requested() && accepted == MCSocket::InvalidHandle)
+            {
+                MCSocket::Address from;
+                accepted = annNet.AcceptTcp(annsListener, from);
+                std::this_thread::sleep_for(StepWait);
+            }
+        });
+    const std::optional<uint32_t> address = catNet.Resolve(Code);
+    REQUIRE(address.has_value());
+    const MCSocket::Handle stream = catNet.ConnectTcp({*address, annsPort}, ConnectMs);
+    taker.request_stop();
+    taker.join();
+    REQUIRE(stream != MCSocket::InvalidHandle);
+    REQUIRE(accepted != MCSocket::InvalidHandle);
+    REQUIRE_EQ(catNet.Send(stream, Bytes("back")), 4);
+    CHECK_EQ(Read(annNet, accepted, 4), "back");
+    REQUIRE_EQ(annNet.Send(accepted, Bytes("in")), 2);
+    CHECK_EQ(Read(catNet, stream, 2), "in");
+}

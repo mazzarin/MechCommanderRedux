@@ -593,6 +593,9 @@ struct MCDirectPlay::Impl
     };
 
     std::optional<Rolling> Roll;
+    /// <summary>Whether the machine taking over can be connected to (MCDirectPlay::SetRolloverReach), and the wait.</summary>
+    std::function<bool()> RolloverReady;
+    uint64_t RolloverWait = RolloverWaitMs;
 
     ~Impl()
     {
@@ -1750,9 +1753,9 @@ struct MCDirectPlay::Impl
         {
             AcceptJoiners();
             std::erase_if(Joiners,
-                          [](Link& held)
+                          [this](Link& held)
                           {
-                              const bool stale = NowMs() - held.AcceptedAt > RolloverWaitMs;
+                              const bool stale = NowMs() - held.AcceptedAt > RolloverWait;
 
                               if (stale)
                               {
@@ -1835,7 +1838,7 @@ struct MCDirectPlay::Impl
             roll.Address.Ip = hubAddress.Ip;
         }
 
-        roll.Until = NowMs() + RolloverWaitMs;
+        roll.Until = NowMs() + RolloverWait;
         roll.NextKey = NewKey();
         Roll = roll;
         SDL_Log("MCDirectPlay: the host of \"%s\" has gone; machine %u takes over, at %s", Session.Name.c_str(),
@@ -1856,6 +1859,12 @@ struct MCDirectPlay::Impl
             if (NowMs() > roll.Until)
             {
                 LoseSession("the machine taking over can't be reached");
+                return;
+            }
+
+            // An internet game's new host is reached once the service says the game is its (MCSessionManager).
+            if (RolloverReady && !RolloverReady())
+            {
                 return;
             }
 
@@ -2063,7 +2072,7 @@ struct MCDirectPlay::Impl
             {
                 Link& slot = Joiners.emplace_back();
                 slot.Machine = machine.Id;
-                slot.ResumeBy = NowMs() + RolloverWaitMs;
+                slot.ResumeBy = NowMs() + RolloverWait;
             }
         }
 
@@ -2612,6 +2621,12 @@ uint32_t MCDirectPlay::Leave()
 bool MCDirectPlay::RollingOver() const
 {
     return _Impl->Roll.has_value();
+}
+
+void MCDirectPlay::SetRolloverReach(std::function<bool()> ready, std::chrono::milliseconds wait)
+{
+    _Impl->RolloverReady = std::move(ready);
+    _Impl->RolloverWait = static_cast<uint64_t>(wait.count());
 }
 
 std::string MCDirectPlay::LastRefusal() const

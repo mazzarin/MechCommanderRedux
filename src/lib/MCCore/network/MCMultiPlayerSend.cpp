@@ -321,30 +321,56 @@ int32_t MCMultiPlayer::SendLights(int32_t checkInId, std::span<const std::shared
 {
     static_assert(MaxLightsParts == static_cast<size_t>(MaxLocalMovers));
 
-    // Every field set: the buffer holds the last message's bytes past the header.
-    auto message = StartGuaranteedMessage<MCMPLightsMessage>(MCMPMessageType::Lights);
-    message.CheckInId = static_cast<int8_t>(checkInId);
-    message.On = on ? 1 : 0;
-    message.Count = 0;
-    message.Parts = {};
+    const auto send = [this, on](int32_t player, std::span<const std::shared_ptr<MCMover>> theirs)
+    {
+        // Every field set: the buffer holds the last message's bytes past the header.
+        auto message = StartGuaranteedMessage<MCMPLightsMessage>(MCMPMessageType::Lights);
+        message.CheckInId = static_cast<int8_t>(player);
+        message.On = on ? 1 : 0;
+        message.Count = 0;
+        message.Parts = {};
+
+        for (const std::shared_ptr<MCMover>& unit : theirs)
+        {
+            if (unit != nullptr && message.Count < message.Parts.size())
+            {
+                message.Parts[message.Count++] = static_cast<uint16_t>(unit->PartId);
+            }
+        }
+
+        PutMessage(message);
+
+        if (IsServer)
+        {
+            SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPLightsMessage)));
+        }
+        else
+        {
+            SessionManager->SendMessageToServerGuaranteed(Outgoing(sizeof(MCMPLightsMessage)));
+        }
+    };
+
+    if (!IsServer)
+    {
+        send(checkInId, units);
+        return 0;
+    }
+
+    // Port-only (Redux HD): the server's go to every game by the units' commanders, as every game takes a player's
+    // lights only for its own: a player's LIGHTS turn the units handed to it too (network/MCMechHandover.h).
+    std::map<int32_t, std::vector<std::shared_ptr<MCMover>>> byCommander;
 
     for (const std::shared_ptr<MCMover>& unit : units)
     {
-        if (unit != nullptr && message.Count < message.Parts.size())
+        if (unit != nullptr)
         {
-            message.Parts[message.Count++] = static_cast<uint16_t>(unit->PartId);
+            byCommander[unit->GetCommanderId()].push_back(unit);
         }
     }
 
-    PutMessage(message);
-
-    if (IsServer)
+    for (const auto& [commander, theirs] : byCommander)
     {
-        SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPLightsMessage)));
-    }
-    else
-    {
-        SessionManager->SendMessageToServerGuaranteed(Outgoing(sizeof(MCMPLightsMessage)));
+        send(commander, theirs);
     }
 
     return 0;

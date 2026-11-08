@@ -2,6 +2,7 @@
 #include "main/MCMissionGlobals.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCMechHandover.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFatal.h"
@@ -1029,6 +1030,10 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
     }
 
     const bool wasServer = IsServer;
+    // Port-only (Redux HD): the leaver's number, for the handover below (the session keeps the player until the leave is
+    // handled, its number no longer counted).
+    const std::shared_ptr<MCFidpPlayer> leaving = SessionManager->GetPlayer(playerID);
+    const int32_t leaverNumber = leaving != nullptr ? leaving->PlayerNumber : -1;
 
     if (playerID == HostID)
     {
@@ -1075,6 +1080,13 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
         if (IsServer && !wasServer)
         {
             TakeOverMovers(*this);
+        }
+
+        // Port-only (Redux HD): the server hands the player's units on to a teammate still playing; so does a game that
+        // has just become the server (network/MCMechHandover.h).
+        if (IsServer)
+        {
+            MCMechHandover::HandOn(*this, leaverNumber);
         }
 
         return;

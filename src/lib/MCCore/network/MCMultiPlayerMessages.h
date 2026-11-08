@@ -88,7 +88,13 @@ enum class MCMPMessageType : uint16_t
     /// to everyone (mission/MCNightLights.h). Sent only in a match whose rules have MCMatchRule::NightLights, so every
     /// game in it knows it.
     /// </summary>
-    Lights = 53
+    Lights = 53,
+    /// <summary>
+    /// Port-only (Redux HD): a dropped player's units handed to its teammates (<c>MCMPHandoverMessage</c>), from the
+    /// server to everyone as the player's leave reaches it in a mission (network/MCMechHandover.h): each unit's new
+    /// player and slot. A build without it ignores it, and goes on showing the units as the dropped player's.
+    /// </summary>
+    Handover = 54
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>
@@ -196,6 +202,30 @@ struct MCMPLightsMessage : public MCFIGuaranteedMessageHeader
 };
 
 static_assert(sizeof(MCMPLightsMessage) == 0x23);
+
+/// <summary>The most units a Handover message names: a player's movers (MCMultiPlayer::MaxLocalMovers).</summary>
+inline constexpr size_t MaxHandoverUnits = 12;
+
+/// <summary>
+/// Port-only: player <see cref="Leaver"/>'s units handed on (MCMPMessageType::Handover), the first Count used: each
+/// by its part id, with its new player (number) and slot in that player's roster.
+/// </summary>
+struct MCMPHandoverMessage : public MCFIGuaranteedMessageHeader
+{
+    struct Unit
+    {
+        uint16_t Part = 0;
+        int8_t Player = 0;
+        int8_t Slot = 0;
+    };
+
+    /// <summary>The player who left (its number).</summary>
+    int8_t Leaver = 0;
+    uint8_t Count = 0;
+    std::array<Unit, MaxHandoverUnits> Units{};
+};
+
+static_assert(sizeof(MCMPHandoverMessage) == 0x3a);
 
 /// <summary>Player order (guaranteed, to the server): a tactical order packed into two words.</summary>
 /// <remarks>Fixed layout.</remarks>

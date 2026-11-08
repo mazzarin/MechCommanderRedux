@@ -49,6 +49,11 @@ void HandleAppEndScenario(uint32_t fromID, std::span<const uint8_t> msg);
 /// it on; a client takes it from the server.
 /// </summary>
 void HandleAppLights(uint32_t fromID, std::span<const uint8_t> msg);
+/// <summary>
+/// Port-only (Redux HD): the server's handover of a dropped player's units (MCMPHandoverMessage, network/MCMechHandover.h):
+/// a client moves them in its rosters, and makes its own those its player was handed.
+/// </summary>
+void HandleAppHandover(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerOrder(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerMoverGroup(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerArtillery(uint32_t fromID, std::span<const uint8_t> msg);

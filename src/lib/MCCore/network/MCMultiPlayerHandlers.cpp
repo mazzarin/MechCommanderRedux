@@ -18,6 +18,7 @@
 #include "logistics/MCSessionScreen.h"
 #include "network/MCGameDataHash.h"
 #include "network/MCMPGameConfiguration.h"
+#include "network/MCMechHandover.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCGameStrings.h"
@@ -537,7 +538,10 @@ void HandleAppLights(uint32_t fromID, std::span<const uint8_t> msg)
     {
         const auto unit = std::dynamic_pointer_cast<MCMover>(ObjectList()->FindObjectFromPart(part));
 
-        if (unit == nullptr || unit->GetCommanderId() != message.CheckInId)
+        // Port-only (Redux HD): a player's own, or on the server one handed to it (network/MCMechHandover.h); the server
+        // sends them on by their commander's (MCMultiPlayer::SendLights), as every game takes them.
+        if (unit == nullptr || (unit->GetCommanderId() != message.CheckInId &&
+                                !(game.IsServer && MCMechHandover::Commands(game, message.CheckInId, *unit))))
         {
             Dropped("lights for a unit not the player's", fromID);
             return;
@@ -552,6 +556,32 @@ void HandleAppLights(uint32_t fromID, std::span<const uint8_t> msg)
     {
         game.SendLights(message.CheckInId, units, message.On != 0);
     }
+}
+
+void HandleAppHandover(uint32_t fromID, std::span<const uint8_t> msg)
+{
+    if (msg.size() < sizeof(MCMPHandoverMessage) || !InMultiplayerMission())
+    {
+        return;
+    }
+
+    // The server moves them as it sends this (network/MCMechHandover.h).
+    if (Game().IsServer)
+    {
+        Dropped("a handover to the server", fromID);
+        return;
+    }
+
+    const auto message = ReadLinkupMessage<MCMPHandoverMessage>(msg);
+    std::vector<MCMechHandover::MCHanded> units;
+
+    for (const MCMPHandoverMessage::Unit& unit :
+         std::span(message.Units).first(std::min<size_t>(message.Count, message.Units.size())))
+    {
+        units.push_back({.Part = unit.Part, .Player = unit.Player, .Slot = unit.Slot});
+    }
+
+    MCMechHandover::Apply(Game(), message.Leaver, units);
 }
 
 void HandleAppPlayerOrder(uint32_t fromID, std::span<const uint8_t> msg)
@@ -1460,6 +1490,7 @@ namespace
             case MCMPMessageType::MatchRules:
             case MCMPMessageType::MatchOptions:
             case MCMPMessageType::PlayersRules:
+            case MCMPMessageType::Handover:
             {
                 const MCMultiPlayer& game = Game();
                 return fromID == game.ServerID || fromID == game.HostID ||
@@ -1558,6 +1589,13 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         case MCMPMessageType::PlayerOrder:
         {
             HandleAppPlayerOrder(fromID, bytes);
+            break;
+        }
+
+        case MCMPMessageType::Handover:
+        {
+            // Port-only (Redux HD): a dropped player's units handed to its teammates (network/MCMechHandover.h).
+            HandleAppHandover(fromID, bytes);
             break;
         }
 

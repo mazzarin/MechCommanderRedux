@@ -129,6 +129,12 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - LAN games are found automatically. Internet games connect by `host:port`; the default port is 28800.
 - **Redux HD.** A player whose computer drops out (switched off, asleep, off the network) leaves the game within half a minute, as
   DirectPlay dropped them. The players' computers check, not the games, so a slow or loading game never drops out.
+- **Redux HD.** A player who drops out of a battle leaves no dead weight: their mechs and vehicles go to a teammate
+  still playing, the one with the fewest units (on a tie, the first to join), who commands them as their own. They
+  join the end of the teammate's mech bar, and keep their last orders until given new ones. Any that don't fit (a
+  player commands 12) go to the next teammate. Their kills still count for the player who dropped. A teammate whose
+  game is older is passed over, and a host whose game is older hands nothing on; with no one to take them, the units
+  stand where they were, as in the original. The host's own leaving still ends the match.
 - Modem, serial cable, lobby (MPlayer, Zone) and host migration aren't supported.
 - **Redux HD.** MULTIPLAYER opens the local network's games straight away: the connection screen (modem, serial,
   network, internet) and its IPX or TCP question are gone. CANCEL there goes back to the main menu, and a game's EXIT

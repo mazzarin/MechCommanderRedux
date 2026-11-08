@@ -368,6 +368,30 @@ namespace MCTestGuest
         /// <summary>The host's messages telling this guest to load a mission, so far.</summary>
         int32_t MissionsLoaded() const { return _MissionsLoaded; }
 
+        /// <summary>
+        /// Keeps every message of <paramref name="type"/> the host sends from now on, each once (the host sends a
+        /// guaranteed message again, byte for byte, until it is acknowledged): <see cref="Watched"/>.
+        /// </summary>
+        void Watch(MCMPMessageType type)
+        {
+            const std::lock_guard lock(_Mutex);
+            _WatchedMessages.try_emplace(static_cast<uint16_t>(type));
+        }
+
+        /// <summary>The messages of <paramref name="type"/> (one <see cref="Watch"/> named), in the order they came.</summary>
+        std::vector<std::vector<uint8_t>> Watched(MCMPMessageType type)
+        {
+            const std::lock_guard lock(_Mutex);
+            const auto watched = _WatchedMessages.find(static_cast<uint16_t>(type));
+            return watched != _WatchedMessages.end() ? watched->second : std::vector<std::vector<uint8_t>>();
+        }
+
+        /// <summary>
+        /// Sends <paramref name="message"/> to player <paramref name="to"/> as a game's would (from the listener, which
+        /// owns the connection).
+        /// </summary>
+        template <typename Message> void SendTo(uint32_t to, Message message) { Send(to, message); }
+
     private:
         /// <summary>How long a guest pings (<see cref="Ping"/>), and how often.</summary>
         static constexpr std::chrono::seconds PingTime{1};
@@ -377,6 +401,24 @@ namespace MCTestGuest
         {
             Answer(from, message);
             Keep(message);
+            KeepWatched(message);
+        }
+
+        /// <summary>Keeps <paramref name="message"/> if it is of a watched type, the first time it comes.</summary>
+        void KeepWatched(std::span<const uint8_t> message)
+        {
+            if (message.size() < sizeof(MCFIGuaranteedMessageHeader))
+            {
+                return;
+            }
+
+            const std::lock_guard lock(_Mutex);
+            const auto watched = _WatchedMessages.find(ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type());
+
+            if (watched != _WatchedMessages.end() && _WatchedTaken.emplace(message.begin(), message.end()).second)
+            {
+                watched->second.emplace_back(message.begin(), message.end());
+            }
         }
 
         /// <summary>A ping, while <see cref="Ping"/>'s time lasts.</summary>
@@ -502,6 +544,9 @@ namespace MCTestGuest
         /// <summary>The inquiries and load missions taken, and the messages kept (the listener's own).</summary>
         std::set<std::vector<uint8_t>> _Taken;
         std::set<std::vector<uint8_t>> _Kept;
+        /// <summary>The messages of the watched types taken, and kept by type.</summary>
+        std::set<std::vector<uint8_t>> _WatchedTaken;
+        std::map<uint16_t, std::vector<std::vector<uint8_t>>> _WatchedMessages;
         /// <summary>Until when the guest pings (<see cref="Ping"/>), and its next ping (the listener's own).</summary>
         std::atomic<std::chrono::steady_clock::time_point> _PingUntil{};
         std::chrono::steady_clock::time_point _NextPing{};

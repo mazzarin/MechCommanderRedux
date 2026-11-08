@@ -103,6 +103,13 @@ namespace MCMatchRule
     /// </summary>
     inline constexpr uint32_t NightLights = 1u << 25;
     /// <summary>
+    /// Port-only (Redux HD), not a rule the match plays by: the build takes a dropped player's units into its player's
+    /// command when the server hands them over (MCMPMessageType::Handover, network/MCMechHandover.h), and as the server
+    /// hands them on. The server hands them only to a teammate whose build says so; a server without it hands nothing
+    /// on. Every other game goes on as before: it runs no unit of its own.
+    /// </summary>
+    inline constexpr uint32_t MechHandover = 1u << 26;
+    /// <summary>
     /// Not a rule the match plays by: the build's file report carries the hash of the mission's and the shared
     /// gameplay data (MCMissionDataHash), which the host checks against its own (MCMultiPlayer::CheckFileReport); a
     /// build without it sends the original's "checksum", which says only that the file is there.
@@ -122,7 +129,7 @@ namespace MCMatchRule
     /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
     inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
                                           NoMines | NoProbes | PilotRanks | WeaponBans | DataHash | RejoinsHost |
-                                          NightLights;
+                                          NightLights | MechHandover;
 } // namespace MCMatchRule
 
 /// <summary>A pilot's rank (MCPurPilotData::Rank, MCLogWarrior's): the purchase files' PilotCosts order.</summary>
@@ -656,7 +663,10 @@ public:
 
     void SwitchServers();
 
-    /// <summary>Handles player <paramref name="playerID"/> leaving: host and server hand-over, messages, ending a lone game.</summary>
+    /// <summary>
+    /// Handles player <paramref name="playerID"/> leaving: host and server hand-over, messages, ending a lone game. Port-only
+    /// (Redux HD): in a mission the server hands its units on to a teammate (network/MCMechHandover.h).
+    /// </summary>
     void PlayerLeftGame(uint32_t playerID);
 
     void LeaveSession();
@@ -723,7 +733,10 @@ public:
     std::array<std::weak_ptr<MCMover>, MaxLocalMovers> LocalMovers{};
     /// <summary>Every synchronised mover, by roster index.</summary>
     std::array<std::weak_ptr<MCMover>, MaxMovers> MoverRoster{};
-    /// <summary>Per player number: its movers.</summary>
+    /// <summary>
+    /// Per player number: its movers, by slot (an order names them so). Port-only (Redux HD): a dropped player's go into
+    /// a teammate's free slots (network/MCMechHandover.h), its own left empty.
+    /// </summary>
     std::array<std::array<std::weak_ptr<MCMover>, MaxLocalMovers>, MaxLinkupPlayers> PlayerMoverRoster{};
     /// <summary>Every synchronised turret, by roster index.</summary>
     std::array<std::weak_ptr<MCTurret>, MaxTurrets> TurretRoster{};

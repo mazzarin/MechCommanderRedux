@@ -43,9 +43,11 @@ namespace
             {
                 const std::shared_ptr<MCMover> mover = LockObject(slot);
 
+                // Port-only (Redux HD): an empty slot needn't end the roster: a dropped player's units leave theirs
+                // empty, those it couldn't hand on after them (network/MCMechHandover.h).
                 if (mover == nullptr)
                 {
-                    break;
+                    continue;
                 }
 
                 if (mover.get() == &object)

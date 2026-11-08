@@ -17,7 +17,8 @@ the game folder's Redux backup folder.
 - Renders at your window's resolution during missions (640x480 minimum), and scales
   the menu screens to fit.
 - Multiplayer over TCP/UDP in place of DirectPlay: LAN games are found automatically,
-  and internet games connect by host:port (default port 28800).
+  and internet games are joined from the game's own list, by a friend's code, or by
+  host:port (default port 28800).
 - Many bugs in the original game are fixed.
 
 

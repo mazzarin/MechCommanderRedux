@@ -88,17 +88,17 @@ Its options are on by default, each a row on the HD OPTIONS page (PREFERENCES, t
   brake to a halt through the stopping art the original drew, instead of stopping dead.
 - **Sound.** The HD pack's music, effects and voices, sharper; rain and thunder.
 - **Multiplayer.** The host's MATCH OPTIONS: the weather and time of day everyone plays in (in a match, both change
-  sight, and the weather aim, footing, fires and vehicles' speed), braking, and artillery, probes, sensors and mines on
-  or off. A player whose computer drops out leaves within half a minute, and a teammate still playing takes over
-  their mechs. The host checks that everyone has its mission and game data, and names whoever doesn't.
+  sight, and the weather aim, footing, fires and vehicles' speed), braking, artillery, probes, sensors and mines on
+  or off, the most skilled pilot, and a ban on each kind of weapon. A player whose computer drops out leaves within half
+  a minute, and a teammate still playing takes over their mechs. The host checks that everyone has its mission and game
+  data, and names whoever doesn't. Also: internet games beside LAN, the match going on when the host leaves, and
+  REMATCH.
 - **Mission Editor.** Mission > Time of Day and Mission > Weather.
-- **Menus.** UPDATE on the main menu (the Mac app updates itself), and INTERFACE SIZE on the Preferences screen.
+- **Menus.** UPDATE on the main menu (the game updates itself), and INTERFACE SIZE on the Preferences screen.
 
 ## Coming
 
-- The one download per platform: the app, the game and the HD pack.
-- Windows: a release that updates itself, as the Mac's does.
-- Updates to the HD pack, and new missions and maps, downloaded as they change.
+- New missions and maps, downloaded as they change.
 
 ## Reports
 

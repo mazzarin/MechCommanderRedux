@@ -134,11 +134,19 @@ adds are in the [README](README.md#what-redux-hd-adds).
   join the end of the teammate's mech bar, and keep their last orders until given new ones. Any that don't fit (a
   player commands 12) go to the next teammate. Their kills still count for the player who dropped. A teammate whose
   game is older is passed over, and a host whose game is older hands nothing on; with no one to take them, the units
-  stand where they were, as in the original. The host's own leaving still ends the match.
-- Modem, serial cable, lobby (MPlayer, Zone) and host migration aren't supported.
-- **Redux HD.** MULTIPLAYER opens the local network's games straight away: the connection screen (modem, serial,
-  network, internet) and its IPX or TCP question are gone. CANCEL there goes back to the main menu, and a game's EXIT
-  back to the games.
+  stand where they were, as in the original. The host's own mechs are handed on the same way when another player's game
+  takes over as host (below).
+- Modem, serial cable and lobbies (MPlayer, Zone) aren't supported.
+- **Redux HD.** MULTIPLAYER offers INTERNET and LAN: the connection screen's modem and serial and its IPX or TCP
+  question are gone. LAN opens the local network's games straight away. INTERNET lists the open games and joins a
+  friend's by its code, with no addresses or ports. CANCEL goes back a step, and a game's EXIT back to the games.
+- **Redux HD.** When the host's game leaves (it drops, quits, or EXITs the room), another player's game takes the room
+  or the match over: the chat says who is now the host, and everyone's picks stay. With no game able to take over (only
+  older builds left), the room or match ends as before.
+- **Redux HD.** The battle's results give the host REMATCH beside DONE: everyone comes back to the same room, with the
+  same players, teams and picks. Not in a launcher's games, whose rooms are the launcher's.
+- **Redux HD.** A player away from a room for 10 minutes is asked "ARE YOU STILL THERE?", and leaves the room without an
+  answer within a minute. Never in battle.
 - **Redux HD.** No ready room: hosting or joining a game, from the menu or a launcher's `-host` and `-join`, goes
   straight to the session screen, which takes players until START. A player who joins sees the room as it stands
   (teams, mission, points, options) and the host's picks stay; one who leaves is taken off the screen and the game

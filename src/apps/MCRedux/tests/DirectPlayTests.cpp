@@ -501,3 +501,508 @@ TEST_CASE("directplay: a search for a typed host ignores answers about other ses
     CHECK(listed.empty());
     MCSocket::Close(typed);
 }
+
+// Port-only (Redux HD): the session rolling over to another machine when its host goes (SPEC-host-rollover.md), with
+// three machines on the loopback.
+
+namespace
+{
+    using Machines = std::initializer_list<std::reference_wrapper<MCDirectPlay>>;
+
+    /// <summary>Pumps each of <paramref name="machines"/> once.</summary>
+    void PumpEach(Machines machines)
+    {
+        for (MCDirectPlay& machine : machines)
+        {
+            machine.Pump();
+        }
+    }
+
+    /// <summary>The next message for <paramref name="directPlay"/>, pumping <paramref name="others"/> meanwhile.</summary>
+    std::optional<Received> NextAmong(MCDirectPlay& directPlay, Machines others, uint64_t waitMs = 2000)
+    {
+        const uint64_t until = SDL_GetTicks() + waitMs;
+
+        for (;;)
+        {
+            std::array<uint8_t, 512> buffer{};
+            uint32_t size = 0;
+            Received received;
+
+            if (directPlay.Receive(received.From, received.To, DPRECEIVE_ALL, buffer, size) == DP_OK)
+            {
+                received.Bytes.assign(buffer.begin(), buffer.begin() + size);
+                return received;
+            }
+
+            if (SDL_GetTicks() > until)
+            {
+                return std::nullopt;
+            }
+
+            PumpEach(others);
+            SDL_Delay(1);
+        }
+    }
+
+    /// <summary>Every message <paramref name="directPlay"/> gets until it is quiet, <paramref name="others"/> pumped.</summary>
+    std::vector<Received> Drain(MCDirectPlay& directPlay, Machines others)
+    {
+        constexpr uint64_t quietMs = 150;
+        std::vector<Received> all;
+
+        while (std::optional<Received> next = NextAmong(directPlay, others, quietMs))
+        {
+            all.push_back(std::move(*next));
+        }
+
+        return all;
+    }
+
+    /// <summary>The system messages' types in <paramref name="messages"/>, in order.</summary>
+    std::vector<uint32_t> SystemTypes(const std::vector<Received>& messages)
+    {
+        std::vector<uint32_t> types;
+
+        for (const Received& message : messages)
+        {
+            if (message.From == DPID_SYSMSG)
+            {
+                types.push_back(message.SystemType());
+            }
+        }
+
+        return types;
+    }
+
+    /// <summary>Has <paramref name="joiner"/> find and join the session at <paramref name="address"/> as a new player.</summary>
+    uint32_t JoinAs(MCDirectPlay& joiner, MCDirectPlay& host, std::string_view address, std::string_view name)
+    {
+        uint32_t id = 0;
+        REQUIRE_EQ(Connect(joiner, address), DP_OK);
+        const std::vector<DPSESSIONDESC2> sessions = Enumerate(joiner, host, DPENUMSESSIONS_AVAILABLE);
+        REQUIRE_EQ(sessions.size(), size_t{1});
+        REQUIRE_EQ(WithHostRunning(host, [&] { return joiner.Open(sessions[0], DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }),
+                   DP_OK);
+        REQUIRE_EQ(WithHostRunning(host, [&] { return NewPlayer(joiner, name, id); }), DP_OK);
+        return id;
+    }
+
+    /// <summary>
+    /// A session of three machines at <paramref name="address"/> (a typed host, or a LAN search's ":port"): the host's
+    /// Bob, then Ann's machine, then Cat's, the three players in the host's group "Team", each machine's messages so
+    /// far taken.
+    /// </summary>
+    struct ThreeMachines
+    {
+        explicit ThreeMachines(uint16_t port) : ThreeMachines(std::format("127.0.0.1:{}", port)) {}
+
+        explicit ThreeMachines(std::string address) : Address(std::move(address))
+        {
+            REQUIRE_EQ(Connect(*Host, Address), DP_OK);
+            REQUIRE_EQ(::Host(*Host, "Rolling", 6), DP_OK);
+            REQUIRE_EQ(NewPlayer(*Host, "Bob", Bob), DP_OK);
+            REQUIRE_EQ(Host->CreateGroup(Team, DPNAME{std::string("Team"), std::nullopt}, {}, 0), DP_OK);
+            Ann = JoinAs(AnnMachine, *Host, Address, "Ann");
+            Cat = JoinAs(CatMachine, *Host, Address, "Cat");
+
+            for (const uint32_t player : {Bob, Ann, Cat})
+            {
+                REQUIRE_EQ(Host->AddPlayerToGroup(Team, player), DP_OK);
+            }
+
+            Drain(*Host, {AnnMachine, CatMachine});
+            Drain(AnnMachine, {*Host, CatMachine});
+            Drain(CatMachine, {*Host, AnnMachine});
+        }
+
+        std::string Address;
+        std::optional<MCDirectPlay> Host{std::in_place};
+        MCDirectPlay AnnMachine;
+        MCDirectPlay CatMachine;
+        uint32_t Bob = 0;
+        uint32_t Ann = 0;
+        uint32_t Cat = 0;
+        uint32_t Team = 0;
+    };
+
+    /// <summary>Whether <paramref name="messages"/> hold Bob's leave, flagged as the hub's player, after his group's.</summary>
+    bool HubLeft(const std::vector<Received>& messages, uint32_t bob, uint32_t team)
+    {
+        const auto left = std::ranges::find_if(messages,
+                                               [&](const Received& message)
+                                               {
+                                                   return message.From == DPID_SYSMSG &&
+                                                          message.SystemType() == DPSYS_DESTROYPLAYERORGROUP &&
+                                                          message.As<DPMSG_DESTROYPLAYERORGROUP>().dpId == bob;
+                                               });
+        const auto outOfTeam = std::ranges::find_if(messages,
+                                                    [&](const Received& message)
+                                                    {
+                                                        return message.From == DPID_SYSMSG &&
+                                                               message.SystemType() == DPSYS_DELETEPLAYERFROMGROUP &&
+                                                               message.As<DPMSG_ADDPLAYERTOGROUP>().dpIdPlayer == bob &&
+                                                               message.As<DPMSG_ADDPLAYERTOGROUP>().dpIdGroup == team;
+                                                    });
+        return left != messages.end() && outOfTeam < left &&
+               (left->As<DPMSG_DESTROYPLAYERORGROUP>().dwFlags & DPPLAYER_SERVERPLAYER) != 0;
+    }
+
+    /// <summary>A frame of the stand-in's own protocol, as a test speaking it raw writes one.</summary>
+    std::vector<uint8_t> RawFrame(uint8_t type, std::span<const uint8_t> payload)
+    {
+        std::vector<uint8_t> frame;
+        const auto size = static_cast<uint32_t>(payload.size() + 1);
+
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            frame.push_back(static_cast<uint8_t>(size >> shift));
+        }
+
+        frame.push_back(type);
+        frame.insert(frame.end(), payload.begin(), payload.end());
+        return frame;
+    }
+
+    /// <summary>Appends a little-endian word, a GUID as the stand-in writes one, or a length-prefixed blob.</summary>
+    void PutU32(std::vector<uint8_t>& bytes, uint32_t value)
+    {
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            bytes.push_back(static_cast<uint8_t>(value >> shift));
+        }
+    }
+
+    void PutGuid(std::vector<uint8_t>& bytes, const _GUID& guid)
+    {
+        const auto raw = std::bit_cast<std::array<uint8_t, sizeof(_GUID)>>(guid);
+        bytes.insert(bytes.end(), raw.begin(), raw.end());
+    }
+
+    void PutBlob(std::vector<uint8_t>& bytes, std::span<const uint8_t> blob)
+    {
+        PutU32(bytes, static_cast<uint32_t>(blob.size()));
+        bytes.insert(bytes.end(), blob.begin(), blob.end());
+    }
+
+    /// <summary>The frame types the raw tests send and read (MCDirectPlay.cpp's FrameType).</summary>
+    constexpr uint8_t JoinRequestFrame = 1;
+    constexpr uint8_t JoinReplyFrame = 2;
+    constexpr uint8_t CreatePlayerFrame = 3;
+    constexpr uint8_t CreateReplyFrame = 5;
+    constexpr uint8_t ResumeFrame = 15;
+    constexpr uint8_t ResumeReplyFrame = 16;
+    /// <summary>The first word of the stand-in's join: "MCG1".</summary>
+    constexpr uint32_t RawMagic = 0x3147434d;
+
+    /// <summary>Reads the next whole frame from <paramref name="socket"/> (its type and payload), pumping meanwhile.</summary>
+    std::optional<std::pair<uint8_t, std::vector<uint8_t>>> RawRead(MCSocket::Handle socket, Machines pumped)
+    {
+        constexpr uint64_t waitMs = 2000;
+        const uint64_t until = SDL_GetTicks() + waitMs;
+        std::vector<uint8_t> input;
+
+        while (SDL_GetTicks() < until)
+        {
+            std::array<uint8_t, 4096> chunk{};
+            const int received = MCSocket::Receive(socket, chunk);
+
+            if (received > 0)
+            {
+                input.insert(input.end(), chunk.begin(), chunk.begin() + received);
+            }
+
+            if (input.size() >= 5)
+            {
+                const uint32_t size = input[0] | (input[1] << 8) | (input[2] << 16) | (uint32_t{input[3]} << 24);
+
+                if (input.size() >= 4 + size)
+                {
+                    return std::pair(input[4], std::vector<uint8_t>(input.begin() + 5, input.begin() + 4 + size));
+                }
+            }
+
+            if (received < 0)
+            {
+                return std::nullopt;
+            }
+
+            PumpEach(pumped);
+            SDL_Delay(1);
+        }
+
+        return std::nullopt;
+    }
+
+    /// <summary>Whether <paramref name="socket"/>'s other end closes it within a while (pumping meanwhile).</summary>
+    bool RawClosed(MCSocket::Handle socket, Machines pumped)
+    {
+        constexpr uint64_t waitMs = 2000;
+        const uint64_t until = SDL_GetTicks() + waitMs;
+
+        while (SDL_GetTicks() < until)
+        {
+            std::array<uint8_t, 4096> chunk{};
+
+            if (MCSocket::Receive(socket, chunk) < 0)
+            {
+                return true;
+            }
+
+            PumpEach(pumped);
+            SDL_Delay(1);
+        }
+
+        return false;
+    }
+
+    /// <summary>The result word a reply frame starts with.</summary>
+    uint32_t ReplyResult(std::span<const uint8_t> payload, size_t at = 0)
+    {
+        return payload.size() < at + 4
+                   ? DPERR_GENERIC
+                   : payload[at] | (payload[at + 1] << 8) | (payload[at + 2] << 16) | (uint32_t{payload[at + 3]} << 24);
+    }
+}
+
+/// <summary>
+/// The host's link cut (its machine gone without a word): the session goes on under Ann's machine, the earliest
+/// joined, with the same instance, players, ids and groups; Cat's machine comes back to it. Ann's game hears Bob leave
+/// (out of his group first, flagged as the hub's player) and that it hosts; Cat's hears Bob leave. Messages go between
+/// the two, the group's still reach its members, and a new machine finds the session on its port and joins it, its
+/// player numbered on from the highest. (On the process's own network: a LAN search reaches every machine on the port.)
+/// </summary>
+TEST_CASE("directplay: the host's link cut, the session rolls over to the earliest joined machine, the same ids kept")
+{
+    MCTestContextScope scope;
+    scope.Context().SetNet(std::make_unique<MCLoopbackTransport>());
+    ThreeMachines session(":28961");
+    const std::vector<DPSESSIONDESC2> before = Enumerate(session.CatMachine, *session.Host, 0);
+    REQUIRE_EQ(before.size(), size_t{1});
+    session.Host.reset();
+
+    const std::vector<Received> ann = Drain(session.AnnMachine, {session.CatMachine});
+    const std::vector<Received> cat = Drain(session.CatMachine, {session.AnnMachine});
+    CHECK(HubLeft(ann, session.Bob, session.Team));
+    CHECK(HubLeft(cat, session.Bob, session.Team));
+    CHECK(std::ranges::contains(SystemTypes(ann), uint32_t{DPSYS_HOST}));
+    CHECK(!std::ranges::contains(SystemTypes(cat), uint32_t{DPSYS_HOST}));
+    CHECK(!std::ranges::contains(SystemTypes(cat), uint32_t{DPSYS_SESSIONLOST}));
+    CHECK(!session.CatMachine.RollingOver());
+
+    // Ann's player speaks for the session now, on both machines; the players and the group are as they were.
+    CHECK(session.AnnMachine.IsSessionHostPlayer(session.Ann));
+    CHECK(session.CatMachine.IsSessionHostPlayer(session.Ann));
+    CHECK(!session.CatMachine.IsSessionHostPlayer(session.Cat));
+    const std::map<uint32_t, std::string> players{{session.Ann, "Ann"}, {session.Cat, "Cat"}};
+    CHECK(Listed(session.AnnMachine, false) == players);
+    CHECK(Listed(session.CatMachine, false) == players);
+    const std::map<uint32_t, std::string> groups{{session.Team, "Team"}};
+    CHECK(Listed(session.AnnMachine, true) == groups);
+    CHECK(Listed(session.CatMachine, true) == groups);
+
+    REQUIRE_EQ(session.CatMachine.Send(session.Cat, session.Ann, 0, Bytes("to the new host")), DP_OK);
+    std::optional<Received> toAnn = NextAmong(session.AnnMachine, {session.CatMachine});
+    REQUIRE(toAnn.has_value());
+    CHECK_EQ(toAnn->From, session.Cat);
+    CHECK_EQ(toAnn->Text(), std::string("to the new host"));
+    REQUIRE_EQ(session.AnnMachine.Send(session.Ann, session.Team, 0, Bytes("team")), DP_OK);
+    std::optional<Received> toCat = NextAmong(session.CatMachine, {session.AnnMachine});
+    REQUIRE(toCat.has_value());
+    CHECK_EQ(toCat->From, session.Ann);
+    CHECK_EQ(toCat->Text(), std::string("team"));
+
+    // A new machine finds the same session on its port, now Ann's, and joins it.
+    MCDirectPlay danMachine;
+    REQUIRE_EQ(Connect(danMachine, session.Address), DP_OK);
+    const std::vector<DPSESSIONDESC2> after = Enumerate(danMachine, session.AnnMachine, 0);
+    REQUIRE_EQ(after.size(), size_t{1});
+    CHECK(MCSameGuid(after[0].guidInstance, before[0].guidInstance));
+    CHECK_EQ(after[0].dwCurrentPlayers, 2u);
+    uint32_t dan = 0;
+    REQUIRE_EQ(WithHostRunning(session.AnnMachine,
+                               [&] { return danMachine.Open(after[0], DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }),
+               DP_OK);
+    REQUIRE_EQ(WithHostRunning(session.AnnMachine, [&] { return NewPlayer(danMachine, "Dan", dan); }), DP_OK);
+    CHECK(dan > std::max({session.Bob, session.Ann, session.Cat, session.Team}));
+    std::optional<Received> danJoined = NextAmong(session.CatMachine, {session.AnnMachine, danMachine});
+    REQUIRE(danJoined.has_value());
+    CHECK_EQ(danJoined->SystemType(), uint32_t{DPSYS_CREATEPLAYERORGROUP});
+    CHECK_EQ(danJoined->As<DPMSG_CREATEPLAYERORGROUP>().dpId, dan);
+}
+
+/// <summary>
+/// A host that leaves the session (Leave, the game's EXIT and quit) hands it on as one whose link is cut; one that
+/// closes it (Close: a host restarting into an update, whose guests wait for it) ends it for everyone.
+/// </summary>
+TEST_CASE("directplay: a host that leaves hands the session on; one that closes it ends it for everyone")
+{
+    {
+        ThreeMachines session(28962);
+        REQUIRE_EQ(session.Host->Leave(), DP_OK);
+        const std::vector<Received> ann = Drain(session.AnnMachine, {session.CatMachine});
+        const std::vector<Received> cat = Drain(session.CatMachine, {session.AnnMachine});
+        CHECK(HubLeft(ann, session.Bob, session.Team));
+        CHECK(HubLeft(cat, session.Bob, session.Team));
+        CHECK(Listed(session.CatMachine, false) ==
+              (std::map<uint32_t, std::string>{{session.Ann, "Ann"}, {session.Cat, "Cat"}}));
+    }
+
+    ThreeMachines session(28963);
+    REQUIRE_EQ(session.Host->Close(), DP_OK);
+    CHECK(SystemTypes(Drain(session.AnnMachine, {session.CatMachine})) ==
+          std::vector<uint32_t>{uint32_t{DPSYS_SESSIONLOST}});
+    CHECK(SystemTypes(Drain(session.CatMachine, {session.AnnMachine})) ==
+          std::vector<uint32_t>{uint32_t{DPSYS_SESSIONLOST}});
+}
+
+/// <summary>
+/// Only a machine itself comes back as itself: a connection to the new hub asking to be Cat's machine with another key
+/// is refused and closed, and Cat's own comes back after it. (Machines are numbered as they join: the host's 0, Ann's
+/// 1, Cat's 2.)
+/// </summary>
+TEST_CASE("directplay: a machine coming back to the new hub with the wrong key is refused")
+{
+    constexpr uint16_t port = 28964;
+    constexpr uint32_t catMachine = 2;
+    ThreeMachines session(port);
+    const std::vector<DPSESSIONDESC2> sessions = Enumerate(session.CatMachine, *session.Host, 0);
+    REQUIRE_EQ(sessions.size(), size_t{1});
+    session.Host.reset();
+
+    // Ann's machine takes over; Cat's isn't pumped yet, so its slot waits.
+    std::vector<Received> ann = Drain(session.AnnMachine, {});
+    REQUIRE(std::ranges::contains(SystemTypes(ann), uint32_t{DPSYS_HOST}));
+
+    // A search on the session's port is answered by the new hub, naming its own port: an impostor connects there and
+    // asks to be Cat's machine.
+    uint16_t hubPort = 0;
+    {
+        const MCSocket::Handle udp = MCSocket::OpenUdp(0);
+        REQUIRE(udp != MCSocket::InvalidHandle);
+        std::vector<uint8_t> query;
+        PutU32(query, RawMagic);
+        query.push_back(1);
+        PutGuid(query, TestApplication);
+        REQUIRE(MCSocket::SendTo(udp, {MCSocket::LoopbackIp, port}, query));
+
+        for (int attempt = 0; attempt < SearchAttempts * 10 && hubPort == 0; attempt++)
+        {
+            session.AnnMachine.Pump();
+            std::array<uint8_t, 1500> answer{};
+            MCSocket::Address from;
+
+            // Magic, kind, then the port joins go to.
+            if (MCSocket::ReceiveFrom(udp, answer, from) > 7)
+            {
+                hubPort = static_cast<uint16_t>(answer[5] | (answer[6] << 8));
+            }
+
+            SDL_Delay(1);
+        }
+
+        MCSocket::Close(udp);
+    }
+
+    REQUIRE(hubPort != 0);
+    CHECK(hubPort != port);
+    const MCSocket::Handle impostor = MCSocket::ConnectTcp({MCSocket::LoopbackIp, hubPort}, 1000);
+    REQUIRE(impostor != MCSocket::InvalidHandle);
+    std::vector<uint8_t> resume;
+    PutU32(resume, RawMagic);
+    PutGuid(resume, TestApplication);
+    PutGuid(resume, sessions[0].guidInstance);
+    PutU32(resume, catMachine);
+    const std::vector<uint8_t> wrongKey(32, 0x5a);
+    PutBlob(resume, wrongKey);
+    PutBlob(resume, wrongKey);
+    PutU32(resume, 1);
+    resume.push_back(0);
+    resume.push_back(0);
+    REQUIRE_EQ(MCSocket::Send(impostor, RawFrame(ResumeFrame, resume)), static_cast<int>(resume.size() + 5));
+    const auto refused = RawRead(impostor, {session.AnnMachine});
+    REQUIRE(refused.has_value());
+    CHECK_EQ(int{refused->first}, int{ResumeReplyFrame});
+    CHECK(ReplyResult(refused->second) != uint32_t{DP_OK});
+    CHECK(RawClosed(impostor, {session.AnnMachine}));
+    MCSocket::Close(impostor);
+
+    // Cat's own machine comes back, its player Cat's as before.
+    const std::vector<Received> cat = Drain(session.CatMachine, {session.AnnMachine});
+    CHECK(HubLeft(cat, session.Bob, session.Team));
+    CHECK(Listed(session.AnnMachine, false) ==
+          (std::map<uint32_t, std::string>{{session.Ann, "Ann"}, {session.Cat, "Cat"}}));
+    REQUIRE_EQ(session.CatMachine.Send(session.Cat, session.Ann, 0, Bytes("me")), DP_OK);
+    std::optional<Received> me = NextAmong(session.AnnMachine, {session.CatMachine});
+    REQUIRE(me.has_value());
+    CHECK_EQ(me->From, session.Cat);
+}
+
+/// <summary>
+/// An older build's joiner (its join says nothing of the rollover) never takes the session over: its players go with
+/// the host's, on the new hub and the machine coming back to it, and its link ends with the host's machine.
+/// </summary>
+TEST_CASE("directplay: an older build's joiner loses the session as its host goes, its players let go")
+{
+    constexpr uint16_t port = 28965;
+    ThreeMachines session(port);
+    const std::vector<DPSESSIONDESC2> sessions = Enumerate(session.CatMachine, *session.Host, 0);
+    REQUIRE_EQ(sessions.size(), size_t{1});
+
+    // The older build joins as release 1's did: its join's words end with the password; then its player.
+    const MCSocket::Handle older = MCSocket::ConnectTcp({MCSocket::LoopbackIp, port}, 1000);
+    REQUIRE(older != MCSocket::InvalidHandle);
+    std::vector<uint8_t> join;
+    PutU32(join, RawMagic);
+    PutGuid(join, TestApplication);
+    PutGuid(join, sessions[0].guidInstance);
+    PutBlob(join, {});
+    MCSocket::Send(older, RawFrame(JoinRequestFrame, join));
+    const auto joined = RawRead(older, {*session.Host});
+    REQUIRE(joined.has_value());
+    CHECK_EQ(int{joined->first}, int{JoinReplyFrame});
+    CHECK_EQ(ReplyResult(joined->second), uint32_t{DP_OK});
+    std::vector<uint8_t> create;
+    PutU32(create, 1);
+    PutU32(create, 0);
+    PutU32(create, DPPLAYERTYPE_PLAYER);
+    PutU32(create, 0);
+    PutU32(create, 0);
+    const std::string_view name = "Old";
+    PutBlob(create, Bytes(name));
+    PutBlob(create, {});
+    PutBlob(create, {});
+    PutU32(create, 0);
+    MCSocket::Send(older, RawFrame(CreatePlayerFrame, create));
+    const auto created = RawRead(older, {*session.Host});
+    REQUIRE(created.has_value());
+    CHECK_EQ(int{created->first}, int{CreateReplyFrame});
+    REQUIRE_EQ(ReplyResult(created->second, 4), uint32_t{DP_OK});
+    const uint32_t old = ReplyResult(created->second, 8);
+    Drain(session.AnnMachine, {*session.Host, session.CatMachine});
+    Drain(session.CatMachine, {*session.Host, session.AnnMachine});
+    REQUIRE(Listed(session.CatMachine, false).contains(old));
+
+    session.Host.reset();
+    const auto leftOf = [](const std::vector<Received>& messages, uint32_t id)
+    {
+        return std::ranges::any_of(messages,
+                                   [&](const Received& message)
+                                   {
+                                       return message.From == DPID_SYSMSG &&
+                                              message.SystemType() == DPSYS_DESTROYPLAYERORGROUP &&
+                                              message.As<DPMSG_DESTROYPLAYERORGROUP>().dpId == id;
+                                   });
+    };
+
+    const std::vector<Received> ann = Drain(session.AnnMachine, {session.CatMachine});
+    const std::vector<Received> cat = Drain(session.CatMachine, {session.AnnMachine});
+    CHECK(leftOf(ann, old));
+    CHECK(leftOf(cat, old));
+    CHECK(HubLeft(cat, session.Bob, session.Team));
+    const std::map<uint32_t, std::string> players{{session.Ann, "Ann"}, {session.Cat, "Cat"}};
+    CHECK(Listed(session.AnnMachine, false) == players);
+    CHECK(Listed(session.CatMachine, false) == players);
+    CHECK(RawClosed(older, {}));
+    MCSocket::Close(older);
+}

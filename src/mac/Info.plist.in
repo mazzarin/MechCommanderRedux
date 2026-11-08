@@ -30,10 +30,11 @@
   <string>@MC_MIN_MACOS@</string>
   <key>NSHighResolutionCapable</key>
   <true/>
-  <!-- The updater (Sparkle): the fork's feed, from its latest release; the game looks once a start itself, and
-       installs only an update signed with this key's private half (generate_keys, the releaser's login Keychain). -->
+  <!-- The updater (Sparkle): Redux HD's feed, on its downloads host (before 0.6.0, the fork's latest GitHub release);
+       the game looks once a start itself, and installs only an update signed with this key's private half
+       (generate_keys, the releaser's login Keychain). -->
   <key>SUFeedURL</key>
-  <string>https://github.com/mazzarin/MechCommanderRedux/releases/latest/download/appcast.xml</string>
+  <string>https://mechcommander-redux-downloads.mazzarin.workers.dev/mac/appcast.xml</string>
   <key>SUPublicEDKey</key>
   <string>uJU9bzHfuaVaOzO0OUxodWg8ExKCBxWjoVxYLyoWrqw=</string>
   <key>SUEnableAutomaticChecks</key>

@@ -514,12 +514,14 @@ macOS too. Its version comes from `version.json` and git, as on Windows.
 
 ### Releases
 
-**Redux HD:** the Mac app is released on
+**Redux HD:** each release's Mac package and Windows setup are on
 [this fork's Releases page](https://github.com/mazzarin/MechCommanderRedux/releases), each with a higher build than
-the last, beside `appcast.xml`, the feed every copy checks for a newer version
-([Sparkle](https://sparkle-project.org); the updates are signed with a key kept off the repository). This branch's
-commits are checked on Windows by pushing them to `windows-HD`, which builds and tests Redux HD there
-(`.github/workflows/windows.yml`), keeping the exes for a week.
+the last, and its game files on Redux HD's downloads host. The game updates itself from there: on Windows by running
+the new setup, on the Mac through [Sparkle](https://sparkle-project.org), whose feed (`mac/appcast.xml`) and zipped
+apps are on the downloads host too (copies before 0.6.0 read the feed from the latest release on the Releases page).
+Updates are signed with keys kept off the repository. This branch's commits are checked on Windows by running
+`.github/workflows/windows.yml` on it by hand, or by pushing them to a `windows-*` branch, which builds and tests Redux
+HD there, keeping the exes for a week.
 
 MechCommander Redux's own releases come from the **Release** workflow (Actions → Release → Run workflow), which builds
 `main`, runs the tests, tags the commit `v<version>` and publishes the Windows zip, its symbols and the Mac app on

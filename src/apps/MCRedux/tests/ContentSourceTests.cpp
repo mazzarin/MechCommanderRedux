@@ -489,10 +489,11 @@ TEST_CASE("content source: the waits to try again grow to a cap and ride out two
     CHECK(waited - waits.back() < std::chrono::minutes(2));
     CHECK(waits.back() == MCHttpSource::LongestRetryWait);
 
-    // A source follows its schedule: busy through every wait, it gets the file; busy past them, it gives up.
+    // A source follows its schedule (without jitter, its waits each their longest): busy through every wait, it gets
+    // the file; busy past them, it gives up.
     const std::string zip = Bytes(ZipBytes);
     MCTestHost host({{std::string(ZipName), zip}});
-    const MCHttpSource::MCRetries quick{.First = 10ms, .Longest = 40ms, .RideOut = 300ms};
+    const MCHttpSource::MCRetries quick{.First = 10ms, .Longest = 40ms, .RideOut = 300ms, .Jitter = 0};
     const size_t tries = MCHttpSource::RetryWaits(quick).size() + 1;
     auto source = MCHttpSource::Make(host.Address(), MCMakeHttpGet, quick);
     REQUIRE(source.has_value());
@@ -507,6 +508,13 @@ TEST_CASE("content source: the waits to try again grow to a cap and ride out two
     CHECK(Fetch(**source, ZipName, folder.Path() / "gave-up.zip", zip.size(), received).error_or("").find("503") !=
           std::string::npos);
     CHECK_EQ(host.Ranges().size(), 2 * tries);
+
+    // With jitter its waits are shorter and it makes more of them: the same outage is still ridden out.
+    const MCHttpSource::MCRetries jittered{.First = quick.First, .Longest = quick.Longest, .RideOut = quick.RideOut};
+    auto spread = MCHttpSource::Make(host.Address(), MCMakeHttpGet, jittered);
+    REQUIRE(spread.has_value());
+    host.FailNext(Unavailable, static_cast<int>(tries) - 1);
+    CHECK_EQ(Fetch(**spread, ZipName, folder.Path() / "spread.zip", zip.size(), received).error_or(""), std::string());
 
     // Waiting half a minute to try again, a cancel ends the wait at once.
     const MCHttpSource::MCRetries slow{.First = MCHttpSource::LongestRetryWait};
@@ -797,8 +805,8 @@ TEST_CASE("content source: a small file is read whole, one too big refused; only
 
 namespace
 {
-    /// <summary>Quick waits between rounds of the hosts: three waits, so four rounds.</summary>
-    const MCHttpSource::MCRetries QuickRetries{.First = 10ms, .Longest = 20ms, .RideOut = 50ms};
+    /// <summary>Quick waits between rounds of the hosts, without jitter: three waits, so four rounds.</summary>
+    const MCHttpSource::MCRetries QuickRetries{.First = 10ms, .Longest = 20ms, .RideOut = 50ms, .Jitter = 0};
 
     /// <summary>Each file starts from the last host it may come from: the last mirror, while it isn't passed over.</summary>
     const MCHttpSource::MCPick PickLast = [](size_t hosts) { return hosts - 1; };

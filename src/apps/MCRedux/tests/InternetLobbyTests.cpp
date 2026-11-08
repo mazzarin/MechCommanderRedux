@@ -19,8 +19,10 @@ namespace
     constexpr std::string_view ListUrl = "wss://games.test/list?proto=1";
     constexpr std::string_view CountUrl = "https://games.test/count";
     constexpr std::string_view Version = "0.6.0 (812)";
-    /// <summary>A dropped list comes back in a second (the list's first try), well within this.</summary>
-    constexpr auto ComebackPatience = std::chrono::seconds(3);
+    /// <summary>A dropped list is back within its first try's spread (MCServiceComebackTries).</summary>
+    constexpr auto ComebackPatience = MCServiceComebackTries.FirstSpread + std::chrono::seconds(2);
+    /// <summary>The count's stand-in answers at once, and stops at once when destroyed: well within this.</summary>
+    constexpr auto AnswerPatience = std::chrono::seconds(3);
     constexpr auto StepWait = std::chrono::milliseconds(10);
     constexpr int32_t DayHours = 24;
     constexpr std::chrono::minutes UtcAlone{0};
@@ -165,7 +167,7 @@ TEST_CASE("internet lobby: the list as the service sends it, a game that isn't o
     CHECK(list->Listing()->Online == 38);
     CHECK(list->Listing()->Games.empty());
 
-    // A drop (the service's deploy): the list is gone until the socket's back, a second later.
+    // A drop (the service's deploy): the list is gone until the socket's back, a few seconds later at most.
     script.State = MCWebSocket::State::Closed;
     CHECK(list->Update());
     CHECK(!list->Listing().has_value());
@@ -204,7 +206,7 @@ TEST_CASE("internet lobby: the count asked once by the service's plain request, 
     std::string asked;
     const auto waitDone = [](MCInternetCount& count)
     {
-        const auto deadline = Clock::now() + ComebackPatience;
+        const auto deadline = Clock::now() + AnswerPatience;
 
         while (!count.Done() && Clock::now() < deadline)
         {
@@ -243,7 +245,7 @@ TEST_CASE("internet lobby: the count asked once by the service's plain request, 
         CHECK(!count->Done());
         const auto before = Clock::now();
         count.reset();
-        CHECK(Clock::now() - before < ComebackPatience);
+        CHECK(Clock::now() - before < AnswerPatience);
     }
 
     // No transfer set: nothing is asked.

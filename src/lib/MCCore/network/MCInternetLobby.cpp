@@ -41,10 +41,12 @@ namespace
     /// <summary>The count's answer, {"online":n}: anything longer isn't it.</summary>
     constexpr size_t MostCountBody = 256;
 
-    /// <summary>Coming back after a drop: each try waits twice the last, from a second up to half a minute.</summary>
-    constexpr std::chrono::milliseconds FirstTry = std::chrono::seconds(1);
-    constexpr std::chrono::milliseconds LongestWait = std::chrono::seconds(30);
-    constexpr int32_t MostDoublings = 16;
+    /// <summary>
+    /// Coming back after a drop, as every socket to the service does: each try waits up to twice the last, from a
+    /// second up to half a minute, the first anywhere in its first few seconds (the service's deploy drops every list
+    /// at once).
+    /// </summary>
+    constexpr MCRetryDelay Comeback = MCServiceComebackTries;
 
     /// <summary>A busy hour or day: at least this share of the busiest one's mean.</summary>
     constexpr double BusyShare = 0.75;
@@ -467,7 +469,7 @@ void MCInternetList::Reopen(Clock::time_point now)
     if (_Ws == nullptr)
     {
         SDL_Log("MCInternetList: the system couldn't open a socket to the service's list");
-        Dropped(now, LongestWait);
+        Dropped(now, Comeback.Most);
     }
 }
 
@@ -522,19 +524,13 @@ bool MCInternetList::Update()
     {
         case MCWebSocket::State::Open:
         {
-            if (now - _LastPing >= MCServicePingEvery)
-            {
-                _Ws->SendText(MCServicePing);
-                _LastPing = now;
-            }
-
+            MCServicePingIfDue(*_Ws, _LastPing, now);
             break;
         }
 
         case MCWebSocket::State::Closed:
         {
-            const auto wait =
-                std::min<std::chrono::milliseconds>(FirstTry * (1LL << std::min(_Tries, MostDoublings)), LongestWait);
+            const std::chrono::milliseconds wait = Comeback.Wait(_Tries);
             SDL_Log("MCInternetList: the list's socket closed (%s); trying again in %lld ms", _Ws->WhyClosed().c_str(),
                     static_cast<long long>(wait.count()));
             changed |= _Listing.has_value();
@@ -594,7 +590,7 @@ bool MCInternetList::Hear(const MCWebSocket::Message& message)
     if (refusal == MCServiceRefusal::TooManyTries)
     {
         // Its close follows: the next try waits the longest.
-        _Tries = MostDoublings;
+        _Tries = MCRetryDelay::MostDoublings;
         return false;
     }
 

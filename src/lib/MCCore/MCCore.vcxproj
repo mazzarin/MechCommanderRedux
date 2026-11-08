@@ -653,6 +653,7 @@
     <ClInclude Include="lib\MCPacketFile.h" />
     <ClInclude Include="lib\MCPriorityQueue.h" />
     <ClInclude Include="lib\MCRandomId.h" />
+    <ClInclude Include="lib\MCRetryDelay.h" />
     <ClInclude Include="lib\MCSha256.h" />
     <ClInclude Include="lib\MCVector2D.h" />
     <ClInclude Include="lib\MCVector3D.h" />

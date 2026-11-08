@@ -1831,6 +1831,9 @@
     <ClInclude Include="lib\MCRandomId.h">
       <Filter>lib</Filter>
     </ClInclude>
+    <ClInclude Include="lib\MCRetryDelay.h">
+      <Filter>lib</Filter>
+    </ClInclude>
     <ClInclude Include="lib\MCSha256.h">
       <Filter>lib</Filter>
     </ClInclude>

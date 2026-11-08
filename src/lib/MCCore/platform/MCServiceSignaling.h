@@ -8,6 +8,7 @@
 // (/game/<code>), which the service keeps 5 minutes; the links it carried are gone, the others go on. The host says
 // its room for the service's list. Every message from the service is checked before it's used.
 
+#include "lib/MCRetryDelay.h"
 #include "platform/MCIceTransport.h"
 #include "platform/MCWebSocket.h"
 
@@ -92,12 +93,26 @@ inline constexpr std::string_view MCServicePing = "ping";
 inline constexpr std::string_view MCServicePong = "pong";
 inline constexpr std::chrono::seconds MCServicePingEvery{30};
 
+/// <summary>
+/// Pings the service over <paramref name="ws"/> when it's open and <see cref="MCServicePingEvery"/> has passed since
+/// <paramref name="lastPing"/>, which then moves to <paramref name="now"/>: every socket to the service keeps alive so.
+/// </summary>
+void MCServicePingIfDue(MCWebSocket& ws, std::chrono::steady_clock::time_point& lastPing,
+                        std::chrono::steady_clock::time_point now);
+
+/// <summary>
+/// A socket to the service coming back after a drop (the INTERNET screen's list, a game's socket to its place): from a
+/// second, doubling up to half a minute, the first anywhere in its first 3 s (the service's deploy drops every socket
+/// at once).
+/// </summary>
+inline constexpr MCRetryDelay MCServiceComebackTries{
+    .First = std::chrono::seconds(1), .Most = std::chrono::seconds(30), .FirstSpread = std::chrono::seconds(3)};
+
 /// <summary>How long a dropped socket's place waits (the service's 5 minutes), and the tries at coming back to it.</summary>
 struct MCServiceComeback
 {
     std::chrono::milliseconds PlaceKept = std::chrono::minutes(5);
-    std::chrono::milliseconds FirstTry = std::chrono::seconds(1);
-    std::chrono::milliseconds LongestWait = std::chrono::seconds(30);
+    MCRetryDelay Tries = MCServiceComebackTries;
 };
 
 /// <summary>The service's signals and a link's bytes, over its WebSockets. Thread-safe.</summary>
@@ -220,7 +235,7 @@ private:
         /// back (its place is the host's now).
         /// </summary>
         bool TakenOver = false;
-        /// <summary>Since its socket dropped, while it tries to come back; the next try.</summary>
+        /// <summary>Since its socket dropped, while it tries to come back; the next try, and the tries since.</summary>
         std::optional<Clock::time_point> DroppedAt;
         Clock::time_point NextTry;
         int32_t Tries = 0;
@@ -235,7 +250,6 @@ private:
     void Tend(Socket& socket, std::string_view game, Clock::time_point now, std::vector<Heard>& heard);
     /// <summary>The peers a closed or away socket's links through the service went to: each heard as gone.</summary>
     void TellGone(std::string_view game, std::vector<Heard>& heard);
-    void Ping(Socket& socket, Clock::time_point now);
     void SendRoom();
     /// <summary>A link's settings as this game takes them: relays only when <paramref name="relayOnly"/> or always.</summary>
     MCIceLink::Settings WithPolicy(MCIceLink::Settings settings, bool relayOnly) const;

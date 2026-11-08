@@ -42,9 +42,7 @@ namespace
         R"("ice":{"stun":["stun.cloudflare.com:3478"],)"
         R"("relays":[{"host":"turn.cloudflare.com","port":443,"user":"u2","password":"p2"}]}})";
     /// <summary>A dropped socket tries to come back at once, and its place waits long past the test.</summary>
-    const MCServiceComeback AtOnce{.PlaceKept = std::chrono::hours(1),
-                                   .FirstTry = std::chrono::milliseconds(0),
-                                   .LongestWait = std::chrono::milliseconds(0)};
+    const MCServiceComeback AtOnce{.PlaceKept = std::chrono::hours(1), .Tries = {}};
 
     /// <summary>
     /// The service's end of a scripted socket, which the test plays: what the game sent, what arrives for it, its state.

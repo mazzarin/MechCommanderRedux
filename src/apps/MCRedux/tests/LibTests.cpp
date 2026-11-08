@@ -14,6 +14,7 @@
 #include "lib/MCLz.h"
 #include "lib/MCPacketFile.h"
 #include "lib/MCPriorityQueue.h"
+#include "lib/MCRetryDelay.h"
 #include "main/MCGameContext.h"
 #include "platform/MCFileSystem.h"
 
@@ -1102,4 +1103,65 @@ TEST_CASE_ISOLATED("tool: --file-patch applies an update's patch to a file")
     std::cout << std::format("  {}: {} bytes, {:.1f} s\n", *out,
                              std::filesystem::file_size(MCFileSystem::FromUtf8(*out)),
                              std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+}
+
+TEST_CASE(
+    "retry delay: waits double to their cap, each drawn from its last share at random, the first spread when asked")
+{
+    using std::chrono::milliseconds;
+    // Random fractions from the draw's ends: none (each wait its longest), and all but nothing (its least).
+    const MCRetryDelay::MCRandom none = [] { return 0.0; };
+    const MCRetryDelay::MCRandom all = [] { return std::nextafter(1.0, 0.0); };
+    const MCRetryDelay::MCRandom half = [] { return 0.5; };
+
+    // The progression: from the first, doubling, held at the most from there on (however many tries).
+    const MCRetryDelay delay{.First = milliseconds(1000), .Most = milliseconds(30000), .Jitter = 0.5};
+    const std::array<int64_t, 8> longest = {1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000};
+
+    for (size_t tries = 0; tries < longest.size(); tries++)
+    {
+        const auto at = static_cast<int32_t>(tries);
+        CHECK_EQ(delay.Longest(at).count(), longest[tries]);
+        CHECK_EQ(delay.Wait(at, none).count(), longest[tries]);
+        CHECK_EQ(delay.Wait(at, half).count(), longest[tries] * 3 / 4);
+        CHECK_EQ(delay.Wait(at, all).count(), longest[tries] / 2);
+    }
+
+    CHECK_EQ(delay.Longest(MCRetryDelay::MostDoublings).count(), 30000);
+    CHECK_EQ(delay.Longest(std::numeric_limits<int32_t>::max()).count(), 30000);
+    CHECK_EQ(delay.Longest(-1).count(), 1000);
+
+    // The jitter's bounds: drawn from the thread's own source, every wait from its least to its longest, and spread.
+    std::set<int64_t> drawn;
+
+    for (int draw = 0; draw < 200; draw++)
+    {
+        const milliseconds wait = delay.Wait(2);
+        CHECK(wait >= milliseconds(2000));
+        CHECK(wait <= milliseconds(4000));
+        drawn.insert(wait.count());
+    }
+
+    CHECK(drawn.size() > 10);
+
+    // No jitter: each wait its longest. All of it: from nothing to its longest.
+    const MCRetryDelay exact{.First = milliseconds(10), .Most = milliseconds(40), .Jitter = 0};
+    CHECK_EQ(exact.Wait(1, all).count(), 20);
+    const MCRetryDelay full{.First = milliseconds(10), .Most = milliseconds(40), .Jitter = 1};
+    CHECK_EQ(full.Wait(1, all).count(), 0);
+    CHECK_EQ(full.Wait(1, none).count(), 20);
+
+    // The first try spread: anywhere from none to the spread, the tries after it as ever.
+    const MCRetryDelay spread{
+        .First = milliseconds(1000), .Most = milliseconds(30000), .FirstSpread = milliseconds(3000)};
+    CHECK_EQ(spread.Wait(0, none).count(), 0);
+    CHECK_EQ(spread.Wait(0, half).count(), 1500);
+    CHECK_EQ(spread.Wait(0, all).count(), 3000);
+    CHECK_EQ(spread.Wait(1, none).count(), 2000);
+    CHECK_EQ(spread.Wait(1, all).count(), 1000);
+
+    // Waits of nothing stay nothing (the tests' services come back at once).
+    const MCRetryDelay atOnce{};
+    CHECK_EQ(atOnce.Wait(0, none).count(), 0);
+    CHECK_EQ(atOnce.Wait(MCRetryDelay::MostDoublings, all).count(), 0);
 }

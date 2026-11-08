@@ -124,7 +124,8 @@ namespace MCKeyBindings
 
     /// <summary>
     /// Reads the player's bindings from <paramref name="file"/>'s Controls block over the defaults (none: the
-    /// defaults). A command or key PREFS names that isn't one is left as it was, and logged.
+    /// defaults). A command or key PREFS names that isn't one is left as it was, and logged. A default on a key PREFS
+    /// gives another command is left without a key (port-only: a default added later never takes a player's key).
     /// </summary>
     void ReadPrefs(MCFitIniFile& file);
 

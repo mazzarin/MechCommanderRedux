@@ -822,6 +822,8 @@ MCKeyCommand MCKeyBindings::Bind(MCKeyTable& keys, MCKeyCommand command, uint32_
 void MCKeyBindings::ReadPrefs(MCFitIniFile& file)
 {
     MCKeyTable keys = Defaults();
+    // The commands PREFS gives a key: the player's own choices.
+    std::array<bool, NumKeyCommands> chosen{};
 
     if (file.SeekBlock(PrefsBlock) == 0)
     {
@@ -839,6 +841,7 @@ void MCKeyBindings::ReadPrefs(MCFitIniFile& file)
                 if (const std::optional<uint32_t> key = ParseKey(*name); key.has_value())
                 {
                     keys[static_cast<size_t>(command)] = *key;
+                    chosen[static_cast<size_t>(command)] = true;
                 }
                 else
                 {
@@ -848,6 +851,38 @@ void MCKeyBindings::ReadPrefs(MCFitIniFile& file)
                 }
             });
     }
+
+    // Port-only: a default on a key the player chose for another command gives way, as CONTROLS moves a key, so a
+    // default a later version adds (Redux HD's LIGHTS on N) never takes a key the player gave a command of their own.
+    ForEachListedCommand(
+        [&](MCKeyCommand command)
+        {
+            const uint32_t key = keys[static_cast<size_t>(command)];
+
+            if (!chosen[static_cast<size_t>(command)] || key == NoKey)
+            {
+                return;
+            }
+
+            ForEachListedCommand(
+                [&](MCKeyCommand other)
+                {
+                    uint32_t& otherKey = keys[static_cast<size_t>(other)];
+
+                    if (chosen[static_cast<size_t>(other)] || otherKey != key)
+                    {
+                        return;
+                    }
+
+                    const std::string_view id = CommandId(command);
+                    const std::string_view otherId = CommandId(other);
+                    SDL_Log("MCKeyBindings: PREFS gives %.*s %s, %.*s's default, so %.*s has no key",
+                            static_cast<int>(id.size()), id.data(), KeyName(key).c_str(),
+                            static_cast<int>(otherId.size()), otherId.data(), static_cast<int>(otherId.size()),
+                            otherId.data());
+                    otherKey = NoKey;
+                });
+        });
 
     SetPlayer(keys);
 }

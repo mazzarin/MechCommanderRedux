@@ -347,8 +347,8 @@ TEST_CASE("controls: the LAPTOP keys need no keypad, F-key or page key, and none
 
 /// <summary>
 /// PREFS keeps only the keys that differ from the defaults, in the Controls block by name, and reading it gives the
-/// player those keys over the defaults; a name it doesn't know leaves that command's key as it was, and a PREFS without
-/// the block gives the defaults.
+/// player those keys over the defaults; a name it doesn't know leaves that command's key as it was, a PREFS without the
+/// block gives the defaults, and a default on a key the player gave another command gives way.
 /// </summary>
 TEST_CASE_ISOLATED("game: PREFS keeps the changed keys and reads them back")
 {
@@ -411,6 +411,29 @@ TEST_CASE_ISOLATED("game: PREFS keeps the changed keys and reads them back")
     CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Jump)],
              MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Jump)]);
     CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Guard)], 0x22u | KeyShift);
+
+    // A key the player gave a command before a default came on it (PREFS from before LIGHTS took N) stays theirs:
+    // the default gives way and is left without a key.
+    const uint32_t lightsKey = MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Lights)];
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Create(MCFileSystem::ToUtf8(prefsPath)), 0);
+        prefs.WriteBlock("MechCommander");
+        prefs.WriteIdLong("Difficulty", 1);
+        prefs.WriteBlock("Controls");
+        prefs.WriteIdString("Eject", MCKeyBindings::KeyName(lightsKey));
+    }
+
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
+        ReadPreferences(prefs);
+    }
+
+    CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Eject)], lightsKey);
+    CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Lights)], MCKeyBindings::NoKey);
+    CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Stop)],
+             MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Stop)]);
 
     std::filesystem::remove(prefsPath);
 }

@@ -1611,6 +1611,9 @@ auto MCSessionScreen::LoadMission(std::string_view fileName) -> void
                 }
 
                 ShowDialog(LoadGameString(0xac, 0xfe), MPCancel, "bh_cancl.tga", "bg_cancl.tga", MPLoadWorked);
+                // Port-only (the personal build): with no ready room the host may be alone in the room, and then nobody
+                // answers: the check is done at once.
+                FilesAnswered();
             }
 
             return;

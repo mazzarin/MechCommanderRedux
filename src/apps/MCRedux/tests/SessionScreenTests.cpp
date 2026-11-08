@@ -708,6 +708,10 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     CHECK(room.StartButton->Disabled);
     CHECK(!room.LoadMissionButton->Disabled);
     SaveShot("menus 0 host alone", ScreenHash());
+    // A mission loaded with nobody else in the room: its file check is done at once (nobody to answer).
+    room.LoadMission("ARENA");
+    REQUIRE(SettleUntil([] { return !GlobalLog()->MessageDialog->IsShowing(); }));
+    CHECK(!room.LoadMissionButton->Disabled);
     ClickButton(*room.ExitButton);
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
     CHECK(lanScreen.IsShowing());

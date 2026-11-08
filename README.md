@@ -107,7 +107,8 @@ first time it starts (or, where the law requires it, asks you first); REPORTS, o
 
 - **What:** the computer (its model, processor, graphics, memory and system version), the window and settings, how
   smoothly missions and matches ran, and crashes with what led up to them.
-- **When:** after each multiplayer match, and after missions: the first, then at most once a week.
+- **When:** after each multiplayer match, and after missions: the first, then at most once a week, and the first
+  after an update.
 - **Anonymous:** under a random ID your copy of the game makes, with no names, paths, saves, chat or addresses. The
   server keeps the country a report came from, never the IP address.
 

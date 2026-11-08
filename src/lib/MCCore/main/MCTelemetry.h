@@ -21,7 +21,8 @@
 // backend (upstream, the tests) sends nothing.
 //
 // Reports: a multiplayer match's at its end; an internet game's link's as it ends (opened or not); single-player
-// missions' at the end of the first, then of the first a week or more after the last, covering every mission since; a
+// missions' at the end of the first, then of the first a week or more after the last, covering every mission since, and
+// of the first after an update (the play before it under the version it was played on, then its own); a
 // crash's at the next start, with the black box: the last moments' state and events (the match's phases, its messages
 // by type and size, players lost), kept in a file mapped into memory so a crash leaves it behind. Play under two minutes counts for nothing. No name, path or address is in
 // any report; the copy's random ID (made while REPORTS is on, dropped when it goes off) lets one copy's reports be

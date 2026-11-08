@@ -32,6 +32,8 @@ namespace
         /// <summary>Now (seconds since 1970): 15 January 2027.</summary>
         int64_t Now = 1'800'000'000;
         std::vector<std::string> Countries = {"US"};
+        /// <summary>The game's version: a later one after a restart is the game updated.</summary>
+        std::string AppVersion = "0.2.1 (468)";
         std::optional<MCTelemetry::MCCrash> Crash;
         /// <summary>The black box's file: it outlives a backend, as a file does a run.</summary>
         std::shared_ptr<std::vector<std::byte>> BlackBox = std::make_shared<std::vector<std::byte>>();
@@ -46,7 +48,7 @@ namespace
         MCTelemetry::MCMachine Machine() override
         {
             return {.Platform = "mac",
-                    .AppVersion = "0.2.1 (468)",
+                    .AppVersion = _Log->AppVersion,
                     .Model = "MacBookAir10,1",
                     .Cpu = "Apple M1",
                     .PerformanceCores = 4,
@@ -515,6 +517,60 @@ TEST_CASE("reports: missions are reported at the first, then a week or more afte
     mission();
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{2});
     CHECK(Holds(reports.Log->Requests[1].second, R"("play":{"count":3,)"));
+}
+
+TEST_CASE("reports: the first mission after an update sends the play before it under its version, then its own")
+{
+    MCFakeReports reports;
+    StartReporting(reports);
+    constexpr double missionSeconds = 130.0;
+    const auto mission = []
+    {
+        MCTelemetry::PlayLoading("mis0101", false);
+        MCTelemetry::PlayStarted(1, false);
+        Play(missionSeconds);
+        MCTelemetry::PlayEnded();
+    };
+
+    const auto sent = [&](size_t index, std::string_view app, int32_t count)
+    {
+        const std::string& report = reports.Log->Requests[index].second;
+        CHECK(Holds(report, std::format(R"("app":"{}")", app)));
+        CHECK(Holds(report, std::format(R"("play":{{"count":{},)", count)));
+    };
+
+    constexpr std::string_view before = "0.2.1 (468)";
+    constexpr std::string_view after = "0.2.2 (470)";
+
+    // The first, sent; the next, a day on, kept for the week.
+    mission();
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+    reports.Reply(0, HttpOk);
+    reports.Log->Now += SecondsPerDay;
+    mission();
+    CHECK_EQ(reports.Log->Requests.size(), size_t{1});
+
+    // Updated: the game starts again as a later version, and its first mission, a day on, sends the kept one under the
+    // version it was played on, then its own.
+    reports.Restart();
+    reports.Log->AppVersion = std::string(after);
+    MCTelemetry::Start();
+    reports.Log->Now += SecondsPerDay;
+    mission();
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{2});
+    sent(0, before, 1);
+    sent(1, after, 1);
+
+    // The old version's not taken: not kept, so it never counts as the new one's. The next mission waits for the week.
+    reports.Reply(0, ServerError);
+    reports.Reply(1, HttpOk);
+    reports.Log->Now += SecondsPerDay;
+    mission();
+    CHECK_EQ(reports.Log->Requests.size(), size_t{2});
+    reports.Log->Now += SecondsPerDay * 7;
+    mission();
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{3});
+    sent(2, after, 2);
 }
 
 TEST_CASE("reports: each holds the copy's random ID, the same after a restart; REPORTS off drops it, on makes another")

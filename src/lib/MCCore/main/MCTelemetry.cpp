@@ -209,6 +209,11 @@ namespace
         int32_t MissionDay = 0;
         /// <summary>The missions (and HD movies) since.</summary>
         MCTally Missions;
+        /// <summary>
+        /// The version they were played on: a mission on another (the game updated) sends them under it first, then its
+        /// own at once. Empty when unknown (kept by a build before this one).
+        /// </summary>
+        std::string MissionsApp;
     };
 
     /// <summary>A reply from the backend, from any thread, waiting for the next frame.</summary>
@@ -475,6 +480,12 @@ namespace
 
         State.MissionDay = file.Read<int32_t>("MissionDay").value_or(0);
         State.Missions = ReadTally(file);
+
+        if (MCFitResult<std::string> app = file.Read<std::string>("MissionsApp");
+            app.has_value() && app->size() <= MaxTextLength)
+        {
+            State.MissionsApp = std::move(*app);
+        }
     }
 
     void WriteState()
@@ -503,6 +514,12 @@ namespace
         }
 
         file.WriteIdLong("MissionDay", State.MissionDay);
+
+        if (!State.MissionsApp.empty())
+        {
+            file.WriteIdString("MissionsApp", State.MissionsApp);
+        }
+
         file.WriteIdLong("Missions", tally.Count);
         file.WriteIdFloat("Seconds", static_cast<float>(tally.Seconds));
         file.WriteIdFloat("LoadSeconds", static_cast<float>(tally.LoadSeconds));
@@ -694,26 +711,39 @@ namespace
                 });
     }
 
-    /// <summary>The missions since the last report, sent (on failure they're kept for the next).</summary>
-    void SendMissions()
+    /// <summary>
+    /// The missions since the last report, sent as played on <paramref name="app"/>. On failure they're kept for the
+    /// next, unless that's a later version's (the game updated meanwhile): one version's play never counts as
+    /// another's.
+    /// </summary>
+    void SendMissions(std::string app)
     {
         MCTally missions = std::move(State.Missions);
         State.Missions = {};
         State.MissionDay = static_cast<int32_t>(Today());
         WriteState();
-        const std::string report = ReportStart("missions", Machine.AppVersion)
+        const std::string report = ReportStart("missions", app)
                                        .Raw("display", DisplayJson())
                                        .Raw("settings", SettingsJson())
                                        .Raw("play", PlayJson(missions).Close())
                                        .Close();
         SendReport(report,
-                   [missions = std::move(missions)](bool sent)
+                   [missions = std::move(missions), app = std::move(app)](bool sent)
                    {
-                       if (!sent)
+                       if (sent)
                        {
-                           State.Missions.Add(missions);
-                           WriteState();
+                           return;
                        }
+
+                       if (State.MissionsApp != app)
+                       {
+                           SDL_Log("Reports: %d missions on %s weren't taken, and the game is %s now: not sent",
+                                   missions.Count, app.c_str(), State.MissionsApp.c_str());
+                           return;
+                       }
+
+                       State.Missions.Add(missions);
+                       WriteState();
                    });
     }
 
@@ -1212,12 +1242,23 @@ auto MCTelemetry::PlayEnded() -> void
         }
         else
         {
+            // The first mission on a new version (the game updated): the play before it goes under the version it was
+            // played on, and this one's at once, so a copy's update shows the day it plays. A tally kept by an older
+            // build has no version: it goes with this one's, as before.
+            const bool updated = State.MissionsApp != Machine.AppVersion;
+
+            if (updated && !State.MissionsApp.empty() && State.Missions.Count > 0)
+            {
+                SendMissions(State.MissionsApp);
+            }
+
             State.Missions.Add(Play.Tally);
+            State.MissionsApp = Machine.AppVersion;
             const int64_t day = Today();
 
-            if (State.MissionDay == 0 || day - State.MissionDay >= ReportDays)
+            if (updated || State.MissionDay == 0 || day - State.MissionDay >= ReportDays)
             {
-                SendMissions();
+                SendMissions(Machine.AppVersion);
             }
             else
             {

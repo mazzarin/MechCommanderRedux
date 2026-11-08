@@ -75,6 +75,19 @@ namespace
         return list.GetTextLine(line + 1).value_or("");
     }
 
+    /// <summary>The list's lines from <paramref name="first"/> on, one space between: its text however it wrapped.</summary>
+    std::string TextFrom(MCLogScrollTextObject& list, int32_t first)
+    {
+        std::string text;
+
+        for (int32_t line = first; line < list.NumLines; line++)
+        {
+            text += (text.empty() ? "" : " ") + LineOf(list, line);
+        }
+
+        return text;
+    }
+
     Json Listing(Json games, int online, int inGames)
     {
         return Json{{"t", "list"}, {"online", online}, {"inGames", inGames}, {"games", std::move(games)}};
@@ -256,7 +269,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     Settle();
     CHECK(LineOf(*players, 0) == "BOB");
     CHECK(LineOf(*players, 1) == "ANN");
-    CHECK(LineOf(*players, 3) == "EUROPE");
+    CHECK(TextFrom(*players, 3) == "HOSTED IN EUROPE");
     CHECK(!join->Disabled);
     SaveShot("internet 2 picked", ScreenHash());
 
@@ -267,15 +280,11 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     games->Pick("Q4RT");
     Settle();
     CHECK(join->Disabled);
-    CHECK(LineOf(*players, 4) == "IN BATTLE");
-    CHECK(LineOf(*players, 5) == "12 MIN");
-    // The mission, wrapped to the narrow list.
-    CHECK(LineOf(*players, 6) + " " + LineOf(*players, 7) == "LOST OUTPOST");
+    CHECK(TextFrom(*players, 3) == "IN BATTLE FOR 12 MIN, ON LOST OUTPOST HOSTED IN ASIA");
     games->Pick("W8ZE");
     Settle();
     CHECK(join->Disabled);
-    CHECK(LineOf(*players, 2) == "OCEANIA");
-    CHECK(LineOf(*players, 3) == "NEEDS 0.7.0");
+    CHECK(TextFrom(*players, 2) == "NEEDS VERSION 0.7.0 HOSTED IN OCEANIA");
 
     // A code typed (either case): JOIN GAME takes it, whatever is picked.
     games->ClearPick();
@@ -332,7 +341,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     empty["busiest"] = hours;
     list.Send(empty);
     REQUIRE(SettleUntil([] { return InternetCountsShown() == "3 ONLINE, 0 IN GAMES"; }));
-    CHECK(LineOf(*games, 0).starts_with("NO OPEN GAMES."));
+    CHECK(LineOf(*games, 0).starts_with("NO GAMES ARE OPEN"));
     SaveShot("internet 5 empty", ScreenHash());
 }
 
@@ -369,7 +378,7 @@ TEST_CASE_ISOLATED(
     REQUIRE(manager.Internet != nullptr);
     CHECK(manager.HostedInternetCode() == std::optional<std::string>(MCFakeGames::GameCode));
     CHECK(DialogText().empty());
-    const std::string codeLine = std::format("THIS GAME'S CODE: {}", MCFakeGames::GameCode);
+    const std::string codeLine = std::format("FRIENDS CAN JOIN WITH CODE {}.", MCFakeGames::GameCode);
     CHECK(std::ranges::any_of(GlobalLog()->Chat->Lines,
                               [&](const MCLogChat::HistoryLine& line) { return line.Text.contains(codeLine); }));
 
@@ -411,7 +420,7 @@ TEST_CASE_ISOLATED(
     auto join = screen.Element<MCLogButton>(JoinButton);
     REQUIRE(!join->Disabled);
     ClickButton(*join);
-    REQUIRE(SettleUntil([] { return DialogText() == "NO GAME WITH THAT CODE."; }));
+    REQUIRE(SettleUntil([] { return DialogText() == "THERE'S NO GAME WITH THAT CODE."; }));
     CHECK(service.Paths.back().starts_with(std::format("/join/{}", NoSuchCode)));
     CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
     CHECK_EQ(service.OpenLines(), 0u);
@@ -458,7 +467,7 @@ TEST_CASE_ISOLATED("game: a player away from an internet game is asked STILL THE
     Settle();
     CHECK(DialogText().empty());
     now += std::chrono::seconds(1);
-    REQUIRE(SettleUntil([] { return DialogText() == "STILL THERE?"; }));
+    REQUIRE(SettleUntil([] { return DialogText() == "ARE YOU STILL THERE?"; }));
     CHECK(MCIdleCheck::Asking());
     SaveShot("internet 8 still there", ScreenHash());
     now += MCIdleCheck::AnswerTime - std::chrono::seconds(1);
@@ -471,10 +480,10 @@ TEST_CASE_ISOLATED("game: a player away from an internet game is asked STILL THE
 
     // Asked again, and no answer: the player leaves, the game ends on the service, and the games say why.
     now += MCIdleCheck::AwayTime;
-    REQUIRE(SettleUntil([] { return DialogText() == "STILL THERE?"; }));
+    REQUIRE(SettleUntil([] { return DialogText() == "ARE YOU STILL THERE?"; }));
     now += MCIdleCheck::AnswerTime;
     REQUIRE(SettleUntil([] { return GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen; }));
-    CHECK(DialogText() == "YOU WERE AWAY, SO YOU LEFT THE GAME.");
+    CHECK(DialogText() == "YOU WERE AWAY TOO LONG AND WERE TAKEN OUT OF THE GAME.");
     CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
     CHECK_EQ(service.OpenLines(), 0u);
     MCIdleCheck::SetClock({});
@@ -510,7 +519,7 @@ TEST_CASE_ISOLATED("game: an internet room's host restarts into an update, keepi
     const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(room, "RESTART");
     REQUIRE(restart != nullptr);
     CHECK(restart->IsShowing());
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, THE ROOM OPENS AGAIN."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. RESTART TO INSTALL IT; YOUR ROOM WILL REOPEN."));
     SaveShot("internet 9 restart", ScreenHash());
 
     // RESTART: the note to come back by, the update installing, the game's place kept.
@@ -579,7 +588,7 @@ TEST_CASE_ISOLATED("game: a host's new version whose internet game's place has g
     MCFakeGames::MCFakeGamesService service;
     const MCServicesScope scope(list, service);
     REQUIRE(StartFromNote(HostNote("Commander's game")));
-    REQUIRE(SettleUntil([] { return DialogText() == "Couldn't open the room again."; }));
+    REQUIRE(SettleUntil([] { return DialogText() == "Couldn't reopen your room."; }));
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
     CHECK(!LaunchedFromLobby);
     SaveShot("internet 11 place gone", ScreenHash());
@@ -619,35 +628,25 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
     auto games = screen.Element<MCInternetGameList>(GameList);
     auto players = screen.Element<MCLogScrollTextObject>(PlayerList);
     auto join = screen.Element<MCLogButton>(JoinButton);
-    const auto playerLines = [&]
-    {
-        std::string lines;
-
-        for (int32_t line = 0; line < players->NumLines; line++)
-        {
-            lines += LineOf(*players, line) + "|";
-        }
-
-        return lines;
-    };
 
     // No update known: it needs one, and can't be joined.
     games->Pick("W8ZE");
     Settle();
     CHECK(join->Disabled);
-    CHECK_EQ(playerLines(), std::string("EVE||OCEANIA|NEEDS 0.7.0|"));
+    CHECK_EQ(LineOf(*players, 0), std::string("EVE"));
+    CHECK_EQ(TextFrom(*players, 2), std::string("NEEDS VERSION 0.7.0 HOSTED IN OCEANIA"));
 
     // The update that brings it found: JOIN GAME updates first.
     MCUpdater::Found(std::string(NewerVersion), "Rooms come back after an update.");
     REQUIRE(SettleUntil([&] { return !join->Disabled; }));
-    CHECK(playerLines().contains("NEEDS 0.7.0|JOIN GAME"));
+    CHECK_EQ(TextFrom(*players, 2), std::string("PRESS JOIN GAME TO UPDATE AND JOIN. HOSTED IN OCEANIA"));
     SaveShot("internet 12 newer picked", ScreenHash());
     ClickButton(*join);
     REQUIRE(UpdatePageShown());
     MCUpdater::Answer(MCUpdater::MCAnswer::Install);
     MCUpdater::Ready();
     Settle();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, YOU JOIN NEXT VERSION."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. RESTART TO INSTALL IT AND JOIN NEXT VERSION."));
     const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
     REQUIRE(restart != nullptr);
     REQUIRE(restart->IsShowing());

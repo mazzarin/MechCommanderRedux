@@ -383,7 +383,7 @@ TEST_CASE_ISOLATED(
     REQUIRE(restart != nullptr);
 
     // CAL's game can't rejoin: no RESTART, and the update goes in as the game exits after the match.
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
     CHECK(!restart->IsShowing());
     CHECK(MCLobbyUpdate::Restart());
     Settle();
@@ -393,13 +393,13 @@ TEST_CASE_ISOLATED(
     // Every guest can.
     cal.SendRules(hostId, MCMatchRule::Supported);
     REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, EVERYONE REJOINS."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. RESTART TO INSTALL IT; EVERYONE WILL REJOIN."));
     MCScreenInput::SaveShot("lobby host 0 ready", MCScreenInput::ScreenHash());
 
     // Once the match is under way, neither: the update goes in as the game exits at its end.
     MultiPlayer()->InLogistics = true;
     Settle();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
     CHECK(!restart->IsShowing());
     CHECK(MCLobbyUpdate::Restart());
     Settle();
@@ -813,7 +813,7 @@ TEST_CASE_ISOLATED("game: a lobby's RESTART waits for the match's end when the u
     UpdateReady(VersionWithoutBuild);
     const std::shared_ptr<MCLogTextButton> restart = RestartOnPage(screen);
     REQUIRE(restart != nullptr);
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
     CHECK(!restart->IsShowing());
     CHECK(MCLobbyUpdate::Restart());
     Settle();
@@ -824,7 +824,7 @@ TEST_CASE_ISOLATED("game: a lobby's RESTART waits for the match's end when the u
     UpdateReady();
     REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
     ClickOn(*restart);
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
     CHECK(!restart->IsShowing());
     Settle();
     CHECK_EQ(updater.Log->Answers.size(), size_t{2});
@@ -1044,7 +1044,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest started from the rejoin note joins, an
     CHECK(DialogText().empty());
     MultiPlayer()->PlayerRules[bob->Id()] = MCMatchRule::Supported;
     CHECK(!MCLobbyUpdate::CanRestart());
-    CHECK_EQ(MCLobbyUpdate::ReadyText(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK_EQ(MCLobbyUpdate::ReadyText(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
 
     // It restarts again, its update going in this time.
     CHECK(hostRestarts());
@@ -1092,11 +1092,11 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update tells the ro
     REQUIRE(restart != nullptr);
 
     // Until the host's rules come (relayed with every player's), its game isn't known to rejoin.
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
     CHECK(!restart->IsShowing());
     MultiPlayer()->PlayerRules[bob.Id()] = MCMatchRule::Supported;
     Settle();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, YOU REJOIN THIS ROOM."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. RESTART TO INSTALL IT AND REJOIN THIS ROOM."));
     REQUIRE(restart->IsShowing());
     ClickOn(*restart);
     CHECK(SettleUntil([&] { return bob.Updatings() == 1; }));
@@ -1199,7 +1199,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest calls its restart off when the match s
     MultiPlayer()->InLogistics = false;
     Settle();
 
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
     CHECK(!restart->IsShowing());
     CHECK(MCLobbyUpdate::Restart());
     clock.Pass(MCLobbyUpdate::SendTime);
@@ -1254,7 +1254,7 @@ TEST_CASE_ISOLATED("game: a lobby's host whose rejoin can't open its room says s
     REQUIRE(other.Open(Port, "CAL", "CAL's room"));
     REQUIRE(StartFromNote(std::format("-host -port {} -player BOB -rejoin", Port)));
     CHECK(!InSession());
-    CHECK_EQ(DialogText(), std::string("Couldn't open the room again."));
+    CHECK_EQ(DialogText(), std::string("Couldn't reopen your room."));
     CHECK(OkEndsTheGame());
 }
 

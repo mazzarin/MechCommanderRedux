@@ -13,8 +13,8 @@ namespace
 {
     using Clock = std::chrono::steady_clock;
 
-    constexpr std::string_view StillThereText = "STILL THERE?";
-    constexpr std::string_view LeftText = "YOU WERE AWAY, SO YOU LEFT THE GAME.";
+    constexpr std::string_view StillThereText = "ARE YOU STILL THERE?";
+    constexpr std::string_view LeftText = "YOU WERE AWAY TOO LONG AND WERE TAKEN OUT OF THE GAME.";
 
     /// <summary>The tests' clock, when one is set (MCIdleCheck::SetClock).</summary>
     MCIdleCheck::MCClock TestClock;

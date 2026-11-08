@@ -77,7 +77,7 @@ namespace
     /// <summary>The logistics screens while they exist (<see cref="GlobalLog"/>).</summary>
     std::weak_ptr<MCLogistics> GlobalLogistics;
     /// <summary>Port (Redux HD): the room's chat line telling an internet game's host the code its players join by.</summary>
-    constexpr std::string_view InternetCodeFormat = "THIS GAME'S CODE: {}";
+    constexpr std::string_view InternetCodeFormat = "FRIENDS CAN JOIN WITH CODE {}.";
 }
 
 auto GlobalLog() -> std::shared_ptr<MCLogistics>

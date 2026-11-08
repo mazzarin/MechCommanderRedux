@@ -38,16 +38,16 @@ namespace
     constexpr std::string_view RoomFullText = "Couldn't join the room again: it is full.";
     constexpr std::string_view RoomStartedText = "Couldn't join the room again: its match has started.";
     /// <summary>What a host's rejoin that failed says: it couldn't host the room on its port again.</summary>
-    constexpr std::string_view RoomNotReopenedText = "Couldn't open the room again.";
+    constexpr std::string_view RoomNotReopenedText = "Couldn't reopen your room.";
 
     /// <summary>The UPDATE page's line for an update ready to join a game the INTERNET screen picked.</summary>
-    constexpr std::string_view JoinAfterFormat = "DOWNLOADED: ON RESTART, YOU JOIN {}.";
+    constexpr std::string_view JoinAfterFormat = "DOWNLOADED. RESTART TO INSTALL IT AND JOIN {}.";
 
     /// <summary>The UPDATE page's line for an update ready in a room (MCLobbyUpdate::ReadyText).</summary>
-    constexpr std::string_view AfterMatchText = "DOWNLOADED: IT INSTALLS AFTER THE MATCH.";
-    constexpr std::string_view GuestRestartText = "DOWNLOADED: ON RESTART, YOU REJOIN THIS ROOM.";
-    constexpr std::string_view HostAloneRestartText = "DOWNLOADED: ON RESTART, THE ROOM OPENS AGAIN.";
-    constexpr std::string_view HostRestartText = "DOWNLOADED: ON RESTART, EVERYONE REJOINS.";
+    constexpr std::string_view AfterMatchText = "DOWNLOADED. IT WILL INSTALL AFTER THE MATCH.";
+    constexpr std::string_view GuestRestartText = "DOWNLOADED. RESTART TO INSTALL IT AND REJOIN THIS ROOM.";
+    constexpr std::string_view HostAloneRestartText = "DOWNLOADED. RESTART TO INSTALL IT; YOUR ROOM WILL REOPEN.";
+    constexpr std::string_view HostRestartText = "DOWNLOADED. RESTART TO INSTALL IT; EVERYONE WILL REJOIN.";
 
     /// <summary>
     /// The session screen's line while the room waits for guests away updating (or, after the host's restart was called
@@ -59,7 +59,7 @@ namespace
     /// <summary>What START asks of one guest away updating, after UpdatingText.</summary>
     constexpr std::string_view StartWithoutOneFormat = "{} START WITHOUT {}?";
     /// <summary>What the room's other games say of player <paramref name="name"/> whose restart into an update is off.</summary>
-    constexpr std::string_view UpdateOffFormat = "{}'S UPDATE IS OFF.";
+    constexpr std::string_view UpdateOffFormat = "{} ISN'T UPDATING AFTER ALL.";
     /// <summary>What the room's games say of player <paramref name="name"/> whose time to rejoin is over.</summary>
     constexpr std::string_view NotBackFormat = "{} DIDN'T REJOIN IN TIME.";
 

@@ -124,24 +124,27 @@ namespace
     constexpr std::string_view CodeWord = "CODE";
     constexpr std::string_view CountsFormat = "{} ONLINE, {} IN GAMES";
     constexpr std::string_view LookingText = "LOOKING FOR GAMES...";
-    constexpr std::string_view NoGamesText = "NO OPEN GAMES. HOST ONE AND IT SHOWS HERE.";
-    constexpr std::string_view BusiestFormat = "\n\nBUSIEST:\n{}";
+    constexpr std::string_view NoGamesText = "NO GAMES ARE OPEN RIGHT NOW. HOST ONE AND IT WILL APPEAR HERE.";
+    constexpr std::string_view BusiestFormat = "\n\nMOST PLAYERS ARE ON:\n{}";
+    constexpr std::string_view RegionFormat = "HOSTED IN {}";
+    /// <summary>A game in battle under a minute: no time said.</summary>
     constexpr std::string_view InBattleLine = "IN BATTLE";
-    constexpr std::string_view MinutesFormat = "{} MIN";
-    constexpr std::string_view NeedsFormat = "NEEDS {}";
-    constexpr std::string_view JoinUpdatesLine = "JOIN GAME UPDATES";
+    constexpr std::string_view InBattleForFormat = "IN BATTLE FOR {} MIN";
+    constexpr std::string_view OnMissionFormat = "{}, ON {}";
+    constexpr std::string_view NeedsFormat = "NEEDS VERSION {}";
+    constexpr std::string_view JoinUpdatesLine = "PRESS JOIN GAME TO UPDATE AND JOIN.";
     constexpr std::string_view ConnectingFormat = "CONNECTING TO {}...";
-    constexpr std::string_view HostingText = "MAKING YOUR GAME...";
+    constexpr std::string_view HostingText = "SETTING UP YOUR GAME...";
     constexpr std::string_view CodeGameFormat = "GAME {}";
-    constexpr std::string_view NoGameText = "NO GAME WITH THAT CODE.";
+    constexpr std::string_view NoGameText = "THERE'S NO GAME WITH THAT CODE.";
     constexpr std::string_view FullText = "THAT GAME IS FULL.";
-    constexpr std::string_view InBattleText = "THAT GAME IS IN BATTLE.";
-    constexpr std::string_view UnreachableFormat = "COULDN'T REACH {}. TRY AGAIN.";
-    constexpr std::string_view NotHostedText = "COULDN'T MAKE YOUR GAME. TRY AGAIN.";
+    constexpr std::string_view InBattleText = "THAT GAME HAS ALREADY STARTED.";
+    constexpr std::string_view UnreachableFormat = "COULDN'T CONNECT TO {}. TRY AGAIN.";
+    constexpr std::string_view NotHostedText = "COULDN'T SET UP YOUR GAME. TRY AGAIN.";
     constexpr std::string_view UpdateText = "UPDATE YOUR GAME TO PLAY OVER THE INTERNET.";
     constexpr std::string_view TooManyText = "TOO MANY TRIES. WAIT A MINUTE AND TRY AGAIN.";
-    constexpr std::string_view TurnedAwayText = "THIS GAME CAN'T PLAY OVER THE INTERNET.";
-    constexpr std::string_view NoInternetText = "THIS GAME HAS NO INTERNET GAMES.";
+    constexpr std::string_view BannedText = "THIS COPY OF THE GAME IS BLOCKED FROM INTERNET GAMES.";
+    constexpr std::string_view NoInternetText = "THIS VERSION CAN'T PLAY INTERNET GAMES.";
 
     /// <summary>The continents Cloudflare names a host's location by.</summary>
     constexpr std::array<std::pair<std::string_view, std::string_view>, 7> Regions{{
@@ -300,31 +303,27 @@ namespace
         players->PrintBlank(PlayerColor);
         std::vector<std::string> details;
 
-        if (const std::string_view region = RegionName(game->Region); !region.empty())
+        // What the player can do first (the list is narrow and short): the version it needs, or once the update that
+        // brings it is found, how to join it; then its battle; then where it's hosted.
+        if (NeedsNewer(game->Version))
         {
-            details.emplace_back(region);
+            ShownUpdateBrings = UpdateBrings(*game);
+            details.push_back(ShownUpdateBrings
+                                  ? std::string(JoinUpdatesLine)
+                                  : std::format(NeedsFormat, game->Version.substr(0, game->Version.find(' '))));
         }
 
         if (game->BattleSeconds.has_value())
         {
-            details.emplace_back(InBattleLine);
-            details.push_back(std::format(MinutesFormat, *game->BattleSeconds / SecondsPerMinute));
-
-            if (!game->Mission.empty())
-            {
-                details.push_back(Upper(game->Mission));
-            }
+            const int64_t minutes = *game->BattleSeconds / SecondsPerMinute;
+            std::string battle = minutes > 0 ? std::format(InBattleForFormat, minutes) : std::string(InBattleLine);
+            details.push_back(game->Mission.empty() ? battle
+                                                    : std::format(OnMissionFormat, battle, Upper(game->Mission)));
         }
 
-        if (NeedsNewer(game->Version))
+        if (const std::string_view region = RegionName(game->Region); !region.empty())
         {
-            details.push_back(std::format(NeedsFormat, game->Version.substr(0, game->Version.find(' '))));
-
-            if (UpdateBrings(*game))
-            {
-                details.emplace_back(JoinUpdatesLine);
-                ShownUpdateBrings = true;
-            }
+            details.push_back(std::format(RegionFormat, region));
         }
 
         for (const std::string& detail : details)
@@ -443,8 +442,8 @@ namespace
             case MCServiceRefusal::TooManyTries:
                 return std::string(TooManyText);
             case MCServiceRefusal::Banned:
-            case MCServiceRefusal::Refused:
-                return std::string(TurnedAwayText);
+                return std::string(BannedText);
+            // Anything else the service refused reads as the game not reached or not set up.
             default:
                 return pending.Hosting ? std::string(NotHostedText) : std::format(UnreachableFormat, pending.Shown);
         }

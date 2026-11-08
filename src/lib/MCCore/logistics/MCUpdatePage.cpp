@@ -632,10 +632,10 @@ namespace
                     return room;
                 }
 
-                return "DOWNLOADED: IT INSTALLS WHEN THE GAME RESTARTS OR QUITS.";
+                return "DOWNLOADED. IT WILL INSTALL WHEN YOU RESTART OR QUIT.";
             }
             case MCStage::Installing:
-                return "INSTALLING: THE GAME STARTS AGAIN BY ITSELF.";
+                return "INSTALLING. THE GAME WILL RESTART BY ITSELF.";
             case MCStage::Failed:
             {
                 std::string text = std::format("THE UPDATE FAILED: {}", status.Error);

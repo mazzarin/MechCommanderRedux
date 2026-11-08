@@ -1121,7 +1121,9 @@ TEST_CASE("network: a joiner is refused at the door only for a value the host ch
     // too) or not. With version 2's games in the room, a kept version 2 plays: a version 3 joiner that keeps it joins,
     // one that doesn't is refused; a dropped one leaves the room no night (the host's click skips NIGHT, while DAY and
     // DUSK play), so no one is refused for it. A room of version 3's games plays night at 3, refusing version 2's.
-    constexpr uint32_t nightThree = 1u << 26;
+    constexpr uint32_t nightThree = 1u << 30;
+    static_assert((nightThree & (MCMatchRule::Supported | MCMatchRule::BrakingFromPrefs)) == 0,
+                  "Version 3's bit is no rule this build has");
     constexpr uint32_t keepsTwo = supported | nightThree;
     constexpr uint32_t dropsTwo = (supported & ~MCMatchRule::NightLights) | nightThree;
     constexpr std::array keptNight = {MCOptionVersions::Night[0], MCOptionVersions::Night[1],

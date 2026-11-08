@@ -142,6 +142,7 @@
     <ClCompile Include="tests\MCTest.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="tests\MechHandoverTests.cpp" />
     <ClCompile Include="tests\MechTests.cpp" />
     <ClCompile Include="tests\MissionTests.cpp" />
     <ClCompile Include="tests\MoverTests.cpp" />

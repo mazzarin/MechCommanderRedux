@@ -22,6 +22,10 @@ only the characters on a keyboard. The release script takes the entry under the 
 - Multiplayer cleanup: match continues after host leaves, reallocation of mechs after a player leaves, ability to
   rematch, other bug fixes and enhancements.
 
+## 0.5.2
+
+- Fixed: a right-click on a mech or vehicle in your inventory crashed the game.
+
 ## 0.5.1
 
 - An overhaul of the code underneath, with bug fixes, courtesy of RevenantBob.

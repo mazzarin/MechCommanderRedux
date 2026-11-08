@@ -14,15 +14,15 @@ only the characters on a keyboard. The release script takes the entry under the 
 
 Nights that change the battle.
 
+- Fixed: a right-click on a mech or vehicle in your inventory crashed the game.
 - At night headlights change sight: units see half as far, and a lit unit sees and is seen further. LIGHTS (N) turns
   the selected units' headlights off or on. The night shows without HD LIGHTING too.
 - MATCH OPTIONS: MOST SKILLED PILOT, and a ban on each kind of weapon.
 - Smoother: mechs' legs between frames at any frame rate, guests' mechs walking as the host's do, a falling tree that
   no longer vanishes, sensor blips at the original's pace.
 - Faster: the HD movies, art, weather and sound do more of their work away from the game.
-- Fixed: a right-click on a mech or vehicle in your inventory crashed the game.
-- Multiplayer cleanup: rooms take players until START, a match goes on when the host or a player leaves, REMATCH, and
-  games over the internet.
+- Multiplayer cleanup: match continues after host leaves, reallocation of mechs after a player leaves, ability to
+  rematch, other bug fixes and enhancements.
 
 ## 0.5.1
 

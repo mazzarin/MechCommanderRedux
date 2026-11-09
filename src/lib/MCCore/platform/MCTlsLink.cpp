@@ -113,7 +113,9 @@ struct MCTlsLink::MCState
     }
 };
 
-MCTlsLink::MCTlsLink(std::unique_ptr<MCState> state) : _State(std::move(state)) {}
+MCTlsLink::MCTlsLink(std::unique_ptr<MCState> state) : _State(std::move(state))
+{
+}
 
 MCTlsLink::~MCTlsLink()
 {
@@ -153,9 +155,9 @@ std::expected<std::unique_ptr<MCTlsLink>, std::string> MCTlsLink::Connect(const 
     const auto failed = [](std::string_view what, int code) -> std::unexpected<std::string>
     { return std::unexpected(std::format("{}: {}", what, ErrorText(code))); };
 
-    if (const int code = mbedtls_ctr_drbg_seed(&state->Random, mbedtls_entropy_func, &state->Entropy,
-                                               reinterpret_cast<const unsigned char*>(RandomPurpose.data()),
-                                               RandomPurpose.size());
+    if (const int code =
+            mbedtls_ctr_drbg_seed(&state->Random, mbedtls_entropy_func, &state->Entropy,
+                                  reinterpret_cast<const unsigned char*>(RandomPurpose.data()), RandomPurpose.size());
         code != 0)
     {
         return failed("TLS's random numbers", code);
@@ -181,9 +183,9 @@ std::expected<std::unique_ptr<MCTlsLink>, std::string> MCTlsLink::Connect(const 
     if (!settings.AnchorPem.empty())
     {
         // Mbed TLS reads PEM text with its terminating NUL.
-        if (const int code =
-                mbedtls_x509_crt_parse(&state->Anchor, reinterpret_cast<const unsigned char*>(settings.AnchorPem.c_str()),
-                                       settings.AnchorPem.size() + 1);
+        if (const int code = mbedtls_x509_crt_parse(&state->Anchor,
+                                                    reinterpret_cast<const unsigned char*>(settings.AnchorPem.c_str()),
+                                                    settings.AnchorPem.size() + 1);
             code != 0)
         {
             return failed("the trusted authority", code);

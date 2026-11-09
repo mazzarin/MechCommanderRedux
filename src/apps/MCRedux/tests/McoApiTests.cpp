@@ -797,3 +797,313 @@ TEST_CASE("mco api: MCO's text is shown at a terminal without its controls, C1's
              std::string("?evil?"));
     CHECK_EQ(MCMcoApi::Printable("bad\xff"), std::string("bad?"));
 }
+
+namespace
+{
+    using MCFormFields = std::vector<std::pair<std::string, std::string>>;
+
+    const std::string RoomId = Hex('6', MCMcoApi::ClientIdDigits);
+    const std::string SessionHex = Hex('5', MCMcoApi::ClientIdDigits);
+    const std::string Content = Hex('9', 64);
+    constexpr std::string_view StockBuild = "official-0.2.1.61";
+    constexpr std::string_view RelayHost = "relay.mco.test";
+    constexpr int RelayPort = 8443;
+    constexpr int RelayTicketFewest = 64;
+
+    /// <summary>The <paramref name="count"/> fields from <paramref name="first"/>'s on, or none when it isn't there.</summary>
+    MCFormFields FieldsFrom(std::string_view body, std::string_view first, size_t count)
+    {
+        const MCFormFields fields = FormFields(body);
+        const auto at = std::ranges::find_if(fields, [&](const auto& field) { return field.first == first; });
+
+        if (at == fields.end() || static_cast<size_t>(fields.end() - at) < count)
+        {
+            return {};
+        }
+
+        return MCFormFields(at, at + static_cast<ptrdiff_t>(count));
+    }
+
+    MCMcoApi::MCRoom ReduxRoom()
+    {
+        return {.RoomId = RoomId,
+                .Name = "Solaris Night",
+                .Host = "HOST",
+                .Engine = std::string(MCMcoApi::ReduxEngine),
+                .EngineBuild = std::string(StockBuild),
+                .EngineContent = Content,
+                .Players = 2,
+                .MaxPlayers = 4};
+    }
+
+    /// <summary>A match as MCO's create_session or a start_signal gives it.</summary>
+    Json MatchJson()
+    {
+        return {{"engine_protocol", MCMcoApi::EngineProtocol},
+                {"session_hex", SessionHex},
+                {"room_id", RoomId},
+                {"engine_build", StockBuild},
+                {"engine_content", Content},
+                {"stock_host", RelayHost},
+                {"stock_port", RelayPort},
+                {"capacity", 4}};
+    }
+
+    /// <summary>The relay's admission for <paramref name="role"/>, as MCO's redux_ticket gives it.</summary>
+    Json AdmissionJson(std::string_view role)
+    {
+        return {{"protocol", MCMcoApi::EngineProtocol},
+                {"host", RelayHost},
+                {"port", RelayPort},
+                {"peer", ClientId},
+                {"room", SessionHex},
+                {"room_id", RoomId},
+                {"role", role},
+                {"ticket", std::string(RelayTicketFewest, 'T')}};
+    }
+
+    MCMcoApi::MCMatch Match()
+    {
+        return {.SessionHex = SessionHex,
+                .EngineBuild = std::string(StockBuild),
+                .EngineContent = Content,
+                .RoomId = RoomId,
+                .RelayHost = std::string(RelayHost),
+                .RelayPort = RelayPort,
+                .Capacity = 4};
+    }
+}
+
+TEST_CASE("mco api: joining a Redux room registers into it as MCO's launcher does: the room, READY, its id, then the "
+          "engine it plays with our data")
+{
+    MCFakeMco mco;
+    MCMcoApi::MCService service(mco, TestClient());
+    mco.AnswerJson(
+        Success({{"peer_token", PeerToken}, {"peer", {{"client_id", ClientId}}}, {"room_last_message_id", 17}}));
+    MCMcoApi::MCPeer peer = Registered();
+
+    const auto seat = service.JoinRoom(peer, ReduxRoom(), "pass word", Content, true);
+    REQUIRE(seat);
+    CHECK_EQ(seat->Room, std::string("Solaris Night"));
+    CHECK_EQ(seat->RoomId, RoomId);
+    CHECK(!seat->Host);
+    CHECK(seat->Ready);
+    CHECK_EQ(seat->LastMessageId, int64_t{17});
+    const std::string& body = mco.Asked().at(0).Post.Body;
+    CHECK(Field(body, "action") == std::optional<std::string>("register_peer"));
+    CHECK(FieldsFrom(body, "username", 11) == (MCFormFields{{"username", "PILOT"},
+                                                            {"room", "Solaris Night"},
+                                                            {"is_host", "0"},
+                                                            {"max_players", "4"},
+                                                            {"password", "pass word"},
+                                                            {"is_ready", "1"},
+                                                            {"room_id", RoomId},
+                                                            {"engine", "redux"},
+                                                            {"engine_protocol", "2"},
+                                                            {"engine_build", std::string(StockBuild)},
+                                                            {"engine_content", Content}}));
+    CHECK(Field(body, "client_os").has_value());
+}
+
+TEST_CASE("mco api: hosting a Redux room registers it with its name, players and password, the stock build and our "
+          "data, and keeps the room's id MCO gives")
+{
+    MCFakeMco mco;
+    MCMcoApi::MCService service(mco, TestClient());
+    mco.AnswerJson(Success({{"peer_token", PeerToken}, {"peer", {{"client_id", ClientId}, {"room_id", RoomId}}}}));
+    MCMcoApi::MCPeer peer = Registered();
+
+    const auto seat = service.HostRoom(peer, "Night Raid", 3, "", StockBuild, Content);
+    REQUIRE(seat);
+    CHECK(seat->Host);
+    CHECK(seat->Ready);
+    CHECK_EQ(seat->RoomId, RoomId);
+    CHECK(FieldsFrom(mco.Asked().at(0).Post.Body, "username", 11) ==
+          (MCFormFields{{"username", "PILOT"},
+                        {"room", "Night Raid"},
+                        {"is_host", "1"},
+                        {"max_players", "3"},
+                        {"description", ""},
+                        {"password", ""},
+                        {"is_ready", "1"},
+                        {"engine", "redux"},
+                        {"engine_protocol", "2"},
+                        {"engine_build", std::string(StockBuild)},
+                        {"engine_content", Content}}));
+}
+
+TEST_CASE("mco api: a room's poll carries its cursor and, while a match runs, its session; it reads the players, the "
+          "room's engine, the match started and the player taken out")
+{
+    MCFakeMco mco;
+    MCMcoApi::MCService service(mco, TestClient());
+    MCMcoApi::MCPeer peer = Registered();
+    MCMcoApi::MCSeat seat{.Room = "Solaris Night", .RoomId = RoomId, .Ready = true, .LastMessageId = 17};
+    mco.AnswerJson(Success(
+        {{"peers",
+          {{{"client_id", Hex('7', 32)}, {"username", "HOST"}, {"is_ready", 1}, {"is_host", 1}},
+           {{"client_id", ClientId}, {"username", "PILOT"}, {"is_ready", 0}, {"is_host", 0}}}},
+         {"room_settings", {{"name", "Solaris Night"}, {"engine_build", StockBuild}, {"engine_content", Content}}},
+         {"last_id", 25},
+         {"messages", {{{"id", 30}}, {{"id", 31}}}},
+         {"peer", {{"client_id", ClientId}, {"room_id", RoomId}, {"room", "Solaris Night"}}},
+         {"start_signal", MatchJson()}}));
+
+    const auto state = service.RoomPoll(peer, seat, SessionHex, true);
+    REQUIRE(state);
+    CHECK(FieldsFrom(mco.Asked().at(0).Post.Body, "room", 8) == (MCFormFields{{"room", "Solaris Night"},
+                                                                              {"room_id", RoomId},
+                                                                              {"last_id", "17"},
+                                                                              {"limit", "50"},
+                                                                              {"mention_cursor", "0"},
+                                                                              {"is_ready", "1"},
+                                                                              {"redux_process_session", SessionHex},
+                                                                              {"redux_process_running", "1"}}));
+    CHECK_EQ(seat.LastMessageId, int64_t{31});
+    REQUIRE_EQ(state->Players.size(), size_t{2});
+    CHECK(state->Players[0].Host);
+    CHECK(state->Players[0].Ready);
+    CHECK_EQ(state->Players[1].Username, std::string("PILOT"));
+    CHECK(!state->Players[1].Ready);
+    CHECK_EQ(state->EngineContent, Content);
+    CHECK(!state->Gone);
+    REQUIRE(state->Start.has_value());
+    CHECK_EQ(state->Start->SessionHex, SessionHex);
+    CHECK_EQ(state->Start->RelayHost, std::string(RelayHost));
+    CHECK_EQ(state->Start->RelayPort, uint16_t{RelayPort});
+
+    // No match running: no session asked about. Taken out of the room, or registered in another: gone.
+    mco.AnswerJson(Success({{"removed", true}, {"exit_reason", {{"kind", "kicked"}}}}));
+    const auto removed = service.RoomPoll(peer, seat);
+    REQUIRE(removed);
+    CHECK(!Field(mco.Asked().at(1).Post.Body, "redux_process_session").has_value());
+    CHECK(removed->Gone);
+    CHECK_EQ(removed->GoneWhy, std::string("kicked"));
+    mco.AnswerJson(Success({{"peer", {{"client_id", ClientId}, {"room_id", Hex('8', 32)}, {"room", "Elsewhere"}}}}));
+    const auto elsewhere = service.RoomPoll(peer, seat);
+    REQUIRE(elsewhere);
+    CHECK(elsewhere->Gone);
+}
+
+TEST_CASE("mco api: START asks for the match with the room's engine and no countdown, held to what the launcher "
+          "takes: protocol 2, hex session and room, a relay named by DNS on a port it allows")
+{
+    MCFakeMco mco;
+    MCMcoApi::MCService service(mco, TestClient());
+    MCMcoApi::MCPeer peer = Registered();
+    mco.AnswerJson(Success(MatchJson()));
+
+    const auto match = service.CreateSession(peer, StockBuild, Content);
+    REQUIRE(match);
+    CHECK_EQ(match->SessionHex, SessionHex);
+    CHECK_EQ(match->RoomId, RoomId);
+    CHECK_EQ(match->EngineContent, Content);
+    CHECK_EQ(match->Capacity, 4);
+    CHECK(FieldsFrom(mco.Asked().at(0).Post.Body, "engine", 4) ==
+          (MCFormFields{{"engine", "redux"},
+                        {"engine_build", std::string(StockBuild)},
+                        {"engine_content", Content},
+                        {"launch_countdown", "0"}}));
+
+    const std::vector<std::pair<std::string, Json>> wrong{
+        {"engine_protocol", 1},        {"session_hex", Hex('5', 31)},      {"room_id", "no room"},
+        {"stock_host", "203.0.113.5"}, {"stock_host", "localhost"},        {"stock_host", "relay..mco.test"},
+        {"stock_host", ".mco.test"},   {"stock_host", "relay_1.mco.test"}, {"stock_port", 80},
+        {"stock_port", 70000},
+    };
+
+    for (const auto& [key, value] : wrong)
+    {
+        MCTest::Scope scope(std::format("{} {}", key, value.dump()));
+        Json answer = MatchJson();
+        answer[key] = value;
+        mco.AnswerJson(Success(answer));
+        const auto refused = service.CreateSession(peer, StockBuild, Content);
+        REQUIRE(!refused);
+        CHECK_EQ(refused.error().Code, std::string("invalid_match"));
+    }
+}
+
+TEST_CASE("mco api: the match's ticket is asked for its session, the room's engine and the relay's epoch, and held "
+          "to this match, player and role as the launcher holds it")
+{
+    MCFakeMco mco;
+    MCMcoApi::MCService service(mco, TestClient());
+    MCMcoApi::MCPeer peer = Registered();
+    const std::string epoch = Hex('e', 32);
+    mco.AnswerJson(Success({{"admission", AdmissionJson("join")}}));
+
+    const auto ticket = service.Ticket(peer, Match(), epoch, false);
+    REQUIRE(ticket);
+    CHECK_EQ(ticket->Ticket, std::string(RelayTicketFewest, 'T'));
+    CHECK_EQ(ticket->Role, std::string("join"));
+    const std::string& body = mco.Asked().at(0).Post.Body;
+    CHECK(Field(body, "action") == std::optional<std::string>("redux_ticket"));
+    CHECK(FieldsFrom(body, "session_hex", 4) == (MCFormFields{{"session_hex", SessionHex},
+                                                              {"engine_build", std::string(StockBuild)},
+                                                              {"engine_content", Content},
+                                                              {"relay_epoch", epoch}}));
+
+    const std::vector<std::pair<std::string, Json>> wrong{
+        {"role", "host"},
+        {"protocol", 1},
+        {"host", "relay.other.test"},
+        {"port", 8444},
+        {"peer", Hex('f', 32)},
+        {"room", Hex('4', 32)},
+        {"room_id", Hex('4', 32)},
+        {"ticket", std::string(RelayTicketFewest - 1, 'T')},
+        {"ticket", std::string(RelayTicketFewest, '+')},
+    };
+
+    for (const auto& [key, value] : wrong)
+    {
+        MCTest::Scope scope(std::format("{} {}", key, value.dump()));
+        Json admission = AdmissionJson("join");
+        admission[key] = value;
+        mco.AnswerJson(Success({{"admission", admission}}));
+        const auto refused = service.Ticket(peer, Match(), epoch, false);
+        REQUIRE(!refused);
+        CHECK_EQ(refused.error().Message, std::string("The relay's admission couldn't be checked."));
+    }
+
+    mco.AnswerJson(Success({{"admission", AdmissionJson("host")}}));
+    CHECK(service.Ticket(peer, Match(), epoch, true));
+}
+
+TEST_CASE("mco api: READY is a heartbeat; a match is published and closed by its session, a played one with the "
+          "room's engine; leaving a room registers in the lobby")
+{
+    MCFakeMco mco;
+    MCMcoApi::MCService service(mco, TestClient());
+    MCMcoApi::MCPeer peer = Registered();
+    MCMcoApi::MCSeat seat{.Room = "Solaris Night", .RoomId = RoomId};
+
+    mco.AnswerJson(Success());
+    REQUIRE(service.SetReady(peer, seat, true));
+    CHECK(seat.Ready);
+    CHECK(Field(mco.Asked().at(0).Post.Body, "action") == std::optional<std::string>("heartbeat"));
+    CHECK(Field(mco.Asked().at(0).Post.Body, "is_ready") == std::optional<std::string>("1"));
+
+    mco.AnswerJson(Success());
+    REQUIRE(service.PublishReady(peer, SessionHex));
+    CHECK(Field(mco.Asked().at(1).Post.Body, "session_hex") == std::optional<std::string>(SessionHex));
+    CHECK(!Field(mco.Asked().at(1).Post.Body, "engine").has_value());
+
+    mco.AnswerJson(Success());
+    REQUIRE(service.CloseSession(peer, SessionHex, StockBuild, Content));
+    CHECK(FieldsFrom(mco.Asked().at(2).Post.Body, "session_hex", 4) ==
+          (MCFormFields{{"session_hex", SessionHex},
+                        {"engine", "redux"},
+                        {"engine_build", std::string(StockBuild)},
+                        {"engine_content", Content}}));
+    mco.AnswerJson(Success());
+    REQUIRE(service.CloseSession(peer, SessionHex));
+    CHECK(!Field(mco.Asked().at(3).Post.Body, "engine").has_value());
+
+    mco.AnswerJson(Success({{"peer_token", PeerToken}, {"peer", {{"client_id", ClientId}}}}));
+    REQUIRE(service.LeaveRoom(peer));
+    CHECK(Field(mco.Asked().at(4).Post.Body, "action") == std::optional<std::string>("register_peer"));
+    CHECK(Field(mco.Asked().at(4).Post.Body, "room") == std::optional<std::string>("Lobby"));
+}

@@ -25,8 +25,8 @@ namespace
             return {};
         }
 
-        const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()),
-                                             nullptr, 0);
+        const int size =
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
 
         if (size <= 0)
         {
@@ -58,8 +58,8 @@ namespace
                 return std::format("Windows couldn't check the certificates ({})", GetLastError());
             }
 
-            PCCERT_CONTEXT leaf = CertCreateCertificateContext(X509_ASN_ENCODING, chain[0].data(),
-                                                               static_cast<DWORD>(chain[0].size()));
+            PCCERT_CONTEXT leaf =
+                CertCreateCertificateContext(X509_ASN_ENCODING, chain[0].data(), static_cast<DWORD>(chain[0].size()));
 
             if (leaf == nullptr)
             {

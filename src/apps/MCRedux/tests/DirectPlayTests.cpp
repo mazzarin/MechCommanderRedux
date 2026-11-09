@@ -1232,7 +1232,8 @@ TEST_CASE("directplay: a search that doesn't wait comes back at once, the host's
 /// MechCommander's own session query as MCO's launcher waits for it; the joiner's game typing the guest bridge's address
 /// on this computer (`-join 127.0.0.1:port`), its search, join and play passing through both bridges.
 /// </summary>
-TEST_CASE("directplay: a session through MechCommander Online's relay, carried by the bridges, is found, joined and played")
+TEST_CASE(
+    "directplay: a session through MechCommander Online's relay, carried by the bridges, is found, joined and played")
 {
     constexpr uint16_t port = 28991;
     // Each search's answer crosses both bridges and the relay after the host's next pump.

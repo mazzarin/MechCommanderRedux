@@ -48,7 +48,8 @@ namespace
         "Usage: --mco-probe guest | sign-in | create [--name NAME] [--seconds N] [--user FOLDER] [--service ADDRESS/]\n"
         "       --mco-probe join | host [--name NAME] [--room ROOM] [--password WORD] [--players N] [--data FOLDER]\n"
         "                   [--user FOLDER] [--service ADDRESS/] [--relay-ca FILE] [--no-launch]\n"
-        "join and host play as a guest: join a Redux room (ROOM, else picked), or host one (its name ROOM, else asked),\n"
+        "join and host play as a guest: join a Redux room (ROOM, else picked), or host one (its name ROOM, else "
+        "asked),\n"
         "and play its matches with this game, carried over MCO's relay."
 #ifdef _WIN32
         "\nStart it with start /wait, so the terminal waits for it."
@@ -235,10 +236,7 @@ namespace
         MCProbe(MCMcoApi::MCService& service, int seconds) : _Service(service), _Seconds(seconds) {}
 
         /// <summary>This computer's game data, as MCO fingerprints it, to compare each Redux room's with.</summary>
-        void CompareContent(std::string content)
-        {
-            _Content = std::move(content);
-        }
+        void CompareContent(std::string content) { _Content = std::move(content); }
 
         MCProbe(const MCProbe&) = delete;
         MCProbe& operator=(const MCProbe&) = delete;
@@ -707,7 +705,8 @@ int MCMcoProbe::Run(std::span<const std::string_view> arguments)
     MCProbe probe(service, seconds);
 
     // The rooms' data, compared with this computer's (the game folder the game remembers, or --data).
-    if (const std::filesystem::path game = data.empty() ? MCGameFolder::Remembered(*folder) : MCFileSystem::FromUtf8(data);
+    if (const std::filesystem::path game =
+            data.empty() ? MCGameFolder::Remembered(*folder) : MCFileSystem::FromUtf8(data);
         !playing && !game.empty() && MCGameFolder::HasGameData(game))
     {
         if (const auto content = MCMcoContent::Fingerprint(game, *folder); content)

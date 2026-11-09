@@ -58,7 +58,8 @@ namespace MCFakeMcoRelay
 
             if (took == 0)
             {
-                const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
+                const auto left =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
 
                 if (left <= 0)
                 {
@@ -133,7 +134,8 @@ namespace MCFakeMcoRelay
             return [port]() -> std::expected<std::unique_ptr<MCMcoBridge::MCStream>, std::string>
             {
                 MCSocketTransport sockets;
-                const MCSocket::Handle socket = sockets.ConnectTcp(MCSocket::Address{MCSocket::LoopbackIp, port}, ConnectMs);
+                const MCSocket::Handle socket =
+                    sockets.ConnectTcp(MCSocket::Address{MCSocket::LoopbackIp, port}, ConnectMs);
 
                 if (socket == MCSocket::InvalidHandle)
                 {
@@ -295,8 +297,9 @@ namespace MCFakeMcoRelay
         void Answer(MCConnection& connection, const Json& answer)
         {
             const std::string text = answer.dump();
-            const std::vector<uint8_t> frame = MCMcoRelay::Frame(
-                MCMcoRelay::MCFrameType::Control, std::span(reinterpret_cast<const uint8_t*>(text.data()), text.size()));
+            const std::vector<uint8_t> frame =
+                MCMcoRelay::Frame(MCMcoRelay::MCFrameType::Control,
+                                  std::span(reinterpret_cast<const uint8_t*>(text.data()), text.size()));
             connection.Closed = connection.Closed || !SendAll(_Sockets, connection.Socket, frame, WriteMs);
         }
 

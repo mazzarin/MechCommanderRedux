@@ -124,7 +124,8 @@ namespace
         Within(ArrivesMs,
                [&]
                {
-                   const int took = sockets.Receive(tcp, std::span(bytes).first(std::min(bytes.size(), count - read.size())));
+                   const int took =
+                       sockets.Receive(tcp, std::span(bytes).first(std::min(bytes.size(), count - read.size())));
 
                    if (took > 0)
                    {
@@ -246,7 +247,8 @@ TEST_CASE("mco relay: the hello and the relay's answers read as its helper write
 {
     // The helper's order: the mode, then its ticket or grant, left out when there's none.
     CHECK_EQ(MCMcoRelay::Hello(MCMcoRelay::MCMode::Status), std::string(R"({"mode":"status"})"));
-    CHECK_EQ(MCMcoRelay::Hello(MCMcoRelay::MCMode::Host, "T.k-1_"), std::string(R"({"mode":"host","ticket":"T.k-1_"})"));
+    CHECK_EQ(MCMcoRelay::Hello(MCMcoRelay::MCMode::Host, "T.k-1_"),
+             std::string(R"({"mode":"host","ticket":"T.k-1_"})"));
     CHECK_EQ(MCMcoRelay::Hello(MCMcoRelay::MCMode::Join, "T"), std::string(R"({"mode":"join","ticket":"T"})"));
     CHECK_EQ(MCMcoRelay::Hello(MCMcoRelay::MCMode::Attach, "abc"), std::string(R"({"mode":"attach","grant":"abc"})"));
 
@@ -281,9 +283,9 @@ TEST_CASE("mco relay: only the game's session query and answer pass, the answer'
 {
     // MechCommander's query, as MCDirectPlay writes it: the magic, kind 1, the game's id little-endian.
     const std::array<uint8_t, MCMcoRelay::QueryBytes> query = MCMcoRelay::Query(MultiPlayerAppGuid);
-    CHECK(query == (std::array<uint8_t, MCMcoRelay::QueryBytes>{'M', 'C', 'G', '1', 1, 0x00, 0x88, 0x60, 0x09, 0x15, 0x48,
-                                                                 0xd2, 0x11, 0x92, 0xd2, 0x00, 0x60, 0x97, 0x3c, 0xfb,
-                                                                 0x2c}));
+    CHECK(query ==
+          (std::array<uint8_t, MCMcoRelay::QueryBytes>{'M',  'C',  'G',  '1',  1,    0x00, 0x88, 0x60, 0x09, 0x15, 0x48,
+                                                       0xd2, 0x11, 0x92, 0xd2, 0x00, 0x60, 0x97, 0x3c, 0xfb, 0x2c}));
     CHECK(MCMcoRelay::IsQuery(query));
     CHECK(!MCMcoRelay::IsAnswer(query));
     CHECK(!MCMcoRelay::IsQuery(std::span(query).first(MCMcoRelay::QueryBytes - 1)));
@@ -585,14 +587,13 @@ QSx6eTooFae/LuhoGdvqJBkQINgx4KOGsgV1LQMnC5i4oT/ePXzqZ+nE
             const auto serverPem = PemBytes(ServerPem);
             const auto authorityPem = PemBytes(TestAuthorityPem);
             const auto keyPem = PemBytes(ServerKeyPem);
-            bool ready =
-                mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0) == 0 &&
-                mbedtls_x509_crt_parse(&chain, serverPem.data(), serverPem.size()) == 0 &&
-                mbedtls_x509_crt_parse(&chain, authorityPem.data(), authorityPem.size()) == 0 &&
-                mbedtls_pk_parse_key(&key, keyPem.data(), keyPem.size(), nullptr, 0, mbedtls_ctr_drbg_random, &random) ==
-                    0 &&
-                mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
-                                            MBEDTLS_SSL_PRESET_DEFAULT) == 0;
+            bool ready = mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0) == 0 &&
+                         mbedtls_x509_crt_parse(&chain, serverPem.data(), serverPem.size()) == 0 &&
+                         mbedtls_x509_crt_parse(&chain, authorityPem.data(), authorityPem.size()) == 0 &&
+                         mbedtls_pk_parse_key(&key, keyPem.data(), keyPem.size(), nullptr, 0, mbedtls_ctr_drbg_random,
+                                              &random) == 0 &&
+                         mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
+                                                     MBEDTLS_SSL_PRESET_DEFAULT) == 0;
 
             if (ready)
             {
@@ -713,6 +714,7 @@ TEST_CASE("mco relay: a TLS link to a server its one authority vouches for, spea
     MCTlsServer server({});
     REQUIRE(server.Port() != 0);
     auto link = MCTlsLink::Connect(TestSettings(server.Port()));
+
     if (!link.has_value())
     {
         FAIL(link.error());
@@ -751,16 +753,19 @@ TEST_CASE("mco relay: a TLS link refuses a server another authority vouches for,
         settings.AnchorPem = std::string(OtherAuthorityPem);
         CHECK(!MCTlsLink::Connect(settings).has_value());
     }
+
     {
         MCTlsServer server({.Alpn = ""});
         const auto link = MCTlsLink::Connect(TestSettings(server.Port()));
         REQUIRE(!link.has_value());
         CHECK_EQ(link.error(), std::format("the server doesn't speak {}", MCMcoRelay::Alpn));
     }
+
     {
         MCTlsServer server({.Alpn = "h2"});
         CHECK(!MCTlsLink::Connect(TestSettings(server.Port())).has_value());
     }
+
     {
         MCTlsLink::MCSettings settings = TestSettings(1);
         settings.AnchorPem.clear();
@@ -779,6 +784,7 @@ TEST_CASE("mco relay: a TLS link hands the computer's trust the server's chain a
         settings.AnchorPem.clear();
         settings.Trust = trusting;
         const auto link = MCTlsLink::Connect(settings);
+
         if (!link.has_value())
         {
             FAIL_CHECK(link.error());
@@ -787,6 +793,7 @@ TEST_CASE("mco relay: a TLS link hands the computer's trust the server's chain a
         CHECK_EQ(trusting.Certificates, size_t{2});
         CHECK_EQ(trusting.Host, std::string(ServerName));
     }
+
     {
         MCTlsServer server({});
         const MCToldTrust doubting("not today");
@@ -797,6 +804,7 @@ TEST_CASE("mco relay: a TLS link hands the computer's trust the server's chain a
         REQUIRE(!link.has_value());
         CHECK_EQ(link.error(), std::string("the server's certificate isn't trusted: not today"));
     }
+
     {
         // The computer's own trust knows nothing of the test authority.
         MCTlsServer server({});
@@ -840,6 +848,7 @@ TEST_CASE("mco relay: the bridges carry a guest's game to the host's through the
     REQUIRE(host.has_value());
     // The relay answers a guest once the host has opened a connection for it.
     auto guest = MCMcoBridge::MCGuest::Start(relay.Dial(), "join-ticket", {});
+
     if (!guest.has_value())
     {
         FAIL(guest.error());
@@ -960,6 +969,7 @@ TEST_CASE("mco relay: a refusal, a bad epoch or a frame out of place ends the br
         CHECK(Within(ArrivesMs, [&] { return !(*host)->Running(); }));
         CHECK_EQ((*host)->Ended(), std::string("the relay said closed"));
     }
+
     {
         auto host = MCMcoBridge::MCHost::Start(relay.Dial(), "host-ticket", 1, {});
         REQUIRE(host.has_value());
@@ -1051,6 +1061,7 @@ TEST_CASE("mco relay: the host's bridge waits for its game's answer, one naming 
         const MCAnsweringGame game;
         CHECK(MCMcoBridge::WaitForHostGame(game.Port(), ArrivesMs, going));
     }
+
     {
         const MCAnsweringGame elsewhere(uint16_t{1});
         const Clock::time_point start = Clock::now();
@@ -1058,6 +1069,7 @@ TEST_CASE("mco relay: the host's bridge waits for its game's answer, one naming 
         CHECK(Clock::now() - start >= std::chrono::milliseconds(HostWaitMs));
         CHECK(Clock::now() - start < std::chrono::milliseconds(HostWaitMs + OverrunMs));
     }
+
     {
         const std::atomic<bool> cancelled = true;
         const MCAnsweringGame game;

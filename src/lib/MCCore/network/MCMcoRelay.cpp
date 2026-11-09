@@ -22,8 +22,8 @@ namespace
     /// <summary>Whether <paramref name="datagram"/> starts with the game's magic and has <paramref name="kind"/>.</summary>
     bool IsKind(std::span<const uint8_t> datagram, uint8_t kind)
     {
-        return datagram.size() > KindAt && std::equal(MCMcoRelay::GameMagic.begin(), MCMcoRelay::GameMagic.end(),
-                                                      datagram.begin()) &&
+        return datagram.size() > KindAt &&
+               std::equal(MCMcoRelay::GameMagic.begin(), MCMcoRelay::GameMagic.end(), datagram.begin()) &&
                datagram[KindAt] == kind;
     }
 
@@ -57,16 +57,16 @@ namespace MCMcoRelay
     {
         switch (static_cast<MCFrameType>(type))
         {
-        case MCFrameType::Control:
-            return size >= 1 && size <= ControlMost;
-        case MCFrameType::Datagram:
-            return size >= 1 && size <= DatagramMost;
-        case MCFrameType::StreamData:
-            return size >= 1 && size <= StreamMost;
-        case MCFrameType::StreamOpen:
-        case MCFrameType::StreamClose:
-        case MCFrameType::KeepAlive:
-            return size == 0;
+            case MCFrameType::Control:
+                return size >= 1 && size <= ControlMost;
+            case MCFrameType::Datagram:
+                return size >= 1 && size <= DatagramMost;
+            case MCFrameType::StreamData:
+                return size >= 1 && size <= StreamMost;
+            case MCFrameType::StreamOpen:
+            case MCFrameType::StreamClose:
+            case MCFrameType::KeepAlive:
+                return size == 0;
         }
 
         return false;
@@ -117,7 +117,8 @@ namespace MCMcoRelay
         }
 
         const auto start = _Bytes.begin() + static_cast<ptrdiff_t>(_Read + HeaderBytes);
-        MCFrame frame{static_cast<MCFrameType>(type), std::vector<uint8_t>(start, start + static_cast<ptrdiff_t>(size))};
+        MCFrame frame{static_cast<MCFrameType>(type),
+                      std::vector<uint8_t>(start, start + static_cast<ptrdiff_t>(size))};
         _Read += HeaderBytes + size;
         return frame;
     }
@@ -131,14 +132,14 @@ namespace MCMcoRelay
     {
         switch (mode)
         {
-        case MCMode::Status:
-            return "status";
-        case MCMode::Host:
-            return "host";
-        case MCMode::Attach:
-            return "attach";
-        case MCMode::Join:
-            return "join";
+            case MCMode::Status:
+                return "status";
+            case MCMode::Host:
+                return "host";
+            case MCMode::Attach:
+                return "attach";
+            case MCMode::Join:
+                return "join";
         }
 
         return "status";

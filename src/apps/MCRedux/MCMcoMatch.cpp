@@ -149,7 +149,8 @@ namespace
             return "A moderator closed the room.";
         }
 
-        return why.empty() ? "You're no longer in the room." : std::format("You're no longer in the room ({}).", Shown(why));
+        return why.empty() ? "You're no longer in the room."
+                           : std::format("You're no longer in the room ({}).", Shown(why));
     }
 
     /// <summary>A port free for both the host game's TCP and UDP on every interface, or 0.</summary>
@@ -262,7 +263,8 @@ namespace
                 name = *typed;
             }
 
-            std::cout << std::format("Hosting \"{}\" for {} players... ", Shown(name), _Options.MaxPlayers) << std::flush;
+            std::cout << std::format("Hosting \"{}\" for {} players... ", Shown(name), _Options.MaxPlayers)
+                      << std::flush;
             auto seat = _Service.HostRoom(_Peer, name, _Options.MaxPlayers, _Options.Password, _Stock, _Content);
 
             if (!seat)
@@ -519,7 +521,8 @@ namespace
 
                 for (const std::string& word : words)
                 {
-                    command += word.find(' ') == std::string::npos ? std::format(" {}", word) : std::format(" \"{}\"", word);
+                    command +=
+                        word.find(' ') == std::string::npos ? std::format(" {}", word) : std::format(" \"{}\"", word);
                 }
 
                 Say(command);
@@ -587,10 +590,22 @@ namespace
                             carried.DatagramsIn.load(), carried.BytesOut.load(), carried.BytesIn.load()));
         }
 
-        /// <returns>Whether the match was played (the relay took the guest); else it may be tried again.</returns>
+        /// <returns>
+        /// Whether the match is settled: played (the relay took the guest), or one this computer can't play; else it
+        /// may be tried again.
+        /// </returns>
         bool PlayAsGuest(const MCMcoApi::MCMatch& match, MCTyped& typed)
         {
             Say("The host started the match.");
+
+            // As MCO's launcher holds a match to the player's data before starting its game.
+            if (!MCMcoApi::SameId(match.EngineContent, _Content))
+            {
+                Say(std::format("The match's game data ({}) isn't this computer's ({}): not joining it.",
+                                Shown(match.EngineContent), _Content));
+                return true;
+            }
+
             const MCMcoBridge::MCDial dial = Dial(match);
             std::cout << std::format("Asking the relay {}:{} for its epoch... ", match.RelayHost, match.RelayPort)
                       << std::flush;
@@ -657,16 +672,18 @@ namespace
 
             if (!epoch || port == 0)
             {
-                Say(epoch ? std::string("failed: no free port for the game") : std::format("failed: {}", epoch.error()));
+                Say(epoch ? std::string("failed: no free port for the game")
+                          : std::format("failed: {}", epoch.error()));
                 Close(match->SessionHex);
                 return;
             }
 
             Say("done.");
             const std::string session = std::string(SessionPrefix) + match->SessionHex.substr(0, SessionDigits);
-            const std::unique_ptr<MCGameCopy> game = StartGame(GameWords({"-host", std::to_string(port), "-session",
-                                                                          session, "-maxplayers",
-                                                                          std::to_string(_Options.MaxPlayers)}));
+            const std::unique_ptr<MCGameCopy> game =
+                StartGame(GameWords({"-host", std::to_string(port), "-session", session, "-maxplayers",
+                                     std::to_string(_Options.MaxPlayers)}));
+
             if (_Options.Launch && game == nullptr)
             {
                 Close(match->SessionHex);
@@ -710,13 +727,17 @@ namespace
             Say(published ? std::string("MCO told the match is ready: the guests join now.")
                           : std::format("Telling MCO the match is ready {}", Failure(published.error())));
             WhilePlaying(*match, **host, game.get(), typed);
-            Close(match->SessionHex);
+            Close(match->SessionHex, *match);
         }
 
-        void Close(const std::string& session)
+        /// <summary>Ends the match: one its game came back from (<paramref name="played"/>) as such, else called off.</summary>
+        void Close(const std::string& session, MCOptionalRef<const MCMcoApi::MCMatch> played = std::nullopt)
         {
-            const auto closed = _Service.CloseSession(_Peer, session);
-            Say(closed ? std::string("The match closed.") : std::format("Closing the match {}", Failure(closed.error())));
+            const auto closed =
+                played ? _Service.CloseSession(_Peer, session, played->get().EngineBuild, played->get().EngineContent)
+                       : _Service.CloseSession(_Peer, session);
+            Say(closed ? std::string("The match closed.")
+                       : std::format("Closing the match {}", Failure(closed.error())));
         }
 
         /// <summary>Leaves the room for the lobby (the probe then leaves the lobby).</summary>

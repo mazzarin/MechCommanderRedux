@@ -132,7 +132,8 @@ std::expected<std::unique_ptr<MCGameCopy>, std::string> MCGameCopy::Start(std::s
     posix_spawn_file_actions_init(&actions);
     const std::string logPath = log.string();
     constexpr int OutputMode = 0644;
-    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, logPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, OutputMode);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, logPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC,
+                                     OutputMode);
     posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
     pid_t started = 0;
     const int error = posix_spawn(&started, words.front().c_str(), &actions, nullptr, argv.data(), environ);

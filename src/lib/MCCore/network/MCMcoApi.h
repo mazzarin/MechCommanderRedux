@@ -311,8 +311,12 @@ namespace MCMcoApi
         /// <summary>The host's game is hosting through the relay (publish_ready).</summary>
         MCResult<void> PublishReady(MCPeer& peer, std::string_view session);
 
-        /// <summary>The host's match is over (close_session).</summary>
-        MCResult<void> CloseSession(MCPeer& peer, std::string_view session);
+        /// <summary>
+        /// The host's match is over (close_session): one whose game came back says the room's <paramref name="build"/>
+        /// and <paramref name="content"/>, as the launcher does; one called off before, none.
+        /// </summary>
+        MCResult<void> CloseSession(MCPeer& peer, std::string_view session, std::string_view build = {},
+                                    std::string_view content = {});
 
         /// <summary>A guest's match that's gone from the relay (report_session_missing).</summary>
         MCResult<void> ReportSessionMissing(MCPeer& peer, std::string_view session);

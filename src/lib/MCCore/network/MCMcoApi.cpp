@@ -302,14 +302,23 @@ namespace
             return refused("The match plays another Redux protocol.");
         }
 
-        if (!MCMcoApi::IsHex(match.SessionHex, MCMcoApi::ClientIdDigits) || !MCMcoApi::IsHex(match.RoomId, MCMcoApi::ClientIdDigits))
+        if (!MCMcoApi::IsHex(match.SessionHex, MCMcoApi::ClientIdDigits) ||
+            !MCMcoApi::IsHex(match.RoomId, MCMcoApi::ClientIdDigits))
         {
             return refused("The match has no session.");
         }
 
-        const bool named = !match.RelayHost.empty() && match.RelayHost.find('.') != std::string::npos &&
-                           std::ranges::all_of(match.RelayHost, [](char c)
-                                               { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '.' || c == '-'; });
+        // A name (as .NET's Uri.CheckHostName calls one DNS's): its labels letters, digits and hyphens, none empty, more
+        // than one, and not an address's four numbers.
+        const std::string_view host = match.RelayHost;
+        const bool labelsWhole =
+            !host.empty() && !host.starts_with('.') && !host.ends_with('.') && !host.contains("..");
+        const bool named =
+            labelsWhole && host.contains('.') &&
+            std::ranges::all_of(host, [](char c)
+                                { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '.' || c == '-'; }) &&
+            !std::ranges::all_of(host,
+                                 [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.'; });
 
         if (!named || port < MCMcoApi::RelayPortLeast || port > PortMost)
         {
@@ -732,12 +741,10 @@ namespace MCMcoApi
                                          std::string_view content, bool ready)
     {
         // The launcher's fields for a join, in its order: the room, then (a Redux room) the engine it plays.
-        MCFields extra = {{"username", peer.Username},
-                          {"room", room.Name},
-                          {"is_host", std::string(Zero)},
-                          {"max_players", std::to_string(room.MaxPlayers)},
-                          {"password", std::string(password)},
-                          {"is_ready", ready ? std::string(ReadyFlag) : std::string(Zero)}};
+        MCFields extra = {
+            {"username", peer.Username},         {"room", room.Name},
+            {"is_host", std::string(Zero)},      {"max_players", std::to_string(room.MaxPlayers)},
+            {"password", std::string(password)}, {"is_ready", ready ? std::string(ReadyFlag) : std::string(Zero)}};
 
         if (IsHex(room.RoomId, ClientIdDigits))
         {
@@ -816,8 +823,9 @@ namespace MCMcoApi
 
         if (IsHex(matchSession, ClientIdDigits))
         {
-            extra.insert(extra.end(), {{"redux_process_session", std::string(matchSession)},
-                                       {"redux_process_running", matchRunning ? std::string(ReadyFlag) : std::string(Zero)}});
+            extra.insert(extra.end(),
+                         {{"redux_process_session", std::string(matchSession)},
+                          {"redux_process_running", matchRunning ? std::string(ReadyFlag) : std::string(Zero)}});
         }
 
         const auto answer = AskChat("room_poll", extra, peer);
@@ -879,7 +887,8 @@ namespace MCMcoApi
 
     MCResult<void> MCService::SetReady(MCPeer& peer, MCSeat& seat, bool ready)
     {
-        const auto answer = AskChat("heartbeat", {{"is_ready", ready ? std::string(ReadyFlag) : std::string(Zero)}}, peer);
+        const auto answer =
+            AskChat("heartbeat", {{"is_ready", ready ? std::string(ReadyFlag) : std::string(Zero)}}, peer);
 
         if (!answer)
         {
@@ -913,9 +922,20 @@ namespace MCMcoApi
         return answer ? MCResult<void>() : std::unexpected(answer.error());
     }
 
-    MCResult<void> MCService::CloseSession(MCPeer& peer, std::string_view session)
+    MCResult<void> MCService::CloseSession(MCPeer& peer, std::string_view session, std::string_view build,
+                                           std::string_view content)
     {
-        const auto answer = AskChat("close_session", {{"session_hex", std::string(session)}}, peer);
+        // The session, then (a match played) the room's engine, as the launcher's AddReduxRoomIdentity adds it.
+        MCFields extra = {{"session_hex", std::string(session)}};
+
+        if (!build.empty())
+        {
+            extra.insert(extra.end(), {{"engine", std::string(ReduxEngine)},
+                                       {"engine_build", std::string(build)},
+                                       {"engine_content", std::string(content)}});
+        }
+
+        const auto answer = AskChat("close_session", extra, peer);
         return answer ? MCResult<void>() : std::unexpected(answer.error());
     }
 
@@ -944,15 +964,16 @@ namespace MCMcoApi
         const Json none = Json::object();
         const Json& given = admission != answer->Object.end() && admission->is_object() ? *admission : none;
         MCAdmission ticket{.Ticket = TextOf(given, "ticket"), .Role = TextOf(given, "role")};
-        const bool ticketShaped = ticket.Ticket.size() >= TicketFewest && ticket.Ticket.size() <= TicketMost &&
-                                  std::ranges::all_of(ticket.Ticket, [](char c)
-                                                      { return std::isalnum(static_cast<unsigned char>(c)) != 0 ||
-                                                               c == '-' || c == '.' || c == '_'; });
-        const bool forThis = NumberOf(given, "protocol", 0) == EngineProtocol &&
-                             TextOf(given, "host") == match.RelayHost &&
-                             NumberOf(given, "port", 0) == match.RelayPort && SameId(TextOf(given, "peer"), peer.ClientId) &&
-                             TextOf(given, "room") == match.SessionHex && TextOf(given, "room_id") == match.RoomId &&
-                             ticket.Role == (host ? HostRole : JoinRole);
+        const bool ticketShaped =
+            ticket.Ticket.size() >= TicketFewest && ticket.Ticket.size() <= TicketMost &&
+            std::ranges::all_of(
+                ticket.Ticket, [](char c)
+                { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '.' || c == '_'; });
+        const bool forThis =
+            NumberOf(given, "protocol", 0) == EngineProtocol && TextOf(given, "host") == match.RelayHost &&
+            NumberOf(given, "port", 0) == match.RelayPort && SameId(TextOf(given, "peer"), peer.ClientId) &&
+            TextOf(given, "room") == match.SessionHex && TextOf(given, "room_id") == match.RoomId &&
+            ticket.Role == (host ? HostRole : JoinRole);
 
         if (!ticketShaped || !forThis)
         {

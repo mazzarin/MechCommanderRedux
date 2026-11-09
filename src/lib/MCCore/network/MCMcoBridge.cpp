@@ -41,20 +41,11 @@ namespace
     public:
         explicit MCTlsStream(std::unique_ptr<MCTlsLink> link) : _Link(std::move(link)) {}
 
-        MCSocket::Handle Socket() const override
-        {
-            return _Link->Socket();
-        }
+        MCSocket::Handle Socket() const override { return _Link->Socket(); }
 
-        bool Buffered() const override
-        {
-            return _Link->Buffered();
-        }
+        bool Buffered() const override { return _Link->Buffered(); }
 
-        int Read(std::span<uint8_t> data) override
-        {
-            return _Link->Read(data);
-        }
+        int Read(std::span<uint8_t> data) override { return _Link->Read(data); }
 
         std::expected<void, std::string> Write(std::span<const uint8_t> data, int timeoutMs) override
         {
@@ -71,10 +62,7 @@ namespace
     public:
         explicit MCRelayLink(std::unique_ptr<MCMcoBridge::MCStream> stream) : _Stream(std::move(stream)) {}
 
-        MCMcoBridge::MCStream& Stream()
-        {
-            return *_Stream;
-        }
+        MCMcoBridge::MCStream& Stream() { return *_Stream; }
 
         /// <summary>Sends a frame (its write held to the relay's time).</summary>
         std::expected<void, std::string> Send(MCFrameType type, std::span<const uint8_t> payload = {})
@@ -120,20 +108,11 @@ namespace
             return !_Closed && !_Reader.Bad();
         }
 
-        std::optional<MCFrame> Next()
-        {
-            return _Reader.Next();
-        }
+        std::optional<MCFrame> Next() { return _Reader.Next(); }
 
-        bool Closed() const
-        {
-            return _Closed;
-        }
+        bool Closed() const { return _Closed; }
 
-        bool Bad() const
-        {
-            return _Reader.Bad();
-        }
+        bool Bad() const { return _Reader.Bad(); }
 
         /// <summary>Waits up to <paramref name="timeoutMs"/> for the next frame.</summary>
         std::expected<MCFrame, std::string> Wait(int timeoutMs)
@@ -189,16 +168,10 @@ namespace
         }
 
         /// <summary>The time since the relay last sent anything.</summary>
-        int QuietMs() const
-        {
-            return MsSince(_LastHeard);
-        }
+        int QuietMs() const { return MsSince(_LastHeard); }
 
         /// <summary>How long the bridge may wait before its next keep-alive is due.</summary>
-        int UntilKeepAliveMs() const
-        {
-            return std::max(0, MCMcoRelay::KeepAliveMs - MsSince(_LastSent));
-        }
+        int UntilKeepAliveMs() const { return std::max(0, MCMcoRelay::KeepAliveMs - MsSince(_LastSent)); }
 
     private:
         std::unique_ptr<MCMcoBridge::MCStream> _Stream;
@@ -289,11 +262,16 @@ namespace
         }
 
         MCPair(MCPair&& other) noexcept
-            : _Link(std::move(other._Link)), _Note(std::move(other._Note)), _Carried(other._Carried),
-              _IsGuest(other._IsGuest), _Udp(std::exchange(other._Udp, MCSocket::InvalidHandle)),
-              _Listener(std::exchange(other._Listener, MCSocket::InvalidHandle)),
-              _Tcp(std::exchange(other._Tcp, MCSocket::InvalidHandle)), _Port(other._Port), _Game(other._Game),
-              _GameKnown(other._GameKnown)
+            : _Link(std::move(other._Link))
+            , _Note(std::move(other._Note))
+            , _Carried(other._Carried)
+            , _IsGuest(other._IsGuest)
+            , _Udp(std::exchange(other._Udp, MCSocket::InvalidHandle))
+            , _Listener(std::exchange(other._Listener, MCSocket::InvalidHandle))
+            , _Tcp(std::exchange(other._Tcp, MCSocket::InvalidHandle))
+            , _Port(other._Port)
+            , _Game(other._Game)
+            , _GameKnown(other._GameKnown)
         {
         }
 
@@ -320,6 +298,7 @@ namespace
                     MCSocketTransport::MCWaiting{_Tcp == MCSocket::InvalidHandle ? _Listener : MCSocket::InvalidHandle},
                     MCSocketTransport::MCWaiting{_Tcp},
                 };
+
                 const int wait = _Link->Stream().Buffered() ? 0 : std::min(LoopWaitMs, _Link->UntilKeepAliveMs());
                 MCSocketTransport::Wait(waiting, wait);
 
@@ -402,24 +381,26 @@ namespace
         {
             switch (frame.Type)
             {
-            case MCFrameType::KeepAlive:
-                return {};
-            case MCFrameType::Datagram:
-                return FromRelayDatagram(frame.Payload);
-            case MCFrameType::StreamOpen:
-                return FromRelayOpen();
-            case MCFrameType::StreamData:
-                return FromRelayData(frame.Payload);
-            case MCFrameType::StreamClose:
-                if (!_PeerOpened)
+                case MCFrameType::KeepAlive:
+                    return {};
+                case MCFrameType::Datagram:
+                    return FromRelayDatagram(frame.Payload);
+                case MCFrameType::StreamOpen:
+                    return FromRelayOpen();
+                case MCFrameType::StreamData:
+                    return FromRelayData(frame.Payload);
+                case MCFrameType::StreamClose:
                 {
-                    return "the relay closed a connection it never opened";
-                }
+                    if (!_PeerOpened)
+                    {
+                        return "the relay closed a connection it never opened";
+                    }
 
-                CloseGameTcp(false);
-                return {};
-            case MCFrameType::Control:
-                break;
+                    CloseGameTcp(false);
+                    return {};
+                }
+                case MCFrameType::Control:
+                    break;
             }
 
             return "the relay sent a control message mid-match";
@@ -538,7 +519,8 @@ namespace
                     return {};
                 }
 
-                const std::span<const uint8_t> received = std::span<const uint8_t>(datagram).first(static_cast<size_t>(size));
+                const std::span<const uint8_t> received =
+                    std::span<const uint8_t>(datagram).first(static_cast<size_t>(size));
 
                 if (_IsGuest)
                 {
@@ -738,7 +720,9 @@ namespace MCMcoBridge
         MCCarried Carried;
     };
 
-    MCGuest::MCGuest(std::unique_ptr<MCState> state) : _State(std::move(state)) {}
+    MCGuest::MCGuest(std::unique_ptr<MCState> state) : _State(std::move(state))
+    {
+    }
 
     std::expected<std::unique_ptr<MCGuest>, std::string> MCGuest::Start(const MCDial& dial, std::string_view ticket,
                                                                         MCNote note)
@@ -922,9 +906,10 @@ namespace MCMcoBridge
         {
             while (!Stopping)
             {
-                std::array<MCSocketTransport::MCWaiting, 1> waiting{MCSocketTransport::MCWaiting{control.Stream().Socket()}};
-                MCSocketTransport::Wait(waiting,
-                                        control.Stream().Buffered() ? 0 : std::min(LoopWaitMs, control.UntilKeepAliveMs()));
+                std::array<MCSocketTransport::MCWaiting, 1> waiting{
+                    MCSocketTransport::MCWaiting{control.Stream().Socket()}};
+                MCSocketTransport::Wait(
+                    waiting, control.Stream().Buffered() ? 0 : std::min(LoopWaitMs, control.UntilKeepAliveMs()));
                 const bool open = control.Pump();
 
                 while (std::optional<MCFrame> frame = control.Next())
@@ -946,7 +931,8 @@ namespace MCMcoBridge
                         return word.error();
                     }
 
-                    if (word->Status != MCMcoRelay::AttachStatus || !MCMcoApi::IsHex(word->Grant, MCMcoRelay::GrantDigits))
+                    if (word->Status != MCMcoRelay::AttachStatus ||
+                        !MCMcoApi::IsHex(word->Grant, MCMcoRelay::GrantDigits))
                     {
                         return std::format("the relay said {}", MCMcoApi::Printable(word->Status));
                     }
@@ -956,7 +942,8 @@ namespace MCMcoBridge
 
                 if (!open)
                 {
-                    return control.Bad() ? "the relay sent a frame it never sends" : "the relay closed the host's connection";
+                    return control.Bad() ? "the relay sent a frame it never sends"
+                                         : "the relay closed the host's connection";
                 }
 
                 if (control.QuietMs() > MCMcoRelay::ControlQuietMs)
@@ -974,7 +961,9 @@ namespace MCMcoBridge
         }
     };
 
-    MCHost::MCHost(std::unique_ptr<MCState> state) : _State(std::move(state)) {}
+    MCHost::MCHost(std::unique_ptr<MCState> state) : _State(std::move(state))
+    {
+    }
 
     std::expected<std::unique_ptr<MCHost>, std::string> MCHost::Start(const MCDial& dial, std::string_view ticket,
                                                                       uint16_t gamePort, MCNote note)
@@ -1077,9 +1066,10 @@ namespace MCMcoBridge
             for (int size = sockets.ReceiveFrom(udp, answer, from); size > 0;
                  size = sockets.ReceiveFrom(udp, answer, from))
             {
-                const std::span<const uint8_t> received = std::span<const uint8_t>(answer).first(static_cast<size_t>(size));
-                answered = answered ||
-                           (from == game && MCMcoRelay::IsAnswer(received) && MCMcoRelay::AnswerPort(received) == gamePort);
+                const std::span<const uint8_t> received =
+                    std::span<const uint8_t>(answer).first(static_cast<size_t>(size));
+                answered = answered || (from == game && MCMcoRelay::IsAnswer(received) &&
+                                        MCMcoRelay::AnswerPort(received) == gamePort);
             }
         }
 

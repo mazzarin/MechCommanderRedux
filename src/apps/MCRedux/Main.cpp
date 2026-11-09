@@ -654,6 +654,9 @@ int main(int argc, char** argv)
     // What the game starts may end with it (a lobby's job): then no RESTART, and no setup is started.
     const bool canStart = MCStartedOutlive() != MCOutlives::No;
     MCUpdater::SetCanStartAgain(canStart);
+    // TRIAL BUILD ONLY (release-trial; never merged): the job check's answer, whatever it is.
+    SDL_Log("Trial: what the game starts outlives it: %d (0 yes, 1 broken away, 2 no)",
+            static_cast<int>(MCStartedOutlive()));
 
     if (!canStart)
     {

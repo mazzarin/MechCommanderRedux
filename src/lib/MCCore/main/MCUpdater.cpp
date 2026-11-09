@@ -985,7 +985,12 @@ namespace
             return;
         }
 
-        if (Current.Stage == MCUpdater::MCStage::Ready && !TrialRestarted)
+        // An update ready that RESTART can't take (in a job that ends what the game starts, or a setup waiting for
+        // the player's own start) is done here: the game quits as a lobby's player would.
+        const bool readyHere = Current.Stage == MCUpdater::MCStage::Ready &&
+                               (!StartsAgain || Current.GoesIn == MCUpdater::MCGoesIn::PlayersStart);
+
+        if (Current.Stage == MCUpdater::MCStage::Ready && !readyHere && !TrialRestarted)
         {
             TrialRestarted = true;
             SDL_Log("Trial: RESTART into %s", Current.Version.c_str());
@@ -993,8 +998,8 @@ namespace
             return;
         }
 
-        const bool quiet =
-            !TrialBusy() && (Current.Stage == MCUpdater::MCStage::None || Current.Stage == MCUpdater::MCStage::Failed);
+        const bool quiet = readyHere || (!TrialBusy() && (Current.Stage == MCUpdater::MCStage::None ||
+                                                          Current.Stage == MCUpdater::MCStage::Failed));
 
         if (!quiet)
         {
@@ -1011,8 +1016,10 @@ namespace
         else if (now - TrialQuietSince >= TrialQuietMs)
         {
             TrialQuit = true;
-            SDL_Log("Trial: nothing left to do (%s); quitting",
-                    Current.Stage == MCUpdater::MCStage::Failed ? Current.Error.c_str() : "up to date");
+            SDL_Log("Trial: nothing left to do (%s); quitting", readyHere ? "an update ready, no RESTART here"
+                                                                : Current.Stage == MCUpdater::MCStage::Failed
+                                                                    ? Current.Error.c_str()
+                                                                    : "up to date");
             InputQuit();
         }
     }

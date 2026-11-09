@@ -60,9 +60,12 @@ struct MCLegsStep
 /// the way through it (0 to 1), the in-between of the way to the next frame they show (<see cref="LegsInBetweenSteps"/>):
 /// from the frame toward the one after it; played <paramref name="backwards"/>, from the frame before it toward it, the
 /// rest of the way. Past either end, round to the other end when the gesture <paramref name="loops"/>, else none (the
-/// next gesture's frame comes next). None in a frame's first step.
+/// next gesture's frame comes next). None in a frame's first step. The art draws <paramref name="drawn"/> frames, which
+/// may be fewer than the gesture plays (a frame past its last shows its last, as MCClampShapeFrame has it): the step
+/// is between the frames shown, and none where both show the same one.
 /// </summary>
-std::optional<MCLegsStep> MCLegsStepOf(int32_t frame, int32_t frames, float share, bool backwards, bool loops);
+std::optional<MCLegsStep> MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, bool backwards,
+                                       bool loops);
 
 /// <summary>
 /// Port-only (HDStops): a stride drawn on while its mech stands with its move held up: each part's frame as last drawn,
@@ -241,10 +244,11 @@ public:
     /// <summary>
     /// Port-only (HD art): playing <paramref name="frames"/> frames, at frame <paramref name="frame"/>, the step of the
     /// way to the next frame its legs show (<see cref="LegsInBetweenSteps"/>), from the frame toward it; played
-    /// backwards, from the frame before toward this one, the rest of the way. None in a frame's first step, when the
-    /// next frame shown is the next gesture's, or stepped by hand.
+    /// backwards, from the frame before toward this one, the rest of the way. Between the frames the legs' art draws
+    /// (<paramref name="drawn"/> of them: <see cref="MCLegsStepOf"/>). None in a frame's first step, when the next frame
+    /// shown is the next gesture's, or stepped by hand.
     /// </summary>
-    std::optional<MCLegsStep> LegsStepNow(int32_t frame, int32_t frames) const;
+    std::optional<MCLegsStep> LegsStepNow(int32_t frame, int32_t frames, int32_t drawn) const;
 
     /// <summary>
     /// The jump's or fall's height per frame of the legs: the mech type's gesture outline of

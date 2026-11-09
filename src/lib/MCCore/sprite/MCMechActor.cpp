@@ -1389,9 +1389,10 @@ namespace
     }
 } // namespace
 
-auto MCLegsStepOf(int32_t frame, int32_t frames, float share, bool backwards, bool loops) -> std::optional<MCLegsStep>
+auto MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, bool backwards, bool loops)
+    -> std::optional<MCLegsStep>
 {
-    if (frames < 2 || frame < 0 || frame >= frames)
+    if (frames < 2 || drawn < 1 || frame < 0 || frame >= frames)
     {
         return std::nullopt;
     }
@@ -1415,17 +1416,26 @@ auto MCLegsStepOf(int32_t frame, int32_t frames, float share, bool backwards, bo
         return loops ? std::optional((at % frames + frames) % frames) : std::nullopt;
     };
 
+    // Some art draws fewer frames than its gesture plays (Thor's and Hunchback's limp, a frame short): a frame past its
+    // last shows its last, so the step is between the frames shown, and none while the art holds its last.
+    const auto drawnStep = [&](int32_t from, int32_t to, int32_t at) -> std::optional<MCLegsStep>
+    {
+        const int32_t fromShown = std::min(from, drawn - 1);
+        const int32_t toShown = std::min(to, drawn - 1);
+        return fromShown != toShown ? std::optional(MCLegsStep{fromShown, toShown, at}) : std::nullopt;
+    };
+
     if (backwards)
     {
         const std::optional<int32_t> from = shown(frame - 1);
-        return from.has_value() ? std::optional(MCLegsStep{*from, frame, LegsInBetweenSteps - step}) : std::nullopt;
+        return from.has_value() ? drawnStep(*from, frame, LegsInBetweenSteps - step) : std::nullopt;
     }
 
     const std::optional<int32_t> to = shown(frame + 1);
-    return to.has_value() ? std::optional(MCLegsStep{frame, *to, step}) : std::nullopt;
+    return to.has_value() ? drawnStep(frame, *to, step) : std::nullopt;
 }
 
-auto MCMechActor::LegsStepNow(int32_t frame, int32_t frames) const -> std::optional<MCLegsStep>
+auto MCMechActor::LegsStepNow(int32_t frame, int32_t frames, int32_t drawn) const -> std::optional<MCLegsStep>
 {
     // Port-only (MechBraking): at the rate the legs play (Update's legsRate).
     const float rate = FrameRate[MCMechPart::Legs] * StrideRate;
@@ -1436,7 +1446,7 @@ auto MCMechActor::LegsStepNow(int32_t frame, int32_t frames) const -> std::optio
     }
 
     // The legs loop but in a transition, where past either end the next gesture's frame comes next (Update).
-    return MCLegsStepOf(frame, frames, CurrentTime[MCMechPart::Legs] * rate, PlayBackwards, !InTransition);
+    return MCLegsStepOf(frame, frames, drawn, CurrentTime[MCMechPart::Legs] * rate, PlayBackwards, !InTransition);
 }
 
 auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing, const MCShape& legs, bool asPlayed)
@@ -1514,10 +1524,13 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
     };
 
     // On the way to the next frame: the in-between over both frames' boxes (or their turn middles'). Only where the GPU
-    // draws the pack's frames: drawn by the CPU, the frame itself (played backwards, not the one before it).
+    // draws the pack's frames: drawn by the CPU, the frame itself (played backwards, not the one before it). Stepped by
+    // the frame as played, between the frames the art draws (never past its last: the frame there would be read from
+    // beyond the table).
     const bool gpuDraws = MCRenderer::GpuDrawing() == MCGpuDrawing::On;
 
-    if (const std::optional<MCLegsStep> step = asPlayed && gpuDraws ? LegsStepNow(frame, frames) : std::nullopt;
+    if (const std::optional<MCLegsStep> step =
+            asPlayed && gpuDraws ? LegsStepNow(frameNow, frames, VfxShapeCount(table)) : std::nullopt;
         step.has_value())
     {
         const std::optional<FrameBox> from = boxOf(step->From);

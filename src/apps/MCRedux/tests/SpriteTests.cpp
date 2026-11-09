@@ -793,7 +793,7 @@ TEST_CASE("sprites: legs part of the way to their next frame show that step's in
 
     for (int32_t step = 0; step < LegsInBetweenSteps; ++step)
     {
-        const std::optional<MCLegsStep> shown = MCLegsStepOf(5, Frames, seconds * ArtRate, false, true);
+        const std::optional<MCLegsStep> shown = MCLegsStepOf(5, Frames, Frames, seconds * ArtRate, false, true);
         MCTest::Scope scope(std::format("step {}", step));
 
         if (step == 0)
@@ -803,7 +803,7 @@ TEST_CASE("sprites: legs part of the way to their next frame show that step's in
         else
         {
             CHECK((shown == MCLegsStep{5, 6, step}));
-            CHECK((MCLegsStepOf(5, Frames, seconds * ArtRate, true, true) ==
+            CHECK((MCLegsStepOf(5, Frames, Frames, seconds * ArtRate, true, true) ==
                    MCLegsStep{4, 5, LegsInBetweenSteps - step}));
         }
 
@@ -811,14 +811,62 @@ TEST_CASE("sprites: legs part of the way to their next frame show that step's in
     }
 
     constexpr float Quarter = 0.25f;
-    CHECK((MCLegsStepOf(Frames - 1, Frames, Quarter, false, true) == MCLegsStep{Frames - 1, 0, 1}));
-    CHECK(!MCLegsStepOf(Frames - 1, Frames, Quarter, false, false).has_value());
-    CHECK((MCLegsStepOf(0, Frames, Quarter, true, true) == MCLegsStep{Frames - 1, 0, LegsInBetweenSteps - 1}));
-    CHECK(!MCLegsStepOf(0, Frames, Quarter, true, false).has_value());
+    CHECK((MCLegsStepOf(Frames - 1, Frames, Frames, Quarter, false, true) == MCLegsStep{Frames - 1, 0, 1}));
+    CHECK(!MCLegsStepOf(Frames - 1, Frames, Frames, Quarter, false, false).has_value());
+    CHECK((MCLegsStepOf(0, Frames, Frames, Quarter, true, true) == MCLegsStep{Frames - 1, 0, LegsInBetweenSteps - 1}));
+    CHECK(!MCLegsStepOf(0, Frames, Frames, Quarter, true, false).has_value());
     // A share past the frame's end (frames stepped late) keeps to its last step; a lone frame has nowhere to go.
-    CHECK((MCLegsStepOf(5, Frames, 1.5f, false, true) == MCLegsStep{5, 6, LegsInBetweenSteps - 1}));
-    CHECK(!MCLegsStepOf(0, 1, Quarter, false, true).has_value());
-    CHECK(!MCLegsStepOf(Frames, Frames, Quarter, false, true).has_value());
+    CHECK((MCLegsStepOf(5, Frames, Frames, 1.5f, false, true) == MCLegsStep{5, 6, LegsInBetweenSteps - 1}));
+    CHECK(!MCLegsStepOf(0, 1, 1, Quarter, false, true).has_value());
+    CHECK(!MCLegsStepOf(Frames, Frames, Frames, Quarter, false, true).has_value());
+}
+
+/// <summary>
+/// Port-only (HD art's walk in-betweens): art drawing fewer frames than its gesture plays (Thor's limp plays 22, its art
+/// draws 21; Hollander's gesture 10 plays 17 over 10) steps only between the frames it draws, a frame past its last
+/// showing its last: none while it holds its last, from its last toward the first as the loop comes round, never toward
+/// a frame past it (read from beyond the shape table, release 4's crash).
+/// </summary>
+TEST_CASE("sprites: legs whose art draws fewer frames than they play step only between the frames drawn")
+{
+    constexpr float Quarter = 0.25f;
+    constexpr int32_t Limp = 22;
+    constexpr int32_t LimpDrawn = 21;
+    // Held at the art's last frame (20) while 20 and 21 play; from it toward the first as 21 plays toward 0.
+    CHECK(!MCLegsStepOf(LimpDrawn - 1, Limp, LimpDrawn, Quarter, false, true).has_value());
+    CHECK((MCLegsStepOf(Limp - 1, Limp, LimpDrawn, Quarter, false, true) == MCLegsStep{LimpDrawn - 1, 0, 1}));
+    CHECK((MCLegsStepOf(5, Limp, LimpDrawn, Quarter, false, true) == MCLegsStep{5, 6, 1}));
+    // Backwards: 0 from 21, shown as 20; none from 21 to 20, both shown as 20.
+    CHECK((MCLegsStepOf(0, Limp, LimpDrawn, Quarter, true, true) ==
+           MCLegsStep{LimpDrawn - 1, 0, LegsInBetweenSteps - 1}));
+    CHECK(!MCLegsStepOf(Limp - 1, Limp, LimpDrawn, Quarter, true, true).has_value());
+
+    constexpr int32_t Played = 17;
+    constexpr int32_t Drawn = 10;
+
+    for (int32_t frame = 0; frame < Played; ++frame)
+    {
+        MCTest::Scope scope(std::format("frame {}", frame));
+
+        for (const bool backwards : {false, true})
+        {
+            const std::optional<MCLegsStep> step = MCLegsStepOf(frame, Played, Drawn, Quarter, backwards, false);
+
+            if (step.has_value())
+            {
+                CHECK(step->From < Drawn);
+                CHECK(step->To < Drawn);
+                CHECK(step->From != step->To);
+            }
+            else
+            {
+                // Only at the ends of the frames drawn, or past them, is there none.
+                CHECK((frame >= Drawn - 1 || (backwards && frame == 0)));
+            }
+        }
+    }
+
+    CHECK(!MCLegsStepOf(0, Limp, 0, Quarter, false, true).has_value());
 }
 
 TEST_CASE("sprites: a mech's transitions come from its own table when it has one")

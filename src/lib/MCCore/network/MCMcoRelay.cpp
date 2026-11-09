@@ -147,7 +147,7 @@ namespace MCMcoRelay
     std::string Hello(MCMode mode, std::string_view credential)
     {
         // The helper's hello (mode, then ticket or grant, each left out when empty), in its order.
-        Json hello = Json::object();
+        nlohmann::ordered_json hello = nlohmann::ordered_json::object();
         hello["mode"] = std::string(ModeName(mode));
 
         if (!credential.empty())

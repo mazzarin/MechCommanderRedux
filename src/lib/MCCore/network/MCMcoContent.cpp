@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <format>
 #include <fstream>
-#include <vector>
+#include <map>
 
 namespace
 {
@@ -26,6 +26,8 @@ namespace
     constexpr std::array<std::string_view, 3> LeftOutPlaces = {"DATA/SAVEGAME/", "DATA/MISSIONS/", "DATA/TERRAIN/"};
     constexpr std::array<std::string_view, 2> MapPlaces = {"DATA/MISSIONS/", "DATA/TERRAIN/"};
     constexpr std::string_view LeftOutFile = "WINDOWS.FIT";
+    /// <summary>Where the user folder's files of the counted kinds stand in for the game's (with any .fst).</summary>
+    constexpr std::string_view ObjectsPlace = "DATA/OBJECTS/";
     /// <summary>The archives counted even when they hold only maps.</summary>
     constexpr std::array<std::string_view, 5> CoreArchives = {"ART.FST", "MISC.FST", "MISSION.FST", "SHAPES.FST",
                                                               "TERRAIN.FST"};
@@ -137,36 +139,64 @@ namespace
 
         return maps;
     }
-}
 
-namespace MCMcoContent
-{
-    std::expected<std::string, std::string> Fingerprint(const std::filesystem::path& gameFolder)
+    /// <summary>The files counted, by name (upper case, '/'), each where it is.</summary>
+    using MCFiles = std::map<std::string, std::filesystem::path>;
+
+    /// <summary>Which of a player's folders is read: the game folder, or the user folder overlaying it.</summary>
+    enum class MCPass
     {
-        std::error_code error;
-        std::vector<std::pair<std::string, std::filesystem::path>> files;
-        auto it = std::filesystem::recursive_directory_iterator(gameFolder, error);
+        Game,
+        User,
+    };
 
-        if (error)
+    /// <summary>Whether a folder on <paramref name="name"/>'s way is named Redux, Temp or Tmp.</summary>
+    bool InSkippedFolder(std::string_view name)
+    {
+        for (size_t start = 0, slash = name.find('/'); slash != std::string_view::npos;
+             start = slash + 1, slash = name.find('/', start))
         {
-            return std::unexpected(std::format("the game folder can't be read: {}", error.message()));
+            if (Among(name.substr(start, slash - start), SkippedFolders))
+            {
+                return true;
+            }
         }
 
-        for (const auto end = std::filesystem::recursive_directory_iterator(); it != end; it.increment(error))
-        {
-            if (error)
-            {
-                return std::unexpected(std::format("the game folder can't be read: {}", error.message()));
-            }
+        return false;
+    }
 
+    /// <summary>Whether the file <paramref name="name"/> in <paramref name="pass"/>'s folder is the room's (its archive aside).</summary>
+    bool Counted(std::string_view name, MCPass pass)
+    {
+        const std::string_view kind = KindOf(name);
+
+        if (!Among(kind, Kinds) || !IsRoomContent(name))
+        {
+            return false;
+        }
+
+        return pass == MCPass::Game ? !InSkippedFolder(name) : name.starts_with(ObjectsPlace) || kind == ArchiveKind;
+    }
+
+    /// <summary>
+    /// The files counted in <paramref name="folder"/> (<paramref name="what"/> names it), each standing in for any of its
+    /// name already in <paramref name="files"/>.
+    /// </summary>
+    std::expected<void, std::string> Collect(const std::filesystem::path& folder, MCPass pass, std::string_view what,
+                                             MCFiles& files)
+    {
+        std::error_code error;
+        auto it = std::filesystem::recursive_directory_iterator(folder, error);
+
+        for (const auto end = std::filesystem::recursive_directory_iterator(); !error && it != end; it.increment(error))
+        {
             const std::filesystem::directory_entry& entry = *it;
-            std::string relative = MCFileSystem::ToUtf8(entry.path().lexically_relative(gameFolder));
+            std::string relative = MCFileSystem::ToUtf8(entry.path().lexically_relative(folder));
             std::ranges::replace(relative, '\\', '/');
             const std::string name = Upper(std::move(relative));
-            const std::string top = name.substr(0, name.find('/'));
 
             // A link is never followed (MCO's skips reparse points); nor are Redux HD's own folders read.
-            if (entry.is_symlink(error) || (entry.is_directory(error) && Among(top, OurFolders) && top == name))
+            if (entry.is_symlink(error) || (entry.is_directory(error) && Among(name, OurFolders)))
             {
                 if (entry.is_directory(error))
                 {
@@ -176,21 +206,7 @@ namespace MCMcoContent
                 continue;
             }
 
-            if (!entry.is_regular_file(error) || !Among(KindOf(name), Kinds))
-            {
-                continue;
-            }
-
-            // Any folder on the way named Redux, Temp or Tmp.
-            bool skipped = false;
-
-            for (size_t start = 0, slash = name.find('/'); slash != std::string::npos;
-                 start = slash + 1, slash = name.find('/', start))
-            {
-                skipped = skipped || Among(std::string_view(name).substr(start, slash - start), SkippedFolders);
-            }
-
-            if (skipped || !IsRoomContent(name))
+            if (!entry.is_regular_file(error) || !Counted(name, pass))
             {
                 continue;
             }
@@ -201,7 +217,38 @@ namespace MCMcoContent
                 continue;
             }
 
-            files.emplace_back(name, entry.path());
+            files.insert_or_assign(name, entry.path());
+        }
+
+        if (error)
+        {
+            return std::unexpected(std::format("the {} can't be read: {}", what, error.message()));
+        }
+
+        return {};
+    }
+}
+
+namespace MCMcoContent
+{
+    std::expected<std::string, std::string> Fingerprint(const std::filesystem::path& gameFolder,
+                                                        const std::filesystem::path& userFolder)
+    {
+        MCFiles files;
+
+        if (auto collected = Collect(gameFolder, MCPass::Game, "game folder", files); !collected)
+        {
+            return std::unexpected(collected.error());
+        }
+
+        std::error_code error;
+
+        if (!userFolder.empty() && std::filesystem::is_directory(userFolder, error))
+        {
+            if (auto collected = Collect(userFolder, MCPass::User, "user folder", files); !collected)
+            {
+                return std::unexpected(collected.error());
+            }
         }
 
         if (files.empty() || files.size() > FilesMost)
@@ -209,7 +256,7 @@ namespace MCMcoContent
             return std::unexpected(std::string("the game folder's data couldn't be checked"));
         }
 
-        std::ranges::sort(files, {}, [](const auto& file) { return file.first; });
+        // The map keeps the names in byte order, MCO's ordinal order.
         MCSha256::MCHasher combined;
         combined.Add(Header);
 

@@ -8,6 +8,7 @@
 #include "MCVersion.h"
 #include "lib/MCRandomId.h"
 #include "network/MCMcoApi.h"
+#include "network/MCMcoContent.h"
 #include "update/MCHttpSource.h"
 #include "platform/MCFileSystem.h"
 
@@ -63,6 +64,8 @@ namespace
     constexpr const char* SaveFolderApp = "MechCommander Redux";
     /// <summary>The lobby polled about once a second, as MCO's launcher polls it (850-1150 ms).</summary>
     constexpr auto PollEvery = std::chrono::seconds(1);
+    /// <summary>The hex digits of a room's data fingerprint shown (enough to tell two apart).</summary>
+    constexpr size_t ContentShown = 12;
     constexpr int MostSeconds = 3600;
     constexpr std::string_view Yes = "y";
 
@@ -230,6 +233,12 @@ namespace
     {
     public:
         MCProbe(MCMcoApi::MCService& service, int seconds) : _Service(service), _Seconds(seconds) {}
+
+        /// <summary>This computer's game data, as MCO fingerprints it, to compare each Redux room's with.</summary>
+        void CompareContent(std::string content)
+        {
+            _Content = std::move(content);
+        }
 
         MCProbe(const MCProbe&) = delete;
         MCProbe& operator=(const MCProbe&) = delete;
@@ -445,7 +454,7 @@ namespace
                     return 1;
                 }
 
-                if (const std::string listed = Listing(*lobby); listed != last)
+                if (const std::string listed = Listing(*lobby, _Content); listed != last)
                 {
                     std::cout << listed << std::flush;
                     last = listed;
@@ -460,7 +469,7 @@ namespace
             }
         }
 
-        static std::string Listing(const MCMcoApi::MCLobby& lobby)
+        static std::string Listing(const MCMcoApi::MCLobby& lobby, std::string_view ours)
         {
             std::string listed =
                 std::format("The lobby: {} players online, {} rooms.\n", lobby.Players, lobby.Rooms.size());
@@ -471,10 +480,25 @@ namespace
                 listed += std::format("  {:5} \"{}\", host {}, {}/{}, {}{}{}\n", redux ? "REDUX" : "GOLD",
                                       Shown(room.Name), Shown(room.Host), room.Players, room.MaxPlayers,
                                       room.InGame ? "in game" : "waiting", room.Locked ? ", locked" : "",
-                                      redux ? std::format(", build {}", Shown(room.EngineBuild)) : std::string());
+                                      redux ? std::format(", build {}{}", Shown(room.EngineBuild), DataOf(room, ours))
+                                            : std::string());
             }
 
             return listed;
+        }
+
+        /// <summary>A Redux room's data, its fingerprint's start, and whether it is this computer's.</summary>
+        static std::string DataOf(const MCMcoApi::MCRoom& room, std::string_view ours)
+        {
+            if (room.EngineContent.empty())
+            {
+                return {};
+            }
+
+            return std::format(", data {}{}", Shown(std::string_view(room.EngineContent).substr(0, ContentShown)),
+                               ours.empty()                                 ? ""
+                               : MCMcoApi::SameId(room.EngineContent, ours) ? " (this computer's)"
+                                                                            : " (not this computer's)");
         }
 
         void Unregister()
@@ -507,6 +531,7 @@ namespace
 
         MCMcoApi::MCService& _Service;
         int _Seconds = 0;
+        std::string _Content;
         std::optional<MCMcoApi::MCPeer> _Registered;
         std::string _AccountToken;
     };
@@ -680,6 +705,21 @@ int MCMcoProbe::Run(std::span<const std::string_view> arguments)
     const std::unique_ptr<MCHttpSource::MCGet> transfer = MCMakeHttpGet();
     MCMcoApi::MCService service(*transfer, std::move(client));
     MCProbe probe(service, seconds);
+
+    // The rooms' data, compared with this computer's (the game folder the game remembers, or --data).
+    if (const std::filesystem::path game = data.empty() ? MCGameFolder::Remembered(*folder) : MCFileSystem::FromUtf8(data);
+        !playing && !game.empty() && MCGameFolder::HasGameData(game))
+    {
+        if (const auto content = MCMcoContent::Fingerprint(game, *folder); content)
+        {
+            Say(std::format("This computer's game data, as MCO fingerprints it: {}.", *content));
+            probe.CompareContent(*content);
+        }
+        else
+        {
+            Say(std::format("This computer's game data couldn't be fingerprinted: {}.", content.error()));
+        }
+    }
 
     if (playing)
     {

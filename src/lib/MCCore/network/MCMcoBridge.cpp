@@ -147,15 +147,18 @@ namespace
                     return std::move(*frame);
                 }
 
-                if (!Pump())
-                {
-                    return std::unexpected(std::string(Bad() ? "the relay sent a frame it never sends"
-                                                             : "the relay closed the connection"));
-                }
+                // A frame that came before a close is read first: a relay refusing a connection answers, then closes it.
+                const bool open = Pump();
 
                 if (std::optional<MCFrame> frame = _Reader.Next())
                 {
                     return std::move(*frame);
+                }
+
+                if (!open)
+                {
+                    return std::unexpected(std::string(Bad() ? "the relay sent a frame it never sends"
+                                                             : "the relay closed the connection"));
                 }
 
                 const int left = timeoutMs - MsSince(start);

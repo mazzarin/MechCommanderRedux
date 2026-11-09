@@ -281,7 +281,7 @@ namespace
         bool Prepare()
         {
             std::cout << "Fingerprinting the game data as MCO does... " << std::flush;
-            const auto content = MCMcoContent::Fingerprint(_Options.DataFolder);
+            const auto content = MCMcoContent::Fingerprint(_Options.DataFolder, _Options.UserFolder);
 
             if (!content)
             {

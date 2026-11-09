@@ -1,10 +1,13 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "fakes/MCFakeMcoRelay.h"
 #include "fakes/MCFakeSignaling.h"
 #include "fakes/MCLoopbackTransport.h"
 #include "lib/MCOptionalRef.h"
 #include "linkup/MCSessionManager.h"
 #include "main/MCGameContext.h"
+#include "network/MCMcoBridge.h"
+#include "network/MCMultiPlayer.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCIceTransport.h"
 #include "platform/MCSocket.h"
@@ -60,12 +63,12 @@ namespace
 
     /// <summary>Hosts a session named <paramref name="name"/> for up to <paramref name="maxPlayers"/>.</summary>
     uint32_t Host(MCDirectPlay& directPlay, std::string_view name, uint32_t maxPlayers,
-                  uint32_t flags = GameSessionFlags)
+                  uint32_t flags = GameSessionFlags, const _GUID& application = TestApplication)
     {
         DPSESSIONDESC2 desc{};
         desc.dwSize = sizeof(desc);
         desc.dwFlags = flags;
-        desc.guidApplication = TestApplication;
+        desc.guidApplication = application;
         desc.dwMaxPlayers = maxPlayers;
         desc.SessionName = name;
         return directPlay.Open(desc, DPOPEN_CREATE | DPOPEN_RETURNSTATUS);
@@ -119,7 +122,7 @@ namespace
 
     /// <summary>The sessions an enumeration reports.</summary>
     std::vector<DPSESSIONDESC2> Enumerate(MCDirectPlay& directPlay, MCDirectPlay& host, uint32_t flags,
-                                          int attempts = SearchAttempts)
+                                          int attempts = SearchAttempts, const _GUID& application = TestApplication)
     {
         struct Found
         {
@@ -129,7 +132,7 @@ namespace
 
         DPSESSIONDESC2 desc{};
         desc.dwSize = sizeof(desc);
-        desc.guidApplication = TestApplication;
+        desc.guidApplication = application;
 
         // DirectPlay's enumeration is asynchronous: the host answers when it next pumps, and a later call lists it.
         for (int attempt = 0; attempt < attempts && found.Sessions.empty(); attempt++)
@@ -1221,4 +1224,71 @@ TEST_CASE("directplay: a search that doesn't wait comes back at once, the host's
         Enumerate(joiner, host, DPENUMSESSIONS_AVAILABLE | MCENUMSESSIONS_NOWAIT);
     REQUIRE_EQ(sessions.size(), size_t{1});
     CHECK(sessions[0].SessionName == std::optional<std::string>("Solaris VII"));
+}
+
+/// <summary>
+/// Port-only (Redux HD): a session through MechCommander Online's match relay, carried by the bridges as MCO's helper
+/// carries it (network/MCMcoBridge.h; tests/fakes/MCFakeMcoRelay.h the relay): the host's game on its port, found by
+/// MechCommander's own session query as MCO's launcher waits for it; the joiner's game typing the guest bridge's address
+/// on this computer (`-join 127.0.0.1:port`), its search, join and play passing through both bridges.
+/// </summary>
+TEST_CASE("directplay: a session through MechCommander Online's relay, carried by the bridges, is found, joined and played")
+{
+    constexpr uint16_t port = 28991;
+    // Each search's answer crosses both bridges and the relay after the host's next pump.
+    constexpr int relaySearchAttempts = 60;
+    constexpr int hostGameWaitMs = 5000;
+    MCFakeMcoRelay::MCRelay relay;
+    MCDirectPlay host;
+    REQUIRE_EQ(Connect(host, std::format("127.0.0.1:{}", port)), DP_OK);
+    REQUIRE_EQ(Host(host, "Through the relay", 6, GameSessionFlags, MultiPlayerAppGuid), DP_OK);
+    uint32_t hostPlayer = 0;
+    REQUIRE_EQ(NewPlayer(host, "Commander", hostPlayer), DP_OK);
+    const std::atomic<bool> going = false;
+    CHECK_EQ(WithHostRunning(host, [&] { return uint32_t{MCMcoBridge::WaitForHostGame(port, hostGameWaitMs, going)}; }),
+             1u);
+
+    auto hostBridge = MCMcoBridge::MCHost::Start(relay.Dial(), "host-ticket", port, {});
+    REQUIRE(hostBridge.has_value());
+    auto guestBridge = MCMcoBridge::MCGuest::Start(relay.Dial(), "join-ticket", {});
+    REQUIRE(guestBridge.has_value());
+
+    MCDirectPlay joiner;
+    REQUIRE_EQ(Connect(joiner, std::format("127.0.0.1:{}", (*guestBridge)->Port())), DP_OK);
+    const std::vector<DPSESSIONDESC2> sessions =
+        Enumerate(joiner, host, DPENUMSESSIONS_AVAILABLE, relaySearchAttempts, MultiPlayerAppGuid);
+    REQUIRE_EQ(sessions.size(), size_t{1});
+    CHECK(sessions[0].SessionName == std::optional<std::string>("Through the relay"));
+    CHECK_EQ(sessions[0].dwCurrentPlayers, 1u);
+
+    DPSESSIONDESC2 join = sessions[0];
+    REQUIRE_EQ(WithHostRunning(host, [&] { return joiner.Open(join, DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }), DP_OK);
+    CHECK((*guestBridge)->Connected());
+    uint32_t guestPlayer = 0;
+    REQUIRE_EQ(WithHostRunning(host, [&] { return NewPlayer(joiner, "Guest", guestPlayer); }), DP_OK);
+    std::optional<Received> created = Next(host);
+    REQUIRE(created.has_value());
+    CHECK_EQ(created->SystemType(), uint32_t{DPSYS_CREATEPLAYERORGROUP});
+    CHECK_EQ(created->As<DPMSG_CREATEPLAYERORGROUP>().dpId, guestPlayer);
+    CHECK(Listed(joiner, false) ==
+          (std::map<uint32_t, std::string>{{hostPlayer, "Commander"}, {guestPlayer, "Guest"}}));
+
+    REQUIRE_EQ(joiner.Send(guestPlayer, hostPlayer, 0, Bytes("hello")), DP_OK);
+    std::optional<Received> hello = Next(host);
+    REQUIRE(hello.has_value());
+    CHECK_EQ(hello->Text(), std::string("hello"));
+    REQUIRE_EQ(host.Send(hostPlayer, DPID_ALLPLAYERS, 0, Bytes("all")), DP_OK);
+    std::optional<Received> all = Next(joiner, host);
+    REQUIRE(all.has_value());
+    CHECK_EQ(all->Text(), std::string("all"));
+    CHECK_EQ(relay.Pairs(), size_t{1});
+    CHECK((*hostBridge)->Carried().BytesIn > 0);
+    CHECK((*guestBridge)->Carried().BytesIn > 0);
+
+    // The joiner leaving reaches the host through the relay: its player is destroyed there.
+    joiner.Close();
+    std::optional<Received> destroyed = Next(host);
+    REQUIRE(destroyed.has_value());
+    CHECK_EQ(destroyed->SystemType(), uint32_t{DPSYS_DESTROYPLAYERORGROUP});
+    CHECK_EQ(destroyed->As<DPMSG_DESTROYPLAYERORGROUP>().dpId, guestPlayer);
 }

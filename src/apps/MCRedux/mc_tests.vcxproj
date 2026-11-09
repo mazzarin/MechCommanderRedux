@@ -394,6 +394,7 @@
     <ClCompile Include="tests\LogisticsViewTests.cpp" />
     <ClCompile Include="tests\MainMenuTests.cpp" />
     <ClCompile Include="tests\McoApiTests.cpp" />
+    <ClCompile Include="tests\McoRelayTests.cpp" />
     <ClCompile Include="tests\MCTest.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -466,6 +467,7 @@
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="tests\fakes\MCFakeGamesService.h" />
+    <ClInclude Include="tests\fakes\MCFakeMcoRelay.h" />
     <ClInclude Include="tests\fakes\MCFakeMemorySystem.h" />
     <ClInclude Include="tests\fakes\MCFakeSignaling.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h" />

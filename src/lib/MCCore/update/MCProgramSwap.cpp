@@ -290,6 +290,44 @@ namespace
             });
     }
 
+    /// <summary>Nothing, or why no program update may begin: one under way (its journal), which the next start ends.</summary>
+    std::expected<void, std::string> NoneUnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+    {
+        const auto underWay = IsThere(disk, In(gameFolder, MCProgramSwap::JournalFile));
+
+        if (!underWay)
+        {
+            return std::unexpected(underWay.error());
+        }
+
+        if (*underWay)
+        {
+            return std::unexpected("an earlier program update is under way: the next start ends it");
+        }
+
+        return {};
+    }
+
+    /// <summary>
+    /// Whether every one of <paramref name="program"/>'s files is in its place already: its swap committed (the running
+    /// copy still the old program), and the update tried again, its content having failed to arm after it.
+    /// </summary>
+    std::expected<bool, std::string> AllIn(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                           const MCProgram& program)
+    {
+        for (const MCProgramFile& file : program.Files)
+        {
+            const auto in = IsNamed(disk, In(gameFolder, file.Name), file.Size, file.Sha256);
+
+            if (!in || !*in)
+            {
+                return in;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>The swap's paths for one file: where it goes, where its old copy is set aside, and where it's staged.</summary>
     struct MCPlaces
     {
@@ -735,6 +773,18 @@ std::expected<void, std::string> MCProgramSwap::Stage(MCUpdateDisk& disk, MCCont
         return std::unexpected("release.json gives the program no zip");
     }
 
+    // A swap stopped midway needs its staged files: nothing is staged until a start has ended it.
+    if (auto none = NoneUnderWay(disk, gameFolder); !none)
+    {
+        return none;
+    }
+
+    // In already: nothing to fetch.
+    if (const auto in = AllIn(disk, gameFolder, program); !in || *in)
+    {
+        return in ? std::expected<void, std::string>() : std::unexpected(in.error());
+    }
+
     MCNoLinks noLinks(disk, gameFolder);
     const std::filesystem::path staged = ForBuild(gameFolder, StagedFolder, program.Build);
 
@@ -835,11 +885,21 @@ std::expected<void, std::string> MCProgramSwap::Swap(MCUpdateDisk& disk, const s
     MCNoLinks noLinks(disk, gameFolder);
     const std::filesystem::path journalPath = In(gameFolder, JournalFile);
 
-    if (const auto underWay = IsThere(disk, journalPath); !underWay || *underWay)
+    if (auto none = NoneUnderWay(disk, gameFolder); !none)
     {
-        return std::unexpected(!underWay
-                                   ? underWay.error()
-                                   : std::string("an earlier program update is under way: the next start ends it"));
+        return none;
+    }
+
+    // In already (its swap committed, this copy still running the old program): its old files, the running one among
+    // them, stay set aside for the next start to clear.
+    if (const auto in = AllIn(disk, gameFolder, program); !in || *in)
+    {
+        if (in)
+        {
+            SDL_Log("Updater: build %llu's program is in already", static_cast<unsigned long long>(program.Build));
+        }
+
+        return in ? std::expected<void, std::string>() : std::unexpected(in.error());
     }
 
     MCJournal journal{.Build = program.Build, .Version = std::string(version)};

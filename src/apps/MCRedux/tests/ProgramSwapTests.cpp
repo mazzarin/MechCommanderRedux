@@ -311,6 +311,18 @@ TEST_CASE("program swap: the staged files go in, the game last; the game's other
     CHECK(!std::filesystem::exists(old / OwnResolution));
     CHECK(!std::filesystem::exists(copy.Staged(Game).parent_path()));
 
+    // The update tried again before a start (its content failed to arm): the program is in, so nothing is fetched and
+    // the old files, the running program among them, stay set aside.
+    MCScratchFolder host(Group, "swap-host");
+    Write(host.Path() / ZipName, ZipBytes());
+    MCFolderSource source(host.Path());
+    CHECK(MCProgramSwap::Stage(*MakeDisk(), source, ZipName, copy.Path(), Program(), [](uint64_t) { return true; })
+              .has_value());
+    CHECK(source.Asked().empty());
+    CHECK(MCProgramSwap::Swap(*MakeDisk(), copy.Path(), Program(), NewVersion, FakeWindows(log)).has_value());
+    CHECK_EQ(Read(old / Game), std::string(*Files[0].Old));
+    CHECK_EQ(log->Shown.size(), size_t{1});
+
     // The new build's start: nothing under way, and what was set aside goes with the swap's folder.
     CHECK(RecoverAt(copy, NewBuild).Outcome == MCOutcome::Nothing);
     CHECK(!std::filesystem::exists(copy.Path() / MCFileSystem::FromUtf8(MCProgramSwap::SwapFolder)));
@@ -478,6 +490,27 @@ TEST_CASE("program swap: staged from its zip, each file checked; the files stage
     REQUIRE(!refused.has_value());
     CHECK_EQ(refused.error(), std::string("the program's download isn't the one release.json names"));
     CHECK(!std::filesystem::exists(other.Path() / MCFileSystem::FromUtf8(MCProgramSwap::StagedFolder) / "600" / Game));
+}
+
+TEST_CASE("program swap: nothing is staged while a swap stopped midway awaits a start, its staged files kept")
+{
+    MCCopy copy("stage-under-way");
+    Write(copy.Journal(), "a swap's journal");
+    MCScratchFolder host(Group, "stage-under-way-host");
+    Write(host.Path() / ZipName, ZipBytes());
+    MCFolderSource source(host.Path());
+    MCReleaseFile::MCProgram later = Program();
+    later.Build = NewBuild + 1;
+    const auto staged =
+        MCProgramSwap::Stage(*MakeDisk(), source, ZipName, copy.Path(), later, [](uint64_t) { return true; });
+    REQUIRE(!staged.has_value());
+    CHECK_EQ(staged.error(), std::string("an earlier program update is under way: the next start ends it"));
+    CHECK(source.Asked().empty());
+
+    for (const MCFileBytes& file : Files)
+    {
+        CHECK_EQ(Read(copy.Staged(file.Name)), std::string(file.New));
+    }
 }
 
 TEST_CASE("program swap: the setup's level is the copy's record's (0 without one); a release swaps only at it, with "

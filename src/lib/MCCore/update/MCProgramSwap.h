@@ -60,7 +60,8 @@ namespace MCProgramSwap
     /// <summary>
     /// Stages <paramref name="program"/>'s files in <paramref name="gameFolder"/>: those staged already and still right
     /// stay, the others are unpacked from its zip (the hosted <paramref name="zipName"/> on <paramref name="source"/>,
-    /// resumed when cut off), each checked against release.json and flushed; other builds' staged files go.
+    /// resumed when cut off), each checked against release.json and flushed; other builds' staged files go. A program
+    /// in its place already needs nothing; while a swap stopped midway awaits a start, nothing is staged.
     /// <paramref name="received"/> gets the zip's bytes already here, then each count that arrives (0: asked whether to
     /// go on), and returns false to stop.
     /// </summary>
@@ -72,7 +73,8 @@ namespace MCProgramSwap
 
     /// <summary>
     /// Swaps <paramref name="program"/>'s staged files in (as shown, version <paramref name="version"/>), under the
-    /// staging lock. A file held past a few tries, or anything else failing, puts the old files back.
+    /// staging lock. A file held past a few tries, or anything else failing, puts the old files back. A program in its
+    /// place already (its swap committed, the update tried again) is left as it is.
     /// </summary>
     /// <returns>Nothing once committed, or what failed (the old files are back, or the next start puts them back).</returns>
     std::expected<void, std::string> Swap(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,

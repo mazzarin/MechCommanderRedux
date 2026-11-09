@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "update/MCReleaseFile.h"
+#include "update/MCContentList.h"
 #include "update/MCUpdateJson.h"
 
 #include <charconv>
@@ -34,6 +35,10 @@ namespace
     constexpr std::string_view EpochKey = "epoch";
     constexpr std::string_view EdSignaturesKey = "edSignatures";
     constexpr std::string_view MirrorsKey = "mirrors";
+    constexpr std::string_view FilesKey = "files";
+    constexpr std::string_view NameKey = "name";
+    constexpr std::string_view ZipKey = "zip";
+    constexpr std::string_view SetupLevelKey = "setupLevel";
     /// <summary>A rollout's share runs from none to every copy.</summary>
     constexpr double NoShare = 0.0;
     constexpr double WholeShare = 100.0;
@@ -68,6 +73,77 @@ namespace
         MCEdSignature signature{};
         std::ranges::copy(bytes, signature.begin());
         return signature;
+    }
+
+    /// <summary>Whether <paramref name="a"/> and <paramref name="b"/> name one file on Windows (ASCII case aside).</summary>
+    bool SameName(std::string_view a, std::string_view b)
+    {
+        return MCContentList::FoldedPath(a) == MCContentList::FoldedPath(b);
+    }
+
+    /// <summary>
+    /// The program's file <paramref name="entry"/> in <paramref name="platform"/>'s program: a name at the top of the
+    /// game folder, by the content's rules for a path (MCContentList::PathProblem: one Windows holds, ASCII).
+    /// </summary>
+    MCProgramFile ProgramFileOf(const MCJson& entry, std::string_view platform)
+    {
+        if (!entry.is_object())
+        {
+            Fail("the program for \"{}\" has a file that isn't an object", platform);
+        }
+
+        MCProgramFile file{
+            .Name = Text(entry, NameKey), .Size = Count(entry, SizeKey), .Sha256 = Digest(entry, Sha256Key)};
+
+        if (const std::string problem = MCContentList::PathProblem(file.Name);
+            !problem.empty() || file.Name.find('/') != std::string::npos)
+        {
+            Fail("the program for \"{}\" names a file \"{}\" that isn't a name in the game folder ({})", platform,
+                 file.Name, problem.empty() ? "it's in a folder" : problem);
+        }
+
+        return file;
+    }
+
+    /// <summary>The hosted file <paramref name="entry"/> (<paramref name="what"/> says whose).</summary>
+    MCHostedFile HostedOf(const MCJson& entry, std::string_view what)
+    {
+        if (!entry.is_object())
+        {
+            Fail("{} isn't an object", what);
+        }
+
+        return {.Url = Text(entry, UrlKey), .Size = Count(entry, SizeKey), .Sha256 = Digest(entry, Sha256Key)};
+    }
+
+    /// <summary>The program's files, zip and setup level, when <paramref name="entry"/> gives them.</summary>
+    void ReadProgramFiles(const MCJson& entry, std::string_view platform, MCProgram& program)
+    {
+        for (const MCJson& file : Array(entry, FilesKey, false))
+        {
+            if (program.Files.size() == MaxProgramFiles)
+            {
+                Fail("the program for \"{}\" names more than {} files", platform, MaxProgramFiles);
+            }
+
+            MCProgramFile read = ProgramFileOf(file, platform);
+
+            // Windows' names are the same whatever their case.
+            if (std::ranges::any_of(program.Files,
+                                    [&](const MCProgramFile& named) { return SameName(named.Name, read.Name); }))
+            {
+                Fail("the program for \"{}\" names \"{}\" twice", platform, read.Name);
+            }
+
+            program.Files.push_back(std::move(read));
+        }
+
+        if (entry.contains(ZipKey))
+        {
+            program.Zip = HostedOf(Member(entry, ZipKey), std::format("the program for \"{}\"'s zip", platform));
+        }
+
+        program.SetupLevel = CountOr(entry, SetupLevelKey, 0);
     }
 
     MCRelease ReadRelease(const MCJson& json)
@@ -110,6 +186,7 @@ namespace
                 program.EdSignatures.push_back(EdSignatureOf(signature.get_ref<const std::string&>(), platform));
             }
 
+            ReadProgramFiles(entry, platform, program);
             release.Programs.emplace(platform, std::move(program));
         }
 
@@ -170,6 +247,31 @@ namespace
                 }
 
                 entry[std::string(EdSignaturesKey)] = std::move(signatures);
+            }
+
+            if (!program.Files.empty())
+            {
+                MCJson files = MCJson::array();
+
+                for (const MCProgramFile& file : program.Files)
+                {
+                    files.push_back(
+                        {{NameKey, file.Name}, {SizeKey, file.Size}, {Sha256Key, MCSha256::Hex(file.Sha256)}});
+                }
+
+                entry[std::string(FilesKey)] = std::move(files);
+            }
+
+            if (program.Zip)
+            {
+                entry[std::string(ZipKey)] = {{UrlKey, program.Zip->Url},
+                                              {SizeKey, program.Zip->Size},
+                                              {Sha256Key, MCSha256::Hex(program.Zip->Sha256)}};
+            }
+
+            if (program.SetupLevel != 0)
+            {
+                entry[std::string(SetupLevelKey)] = program.SetupLevel;
             }
 
             programs[platform] = std::move(entry);

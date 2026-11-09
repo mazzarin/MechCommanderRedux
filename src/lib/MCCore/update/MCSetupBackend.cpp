@@ -102,9 +102,20 @@ namespace
         return std::pair{std::string(url.substr(0, slash)), std::string(url.substr(slash + 1))};
     }
 
-    /// <summary>What's wrong with <paramref name="program"/> as release.json gives it, or empty.</summary>
-    std::string Problem(const MCReleaseFile::MCProgram& program)
+    /// <summary>
+    /// What's wrong with <paramref name="program"/> as release.json gives it, or empty: its files' zip, when <paramref
+    /// name="swaps"/> (the game puts them in itself), else its setup.
+    /// </summary>
+    std::string Problem(const MCReleaseFile::MCProgram& program, bool swaps)
     {
+        if (swaps)
+        {
+            const auto split = Split(program.Zip->Url);
+            return program.Zip->Size == 0 ? "release.json gives the program's zip no size"
+                   : split                ? std::string()
+                                          : split.error();
+        }
+
         if (!program.Sha256 || program.Size == 0)
         {
             return "release.json gives the program no size or SHA-256";
@@ -129,17 +140,16 @@ namespace
         std::string Error;
     };
 
-    /// <summary>
-    /// On the download's thread: <paramref name="program"/>'s setup fetched (resumed when cut off before), checked
-    /// against release.json, asked whether the system runs it, and armed.
-    /// </summary>
-    std::expected<void, std::string> FetchSetup(
-        const std::filesystem::path& gameFolder, const MCReleaseFile::MCProgram& program,
-        const MCSetupBackend::MCSourceFor& sources,
-        const std::function<std::string(const std::filesystem::path&)>& runnable, MCDownload& download,
-        const std::stop_token& stop)
+    /// <summary>A program's hosted file at <paramref name="url"/>: a transfer to its folder, and its name there.</summary>
+    struct MCHosted
     {
-        const auto split = Split(program.Url);
+        std::unique_ptr<MCContentStage::MCSource> Source;
+        std::string Name;
+    };
+
+    std::expected<MCHosted, std::string> HostedAt(std::string_view url, const MCSetupBackend::MCSourceFor& sources)
+    {
+        const auto split = Split(url);
 
         if (!split)
         {
@@ -155,18 +165,65 @@ namespace
             return std::unexpected(source.error());
         }
 
+        return MCHosted{.Source = std::move(*source), .Name = split->second};
+    }
+
+    /// <summary>The download's count of bytes in, asked each piece whether to go on (not once stopped).</summary>
+    std::function<bool(uint64_t)> CountInto(MCDownload& download, const std::stop_token& stop)
+    {
+        return [&download, stop](uint64_t bytes)
+        {
+            const std::lock_guard lock(download.Mutex);
+            download.Received += bytes;
+            return !stop.stop_requested();
+        };
+    }
+
+    /// <summary>
+    /// On the download's thread: <paramref name="program"/>'s files staged from its zip (update/MCProgramSwap.h), to be
+    /// put in place as the update is armed.
+    /// </summary>
+    std::expected<void, std::string> FetchFiles(const std::filesystem::path& gameFolder,
+                                                const MCReleaseFile::MCProgram& program,
+                                                const MCSetupBackend::MCSourceFor& sources, MCDownload& download,
+                                                const std::stop_token& stop)
+    {
+        auto hosted = HostedAt(program.Zip->Url, sources);
+
+        if (!hosted)
+        {
+            return std::unexpected(hosted.error());
+        }
+
         // Let go of (Later, a new check) ends the download at once, even while the host sends nothing.
-        const std::stop_callback cancel(stop, [&] { (*source)->Cancel(); });
+        const std::stop_callback cancel(stop, [&] { hosted->Source->Cancel(); });
+        return MCProgramSwap::Stage(*MakeDisk(), *hosted->Source, hosted->Name, gameFolder, program,
+                                    CountInto(download, stop));
+    }
+
+    /// <summary>
+    /// On the download's thread: <paramref name="program"/>'s setup fetched (resumed when cut off before), checked
+    /// against release.json, asked whether the system runs it, and armed.
+    /// </summary>
+    std::expected<void, std::string> FetchSetup(
+        const std::filesystem::path& gameFolder, const MCReleaseFile::MCProgram& program,
+        const MCSetupBackend::MCSourceFor& sources,
+        const std::function<std::string(const std::filesystem::path&)>& runnable, MCDownload& download,
+        const std::stop_token& stop)
+    {
+        auto hosted = HostedAt(program.Url, sources);
+
+        if (!hosted)
+        {
+            return std::unexpected(hosted.error());
+        }
+
+        // Let go of (Later, a new check) ends the download at once, even while the host sends nothing.
+        const std::stop_callback cancel(stop, [&] { hosted->Source->Cancel(); });
         const std::filesystem::path setup = SetupPath(gameFolder, program.Build);
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-        const auto fetched =
-            MCContentStage::FetchChecked(*disk, **source, split->second, setup, program.Size, *program.Sha256,
-                                         [&](uint64_t bytes)
-                                         {
-                                             const std::lock_guard lock(download.Mutex);
-                                             download.Received += bytes;
-                                             return !stop.stop_requested();
-                                         });
+        const auto fetched = MCContentStage::FetchChecked(*disk, *hosted->Source, hosted->Name, setup, program.Size,
+                                                          *program.Sha256, CountInto(download, stop));
 
         if (!fetched)
         {
@@ -282,7 +339,10 @@ namespace
                 return;
             }
 
-            if (const std::string problem = Problem(*_Program); !problem.empty())
+            // The program's files put in place by the game, where the setup's work is as the copy's setup left it.
+            _Swaps = MCProgramSwap::Swaps(MCProgramSwap::SetupLevel(*MakeDisk(), _GameFolder), *_Program);
+
+            if (const std::string problem = Problem(*_Program, _Swaps); !problem.empty())
             {
                 Report([problem] { MCUpdater::Failed(problem); });
                 return;
@@ -363,7 +423,7 @@ namespace
                 if (received != _Shown)
                 {
                     _Shown = received;
-                    MCUpdater::Downloading(received, _Program->Size);
+                    MCUpdater::Downloading(received, DownloadSize());
                 }
 
                 return;
@@ -379,7 +439,7 @@ namespace
             }
 
             _State = MCState::Ready;
-            MCUpdater::Downloading(_Program->Size, _Program->Size);
+            MCUpdater::Downloading(DownloadSize(), DownloadSize());
             MCUpdater::Ready();
         }
 
@@ -387,8 +447,17 @@ namespace
         {
             StopDownload();
 
-            if (_State != MCState::Ready && _State != MCState::Installing)
+            // The program's files are in already (InstallNow): nothing runs as the game ends.
+            if (_Swaps || (_State != MCState::Ready && _State != MCState::Installing))
             {
+                return;
+            }
+
+            // Started here, the setup would end with the game (a lobby's job): it stays armed for a start that can.
+            if (!MCUpdater::CanStartAgain())
+            {
+                SDL_Log("Updater: build %llu's setup stays armed: it runs at a start the player makes",
+                        static_cast<unsigned long long>(_Program->Build));
                 return;
             }
 
@@ -408,6 +477,31 @@ namespace
             Disarm(_GameFolder);
         }
 
+        std::function<std::string()> InstallNow(std::string_view version) override
+        {
+            if (!_Swaps || _State != MCState::Ready)
+            {
+                return {};
+            }
+
+            return [folder = _GameFolder, program = *_Program, shown = std::string(version),
+                    platform = MCSetupBackend::SwapPlatform(_Platform)]
+            {
+                const auto swapped = MCProgramSwap::Swap(*MakeDisk(), folder, program, shown, platform);
+                return swapped ? std::string() : swapped.error();
+            };
+        }
+
+        MCUpdater::MCGoesIn GoesIn() override
+        {
+            if (_Swaps)
+            {
+                return MCUpdater::MCGoesIn::NextStart;
+            }
+
+            return MCUpdater::CanStartAgain() ? MCUpdater::MCGoesIn::AsItQuits : MCUpdater::MCGoesIn::PlayersStart;
+        }
+
     private:
         enum class MCState : uint8_t
         {
@@ -420,17 +514,22 @@ namespace
 
         void Report(std::function<void()> report) { _Reports.push_back(std::move(report)); }
 
+        /// <summary>What the program's download is: its files' zip, or its setup.</summary>
+        uint64_t DownloadSize() const { return _Swaps ? _Program->Zip->Size : _Program->Size; }
+
         void StartDownload()
         {
-            SDL_Log("Updater: downloading build %llu's setup", static_cast<unsigned long long>(_Program->Build));
+            SDL_Log("Updater: downloading build %llu's %s", static_cast<unsigned long long>(_Program->Build),
+                    _Swaps ? "files" : "setup");
             _State = MCState::Downloading;
             _Shown = 0;
             _Download = std::make_shared<MCDownload>();
             _Worker = std::jthread(
                 [download = _Download, folder = _GameFolder, program = *_Program, sources = _Sources,
-                 runnable = _Platform.Runnable](std::stop_token stop)
+                 runnable = _Platform.Runnable, swaps = _Swaps](std::stop_token stop)
                 {
-                    const auto done = FetchSetup(folder, program, sources, runnable, *download, stop);
+                    const auto done = swaps ? FetchFiles(folder, program, sources, *download, stop)
+                                            : FetchSetup(folder, program, sources, runnable, *download, stop);
                     const std::lock_guard lock(download->Mutex);
                     download->Finished = true;
 
@@ -458,6 +557,8 @@ namespace
         MCSetupBackend::MCSourceFor _Sources;
         MCSetupBackend::MCPlatform _Platform;
         std::optional<MCReleaseFile::MCProgram> _Program;
+        /// <summary>The program's files go in by the swap (update/MCProgramSwap.h), not its setup.</summary>
+        bool _Swaps = false;
         MCState _State = MCState::Idle;
         /// <summary>RESTART: the setup starts the game again once it's in.</summary>
         bool _Restart = false;
@@ -476,8 +577,13 @@ std::unique_ptr<MCUpdater::MCBackend> MCSetupBackend::Make(std::filesystem::path
                                        std::move(platform));
 }
 
+MCProgramSwap::MCPlatform MCSetupBackend::SwapPlatform(const MCPlatform& platform)
+{
+    return {.Runnable = platform.Runnable, .ShowVersion = platform.ShowVersion};
+}
+
 bool MCSetupBackend::RunLeftOver(const std::filesystem::path& gameFolder, uint64_t runningBuild,
-                                 const MCPlatform& platform)
+                                 const MCPlatform& platform, bool canStart)
 {
     // Held exclusive throughout, from before the armed record is read until the setup has started: no other copy plays,
     // arms or runs one meanwhile. Another copy running is at its own update's READY, or playing on: the setup waits
@@ -505,6 +611,14 @@ bool MCSetupBackend::RunLeftOver(const std::filesystem::path& gameFolder, uint64
         }
 
         ClearDone(gameFolder, runningBuild);
+        return false;
+    }
+
+    // Started now, it would end with this game (a lobby's job): it waits, armed, for a start that can run it.
+    if (!canStart)
+    {
+        SDL_Log("Updater: build %llu's armed setup waits for a start that can run it",
+                static_cast<unsigned long long>((*armed)->Build));
         return false;
     }
 

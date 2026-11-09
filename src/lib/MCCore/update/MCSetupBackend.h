@@ -2,6 +2,7 @@
 
 #include "main/MCUpdater.h"
 #include "update/MCContentStage.h"
+#include "update/MCProgramSwap.h"
 
 /// <summary>
 /// Port-only: the updater's program half where the game installs the program itself, with its own installer run
@@ -13,6 +14,10 @@
 /// update, saying why, and the old program runs on. Otherwise it's armed, recorded in <c>Redux update/program/</c>,
 /// and the content with it (MCUpdater); RESTART or quitting runs it as the game ends, RESTART asking it to start the
 /// game again. A start that finds a setup armed and never run (the game crashed or was ended first) runs it then.
+/// A release whose setup's level is the copy's gives the program's files instead, which the game puts in place itself as
+/// the update is armed (update/MCProgramSwap.h), the next start running them: no setup runs. Where what the game starts
+/// can't outlive it (a lobby's job ends it as the game exits: MCUpdater::CanStartAgain), a setup armed waits for a
+/// start that can run it.
 /// </summary>
 namespace MCSetupBackend
 {
@@ -32,7 +37,12 @@ namespace MCSetupBackend
         std::function<std::string(const std::filesystem::path& setup, std::string_view arguments, bool restart)> Start;
         /// <summary>Quits the game for RESTART (none: the input's quit, as the player closing the game).</summary>
         std::function<void()> Quit;
+        /// <summary>The Apps list's version, for the program's swap (MCProgramSwap::MCPlatform's).</summary>
+        std::function<std::string(const std::filesystem::path& gameFolder, std::string_view version)> ShowVersion;
     };
+
+    /// <summary>The program's swap's platform, from the backend's.</summary>
+    MCProgramSwap::MCPlatform SwapPlatform(const MCPlatform& platform);
 
     /// <summary>A transfer to the folder at an address (https), where a program is hosted, or why there's none.</summary>
     using MCSourceFor =
@@ -48,8 +58,10 @@ namespace MCSetupBackend
     /// <summary>
     /// At a start: a setup armed in an earlier run and never run, for a build newer than <paramref name="runningBuild"/>,
     /// is started (asked to start the game again), its hash checked again first. One for this build or older has done
-    /// its work: its folder goes.
+    /// its work: its folder goes. A start whose game can't start anything that outlives it (<paramref name="canStart"/>
+    /// false) leaves it armed for one that can.
     /// </summary>
     /// <returns>Whether it started one: the game then quits so it can install.</returns>
-    bool RunLeftOver(const std::filesystem::path& gameFolder, uint64_t runningBuild, const MCPlatform& platform);
+    bool RunLeftOver(const std::filesystem::path& gameFolder, uint64_t runningBuild, const MCPlatform& platform,
+                     bool canStart = true);
 }

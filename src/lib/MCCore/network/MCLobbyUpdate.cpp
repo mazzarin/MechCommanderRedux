@@ -46,6 +46,9 @@ namespace
 
     /// <summary>The UPDATE page's line for an update ready in a room (MCLobbyUpdate::ReadyText).</summary>
     constexpr std::string_view AfterMatchText = "DOWNLOADED. IT WILL INSTALL AFTER THE MATCH.";
+    /// <summary>...for a program in already (main/MCUpdater.h's MCGoesIn), and one whose setup waits for the player's start.</summary>
+    constexpr std::string_view NextMatchFormat = "VERSION {} IS IN. IT PLAYS FROM YOUR NEXT MATCH.";
+    constexpr std::string_view PlayersStartFormat = "VERSION {} INSTALLS WHEN YOU START REDUX HD YOURSELF.";
     constexpr std::string_view GuestRestartText = "DOWNLOADED. RESTART TO INSTALL IT AND REJOIN THIS ROOM.";
     constexpr std::string_view HostAloneRestartText = "DOWNLOADED. RESTART TO INSTALL IT; YOUR ROOM WILL REOPEN.";
     constexpr std::string_view HostRestartText = "DOWNLOADED. RESTART TO INSTALL IT; EVERYONE WILL REJOIN.";
@@ -680,8 +683,8 @@ namespace
     /// </summary>
     bool RoomRejoins()
     {
-        return MCLobbyUpdate::InRoom() && !MCLobbyUpdate::MatchUnderWay() && Coming.empty() && !NoteUnwritten &&
-               !OwnPlaceUsed() && MCUpdater::ExpectedBuild().has_value() &&
+        return MCLobbyUpdate::InRoom() && MCUpdater::CanStartAgain() && !MCLobbyUpdate::MatchUnderWay() &&
+               Coming.empty() && !NoteUnwritten && !OwnPlaceUsed() && MCUpdater::ExpectedBuild().has_value() &&
                std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
     }
 }
@@ -699,7 +702,22 @@ auto MCLobbyUpdate::ReadyText() -> std::string
     // game still opening the room holds RESTART back for a moment, the text as it will be.
     if (!RoomRejoins())
     {
-        return LobbyLaunchArgs.Active ? std::string(AfterMatchText) : std::string();
+        if (!LobbyLaunchArgs.Active)
+        {
+            return {};
+        }
+
+        switch (const MCUpdater::MCStatus& status = MCUpdater::Status(); status.GoesIn)
+        {
+            case MCUpdater::MCGoesIn::NextStart:
+                return std::format(NextMatchFormat, status.Version);
+            case MCUpdater::MCGoesIn::PlayersStart:
+                return std::format(PlayersStartFormat, status.Version);
+            case MCUpdater::MCGoesIn::AsItQuits:
+                break;
+        }
+
+        return std::string(AfterMatchText);
     }
 
     if (!MultiPlayer()->IsHost)

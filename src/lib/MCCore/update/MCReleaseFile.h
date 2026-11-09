@@ -56,6 +56,25 @@ namespace MCReleaseFile
     constexpr size_t EdSignatureBytes = 64;
     using MCEdSignature = std::array<uint8_t, EdSignatureBytes>;
 
+    /// <summary>One of the Windows program's files, by its name at the top of the game folder.</summary>
+    struct MCProgramFile
+    {
+        std::string Name;
+        uint64_t Size = 0;
+        MCSha256::MCDigest Sha256{};
+    };
+
+    /// <summary>A file hosted for the program: its address, size and SHA-256.</summary>
+    struct MCHostedFile
+    {
+        std::string Url;
+        uint64_t Size = 0;
+        MCSha256::MCDigest Sha256{};
+    };
+
+    /// <summary>The most files a program may name (Windows' has five).</summary>
+    constexpr size_t MaxProgramFiles = 32;
+
     /// <summary>A platform's program in a release.</summary>
     struct MCProgram
     {
@@ -74,6 +93,15 @@ namespace MCReleaseFile
         /// one the Mac takes no program from the release.
         /// </summary>
         std::vector<MCEdSignature> EdSignatures;
+        /// <summary>
+        /// Windows': the program's files (<see cref="MaxProgramFiles"/> at most, each a plain name), one stored zip
+        /// holding them, and the setup's level, which rises whenever the setup's own work changes. A copy whose setup
+        /// was at that level puts the files in itself (update/MCProgramSwap.h); any other runs the setup. None given (a
+        /// release from before), the setup always runs.
+        /// </summary>
+        std::vector<MCProgramFile> Files;
+        std::optional<MCHostedFile> Zip;
+        uint64_t SetupLevel = 0;
     };
 
     /// <summary>A release.</summary>

@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 // Port-only (the personal build): the updater. An update has two halves (SPEC-install-and-updates.md):
 //
@@ -60,6 +61,23 @@ namespace MCUpdater
         /// (<see cref="MCStatus::Retry"/>), else the next start looks again.
         /// </summary>
         Failed,
+    };
+
+    /// <summary>How an update ready goes in.</summary>
+    enum class MCGoesIn : uint8_t
+    {
+        /// <summary>As the game quits, RESTART or not: the program's installer then (Sparkle, Windows' setup).</summary>
+        AsItQuits,
+        /// <summary>
+        /// At the next start, whoever starts the game: the program is in already (Windows' program swap,
+        /// update/MCProgramSwap.h), or there's none, and the content goes in as that start swaps it.
+        /// </summary>
+        NextStart,
+        /// <summary>
+        /// At a start the player makes: the program's installer can't run from this game (a lobby's job ends whatever
+        /// the game starts as the game exits), so it waits, armed, for a start that can run it.
+        /// </summary>
+        PlayersStart,
     };
 
     /// <summary>The player's answer to the update shown, or the updater's own to the program's backend.</summary>
@@ -134,6 +152,8 @@ namespace MCUpdater
         std::string Error;
         /// <summary>Failed: whether INSTALL tries again (a fresh check first), the download having failed.</summary>
         bool Retry = false;
+        /// <summary>Ready: how it goes in.</summary>
+        MCGoesIn GoesIn = MCGoesIn::AsItQuits;
     };
 
     /// <summary>What the app gives the updater: the version running, the check and the answers.</summary>
@@ -166,6 +186,16 @@ namespace MCUpdater
 
         /// <summary>The game is quitting: an update ready to install goes in as it ends (Sparkle sees to its own).</summary>
         virtual void Quit() {}
+
+        /// <summary>
+        /// The program downloaded (its ready report made): what puts it in place now, as version <paramref
+        /// name="version"/> (as shown), run on the arming's thread before the content is armed, returning empty once
+        /// it's in or why it isn't; none when it goes in as the game quits.
+        /// </summary>
+        virtual std::function<std::string()> InstallNow([[maybe_unused]] std::string_view version) { return {}; }
+
+        /// <summary>How the program downloaded goes in.</summary>
+        virtual MCGoesIn GoesIn() { return MCGoesIn::AsItQuits; }
     };
 
     /// <summary>The app's backend (before the game starts); none takes it away.</summary>
@@ -212,6 +242,14 @@ namespace MCUpdater
 
     /// <summary>Whether this build updates itself (it has a backend, or the content's updater).</summary>
     bool Available();
+
+    /// <summary>
+    /// Whether what the game starts outlives it (the app says so before the game starts; by default it does): where it
+    /// doesn't (a lobby's job that ends every process in it as the game exits), there's no RESTART, and no installer
+    /// is started.
+    /// </summary>
+    void SetCanStartAgain(bool can);
+    bool CanStartAgain();
 
     /// <summary>The HD pack (HD OPTIONS' HD PACK row).</summary>
     const MCHdPack& HdPack();

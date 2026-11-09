@@ -251,7 +251,32 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     CHECK(restart->IsShowing());
     CHECK(!install->IsShowing());
     CHECK_EQ(restart->GlobalX(), install->GlobalX());
+    CHECK_EQ(UpdatePageStatus(), std::format("VERSION {} INSTALLS AS YOU QUIT.", NewVersion));
     MCScreenInput::SaveShot("update ready", MCScreenInput::ScreenHash());
+
+    // Windows' program put in place already (the swap): it plays from the next start, RESTART only where what the
+    // game starts outlives it; a setup a lobby's job would end waits for a start the player makes, with no RESTART.
+    const auto readyAs = [&](MCUpdater::MCGoesIn goesIn, bool canStart)
+    {
+        updater.Log->GoesIn = goesIn;
+        MCUpdater::SetCanStartAgain(canStart);
+        MCUpdater::Ready();
+        Frames();
+        return UpdatePageStatus();
+    };
+
+    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::NextStart, true),
+             std::format("VERSION {} IS IN. RESTART TO PLAY IT.", NewVersion));
+    CHECK(restart->IsShowing());
+    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::NextStart, false),
+             std::format("VERSION {} IS IN. IT PLAYS WHEN THE GAME STARTS AGAIN.", NewVersion));
+    CHECK(!restart->IsShowing());
+    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::PlayersStart, false),
+             std::format("VERSION {} INSTALLS WHEN YOU START REDUX HD YOURSELF.", NewVersion));
+    CHECK(!restart->IsShowing());
+    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::AsItQuits, true),
+             std::format("VERSION {} INSTALLS AS YOU QUIT.", NewVersion));
+    CHECK(restart->IsShowing());
 
     // DONE leaves it waiting (quitting installs it); RESTART installs it now.
     RealClickOn(*done);

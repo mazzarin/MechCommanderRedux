@@ -89,6 +89,11 @@ namespace MCProgramSwap
         Finished,
         /// <summary>A swap stopped midway is put back (a staged file gone or damaged): the old program stays.</summary>
         PutBack,
+        /// <summary>
+        /// A swap stopped midway was overtaken: a file is neither its old one nor its new one (the setup ran since), so
+        /// its journal goes and nothing moves.
+        /// </summary>
+        Overtaken,
         /// <summary>It can't be finished or put back (<see cref="MCResult::Error"/>): the setup repairs it.</summary>
         Stuck,
     };
@@ -100,7 +105,8 @@ namespace MCProgramSwap
     };
 
     /// <summary>
-    /// At a start, under the staging lock: a swap stopped midway is finished, or put back. With none under way, the
+    /// At a start, under the staging lock: a swap stopped midway is finished, or put back (or dropped, where something
+    /// else has installed since: <see cref="MCOutcome::Overtaken"/>). With none under way, the
     /// files earlier swaps set aside go, and those staged for build <paramref name="runningBuild"/> or older (what a
     /// running copy still holds stays for a later start).
     /// </summary>

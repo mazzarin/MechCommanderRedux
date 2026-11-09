@@ -9,6 +9,8 @@
 #include "update/MCReleaseFile.h"
 #include "update/MCUpdateDisk.h"
 
+#include <set>
+
 // The Windows program's update put in place by the game itself (update/MCProgramSwap.h), on this machine's disk in a
 // scratch folder: the program's files renamed aside and the staged ones into their places, the game's other names
 // made links to the new program, and a swap stopped at any step ending all old or all new at the next start.
@@ -203,7 +205,7 @@ namespace
     /// The disk, stopping the program at the <see cref="StopAt"/>th change (a move, deletion, write, made folder or
     /// flush): what was done before stays, as a program's death leaves it (a power cut's lost writes are the content
     /// swap's tests', on a disk in memory). Its flushes are counted but not made, to keep the test fast. A file held
-    /// open can't be moved.
+    /// open can't be moved; a program a copy runs can be renamed but not deleted, as on Windows.
     /// </summary>
     class MCStoppingDisk final : public MCUpdateDisk
     {
@@ -214,6 +216,12 @@ namespace
         /// <summary>Whether the journal was put in its place before the stop.</summary>
         bool JournalWritten = false;
         std::filesystem::path JournalPath;
+        /// <summary>The programs copies run, and a path a copy starts from as soon as a file is first moved there.</summary>
+        std::set<std::filesystem::path> Running;
+        std::filesystem::path StartsWhenMade;
+        /// <summary>A folder whose next flush fails (once), and the files flushed.</summary>
+        std::filesystem::path FailFlushOnce;
+        std::vector<std::filesystem::path> FlushedFiles;
 
         MCStat Stat(const std::filesystem::path& path) override { return _Disk->Stat(path); }
         std::expected<bool, std::string> IsLink(const std::filesystem::path& path) override
@@ -247,10 +255,37 @@ namespace
 
         bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
         {
-            return Step() && from != Held && to != Held && _Disk->Move(from, to);
+            if (!Step() || from == Held || to == Held || !_Disk->Move(from, to))
+            {
+                return false;
+            }
+
+            if (Running.erase(from) != 0 || to == StartsWhenMade)
+            {
+                Running.insert(to);
+            }
+
+            // Started once, from the first file moved there.
+            if (to == StartsWhenMade)
+            {
+                StartsWhenMade.clear();
+            }
+
+            return true;
         }
 
-        bool Remove(const std::filesystem::path& path) override { return Step() && _Disk->Remove(path); }
+        /// <summary>A file a copy runs, or a folder holding one, isn't deleted.</summary>
+        bool Remove(const std::filesystem::path& path) override
+        {
+            const auto runs = [&](const std::filesystem::path& running)
+            {
+                const auto [end, at] = std::ranges::mismatch(path, running);
+                return end == path.end();
+            };
+
+            return Step() && std::ranges::none_of(Running, runs) && _Disk->Remove(path);
+        }
+
         bool RemoveIfEmpty(const std::filesystem::path& path) override { return Step() && _Disk->RemoveIfEmpty(path); }
 
         bool WriteFlushed(const std::filesystem::path& path, std::string_view bytes) override
@@ -258,8 +293,27 @@ namespace
             return Step() && _Disk->WriteFlushed(path, bytes);
         }
 
-        bool FlushFile(const std::filesystem::path&) override { return Step(); }
-        bool FlushFolder(const std::filesystem::path&) override { return Step(); }
+        bool FlushFile(const std::filesystem::path& path) override
+        {
+            FlushedFiles.push_back(path);
+            return Step();
+        }
+
+        bool FlushFolder(const std::filesystem::path& path) override
+        {
+            if (!Step())
+            {
+                return false;
+            }
+
+            if (!FailFlushOnce.empty() && path == FailFlushOnce)
+            {
+                FailFlushOnce.clear();
+                return false;
+            }
+
+            return true;
+        }
 
         std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path& path) override
         {
@@ -374,6 +428,83 @@ TEST_CASE("program swap: a file held open puts the old files back at once, the n
     CHECK_EQ(copy.NotWhole(NewBuild), std::string());
 }
 
+TEST_CASE("program swap: a copy started from the new MCX.EXE as the swap goes back (Windows deletes no running "
+          "program) has it renamed aside, and the old files all come back")
+{
+    MCCopy copy("running");
+    MCStoppingDisk disk;
+    disk.StartsWhenMade = copy.At(Original);
+    disk.FailFlushOnce = copy.Path();
+    const auto swapped =
+        MCProgramSwap::Swap(disk, copy.Path(), Program(), NewVersion, FakeWindows(std::make_shared<MCWindowsLog>()));
+    REQUIRE(!swapped.has_value());
+    CHECK_EQ(swapped.error(), std::string("the new files can't be flushed"));
+    CHECK_EQ(copy.NotWhole(OldBuild), std::string());
+    const std::filesystem::path gone =
+        copy.Path() / MCFileSystem::FromUtf8(MCProgramSwap::OldFolder) / "600" / "MCX.EXE.gone";
+    CHECK_EQ(Read(gone), std::string(Files[0].New));
+    CHECK(disk.Running == std::set{gone});
+
+    // The next start can't delete it while that copy runs, and keeps the old program as it is.
+    CHECK(RecoverAt(copy, OldBuild, disk).Outcome == MCOutcome::Nothing);
+    CHECK(std::filesystem::exists(gone));
+    CHECK_EQ(copy.NotWhole(OldBuild), std::string());
+}
+
+TEST_CASE("program swap: stopped midway, then overtaken by the setup installing another build: the next start drops "
+          "the journal and moves nothing")
+{
+    // The first stop that leaves SDL in and the game not yet.
+    for (int stopAt = 1;; ++stopAt)
+    {
+        REQUIRE(stopAt < 100);
+        MCCopy copy("overtaken");
+        MCStoppingDisk disk;
+        disk.StopAt = stopAt;
+
+        try
+        {
+            [[maybe_unused]] const auto swapped = MCProgramSwap::Swap(disk, copy.Path(), Program(), NewVersion,
+                                                                      FakeWindows(std::make_shared<MCWindowsLog>()));
+        }
+        catch (const MCStopped&)
+        {
+        }
+
+        if (!std::filesystem::exists(copy.Journal()) || Read(copy.At(Sdl)) != Files[1].New ||
+            Read(copy.At(Game)) == Files[0].New)
+        {
+            continue;
+        }
+
+        // The setup of build 700 runs over it, before any start.
+        const auto built = [](std::string_view name) { return std::format("{}, build 700", name); };
+
+        for (const MCFileBytes& file : Files)
+        {
+            Write(copy.At(file.Name), built(file.Name));
+        }
+
+        for (const std::string_view name : {Original, LinkedResolution})
+        {
+            std::filesystem::remove(copy.At(name));
+            std::filesystem::create_hard_link(copy.At(Game), copy.At(name));
+        }
+
+        const MCProgramSwap::MCResult recovered = RecoverAt(copy, OldBuild);
+        CHECK(recovered.Outcome == MCOutcome::Overtaken);
+        CHECK(!std::filesystem::exists(copy.Journal()));
+
+        for (const MCFileBytes& file : Files)
+        {
+            CHECK_EQ(Read(copy.At(file.Name)), built(file.Name));
+        }
+
+        CHECK_EQ(Read(copy.At(Original)), built(Game));
+        return;
+    }
+}
+
 TEST_CASE("program swap: stopped at any step, the next start ends it all old or all new: new once the journal is "
           "written, unless a staged file is gone by then")
 {
@@ -443,6 +574,123 @@ TEST_CASE("program swap: stopped at any step, the next start ends it all old or 
     }
 }
 
+/// <summary>
+/// Crashes in a row: the swap stopped at each step, then the start after it stopped at each of its own steps; the start
+/// after that still ends it all old or all new. In a process of its own: about 1,500 runs.
+/// </summary>
+TEST_CASE_ISOLATED("program swap: the next start stopped at any step too, the start after it still ends it all old or "
+                   "all new")
+{
+    int runs = 0;
+
+    for (int swapStop = 1;; ++swapStop)
+    {
+        for (const bool loseStaged : {false, true})
+        {
+            for (int recoverStop = 1;; ++recoverStop)
+            {
+                MCCopy copy("stopped-twice");
+                MCStoppingDisk disk;
+                disk.StopAt = swapStop;
+                disk.JournalPath = copy.Journal();
+
+                try
+                {
+                    [[maybe_unused]] const auto swapped = MCProgramSwap::Swap(
+                        disk, copy.Path(), Program(), NewVersion, FakeWindows(std::make_shared<MCWindowsLog>()));
+                }
+                catch (const MCStopped&)
+                {
+                    disk.StopAt.reset();
+                }
+
+                // The swap ran to its end: every stop has been tried.
+                if (disk.StopAt)
+                {
+                    CHECK(runs > 100);
+                    return;
+                }
+
+                const bool lost = loseStaged && std::filesystem::exists(copy.Staged(Game));
+
+                if (loseStaged && !lost)
+                {
+                    break;
+                }
+
+                if (lost)
+                {
+                    std::filesystem::remove(copy.Staged(Game));
+                }
+
+                const bool fresh = disk.JournalWritten && !lost;
+                MCStoppingDisk starting;
+                starting.StopAt = recoverStop;
+                bool recovered = false;
+                runs++;
+
+                try
+                {
+                    RecoverAt(copy, OldBuild, starting);
+                    recovered = true;
+                }
+                catch (const MCStopped&)
+                {
+                }
+
+                MCStoppingDisk again;
+                RecoverAt(copy, OldBuild, again);
+
+                if (const std::string mixed = copy.NotWhole(fresh ? NewBuild : OldBuild); !mixed.empty())
+                {
+                    FAIL_CHECK(std::format("the swap stopped at step {}{}, its next start at step {}: {}", swapStop,
+                                           lost ? " and its staged game lost" : "", recoverStop, mixed));
+                }
+
+                if (recovered)
+                {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("program swap: a folder at a program file's name is the player's: the swap refuses, and it stays as it is")
+{
+    MCCopy copy("folder");
+    std::filesystem::create_directories(copy.At(Licences));
+    Write(copy.At(Licences) / "notes.txt", "the player's notes");
+    const auto swapped = MCProgramSwap::Swap(*MakeDisk(), copy.Path(), Program(), NewVersion,
+                                             FakeWindows(std::make_shared<MCWindowsLog>()));
+    REQUIRE(!swapped.has_value());
+    CHECK_EQ(
+        swapped.error(),
+        std::string("MechCommander Redux HD licences.txt in the game folder is a folder: move it, then try again"));
+    CHECK_EQ(Read(copy.At(Licences) / "notes.txt"), std::string("the player's notes"));
+    CHECK_EQ(Read(copy.At(Game)), std::string(*Files[0].Old));
+    CHECK(!std::filesystem::exists(copy.Journal()));
+}
+
+TEST_CASE("program swap: a link where the old files go is refused before anything there is deleted")
+{
+    MCCopy copy("old-link");
+    MCScratchFolder outside(Group, "old-link-outside");
+    Write(outside.Path() / "600" / "keep.txt", "outside the game folder");
+    const std::filesystem::path old = copy.Path() / MCFileSystem::FromUtf8(MCProgramSwap::OldFolder);
+    std::filesystem::create_directories(old.parent_path());
+    std::filesystem::create_directory_symlink(outside.Path(), old);
+    const auto swapped = MCProgramSwap::Swap(*MakeDisk(), copy.Path(), Program(), NewVersion,
+                                             FakeWindows(std::make_shared<MCWindowsLog>()));
+    REQUIRE(!swapped.has_value());
+    CHECK_EQ(Read(outside.Path() / "600" / "keep.txt"), std::string("outside the game folder"));
+    CHECK_EQ(copy.NotWhole(OldBuild), std::string());
+
+    // Nor does a start's clearing follow it.
+    CHECK(RecoverAt(copy, NewBuild).Outcome == MCOutcome::Nothing);
+    CHECK_EQ(Read(outside.Path() / "600" / "keep.txt"), std::string("outside the game folder"));
+}
+
 TEST_CASE("program swap: staged from its zip, each file checked; the files staged already and right aren't fetched "
           "again; other builds' staged files go; a zip not as release.json names it stages nothing")
 {
@@ -472,9 +720,12 @@ TEST_CASE("program swap: staged from its zip, each file checked; the files stage
     CHECK(
         !std::filesystem::exists(game.Path() / MCFileSystem::FromUtf8(MCProgramSwap::SwapFolder) / "program-600.zip"));
 
-    // Staged already: nothing is fetched.
-    CHECK(MCProgramSwap::Stage(*disk, source, ZipName, game.Path(), Program(), counting).has_value());
+    // Staged already: nothing is fetched, and every file is flushed again (a start stopped before their flush left
+    // them only in the system's cache).
+    MCStoppingDisk flushing;
+    CHECK(MCProgramSwap::Stage(flushing, source, ZipName, game.Path(), Program(), counting).has_value());
     CHECK_EQ(source.Asked().size(), size_t{1});
+    CHECK_EQ(flushing.FlushedFiles.size(), Files.size());
 
     // One file damaged: it's unpacked again.
     Write(staged / "600" / "SDL3.dll", "SDL, changed");
@@ -504,7 +755,8 @@ TEST_CASE("program swap: nothing is staged while a swap stopped midway awaits a 
     const auto staged =
         MCProgramSwap::Stage(*MakeDisk(), source, ZipName, copy.Path(), later, [](uint64_t) { return true; });
     REQUIRE(!staged.has_value());
-    CHECK_EQ(staged.error(), std::string("an earlier program update is under way: the next start ends it"));
+    CHECK_EQ(staged.error(),
+             std::string("an earlier program update didn't finish: the next start ends it, or run the setup"));
     CHECK(source.Asked().empty());
 
     for (const MCFileBytes& file : Files)
@@ -539,14 +791,15 @@ TEST_CASE("program swap: the setup's level is the copy's record's (0 without one
     CHECK(!MCProgramSwap::Swaps(1, program));
 }
 
-TEST_CASE("program swap: a journal that can't be read, or that names a file outside the game folder's top, leaves "
-          "every file as it is")
+TEST_CASE("program swap: a journal that can't be read, names a file outside the game folder's top, or names another "
+          "file as one of the game's names, leaves every file as it is")
 {
     for (const std::string_view journal :
          {std::string_view("not JSON"),
           std::string_view(R"({"build": 600, "version": "0.6.1", "files": [{"name": "../MCRedux.exe", "size": 1, )"
                            R"("sha256": "0000000000000000000000000000000000000000000000000000000000000000", )"
-                           R"("had": true}], "names": []})")})
+                           R"("old": null}], "names": []})"),
+          std::string_view(R"({"build": 600, "version": "0.6.1", "files": [], "names": ["MyMods"]})")})
     {
         MCCopy copy("unreadable");
         Write(copy.Journal(), journal);

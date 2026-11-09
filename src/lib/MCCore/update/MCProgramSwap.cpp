@@ -18,7 +18,7 @@ namespace
     constexpr std::string_view NameKey = "name";
     constexpr std::string_view SizeKey = "size";
     constexpr std::string_view Sha256Key = "sha256";
-    constexpr std::string_view HadKey = "had";
+    constexpr std::string_view OldKey = "old";
     constexpr std::string_view NamesKey = "names";
     constexpr std::string_view LevelKey = "level";
 
@@ -36,17 +36,27 @@ namespace
     constexpr std::string_view ResolutionExtension = ".EXE";
     /// <summary>A name being made, in the old files' folder, before it moves into place.</summary>
     constexpr std::string_view MadeSuffix = ".new";
+    /// <summary>A new file put back that can't be deleted (a copy runs it) is renamed aside with this, beside the old ones.</summary>
+    constexpr std::string_view GoneSuffix = ".gone";
     /// <summary>The zip's download, in the swap folder: its build between these.</summary>
     constexpr std::string_view ZipPrefix = "program-";
     constexpr std::string_view ZipSuffix = ".zip";
 
-    /// <summary>A file the swap puts in: its name, the new one's size and hash, and whether the folder had one before.</summary>
+    /// <summary>A file's size and SHA-256.</summary>
+    struct MCFileId
+    {
+        uint64_t Size = 0;
+        MCSha256::MCDigest Sha256{};
+    };
+
+    /// <summary>A file the swap puts in: its name, the new one's size and hash, and the one it replaces.</summary>
     struct MCJournalFile
     {
         std::string Name;
         uint64_t Size = 0;
         MCSha256::MCDigest Sha256{};
-        bool Had = false;
+        /// <summary>The file the folder had there before, as it was; none when it had none.</summary>
+        std::optional<MCFileId> Old;
     };
 
     /// <summary>The swap under way: the build and version going in, its files (the game last), the game's other names.</summary>
@@ -233,7 +243,9 @@ namespace
             files.push_back({{NameKey, file.Name},
                              {SizeKey, file.Size},
                              {Sha256Key, MCSha256::Hex(file.Sha256)},
-                             {HadKey, file.Had}});
+                             {OldKey, file.Old ? MCUpdateJson::MCJson{{SizeKey, file.Old->Size},
+                                                                      {Sha256Key, MCSha256::Hex(file.Old->Sha256)}}
+                                               : MCUpdateJson::MCJson()}});
         }
 
         return MCUpdateJson::MCJson{
@@ -260,29 +272,47 @@ namespace
 
                         for (const MCUpdateJson::MCJson& file : MCUpdateJson::Array(json, FilesKey))
                         {
-                            const MCUpdateJson::MCJson& had = MCUpdateJson::Member(file, HadKey);
+                            const MCUpdateJson::MCJson& old = MCUpdateJson::Member(file, OldKey);
 
-                            if (!had.is_boolean())
+                            if (!old.is_null() && !old.is_object())
                             {
-                                MCUpdateJson::Fail("\"{}\" isn't true or false", HadKey);
+                                MCUpdateJson::Fail("\"{}\" isn't a file or null", OldKey);
                             }
 
-                            journal.Files.push_back({.Name = MCUpdateJson::Text(file, NameKey),
-                                                     .Size = MCUpdateJson::Count(file, SizeKey),
-                                                     .Sha256 = MCUpdateJson::Digest(file, Sha256Key),
-                                                     .Had = had.get<bool>()});
+                            journal.Files.push_back(
+                                {.Name = MCUpdateJson::Text(file, NameKey),
+                                 .Size = MCUpdateJson::Count(file, SizeKey),
+                                 .Sha256 = MCUpdateJson::Digest(file, Sha256Key),
+                                 .Old = old.is_null()
+                                            ? std::nullopt
+                                            : std::optional(MCFileId{.Size = MCUpdateJson::Count(old, SizeKey),
+                                                                     .Sha256 = MCUpdateJson::Digest(old, Sha256Key)})});
                         }
 
-                        // Only the program's plain names, in the game folder itself (MCReleaseFile's rule).
+                        // Only the program's plain names, in the game folder itself (MCReleaseFile's rule), and as
+                        // the game's other names only MCX.EXE and the resolutions', none a file's.
                         const auto plain = [](std::string_view name)
                         {
                             return MCContentList::PathProblem(name).empty() && name.find('/') == std::string_view::npos;
+                        };
+
+                        const auto otherName = [&](const std::string& name)
+                        {
+                            const std::string folded = MCContentList::FoldedPath(name);
+                            return IsGameName(folded) &&
+                                   std::ranges::none_of(journal.Files, [&](const MCJournalFile& file)
+                                                        { return MCContentList::FoldedPath(file.Name) == folded; });
                         };
 
                         if (!std::ranges::all_of(journal.Files, plain, &MCJournalFile::Name) ||
                             !std::ranges::all_of(journal.Names, plain))
                         {
                             MCUpdateJson::Fail("it names a file outside the game folder's top");
+                        }
+
+                        if (!std::ranges::all_of(journal.Names, otherName))
+                        {
+                            MCUpdateJson::Fail("it names a file as the game's other name that isn't one");
                         }
 
                         return journal;
@@ -302,7 +332,7 @@ namespace
 
         if (*underWay)
         {
-            return std::unexpected("an earlier program update is under way: the next start ends it");
+            return std::unexpected("an earlier program update didn't finish: the next start ends it, or run the setup");
         }
 
         return {};
@@ -344,6 +374,45 @@ namespace
                 .Staged = ForBuild(gameFolder, MCProgramSwap::StagedFolder, build) / file};
     }
 
+    /// <summary>Nothing, or why <paramref name="path"/> isn't a file the swap may move: a folder (the player's own).</summary>
+    std::expected<void, std::string> NotAFolder(MCUpdateDisk& disk, const std::filesystem::path& path,
+                                                std::string_view name)
+    {
+        const MCUpdateDisk::MCStat stat = disk.Stat(path);
+
+        if (!stat.Error.empty())
+        {
+            return std::unexpected(stat.Error);
+        }
+
+        if (stat.Folder)
+        {
+            return std::unexpected(std::format("{} in the game folder is a folder: move it, then try again", name));
+        }
+
+        return {};
+    }
+
+    /// <summary>
+    /// A new file at <paramref name="path"/> taken out of its place: deleted, or, where a copy runs it (Windows deletes
+    /// no running program), renamed to <paramref name="gone"/>, which the next start's clearing deletes.
+    /// </summary>
+    bool TakeOut(MCUpdateDisk& disk, const std::filesystem::path& path, const std::filesystem::path& gone)
+    {
+        if (disk.Remove(path))
+        {
+            return true;
+        }
+
+        disk.Remove(gone);
+        return MoveTrying(disk, path, gone);
+    }
+
+    std::filesystem::path GonePath(const std::filesystem::path& old, std::string_view name)
+    {
+        return old.parent_path() / MCFileSystem::FromUtf8(std::string(name) + std::string(GoneSuffix));
+    }
+
     /// <summary>
     /// <paramref name="file"/> in: the new one at its place (left as it is: unchanged since the last release, or moved
     /// already), or its old one set aside and the staged one moved in. The staged one is known to be right.
@@ -381,6 +450,11 @@ namespace
             return std::unexpected(atThere.error());
         }
 
+        if (auto notFolder = NotAFolder(disk, places.At, file.Name); !notFolder)
+        {
+            return notFolder;
+        }
+
         if (*atThere && !MoveTrying(disk, places.At, places.Old))
         {
             return std::unexpected(std::format("{} is in use", file.Name));
@@ -403,8 +477,9 @@ namespace
                                               const MCJournalFile& file)
     {
         const MCPlaces places = PlacesOf(gameFolder, build, file.Name);
+        const std::filesystem::path gone = GonePath(places.Old, file.Name);
 
-        for (const std::filesystem::path& path : {places.At, places.Old, places.Staged})
+        for (const std::filesystem::path& path : {places.At, places.Old, places.Staged, gone})
         {
             if (auto checked = noLinks.Check(path); !checked)
             {
@@ -422,14 +497,15 @@ namespace
         }
 
         // Its old one never moved (or it had none, and the new one never came): nothing to put back.
-        if (!*oldThere && (file.Had || !*atThere))
+        if (!*oldThere && (file.Old || !*atThere))
         {
             return {};
         }
 
         if (*atThere)
         {
-            const bool aside = *stagedThere ? disk.Remove(places.At) : MoveTrying(disk, places.At, places.Staged);
+            const bool aside =
+                *stagedThere ? TakeOut(disk, places.At, gone) : MoveTrying(disk, places.At, places.Staged);
 
             if (!aside)
             {
@@ -481,6 +557,11 @@ namespace
             return {};
         }
 
+        if (auto notFolder = NotAFolder(disk, places.At, name); !notFolder)
+        {
+            return notFolder;
+        }
+
         if (*atThere && !MoveTrying(disk, places.At, places.Old))
         {
             return std::unexpected(std::format("{} is in use", name));
@@ -521,8 +602,9 @@ namespace
         const MCPlaces places = PlacesOf(gameFolder, build, name);
         const std::filesystem::path made =
             places.Old.parent_path() / MCFileSystem::FromUtf8(name + std::string(MadeSuffix));
+        const std::filesystem::path gone = GonePath(places.Old, name);
 
-        for (const std::filesystem::path& path : {places.At, places.Old, made})
+        for (const std::filesystem::path& path : {places.At, places.Old, made, gone})
         {
             if (auto checked = noLinks.Check(path); !checked)
             {
@@ -543,7 +625,7 @@ namespace
             return {};
         }
 
-        if (const auto atThere = IsThere(disk, places.At); !atThere || (*atThere && !disk.Remove(places.At)))
+        if (const auto atThere = IsThere(disk, places.At); !atThere || (*atThere && !TakeOut(disk, places.At, gone)))
         {
             return std::unexpected(!atThere ? atThere.error() : std::format("the new {} is in use", name));
         }
@@ -573,34 +655,28 @@ namespace
     }
 
     /// <summary>
-    /// Puts <paramref name="journal"/>'s files back as they were (<paramref name="reason"/>: why), then ends it. Failing,
-    /// the journal stays, so the next start tries again.
+    /// Puts <paramref name="journal"/>'s files back as they were, the reverse of their order in, then ends it. It stops
+    /// at the first that can't go back, so a new program is never left beside its old files (the game's other names
+    /// first, then the game, then its files); the journal stays, so the next start tries again.
     /// </summary>
     /// <returns>Empty once back, or why not.</returns>
     std::string PutBack(MCUpdateDisk& disk, MCNoLinks& noLinks, const std::filesystem::path& gameFolder,
                         const MCJournal& journal)
     {
-        std::string failed;
-
         for (const std::string& name : journal.Names | std::views::reverse)
         {
-            if (const auto back = NameBack(disk, noLinks, gameFolder, journal.Build, name); !back && failed.empty())
+            if (const auto back = NameBack(disk, noLinks, gameFolder, journal.Build, name); !back)
             {
-                failed = back.error();
+                return back.error();
             }
         }
 
         for (const MCJournalFile& file : journal.Files | std::views::reverse)
         {
-            if (const auto back = FileBack(disk, noLinks, gameFolder, journal.Build, file); !back && failed.empty())
+            if (const auto back = FileBack(disk, noLinks, gameFolder, journal.Build, file); !back)
             {
-                failed = back.error();
+                return back.error();
             }
-        }
-
-        if (!failed.empty())
-        {
-            return failed;
         }
 
         if (!FlushSwapped(disk, gameFolder, journal.Build) || !EndJournal(disk, gameFolder))
@@ -619,7 +695,14 @@ namespace
                                            const std::filesystem::path& gameFolder, const MCJournal& journal,
                                            const MCProgramSwap::MCPlatform& platform)
     {
-        if (!disk.MakeFolders(ForBuild(gameFolder, MCProgramSwap::OldFolder, journal.Build)))
+        const std::filesystem::path old = ForBuild(gameFolder, MCProgramSwap::OldFolder, journal.Build);
+
+        if (auto checked = noLinks.Check(old); !checked)
+        {
+            return std::unexpected(checked.error());
+        }
+
+        if (!disk.MakeFolders(old))
         {
             return std::unexpected("the old files' folder can't be made");
         }
@@ -699,27 +782,22 @@ namespace
             }
         }
 
-        // A copy still running an old program holds it: a later start tries again.
-        if (disk.Stat(old).Exists && !disk.Remove(old))
-        {
-            SDL_Log("Updater: what an earlier program update set aside can't all be deleted yet");
-        }
-
         const std::filesystem::path staged = In(gameFolder, MCProgramSwap::StagedFolder);
         const std::filesystem::path swap = In(gameFolder, MCProgramSwap::SwapFolder);
         std::vector<std::filesystem::path> done;
         std::error_code error;
 
-        for (const std::filesystem::path& folder : {staged, swap})
+        for (const std::filesystem::path& folder : {old, staged, swap})
         {
             for (std::filesystem::directory_iterator entry(folder, error), end; !error && entry != end;
                  entry.increment(error))
             {
                 const std::string name = MCFileSystem::ToUtf8(entry->path().filename());
                 const std::optional<uint64_t> build =
-                    folder == staged ? BuildIn(name, "", "") : BuildIn(name, ZipPrefix, ZipSuffix);
+                    folder == swap ? BuildIn(name, ZipPrefix, ZipSuffix) : BuildIn(name, "", "");
 
-                if (build && *build <= runningBuild)
+                // Every earlier swap's old files; staged files (and downloads) for this build or older.
+                if (build && (folder == old || *build <= runningBuild))
                 {
                     done.push_back(entry->path());
                 }
@@ -728,11 +806,21 @@ namespace
             error.clear();
         }
 
+        // Each looked at first (a link there, the game's writes would follow it). A copy still running an old program
+        // holds its files: a later start tries again.
         for (const std::filesystem::path& path : done)
         {
-            disk.Remove(path);
+            if (auto checked = noLinks.Check(path); !checked)
+            {
+                SDL_Log("Updater: an earlier program update's files aren't cleared: %s", checked.error().c_str());
+            }
+            else if (!disk.Remove(path))
+            {
+                SDL_Log("Updater: what an earlier program update set aside can't all be deleted yet");
+            }
         }
 
+        disk.RemoveIfEmpty(old);
         disk.RemoveIfEmpty(staged);
         disk.RemoveIfEmpty(swap);
     }
@@ -799,7 +887,7 @@ std::expected<void, std::string> MCProgramSwap::Stage(MCUpdateDisk& disk, MCCont
     for (std::filesystem::directory_iterator entry(In(gameFolder, StagedFolder), error), end; !error && entry != end;
          entry.increment(error))
     {
-        if (entry->path() != staged)
+        if (entry->path() != staged && noLinks.Check(entry->path()))
         {
             disk.Remove(entry->path());
         }
@@ -862,11 +950,12 @@ std::expected<void, std::string> MCProgramSwap::Stage(MCUpdateDisk& disk, MCCont
         }
     }
 
-    for (const MCContentStage::MCEntry& entry : wanted)
+    // Every file, those staged already too: a start stopped before their flush left them only in the system's cache.
+    for (const MCProgramFile& file : program.Files)
     {
-        if (!disk.FlushFile(entry.To))
+        if (const std::filesystem::path path = staged / MCFileSystem::FromUtf8(file.Name); !disk.FlushFile(path))
         {
-            return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(entry.To)));
+            return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(path)));
         }
     }
 
@@ -928,14 +1017,24 @@ std::expected<void, std::string> MCProgramSwap::Swap(MCUpdateDisk& disk, const s
                 !staged ? staged.error() : std::format("the new {} isn't staged as release.json names it", file.Name));
         }
 
-        const auto had = IsThere(disk, places.At);
-
-        if (!had)
+        // The file it replaces, as it is now (a folder there is the player's, never moved): a start finding neither
+        // this nor the new one there knows something else (the setup) has installed since.
+        if (auto notFolder = NotAFolder(disk, places.At, file.Name); !notFolder)
         {
-            return std::unexpected(had.error());
+            return notFolder;
         }
 
-        file.Had = *had;
+        if (const MCUpdateDisk::MCStat at = disk.Stat(places.At); at.Exists)
+        {
+            const auto hash = disk.Hash(places.At);
+
+            if (!hash)
+            {
+                return std::unexpected(hash.error());
+            }
+
+            file.Old = MCFileId{.Size = at.Size, .Sha256 = *hash};
+        }
 
         if ((file.Name == GameName || file.Name == EditorName) && platform.Runnable)
         {
@@ -955,16 +1054,24 @@ std::expected<void, std::string> MCProgramSwap::Swap(MCUpdateDisk& disk, const s
 
     journal.Names = std::move(*names);
 
-    // An earlier attempt at this build, put back, may have left its folder.
-    if (const std::filesystem::path old = ForBuild(gameFolder, OldFolder, program.Build);
-        disk.Stat(old).Exists && !disk.Remove(old))
+    // An earlier attempt at this build, put back, may have left its folder: what's left there (a new file a copy ran,
+    // renamed aside) has none of the names the swap moves, and goes at a later start.
+    const std::filesystem::path old = ForBuild(gameFolder, OldFolder, program.Build);
+
+    if (auto checked = noLinks.Check(old); !checked)
     {
-        return std::unexpected(std::format("{} can't be emptied", MCFileSystem::ToUtf8(old)));
+        return std::unexpected(checked.error());
     }
 
-    // 2. The journal.
+    if (disk.Stat(old).Exists && !disk.Remove(old))
+    {
+        SDL_Log("Updater: %s can't all be deleted yet", MCFileSystem::ToUtf8(old).c_str());
+    }
+
+    // 2. The journal. One written but not flushed is taken out again: the swap failed, so no start may finish it.
     if (!WriteDurably(disk, gameFolder, journalPath, JournalText(journal)))
     {
+        disk.Remove(journalPath);
         return std::unexpected(std::format("{} can't be written", JournalFile));
     }
 
@@ -999,6 +1106,50 @@ MCProgramSwap::MCResult MCProgramSwap::Recover(MCUpdateDisk& disk, const std::fi
 
     const MCJournal& journal = **read;
     MCNoLinks noLinks(disk, gameFolder);
+
+    // Something else installed since (the setup, run over the swap stopped midway): a file at its place that is neither
+    // the one the swap replaces nor its new one. The journal is moot and goes; nothing moves. (A folder there is
+    // looked at no further: the moves below refuse it.)
+    for (const MCJournalFile& file : journal.Files)
+    {
+        const std::filesystem::path at = In(gameFolder, file.Name);
+        const MCUpdateDisk::MCStat stat = disk.Stat(at);
+
+        if (!stat.Error.empty())
+        {
+            return {.Outcome = MCOutcome::Stuck, .Error = stat.Error};
+        }
+
+        if (!stat.Exists || stat.Folder)
+        {
+            continue;
+        }
+
+        const auto isNew = IsNamed(disk, at, file.Size, file.Sha256);
+        const auto isOld = isNew && !*isNew && file.Old ? IsNamed(disk, at, file.Old->Size, file.Old->Sha256)
+                                                        : std::expected<bool, std::string>(false);
+
+        if (!isNew || !isOld)
+        {
+            return {.Outcome = MCOutcome::Stuck, .Error = !isNew ? isNew.error() : isOld.error()};
+        }
+
+        if (!*isNew && !*isOld)
+        {
+            const std::string reason = std::format("{} is neither its old one nor its new one", file.Name);
+
+            if (!EndJournal(disk, gameFolder))
+            {
+                return {.Outcome = MCOutcome::Stuck,
+                        .Error = std::format("{}, and its journal can't be deleted", reason)};
+            }
+
+            SDL_Log("Updater: build %llu's program update, stopped midway, was overtaken (%s): its journal is gone",
+                    static_cast<unsigned long long>(journal.Build), reason.c_str());
+            ClearDone(disk, gameFolder, runningBuild);
+            return {.Outcome = MCOutcome::Overtaken, .Error = reason};
+        }
+    }
 
     // Forward when every file is in or staged as it was checked; otherwise back.
     std::string gone;

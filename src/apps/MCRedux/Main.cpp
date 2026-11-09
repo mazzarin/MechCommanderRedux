@@ -377,6 +377,11 @@ namespace
             .Runnable = MCSetupRunnable, .Start = MCStartSetup, .Quit = nullptr, .ShowVersion = MCShowInstalledVersion};
     }
 
+    /// <summary>What the player is told of a program update that can neither finish nor be undone.</summary>
+    constexpr std::string_view StuckSwapFormat =
+        "The last update of Redux HD didn't finish, and couldn't be undone ({}).\n\nRun the Redux HD setup again to "
+        "repair the install.";
+
     /// <summary>
     /// At a start, under the staging lock (another copy holding it is swapping: it finishes its own): a program update
     /// stopped midway finished or put back, or with none, what earlier ones set aside cleared (update/MCProgramSwap.h).
@@ -394,8 +399,10 @@ namespace
                 *MakeDisk(), gameFolder, MC_VERSION_BUILD, MCSetupBackend::SwapPlatform(SetupPlatform()));
             recovered.Outcome == MCProgramSwap::MCOutcome::Stuck)
         {
+            // The game may be a mix of two versions: the player is told, and plays on as it is.
             SDL_Log("Updates: the program update stopped midway is left as it is (%s): the setup repairs it",
                     recovered.Error.c_str());
+            Report(std::format(StuckSwapFormat, recovered.Error), true);
         }
     }
 

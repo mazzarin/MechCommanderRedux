@@ -911,106 +911,30 @@ namespace
                 return Stop();
             }
 
-            std::ifstream file(*path, std::ios::binary);
-            mz_zip_archive archive{};
-            archive.m_pRead = ReadZip;
-            archive.m_pIO_opaque = &file;
-
-            if (!file || !mz_zip_reader_init(&archive, zip.Size, 0))
-            {
-                file.close();
-                _Disk.Remove(*path);
-                return std::unexpected(std::format("{} can't be opened as a zip", zip.Name));
-            }
-
-            std::string error;
-            bool keepZip = false;
+            std::vector<MCContentStage::MCEntry> unpacked;
 
             for (const MCStep& step : entries)
             {
-                // Stopped, the zip stays for the next attempt.
-                if (Stopped())
-                {
-                    error = StoppedError;
-                    keepZip = true;
-                    break;
-                }
-
-                const int index =
-                    mz_zip_reader_locate_file(&archive, step.File->Path.c_str(), nullptr, MZ_ZIP_FLAG_CASE_SENSITIVE);
-                const std::filesystem::path staged = StagedPath(step);
-
-                if (index < 0)
-                {
-                    error = std::format("{} isn't in {}", step.File->Path, zip.Name);
-                    break;
-                }
-
-                if (auto checked = _NoLinks.Check(staged); !checked)
-                {
-                    error = checked.error();
-                    keepZip = true;
-                    break;
-                }
-
-                if (!_Disk.MakeFolders(staged.parent_path()))
-                {
-                    error = std::format("{} can't be made", MCFileSystem::ToUtf8(staged.parent_path()));
-                    keepZip = true;
-                    break;
-                }
-
-                // Made anew: never through a link, nor over what an earlier attempt left.
-                auto made = MCNewFile::Create(staged);
-
-                if (!made)
-                {
-                    error = made.error();
-                    keepZip = true;
-                    break;
-                }
-
-                MCEntrySink sink(std::move(*made), step.File->Size, _GoOn);
-                const bool unpacked =
-                    mz_zip_reader_extract_to_callback(&archive, static_cast<mz_uint>(index), WriteEntry, &sink, 0);
-                const bool closed = sink.File.Close();
-
-                if (sink.Stopped)
-                {
-                    _Disk.Remove(staged);
-                    error = StoppedError;
-                    keepZip = true;
-                    break;
-                }
-
-                if (!closed || sink.WriteFailed)
-                {
-                    _Disk.Remove(staged);
-                    error = std::format("{} can't be written", MCFileSystem::ToUtf8(staged));
-                    keepZip = true;
-                    break;
-                }
-
-                if (!unpacked || sink.TooLong || sink.Written != step.File->Size ||
-                    sink.Hasher.Finish() != step.File->Sha256)
-                {
-                    _Disk.Remove(staged);
-                    error = std::format("{} from {} isn't the release's", step.File->Path, zip.Name);
-                    break;
-                }
+                unpacked.push_back({.Path = step.File->Path,
+                                    .To = StagedPath(step),
+                                    .Size = step.File->Size,
+                                    .Sha256 = step.File->Sha256});
             }
 
-            mz_zip_reader_end(&archive);
-            file.close();
+            const auto done = MCContentStage::Unpack(_Disk, _NoLinks, *path, zip.Size, zip.Name, unpacked, _GoOn);
+            using MCKind = MCContentStage::MCUnpackError::MCKind;
 
-            if (!keepZip)
+            // The zip goes once done, or when it's at fault; stopped, or an entry that couldn't be written (a full disk),
+            // it stays for the next attempt.
+            if (done || done.error().Kind == MCKind::NotAsNamed)
             {
                 _Disk.Remove(*path);
             }
 
-            if (!error.empty())
+            if (!done)
             {
-                return std::unexpected(error);
+                return std::unexpected(done.error().Kind == MCKind::Stopped ? std::string(StoppedError)
+                                                                            : done.error().Reason);
             }
 
             return {};
@@ -1317,6 +1241,100 @@ std::expected<void, MCContentStage::MCFetchError> MCContentStage::FetchChecked(
                 name.data());
         toldAlready = told;
     }
+}
+
+std::expected<void, MCContentStage::MCUnpackError> MCContentStage::Unpack(MCUpdateDisk& disk, MCNoLinks& noLinks,
+                                                                          const std::filesystem::path& zip,
+                                                                          uint64_t zipSize, std::string_view zipName,
+                                                                          std::span<const MCEntry> entries,
+                                                                          const std::function<bool()>& goOn)
+{
+    using MCKind = MCUnpackError::MCKind;
+    std::ifstream file(zip, std::ios::binary);
+    mz_zip_archive archive{};
+    archive.m_pRead = ReadZip;
+    archive.m_pIO_opaque = &file;
+
+    if (!file || !mz_zip_reader_init(&archive, zipSize, 0))
+    {
+        return std::unexpected(MCUnpackError{MCKind::NotAsNamed, std::format("{} can't be opened as a zip", zipName)});
+    }
+
+    std::optional<MCUnpackError> failed;
+
+    for (const MCEntry& entry : entries)
+    {
+        if (!goOn())
+        {
+            failed = {MCKind::Stopped, std::string(StoppedError)};
+            break;
+        }
+
+        const int index = mz_zip_reader_locate_file(&archive, entry.Path.c_str(), nullptr, MZ_ZIP_FLAG_CASE_SENSITIVE);
+
+        if (index < 0)
+        {
+            failed = {MCKind::NotAsNamed, std::format("{} isn't in {}", entry.Path, zipName)};
+            break;
+        }
+
+        if (auto checked = noLinks.Check(entry.To); !checked)
+        {
+            failed = {MCKind::Disk, checked.error()};
+            break;
+        }
+
+        if (!disk.MakeFolders(entry.To.parent_path()))
+        {
+            failed = {MCKind::Disk, std::format("{} can't be made", MCFileSystem::ToUtf8(entry.To.parent_path()))};
+            break;
+        }
+
+        // Made anew: never through a link, nor over what an earlier attempt left.
+        auto made = MCNewFile::Create(entry.To);
+
+        if (!made)
+        {
+            failed = {MCKind::Disk, made.error()};
+            break;
+        }
+
+        MCEntrySink sink(std::move(*made), entry.Size, goOn);
+        const bool unpacked =
+            mz_zip_reader_extract_to_callback(&archive, static_cast<mz_uint>(index), WriteEntry, &sink, 0);
+        const bool closed = sink.File.Close();
+
+        if (sink.Stopped)
+        {
+            disk.Remove(entry.To);
+            failed = {MCKind::Stopped, std::string(StoppedError)};
+            break;
+        }
+
+        if (!closed || sink.WriteFailed)
+        {
+            disk.Remove(entry.To);
+            failed = {MCKind::Disk, std::format("{} can't be written", MCFileSystem::ToUtf8(entry.To))};
+            break;
+        }
+
+        if (!unpacked || sink.TooLong || sink.Written != entry.Size || sink.Hasher.Finish() != entry.Sha256)
+        {
+            disk.Remove(entry.To);
+            failed = {MCKind::NotAsNamed, std::format("{} from {} isn't the release's", entry.Path, zipName)};
+            break;
+        }
+    }
+
+    mz_zip_reader_end(&archive);
+    file.close();
+
+    if (failed)
+    {
+        return std::unexpected(std::move(*failed));
+    }
+
+    return {};
 }
 
 std::vector<MCContentSwap::MCMove> MCContentStage::Moves(const MCContentPlan::MCPlan& plan)

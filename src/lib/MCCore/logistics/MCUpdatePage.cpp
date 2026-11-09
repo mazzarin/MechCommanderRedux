@@ -599,6 +599,24 @@ namespace
     constexpr std::string_view FoundTitle = "NEW: {}";
     constexpr std::string_view RunningTitle = "RUNNING: {}";
 
+    /// <summary>What the status line says of an update ready, by how it goes in (main/MCUpdater.h's MCGoesIn).</summary>
+    std::string ReadyText(const MCStatus& status)
+    {
+        switch (status.GoesIn)
+        {
+            case MCUpdater::MCGoesIn::NextStart:
+                return MCUpdater::CanStartAgain()
+                           ? std::format("VERSION {} IS IN. RESTART TO PLAY IT.", status.Version)
+                           : std::format("VERSION {} IS IN. IT PLAYS WHEN THE GAME STARTS AGAIN.", status.Version);
+            case MCUpdater::MCGoesIn::PlayersStart:
+                return std::format("VERSION {} INSTALLS WHEN YOU START REDUX HD YOURSELF.", status.Version);
+            case MCUpdater::MCGoesIn::AsItQuits:
+                break;
+        }
+
+        return std::format("VERSION {} INSTALLS AS YOU QUIT.", status.Version);
+    }
+
     /// <summary>What the status line says the update is doing.</summary>
     std::string StatusText(const MCStatus& status)
     {
@@ -632,7 +650,7 @@ namespace
                     return room;
                 }
 
-                return "DOWNLOADED. IT WILL INSTALL WHEN YOU RESTART OR QUIT.";
+                return ReadyText(status);
             }
             case MCStage::Installing:
                 return "INSTALLING. THE GAME WILL RESTART BY ITSELF.";
@@ -794,7 +812,9 @@ namespace
             case MCStage::Downloading:
                 return std::format("DOWNLOADING VERSION {}", status.Version);
             case MCStage::Ready:
-                return std::format("VERSION {} IS READY TO INSTALL", status.Version);
+                return status.GoesIn == MCUpdater::MCGoesIn::NextStart
+                           ? std::format("VERSION {} IS IN", status.Version)
+                           : std::format("VERSION {} IS READY TO INSTALL", status.Version);
             case MCStage::Installing:
                 return std::format("INSTALLING VERSION {}", status.Version);
             case MCStage::Failed:
@@ -935,8 +955,11 @@ namespace
 
     void ShowRestart(MCStage stage)
     {
-        // In a lobby's room, only when every game there can rejoin, before the match (network/MCLobbyUpdate.h).
-        const bool shown = stage == MCStage::Ready && (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart());
+        // Only where what the game starts outlives it, and not for a setup waiting for the player's own start; in a
+        // lobby's room, only when every game there can rejoin, before the match (network/MCLobbyUpdate.h).
+        const bool shown = stage == MCStage::Ready && MCUpdater::CanStartAgain() &&
+                           MCUpdater::Status().GoesIn != MCUpdater::MCGoesIn::PlayersStart &&
+                           (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart());
 
         for (const MCUpdatePageView& view : LivePages())
         {

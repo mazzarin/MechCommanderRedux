@@ -16,6 +16,8 @@ namespace MCTestUpdater
         /// <summary>The build each check looked for (none: the backend's own newest).</summary>
         std::vector<std::optional<uint64_t>> Checks;
         std::vector<MCUpdater::MCAnswer> Answers;
+        /// <summary>How the stand-in says its program goes in (Sparkle's: as the game quits).</summary>
+        MCUpdater::MCGoesIn GoesIn = MCUpdater::MCGoesIn::AsItQuits;
     };
 
     /// <summary>A stand-in for Sparkle: it keeps the checks and the answers in its log.</summary>
@@ -32,6 +34,8 @@ namespace MCTestUpdater
         void Check(std::optional<uint64_t> build) override { _Log->Checks.push_back(build); }
 
         void Answer(MCUpdater::MCAnswer answer) override { _Log->Answers.push_back(answer); }
+
+        MCUpdater::MCGoesIn GoesIn() override { return _Log->GoesIn; }
 
     private:
         std::shared_ptr<MCBackendLog> _Log;

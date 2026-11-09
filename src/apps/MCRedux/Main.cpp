@@ -373,7 +373,30 @@ namespace
     /// <summary>What Windows does for the program's updates: the setup judged and started (MCSetupRun.h).</summary>
     MCSetupBackend::MCPlatform SetupPlatform()
     {
-        return {.Runnable = MCSetupRunnable, .Start = MCStartSetup, .Quit = nullptr};
+        return {
+            .Runnable = MCSetupRunnable, .Start = MCStartSetup, .Quit = nullptr, .ShowVersion = MCShowInstalledVersion};
+    }
+
+    /// <summary>
+    /// At a start, under the staging lock (another copy holding it is swapping: it finishes its own): a program update
+    /// stopped midway finished or put back, or with none, what earlier ones set aside cleared (update/MCProgramSwap.h).
+    /// </summary>
+    void RecoverProgramSwap(const std::filesystem::path& gameFolder)
+    {
+        const std::unique_ptr<MCUpdateLock> staging = MCUpdateLock::Open(gameFolder, MCUpdateLock::StagingLock);
+
+        if (staging == nullptr || !staging->TryExclusive())
+        {
+            return;
+        }
+
+        if (const MCProgramSwap::MCResult recovered = MCProgramSwap::Recover(
+                *MakeDisk(), gameFolder, MC_VERSION_BUILD, MCSetupBackend::SwapPlatform(SetupPlatform()));
+            recovered.Outcome == MCProgramSwap::MCOutcome::Stuck)
+        {
+            SDL_Log("Updates: the program update stopped midway is left as it is (%s): the setup repairs it",
+                    recovered.Error.c_str());
+        }
     }
 
     /// <summary>The folder a program is hosted in (the fork's releases), over https.</summary>
@@ -593,8 +616,23 @@ int main(int argc, char** argv)
 
     options->DataFolder = *dataFolder;
 #ifdef _WIN32
-    // A program update armed before the game last ended and never run (a crash) installs first, with its content.
-    if (contentUpdates && MCSetupBackend::RunLeftOver(options->DataFolder, MC_VERSION_BUILD, SetupPlatform()))
+    // What the game starts may end with it (a lobby's job): then no RESTART, and no setup is started.
+    const bool canStart = MCStartedOutlive() != MCOutlives::No;
+    MCUpdater::SetCanStartAgain(canStart);
+
+    if (!canStart)
+    {
+        SDL_Log("Updates: the game runs in a job that ends what it starts as it exits: no restart, no setup");
+    }
+
+    // A program update stopped midway is finished (or put back); then one armed before the game last ended and never
+    // run (a crash) installs first, with its content.
+    if (contentUpdates)
+    {
+        RecoverProgramSwap(options->DataFolder);
+    }
+
+    if (contentUpdates && MCSetupBackend::RunLeftOver(options->DataFolder, MC_VERSION_BUILD, SetupPlatform(), canStart))
     {
         SDL_Quit();
         return 0;

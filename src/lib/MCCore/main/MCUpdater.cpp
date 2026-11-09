@@ -11,6 +11,9 @@
 #include "update/MCUpdateLock.h"
 #include "update/MCUpdateWork.h"
 
+#include <atomic>
+#include <thread>
+
 namespace
 {
     using MCContentUpdater::MCOffer;
@@ -24,6 +27,8 @@ namespace
     constexpr size_t MaxVersionLength = 40;
     constexpr size_t MaxNotesLength = 8192;
     constexpr size_t MaxErrorLength = 300;
+    /// <summary>How often the program's install, held for a match's mission, looks whether the mission has ended.</summary>
+    constexpr std::chrono::milliseconds MissionLook{250};
 
     /// <summary>
     /// <paramref name="text"/> with only what the game's fonts write (printable ASCII, and newlines when
@@ -148,6 +153,13 @@ namespace
 
     std::function<void()> QuitGame = InputQuit;
     bool RestartAfterQuit = false;
+    /// <summary>Whether what the game starts outlives it (<see cref="MCUpdater::SetCanStartAgain"/>).</summary>
+    bool StartsAgain = true;
+    /// <summary>
+    /// Whether a match's mission plays (<see cref="MCUpdater::PauseWork"/>), shared with the arming's thread: the
+    /// program's install waits for the mission's end.
+    /// </summary>
+    const std::shared_ptr<std::atomic<bool>> MatchPlays = std::make_shared<std::atomic<bool>>(false);
 
     /// <summary>Tells the listener <see cref="Current"/> changed.</summary>
     void Changed()
@@ -362,9 +374,33 @@ namespace
     void StartArming()
     {
         Step = MCStep::ArmingContent;
+        // A program put in place by the game itself (Windows' swap) goes in first, never while a match's mission plays:
+        // failing, the content isn't armed. Content failing to arm after it is the new program's to get: at its start
+        // where it needs that release (a release older than it plays), else its updater offers it.
+        std::function<std::string()> install =
+            Offer->ProgramBuild && Backend != nullptr ? Backend->InstallNow(Current.Version) : nullptr;
         RunWork("the update's arming",
-                [setup = *Content, offer = *Offer](MCUpdateWork::MCContext&) -> MCWorkResult
+                [setup = *Content, offer = *Offer, install = std::move(install),
+                 playing = MatchPlays](MCUpdateWork::MCContext& context) -> MCWorkResult
                 {
+                    if (install)
+                    {
+                        while (playing->load() && !context.Stop.stop_requested())
+                        {
+                            std::this_thread::sleep_for(MissionLook);
+                        }
+
+                        if (context.Stop.stop_requested())
+                        {
+                            return std::unexpected("stopped");
+                        }
+
+                        if (std::string failed = install(); !failed.empty())
+                        {
+                            return std::unexpected(std::move(failed));
+                        }
+                    }
+
                     if (const auto armed = MCContentUpdater::Arm(setup, *MakeDisk(), offer); !armed)
                     {
                         return std::unexpected(armed.error());
@@ -395,9 +431,13 @@ namespace
 
         StagingLock.reset();
         Step = MCStep::Armed;
-        SDL_Log("Updater: %s is ready to install", Current.Version.c_str());
         Current.Stage = MCStage::Ready;
         Current.Received = Current.Expected;
+        Current.GoesIn = Offer->ProgramBuild && Backend != nullptr ? Backend->GoesIn() : MCUpdater::MCGoesIn::NextStart;
+        SDL_Log("Updater: %s is ready to install%s", Current.Version.c_str(),
+                Current.GoesIn == MCUpdater::MCGoesIn::NextStart      ? ": the next start plays it"
+                : Current.GoesIn == MCUpdater::MCGoesIn::PlayersStart ? ": its setup waits for a start the player makes"
+                                                                      : "");
         Changed();
     }
 
@@ -830,7 +870,8 @@ namespace
             Changed();
             Settle();
         }
-        else if (Current.Stage == MCStage::Ready && Step == MCStep::Armed && answer == MCAnswer::Install)
+        else if (Current.Stage == MCStage::Ready && Step == MCStep::Armed && answer == MCAnswer::Install &&
+                 StartsAgain && Current.GoesIn != MCUpdater::MCGoesIn::PlayersStart)
         {
             SDL_Log("Updater: restart into %s", Current.Version.c_str());
             Step = MCStep::Finished;
@@ -838,8 +879,8 @@ namespace
             Changed();
 
             // The program's installer quits the game and starts the new version, whose start swaps the content in;
-            // with no program, the game quits and starts again itself.
-            if (Offer->ProgramBuild)
+            // with no program, or the program in already, the game quits and starts again itself.
+            if (Current.GoesIn == MCUpdater::MCGoesIn::AsItQuits)
             {
                 Backend->Answer(MCAnswer::Install);
             }
@@ -988,6 +1029,8 @@ auto MCUpdater::Frame() -> void
 
 auto MCUpdater::PauseWork(bool paused) -> void
 {
+    MatchPlays->store(paused);
+
     if (paused)
     {
         // Each frame: a download that began during the mission (the start's check ending in the HD pack's change)
@@ -1019,6 +1062,9 @@ auto MCUpdater::PauseWork(bool paused) -> void
 
 auto MCUpdater::Quit() -> void
 {
+    // No more frames: the program's install held for a match's mission goes ahead.
+    MatchPlays->store(false);
+
     // An arming under way finishes (quitting installs the program armed: neither half goes in without the other).
     if (Step == MCStep::ArmingContent)
     {
@@ -1042,6 +1088,16 @@ auto MCUpdater::Quit() -> void
 auto MCUpdater::RestartWanted() -> bool
 {
     return RestartAfterQuit;
+}
+
+auto MCUpdater::SetCanStartAgain(bool can) -> void
+{
+    StartsAgain = can;
+}
+
+auto MCUpdater::CanStartAgain() -> bool
+{
+    return StartsAgain;
 }
 
 auto MCUpdater::Available() -> bool
@@ -1350,6 +1406,7 @@ auto MCUpdater::Ready() -> void
 
     SDL_Log("Updater: %s is downloaded", Current.Version.c_str());
     Current.Stage = MCStage::Ready;
+    Current.GoesIn = Backend != nullptr ? Backend->GoesIn() : MCUpdater::MCGoesIn::AsItQuits;
     Changed();
 }
 

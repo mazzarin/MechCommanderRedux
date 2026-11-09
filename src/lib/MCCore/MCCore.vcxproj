@@ -501,6 +501,7 @@
     <ClCompile Include="update\MCContentUpdater.cpp" />
     <ClCompile Include="update\MCHttpSource.cpp" />
     <ClCompile Include="update\MCInstalled.cpp" />
+    <ClCompile Include="update\MCProgramSwap.cpp" />
     <ClCompile Include="update\MCReleaseFile.cpp" />
     <ClCompile Include="update\MCSetupBackend.cpp" />
     <ClCompile Include="update\MCSignedFile.cpp" />
@@ -986,6 +987,7 @@
     <ClInclude Include="update\MCHttpTransfer.h" />
     <ClInclude Include="update\MCInstalled.h" />
     <ClInclude Include="update\MCInstalledJson.h" />
+    <ClInclude Include="update\MCProgramSwap.h" />
     <ClInclude Include="update\MCReleaseFile.h" />
     <ClInclude Include="update\MCSetupBackend.h" />
     <ClInclude Include="update\MCSignedFile.h" />

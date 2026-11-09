@@ -1127,6 +1127,21 @@ TEST_CASE_ISOLATED("game: a lobby's guest started from the rejoin note joins, an
     CHECK(!MCLobbyUpdate::CanRestart());
     CHECK_EQ(MCLobbyUpdate::ReadyText(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
 
+    // Windows' program put in place already (the swap) plays from the next match the lobby starts; a setup a lobby's
+    // job would end waits for a start the player makes.
+    const auto readyAs = [&](MCUpdater::MCGoesIn goesIn)
+    {
+        updater.Log->GoesIn = goesIn;
+        MCUpdater::Ready();
+        return MCLobbyUpdate::ReadyText();
+    };
+
+    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::NextStart),
+             std::format("VERSION {} IS IN. IT PLAYS FROM YOUR NEXT MATCH.", NewVersion));
+    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::PlayersStart),
+             std::format("VERSION {} INSTALLS WHEN YOU START REDUX HD YOURSELF.", NewVersion));
+    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::AsItQuits), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
+
     // It restarts again, its update going in this time.
     CHECK(hostRestarts());
     CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));

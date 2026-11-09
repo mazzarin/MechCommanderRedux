@@ -1409,6 +1409,9 @@
     <ClCompile Include="update\MCInstalled.cpp">
       <Filter>update</Filter>
     </ClCompile>
+    <ClCompile Include="update\MCProgramSwap.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
     <ClCompile Include="update\MCReleaseFile.cpp">
       <Filter>update</Filter>
     </ClCompile>
@@ -2820,6 +2823,9 @@
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCInstalledJson.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCProgramSwap.h">
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCReleaseFile.h">

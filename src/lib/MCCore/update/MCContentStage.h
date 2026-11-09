@@ -5,6 +5,7 @@
 #include "update/MCContentSwap.h"
 #include "update/MCUpdateWork.h"
 
+class MCNoLinks;
 class MCUpdateDisk;
 
 /// <summary>
@@ -117,6 +118,44 @@ namespace MCContentStage
                                                    const std::filesystem::path& to, uint64_t size,
                                                    const MCSha256::MCDigest& sha256,
                                                    const std::function<bool(uint64_t)>& received);
+
+    /// <summary>An entry of a zip to unpack: its path there, the file it's written to, and its size and SHA-256.</summary>
+    struct MCEntry
+    {
+        std::string Path;
+        std::filesystem::path To;
+        uint64_t Size = 0;
+        MCSha256::MCDigest Sha256{};
+    };
+
+    /// <summary>Why a zip's entries weren't all unpacked (<see cref="Unpack"/>).</summary>
+    struct MCUnpackError
+    {
+        enum class MCKind : uint8_t
+        {
+            /// <summary>The zip isn't as named: it can't be read, an entry is missing or isn't the size and hash given.</summary>
+            NotAsNamed,
+            /// <summary>An entry couldn't be written (a full disk, a link on its way): the zip is good.</summary>
+            Disk,
+            /// <summary>Stopped (<c>goOn</c> said so).</summary>
+            Stopped,
+        };
+
+        MCKind Kind = MCKind::NotAsNamed;
+        std::string Reason;
+    };
+
+    /// <summary>
+    /// Unpacks <paramref name="entries"/> from the zip at <paramref name="zip"/> (<paramref name="zipSize"/> bytes, the
+    /// hosted <paramref name="zipName"/>), each made anew where it goes (its folders made, no link on its way:
+    /// <paramref name="noLinks"/>) and checked as it's written; one that isn't as given is deleted. <paramref
+    /// name="goOn"/> is asked before each entry and each piece, and returns false to stop. The entries' bytes aren't
+    /// flushed.
+    /// </summary>
+    /// <returns>Nothing, or why not all were unpacked (those before it stay).</returns>
+    std::expected<void, MCUnpackError> Unpack(MCUpdateDisk& disk, MCNoLinks& noLinks, const std::filesystem::path& zip,
+                                              uint64_t zipSize, std::string_view zipName,
+                                              std::span<const MCEntry> entries, const std::function<bool()>& goOn);
 
     /// <summary>The moves the swap makes for <paramref name="plan"/>.</summary>
     std::vector<MCContentSwap::MCMove> Moves(const MCContentPlan::MCPlan& plan);

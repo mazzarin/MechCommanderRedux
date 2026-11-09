@@ -22,6 +22,7 @@
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCHttpSource.h"
+#include "update/MCProgramSwap.h"
 #include "update/MCSetupBackend.h"
 #include "update/MCSyncedFolder.h"
 #include "update/MCUpdatePlace.h"
@@ -1641,6 +1642,169 @@ TEST_CASE("updater on Windows: quitting with the update ready runs the setup; on
     // The new build's start: the setup's folder goes.
     CHECK(!MCSetupBackend::RunLeftOver(release.Game.Path(), NewerBuild, FakeWindows(log)));
     CHECK(!std::filesystem::exists(release.Game.Path() / "Redux update" / "program"));
+}
+
+namespace
+{
+    /// <summary>The Windows program's files, each build's bytes; the README the same in both.</summary>
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 3> OldProgram{
+        {{"MCRedux.exe", "the game, build 500"}, {"SDL3.dll", "SDL, build 500"}, {"README.txt", "the README"}}};
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 3> NewProgram{
+        {{"MCRedux.exe", "the game, build 600"}, {"SDL3.dll", "SDL, build 600"}, {"README.txt", "the README"}}};
+    constexpr std::string_view ProgramZipName = "MechCommander-Redux-600-windows-program.zip";
+
+    /// <summary>
+    /// release.json naming the setup and, at setup level <paramref name="level"/>, the program's files and their zip;
+    /// the copy's setup at <paramref name="copyLevel"/>, its program build 500's.
+    /// </summary>
+    void PublishProgram(const MCHostedRelease& release, uint64_t level, uint64_t copyLevel)
+    {
+        PublishSetup(release, SetupBytes);
+        std::vector<std::pair<std::string, std::string>> entries;
+        MCReleaseFile::MCProgram program;
+
+        for (const auto& [name, bytes] : NewProgram)
+        {
+            entries.emplace_back(name, bytes);
+            program.Files.push_back({.Name = std::string(name), .Size = bytes.size(), .Sha256 = MCSha256::Of(bytes)});
+        }
+
+        const std::string zip = StoredZip(entries);
+        Write(release.Host.Path() / "programs" / ProgramZipName, zip);
+        MCReleaseFile::MCRelease entry{.Number = 2,
+                                       .Version = std::string(ReleaseVersion),
+                                       .Notes = std::string(ReleaseNotes),
+                                       .List = MCSha256::Of(release.ListText),
+                                       .ListSize = release.ListText.size()};
+        program.Build = NewerBuild;
+        program.Size = SetupBytes.size();
+        program.Sha256 = MCSha256::Of(SetupBytes);
+        program.Url = std::format("{}/{}", ProgramsAddress, SetupName);
+        program.Silent = std::string(SetupArguments);
+        program.Zip = MCReleaseFile::MCHostedFile{.Url = std::format("{}/{}", ProgramsAddress, ProgramZipName),
+                                                  .Size = zip.size(),
+                                                  .Sha256 = MCSha256::Of(zip)};
+        program.SetupLevel = level;
+        entry.Programs["windows"] = program;
+        const MCReleaseFile::MCReleases releases{.Format = 1, .Issue = 1, .Current = entry};
+        Write(release.Host.Path() / "release.json",
+              release.ReleaseKey.Envelope(MCSignedFile::ReleaseType, MCReleaseFile::ReleasesPayload(releases)));
+
+        for (const auto& [name, bytes] : OldProgram)
+        {
+            Write(release.Game.Path() / name, bytes);
+        }
+
+        Write(release.Game.Path() / MCFileSystem::FromUtf8(MCProgramSwap::SetupFile),
+              std::format(R"({{"level": {}}})", copyLevel));
+    }
+
+    /// <summary>Whether the copy's program is <paramref name="program"/>'s files.</summary>
+    template <typename T> bool ProgramIs(const MCHostedRelease& release, const T& program)
+    {
+        return std::ranges::all_of(program, [&](const auto& file)
+                                   { return Read(release.Game.Path() / file.first) == file.second; });
+    }
+
+    std::filesystem::path StagedProgram(const MCHostedRelease& release, std::string_view name)
+    {
+        return release.Game.Path() / MCFileSystem::FromUtf8(MCProgramSwap::StagedFolder) / "600" /
+               MCFileSystem::FromUtf8(name);
+    }
+
+    /// <summary>For the test's length, what the game starts ends with it (a lobby's job).</summary>
+    struct MCInAJob
+    {
+        MCInAJob() { MCUpdater::SetCanStartAgain(false); }
+        ~MCInAJob() { MCUpdater::SetCanStartAgain(true); }
+        MCInAJob(const MCInAJob&) = delete;
+        MCInAJob& operator=(const MCInAJob&) = delete;
+    };
+}
+
+TEST_CASE("updater on Windows: a release at the copy's setup level fetches the program's zip and swaps its files in "
+          "before the content is armed; the next start plays it, RESTART starting the game itself, no setup run")
+{
+    MCHostedRelease release("swap-backend");
+    PublishProgram(release, 1, 1);
+    MCSetupScope scope(release);
+    const auto quits = std::make_shared<int32_t>(0);
+    MCUpdater::SetQuit([quits] { ++*quits; });
+    MCUpdater::CheckAtStart();
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Found; }));
+    CHECK_EQ(MCUpdater::Status().Expected,
+             release.ContentBytes() + std::filesystem::file_size(release.Host.Path() / "programs" / ProgramZipName));
+
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Ready || Stage() == MCStage::Failed; }));
+    REQUIRE_EQ(MCUpdater::Status().Error, std::string());
+    REQUIRE(Stage() == MCStage::Ready);
+    CHECK(MCUpdater::Status().GoesIn == MCUpdater::MCGoesIn::NextStart);
+    CHECK(release.Armed());
+    CHECK(ProgramIs(release, NewProgram));
+    CHECK(!std::filesystem::exists(Downloaded(release)));
+    CHECK(scope.Log->Judged == std::vector{StagedProgram(release, "MCRedux.exe")});
+
+    // RESTART: the game quits and starts itself again; no setup runs as it ends.
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK_EQ(*quits, 1);
+    CHECK(MCUpdater::RestartWanted());
+    MCUpdater::Quit();
+    CHECK(scope.Log->Started.empty());
+    CHECK_EQ(scope.Log->Quits, 0);
+    MCUpdater::SetQuit(nullptr);
+}
+
+TEST_CASE("updater on Windows: Windows refusing the new program fails the update before anything changes; the content "
+          "isn't armed")
+{
+    MCHostedRelease release("swap-refused");
+    PublishProgram(release, 1, 1);
+    MCSetupScope scope(release);
+    scope.Log->Refusal = Blocked;
+    InstallUntilDone();
+    CHECK(Stage() == MCStage::Failed);
+    CHECK_EQ(MCUpdater::Status().Error, std::string(Blocked));
+    CHECK(!release.Armed());
+    CHECK(ProgramIs(release, OldProgram));
+    MCUpdater::Quit();
+    CHECK(scope.Log->Started.empty());
+}
+
+TEST_CASE("updater on Windows: a release whose setup level is above the copy's runs its setup; in a job that ends what "
+          "the game starts, it waits armed, with no RESTART, for a start that can run it")
+{
+    MCHostedRelease release("setup-level");
+    PublishProgram(release, 2, 1);
+    MCInAJob job;
+
+    {
+        MCSetupScope scope(release);
+        InstallUntilDone();
+        REQUIRE_EQ(MCUpdater::Status().Error, std::string());
+        REQUIRE(Stage() == MCStage::Ready);
+        CHECK(MCUpdater::Status().GoesIn == MCUpdater::MCGoesIn::PlayersStart);
+        CHECK_EQ(Read(Downloaded(release)), std::string(SetupBytes));
+        CHECK(ProgramIs(release, OldProgram));
+
+        // RESTART isn't taken, and quitting starts nothing: the setup would end with the game.
+        MCUpdater::Answer(MCAnswer::Install);
+        CHECK(Stage() == MCStage::Ready);
+        CHECK_EQ(scope.Log->Quits, 0);
+        MCUpdater::Quit();
+        CHECK(scope.Log->Started.empty());
+    }
+
+    REQUIRE(std::filesystem::exists(ArmedRecord(release)));
+    const auto log = std::make_shared<MCSetupLog>();
+    CHECK(!MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log), false));
+    CHECK(log->Started.empty());
+    CHECK(std::filesystem::exists(ArmedRecord(release)));
+
+    // A start the player makes runs it.
+    CHECK(MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log), true));
+    REQUIRE_EQ(log->Started.size(), size_t{1});
+    CHECK(std::get<0>(log->Started.front()) == Downloaded(release));
 }
 
 TEST_CASE("update place: every path an update installs, stages, downloads and sets aside is held to Windows' limit; "

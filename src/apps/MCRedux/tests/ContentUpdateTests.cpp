@@ -330,6 +330,84 @@ TEST_CASE("update files: release.json's mirrors are read and kept; a file naming
     CHECK(!MCReleaseFile::ReadReleases(numbered.dump()).has_value());
 }
 
+TEST_CASE("update files: Windows' program files, zip and setup level are read as the release script writes them, "
+          "and written back the same; a release from before them reads with none; bad names are refused")
+{
+    constexpr std::string_view Hash = "3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b";
+    const std::string written = std::format(R"({{
+  "format": 1,
+  "issue": 5,
+  "current": {{
+    "release": 5,
+    "version": "0.6.1",
+    "notes": "Fixes.",
+    "programs": {{
+      "windows": {{"build": 900, "size": 30000000, "sha256": "{0}",
+                   "url": "https://example.test/setup.exe", "silent": "/VERYSILENT",
+                   "files": [{{"name": "SDL3.dll", "size": 3, "sha256": "{0}"}},
+                             {{"name": "MCRedux.exe", "size": 20, "sha256": "{0}"}},
+                             {{"name": "MechCommander Redux HD README.txt", "size": 7, "sha256": "{0}"}}],
+                   "zip": {{"url": "https://example.test/program.zip", "size": 40, "sha256": "{0}"}},
+                   "setupLevel": 2}}
+    }},
+    "content": {{"list": "{0}", "size": 1203}}
+  }}
+}})",
+                                            Hash);
+    const auto read = MCReleaseFile::ReadReleases(written);
+    REQUIRE_EQ(read.error_or(""), std::string());
+    const MCReleaseFile::MCProgram& windows = read->Current.Programs.at("windows");
+    REQUIRE_EQ(windows.Files.size(), size_t{3});
+    CHECK_EQ(windows.Files[1].Name, std::string("MCRedux.exe"));
+    CHECK_EQ(windows.Files[1].Size, uint64_t{20});
+    CHECK_EQ(MCSha256::Hex(windows.Files[1].Sha256), std::string(Hash));
+    REQUIRE(windows.Zip.has_value());
+    CHECK_EQ(windows.Zip->Url, std::string("https://example.test/program.zip"));
+    CHECK_EQ(windows.Zip->Size, uint64_t{40});
+    CHECK_EQ(windows.SetupLevel, uint64_t{2});
+
+    const auto again = MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(*read));
+    REQUIRE(again.has_value());
+    CHECK_EQ(MCReleaseFile::ReleasesPayload(*again), MCReleaseFile::ReleasesPayload(*read));
+
+    // A release from before them: none, and the payload written without them.
+    MCUpdateJson::MCJson older = MCUpdateJson::Object(written);
+    MCUpdateJson::MCJson& program = older["current"]["programs"]["windows"];
+    program.erase("files");
+    program.erase("zip");
+    program.erase("setupLevel");
+    const auto olderRead = MCReleaseFile::ReadReleases(older.dump());
+    REQUIRE(olderRead.has_value());
+    const MCReleaseFile::MCProgram& before = olderRead->Current.Programs.at("windows");
+    CHECK(before.Files.empty());
+    CHECK(!before.Zip.has_value());
+    CHECK_EQ(before.SetupLevel, uint64_t{0});
+    CHECK(!MCUpdateJson::Object(MCReleaseFile::ReleasesPayload(*olderRead))["current"]["programs"]["windows"].contains(
+        "files"));
+
+    // A name in a folder, out of the folder, twice by Windows' case, or past the most a program names.
+    for (const std::string_view name : {"bin/MCRedux.exe", "../MCRedux.exe", "mcredux.EXE", "COM1.dll"})
+    {
+        MCUpdateJson::MCJson bad = MCUpdateJson::Object(written);
+        bad["current"]["programs"]["windows"]["files"][0]["name"] = name;
+
+        if (MCReleaseFile::ReadReleases(bad.dump()).has_value())
+        {
+            FAIL_CHECK(std::format("a program file named \"{}\" is taken", name));
+        }
+    }
+
+    MCReleaseFile::MCReleases tooMany = *read;
+    MCReleaseFile::MCProgram& many = tooMany.Current.Programs.at("windows");
+
+    while (many.Files.size() <= MCReleaseFile::MaxProgramFiles)
+    {
+        many.Files.push_back({.Name = std::format("file{}.dll", many.Files.size()), .Size = 1});
+    }
+
+    CHECK(!MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(tooMany)).has_value());
+}
+
 TEST_CASE("update files: a key list of a later epoch starts release.json's issues again and its releases come after "
           "any earlier; an earlier epoch, or a key list below the build's lowest issue, is refused")
 {

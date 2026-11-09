@@ -23,8 +23,10 @@
 ;
 ; Built by .github/workflows/windows.yml with Inno Setup 6.7:
 ;   ISCC /DAppVersionNumber=0.2.1.548 "/DAppVersionShown=0.2.1 (548)" /DBinDir=<the exes' folder>
-;        /DDocsDir=<src\docs> /DLicencesFile=<make_licences.ps1's file> [/DGameBytes=<n> /DHdBytes=<n>]
-;        /O<output folder> src\installer\windows\MechCommanderRedux.iss
+;        /DDocsDir=<src\docs> /DLicencesFile=<make_licences.ps1's file> /DSetupLevel=<setup_level.py --check>
+;        [/DGameBytes=<n> /DHdBytes=<n>] /O<output folder> src\installer\windows\MechCommanderRedux.iss
+; SetupLevel is the setup's level (setup-level.txt), which every install records in the game folder: a later release
+; whose setup is at the same level puts its program in by the game itself (update/MCProgramSwap.h), without this setup.
 ; GameBytes and HdBytes are the release's sets' sizes, which make_release.py's setup-sizes prints from its content
 ; list. A build without them (a work branch's) has no release to download from, so its folder page asks only for the
 ; player's copy, without HD; silent installs still take their answers.
@@ -46,6 +48,9 @@
 #endif
 #ifndef LicencesFile
   #error Pass /DLicencesFile=<the licences file make_licences.ps1 writes>
+#endif
+#ifndef SetupLevel
+  #error Pass /DSetupLevel=<the level setup_level.py --check prints>
 #endif
 #ifndef GameBytes
   #define GameBytes "0"
@@ -98,6 +103,10 @@
 ; The sets the player chose, for the game (update/MCContentUpdater.h's ChosenFile), in the install folder.
 #define ChosenFolder "Redux update"
 #define ChosenFile "sets.json"
+; The setup's record of its level, and the game's own program updates' folder and journal (update/MCProgramSwap.h).
+#define SetupFile "setup.json"
+#define SwapFolder "swap"
+#define SwapJournal "journal.json"
 ; What the game sets when it runs this setup as an update (MCSetupBackend): its process, which the setup waits for, and
 ; whether to start the game again once installed (RESTART).
 #define UpdatePidVariable "MCREDUX_UPDATE_PID"
@@ -1604,8 +1613,34 @@ begin
     Log(Format('Couldn''t write the answers for the game, %s', [Path]));
 end;
 
+// Every install records its level (update/MCProgramSwap.h's SetupFile): a later release whose setup is at this level
+// puts its program in by the game itself, without the setup. A program update the game left unfinished is moot once
+// the setup's files are in: its journal goes first (the game's next start would otherwise put that update's old files
+// back over these), then the rest of its folder.
+procedure NoteLevel(const Folder: String);
+var
+  Update, Swap, Journal, Path: String;
+begin
+  Update := AddBackslash(Folder) + '{#ChosenFolder}';
+  Swap := AddBackslash(Update) + '{#SwapFolder}';
+  Journal := AddBackslash(Swap) + '{#SwapJournal}';
+
+  if FileExists(Journal) and not DeleteFile(Journal) then
+    Log(Format('Couldn''t delete the unfinished program update''s journal, %s', [Journal]))
+  else if DirExists(Swap) and not DelTree(Swap, True, True, True) then
+    Log(Format('Couldn''t delete all of the earlier program updates in %s: the game deletes the rest', [Swap]));
+
+  Path := AddBackslash(Update) + '{#SetupFile}';
+
+  if ForceDirectories(Update) and SaveStringToFile(Path, '{"level": {#SetupLevel}}', False) then
+    Log(Format('The setup''s level: {#SetupLevel}, in %s', [Path]))
+  else
+    Log(Format('Couldn''t write the setup''s level, %s: the next program update runs the setup', [Path]));
+end;
+
 // Once the program is in: the original's MCX.EXE, now the game under its name, and its resolutions' copies taken over;
-// a new install's answers left; then, shown, the game's download; and the Apps list's size, the folder's with all that.
+// the setup's level noted and a new install's answers left; then, shown, the game's download; and the Apps list's
+// size, the folder's with all that.
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Folder: String;
@@ -1617,6 +1652,7 @@ begin
     LiftCompatibility(OriginalPath(Folder));
     MakeGameName(Folder, OriginalPath(Folder));
     TakeOverResolutionCopies(Folder);
+    NoteLevel(Folder);
 
     if WizardForm.PrevAppDir = '' then
       LeaveAnswers(Folder);

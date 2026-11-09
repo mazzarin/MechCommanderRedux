@@ -6,6 +6,8 @@
 #include <vector>
 
 #ifdef _WIN32
+#include "MCSetupRun.h"
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -73,8 +75,9 @@ bool MCStartAgain([[maybe_unused]] std::span<const std::string> arguments)
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
 
-    if (!CreateProcessW(program.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup,
-                        &process))
+    // Out of the game's job where only that outlives it (a lobby's that ends its processes as the game exits).
+    if (!CreateProcessW(program.c_str(), commandLine.data(), nullptr, nullptr, FALSE, MCOutlivingFlags(), nullptr,
+                        nullptr, &startup, &process))
     {
         SDL_Log("Updater: the game can't start again (error %lu)", GetLastError());
         return false;

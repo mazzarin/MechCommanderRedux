@@ -94,8 +94,11 @@ namespace
                 ssl.cbSize = sizeof(ssl);
                 ssl.dwAuthType = AUTHTYPE_SERVER;
                 ssl.pwszServerName = name.data();
+                // A revocation check that couldn't be made (no answer from the authority, offline) passes, as the
+                // browsers let it; a certificate found revoked doesn't.
                 CERT_CHAIN_POLICY_PARA policy{};
                 policy.cbSize = sizeof(policy);
+                policy.dwFlags = CERT_CHAIN_POLICY_IGNORE_ALL_REV_UNKNOWN_FLAGS;
                 policy.pvExtraPolicyPara = &ssl;
                 CERT_CHAIN_POLICY_STATUS status{};
                 status.cbSize = sizeof(status);

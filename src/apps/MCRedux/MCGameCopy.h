@@ -9,7 +9,8 @@
 
 // Port-only (Redux HD): a copy of the game started from this program and watched until it quits, as MechCommander
 // Online's launcher starts and watches its own (the MCO probe's matches, MCMcoProbe.h): the same program with the
-// arguments given, its output to a log file of its own.
+// arguments given, its output to a log file of its own, nothing else of this program's (its sockets, its terminal)
+// handed to it. It goes with its match: stopped when its owner lets it go, as the launcher's job object ends its game.
 
 /// <summary>A copy of the game this program started.</summary>
 class MCGameCopy
@@ -22,6 +23,7 @@ public:
     static std::expected<std::unique_ptr<MCGameCopy>, std::string> Start(std::span<const std::string> arguments,
                                                                          const std::filesystem::path& log);
 
+    /// <summary>Stops it (<see cref="Stop"/>) if it still runs.</summary>
     ~MCGameCopy();
     MCGameCopy(const MCGameCopy&) = delete;
     MCGameCopy& operator=(const MCGameCopy&) = delete;
@@ -31,6 +33,12 @@ public:
 
     /// <summary>Waits until it has quit.</summary>
     void Wait();
+
+    /// <summary>
+    /// Asks it to quit (the Mac's SIGTERM, which the game takes as its window closed) and, if it hasn't within a few
+    /// seconds, ends it; on Windows ends it, as the launcher's job object does.
+    /// </summary>
+    void Stop();
 
 private:
     MCGameCopy() = default;

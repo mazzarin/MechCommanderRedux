@@ -426,47 +426,47 @@ TEST_CASE("mco relay: the data's fingerprint is MCO's, the user folder overlayin
 namespace
 {
     // A test authority, a second one, and the localhost server's certificate (localhost, 127.0.0.1) the first signed
-    // with its key: EC P-256, good to 2126, made with OpenSSL for these tests alone.
+    // with its key: EC P-256, good from 8 Nov 2026 to 2126, made with OpenSSL for these tests alone.
     constexpr std::string_view TestAuthorityPem = R"(-----BEGIN CERTIFICATE-----
-MIIBlTCCATygAwIBAgIUIQ7mEEz6+FCjN+vjS3PPmLcOiTUwCgYIKoZIzj0EAwIw
+MIIBljCCATygAwIBAgIUKdqRjbJ6G6r1FowrNbxIsGbN3tswCgYIKoZIzj0EAwIw
 KDEmMCQGA1UEAwwdUmVkdXggSEQgdGVzdCByZWxheSBhdXRob3JpdHkwIBcNMjYx
-MTA5MDQ1MDM5WhgPMjEyNjEwMTYwNDUwMzlaMCgxJjAkBgNVBAMMHVJlZHV4IEhE
+MTA4MDAwMDAwWhgPMjEyNjExMDgwMDAwMDBaMCgxJjAkBgNVBAMMHVJlZHV4IEhE
 IHRlc3QgcmVsYXkgYXV0aG9yaXR5MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
-zeFYfvED/XtLdvIl8JkY98L2p2irgn6mVFUpmgO28M1FsHU/EcEQruG9ypsmShOw
-MVmw6lvgXylyEvgKDUUJbKNCMEAwHQYDVR0OBBYEFHWzwJ7gYR7q7OXTSRvoabCw
-fO5/MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMC
-A0cAMEQCICugRyXP3DeCFGiw9LurhZ6diyzJMJJ6EsGKf18REr+MAiA8dxnh6YX5
-RyC5LBKouYmYZDdTc7iH+O7j73DGY+It8w==
+ah3j0/Dyg2GpuhwXcYvJB3d6C0up84Gi/XyPzl5j94Kj8lFiRe4KD+jxWJp+iPg8
+OVfUy0J51CiDwj6+UgZpAKNCMEAwHQYDVR0OBBYEFMfNXqWSVIvU8if75eJDdXLw
+m11qMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMC
+A0gAMEUCID1u/BHG+VshH0e4dmi+ukMoMUGT0Ewt29Rh0O1mQwMuAiEAvFz7LNxh
+JlPaw0o6i83t4bsTn5FLI/LLwjDGZwhz6Do=
 -----END CERTIFICATE-----
 )";
     constexpr std::string_view OtherAuthorityPem = R"(-----BEGIN CERTIFICATE-----
-MIIBlzCCATygAwIBAgIUAUy+8Z/ScTocUvf3qIiXDaA0LNowCgYIKoZIzj0EAwIw
+MIIBlTCCATygAwIBAgIUCB6VAjKpnJzDtlocZfWcmECwkZQwCgYIKoZIzj0EAwIw
 KDEmMCQGA1UEAwwdUmVkdXggSEQgdGVzdCBvdGhlciBhdXRob3JpdHkwIBcNMjYx
-MTA5MDQ1MDM5WhgPMjEyNjEwMTYwNDUwMzlaMCgxJjAkBgNVBAMMHVJlZHV4IEhE
+MTA4MDAwMDAwWhgPMjEyNjExMDgwMDAwMDBaMCgxJjAkBgNVBAMMHVJlZHV4IEhE
 IHRlc3Qgb3RoZXIgYXV0aG9yaXR5MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
-Br7hxhuCeyamRp605hLHlDL39gRODlARFV4P33lCDL2MOU0iBzFW693nSKCGSlid
-jOgQKxq6ynY9eloqK4xByaNCMEAwHQYDVR0OBBYEFOiCd876oAFWawz+jEHECh3b
-STPdMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMC
-A0kAMEYCIQDz71ivbXoWFXHmPpbD5EtelsoTQiKzybyXRZX27NIqNAIhAL0d2ljO
-gmqGhsMrvqQf6y7AUuI/8EnJ7scJHA217BrQ
+FosAgiR9/Ac+bxK87iXhH5Y8841POLMooZhq/aC8SxrD/7gR9iy6tGUbtIDQgrOr
+MPvsLkf3EzUnBNg5aMOjrqNCMEAwHQYDVR0OBBYEFEcUKyd8atd7cavto3x0xrjU
+htYEMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMC
+A0cAMEQCIB1O/OI1Z1gYDJn7ocrG09fqqr+FASakC7GIucTzPfJ1AiAzs+ur5/82
+HTC/6kbfqmwcozYJ092eFdUsUnFrH4onfQ==
 -----END CERTIFICATE-----
 )";
     constexpr std::string_view ServerPem = R"(-----BEGIN CERTIFICATE-----
-MIIBjzCCATSgAwIBAgIURds9+OKkC6baw/s3oU8OBht5cqUwCgYIKoZIzj0EAwIw
-KDEmMCQGA1UEAwwdUmVkdXggSEQgdGVzdCByZWxheSBhdXRob3JpdHkwIBcNMjYx
-MTA5MDQ1MDQwWhgPMjEyNjEwMTYwNDUwNDBaMBQxEjAQBgNVBAMMCWxvY2FsaG9z
-dDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABC/pgikf9hRctMt1ohZxSzDLQhv3
-s7ZBLHp5OigVp78u6GgZ2+okGRAg2DHgo4ayBXUtAycLmLihP949fOpn6cSjTjBM
-MAkGA1UdEwQCMAAwDgYDVR0PAQH/BAQDAgeAMBMGA1UdJQQMMAoGCCsGAQUFBwMB
-MBoGA1UdEQQTMBGCCWxvY2FsaG9zdIcEfwAAATAKBggqhkjOPQQDAgNJADBGAiEA
-m6K+RR2o32rmBwAYsTr6hA/5t7SIMZ1tKUMowQUOQ6ECIQCUufIeyBzrVyJMq7Qu
-dYaX8KGpqh8UoQclmvMCW2Bg2w==
+MIIBjDCCATOgAwIBAgITdLv15BqmRp/cC9pnxo8Xa7yZsDAKBggqhkjOPQQDAjAo
+MSYwJAYDVQQDDB1SZWR1eCBIRCB0ZXN0IHJlbGF5IGF1dGhvcml0eTAgFw0yNjEx
+MDgwMDAwMDBaGA8yMTI2MTEwODAwMDAwMFowFDESMBAGA1UEAwwJbG9jYWxob3N0
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErVpfugAtHIEBtdRk9PSsFs9UfA8T
+s4L93a03JcpfEgY3JOJz4uiIkIn3Xa2QtfYhNbq63CUvKKWN9hPo9NH0+qNOMEww
+CQYDVR0TBAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEw
+GgYDVR0RBBMwEYIJbG9jYWxob3N0hwR/AAABMAoGCCqGSM49BAMCA0cAMEQCIFmK
+zRcpooIbR8mPUlUeEu4yW/vM4uUGGfgjtv42IbGiAiAZ5mabS7ox3ySBly7LCEMU
+G5Nf/TK5awnIxEnOh8bshg==
 -----END CERTIFICATE-----
 )";
     constexpr std::string_view ServerKeyPem = R"(-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgKXnDmT+k56t9KAJG
-CrKN/RdAjW57pL1EfpyQ7cXgpFChRANCAAQv6YIpH/YUXLTLdaIWcUswy0Ib97O2
-QSx6eTooFae/LuhoGdvqJBkQINgx4KOGsgV1LQMnC5i4oT/ePXzqZ+nE
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgYFrqJdyUxv155x7o
+V9/Nitw/Yuir9rJgOalNO72rSpKhRANCAAStWl+6AC0cgQG11GT09KwWz1R8DxOz
+gv3drTclyl8SBjck4nPi6IiQifddrZC19iE1urrcJS8opY32E+j00fT6
 -----END PRIVATE KEY-----
 )";
     constexpr std::string_view ServerName = "localhost";
@@ -905,21 +905,28 @@ TEST_CASE("mco relay: the bridges carry a guest's game to the host's through the
     CHECK_EQ(relay.Passed(MCFrameType::StreamOpen), size_t{2});
     CHECK(relay.Passed(MCFrameType::StreamData) >= ManyBytes / MCMcoRelay::StreamMost + 1);
 
+    // What each bridge carried (counted just after it's passed on, so the counts may trail what arrived a moment).
     const MCMcoBridge::MCCarried& guestCarried = (*guest)->Carried();
     const MCMcoBridge::MCCarried& hostCarried = (*host)->Carried();
+    CHECK(Within(ArrivesMs, [&] { return guestCarried.BytesIn == ManyBytes && hostCarried.BytesOut == ManyBytes; }));
+    CHECK(Within(ArrivesMs, [&] { return guestCarried.BytesOut == 7 && hostCarried.BytesIn == 7; }));
     CHECK_EQ(guestCarried.DatagramsOut.load(), uint64_t{1});
     CHECK_EQ(guestCarried.DatagramsIn.load(), uint64_t{1});
     CHECK_EQ(hostCarried.DatagramsIn.load(), uint64_t{1});
     CHECK_EQ(hostCarried.DatagramsOut.load(), uint64_t{1});
-    CHECK_EQ(guestCarried.BytesOut.load(), uint64_t{7});
-    CHECK_EQ(hostCarried.BytesIn.load(), uint64_t{7});
-    CHECK_EQ(hostCarried.BytesOut.load(), uint64_t{ManyBytes});
-    CHECK_EQ(guestCarried.BytesIn.load(), uint64_t{ManyBytes});
 
-    // The guest's game leaving closes the host's game's connection.
-    sockets.Close(guestTcp);
+    // The guest's game ending its sending side: the host's game reads its end, and what the host's still sends reaches
+    // the guest's (as MCO's helper carries each side on its own).
+    CHECK(MCSocket::EndSending(guestTcp));
     CHECK(ClosedWithin(sockets, hostTcp));
-    CHECK_EQ(relay.Passed(MCFrameType::StreamClose), size_t{1});
+    CHECK(Within(ArrivesMs, [&] { return relay.Passed(MCFrameType::StreamClose) == 1; }));
+    CHECK(MCFakeMcoRelay::SendAll(sockets, hostTcp, BytesOf("last words"), ArrivesMs).has_value());
+    CHECK_EQ(TextOf(ReadWithin(sockets, guestTcp, 10)), std::string("last words"));
+
+    // The host's game closing too ends the guest's game's connection.
+    sockets.Close(hostTcp);
+    CHECK(ClosedWithin(sockets, guestTcp));
+    CHECK(Within(ArrivesMs, [&] { return relay.Passed(MCFrameType::StreamClose) == 2; }));
 
     // The host's bridge stopping ends the guest's: the relay closes its side of the pair.
     (*host)->Stop();
@@ -927,7 +934,7 @@ TEST_CASE("mco relay: the bridges carry a guest's game to the host's through the
     CHECK(Within(ArrivesMs, [&] { return !(*guest)->Running(); }));
     CHECK_EQ((*guest)->Ended(), std::string("the relay closed the connection"));
 
-    sockets.Close(hostTcp);
+    sockets.Close(guestTcp);
     sockets.Close(guestGame);
     sockets.Close(gameUdp);
     sockets.Close(gameListener);
@@ -996,7 +1003,7 @@ TEST_CASE("mco relay: a refusal, a bad epoch or a frame out of place ends the br
     relay.Close("host");
     CHECK(Within(ArrivesMs, [&] { return !(*host)->Running(); }));
     CHECK_EQ((*host)->Ended(), std::string("the relay closed the host's connection"));
-    CHECK_EQ((*host)->Guests(), size_t{0});
+    CHECK(Within(ArrivesMs, [&] { return (*host)->Guests() == 0; }));
 }
 
 namespace

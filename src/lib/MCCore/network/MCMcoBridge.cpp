@@ -296,7 +296,7 @@ namespace
                     MCSocketTransport::MCWaiting{_Link->Stream().Socket()},
                     MCSocketTransport::MCWaiting{_Udp},
                     MCSocketTransport::MCWaiting{_Tcp == MCSocket::InvalidHandle ? _Listener : MCSocket::InvalidHandle},
-                    MCSocketTransport::MCWaiting{_Tcp},
+                    MCSocketTransport::MCWaiting{_GameDone ? MCSocket::InvalidHandle : _Tcp},
                 };
 
                 const int wait = _Link->Stream().Buffered() ? 0 : std::min(LoopWaitMs, _Link->UntilKeepAliveMs());
@@ -396,7 +396,19 @@ namespace
                         return "the relay closed a connection it never opened";
                     }
 
-                    CloseGameTcp(false);
+                    // The other game has sent all it will: this game reads its end (as MCO's helper's CloseWrite), and
+                    // what this game still sends goes on until it closes too.
+                    if (_Tcp != MCSocket::InvalidHandle && !_PeerClosed)
+                    {
+                        _PeerClosed = true;
+                        Note("the other game closed its side");
+
+                        if (_GameDone || !MCSocket::EndSending(_Tcp))
+                        {
+                            CloseGameTcp();
+                        }
+                    }
+
                     return {};
                 }
                 case MCFrameType::Control:
@@ -466,9 +478,9 @@ namespace
                 return "the relay sent the game's bytes before its connection";
             }
 
-            if (_Tcp == MCSocket::InvalidHandle)
+            if (_Tcp == MCSocket::InvalidHandle || _PeerClosed)
             {
-                // The game closed its side: what still comes has nowhere to go.
+                // The game closed its connection, or the other's side closed: what still comes has nowhere to go.
                 return {};
             }
 
@@ -481,7 +493,7 @@ namespace
 
                 if (took < 0)
                 {
-                    CloseGameTcp(true);
+                    CloseGameTcp();
                     return {};
                 }
 
@@ -578,7 +590,7 @@ namespace
 
         std::string FromGameTcp()
         {
-            if (_Tcp == MCSocket::InvalidHandle || (!_IsGuest && !_PeerOpened))
+            if (_Tcp == MCSocket::InvalidHandle || _GameDone || (!_IsGuest && !_PeerOpened))
             {
                 return {};
             }
@@ -594,9 +606,22 @@ namespace
                     return {};
                 }
 
+                // The game has sent all it will (or its connection failed): the relay is told; what the other game
+                // sends still reaches this one until its side closes too.
                 if (read < 0)
                 {
-                    CloseGameTcp(true);
+                    _GameDone = true;
+                    Note("the game closed its side");
+
+                    if (_PeerClosed)
+                    {
+                        CloseGameTcp();
+                    }
+                    else
+                    {
+                        TellClosed();
+                    }
+
                     return {};
                 }
 
@@ -611,11 +636,8 @@ namespace
             }
         }
 
-        /// <summary>
-        /// Closes the game's connection: the game closed it (<paramref name="toldRelay"/>: the relay is told), or the
-        /// other end did.
-        /// </summary>
-        void CloseGameTcp(bool tellRelay)
+        /// <summary>The game's connection closed here, both its sides (and the relay told, if it wasn't).</summary>
+        void CloseGameTcp()
         {
             if (_Tcp == MCSocket::InvalidHandle)
             {
@@ -624,9 +646,14 @@ namespace
 
             _Sockets.Close(_Tcp);
             _Tcp = MCSocket::InvalidHandle;
-            Note(tellRelay ? "the game closed its connection" : "the other game closed the connection");
+            Note("the game's connection closed");
+            TellClosed();
+        }
 
-            if (tellRelay && !_SentClose)
+        /// <summary>The relay told this game has sent all it will (once).</summary>
+        void TellClosed()
+        {
+            if (!_SentClose)
             {
                 // A close that can't be sent is the relay's connection failing, which the next read finds.
                 _SentClose = true;
@@ -648,6 +675,10 @@ namespace
         MCSocket::Address _Game;
         bool _GameKnown = false;
         bool _PeerOpened = false;
+        /// <summary>The other game closed its side (its stream-close came): this game's sending side is shut.</summary>
+        bool _PeerClosed = false;
+        /// <summary>This game closed its side (its end of file read): the relay was told; its reads are done.</summary>
+        bool _GameDone = false;
         bool _SentClose = false;
     };
 

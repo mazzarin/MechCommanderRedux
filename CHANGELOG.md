@@ -10,6 +10,19 @@ only the characters on a keyboard. The release script takes the entry under the 
 (version.json) and refuses a release without one.
 -->
 
+## 0.6.1
+
+- Fixed: with HD art on, the game could crash as some mechs moved, such as a limping Thor or Hunchback.
+- Fixed: a right-click on a mech or vehicle in your inventory crashed the game.
+- Night mode is in testing, to see how the community likes it: at night units see half as far, and their headlights
+  light the way but show them to the enemy. LIGHTS (N) turns the selected units' headlights off or on.
+- MATCH OPTIONS: MOST SKILLED PILOT, and a ban on each kind of weapon.
+- Smoother: mechs' legs between frames at any frame rate, guests' mechs walking as the host's do, a falling tree that
+  no longer vanishes, sensor blips at the original's pace.
+- Faster: the HD movies, art, weather and sound do more of their work away from the game.
+- Multiplayer cleanup: match continues after host leaves, reallocation of mechs after a player leaves, ability to
+  rematch, other bug fixes and enhancements.
+
 ## 0.6.0
 
 - Fixed: a right-click on a mech or vehicle in your inventory crashed the game.

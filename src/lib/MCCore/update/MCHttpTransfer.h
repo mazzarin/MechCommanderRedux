@@ -37,6 +37,19 @@ namespace MCHttpSource
         std::string Reason;
     };
 
+    /// <summary>What a POST sends (MCGet::Post): its body, the body's type, and the user agent it names.</summary>
+    struct MCPost
+    {
+        /// <summary>The body's Content-Type ("application/json", "application/x-www-form-urlencoded").</summary>
+        std::string ContentType;
+        std::string Body;
+        /// <summary>The User-Agent header (empty: the transfer's own, "MechCommander Redux").</summary>
+        std::string UserAgent;
+    };
+
+    /// <summary>What a transfer that can't POST answers one (MCGet::Post's own).</summary>
+    inline constexpr std::string_view CannotPost = "this transfer can't POST";
+
     /// <summary>The platform's transfer.</summary>
     class MCGet
     {
@@ -49,6 +62,18 @@ namespace MCHttpSource
         /// </summary>
         /// <returns>Nothing once the answer ended or the reply stopped it; else what failed (no connection, a timeout).</returns>
         virtual std::expected<void, MCGetError> Get(const std::string& url, uint64_t from, MCReply& reply) = 0;
+
+        /// <summary>
+        /// POSTs the post to the address, asking for JSON, and tells the reply what arrives, on this thread, as Get
+        /// does. A redirect isn't followed (its answer is the reply's), so what's posted (a password, a token) goes
+        /// only to the address asked.
+        /// </summary>
+        /// <returns>As Get's; here, that this transfer can't POST (<see cref="CannotPost"/>).</returns>
+        virtual std::expected<void, MCGetError> Post(const std::string& /*url*/, const MCPost& /*post*/,
+                                                     MCReply& /*reply*/)
+        {
+            return std::unexpected(MCGetError{.Unreachable = false, .Reason = std::string(CannotPost)});
+        }
 
         /// <summary>
         /// From any thread: ends the transfer under way at once, and fails every later one, with "stopped". Here it

@@ -22,6 +22,9 @@ namespace
     /// <summary>The body is read in pieces this big.</summary>
     constexpr size_t PieceBytes = 64 * 1024;
     constexpr std::string_view StoppedError = "stopped";
+    constexpr const wchar_t* GetVerb = L"GET";
+    constexpr const wchar_t* PostVerb = L"POST";
+    constexpr std::wstring_view JsonType = L"application/json";
     /// <summary>The notices a request's callback gets: each step's end, and its handle's closing (its last).</summary>
     constexpr DWORD CallbackNotices = WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES;
 
@@ -150,6 +153,57 @@ namespace
         std::expected<void, MCHttpSource::MCGetError> Get(const std::string& url, uint64_t from,
                                                           MCHttpSource::MCReply& reply) override
         {
+            const std::wstring range = from != 0 ? std::format(L"Range: bytes={}-", from) : std::wstring();
+            return Send({.Url = url, .Headers = range}, reply);
+        }
+
+        std::expected<void, MCHttpSource::MCGetError> Post(const std::string& url, const MCHttpSource::MCPost& post,
+                                                           MCHttpSource::MCReply& reply) override
+        {
+            std::wstring headers =
+                std::format(L"Content-Type: {}\r\nAccept: {}\r\n", MCWinHttp::Wide(post.ContentType), JsonType);
+
+            // A request's own header takes the place of the session's.
+            if (!post.UserAgent.empty())
+            {
+                headers += std::format(L"User-Agent: {}\r\n", MCWinHttp::Wide(post.UserAgent));
+            }
+
+            return Send({.Url = url, .Headers = headers, .Body = post.Body, .Post = true}, reply);
+        }
+
+        /// <summary>
+        /// From any thread: closes the request under way, which WinHTTP allows while its step is pending (never while
+        /// another thread is in a call on it: those are made under the same lock), so that step ends at once.
+        /// </summary>
+        void Cancel() override
+        {
+            const std::scoped_lock lock(_Lock);
+            _Cancelled = true;
+
+            if (_Request != nullptr)
+            {
+                WinHttpCloseHandle(_Request);
+                _Request = nullptr;
+            }
+        }
+
+    private:
+        /// <summary>A request to send: its address, extra headers (each ending "\r\n", or none), body and verb.</summary>
+        struct MCSend
+        {
+            const std::string& Url;
+            std::wstring Headers;
+            std::string_view Body;
+            /// <summary>A POST (else a GET).</summary>
+            bool Post = false;
+        };
+
+        /// <summary>Sends <paramref name="send"/> and passes its answer to <paramref name="reply"/>.</summary>
+        std::expected<void, MCHttpSource::MCGetError> Send(const MCSend& send, MCHttpSource::MCReply& reply)
+        {
+            const std::string& url = send.Url;
+
             if (_Session == nullptr)
             {
                 return std::unexpected(Failed("Opening WinHTTP", _OpenError));
@@ -178,12 +232,25 @@ namespace
 
             const DWORD flags =
                 WINHTTP_FLAG_REFRESH | (parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
-            HINTERNET request = WinHttpOpenRequest(connection.get(), L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                                   WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+            HINTERNET request = WinHttpOpenRequest(connection.get(), send.Post ? PostVerb : GetVerb, path.c_str(),
+                                                   nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
 
             if (request == nullptr)
             {
                 return std::unexpected(Failed("Asking the host", GetLastError()));
+            }
+
+            // A POST's redirect is its answer: what it posts goes only to the address asked (MCGet::Post).
+            if (send.Post)
+            {
+                DWORD never = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+
+                if (!WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &never, sizeof(never)))
+                {
+                    const DWORD error = GetLastError();
+                    WinHttpCloseHandle(request);
+                    return std::unexpected(Failed("Asking the host", error));
+                }
             }
 
             // The state outlives every callback: from here on, each way out closes the request and waits for its
@@ -212,7 +279,7 @@ namespace
 
             if (!cancelledBefore)
             {
-                done = Follow(state, from, context, reply);
+                done = Follow(state, send, context, reply);
             }
 
             bool cancelled = false;
@@ -244,23 +311,6 @@ namespace
             return done;
         }
 
-        /// <summary>
-        /// From any thread: closes the request under way, which WinHTTP allows while its step is pending (never while
-        /// another thread is in a call on it: those are made under the same lock), so that step ends at once.
-        /// </summary>
-        void Cancel() override
-        {
-            const std::scoped_lock lock(_Lock);
-            _Cancelled = true;
-
-            if (_Request != nullptr)
-            {
-                WinHttpCloseHandle(_Request);
-                _Request = nullptr;
-            }
-        }
-
-    private:
         /// <summary>
         /// Starts a step on the request with <paramref name="step"/> (under the lock, while it's still open), then
         /// waits for its end: what it brought, or what failed.
@@ -307,18 +357,22 @@ namespace
         }
 
         /// <summary>Sends the request and passes the answer to the reply, until it ends or the reply stops it.</summary>
-        std::expected<void, MCHttpSource::MCGetError> Follow(MCRequestState& state, uint64_t from, DWORD_PTR context,
-                                                             MCHttpSource::MCReply& reply)
+        std::expected<void, MCHttpSource::MCGetError> Follow(MCRequestState& state, const MCSend& send,
+                                                             DWORD_PTR context, MCHttpSource::MCReply& reply)
         {
-            const std::wstring range = from != 0 ? std::format(L"Range: bytes={}-", from) : std::wstring();
-            const auto sent = Step(
-                state, "Asking the host",
-                [&](HINTERNET request)
-                {
-                    return WinHttpSendRequest(request, range.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : range.c_str(),
-                                              range.empty() ? 0 : static_cast<DWORD>(-1L), WINHTTP_NO_REQUEST_DATA, 0,
-                                              0, context) != FALSE;
-                });
+            const std::wstring& headers = send.Headers;
+            // The body stays in the caller's keeping until the send's step ends, as WinHTTP asks.
+            const auto bodyBytes = static_cast<DWORD>(send.Body.size());
+            const auto sent =
+                Step(state, "Asking the host",
+                     [&](HINTERNET request)
+                     {
+                         return WinHttpSendRequest(
+                                    request, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
+                                    headers.empty() ? 0 : static_cast<DWORD>(-1L),
+                                    send.Body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(send.Body.data()),
+                                    bodyBytes, bodyBytes, context) != FALSE;
+                     });
 
             if (!sent)
             {

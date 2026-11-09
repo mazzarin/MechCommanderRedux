@@ -315,6 +315,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="MCIceTrial.cpp" />
+    <ClCompile Include="MCMcoProbe.cpp" />
     <ClCompile Include="MCMemorySystemWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\lib\SDL-release-3.4.12\src\video\khronos;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -341,6 +342,7 @@
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCIceTrial.h" />
+    <ClInclude Include="MCMcoProbe.h" />
     <ClInclude Include="MCMemorySystem.h" />
     <ClInclude Include="MCRestart.h" />
     <ClInclude Include="MCSetupRun.h" />

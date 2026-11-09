@@ -775,6 +775,9 @@
     <ClCompile Include="network\MCLobbyUpdate.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCMcoApi.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMechHandover.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -2212,6 +2215,9 @@
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCLobbyUpdate.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCMcoApi.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMechHandover.h">

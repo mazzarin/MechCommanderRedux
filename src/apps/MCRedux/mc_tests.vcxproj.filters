@@ -220,6 +220,9 @@
     <ClCompile Include="tests\MainMenuTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\McoApiTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\MCTest.cpp">
       <Filter>tests</Filter>
     </ClCompile>

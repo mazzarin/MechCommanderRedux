@@ -5,6 +5,7 @@
 #include "MCGameFolder.h"
 #include "MCHttpGet.h"
 #include "MCIceTrial.h"
+#include "MCMcoProbe.h"
 #include "MCMemorySystem.h"
 #include "MCRestart.h"
 #include "MCTelemetryBackend.h"
@@ -147,6 +148,8 @@ namespace
         "  --report <file> - With --remove-content: why it failed, written to the file\n"
         "  --ice-trial host | join <code> [--relay-only] [--seconds n] [--out <file>]\n"
         "                 - The internet games' trial: a link through the trial service\n"
+        "  --mco-probe guest | sign-in | create [--name n] [--seconds n] [--user <folder>]\n"
+        "                 - Signs in to MechCommander Online and lists its rooms\n"
         "  --user         - Where saves, prefs and temp files go (default: the SDL pref path)\n"
         "                   game options, as MCX.EXE takes them.\n"
         "  -mission <n>   - Start game segment n of SYSTEM.CFG's missionName (skips logistics)\n"
@@ -663,6 +666,11 @@ int main(int argc, char** argv)
     if (arguments.size() > 1 && arguments[1] == MCIceTrial::Option)
     {
         return MCIceTrial::Run(std::span(arguments).subspan(2));
+    }
+
+    if (arguments.size() > 1 && arguments[1] == MCMcoProbe::Option)
+    {
+        return MCMcoProbe::Run(std::span(arguments).subspan(2));
     }
 
     auto options = ParseArguments(arguments);

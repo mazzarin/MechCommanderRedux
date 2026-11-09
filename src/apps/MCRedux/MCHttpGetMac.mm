@@ -19,6 +19,8 @@ namespace
     /// <summary>Our own user agent, as the reports': the system's names the macOS version, which isn't the host's.</summary>
     NSString* const UserAgent = @"MechCommander Redux";
     NSString* const ContentRangeHeader = @"Content-Range";
+    NSString* const PostMethod = @"POST";
+    NSString* const JsonType = @"application/json";
     /// <summary>
     /// The bytes arrived and not yet taken past which the transfer is paused (the session reads no more from the
     /// connection), and the bytes it's taken down to before it goes on.
@@ -191,6 +193,16 @@ namespace
     completionHandler(NSURLSessionResponseAllow);
 }
 
+- (void)URLSession:(NSURLSession*)session
+                          task:(NSURLSessionTask*)task
+    willPerformHTTPRedirection:(NSHTTPURLResponse*)response
+                    newRequest:(NSURLRequest*)request
+             completionHandler:(void (^)(NSURLRequest*))completionHandler
+{
+    // A POST's redirect is its answer: what it posts goes only to the address asked (MCGet::Post).
+    completionHandler([task.originalRequest.HTTPMethod isEqualToString:PostMethod] ? nil : request);
+}
+
 - (void)URLSession:(NSURLSession*)session dataTask:(NSURLSessionDataTask*)dataTask didReceiveData:(NSData*)data
 {
     if (const std::shared_ptr<MCTransfer> transfer = [self transferFor:dataTask])
@@ -242,20 +254,72 @@ namespace
         std::expected<void, MCHttpSource::MCGetError> Get(const std::string& url, uint64_t from,
                                                           MCHttpSource::MCReply& reply) override
         {
-            NSURL* address = [NSURL URLWithString:@(url.c_str())];
+            NSMutableURLRequest* request = Request(url);
 
-            if (address == nil)
+            if (request == nil)
             {
-                return std::unexpected(Failed(std::format("\"{}\" isn't an address", url)));
+                return std::unexpected(NotAnAddress(url));
             }
-
-            NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:address];
 
             if (from != 0)
             {
                 [request setValue:@(std::format("bytes={}-", from).c_str()) forHTTPHeaderField:@"Range"];
             }
 
+            return Send(request, reply);
+        }
+
+        std::expected<void, MCHttpSource::MCGetError> Post(const std::string& url, const MCHttpSource::MCPost& post,
+                                                           MCHttpSource::MCReply& reply) override
+        {
+            NSMutableURLRequest* request = Request(url);
+
+            if (request == nil)
+            {
+                return std::unexpected(NotAnAddress(url));
+            }
+
+            request.HTTPMethod = PostMethod;
+            request.HTTPBody = [NSData dataWithBytes:post.Body.data() length:post.Body.size()];
+            [request setValue:@(post.ContentType.c_str()) forHTTPHeaderField:@"Content-Type"];
+            [request setValue:JsonType forHTTPHeaderField:@"Accept"];
+
+            // A request's own header takes the place of the session's.
+            if (!post.UserAgent.empty())
+            {
+                [request setValue:@(post.UserAgent.c_str()) forHTTPHeaderField:@"User-Agent"];
+            }
+
+            return Send(request, reply);
+        }
+
+        void Cancel() override
+        {
+            const std::scoped_lock lock(_Lock);
+            _Cancelled = true;
+
+            if (_Current != nullptr)
+            {
+                _Current->Cancel();
+            }
+        }
+
+    private:
+        /// <summary>A request for <paramref name="url"/>, or nil when it isn't an address.</summary>
+        static NSMutableURLRequest* Request(const std::string& url)
+        {
+            NSURL* address = [NSURL URLWithString:@(url.c_str())];
+            return address != nil ? [NSMutableURLRequest requestWithURL:address] : nil;
+        }
+
+        static MCHttpSource::MCGetError NotAnAddress(const std::string& url)
+        {
+            return Failed(std::format("\"{}\" isn't an address", url));
+        }
+
+        /// <summary>Sends <paramref name="request"/> and passes its answer to <paramref name="reply"/>.</summary>
+        std::expected<void, MCHttpSource::MCGetError> Send(NSURLRequest* request, MCHttpSource::MCReply& reply)
+        {
             const auto transfer = std::make_shared<MCTransfer>();
             transfer->Task = [_Session dataTaskWithRequest:request];
             transfer->TaskId = transfer->Task.taskIdentifier;
@@ -287,18 +351,6 @@ namespace
             return done;
         }
 
-        void Cancel() override
-        {
-            const std::scoped_lock lock(_Lock);
-            _Cancelled = true;
-
-            if (_Current != nullptr)
-            {
-                _Current->Cancel();
-            }
-        }
-
-    private:
         /// <summary>Passes the transfer's events to the reply until the answer ends, the reply stops it or it's cancelled.</summary>
         std::expected<void, MCHttpSource::MCGetError> Follow(MCTransfer& transfer, MCHttpSource::MCReply& reply)
         {

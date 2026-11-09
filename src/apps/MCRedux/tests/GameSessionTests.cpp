@@ -23,6 +23,7 @@
 #include "camera/MCCameraList.h"
 #include "color/MCPalette.h"
 #include "mission/MCMission.h"
+#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "platform/MCPresenter.h"
@@ -364,9 +365,9 @@ namespace
 
     /// <summary>
     /// A new campaign's first mission, played with the force's first mech and ended with <paramref name="result"/>
-    /// (above 3 a win) once the results screen is closed.
+    /// (above 3 a win): its results screen up.
     /// </summary>
-    bool PlayFirstMission(uint32_t result)
+    bool ReachFirstResults(uint32_t result)
     {
         if (!MCTestGame::StartLogistics())
         {
@@ -383,10 +384,64 @@ namespace
         }
 
         REQUIRE(Mission()->State == MCMissionState::Results);
+        REQUIRE(Mission()->ResultsScreen != nullptr);
+        return true;
+    }
+
+    /// <summary>
+    /// A new campaign's first mission, played with the force's first mech and ended with <paramref name="result"/>
+    /// (above 3 a win) once the results screen is closed.
+    /// </summary>
+    bool PlayFirstMission(uint32_t result)
+    {
+        if (!ReachFirstResults(result))
+        {
+            return false;
+        }
+
         Mission()->CloseResultsScreen();
         RunFrames(30);
         return true;
     }
+}
+
+/// <summary>
+/// A launcher's game stopped while its match's results screen is up (its window closed, or its launcher ending it)
+/// stops: the screen's close ends the scenario, which ends a launcher's game still in its match (KillTheGame), and that
+/// end, thrown as the GUI system stopped, once found no catch and aborted the game (MechCommander Online's rooms,
+/// 9 Nov). A campaign mission's results stand in for the match's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a launcher's game stopped on its match's results screen stops without aborting")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(ReachFirstResults(5));
+    // A launcher's game in its match.
+    MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
+    MultiPlayer()->InMission = true;
+    IsMPlayerGame = true;
+
+    MCGuiSystem& gui = GuiSystem();
+    std::optional<int32_t> quit;
+
+    try
+    {
+        gui.Stop();
+    }
+    catch (const MCGameQuit& thrown)
+    {
+        quit = thrown.ExitCode;
+    }
+
+    CHECK(!quit.has_value());
+    CHECK(gui.Session == nullptr);
+    CHECK(Mission() == nullptr);
+    CHECK(MultiPlayer() == nullptr);
+    IsMPlayerGame = false;
 }
 
 /// <summary>A won campaign mission moves the campaign on to the next one: its briefing comes up.</summary>

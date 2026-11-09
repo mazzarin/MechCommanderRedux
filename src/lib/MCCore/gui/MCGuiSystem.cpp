@@ -315,7 +315,17 @@ auto MCGuiSystem::Stop() -> void
 
     if (Mission() != nullptr)
     {
-        Mission()->CloseResultsScreen();
+        // Port fix: a results screen still up ends its scenario as it closes, which ends a launcher's game still in
+        // its match (KillTheGame). The original's KillTheGame left the process there; the port's throw would find no
+        // catch past RunGame's run (std::terminate). The game is ending already: the rest of the stop goes on.
+        try
+        {
+            Mission()->CloseResultsScreen();
+        }
+        catch (const MCGameQuit& quit)
+        {
+            SDL_Log("GuiSystem: the results screen's close ended the game (code %d) as it stopped", quit.ExitCode);
+        }
     }
 
     Session.reset();

@@ -147,7 +147,19 @@ void MCMultiPlayer::SendPlayersRules()
     auto said = StartGuaranteedMessage<MCMPPlayersRulesMessage>(MCMPMessageType::PlayersRules);
     said.Count = 0;
     said.Players = {};
-    std::map<uint32_t, uint32_t> players = PlayerRules;
+    // Only the players in the session: PlayerRules keeps a player who left, and the message holds MaxLinkupPlayers, so a
+    // room's comings and goings would cut the newest (the highest ids) off the end. A joiner is in the session as its
+    // join is handled, and a leaver goes once its leave has been.
+    std::map<uint32_t, uint32_t> players;
+
+    for (const auto& [id, rules] : PlayerRules)
+    {
+        if (SessionManager->GetPlayer(id) != nullptr)
+        {
+            players[id] = rules;
+        }
+    }
+
     players[SessionManager->MyPlayer()->Id] = MCMatchRule::Supported;
 
     for (const auto& [id, rules] : players)

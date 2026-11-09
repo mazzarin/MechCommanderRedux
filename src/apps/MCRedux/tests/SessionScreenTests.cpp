@@ -737,8 +737,8 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
 /// <summary>
 /// The room (the personal build): a LAN game's host waits in the session screen; a player who joins is shown the room
 /// once its game is up (it pinged) with the host's picks as they stand: the teams, the tech bases, the points and the
-/// mission, every player asked for its file again; one who leaves is taken off every screen and the room goes on; START
-/// closes the room.
+/// mission, every player asked for its file again; one who leaves is taken off every screen and out of the host's word
+/// on the players' rules, and the room goes on; START closes the room.
 /// </summary>
 TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks kept as they join and leave")
 {
@@ -842,6 +842,20 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     Guest dan("DAN", MCMatchRule::Supported);
     REQUIRE(dan.Join(*manager.DirectPlay, RoomHostAddress));
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()) && dialog.IsShowing(); }));
+    // The host's word on every player's rules names the players in the room, not ANN, who left.
+    REQUIRE(SettleUntil([&] { return dan.PlayersRules().has_value(); }));
+    const MCMPPlayersRulesMessage said = *dan.PlayersRules();
+    const auto named = [&said](uint32_t id)
+    {
+        return std::ranges::any_of(std::span(said.Players).first(said.Count),
+                                   [id](const MCMPPlayersRulesMessage::Said& player) { return player.PlayerId == id; });
+    };
+
+    CHECK_EQ(said.Count, 3);
+    CHECK(named(hostId));
+    CHECK(named(cal.Id()));
+    CHECK(named(dan.Id()));
+    CHECK(!named(ann.Id()));
     Settle();
     CHECK(dialog.IsShowing());
     const int32_t calMissions = cal.MissionsLoaded();

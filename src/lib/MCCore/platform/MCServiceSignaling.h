@@ -92,10 +92,18 @@ std::string MCServiceName(std::string_view text, size_t most, std::string_view f
 /// <summary>The service's protocol this game speaks (each socket's URL says it).</summary>
 inline constexpr int MCServiceProtocol = 1;
 
-/// <summary>The service's keep-alive, which it answers itself (a socket silent 5 minutes is closed).</summary>
+/// <summary>
+/// The service's keep-alive, which it answers itself: a socket silent 5 minutes is closed, and a host's silent 20 seconds
+/// (its HOST_SILENT_MS: its computer gone without a word) hands its game to a guest that asks to take it over.
+/// </summary>
 inline constexpr std::string_view MCServicePing = "ping";
 inline constexpr std::string_view MCServicePong = "pong";
-inline constexpr std::chrono::seconds MCServicePingEvery{30};
+inline constexpr std::chrono::seconds MCServicePingEvery{10};
+/// <summary>
+/// Port-only (Redux HD): how often a game taking its game over asks again while the service has the old host's socket
+/// in (MCServiceSignaling::TakeOver).
+/// </summary>
+inline constexpr std::chrono::seconds MCServiceTakeoverEvery{2};
 
 /// <summary>The most public games one network lists at once (the service's MOST_LISTED_ROOMS): more play by their code.</summary>
 inline constexpr int32_t MCServiceListedPerNetwork = 3;
@@ -191,12 +199,15 @@ public:
     /// </summary>
     bool HostAway(std::string_view game);
     /// <summary>
-    /// Port-only (Redux HD): takes the game <paramref name="game"/> this one joined over as its host (its host's socket
-    /// away or gone, the session rolled over to this game: SPEC-host-rollover.md), the same code: a socket to the
-    /// service's /takeover with this game's place's token, its socket to the game closing. <see cref="HostedCode"/> once
-    /// the service has made it the host; the service tells the game's other guests to reach it. Whether it asked.
+    /// Port-only (Redux HD): takes the game <paramref name="game"/> this one joined over as its host (the session rolled
+    /// over to this game: SPEC-host-rollover.md), the same code: a socket to the service's /takeover with this game's
+    /// place's token. The service takes it once the host's socket is away, gone or silent; until then (hostin) it asks
+    /// again each <see cref="MCServiceTakeoverEvery"/>, for up to <paramref name="wait"/>, then gives up (Refused). Its
+    /// socket to the game stays until the service has made it the host, which closes it: that socket's own close would be
+    /// its player leaving, which frees the place the takeover needs. <see cref="HostedCode"/> once the service has made
+    /// it the host; the service tells the game's other guests to reach it. Whether it asked.
     /// </summary>
-    bool TakeOver(std::string_view game);
+    bool TakeOver(std::string_view game, std::chrono::milliseconds wait);
     /// <summary>
     /// Port-only (Redux HD): how many times the service said <paramref name="game"/> has a new host since this game
     /// joined it (another guest took it over): links to it from before go nowhere.
@@ -275,6 +286,11 @@ private:
         /// back (its place is the host's now).
         /// </summary>
         bool TakenOver = false;
+        /// <summary>
+        /// Port-only (Redux HD), the host's while it takes a game over (TakeOver) and the service hasn't made it the host
+        /// yet: it asks again (at <see cref="NextTry"/>) until then.
+        /// </summary>
+        std::optional<Clock::time_point> TakingOverUntil;
         /// <summary>Since its socket dropped, while it tries to come back; the next try, and the tries since.</summary>
         std::optional<Clock::time_point> DroppedAt;
         Clock::time_point NextTry;

@@ -85,6 +85,8 @@ namespace
     constexpr std::string_view BackPath = "/game/";
     /// <summary>Port-only (Redux HD): a guest's socket taking its game over as its host (with its place's token).</summary>
     constexpr std::string_view TakeoverPath = "/takeover/";
+    /// <summary>Port-only (Redux HD): the service's answer to a takeover while the game's host's socket is in.</summary>
+    constexpr std::string_view HostInType = "hostin";
 
     /// <summary>What the service's refusals and endings are called in its messages.</summary>
     constexpr std::array<std::pair<std::string_view, MCServiceRefusal>, 11> Refusals{{
@@ -559,7 +561,7 @@ bool MCServiceSignaling::HostAway(std::string_view game)
     return found != _Games.end() && found->second.HostAway;
 }
 
-bool MCServiceSignaling::TakeOver(std::string_view game)
+bool MCServiceSignaling::TakeOver(std::string_view game, std::chrono::milliseconds wait)
 {
     const std::scoped_lock lock(_Lock);
     const auto found = _Games.find(game);
@@ -575,17 +577,18 @@ bool MCServiceSignaling::TakeOver(std::string_view game)
     const Clock::time_point now = Clock::now();
     // A public game's links take relays only, the host's too.
     _RelayOnly = _RelayOnly || joined.Public;
+    // Its socket to the game stays until the service has made this game the host (which closes it): its own close
+    // would land before the takeover, whose socket opens round trips later, and free the place the takeover needs.
     _Host = Socket{.Ws = Opened(std::format("{}{}", TakeoverPath, game), joined.Token),
                    .LastPing = now,
                    .Code = std::string(game),
-                   .Token = joined.Token};
+                   .Token = joined.Token,
+                   .TakingOverUntil = now + wait,
+                   .NextTry = now + MCServiceTakeoverEvery};
     _Guests.clear();
     _GuestSettings.clear();
     _NameRefused = false;
     _Unlisted = false;
-    // Its place is the host's now: the socket to the game goes, never coming back to it.
-    joined.TakenOver = true;
-    joined.Ws->Close();
     SDL_Log("MCServiceSignaling: taking game \"%.*s\" over as its host", static_cast<int>(game.size()), game.data());
     return true;
 }
@@ -785,6 +788,21 @@ void MCServiceSignaling::TellGone(std::string_view game, std::vector<Heard>& hea
 
 void MCServiceSignaling::Tend(Socket& socket, std::string_view game, Clock::time_point now, std::vector<Heard>& heard)
 {
+    // Port-only (Redux HD): a takeover the service hasn't taken by the end of its wait gives up, whether its last try's
+    // socket was answered or not.
+    if (socket.TakingOverUntil.has_value() && now >= *socket.TakingOverUntil)
+    {
+        SDL_Log("MCServiceSignaling: couldn't take game \"%s\" over: the service kept its host in",
+                socket.Code.c_str());
+        socket.TakingOverUntil.reset();
+        socket.Refusal = MCServiceRefusal::Refused;
+
+        if (socket.Ws->GetState() != MCWebSocket::State::Closed)
+        {
+            socket.Ws->Close();
+        }
+    }
+
     if (socket.Ws->GetState() != MCWebSocket::State::Closed)
     {
         return;
@@ -802,6 +820,21 @@ void MCServiceSignaling::Tend(Socket& socket, std::string_view game, Clock::time
 
     if (socket.Refusal.has_value() || socket.TakenOver)
     {
+        return;
+    }
+
+    // Port-only (Redux HD): a takeover the service hasn't taken yet asks again, until its wait is over (above).
+    if (socket.TakingOverUntil.has_value())
+    {
+        if (now >= socket.NextTry)
+        {
+            socket.Ws = Opened(std::format("{}{}", TakeoverPath, socket.Code), socket.Token);
+            socket.Told = false;
+            socket.Tries++;
+            socket.NextTry = now + MCServiceTakeoverEvery;
+            SDL_Log("MCServiceSignaling: taking game \"%s\" over (try %d)", socket.Code.c_str(), socket.Tries + 1);
+        }
+
         return;
     }
 
@@ -922,6 +955,18 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
             _Host->Token = *token;
             _Host->In = true;
             _Host->Hosted = true;
+
+            // Port-only (Redux HD): a takeover taken: the place is the host's now, so the socket to the game goes (the
+            // service closes it too), never coming back to it.
+            if (std::exchange(_Host->TakingOverUntil, std::nullopt).has_value())
+            {
+                if (const auto joined = _Games.find(*code); joined != _Games.end())
+                {
+                    joined->second.TakenOver = true;
+                    joined->second.Ws->Close();
+                }
+            }
+
             SDL_Log("MCServiceSignaling: hosting game \"%s\"", code->c_str());
             _RoomDue = true;
             SendRoom();
@@ -981,6 +1026,13 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
             heard.push_back({.Sender = From::Guest, .Peer = *guest});
             return;
         }
+    }
+    else if (type == HostInType && _Host->TakingOverUntil.has_value())
+    {
+        // Port-only (Redux HD): the game's host's socket still in to the service (its computer gone without a word
+        // looks in until it's been silent a while): the service closes this one, and Tend asks again.
+        SDL_Log("MCServiceSignaling: the service still has game \"%s\"'s host in; asking again", _Host->Code.c_str());
+        return;
     }
     else if (type == NameNotice)
     {

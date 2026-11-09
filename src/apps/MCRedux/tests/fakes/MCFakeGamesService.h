@@ -7,14 +7,16 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <format>
 #include <map>
 #include <mutex>
 
 // A stand-in for the games service in the process, for one game (its protocol as tools/cloudflare/games/README.md in the
 // workspace has it): hosting, joining by the code, the signals passed with each guest's tag, pings, the host's room kept,
-// a guest's leaving told to its host and a host's to its guests. No relays (the links are on the loopback), no WebSocket
-// path and no list (tests/fakes/MCServiceScript.h scripts the list).
+// a guest's leaving told to its host and a host's to its guests. As over a network, a socket's opening lands only when
+// its game next uses it, after what its open sockets sent meanwhile (a new socket opens round trips later). No relays
+// (the links are on the loopback), no WebSocket path and no list (tests/fakes/MCServiceScript.h scripts the list).
 namespace MCFakeGames
 {
     using Json = nlohmann::json;
@@ -50,8 +52,9 @@ namespace MCFakeGames
     /// The games service's protocol for one game, in the process: hosting, joining by the code, the signals passed
     /// with each guest's tag, pings, the room kept, a guest's leaving told to its host and a host's to its guests; a
     /// host's drop keeps its place (its guests told it's away, a join answered hostaway) for a socket that comes back
-    /// with its token; a guest takes a game whose host is away (or left, HostLeaveHandsOver) over. No relays (the links
-    /// are on the loopback) and no WebSocket path.
+    /// with its token; a guest's own close frees its place; a guest takes a game whose host is away (or left,
+    /// HostLeaveHandsOver, or silent, HostSilent) over, refused (hostin) while the host's socket is in. No relays (the
+    /// links are on the loopback) and no WebSocket path.
     /// </summary>
     class MCFakeGamesService
     {
@@ -67,6 +70,11 @@ namespace MCFakeGames
         bool HostLeaveHandsOver = false;
         /// <summary>What a join is refused with ("crowded"...), whatever the game: none, and joins go as usual.</summary>
         std::optional<std::string> RefuseJoinsWith;
+        /// <summary>
+        /// Port-only (Redux HD): the host's socket, still open, has answered no ping for the service's HOST_SILENT_MS (its
+        /// computer gone without a word): a guest's takeover is taken, and the host's socket closed.
+        /// </summary>
+        std::atomic<bool> HostSilent = false;
 
         MCWebSocketOpener Opener()
         {
@@ -77,9 +85,16 @@ namespace MCFakeGames
                 Line& line = _Lines[id];
                 const std::string_view path = std::string_view(url).substr(ServiceUrl.size());
                 Paths.emplace_back(path);
-                Open(id, line, path);
+                line.Pending = std::string(path);
                 return std::make_unique<MCServiceLine>(*this, id);
             };
+        }
+
+        /// <summary>Port-only (Redux HD): the takeovers refused while the host's socket was in (hostin).</summary>
+        int TakeoversRefused()
+        {
+            const std::scoped_lock lock(_Lock);
+            return _TakeoversRefused;
         }
 
         /// <summary>The host's room as it last said it.</summary>
@@ -144,6 +159,7 @@ namespace MCFakeGames
         void Heard(int id, std::string_view text)
         {
             const std::scoped_lock lock(_Lock);
+            Land(id);
             Line& from = _Lines.at(id);
 
             if (!from.Open)
@@ -193,12 +209,14 @@ namespace MCFakeGames
         std::vector<MCWebSocket::Message> Take(int id)
         {
             const std::scoped_lock lock(_Lock);
+            Land(id);
             return std::exchange(_Lines.at(id).Inbox, {});
         }
 
         MCWebSocket::State StateOf(int id)
         {
             const std::scoped_lock lock(_Lock);
+            Land(id);
             return _Lines.at(id).Open ? MCWebSocket::State::Open : MCWebSocket::State::Closed;
         }
 
@@ -206,6 +224,7 @@ namespace MCFakeGames
         void Dropped(int id)
         {
             const std::scoped_lock lock(_Lock);
+            Land(id);
             Line& line = _Lines.at(id);
 
             if (!line.Open)
@@ -239,6 +258,7 @@ namespace MCFakeGames
         void Closed(int id)
         {
             const std::scoped_lock lock(_Lock);
+            Land(id);
             Line& line = _Lines.at(id);
 
             if (!line.Open)
@@ -247,6 +267,12 @@ namespace MCFakeGames
             }
 
             line.Open = false;
+
+            // A guest's own close is its leaving: its place goes, its token with it.
+            if (!line.Host)
+            {
+                line.Token.clear();
+            }
 
             for (auto& [other, peer] : _Lines)
             {
@@ -282,7 +308,22 @@ namespace MCFakeGames
             /// <summary>A guest's place's token (each guest's own: the takeover finds the guest by it).</summary>
             std::string Token;
             std::vector<MCWebSocket::Message> Inbox;
+            /// <summary>The path a socket opened at, until its opening lands (<see cref="Land"/>).</summary>
+            std::optional<std::string> Pending;
         };
+
+        /// <summary>A socket's opening, landing as its game first uses it (under the lock).</summary>
+        void Land(int id)
+        {
+            Line& line = _Lines.at(id);
+
+            if (line.Pending.has_value())
+            {
+                const std::string path = std::move(*line.Pending);
+                line.Pending.reset();
+                Open(id, line, path);
+            }
+        }
 
         static void Say(Line& line, std::string_view text) { line.Inbox.push_back({false, std::string(text)}); }
 
@@ -338,11 +379,27 @@ namespace MCFakeGames
                                                     path.contains(std::format("token={}", other.second.Token));
                                          });
 
-                if (HostLine().has_value() || taker == _Lines.end())
+                const MCOptionalRef<Line> host = HostLine();
+
+                if (host.has_value() && !HostSilent)
                 {
-                    Say(line, R"({"t":"refused"})");
+                    _TakeoversRefused++;
+                    Say(line, R"({"t":"hostin"})");
                     line.Open = false;
                     return;
+                }
+
+                if (taker == _Lines.end())
+                {
+                    Say(line, R"({"t":"expired"})");
+                    line.Open = false;
+                    return;
+                }
+
+                // A silent host's socket goes.
+                if (host.has_value())
+                {
+                    host->get().Open = false;
                 }
 
                 const std::string token = taker->second.Token;
@@ -401,6 +458,7 @@ namespace MCFakeGames
         std::optional<Json> _Room;
         std::vector<std::string> _GuestSignals;
         int _NextId = 1;
+        int _TakeoversRefused = 0;
     };
 
     inline void MCServiceLine::SendText(std::string_view text)

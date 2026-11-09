@@ -9,6 +9,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 // The service's signals over its WebSockets (platform/MCServiceSignaling), each socket a scripted one: what the game
 // sends the service, and what it makes of what the service sends, the malformed included; a dropped socket coming back
@@ -385,7 +386,7 @@ TEST_CASE("service signaling: a public game's guest stays relay-only as its sock
     CHECK(signaling.GamePublic(GameCode));
 
     // Its session rolled over to it: it hosts the game, the links to its guests through relays only.
-    REQUIRE(signaling.TakeOver(GameCode));
+    REQUIRE(signaling.TakeOver(GameCode, std::chrono::seconds(30)));
     service.At(TakeoverUrl).Arrived.push_back(Text(HostedMessage));
     service.At(TakeoverUrl).Arrived.push_back(Text(GuestMessage));
     signaling.Take();
@@ -530,6 +531,35 @@ TEST_CASE("service signaling: a dropped socket that can't come back while its pl
     CHECK(signaling.Take().empty());
     CHECK(signaling.Refusal(GameCode) == std::optional(MCServiceRefusal::Unreachable));
     CHECK_EQ(service.OpenedTo(BackUrl), size_t{0});
+}
+
+/// <summary>
+/// Port-only (Redux HD): taking a game over keeps this game's socket to it open while the service hasn't made it the host
+/// (that socket's own close would be its leaving), and a takeover the service hasn't taken by its wait's end gives up,
+/// its socket closed, though that socket was never answered.
+/// </summary>
+TEST_CASE("service signaling: a takeover keeps its socket to the game until taken, and gives up at its wait's end")
+{
+    constexpr auto wait = std::chrono::milliseconds(50);
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, false, AtOnce);
+    signaling.Join(GameCode);
+    service.At(JoinUrl).Arrived.push_back(Text(JoinedMessage));
+    CHECK(signaling.Take().empty());
+    REQUIRE(signaling.Joined(GameCode));
+
+    REQUIRE(signaling.TakeOver(GameCode, wait));
+    signaling.Take();
+    CHECK(service.At(JoinUrl).Now == MCWebSocket::State::Open);
+    CHECK(service.At(TakeoverUrl).Now == MCWebSocket::State::Open);
+    CHECK(!signaling.Refusal().has_value());
+
+    std::this_thread::sleep_for(wait);
+    signaling.Take();
+    CHECK(service.At(TakeoverUrl).Now == MCWebSocket::State::Closed);
+    CHECK(signaling.Refusal() == std::optional(MCServiceRefusal::Refused));
+    CHECK(!signaling.HostedCode().has_value());
+    CHECK_EQ(service.OpenedTo(TakeoverUrl), size_t{1});
 }
 
 /// <summary>

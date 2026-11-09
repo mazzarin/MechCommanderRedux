@@ -125,9 +125,11 @@ public:
 
     /// <summary>
     /// Port-only (Redux HD), a guest: its session rolled over to this game (SPEC-host-rollover.md), which takes the game
-    /// over on the service as its host, the same code: it hosts it from now, its room listed as the old host's was.
+    /// over on the service as its host, the same code: it hosts it from now, its room listed as the old host's was. The
+    /// service may keep the old host in a while (its computer gone without a word): the game asks for up to
+    /// <paramref name="wait"/>, the rollover's, and fails after it.
     /// </summary>
-    void TakeOver();
+    void TakeOver(std::chrono::milliseconds wait);
     /// <summary>
     /// Port-only (Redux HD), a guest whose session is rolling over to another guest's game: whether its link to the
     /// game's new host is open, opening one once the service says the game has a new host.

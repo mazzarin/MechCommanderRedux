@@ -294,7 +294,7 @@ bool MCInternetGame::TakeUnlistedNotice()
     return true;
 }
 
-void MCInternetGame::TakeOver()
+void MCInternetGame::TakeOver(std::chrono::milliseconds wait)
 {
     if (_Hosting || _Signaling == nullptr || _Stage != Stage::Ready)
     {
@@ -304,7 +304,7 @@ void MCInternetGame::TakeOver()
     // A public game's guest taking it over stays public: its links relayed, its room listed as the old host's was.
     _Public = _Public || _Signaling->GamePublic(_Code);
 
-    if (_Signaling->TakeOver(_Code))
+    if (_Signaling->TakeOver(_Code, wait))
     {
         _Hosting = true;
         SDL_Log("Internet game %s: taking it over as its host", _Code.c_str());

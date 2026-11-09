@@ -323,7 +323,7 @@ void MCSessionManager::HandlePreSystemMessage(MCFidpMessage& msg)
     {
         // Port-only (Redux HD): the session rolled over to this machine (MCDirectPlay.h): its internet game is the
         // game's host on the service now, and the game's other guests reach it there.
-        Internet->TakeOver();
+        Internet->TakeOver(InternetRolloverWait);
     }
     else if (type == DPSYS_SETSESSIONDESC && LaunchedFromLobby)
     {

@@ -393,7 +393,7 @@ TEST_CASE("internet game: a guest takes the game over on the service as its host
     REQUIRE(Until(*ann, *cat, [&] { return service.OpenLines() == 2; }));
     CHECK(!cat->HostReached());
 
-    ann->TakeOver();
+    ann->TakeOver(Patience);
     CHECK(ann->Hosting());
     REQUIRE(Until(*ann, *cat, [&] { return ann->Place().has_value(); }));
     CHECK_EQ(ann->Place()->Code, std::string(Code));
@@ -427,4 +427,45 @@ TEST_CASE("internet game: a guest takes the game over on the service as its host
     CHECK_EQ(Read(annNet, accepted, 4), "back");
     REQUIRE_EQ(annNet.Send(accepted, Bytes("in")), 2);
     CHECK_EQ(Read(catNet, stream, 2), "in");
+}
+
+/// <summary>
+/// Port-only (Redux HD): the host's computer goes without a word (a lost connection, a power cut): its socket to the
+/// service still looks open, so the service won't hand the game on yet (hostin). Ann's game, which the session rolled
+/// over to, asks again while its own place waits, and takes the game over once the service finds the host's socket
+/// silent; Cat's game is told and reaches it there.
+/// </summary>
+TEST_CASE("internet game: a guest takes the game over when its host's computer goes without a word, asking until the "
+          "service lets it")
+{
+    constexpr int refusalsFirst = 2;
+    MCFakeGamesService service;
+    const MCInternetSetupScope setup(service);
+    MCNetSwitch hostNet(std::make_unique<MCLoopbackTransport>());
+    MCNetSwitch annNet(std::make_unique<MCLoopbackTransport>());
+    MCNetSwitch catNet(std::make_unique<MCLoopbackTransport>());
+    std::unique_ptr<MCInternetGame> host = MCInternetGame::Host(hostNet, false);
+    REQUIRE(host != nullptr);
+    REQUIRE(Until(*host, *host, [&] { return host->Update() == MCInternetGame::Stage::Ready; }));
+    const MCSocket::Handle hostsListener = hostNet.ListenTcp(GamePort);
+    REQUIRE(hostsListener != MCSocket::InvalidHandle);
+    std::unique_ptr<MCInternetGame> ann = MCInternetGame::Join(annNet, Code, false);
+    REQUIRE(ann != nullptr);
+    REQUIRE(Until(*host, *ann, [&] { return ann->Update() == MCInternetGame::Stage::Ready; }));
+    std::unique_ptr<MCInternetGame> cat = MCInternetGame::Join(catNet, Code, false);
+    REQUIRE(cat != nullptr);
+    REQUIRE(Until(*host, *cat, [&] { return cat->Update() == MCInternetGame::Stage::Ready; }));
+
+    // The host's game is never moved along again, its socket left open.
+    ann->TakeOver(Patience);
+    CHECK(ann->Hosting());
+    REQUIRE(Until(*ann, *cat, [&] { return service.TakeoversRefused() >= refusalsFirst; }));
+    CHECK(!ann->Place().has_value());
+    CHECK(ann->Update() != MCInternetGame::Stage::Failed);
+    CHECK(!cat->HostReached());
+
+    service.HostSilent = true;
+    REQUIRE(Until(*ann, *cat, [&] { return ann->Place().has_value(); }));
+    CHECK_EQ(ann->Place()->Code, std::string(Code));
+    REQUIRE(Until(*ann, *cat, [&] { return cat->HostReached(); }));
 }

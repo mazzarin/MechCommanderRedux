@@ -209,6 +209,13 @@ public:
     /// <summary>Whether the game was started by a DirectPlay lobby.</summary>
     static bool WasLaunchedFromLobby();
     /// <summary>
+    /// Port-only (Redux HD): whether a launcher's join to <paramref name="address"/> ("host" or "host:port"; empty, as
+    /// the launcher's default, 127.0.0.1) reaches its host through this computer's own loopback: through the launcher's
+    /// relay here (MechCommander Online's), which the session's other machines can't reach this one through, so it
+    /// never takes the session over (MCDirectPlay::NeverTakeOver).
+    /// </summary>
+    static bool JoinsThroughThisComputer(std::string_view address);
+    /// <summary>
     /// Connects the session the lobby launched the game for, calling <paramref name="showStatus"/> while waiting and
     /// <paramref name="hideStatus"/> after.
     /// </summary>

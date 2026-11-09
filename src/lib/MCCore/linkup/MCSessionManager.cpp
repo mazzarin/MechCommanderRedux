@@ -349,6 +349,14 @@ bool MCSessionManager::WasLaunchedFromLobby()
     return LobbyLaunchArgs.Active;
 }
 
+bool MCSessionManager::JoinsThroughThisComputer(std::string_view address)
+{
+    constexpr std::string_view launcherDefault = "127.0.0.1";
+    const std::string_view host = address.substr(0, address.find(':'));
+    const std::optional<uint32_t> ip = MCSocket::Resolve(host.empty() ? launcherDefault : host);
+    return ip.has_value() && MCSocket::IsLoopback(*ip);
+}
+
 uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& showStatus,
                                                 const std::function<void()>& hideStatus)
 {
@@ -420,6 +428,16 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
         }
 
         ConnectTcp(targetAddr);
+
+        // Port-only (Redux HD): a launcher's game joined at this computer's own address reaches its host through the
+        // launcher's relay here (MechCommander Online's), which the session's other machines can't reach it through: it
+        // never takes the session over, so its host's leaving ends the session at once, as before the rollover.
+        if (!LobbyLaunchArgs.Internet && DirectPlay != nullptr && JoinsThroughThisComputer(targetAddr))
+        {
+            SDL_Log("SetupLobbyConnection: joining through this computer (%s): this game never takes the session over",
+                    targetAddr.c_str());
+            DirectPlay->NeverTakeOver();
+        }
 
         if (showStatus)
         {

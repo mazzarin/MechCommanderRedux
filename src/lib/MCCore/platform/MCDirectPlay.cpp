@@ -109,7 +109,7 @@ namespace
     constexpr size_t MachineKeyBytes = 32;
     /// <summary>
     /// Port-only (Redux HD): the addresses of an internet game's links (0.0.0.0/8, platform/MCIceTransport): a machine
-    /// seen at one is reached by the game's own name, where its hub was.
+    /// seen at one is reached by the game's own name, where its hub was (<see cref="MCDirectPlay::RolloverIp"/>).
     /// </summary>
     constexpr uint32_t LinkAddressMask = 0xff000000u;
 
@@ -592,6 +592,8 @@ struct MCDirectPlay::Impl
     bool Ending = false;
     /// <summary>The port this machine takes connections on: a host's session port, a joiner's own (for a rollover).</summary>
     uint16_t ListenPort = 0;
+    /// <summary>Port-only (Redux HD), a joiner: it may take the session over (MCDirectPlay::NeverTakeOver).</summary>
+    bool MayTakeOver = true;
 
     /// <summary>A joiner whose hub has gone, coming back to the machine taking over.</summary>
     struct Rolling
@@ -1845,13 +1847,7 @@ struct MCDirectPlay::Impl
         Rolling roll;
         roll.Successor = successor->Id;
         roll.Address = successor->Address;
-
-        // An internet game's machine is reached by the game's name, as its hub was (MCIceTransport), at its own port.
-        if ((roll.Address.Ip & LinkAddressMask) == 0)
-        {
-            roll.Address.Ip = hubAddress.Ip;
-        }
-
+        roll.Address.Ip = MCDirectPlay::RolloverIp(successor->Address.Ip, hubAddress.Ip);
         roll.Until = NowMs() + RolloverWait;
         roll.NextKey = NewKey();
         Roll = roll;
@@ -2568,8 +2564,9 @@ uint32_t MCDirectPlay::Open(const DPSESSIONDESC2& desc, uint32_t flags)
     impl.ServerAddress = found->Address;
 
     // Port-only (Redux HD): a session that can migrate its host rolls over to a joiner, which takes connections from
-    // its join on a port of its own (so a firewall asks as it joins, never mid-battle).
-    if ((found->Info.Desc.dwFlags & DPSESSION_MIGRATEHOST) != 0)
+    // its join on a port of its own (so a firewall asks as it joins, never mid-battle); one that never takes it over
+    // takes none, and its join says so (port 0).
+    if ((found->Info.Desc.dwFlags & DPSESSION_MIGRATEHOST) != 0 && impl.MayTakeOver)
     {
         impl.Listener = MCSocket::ListenTcp(0);
         impl.ListenPort = impl.Listener != MCSocket::InvalidHandle ? MCSocket::LocalPort(impl.Listener) : uint16_t{0};
@@ -2669,12 +2666,30 @@ bool MCDirectPlay::RollingOver() const
     return _Impl->Roll.has_value();
 }
 
+uint32_t MCDirectPlay::RolloverIp(uint32_t sharedIp, uint32_t hubIp)
+{
+    // An internet game's machine is reached by the game's name, as its hub was (MCIceTransport); a machine on the hub's
+    // own computer (the hub saw it on its loopback: a LAN search finds a host on the same computer there too) at that
+    // computer's address, unless this machine is on it too.
+    if ((sharedIp & LinkAddressMask) == 0 || (MCSocket::IsLoopback(sharedIp) && !MCSocket::IsLoopback(hubIp)))
+    {
+        return hubIp;
+    }
+
+    return sharedIp;
+}
+
 bool MCDirectPlay::HasSuccessor() const
 {
     const Impl& impl = *_Impl;
     return impl.State == Impl::Mode::Host && (impl.Session.Desc.dwFlags & DPSESSION_MIGRATEHOST) != 0 &&
            std::ranges::any_of(impl.Machines, [&](const auto& machine)
                                { return machine.Id != impl.SelfMachine && machine.TakesOver(); });
+}
+
+void MCDirectPlay::NeverTakeOver()
+{
+    _Impl->MayTakeOver = false;
 }
 
 void MCDirectPlay::SetRolloverReach(std::function<bool()> ready, std::chrono::milliseconds wait)

@@ -3,6 +3,7 @@
 #include "fakes/MCFakeSignaling.h"
 #include "fakes/MCLoopbackTransport.h"
 #include "lib/MCOptionalRef.h"
+#include "linkup/MCSessionManager.h"
 #include "main/MCGameContext.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCIceTransport.h"
@@ -1008,6 +1009,79 @@ TEST_CASE("directplay: an older build's joiner loses the session as its host goe
     CHECK(Listed(session.CatMachine, false) == players);
     CHECK(RawClosed(older, {}));
     MCSocket::Close(older);
+}
+
+/// <summary>
+/// Where a joiner reaches the machine taking over: where its hub saw that machine, but where the hub was for one the
+/// hub saw over an internet game's link, or on its own loopback (a second copy of the game on the hub's computer) when
+/// the joiner reached the hub from another computer. A LAN search finds a host on the same computer at 127.0.0.1 too,
+/// so such a copy joins over the loopback, and its hub shares it as 127.0.0.1: a third computer reaching for it there
+/// reached for itself (8 Nov's playtest: the laptop's game lost the session).
+/// </summary>
+TEST_CASE("directplay: a rollover reaches the machine taking over where its host was, for one the host saw on its own "
+          "computer or over an internet link")
+{
+    constexpr uint32_t hub = 0xc0a8320au;       // 192.168.50.10
+    constexpr uint32_t other = 0xc0a83214u;     // 192.168.50.20
+    constexpr uint32_t hubLink = 0x00000005u;   // an internet game's link, 0.0.0.5
+    constexpr uint32_t otherLink = 0x00000007u; // 0.0.0.7
+    constexpr uint32_t loopbackOther = 0x7f000002u;
+
+    CHECK(MCDirectPlay::RolloverIp(other, hub) == other);
+    CHECK(MCDirectPlay::RolloverIp(MCSocket::LoopbackIp, hub) == hub);
+    CHECK(MCDirectPlay::RolloverIp(loopbackOther, hub) == hub);
+    CHECK(MCDirectPlay::RolloverIp(MCSocket::LoopbackIp, MCSocket::LoopbackIp) == MCSocket::LoopbackIp);
+    CHECK(MCDirectPlay::RolloverIp(other, MCSocket::LoopbackIp) == other);
+    CHECK(MCDirectPlay::RolloverIp(otherLink, hubLink) == hubLink);
+    CHECK(MCDirectPlay::RolloverIp(otherLink, hub) == hub);
+}
+
+/// <summary>
+/// A launcher's game reaching its host through the launcher's relay on its own computer (MechCommander Online's: a join
+/// at 127.0.0.1) never takes the session over: a host whose every guest joined so has no successor (its leave ends the
+/// session, as before the rollover), and its guests lose the session as it goes, without waiting for a machine to take
+/// it over.
+/// </summary>
+TEST_CASE("directplay: guests that never take over leave their host no successor, and lose the session as it goes")
+{
+    constexpr uint16_t port = 28976;
+    const std::string address = std::format("127.0.0.1:{}", port);
+    std::optional<MCDirectPlay> host{std::in_place};
+    REQUIRE_EQ(Connect(*host, address), DP_OK);
+    REQUIRE_EQ(Host(*host, "Relayed", 6), DP_OK);
+    uint32_t bob = 0;
+    REQUIRE_EQ(NewPlayer(*host, "Bob", bob), DP_OK);
+    MCDirectPlay ann;
+    MCDirectPlay cat;
+    ann.NeverTakeOver();
+    cat.NeverTakeOver();
+    JoinAs(ann, *host, address, "Ann");
+    JoinAs(cat, *host, address, "Cat");
+    Drain(*host, {ann, cat});
+    Drain(ann, {*host, cat});
+    Drain(cat, {*host, ann});
+    CHECK(!host->HasSuccessor());
+
+    host.reset();
+    const std::vector<uint32_t> annHeard = SystemTypes(Drain(ann, {cat}));
+    REQUIRE(!annHeard.empty());
+    CHECK_EQ(annHeard.back(), uint32_t{DPSYS_SESSIONLOST});
+    CHECK(!ann.RollingOver());
+}
+
+/// <summary>
+/// Whether a launcher's join goes through this computer's own loopback (where MechCommander Online's relay is), so the
+/// game never takes the session over.
+/// </summary>
+TEST_CASE("directplay: a launcher's join at this computer's own address goes through it")
+{
+    REQUIRE(MCSocket::Startup());
+    CHECK(MCSessionManager::JoinsThroughThisComputer("127.0.0.1"));
+    CHECK(MCSessionManager::JoinsThroughThisComputer("127.0.0.1:28800"));
+    CHECK(MCSessionManager::JoinsThroughThisComputer("127.0.0.2:28800"));
+    CHECK(MCSessionManager::JoinsThroughThisComputer(""));
+    CHECK(!MCSessionManager::JoinsThroughThisComputer("192.168.50.10"));
+    CHECK(!MCSessionManager::JoinsThroughThisComputer("192.168.50.10:28800"));
 }
 
 /// <summary>

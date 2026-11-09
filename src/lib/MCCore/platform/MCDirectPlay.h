@@ -371,11 +371,28 @@ public:
     bool HasSuccessor() const;
 
     /// <summary>
+    /// Port-only (Redux HD), a joiner whose hub has gone: the IPv4 address (host order) it reaches the machine taking
+    /// over at, at that machine's own port. The hub shared it as <paramref name="sharedIp"/>, where the hub saw it; this
+    /// machine reached the hub at <paramref name="hubIp"/>. A machine the hub saw over an internet game's link
+    /// (0.0.0.0/8), or on its own loopback (127.0.0.0/8: a second copy of the game on the hub's computer) when this
+    /// machine reached the hub from elsewhere, is reached where the hub was.
+    /// </summary>
+    static uint32_t RolloverIp(uint32_t sharedIp, uint32_t hubIp);
+
+    /// <summary>
     /// Port-only (Redux HD): whether the machine a rollover goes to can be connected to now (<paramref name="ready"/>:
     /// an internet game's link to the game's new host open), asked before each try; none, at once. A rollover then
     /// waits up to <paramref name="wait"/>, for the machines coming back and for the machine taking over.
     /// </summary>
     void SetRolloverReach(std::function<bool()> ready, std::chrono::milliseconds wait);
+
+    /// <summary>
+    /// Port-only (Redux HD), before a join: this machine never takes the session over (its join takes no connections),
+    /// for a game the session's other machines can't reach: one that reaches its host through a relay on its own
+    /// computer (MCSessionManager::JoinsThroughThisComputer). A host whose every guest joined so has no successor
+    /// (<see cref="HasSuccessor"/>), and its guests lose the session as it goes, as before the rollover.
+    /// </summary>
+    void NeverTakeOver();
 
     /// <summary>
     /// Creates a player of this machine with <paramref name="data"/> as its data; <paramref name="playerID"/> receives

@@ -34,6 +34,14 @@ namespace MCSocket
     inline constexpr uint32_t BroadcastIp = 0xffffffffu;
     /// <summary>The loopback address (127.0.0.1).</summary>
     inline constexpr uint32_t LoopbackIp = 0x7f000001u;
+    /// <summary>The loopback's network (127.0.0.0/8) and its mask.</summary>
+    inline constexpr uint32_t LoopbackMask = 0xff000000u;
+
+    /// <summary>Whether <paramref name="ip"/> (host order) is on this computer's loopback (127.0.0.0/8).</summary>
+    constexpr bool IsLoopback(uint32_t ip)
+    {
+        return (ip & LoopbackMask) == (LoopbackIp & LoopbackMask);
+    }
 
     /// <summary>Starts the socket library (once per process; later calls do nothing).</summary>
     /// <returns>Whether sockets are usable.</returns>

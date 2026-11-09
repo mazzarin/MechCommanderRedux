@@ -283,6 +283,9 @@
     <ClCompile Include="network\MCIntroNote.cpp" />
     <ClCompile Include="network\MCLobbyUpdate.cpp" />
     <ClCompile Include="network\MCMcoApi.cpp" />
+    <ClCompile Include="network\MCMcoBridge.cpp" />
+    <ClCompile Include="network\MCMcoContent.cpp" />
+    <ClCompile Include="network\MCMcoRelay.cpp" />
     <ClCompile Include="network\MCMechHandover.cpp" />
     <ClCompile Include="network\MCMPGameConfiguration.cpp" />
     <ClCompile Include="network\MCMultiPlayer.cpp" />
@@ -447,6 +450,7 @@
            header. -->
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="platform\MCTlsLink.cpp" />
     <ClCompile Include="platform\MCTlsThreading.cpp" />
     <ClCompile Include="platform\MCUiDraws.cpp" />
     <ClCompile Include="platform\MCUiGpu.cpp" />
@@ -794,6 +798,9 @@
     <ClInclude Include="network\MCIntroNote.h" />
     <ClInclude Include="network\MCLobbyUpdate.h" />
     <ClInclude Include="network\MCMcoApi.h" />
+    <ClInclude Include="network\MCMcoBridge.h" />
+    <ClInclude Include="network\MCMcoContent.h" />
+    <ClInclude Include="network\MCMcoRelay.h" />
     <ClInclude Include="network\MCMechHandover.h" />
     <ClInclude Include="network\MCMPGameConfiguration.h" />
     <ClInclude Include="network\MCMultiPlayer.h" />
@@ -939,6 +946,7 @@
     <ClInclude Include="platform\MCSoftwareRenderer.h" />
     <ClInclude Include="platform\MCStringTable.h" />
     <ClInclude Include="platform\MCThreadPriority.h" />
+    <ClInclude Include="platform\MCTlsLink.h" />
     <ClInclude Include="platform\MCTlsThreading.h" />
     <ClInclude Include="platform\MCUiDraws.h" />
     <ClInclude Include="platform\MCUiGpu.h" />

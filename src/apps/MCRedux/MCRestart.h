@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <span>
 #include <string>
 
@@ -10,3 +11,6 @@
 /// <summary>Starts this program again with <paramref name="arguments"/> (the program's name first, as main gets them).</summary>
 /// <returns>Whether it started (why not is logged).</returns>
 bool MCStartAgain(std::span<const std::string> arguments);
+
+/// <summary>This program's path, or empty when the system won't say.</summary>
+std::filesystem::path MCProgramPath();

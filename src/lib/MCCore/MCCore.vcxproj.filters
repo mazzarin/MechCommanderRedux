@@ -778,6 +778,15 @@
     <ClCompile Include="network\MCMcoApi.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCMcoBridge.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
+    <ClCompile Include="network\MCMcoContent.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
+    <ClCompile Include="network\MCMcoRelay.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMechHandover.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -1223,6 +1232,9 @@
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCThreadPriority.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCTlsLink.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCTlsThreading.cpp">
@@ -2220,6 +2232,15 @@
     <ClInclude Include="network\MCMcoApi.h">
       <Filter>network</Filter>
     </ClInclude>
+    <ClInclude Include="network\MCMcoBridge.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCMcoContent.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCMcoRelay.h">
+      <Filter>network</Filter>
+    </ClInclude>
     <ClInclude Include="network\MCMechHandover.h">
       <Filter>network</Filter>
     </ClInclude>
@@ -2653,6 +2674,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCThreadPriority.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCTlsLink.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCTlsThreading.h">

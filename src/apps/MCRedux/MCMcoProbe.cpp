@@ -2,7 +2,9 @@
 #include "MCMcoProbe.h"
 
 #include "MCConsole.h"
+#include "MCGameFolder.h"
 #include "MCHttpGet.h"
+#include "MCMcoMatch.h"
 #include "MCVersion.h"
 #include "lib/MCRandomId.h"
 #include "network/MCMcoApi.h"
@@ -29,16 +31,30 @@ namespace
     constexpr std::string_view GuestWord = "guest";
     constexpr std::string_view SignInWord = "sign-in";
     constexpr std::string_view CreateWord = "create";
+    constexpr std::string_view JoinWord = "join";
+    constexpr std::string_view HostWord = "host";
     constexpr std::string_view NameOption = "--name";
     constexpr std::string_view SecondsOption = "--seconds";
     constexpr std::string_view UserOption = "--user";
     constexpr std::string_view ServiceOption = "--service";
-    constexpr std::string_view UsageText = "Usage: --mco-probe guest | sign-in | create [--name NAME] [--seconds N] "
-                                           "[--user FOLDER] [--service ADDRESS/]"
+    constexpr std::string_view RoomOption = "--room";
+    constexpr std::string_view PasswordOption = "--password";
+    constexpr std::string_view PlayersOption = "--players";
+    constexpr std::string_view DataOption = "--data";
+    constexpr std::string_view RelayCaOption = "--relay-ca";
+    constexpr std::string_view NoLaunchOption = "--no-launch";
+    constexpr std::string_view UsageText =
+        "Usage: --mco-probe guest | sign-in | create [--name NAME] [--seconds N] [--user FOLDER] [--service ADDRESS/]\n"
+        "       --mco-probe join | host [--name NAME] [--room ROOM] [--password WORD] [--players N] [--data FOLDER]\n"
+        "                   [--user FOLDER] [--service ADDRESS/] [--relay-ca FILE] [--no-launch]\n"
+        "join and host play as a guest: join a Redux room (ROOM, else picked), or host one (its name ROOM, else asked),\n"
+        "and play its matches with this game, carried over MCO's relay."
 #ifdef _WIN32
-                                           "\nStart it with start /wait, so the terminal waits for it."
+        "\nStart it with start /wait, so the terminal waits for it."
 #endif
         ;
+    /// <summary>The most a relay's trusted authority file may be (a lab's PEM).</summary>
+    constexpr uintmax_t AnchorMost = 1 << 20;
 
     /// <summary>The save folder's file keeping the device's seed, and its line's key.</summary>
     constexpr std::string_view ConfigFile = "mco.cfg";
@@ -62,24 +78,7 @@ namespace
 
     std::string Failure(const MCMcoApi::MCError& error)
     {
-        std::string line = std::format("failed: {}", Shown(error.Message));
-
-        if (!error.Code.empty())
-        {
-            line += std::format(" (code {})", Shown(error.Code));
-        }
-
-        if (error.Status != 0)
-        {
-            line += std::format(" (HTTP {})", error.Status);
-        }
-
-        if (error.RetryAfter != 0)
-        {
-            line += std::format(" (try again in {} s)", error.RetryAfter);
-        }
-
-        return line;
+        return std::format("failed: {}", MCMcoApi::Describe(error));
     }
 
     struct MCSystem
@@ -236,6 +235,31 @@ namespace
         MCProbe& operator=(const MCProbe&) = delete;
 
         ~MCProbe() { Leave(); }
+
+        /// <summary>Joins or hosts a room as a guest's profile, made new, and plays its matches.</summary>
+        int Play(std::string_view name, bool host, const MCMcoMatch::MCOptions& options)
+        {
+            const std::optional<std::string> player = PlayerName(name);
+
+            if (!player)
+            {
+                return 1;
+            }
+
+            MCMcoApi::MCPeer guest{.ClientId = MCMcoApi::NewClientId(), .Username = *player};
+            std::cout << std::format("Registering {} in the lobby... ", Shown(guest.Username)) << std::flush;
+
+            if (const auto registered = _Service.Register(guest); !registered)
+            {
+                Say(Failure(registered.error()));
+                return 1;
+            }
+
+            _Registered = guest;
+            Say("registered.");
+            return host ? MCMcoMatch::Host(_Service, *_Registered, options)
+                        : MCMcoMatch::Join(_Service, *_Registered, options);
+        }
 
         int Guest(std::string_view name)
         {
@@ -499,8 +523,19 @@ int MCMcoProbe::Run(std::span<const std::string_view> arguments)
     const std::string_view mode = arguments[0];
     std::string_view name;
     std::string_view user;
+    std::string_view data;
+    std::string_view relayCa;
     std::string site(MCMcoApi::Site);
     int seconds = 0;
+    MCMcoMatch::MCOptions options;
+    const auto number = [](std::string_view value, int least, int most) -> std::optional<int>
+    {
+        int parsed = 0;
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+        return error == std::errc() && end == value.data() + value.size() && parsed >= least && parsed <= most
+                   ? std::optional<int>(parsed)
+                   : std::nullopt;
+    };
 
     for (size_t i = 1; i < arguments.size(); i++)
     {
@@ -529,14 +564,47 @@ int MCMcoProbe::Run(std::span<const std::string_view> arguments)
         }
         else if (arguments[i] == SecondsOption && hasValue)
         {
-            const std::string_view value = arguments[++i];
-            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), seconds);
+            const std::optional<int> value = number(arguments[++i], 0, MostSeconds);
 
-            if (error != std::errc() || end != value.data() + value.size() || seconds < 0 || seconds > MostSeconds)
+            if (!value)
             {
                 Say(std::format("--seconds takes 0 to {}.", MostSeconds));
                 return 1;
             }
+
+            seconds = *value;
+        }
+        else if (arguments[i] == PlayersOption && hasValue)
+        {
+            const std::optional<int> value = number(arguments[++i], MCMcoApi::MatchFewest, MCMcoApi::RoomMost);
+
+            if (!value)
+            {
+                Say(std::format("--players takes {} to {}.", MCMcoApi::MatchFewest, MCMcoApi::RoomMost));
+                return 1;
+            }
+
+            options.MaxPlayers = *value;
+        }
+        else if (arguments[i] == RoomOption && hasValue)
+        {
+            options.Room = arguments[++i];
+        }
+        else if (arguments[i] == PasswordOption && hasValue)
+        {
+            options.Password = arguments[++i];
+        }
+        else if (arguments[i] == DataOption && hasValue)
+        {
+            data = arguments[++i];
+        }
+        else if (arguments[i] == RelayCaOption && hasValue)
+        {
+            relayCa = arguments[++i];
+        }
+        else if (arguments[i] == NoLaunchOption)
+        {
+            options.Launch = false;
         }
         else
         {
@@ -545,7 +613,9 @@ int MCMcoProbe::Run(std::span<const std::string_view> arguments)
         }
     }
 
-    if (mode != GuestWord && mode != SignInWord && mode != CreateWord)
+    const bool playing = mode == JoinWord || mode == HostWord;
+
+    if (mode != GuestWord && mode != SignInWord && mode != CreateWord && !playing)
     {
         Say(UsageText);
         return 1;
@@ -557,6 +627,36 @@ int MCMcoProbe::Run(std::span<const std::string_view> arguments)
     {
         Say(std::format("No save folder: {}", SDL_GetError()));
         return 1;
+    }
+
+    if (playing)
+    {
+        options.UserFolder = *folder;
+        options.UserGiven = !user.empty();
+        options.DataGiven = !data.empty();
+        options.DataFolder = options.DataGiven ? MCFileSystem::FromUtf8(data) : MCGameFolder::Remembered(*folder);
+
+        if (options.DataFolder.empty() || !MCGameFolder::HasGameData(options.DataFolder))
+        {
+            Say("No game data: start the game once to choose its folder, or name it with --data FOLDER.");
+            return 1;
+        }
+
+        if (!relayCa.empty())
+        {
+            const std::filesystem::path anchor = MCFileSystem::FromUtf8(relayCa);
+            std::error_code error;
+            const uintmax_t size = std::filesystem::file_size(anchor, error);
+            std::ifstream in(anchor, std::ios::binary);
+
+            if (error || size > AnchorMost || !in)
+            {
+                Say(std::format("--relay-ca: {} can't be read.", Shown(relayCa)));
+                return 1;
+            }
+
+            options.RelayAnchor.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
     }
 
     const auto seed = DeviceSeed(*folder);
@@ -580,6 +680,11 @@ int MCMcoProbe::Run(std::span<const std::string_view> arguments)
     const std::unique_ptr<MCHttpSource::MCGet> transfer = MCMakeHttpGet();
     MCMcoApi::MCService service(*transfer, std::move(client));
     MCProbe probe(service, seconds);
+
+    if (playing)
+    {
+        return probe.Play(name, mode == HostWord, options);
+    }
 
     if (mode == GuestWord)
     {

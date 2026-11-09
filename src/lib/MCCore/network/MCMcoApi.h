@@ -128,6 +128,71 @@ namespace MCMcoApi
         size_t Players = 0;
     };
 
+    /// <summary>The Redux engine's protocol a room plays (the relay's, mco-redux-stock/2).</summary>
+    inline constexpr int32_t EngineProtocol = 2;
+    /// <summary>The most players a room holds, and the fewest a match starts with (MCO's launcher's rule).</summary>
+    inline constexpr int32_t RoomMost = 6;
+    inline constexpr int32_t MatchFewest = 2;
+    /// <summary>The lowest port a relay listens on, as the launcher holds a match to.</summary>
+    inline constexpr int32_t RelayPortLeast = 1024;
+
+    /// <summary>A Redux match, as the host's create_session or a guest's start_signal gives it.</summary>
+    struct MCMatch
+    {
+        /// <summary>The match's id (32 hex), its session's.</summary>
+        std::string SessionHex;
+        std::string EngineBuild;
+        std::string EngineContent;
+        std::string RoomId;
+        /// <summary>The relay the match is played through.</summary>
+        std::string RelayHost;
+        uint16_t RelayPort = 0;
+        int32_t Capacity = 0;
+    };
+
+    /// <summary>The match's ticket to the relay (redux_ticket's admission), checked against the match and the player.</summary>
+    struct MCAdmission
+    {
+        std::string Ticket;
+        /// <summary>"host" or "join".</summary>
+        std::string Role;
+    };
+
+    /// <summary>A player in a room.</summary>
+    struct MCRoomPlayer
+    {
+        std::string ClientId;
+        std::string Username;
+        bool Ready = false;
+        bool Host = false;
+    };
+
+    /// <summary>Where a player sits: the room it registered in and how far its polls have read the room's messages.</summary>
+    struct MCSeat
+    {
+        std::string Room;
+        /// <summary>The room's id (32 hex), once known (a joined room's; a hosted one's from its first poll).</summary>
+        std::string RoomId;
+        bool Host = false;
+        bool Ready = false;
+        int64_t LastMessageId = 0;
+    };
+
+    /// <summary>A room as one poll found it.</summary>
+    struct MCRoomState
+    {
+        std::string Name;
+        std::vector<MCRoomPlayer> Players;
+        /// <summary>The build and content the room plays (its settings').</summary>
+        std::string EngineBuild;
+        std::string EngineContent;
+        /// <summary>The match the host started, when there is one (a guest's start_signal).</summary>
+        std::optional<MCMatch> Start;
+        /// <summary>The player is no longer in the room, and why (MCO's exit_reason, its kind).</summary>
+        bool Gone = false;
+        std::string GoneWhy;
+    };
+
     /// <summary>A form's fields, in order.</summary>
     using MCFields = std::vector<std::pair<std::string, std::string>>;
 
@@ -164,6 +229,12 @@ namespace MCMcoApi
     /// character (C0, DEL, C1: an escape sequence), text-direction control and byte that isn't UTF-8 as '?'.
     /// </summary>
     std::string Printable(std::string_view text);
+
+    /// <summary>
+    /// <paramref name="error"/> as a line for the player: MCO's text, then its code, the HTTP status and how long to
+    /// wait when there are ones (each <see cref="Printable"/>).
+    /// </summary>
+    std::string Describe(const MCError& error);
 
     /// <summary>MCO's two services, asked through the platform's transfer (one request at a time, on this thread).</summary>
     class MCService
@@ -210,8 +281,56 @@ namespace MCMcoApi
         /// <summary>Takes <paramref name="peer"/> out of the lobby (unregister_peer).</summary>
         MCResult<void> Unregister(MCPeer& peer);
 
+        /// <summary>
+        /// Joins <paramref name="room"/> (register_peer into it, READY as asked), saying the game plays its build with
+        /// <paramref name="content"/> (our game data's fingerprint, which must be the room's).
+        /// </summary>
+        MCResult<MCSeat> JoinRoom(MCPeer& peer, const MCRoom& room, std::string_view password, std::string_view content,
+                                  bool ready);
+
+        /// <summary>
+        /// Hosts a room named <paramref name="name"/> for <paramref name="maxPlayers"/>, playing <paramref name="build"/>
+        /// (the stock build) with <paramref name="content"/>.
+        /// </summary>
+        MCResult<MCSeat> HostRoom(MCPeer& peer, std::string_view name, int32_t maxPlayers, std::string_view password,
+                                  std::string_view build, std::string_view content);
+
+        /// <summary>
+        /// The room as it is (room_poll), the seat's cursor carried on; while a match runs, its session and whether this
+        /// player's game is in it (as MCO's launcher says, or the room drops the player).
+        /// </summary>
+        MCResult<MCRoomState> RoomPoll(MCPeer& peer, MCSeat& seat, std::string_view matchSession = {},
+                                       bool matchRunning = false);
+
+        /// <summary>READY, or not (heartbeat).</summary>
+        MCResult<void> SetReady(MCPeer& peer, MCSeat& seat, bool ready);
+
+        /// <summary>The host's START (create_session): the match, for the room's build and content.</summary>
+        MCResult<MCMatch> CreateSession(MCPeer& peer, std::string_view build, std::string_view content);
+
+        /// <summary>The host's game is hosting through the relay (publish_ready).</summary>
+        MCResult<void> PublishReady(MCPeer& peer, std::string_view session);
+
+        /// <summary>The host's match is over (close_session).</summary>
+        MCResult<void> CloseSession(MCPeer& peer, std::string_view session);
+
+        /// <summary>A guest's match that's gone from the relay (report_session_missing).</summary>
+        MCResult<void> ReportSessionMissing(MCPeer& peer, std::string_view session);
+
+        /// <summary>
+        /// The match's ticket to its relay (redux_ticket), for the relay's <paramref name="epoch"/>, held to the match,
+        /// the player and its role as the launcher holds it.
+        /// </summary>
+        MCResult<MCAdmission> Ticket(MCPeer& peer, const MCMatch& match, std::string_view epoch, bool host);
+
+        /// <summary>Leaves the room for the lobby (register_peer into the Lobby).</summary>
+        MCResult<void> LeaveRoom(MCPeer& peer);
+
     private:
         struct MCAnswer;
+
+        /// <summary>A registration (register_peer) with <paramref name="extra"/>, its token kept and its player checked.</summary>
+        MCResult<MCAnswer> RegisterWith(MCPeer& peer, const MCFields& extra);
 
         /// <summary>Asks the account service with <paramref name="body"/> (its JSON, its action in it).</summary>
         MCResult<MCAnswer> AskAccount(std::string body);

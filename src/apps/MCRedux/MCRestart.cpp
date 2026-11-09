@@ -32,29 +32,12 @@ namespace
     constexpr std::string_view OpenTool = "/usr/bin/open";
     constexpr std::string_view NewCopySwitch = "-n";
     constexpr std::string_view ArgumentsSwitch = "--args";
-
-    /// <summary>This program's path, or empty when the system won't say.</summary>
-    std::filesystem::path ProgramPath()
-    {
-        uint32_t size = 0;
-        _NSGetExecutablePath(nullptr, &size);
-        std::string path(size, '\0');
-
-        if (_NSGetExecutablePath(path.data(), &size) != 0)
-        {
-            return {};
-        }
-
-        path.resize(std::strlen(path.c_str()));
-        return std::filesystem::path(path);
-    }
 #endif
 }
 
-bool MCStartAgain([[maybe_unused]] std::span<const std::string> arguments)
+std::filesystem::path MCProgramPath()
 {
 #ifdef _WIN32
-    // Windows' own command line, as it was given: nothing lost turning it into words and back.
     std::wstring program(FirstPathLength, L'\0');
     DWORD length = 0;
 
@@ -63,13 +46,35 @@ bool MCStartAgain([[maybe_unused]] std::span<const std::string> arguments)
         program.resize(program.size() * 2);
     }
 
-    if (length == 0)
+    program.resize(length);
+    return std::filesystem::path(program);
+#else
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string path(size, '\0');
+
+    if (_NSGetExecutablePath(path.data(), &size) != 0)
+    {
+        return {};
+    }
+
+    path.resize(std::strlen(path.c_str()));
+    return std::filesystem::path(path);
+#endif
+}
+
+bool MCStartAgain([[maybe_unused]] std::span<const std::string> arguments)
+{
+#ifdef _WIN32
+    // Windows' own command line, as it was given: nothing lost turning it into words and back.
+    const std::wstring program = MCProgramPath().wstring();
+
+    if (program.empty())
     {
         SDL_Log("Updater: the game can't start again: its path is unknown (error %lu)", GetLastError());
         return false;
     }
 
-    program.resize(length);
     std::wstring commandLine = GetCommandLineW();
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -87,7 +92,7 @@ bool MCStartAgain([[maybe_unused]] std::span<const std::string> arguments)
     CloseHandle(process.hProcess);
     return true;
 #else
-    const std::filesystem::path program = ProgramPath();
+    const std::filesystem::path program = MCProgramPath();
 
     if (program.empty())
     {

@@ -24,8 +24,12 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <mutex>
+#include <thread>
+#include <vector>
 
 namespace
 {
@@ -196,6 +200,11 @@ std::optional<uint32_t> MCSocketTransport::Resolve(std::string_view host)
 
 MCSocket::Handle MCSocketTransport::ListenTcp(uint16_t port)
 {
+    return ListenTcpOn(0, port);
+}
+
+MCSocket::Handle MCSocketTransport::ListenTcpOn(uint32_t ip, uint16_t port)
+{
     if (!Startup())
     {
         return MCSocket::InvalidHandle;
@@ -208,7 +217,7 @@ MCSocket::Handle MCSocketTransport::ListenTcp(uint16_t port)
         return MCSocket::InvalidHandle;
     }
 
-    const sockaddr_in local = ToSockaddr(MCSocket::Address{0, port});
+    const sockaddr_in local = ToSockaddr(MCSocket::Address{ip, port});
 
 #ifndef _WIN32
     // Port (personal): a host starting again on its port (a restart into an update, network/MCLobbyUpdate.h) takes it
@@ -391,6 +400,11 @@ int MCSocketTransport::Receive(MCSocket::Handle socket, std::span<uint8_t> data)
 
 MCSocket::Handle MCSocketTransport::OpenUdp(uint16_t port)
 {
+    return OpenUdpOn(0, port);
+}
+
+MCSocket::Handle MCSocketTransport::OpenUdpOn(uint32_t ip, uint16_t port)
+{
     if (!Startup())
     {
         return MCSocket::InvalidHandle;
@@ -405,7 +419,7 @@ MCSocket::Handle MCSocketTransport::OpenUdp(uint16_t port)
 
     const int enable = 1;
     setsockopt(socket, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&enable), sizeof(enable));
-    const sockaddr_in local = ToSockaddr(MCSocket::Address{0, port});
+    const sockaddr_in local = ToSockaddr(MCSocket::Address{ip, port});
 
     if (bind(socket, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) != 0 || !SetNonBlocking(socket))
     {
@@ -573,4 +587,57 @@ bool MCSocketTransport::HasNetwork()
     freeifaddrs(interfaces);
     return found;
 #endif
+}
+
+int MCSocketTransport::Wait(std::span<MCWaiting> sockets, int timeoutMs)
+{
+    // Only the open sockets are asked about (where each came from kept beside it): a closed one is never ready.
+    std::vector<pollfd> polled;
+    std::vector<size_t> from;
+    polled.reserve(sockets.size());
+    from.reserve(sockets.size());
+
+    for (size_t i = 0; i < sockets.size(); i++)
+    {
+        sockets[i].Ready = false;
+
+        if (sockets[i].Socket != MCSocket::InvalidHandle)
+        {
+            pollfd entry{};
+            entry.fd = ToNative(sockets[i].Socket);
+            entry.events = sockets[i].Write ? POLLOUT : POLLIN;
+            polled.push_back(entry);
+            from.push_back(i);
+        }
+    }
+
+    if (polled.empty())
+    {
+        // Nothing to wait on (WSAPoll refuses an empty set): wait out the time as poll would.
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::max(timeoutMs, 0)));
+        return 0;
+    }
+
+#ifdef _WIN32
+    const int ready = WSAPoll(polled.data(), static_cast<ULONG>(polled.size()), timeoutMs);
+#else
+    const int ready = poll(polled.data(), static_cast<nfds_t>(polled.size()), timeoutMs);
+
+    if (ready < 0 && errno == EINTR)
+    {
+        return 0;
+    }
+#endif
+
+    if (ready <= 0)
+    {
+        return ready < 0 ? -1 : 0;
+    }
+
+    for (size_t i = 0; i < polled.size(); i++)
+    {
+        sockets[from[i]].Ready = polled[i].revents != 0;
+    }
+
+    return ready;
 }

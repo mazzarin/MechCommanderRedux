@@ -207,4 +207,30 @@ public:
     /// that's up and isn't the loopback (sockets starting says nothing of a cable or Wi-Fi).
     /// </summary>
     static bool HasNetwork();
+
+    /// <summary>
+    /// Port-only (Redux HD): <see cref="ListenTcp"/> on the address <paramref name="ip"/> (host order) alone, as
+    /// <see cref="MCSocket::LoopbackIp"/> keeps a listener to this computer.
+    /// </summary>
+    MCSocket::Handle ListenTcpOn(uint32_t ip, uint16_t port);
+
+    /// <summary>Port-only (Redux HD): <see cref="OpenUdp"/> on the address <paramref name="ip"/> (host order) alone.</summary>
+    MCSocket::Handle OpenUdpOn(uint32_t ip, uint16_t port);
+
+    /// <summary>A socket <see cref="Wait"/> watches, and what it found.</summary>
+    struct MCWaiting
+    {
+        MCSocket::Handle Socket = MCSocket::InvalidHandle;
+        /// <summary>Waits for room to send rather than for something to read (or a closed connection).</summary>
+        bool Write = false;
+        /// <summary>Set by <see cref="Wait"/>: the socket is ready (or failed, which its next call says).</summary>
+        bool Ready = false;
+    };
+
+    /// <summary>
+    /// Port-only (Redux HD): waits up to <paramref name="timeoutMs"/> milliseconds for any of <paramref name="sockets"/>
+    /// to be ready, marking those that are; an <see cref="MCSocket::InvalidHandle"/> is never ready.
+    /// </summary>
+    /// <returns>How many are ready (0 when the time ran out), or -1 when the wait failed.</returns>
+    static int Wait(std::span<MCWaiting> sockets, int timeoutMs);
 };

@@ -35,6 +35,20 @@ namespace
     /// <summary>An account's name when its profile names none, as the launcher names it.</summary>
     constexpr std::string_view DefaultUsername = "Player";
 
+    constexpr std::string_view ReduxEngineProtocol = "2";
+    constexpr std::string_view HostFlag = "1";
+    constexpr std::string_view ReadyFlag = "1";
+    /// <summary>The room's messages a poll asks for at once, as the launcher asks.</summary>
+    constexpr std::string_view RoomMessagesAsked = "50";
+    /// <summary>A match's role on the relay.</summary>
+    constexpr std::string_view HostRole = "host";
+    constexpr std::string_view JoinRole = "join";
+    /// <summary>A ticket's length and characters the launcher takes (letters, digits, '-', '.', '_').</summary>
+    constexpr size_t TicketFewest = 64;
+    constexpr size_t TicketMost = 3500;
+    constexpr int32_t PortMost = 65535;
+    constexpr std::string_view NoMatchCode = "invalid_match";
+
     constexpr std::string_view RegisterAction = "register_peer";
     constexpr std::string_view RecoverAction = "recover_peer";
     constexpr std::string_view UnregisterAction = "unregister_peer";
@@ -268,6 +282,87 @@ namespace
     }
 
     /// <summary>
+    /// A match as the host's create_session or a guest's start_signal gives it, held to what the launcher takes (its
+    /// StartAsync): the Redux engine's protocol, 32-hex session and room, a relay named by DNS on a port it allows.
+    /// </summary>
+    MCMcoApi::MCResult<MCMcoApi::MCMatch> MatchFrom(const Json& session)
+    {
+        MCMcoApi::MCMatch match{.SessionHex = TextOf(session, "session_hex"),
+                                .EngineBuild = TextOf(session, "engine_build"),
+                                .EngineContent = TextOf(session, "engine_content"),
+                                .RoomId = TextOf(session, "room_id"),
+                                .RelayHost = TextOf(session, "stock_host"),
+                                .Capacity = CountOf(NumberOf(session, "capacity", 0))};
+        const int64_t port = NumberOf(session, "stock_port", 0);
+        const auto refused = [](std::string_view why)
+        { return std::unexpected(MCMcoApi::MCError{.Message = std::string(why), .Code = std::string(NoMatchCode)}); };
+
+        if (NumberOf(session, "engine_protocol", 0) != MCMcoApi::EngineProtocol)
+        {
+            return refused("The match plays another Redux protocol.");
+        }
+
+        if (!MCMcoApi::IsHex(match.SessionHex, MCMcoApi::ClientIdDigits) || !MCMcoApi::IsHex(match.RoomId, MCMcoApi::ClientIdDigits))
+        {
+            return refused("The match has no session.");
+        }
+
+        const bool named = !match.RelayHost.empty() && match.RelayHost.find('.') != std::string::npos &&
+                           std::ranges::all_of(match.RelayHost, [](char c)
+                                               { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '.' || c == '-'; });
+
+        if (!named || port < MCMcoApi::RelayPortLeast || port > PortMost)
+        {
+            return refused("The match's relay isn't one.");
+        }
+
+        match.RelayPort = static_cast<uint16_t>(port);
+        return match;
+    }
+
+    /// <summary>A room's players, as its poll lists them.</summary>
+    std::vector<MCMcoApi::MCRoomPlayer> PlayersFrom(const Json& answer)
+    {
+        std::vector<MCMcoApi::MCRoomPlayer> players;
+        const auto peers = answer.find("peers");
+
+        if (peers == answer.end() || !peers->is_array())
+        {
+            return players;
+        }
+
+        for (const Json& peer : *peers)
+        {
+            if (peer.is_object())
+            {
+                players.push_back({.ClientId = TextOf(peer, "client_id"),
+                                   .Username = TextOf(peer, "username"),
+                                   .Ready = FlagOf(peer, "is_ready"),
+                                   .Host = FlagOf(peer, "is_host")});
+            }
+        }
+
+        return players;
+    }
+
+    /// <summary>The newest message id a room's answer has had: its own, or its messages' highest.</summary>
+    int64_t RoomCursorFrom(const Json& answer, int64_t cursor)
+    {
+        cursor = std::max(cursor, NumberOf(answer, "last_id", cursor));
+        cursor = std::max(cursor, NumberOf(answer, "room_last_message_id", cursor));
+
+        if (const auto messages = answer.find("messages"); messages != answer.end() && messages->is_array())
+        {
+            for (const Json& message : *messages)
+            {
+                cursor = std::max(cursor, NumberOf(message, "id", cursor));
+            }
+        }
+
+        return cursor;
+    }
+
+    /// <summary>
     /// Appends <paramref name="text"/> to a form's body as .NET's FormUrlEncodedContent does: letters, digits and
     /// "-_.~" as they are, a space as '+', every other byte as %XX.
     /// </summary>
@@ -467,6 +562,28 @@ namespace MCMcoApi
         return shown;
     }
 
+    std::string Describe(const MCError& error)
+    {
+        std::string line = Printable(error.Message);
+
+        if (!error.Code.empty())
+        {
+            line += std::format(" (code {})", Printable(error.Code));
+        }
+
+        if (error.Status != 0)
+        {
+            line += std::format(" (HTTP {})", error.Status);
+        }
+
+        if (error.RetryAfter != 0)
+        {
+            line += std::format(" (try again in {} s)", error.RetryAfter);
+        }
+
+        return line;
+    }
+
     MCService::MCService(MCHttpSource::MCGet& transfer, MCClient client)
         : _Transfer(transfer), _Client(std::move(client))
     {
@@ -566,11 +683,23 @@ namespace MCMcoApi
                                 {"status", std::string(OnlineStatus)},
                                 {"stream_url", ""},
                                 {"away_message", ""}};
-        const auto answer = AskChat(RegisterAction, extra, peer);
+        const auto answer = RegisterWith(peer, extra);
 
         if (!answer)
         {
             return std::unexpected(answer.error());
+        }
+
+        return {};
+    }
+
+    MCResult<MCService::MCAnswer> MCService::RegisterWith(MCPeer& peer, const MCFields& extra)
+    {
+        auto answer = AskChat(RegisterAction, extra, peer);
+
+        if (!answer)
+        {
+            return answer;
         }
 
         // The answer's peer, when it names one, must be this player.
@@ -596,7 +725,247 @@ namespace MCMcoApi
                 MCError{.Message = "The lobby gave no peer token.", .Code = std::string(InvalidResponseCode)});
         }
 
+        return answer;
+    }
+
+    MCResult<MCSeat> MCService::JoinRoom(MCPeer& peer, const MCRoom& room, std::string_view password,
+                                         std::string_view content, bool ready)
+    {
+        // The launcher's fields for a join, in its order: the room, then (a Redux room) the engine it plays.
+        MCFields extra = {{"username", peer.Username},
+                          {"room", room.Name},
+                          {"is_host", std::string(Zero)},
+                          {"max_players", std::to_string(room.MaxPlayers)},
+                          {"password", std::string(password)},
+                          {"is_ready", ready ? std::string(ReadyFlag) : std::string(Zero)}};
+
+        if (IsHex(room.RoomId, ClientIdDigits))
+        {
+            extra.emplace_back("room_id", room.RoomId);
+        }
+
+        extra.insert(extra.end(), {{"engine", std::string(ReduxEngine)},
+                                   {"engine_protocol", std::string(ReduxEngineProtocol)},
+                                   {"engine_build", room.EngineBuild},
+                                   {"engine_content", std::string(content)}});
+        const auto answer = RegisterWith(peer, extra);
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        return MCSeat{.Room = room.Name,
+                      .RoomId = room.RoomId,
+                      .Host = false,
+                      .Ready = ready,
+                      .LastMessageId = NumberOf(answer->Object, "room_last_message_id", 0)};
+    }
+
+    MCResult<MCSeat> MCService::HostRoom(MCPeer& peer, std::string_view name, int32_t maxPlayers,
+                                         std::string_view password, std::string_view build, std::string_view content)
+    {
+        const MCFields extra = {{"username", peer.Username},
+                                {"room", std::string(name)},
+                                {"is_host", std::string(HostFlag)},
+                                {"max_players", std::to_string(maxPlayers)},
+                                {"description", ""},
+                                {"password", std::string(password)},
+                                {"is_ready", std::string(ReadyFlag)},
+                                {"engine", std::string(ReduxEngine)},
+                                {"engine_protocol", std::string(ReduxEngineProtocol)},
+                                {"engine_build", std::string(build)},
+                                {"engine_content", std::string(content)}};
+        const auto answer = RegisterWith(peer, extra);
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        MCSeat seat{.Room = std::string(name),
+                    .Host = true,
+                    .Ready = true,
+                    .LastMessageId = NumberOf(answer->Object, "room_last_message_id", 0)};
+
+        if (const auto named = answer->Object.find("peer"); named != answer->Object.end() && named->is_object())
+        {
+            if (const std::string roomId = TextOf(*named, "room_id"); IsHex(roomId, ClientIdDigits))
+            {
+                seat.RoomId = roomId;
+            }
+        }
+
+        return seat;
+    }
+
+    MCResult<MCRoomState> MCService::RoomPoll(MCPeer& peer, MCSeat& seat, std::string_view matchSession,
+                                              bool matchRunning)
+    {
+        MCFields extra = {{"room", seat.Room}};
+
+        if (IsHex(seat.RoomId, ClientIdDigits))
+        {
+            extra.emplace_back("room_id", seat.RoomId);
+        }
+
+        extra.insert(extra.end(), {{"last_id", std::to_string(seat.LastMessageId)},
+                                   {"limit", std::string(RoomMessagesAsked)},
+                                   {"mention_cursor", std::string(Zero)},
+                                   {"is_ready", seat.Ready ? std::string(ReadyFlag) : std::string(Zero)}});
+
+        if (IsHex(matchSession, ClientIdDigits))
+        {
+            extra.insert(extra.end(), {{"redux_process_session", std::string(matchSession)},
+                                       {"redux_process_running", matchRunning ? std::string(ReadyFlag) : std::string(Zero)}});
+        }
+
+        const auto answer = AskChat("room_poll", extra, peer);
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        const Json& object = answer->Object;
+        seat.LastMessageId = RoomCursorFrom(object, seat.LastMessageId);
+        MCRoomState state;
+        state.Players = PlayersFrom(object);
+
+        if (const auto settings = object.find("room_settings"); settings != object.end() && settings->is_object())
+        {
+            state.Name = TextOf(*settings, "name", seat.Room);
+            state.EngineBuild = TextOf(*settings, "engine_build");
+            state.EngineContent = TextOf(*settings, "engine_content");
+        }
+
+        // The player's own registration says which room it is in: another (or none) is the room gone for it.
+        bool elsewhere = false;
+
+        if (const auto named = object.find("peer"); named != object.end() && named->is_object())
+        {
+            const std::string roomId = TextOf(*named, "room_id");
+
+            if (IsHex(roomId, ClientIdDigits) && !IsHex(seat.RoomId, ClientIdDigits) && seat.Host)
+            {
+                seat.RoomId = roomId;
+            }
+
+            elsewhere = IsHex(seat.RoomId, ClientIdDigits) && IsHex(roomId, ClientIdDigits)
+                            ? !SameId(roomId, seat.RoomId)
+                            : TextOf(*named, "room", seat.Room) != seat.Room;
+        }
+
+        if (FlagOf(object, "removed") || elsewhere)
+        {
+            state.Gone = true;
+
+            if (const auto reason = object.find("exit_reason"); reason != object.end() && reason->is_object())
+            {
+                state.GoneWhy = TextOf(*reason, "kind");
+            }
+        }
+
+        if (const auto start = object.find("start_signal"); start != object.end() && start->is_object())
+        {
+            if (auto match = MatchFrom(*start))
+            {
+                state.Start = std::move(*match);
+            }
+        }
+
+        return state;
+    }
+
+    MCResult<void> MCService::SetReady(MCPeer& peer, MCSeat& seat, bool ready)
+    {
+        const auto answer = AskChat("heartbeat", {{"is_ready", ready ? std::string(ReadyFlag) : std::string(Zero)}}, peer);
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        seat.Ready = ready;
         return {};
+    }
+
+    MCResult<MCMatch> MCService::CreateSession(MCPeer& peer, std::string_view build, std::string_view content)
+    {
+        // The room's identity as the launcher adds it (AddReduxRoomIdentity), then no countdown.
+        const MCFields extra = {{"engine", std::string(ReduxEngine)},
+                                {"engine_build", std::string(build)},
+                                {"engine_content", std::string(content)},
+                                {"launch_countdown", std::string(Zero)}};
+        const auto answer = AskChat("create_session", extra, peer);
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        return MatchFrom(answer->Object);
+    }
+
+    MCResult<void> MCService::PublishReady(MCPeer& peer, std::string_view session)
+    {
+        const auto answer = AskChat("publish_ready", {{"session_hex", std::string(session)}}, peer);
+        return answer ? MCResult<void>() : std::unexpected(answer.error());
+    }
+
+    MCResult<void> MCService::CloseSession(MCPeer& peer, std::string_view session)
+    {
+        const auto answer = AskChat("close_session", {{"session_hex", std::string(session)}}, peer);
+        return answer ? MCResult<void>() : std::unexpected(answer.error());
+    }
+
+    MCResult<void> MCService::ReportSessionMissing(MCPeer& peer, std::string_view session)
+    {
+        const auto answer = AskChat("report_session_missing", {{"session_hex", std::string(session)}}, peer);
+        return answer ? MCResult<void>() : std::unexpected(answer.error());
+    }
+
+    MCResult<MCAdmission> MCService::Ticket(MCPeer& peer, const MCMatch& match, std::string_view epoch, bool host)
+    {
+        const MCFields extra = {{"session_hex", match.SessionHex},
+                                {"engine_build", match.EngineBuild},
+                                {"engine_content", match.EngineContent},
+                                {"relay_epoch", std::string(epoch)}};
+        const auto answer = AskChat("redux_ticket", extra, peer);
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        // As the launcher holds the admission: for this match's relay, room and player, in this role, and a ticket of
+        // the relay's characters.
+        const auto admission = answer->Object.find("admission");
+        const Json none = Json::object();
+        const Json& given = admission != answer->Object.end() && admission->is_object() ? *admission : none;
+        MCAdmission ticket{.Ticket = TextOf(given, "ticket"), .Role = TextOf(given, "role")};
+        const bool ticketShaped = ticket.Ticket.size() >= TicketFewest && ticket.Ticket.size() <= TicketMost &&
+                                  std::ranges::all_of(ticket.Ticket, [](char c)
+                                                      { return std::isalnum(static_cast<unsigned char>(c)) != 0 ||
+                                                               c == '-' || c == '.' || c == '_'; });
+        const bool forThis = NumberOf(given, "protocol", 0) == EngineProtocol &&
+                             TextOf(given, "host") == match.RelayHost &&
+                             NumberOf(given, "port", 0) == match.RelayPort && SameId(TextOf(given, "peer"), peer.ClientId) &&
+                             TextOf(given, "room") == match.SessionHex && TextOf(given, "room_id") == match.RoomId &&
+                             ticket.Role == (host ? HostRole : JoinRole);
+
+        if (!ticketShaped || !forThis)
+        {
+            return std::unexpected(MCError{.Message = "The relay's admission couldn't be checked.",
+                                           .Code = std::string(InvalidResponseCode)});
+        }
+
+        return ticket;
+    }
+
+    MCResult<void> MCService::LeaveRoom(MCPeer& peer)
+    {
+        return Register(peer);
     }
 
     MCResult<MCLobby> MCService::Lobby(MCPeer& peer)

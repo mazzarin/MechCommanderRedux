@@ -19,6 +19,7 @@
     <ClCompile Include="MCGameFolder.cpp" />
     <ClCompile Include="MCHttpGetWin.cpp" />
     <ClCompile Include="MCMemorySystemWin.cpp" />
+    <ClCompile Include="MCSystemTrustWin.cpp" />
     <ClCompile Include="MCTelemetryWin.cpp" />
     <ClCompile Include="MCWebSocketWin.cpp" />
     <ClCompile Include="stdafx.cpp" />
@@ -403,6 +404,7 @@
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCMemorySystem.h" />
+    <ClInclude Include="MCSystemTrust.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />

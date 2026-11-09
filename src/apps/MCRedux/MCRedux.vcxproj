@@ -308,6 +308,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="MCFirstStart.cpp" />
+    <ClCompile Include="MCGameCopy.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="MCGameFolder.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -315,6 +318,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="MCIceTrial.cpp" />
+    <ClCompile Include="MCMcoMatch.cpp" />
     <ClCompile Include="MCMcoProbe.cpp" />
     <ClCompile Include="MCMemorySystemWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -324,6 +328,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="MCSetupRunWin.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="MCSystemTrustWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="MCTelemetryWin.cpp">
@@ -339,13 +346,16 @@
     <ClInclude Include="MCContentAtStart.h" />
     <ClInclude Include="MCCrashTrace.h" />
     <ClInclude Include="MCFirstStart.h" />
+    <ClInclude Include="MCGameCopy.h" />
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCIceTrial.h" />
+    <ClInclude Include="MCMcoMatch.h" />
     <ClInclude Include="MCMcoProbe.h" />
     <ClInclude Include="MCMemorySystem.h" />
     <ClInclude Include="MCRestart.h" />
     <ClInclude Include="MCSetupRun.h" />
+    <ClInclude Include="MCSystemTrust.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />

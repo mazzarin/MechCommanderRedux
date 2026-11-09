@@ -39,6 +39,8 @@
 #include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteTree.h"
 #include "sprite/MCVfxAppearance.h"
+#include "vfx/MCAgShape.h"
+#include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
 
 #include <random>
@@ -2288,4 +2290,210 @@ TEST_CASE_ISOLATED("game: a server's move chunk with room left says whether the 
     orders.PathType = keptType;
     orders.NumGlobalSteps = keptLegs;
     path.GlobalStep = keptLeg;
+}
+
+namespace
+{
+    /// <summary>
+    /// A VFX shape table listing <paramref name="held"/> 1x1 frames it holds, then <paramref name="missing"/> it doesn't
+    /// (their directory entries at the table's end, as the retail Hollander's fall back from a run has them).
+    /// </summary>
+    std::vector<uint8_t> TableWithMissingFrames(int32_t held, int32_t missing)
+    {
+        std::vector<uint8_t> table = {'1', '.', '1', '0'};
+        const auto put = [&table](int32_t value)
+        {
+            for (int32_t byte = 0; byte < 4; ++byte)
+            {
+                table.push_back(static_cast<uint8_t>(static_cast<uint32_t>(value) >> (8 * byte)));
+            }
+        };
+
+        constexpr int32_t DirectoryAt = 8;
+        constexpr int32_t EntryBytes = 8;
+        constexpr int32_t HeaderBytes = 0x18;
+        constexpr int32_t OnePixelOneRow = (1 << 16) | 1;
+        // One pixel of colour 0x40, then the row's end.
+        constexpr std::array<uint8_t, 3> Row = {3, 0x40, 0};
+        const int32_t count = held + missing;
+        const int32_t end = DirectoryAt + EntryBytes * count + held * (HeaderBytes + static_cast<int32_t>(Row.size()));
+        put(count);
+
+        for (int32_t frame = 0; frame < count; ++frame)
+        {
+            put(frame < held
+                    ? DirectoryAt + EntryBytes * count + frame * (HeaderBytes + static_cast<int32_t>(Row.size()))
+                    : end);
+            put(0);
+        }
+
+        for (int32_t frame = 0; frame < held; ++frame)
+        {
+            for (const int32_t value : {OnePixelOneRow, 0, 0, 0, 0, 0})
+            {
+                put(value);
+            }
+
+            table.insert(table.end(), Row.begin(), Row.end());
+        }
+
+        return table;
+    }
+
+    /// <summary>
+    /// An MCShape over a copy of <paramref name="table"/>, behind a mech gesture packet's 6-byte header when
+    /// <paramref name="gestureHeader"/> (as the retail Hollander's are: legs, 23 frames).
+    /// </summary>
+    std::shared_ptr<MCShape> ShapeOf(std::span<const uint8_t> table, bool gestureHeader = false)
+    {
+        constexpr std::array<uint8_t, 6> Header = {0, 0, 0x17, 0, 0, 0};
+        const size_t start = gestureHeader ? Header.size() : 0;
+        MCRegisteredBlock block(start + table.size(), MCDataKind::Shapes);
+
+        if (gestureHeader)
+        {
+            std::ranges::copy(Header, block.Bytes().begin());
+        }
+
+        std::ranges::copy(table, block.Bytes().begin() + static_cast<std::ptrdiff_t>(start));
+        return std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+    }
+}
+
+/// <summary>
+/// OB-190 (fixed): a frame its table lists but doesn't hold (its directory entry at the table's end) has no header to
+/// read: it is no shape (MCVfxHasShape), has no size and draws nothing; an MCShape counts only the frames up to the last
+/// it holds, so a gesture playing past it shows that one, and a table holding none counts none (no art).
+/// </summary>
+TEST_CASE("sprites: a frame its shape table lists but doesn't hold is no shape, and isn't counted")
+{
+    const std::vector<uint8_t> table = TableWithMissingFrames(1, 2);
+    CHECK(VfxShapeCount(table) == 3);
+    CHECK(MCVfxHasShape(table, 0));
+    CHECK(!MCVfxHasShape(table, 1));
+    CHECK(!MCVfxHasShape(table, 2));
+    CHECK(!MCVfxHasShape(table, 3));
+    CHECK(!MCVfxHasShape(table, -1));
+    CHECK(VfxShapeBounds(table, 0) == ((1 << 16) | 1));
+    CHECK(VfxShapeBounds(table, 1) == 0);
+    CHECK(MCShapeFrameBounds(table, 1).Width <= 0.0f);
+    CHECK(!MCAgShapeIsAlpha(table, 2));
+    int32_t pixels = 0;
+    VfxShapeVisit(table, 1, [&pixels](int32_t, int32_t, uint8_t) { ++pixels; });
+    CHECK(pixels == 0);
+    VfxShapeVisit(table, 0, [&pixels](int32_t, int32_t, uint8_t) { ++pixels; });
+    CHECK(pixels == 1);
+
+    const std::shared_ptr<MCShape> shape = ShapeOf(table);
+    CHECK(VfxShapeCount(shape->FrameList()) == 1);
+    CHECK(shape->HasArt());
+    CHECK(MCClampShapeFrame(shape->FrameList(), 2) == 0);
+
+    const std::shared_ptr<MCShape> behind = ShapeOf(table, true);
+    CHECK(VfxShapeCount(behind->FrameList()) == 1);
+    CHECK(behind->HasArt());
+
+    // Holding none: a bare table is refused (its first frame at its end), one behind a gesture header (whose 6 bytes
+    // the first frame's check counts) counts none.
+    const std::vector<uint8_t> empty = TableWithMissingFrames(0, 23);
+    const std::shared_ptr<MCShape> refused = ShapeOf(empty);
+    CHECK(refused->FrameList().empty());
+    CHECK(!refused->HasArt());
+    const std::shared_ptr<MCShape> none = ShapeOf(empty, true);
+    CHECK(!none->FrameList().empty());
+    CHECK(VfxShapeCount(none->FrameList()) == 0);
+    CHECK(!none->HasArt());
+    CHECK(!MCVfxHasShape(none->FrameList(), 0));
+    CHECK(VfxShapeCount({}) == 0);
+}
+
+/// <summary>
+/// OB-190 (fixed): a mech part whose art lists frames it doesn't hold is drawn from the art nearest it that has frames:
+/// the Hollander's fall back from a run (gesture 16, every part at every facing, none held) from its fall back from
+/// standing (18), at the same rate as the fall it plays; the Atlas's right arm at one facing of its fall back from
+/// standing (18) from a neighbouring facing. Every part of both falls has art at every facing, in both sprite sizes, and
+/// every frame either plays is held by the table it is drawn from.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mech part whose art lists frames it doesn't hold is drawn from the art nearest it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    constexpr int32_t BackFromRun = 16;
+    constexpr int32_t BackFromStanding = 18;
+    constexpr float FacingStep = 11.25f;
+    constexpr float HalfTurn = 180.0f;
+
+    for (const std::string_view name : {"hollander", "atlas"})
+    {
+        MCTest::Scope mech(name);
+        const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree(name);
+        REQUIRE(tree != nullptr);
+        int32_t borrowed = 0;
+
+        for (const int32_t gesture : {BackFromRun, BackFromStanding})
+        {
+            const auto frames = static_cast<int32_t>(tree->Gestures[gesture].NumFrames);
+
+            for (const bool zoomedOut : {false, true})
+            {
+                for (int32_t part = 0; part < MechPartCount; ++part)
+                {
+                    for (float facing = -HalfTurn; facing < HalfTurn; facing += FacingStep)
+                    {
+                        MCTest::Scope scope(std::format("gesture {} zoomed out {} part {} facing {}", gesture,
+                                                        zoomedOut, part, facing));
+                        int32_t reverse = 0;
+                        float rate = 0.0f;
+                        const std::shared_ptr<MCShape> shape =
+                            tree->GetGesture(gesture, part, facing, reverse, rate, zoomedOut);
+                        REQUIRE(shape != nullptr);
+                        CHECK(shape->HasArt());
+                        CHECK(rate == std::abs(tree->Gestures[gesture].FrameRate));
+
+                        for (int32_t frame = 0; frame < frames; ++frame)
+                        {
+                            CHECK(MCVfxHasShape(shape->FrameList(), MCClampShapeFrame(shape->FrameList(), frame)));
+                        }
+
+                        // Borrowed: not the shape at the gesture's own packet.
+                        const std::optional<MCGesturePacket> own = tree->GesturePacket(gesture, part, facing);
+                        REQUIRE(own.has_value());
+                        const std::shared_ptr<MCShape> ownShape = tree->ShapeList[own->ListIndex].lock();
+                        REQUIRE(ownShape != nullptr);
+
+                        if (ownShape != shape)
+                        {
+                            CHECK(!ownShape->HasArt());
+                            ++borrowed;
+
+                            if (name == "hollander")
+                            {
+                                CHECK(gesture == BackFromRun);
+                                int32_t standingReverse = 0;
+                                float standingRate = 0.0f;
+                                CHECK(tree->GetGesture(BackFromStanding, part, facing, standingReverse, standingRate,
+                                                       zoomedOut) == shape);
+                                CHECK(standingReverse == reverse);
+                            }
+                            else
+                            {
+                                CHECK(gesture == BackFromStanding);
+                                CHECK(part == 3);
+                            }
+                        }
+                        else if (name == "hollander")
+                        {
+                            CHECK(gesture != BackFromRun);
+                        }
+                    }
+                }
+            }
+        }
+
+        CHECK(borrowed > 0);
+    }
 }

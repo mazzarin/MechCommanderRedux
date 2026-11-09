@@ -17,7 +17,8 @@ void MCAgDrawShape(const MCPane& pane, std::span<const uint8_t> shapeTable, int3
 {
     MCVfxClip clip;
 
-    if (MCVfxClipPane(pane, clip) != 0 || shapeTable.empty())
+    // OB-190 (fixed): a frame the table lists but doesn't hold (MCVfxHasShape) draws nothing.
+    if (MCVfxClipPane(pane, clip) != 0 || !MCVfxHasShape(shapeTable, shapeNum))
     {
         return;
     }

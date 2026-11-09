@@ -252,6 +252,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
   read and wrote past such files' data.
 - A mission script asking for more entries than its array holds, or recursing without end, no longer overruns memory
   or the stack; the script stops with an error.
+- A Hollander falling backwards from a run, or an Atlas falling backwards with its arm turned a little toward its
+  target, no longer reads its pictures from past the end of its art, which lists frames it doesn't hold. The part is
+  drawn from the nearest art the mech has: the fall from standing, or the arm's next facing (OB-190).
 
 ### Combat
 

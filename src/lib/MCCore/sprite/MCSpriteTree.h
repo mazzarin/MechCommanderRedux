@@ -214,6 +214,18 @@ public:
     /// <summary>Port-only (MechBraking): the run to walk made from the run and walk (MCRunToWalkMade), once worked out.</summary>
     std::optional<MCMadeRunToWalk> MadeRunToWalk;
     bool MadeRunToWalkKnown = false;
+
+private:
+    /// <summary>The shape at <paramref name="where"/>, loading it if needed (none without its part's PAK).</summary>
+    std::shared_ptr<MCShape> LoadGesturePacket(const MCGesturePacket& where, bool zoomedOut);
+
+    /// <summary>
+    /// The packets whose art stands in for <paramref name="where"/>'s (part <paramref name="part"/> of gesture
+    /// <paramref name="gesture"/> at <paramref name="rotation"/> degrees) when it has none, the most like it first: the
+    /// gesture's other facings, nearest first, then the same fall from standing or from a run (FallTwin).
+    /// </summary>
+    std::vector<MCGesturePacket> ArtStandIns(int32_t gesture, int32_t part, float rotation,
+                                             const MCGesturePacket& where) const;
 };
 
 /// <summary>The number of entries of a tree's shape list (all four parts).</summary>

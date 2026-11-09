@@ -129,7 +129,8 @@ namespace
     {
         const std::shared_ptr<MCWindow> window = pane.Window.lock();
 
-        if (window == nullptr || shapeTable.empty())
+        // OB-190 (fixed): a frame the table lists but doesn't hold (MCVfxHasShape) draws nothing.
+        if (window == nullptr || !MCVfxHasShape(shapeTable, shapeNum))
         {
             return;
         }

@@ -102,6 +102,36 @@ namespace
         return (gesture > 0xd && gesture < 0x14) || (gesture > 0x14 && gesture < 0x19);
     }
 
+    /// <summary>The step between the facings a gesture with every fourth facing only has.</summary>
+    constexpr int32_t FourthFacingStep = 4;
+
+    /// <summary>
+    /// The fall a fall from a run looks most like when it has no art, and the other way round: the same fall from
+    /// standing (back from a run 16 and from standing 18; forward from a run 17 and from standing 19). None for any
+    /// other gesture.
+    /// </summary>
+    auto FallTwin(int32_t gesture) -> std::optional<int32_t>
+    {
+        constexpr int32_t BackFromRun = 16;
+        constexpr int32_t ForwardFromRun = 17;
+        constexpr int32_t BackFromStanding = 18;
+        constexpr int32_t ForwardFromStanding = 19;
+
+        switch (gesture)
+        {
+            case BackFromRun:
+                return BackFromStanding;
+            case BackFromStanding:
+                return BackFromRun;
+            case ForwardFromRun:
+                return ForwardFromStanding;
+            case ForwardFromStanding:
+                return ForwardFromRun;
+            default:
+                return std::nullopt;
+        }
+    }
+
     /// <summary>Which of a part's facings a rotation shows (its index among the gesture's), and whether mirrored.</summary>
     struct ShownFacing
     {
@@ -474,16 +504,40 @@ auto MCSpriteTree::GetGesture(int32_t gesture, int32_t part, float rotation, int
 
     reverse = where->Reverse ? 1 : 0;
     frameRate = PositiveRate(Gestures[gesture]);
-    const uint32_t fileNumber = FileNumbers[where->FilePart];
+    std::shared_ptr<MCShape> shape = LoadGesturePacket(*where, zoomedOut);
 
+    if (shape == nullptr || shape->HasArt())
+    {
+        return shape;
+    }
+
+    // OB-190 (fixed): a part whose art lists frames it doesn't hold (the Hollander's whole fall back from a run; the
+    // Atlas's right arm at one facing of its fall back from standing) is drawn from the art nearest it that has frames,
+    // so the mech doesn't vanish as it falls. The original read those frames from whatever followed the table.
+    for (const MCGesturePacket& standIn : ArtStandIns(gesture, part, rotation, *where))
+    {
+        if (std::shared_ptr<MCShape> borrowed = LoadGesturePacket(standIn, zoomedOut);
+            borrowed != nullptr && borrowed->HasArt())
+        {
+            reverse = standIn.Reverse ? 1 : 0;
+            return borrowed;
+        }
+    }
+
+    return shape;
+}
+
+auto MCSpriteTree::LoadGesturePacket(const MCGesturePacket& where, bool zoomedOut) -> std::shared_ptr<MCShape>
+{
+    const uint32_t fileNumber = FileNumbers[where.FilePart];
     const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
 
-    if (fileNumber == NoFileNumber || spriteManager == nullptr)
+    if (fileNumber == NoFileNumber || spriteManager == nullptr || where.ListIndex >= ShapeList.size())
     {
         return nullptr;
     }
 
-    std::weak_ptr<MCShape>& slot = ShapeList[where->ListIndex];
+    std::weak_ptr<MCShape>& slot = ShapeList[where.ListIndex];
 
     if (std::shared_ptr<MCShape> shape = slot.lock())
     {
@@ -492,9 +546,47 @@ auto MCSpriteTree::GetGesture(int32_t gesture, int32_t part, float rotation, int
     }
 
     std::shared_ptr<MCShape> shape =
-        spriteManager->GetMechShapeData(fileNumber, where->Packet, where->FilePart, Turn, weak_from_this(), zoomedOut);
+        spriteManager->GetMechShapeData(fileNumber, where.Packet, where.FilePart, Turn, weak_from_this(), zoomedOut);
     slot = shape;
     return shape;
+}
+
+auto MCSpriteTree::ArtStandIns(int32_t gesture, int32_t part, float rotation, const MCGesturePacket& where) const
+    -> std::vector<MCGesturePacket>
+{
+    std::vector<MCGesturePacket> standIns;
+    const MCGestureData& data = Gestures[gesture];
+    const int32_t stored = part == 0 ? LegRotationCount : PartRotations(PartSymmetrical(data, part));
+    const auto first = static_cast<int32_t>(PacketFinderArray[gesture]) * stored;
+    const int32_t index = static_cast<int32_t>(where.Packet) - first;
+    const int32_t step = EveryFourthFacing(gesture) ? FourthFacingStep : 1;
+
+    // The same gesture's other facings, nearest first (the nearer one toward straight ahead first), drawn the way the
+    // facing asked for is.
+    for (int32_t away = step; away < stored; away += step)
+    {
+        for (const int32_t other : {index - away, index + away})
+        {
+            if (other >= 0 && other < stored)
+            {
+                MCGesturePacket standIn = where;
+                standIn.Packet = static_cast<uint32_t>(first + other);
+                standIn.ListIndex = where.ListIndex - static_cast<uint32_t>(index) + static_cast<uint32_t>(other);
+                standIns.push_back(standIn);
+            }
+        }
+    }
+
+    // Then the same fall from standing (or from a run), at the facing asked for.
+    if (const std::optional<int32_t> twin = FallTwin(gesture); twin.has_value())
+    {
+        if (const std::optional<MCGesturePacket> twinPacket = GesturePacket(*twin, part, rotation))
+        {
+            standIns.push_back(*twinPacket);
+        }
+    }
+
+    return standIns;
 }
 
 auto MCSpriteTree::Transition(int32_t index) const -> int32_t

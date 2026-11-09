@@ -19,7 +19,7 @@ public:
     /// <summary>
     /// Takes the packet <paramref name="packet"/> for <paramref name="owner"/>, checking its shape table: a table whose
     /// first frame lies past the packet, or whose offset table doesn't match its frame count, gives an empty
-    /// <see cref="FrameList"/>.
+    /// <see cref="FrameList"/>; the frames listed past the last one the table holds aren't counted.
     /// </summary>
     MCShape(MCRegisteredBlock packet, std::weak_ptr<MCAppearanceType> owner, int32_t lastTurnUsed);
 
@@ -31,6 +31,9 @@ public:
     /// bad.
     /// </summary>
     std::span<const uint8_t> FrameList() const;
+
+    /// <summary>Whether the table holds a frame to draw (a table listing only frames it doesn't hold has none).</summary>
+    bool HasArt() const;
 
     /// <summary>The turn the shape was last used (the cache keeps shapes used this turn or the last).</summary>
     int32_t LastTurnUsed = 0;

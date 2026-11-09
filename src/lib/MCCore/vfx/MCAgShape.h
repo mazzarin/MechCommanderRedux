@@ -19,6 +19,12 @@ void MCAgDrawShape(const MCPane& pane, std::span<const uint8_t> shapeTable, int3
 /// <summary>Whether the game's shape routines treat a shape as translucent: its data starts with the token pair 03 00.</summary>
 inline bool MCAgShapeIsAlpha(std::span<const uint8_t> shapeTable, int32_t shapeNum)
 {
+    // OB-190 (fixed): a frame the table lists but doesn't hold (MCVfxHasShape) draws nothing.
+    if (!MCVfxHasShape(shapeTable, shapeNum))
+    {
+        return false;
+    }
+
     const std::span<const uint8_t> data = MCVfxShape(shapeTable, shapeNum).subspan(0x18);
 
     // OB-171: an empty shape last in its table (the encoder's all-transparent header, no rows) has no data; the

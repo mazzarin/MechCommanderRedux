@@ -15,13 +15,23 @@ namespace
         std::span<const uint8_t> Header;
         int32_t XMin = 0;
         int32_t YMin = 0;
-        int32_t XMax = 0;
-        int32_t YMax = 0;
+        int32_t XMax = -1;
+        int32_t YMax = -1;
     };
 
+    /// <summary>
+    /// Shape <paramref name="shapeNum"/>'s header; for a frame the table lists but doesn't hold (MCVfxHasShape), an
+    /// empty shape with no bounds (OB-190 fixed: the original read the header from past the table).
+    /// </summary>
     MCShapeInfo ReadShape(std::span<const uint8_t> shapeTable, int32_t shapeNum)
     {
         MCShapeInfo info;
+
+        if (!MCVfxHasShape(shapeTable, shapeNum))
+        {
+            return info;
+        }
+
         info.Header = MCVfxShape(shapeTable, shapeNum);
         info.XMin = MCVfxRead32(info.Header, 0x08);
         info.YMin = MCVfxRead32(info.Header, 0x0c);
@@ -116,6 +126,11 @@ int32_t VfxShapeTranslateDraw(const MCPane& pane, std::span<const uint8_t> shape
 
 int32_t VfxShapeRemapColors(std::span<uint8_t> shapeTable, int32_t shapeNum)
 {
+    if (!MCVfxHasShape(shapeTable, shapeNum))
+    {
+        return 0;
+    }
+
     const MCShapeInfo shape = ReadShape(shapeTable, shapeNum);
     const std::span<uint8_t> header = MCVfxShape(shapeTable, shapeNum);
     // The first row's first token.
@@ -554,6 +569,12 @@ int32_t VfxShapeScanAsm(const MCPane& pane, uint8_t transparentColor, int32_t ho
 
 int32_t VfxShapeBounds(std::span<const uint8_t> shapeTable, int32_t shapeNum)
 {
+    // OB-190 (fixed): a frame the table lists but doesn't hold has no size.
+    if (!MCVfxHasShape(shapeTable, shapeNum))
+    {
+        return 0;
+    }
+
     return MCVfxRead32(MCVfxShape(shapeTable, shapeNum));
 }
 
@@ -573,6 +594,15 @@ int32_t VfxShapeMinxy(std::span<const uint8_t> shapeTable, int32_t shapeNum)
 
 int32_t VfxShapeCount(std::span<const uint8_t> shapeTable)
 {
+    constexpr size_t CountEnd = 8;
+
+    // Port fix: a table too short to hold its count (none at all: a missing shadow PAK's, a packet MCShape refused) has
+    // no shapes.
+    if (shapeTable.size() < CountEnd)
+    {
+        return 0;
+    }
+
     return MCVfxRead32(shapeTable, 4);
 }
 

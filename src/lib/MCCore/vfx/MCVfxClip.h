@@ -117,6 +117,38 @@ inline int32_t MCVfxRead32(std::span<const uint8_t> data, size_t offset = 0)
 }
 
 /// <summary>
+/// Whether shape <paramref name="shapeNum"/> of <paramref name="shapeTable"/> is one of the table's shapes (under its
+/// count, at 4) with its header inside the table (at the offset in its directory, 8 + 8n).
+/// </summary>
+/// <remarks>
+/// OB-190 (fixed): some of the retail mechs' shape tables list frames that aren't there, their directory entries
+/// pointing at the table's end (the Hollander's whole fall back from a run; the Atlas's right arm at one facing of its
+/// fall back from standing). The original read such a frame's header and rows from whatever followed the table.
+/// </remarks>
+inline bool MCVfxHasShape(std::span<const uint8_t> shapeTable, int32_t shapeNum)
+{
+    constexpr size_t CountAt = 4;
+    constexpr size_t DirectoryAt = 8;
+    constexpr size_t EntryBytes = 8;
+    constexpr size_t OffsetBytes = 4;
+
+    if (shapeNum < 0 || shapeTable.size() < DirectoryAt || shapeNum >= MCVfxRead32(shapeTable, CountAt))
+    {
+        return false;
+    }
+
+    const size_t entry = DirectoryAt + static_cast<size_t>(shapeNum) * EntryBytes;
+
+    if (entry + OffsetBytes > shapeTable.size())
+    {
+        return false;
+    }
+
+    const int32_t offset = MCVfxRead32(shapeTable, entry);
+    return offset >= 0 && static_cast<size_t>(offset) + sizeof(MCVfxShapeHeader) <= shapeTable.size();
+}
+
+/// <summary>
 /// Shape <paramref name="shapeNum"/> of <paramref name="shapeTable"/>, from its header (at the offset in the table's
 /// directory, 8 + 8n) to the table's end.
 /// </summary>

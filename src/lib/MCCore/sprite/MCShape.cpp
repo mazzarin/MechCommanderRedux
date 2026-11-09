@@ -1,11 +1,13 @@
 #include "stdafx.h"
 #include "sprite/MCShape.h"
-#include "vfx/MCVfxFunctions.h"
+#include "vfx/MCVfxClip.h"
 
 namespace
 {
     /// <summary>The size of the gesture header in front of a mech gesture packet's shape table.</summary>
     constexpr size_t GestureHeaderSize = 6;
+    /// <summary>Where a VFX shape table keeps its frame count.</summary>
+    constexpr size_t CountAt = 4;
 }
 
 MCShape::MCShape(MCRegisteredBlock packet, std::weak_ptr<MCAppearanceType> owner, int32_t lastTurnUsed)
@@ -30,7 +32,30 @@ MCShape::MCShape(MCRegisteredBlock packet, std::weak_ptr<MCAppearanceType> owner
     if (static_cast<int32_t>(_Packet.Size()) <= firstFrame || numFrames * 8 + 8 != firstFrame)
     {
         _FrameStart.reset();
+        return;
     }
+
+    // OB-190 (fixed): frames past the last one the table holds (MCVfxHasShape) aren't counted, so a gesture that plays
+    // them shows that one, as it does a frame past the count (the Hollander's fall back from standing lists a 22nd
+    // frame for its 21). A table holding none counts none, and its part borrows another's art
+    // (MCSpriteTree::GetGesture).
+    const std::span<uint8_t> table = _Packet.Bytes().subspan(start);
+    int32_t held = numFrames;
+
+    while (held > 0 && !MCVfxHasShape(table, held - 1))
+    {
+        --held;
+    }
+
+    if (held != numFrames)
+    {
+        std::memcpy(table.subspan(CountAt, sizeof(held)).data(), &held, sizeof(held));
+    }
+}
+
+auto MCShape::HasArt() const -> bool
+{
+    return VfxShapeCount(FrameList()) > 0;
 }
 
 auto MCShape::FrameList() const -> std::span<const uint8_t>

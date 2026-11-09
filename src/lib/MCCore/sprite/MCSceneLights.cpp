@@ -396,7 +396,8 @@ namespace
     {
         State& state = TheState();
 
-        if (state.Drawing.expired() || !VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
+        // OB-190: a frame the table lists but doesn't hold (MCVfxHasShape) has no bytes to key.
+        if (state.Drawing.expired() || !VfxIsShapeTable(shapeTable) || !MCVfxHasShape(shapeTable, frame))
         {
             return MeasurePixels(shapeTable, frame, shining);
         }

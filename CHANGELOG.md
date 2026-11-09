@@ -10,6 +10,14 @@ only the characters on a keyboard. The release script takes the entry under the 
 (version.json) and refuses a release without one.
 -->
 
+## 0.6.2
+
+- Fixed: the game could crash as a Hollander or an Atlas fell over. The fall is now drawn from the mech's own art.
+- Fixed: a game started from a launcher no longer crashes when you quit on the match's results screen.
+- Fixed: in multiplayer, the host takes one player from each computer and passes on only messages the size of the
+  game's own, and a short chat message, or one from a player who just left, no longer crashes the game.
+- Windows: from this version the game puts its own updates in place, also when a launcher started it.
+
 ## 0.6.1
 
 - Fixed: with HD art on, the game could crash as some mechs moved, such as a limping Thor or Hunchback.

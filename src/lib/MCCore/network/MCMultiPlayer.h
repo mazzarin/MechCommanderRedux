@@ -387,6 +387,12 @@ uint32_t MCWantedRules(std::optional<uint32_t> chosen, bool prefsBraking);
 uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const std::map<uint32_t, uint32_t>& said);
 
 /// <summary>
+/// Port: <paramref name="rules"/> named for the log, as MCMatchRule names them: a whole group by its name
+/// ("WeaponBans"), else its bits; bits no name covers in hex; "none" for none.
+/// </summary>
+std::string MCRulesText(uint32_t rules);
+
+/// <summary>
 /// Port: those of <paramref name="players"/> whose build doesn't play by <paramref name="rule"/>, as their rules messages
 /// (<paramref name="said"/>) said; a player whose build sent none is one.
 /// </summary>
@@ -577,6 +583,18 @@ public:
     /// does.
     /// </summary>
     void SendPlayersRules();
+
+    /// <summary>
+    /// Port: keeps <paramref name="rules"/> as <paramref name="playerId"/>'s (<see cref="PlayerRules"/>), heard by way
+    /// of <paramref name="source"/> (its join card, its rules message, the host's word), and logs the player's
+    /// capabilities when they're new or changed from <paramref name="before"/> (the rules as they were);
+    /// <paramref name="name"/> names a player the session doesn't have yet.
+    /// </summary>
+    void LearnRules(uint32_t playerId, uint32_t rules, std::string_view source,
+                    const std::map<uint32_t, uint32_t>& before, std::string_view name = {});
+
+    /// <summary>Port: LearnRules against <see cref="PlayerRules"/> as they stand.</summary>
+    void LearnRules(uint32_t playerId, uint32_t rules, std::string_view source, std::string_view name = {});
 
     /// <summary>
     /// Port, the host: sends its match options again (<see cref="SendMatchOptions"/>) when what the match plays of them

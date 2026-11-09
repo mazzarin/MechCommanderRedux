@@ -937,6 +937,22 @@ TEST_CASE("network: a match plays by the server's rules that every player's buil
 }
 
 /// <summary>
+/// Port: the log names a player's rules as MCMatchRule does, a whole group by its name and a group in part by its bits,
+/// with what no name covers in hex.
+/// </summary>
+TEST_CASE("network: the log names a player's rules, a whole group by its name")
+{
+    CHECK_EQ(MCRulesText(0), std::string("none"));
+    CHECK_EQ(MCRulesText(MCMatchRule::MechBraking | MCMatchRule::DataHash), std::string("MechBraking DataHash"));
+    CHECK_EQ(MCRulesText(MCMatchRule::WeaponBans), std::string("WeaponBans"));
+    CHECK_EQ(MCRulesText(MCMatchRule::NoLrms | MCMatchRule::NoPpcs), std::string("NoLrms NoPpcs"));
+    CHECK_EQ(MCRulesText(MCMatchRule::MatchWeather | (1u << 29)), std::string("MatchWeather 0x20000000"));
+    CHECK_EQ(MCRulesText(MCMatchRule::Supported),
+             std::string("MechBraking WeatherRules TimeOfDayRules NoArtillery NoSensors NoMines NoProbes PilotRanks "
+                         "WeaponBans DataHash RejoinsHost NightLights MechHandover Rematch"));
+}
+
+/// <summary>
 /// Port: what a match plays of its host's match options (the session screen's MATCH OPTIONS) is taken only from the
 /// host or the server, kept as far as this build knows it (a weather or time of day it doesn't is the mission's own;
 /// rules it doesn't play by are left out), and a short message is dropped. The rules the server wants are the host's,

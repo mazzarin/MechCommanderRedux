@@ -193,7 +193,8 @@ void HandleSysCreatePlayer(const DPMSG_CREATEPLAYERORGROUP& msg, std::span<const
     {
         if (const std::optional<uint32_t> rules = MCJoinCardRules(message.subspan(offset, size)); rules.has_value())
         {
-            game.PlayerRules[msg.dpId] = *rules & MCMatchRule::Supported;
+            game.LearnRules(msg.dpId, *rules & MCMatchRule::Supported, "its join card",
+                            MCDirectPlayMessageName(message, msg.dpnName).ShortName.value_or(""));
             game.SendPlayersRules();
         }
     }
@@ -415,6 +416,7 @@ void HandleAppPlayersRules(uint32_t fromID, std::span<const uint8_t> msg)
     // The host's word for every player's (a guest hears no other's); the bits this build doesn't know left out.
     const auto said = ReadLinkupMessage<MCMPPlayersRulesMessage>(msg);
     MCMultiPlayer& game = Game();
+    const std::map<uint32_t, uint32_t> before = std::move(game.PlayerRules);
     game.PlayerRules.clear();
 
     for (const MCMPPlayersRulesMessage::Said& player :
@@ -422,7 +424,7 @@ void HandleAppPlayersRules(uint32_t fromID, std::span<const uint8_t> msg)
     {
         // Copied first: the map's [] takes its key by reference, and the message's packed fields aren't aligned.
         const uint32_t playerId = player.PlayerId;
-        game.PlayerRules[playerId] = player.Rules & MCMatchRule::Supported;
+        game.LearnRules(playerId, player.Rules & MCMatchRule::Supported, "the host's word", before);
     }
 }
 
@@ -1830,7 +1832,7 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
 
             if (type == MCMPMessageType::PlayerRules)
             {
-                game.PlayerRules[fromID] = rules;
+                game.LearnRules(fromID, rules, "its rules message");
 
                 // Port: and the host tells everyone, so every player's MATCH OPTIONS names whose game lacks one.
                 if (game.IsHost)

@@ -102,7 +102,7 @@ int32_t MCMultiPlayer::SendPlayerRules()
     }
     else
     {
-        PlayerRules[SessionManager->MyPlayer()->Id] = MCMatchRule::Supported;
+        LearnRules(SessionManager->MyPlayer()->Id, MCMatchRule::Supported, "this game's own build");
     }
 
     return 0;

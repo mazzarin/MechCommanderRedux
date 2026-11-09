@@ -40,6 +40,12 @@ namespace
     constexpr std::string_view StartWord = "s";
     constexpr std::string_view ReadyWord = "r";
     constexpr std::string_view QuitWord = "q";
+    /// <summary>
+    /// The words typed in a guest's match: a second ticket for it asked (shown only as given or not), and the match
+    /// joined again on a new ticket (the game and its relay link closed first).
+    /// </summary>
+    constexpr std::string_view TicketWord = "t";
+    constexpr std::string_view RejoinWord = "j";
     constexpr std::string_view LoopbackHost = "127.0.0.1";
 
     /// <summary>How often a guest tries a match the relay or its host wasn't ready for, and how long between.</summary>
@@ -486,10 +492,19 @@ namespace
                 {
                     tried = Clock::now();
                     tries++;
+                    const bool settled = PlayAsGuest(*state->Start, typed);
 
-                    if (PlayAsGuest(*state->Start, typed) || tries >= MatchTries)
+                    if (std::exchange(_Rejoin, false))
+                    {
+                        // j: the same match again at once, on a new ticket.
+                        _Again = true;
+                        tries = 0;
+                        Say("Joining the match again, on a new ticket.");
+                    }
+                    else if (settled || tries >= MatchTries)
                     {
                         _Played = state->Start->SessionHex;
+                        _Again = false;
                         tries = 0;
                     }
 
@@ -655,6 +670,16 @@ namespace
                 {
                     Interrupted = true;
                 }
+                else if (line && *line == TicketWord && !_Seat->Host)
+                {
+                    SecondTicket(match);
+                }
+                else if (line && *line == RejoinWord && !_Seat->Host)
+                {
+                    Say("Leaving the match to join it again.");
+                    _Rejoin = true;
+                    break;
+                }
 
                 std::this_thread::sleep_for(PollEvery);
             }
@@ -688,7 +713,8 @@ namespace
         /// </summary>
         bool ReportIfGone(const MCMcoApi::MCMatch& match, std::string_view failure)
         {
-            if (!SaysSessionGone(failure))
+            // A match joined again (j) that MCO or its relay won't take again isn't the host's session gone.
+            if (_Again || !SaysSessionGone(failure))
             {
                 return false;
             }
@@ -757,8 +783,32 @@ namespace
                 return true;
             }
 
+            Say("Type t and Enter for a second ticket for this match, j to join it again, q to leave.");
+            _Ticket = ticket->Ticket;
+            _Epoch = *epoch;
             WhilePlaying(match, **guest, GameOf(game), typed);
+            std::ranges::fill(_Ticket, '\0');
+            _Ticket.clear();
             return true;
+        }
+
+        /// <summary>
+        /// t: asks MCO for another ticket for the match this guest plays, and says whether it gave one, and whether it's
+        /// the one it gave first (neither is shown).
+        /// </summary>
+        void SecondTicket(const MCMcoApi::MCMatch& match)
+        {
+            std::cout << "Asking MCO for a second ticket for this match... " << std::flush;
+            auto ticket = _Service.Ticket(_Peer, match, _Epoch, false);
+
+            if (!ticket)
+            {
+                Say(Failure(ticket.error()));
+                return;
+            }
+
+            Say(ticket->Ticket == _Ticket ? "given: the first one again." : "given: a new one.");
+            std::ranges::fill(ticket->Ticket, '\0');
         }
 
         void PlayAsHost(MCTyped& typed)
@@ -880,6 +930,14 @@ namespace
         std::string _Stock;
         /// <summary>The match a guest played last (not played again while its signal stays).</summary>
         std::string _Played;
+        /// <summary>The ticket a guest's match was joined on, to tell a second one from (never shown).</summary>
+        std::string _Ticket;
+        /// <summary>The epoch of the relay a guest's match is on, for a second ticket.</summary>
+        std::string _Epoch;
+        /// <summary>A guest's j: its match is joined again rather than counted played.</summary>
+        bool _Rejoin = false;
+        /// <summary>The match being joined again: a refusal of it is said, never reported as its session gone.</summary>
+        bool _Again = false;
     };
 }
 

@@ -689,6 +689,74 @@ uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const
     return rules;
 }
 
+namespace
+{
+    struct MCRuleName
+    {
+        uint32_t Bits;
+        std::string_view Name;
+    };
+
+    /// <summary>The rules' names for the log, each group before its bits (a whole group is named once).</summary>
+    constexpr std::array RuleNames = {
+        MCRuleName{MCMatchRule::MechBraking, "MechBraking"},
+        MCRuleName{MCMatchRule::WeatherRules, "WeatherRules"},
+        MCRuleName{MCMatchRule::MatchWeather, "MatchWeather"},
+        MCRuleName{MCMatchRule::WeatherPlay, "WeatherPlay"},
+        MCRuleName{MCMatchRule::TimeOfDayRules, "TimeOfDayRules"},
+        MCRuleName{MCMatchRule::MatchTimeOfDay, "MatchTimeOfDay"},
+        MCRuleName{MCMatchRule::TimeOfDaySight, "TimeOfDaySight"},
+        MCRuleName{MCMatchRule::NoArtillery, "NoArtillery"},
+        MCRuleName{MCMatchRule::NoSensors, "NoSensors"},
+        MCRuleName{MCMatchRule::NoMines, "NoMines"},
+        MCRuleName{MCMatchRule::NoProbes, "NoProbes"},
+        MCRuleName{MCMatchRule::PilotRanks, "PilotRanks"},
+        MCRuleName{MCMatchRule::NoElitePilots, "NoElitePilots"},
+        MCRuleName{MCMatchRule::NoVeteranPilots, "NoVeteranPilots"},
+        MCRuleName{MCMatchRule::NoRegularPilots, "NoRegularPilots"},
+        MCRuleName{MCMatchRule::WeaponBans, "WeaponBans"},
+        MCRuleName{MCMatchRule::NoLrms, "NoLrms"},
+        MCRuleName{MCMatchRule::NoSrms, "NoSrms"},
+        MCRuleName{MCMatchRule::NoThunderbolts, "NoThunderbolts"},
+        MCRuleName{MCMatchRule::NoPpcs, "NoPpcs"},
+        MCRuleName{MCMatchRule::NoLasers, "NoLasers"},
+        MCRuleName{MCMatchRule::NoPulseLasers, "NoPulseLasers"},
+        MCRuleName{MCMatchRule::NoFlamers, "NoFlamers"},
+        MCRuleName{MCMatchRule::NoAutocannons, "NoAutocannons"},
+        MCRuleName{MCMatchRule::NoGaussRifles, "NoGaussRifles"},
+        MCRuleName{MCMatchRule::NoMachineGuns, "NoMachineGuns"},
+        MCRuleName{MCMatchRule::NoLongToms, "NoLongToms"},
+        MCRuleName{MCMatchRule::DataHash, "DataHash"},
+        MCRuleName{MCMatchRule::RejoinsHost, "RejoinsHost"},
+        MCRuleName{MCMatchRule::NightLights, "NightLights"},
+        MCRuleName{MCMatchRule::MechHandover, "MechHandover"},
+        MCRuleName{MCMatchRule::Rematch, "Rematch"},
+        MCRuleName{MCMatchRule::BrakingFromPrefs, "BrakingFromPrefs"},
+    };
+} // namespace
+
+std::string MCRulesText(uint32_t rules)
+{
+    std::string text;
+    uint32_t left = rules;
+
+    for (const MCRuleName& rule : RuleNames)
+    {
+        if ((left & rule.Bits) == rule.Bits)
+        {
+            text += std::format("{}{}", text.empty() ? "" : " ", rule.Name);
+            left &= ~rule.Bits;
+        }
+    }
+
+    if (left != 0)
+    {
+        text += std::format("{}0x{:x}", text.empty() ? "" : " ", left);
+    }
+
+    return text.empty() ? std::string("none") : text;
+}
+
 std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> players,
                                        const std::map<uint32_t, uint32_t>& said)
 {
@@ -909,6 +977,31 @@ MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRule
 uint32_t MCMultiPlayer::AgreedRules(uint32_t wanted) const
 {
     return MCAgreedRules(wanted, OtherPlayers(*SessionManager), PlayerRules);
+}
+
+void MCMultiPlayer::LearnRules(uint32_t playerId, uint32_t rules, std::string_view source,
+                               const std::map<uint32_t, uint32_t>& before, std::string_view name)
+{
+    // Asked before the rules are kept: before may be PlayerRules itself.
+    const auto known = before.find(playerId);
+    const bool changed = known == before.end() || known->second != rules;
+    PlayerRules[playerId] = rules;
+
+    if (!changed)
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCFidpPlayer> player =
+        SessionManager != nullptr ? SessionManager->GetPlayer(playerId) : nullptr;
+    const std::string shown = player != nullptr ? player->Name : std::string(name);
+    SDL_Log("MultiPlayer: %s (player %u) can play %s (0x%x), by %.*s", shown.empty() ? "a player" : shown.c_str(),
+            playerId, MCRulesText(rules).c_str(), rules, static_cast<int>(source.size()), source.data());
+}
+
+void MCMultiPlayer::LearnRules(uint32_t playerId, uint32_t rules, std::string_view source, std::string_view name)
+{
+    LearnRules(playerId, rules, source, PlayerRules, name);
 }
 
 std::vector<uint32_t> MCMultiPlayer::PlayersWithout(uint32_t rule) const

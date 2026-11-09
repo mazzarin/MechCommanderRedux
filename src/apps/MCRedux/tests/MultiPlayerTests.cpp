@@ -717,6 +717,23 @@ TEST_CASE("network: the server's and host's messages are dropped from anyone els
 }
 
 /// <summary>
+/// A chat message shorter than its header (another machine's) is dropped before the chat windows read its team flag and
+/// its text past the header; a whole one is handed on.
+/// </summary>
+TEST_CASE("network: a chat message shorter than its header is dropped")
+{
+    ClientGame client;
+    int32_t chats = 0;
+    client.Game->ChatCallback = [&chats](MCFidpMessage&) { ++chats; };
+    Deliver(9, Message(MCMPMessageType::Chat, {0, 0}));
+    CHECK_EQ(chats, 0);
+    // The guaranteed header's 8 bytes, the team flag, then the text.
+    Deliver(9, Message(MCMPMessageType::Chat, {0, 0, 0, 0, 0, 0, 1, 'h', 'i', 0}));
+    CHECK_EQ(chats, 1);
+    client.Game->ChatCallback = nullptr;
+}
+
+/// <summary>
 /// The server's updates name movers, turrets and targets by index, and events by type; a client skips any it doesn't
 /// have (issue #25: the original read and wrote past its rosters, or was fatal), and keeps the ones it does.
 /// </summary>

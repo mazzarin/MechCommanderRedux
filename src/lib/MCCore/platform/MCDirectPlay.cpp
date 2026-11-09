@@ -66,6 +66,20 @@ namespace
     constexpr uint32_t MaxFrameSize = 1u << 20;
     /// <summary>The groups one joiner may create (the game's three are the host's).</summary>
     constexpr std::ptrdiff_t MaxJoinerGroups = 8;
+    /// <summary>
+    /// Host: the largest data message it relays (the game's are at most 0x200 bytes: MCSessionManager's sends). Issue
+    /// #25: a joiner's bigger ones, up to a frame's megabyte, filled a slower player's queue until the host dropped it.
+    /// </summary>
+    constexpr size_t MaxRelayedData = 0x200;
+    /// <summary>Host: the players one joiner may create (each machine's game makes one).</summary>
+    constexpr std::ptrdiff_t MaxJoinerPlayers = 1;
+    /// <summary>
+    /// Host: the longest name a joiner's player or group may have, in bytes. Its arrival, names and data, must fit the
+    /// game's 0x200-byte messages, or every game leaves the player out while DirectPlay counts it.
+    /// </summary>
+    constexpr size_t MaxEntityName = 0x7f;
+    /// <summary>Host: the most data a joiner's player may carry (the game's join card is 8 bytes).</summary>
+    constexpr size_t MaxPlayerData = 0x40;
     /// <summary>Host: connections accepted but not yet joined at once (more are closed at once).</summary>
     constexpr std::ptrdiff_t MaxPendingJoiners = 8;
     /// <summary>Host: how long an accepted connection has to ask to join.</summary>
@@ -1294,9 +1308,22 @@ struct MCDirectPlay::Impl
                 uint32_t result = in.Ok ? DP_OK : DPERR_INVALIDPARAMS;
                 uint32_t id = 0;
 
+                // Issue #25: names and data the game's messages can carry (MaxEntityName, MaxPlayerData).
+                if (result == DP_OK &&
+                    (entity.ShortName.size() > MaxEntityName || entity.LongName.size() > MaxEntityName ||
+                     (entity.Type == DPPLAYERTYPE_PLAYER && entity.Data.size() > MaxPlayerData)))
+                {
+                    result = DPERR_INVALIDPARAMS;
+                }
+
+                // Issue #25: one machine's player, not as many as the room has places (MaxJoinerPlayers).
                 if (result == DP_OK && entity.Type == DPPLAYERTYPE_PLAYER &&
                     ((Session.Desc.dwFlags & DPSESSION_NEWPLAYERSDISABLED) != 0 ||
-                     PlayerCount() >= Session.Desc.dwMaxPlayers))
+                     PlayerCount() >= Session.Desc.dwMaxPlayers ||
+                     std::ranges::count_if(
+                         Entities, [&](const auto& item)
+                         { return item.second.Type == DPPLAYERTYPE_PLAYER && item.second.Owner == index; }) >=
+                         MaxJoinerPlayers))
                 {
                     result = DPERR_CANTCREATEPLAYER;
                 }
@@ -1378,10 +1405,14 @@ struct MCDirectPlay::Impl
                 const uint32_t to = in.U32();
                 const std::vector<uint8_t> data = in.Blob();
 
-                // A joiner may only speak for its own players.
+                // A joiner may only speak for its own players, in messages no bigger than the game's (MaxRelayedData).
                 const auto sender = Entities.find(from);
 
-                if (in.Ok && sender != Entities.end() && sender->second.Owner == index)
+                if (in.Ok && data.size() > MaxRelayedData)
+                {
+                    SDL_Log("MCDirectPlay: dropped a %zu-byte message from joiner %d", data.size(), index);
+                }
+                else if (in.Ok && sender != Entities.end() && sender->second.Owner == index)
                 {
                     Route(from, to, data);
                 }

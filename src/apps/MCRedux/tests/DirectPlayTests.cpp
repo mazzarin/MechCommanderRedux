@@ -770,6 +770,53 @@ namespace
 }
 
 /// <summary>
+/// Issue #25: the host holds a joiner to what a game sends: one player for its machine, a name its arrival can carry
+/// in the game's 0x200-byte messages, and messages no bigger than the game's (a bigger one is dropped, not relayed to
+/// fill a slower player's queue until the host drops that player).
+/// </summary>
+TEST_CASE("directplay: the host takes one player a joiner, named as the game's messages hold, and relays no message "
+          "bigger than a game's")
+{
+    constexpr size_t LongestName = 0x7f;
+    constexpr size_t LargestMessage = 0x200;
+    ThreeMachines session(28977);
+    uint32_t second = 0;
+    CHECK_EQ(WithHostRunning(*session.Host, [&] { return NewPlayer(session.AnnMachine, "Ann again", second); }),
+             uint32_t{DPERR_CANTCREATEPLAYER});
+
+    // A joiner's player named past what the game's messages carry is refused; one at the longest is taken.
+    MCDirectPlay named;
+    REQUIRE_EQ(Connect(named, session.Address), DP_OK);
+    const std::vector<DPSESSIONDESC2> sessions = Enumerate(named, *session.Host, DPENUMSESSIONS_AVAILABLE);
+    REQUIRE_EQ(sessions.size(), size_t{1});
+    REQUIRE_EQ(
+        WithHostRunning(*session.Host, [&] { return named.Open(sessions[0], DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }),
+        DP_OK);
+    uint32_t id = 0;
+    CHECK_EQ(WithHostRunning(*session.Host, [&] { return NewPlayer(named, std::string(LongestName + 1, 'N'), id); }),
+             uint32_t{DPERR_INVALIDPARAMS});
+    CHECK_EQ(WithHostRunning(*session.Host, [&] { return NewPlayer(named, std::string(LongestName, 'N'), id); }),
+             uint32_t{DP_OK});
+
+    // A message bigger than the game's largest isn't relayed; one of the largest is.
+    const std::vector<uint8_t> big(LargestMessage + 1, 0x55);
+    const std::vector<uint8_t> largest(LargestMessage, 0x66);
+    REQUIRE_EQ(session.AnnMachine.Send(session.Ann, session.Cat, 0, big), DP_OK);
+    REQUIRE_EQ(session.AnnMachine.Send(session.Ann, session.Cat, 0, largest), DP_OK);
+    std::vector<size_t> fromAnn;
+
+    for (const Received& message : Drain(session.CatMachine, {*session.Host, session.AnnMachine}))
+    {
+        if (message.From == session.Ann)
+        {
+            fromAnn.push_back(message.Bytes.size());
+        }
+    }
+
+    CHECK(fromAnn == std::vector<size_t>{LargestMessage});
+}
+
+/// <summary>
 /// The host's link cut (its machine gone without a word): the session goes on under Ann's machine, the earliest
 /// joined, with the same instance, players, ids and groups; Cat's machine comes back to it. Ann's game hears Bob leave
 /// (out of his group first, flagged as the hub's player) and that it hosts; Cat's hears Bob leave. Messages go between

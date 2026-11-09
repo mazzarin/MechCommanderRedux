@@ -330,6 +330,11 @@ adds are in the [README](README.md#what-redux-hd-adds).
   player is left out.
 - The host turns away floods of connections, drops connections that never join, and answers only so many LAN searches
   each second, so it can't be used to flood another machine.
+- The host takes one player from each joining computer, with a name its messages can carry, and passes on no message
+  bigger than the game's own. Before, one computer could fill the room with players, add one every game left out, or
+  send messages big enough to get a slower player dropped.
+- An in-mission chat message too short to hold its text, or from a player who has just left, no longer crashes the
+  game.
 - **Redux HD.** The host checks that every player has the same mission and game data as its own, so players whose
   files differ no longer start a match that drifts apart. The original only checked that the mission file was there.
   Each game sends a hash of the mission's files (its scenario, script, map and purchase list) and of the data every

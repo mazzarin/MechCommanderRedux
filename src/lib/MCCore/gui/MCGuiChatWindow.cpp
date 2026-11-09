@@ -316,9 +316,11 @@ auto MCGuiChatWindow::ProcessChatString(uint32_t playerId, std::string_view text
     std::string_view name = "?";
     int32_t playerNumber = 0;
 
-    if (playerId != 0)
+    // Port fix: a sender no longer in the session shows as "?" in player 0's colour, as OB-162 has it in the lobby's
+    // chat (the original read its name and number through null).
+    if (const auto player = playerId != 0 ? MultiPlayer()->SessionManager->GetPlayer(playerId) : nullptr;
+        player != nullptr)
     {
-        const auto player = MultiPlayer()->SessionManager->GetPlayer(playerId);
         name = player->Name;
         playerNumber = player->PlayerNumber;
     }

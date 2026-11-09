@@ -1554,7 +1554,13 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
 
         case MCMPMessageType::Chat:
         {
-            game.ChatCallback(msg);
+            // Port fix: a chat message shorter than its header (another machine's) is dropped; the chat windows read its
+            // team flag and its text past the header (the original read past the message).
+            if (bytes.size() >= sizeof(MCMPChatMessage))
+            {
+                game.ChatCallback(msg);
+            }
+
             break;
         }
 

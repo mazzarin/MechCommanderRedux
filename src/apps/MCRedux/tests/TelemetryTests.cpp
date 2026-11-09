@@ -38,6 +38,8 @@ namespace
         /// <summary>The black box's file: it outlives a backend, as a file does a run.</summary>
         std::shared_ptr<std::vector<std::byte>> BlackBox = std::make_shared<std::vector<std::byte>>();
         int32_t PowerReads = 0;
+        /// <summary>The time the computer has been awake: it moves only as a test moves it.</summary>
+        std::chrono::nanoseconds Awake{};
     };
 
     class MCFakeBackend final : public MCTelemetry::MCBackend
@@ -67,6 +69,8 @@ namespace
         std::vector<std::string> LocalCountries() override { return _Log->Countries; }
 
         int64_t Now() override { return _Log->Now; }
+
+        std::chrono::nanoseconds Awake() override { return _Log->Awake; }
 
         void Request(std::string path, std::string body, std::function<void(int32_t, std::string)> done) override
         {
@@ -424,6 +428,52 @@ TEST_CASE("reports: a match of two minutes or more is reported at its end, with 
     MCTelemetry::PlayEnded();
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{2});
     CHECK(Holds(reports.Log->Requests[1].second, R"("first":false)"));
+}
+
+TEST_CASE("reports: play is timed by the time awake, and the time the player sees no frame isn't counted")
+{
+    MCFakeReports reports;
+    StartReporting(reports);
+    MCTelemetry::PlayLoading("mc2mp_01", true);
+    MCTelemetry::PlayStarted(2, true);
+    MCTelemetry::Frame();
+
+    // 130 s of 16 ms frames by the time awake.
+    constexpr std::chrono::milliseconds frame(16);
+    constexpr int32_t frames = 130'000 / 16;
+    constexpr int32_t asleep = 100;
+    constexpr int32_t unseen = 200;
+
+    for (int32_t i = 0; i < frames; i++)
+    {
+        if (i == asleep)
+        {
+            // The machine asleep through a frame: the wall clock runs on, the time awake doesn't.
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        }
+
+        reports.Log->Awake += frame;
+        MCTelemetry::Frame();
+
+        if (i == unseen)
+        {
+            // Half an hour of frames the player didn't see (the window minimized): the first seen after measures
+            // nothing.
+            for (int32_t hidden = 0; hidden < 100; hidden++)
+            {
+                reports.Log->Awake += std::chrono::seconds(18);
+                MCTelemetry::Unseen();
+            }
+
+            MCTelemetry::Frame();
+        }
+    }
+
+    MCTelemetry::PlayEnded();
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+    const std::string& report = reports.Log->Requests[0].second;
+    CHECK(Holds(report, R"("minutes":2.17,)"));
+    CHECK(Holds(report, R"("p50":16.50,"p95":16.50,"p99":16.50,"worst":16.00)"));
 }
 
 TEST_CASE("reports: an internet game's link is reported as it ends, with no address, and at most 32 a run")

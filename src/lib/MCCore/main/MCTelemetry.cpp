@@ -253,7 +253,8 @@ namespace
     MCPlay Play;
     MCPrompt Pending = MCPrompt::None;
     Clock::time_point RunStart = Clock::now();
-    std::optional<Clock::time_point> LastFrame;
+    /// <summary>When the last frame began, by the backend's clock of the time awake; none for a frame not measured.</summary>
+    std::optional<std::chrono::nanoseconds> LastFrame;
     /// <summary>The share of the HD weather's pieces the frame being measured threw (1: all, or it threw none).</summary>
     float FrameWeather = 1.0f;
     /// <summary>The links reported this run.</summary>
@@ -1127,8 +1128,16 @@ auto MCTelemetry::Reporting() -> bool
 
 auto MCTelemetry::Frame() -> void
 {
-    const Clock::time_point now = Clock::now();
-    const std::optional<Clock::time_point> last = std::exchange(LastFrame, now);
+    if (Backend == nullptr)
+    {
+        FrameWeather = 1.0f;
+        LastFrame.reset();
+        return;
+    }
+
+    // By the time awake, so a frame across the machine asleep counts only its waking part.
+    const std::chrono::nanoseconds now = Backend->Awake();
+    const std::optional<std::chrono::nanoseconds> last = std::exchange(LastFrame, now);
 
     if (last.has_value())
     {
@@ -1136,13 +1145,21 @@ auto MCTelemetry::Frame() -> void
     }
     else
     {
-        // Nothing to measure from: the first frame, or the first after a load (the load isn't a frame).
+        // Nothing to measure from: the first frame, the first after a load (the load isn't a frame), or the first the
+        // player saw after some they didn't.
         FrameWeather = 1.0f;
+        Tick();
+    }
+}
 
-        if (Backend != nullptr)
-        {
-            Tick();
-        }
+auto MCTelemetry::Unseen() -> void
+{
+    FrameWeather = 1.0f;
+    LastFrame.reset();
+
+    if (Backend != nullptr)
+    {
+        Tick();
     }
 }
 

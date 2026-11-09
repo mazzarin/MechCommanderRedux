@@ -455,7 +455,16 @@ auto MCGuiSystem::Run() -> void
             MCTelemetry::WeatherDrawn(MCWeatherPacing::Share());
         }
 
-        MCTelemetry::Frame();
+        // Port (personal): a frame the player can't see (the window minimized or covered) isn't play.
+        if (_Display == nullptr || _Display->Seen())
+        {
+            MCTelemetry::Frame();
+        }
+        else
+        {
+            MCTelemetry::Unseen();
+        }
+
         // Port (personal): the updater's content work, done on a thread of its own (main/MCUpdater.h); its downloads
         // wait while a match's mission plays.
         MCUpdater::PauseWork(MultiPlayer() != nullptr && MultiPlayer()->InMission);
@@ -492,6 +501,8 @@ auto MCGuiSystem::Run() -> void
         else if (!quit)
         {
             MCInput::WaitMessage(-1);
+            // Port (personal): the wait while the game wasn't the active window isn't play for the reports.
+            MCTelemetry::Unseen();
         }
         else
         {

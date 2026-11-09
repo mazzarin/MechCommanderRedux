@@ -322,6 +322,12 @@ public:
     void SetVSync(bool on);
 
     /// <summary>
+    /// Whether the player can see the window: not minimized, nor wholly covered (another Space, the screen off). A
+    /// hidden window counts as seen: only the tests' windows are hidden.
+    /// </summary>
+    bool Seen() const;
+
+    /// <summary>
     /// Writes the shown view as it is now (the screen with its underlays, at the screen's size) as an 8-bit PNG with its
     /// palette (the game's screenshot key).
     /// </summary>

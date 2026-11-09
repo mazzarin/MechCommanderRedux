@@ -100,6 +100,13 @@ namespace MCTelemetry
         virtual int64_t Now() = 0;
 
         /// <summary>
+        /// The time the computer has been awake, from any start: play's frames are timed by it, so a frame across the
+        /// machine asleep counts only its waking part. The Mac's and Windows' backends read their systems' clocks that
+        /// stop in sleep; this one doesn't.
+        /// </summary>
+        virtual std::chrono::nanoseconds Awake() { return std::chrono::steady_clock::now().time_since_epoch(); }
+
+        /// <summary>
         /// Sends <paramref name="body"/> to the server's <paramref name="path"/> (a GET when empty, else a POST of
         /// JSON), and calls <paramref name="done"/> with the HTTP status (0: no answer) and the reply, from any thread.
         /// </summary>
@@ -207,6 +214,13 @@ namespace MCTelemetry
 
     /// <summary>One frame of <paramref name="milliseconds"/> (the tests' clock).</summary>
     void Frame(double milliseconds);
+
+    /// <summary>
+    /// One frame of the game's loop that the player didn't see (the window minimized or covered), or the wait while
+    /// the game wasn't the active window: in place of <see cref="Frame()"/>. It isn't play, nor is the time until the
+    /// next frame seen; the replies still come in.
+    /// </summary>
+    void Unseen();
 
     /// <summary>A scenario starts loading: <paramref name="mission"/>, as a match when <paramref name="match"/>.</summary>
     void PlayLoading(std::string_view mission, bool match);

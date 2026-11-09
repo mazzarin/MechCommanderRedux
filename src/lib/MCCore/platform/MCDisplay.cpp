@@ -240,6 +240,11 @@ bool MCDisplay::WindowPixelSize(int& pixelWidth, int& pixelHeight) const
            SDL_GetWindowSizeInPixels(_Window.get(), &pixelWidth, &pixelHeight) && pixelWidth > 0 && pixelHeight > 0;
 }
 
+bool MCDisplay::Seen() const
+{
+    return (SDL_GetWindowFlags(_Window.get()) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED)) == 0;
+}
+
 MCScreenFit MCDisplay::ScreenFit() const
 {
     return MCScreenFit{.MinWidth = _MinWidth,

@@ -19,6 +19,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
@@ -525,7 +526,7 @@ void SavePrefs()
 {
     MCFitIniFile prefs;
 
-    if (const int32_t result = prefs.Create("prefs.cfg"); result != 0)
+    if (const int32_t result = prefs.Create(MCFileSystem::SettingsToWrite(PrefsFile)); result != 0)
     {
         SDL_Log("SavePrefs: cannot create prefs.cfg (%#x); the settings aren't saved", static_cast<uint32_t>(result));
         return;

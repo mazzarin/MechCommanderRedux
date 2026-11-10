@@ -47,6 +47,11 @@ namespace
     {
         std::filesystem::path DataFolder;
         std::filesystem::path UserFolder;
+        /// <summary>
+        /// Where the player's settings are kept when it isn't <see cref="UserFolder"/>: a launcher's match keeps the
+        /// player's own (MCFileSystem::SetSettingsRoot); empty, the user folder keeps them.
+        /// </summary>
+        std::filesystem::path SettingsFolder;
         std::string GameCommandLine;
         /// <summary>--remove-content: the content goes, and the game doesn't start (the Windows uninstaller's).</summary>
         bool RemoveContent = false;
@@ -55,6 +60,20 @@ namespace
         /// <summary>--report: where --remove-content says why it failed (the uninstaller shows it); empty, nowhere.</summary>
         std::filesystem::path ReportFile;
     };
+
+    /// <summary>The player's own folder of settings and saves, which SDL keeps for the game (made if missing).</summary>
+    std::expected<std::filesystem::path, std::string> PlayerFolder()
+    {
+        const std::unique_ptr<char, decltype(&SDL_free)> prefPath(SDL_GetPrefPath(nullptr, "MechCommander Redux"),
+                                                                  &SDL_free);
+
+        if (prefPath == nullptr)
+        {
+            return std::unexpected(std::format("No save folder: {}", SDL_GetError()));
+        }
+
+        return MCFileSystem::FromUtf8(prefPath.get());
+    }
 
     /// <summary>The command line's words for the content's removal, and for getting it.</summary>
     constexpr std::string_view RemoveContentOption = "--remove-content";
@@ -309,15 +328,30 @@ namespace
 
         if (options.UserFolder.empty())
         {
-            const std::unique_ptr<char, decltype(&SDL_free)> prefPath(SDL_GetPrefPath(nullptr, "MechCommander Redux"),
-                                                                      &SDL_free);
+            auto player = PlayerFolder();
 
-            if (prefPath == nullptr)
+            if (!player)
             {
-                return std::unexpected(std::format("No save folder: {}", SDL_GetError()));
+                return std::unexpected(player.error());
             }
 
-            options.UserFolder = MCFileSystem::FromUtf8(prefPath.get());
+            options.UserFolder = std::move(*player);
+        }
+
+        // A match a launcher starts (hosted or joined from the start) in a user folder of its own keeps the player's
+        // own settings; the launcher's folder keeps the rest (saves, notes, the black box).
+        else if (StartsInLobby(options.GameCommandLine))
+        {
+            std::error_code error;
+
+            if (auto player = PlayerFolder(); !player)
+            {
+                SDL_Log("Settings: the launcher's (%s)", player.error().c_str());
+            }
+            else if (!std::filesystem::equivalent(*player, options.UserFolder, error))
+            {
+                options.SettingsFolder = std::move(*player);
+            }
         }
 
         return options;
@@ -689,8 +723,14 @@ int main(int argc, char** argv)
 
     MCFileSystem::SetGameRoot(options->DataFolder);
     MCFileSystem::SetUserRoot(options->UserFolder);
+    MCFileSystem::SetSettingsRoot(options->SettingsFolder);
     SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
     SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
+
+    if (!options->SettingsFolder.empty())
+    {
+        SDL_Log("Settings: the player's own, in %s", MCFileSystem::ToUtf8(options->SettingsFolder).c_str());
+    }
 
     // The game folder's own settings and saves show through the user folder; what the original wrote into it from
     // Program Files went to Windows' VirtualStore, so the first start copies that into the user folder.

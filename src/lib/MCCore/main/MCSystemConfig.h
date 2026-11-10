@@ -1,9 +1,15 @@
 #pragma once
 
+#include <string>
+#include <string_view>
+
 // The game's settings at start-up (honorb.cpp, the "HonorBound" codename): SYSTEM.CFG (sound, ABL, the data paths) and
 // PREFS.CFG (display, gamma, language, difficulty, volumes).
 
 class MCFitIniFile;
+
+/// <summary>PREFS.CFG's name, in the player's settings folder (MCFileSystem::SettingsToRead, SettingsToWrite).</summary>
+inline constexpr std::string_view PrefsFile = "prefs.cfg";
 
 /// <summary>The campaign control FIT the game session starts ("campaign", in the mission path).</summary>
 extern std::string CampaignFile;

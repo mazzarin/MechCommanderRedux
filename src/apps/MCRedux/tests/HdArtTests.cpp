@@ -17403,6 +17403,173 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
 }
 
 /// <summary>
+/// An HD picture copied into another's keyed hole edge to edge (a store row's name plate into the row's picture, both
+/// keyed copies, as the list's view leaves the key out) meets it without a seam on a sharp screen, and the outer
+/// picture's own border is drawn whole: every shown pixel of their rectangle is their colour (port-only, HD art:
+/// bilinear filtering took the key's transparent texels into the row's pixels beside the hole and the transparent
+/// outside into each picture's border, so each covered only part of the pixels where they meet and the black under them
+/// showed through, a line 68% bright round every name in the store).
+/// </summary>
+TEST_CASE_ISOLATED("game: an HD picture copied into another's keyed hole meets it without a dark line")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // The pictures in the palette's brightest colour, over its darkest (the key aside).
+    constexpr int32_t Key = 0xff;
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    uint8_t bright = 0;
+    uint8_t dark = 0;
+
+    for (int32_t index = 0; index < Key; ++index)
+    {
+        bright = LumaOf(colors[index]) > LumaOf(colors[bright]) ? static_cast<uint8_t>(index) : bright;
+        dark = LumaOf(colors[index]) < LumaOf(colors[dark]) ? static_cast<uint8_t>(index) : dark;
+    }
+
+    constexpr float LeastContrast = 64.0f;
+    REQUIRE(LumaOf(colors[bright]) - LumaOf(colors[dark]) > LeastContrast);
+
+    // The row, with a hole of the key; the plate, the hole's size.
+    constexpr int32_t RowWidth = 40;
+    constexpr int32_t RowHeight = 24;
+    constexpr int32_t HoleX = 5;
+    constexpr int32_t HoleY = 4;
+    constexpr int32_t HoleWidth = 20;
+    constexpr int32_t HoleHeight = 10;
+    const std::shared_ptr<MCWindow> row = MCWindow::Make(RowWidth, RowHeight);
+    const std::shared_ptr<MCWindow> plate = MCWindow::Make(HoleWidth, HoleHeight);
+    std::ranges::fill(plate->Bytes(), bright);
+
+    for (int32_t y = 0; y < RowHeight; ++y)
+    {
+        for (int32_t x = 0; x < RowWidth; ++x)
+        {
+            const bool hole = x >= HoleX && x < HoleX + HoleWidth && y >= HoleY && y < HoleY + HoleHeight;
+            row->Pixels[static_cast<size_t>(y) * RowWidth + x] = hole ? static_cast<uint8_t>(Key) : bright;
+        }
+    }
+
+    MCRenderer::CreateTexture(*row, MCTextureUse::Static);
+    MCRenderer::CreateTexture(*plate, MCTextureUse::Static);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_hole_seam";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    std::filesystem::create_directories(PictureFolderOf(pack));
+
+    // Each picture in the pack as the menus' generator makes them: every pixel with its index, the key's too (a keyed
+    // copy leaves it out), in the colours as shown.
+    const auto writePicture = [&](const MCWindow& picture, int32_t width, int32_t height)
+    {
+        DecodedFrame frame;
+        frame.Width = width;
+        frame.Height = height;
+        frame.Index.assign(picture.Bytes().begin(), picture.Bytes().end());
+        frame.Drawn.assign(frame.Index.size(), 1);
+        const std::string name = MCHdArt::PictureName(MCHdArt::PictureHash(picture.Bytes(), width, height));
+        WriteFramePngs(
+            PictureFolderOf(pack) / name, frame, colors, TestPackScale, [](SDL_Color color) { return color; }, false);
+    };
+
+    writePicture(*row, RowWidth, RowHeight);
+    writePicture(*plate, HoleWidth, HoleHeight);
+    WritePaletteRgb(pack, colors);
+
+    // The dark colour under them, a few pixels past the row each way; the row and the plate keyed, as the store draws
+    // them (MCLogRows' RowPicture and CopyArt).
+    constexpr int32_t Margin = 4;
+    constexpr int32_t KeyedCopy = 0x100;
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+    const std::shared_ptr<MCWindow> under = MCWindow::Make(RowWidth + 2 * Margin, RowHeight + 2 * Margin);
+    GamePaused = true;
+    MCTestGame::RunFrame(FrameSeconds);
+    const int64_t before = renderer->HdDrawn();
+    Shown shown;
+
+    {
+        const MCHdArtOn on(pack);
+        VfxPaneCopy(MCPane::Over(under), 0, 0, screen, left - Margin, top - Margin, dark);
+        VfxPaneCopy(MCPane::Over(row), 0, 0, screen, left, top, KeyedCopy | Key);
+        VfxPaneCopy(MCPane::Over(plate), 0, 0, screen, left + HoleX, top + HoleY, KeyedCopy | Key);
+        shown = ReadShown(scratch);
+    }
+
+    GamePaused = false;
+    REQUIRE_EQ(renderer->HdDrawn() - before, 2);
+
+    // Each shown pixel whose centre lies in the row's rectangle (window pixels), as a share of the way from the dark
+    // colour to the pictures' (measured in the plate's middle and the margin): the darkest beside the hole's edges, and
+    // along the row's own border.
+    const int32_t windowWidth = MCInput::Display()->Width();
+    REQUIRE(windowWidth > 0);
+    const double scale = static_cast<double>(shown.Width) / static_cast<double>(windowWidth);
+    const double rowLeft = screen.X0 + left;
+    const double rowTop = screen.Y0 + top;
+    const auto lumaAt = [&](int32_t x, int32_t y)
+    {
+        const size_t at = (static_cast<size_t>(y) * shown.Width + x) * BytesPerPixel;
+        return LumaOf(SDL_Color{shown.Pixels[at], shown.Pixels[at + 1], shown.Pixels[at + 2], SDL_ALPHA_OPAQUE});
+    };
+
+    const auto shownPixel = [&](double windowX, double windowY)
+    { return std::pair{static_cast<int32_t>(windowX * scale), static_cast<int32_t>(windowY * scale)}; };
+    const auto [middleX, middleY] = shownPixel(rowLeft + HoleX + HoleWidth / 2.0, rowTop + HoleY + HoleHeight / 2.0);
+    const auto [marginX, marginY] = shownPixel(rowLeft - Margin / 2.0, rowTop - Margin / 2.0);
+    const float brightLuma = lumaAt(middleX, middleY);
+    const float darkLuma = lumaAt(marginX, marginY);
+    REQUIRE(brightLuma - darkLuma > LeastContrast);
+    // Within this many window pixels of an edge.
+    constexpr double Reach = 1.0;
+    float holeShare = 1.0f;
+    float borderShare = 1.0f;
+
+    for (int32_t y = 0; y < shown.Height; ++y)
+    {
+        for (int32_t x = 0; x < shown.Width; ++x)
+        {
+            // The centre in the row's pixels.
+            const double rx = (x + 0.5) / scale - rowLeft;
+            const double ry = (y + 0.5) / scale - rowTop;
+
+            if (rx < 0.0 || ry < 0.0 || rx >= RowWidth || ry >= RowHeight)
+            {
+                continue;
+            }
+
+            const float share = (lumaAt(x, y) - darkLuma) / (brightLuma - darkLuma);
+            const bool byHole = rx > HoleX - Reach && rx < HoleX + HoleWidth + Reach && ry > HoleY - Reach &&
+                                ry < HoleY + HoleHeight + Reach &&
+                                (rx < HoleX + Reach || rx > HoleX + HoleWidth - Reach || ry < HoleY + Reach ||
+                                 ry > HoleY + HoleHeight - Reach);
+            const bool byBorder = rx < Reach || ry < Reach || rx > RowWidth - Reach || ry > RowHeight - Reach;
+            holeShare = byHole ? std::min(holeShare, share) : holeShare;
+            borderShare = byBorder ? std::min(borderShare, share) : borderShare;
+        }
+    }
+
+    std::cout << std::format("  darkest beside the hole {:.0f}%, along the row's border {:.0f}%\n", holeShare * 100.0f,
+                             borderShare * 100.0f);
+    constexpr float LeastShare = 0.97f;
+    CHECK(holeShare >= LeastShare);
+    CHECK(borderShare >= LeastShare);
+    MCRenderer::DestroyTexture(*row);
+    MCRenderer::DestroyTexture(*plate);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
 /// A frame shown over a texture's pixels (<see cref="MCRenderer::ShowHdPicture"/>: a movie's HD frame over the window
 /// it decodes into) is drawn where a copy of the texture onto a sharp screen covers it, in its own colours (the test
 /// movie's red), and only there: the copy's other pixels show as they did, the screen's indices are the texture's

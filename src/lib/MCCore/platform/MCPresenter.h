@@ -187,7 +187,7 @@ public:
 
     /// <summary>
     /// A frame that isn't shown (the window is minimised): a GPU renderer still runs what was drawn for it, so what it
-    /// recorded doesn't pile up.
+    /// recorded doesn't pile up, and waits for the GPU to finish it, so neither does what the GPU holds for it.
     /// </summary>
     virtual std::expected<void, std::string> Discard(const MCFrame&) { return {}; }
 

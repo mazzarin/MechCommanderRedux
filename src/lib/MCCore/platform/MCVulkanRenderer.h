@@ -119,10 +119,13 @@ public:
     std::expected<void, std::string> Execute(SDL_GPUCommandBuffer& commands, std::span<const MCUnderlay> underlays);
 
     /// <summary>
-    /// Runs the commands recorded so far (<see cref="Execute"/>) in a command buffer of its own: before a read of the
-    /// surfaces ahead of the frame's present, or for a frame that isn't shown.
+    /// Runs the commands recorded so far (<see cref="Execute"/>) in a command buffer of its own and waits for the GPU to
+    /// finish them: before a read of the surfaces ahead of the frame's present, or for a frame that isn't shown.
     /// </summary>
     std::expected<void, std::string> Flush(std::span<const MCUnderlay> underlays);
+
+    /// <summary>The frames whose commands have run (<see cref="Execute"/>), shown or not.</summary>
+    uint64_t FramesRun() const { return _Frame; }
 
     /// <summary>
     /// The colour texture of <paramref name="window"/>'s surface (premultiplied RGBA, as <see cref="Execute"/> left it)

@@ -101,6 +101,63 @@ TEST_CASE_ISOLATED("game: the GPU draws mission 1 as the software renderer does"
 }
 
 /// <summary>
+/// A minimised window's frames (taken as minimised: SDL can't minimise the tests' hidden windows): the GPU still runs
+/// each one's commands, waiting for them, and once the window is back its surfaces are the software renderer's pixels,
+/// as if it had never been minimised. (0.6.3's crash: unwaited, SDL's Vulkan driver kept what every minimised frame
+/// held until an allocation failed. The Mac's Metal driver frees it at each submit, so only the path is checked here.)
+/// </summary>
+TEST_CASE_ISOLATED("game: a minimised window's frames are drawn on the GPU, and back, they are the software renderer's")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::Mirror);
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCVulkanRenderer> renderer = MirrorRenderer();
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    constexpr int32_t ShownFrames = 5;
+    constexpr int32_t MinimisedFrames = 120;
+
+    for (int32_t frame = 0; frame < ShownFrames; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    const int64_t compared = renderer->Mirror().Frames;
+    const uint64_t run = renderer->FramesRun();
+    display->TakenAsMinimised = true;
+    CHECK(display->Minimised());
+
+    for (int32_t frame = 0; frame < MinimisedFrames; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    // Each minimised frame ran its commands, and none was shown (so none was compared).
+    CHECK_EQ(renderer->FramesRun(), run + MinimisedFrames);
+    CHECK_EQ(renderer->Mirror().Frames, compared);
+
+    display->TakenAsMinimised = false;
+    renderer->ResetMirror();
+
+    for (int32_t frame = 0; frame < ShownFrames; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    CheckMirror(*renderer);
+}
+
+/// <summary>
 /// Mirror mode on mission 1 zoomed out and in: the GPU draws the world straight at the size it is shown (the zoom is
 /// only the scale its draws are mapped by), and each drawn pixel is the software renderer's world pixel under its
 /// centre, the pixel the composite would have shown from the 1x world; the screen as shown over it is the CPU's. The

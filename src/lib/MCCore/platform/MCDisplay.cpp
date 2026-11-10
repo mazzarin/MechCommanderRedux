@@ -624,12 +624,17 @@ std::expected<void, std::string> MCDisplay::Present()
         OnPresent();
     }
 
-    if ((SDL_GetWindowFlags(_Window.get()) & SDL_WINDOW_MINIMIZED) != 0)
+    if (Minimised())
     {
         return _Presenter->Discard(BuildFrame(false));
     }
 
     return _Presenter->Present(BuildFrame(false));
+}
+
+bool MCDisplay::Minimised() const
+{
+    return TakenAsMinimised || (SDL_GetWindowFlags(_Window.get()) & SDL_WINDOW_MINIMIZED) != 0;
 }
 
 std::expected<std::vector<SDL_Color>, std::string> MCDisplay::ReadFrame()

@@ -305,9 +305,13 @@ public:
 
     /// <summary>
     /// Shows the screen: uploads the pixels and the palette and presents (waiting for the display's refresh when
-    /// vsync is on). A minimised window is skipped without waiting.
+    /// vsync is on). A minimised window's frame (<see cref="Minimised"/>) isn't shown: the GPU draws what was recorded
+    /// for it, and the game waits for that rather than the refresh.
     /// </summary>
     std::expected<void, std::string> Present();
+
+    /// <summary>Whether the window is minimised, or a test takes it as minimised (<see cref="TakenAsMinimised"/>).</summary>
+    bool Minimised() const;
 
     /// <summary>Switches between desktop fullscreen and the window (the original's InitFullScreen / InitWindowMode).</summary>
     bool SetFullscreen(bool fullscreen);
@@ -385,6 +389,9 @@ public:
     /// drawn inside the game's own loops, such as the logistics screen wipes, are seen too).
     /// </summary>
     std::function<void()> OnPresent;
+
+    /// <summary>Tests: the window taken as minimised (<see cref="Minimised"/>); SDL can't minimise their hidden windows.</summary>
+    bool TakenAsMinimised = false;
 
 private:
     /// <summary>Resizes the window to the screen's size times its scale (windowed, not following the window).</summary>

@@ -7248,9 +7248,24 @@ std::expected<void, std::string> MCVulkanRenderer::Flush(std::span<const MCUnder
         return executed;
     }
 
-    if (!SDL_SubmitGPUCommandBuffer(commands))
+    // Waited for: this command buffer asks for no swapchain image, and SDL's Vulkan driver frees what its finished
+    // command buffers hold (descriptor sets, uniform buffers, the copies of a transfer buffer it cycled, released
+    // textures) only at a submit that asked for one, or in a fence wait. A minimised window's frames come here one after
+    // another, with no swapchain or vsync to pace them: unwaited, each left its command buffer and a new copy of the
+    // frames' upload buffer behind until an allocation in the driver failed (0.6.3's crash in vkUpdateDescriptorSets).
+    SDL_GPUFence* const fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+
+    if (fence == nullptr)
     {
-        return std::unexpected(SdlError("SDL_SubmitGPUCommandBuffer"));
+        return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence"));
+    }
+
+    const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &fence, 1);
+    SDL_ReleaseGPUFence(_Device.get(), fence);
+
+    if (!waited)
+    {
+        return std::unexpected(SdlError("SDL_WaitForGPUFences"));
     }
 
     return {};

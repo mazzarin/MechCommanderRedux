@@ -2416,7 +2416,7 @@ MCVulkanRenderer::AuditScope::AuditScope(MCVulkanRenderer& renderer, std::string
     if (renderer.Audit && !renderer._Audited.has_value())
     {
         _Outermost = true;
-        renderer._Audited = AuditedDraw{command, target, false, data, frame, from, 0, false};
+        renderer._Audited = AuditedDraw{command, target, false, data, frame, from, 0, false, false};
     }
 }
 
@@ -3273,11 +3273,30 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
 }
 
 bool MCVulkanRenderer::AddSharpLines(uint16_t surface, std::span<const uint8_t> art, int32_t columns, int32_t rows,
-                                     const Quad& at, const Quad& from, uint32_t tableRow)
+                                     const Quad& at, const Quad& from, uint32_t tableRow,
+                                     std::span<const MCSharpLines::MCDrawnLoop> drawn)
 {
-    const uint64_t key = SharpKey(SharpKind::Lines, art, columns, columns, rows);
+    uint64_t key = SharpKey(SharpKind::Lines, art, columns, columns, rows);
+
+    // The parts drawn by hand are part of what it's redrawn from.
+    for (const MCSharpLines::MCDrawnLoop& loop : drawn)
+    {
+        for (const int32_t edge : {loop.Left, loop.Top, loop.Right, loop.Bottom})
+        {
+            MixHash(key, static_cast<uint64_t>(static_cast<uint32_t>(edge)));
+        }
+
+        for (const auto& point : loop.Through)
+        {
+            for (const float along : point)
+            {
+                MixHash(key, std::bit_cast<uint32_t>(along));
+            }
+        }
+    }
+
     return AddSharpPicture(
-        surface, key, [&] { return MCSharpLines::Redraw(art, columns, columns, rows); }, columns, rows, at, from,
+        surface, key, [&] { return MCSharpLines::Redraw(art, columns, columns, rows, drawn); }, columns, rows, at, from,
         tableRow);
 }
 
@@ -3523,9 +3542,9 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     uint32_t op = KindTexture;
     uint32_t before = 0;
     uint32_t after = 0;
-    // Port-only: line art (the purchase screen's sold-out outlines) on a sharp screen is redrawn as smooth strokes at
-    // the output's resolution (MCSharpLines), in the colours its table gives its bytes; the original's draw keeps the
-    // indices.
+    // Port-only: line art (the store's and the mech bay's diagrams, the store's sold-out outlines) on a sharp screen is
+    // redrawn as smooth strokes at the output's resolution (MCSharpLines), in the colours its table gives its bytes, in
+    // place of any pack's copy; the original's draw keeps the indices.
     bool lineArt = false;
 
     if ((command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) && SharpScreenSurface(surface) &&
@@ -3545,8 +3564,14 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
         const Quad artFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
         const uint32_t tableRow = command.Op == MCShapeOp::Xlat ? TableRow(*command.Table) : IdentityRow;
-        lineArt = AddSharpLines(surface, art, width, rows, at, artFrom, tableRow);
+        lineArt = AddSharpLines(surface, art, width, rows, at, artFrom, tableRow,
+                                MCHdArt::LineArtDrawn(command.ShapeTable, command.ShapeNum));
         op |= lineArt ? IndexOnly : 0u;
+
+        if (_Audited.has_value())
+        {
+            _Audited->LineArt |= lineArt;
+        }
     }
 
     switch (command.Op)

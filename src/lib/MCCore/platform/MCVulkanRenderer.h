@@ -2,6 +2,7 @@
 
 #include "platform/MCPresenter.h"
 #include "platform/MCSdlHandle.h"
+#include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 #include "sprite/MCHdMovie.h"
@@ -269,6 +270,8 @@ public:
         /// <summary>The window pixels its draws covered.</summary>
         int64_t Pixels = 0;
         bool Sharp = false;
+        /// <summary>Whether it was line art redrawn as strokes (MCSharpLines).</summary>
+        bool LineArt = false;
     };
 
     /// <summary>Port-only: called after every draw command while set (the HD art audit's).</summary>
@@ -869,10 +872,10 @@ private:
     /// pixels' bytes, <see cref="MCSharpText::NoInk"/> where none is drawn) over <paramref name="at"/> on a sharp screen,
     /// reading it from <paramref name="from"/> (its first pixel and steps), redrawn as smooth strokes
     /// (<see cref="MCSharpLines"/>) at the output's resolution in the colours table row <paramref name="tableRow"/> gives
-    /// its bytes. False when it can't be put on the GPU.
+    /// its bytes, <paramref name="drawn"/> its parts drawn by hand. False when it can't be put on the GPU.
     /// </summary>
     bool AddSharpLines(uint16_t surface, std::span<const uint8_t> art, int32_t columns, int32_t rows, const Quad& at,
-                       const Quad& from, uint32_t tableRow);
+                       const Quad& from, uint32_t tableRow, std::span<const MCSharpLines::MCDrawnLoop> drawn);
     /// <summary>What a picture redrawn sharp was redrawn from (its key's space).</summary>
     enum class SharpKind : uint8_t
     {

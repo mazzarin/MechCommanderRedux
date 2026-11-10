@@ -612,15 +612,44 @@ auto MCLogistics::Start() -> void
     ShowLogScreen(false, false);
 }
 
+namespace
+{
+    /// <summary>The Atlas's repair shapes (mechrep00.shp) and its head's armor frame, 21 pixels wide.</summary>
+    constexpr size_t AtlasMech = 0;
+    constexpr int32_t AtlasHead = MCLogistics::MechArmorShapes;
+    constexpr float AtlasHeadWidth = 21.0f;
+
+    /// <summary>
+    /// Port-only: the Atlas's head is a skull, but its eyes are boxes of pixels (each with a tick at its outer corner)
+    /// that line art draws as tilted boxes: drawn by hand as sockets under the brow, tall at the outside and narrowing
+    /// toward the nose, the right one the left one mirrored.
+    /// </summary>
+    std::vector<MCSharpLines::MCDrawnLoop> AtlasEyes()
+    {
+        const std::vector<std::array<float, 2>> left = {{4.3f, 5.4f}, {6.4f, 5.6f}, {8.3f, 6.3f}, {8.6f, 7.2f},
+                                                        {7.9f, 8.2f}, {6.0f, 8.6f}, {4.5f, 8.2f}, {4.0f, 6.8f}};
+        std::vector<std::array<float, 2>> right;
+
+        for (const auto& [x, y] : left)
+        {
+            right.push_back({AtlasHeadWidth - x, y});
+        }
+
+        return {{3, 5, 8, 8, left}, {12, 5, 17, 8, right}};
+    }
+}
+
 auto MCLogistics::AttachHdArt() -> void
 {
     // A new owner: ties made before go with the old one.
     HdArtOwner = std::make_shared<const int>(0);
     std::vector<MCHdArt::LineArtFrame> lineArt;
 
-    // Each unit's icons tied to the pack's (named as their files are), and its repair shapes' sold-out outline.
+    // Each unit's icons tied to the pack's (named as their files are), and its repair shapes' diagram (runs of frames
+    // from each first) and sold-out outline as line art.
     const auto attach = [&](std::span<const MCRegisteredBlock> repairs, std::span<const MCRegisteredBlock> icons,
-                            std::string_view prefix, int32_t soldOut)
+                            std::string_view prefix, std::initializer_list<int32_t> diagram, int32_t locations,
+                            int32_t soldOut)
     {
         for (size_t i = 0; i < repairs.size(); ++i)
         {
@@ -629,15 +658,43 @@ auto MCLogistics::AttachHdArt() -> void
                 MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, MCHdArt::IconShapeKey{std::format("{}{:02}", prefix, i)});
             }
 
-            if (!repairs[i].Empty())
+            if (repairs[i].Empty())
             {
-                lineArt.push_back({MCAddressKey::OfData(repairs[i].Bytes()), soldOut});
+                continue;
             }
+
+            const MCAddressKey table = MCAddressKey::OfData(repairs[i].Bytes());
+
+            for (const int32_t first : diagram)
+            {
+                for (int32_t location = 0; location < locations; ++location)
+                {
+                    lineArt.push_back({table, first + location});
+                }
+            }
+
+            lineArt.push_back({table, soldOut});
         }
     };
 
-    attach(MechRepShapes, MechIconShapes, "mi", MechSoldOutShape);
-    attach(VehicleRepShapes, VehicleIconShapes, "vi1", VehicleSoldOutShape);
+    attach(MechRepShapes, MechIconShapes, "mi", {MechArmorShapes, MechInternalShapes}, MechDiagramLocations,
+           MechSoldOutShape);
+    attach(VehicleRepShapes, VehicleIconShapes, "vi1", {VehicleArmorShapes}, VehicleDiagramLocations,
+           VehicleSoldOutShape);
+
+    // The Atlas's skull: its eyes drawn by hand.
+    if (AtlasMech < MechRepShapes.size() && !MechRepShapes[AtlasMech].Empty())
+    {
+        const MCAddressKey atlas = MCAddressKey::OfData(MechRepShapes[AtlasMech].Bytes());
+
+        for (MCHdArt::LineArtFrame& frame : lineArt)
+        {
+            if (frame.Table == atlas && frame.Frame == AtlasHead)
+            {
+                frame.Drawn = AtlasEyes();
+            }
+        }
+    }
 
     MCHdArt::SetLineArtFrames(lineArt);
 }

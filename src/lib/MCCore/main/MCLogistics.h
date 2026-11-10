@@ -81,12 +81,23 @@ public:
 
     /// <summary>
     /// Port-only: ties the mech and vehicle icons' damage shapes (<c>mi##.shp</c>, <c>vi1##.shp</c>) to the HD art
-    /// pack's (the mech bar's icons), and marks the sold-out outlines (<see cref="MechSoldOutShape"/>,
-    /// <see cref="VehicleSoldOutShape"/>) as line art, drawn as smooth strokes (MCHdArt::SetLineArtFrames). Start does
-    /// it; again when HD art comes on.
+    /// pack's (the mech bar's icons), and marks the repair shapes' diagrams (the store's stocked rows' and the mech
+    /// bay's: <see cref="MechArmorShapes"/>, <see cref="MechInternalShapes"/>, <see cref="VehicleArmorShapes"/>) and
+    /// sold-out outlines (<see cref="MechSoldOutShape"/>, <see cref="VehicleSoldOutShape"/>) as line art, drawn as
+    /// smooth strokes (MCHdArt::SetLineArtFrames). Start does it; again when HD art comes on.
     /// </summary>
     void AttachHdArt();
 
+    /// <summary>
+    /// The frames of a mech's repair shapes its diagram is drawn with, a frame a location: the armor (from 0) over the
+    /// internal structure (from 0xb).
+    /// </summary>
+    static constexpr int32_t MechArmorShapes = 0;
+    static constexpr int32_t MechInternalShapes = 0xb;
+    static constexpr int32_t MechDiagramLocations = 8;
+    /// <summary>The frames of a vehicle's repair shapes its diagram is drawn with, a frame a location (from 0).</summary>
+    static constexpr int32_t VehicleArmorShapes = 0;
+    static constexpr int32_t VehicleDiagramLocations = 5;
     /// <summary>The frame of a mech's repair shapes drawn as its sold-out outline (on the purchase screen).</summary>
     static constexpr int32_t MechSoldOutShape = 0x13;
     /// <summary>The frame of a vehicle's repair shapes drawn as its sold-out outline.</summary>

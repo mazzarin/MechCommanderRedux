@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/MCAddressKey.h"
+#include "platform/MCSharpLines.h"
 #include "sprite/MCBc7.h"
 
 class MCShape;
@@ -425,22 +426,26 @@ namespace MCHdArt
     /// <summary>Whether HD art is on and <paramref name="table"/> is one whose edges are drawn smooth.</summary>
     bool SmoothEdges(std::span<const uint8_t> table);
 
-    /// <summary>A frame of a shape table (where the table starts).</summary>
+    /// <summary>A frame of a shape table (where the table starts), and its parts drawn by hand.</summary>
     struct LineArtFrame
     {
         MCAddressKey Table;
         int32_t Frame = 0;
+        std::vector<MCSharpLines::MCDrawnLoop> Drawn;
     };
 
     /// <summary>
-    /// Sets the shape frames that are line art (one-pixel outlines: the purchase screen's sold-out mechs and vehicles),
-    /// redrawn as smooth strokes (platform/MCSharpLines) on a screen drawn at the size it's shown while HD art is on;
-    /// none needs a pack.
+    /// Sets the shape frames that are line art (one-pixel outlines: the mechs' and vehicles' diagrams in the store and
+    /// the mech bay, and the store's sold-out outlines), redrawn as smooth strokes (platform/MCSharpLines) in place of
+    /// any pack's copy on a screen drawn at the size it's shown while HD art is on; none needs a pack.
     /// </summary>
     void SetLineArtFrames(std::span<const LineArtFrame> frames);
 
     /// <summary>Whether HD art is on and frame <paramref name="frame"/> of <paramref name="table"/> is line art.</summary>
     bool LineArt(std::span<const uint8_t> table, int32_t frame);
+
+    /// <summary>A line art frame's parts drawn by hand (none for most).</summary>
+    std::span<const MCSharpLines::MCDrawnLoop> LineArtDrawn(std::span<const uint8_t> table, int32_t frame);
 
     /// <summary>The bytes of a palette file: 256 colours, red, green and blue.</summary>
     inline constexpr size_t PaletteBytes = 256 * 3;

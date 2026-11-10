@@ -951,8 +951,10 @@ static const uint FilledHolesMost = 4u;
 static const uint HalfShift = 16u;
 static const uint HalfMask = 0xffffu;
 
-// Whether original pixel `pixel` of a KindHd draw's picture lies in one of the holes it carries.
-bool InFilledHole(Input input, int2 pixel)
+// Whether `place` of a KindHd draw's picture, in units `scale` to an original pixel (1: its original pixels; the
+// frame's texel scale: its HD texels), lies in one of the holes it carries. The holes' bounds are scaled rather than
+// the place divided (no divides in the pixels).
+bool InFilledHole(Input input, int2 place, int scale)
 {
     const uint4 low = uint4((uint)input.span.x, (uint)input.span.z, input.walk.x, input.walk.z);
     const uint4 high = uint4((uint)input.span.y, (uint)input.span.w, input.walk.y, input.walk.w);
@@ -962,7 +964,7 @@ bool InFilledHole(Input input, int2 pixel)
         const int2 first = int2((int)(low[i] & HalfMask), (int)(low[i] >> HalfShift));
         const int2 past = int2((int)(high[i] & HalfMask), (int)(high[i] >> HalfShift));
 
-        if (all(pixel >= first) && all(pixel < past))
+        if (all(place >= first * scale) && all(place < past * scale))
         {
             return true;
         }
@@ -995,7 +997,7 @@ int2 HdTap(Input input, int2 texel, int2 size)
 // are between all four.
 float4 HdColourBesideHoles(Input input, float2 shape, int2 base, float2 f, int2 size)
 {
-    if (InFilledHole(input, int2(floor(shape))))
+    if (InFilledHole(input, int2(floor(shape)), 1))
     {
         return float4(0.0, 0.0, 0.0, 0.0);
     }
@@ -1012,7 +1014,7 @@ float4 HdColourBesideHoles(Input input, float2 shape, int2 base, float2 f, int2 
         {
             const int2 texel = HdTap(input, base + int2(x, y), size);
 
-            if (InFilledHole(input, FloorDivide(texel, int2(texelScale, texelScale))))
+            if (InFilledHole(input, texel, texelScale))
             {
                 continue;
             }

@@ -663,6 +663,87 @@ TEST_CASE_ISOLATED("game: the operation tab starts the briefing movie half a sec
     }
 }
 
+/// <summary>
+/// OB-191: the operation tab says "Click to restart video." once it shows, and a click on it does: a second click
+/// before the movie starts leaves one start, and a click while the movie plays (as one during Betty's "incoming
+/// transmission" lands, once the movie has opened) starts it again after the delay; the mission tab clicked within the
+/// delay drops the start. The original armed a start for each click, the later one stopping the movie the first had
+/// started, and a click once the movie had started only stopped it: the operation picture stayed, without its movie;
+/// and the mission tab left the start waiting, which flipped back to the operation tab.
+/// </summary>
+TEST_CASE_ISOLATED("game: a click on the operation tab restarts the briefing movie, however soon it comes")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    NewCampaign();
+    Settle();
+    MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
+    REQUIRE(GlobalLog()->CurrentScreen().get() == &briefing);
+    REQUIRE(!GlobalLog()->OperationCinema.empty());
+    briefing.SetUpMission();
+    REQUIRE(briefing.SmackerWindow == nullptr);
+
+    // The operation tab (MCBriefingScreen::HandleClick's), the start's delay (500 ms) and a time well into the movie.
+    constexpr int32_t TabX = 0xc8;
+    constexpr int32_t TabY = 0x80;
+    constexpr float SecondClickAfter = 0.2f;
+    constexpr float PastDelay = 0.7f;
+    constexpr float IntoMovie = 1.5f;
+    const auto frameShown = [&briefing]() -> std::optional<uint32_t>
+    {
+        const std::shared_ptr<MCGuiSmackerWindow> window = briefing.SmackerWindow.Lock();
+
+        if (window == nullptr || window->Movie == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        return window->Movie->Player->FrameNum();
+    };
+
+    // Two clicks before the movie starts: it starts once, and plays on.
+    MCScreenInput::Click(TabX, TabY);
+    RunFor(SecondClickAfter);
+    MCScreenInput::Click(TabX, TabY);
+    CHECK_EQ(briefing.CurrentTab, MCBriefingScreen::OperationTab);
+    RunFor(PastDelay);
+    const std::optional<uint32_t> started = frameShown();
+    REQUIRE(started.has_value());
+    RunFor(IntoMovie);
+    const std::optional<uint32_t> playing = frameShown();
+    REQUIRE(playing.has_value());
+    CHECK(*playing > *started);
+
+    // A click while it plays: it stops, and starts again from its first frame after the delay.
+    MCScreenInput::Click(TabX, TabY);
+    CHECK(!frameShown().has_value());
+    RunFor(PastDelay);
+    const std::optional<uint32_t> restarted = frameShown();
+    REQUIRE(restarted.has_value());
+    CHECK(*restarted < *playing);
+    RunFor(IntoMovie);
+    const std::optional<uint32_t> playingAgain = frameShown();
+    REQUIRE(playingAgain.has_value());
+    CHECK(*playingAgain > *restarted);
+    CHECK(briefing.OperationPictureShown);
+
+    // The mission tab clicked within the delay: the start waiting is dropped, and the mission tab stays.
+    constexpr int32_t MissionTabY = 0x110;
+    MCScreenInput::Click(TabX, MissionTabY);
+    CHECK(!frameShown().has_value());
+    MCScreenInput::Click(TabX, TabY);
+    RunFor(SecondClickAfter);
+    MCScreenInput::Click(TabX, MissionTabY);
+    RunFor(PastDelay);
+    CHECK_EQ(briefing.CurrentTab, MCBriefingScreen::MissionTab);
+    CHECK(!frameShown().has_value());
+}
+
 namespace
 {
     /// <summary>What a campaign save holds that a load brings back: the units, pilots, spare parts and points.</summary>

@@ -42,6 +42,8 @@ namespace
     /// <summary>The briefing screen's timers: the chat button's blink and the operation movie's start delay.</summary>
     constexpr int32_t ChatBlinkTimer = 5;
     constexpr int32_t MovieDelayTimer = 6;
+    /// <summary>The operation movie's start delay after the tab is shown, in milliseconds.</summary>
+    constexpr int32_t MovieDelay = 500;
 
     /// <summary>The tops of the drop slots' rows; each lance is two rows of two.</summary>
     constexpr std::array<int32_t, 6> SlotTops = {0x28, 0x58, 0x98, 0xc8, 0x108, 0x138};
@@ -854,6 +856,12 @@ auto MCBriefingScreen::HandleClick(int32_t xPos, int32_t yPos) -> void
     if (Inside(point, 0xc2, 0x67, 0xd1, 0xde))
     {
         SoundSystem()->PlayInterfaceSample(0x36);
+        // OB-191 (fixed): the operation tab restarts the movie, as its help says ("Click to restart video."): the movie
+        // playing stops, and it starts again after the delay. The original's click while the movie played (as one
+        // during Betty's "incoming transmission" lands, once the movie has opened) only stopped it, leaving the
+        // operation picture without its movie.
+        StopSmackerMovies();
+        PlayMovie = false;
         SetUpOperation();
         return;
     }
@@ -1006,7 +1014,10 @@ auto MCBriefingScreen::SetUpOperation() -> void
 
         if (!PlayMovie)
         {
-            GuiSystem().AddTimer(weak_from_this(), MovieDelayTimer, 500, 0, 0, false);
+            // OB-191 (fixed): one start waits at a time, from the last click. The original armed another for each
+            // click before the movie started, and the later one's start stopped the movie the first had started.
+            GuiSystem().RemoveTimer(*this, MovieDelayTimer);
+            GuiSystem().AddTimer(weak_from_this(), MovieDelayTimer, MovieDelay, 0, 0, false);
         }
     }
     else
@@ -1087,6 +1098,9 @@ auto MCBriefingScreen::SetUpMission() -> void
 
     if (MultiPlayer() == nullptr)
     {
+        // OB-191 (fixed): the operation movie's pending start is dropped too. The original left it, so the mission
+        // tab clicked within the delay flipped back to the operation tab and its movie played.
+        GuiSystem().RemoveTimer(*this, MovieDelayTimer);
         StopSmackerMovies();
     }
     else

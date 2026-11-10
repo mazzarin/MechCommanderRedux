@@ -21,6 +21,7 @@
 #include "network/MCRejoinNote.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCWeatherPace.h"
 #include "update/MCContentList.h"
 #include "update/MCContentRemoval.h"
@@ -710,8 +711,23 @@ int main(int argc, char** argv)
     const MCInstalled::MCRecord& record = installed ? *installed : noRecord;
 
     UsePersonalGameplay();
+    bool hd = !contentUpdates || MCInstalled::Has(record, options->DataFolder, MCContentList::HdSet);
+    std::error_code packError;
 
-    if (!contentUpdates || MCInstalled::Has(record, options->DataFolder, MCContentList::HdSet))
+    // A game folder without HD of its own (a launcher's copy of the game, --data) played by a Redux HD install's
+    // program: the install's HD pack shows (art, sound, movies), and its HD answer sets the looks.
+    if (!std::filesystem::is_directory(MCHdArt::PackFolder(), packError))
+    {
+        if (const std::optional<std::filesystem::path> install =
+                MCGameFolder::HdInstall(*MakeDisk(), options->DataFolder, record, MCGameFolder::InstallFolder()))
+        {
+            MCHdArt::SetPackFolder(*install / MCHdArt::DefaultFolder);
+            hd = true;
+            SDL_Log("HD: the game folder has none; the install's, in %s", MCFileSystem::ToUtf8(*install).c_str());
+        }
+    }
+
+    if (hd)
     {
         UseHdByDefault();
     }

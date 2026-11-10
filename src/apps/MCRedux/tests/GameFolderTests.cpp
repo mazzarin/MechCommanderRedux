@@ -4,7 +4,10 @@
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "platform/MCUtf8Path.h"
+#include "sprite/MCHdArt.h"
 #include "update/MCContentSwap.h"
+#include "update/MCInstalled.h"
+#include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
 namespace
@@ -106,6 +109,37 @@ TEST_CASE("launcher: a folder whose update is under way is the game's, its SYSTE
     std::ofstream(locksOnly / "MCX.EXE") << "MZ";
     CHECK(!MCGameFolder::HasGameData(locksOnly));
     CHECK(!MCGameFolder::IsInstall(locksOnly));
+}
+
+/// <summary>
+/// A launcher's copy of the game without HD plays with the HD of the Redux HD install whose program runs it; a copy with
+/// HD of its own, the install itself, an install without HD or whose record can't be read give none.
+/// </summary>
+TEST_CASE("launcher: a game folder without HD takes the Redux HD install's, when the install has it")
+{
+    const ScratchFolder scratch("hd-install");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCInstalled::MCRecord none;
+    const std::filesystem::path lobbyCopy = MakeInstall(scratch.Path() / "lobby copy");
+    const std::filesystem::path install = MakeInstall(scratch.Path() / "Redux HD");
+    const std::filesystem::path withoutHd = MakeInstall(scratch.Path() / "Redux without HD");
+    std::filesystem::create_directories(install / MCHdArt::DefaultFolder);
+
+    CHECK(MCGameFolder::HdInstall(*disk, lobbyCopy, none, install) == install);
+    CHECK(!MCGameFolder::HdInstall(*disk, install, none, install));
+    CHECK(!MCGameFolder::HdInstall(*disk, lobbyCopy, none, withoutHd));
+    CHECK(!MCGameFolder::HdInstall(*disk, lobbyCopy, none, std::filesystem::path()));
+
+    // The launcher's copy has HD of its own: its own.
+    const std::filesystem::path lobbyWithHd = MakeInstall(scratch.Path() / "lobby copy with HD");
+    std::filesystem::create_directories(lobbyWithHd / MCHdArt::DefaultFolder);
+    CHECK(!MCGameFolder::HdInstall(*disk, lobbyWithHd, none, install));
+
+    // The install's record can't be read: nothing is known of its HD.
+    const std::filesystem::path record = install / std::filesystem::path(MCInstalled::RecordPath);
+    std::filesystem::create_directories(record.parent_path());
+    std::ofstream(record) << "not a record";
+    CHECK(!MCGameFolder::HdInstall(*disk, lobbyCopy, none, install));
 }
 
 /// <summary>The chosen folder is remembered in the user folder, accented letters and all; none is empty.</summary>

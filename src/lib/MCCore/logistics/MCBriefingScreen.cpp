@@ -1098,6 +1098,9 @@ auto MCBriefingScreen::SetUpMission() -> void
 
     if (MultiPlayer() == nullptr)
     {
+        // OB-191 (fixed): the operation movie's pending start is dropped too. The original left it, so the mission
+        // tab clicked within the delay flipped back to the operation tab and its movie played.
+        GuiSystem().RemoveTimer(*this, MovieDelayTimer);
         StopSmackerMovies();
     }
     else

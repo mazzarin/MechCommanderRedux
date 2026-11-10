@@ -287,7 +287,8 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - Empty inventories, and items with fewer copies than their count, no longer crash the inventory.
 - The briefing no longer crashes on a mech without a pilot or engine, or on a missing movie.
 - Clicking the briefing's OPERATION BRIEFING tab again restarts its movie, as the tab's help says. A second click before
-  the movie began, or one while it played, stopped it and left the operation picture (OB-191).
+  the movie began, or one while it played, stopped it and left the operation picture; MISSION BRIEFING clicked just
+  after it no longer flips back to the movie (OB-191).
 - The mission results no longer crash without a best pilot, and no longer overflow when they find more pilots than they
   made room for.
 - With two or more campaigns, the campaign name is no longer garbage.

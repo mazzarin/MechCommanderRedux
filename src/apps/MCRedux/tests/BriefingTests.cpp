@@ -666,9 +666,10 @@ TEST_CASE_ISOLATED("game: the operation tab starts the briefing movie half a sec
 /// <summary>
 /// OB-191: the operation tab says "Click to restart video." once it shows, and a click on it does: a second click
 /// before the movie starts leaves one start, and a click while the movie plays (as one during Betty's "incoming
-/// transmission" lands, once the movie has opened) starts it again after the delay. The original armed a start for
-/// each click, the later one stopping the movie the first had started, and a click once the movie had started only
-/// stopped it: the operation picture stayed, without its movie.
+/// transmission" lands, once the movie has opened) starts it again after the delay; the mission tab clicked within the
+/// delay drops the start. The original armed a start for each click, the later one stopping the movie the first had
+/// started, and a click once the movie had started only stopped it: the operation picture stayed, without its movie;
+/// and the mission tab left the start waiting, which flipped back to the operation tab.
 /// </summary>
 TEST_CASE_ISOLATED("game: a click on the operation tab restarts the briefing movie, however soon it comes")
 {
@@ -730,6 +731,17 @@ TEST_CASE_ISOLATED("game: a click on the operation tab restarts the briefing mov
     REQUIRE(playingAgain.has_value());
     CHECK(*playingAgain > *restarted);
     CHECK(briefing.OperationPictureShown);
+
+    // The mission tab clicked within the delay: the start waiting is dropped, and the mission tab stays.
+    constexpr int32_t MissionTabY = 0x110;
+    MCScreenInput::Click(TabX, MissionTabY);
+    CHECK(!frameShown().has_value());
+    MCScreenInput::Click(TabX, TabY);
+    RunFor(SecondClickAfter);
+    MCScreenInput::Click(TabX, MissionTabY);
+    RunFor(PastDelay);
+    CHECK_EQ(briefing.CurrentTab, MCBriefingScreen::MissionTab);
+    CHECK(!frameShown().has_value());
 }
 
 namespace

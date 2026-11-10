@@ -2063,17 +2063,22 @@ uint StreakHash(uint x)
     return x;
 }
 
+// The top bits of a cell's hash that say whether it shows: a streak's (the next 10 where in its cell it starts), and a
+// splash's, finer, as a texel's share of them can be small (in the last of a shower).
+static const uint StreakShownBits = 12u;
+static const uint SplashShownBits = 22u;
+
 // Whether cell `cell` of streak layer `layer` holds a streak now, at `share` of its cells: each living `life` seconds
-// from the cell's own phase; `hash` its own (its top 12 bits whether it shows, the next 10 where in its cell it starts,
-// the last 10 how strong it is and how much light it catches) and `gone`, how much of its life is.
-bool StreakIn(int2 cell, uint layer, float life, float share, out uint hash, out float gone)
+// from the cell's own phase; `hash` its own (its top `shownBits` whether it shows, its last 10 how strong it is and how
+// much light it catches) and `gone`, how much of its life is.
+bool StreakIn(int2 cell, uint layer, float life, float share, uint shownBits, out uint hash, out float gone)
 {
     const uint2 at = asuint(cell) & SpeckWrapMask;
     const uint key = StreakHash(at.x * StreakColumnMix ^ at.y * StreakRowMix ^ layer * StreakLayerMix);
     const float lives = haze.z / max(life, SpeckShortestLife) + SpeckUnit(key);
     hash = StreakHash(key ^ asuint(int(floor(lives))) * StreakLifeMix);
     gone = frac(lives);
-    return float(hash >> 20u) * (1.0 / 4096.0) < share;
+    return float(hash >> (32u - shownBits)) / float(1u << shownBits) < share;
 }
 
 // A share, 0 to 1, from 10 bits of `hash` from bit `from` up.
@@ -2112,9 +2117,9 @@ void LayRainStreaks(inout float4 laid, inout float glints, float2 texel, float3 
         uint hash;
         float gone;
 
-        if (StreakIn(cell, 0u, speckLives[0], share * StreakCell, hash, gone))
+        if (StreakIn(cell, 0u, speckLives[0], share * StreakCell, StreakShownBits, hash, gone))
         {
-            const float pick = float(hash >> 20u) * (1.0 / 4096.0) * picked;
+            const float pick = float(hash >> (32u - StreakShownBits)) / float(1u << StreakShownBits) * picked;
             const uint size = pick < shares.x ? 0u : (pick < shares.x + shares.y ? 1u : 2u);
             // A streak shorter than its cell starts where it ends in it; a longer one starts in its cell's top texel.
             const float reach = speckStreaks[size];
@@ -2158,7 +2163,7 @@ void LayRainSplashes(inout float4 laid, float2 texel, float share, float waterSh
     uint hash;
     float gone;
 
-    if (StreakIn(cell, RestingSpecks, life, shown, hash, gone))
+    if (StreakIn(cell, RestingSpecks, life, shown, SplashShownBits, hash, gone))
     {
         LaySpeck(laid, look.rgb, lerp(look.a, strongest, StreakUnit(hash, 0u)) * (1.0 - gone));
     }

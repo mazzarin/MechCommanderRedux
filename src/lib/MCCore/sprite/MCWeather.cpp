@@ -2423,7 +2423,9 @@ namespace
     /// <summary>
     /// Port-only (Redux HD): <paramref name="speckle"/>'s colours through <paramref name="dim"/>, the dimming of the
     /// world they're laid over (MCPaletteNight::NightFit): a speck of colour c laid over the dimmed world shows as a
-    /// flake or drop drawn into it before it was dimmed, so long as it shows c * Slope + Offset.
+    /// flake or drop drawn into it before it was dimmed, so long as it shows c * Slope + Offset. The night where no beam
+    /// lifts it: in a headlight's beam, where the world is dimmed less, the specks show a little darker than their
+    /// flakes and drops would.
     /// </summary>
     void DimSpecks(MCWeather::MCSpeckle& speckle, const MCTableFit& dim)
     {

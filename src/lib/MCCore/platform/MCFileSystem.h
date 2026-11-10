@@ -44,6 +44,25 @@ namespace MCFileSystem
     const std::filesystem::path& UserRoot();
 
     /// <summary>
+    /// Port-only: sets the folder that keeps the player's own settings (PREFS.CFG, the reports' state) when it isn't the
+    /// user folder, as when a launcher gives a match a user folder of its own (created if missing; empty: the user
+    /// folder keeps them, as it keeps everything else).
+    /// </summary>
+    void SetSettingsRoot(const std::filesystem::path& root);
+
+    /// <summary>
+    /// The path to read the settings file <paramref name="name"/> from: the settings folder's copy, when one is set and
+    /// holds it (an absolute path), else <paramref name="name"/> (the user folder's, else the install's).
+    /// </summary>
+    std::string SettingsToRead(std::string_view name);
+
+    /// <summary>
+    /// The path to save the settings file <paramref name="name"/> to: in the settings folder when one is set (an
+    /// absolute path), else <paramref name="name"/> (the user folder's).
+    /// </summary>
+    std::string SettingsToWrite(std::string_view name);
+
+    /// <summary>
     /// Maps a path as the game writes it to the file on disk, for reading. A relative path is taken from the user
     /// folder when it exists there, else from the game root; each component is matched without regard to case
     /// against what exists. Components that don't exist yet (a file about to be created) are kept as written.

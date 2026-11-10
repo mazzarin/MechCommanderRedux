@@ -6,6 +6,7 @@
 #include "lib/MCRandomId.h"
 #include "main/MCHdSettings.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "sprite/MCHdArt.h"
 
 int GReports = 0;
@@ -466,7 +467,7 @@ namespace
         State = {};
         MCFitIniFile file;
 
-        if (file.Open(StateFile) != 0 || file.SeekBlock(StateBlock) != 0)
+        if (file.Open(MCFileSystem::SettingsToRead(StateFile)) != 0 || file.SeekBlock(StateBlock) != 0)
         {
             return;
         }
@@ -493,7 +494,7 @@ namespace
     {
         MCFitIniFile file;
 
-        if (const int32_t result = file.Create(StateFile); result != 0)
+        if (const int32_t result = file.Create(MCFileSystem::SettingsToWrite(StateFile)); result != 0)
         {
             SDL_Log("Reports: cannot create %s (%#x); what was sent isn't kept", StateFile.data(),
                     static_cast<uint32_t>(result));

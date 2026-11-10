@@ -127,6 +127,9 @@ public:
     /// <summary>The renderer in use, for logs.</summary>
     std::string RendererName() const { return _Presenter->Name(); }
 
+    /// <summary>The presenter showing the frames.</summary>
+    const MCPresenter& Presenter() const { return *_Presenter; }
+
     /// <summary>
     /// Sets the window's title (the original's <c>SetWindowTextA</c>), with the renderer in use after it
     /// ("... [Vulkan]", "... [Software]").

@@ -15,6 +15,15 @@ namespace
         return std::format("{}: {}", what, SDL_GetError());
     }
 
+    /// <summary>
+    /// Port-only: the swapchain images asked for with the third image (SDL's frames in flight; 2 by default), and the
+    /// frames presented the game may still have on the GPU as it shows another (as many as SDL's default holds).
+    /// </summary>
+    constexpr uint32_t ThirdImageFrames = 3;
+    constexpr size_t FramesHeldOnGpu = 2;
+    /// <summary>Port-only: SDL's name for its Vulkan driver (SDL_GetGPUDeviceDriver).</summary>
+    constexpr std::string_view VulkanDriver = "vulkan";
+
     /// <summary>The quad shader's uniforms (shaders/quad.vshader, cbuffer Quad).</summary>
     struct QuadUniforms
     {
@@ -707,6 +716,18 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
 
     presenter->_Device = std::shared_ptr<SDL_GPUDevice>(device, MCSdlDeleter{});
 
+    // Port-only: the third swapchain image, asked before the window is claimed so its swapchain is made with it.
+    if (const char* const driver = SDL_GetGPUDeviceDriver(device);
+        ThirdImageEverywhere || (driver != nullptr && std::string_view(driver) == VulkanDriver))
+    {
+        presenter->_ThirdImage = SDL_SetGPUAllowedFramesInFlight(device, ThirdImageFrames);
+
+        if (!presenter->_ThirdImage)
+        {
+            SDL_Log("MCVulkanPresenter: two swapchain images, not %u: %s", ThirdImageFrames, SDL_GetError());
+        }
+    }
+
     if (!SDL_ClaimWindowForGPUDevice(device, presenter->_Window.get()))
     {
         return std::unexpected(SdlError("SDL_ClaimWindowForGPUDevice"));
@@ -833,6 +854,13 @@ MCVulkanPresenter::~MCVulkanPresenter()
     }
 
     SDL_WaitForGPUIdle(_Device.get());
+
+    for (SDL_GPUFence* const fence : _Sent)
+    {
+        SDL_ReleaseGPUFence(_Device.get(), fence);
+    }
+
+    _Sent.clear();
 
     if (_Renderer != nullptr && MCRenderer::Hardware() == _Renderer)
     {
@@ -1658,6 +1686,24 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
     return bloom.Handle.get();
 }
 
+void MCVulkanPresenter::HoldFramesOnGpu()
+{
+    // With the third image SDL lets three frames be on the GPU (ThirdImageFrames): the game waits as two let it, so
+    // what it shows is no older than with two.
+    while (_Sent.size() >= FramesHeldOnGpu)
+    {
+        SDL_GPUFence* const oldest = _Sent.front();
+
+        if (!SDL_WaitForGPUFences(_Device.get(), true, &oldest, 1))
+        {
+            SDL_Log("MCVulkanPresenter: waiting for the frame before last's GPU work: %s", SDL_GetError());
+        }
+
+        SDL_ReleaseGPUFence(_Device.get(), oldest);
+        _Sent.erase(_Sent.begin());
+    }
+}
+
 std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame)
 {
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(_Device.get());
@@ -1689,11 +1735,16 @@ std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame
     uint32_t swapchainWidth = 0;
     uint32_t swapchainHeight = 0;
 
-    if (MCFrameLog::Scope part("present.acquire");
-        !SDL_WaitAndAcquireGPUSwapchainTexture(commands, _Window.get(), &swapchain, &swapchainWidth, &swapchainHeight))
+    if (MCFrameLog::Scope part("present.acquire"); true)
     {
-        SDL_SubmitGPUCommandBuffer(commands);
-        return std::unexpected(SdlError("SDL_WaitAndAcquireGPUSwapchainTexture"));
+        HoldFramesOnGpu();
+
+        if (!SDL_WaitAndAcquireGPUSwapchainTexture(commands, _Window.get(), &swapchain, &swapchainWidth,
+                                                   &swapchainHeight))
+        {
+            SDL_SubmitGPUCommandBuffer(commands);
+            return std::unexpected(SdlError("SDL_WaitAndAcquireGPUSwapchainTexture"));
+        }
     }
 
     // No swapchain image (a minimised or hidden window): the frame is composited but not shown.
@@ -1733,7 +1784,19 @@ std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame
         }
     }
 
-    if (MCFrameLog::Scope part("present.submit"); !SDL_SubmitGPUCommandBuffer(commands))
+    if (MCFrameLog::Scope part("present.submit"); _ThirdImage)
+    {
+        // Its fence, for the frame after next to wait on (HoldFramesOnGpu).
+        SDL_GPUFence* const fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+
+        if (fence == nullptr)
+        {
+            return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence"));
+        }
+
+        _Sent.push_back(fence);
+    }
+    else if (!SDL_SubmitGPUCommandBuffer(commands))
     {
         return std::unexpected(SdlError("SDL_SubmitGPUCommandBuffer"));
     }

@@ -50,6 +50,15 @@ public:
 
     ~MCVulkanPresenter() override;
 
+    /// <summary>
+    /// Port-only (tests): the third swapchain image on every driver, not Vulkan's alone (_ThirdImage), so a test on
+    /// the Mac's Metal runs its waits. Set before the presenter is made.
+    /// </summary>
+    static inline bool ThirdImageEverywhere = false;
+
+    /// <summary>Port-only: the frames presented whose GPU work may not be done yet (_Sent), for the tests.</summary>
+    size_t FramesOnGpu() const { return _Sent.size(); }
+
     MCRendererKind Kind() const override { return MCRendererKind::Vulkan; }
     std::string Name() const override;
     bool CompositesOnGpu() const override { return true; }
@@ -136,6 +145,17 @@ private:
     std::shared_ptr<SDL_GPUDevice> _Device;
     bool _Claimed = false;
     bool _VSync = true;
+    /// <summary>
+    /// Port-only: three swapchain images rather than SDL's two (where the driver is Vulkan): with vsync, a frame that
+    /// runs past a refresh then waits for that refresh alone, where with two the next frame waits too and the rate
+    /// falls in steps (240, 120, 80 fps on a 240 Hz screen). The game is still held to two frames on the GPU, as two
+    /// images held it (_Sent).
+    /// </summary>
+    bool _ThirdImage = false;
+    /// <summary>Port-only (with the third image): the fences of the frames presented last, oldest first.</summary>
+    std::vector<SDL_GPUFence*> _Sent;
+    /// <summary>Port-only (with the third image): waits for the frame before last's GPU work (_Sent).</summary>
+    void HoldFramesOnGpu();
     MCPresentation _Presentation;
     MCGpuHandle<SDL_GPUShader> _QuadShader;
     MCGpuHandle<SDL_GPUShader> _CompositeShader;

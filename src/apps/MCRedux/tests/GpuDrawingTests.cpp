@@ -26,6 +26,7 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCSmacker.h"
+#include "platform/MCVulkanPresenter.h"
 #include "platform/MCVulkanRenderer.h"
 #include "terrain/MCTerrain.h"
 #include "terrain/MCTerrainWindow.h"
@@ -737,6 +738,43 @@ TEST_CASE_ISOLATED("game: the GPU draws what lies apart in a batch for each kind
     const SDL_Color lit = at(x + 2, y);
     CHECK((over.r == alone.r && over.g == alone.g && over.b == alone.b));
     CHECK((lit.r != alone.r || lit.g != alone.g || lit.b != alone.b));
+}
+
+/// <summary>
+/// Port-only: the third swapchain image (Vulkan's; here on every driver, so the Mac's Metal runs its waits): the game
+/// still keeps at most two frames on the GPU, and draws on.
+/// </summary>
+TEST_CASE_ISOLATED("game: with a third swapchain image, the game keeps at most two frames on the GPU")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCVulkanPresenter::ThirdImageEverywhere = true;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    const auto* const presenter = dynamic_cast<const MCVulkanPresenter*>(&display->Presenter());
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || presenter == nullptr)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    constexpr int32_t Frames = 120;
+    size_t most = 0;
+
+    for (int32_t frame = 0; frame < Frames; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 60.0f);
+        most = std::max(most, presenter->FramesOnGpu());
+    }
+
+    CHECK_EQ(most, 2u);
+    CHECK(display->ReadFrame().has_value());
 }
 
 /// <summary>

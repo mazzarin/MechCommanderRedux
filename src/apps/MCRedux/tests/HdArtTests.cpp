@@ -18340,20 +18340,22 @@ TEST_CASE("sharp lines: a ring and a dot in line art are drawn round, a small re
 
     constexpr uint8_t Full = 255;
     constexpr uint8_t None = 0;
-    // Round a centre, the coverage at a distance from it in each of these directions.
+    // Whether the coverage is <coverage> at a distance from a centre in each of these directions.
     constexpr int32_t Directions = 16;
-    const auto around = [&](float x, float y, float distance)
+    const auto allAround = [&](float x, float y, float distance, uint8_t coverage)
     {
-        std::vector<uint8_t> coverage;
-
         for (int32_t direction = 0; direction < Directions; ++direction)
         {
             const float angle =
                 2.0f * std::numbers::pi_v<float> * static_cast<float>(direction) / static_cast<float>(Directions);
-            coverage.push_back(at(x + distance * std::cos(angle), y + distance * std::sin(angle)).second);
+
+            if (at(x + distance * std::cos(angle), y + distance * std::sin(angle)).second != coverage)
+            {
+                return false;
+            }
         }
 
-        return coverage;
+        return true;
     };
 
     // The ring: a circle of radius 1.5 through its pixels' centres, its stroke a pixel wide.
@@ -18364,9 +18366,9 @@ TEST_CASE("sharp lines: a ring and a dot in line art are drawn round, a small re
         constexpr float Radius = (RingSide - 1) / 2.0f;
         // Clear of the stroke, inside and out (its edges half a pixel either side, smoothed over an eighth).
         constexpr float Clear = 0.75f;
-        CHECK(std::ranges::all_of(around(CentreX, CentreY, Radius), [](uint8_t c) { return c == Full; }));
-        CHECK(std::ranges::all_of(around(CentreX, CentreY, Radius - Clear), [](uint8_t c) { return c == None; }));
-        CHECK(std::ranges::all_of(around(CentreX, CentreY, Radius + Clear), [](uint8_t c) { return c == None; }));
+        CHECK(allAround(CentreX, CentreY, Radius, Full));
+        CHECK(allAround(CentreX, CentreY, Radius - Clear, None));
+        CHECK(allAround(CentreX, CentreY, Radius + Clear, None));
         CHECK_EQ(at(CentreX + Radius, CentreY).first, Ring);
     }
 
@@ -18379,8 +18381,8 @@ TEST_CASE("sharp lines: a ring and a dot in line art are drawn round, a small re
         constexpr float Outside = 1.25f;
         CHECK_EQ(at(CentreX, CentreY).second, Full);
         CHECK_EQ(at(CentreX, CentreY).first, Dot);
-        CHECK(std::ranges::all_of(around(CentreX, CentreY, Inside), [](uint8_t c) { return c == Full; }));
-        CHECK(std::ranges::all_of(around(CentreX, CentreY, Outside), [](uint8_t c) { return c == None; }));
+        CHECK(allAround(CentreX, CentreY, Inside, Full));
+        CHECK(allAround(CentreX, CentreY, Outside, None));
     }
 
     // The rectangle: its corner pixel covered out to the corner's edges, as a straight stroke's corner is.

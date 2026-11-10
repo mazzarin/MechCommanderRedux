@@ -287,8 +287,6 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
     const int32_t minY = static_cast<int32_t>(std::floor(-stepY));
     const int32_t maxX = (GlobalPane->X1 - GlobalPane->X0) + static_cast<int32_t>(std::floor(stepX));
     const int32_t maxY = GlobalPane->Y1 - GlobalPane->Y0;
-    const int32_t paneWidth = GlobalPane->X1 - GlobalPane->X0;
-    const int32_t paneHeight = GlobalPane->Y1 - GlobalPane->Y0;
     MCVector2D current = rowStart;
     const auto numVertices = static_cast<int32_t>(Vertices.size());
 
@@ -316,70 +314,16 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
             terrain->ScreenPosY[screenIndex] = static_cast<int32_t>(std::floor(current.Y));
         }
 
-        vertex->EdgeRedraw = false;
-        vertex->Redraw = false;
+        // Every vertex is redrawn, its edges too: this render asked for a forced redraw before the walk, and nothing in
+        // it takes that back, so the original's tests of the scroll (a scroll of a screen or more, the strips it
+        // uncovered) could only ask again.
+        vertex->Redraw = true;
+        vertex->EdgeRedraw = true;
         vertex->Clipped = px < minX || px > maxX || py < minY || py > maxY;
-
-        // A scroll of a screen or more (or ForceAlways) redraws everything; so does a forced redraw, which this
-        // render has just asked for.
-        if (std::abs(scrollX) >= GuiSystem().Width() || std::abs(scrollY) >= GuiSystem().Height() || ForceAlways != 0)
-        {
-            MCTerrain::ForceRedraw = true;
-        }
-
-        if (MCTerrain::ForceRedraw)
-        {
-            vertex->Redraw = true;
-            vertex->EdgeRedraw = true;
-        }
 
         if (!vertex->Clipped)
         {
             terrain->MarkBlockUsed(blockNum);
-            // Vertices over the strip the scroll uncovered are redrawn; those near it get their edges redrawn.
-            const int32_t oldX = px - scrollX;
-
-            if (oldX < 0 && scrollX > 0)
-            {
-                vertex->Redraw = true;
-            }
-
-            if (static_cast<float>(oldX) <= stepX + stepX && scrollX > 0)
-            {
-                vertex->EdgeRedraw = true;
-            }
-
-            if (paneWidth < oldX && scrollX < 0)
-            {
-                vertex->Redraw = true;
-            }
-
-            if (static_cast<float>(paneWidth) - (stepX + stepX) <= static_cast<float>(oldX) && scrollX < 0)
-            {
-                vertex->EdgeRedraw = true;
-            }
-
-            const int32_t oldY = py - scrollY;
-
-            if (oldY < 0 && scrollY > 0)
-            {
-                vertex->Redraw = true;
-            }
-
-            if (static_cast<float>(oldY) <= stepY + stepY && scrollY > 0)
-            {
-                vertex->EdgeRedraw = true;
-            }
-
-            if (static_cast<float>(paneHeight) - stepY < static_cast<float>(oldY) && scrollY < 0)
-            {
-                vertex->Redraw = true;
-            }
-
-            if (static_cast<float>(paneHeight) - (stepY + stepY) <= static_cast<float>(oldY) && scrollY < 0)
-            {
-                vertex->EdgeRedraw = true;
-            }
 
             if (DrawTerrainGrid != 0)
             {

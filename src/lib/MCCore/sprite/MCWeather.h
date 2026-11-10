@@ -404,6 +404,14 @@ namespace MCWeather
     constexpr float FullFlakeLines = 540.0f;
 
     /// <summary>
+    /// The view lines past which the rain throws no more real drops than a view showing that many, as the snow its
+    /// flakes (<see cref="FullFlakeLines"/>): the composite draws the drops left out as streaks and their splashes as
+    /// specks (<see cref="ShownSpeckle"/>). A drop's every piece is the game thread's work each frame, so without it a
+    /// view showing more lines (a larger display at one world pixel a pixel, or zoomed out) costs the square of them.
+    /// </summary>
+    constexpr float FullDropLines = 540.0f;
+
+    /// <summary>
     /// One layer of the specks the composite draws for the flakes a zoomed-out view leaves out (composite.pshader's
     /// SpecksAt), on whole texels as a hard flake is drawn.
     /// </summary>
@@ -430,6 +438,11 @@ namespace MCWeather
         /// </summary>
         float Side = 0.0f;
         float Arm = 0.0f;
+        /// <summary>
+        /// The rain's: a falling streak this long along its fall, view pixels, a texel thick (its Side is its width,
+        /// which a streak thinner than a texel is drawn fainter for); 0 a square or a plus.
+        /// </summary>
+        float Length = 0.0f;
         /// <summary>Their colour and how strongly a speck is drawn over the world, each from Weakest to Strongest.</summary>
         float Red = 0.0f;
         float Green = 0.0f;
@@ -442,7 +455,9 @@ namespace MCWeather
     /// The specks: the three sizes of the flakes falling (far, between and near), then those resting on the ground; as
     /// many as the flakes left out would be now, each thrown as the view's real ones are and gone after its fall and
     /// rest, so the real flakes and the specks together are as many as a view throwing them all (none at
-    /// <see cref="FullFlakeLines"/> and closer once the flakes left out further out have fallen and rested).
+    /// <see cref="FullFlakeLines"/> and closer once the flakes left out further out have fallen and rested). In rain,
+    /// the three sizes of the drops falling as streaks (<see cref="MCSpeckLayer::Length"/>), then their splashes on the
+    /// ground, past <see cref="FullDropLines"/>.
     /// </summary>
     struct MCSpeckle
     {
@@ -452,9 +467,22 @@ namespace MCWeather
         float ThickSheets = 1.0f;
         /// <summary>How much of the light in the air the falling ones catch, as the flakes do (CatchGain; 0 none).</summary>
         float Catch = 0.0f;
+        /// <summary>
+        /// The rain's streaks' slant, view pixels across (downwind) a pixel down, which their lattices are laid along:
+        /// the wind's middle, the same all the while, so a gust doesn't slide them (the drops' own slants vary about it).
+        /// </summary>
+        float Slant = 0.0f;
+        /// <summary>
+        /// The rain's splashes on water (the composite's where the world's indices are water): specks standing for the
+        /// rings the drops left out would spread there, on the resting layer's lattice, each fading over its Life.
+        /// </summary>
+        MCSpeckLayer OnWater{};
     };
 
-    /// <summary>The specks shown now (none but in snow drawn by the GPU, zoomed out past FullFlakeLines lately).</summary>
+    /// <summary>
+    /// The specks shown now (none but in snow or rain drawn by the GPU, zoomed out past FullFlakeLines or FullDropLines
+    /// lately).
+    /// </summary>
     MCSpeckle ShownSpeckle();
 
     /// <summary>

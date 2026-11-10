@@ -548,6 +548,19 @@ namespace
     // as long as the longest fall and rest; the share of a size's still falling is taken at StillFallingSpeeds speeds
     // through its range (exactly through its falls).
     constexpr size_t StillFallingSpeeds = 32;
+    // Zoomed out past MCWeather::FullDropLines, the drops left out are drawn as streaks (MCSpeckLayer::Length), their
+    // lattices laid along the wind's middle slant (WindLow to WindHigh's), each StreakStrength as strong as its drop
+    // (a streak is on whole texels, a drop's a smoothed line thinner than one, brightest at its tip); their splashes as
+    // specks a view pixel across, each showing SplashSpeckLife seconds, as strong as the real ones (a dot and the
+    // droplets thrown up round it, each smaller than a pixel) over it, SplashSpeckAlpha, in their grey.
+    constexpr float StreakStrength = 1.0f;
+    constexpr float SplashSpeckLife = 0.15f;
+    constexpr float SplashSpeckSide = 1.0f;
+    constexpr float SplashSpeckAlpha = 0.7f;
+    // On water, the splashes' specks stand for the rings (Rings) instead, WaterSpeckAlpha strong: as many as leave as
+    // much light over their lives (each fading to none, SpeckFadeMean as strong on average) as the rings would.
+    constexpr float WaterSpeckAlpha = 1.0f;
+    constexpr float SpeckFadeMean = 0.5f;
     // The snow's cover (MCWeather::ShownCover), as composite.pshader lays it (SnowFieldAt): noise SnowSize meters big, two
     // layers, the finer SnowApart off; of the ground it covers, ThickShare lies thick, the rest under a dusting.
     constexpr float SnowSize = 30.0f;
@@ -826,15 +839,19 @@ namespace
     };
 
     /// <summary>
-    /// The flakes of each size a frame of a zoomed-out view left out, at the game's time Time: as many a view pixel
-    /// squared as would have landed where the veil's sheets are as thin as SheetLeast thins them, and SheetMost over
-    /// SheetLeast times as many where they're thickest.
+    /// The flakes (or, in rain, the drops) of each size a frame of a zoomed-out view left out, at the game's time Time:
+    /// as many a view pixel squared as would have landed where the veil's sheets are as thin as SheetLeast thins them,
+    /// and SheetMost over SheetLeast times as many where they're thickest.
     /// </summary>
     struct LeftOutFlakes
     {
         float Time = 0.0f;
         std::array<float, FlakeSizes.size()> Thrown{};
+        /// <summary>Flakes, not drops (a weather changing from snow to rain, or back, leaves the other's out).</summary>
+        bool Snows = false;
     };
+
+    static_assert(FlakeSizes.size() == DropSizes.size(), "a left-out count for each size of flake or drop");
 
     /// <summary>
     /// Marks of the frame's (all of them, or a part's: AddMarks), each at its depth, added to the draw list together once
@@ -1774,7 +1791,7 @@ namespace
     /// The share of a size's flakes still falling <paramref name="age"/> seconds after they were thrown: those whose fall
     /// over their speed (each even through its range) is longer.
     /// </summary>
-    float StillFalling(const FlakeSize& size, float age)
+    template <typename Size> float StillFalling(const Size& size, float age)
     {
         if (age <= 0.0f)
         {
@@ -1794,9 +1811,37 @@ namespace
     }
 
     /// <summary>How fast a size's flakes in the air fall on average (each as long in it as its fall over its speed).</summary>
-    float SeenSpeed(const FlakeSize& size)
+    template <typename Size> float SeenSpeed(const Size& size)
     {
         return (size.SpeedHigh - size.SpeedLow) / std::log(size.SpeedHigh / size.SpeedLow);
+    }
+
+    /// <summary>The longest a drop falls and its splash's specks (or, on water, its rings') show, seconds.</summary>
+    float LongestDrop()
+    {
+        float longest = 0.0f;
+        float shown = SplashSpeckLife;
+
+        for (const DropSize& size : DropSizes)
+        {
+            longest = std::max(longest, size.FallHigh / size.SpeedLow);
+            shown = std::max(shown, size.RingLife);
+        }
+
+        return longest + shown;
+    }
+
+    /// <summary>
+    /// The light a ring spreading on water (Rings) leaves over its <paramref name="life"/>: its outline a view pixel
+    /// wide round the ground's ellipse (<paramref name="aspect"/> as tall as wide), growing from RingFrom to
+    /// <paramref name="size"/> as the root of its age, times its strength fading from <paramref name="alpha"/> (its
+    /// middle between RingAlphaLeast and all of it) to none; view pixels squared times strength times seconds.
+    /// </summary>
+    float RingLight(float size, float life, float alpha, float aspect)
+    {
+        // Over its age a, 0 to 1: (1 - a) times (RingFrom + (size - RingFrom) * sqrt(a)).
+        const float grown = 0.5f * RingFrom + (size - RingFrom) * (4.0f / 15.0f);
+        return life * std::numbers::pi_v<float> * (1.0f + aspect) * grown * alpha * 0.5f * (1.0f + RingAlphaLeast);
     }
 
     /// <summary>The longest a flake falls and rests, seconds.</summary>
@@ -1827,11 +1872,11 @@ namespace
         const float landLeft =
             look.Snows ? LandLeft + look.Drift * (FlakeCalm + FlakeGusts) * FlakeSizes[NearFlake].FallHigh : LandLeft;
         const float landBelow = look.Snows ? FlakeBelow : LandBelow;
-        // Port-only (HD weather's snow): zoomed out past MCWeather::FullFlakeLines, the view throws no more flakes than
-        // one showing that many lines; the composite draws the rest as specks (LeftOut).
-        const float kept = look.Snows && height > MCWeather::FullFlakeLines
-                               ? (MCWeather::FullFlakeLines / height) * (MCWeather::FullFlakeLines / height)
-                               : 1.0f;
+        // Port-only (HD weather): zoomed out past MCWeather::FullFlakeLines (MCWeather::FullDropLines in rain), the
+        // view throws no more flakes or drops than one showing that many lines; the composite draws the rest as specks
+        // or streaks (LeftOut).
+        const float full = look.Snows ? MCWeather::FullFlakeLines : MCWeather::FullDropLines;
+        const float kept = height > full ? (full / height) * (full / height) : 1.0f;
         const float area = (width + landLeft + LandRight) * (height + landBelow) * kept;
         const float rate = look.Drops * state.Settings.Amount * area / (DropsArea * DropsArea) * SheetMost;
         // Port-only (HD weather's snow): on a machine whose frames can't keep up with them all, fewer flakes are
@@ -1841,7 +1886,7 @@ namespace
 
         if (kept < 1.0f || pace < 1.0f)
         {
-            LeftOutFlakes& left = state.LeftOut.emplace_back(LeftOutFlakes{.Time = time});
+            LeftOutFlakes& left = state.LeftOut.emplace_back(LeftOutFlakes{.Time = time, .Snows = look.Snows});
 
             for (size_t size = 0; size < left.Thrown.size(); ++size)
             {
@@ -2241,6 +2286,140 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (HD weather's rain, past MCWeather::FullDropLines): the streaks and splashes the composite draws for the
+    /// drops left out (Specks' rain): each size's still falling, as many as Thrown times their share still falling, as
+    /// streaks as long and wide as theirs on average, falling at their speed along the wind's middle slant, in the
+    /// drops' blue; and those that landed in the last SplashSpeckLife seconds as specks of their splashes on the
+    /// ground, fading, in their grey no paler than <paramref name="palest"/>; on water, as specks leaving as much light
+    /// as their rings (MCSpeckle::OnWater).
+    /// </summary>
+    MCWeather::MCSpeckle RainSpecks(const State& state, float now, float palest)
+    {
+        MCWeather::MCSpeckle speckle{.ThickSheets = SheetMost / SheetLeast,
+                                     .Catch = MCWeather::CatchGain(),
+                                     .Slant = 0.5f * (WindLow + WindHigh)};
+        float landed = 0.0f;
+        // Each size's rings still spreading on water (where the drops landed on it).
+        std::array<float, DropSizes.size()> rings{};
+
+        for (const LeftOutFlakes& left : state.LeftOut)
+        {
+            if (left.Snows)
+            {
+                continue;
+            }
+
+            const float age = now - left.Time;
+
+            for (size_t size = 0; size < DropSizes.size(); ++size)
+            {
+                const float falling = StillFalling(DropSizes[size], age);
+                speckle.Layers[size].Density += left.Thrown[size] * falling;
+                landed += left.Thrown[size] * (StillFalling(DropSizes[size], age - SplashSpeckLife) - falling);
+                rings[size] +=
+                    left.Thrown[size] * (StillFalling(DropSizes[size], age - DropSizes[size].RingLife) - falling);
+            }
+        }
+
+        // The drops' blue as AddDrops draws them (at any time of day: only their splashes are kept from being paler).
+        const Rgb falls = WaterBlue;
+
+        for (size_t size = 0; size < DropSizes.size(); ++size)
+        {
+            const DropSize& drop = DropSizes[size];
+            MCWeather::MCSpeckLayer& layer = speckle.Layers[size];
+            layer.Down = SeenSpeed(drop);
+            layer.Across = speckle.Slant * layer.Down;
+            layer.Fall = 0.5f * (drop.FallLow + drop.FallHigh);
+            layer.Life = layer.Fall / layer.Down;
+            layer.Length = 0.5f * (drop.LengthLow + drop.LengthHigh);
+            layer.Side = drop.Width;
+            layer.Red = falls.Red;
+            layer.Green = falls.Green;
+            layer.Blue = falls.Blue;
+            layer.Weakest = StreakStrength * drop.AlphaLow;
+            layer.Strongest = StreakStrength * drop.AlphaHigh;
+        }
+
+        // The sizes' streaks share the first layer's lattice (the composite's LayRainStreaks): it falls and lives as
+        // their mean, each size weighted by how many of it are falling.
+        float falling = 0.0f;
+        float down = 0.0f;
+        float life = 0.0f;
+
+        for (size_t size = 0; size < DropSizes.size(); ++size)
+        {
+            const MCWeather::MCSpeckLayer& layer = speckle.Layers[size];
+            falling += layer.Density;
+            down += layer.Density * layer.Down;
+            life += layer.Density * layer.Life;
+        }
+
+        if (falling > 0.0f)
+        {
+            MCWeather::MCSpeckLayer& shared = speckle.Layers[0];
+            shared.Down = down / falling;
+            shared.Across = speckle.Slant * shared.Down;
+            shared.Life = life / falling;
+        }
+
+        const Rgb splashes = NoPalerThan(SplashGrey, palest);
+        MCWeather::MCSpeckLayer& splash = speckle.Layers[MCWeather::MCSpeckle::Resting];
+        splash.Density = landed;
+        splash.Life = SplashSpeckLife;
+        splash.Side = SplashSpeckSide;
+        splash.Red = splashes.Red;
+        splash.Green = splashes.Green;
+        splash.Blue = splashes.Blue;
+        splash.Weakest = SplashSpeckAlpha;
+        splash.Strongest = SplashSpeckAlpha;
+
+        // On water: the rings' light, each size's landing on it as fast as its rings showing over their life, each
+        // leaving its ring's light and a near drop's second ring's; RingPaleShare of the first rings pale, the second
+        // all.
+        const float aspect = MCSceneLights::GroundAspect();
+        float light = 0.0f;
+        float pale = 0.0f;
+        float showing = 0.0f;
+        float lives = 0.0f;
+
+        for (size_t size = 0; size < DropSizes.size(); ++size)
+        {
+            const DropSize& drop = DropSizes[size];
+            const float first = RingLight(drop.Ring, drop.RingLife, drop.RingAlpha, aspect);
+            const float second = size == NearDrop
+                                     ? RingLight(drop.Ring * SecondRingShare, drop.RingLife * SecondRingLife,
+                                                 drop.RingAlpha * SecondRingAlpha, aspect)
+                                     : 0.0f;
+            const float landing = rings[size] / drop.RingLife;
+            light += landing * (first + second);
+            pale += landing * (RingPaleShare * first + second);
+            showing += rings[size];
+            lives += rings[size] * drop.RingLife;
+        }
+
+        if (light > 0.0f && showing > 0.0f)
+        {
+            const float paleShare = pale / light;
+            const Rgb ringColour = NoPalerThan({WaterBlue.Red + (PaleBlue.Red - WaterBlue.Red) * paleShare,
+                                                WaterBlue.Green + (PaleBlue.Green - WaterBlue.Green) * paleShare,
+                                                WaterBlue.Blue + (PaleBlue.Blue - WaterBlue.Blue) * paleShare},
+                                               palest);
+            MCWeather::MCSpeckLayer& water = speckle.OnWater;
+            water.Density = light / (WaterSpeckAlpha * SpeckFadeMean);
+            water.Life = lives / showing;
+            water.Side = SplashSpeckSide;
+            water.Red = ringColour.Red;
+            water.Green = ringColour.Green;
+            water.Blue = ringColour.Blue;
+            water.Weakest = WaterSpeckAlpha;
+            water.Strongest = WaterSpeckAlpha;
+        }
+
+        return speckle;
+    }
+
+    /// <summary>
     /// Port-only (HD weather's snow): the specks for the flakes the view left out (State::LeftOut) at the game's time
     /// <paramref name="now"/>, dropping those gone: each size's still falling, drifting downwind by the gusts at the
     /// view's middle, then those landed and resting, as AddFlake and AddSplashes draw them (no paler than
@@ -2249,16 +2428,21 @@ namespace
     MCWeather::MCSpeckle Specks(State& state, const MCCamera& camera, const MCWeather::MCWeatherLook& look, float now,
                                 float palest)
     {
-        const float longest = LongestFlake();
+        const float longest = std::max(LongestFlake(), LongestDrop());
 
         while (!state.LeftOut.empty() && now - state.LeftOut.front().Time > longest)
         {
             state.LeftOut.pop_front();
         }
 
-        if (state.LeftOut.empty() || !look.Snows)
+        if (state.LeftOut.empty())
         {
             return {};
+        }
+
+        if (!look.Snows)
+        {
+            return RainSpecks(state, now, palest);
         }
 
         MCWeather::MCSpeckle speckle{.ThickSheets = SheetMost / SheetLeast, .Catch = MCWeather::CatchGain()};
@@ -2266,6 +2450,11 @@ namespace
 
         for (const LeftOutFlakes& left : state.LeftOut)
         {
+            if (!left.Snows)
+            {
+                continue;
+            }
+
             const float age = now - left.Time;
 
             for (size_t size = 0; size < FlakeSizes.size(); ++size)
@@ -3008,6 +3197,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     if (step > 0.0f)
     {
         Move(state, look, step, camera);
+
         AgePuddleSteps(state, step);
         Rain(state, camera, look, step, now, ShowersAt(Shown(), now).Rain);
         Drip(state, look, step);
@@ -3036,6 +3226,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     const bool night = state.Settings.Light > 0.0f && MCSceneLights::TimeOfDay() != MCTimeOfDay::Day;
     const float palest = night ? MCSceneLights::ShownLighting().SelfLit : 1.0f;
     state.Speckle = Specks(state, camera, look, now, palest);
+
     AddMarks(state, camera, catching, palest);
     state.SnowDrawn = state.SnowDrawn || (look.Snows && !state.Drops.empty());
 }

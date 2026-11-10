@@ -109,6 +109,17 @@ namespace
         /// </summary>
         float SpeckFalls[4] = {};
         /// <summary>
+        /// The rain's streaks (MCSpeckLayer::Length): each falling layer's length in texels down its lattice's columns
+        /// (0: specks), then how many texels across the columns slant a texel down (MCSpeckle::Slant).
+        /// </summary>
+        float SpeckStreaks[4] = {};
+        /// <summary>
+        /// The rain's splashes on water (MCSpeckle::OnWater): its specks a texel, how long each lives, its weakest and
+        /// strongest; then its colour (rgb).
+        /// </summary>
+        float SpeckWater[4] = {};
+        float SpeckWaterLook[4] = {};
+        /// <summary>
         /// Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky by how many of a
         /// tile's corners are seen: 0 none (no edge: 1s), 1 to 3 MCTerrainFogEdgeShades' (rgb, 1 where it doesn't).
         /// </summary>
@@ -364,17 +375,20 @@ namespace
     }
 
     /// <summary>
-    /// Port-only (HD weather's snow): sets <paramref name="uniforms"/>' specks (MCWeather::ShownSpeckle) for a world
-    /// texture <paramref name="width"/> by <paramref name="height"/>, <paramref name="across"/> and
+    /// Port-only (HD weather's snow and rain): sets <paramref name="uniforms"/>' specks (MCWeather::ShownSpeckle) for a
+    /// world texture <paramref name="width"/> by <paramref name="height"/>, <paramref name="across"/> and
     /// <paramref name="down"/> texels a view pixel, its ground's map (uniforms' Ground) and time (Haze's) set; moving
     /// <paramref name="lattice"/> on by the game's time since it last moved, each layer's as its specks fall, and all as
     /// far as the ground point at the texture's middle then has moved on the screen since (as the view pans, not as it
-    /// zooms about it).
+    /// zooms about it). A rain streak layer's lattice lies along the streaks' slant.
     /// </summary>
     void SetSpeckle(CompositeUniforms& uniforms, MCSpeckLattice& lattice, float across, float down, float width,
                     float height)
     {
         const MCWeather::MCSpeckle speckle = MCWeather::ShownSpeckle();
+        // The rain's streaks' lattices lie along their slant: a texel's column is its across less the slant times its
+        // down, so a streak falling along it keeps its column and a pan moves it as it moves the world.
+        const float slant = speckle.Slant * across / down;
         const float time = uniforms.Haze[2];
         const std::array<float, 2> ground{uniforms.Ground[0], uniforms.Ground[1]};
         const std::array<float, 2> scale{across, down};
@@ -383,19 +397,25 @@ namespace
         if (lattice.Placed && lattice.Scale[0] > 0.0f && lattice.Scale[1] > 0.0f)
         {
             const double step = std::max(time - lattice.Time, 0.0f);
+            std::array<double, 2> panned{};
 
             for (size_t axis = 0; axis < middle.size(); ++axis)
             {
-                const double panned = ground[axis] - middle[axis] +
-                                      (middle[axis] - lattice.Ground[axis]) * scale[axis] / lattice.Scale[axis];
+                panned[axis] = ground[axis] - middle[axis] +
+                               (middle[axis] - lattice.Ground[axis]) * scale[axis] / lattice.Scale[axis];
+            }
 
-                for (size_t layer = 0; layer < lattice.Moved.size(); ++layer)
-                {
-                    const MCWeather::MCSpeckLayer& shown = speckle.Layers[layer];
-                    const double fell = (axis == 0 ? shown.Across : shown.Down) * scale[axis] * step;
-                    const double moved = lattice.Moved[layer][axis] + panned + fell;
-                    lattice.Moved[layer][axis] = moved - SpeckWrap * std::floor(moved / SpeckWrap);
-                }
+            const auto wrapped = [](double moved) { return moved - SpeckWrap * std::floor(moved / SpeckWrap); };
+
+            for (size_t layer = 0; layer < lattice.Moved.size(); ++layer)
+            {
+                const MCWeather::MCSpeckLayer& shown = speckle.Layers[layer];
+                const std::array<double, 2> fell{shown.Across * scale[0] * step, shown.Down * scale[1] * step};
+                // A streak layer's lattice lies along the slant (its first axis across its columns): what moved it
+                // down moves it back across as far as the slant takes that.
+                const double slid = shown.Length > 0.0f ? slant * (panned[1] + fell[1]) : 0.0;
+                lattice.Moved[layer][0] = wrapped(lattice.Moved[layer][0] + panned[0] + fell[0] - slid);
+                lattice.Moved[layer][1] = wrapped(lattice.Moved[layer][1] + panned[1] + fell[1]);
             }
         }
 
@@ -428,7 +448,24 @@ namespace
             uniforms.SpeckSides[layer] = std::max(std::round(shown.Side * across), 1.0f);
             uniforms.SpeckArms[layer] = shown.Arm > 0.0f ? shown.Arm * across : -1.0f;
             uniforms.SpeckFalls[layer] = shown.Fall > 0.0f ? shown.Fall / longest->Fall : 0.0f;
+
+            // A streak a texel thick, as faint as a drop thinner than one shows (its width's share of the texel).
+            if (shown.Length > 0.0f && layer < MCWeather::MCSpeckle::Resting)
+            {
+                const float thickness = std::min(shown.Side * across, 1.0f);
+                uniforms.SpeckLooks[layer][3] *= thickness;
+                uniforms.SpeckStrongest[layer] *= thickness;
+                uniforms.SpeckSides[layer] = 1.0f;
+                uniforms.SpeckStreaks[layer] = shown.Length * down;
+            }
         }
+
+        uniforms.SpeckStreaks[3] = slant;
+        const MCWeather::MCSpeckLayer& water = speckle.OnWater;
+        std::ranges::copy(
+            std::array{std::max(water.Density, 0.0f) / (across * down), water.Life, water.Weakest, water.Strongest},
+            uniforms.SpeckWater);
+        std::ranges::copy(std::array{water.Red, water.Green, water.Blue, 0.0f}, uniforms.SpeckWaterLook);
 
         uniforms.SpeckFalls[MCWeather::MCSpeckle::Resting] = MCSceneLights::ReliefMapsOn() ? 1.0f : 0.0f;
     }

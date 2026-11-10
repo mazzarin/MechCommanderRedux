@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "TestGame.h"
 #include "camera/MCCamera.h"
+#include "camera/MCViewWindow.h"
 #include "object/MCGameObject.h"
 #include "engine/MCByteFlag.h"
 #include "fakes/MCMemoryFileSource.h"
@@ -635,4 +636,82 @@ TEST_CASE("game: every retail terrain tile fits its row table")
     }
 
     CHECK(tiles > 1000);
+}
+
+/// <summary>
+/// Mission 1 at the closest zoom, the start's at 1440p and the furthest, the view at the middle and towards each of the
+/// map's edges: the quads the terrain draws (MCTerrainWindow::QuadsOnPane) are the smallest rectangle of the grid that
+/// holds every quad with a corner on the pane, so every quad outside it has its four corners clipped.
+/// </summary>
+TEST_CASE_ISOLATED("game: the terrain draws the grid's quads with a corner on the pane, and passes over no others")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const MCVector3D middle = Eye()->GetPosition();
+    const float far =
+        static_cast<float>(MCTerrain::VerticesBlockSide * MCTerrain::BlocksMapSide) * MCTerrain::MetersPerVertex * 2.0f;
+    const std::array<std::array<float, 2>, 5> directions{{{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}};
+
+    for (const float zoom : {480.0f, 1440.0f, 2160.0f})
+    {
+        MCFixedZoomHeight = zoom;
+
+        for (const auto& direction : directions)
+        {
+            MCTest::Scope scope(std::format("{} lines, towards ({}, {})", zoom, direction[0], direction[1]));
+            MCVector3D position = middle;
+            position.X += direction[0] * far;
+            position.Y += direction[1] * far;
+            Eye()->SetPosition(position);
+            MCTestGame::RunFrame(1.0f / 15.0f);
+            MCTestGame::RunFrame(1.0f / 15.0f);
+
+            const std::shared_ptr<MCTerrainWindow> window = Eye()->TerrainWindow.lock();
+            REQUIRE(window != nullptr);
+            const int32_t quadsSide = window->Side() - 1;
+            std::optional<MCGridQuads> expected;
+            int32_t onPane = 0;
+
+            for (int32_t row = 0; row < quadsSide; row++)
+            {
+                for (int32_t col = 0; col < quadsSide; col++)
+                {
+                    const MCTerrainBlock& quad = window->Blocks[static_cast<size_t>(row * quadsSide + col)];
+
+                    if (std::ranges::all_of(quad.Vertices,
+                                            [&](uint32_t corner) { return window->Vertices[corner].Clipped; }))
+                    {
+                        continue;
+                    }
+
+                    onPane++;
+                    expected = expected.has_value()
+                                   ? MCGridQuads{.FirstRow = std::min(expected->FirstRow, row),
+                                                 .FirstCol = std::min(expected->FirstCol, col),
+                                                 .LastRow = std::max(expected->LastRow, row),
+                                                 .LastCol = std::max(expected->LastCol, col)}
+                                   : MCGridQuads{.FirstRow = row, .FirstCol = col, .LastRow = row, .LastCol = col};
+                }
+            }
+
+            CHECK(onPane > 0);
+            const std::optional<MCGridQuads> drawn = window->QuadsOnPane();
+            REQUIRE(drawn.has_value() == expected.has_value());
+
+            if (drawn.has_value())
+            {
+                CHECK_EQ(drawn->FirstRow, expected->FirstRow);
+                CHECK_EQ(drawn->FirstCol, expected->FirstCol);
+                CHECK_EQ(drawn->LastRow, expected->LastRow);
+                CHECK_EQ(drawn->LastCol, expected->LastCol);
+                // The grid is made for the furthest zoom on the largest screen: nearer in, most of it is off the pane.
+                CHECK(std::cmp_less((drawn->LastRow - drawn->FirstRow + 1) * (drawn->LastCol - drawn->FirstCol + 1),
+                                    window->Blocks.size()));
+            }
+        }
+    }
 }

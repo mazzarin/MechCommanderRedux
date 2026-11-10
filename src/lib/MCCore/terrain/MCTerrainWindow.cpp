@@ -312,6 +312,11 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
     const int32_t maxY = GlobalPane->Y1 - GlobalPane->Y0;
     MCVector2D current = rowStart;
     const auto numVertices = static_cast<int32_t>(Vertices.size());
+    // Port-only: the rows and columns of the vertices on the pane, for QuadsOnPane.
+    int32_t lowRow = INT32_MAX;
+    int32_t lowCol = INT32_MAX;
+    int32_t highRow = INT32_MIN;
+    int32_t highCol = INT32_MIN;
 
     for (int32_t index = 0; index < numVertices; index++)
     {
@@ -346,6 +351,10 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
 
         if (!vertex->Clipped)
         {
+            lowRow = std::min(lowRow, row);
+            lowCol = std::min(lowCol, col);
+            highRow = std::max(highRow, row);
+            highCol = std::max(highCol, col);
             terrain->MarkBlockUsed(blockNum);
 
             if (DrawTerrainGrid != 0)
@@ -386,6 +395,39 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
         tileRow = std::clamp(tileRow, 0, mapSide - 1);
     }
 
+    // A quad's corners are its top-left vertex and those a row and a column on (the constructor's layout).
+    _QuadsOnPane.reset();
+
+    if (lowRow <= highRow && _Side >= 2)
+    {
+        _QuadsOnPane = MCGridQuads{.FirstRow = std::max(lowRow - 1, 0),
+                                   .FirstCol = std::max(lowCol - 1, 0),
+                                   .LastRow = std::min(highRow, _Side - 2),
+                                   .LastCol = std::min(highCol, _Side - 2)};
+    }
+
+    // Port-only: the tiles of the quads with a corner on the pane alone, in the grid's order. The grid is made for the
+    // furthest zoom on the largest screen (GrownGridSide), so most of its quads have every corner clipped, and those
+    // draw nothing (MCTerrainBlock::Draw and DrawOverlay return at once): passing over them was most of the two loops'
+    // time at the closer zooms.
+    const auto eachQuadOnPane = [this](const auto& draw)
+    {
+        if (!_QuadsOnPane.has_value())
+        {
+            return;
+        }
+
+        const int32_t quadsSide = _Side - 1;
+
+        for (int32_t quadRow = _QuadsOnPane->FirstRow; quadRow <= _QuadsOnPane->LastRow; quadRow++)
+        {
+            for (int32_t quadCol = _QuadsOnPane->FirstCol; quadCol <= _QuadsOnPane->LastCol; quadCol++)
+            {
+                draw(Blocks[static_cast<size_t>(quadRow * quadsSide + quadCol)]);
+            }
+        }
+    };
+
     ElementList().OpenGroup(50000000, false);
 
     // Port: the GPU draws the pass from the map's ground mesh in one draw; the tiles below then only reach the software
@@ -411,10 +453,7 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
         }
     }
 
-    for (MCTerrainBlock& block : Blocks)
-    {
-        block.Draw(Vertices, *cache, hazeFactor);
-    }
+    eachQuadOnPane([&](MCTerrainBlock& block) { block.Draw(Vertices, *cache, hazeFactor); });
 
     if (layer)
     {
@@ -422,11 +461,7 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
     }
 
     ElementList().OpenGroup(10000000, false);
-
-    for (MCTerrainBlock& block : Blocks)
-    {
-        block.DrawOverlay(Vertices, *cache, hazeFactor);
-    }
+    eachQuadOnPane([&](MCTerrainBlock& block) { block.DrawOverlay(Vertices, *cache, hazeFactor); });
 
     MCTerrain::ForceRedraw = false;
 }

@@ -51,6 +51,12 @@ public:
     /// <summary>The vertices along a side of the grid.</summary>
     int32_t Side() const { return _Side; }
 
+    /// <summary>
+    /// The quads with vertex <paramref name="vertex"/> as a corner, as indices into <see cref="Blocks"/> in their order
+    /// there: up to four (up and left of it, up, left, and the one it is the top-left corner of), the rest empty.
+    /// </summary>
+    std::array<std::optional<size_t>, 4> QuadsAround(uint32_t vertex) const;
+
     /// <summary>The camera using the window (none: the window is free). The camera holds the window by
     /// <c>weak_ptr</c> too: each refers to the other, the camera list and the terrain own them.</summary>
     std::weak_ptr<MCCamera> Camera;

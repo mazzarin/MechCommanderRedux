@@ -411,17 +411,21 @@ auto MCCamera::InverseProject(const MCVector2D& screenPos, MCVector3D& point) co
     }
 
     // The block around it that holds the point: the corners' angles from the point turn by at most 180 degrees
-    // between neighbours. Measure from its first corner.
+    // between neighbours. Measure from its first corner. The original searched every block for those with the vertex
+    // as a corner; the grid's layout names them, in the same order.
     float angle = 0.0f;
     MCOptionalRef<const MCTerrainBlock> foundBlock;
+    const std::array<std::optional<size_t>, 4> around =
+        closestVertex.has_value() ? terrain.QuadsAround(*closestVertex) : std::array<std::optional<size_t>, 4>{};
 
-    for (const MCTerrainBlock& block : terrain.Blocks)
+    for (const std::optional<size_t> quad : around)
     {
-        if (!closestVertex.has_value() || !std::ranges::contains(block.Vertices, *closestVertex))
+        if (!quad.has_value())
         {
-            continue;
+            break;
         }
 
+        const MCTerrainBlock& block = terrain.Blocks[*quad];
         std::array<float, 4> cornerAngle{};
 
         for (size_t corner = 0; corner < 4; corner++)

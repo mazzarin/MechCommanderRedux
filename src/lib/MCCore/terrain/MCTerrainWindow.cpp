@@ -186,6 +186,29 @@ MCTerrainWindow::MCTerrainWindow(int32_t windowNum, int32_t side)
     }
 }
 
+auto MCTerrainWindow::QuadsAround(uint32_t vertex) const -> std::array<std::optional<size_t>, 4>
+{
+    // The quad at (row, col) has its top-left corner at vertex row * side + col (the constructor's layout).
+    const auto vertexRow = static_cast<int32_t>(vertex) / _Side;
+    const auto vertexCol = static_cast<int32_t>(vertex) % _Side;
+    const int32_t quadsSide = _Side - 1;
+    std::array<std::optional<size_t>, 4> quads{};
+    size_t found = 0;
+
+    for (int32_t row = vertexRow - 1; row <= vertexRow; row++)
+    {
+        for (int32_t col = vertexCol - 1; col <= vertexCol; col++)
+        {
+            if (row >= 0 && col >= 0 && row < quadsSide && col < quadsSide)
+            {
+                quads[found++] = static_cast<size_t>(row * quadsSide + col);
+            }
+        }
+    }
+
+    return quads;
+}
+
 auto MCTerrainWindow::Bind(std::weak_ptr<MCCamera> cam) -> void
 {
     Camera = std::move(cam);

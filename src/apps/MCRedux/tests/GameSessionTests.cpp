@@ -9,9 +9,12 @@
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFitIniFile.h"
+#include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCReusableDialog.h"
+#include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameSession.h"
@@ -26,6 +29,8 @@
 #include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCMultiPlayerHandlers.h"
+#include "object/MCForces.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
@@ -441,6 +446,101 @@ TEST_CASE_ISOLATED("game: a launcher's game stopped on its match's results scree
     CHECK(gui.Session == nullptr);
     CHECK(Mission() == nullptr);
     CHECK(MultiPlayer() == nullptr);
+    IsMPlayerGame = false;
+}
+
+namespace
+{
+    /// <summary>
+    /// The campaign mission under way made a LAN match's, as a guest's game plays it: the multiplayer game as MULTIPLAYER
+    /// makes it, its connection the LAN, in its match. No logistics is up (the mission dropped it as the scenario loaded).
+    /// </summary>
+    MCMultiPlayer& PlayAsLanGuest()
+    {
+        auto game = std::make_shared<MCMultiPlayer>();
+        MCGameContext::Current().SetMultiPlayer(game);
+        REQUIRE_EQ(game->Start(), 0);
+        game->SessionManager->CurrentConnection = MCNetProtocol::TcpIp;
+        game->InMission = true;
+        IsMPlayerGame = true;
+        REQUIRE(GlobalLog() == nullptr);
+        return *game;
+    }
+}
+
+/// <summary>
+/// A match's guest whose session is lost at the results (its host gone, nobody taking over) keeps them up, and they
+/// draw; DONE goes on as it does. The room's end asked for the menus' logistics first, which a mission doesn't have,
+/// so the loss went the original's way: the scenario ended under the results, and their next draw read the home team
+/// it took (the laptop's crash in the 8 Nov playtest, in MCMissionResultsScreen::DrawMPObjectives).
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's guest whose session is lost at the results keeps them up, and they still draw")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(ReachFirstResults(5));
+    const MCMultiPlayer& game = PlayAsLanGuest();
+
+    // The system's word (DPSYS_SESSIONLOST) at the results.
+    HandleLocalPlayerRemoved();
+    RunFrames(30);
+
+    CHECK(Mission()->State == MCMissionState::Results);
+    CHECK(Mission()->ResultsScreen != nullptr);
+    CHECK(Scenario() != nullptr);
+    CHECK(HomeTeam() != nullptr);
+    CHECK(game.SessionManager->CurrentSession() == nullptr);
+    // Nothing in front of them (the original's "connection lost" box came with the menus).
+    CHECK(GlobalLog() == nullptr);
+
+    // DONE: the scenario ends, and with it this game, as after any match outside a room the menus opened.
+    std::optional<int32_t> quit;
+
+    try
+    {
+        Mission()->CloseResultsScreen();
+    }
+    catch (const MCGameQuit& thrown)
+    {
+        quit = thrown.ExitCode;
+    }
+
+    CHECK(quit == std::optional<int32_t>(0));
+    CHECK(Scenario() == nullptr);
+    IsMPlayerGame = false;
+}
+
+/// <summary>
+/// A guest the LAN games took to its match, whose host is lost mid-battle: the scenario ends and its game goes back to
+/// the LAN games, saying so ("LOST THE CONNECTION TO THE HOST'S GAME.", the host's name unknown here), not to the main
+/// menu with the original's message (which the room's end missed in a mission, as it does at the results).
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN match's guest whose host is lost mid-battle goes back to the LAN games, saying so")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+    PlayAsLanGuest();
+
+    HandleLocalPlayerRemoved();
+    RunFrames(30);
+
+    CHECK(Scenario() == nullptr);
+    CHECK(Mission()->State == MCMissionState::Logistics);
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    REQUIRE(logistics != nullptr);
+    CHECK(logistics->CurrentScreen() == logistics->LanScreen);
+    CHECK(logistics->MessageDialog->ShowWindow);
+    CHECK_EQ(logistics->MessageDialog->Text, std::string("LOST THE CONNECTION TO THE HOST'S GAME."));
     IsMPlayerGame = false;
 }
 

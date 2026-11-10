@@ -547,7 +547,10 @@ auto MCRoomEnd::SessionLost() -> bool
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     const std::optional<std::string> closedBy = std::exchange(ClosedBy, std::nullopt);
 
-    if (game == nullptr || GlobalLog() == nullptr)
+    // Only the room's own screens need the logistics (below): a mission has none while it plays and through its results
+    // (MCMission drops it as the scenario loads). Asked first, it sent every match's end the original's way, which ended
+    // the scenario under the results still up: their next draw read the home team it took (a guest's crash, 8 Nov).
+    if (game == nullptr)
     {
         return false;
     }
@@ -595,7 +598,15 @@ auto MCRoomEnd::SessionLost() -> bool
         return true;
     }
 
-    MCLogistics& logistics = *GlobalLog();
+    const std::shared_ptr<MCLogistics> logisticsHeld = GlobalLog();
+
+    if (logisticsHeld == nullptr)
+    {
+        SDL_Log("Room end: the room ended outside a match with no screens up; the original's way");
+        return false;
+    }
+
+    MCLogistics& logistics = *logisticsHeld;
     game->InLogistics = false;
     logistics.DestroyMultiplayer();
     ClearRoom(logistics);

@@ -450,15 +450,30 @@ namespace MCFileSystem
         return Files().UserRoot();
     }
 
-    void SetSettingsRoot(const std::filesystem::path& root)
+    bool SetSettingsRoot(const std::filesystem::path& root)
     {
-        SettingsFolder() = root;
+        SettingsFolder().clear();
 
-        if (!root.empty())
+        if (root.empty())
         {
-            std::error_code error;
-            std::filesystem::create_directories(root, error);
+            return false;
         }
+
+        std::error_code error;
+        std::filesystem::create_directories(root, error);
+
+        // The settings are opened by the game's own paths, which reach a drive's root and never a network share's
+        // (\\server\share): a folder they don't reach, or one that can't be made, leaves them in the user folder.
+        if (!std::filesystem::equivalent(Resolve(ToUtf8(root)), root, error))
+        {
+            SDL_Log("Settings: the player's folder (%s) can't be made, or the game's paths don't reach it: the user "
+                    "folder keeps them",
+                    ToUtf8(root).c_str());
+            return false;
+        }
+
+        SettingsFolder() = root;
+        return true;
     }
 
     std::string SettingsToRead(std::string_view name)
@@ -470,9 +485,10 @@ namespace MCFileSystem
             return std::string(name);
         }
 
+        // Found without regard to case, as the save finds the file it replaces.
         const std::filesystem::path path = root / FromUtf8(name);
         std::error_code error;
-        return std::filesystem::is_regular_file(path, error) ? ToUtf8(path) : std::string(name);
+        return std::filesystem::is_regular_file(Resolve(ToUtf8(path)), error) ? ToUtf8(path) : std::string(name);
     }
 
     std::string SettingsToWrite(std::string_view name)

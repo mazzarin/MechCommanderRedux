@@ -440,7 +440,7 @@ TEST_CASE("file: the player's own settings are read and saved in their folder wh
     MCFileSystem::SetUserRoot(launcher);
     CHECK_EQ(MCFileSystem::SettingsToRead("prefs.cfg"), "prefs.cfg");
     CHECK_EQ(MCFileSystem::SettingsToWrite("prefs.cfg"), "prefs.cfg");
-    MCFileSystem::SetSettingsRoot(player);
+    REQUIRE(MCFileSystem::SetSettingsRoot(player));
 
     // The settings folder is the process's: none once the test ends, however it ends.
     struct MCSettingsReset
@@ -470,6 +470,15 @@ TEST_CASE("file: the player's own settings are read and saved in their folder wh
     REQUIRE_EQ(fit.Open(MCFileSystem::SettingsToRead("prefs.cfg")), 0);
     REQUIRE_EQ(fit.SeekBlock("Prefs"), 0);
     CHECK(fit.Read<int32_t>("Volume") == MCFitResult<int32_t>(9));
+    fit.Close();
+
+#ifdef _WIN32
+    // A folder the game's paths don't reach (a network share's \\server\share, here the same folder by its \\?\
+    // name): the user folder keeps them, as before.
+    CHECK(!MCFileSystem::SetSettingsRoot(std::filesystem::path(L"\\\\?\\") += player));
+    CHECK_EQ(MCFileSystem::SettingsToRead("prefs.cfg"), "prefs.cfg");
+    CHECK_EQ(MCFileSystem::SettingsToWrite("prefs.cfg"), "prefs.cfg");
+#endif
 }
 
 /// <summary>

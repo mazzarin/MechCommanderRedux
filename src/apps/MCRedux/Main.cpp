@@ -723,11 +723,10 @@ int main(int argc, char** argv)
 
     MCFileSystem::SetGameRoot(options->DataFolder);
     MCFileSystem::SetUserRoot(options->UserFolder);
-    MCFileSystem::SetSettingsRoot(options->SettingsFolder);
     SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
     SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
 
-    if (!options->SettingsFolder.empty())
+    if (MCFileSystem::SetSettingsRoot(options->SettingsFolder))
     {
         SDL_Log("Settings: the player's own, in %s", MCFileSystem::ToUtf8(options->SettingsFolder).c_str());
     }

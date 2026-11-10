@@ -46,9 +46,11 @@ namespace MCFileSystem
     /// <summary>
     /// Port-only: sets the folder that keeps the player's own settings (PREFS.CFG, the reports' state) when it isn't the
     /// user folder, as when a launcher gives a match a user folder of its own (created if missing; empty: the user
-    /// folder keeps them, as it keeps everything else).
+    /// folder keeps them, as it keeps everything else). A folder the game's paths can't reach (a network share), or
+    /// that can't be made, isn't set: the user folder keeps them.
     /// </summary>
-    void SetSettingsRoot(const std::filesystem::path& root);
+    /// <returns>Whether the folder is set.</returns>
+    bool SetSettingsRoot(const std::filesystem::path& root);
 
     /// <summary>
     /// The path to read the settings file <paramref name="name"/> from: the settings folder's copy, when one is set and

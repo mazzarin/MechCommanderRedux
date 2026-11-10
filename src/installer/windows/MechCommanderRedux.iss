@@ -4,7 +4,8 @@
 ; another account's, or one holding them), it asks two things beside the folder: the game, downloaded into a folder of
 ; its own (by default C:\Games\MechCommander Redux HD, else %LOCALAPPDATA%\Programs\MechCommander Redux HD) or the
 ; player's copy, which Redux HD installs into and takes over (the folder the game was last pointed at, else the one the
-; original's installer recorded); and HD, ticked. It puts the program in, leaves the answers for the game (Redux
+; original's installer recorded); and HD, ticked, unless the computer can't run Vulkan, which HD's art and movies need
+; (a line under it says they won't show: VulkanLack). It puts the program in, leaves the answers for the game (Redux
 ; update\sets.json), and, shown, has the game download what the folder lacks before its Finish page (MCRedux
 ; --get-content, the game's own download in its own window; closed or cut off, the first start carries on): the setup
 ; itself downloads and copies no content. Windows' Apps list then gets the folder's size. MCX.EXE is the game itself
@@ -32,7 +33,7 @@
 ; player's copy, without HD; silent installs still take their answers.
 ;
 ; Silently: /DIR=<folder>, /GAME=DOWNLOAD or COPY (by default COPY for a folder holding the game, else DOWNLOAD), and
-; /HD=NO to leave HD out.
+; /HD=NO to leave HD out, /HD=YES to have it where the computer can't run Vulkan (which leaves it out by default).
 
 #ifndef AppVersionNumber
   #error Pass /DAppVersionNumber=<major.minor.patch.build> (MC_VERSION in MCVersion.h)
@@ -177,6 +178,7 @@ UseMyCopy=&Use my copy of MechCommander Gold
 TakeoverChoice=Redux HD takes over this copy. To keep it unchanged, choose Download it instead.%nUninstalling Redux HD restores your copy.
 TakeoverCopy=Redux HD takes over this copy.%nUninstalling Redux HD restores your copy.
 HdChoice=Redux &HD art, sound and movies
+NoVulkan=Redux HD's art and movies won't show on this computer: its graphics can't run Vulkan, so the game plays in its original look.
 GameSize=%1 (%2 GB)
 HdSize=%1 (%2 GB more)
 Totals=About %1 GB with HD, %2 GB without.
@@ -266,6 +268,16 @@ const
   ErrorPathNotFound = 3;
   // The game's exit code once its content is in place (MCRedux --get-content).
   ContentInCode = 0;
+  // Where Windows' Vulkan loader finds the drivers it loads (Khronos' Vulkan-Loader, docs/LoaderDriverInterface.md):
+  // the key of each display adapter and software component, under its class, naming one (VulkanDriverName; the
+  // 32-bit programs' VulkanDriverNameWow isn't the game's), and Khronos' own list, whose values of 0 are drivers it
+  // loads. The loader is vulkan-1.dll in the 64-bit System32, as the game is 64-bit.
+  VulkanLoaderFile = 'System32\vulkan-1.dll';
+  DisplayClassKey = 'SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}';
+  SoftwareComponentClassKey = 'SYSTEM\CurrentControlSet\Control\Class\{5c4c3332-344d-483c-8739-259e934c9cc8}';
+  VulkanDriverValue = 'VulkanDriverName';
+  KhronosDriversKey = 'SOFTWARE\Khronos\Vulkan\Drivers';
+  KhronosDriverLoaded = 0;
   // A file's size from its two halves (TFindRec's SizeHigh, SizeLow), and the KB Windows' Apps list counts in.
   HalfSize = 65536;
   BytesPerKB = 1024;
@@ -281,8 +293,12 @@ var
   // The folder page's questions: the game downloaded or the player's copy, and HD; and the folder each choice shows.
   GameDownload, GameCopy: TNewRadioButton;
   HdBox: TNewCheckBox;
+  // Under HD, when the computer can't run Vulkan: that HD's art and movies won't show.
+  VulkanNote: TNewStaticText;
   // Under them, while the player's copy is chosen: that Redux HD takes it over, and how to leave it as it is.
   TakeoverNote: TNewStaticText;
+  // What the computer lacks to run Vulkan (VulkanLack); empty when nothing is missing.
+  VulkanLacks: String;
   DownloadFolder, CopyFolder: String;
   CopyShown: Boolean;
   // Whether the install ran the game's download, and whether that ended with the content in place.
@@ -407,6 +423,74 @@ begin
   Result := SizesKnown or WizardSilent;
 end;
 
+// Whether one of a device class's keys (DisplayClassKey, SoftwareComponentClassKey; Devices, its subkeys) names a
+// Vulkan driver.
+function ClassNamesVulkanDriver(const ClassKey: String; const Devices: TArrayOfString): Boolean;
+var
+  Index: Integer;
+begin
+  Result := False;
+
+  for Index := 0 to GetArrayLength(Devices) - 1 do
+    if RegValueExists(HKLM64, ClassKey + '\' + Devices[Index], VulkanDriverValue) then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+// Whether Khronos' list of drivers has one the loader loads.
+function KhronosListsVulkanDriver: Boolean;
+var
+  Names: TArrayOfString;
+  Index: Integer;
+  Value: Cardinal;
+begin
+  Result := False;
+
+  if RegGetValueNames(HKLM64, KhronosDriversKey, Names) then
+    for Index := 0 to GetArrayLength(Names) - 1 do
+      if RegQueryDWordValue(HKLM64, KhronosDriversKey, Names[Index], Value) and (Value = KhronosDriverLoaded) then
+      begin
+        Result := True;
+        Exit;
+      end;
+end;
+
+// What the computer lacks to run Vulkan, which Redux HD's art and movies need (without it the game draws on the CPU,
+// in the original's look), as the log says it; empty when nothing is missing. It reads what Windows' Vulkan loader
+// reads: the loader itself, and a driver named for it. Only a clear lack counts: what can't be read counts as there,
+// and a driver named may still not start (the game falls back then, as it always has).
+function VulkanLack: String;
+var
+  Redirected, Loader: Boolean;
+  Adapters, Components: TArrayOfString;
+begin
+  Result := '';
+  // The 64-bit System32, not the 32-bit one Windows shows this 32-bit setup in its place.
+  Redirected := EnableFsRedirection(False);
+
+  try
+    Loader := FileExists(AddBackslash(ExpandConstant('{win}')) + VulkanLoaderFile);
+  finally
+    EnableFsRedirection(Redirected);
+  end;
+
+  if not Loader then
+    Result := 'no vulkan-1.dll in System32'
+  // Every computer has the display adapters' class: when it can't be read, nothing is known.
+  else if not RegGetSubkeyNames(HKLM64, DisplayClassKey, Adapters) then
+    Log('Vulkan: the display adapters'' keys couldn''t be read')
+  else if not ClassNamesVulkanDriver(DisplayClassKey, Adapters) then
+  begin
+    if not RegGetSubkeyNames(HKLM64, SoftwareComponentClassKey, Components) then
+      SetArrayLength(Components, 0);
+
+    if not ClassNamesVulkanDriver(SoftwareComponentClassKey, Components) and not KhronosListsVulkanDriver then
+      Result := 'no Vulkan driver';
+  end;
+end;
+
 // The folder page's line under the folder: what the game takes on disk, with HD and without.
 procedure ShowTotals;
 begin
@@ -442,7 +526,7 @@ end;
 procedure AddQuestions;
 var
   Page: TWizardPage;
-  Top: Integer;
+  Top, NotesTop: Integer;
   DownloadCaption, HdCaption: String;
 begin
   DownloadCaption := CustomMessage('DownloadGame');
@@ -490,6 +574,21 @@ begin
   end;
 
   HdBox.Top := WizardForm.DirEdit.Top + WizardForm.DirEdit.Height + ScaleY(16);
+  NotesTop := HdBox.Top + HdBox.Height;
+
+  VulkanNote := TNewStaticText.Create(WizardForm);
+  VulkanNote.Parent := Page.Surface;
+  VulkanNote.Left := GameDownload.Left;
+  VulkanNote.AutoSize := False;
+  VulkanNote.WordWrap := True;
+  VulkanNote.Width := GameDownload.Width;
+  VulkanNote.Caption := CustomMessage('NoVulkan');
+  VulkanNote.Top := NotesTop + ScaleY(4);
+  VulkanNote.AutoSize := True;
+  VulkanNote.Visible := AsksDownloads and (VulkanLacks <> '');
+
+  if VulkanNote.Visible then
+    NotesTop := VulkanNote.Top + VulkanNote.Height;
 
   TakeoverNote := TNewStaticText.Create(WizardForm);
   TakeoverNote.Parent := Page.Surface;
@@ -502,7 +601,7 @@ begin
   if AsksDownloads then
   begin
     TakeoverNote.Caption := FmtMessage(CustomMessage('TakeoverChoice'), []);
-    TakeoverNote.Top := HdBox.Top + HdBox.Height + ScaleY(16);
+    TakeoverNote.Top := NotesTop + ScaleY(16);
   end
   else
   begin
@@ -517,10 +616,19 @@ function DownloadFolderDefault: String; forward;
 
 procedure InitializeWizard;
 var
-  Given, Answer: String;
+  Given, Answer, Hd: String;
 begin
+  VulkanLacks := VulkanLack;
+
+  if VulkanLacks = '' then
+    Log('Vulkan: found')
+  else
+    Log(Format('Vulkan: none, %s', [VulkanLacks]));
+
   AddQuestions;
-  HdBox.Checked := Uppercase(ExpandConstant('{param:HD|}')) <> NoAnswer;
+  // HD by default where its art and movies show; /HD=NO leaves it out, any other answer has it anyway.
+  Hd := Uppercase(ExpandConstant('{param:HD|}'));
+  HdBox.Checked := (Hd <> NoAnswer) and ((Hd <> '') or (VulkanLacks = ''));
   DownloadFolder := DownloadFolderDefault;
   // The player's copy: the folder the game was last pointed at, else the one the original's installer recorded.
   CopyFolder := RememberedGameFolder;

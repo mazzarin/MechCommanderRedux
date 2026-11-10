@@ -21,7 +21,15 @@ and the HD pack:
 - **Windows** (Windows 10 or later): the setup, the `-setup.exe`. It installs Redux HD in your own copy of
   MechCommander Gold, or downloads the game.
 
-The first start downloads the game's files (0.6 GB) and, if you chose it, the HD pack (5.8 GB). Neither installer is
+What your computer needs:
+
+| | With HD | The original's look |
+|---|---|---|
+| Memory | 8 GB | 4 GB |
+| Free disk space | 10 GB | 2 GB |
+| Graphics | Windows: a graphics card from 2016 or later, or built-in graphics from 2020 or later. Mac: any Apple silicon Mac | Any |
+
+The first start downloads the game's files (0.6 GB) and, if you chose it, the HD pack (6.5 GB). Neither installer is
 signed yet, so macOS and Windows stop it the first time: [Installing](#installing) has the steps. Once installed,
 the game updates itself: when a new version is out, UPDATE on the main menu turns amber. What each version brought:
 [CHANGELOG.md](CHANGELOG.md).

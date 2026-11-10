@@ -106,6 +106,8 @@
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "main/MCLogistics.h"
+#include "main/MCGameStrings.h"
+#include "logistics/MCPurProfile.h"
 #include "lib/MCFile.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
@@ -10869,6 +10871,250 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     std::cout << std::format("  {} pictures ({} distinct) in {}, {} skipped\n", pictures, written.size(),
                              folder.string(), skipped);
     CHECK(!written.empty());
+}
+
+namespace
+{
+    /// <summary>The name plates of each kind of item (logart's pictures, by the item's number, two digits).</summary>
+    constexpr std::array<std::string_view, 2> ComponentPlates = {"lspflc", "lspfdc"};
+    constexpr std::array<std::string_view, 3> VehiclePlates = {"lspflv", "lspfdv", "lscflv"};
+    constexpr std::array<std::string_view, 1> PilotPlates = {"lspflp"};
+    /// <summary>A mech's plates by its NameVariant (0 A, 1 W, 2 J: MCMechPurchaseBlock's and MCMechRepairBlock's).</summary>
+    constexpr std::array<std::array<std::string_view, 3>, 3> MechPlates = {
+        {{"lspflma", "lspfdma", "lscflma"}, {"lspflmw", "lspfdmw", "lscflmw"}, {"lspflmj", "lspfdmj", "lscflmj"}}};
+    /// <summary>
+    /// The string table's names: a mech's at its DescIndex plus this, a vehicle's at its DescIndex plus this (the
+    /// purchase lists' rules, MCPurMechList and MCPurVehicleList), and the room they're read into.
+    /// </summary>
+    constexpr uint32_t MechNameStrings = 300;
+    constexpr uint32_t VehicleNameStrings = 700;
+    constexpr int MechNameRoom = 0x28;
+    constexpr int VehicleNameRoom = 0x7f;
+
+    /// <summary>A text on one line of a TSV file: its tabs and line ends as spaces.</summary>
+    std::string OneField(std::string_view text)
+    {
+        std::string field(text);
+        std::ranges::replace_if(field, [](char c) { return c == '\t' || c == '\n' || c == '\r'; }, ' ');
+        return field;
+    }
+
+    /// <summary>
+    /// The game paths of the .fit files in a folder of the game's (<paramref name="folder"/>, as system.cfg names it):
+    /// those in every FastFile beside SYSTEM.CFG and those on disk, once each, in name order.
+    /// </summary>
+    std::vector<std::string> FitFilesIn(std::string_view folder)
+    {
+        std::set<std::string,
+                 decltype([](const std::string& a, const std::string& b) { return MCFileSystem::NameLess(a, b); })>
+            files;
+        std::error_code error;
+
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(MCFileSystem::GameRoot(), error))
+        {
+            if (!EndsWithIgnoringCase(entry.path().filename().string(), ".fst"))
+            {
+                continue;
+            }
+
+            auto archive = MCFastFile::Create(entry.path().filename().string());
+            REQUIRE(archive.has_value());
+
+            for (const MCFileEntry& file : (*archive)->GetEntries())
+            {
+                const std::string_view name = file.GetName();
+
+                if (name.size() > folder.size() && EndsWithIgnoringCase(name, ".fit") &&
+                    !MCFileSystem::NameLess(name.substr(0, folder.size()), folder) &&
+                    !MCFileSystem::NameLess(folder, name.substr(0, folder.size())) &&
+                    name.find_first_of("\\/", folder.size()) == std::string_view::npos)
+                {
+                    files.emplace(name);
+                }
+            }
+        }
+
+        for (const std::string& name : MCFileSystem::FindFiles(GamePath(folder, "*.fit")))
+        {
+            files.emplace(GamePath(folder, name));
+        }
+
+        return {files.begin(), files.end()};
+    }
+
+    /// <summary>A profile's string (empty when it has none).</summary>
+    std::string ProfileString(MCFitIniFile& file, std::string_view name)
+    {
+        const MCFitResult<std::string> text = file.Read<std::string>(name);
+        return text.has_value() ? *text : std::string();
+    }
+
+    /// <summary>Says which profile --hd-plate-names leaves out and why (a plate with no item is then explained).</summary>
+    void PlateProfileSkipped(std::string_view path, std::string_view why)
+    {
+        std::cerr << std::format("  --hd-plate-names: {} left out: {}\n", path, why);
+    }
+}
+
+/// <summary>
+/// Writes which item each of the store's and inventory's name plates shows (logart's LSPFL*, in stock, LSPFD*, sold
+/// out, and LSCFL*, the inventory's: each a picture of the item's name, picked by the item's number), with the game's
+/// names for it, for the HD art generator, which draws the plates again in a font (tools/upscale/make_menu_pack.py):
+/// a line a plate and item: the plate's file, the item's kind, where the game reads it (a component's master id, a
+/// profile's file), its names (the string table's, the profile's or master list's own and its abbreviation, a pilot's
+/// callsign and name) and its description, tab-separated. A component's plate is its place in the components' range
+/// order (objsort's RangeSortList, MCInventoryList), a mech's, vehicle's or pilot's its profile's NameIndex (a mech's
+/// by its NameVariant too); every profile with a NameIndex is listed, so a plate may have several (the matcher picks by
+/// the plate's own letters).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-plate-names writes the items the store's and inventory's name plates show")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-plate-names");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    std::ofstream names{std::filesystem::path(*out)};
+    REQUIRE(names.good());
+    names << "plate\tkind\tsource\tname\tother name\tdescription\n";
+    int32_t lines = 0;
+
+    const auto write = [&](std::string_view plate, int32_t number, std::string_view kind, std::string_view source,
+                           std::string_view name, std::string_view other, std::string_view description)
+    {
+        names << std::format("{}{:02}.tga\t{}\t{}\t{}\t{}\t{}\n", plate, number, kind, OneField(source), OneField(name),
+                             OneField(other), OneField(description));
+        ++lines;
+    };
+
+    // The components, by their place in the range order.
+    const std::vector<uint32_t>& ranges = GlobalLog()->RangeSortList;
+    REQUIRE(!ranges.empty());
+
+    for (size_t place = 0; place < ranges.size(); ++place)
+    {
+        REQUIRE(ranges[place] < MasterComponentList.size());
+        const MCMasterComponent& component = MasterComponentList[ranges[place]];
+        const std::string description = LoadDescriptionText(static_cast<int32_t>(ranges[place]));
+
+        for (std::string_view plate : ComponentPlates)
+        {
+            write(plate, static_cast<int32_t>(place), "component", std::format("{}", ranges[place]), component.Name,
+                  component.Abbreviation, description);
+        }
+    }
+
+    // The mechs and vehicles, by their profiles' NameIndex.
+    for (const std::string& path : FitFilesIn(ProfilePath))
+    {
+        MCFitIniFile file;
+
+        if (file.Open(path) != 0 || file.SeekBlock("Header") != 0)
+        {
+            PlateProfileSkipped(path, "it doesn't open, or has no Header block");
+            continue;
+        }
+
+        const std::string type = ProfileString(file, "FileType");
+        const bool mech = type == "MechProfile";
+
+        if (!mech && type != "GroundVehicleProfile")
+        {
+            continue; // Another kind of profile: no plate.
+        }
+
+        if (file.SeekBlock("General") != 0)
+        {
+            PlateProfileSkipped(path, "no General block");
+            continue;
+        }
+
+        const MCFitResult<int32_t> number = file.Read<int32_t>("NameIndex");
+
+        if (!number.has_value() || *number < 0)
+        {
+            PlateProfileSkipped(path, "no NameIndex");
+            continue;
+        }
+
+        const MCFitResult<int32_t> descIndex = file.Read<int32_t>("DescIndex");
+        const std::string shown =
+            descIndex.has_value()
+                ? LoadGameString(static_cast<uint32_t>(*descIndex) + (mech ? MechNameStrings : VehicleNameStrings),
+                                 mech ? MechNameRoom : VehicleNameRoom)
+                : std::string();
+        const std::string description = descIndex.has_value() ? LoadDescriptionText(*descIndex) : std::string();
+        const std::string own = ProfileString(file, "Name");
+        const std::string source = path.substr(path.find_last_of("\\/") + 1);
+
+        if (mech)
+        {
+            const MCFitResult<int32_t> variant = file.Read<int32_t>("NameVariant");
+
+            if (!variant.has_value() || *variant < 0 || *variant >= static_cast<int32_t>(MechPlates.size()))
+            {
+                PlateProfileSkipped(path, "no NameVariant naming a mech's plates");
+                continue;
+            }
+
+            for (std::string_view plate : MechPlates[static_cast<size_t>(*variant)])
+            {
+                write(plate, *number, "mech", source, shown, own, description);
+            }
+        }
+        else
+        {
+            for (std::string_view plate : VehiclePlates)
+            {
+                write(plate, *number, "vehicle", source, shown, own, description);
+            }
+        }
+    }
+
+    // The pilots, by their profiles' NameIndex.
+    for (const std::string& path : FitFilesIn(WarriorPath))
+    {
+        MCFitIniFile file;
+
+        if (file.Open(path) != 0 || file.SeekBlock("General") != 0)
+        {
+            PlateProfileSkipped(path, "it doesn't open, or has no General block");
+            continue;
+        }
+
+        const MCFitResult<int32_t> number = file.Read<int32_t>("NameIndex");
+
+        if (!number.has_value() || *number < 0)
+        {
+            PlateProfileSkipped(path, "no NameIndex");
+            continue;
+        }
+
+        const MCFitResult<int32_t> descIndex = file.Read<int32_t>("DescIndex");
+        const std::string description = descIndex.has_value() ? LoadDescriptionText(*descIndex) : std::string();
+        const std::string source = path.substr(path.find_last_of("\\/") + 1);
+
+        for (std::string_view plate : PilotPlates)
+        {
+            write(plate, *number, "pilot", source, ProfileString(file, "Callsign"), ProfileString(file, "Name"),
+                  description);
+        }
+    }
+
+    names.flush();
+
+    if (!names.good())
+    {
+        std::cerr << std::format("  --hd-plate-names: writing {} failed\n", *out);
+    }
+
+    REQUIRE(names.good());
+    std::cout << std::format("  {} plates' items in {}\n", lines, *out);
+    CHECK(lines > 0);
 }
 
 /// <summary>

@@ -194,8 +194,9 @@ namespace
     };
 
     /// <summary>
-    /// The release's files hosted in a folder, from sources made from one another: one zip refused at once, the other
-    /// zips sent slowly, a few bytes at a time (other files at once); each zip's fetch counted as whole or cut short.
+    /// The release's files hosted in a folder, from sources made from one another: one zip refused once the others
+    /// asked for have each sent their first bytes, the other zips sent slowly, a few bytes at a time (other files at
+    /// once); each zip's fetch counted as whole or cut short.
     /// </summary>
     class MCSlowZipSource final : public MCContentStage::MCSource
     {
@@ -204,7 +205,11 @@ namespace
         {
             /// <summary>The zip refused (set before staging, only read after).</summary>
             std::string Refused;
+            /// <summary>How many other zips send their first bytes before it's refused (set before staging).</summary>
+            int RefusedAfter = 0;
             std::mutex Lock;
+            std::condition_variable Changed;
+            int ZipsStarted = 0;
             int ZipsWhole = 0;
             int ZipsCutShort = 0;
         };
@@ -219,6 +224,10 @@ namespace
         {
             if (name == _Shared->Refused)
             {
+                // Up to a while, so a staging that never fetches the others fails the test's checks, not hangs it.
+                std::unique_lock lock(_Shared->Lock);
+                _Shared->Changed.wait_for(lock, StartedWait,
+                                          [this] { return _Shared->ZipsStarted >= _Shared->RefusedAfter; });
                 return std::unexpected("the host refused it");
             }
 
@@ -240,6 +249,14 @@ namespace
                 out.write(bytes.data() + at, static_cast<std::streamsize>(count));
                 out.flush();
                 const bool goOn = received(std::span(bytes).subspan(static_cast<size_t>(at), count));
+
+                if (zip && at == 0)
+                {
+                    const std::scoped_lock lock(_Shared->Lock);
+                    ++_Shared->ZipsStarted;
+                    _Shared->Changed.notify_all();
+                }
+
                 at += count;
 
                 if (!goOn)
@@ -268,6 +285,8 @@ namespace
         /// <summary>A zip's bytes come this many at a time, each piece after this long: a 400-byte zip takes 1.25 s.</summary>
         static constexpr size_t Piece = 8;
         static constexpr std::chrono::milliseconds PieceTime{25};
+        /// <summary>The longest the refused zip waits for the others' first bytes.</summary>
+        static constexpr std::chrono::seconds StartedWait{10};
 
     private:
         std::filesystem::path _Folder;
@@ -848,6 +867,7 @@ TEST_CASE("content stage: a zip that fails ends staging while the others downloa
     const MCContentPlan::MCPlan plan = release.Plan();
     const auto shared = std::make_shared<MCSlowZipSource::MCShared>();
     shared->Refused = "update-2.zip";
+    shared->RefusedAfter = Extra;
     MCSlowZipSource source(release.Host.Path(), shared);
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
     const auto failed = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn);
@@ -856,8 +876,9 @@ TEST_CASE("content stage: a zip that fails ends staging while the others downloa
 
     {
         const std::scoped_lock lock(shared->Lock);
+        CHECK_EQ(shared->ZipsStarted, Extra);
         CHECK_EQ(shared->ZipsWhole, 0);
-        CHECK(shared->ZipsCutShort > 0);
+        CHECK_EQ(shared->ZipsCutShort, Extra);
     }
 
     // What they had stays in download/; the next attempt goes on from it.
@@ -870,7 +891,7 @@ TEST_CASE("content stage: a zip that fails ends staging while the others downloa
         kept += std::filesystem::exists(path) && std::filesystem::file_size(path) > 0 ? 1 : 0;
     }
 
-    CHECK(kept > 0);
+    CHECK_EQ(kept, Extra);
     MCFolderSource working(release.Host.Path());
     REQUIRE(MCContentStage::Stage(*disk, working, release.Game.Path(), plan, release.List, GoOn).has_value());
 

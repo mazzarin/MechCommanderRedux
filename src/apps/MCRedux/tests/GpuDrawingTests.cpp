@@ -671,6 +671,75 @@ TEST_CASE_ISOLATED("game: the GPU blends translucent colours over what is shown"
 }
 
 /// <summary>
+/// Port-only: draws of two kinds taken in turns go in one batch for each kind where they lie apart, and in the order
+/// drawn where they meet.
+/// </summary>
+TEST_CASE_ISOLATED("game: the GPU draws what lies apart in a batch for each kind, and in order where it meets")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || renderer == nullptr)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    MCPane& pane = ScreenPort()->Frame();
+    constexpr int32_t Light = 4;
+    constexpr uint8_t Dark = 0x10;
+    constexpr int32_t Radius = 6;
+    constexpr int32_t Step = 30;
+
+    // Lights (blended) and dots (opaque) in turns, each apart from the rest: one batch of each, however many.
+    const auto apart = [&](int32_t pairs)
+    {
+        for (int32_t i = 0; i < pairs; i++)
+        {
+            AGEllipseFill(pane, 100 + Step * i, 150, Radius, Radius, Light);
+            VfxPixelWrite(pane, 100 + Step * i, 180, Dark);
+        }
+
+        REQUIRE(display->ReadFrame().has_value());
+        return renderer->LastFrameBatches();
+    };
+
+    const int64_t few = apart(4);
+    const int64_t many = apart(12);
+    std::cout << std::format("  {} batches for 4 pairs apart, {} for 12\n", few, many);
+    CHECK_EQ(few, 2);
+    CHECK_EQ(many, 2);
+
+    // A dot, a light over it, a dot over that: the last dot shows as it does alone, not lit.
+    const int32_t x = 300;
+    const int32_t y = 220;
+    VfxPixelWrite(pane, x, y, Dark);
+    AGEllipseFill(pane, x, y, Radius, Radius, Light);
+    VfxPixelWrite(pane, x, y, Dark);
+    VfxPixelWrite(pane, x, y + Step, Dark);
+    const auto frame = display->ReadFrame();
+    REQUIRE(frame.has_value());
+    CHECK_EQ(renderer->LastFrameBatches(), 3);
+    const int32_t width = display->Width();
+    const auto at = [&](int32_t px, int32_t py)
+    { return (*frame)[static_cast<size_t>(py + pane.Y0) * width + px + pane.X0]; };
+    const SDL_Color over = at(x, y);
+    const SDL_Color alone = at(x, y + Step);
+    const SDL_Color lit = at(x + 2, y);
+    CHECK((over.r == alone.r && over.g == alone.g && over.b == alone.b));
+    CHECK((lit.r != alone.r || lit.g != alone.g || lit.b != alone.b));
+}
+
+/// <summary>
 /// Mission 1's battle drawn by the GPU alone (the lance attacks the Uller, the camera follows it): everything is drawn
 /// on the GPU, nothing reads a frame surface's memory, and pictures go up when they are new, not every frame.
 /// </summary>

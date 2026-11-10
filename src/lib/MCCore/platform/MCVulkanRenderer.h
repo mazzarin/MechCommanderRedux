@@ -212,6 +212,9 @@ public:
     /// <summary>The uploads of the last frame <see cref="Execute"/> ran.</summary>
     const UploadTally& LastFrameUploads() const { return _LastFrameUploads; }
 
+    /// <summary>Port-only: the draw calls of the last frame <see cref="Execute"/> ran (each a batch of draws).</summary>
+    int64_t LastFrameBatches() const { return _LastFrameBatches; }
+
     /// <summary>The terrain layers drawn from the mesh so far.</summary>
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
@@ -410,7 +413,14 @@ private:
         MCRect Reads{0, 0, -1, -1};
         /// <summary>The part of the target drawn.</summary>
         MCRect Writes{0, 0, -1, -1};
+        /// <summary>Port-only: the channels of the targets its pipeline writes (WrittenChannels).</summary>
+        uint32_t Channels = 0;
+        /// <summary>
+        /// Its draws: from First, Count of them, once laid out (LayOutDraws). While recording, First is its first draw
+        /// and Last its latest, each draw linked to its next by _DrawNext.
+        /// </summary>
         uint32_t First = 0;
+        uint32_t Last = 0;
         uint32_t Count = 0;
         /// <summary>A terrain layer (an index into the frame's terrain draws), or -1.</summary>
         int32_t TerrainDraw = -1;
@@ -556,6 +566,20 @@ private:
     bool Add(uint16_t surface, SourceKind source, uint32_t sourceIndex, const Quad& rect,
              const std::optional<Quad>& sourceAt, uint32_t op, uint32_t color, uint32_t before, uint32_t after,
              bool join = false);
+    /// <summary>
+    /// Port-only: the channels of a surface's targets that a record's pipeline writes (DrawPipelines::For's, or the
+    /// shadow's), four bits a target in the targets' order, red first.
+    /// </summary>
+    static uint32_t WrittenChannels(bool blend, bool indexOnly, bool shadow, bool marks);
+    /// <summary>
+    /// Port-only: whether a draw on <paramref name="surface"/> reading <paramref name="source"/> and writing
+    /// <paramref name="channels"/> over <paramref name="written"/> leaves every pixel as it was when drawn before
+    /// <paramref name="later"/>, a record added before it, rather than after.
+    /// </summary>
+    static bool DrawsApart(const Record& later, uint16_t surface, SourceKind source, uint32_t sourceIndex,
+                           uint32_t channels, const MCRect& written);
+    /// <summary>Port-only: puts the frame's draws in their records' order, each record's together (Record::First).</summary>
+    void LayOutDraws();
     /// <summary>Adds particle <paramref name="command"/>'s draw to <paramref name="surface"/> (Particle).</summary>
     void AddParticle(uint16_t surface, const MCParticleCommand& command);
     /// <summary>
@@ -1112,6 +1136,14 @@ private:
     std::vector<Record> _Records;
     std::vector<std::array<int32_t, 20>> _Draws;
     /// <summary>
+    /// Port-only: each draw's next in its record (NoDraw for its record's latest), and whether a draw went into a
+    /// record before the latest, so the draws need laying out in their records' order (LayOutDraws).
+    /// </summary>
+    std::vector<uint32_t> _DrawNext;
+    bool _DrawsMoved = false;
+    /// <summary>Port-only: the draws as laid out (LayOutDraws swaps them with _Draws, so neither is made again).</summary>
+    std::vector<std::array<int32_t, 20>> _LaidDraws;
+    /// <summary>
     /// The table rows (256 bytes each, row 0 the identity) and the texture holding them. A row stays while its table
     /// does; rows dropped (the table changed or went) are free again from the next frame on (<c>_ReleasedRows</c>,
     /// the frame recorded may still read them), and new rows go up with their fits at <see cref="Execute"/>.
@@ -1209,6 +1241,8 @@ private:
         size_t Bytes = 0;
         Texture Texture;
         uint64_t LastFrame = 0;
+        /// <summary>Port-only: its place in _FramePictures when last used (UsePicture keeps it for the frame).</summary>
+        uint32_t FrameIndex = UINT32_MAX;
     };
 
     std::unordered_map<uint64_t, Picture> _Pictures;
@@ -1403,6 +1437,9 @@ private:
     std::map<std::string, int64_t> _Unsupported;
     /// <summary>The uploads of the frame being recorded, and of the last one run.</summary>
     UploadTally _FrameUploads;
+    /// <summary>Port-only: the frame's draw calls so far, and the last frame's (LastFrameBatches).</summary>
+    int64_t _FrameBatches = 0;
+    int64_t _LastFrameBatches = 0;
     UploadTally _LastFrameUploads;
     /// <summary>The span walks' state (as the software renderer keeps its own).</summary>
     MCSpanState _Spans;

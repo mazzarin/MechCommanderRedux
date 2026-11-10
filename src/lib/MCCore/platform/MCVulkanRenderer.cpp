@@ -260,6 +260,23 @@ namespace
     constexpr SDL_GPUTextureFormat GlintFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     /// <summary>A surface's colour targets: its colours, its indices and (port-only) its glints.</summary>
     constexpr uint32_t SurfaceTargets = 3;
+    /// <summary>
+    /// Port-only: the channels of a surface's targets a pipeline writes (Record::Channels), four bits a target in
+    /// SurfaceTargets' order, red first: all of one target, and the parts the masks of makePipeline leave written.
+    /// </summary>
+    constexpr uint32_t ColoursChannels = 0x00f;
+    constexpr uint32_t ColoursAlpha = 0x008;
+    constexpr uint32_t IndicesChannels = 0x0f0;
+    constexpr uint32_t IndicesAlpha = 0x080;
+    constexpr uint32_t IndicesGreenBlueAlpha = 0x0e0;
+    constexpr uint32_t GlintsChannels = 0xf00;
+    /// <summary>Port-only: no draw (a record's latest draw's next, _DrawNext).</summary>
+    constexpr uint32_t NoDraw = UINT32_MAX;
+    /// <summary>
+    /// Port-only: how many records back a draw looks for a run it can join (MCVulkanRenderer::Add), each a check of
+    /// the draws between.
+    /// </summary>
+    constexpr size_t JoinReach = 16;
     /// <summary>The black a terrain tile no one has seen is filled with (composite.pshader's UnseenIndex).</summary>
     constexpr uint32_t UnseenTileIndex = 0x10;
 
@@ -1502,6 +1519,92 @@ SDL_GPUGraphicsPipeline* MCVulkanRenderer::DrawPipelines::For(const Record& reco
                             : Opaque.get();
 }
 
+uint32_t MCVulkanRenderer::WrittenChannels(bool blend, bool indexOnly, bool shadow, bool marks)
+{
+    if (shadow)
+    {
+        return ColoursAlpha;
+    }
+
+    if (indexOnly)
+    {
+        return marks ? IndicesGreenBlueAlpha : IndicesChannels;
+    }
+
+    if (blend)
+    {
+        return ColoursChannels | GlintsChannels | (marks ? IndicesAlpha : 0u);
+    }
+
+    return ColoursChannels | IndicesChannels | GlintsChannels;
+}
+
+bool MCVulkanRenderer::DrawsApart(const Record& later, uint16_t surface, SourceKind source, uint32_t sourceIndex,
+                                  uint32_t channels, const MCRect& written)
+{
+    // A resize, or a terrain layer (which the kept ground takes as its surface's first, and which reads the fog's),
+    // stays where it was among the draws.
+    if (later.Resize || later.TerrainDraw >= 0)
+    {
+        return false;
+    }
+
+    // Another surface's draws write other targets: apart unless one reads the other's.
+    if (later.SurfaceIndex != surface)
+    {
+        return !(later.Source == SourceKind::Surface && later.SourceIndex == surface) &&
+               !(source == SourceKind::Surface && sourceIndex == later.SurfaceIndex);
+    }
+
+    // A draw's quad covers its rectangle's pixels alone (pixels.hlsli's DrawnCorner), so draws whose rectangles
+    // don't meet, or that write other channels, never touch each other's pixels; neither may it write what the later
+    // draws read of the target's copy.
+    if (later.ReadsCopy && Overlaps(later.Reads, written))
+    {
+        return false;
+    }
+
+    return (later.Channels & channels) == 0 || !Overlaps(later.Writes, written);
+}
+
+void MCVulkanRenderer::LayOutDraws()
+{
+    // With no draw joining an earlier record, each record's draws are already together and in order.
+    if (!_DrawsMoved)
+    {
+        return;
+    }
+
+    _LaidDraws.clear();
+    _LaidDraws.reserve(_Draws.size());
+
+    for (Record& record : _Records)
+    {
+        const auto first = static_cast<uint32_t>(_LaidDraws.size());
+
+        for (uint32_t draw = record.First, taken = 0; taken < record.Count; ++taken, draw = _DrawNext[draw])
+        {
+            _LaidDraws.push_back(_Draws[draw]);
+        }
+
+        record.First = first;
+    }
+
+    std::swap(_Draws, _LaidDraws);
+    _DrawsMoved = false;
+
+    // The links follow the new places (a frame that fails after this keeps its records for the next).
+    for (Record& record : _Records)
+    {
+        for (uint32_t taken = 0; taken < record.Count; ++taken)
+        {
+            _DrawNext[record.First + taken] = taken + 1 < record.Count ? record.First + taken + 1 : NoDraw;
+        }
+
+        record.Last = record.Count > 0 ? record.First + record.Count - 1 : record.First;
+    }
+}
+
 MCRect MCVulkanRenderer::Clipped(const Surface& surface, const Quad& rect)
 {
     return MCRect{std::max(rect[0], 0), std::max(rect[1], 0),
@@ -1592,20 +1695,56 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     const bool hdFrame = (op & KindMask) == KindHd || (op & KindMask) == KindHdSmooth;
     const bool marks = indexOnly ? hdFrame : (op & Sways) != 0 && blend;
     const DrawVariant variant = VariantOf(op);
-    // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
-    // one command's and apart (else each must see the ones before).
-    const auto continues = [&](const Record& last)
+    const uint32_t channels = WrittenChannels(blend, indexOnly, shadow, marks);
+    // A run of draws with the same target, bindings and pipeline.
+    const auto sameRun = [&](const Record& last)
     {
         return !last.Resize && last.TerrainDraw < 0 && last.SurfaceIndex == surfaceIndex && last.Source == source &&
                last.SourceIndex == sourceIndex && last.Blend == blend && last.IndexOnly == indexOnly &&
-               last.Shadow == shadow && last.Marks == marks && last.Variant == variant &&
-               (join || (!last.ReadsCopy && source != SourceKind::TargetCopy)) &&
-               last.First + last.Count == _Draws.size();
+               last.Shadow == shadow && last.Marks == marks && last.Variant == variant;
     };
 
-    const bool extends = !_Records.empty() && continues(_Records.back());
+    std::optional<size_t> into;
 
-    if (!extends)
+    // The latest record's run goes on: a copy within the surface only when the draws are one command's and apart (else
+    // each must see the ones before).
+    if (!_Records.empty() && sameRun(_Records.back()) &&
+        (join || (!_Records.back().ReadsCopy && source != SourceKind::TargetCopy)))
+    {
+        into = _Records.size() - 1;
+    }
+    else if (source != SourceKind::TargetCopy)
+    {
+        // Port-only: else an earlier record's, when no record since touches what the draw does (a forest's trees, each
+        // drawing its colours, then its indices, take one batch for each pass rather than one a tree: SDL's Vulkan
+        // driver writes all of a batch's bindings again).
+        for (size_t at = _Records.size(), looked = 0; at-- > 0 && looked < JoinReach; ++looked)
+        {
+            const Record& earlier = _Records[at];
+
+            if (sameRun(earlier) && !earlier.ReadsCopy)
+            {
+                into = at;
+                _DrawsMoved = true;
+                break;
+            }
+
+            if (!DrawsApart(earlier, surfaceIndex, source, sourceIndex, channels, written))
+            {
+                break;
+            }
+        }
+    }
+
+    const auto drawn = static_cast<uint32_t>(_Draws.size());
+
+    if (into.has_value())
+    {
+        Record& joined = _Records[*into];
+        _DrawNext[joined.Last] = drawn;
+        joined.Last = drawn;
+    }
+    else
     {
         Record fresh;
         fresh.SurfaceIndex = surfaceIndex;
@@ -1616,11 +1755,15 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         fresh.Shadow = shadow;
         fresh.Marks = marks;
         fresh.Variant = variant;
-        fresh.First = static_cast<uint32_t>(_Draws.size());
+        fresh.Channels = channels;
+        fresh.First = drawn;
+        fresh.Last = drawn;
         _Records.push_back(fresh);
+        into = _Records.size() - 1;
     }
 
-    Record& record = _Records.back();
+    _DrawNext.push_back(NoDraw);
+    Record& record = _Records[*into];
 
     // Mirror mode leaves the blended pixels out of its comparison (an HD art frame's leave the indices under them
     // the original's).
@@ -2299,7 +2442,24 @@ void MCVulkanRenderer::OnUnlockStream(MCTexture& texture, std::span<const uint8_
 uint32_t MCVulkanRenderer::UsePicture(Picture& picture)
 {
     picture.LastFrame = _Frame;
+
+    // Port-only: a picture drawn again keeps its place while that place still holds it (the frame's, with the same HD
+    // colours), so its draws can share a batch (Add).
+    if (picture.FrameIndex < _FramePictures.size() && _FramePictures[picture.FrameIndex] == picture.Texture.Handle)
+    {
+        const auto hd = _FrameHdColors.find(picture.FrameIndex);
+        const bool sameHd = picture.HdColors.Handle != nullptr
+                                ? hd != _FrameHdColors.end() && hd->second == picture.HdColors.Handle
+                                : hd == _FrameHdColors.end();
+
+        if (sameHd)
+        {
+            return picture.FrameIndex;
+        }
+    }
+
     const auto index = static_cast<uint32_t>(_FramePictures.size());
+    picture.FrameIndex = index;
     _FramePictures.push_back(picture.Texture.Handle);
 
     if (picture.HdColors.Handle != nullptr)
@@ -6366,6 +6526,9 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                     _StripPixels.size());
     }
 
+    // Port-only: the draws in their records' order.
+    LayOutDraws();
+
     // Everything up in one transfer: the uploads, then the draws. Past KeptUploadBytes, through a transfer buffer
     // of the frame's own, released once the frame has run.
     const size_t drawOffset = AlignUpload(_Staging.size());
@@ -6683,6 +6846,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         }
 
         SDL_DrawGPUPrimitives(into, 6, count, 0, 0);
+        ++_FrameBatches;
     };
 
     // A render pass's start on a surface's size: the viewport, and the draws' buffer.
@@ -7039,6 +7203,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
     _Records.clear();
     _Draws.clear();
+    _DrawNext.clear();
     _Uploads.clear();
     _TerrainDraws.clear();
     _Staging.clear();
@@ -7073,6 +7238,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
     _LastFrameUploads = _FrameUploads;
     _FrameUploads = UploadTally{};
+    _LastFrameBatches = _FrameBatches;
+    _FrameBatches = 0;
     _Recording = false;
     ++_Frame;
     return {};

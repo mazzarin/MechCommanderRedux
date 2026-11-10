@@ -616,9 +616,11 @@ auto MCLogistics::AttachHdArt() -> void
     HdArtOwner = std::make_shared<const int>(0);
     std::vector<MCHdArt::LineArtFrame> lineArt;
 
-    // Each unit's icons tied to the pack's (named as their files are), and its repair shapes' sold-out outline.
+    // Each unit's icons tied to the pack's (named as their files are), and its repair shapes' diagram (runs of frames
+    // from each first) and sold-out outline as line art.
     const auto attach = [&](std::span<const MCRegisteredBlock> repairs, std::span<const MCRegisteredBlock> icons,
-                            std::string_view prefix, int32_t soldOut)
+                            std::string_view prefix, std::initializer_list<int32_t> diagram, int32_t locations,
+                            int32_t soldOut)
     {
         for (size_t i = 0; i < repairs.size(); ++i)
         {
@@ -627,15 +629,29 @@ auto MCLogistics::AttachHdArt() -> void
                 MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, MCHdArt::IconShapeKey{std::format("{}{:02}", prefix, i)});
             }
 
-            if (!repairs[i].Empty())
+            if (repairs[i].Empty())
             {
-                lineArt.push_back({MCAddressKey::OfData(repairs[i].Bytes()), soldOut});
+                continue;
             }
+
+            const MCAddressKey table = MCAddressKey::OfData(repairs[i].Bytes());
+
+            for (const int32_t first : diagram)
+            {
+                for (int32_t location = 0; location < locations; ++location)
+                {
+                    lineArt.push_back({table, first + location});
+                }
+            }
+
+            lineArt.push_back({table, soldOut});
         }
     };
 
-    attach(MechRepShapes, MechIconShapes, "mi", MechSoldOutShape);
-    attach(VehicleRepShapes, VehicleIconShapes, "vi1", VehicleSoldOutShape);
+    attach(MechRepShapes, MechIconShapes, "mi", {MechArmorShapes, MechInternalShapes}, MechDiagramLocations,
+           MechSoldOutShape);
+    attach(VehicleRepShapes, VehicleIconShapes, "vi1", {VehicleArmorShapes}, VehicleDiagramLocations,
+           VehicleSoldOutShape);
 
     MCHdArt::SetLineArtFrames(lineArt);
 }

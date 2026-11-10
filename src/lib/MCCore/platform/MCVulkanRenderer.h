@@ -266,6 +266,8 @@ public:
         /// <summary>The window pixels its draws covered.</summary>
         int64_t Pixels = 0;
         bool Sharp = false;
+        /// <summary>Whether it was line art redrawn as strokes (MCSharpLines).</summary>
+        bool LineArt = false;
     };
 
     /// <summary>Port-only: called after every draw command while set (the HD art audit's).</summary>

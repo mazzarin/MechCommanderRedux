@@ -1,12 +1,14 @@
 #pragma once
 
 /// <summary>
-/// Port-only: line art (a one-pixel outline: the purchase screen's sold-out mechs and vehicles) redrawn as smooth
-/// strokes, for a screen drawn at the size it is shown (<see cref="MCFrame::SharpScreen"/>). Its pixels are joined as a
-/// glyph's are (<see cref="MCSharpText"/>), into runs between ends and forks; each run's steps are straightened (no
-/// point of the run left further than <c>StepTolerance</c> from the line drawn) and its gentle bends rounded, its
-/// corners kept. The strokes are a pixel wide, as the art's are, and each redrawn pixel keeps the byte of the art pixel
-/// nearest it, so the colours (its table) are the original's.
+/// Port-only: line art (one-pixel outlines: the mechs' and vehicles' diagrams in the store and the mech bay, and the
+/// store's sold-out outlines) redrawn as smooth strokes, for a screen drawn at the size it is shown
+/// (<see cref="MCFrame::SharpScreen"/>). Its pixels are joined as a glyph's are (<see cref="MCSharpText"/>), into runs
+/// between ends and forks; each run's steps are straightened (no point of the run left further than
+/// <c>StepTolerance</c> from the line drawn) and its gentle bends rounded, its corners kept. A round detail (a small
+/// ring, as a gun's muzzle or a launcher's tube, or a two by two dot) is drawn as an ellipse. The strokes are a pixel
+/// wide, as the art's are, and each redrawn pixel keeps the byte of the art pixel nearest it, so the colours (its table)
+/// are the original's.
 /// </summary>
 namespace MCSharpLines
 {

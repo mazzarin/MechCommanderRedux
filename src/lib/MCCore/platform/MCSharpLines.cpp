@@ -3,6 +3,8 @@
 #include "platform/MCSharpText.h"
 
 #include <limits>
+#include <numbers>
+#include <set>
 
 namespace
 {
@@ -26,6 +28,23 @@ namespace
     constexpr int32_t ValueReach = 3;
     /// <summary>A pixel's centre, from its corner.</summary>
     constexpr float Centre = 0.5f;
+    /// <summary>
+    /// The widest round detail, in art pixels: a loop up to this across (a gun's muzzle, a launcher's tubes, a turret's
+    /// ring) may be drawn as an ellipse.
+    /// </summary>
+    constexpr int32_t RoundLargest = 20;
+    /// <summary>A round detail is at most this much longer one way than the other: 3 to 2.</summary>
+    constexpr int32_t RoundLonger = 3;
+    constexpr int32_t RoundShorter = 2;
+    /// <summary>
+    /// How far a round detail's pixels may lie from its ellipse, in art pixels: a drawn circle's lie within about half
+    /// a pixel of it, a rounded square's corners further.
+    /// </summary>
+    constexpr float RoundTolerance = 0.55f;
+    /// <summary>A dot's side: a two by two block, the one round detail whose box's corners are drawn.</summary>
+    constexpr int32_t DotSide = 2;
+    /// <summary>The straight strokes an ellipse is drawn with.</summary>
+    constexpr int32_t EllipseSteps = 64;
 
     /// <summary>The eight directions to a pixel's neighbours: the straight ones, then the diagonals.</summary>
     constexpr std::array<std::pair<int32_t, int32_t>, 8> Directions = {
@@ -358,6 +377,118 @@ namespace
 
         return line;
     }
+
+    /// <summary>An ellipse: its centre and half its width and height, in art pixels.</summary>
+    struct MCEllipse
+    {
+        MCPoint Centre;
+        float HalfWidth = 0.0f;
+        float HalfHeight = 0.0f;
+    };
+
+    /// <summary>
+    /// The ellipse a loop is drawn as when it is a round detail (a ring, or a two by two dot), through its outermost
+    /// pixels' centres. Straightened, a small ring's steps leave a square or a diamond (a four by four ring's eight
+    /// pixels keep four points, their turns too sharp to round) and a dot a dash (its four pixels keep two opposite
+    /// corners). A round detail's loop is no more than RoundLargest across and 3 to 2 long, the same mirrored either
+    /// way, its box's corners empty (else it is a rectangle; a dot excepted), and every pixel within RoundTolerance of
+    /// the ellipse.
+    /// </summary>
+    std::optional<MCEllipse> RoundDetail(const MCRun& run)
+    {
+        constexpr size_t SmallestLoop = 4;
+
+        if (!run.Closed || run.Points.size() < SmallestLoop)
+        {
+            return std::nullopt;
+        }
+
+        std::set<std::pair<int32_t, int32_t>> pixels;
+        int32_t left = std::numeric_limits<int32_t>::max();
+        int32_t top = std::numeric_limits<int32_t>::max();
+        int32_t right = std::numeric_limits<int32_t>::min();
+        int32_t bottom = std::numeric_limits<int32_t>::min();
+
+        for (const MCPoint& point : run.Points)
+        {
+            // The points are pixels' centres: the pixel is the one they lie in.
+            const auto x = static_cast<int32_t>(std::floor(point.X));
+            const auto y = static_cast<int32_t>(std::floor(point.Y));
+            pixels.emplace(x, y);
+            left = std::min(left, x);
+            top = std::min(top, y);
+            right = std::max(right, x);
+            bottom = std::max(bottom, y);
+        }
+
+        const int32_t width = right - left + 1;
+        const int32_t height = bottom - top + 1;
+        const int32_t longer = std::max(width, height);
+
+        if (longer > RoundLargest || longer * RoundShorter > std::min(width, height) * RoundLonger)
+        {
+            return std::nullopt;
+        }
+
+        for (const auto& [x, y] : pixels)
+        {
+            if (!pixels.contains({left + right - x, y}) || !pixels.contains({x, top + bottom - y}))
+            {
+                return std::nullopt;
+            }
+        }
+
+        if (pixels.contains({left, top}) && (width != DotSide || height != DotSide))
+        {
+            return std::nullopt;
+        }
+
+        // Through the outermost pixels' centres.
+        const MCPoint first = CentreOf(left, top);
+        const MCPoint last = CentreOf(right, bottom);
+        const MCEllipse ellipse{{(first.X + last.X) / 2.0f, (first.Y + last.Y) / 2.0f},
+                                (last.X - first.X) / 2.0f,
+                                (last.Y - first.Y) / 2.0f};
+
+        for (const MCPoint& point : run.Points)
+        {
+            // How far the point lies from the ellipse along its ray from the centre.
+            const float across = (point.X - ellipse.Centre.X) / ellipse.HalfWidth;
+            const float down = (point.Y - ellipse.Centre.Y) / ellipse.HalfHeight;
+            const float scaled = std::hypot(across, down);
+
+            if (scaled <= 0.0f)
+            {
+                return std::nullopt;
+            }
+
+            const float reach = std::hypot(across / scaled * ellipse.HalfWidth, down / scaled * ellipse.HalfHeight);
+
+            if (std::abs(scaled - 1.0f) * reach > RoundTolerance)
+            {
+                return std::nullopt;
+            }
+        }
+
+        return ellipse;
+    }
+
+    /// <summary>The ellipse as a loop of EllipseSteps points.</summary>
+    std::vector<MCPoint> EllipseLine(const MCEllipse& ellipse)
+    {
+        std::vector<MCPoint> line;
+        line.reserve(EllipseSteps);
+
+        for (int32_t step = 0; step < EllipseSteps; ++step)
+        {
+            const float angle =
+                2.0f * std::numbers::pi_v<float> * static_cast<float>(step) / static_cast<float>(EllipseSteps);
+            line.push_back({ellipse.Centre.X + ellipse.HalfWidth * std::cos(angle),
+                            ellipse.Centre.Y + ellipse.HalfHeight * std::sin(angle)});
+        }
+
+        return line;
+    }
 }
 
 std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32_t pitch, int32_t columns, int32_t rows)
@@ -405,7 +536,9 @@ std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32
 
     for (const MCRun& run : Runs(art))
     {
-        const std::vector<MCPoint> line = Rounded(Straightened(run), run);
+        // A round detail drawn round; any other run straightened, its gentle bends rounded.
+        const std::optional<MCEllipse> round = RoundDetail(run);
+        const std::vector<MCPoint> line = round.has_value() ? EllipseLine(*round) : Rounded(Straightened(run), run);
 
         if (line.size() == 1)
         {

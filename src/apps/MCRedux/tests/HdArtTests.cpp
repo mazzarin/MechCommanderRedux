@@ -18263,9 +18263,142 @@ TEST_CASE("sharp lines: line art redrawn as strokes is straightened, keeps its c
     CHECK_EQ(at(14.5f, 10.5f).second, uint8_t{0});
 }
 
+/// <summary>
+/// Line art's round details are drawn round: a four by four ring (the Uller's guns), whose straightened steps left a
+/// tilted square, is a circle through its pixels' centres, its stroke all round it and nothing inside or outside; a two
+/// by two dot is a disc, solid at its middle and round at its corners; a ring with its box's corners drawn (a small
+/// rectangle) keeps its corners.
+/// </summary>
+TEST_CASE("sharp lines: a ring and a dot in line art are drawn round, a small rectangle keeps its corners")
+{
+    constexpr int32_t Columns = 20;
+    constexpr int32_t Rows = 8;
+    constexpr uint8_t No = MCSharpText::NoInk;
+    constexpr uint8_t Ring = 5;
+    constexpr uint8_t Dot = 7;
+    constexpr uint8_t Box = 9;
+    std::array<uint8_t, Columns * Rows> art{};
+    art.fill(No);
+    const auto put = [&](int32_t x, int32_t y, uint8_t value) { art[static_cast<size_t>(y * Columns + x)] = value; };
+
+    // The ring, its box from (1, 1) to (4, 4) with the corners left out.
+    constexpr int32_t RingLeft = 1;
+    constexpr int32_t RingTop = 1;
+    constexpr int32_t RingSide = 4;
+
+    for (int32_t i = 1; i + 1 < RingSide; ++i)
+    {
+        put(RingLeft + i, RingTop, Ring);
+        put(RingLeft + i, RingTop + RingSide - 1, Ring);
+        put(RingLeft, RingTop + i, Ring);
+        put(RingLeft + RingSide - 1, RingTop + i, Ring);
+    }
+
+    // The dot at (8, 2) to (9, 3).
+    constexpr int32_t DotLeft = 8;
+    constexpr int32_t DotTop = 2;
+    constexpr int32_t DotSide = 2;
+
+    for (int32_t y = 0; y < DotSide; ++y)
+    {
+        for (int32_t x = 0; x < DotSide; ++x)
+        {
+            put(DotLeft + x, DotTop + y, Dot);
+        }
+    }
+
+    // A 4 x 3 rectangle from (13, 2) to (16, 4).
+    constexpr int32_t BoxLeft = 13;
+    constexpr int32_t BoxTop = 2;
+    constexpr int32_t BoxWidth = 4;
+    constexpr int32_t BoxHeight = 3;
+
+    for (int32_t x = 0; x < BoxWidth; ++x)
+    {
+        put(BoxLeft + x, BoxTop, Box);
+        put(BoxLeft + x, BoxTop + BoxHeight - 1, Box);
+    }
+
+    for (int32_t y = 0; y < BoxHeight; ++y)
+    {
+        put(BoxLeft, BoxTop + y, Box);
+        put(BoxLeft + BoxWidth - 1, BoxTop + y, Box);
+    }
+
+    const std::vector<uint8_t> redrawn = MCSharpLines::Redraw(art, Columns, Columns, Rows);
+    constexpr int32_t Scale = MCSharpText::Scale;
+    REQUIRE_EQ(redrawn.size(), static_cast<size_t>(Columns * Scale * Rows * Scale * BytesPerPixel));
+
+    // The byte and coverage of the redrawn pixel at (x, y) in art pixels.
+    const auto at = [&](float x, float y)
+    {
+        const auto column = static_cast<size_t>(x * Scale);
+        const auto row = static_cast<size_t>(y * Scale);
+        const size_t offset = (row * Columns * Scale + column) * BytesPerPixel;
+        return std::pair{redrawn[offset], redrawn[offset + 1]};
+    };
+
+    constexpr uint8_t Full = 255;
+    constexpr uint8_t None = 0;
+    // Round a centre, the coverage at a distance from it in each of these directions.
+    constexpr int32_t Directions = 16;
+    const auto around = [&](float x, float y, float distance)
+    {
+        std::vector<uint8_t> coverage;
+
+        for (int32_t direction = 0; direction < Directions; ++direction)
+        {
+            const float angle =
+                2.0f * std::numbers::pi_v<float> * static_cast<float>(direction) / static_cast<float>(Directions);
+            coverage.push_back(at(x + distance * std::cos(angle), y + distance * std::sin(angle)).second);
+        }
+
+        return coverage;
+    };
+
+    // The ring: a circle of radius 1.5 through its pixels' centres, its stroke a pixel wide.
+    {
+        MCTest::Scope scope{"ring"};
+        constexpr float CentreX = RingLeft + RingSide / 2.0f;
+        constexpr float CentreY = RingTop + RingSide / 2.0f;
+        constexpr float Radius = (RingSide - 1) / 2.0f;
+        // Clear of the stroke, inside and out (its edges half a pixel either side, smoothed over an eighth).
+        constexpr float Clear = 0.75f;
+        CHECK(std::ranges::all_of(around(CentreX, CentreY, Radius), [](uint8_t c) { return c == Full; }));
+        CHECK(std::ranges::all_of(around(CentreX, CentreY, Radius - Clear), [](uint8_t c) { return c == None; }));
+        CHECK(std::ranges::all_of(around(CentreX, CentreY, Radius + Clear), [](uint8_t c) { return c == None; }));
+        CHECK_EQ(at(CentreX + Radius, CentreY).first, Ring);
+    }
+
+    // The dot: a disc a pixel in radius round its middle.
+    {
+        MCTest::Scope scope{"dot"};
+        constexpr float CentreX = DotLeft + DotSide / 2.0f;
+        constexpr float CentreY = DotTop + DotSide / 2.0f;
+        constexpr float Inside = 0.75f;
+        constexpr float Outside = 1.25f;
+        CHECK_EQ(at(CentreX, CentreY).second, Full);
+        CHECK_EQ(at(CentreX, CentreY).first, Dot);
+        CHECK(std::ranges::all_of(around(CentreX, CentreY, Inside), [](uint8_t c) { return c == Full; }));
+        CHECK(std::ranges::all_of(around(CentreX, CentreY, Outside), [](uint8_t c) { return c == None; }));
+    }
+
+    // The rectangle: its corner pixel covered out to the corner's edges, as a straight stroke's corner is.
+    {
+        MCTest::Scope scope{"rectangle"};
+        constexpr float CornerInset = 0.3f;
+        CHECK_EQ(at(BoxLeft + CornerInset, BoxTop + CornerInset).second, Full);
+        CHECK_EQ(at(BoxLeft + BoxWidth - CornerInset, BoxTop + BoxHeight - CornerInset).second, Full);
+        CHECK_EQ(at(BoxLeft + BoxWidth / 2.0f, BoxTop + BoxHeight / 2.0f).second, None);
+    }
+}
+
 namespace
 {
-    /// <summary>The mech store's shapes: the sold-out outlines, the pictures' repair shapes and the body diagrams' icons.</summary>
+    /// <summary>
+    /// The store's and mech bay's shapes: the sold-out outlines, the pictures' repair shapes (the diagrams of the mechs
+    /// and vehicles) and the body diagrams' icons.
+    /// </summary>
     enum class MCStoreShape : uint8_t
     {
         Outline,
@@ -18274,14 +18407,19 @@ namespace
         Count
     };
 
-    /// <summary>The draws of the store's shapes an audit saw: of each kind, how many, and how many sharp.</summary>
+    /// <summary>
+    /// The draws of the store's shapes an audit saw: of each kind, how many, how many sharp and how many redrawn as line
+    /// art.
+    /// </summary>
     struct MCStoreDraws
     {
         std::array<int32_t, static_cast<size_t>(MCStoreShape::Count)> All{};
         std::array<int32_t, static_cast<size_t>(MCStoreShape::Count)> Sharp{};
+        std::array<int32_t, static_cast<size_t>(MCStoreShape::Count)> LineArt{};
 
         int32_t AllOf(MCStoreShape kind) const { return All[static_cast<size_t>(kind)]; }
         int32_t SharpOf(MCStoreShape kind) const { return Sharp[static_cast<size_t>(kind)]; }
+        int32_t LineArtOf(MCStoreShape kind) const { return LineArt[static_cast<size_t>(kind)]; }
     };
 
     /// <summary>The screen's indices with its top band (the ticker and the clock, which move on) left out.</summary>
@@ -18373,12 +18511,14 @@ namespace
 }
 
 /// <summary>
-/// The purchase screen's mech store on a sharp screen with HD art on: its sold-out rows' outlines are redrawn as smooth
-/// strokes (line art), and, the store stocked, its rows' pictures (each mech's repair shapes, drawn in place) and body
-/// diagrams (the mech icons, tied to the pack's icons) come from the pack; every such draw is sharp, and the screen
-/// keeps the indices it has with HD art off.
+/// The store and the mech bay on a sharp screen with HD art on: the mechs' and vehicles' diagrams (the stocked rows'
+/// pictures, drawn in place from each unit's repair shapes; the mech bay's) and the sold-out rows' outlines are line art,
+/// redrawn as smooth strokes though the pack has a copy of each picture; the body diagrams (the mech icons, tied to the
+/// pack's icons) come from the pack; every such draw is sharp, and the screens keep the indices they have with HD art
+/// off.
 /// </summary>
-TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and outlines sharp and keeps their indices")
+TEST_CASE_ISOLATED(
+    "game: HD art draws the store's and mech bay's diagrams and outlines as sharp line art and keeps their indices")
 {
     if (!MCTestGame::Available())
     {
@@ -18389,21 +18529,34 @@ TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and o
     REQUIRE(renderer != nullptr);
     GlobalLog()->SetUpPurchaseScreen(false);
 
-    // A pack of the mechs' repair shapes (under their bytes' hashes) but their sold-out outlines, which only line art
-    // can draw sharp, and the icons.
+    // A pack of the mechs' and vehicles' repair shapes (under their bytes' hashes) but their sold-out outlines, and the
+    // icons: the diagrams are line art all the same.
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     std::vector<Sequence> sequences;
-
-    for (const MCRegisteredBlock& shapes : GlobalLog()->MechRepShapes)
+    const auto addRepairs = [&](std::span<const MCRegisteredBlock> repairs, int32_t soldOut)
     {
-        std::optional<LooseTable> table = MakeLooseTable(shapes.Bytes(), "mechrep");
-        REQUIRE(table.has_value());
-        REQUIRE(table->Frames.Frames.size() > static_cast<size_t>(MCLogistics::MechSoldOutShape));
-        table->Frames.Frames[static_cast<size_t>(MCLogistics::MechSoldOutShape)] = DecodedFrame{};
-        sequences.push_back(std::move(table->Frames));
-    }
+        for (const MCRegisteredBlock& shapes : repairs)
+        {
+            if (shapes.Empty())
+            {
+                continue;
+            }
 
+            std::optional<LooseTable> table = MakeLooseTable(shapes.Bytes(), "repair shapes");
+            REQUIRE(table.has_value());
+
+            if (table->Frames.Frames.size() > static_cast<size_t>(soldOut))
+            {
+                table->Frames.Frames[static_cast<size_t>(soldOut)] = DecodedFrame{};
+            }
+
+            sequences.push_back(std::move(table->Frames));
+        }
+    };
+
+    addRepairs(GlobalLog()->MechRepShapes, MCLogistics::MechSoldOutShape);
+    addRepairs(GlobalLog()->VehicleRepShapes, MCLogistics::VehicleSoldOutShape);
     size_t translucent = 0;
     std::ranges::move(IconSequences(translucent), std::back_inserter(sequences));
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_store";
@@ -18415,15 +18568,35 @@ TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and o
     const auto kindOf = [](const uint8_t* table, int32_t frame) -> std::optional<MCStoreShape>
     {
         const MCLogistics& log = *GlobalLog();
-
-        for (size_t i = 0; i < log.MechRepShapes.size(); ++i)
+        const auto repairs = [&](std::span<const MCRegisteredBlock> shapes,
+                                 int32_t soldOut) -> std::optional<MCStoreShape>
         {
-            if (log.MechRepShapes[i].Bytes().data() == table)
+            for (const MCRegisteredBlock& block : shapes)
             {
-                return frame == MCLogistics::MechSoldOutShape ? MCStoreShape::Outline : MCStoreShape::Picture;
+                if (!block.Empty() && block.Bytes().data() == table)
+                {
+                    return frame == soldOut ? MCStoreShape::Outline : MCStoreShape::Picture;
+                }
             }
 
-            if (log.MechIconShapes[i].Bytes().data() == table)
+            return std::nullopt;
+        };
+
+        if (std::optional<MCStoreShape> kind = repairs(log.MechRepShapes, MCLogistics::MechSoldOutShape);
+            kind.has_value())
+        {
+            return kind;
+        }
+
+        if (std::optional<MCStoreShape> kind = repairs(log.VehicleRepShapes, MCLogistics::VehicleSoldOutShape);
+            kind.has_value())
+        {
+            return kind;
+        }
+
+        for (const MCRegisteredBlock& icons : log.MechIconShapes)
+        {
+            if (!icons.Empty() && icons.Bytes().data() == table)
             {
                 return MCStoreShape::Diagram;
             }
@@ -18432,7 +18605,8 @@ TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and o
         return std::nullopt;
     };
 
-    // The store with HD art off, then on (its draws audited), and whether they show the same indices.
+    // A screen with HD art off, then on (its draws audited), and whether they show the same indices: every draw sharp,
+    // the pictures and outlines all line art, the body diagrams none.
     const auto compare = [&](std::string_view what)
     {
         MCTest::Scope scope{std::string(what)};
@@ -18448,25 +18622,43 @@ TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and o
                                    if (const std::optional<MCStoreShape> kind = kindOf(draw.Data.data(), draw.Frame);
                                        kind.has_value())
                                    {
-                                       ++draws.All[static_cast<size_t>(*kind)];
-                                       draws.Sharp[static_cast<size_t>(*kind)] += draw.Sharp ? 1 : 0;
+                                       const auto index = static_cast<size_t>(*kind);
+                                       ++draws.All[index];
+                                       draws.Sharp[index] += draw.Sharp ? 1 : 0;
+                                       draws.LineArt[index] += draw.LineArt ? 1 : 0;
                                    }
                                });
-        std::cout << std::format("  {}: outlines {}/{}, pictures {}/{}, diagrams {}/{} sharp\n", what,
-                                 draws.SharpOf(MCStoreShape::Outline), draws.AllOf(MCStoreShape::Outline),
-                                 draws.SharpOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture),
+        std::cout << std::format("  {}: outlines {}/{}, pictures {}/{} line art, diagrams {}/{} sharp\n", what,
+                                 draws.LineArtOf(MCStoreShape::Outline), draws.AllOf(MCStoreShape::Outline),
+                                 draws.LineArtOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture),
                                  draws.SharpOf(MCStoreShape::Diagram), draws.AllOf(MCStoreShape::Diagram));
         CHECK(draws.Sharp == draws.All);
+        CHECK_EQ(draws.LineArtOf(MCStoreShape::Outline), draws.AllOf(MCStoreShape::Outline));
+        CHECK_EQ(draws.LineArtOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture));
+        CHECK_EQ(draws.LineArtOf(MCStoreShape::Diagram), 0);
         return draws;
     };
 
-    const MCStoreDraws soldOut = compare("sold out");
-    CHECK(soldOut.AllOf(MCStoreShape::Outline) > 0);
+    // The purchase screen's tabs (MCLogistics::CurrentInvTab), and the stock the store is given.
+    constexpr int32_t MechTab = 0;
+    constexpr int32_t VehicleTab = 3;
     constexpr int32_t Stock = 2;
+    const MCStoreDraws soldOut = compare("mechs sold out");
+    CHECK(soldOut.AllOf(MCStoreShape::Outline) > 0);
     MCTestGame::StockStore(Stock);
-    const MCStoreDraws stocked = compare("in stock");
+    const MCStoreDraws stocked = compare("mechs in stock");
     CHECK(stocked.AllOf(MCStoreShape::Picture) > 0);
     CHECK(stocked.AllOf(MCStoreShape::Diagram) > 0);
+    GlobalLog()->CurrentInvTab = VehicleTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    CHECK(compare("vehicles in stock").AllOf(MCStoreShape::Picture) > 0);
+
+    // A mech bought, and the mech bay its row shows in.
+    GlobalLog()->CurrentInvTab = MechTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    MCMechPurchaseBlock::OnBuyConfirmed(*GlobalLog()->PurMechList->Mechs.front(), 1, 1);
+    GlobalLog()->SetUpRepairScreen(false);
+    CHECK(compare("mech bay").AllOf(MCStoreShape::Picture) > 0);
     std::filesystem::remove_all(scratch);
 }
 

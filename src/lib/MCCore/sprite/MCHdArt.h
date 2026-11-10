@@ -433,9 +433,9 @@ namespace MCHdArt
     };
 
     /// <summary>
-    /// Sets the shape frames that are line art (one-pixel outlines: the purchase screen's sold-out mechs and vehicles),
-    /// redrawn as smooth strokes (platform/MCSharpLines) on a screen drawn at the size it's shown while HD art is on;
-    /// none needs a pack.
+    /// Sets the shape frames that are line art (one-pixel outlines: the mechs' and vehicles' diagrams in the store and
+    /// the mech bay, and the store's sold-out outlines), redrawn as smooth strokes (platform/MCSharpLines) in place of
+    /// any pack's copy on a screen drawn at the size it's shown while HD art is on; none needs a pack.
     /// </summary>
     void SetLineArtFrames(std::span<const LineArtFrame> frames);
 

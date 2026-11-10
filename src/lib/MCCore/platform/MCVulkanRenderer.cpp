@@ -2403,7 +2403,7 @@ MCVulkanRenderer::AuditScope::AuditScope(MCVulkanRenderer& renderer, std::string
     if (renderer.Audit && !renderer._Audited.has_value())
     {
         _Outermost = true;
-        renderer._Audited = AuditedDraw{command, target, false, data, frame, from, 0, false};
+        renderer._Audited = AuditedDraw{command, target, false, data, frame, from, 0, false, false};
     }
 }
 
@@ -3419,9 +3419,9 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     uint32_t op = KindTexture;
     uint32_t before = 0;
     uint32_t after = 0;
-    // Port-only: line art (the purchase screen's sold-out outlines) on a sharp screen is redrawn as smooth strokes at
-    // the output's resolution (MCSharpLines), in the colours its table gives its bytes; the original's draw keeps the
-    // indices.
+    // Port-only: line art (the store's and the mech bay's diagrams, the store's sold-out outlines) on a sharp screen is
+    // redrawn as smooth strokes at the output's resolution (MCSharpLines), in the colours its table gives its bytes, in
+    // place of any pack's copy; the original's draw keeps the indices.
     bool lineArt = false;
 
     if ((command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) && SharpScreenSurface(surface) &&
@@ -3443,6 +3443,11 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
         const uint32_t tableRow = command.Op == MCShapeOp::Xlat ? TableRow(*command.Table) : IdentityRow;
         lineArt = AddSharpLines(surface, art, width, rows, at, artFrom, tableRow);
         op |= lineArt ? IndexOnly : 0u;
+
+        if (_Audited.has_value())
+        {
+            _Audited->LineArt |= lineArt;
+        }
     }
 
     switch (command.Op)

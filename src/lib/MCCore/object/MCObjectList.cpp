@@ -109,7 +109,7 @@ auto MCObjectList::Remove(MCBaseObject& object) -> bool
 auto MCObjectList::Compact() -> void
 {
     // Only a list holding an empty slot is walked: a walk of every list every frame went through every object on the
-    // map (on the M4 Pro about a twelfth of the game thread's work at a mission's start).
+    // map (on the M4 Pro about 1% of the game thread's work).
     if (_Count != _Objects.size())
     {
         std::erase(_Objects, nullptr);

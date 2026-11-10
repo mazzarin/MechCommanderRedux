@@ -61,10 +61,6 @@ namespace
         std::filesystem::path ReportFile;
     };
 
-    /// <summary>The game's words for hosting a match and joining one, as a launcher passes them.</summary>
-    constexpr std::string_view HostWord = "-host";
-    constexpr std::string_view JoinWord = "-join";
-
     /// <summary>The player's own folder of settings and saves, which SDL keeps for the game (made if missing).</summary>
     std::expected<std::filesystem::path, std::string> PlayerFolder()
     {
@@ -278,7 +274,6 @@ namespace
     std::expected<MCLaunchOptions, std::string> ParseArguments(std::span<const std::string_view> arguments)
     {
         MCLaunchOptions options;
-        bool match = false;
 
         for (size_t i = 1; i < arguments.size(); i++)
         {
@@ -310,8 +305,6 @@ namespace
             }
             else
             {
-                match = match || arg == HostWord || arg == JoinWord;
-
                 if (!options.GameCommandLine.empty())
                 {
                     options.GameCommandLine += ' ';
@@ -345,9 +338,10 @@ namespace
             options.UserFolder = std::move(*player);
         }
 
-        // A launcher's match in a user folder of its own (as MechCommander Online starts the game) keeps the player's
-        // own settings, set up playing alone; the launcher's folder keeps the rest (saves, notes, the black box).
-        else if (match)
+        // A launcher's match in a user folder of its own (hosted or joined from the start, as MechCommander Online
+        // starts the game) keeps the player's own settings, set up playing alone; the launcher's folder keeps the rest
+        // (saves, notes, the black box).
+        else if (StartsInLobby(options.GameCommandLine))
         {
             std::error_code error;
 

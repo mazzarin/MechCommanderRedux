@@ -1,9 +1,11 @@
 #pragma once
 
 #include "update/MCInstalled.h"
+#include "update/MCUpdateLock.h"
 
 #include <expected>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -50,16 +52,28 @@ namespace MCGameFolder
     /// </summary>
     std::filesystem::path InstallFolder();
 
+    /// <summary>The Redux HD install whose HD a game plays with (<see cref="HdInstall"/>), held for the game's run.</summary>
+    struct MCHdInstall
+    {
+        std::filesystem::path Folder;
+        /// <summary>
+        /// The install's game lock, held shared: its own copies swap in or remove none of its files while this game
+        /// plays them, as with any other copy running. None when it can't be opened (a folder this account can't
+        /// write), as its own copies then play it.
+        /// </summary>
+        std::unique_ptr<MCUpdateLock> Lock;
+    };
+
     /// <summary>
     /// The Redux HD install whose HD (its pack and the HD answer) a game folder without HD of its own plays with: a
     /// launcher's copy of the game (--data) played by the program of <paramref name="install"/> (InstallFolder), when
     /// that's another folder holding HD. None when <paramref name="gameFolder"/> has HD itself
-    /// (<paramref name="gameRecord"/>, MCInstalled::Has), or the install doesn't. The game's data stays the game
-    /// folder's: a room checks it.
+    /// (<paramref name="gameRecord"/>, MCInstalled::Has), or the install doesn't, or while the install's files can't be
+    /// played (a copy of it swapping an update in, or a swap stopped midway: its next start finishes it). The game's
+    /// data stays the game folder's: a room checks it.
     /// </summary>
-    std::optional<std::filesystem::path> HdInstall(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
-                                                   const MCInstalled::MCRecord& gameRecord,
-                                                   const std::filesystem::path& install);
+    std::optional<MCHdInstall> HdInstall(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                         const MCInstalled::MCRecord& gameRecord, const std::filesystem::path& install);
 
     /// <summary>The folder chosen last time, or empty when none is remembered in <paramref name="userFolder"/>.</summary>
     std::filesystem::path Remembered(const std::filesystem::path& userFolder);

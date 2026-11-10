@@ -112,8 +112,10 @@ TEST_CASE("launcher: a folder whose update is under way is the game's, its SYSTE
 }
 
 /// <summary>
-/// A launcher's copy of the game without HD plays with the HD of the Redux HD install whose program runs it; a copy with
-/// HD of its own, the install itself, an install without HD or whose record can't be read give none.
+/// A launcher's copy of the game without HD plays with the HD of the Redux HD install whose program runs it, holding the
+/// install's lock as any copy of it does; a copy with HD of its own, the install itself, an install without HD, whose
+/// record can't be read, or whose files can't be played now (a copy swapping its update in, a swap stopped midway) give
+/// none.
 /// </summary>
 TEST_CASE("launcher: a game folder without HD takes the Redux HD install's, when the install has it")
 {
@@ -125,7 +127,34 @@ TEST_CASE("launcher: a game folder without HD takes the Redux HD install's, when
     const std::filesystem::path withoutHd = MakeInstall(scratch.Path() / "Redux without HD");
     std::filesystem::create_directories(install / MCHdArt::DefaultFolder);
 
-    CHECK(MCGameFolder::HdInstall(*disk, lobbyCopy, none, install) == install);
+    {
+        const std::optional<MCGameFolder::MCHdInstall> borrowed =
+            MCGameFolder::HdInstall(*disk, lobbyCopy, none, install);
+        REQUIRE(borrowed);
+        CHECK(borrowed->Folder == install);
+
+        // While it's played, the install's own copy can't swap an update in.
+        const std::unique_ptr<MCUpdateLock> own = MCUpdateLock::Open(install, MCUpdateLock::GameLock);
+        REQUIRE(own != nullptr);
+        CHECK(!own->TryExclusive());
+    }
+
+    {
+        // Once it's not, it can; while it swaps, none is borrowed.
+        const std::unique_ptr<MCUpdateLock> own = MCUpdateLock::Open(install, MCUpdateLock::GameLock);
+        REQUIRE(own != nullptr);
+        REQUIRE(own->TryExclusive());
+        CHECK(!MCGameFolder::HdInstall(*disk, lobbyCopy, none, install));
+    }
+
+    // A swap stopped midway (its journal there): none, until the install's next start finishes it.
+    const std::filesystem::path journal = install / std::filesystem::path(MCContentSwap::JournalFile);
+    std::filesystem::create_directories(journal.parent_path());
+    std::ofstream(journal) << "{}";
+    CHECK(!MCGameFolder::HdInstall(*disk, lobbyCopy, none, install));
+    std::filesystem::remove(journal);
+    CHECK(MCGameFolder::HdInstall(*disk, lobbyCopy, none, install));
+
     CHECK(!MCGameFolder::HdInstall(*disk, install, none, install));
     CHECK(!MCGameFolder::HdInstall(*disk, lobbyCopy, none, withoutHd));
     CHECK(!MCGameFolder::HdInstall(*disk, lobbyCopy, none, std::filesystem::path()));

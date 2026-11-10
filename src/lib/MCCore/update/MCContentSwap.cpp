@@ -1166,16 +1166,9 @@ std::expected<bool, std::string> MCContentSwap::UnderWay(MCUpdateDisk& disk, con
     return AnyThere(disk, gameFolder, {JournalFile, ReadyFile, RepairFile});
 }
 
-namespace
+std::expected<bool, std::string> MCContentSwap::Midway(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
 {
-    /// <summary>
-    /// Whether a swap was stopped midway, or a repair is under way: the files can't be played as they are; or why it
-    /// can't be told.
-    /// </summary>
-    std::expected<bool, std::string> Midway(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
-    {
-        return AnyThere(disk, gameFolder, {JournalFile, RepairFile});
-    }
+    return AnyThere(disk, gameFolder, {JournalFile, RepairFile});
 }
 
 std::expected<void, std::string> MCContentSwap::Abandon(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)

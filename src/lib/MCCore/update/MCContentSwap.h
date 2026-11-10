@@ -152,6 +152,12 @@ namespace MCContentSwap
     std::expected<bool, std::string> Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
 
     /// <summary>
+    /// Whether a swap was stopped midway, or a repair is under way: the files can't be played as they are; or why it
+    /// can't be told.
+    /// </summary>
+    std::expected<bool, std::string> Midway(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+
+    /// <summary>
     /// Whether an update is under way: ready, stopped midway or being repaired (<see cref="Waiting"/>,
     /// <see cref="Repairing"/>). Its game files may be set aside, SYSTEM.CFG among them, until a start finishes it. Or
     /// why it can't be told.

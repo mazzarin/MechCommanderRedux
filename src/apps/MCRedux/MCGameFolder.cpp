@@ -535,10 +535,10 @@ std::filesystem::path MCGameFolder::InstallFolder()
 #endif
 }
 
-std::optional<std::filesystem::path> MCGameFolder::HdInstall(MCUpdateDisk& disk,
-                                                             const std::filesystem::path& gameFolder,
-                                                             const MCInstalled::MCRecord& gameRecord,
-                                                             const std::filesystem::path& install)
+std::optional<MCGameFolder::MCHdInstall> MCGameFolder::HdInstall(MCUpdateDisk& disk,
+                                                                 const std::filesystem::path& gameFolder,
+                                                                 const MCInstalled::MCRecord& gameRecord,
+                                                                 const std::filesystem::path& install)
 {
     std::error_code error;
 
@@ -556,7 +556,29 @@ std::optional<std::filesystem::path> MCGameFolder::HdInstall(MCUpdateDisk& disk,
         return std::nullopt;
     }
 
-    return MCInstalled::Has(*record, install, MCContentList::HdSet) ? std::optional(install) : std::nullopt;
+    if (!MCInstalled::Has(*record, install, MCContentList::HdSet))
+    {
+        return std::nullopt;
+    }
+
+    // Taken only for an install with HD, as opening the lock makes its file in the install's update folder; held
+    // before its files are played, so none of its copies begins a swap after this.
+    std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(install, MCUpdateLock::GameLock);
+
+    if (lock != nullptr && !lock->TryShared())
+    {
+        SDL_Log("HD: a copy of the install (%s) is swapping its update in: none borrowed", ToUtf8(install).c_str());
+        return std::nullopt;
+    }
+
+    if (const auto midway = MCContentSwap::Midway(disk, install); !midway || *midway)
+    {
+        SDL_Log("HD: the install's files (%s) can't be played now: %s", ToUtf8(install).c_str(),
+                midway ? "its update stopped midway, which its next start finishes" : midway.error().c_str());
+        return std::nullopt;
+    }
+
+    return MCHdInstall{.Folder = install, .Lock = std::move(lock)};
 }
 
 std::vector<std::filesystem::path> MCGameFolder::FindInUsualPlaces()

@@ -755,15 +755,20 @@ int main(int argc, char** argv)
     std::error_code packError;
 
     // A game folder without HD of its own (a launcher's copy of the game, --data) played by a Redux HD install's
-    // program: the install's HD pack shows (art, sound, movies), and its HD answer sets the looks.
+    // program: the install's HD pack shows (art, sound, movies), and its HD answer sets the looks. The install's lock
+    // is held for the run.
+    std::optional<MCGameFolder::MCHdInstall> hdInstall;
+
     if (!std::filesystem::is_directory(MCHdArt::PackFolder(), packError))
     {
-        if (const std::optional<std::filesystem::path> install =
-                MCGameFolder::HdInstall(*MakeDisk(), options->DataFolder, record, MCGameFolder::InstallFolder()))
+        hdInstall = MCGameFolder::HdInstall(*MakeDisk(), options->DataFolder, record, MCGameFolder::InstallFolder());
+
+        if (hdInstall)
         {
-            MCHdArt::SetPackFolder(*install / MCHdArt::DefaultFolder);
+            MCHdArt::SetPackFolder(hdInstall->Folder / MCHdArt::DefaultFolder);
             hd = true;
-            SDL_Log("HD: the game folder has none; the install's, in %s", MCFileSystem::ToUtf8(*install).c_str());
+            SDL_Log("HD: the game folder has none; the install's, in %s",
+                    MCFileSystem::ToUtf8(hdInstall->Folder).c_str());
         }
     }
 

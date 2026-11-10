@@ -27,6 +27,7 @@
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCTurret.h"
+#include "platform/MCFileSystem.h"
 #include "sprite/MCMechStops.h"
 
 // The multiplayer game's life, its rosters and chunk queues, its session, and the server hand-over. The sends are in
@@ -166,7 +167,7 @@ void MCMultiPlayer::InitUpdateFrequencies()
     TurretUpdateFrequency = -1.0f;
     WorldStateUpdateFrequency = -1.0f;
     MCFitIniFile prefsFile;
-    Assert(prefsFile.Open("prefs.cfg") == 0, 0, "Could not open prefs.cfg");
+    Assert(prefsFile.Open(MCFileSystem::SettingsToRead(PrefsFile)) == 0, 0, "Could not open prefs.cfg");
 
     if (prefsFile.SeekBlock("Multiplayer") == 0)
     {

@@ -231,6 +231,9 @@ namespace MCHdArt
     /// </summary>
     void DropGround();
 
+    /// <summary>The pack's folder's name, in the user folder or a game folder.</summary>
+    inline constexpr std::string_view DefaultFolder = "HD";
+
     /// <summary>
     /// The pack's folder: the one set, else the user folder's <c>HD</c> when there is one, else the game folder's (a
     /// pack unzipped into the game's folder, as mods are).

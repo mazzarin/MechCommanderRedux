@@ -291,7 +291,7 @@ void SystemInit()
 
     MCFitIniFile prefsFile;
 
-    if (const int32_t result = prefsFile.Open("prefs.cfg"); result != 0)
+    if (const int32_t result = prefsFile.Open(MCFileSystem::SettingsToRead(PrefsFile)); result != 0)
     {
         Fatal(result, "Could not open prefs.cfg.");
     }

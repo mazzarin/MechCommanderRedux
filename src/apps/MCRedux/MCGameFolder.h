@@ -1,7 +1,10 @@
 #pragma once
 
+#include "update/MCInstalled.h"
+
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -13,6 +16,8 @@
 /// Wine wrappers there (Wineskin, Porting Kit) and CrossOver's bottles; on Windows the folders the original's installer
 /// recorded (its own registry key, and DirectPlay's entry for lobbies, which MechCommander Online writes too).
 /// </summary>
+class MCUpdateDisk;
+
 namespace MCGameFolder
 {
     /// <summary>
@@ -44,6 +49,17 @@ namespace MCGameFolder
     /// <c>MechCommander Gold</c> folder beside the app; empty when there's none (an app run from a translocated copy).
     /// </summary>
     std::filesystem::path InstallFolder();
+
+    /// <summary>
+    /// The Redux HD install whose HD (its pack and the HD answer) a game folder without HD of its own plays with: a
+    /// launcher's copy of the game (--data) played by the program of <paramref name="install"/> (InstallFolder), when
+    /// that's another folder holding HD. None when <paramref name="gameFolder"/> has HD itself
+    /// (<paramref name="gameRecord"/>, MCInstalled::Has), or the install doesn't. The game's data stays the game
+    /// folder's: a room checks it.
+    /// </summary>
+    std::optional<std::filesystem::path> HdInstall(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                                   const MCInstalled::MCRecord& gameRecord,
+                                                   const std::filesystem::path& install);
 
     /// <summary>The folder chosen last time, or empty when none is remembered in <paramref name="userFolder"/>.</summary>
     std::filesystem::path Remembered(const std::filesystem::path& userFolder);

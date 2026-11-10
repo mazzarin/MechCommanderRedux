@@ -421,6 +421,58 @@ TEST_CASE("file: writes go to the user folder and never touch the install")
 }
 
 /// <summary>
+/// A launcher's match keeps the player's own settings: they're read from the player's folder once it holds them (until
+/// then, from the launcher's user folder over the install, as before), and always saved there, never in the launcher's
+/// folder or the install. Without a settings folder, they're the user folder's.
+/// </summary>
+TEST_CASE("file: the player's own settings are read and saved in their folder when a launcher gives its own")
+{
+    ScratchFolder folder("settings");
+    std::filesystem::create_directories(folder.Path() / "install");
+    const std::vector<uint8_t> original = Bytes("FITini\r\n[Prefs]\r\nl Volume = 3\r\n\r\nFITend\r\n");
+    WriteFile(folder.Path() / "install/prefs.cfg", original);
+    const std::filesystem::path player = folder.Path() / "player's own";
+    const std::filesystem::path launcher = folder.Path() / "launcher";
+
+    MCTestContextScope scope;
+    scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
+    MCFileSystem::SetGameRoot(folder.Path() / "install");
+    MCFileSystem::SetUserRoot(launcher);
+    CHECK_EQ(MCFileSystem::SettingsToRead("prefs.cfg"), "prefs.cfg");
+    CHECK_EQ(MCFileSystem::SettingsToWrite("prefs.cfg"), "prefs.cfg");
+    MCFileSystem::SetSettingsRoot(player);
+
+    // The settings folder is the process's: none once the test ends, however it ends.
+    struct MCSettingsReset
+    {
+        ~MCSettingsReset() { MCFileSystem::SetSettingsRoot({}); }
+    } reset;
+
+    // The player's folder holds none yet: the install's, through the launcher's folder.
+    CHECK_EQ(MCFileSystem::SettingsToRead("prefs.cfg"), "prefs.cfg");
+    MCFitIniFile fit;
+    REQUIRE_EQ(fit.Open(MCFileSystem::SettingsToRead("prefs.cfg")), 0);
+    REQUIRE_EQ(fit.SeekBlock("Prefs"), 0);
+    CHECK(fit.Read<int32_t>("Volume") == MCFitResult<int32_t>(3));
+    fit.Close();
+
+    {
+        MCFitIniFile out;
+        REQUIRE_EQ(out.Create(MCFileSystem::SettingsToWrite("prefs.cfg")), 0);
+        out.WriteBlock("Prefs");
+        out.WriteIdLong("Volume", 9);
+    }
+
+    CHECK(std::filesystem::exists(player / "prefs.cfg"));
+    CHECK(!std::filesystem::exists(launcher / "prefs.cfg"));
+    CHECK(ReadFile(folder.Path() / "install/prefs.cfg") == original);
+    CHECK_EQ(MCFileSystem::SettingsToRead("prefs.cfg"), MCFileSystem::ToUtf8(player / "prefs.cfg"));
+    REQUIRE_EQ(fit.Open(MCFileSystem::SettingsToRead("prefs.cfg")), 0);
+    REQUIRE_EQ(fit.SeekBlock("Prefs"), 0);
+    CHECK(fit.Read<int32_t>("Volume") == MCFitResult<int32_t>(9));
+}
+
+/// <summary>
 /// Saves are the player's files: deleting one removes it wherever it is, the install's save folder included (the
 /// retail game ships saves there), and the user folder's copy with it. Other files of the install stay.
 /// </summary>

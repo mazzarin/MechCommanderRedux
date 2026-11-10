@@ -18,11 +18,7 @@ int GHdArt = 0;
 
 namespace
 {
-    /// <summary>
-    /// The pack's folder in the user folder or the game's, its folders of mech part frames and of the other appearances'
-    /// frames.
-    /// </summary>
-    constexpr std::string_view DefaultFolder = "HD";
+    /// <summary>The pack's folders of mech part frames and of the other appearances' frames.</summary>
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view ObjectFolder = "objects";
     constexpr std::string_view CraterFolder = "craters";
@@ -1600,8 +1596,8 @@ std::filesystem::path MCHdArt::PackFolder()
     // The user folder's, else the game folder's (a pack unzipped into the game's folder, as mods are).
     if (!state.FoundFolder.has_value())
     {
-        const std::filesystem::path user = MCFileSystem::UserRoot() / DefaultFolder;
-        const std::filesystem::path game = MCFileSystem::GameRoot() / DefaultFolder;
+        const std::filesystem::path user = MCFileSystem::UserRoot() / MCHdArt::DefaultFolder;
+        const std::filesystem::path game = MCFileSystem::GameRoot() / MCHdArt::DefaultFolder;
         std::error_code error;
         state.FoundFolder =
             std::filesystem::is_directory(user, error) || !std::filesystem::is_directory(game, error) ? user : game;

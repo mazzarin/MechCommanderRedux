@@ -1,6 +1,7 @@
 // Built without the precompiled header: macOS's CoreGraphics and MCCore's Win32 stand-ins (MCWin32Defs.h) cannot meet.
 #include "MCGameFolder.h"
 #include "platform/MCUtf8Path.h"
+#include "update/MCContentList.h"
 #include "update/MCContentSwap.h"
 #include "update/MCUpdateDisk.h"
 
@@ -532,6 +533,30 @@ std::filesystem::path MCGameFolder::InstallFolder()
     const char* basePath = SDL_GetBasePath();
     return basePath != nullptr ? FromUtf8(basePath) : std::filesystem::path();
 #endif
+}
+
+std::optional<std::filesystem::path> MCGameFolder::HdInstall(MCUpdateDisk& disk,
+                                                             const std::filesystem::path& gameFolder,
+                                                             const MCInstalled::MCRecord& gameRecord,
+                                                             const std::filesystem::path& install)
+{
+    std::error_code error;
+
+    if (install.empty() || MCInstalled::Has(gameRecord, gameFolder, MCContentList::HdSet) ||
+        std::filesystem::equivalent(install, gameFolder, error))
+    {
+        return std::nullopt;
+    }
+
+    const auto record = MCInstalled::Read(disk, install);
+
+    if (!record)
+    {
+        SDL_Log("HD: the install's record (%s) can't be read: %s", ToUtf8(install).c_str(), record.error().c_str());
+        return std::nullopt;
+    }
+
+    return MCInstalled::Has(*record, install, MCContentList::HdSet) ? std::optional(install) : std::nullopt;
 }
 
 std::vector<std::filesystem::path> MCGameFolder::FindInUsualPlaces()

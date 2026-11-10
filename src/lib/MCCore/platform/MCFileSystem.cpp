@@ -4,6 +4,13 @@
 
 namespace
 {
+    /// <summary>The folder that keeps the player's own settings when it isn't the user folder (SetSettingsRoot).</summary>
+    std::filesystem::path& SettingsFolder()
+    {
+        static std::filesystem::path folder;
+        return folder;
+    }
+
     /// <summary><paramref name="c"/>'s byte, its ASCII letter upper-cased (no locale's: the same everywhere).</summary>
     unsigned char AsciiUpper(char c)
     {
@@ -441,6 +448,37 @@ namespace MCFileSystem
     const std::filesystem::path& UserRoot()
     {
         return Files().UserRoot();
+    }
+
+    void SetSettingsRoot(const std::filesystem::path& root)
+    {
+        SettingsFolder() = root;
+
+        if (!root.empty())
+        {
+            std::error_code error;
+            std::filesystem::create_directories(root, error);
+        }
+    }
+
+    std::string SettingsToRead(std::string_view name)
+    {
+        const std::filesystem::path& root = SettingsFolder();
+
+        if (root.empty())
+        {
+            return std::string(name);
+        }
+
+        const std::filesystem::path path = root / FromUtf8(name);
+        std::error_code error;
+        return std::filesystem::is_regular_file(path, error) ? ToUtf8(path) : std::string(name);
+    }
+
+    std::string SettingsToWrite(std::string_view name)
+    {
+        const std::filesystem::path& root = SettingsFolder();
+        return root.empty() ? std::string(name) : ToUtf8(root / FromUtf8(name));
     }
 
     std::filesystem::path Resolve(std::string_view gamePath)

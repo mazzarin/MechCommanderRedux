@@ -327,15 +327,29 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
     const int32_t originY = vertices[0].Py - (firstRow + firstCol) * stepY +
                             static_cast<int32_t>(blocks.Vertex(vertices[0].MapVertex).Elevation) * elevStep;
 
+    // Port-only: the grid's cells with a corner on the pane (Vertex::clipped), as rows and columns, found on the way.
+    // The grid is made for the furthest zoom on the largest screen (GrownGridSide), so nearer in most of its cells have
+    // every corner clipped and draw nothing: launching them was most of the terrain's GPU vertex work, and the kept
+    // ground's walk over them (PlanGround) a share of the CPU's frame.
+    int32_t lowRow = INT32_MAX;
+    int32_t lowCol = INT32_MAX;
+    int32_t highRow = INT32_MIN;
+    int32_t highCol = INT32_MIN;
+
     for (bool rebuilt = false;;)
     {
         bool current = true;
+        lowRow = INT32_MAX;
+        lowCol = INT32_MAX;
+        highRow = INT32_MIN;
+        highCol = INT32_MIN;
+        // The grid is row by row: its vertex i is (i / perSide, i % perSide) on from its corner, counted here.
+        int32_t row = firstRow;
+        int32_t col = firstCol;
 
         for (size_t i = 0; i < vertices.size(); ++i)
         {
             const MCVertex& vertex = vertices[i];
-            const int32_t row = firstRow + static_cast<int32_t>(i) / perSide;
-            const int32_t col = firstCol + static_cast<int32_t>(i) % perSide;
             const MCPrecompVertex& mapVertex = blocks.Vertex(vertex.MapVertex);
             const uint32_t elevation = mapVertex.Elevation;
 
@@ -371,6 +385,20 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
                               static_cast<size_t>(col - GroundMesh->Mesh.FirstCol);
             current =
                 current && GroundMesh->Elevations[at] == elevation && GroundMesh->Textures[at] == mapVertex.TextureData;
+
+            if (!vertex.Clipped)
+            {
+                lowRow = std::min(lowRow, row);
+                lowCol = std::min(lowCol, col);
+                highRow = std::max(highRow, row);
+                highCol = std::max(highCol, col);
+            }
+
+            if (++col == firstCol + perSide)
+            {
+                col = firstCol;
+                ++row;
+            }
         }
 
         if (current)
@@ -385,28 +413,6 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
 
         BuildGroundMesh(perSide + RingPastGrid, stepX, stepY, elevStep);
         rebuilt = true;
-    }
-
-    // Port-only: the grid's cells with a corner on the pane (Vertex::clipped), as rows and columns. The grid is made
-    // for the furthest zoom on the largest screen (GrownGridSide), so nearer in most of its cells have every corner
-    // clipped and draw nothing: launching them was most of the terrain's GPU vertex work, and the kept ground's
-    // walk over them (PlanGround) a share of the CPU's frame.
-    int32_t lowRow = INT32_MAX;
-    int32_t lowCol = INT32_MAX;
-    int32_t highRow = INT32_MIN;
-    int32_t highCol = INT32_MIN;
-
-    for (size_t i = 0; i < vertices.size(); ++i)
-    {
-        if (!vertices[i].Clipped)
-        {
-            const int32_t row = firstRow + static_cast<int32_t>(i) / perSide;
-            const int32_t col = firstCol + static_cast<int32_t>(i) % perSide;
-            lowRow = std::min(lowRow, row);
-            lowCol = std::min(lowCol, col);
-            highRow = std::max(highRow, row);
-            highCol = std::max(highCol, col);
-        }
     }
 
     frame.Mesh = GroundMesh->Mesh;

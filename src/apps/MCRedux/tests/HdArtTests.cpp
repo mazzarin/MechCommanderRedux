@@ -18395,6 +18395,100 @@ TEST_CASE("sharp lines: a ring and a dot in line art are drawn round, a small re
     }
 }
 
+TEST_CASE("sharp lines: a part drawn by hand replaces the art's pixels in its box with its loop")
+{
+    constexpr int32_t Columns = 14;
+    constexpr int32_t Rows = 7;
+    constexpr uint8_t No = MCSharpText::NoInk;
+    constexpr uint8_t Box = 9;
+    constexpr uint8_t Dot = 7;
+    std::array<uint8_t, Columns * Rows> art{};
+    art.fill(No);
+    const auto put = [&](int32_t x, int32_t y, uint8_t value) { art[static_cast<size_t>(y * Columns + x)] = value; };
+
+    // A 4 x 3 rectangle from (2, 2) to (5, 4), and a lone pixel outside it at (10, 3).
+    constexpr int32_t BoxLeft = 2;
+    constexpr int32_t BoxTop = 2;
+    constexpr int32_t BoxRight = 5;
+    constexpr int32_t BoxBottom = 4;
+
+    for (int32_t x = BoxLeft; x <= BoxRight; ++x)
+    {
+        put(x, BoxTop, Box);
+        put(x, BoxBottom, Box);
+    }
+
+    for (int32_t y = BoxTop; y <= BoxBottom; ++y)
+    {
+        put(BoxLeft, y, Box);
+        put(BoxRight, y, Box);
+    }
+
+    constexpr int32_t DotX = 10;
+    constexpr int32_t DotY = 3;
+    put(DotX, DotY, Dot);
+
+    // The rectangle drawn by hand as a circle through its pixels' middle, eight points round it.
+    constexpr float CentreX = (BoxLeft + BoxRight + 1) / 2.0f;
+    constexpr float CentreY = (BoxTop + BoxBottom + 1) / 2.0f;
+    constexpr float Radius = 1.5f;
+    constexpr int32_t Points = 8;
+    MCSharpLines::MCDrawnLoop loop{BoxLeft, BoxTop, BoxRight, BoxBottom, {}};
+
+    for (int32_t i = 0; i < Points; ++i)
+    {
+        const float angle = 2.0f * std::numbers::pi_v<float> * static_cast<float>(i) / static_cast<float>(Points);
+        loop.Through.push_back({CentreX + Radius * std::cos(angle), CentreY + Radius * std::sin(angle)});
+    }
+
+    constexpr int32_t Scale = MCSharpText::Scale;
+    const auto redraw = [&](std::span<const MCSharpLines::MCDrawnLoop> drawn)
+    {
+        const std::vector<uint8_t> redrawn = MCSharpLines::Redraw(art, Columns, Columns, Rows, drawn);
+        REQUIRE_EQ(redrawn.size(), static_cast<size_t>(Columns * Scale * Rows * Scale * BytesPerPixel));
+        return redrawn;
+    };
+
+    // The byte and coverage of a redrawn pixel at (x, y) in art pixels.
+    const auto at = [&](const std::vector<uint8_t>& redrawn, float x, float y)
+    {
+        const auto column = static_cast<size_t>(x * Scale);
+        const auto row = static_cast<size_t>(y * Scale);
+        const size_t offset = (row * Columns * Scale + column) * BytesPerPixel;
+        return std::pair{redrawn[offset], redrawn[offset + 1]};
+    };
+
+    constexpr uint8_t Full = 255;
+    constexpr uint8_t None = 0;
+    // The rectangle's top left corner pixel: covered as the art draws it, clear of the circle drawn by hand.
+    constexpr float CornerInset = 0.3f;
+    constexpr float CornerTip = 0.05f;
+    const std::vector<uint8_t> asDrawn = redraw({});
+    CHECK_EQ(at(asDrawn, BoxLeft + CornerInset, BoxTop + CornerInset).second, Full);
+
+    const std::vector<uint8_t> byHand = redraw(std::span(&loop, 1));
+    CHECK_EQ(at(byHand, BoxLeft + CornerInset, BoxTop + CornerInset).second, None);
+    CHECK_EQ(at(byHand, BoxLeft + CornerTip, BoxTop + CornerTip).second, None);
+    CHECK_EQ(at(byHand, CentreX, CentreY).second, None);
+
+    // The loop passes through its points, each stroke keeping the byte of the art pixel nearest it.
+    for (const float dx : {-Radius, Radius})
+    {
+        CHECK_EQ(at(byHand, CentreX + dx, CentreY).second, Full);
+        CHECK_EQ(at(byHand, CentreX + dx, CentreY).first, Box);
+    }
+
+    for (const float dy : {-Radius, Radius})
+    {
+        CHECK_EQ(at(byHand, CentreX, CentreY + dy).second, Full);
+    }
+
+    // The pixel outside the box drawn as before.
+    constexpr float Middle = 0.5f;
+    CHECK_EQ(at(byHand, DotX + Middle, DotY + Middle).second, Full);
+    CHECK_EQ(at(byHand, DotX + Middle, DotY + Middle).first, Dot);
+}
+
 namespace
 {
     /// <summary>

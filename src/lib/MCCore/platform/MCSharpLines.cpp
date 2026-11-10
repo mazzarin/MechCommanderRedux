@@ -45,6 +45,8 @@ namespace
     constexpr int32_t DotSide = 2;
     /// <summary>The straight strokes an ellipse is drawn with.</summary>
     constexpr int32_t EllipseSteps = 64;
+    /// <summary>The straight strokes each span of a loop drawn by hand is drawn with.</summary>
+    constexpr int32_t LoopSteps = 16;
 
     /// <summary>The eight directions to a pixel's neighbours: the straight ones, then the diagonals.</summary>
     constexpr std::array<std::pair<int32_t, int32_t>, 8> Directions = {
@@ -489,9 +491,42 @@ namespace
 
         return line;
     }
+
+    /// <summary>A loop drawn by hand: the closed Catmull-Rom curve through its points, LoopSteps points a span.</summary>
+    std::vector<MCPoint> DrawnLine(const MCSharpLines::MCDrawnLoop& loop)
+    {
+        std::vector<MCPoint> line;
+        const size_t count = loop.Through.size();
+        line.reserve(count * static_cast<size_t>(LoopSteps));
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            // The span from point i to i + 1, steered by the points either side.
+            const auto& p0 = loop.Through[(i + count - 1) % count];
+            const auto& p1 = loop.Through[i];
+            const auto& p2 = loop.Through[(i + 1) % count];
+            const auto& p3 = loop.Through[(i + 2) % count];
+
+            for (int32_t step = 0; step < LoopSteps; ++step)
+            {
+                const float t = static_cast<float>(step) / static_cast<float>(LoopSteps);
+                const auto along = [&](size_t axis)
+                {
+                    return 0.5f * (2.0f * p1[axis] + (p2[axis] - p0[axis]) * t +
+                                   (2.0f * p0[axis] - 5.0f * p1[axis] + 4.0f * p2[axis] - p3[axis]) * t * t +
+                                   (3.0f * p1[axis] - p0[axis] - 3.0f * p2[axis] + p3[axis]) * t * t * t);
+                };
+
+                line.push_back({along(0), along(1)});
+            }
+        }
+
+        return line;
+    }
 }
 
-std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32_t pitch, int32_t columns, int32_t rows)
+std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32_t pitch, int32_t columns, int32_t rows,
+                                          std::span<const MCDrawnLoop> drawn)
 {
     if (columns <= 0 || rows <= 0)
     {
@@ -499,6 +534,27 @@ std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32
     }
 
     const MCArt art(pixels, pitch, columns, rows);
+    // The art the strokes follow: the parts drawn by hand left out.
+    std::vector<uint8_t> followed;
+
+    if (!drawn.empty())
+    {
+        followed.resize(static_cast<size_t>(columns) * static_cast<size_t>(rows));
+
+        for (int32_t y = 0; y < rows; ++y)
+        {
+            for (int32_t x = 0; x < columns; ++x)
+            {
+                const bool left = std::ranges::any_of(
+                    drawn, [&](const MCDrawnLoop& loop)
+                    { return x >= loop.Left && x <= loop.Right && y >= loop.Top && y <= loop.Bottom; });
+                followed[static_cast<size_t>(y) * static_cast<size_t>(columns) + static_cast<size_t>(x)] =
+                    left ? MCSharpText::NoInk : art.ByteAt(x, y);
+            }
+        }
+    }
+
+    const MCArt strokes = drawn.empty() ? art : MCArt(followed, columns, columns, rows);
     constexpr int32_t Scale = MCSharpText::Scale;
     const int32_t width = columns * Scale;
     const int32_t height = rows * Scale;
@@ -534,16 +590,12 @@ std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32
         }
     };
 
-    for (const MCRun& run : Runs(art))
+    const auto strokeLine = [&](const std::vector<MCPoint>& line, bool closed)
     {
-        // A round detail drawn round; any other run straightened, its gentle bends rounded.
-        const std::optional<MCEllipse> round = RoundDetail(run);
-        const std::vector<MCPoint> line = round.has_value() ? EllipseLine(*round) : Rounded(Straightened(run), run);
-
         if (line.size() == 1)
         {
             stroke(line[0], line[0]);
-            continue;
+            return;
         }
 
         for (size_t i = 0; i + 1 < line.size(); ++i)
@@ -551,9 +603,24 @@ std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32
             stroke(line[i], line[i + 1]);
         }
 
-        if (run.Closed)
+        if (closed)
         {
             stroke(line.back(), line.front());
+        }
+    };
+
+    for (const MCRun& run : Runs(strokes))
+    {
+        // A round detail drawn round; any other run straightened, its gentle bends rounded.
+        const std::optional<MCEllipse> round = RoundDetail(run);
+        strokeLine(round.has_value() ? EllipseLine(*round) : Rounded(Straightened(run), run), run.Closed);
+    }
+
+    for (const MCDrawnLoop& loop : drawn)
+    {
+        if (!loop.Through.empty())
+        {
+            strokeLine(DrawnLine(loop), true);
         }
     }
 

@@ -3171,11 +3171,30 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
 }
 
 bool MCVulkanRenderer::AddSharpLines(uint16_t surface, std::span<const uint8_t> art, int32_t columns, int32_t rows,
-                                     const Quad& at, const Quad& from, uint32_t tableRow)
+                                     const Quad& at, const Quad& from, uint32_t tableRow,
+                                     std::span<const MCSharpLines::MCDrawnLoop> drawn)
 {
-    const uint64_t key = SharpKey(SharpKind::Lines, art, columns, columns, rows);
+    uint64_t key = SharpKey(SharpKind::Lines, art, columns, columns, rows);
+
+    // The parts drawn by hand are part of what it's redrawn from.
+    for (const MCSharpLines::MCDrawnLoop& loop : drawn)
+    {
+        for (const int32_t edge : {loop.Left, loop.Top, loop.Right, loop.Bottom})
+        {
+            MixHash(key, static_cast<uint64_t>(static_cast<uint32_t>(edge)));
+        }
+
+        for (const auto& point : loop.Through)
+        {
+            for (const float along : point)
+            {
+                MixHash(key, std::bit_cast<uint32_t>(along));
+            }
+        }
+    }
+
     return AddSharpPicture(
-        surface, key, [&] { return MCSharpLines::Redraw(art, columns, columns, rows); }, columns, rows, at, from,
+        surface, key, [&] { return MCSharpLines::Redraw(art, columns, columns, rows, drawn); }, columns, rows, at, from,
         tableRow);
 }
 
@@ -3441,7 +3460,8 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
         const Quad artFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
         const uint32_t tableRow = command.Op == MCShapeOp::Xlat ? TableRow(*command.Table) : IdentityRow;
-        lineArt = AddSharpLines(surface, art, width, rows, at, artFrom, tableRow);
+        lineArt = AddSharpLines(surface, art, width, rows, at, artFrom, tableRow,
+                                MCHdArt::LineArtDrawn(command.ShapeTable, command.ShapeNum));
         op |= lineArt ? IndexOnly : 0u;
 
         if (_Audited.has_value())

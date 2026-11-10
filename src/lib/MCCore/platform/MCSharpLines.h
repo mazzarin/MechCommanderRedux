@@ -13,10 +13,26 @@
 namespace MCSharpLines
 {
     /// <summary>
+    /// A part of the art drawn by hand, where its pixels can't say what they mean (the Atlas's eyes, a skull's
+    /// sockets): the art's pixels from (<c>Left</c>, <c>Top</c>) to (<c>Right</c>, <c>Bottom</c>) left out of the
+    /// strokes, and a smooth loop drawn in their place through <c>Through</c> (a closed Catmull-Rom curve), in art pixels
+    /// (a pixel's centre half a pixel from its corner). Its strokes keep the bytes of the art pixels nearest them.
+    /// </summary>
+    struct MCDrawnLoop
+    {
+        int32_t Left = 0;
+        int32_t Top = 0;
+        int32_t Right = 0;
+        int32_t Bottom = 0;
+        std::vector<std::array<float, 2>> Through;
+    };
+
+    /// <summary>
     /// The art <paramref name="columns"/> x <paramref name="rows"/> bytes at <paramref name="pixels"/> (rows
     /// <paramref name="pitch"/> apart, <see cref="MCSharpText::NoInk"/> where nothing is drawn), redrawn at
     /// <see cref="MCSharpText::Scale"/> in <see cref="MCSharpText::Redraw"/>'s form: RGBA8, red the byte of the nearest
-    /// art pixel, green the strokes' coverage.
+    /// art pixel, green the strokes' coverage; <paramref name="drawn"/> its parts drawn by hand.
     /// </summary>
-    std::vector<uint8_t> Redraw(std::span<const uint8_t> pixels, int32_t pitch, int32_t columns, int32_t rows);
+    std::vector<uint8_t> Redraw(std::span<const uint8_t> pixels, int32_t pitch, int32_t columns, int32_t rows,
+                                std::span<const MCDrawnLoop> drawn = {});
 }

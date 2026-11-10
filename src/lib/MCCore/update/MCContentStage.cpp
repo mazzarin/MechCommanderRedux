@@ -30,6 +30,12 @@ namespace
     /// patches fetched one by one would wait minutes for nothing.
     /// </summary>
     constexpr size_t PatchWorkers = 8;
+    /// <summary>
+    /// The most zips fetched at once, each by a worker with a source of its own, and so the most held in download/ ahead
+    /// of their unpacking, in order; fewer when the disk has room for fewer (CheckSpace). A first start fetches every
+    /// zip (24 of about 270 MB), and on a slow or distant line one connection carries far less than several.
+    /// </summary>
+    constexpr size_t ZipWorkers = 4;
     /// <summary>How often staging tells its progress while the workers fetch.</summary>
     constexpr std::chrono::milliseconds ProgressEvery{100};
 
@@ -120,6 +126,13 @@ namespace
     {
         MCContentList::MCPatch Patch;
         MCSteps Steps;
+    };
+
+    /// <summary>A zip to fetch, and the steps whose files are unpacked from it.</summary>
+    struct MCZipJob
+    {
+        std::reference_wrapper<const MCContentList::MCZip> Zip;
+        MCSteps Entries;
     };
 
     class MCStager
@@ -239,6 +252,8 @@ namespace
                 }
             }
 
+            std::vector<MCZipJob> zips;
+
             for (const MCContentList::MCZip& zip : _List.Zips)
             {
                 MCSteps entries;
@@ -262,10 +277,12 @@ namespace
                     _Expected += zip.Size;
                 }
 
-                if (const auto unpacked = FetchAndUnpack(zip, entries); !unpacked)
-                {
-                    return Stopped() ? Stop() : unpacked;
-                }
+                zips.push_back({.Zip = std::cref(zip), .Entries = std::move(entries)});
+            }
+
+            if (const auto unpacked = UnpackAll(zips); !unpacked)
+            {
+                return Stopped() ? Stop() : unpacked;
             }
 
             return Flush();
@@ -504,14 +521,16 @@ namespace
         /// <summary>
         /// Refuses to go on without room for what's still to stage (<paramref name="patches"/>' and <paramref
         /// name="whole"/>'s files), the biggest patches still to fetch (as many as are fetched ahead) and the biggest
-        /// zip; what's already staged or downloaded takes its room already. When the free space can't be read, it's
-        /// logged and staging goes on.
+        /// zip; what's already staged or downloaded takes its room already. The room left past that sets how many zips
+        /// are fetched at once (<see cref="_ZipsAhead"/>): one more for each next-biggest zip it holds, up to <see
+        /// cref="ZipWorkers"/>. When the free space can't be read, it's logged and staging goes on, a zip at a time.
         /// </summary>
         std::expected<void, std::string> CheckSpace(const std::vector<MCPatchJob>& patches, const MCSteps& whole)
         {
             MCBytesNeeded needed;
-            uint64_t biggestZip = 0;
+            std::vector<uint64_t> zipsLeft;
             std::vector<uint64_t> patchesLeft;
+            _ZipsAhead = 1;
 
             for (const MCPatchJob& job : patches)
             {
@@ -539,10 +558,11 @@ namespace
 
             for (const auto& [name, size] : ZipsHolding(whole))
             {
-                biggestZip = std::max(biggestZip, size - Downloaded(name, size));
+                zipsLeft.push_back(size - Downloaded(name, size));
             }
 
-            needed.Add(biggestZip);
+            std::ranges::sort(zipsLeft, std::greater<>());
+            needed.Add(zipsLeft.empty() ? 0 : zipsLeft.front());
 
             if (needed.Overflowed)
             {
@@ -564,6 +584,18 @@ namespace
                     std::format("the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
                                 static_cast<double>(needed.Total) / BytesPerGigabyte,
                                 static_cast<double>(*free) / BytesPerGigabyte));
+            }
+
+            while (_ZipsAhead < std::min(ZipWorkers, zipsLeft.size()))
+            {
+                needed.Add(zipsLeft[_ZipsAhead]);
+
+                if (needed.Overflowed || needed.Total > *free)
+                {
+                    break;
+                }
+
+                ++_ZipsAhead;
             }
 
             return {};
@@ -614,19 +646,8 @@ namespace
         /// <returns>Nothing, or stopped.</returns>
         std::expected<void, std::string> PatchAll(const std::vector<MCPatchJob>& patches, MCSteps& whole)
         {
-            std::vector<std::shared_ptr<MCContentStage::MCSource>> sources;
-
-            while (patches.size() > 1 && sources.size() < std::min(PatchWorkers, patches.size()))
-            {
-                std::unique_ptr<MCContentStage::MCSource> another = _Source.Another();
-
-                if (another == nullptr)
-                {
-                    break;
-                }
-
-                sources.push_back(std::move(another));
-            }
+            const std::vector<std::shared_ptr<MCContentStage::MCSource>> sources =
+                OtherSources(patches.size(), PatchWorkers);
 
             if (sources.empty())
             {
@@ -643,22 +664,120 @@ namespace
                 return {};
             }
 
-            return PatchAhead(patches, sources, whole);
+            return FetchAhead(
+                patches.size(), sources, PatchWorkers,
+                [this, &patches](MCContentStage::MCSource& source, size_t index, const std::atomic<bool>& ending)
+                {
+                    const MCPatchJob& job = patches[index];
+                    return FetchPatch(source, job, WhileGoing(CountFor(job.Patch.Name, true), ending));
+                },
+                [this, &patches, &whole](size_t index, const MCFetched& fetched)
+                { return Patched(patches[index], fetched, whole); });
         }
 
-        /// <summary>The patches fetched ahead, shared by the workers and staging's thread, which applies them.</summary>
+        /// <summary>
+        /// Downloads each zip and unpacks its entries, in order. With a source that makes others and room on the disk for
+        /// more than one (<see cref="_ZipsAhead"/>), the zips are fetched ahead by workers, that many at once; otherwise
+        /// one by one.
+        /// </summary>
+        /// <returns>Nothing, what failed, or stopped.</returns>
+        std::expected<void, std::string> UnpackAll(const std::vector<MCZipJob>& zips)
+        {
+            const std::vector<std::shared_ptr<MCContentStage::MCSource>> sources =
+                OtherSources(zips.size(), _ZipsAhead);
+
+            if (sources.empty())
+            {
+                for (const MCZipJob& job : zips)
+                {
+                    const MCContentList::MCZip& zip = job.Zip;
+                    const auto fetched =
+                        FetchChecked(_Source, zip.Name, zip.Size, zip.Sha256, CountFor(zip.Name, false));
+
+                    if (auto unpacked = Unpacked(job, fetched); !unpacked)
+                    {
+                        return unpacked;
+                    }
+                }
+
+                return {};
+            }
+
+            SDL_Log("Updates: %zu zips to fetch, %zu at once", zips.size(), sources.size());
+            return FetchAhead(
+                zips.size(), sources, sources.size(),
+                [this, &zips](MCContentStage::MCSource& source, size_t index, const std::atomic<bool>& ending)
+                {
+                    const MCContentList::MCZip& zip = zips[index].Zip;
+                    return FetchChecked(source, zip.Name, zip.Size, zip.Sha256,
+                                        WhileGoing(CountFor(zip.Name, true), ending));
+                },
+                [this, &zips](size_t index, const MCFetched& fetched) { return Unpacked(zips[index], fetched); });
+        }
+
+        /// <summary>
+        /// Up to <paramref name="most"/> sources made from staging's own (MCSource::Another), one for each worker, when
+        /// more than one of <paramref name="files"/> could be fetched at once; none when the source makes none.
+        /// </summary>
+        std::vector<std::shared_ptr<MCContentStage::MCSource>> OtherSources(size_t files, size_t most)
+        {
+            std::vector<std::shared_ptr<MCContentStage::MCSource>> sources;
+
+            while (files > 1 && most > 1 && sources.size() < std::min(most, files))
+            {
+                std::unique_ptr<MCContentStage::MCSource> another = _Source.Another();
+
+                if (another == nullptr)
+                {
+                    break;
+                }
+
+                sources.push_back(std::move(another));
+            }
+
+            return sources;
+        }
+
+        /// <summary>A hosted file fetched into download/, or what failed.</summary>
+        using MCFetched = std::expected<std::filesystem::path, std::string>;
+        /// <summary>
+        /// On a worker: fetches the run's file at an index over the worker's source; its count is to stop the fetch once
+        /// the run is ending (<see cref="WhileGoing"/>).
+        /// </summary>
+        using MCFetchAt = std::function<MCFetched(MCContentStage::MCSource&, size_t, const std::atomic<bool>&)>;
+        /// <summary>On staging's thread, in order: uses the run's file at an index as fetched (or failed).</summary>
+        using MCUseAt = std::function<std::expected<void, std::string>(size_t, const MCFetched&)>;
+
+        /// <summary>
+        /// A worker's count of a fetch, which also stops it once the run it fetches for is ending (<paramref
+        /// name="ending"/>): a fetch staging no longer waits for isn't let run on (a zip's can take minutes).
+        /// </summary>
+        static std::function<bool(uint64_t)> WhileGoing(std::function<bool(uint64_t)> count,
+                                                        const std::atomic<bool>& ending)
+        {
+            return [count = std::move(count), &ending](uint64_t bytes) mutable { return count(bytes) && !ending; };
+        }
+
+        /// <summary>The files fetched ahead, shared by the workers and staging's thread, which uses them.</summary>
         struct MCAhead
         {
             std::mutex Lock;
             std::condition_variable Changed;
-            /// <summary>The next patch to fetch, and the patches applied so far (a worker fetches no further ahead).</summary>
+            /// <summary>
+            /// The next file to fetch, the files used so far, and how far ahead of them a worker fetches (at most).
+            /// </summary>
             size_t Next = 0;
-            size_t Applied = 0;
-            bool Ending = false;
-            std::vector<std::optional<std::expected<std::filesystem::path, std::string>>> Fetched;
+            size_t Used = 0;
+            size_t Most = 0;
+            /// <summary>The run is ending (each file used, or one failed): set under the lock, read by the fetches too.</summary>
+            std::atomic<bool> Ending = false;
+            std::vector<std::optional<MCFetched>> Fetched;
         };
 
-        /// <summary>The workers fetching ahead, ended and their sources let go of whichever way staging goes on.</summary>
+        /// <summary>
+        /// The workers fetching ahead, ended and their sources let go of whichever way staging goes on; a fetch still
+        /// under way stops at its next bytes (<see cref="MCAhead::Ending"/>, <see cref="WhileGoing"/>).
+        /// </summary>
         class MCWorkers
         {
         public:
@@ -686,12 +805,20 @@ namespace
             MCAhead& _Ahead;
         };
 
-        std::expected<void, std::string> PatchAhead(const std::vector<MCPatchJob>& patches,
-                                                    std::vector<std::shared_ptr<MCContentStage::MCSource>>& sources,
-                                                    MCSteps& whole)
+        /// <summary>
+        /// Fetches the run's <paramref name="count"/> files on workers, one for each of <paramref name="sources"/>, none
+        /// more than <paramref name="most"/> ahead of those used, and hands each to <paramref name="use"/> in order on
+        /// staging's thread. A failure <paramref name="use"/> returns ends the run; the workers' fetches still under way
+        /// stop at their next bytes, what they have staying for the next attempt.
+        /// </summary>
+        /// <returns>Nothing, what failed, or stopped.</returns>
+        std::expected<void, std::string> FetchAhead(
+            size_t count, const std::vector<std::shared_ptr<MCContentStage::MCSource>>& sources, size_t most,
+            const MCFetchAt& fetch, const MCUseAt& use)
         {
             MCAhead ahead;
-            ahead.Fetched.resize(patches.size());
+            ahead.Most = most;
+            ahead.Fetched.resize(count);
             MCWorkers workers(*this, ahead);
 
             {
@@ -711,13 +838,13 @@ namespace
 
             for (const std::shared_ptr<MCContentStage::MCSource>& source : sources)
             {
-                workers.Threads.emplace_back([this, &ahead, &patches, worker = source]
-                                             { FetchAhead(*worker, ahead, patches); });
+                workers.Threads.emplace_back([this, &ahead, &fetch, worker = source]
+                                             { FetchOnWorker(*worker, ahead, fetch); });
             }
 
-            for (size_t index = 0; index < patches.size(); ++index)
+            for (size_t index = 0; index < count; ++index)
             {
-                std::expected<std::filesystem::path, std::string> fetched;
+                MCFetched fetched;
 
                 {
                     std::unique_lock lock(ahead.Lock);
@@ -744,26 +871,26 @@ namespace
                     return Stop();
                 }
 
-                auto patched = Patched(patches[index], fetched, whole);
+                auto used = use(index, fetched);
 
                 {
                     const std::scoped_lock lock(ahead.Lock);
-                    ahead.Applied = index + 1;
+                    ahead.Used = index + 1;
                 }
 
                 ahead.Changed.notify_all();
 
-                if (!patched)
+                if (!used)
                 {
-                    return patched;
+                    return used;
                 }
             }
 
             return {};
         }
 
-        /// <summary>A worker: fetches the next patch, no further ahead of those applied than there are workers.</summary>
-        void FetchAhead(MCContentStage::MCSource& source, MCAhead& ahead, const std::vector<MCPatchJob>& patches)
+        /// <summary>A worker: fetches the run's next file, no further ahead of those used than the run's most.</summary>
+        void FetchOnWorker(MCContentStage::MCSource& source, MCAhead& ahead, const MCFetchAt& fetch)
         {
             for (;;)
             {
@@ -771,14 +898,12 @@ namespace
 
                 {
                     std::unique_lock lock(ahead.Lock);
-                    ahead.Changed.wait(lock,
-                                       [&]
-                                       {
-                                           return ahead.Ending || ahead.Next >= patches.size() ||
-                                                  ahead.Next < ahead.Applied + PatchWorkers;
-                                       });
+                    const size_t count = ahead.Fetched.size();
+                    ahead.Changed.wait(
+                        lock,
+                        [&] { return ahead.Ending || ahead.Next >= count || ahead.Next < ahead.Used + ahead.Most; });
 
-                    if (ahead.Ending || ahead.Next >= patches.size() || _Stopped)
+                    if (ahead.Ending || ahead.Next >= count || _Stopped)
                     {
                         return;
                     }
@@ -786,7 +911,7 @@ namespace
                     index = ahead.Next++;
                 }
 
-                auto fetched = FetchPatch(source, patches[index], CountFor(patches[index].Patch.Name, true));
+                auto fetched = fetch(source, index, ahead.Ending);
 
                 {
                     const std::scoped_lock lock(ahead.Lock);
@@ -894,12 +1019,13 @@ namespace
         }
 
         /// <summary>
-        /// Downloads a zip and unpacks the entries wanted from it into staged/, each checked. The zip goes once done, or
-        /// when it's at fault; one whose entry couldn't be written (a full disk) stays for the next attempt.
+        /// Unpacks the entries wanted from a zip downloaded (<paramref name="path"/>, or what failed) into staged/, each
+        /// checked. The zip goes once done, or when it's at fault; one whose entry couldn't be written (a full disk)
+        /// stays for the next attempt.
         /// </summary>
-        std::expected<void, std::string> FetchAndUnpack(const MCContentList::MCZip& zip, const MCSteps& entries)
+        std::expected<void, std::string> Unpacked(const MCZipJob& job, const MCFetched& path)
         {
-            const auto path = FetchChecked(_Source, zip.Name, zip.Size, zip.Sha256, CountFor(zip.Name, false));
+            const MCContentList::MCZip& zip = job.Zip;
 
             if (!path)
             {
@@ -913,7 +1039,7 @@ namespace
 
             std::vector<MCContentStage::MCEntry> unpacked;
 
-            for (const MCStep& step : entries)
+            for (const MCStep& step : job.Entries)
             {
                 unpacked.push_back({.Path = step.File->Path,
                                     .To = StagedPath(step),
@@ -1101,6 +1227,8 @@ namespace
         std::map<std::string, uint64_t, std::less<>> _Prior;
         /// <summary>When the space check refused: the bytes short.</summary>
         std::optional<uint64_t> _Short;
+        /// <summary>How many zips are fetched at once: as many as the disk has room for, at most ZipWorkers (CheckSpace).</summary>
+        size_t _ZipsAhead = 1;
         /// <summary>The workers' sources while they fetch ahead.</summary>
         std::mutex _WorkersLock;
         std::vector<std::weak_ptr<MCContentStage::MCSource>> _Workers;

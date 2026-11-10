@@ -13,8 +13,9 @@ class MCUpdateDisk;
 /// of its own while the game plays. Each patched file is written anew in <c>Redux update/staged/</c> by applying its
 /// patch to the copy on disk (lib/MCFilePatch.h, HDiffPatch); one whose patch fails, or whose result isn't the list's
 /// hash, is fetched whole instead. Only the zips holding a fetched file are downloaded (into <c>Redux
-/// update/download/</c>, resuming where a cut-off download stopped), each checked against the list as it arrives, and
-/// only those entries unpacked, each checked as it's written. Every staged file is flushed. Arming it, once the program's half of the update is
+/// update/download/</c>, resuming where a cut-off download stopped; several at once when the disk has room), each
+/// checked against the list as it arrives, and only those entries unpacked, in order, each checked as it's written.
+/// Every staged file is flushed. Arming it, once the program's half of the update is
 /// in too, writes the journal-to-be (update/MCContentSwap.h), and the swap happens at the next start. Stopped midway,
 /// or staged and never armed, the next attempt keeps every staged file that's already right.
 /// </summary>
@@ -56,7 +57,7 @@ namespace MCContentStage
 
         /// <summary>
         /// Another source to the same host with a transfer of its own, so files are fetched several at once (staging's
-        /// patches, from other threads); this one's Cancel reaches it too. Here none: files are fetched one at a time.
+        /// patches and zips, from other threads); this one's Cancel reaches it too. Here none: files are fetched one at a time.
         /// </summary>
         virtual std::unique_ptr<MCSource> Another() { return nullptr; }
 

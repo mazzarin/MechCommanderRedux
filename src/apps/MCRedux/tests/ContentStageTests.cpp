@@ -56,6 +56,30 @@ namespace
         return release.Game.Path() / "Redux update" / "staged" / MCFileSystem::FromUtf8(path);
     }
 
+    /// <summary>The bytes of the file <see cref="AddZipped"/> adds as <paramref name="name"/>.</summary>
+    std::string ZippedText(std::string_view name, size_t bytes)
+    {
+        std::string text(name);
+        text.resize(std::max(bytes, name.size()), '.');
+        return text;
+    }
+
+    /// <summary>
+    /// Adds to <paramref name="release"/> a zip of its own, <c>name.zip</c>, holding one new file the copy lacks,
+    /// <c>data/name.fit</c> (<paramref name="bytes"/> long): it's fetched whole, as a first start fetches every file.
+    /// </summary>
+    void AddZipped(MCRelease& release, std::string_view name, size_t bytes)
+    {
+        const std::string path = std::format("data/{}.fit", name);
+        const std::string zipName = std::format("{}.zip", name);
+        const std::string text = ZippedText(name, bytes);
+        const std::string zip = StoredZip({{path, text}});
+        Write(release.Host.Path() / MCFileSystem::FromUtf8(zipName), zip);
+        release.List.Zips.push_back({zipName, zip.size(), MCSha256::Of(zip)});
+        release.List.Files.push_back(
+            {.Path = path, .Set = "game", .Size = text.size(), .Sha256 = MCSha256::Of(text), .Zip = zipName});
+    }
+
     /// <summary>
     /// A host that sends nothing: a fetch ends only when cancelled (or after a long while, so a cancel not made shows
     /// as a failed check, not a test that never ends).
@@ -167,6 +191,87 @@ namespace
         std::filesystem::path _Folder;
         std::shared_ptr<MCShared> _Shared;
         bool _First;
+    };
+
+    /// <summary>
+    /// The release's files hosted in a folder, from sources made from one another: one zip refused at once, the other
+    /// zips sent slowly, a few bytes at a time (other files at once); each zip's fetch counted as whole or cut short.
+    /// </summary>
+    class MCSlowZipSource final : public MCContentStage::MCSource
+    {
+    public:
+        struct MCShared
+        {
+            /// <summary>The zip refused (set before staging, only read after).</summary>
+            std::string Refused;
+            std::mutex Lock;
+            int ZipsWhole = 0;
+            int ZipsCutShort = 0;
+        };
+
+        MCSlowZipSource(std::filesystem::path folder, std::shared_ptr<MCShared> shared)
+            : _Folder(std::move(folder)), _Shared(std::move(shared))
+        {
+        }
+
+        std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
+                                               const std::function<bool(std::span<const char>)>& received) override
+        {
+            if (name == _Shared->Refused)
+            {
+                return std::unexpected("the host refused it");
+            }
+
+            const bool zip = name.ends_with(".zip");
+            const std::string bytes = MCContentFixture::Read(_Folder / MCFileSystem::FromUtf8(name));
+            std::error_code error;
+            uint64_t at = std::filesystem::exists(to) ? std::filesystem::file_size(to, error) : 0;
+            std::ofstream out(to, std::ios::binary | std::ios::app);
+
+            while (at < size)
+            {
+                const size_t count = zip ? std::min<size_t>(Piece, size - at) : static_cast<size_t>(size - at);
+
+                if (zip)
+                {
+                    std::this_thread::sleep_for(PieceTime);
+                }
+
+                out.write(bytes.data() + at, static_cast<std::streamsize>(count));
+                out.flush();
+                const bool goOn = received(std::span(bytes).subspan(static_cast<size_t>(at), count));
+                at += count;
+
+                if (!goOn)
+                {
+                    const std::scoped_lock lock(_Shared->Lock);
+                    _Shared->ZipsCutShort += zip && at < size ? 1 : 0;
+                    return std::unexpected("stopped");
+                }
+            }
+
+            const std::scoped_lock lock(_Shared->Lock);
+            _Shared->ZipsWhole += zip ? 1 : 0;
+            return {};
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view, size_t) override
+        {
+            return std::unexpected("not hosted");
+        }
+
+        std::unique_ptr<MCContentStage::MCSource> Another() override
+        {
+            return std::make_unique<MCSlowZipSource>(_Folder, _Shared);
+        }
+
+        /// <summary>A zip's bytes come this many at a time, each piece after this long: a 400-byte zip takes 1.25 s.</summary>
+        static constexpr size_t Piece = 8;
+        static constexpr std::chrono::milliseconds PieceTime{25};
+
+    private:
+        std::filesystem::path _Folder;
+        std::shared_ptr<MCShared> _Shared;
     };
 
     /// <summary>The bytes of the step at <paramref name="path"/>'s file, as listed.</summary>
@@ -636,6 +741,144 @@ TEST_CASE("content stage: patches are fetched several at once, each over a sourc
     CHECK_EQ(stopped.error_or(MCUpdateWork::MCFailure{}).Reason, std::string("stopped"));
     CHECK(std::ranges::count(stoppingShared->Asked, std::string("update-2.zip")) == 0);
     CHECK(stoppingShared->Asked.size() < size_t{Extra + 1});
+}
+
+TEST_CASE("content stage: zips are fetched several at once, each over a source of its own, unpacked in order; as many "
+          "at once as the disk has room for")
+{
+    constexpr int Extra = 7;
+    constexpr size_t ExtraBytes = 64;
+    const auto addZips = [](MCRelease& release)
+    {
+        for (int i = 0; i < Extra; ++i)
+        {
+            AddZipped(release, std::format("extra-{}", i), ExtraBytes);
+        }
+    };
+
+    MCRelease release(Group, "parallel-zips");
+    addZips(release);
+    const MCContentPlan::MCPlan plan = release.Plan();
+    REQUIRE_EQ(plan.Zips.size(), size_t{Extra + 1});
+    const auto shared = std::make_shared<MCParallelSource::MCShared>();
+    MCParallelSource source(release.Host.Path(), shared, true);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    uint64_t lastReceived = 0;
+    const auto staged = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
+                                              [&](const MCUpdateWork::MCProgressReport& report)
+                                              {
+                                                  lastReceived = report.Received;
+                                                  return true;
+                                              });
+    REQUIRE(staged.has_value());
+    CHECK_EQ(lastReceived, plan.DownloadBytes);
+    // At once, but never more than the workers; each zip once, and only the patch from staging's own source.
+    CHECK(shared->MostAtOnce > 1);
+    CHECK(shared->MostAtOnce <= 4);
+
+    for (const MCContentList::MCZip& zip : plan.Zips)
+    {
+        CHECK_EQ(std::ranges::count(shared->Asked, zip.Name), 1);
+    }
+
+    CHECK((shared->AskedFirst == std::vector<std::string>{"patches/terrain-1-2.hdiff"}));
+    REQUIRE(MCContentStage::Arm(*disk, release.Game.Path(), plan).has_value());
+    CHECK(MCContentSwap::Run(*disk, release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK_EQ(Read(release.Game.Path() / "data" / "changed.fit"), std::string("changed v2"));
+
+    for (int i = 0; i < Extra; ++i)
+    {
+        const std::string name = std::format("extra-{}", i);
+        CHECK_EQ(Read(release.Game.Path() / "data" / MCFileSystem::FromUtf8(name + ".fit")),
+                 ZippedText(name, ExtraBytes));
+    }
+
+    // Room beside the staged files and the patch for the biggest zip alone: one at a time from staging's own source, as
+    // before; for the two biggest, two at once at most.
+    for (const size_t room : {size_t{1}, size_t{2}})
+    {
+        MCRelease tight(Group, std::format("parallel-zips-room-{}", room));
+        addZips(tight);
+        const MCContentPlan::MCPlan tightPlan = tight.Plan();
+        std::vector<uint64_t> sizes;
+        std::ranges::transform(tightPlan.Zips, std::back_inserter(sizes), &MCContentList::MCZip::Size);
+        std::ranges::sort(sizes, std::greater<>());
+        uint64_t free = tightPlan.StagedBytes + tight.List.Files[0].Patches[0].Size;
+
+        for (size_t i = 0; i < room; ++i)
+        {
+            free += sizes[i];
+        }
+
+        MCRoomDisk roomDisk(free);
+        const auto tightShared = std::make_shared<MCParallelSource::MCShared>();
+        MCParallelSource tightSource(tight.Host.Path(), tightShared, true);
+        REQUIRE(
+            MCContentStage::Stage(roomDisk, tightSource, tight.Game.Path(), tightPlan, tight.List, GoOn).has_value());
+        CHECK(static_cast<size_t>(tightShared->MostAtOnce) <= room);
+        CHECK_EQ(tightShared->Asked.size(), tightPlan.Zips.size() + 1);
+
+        // Only room for one: each from staging's own source; one byte less refuses, as staging a zip at a time did.
+        if (room == 1)
+        {
+            CHECK_EQ(tightShared->AskedFirst.size(), tightPlan.Zips.size() + 1);
+            MCRelease refused(Group, "parallel-zips-short");
+            addZips(refused);
+            MCRoomDisk shortDisk(free - 1);
+            MCFolderSource refusedSource(refused.Host.Path());
+            const auto shortOf = MCContentStage::Stage(shortDisk, refusedSource, refused.Game.Path(), refused.Plan(),
+                                                       refused.List, GoOn);
+            CHECK(shortOf.error_or(MCUpdateWork::MCFailure{}).Reason.find("GB free") != std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("content stage: a zip that fails ends staging while the others download: their fetches stop at their next "
+          "bytes, what they have kept for the next attempt")
+{
+    constexpr int Extra = 3;
+    constexpr size_t ExtraBytes = 400;
+    MCRelease release(Group, "parallel-zips-fail");
+
+    for (int i = 0; i < Extra; ++i)
+    {
+        AddZipped(release, std::format("extra-{}", i), ExtraBytes);
+    }
+
+    const MCContentPlan::MCPlan plan = release.Plan();
+    const auto shared = std::make_shared<MCSlowZipSource::MCShared>();
+    shared->Refused = "update-2.zip";
+    MCSlowZipSource source(release.Host.Path(), shared);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const auto failed = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn);
+    REQUIRE(!failed.has_value());
+    CHECK(failed.error().Reason.find("update-2.zip didn't download: the host refused it") != std::string::npos);
+
+    {
+        const std::scoped_lock lock(shared->Lock);
+        CHECK_EQ(shared->ZipsWhole, 0);
+        CHECK(shared->ZipsCutShort > 0);
+    }
+
+    // What they had stays in download/; the next attempt goes on from it.
+    const std::filesystem::path download = release.Game.Path() / "Redux update" / "download";
+    int kept = 0;
+
+    for (int i = 0; i < Extra; ++i)
+    {
+        const std::filesystem::path path = download / std::format("extra-{}.zip", i);
+        kept += std::filesystem::exists(path) && std::filesystem::file_size(path) > 0 ? 1 : 0;
+    }
+
+    CHECK(kept > 0);
+    MCFolderSource working(release.Host.Path());
+    REQUIRE(MCContentStage::Stage(*disk, working, release.Game.Path(), plan, release.List, GoOn).has_value());
+
+    for (int i = 0; i < Extra; ++i)
+    {
+        const std::string name = std::format("extra-{}", i);
+        CHECK_EQ(Read(StagedAt(release, std::format("data/{}.fit", name))), ZippedText(name, ExtraBytes));
+    }
 }
 
 TEST_CASE("content stage: what an update dropped midway left in staged/ and download/ goes; this plan's own stays")

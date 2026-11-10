@@ -10944,6 +10944,12 @@ namespace
         const MCFitResult<std::string> text = file.Read<std::string>(name);
         return text.has_value() ? *text : std::string();
     }
+
+    /// <summary>Says which profile --hd-plate-names leaves out and why (a plate with no item is then explained).</summary>
+    void PlateProfileSkipped(std::string_view path, std::string_view why)
+    {
+        std::cerr << std::format("  --hd-plate-names: {} left out: {}\n", path, why);
+    }
 }
 
 /// <summary>
@@ -11004,14 +11010,21 @@ TEST_CASE_ISOLATED("tool: --hd-plate-names writes the items the store's and inve
 
         if (file.Open(path) != 0 || file.SeekBlock("Header") != 0)
         {
+            PlateProfileSkipped(path, "it doesn't open, or has no Header block");
             continue;
         }
 
         const std::string type = ProfileString(file, "FileType");
         const bool mech = type == "MechProfile";
 
-        if ((!mech && type != "GroundVehicleProfile") || file.SeekBlock("General") != 0)
+        if (!mech && type != "GroundVehicleProfile")
         {
+            continue; // Another kind of profile: no plate.
+        }
+
+        if (file.SeekBlock("General") != 0)
+        {
+            PlateProfileSkipped(path, "no General block");
             continue;
         }
 
@@ -11019,6 +11032,7 @@ TEST_CASE_ISOLATED("tool: --hd-plate-names writes the items the store's and inve
 
         if (!number.has_value() || *number < 0)
         {
+            PlateProfileSkipped(path, "no NameIndex");
             continue;
         }
 
@@ -11038,6 +11052,7 @@ TEST_CASE_ISOLATED("tool: --hd-plate-names writes the items the store's and inve
 
             if (!variant.has_value() || *variant < 0 || *variant >= static_cast<int32_t>(MechPlates.size()))
             {
+                PlateProfileSkipped(path, "no NameVariant naming a mech's plates");
                 continue;
             }
 
@@ -11062,6 +11077,7 @@ TEST_CASE_ISOLATED("tool: --hd-plate-names writes the items the store's and inve
 
         if (file.Open(path) != 0 || file.SeekBlock("General") != 0)
         {
+            PlateProfileSkipped(path, "it doesn't open, or has no General block");
             continue;
         }
 
@@ -11069,6 +11085,7 @@ TEST_CASE_ISOLATED("tool: --hd-plate-names writes the items the store's and inve
 
         if (!number.has_value() || *number < 0)
         {
+            PlateProfileSkipped(path, "no NameIndex");
             continue;
         }
 
@@ -11083,6 +11100,14 @@ TEST_CASE_ISOLATED("tool: --hd-plate-names writes the items the store's and inve
         }
     }
 
+    names.flush();
+
+    if (!names.good())
+    {
+        std::cerr << std::format("  --hd-plate-names: writing {} failed\n", *out);
+    }
+
+    REQUIRE(names.good());
     std::cout << std::format("  {} plates' items in {}\n", lines, *out);
     CHECK(lines > 0);
 }

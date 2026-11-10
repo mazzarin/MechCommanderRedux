@@ -1686,22 +1686,24 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
     return bloom.Handle.get();
 }
 
-void MCVulkanPresenter::HoldFramesOnGpu()
+std::expected<void, std::string> MCVulkanPresenter::HoldFramesOnGpu()
 {
     // With the third image SDL lets three frames be on the GPU (ThirdImageFrames): the game waits as two let it, so
     // what it shows is no older than with two.
     while (_Sent.size() >= FramesHeldOnGpu)
     {
         SDL_GPUFence* const oldest = _Sent.front();
-
-        if (!SDL_WaitForGPUFences(_Device.get(), true, &oldest, 1))
-        {
-            SDL_Log("MCVulkanPresenter: waiting for the frame before last's GPU work: %s", SDL_GetError());
-        }
-
+        const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &oldest, 1);
         SDL_ReleaseGPUFence(_Device.get(), oldest);
         _Sent.erase(_Sent.begin());
+
+        if (!waited)
+        {
+            return std::unexpected(SdlError("SDL_WaitForGPUFences (the frame before last's)"));
+        }
     }
+
+    return {};
 }
 
 std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame)
@@ -1737,7 +1739,11 @@ std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame
 
     if (MCFrameLog::Scope part("present.acquire"); true)
     {
-        HoldFramesOnGpu();
+        if (auto held = HoldFramesOnGpu(); !held)
+        {
+            SDL_SubmitGPUCommandBuffer(commands);
+            return held;
+        }
 
         if (!SDL_WaitAndAcquireGPUSwapchainTexture(commands, _Window.get(), &swapchain, &swapchainWidth,
                                                    &swapchainHeight))

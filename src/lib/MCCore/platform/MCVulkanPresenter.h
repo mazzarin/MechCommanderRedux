@@ -154,8 +154,11 @@ private:
     bool _ThirdImage = false;
     /// <summary>Port-only (with the third image): the fences of the frames presented last, oldest first.</summary>
     std::vector<SDL_GPUFence*> _Sent;
-    /// <summary>Port-only (with the third image): waits for the frame before last's GPU work (_Sent).</summary>
-    void HoldFramesOnGpu();
+    /// <summary>
+    /// Port-only (with the third image): waits for the frame before last's GPU work (_Sent); an error when the wait
+    /// fails (a lost device).
+    /// </summary>
+    std::expected<void, std::string> HoldFramesOnGpu();
     MCPresentation _Presentation;
     MCGpuHandle<SDL_GPUShader> _QuadShader;
     MCGpuHandle<SDL_GPUShader> _CompositeShader;

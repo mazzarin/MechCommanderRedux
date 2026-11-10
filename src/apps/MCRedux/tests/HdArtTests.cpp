@@ -5669,6 +5669,103 @@ TEST_CASE_ISOLATED("game: rain falls as the game's time goes, under an overcast,
 }
 
 /// <summary>
+/// HD weather's drops catching the light (port-only), on mission 1 drawn by the GPU, paused, in rain at night, by day,
+/// then at night again: the passes draw into a surface's glints only in the frames whose drops catch light (at night,
+/// by the units' headlights), and every frame is pixel for pixel the one drawn with the glints in every pass
+/// (MCVulkanRenderer::GlintsEveryFrame), the night after the day too.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: the GPU draws the light the drops catch only in frames where they catch some, the same frames")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || renderer == nullptr)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const float now = ScenarioTime;
+    const int lightingWas = GHdLighting;
+    const int weatherWas = GHdWeather;
+    GamePaused = true;
+    GHdWeather = HdWeatherRain;
+    // A frame's step of the game's time, and the frames of each stretch: night, day, night.
+    constexpr float Step = 1.0f / 30.0f;
+    constexpr int32_t Frames = 8;
+    constexpr std::array Stretches{HdLightingNight, HdLightingOn, HdLightingNight};
+
+    // Each frame shown, and its passes with the glints.
+    struct Run
+    {
+        std::vector<std::vector<SDL_Color>> Shown;
+        std::vector<int64_t> GlintPasses;
+    };
+
+    const auto run = [&](bool glintsEveryFrame)
+    {
+        MCVulkanRenderer::GlintsEveryFrame = glintsEveryFrame;
+        MCWeather::Clear();
+        Run made;
+
+        for (const int lighting : Stretches)
+        {
+            GHdLighting = lighting;
+
+            for (int32_t frame = 0; frame < Frames; ++frame)
+            {
+                ScenarioTime = now + Step * static_cast<float>(made.Shown.size());
+                MCTestGame::RunFrame(FrameSeconds);
+                auto shown = display->ReadFrame();
+                REQUIRE(shown.has_value());
+                made.Shown.push_back(std::move(*shown));
+                made.GlintPasses.push_back(renderer->LastFrameGlintPasses());
+            }
+        }
+
+        return made;
+    };
+
+    // The frames as drawn first (the glints made when the first drop catches light), then as every pass drew them.
+    const Run caught = run(false);
+    const Run every = run(true);
+    MCVulkanRenderer::GlintsEveryFrame = false;
+    GHdLighting = lightingWas;
+    GHdWeather = weatherWas;
+    ScenarioTime = now;
+
+    // The passes with the glints in each stretch, and the frames unlike the ones drawn with the glints in every pass.
+    std::array<int64_t, Stretches.size()> passes{};
+    std::array<int64_t, Stretches.size()> everyPasses{};
+    size_t unlike = 0;
+
+    for (size_t i = 0; i < caught.Shown.size(); ++i)
+    {
+        passes[i / Frames] += caught.GlintPasses[i];
+        everyPasses[i / Frames] += every.GlintPasses[i];
+        unlike += std::ranges::equal(caught.Shown[i], every.Shown[i], SameColor) ? 0 : 1;
+    }
+
+    std::cout << std::format("  passes with the glints: night {}, day {}, night {} (every pass: {}, {}, {}); {} of {} "
+                             "frames unlike\n",
+                             passes[0], passes[1], passes[2], everyPasses[0], everyPasses[1], everyPasses[2], unlike,
+                             caught.Shown.size());
+    CHECK(passes[0] > 0);
+    CHECK(passes[1] == 0);
+    CHECK(passes[2] > 0);
+    CHECK(everyPasses[1] > 0);
+    CHECK(unlike == 0);
+}
+
+/// <summary>
 /// HD weather's lightning, on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
 /// interface: in a downpour (its strikes made StrikesTimes as often) as the game's time goes the world flashes brighter
 /// than the overcast now and then and dims again; each strike's thunder comes after its flash; the same times show the

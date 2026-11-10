@@ -258,8 +258,18 @@ namespace
     constexpr uint32_t IndexPixelBytes = 4;
     /// <summary>Port-only (HD weather): the surfaces' glint targets (Surface::Glints), premultiplied RGBA8.</summary>
     constexpr SDL_GPUTextureFormat GlintFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    /// <summary>A surface's colour targets: its colours, its indices and (port-only) its glints.</summary>
+    /// <summary>
+    /// A surface's colour targets: its colours, its indices and (port-only) its glints, which a pass has only when the
+    /// frame's draws on the surface catch light (Surface::CatchesLight).
+    /// </summary>
     constexpr uint32_t SurfaceTargets = 3;
+    constexpr uint32_t TargetsWithoutGlints = 2;
+    /// <summary>
+    /// Port-only (HD weather): MCVulkanRenderer::_SurfacePipelines' sets, for passes without a surface's glints and
+    /// with them.
+    /// </summary>
+    constexpr size_t WithoutGlints = 0;
+    constexpr size_t WithGlints = 1;
     /// <summary>
     /// Port-only: the channels of a surface's targets a pipeline writes (Record::Channels), four bits a target in
     /// SurfaceTargets' order, red first: all of one target, and the parts the masks of makePipeline leave written.
@@ -281,15 +291,19 @@ namespace
     constexpr uint32_t UnseenTileIndex = 0x10;
 
     /// <summary>
-    /// Clears <paramref name="targets"/> as a window's new pixels start: index 0 everywhere, in the colour of palette
-    /// entry 0 (<paramref name="zero"/>); no glints.
+    /// Clears <paramref name="targets"/> (a surface's, with its glints or without) as a window's new pixels start:
+    /// index 0 everywhere, in the colour of palette entry 0 (<paramref name="zero"/>); no glints.
     /// </summary>
-    void ClearBlank(std::span<SDL_GPUColorTargetInfo, SurfaceTargets> targets, const SDL_Color& zero)
+    void ClearBlank(std::span<SDL_GPUColorTargetInfo> targets, const SDL_Color& zero)
     {
         constexpr float Unit = 255.0f;
         targets[0].clear_color = SDL_FColor{zero.r / Unit, zero.g / Unit, zero.b / Unit, 1.0f};
         targets[1].clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
-        targets[2].clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+
+        if (targets.size() == SurfaceTargets)
+        {
+            targets[2].clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+        }
 
         for (SDL_GPUColorTargetInfo& target : targets)
         {
@@ -990,9 +1004,10 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     // A surface's targets: its colours, its indices and (port-only, HD weather) its glints. Opaque draws write all
     // three; blended draws blend their premultiplied colour over the colours and the glints (ONE, ONE_MINUS_SRC_ALPHA)
     // and leave the indices. A shadow (HD lighting) takes the colours' alpha down by its own (ZERO,
-    // ONE_MINUS_SRC_ALPHA) and leaves the rest, as an index-only draw leaves all but the indices.
-    const auto makePipeline = [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false, bool shadow = false,
-                                  bool marks = false, SDL_GPUShader* fragmentShader = nullptr)
+    // ONE_MINUS_SRC_ALPHA) and leaves the rest, as an index-only draw leaves all but the indices. Port-only (HD
+    // weather): each is made for `targetCount` targets, with the glints and without (the first two alone).
+    const auto makePipeline = [&](uint32_t targetCount, SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false,
+                                  bool shadow = false, bool marks = false, SDL_GPUShader* fragmentShader = nullptr)
     {
         SDL_GPUColorTargetDescription targets[SurfaceTargets]{};
         targets[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -1059,41 +1074,44 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
         pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
         pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-        pipeline.target_info.num_color_targets = SurfaceTargets;
+        pipeline.target_info.num_color_targets = targetCount;
         pipeline.target_info.color_target_descriptions = targets;
         return MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline),
                                                     MCGpuRelease{device});
     };
 
-    const auto makeDrawPipelines = [&](DrawPipelines& pipelines, SDL_GPUShader& fragmentShader)
+    const auto makeSurfacePipelines = [&](SurfacePipelines& pipelines, uint32_t targetCount)
     {
-        SDL_GPUShader& vertexShader = *renderer->_VertexShader;
-        pipelines.Opaque = makePipeline(vertexShader, false, false, false, false, &fragmentShader);
-        pipelines.Blend = makePipeline(vertexShader, true, false, false, false, &fragmentShader);
-        pipelines.IndexOnly = makePipeline(vertexShader, false, true, false, false, &fragmentShader);
-        pipelines.BlendMarks = makePipeline(vertexShader, true, false, false, true, &fragmentShader);
-        pipelines.IndexMarks = makePipeline(vertexShader, false, true, false, true, &fragmentShader);
+        const auto makeDrawPipelines = [&](DrawPipelines& draws, SDL_GPUShader& fragmentShader)
+        {
+            SDL_GPUShader& vertexShader = *renderer->_VertexShader;
+            draws.Opaque = makePipeline(targetCount, vertexShader, false, false, false, false, &fragmentShader);
+            draws.Blend = makePipeline(targetCount, vertexShader, true, false, false, false, &fragmentShader);
+            draws.IndexOnly = makePipeline(targetCount, vertexShader, false, true, false, false, &fragmentShader);
+            draws.BlendMarks = makePipeline(targetCount, vertexShader, true, false, false, true, &fragmentShader);
+            draws.IndexMarks = makePipeline(targetCount, vertexShader, false, true, false, true, &fragmentShader);
+        };
+
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], *renderer->_FragmentShader);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], *renderer->_BasicFragmentShader);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], *renderer->_HdFragmentShader);
+        pipelines.Shadow = makePipeline(targetCount, *renderer->_VertexShader, false, false, true);
+        pipelines.Terrain = makePipeline(targetCount, *renderer->_TerrainShader, false, false, false, false,
+                                         renderer->_TerrainFragmentShader.get());
+        pipelines.TerrainSeam = makePipeline(targetCount, *renderer->_TerrainShader, true, false, false, false,
+                                             renderer->_TerrainFragmentShader.get());
+        pipelines.Ground = makePipeline(targetCount, *renderer->_QuadShader, false, false, false, false,
+                                        renderer->_GroundShader.get());
+        pipelines.GroundOver =
+            makePipeline(targetCount, *renderer->_QuadShader, true, false, false, false, renderer->_GroundShader.get());
+        pipelines.GroundIndex =
+            makePipeline(targetCount, *renderer->_QuadShader, false, true, false, false, renderer->_GroundShader.get());
     };
 
-    makeDrawPipelines(renderer->_Pipelines[static_cast<size_t>(DrawVariant::Every)], *renderer->_FragmentShader);
-    makeDrawPipelines(renderer->_Pipelines[static_cast<size_t>(DrawVariant::Basic)], *renderer->_BasicFragmentShader);
-    makeDrawPipelines(renderer->_Pipelines[static_cast<size_t>(DrawVariant::Hd)], *renderer->_HdFragmentShader);
-    renderer->_ShadowPipeline = makePipeline(*renderer->_VertexShader, false, false, true);
-    renderer->_TerrainPipeline =
-        makePipeline(*renderer->_TerrainShader, false, false, false, false, renderer->_TerrainFragmentShader.get());
-    renderer->_TerrainSeamPipeline =
-        makePipeline(*renderer->_TerrainShader, true, false, false, false, renderer->_TerrainFragmentShader.get());
-    renderer->_GroundPipeline =
-        makePipeline(*renderer->_QuadShader, false, false, false, false, renderer->_GroundShader.get());
-    renderer->_GroundOverPipeline =
-        makePipeline(*renderer->_QuadShader, true, false, false, false, renderer->_GroundShader.get());
-    renderer->_GroundIndexPipeline =
-        makePipeline(*renderer->_QuadShader, false, true, false, false, renderer->_GroundShader.get());
+    makeSurfacePipelines(renderer->_SurfacePipelines[WithoutGlints], TargetsWithoutGlints);
+    makeSurfacePipelines(renderer->_SurfacePipelines[WithGlints], SurfaceTargets);
 
-    if (!std::ranges::all_of(renderer->_Pipelines, &DrawPipelines::Made) || renderer->_ShadowPipeline == nullptr ||
-        renderer->_TerrainPipeline == nullptr || renderer->_TerrainSeamPipeline == nullptr ||
-        renderer->_GroundPipeline == nullptr || renderer->_GroundOverPipeline == nullptr ||
-        renderer->_GroundIndexPipeline == nullptr)
+    if (!std::ranges::all_of(renderer->_SurfacePipelines, &SurfacePipelines::Made))
     {
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
     }
@@ -1217,10 +1235,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _DrawBuffer.reset();
     _Nearest.reset();
     ReleaseTerrainMesh();
-    _Pipelines = {};
-    _ShadowPipeline.reset();
-    _TerrainPipeline.reset();
-    _TerrainSeamPipeline.reset();
+    _SurfacePipelines = {};
     _MoviePipeline.reset();
     _MovieShader.reset();
     _VertexShader.reset();
@@ -1510,6 +1525,17 @@ bool MCVulkanRenderer::DrawPipelines::Made() const
 {
     return Opaque != nullptr && Blend != nullptr && IndexOnly != nullptr && BlendMarks != nullptr &&
            IndexMarks != nullptr;
+}
+
+bool MCVulkanRenderer::SurfacePipelines::Made() const
+{
+    return std::ranges::all_of(Draws, &DrawPipelines::Made) && Shadow != nullptr && Terrain != nullptr &&
+           TerrainSeam != nullptr && Ground != nullptr && GroundOver != nullptr && GroundIndex != nullptr;
+}
+
+const MCVulkanRenderer::SurfacePipelines& MCVulkanRenderer::PipelinesFor(const Surface& surface) const
+{
+    return _SurfacePipelines[surface.CatchesLight ? WithGlints : WithoutGlints];
 }
 
 SDL_GPUGraphicsPipeline* MCVulkanRenderer::DrawPipelines::For(const Record& record) const
@@ -4899,6 +4925,12 @@ void MCVulkanRenderer::AddParticle(uint16_t surface, const MCParticleCommand& co
         draw[4] = static_cast<int32_t>(command.Style);
         draw[5] = std::bit_cast<int32_t>(command.Tip);
         draw[10] = static_cast<int32_t>(command.Glint);
+
+        // Port-only (HD weather): the surface's passes this frame draw into its glints (draw.pshader's CaughtLight).
+        if (command.Glint != 0)
+        {
+            _Surfaces[surface].CatchesLight = true;
+        }
     }
 }
 
@@ -5873,8 +5905,9 @@ std::expected<void, std::string> MCVulkanRenderer::UploadHdTile(ChunkedUpload& u
     return {};
 }
 
-void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
-                                   const TerrainDraw& draw, std::span<const std::byte> frameUniforms)
+void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass,
+                                   const SurfacePipelines& pipelines, const Surface& surface, const TerrainDraw& draw,
+                                   std::span<const std::byte> frameUniforms)
 {
     const Surface& fog = _Surfaces[draw.FogIndex];
 
@@ -5920,7 +5953,7 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     uniforms.Pane[1] = frame.PaneY;
     uniforms.Pane[3] = _TerrainMesh.ReliefAtlas.Handle != nullptr ? _TerrainMesh.ReliefScale : 0;
 
-    SDL_BindGPUGraphicsPipeline(&pass, _TerrainPipeline.get());
+    SDL_BindGPUGraphicsPipeline(&pass, pipelines.Terrain.get());
     const SDL_GPUTextureSamplerBinding fogBinding{fog.Index.Handle.get(), _Nearest.get()};
     SDL_BindGPUVertexSamplers(&pass, 0, &fogBinding, 1);
     SDL_GPUBuffer* const buffers[2] = {_TerrainMesh.Cells.get(), _TerrainMesh.Images.get()};
@@ -5956,7 +5989,7 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     if (_TerrainMesh.HdAtlas.Handle != nullptr)
     {
         uniforms.Pane[2] = 1;
-        SDL_BindGPUGraphicsPipeline(&pass, _TerrainSeamPipeline.get());
+        SDL_BindGPUGraphicsPipeline(&pass, pipelines.TerrainSeam.get());
         SDL_PushGPUVertexUniformData(&commands, 0, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(&pass, 6, draw.CellCount, 0, 0);
     }
@@ -6287,9 +6320,9 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     return plan;
 }
 
-void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
-                                      const MCRect& clip, KeptGroundMode mode, std::optional<size_t> from,
-                                      std::array<int32_t, 2> shift)
+void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass,
+                                      const SurfacePipelines& pipelines, const Surface& surface, const MCRect& clip,
+                                      KeptGroundMode mode, std::optional<size_t> from, std::array<int32_t, 2> shift)
 {
     // The drawn pixels showing the clip's window pixels, every one of which the ground's shader draws.
     const MCRect drawn =
@@ -6305,9 +6338,9 @@ void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURen
         {from.has_value() ? _KeptGround.Indices[*from].Handle.get() : _Blank.Handle.get(), _Nearest.get()},
     };
 
-    SDL_BindGPUGraphicsPipeline(&pass, mode == KeptGroundMode::Over      ? _GroundOverPipeline.get()
-                                       : mode == KeptGroundMode::Indices ? _GroundIndexPipeline.get()
-                                                                         : _GroundPipeline.get());
+    SDL_BindGPUGraphicsPipeline(&pass, mode == KeptGroundMode::Over      ? pipelines.GroundOver.get()
+                                       : mode == KeptGroundMode::Indices ? pipelines.GroundIndex.get()
+                                                                         : pipelines.Ground.get());
     SDL_BindGPUFragmentSamplers(&pass, 0, bindings, 2);
     SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
     SDL_PushGPUFragmentUniformData(&commands, 0, &ground, sizeof(ground));
@@ -6426,8 +6459,7 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
                                     surface.DrawnHeight),
                       EnsureTexture(surface.Index, IndexFormat, target, surface.DrawnWidth, surface.DrawnHeight),
                       EnsureTexture(surface.Copy, IndexFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, surface.DrawnWidth,
-                                    surface.DrawnHeight),
-                      EnsureTexture(surface.Glints, GlintFormat, target, surface.DrawnWidth, surface.DrawnHeight)})
+                                    surface.DrawnHeight)})
     {
         if (!made)
         {
@@ -6435,10 +6467,12 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
         }
     }
 
-    SDL_GPUColorTargetInfo clear[SurfaceTargets]{};
+    // Port-only (HD weather): the glints go, made again at the new size by the next pass that draws into them.
+    Release(surface.Glints);
+    surface.GlintsHeld = false;
+    SDL_GPUColorTargetInfo clear[TargetsWithoutGlints]{};
     clear[0].texture = surface.Target.Handle.get();
     clear[1].texture = surface.Index.Handle.get();
-    clear[2].texture = surface.Glints.Handle.get();
     ClearBlank(clear, _Colors[0]);
 
     for (SDL_GPUColorTargetInfo& info : clear)
@@ -6446,7 +6480,7 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
         info.store_op = SDL_GPU_STOREOP_STORE;
     }
 
-    SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, SurfaceTargets, nullptr));
+    SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, TargetsWithoutGlints, nullptr));
     surface.Copied = MCRect{0, 0, -1, -1};
     surface.DrawnSinceCopy.clear();
     return {};
@@ -6462,6 +6496,15 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
     BeginRecording();
     PlaceSurfaces(underlays);
+
+    // Port-only (HD weather), for the tests: every surface drawn as one whose draws catch light.
+    if (GlintsEveryFrame)
+    {
+        for (Surface& surface : _Surfaces)
+        {
+            surface.CatchesLight = true;
+        }
+    }
 
     // The new tables (before the palette goes up: a colour change refits them all).
     if (auto uploaded = UploadTables(); !uploaded)
@@ -6817,7 +6860,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         }};
 
         if (SDL_GPUGraphicsPipeline* const pipeline =
-                record.Shadow ? _ShadowPipeline.get() : _Pipelines[static_cast<size_t>(record.Variant)].For(record);
+                record.Shadow ? PipelinesFor(surface).Shadow.get()
+                              : PipelinesFor(surface).Draws[static_cast<size_t>(record.Variant)].For(record);
             pipeline != boundPipeline)
         {
             SDL_BindGPUGraphicsPipeline(into, pipeline);
@@ -6918,8 +6962,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             for (auto made :
                  {EnsureTexture(kept.Colors[into], SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, usage, width, height),
-                  EnsureTexture(kept.Indices[into], IndexFormat, usage, width, height),
-                  EnsureTexture(kept.Glints, GlintFormat, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET, width, height)})
+                  EnsureTexture(kept.Indices[into], IndexFormat, usage, width, height)})
             {
                 if (!made)
                 {
@@ -6931,17 +6974,16 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                         Release(kept.Indices[i]);
                     }
 
-                    Release(kept.Glints);
                     kept.Held = false;
                     return false;
                 }
             }
 
             // Drawn whole over nothing; shifted, every pixel is copied or drawn again; else kept but where drawn again.
-            SDL_GPUColorTargetInfo targets[SurfaceTargets]{};
+            // Port-only (HD weather): no glints (the terrain catches no light), so through the pipelines without them.
+            SDL_GPUColorTargetInfo targets[TargetsWithoutGlints]{};
             targets[0].texture = kept.Colors[into].Handle.get();
             targets[1].texture = kept.Indices[into].Handle.get();
-            targets[2].texture = kept.Glints.Handle.get();
 
             for (SDL_GPUColorTargetInfo& target : targets)
             {
@@ -6952,28 +6994,28 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                 target.store_op = SDL_GPU_STOREOP_STORE;
             }
 
-            targets[2].load_op = SDL_GPU_LOADOP_DONT_CARE;
-            targets[2].store_op = SDL_GPU_STOREOP_DONT_CARE;
-            SDL_GPURenderPass* const keeping = SDL_BeginGPURenderPass(&commands, targets, SurfaceTargets, nullptr);
+            const SurfacePipelines& plain = _SurfacePipelines[WithoutGlints];
+            SDL_GPURenderPass* const keeping =
+                SDL_BeginGPURenderPass(&commands, targets, TargetsWithoutGlints, nullptr);
             startPass(keeping, surface);
 
             if (shifted)
             {
-                DrawKeptGround(commands, *keeping, surface, draw.Frame.Clip, KeptGroundMode::Copy, kept.Current,
+                DrawKeptGround(commands, *keeping, plain, surface, draw.Frame.Clip, KeptGroundMode::Copy, kept.Current,
                                plan.Shift);
             }
 
             if (plan.Whole)
             {
-                DrawTerrain(commands, *keeping, surface, draw, std::as_bytes(std::span(&frame, 1)));
+                DrawTerrain(commands, *keeping, plain, surface, draw, std::as_bytes(std::span(&frame, 1)));
             }
 
             for (const MCRect& part : plan.Redrawn)
             {
                 const SDL_Rect scissor{part.X0, part.Y0, part.X1 - part.X0 + 1, part.Y1 - part.Y0 + 1};
                 SDL_SetGPUScissor(keeping, &scissor);
-                DrawKeptGround(commands, *keeping, surface, draw.Frame.Clip, KeptGroundMode::Clear);
-                DrawTerrain(commands, *keeping, surface, draw, std::as_bytes(std::span(&frame, 1)));
+                DrawKeptGround(commands, *keeping, plain, surface, draw.Frame.Clip, KeptGroundMode::Clear);
+                DrawTerrain(commands, *keeping, plain, surface, draw, std::as_bytes(std::span(&frame, 1)));
             }
 
             SDL_EndGPURenderPass(keeping);
@@ -7055,10 +7097,32 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         if (passSurface != record.SurfaceIndex)
         {
             endPass();
-            SDL_GPUColorTargetInfo targets[SurfaceTargets]{};
+
+            // Port-only (HD weather): the glints only when the frame's draws on the surface catch light; else its
+            // colours and indices alone, through the pipelines without them. Glints made now, or left behind by a frame
+            // drawn without them, start with no light caught: every draw over them since would have covered them.
+            const bool glints = surface.CatchesLight;
+
+            if (glints && (surface.Glints.Handle == nullptr || surface.Glints.Width != surface.Target.Width ||
+                           surface.Glints.Height != surface.Target.Height))
+            {
+                constexpr SDL_GPUTextureUsageFlags usage =
+                    SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+
+                if (auto made =
+                        EnsureTexture(surface.Glints, GlintFormat, usage, surface.Target.Width, surface.Target.Height);
+                    !made)
+                {
+                    return made;
+                }
+
+                surface.GlintsHeld = false;
+            }
+
+            SDL_GPUColorTargetInfo allTargets[SurfaceTargets]{};
+            const std::span targets(allTargets, glints ? SurfaceTargets : TargetsWithoutGlints);
             targets[0].texture = surface.Target.Handle.get();
             targets[1].texture = surface.Index.Handle.get();
-            targets[2].texture = surface.Glints.Handle.get();
 
             // Port-only: a surface's first pass of the frame starting with a fill of all of it (the screen's wipe to
             // its key, shown over the world) needn't load what the surface held, every texel of which the fill
@@ -7107,11 +7171,21 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                                              ? SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f}
                                              : SDL_FColor{shown.r / Unit, shown.g / Unit, shown.b / Unit, 1.0f};
                 targets[1].clear_color = SDL_FColor{*wipe / Unit, 0.0f, 0.0f, 0.0f};
-                targets[2].clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
                 wiped = 1;
             }
 
-            pass = SDL_BeginGPURenderPass(&commands, targets, SurfaceTargets, nullptr);
+            if (glints)
+            {
+                targets[2].texture = surface.Glints.Handle.get();
+                targets[2].load_op =
+                    wipe.has_value() || !surface.GlintsHeld ? SDL_GPU_LOADOP_CLEAR : targets[0].load_op;
+                targets[2].clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+                targets[2].store_op = SDL_GPU_STOREOP_STORE;
+                surface.GlintsHeld = true;
+                ++_FrameGlintPasses;
+            }
+
+            pass = SDL_BeginGPURenderPass(&commands, targets.data(), static_cast<uint32_t>(targets.size()), nullptr);
             passSurface = record.SurfaceIndex;
             startPass(pass, surface);
         }
@@ -7119,17 +7193,20 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         if (record.TerrainDraw >= 0)
         {
             const TerrainDraw& draw = _TerrainDraws[static_cast<size_t>(record.TerrainDraw)];
+            const SurfacePipelines& pipelines = PipelinesFor(surface);
 
             if (keptSurface == record.SurfaceIndex)
             {
-                DrawKeptGround(commands, *pass, surface, draw.Frame.Clip, KeptGroundMode::Over, _KeptGround.Current);
-                DrawKeptGround(commands, *pass, surface, draw.Frame.Clip, KeptGroundMode::Indices, _KeptGround.Current);
+                DrawKeptGround(commands, *pass, pipelines, surface, draw.Frame.Clip, KeptGroundMode::Over,
+                               _KeptGround.Current);
+                DrawKeptGround(commands, *pass, pipelines, surface, draw.Frame.Clip, KeptGroundMode::Indices,
+                               _KeptGround.Current);
                 keptSurface = -1;
             }
             else
             {
                 const FrameUniforms frame = recordFrame(surface, record);
-                DrawTerrain(commands, *pass, surface, draw, std::as_bytes(std::span(&frame, 1)));
+                DrawTerrain(commands, *pass, pipelines, surface, draw, std::as_bytes(std::span(&frame, 1)));
             }
 
             // The terrain binds and pushes its own.
@@ -7187,10 +7264,19 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
     endPass();
 
-    for (Surface& surface : _Surfaces)
+    for (size_t i = 0; i < _Surfaces.size(); ++i)
     {
+        Surface& surface = _Surfaces[i];
         surface.LastBlended = std::move(surface.Blended);
         surface.Blended.clear();
+
+        // Port-only (HD weather): a surface drawn without its glints left them behind (the composite reads none).
+        if (i < begun.size() && begun[i] && !surface.CatchesLight)
+        {
+            surface.GlintsHeld = false;
+        }
+
+        surface.CatchesLight = false;
 
         if (!surface.Key)
         {
@@ -7198,6 +7284,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             Release(surface.Index);
             Release(surface.Copy);
             Release(surface.Glints);
+            surface.GlintsHeld = false;
         }
     }
 
@@ -7240,6 +7327,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
     _FrameUploads = UploadTally{};
     _LastFrameBatches = _FrameBatches;
     _FrameBatches = 0;
+    _LastFrameGlintPasses = _FrameGlintPasses;
+    _FrameGlintPasses = 0;
     _Recording = false;
     ++_Frame;
     return {};
@@ -7337,8 +7426,15 @@ std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceGlintTexture(const MCWi
 {
     const MCAddressKey canonical = SurfaceKeyOf(window);
     const auto found = std::ranges::find_if(_Surfaces, [&](const Surface& surface)
-                                            { return surface.Key == canonical && surface.Glints.Handle != nullptr; });
-    return found != _Surfaces.end() ? found->Glints.Handle : nullptr;
+                                            { return surface.Key == canonical && surface.Target.Handle != nullptr; });
+
+    if (found == _Surfaces.end())
+    {
+        return nullptr;
+    }
+
+    // Port-only (HD weather): none caught (the blank texel) when the last frame drew the surface without them.
+    return found->GlintsHeld && found->Glints.Handle != nullptr ? found->Glints.Handle : _Blank.Handle;
 }
 
 std::pair<float, float> MCVulkanRenderer::SurfaceScale(const MCWindow& window) const

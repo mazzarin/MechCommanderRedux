@@ -142,7 +142,8 @@ public:
     /// <summary>
     /// Port-only (HD weather's drops catching the light): the light the raindrops on <paramref name="window"/>'s
     /// surface caught (premultiplied RGBA, the size of its colour texture: Surface::Glints), as <see cref="Execute"/>
-    /// left it; null when the window has no surface yet.
+    /// left it; a texture of one transparent texel when its last frame's draws caught none; null when the window has
+    /// no surface yet.
     /// </summary>
     std::shared_ptr<SDL_GPUTexture> SurfaceGlintTexture(const MCWindow& window) const;
 
@@ -214,6 +215,18 @@ public:
 
     /// <summary>Port-only: the draw calls of the last frame <see cref="Execute"/> ran (each a batch of draws).</summary>
     int64_t LastFrameBatches() const { return _LastFrameBatches; }
+
+    /// <summary>
+    /// Port-only (HD weather): the render passes of the last frame <see cref="Execute"/> ran that drew into a surface's
+    /// glints (Surface::Glints), those on a surface whose draws caught light.
+    /// </summary>
+    int64_t LastFrameGlintPasses() const { return _LastFrameGlintPasses; }
+
+    /// <summary>
+    /// Port-only (HD weather), for the tests: every surface drawn with its glints, as though its draws caught light in
+    /// every frame (the frames the same either way).
+    /// </summary>
+    static inline bool GlintsEveryFrame = false;
 
     /// <summary>The terrain layers drawn from the mesh so far.</summary>
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
@@ -328,9 +341,18 @@ private:
         /// <summary>
         /// Port-only (HD weather): a third colour target, the light the raindrops caught (MCParticleCommand::Glint,
         /// premultiplied RGBA), which the composite adds over the lit world. Every draw covers it as it covers the
-        /// colours (an opaque one clears it), so a unit in front of a drop hides its light.
+        /// colours (an opaque one clears it), so a unit in front of a drop hides its light. Only a frame whose draws
+        /// on the surface catch light (CatchesLight) draws into it, the first made then; the others' passes have the
+        /// colours and indices alone, and the composite reads no light caught.
         /// </summary>
         Texture Glints;
+        /// <summary>
+        /// Port-only (HD weather): whether a draw recorded on the surface this frame caught light (a glint), and
+        /// whether Glints holds what the frames drawn so far left in it (not since a frame drawn without it, nor
+        /// since it was made).
+        /// </summary>
+        bool CatchesLight = false;
+        bool GlintsHeld = false;
         /// <summary>The window rectangles blended draws covered in the frame being recorded, and in the last one run.</summary>
         std::vector<MCRect> Blended;
         std::vector<MCRect> LastBlended;
@@ -507,8 +529,6 @@ private:
     {
         std::array<Texture, 2> Colors;
         std::array<Texture, 2> Indices;
-        /// <summary>The glints the terrain's draws write while it is drawn (its pipelines' third target), never read.</summary>
-        Texture Glints;
         /// <summary>The pair holding the ground, and whether one does.</summary>
         size_t Current = 0;
         bool Held = false;
@@ -1020,9 +1040,16 @@ private:
                                                   uint32_t x, uint32_t y);
     /// <summary>Releases the terrain mesh's textures and buffers.</summary>
     void ReleaseTerrainMesh();
-    /// <summary>Execution: draws a terrain layer in the render pass under way.</summary>
-    void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
-                     const TerrainDraw& draw, std::span<const std::byte> frameUniforms);
+    /// <summary>The pipelines drawing into a surface's targets, with its glints or without (defined below).</summary>
+    struct SurfacePipelines;
+    /// <summary>
+    /// Port-only (HD weather): the pipelines for a pass on <paramref name="surface"/> this frame: with its glints when
+    /// its draws catch light.
+    /// </summary>
+    const SurfacePipelines& PipelinesFor(const Surface& surface) const;
+    /// <summary>Execution: draws a terrain layer in the render pass under way, through <paramref name="pipelines"/>.</summary>
+    void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
+                     const Surface& surface, const TerrainDraw& draw, std::span<const std::byte> frameUniforms);
     /// <summary>
     /// Port-only (KeepGround): what the kept ground depends on for <paramref name="draw"/> on
     /// <paramref name="surface"/> but the camera, the fog and the colour cycle's step, as bytes:
@@ -1041,11 +1068,12 @@ private:
     /// <summary>
     /// Port-only (KeepGround): draws kept pair <paramref name="from"/> (none for Clear) as <paramref name="mode"/>
     /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), at the drawn pixels showing
-    /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size.
+    /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size, through
+    /// <paramref name="pipelines"/>.
     /// </summary>
-    void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
-                        const MCRect& clip, KeptGroundMode mode, std::optional<size_t> from = std::nullopt,
-                        std::array<int32_t, 2> shift = {});
+    void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
+                        const Surface& surface, const MCRect& clip, KeptGroundMode mode,
+                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {});
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
         std::span<const std::reference_wrapper<const Surface>> surfaces);
@@ -1090,28 +1118,44 @@ private:
         SDL_GPUGraphicsPipeline* For(const Record& record) const;
     };
 
-    /// <summary>The draws' pipelines, a set for each draw variant (DrawVariant's order).</summary>
-    std::array<DrawPipelines, DrawVariants> _Pipelines;
-    /// <summary>Port-only: shadows (HD lighting), which take the colours' alpha down by theirs and leave the rest.</summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _ShadowPipeline;
-    /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the terrain's fragment shader).</summary>
+    /// <summary>
+    /// The pipelines that draw into a surface's targets. Port-only (HD weather): a set for passes with its glints and
+    /// one for passes with its colours and indices alone (Surface::CatchesLight).
+    /// </summary>
+    struct SurfacePipelines
+    {
+        /// <summary>The draws' pipelines, a set for each draw variant (DrawVariant's order).</summary>
+        std::array<DrawPipelines, DrawVariants> Draws;
+        /// <summary>Port-only: shadows (HD lighting), which take the colours' alpha down by theirs and leave the rest.</summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Shadow;
+        /// <summary>
+        /// The terrain layer's (opaque, with the terrain's fragment shader) and, port-only, its seam pass's, blended
+        /// (shaders/terrain.vshader).
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Terrain;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> TerrainSeam;
+        /// <summary>
+        /// Port-only: the kept ground's (shaders/ground.pshader): opaque (Copy, Clear), blended (Over) and the indices
+        /// alone (Indices).
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Ground;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> GroundOver;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> GroundIndex;
+        /// <summary>Whether every pipeline was made.</summary>
+        bool Made() const;
+    };
+
+    /// <summary>The surfaces' pipelines: for passes without their glints, then for those with them.</summary>
+    std::array<SurfacePipelines, 2> _SurfacePipelines;
+    /// <summary>The terrain layer's vertex shader.</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;
-    /// <summary>Port-only: the terrain's seam pass, blended (shaders/terrain.vshader).</summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainSeamPipeline;
     TerrainMeshState _TerrainMesh;
     /// <summary>Port-only: the terrain meshes uploaded (TerrainMeshState::Upload).</summary>
     uint64_t _TerrainUploads = 0;
-    /// <summary>
-    /// Port-only: the kept ground, and the shaders and pipelines that draw it (shaders/ground.pshader): opaque (Copy,
-    /// Clear), blended (Over) and the indices alone (Indices).
-    /// </summary>
+    /// <summary>Port-only: the kept ground, and the shaders that draw it (shaders/ground.pshader).</summary>
     KeptGround _KeptGround;
     MCGpuHandle<SDL_GPUShader> _QuadShader;
     MCGpuHandle<SDL_GPUShader> _GroundShader;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundPipeline;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundOverPipeline;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundIndexPipeline;
     /// <summary>
     /// Port-only (HD movies): the movie conversion's shader and pipeline (quad.vshader and shaders/movie.pshader, onto
     /// one RGBA8 target, opaque).
@@ -1440,6 +1484,9 @@ private:
     /// <summary>Port-only: the frame's draw calls so far, and the last frame's (LastFrameBatches).</summary>
     int64_t _FrameBatches = 0;
     int64_t _LastFrameBatches = 0;
+    /// <summary>Port-only (HD weather): the frame's passes with the glints so far, and the last frame's.</summary>
+    int64_t _FrameGlintPasses = 0;
+    int64_t _LastFrameGlintPasses = 0;
     UploadTally _LastFrameUploads;
     /// <summary>The span walks' state (as the software renderer keeps its own).</summary>
     MCSpanState _Spans;

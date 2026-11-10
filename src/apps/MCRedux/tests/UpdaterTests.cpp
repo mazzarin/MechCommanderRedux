@@ -3,6 +3,8 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiPort.h"
+#include "gui/MCGuiSystem.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogPort.h"
@@ -20,7 +22,8 @@
 // The updater (main/MCUpdater.h), with a stand-in for the Mac app's Sparkle: the check made once a start, each step
 // reported in turn, the player's answers passed on, the feed's text kept to what the fonts write; and the main menu's
 // UPDATE button in ORIGINAL CINEMA's place (logistics/MCUpdatePage.h), grayed with nothing new and amber with a line
-// under QUIT while an update waits, its page installing, skipping and restarting.
+// under QUIT while an update waits, its page installing, skipping and restarting; and the version running named under
+// the menu's window.
 
 namespace
 {
@@ -47,6 +50,53 @@ namespace
     {
         MCScreenInput::RealClick(object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2);
         Frames();
+    }
+
+    /// <summary>
+    /// The main menu's window (mainscreen.fit's element 9, MM_WN00), the first row of its background's copyright lines
+    /// and their colour (MM_BKGD's entry 58).
+    /// </summary>
+    constexpr int32_t MenuWindowElement = 9;
+    constexpr int32_t CopyrightTop = 444;
+    constexpr uint8_t CopyrightOrange = 58;
+
+    /// <summary>Where pixels of one colour lie, and how many there are.</summary>
+    struct MCInk
+    {
+        int32_t Count = 0;
+        int32_t Left = INT32_MAX;
+        int32_t Top = INT32_MAX;
+        int32_t Right = -1;
+        int32_t Bottom = -1;
+    };
+
+    /// <summary>
+    /// The pixels in the copyright lines' colour between the main menu's window and the copyright lines, on the screen
+    /// as shown.
+    /// </summary>
+    MCInk VersionInk(MCGuiObject& window)
+    {
+        const std::vector<uint8_t> shown = MCScreenInput::ShownScreen();
+        const int32_t width = ScreenPort()->Bitmap().XMax + 1;
+        MCInk ink;
+
+        for (int32_t y = window.GlobalY() + window.Height(); y < CopyrightTop; y++)
+        {
+            for (int32_t x = window.GlobalX(); x < window.GlobalX() + window.Width(); x++)
+            {
+                if (shown[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] ==
+                    CopyrightOrange)
+                {
+                    ink.Count++;
+                    ink.Left = std::min(ink.Left, x);
+                    ink.Top = std::min(ink.Top, y);
+                    ink.Right = std::max(ink.Right, x);
+                    ink.Bottom = std::max(ink.Bottom, y);
+                }
+            }
+        }
+
+        return ink;
     }
 
     /// <summary>Whether <paramref name="a"/> and <paramref name="b"/> hold the same pixels.</summary>
@@ -178,6 +228,43 @@ TEST_CASE_ISOLATED("game: without an updater the main menu keeps ORIGINAL CINEMA
     CHECK(SamePixels(*cinema->GetUpPicture(), *LogArt("mm_xbh08.tga")));
     CHECK(!cinema->Disabled);
     CHECK(!UpdatePageShown());
+}
+
+TEST_CASE("updater: the main menu's version line names Redux HD and the release running, without its build")
+{
+    CHECK_EQ(VersionLineText("0.6.3 (899)"), std::string("Redux HD 0.6.3"));
+    CHECK_EQ(VersionLineText("0.6.3"), std::string("Redux HD 0.6.3"));
+    CHECK(VersionLineText("").empty());
+}
+
+TEST_CASE_ISOLATED("game: the main menu names the version running under its window's right corner, in the copyright "
+                   "lines' orange")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    Frames();
+    const std::shared_ptr<MCGuiObject> window = GlobalLog()->MainScreen->Element<MCGuiObject>(MenuWindowElement);
+    REQUIRE(window != nullptr);
+
+    // Without an updater there is no version to name.
+    CHECK_EQ(VersionInk(*window).Count, 0);
+
+    // With one: its letters right-aligned at the window's edge (the font's glyphs end in a blank column, the window's
+    // picture in its frame's shadow), halfway between the window and the copyright lines.
+    const MCFakeUpdater updater;
+    Frames();
+    MCScreenInput::SaveShot("version line", MCScreenInput::ScreenHash());
+    const MCInk ink = VersionInk(*window);
+    const int32_t windowRight = window->GlobalX() + window->Width();
+    const int32_t windowBottom = window->GlobalY() + window->Height();
+    CHECK(ink.Count > 0);
+    CHECK_EQ(ink.Right, windowRight - 2);
+    CHECK(ink.Left > window->GlobalX() + window->Width() / 2);
+    CHECK_EQ(ink.Top - windowBottom, CopyrightTop - 1 - ink.Bottom);
 }
 
 TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an update waits, and its page installs it")

@@ -12,7 +12,7 @@ class MCLogPort;
 // updates itself (main/MCUpdater.h), lit while an update waits and grayed otherwise; and the UPDATE page it opens over
 // the menu, in the preferences pages' style: the new version and the one running, what it brings, its INSTALL and SKIP;
 // then the download's progress, and RESTART once it is in (quitting installs it too). DONE closes the page and leaves
-// the update waiting.
+// the update waiting. Port-only (Redux HD): the main menu also names the version running, under its window.
 
 /// <summary>The pictures of a main menu button: up (also lit), pressed and grayed.</summary>
 struct MCMenuButtonPictures
@@ -35,6 +35,19 @@ MCMenuButtonPictures UpdateButtonPictures(std::span<const uint8_t> palette);
 /// screen; the button follows the updater from then on.
 /// </summary>
 void AddUpdatePage(MCGenericScreen& mainScreen);
+
+/// <summary>
+/// Port-only (Redux HD): adds to <paramref name="mainScreen"/> the line naming the version running, "Redux HD 0.6.3"
+/// (the updater's running version without its build), small and right-aligned under the menu's window, in the
+/// copyright lines' orange; nothing shows without a running version.
+/// </summary>
+void AddVersionLine(MCGenericScreen& mainScreen);
+
+/// <summary>
+/// What the version line says for the running version as shown, <paramref name="running"/>: "Redux HD 0.6.3" for
+/// "0.6.3 (899)"; nothing without one.
+/// </summary>
+std::string VersionLineText(std::string_view running);
 
 /// <summary>UPDATE: the main menu's page shows (each screen that shows the page has its own, all showing the updater).</summary>
 void ShowUpdatePage();

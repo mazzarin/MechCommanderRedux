@@ -941,6 +941,78 @@ namespace
         std::function<bool()> _Shown;
     };
 
+    /// <summary>
+    /// The colour of the main menu's version line: its background's copyright lines' (6-bit RGB, MM_BKGD's entry 58,
+    /// the logo's orange too).
+    /// </summary>
+    constexpr std::array<int32_t, 3> CopyrightOrange = {53, 28, 0};
+
+    /// <summary>The first row of the main menu background's copyright lines (MM_BKGD), under its window.</summary>
+    constexpr int32_t CopyrightTop = 444;
+
+    /// <summary>What the version line writes: Redux HD and the release running (<c>{}</c>).</summary>
+    constexpr std::string_view VersionLineFormat = "Redux HD {}";
+
+    /// <summary>Where the running version as shown ("0.6.3 (899)") gives its build: the release is what comes before.</summary>
+    constexpr std::string_view BuildOpening = " (";
+
+    /// <summary>The white font's rows its capitals and digits fill (the two under them are for descenders).</summary>
+    constexpr int32_t WhiteFontInkRows = 6;
+
+    /// <summary>
+    /// The main menu's window round its buttons (mainscreen.fit's picture, MM_WN00): the element that holds
+    /// <paramref name="button"/>; null when none does.
+    /// </summary>
+    std::shared_ptr<MCGuiObject> WindowRound(const MCGenericScreen& mainScreen, MCGuiObject& button)
+    {
+        // Element 0 is the screen itself.
+        for (size_t index = 1; index < mainScreen.Elements.size(); index++)
+        {
+            const std::shared_ptr<MCGuiObject> element = mainScreen.Elements[index].lock();
+
+            if (element != nullptr && element.get() != &button && element->X() <= button.X() &&
+                element->Y() <= button.Y() && element->X() + element->Width() >= button.X() + button.Width() &&
+                element->Y() + element->Height() >= button.Y() + button.Height())
+            {
+                return element;
+            }
+        }
+
+        return nullptr;
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD): the main menu's version line, Redux HD and the release running (the updater's running
+    /// version), right-aligned under the menu's window in the white font, in the copyright lines' colour; it writes
+    /// nothing without a running version (no updater). The mouse goes through it.
+    /// </summary>
+    class MCVersionLine : public MCLogObject
+    {
+    public:
+        explicit MCVersionLine(uint8_t color) : _Color(color) {}
+
+        void Draw() override
+        {
+            const std::string text = VersionLineText(MCUpdater::RunningVersion());
+
+            if (text.empty())
+            {
+                return;
+            }
+
+            const MCGuiFont& font = *WhiteFont;
+            VfxStringDraw(Lport()->Frame(), Width() - font.Width(text), 0, font.FontData.Bytes(), text,
+                          FontColors(_Color));
+        }
+
+        bool DrawsLive() override { return true; }
+
+        std::shared_ptr<MCGuiObject> FindObject(int32_t /*xPos*/, int32_t /*yPos*/) override { return nullptr; }
+
+    private:
+        uint8_t _Color;
+    };
+
     /// <summary>The UPDATE button.</summary>
     MCGuiHandle<MCLogButton> MenuButton;
 
@@ -1097,6 +1169,36 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     Home = mainScreen.weak_from_this();
     MCUpdater::SetListener(Refresh);
     Refresh();
+}
+
+std::string VersionLineText(std::string_view running)
+{
+    const std::string_view release = running.substr(0, running.find(BuildOpening));
+    return release.empty() ? std::string() : std::format(VersionLineFormat, release);
+}
+
+void AddVersionLine(MCGenericScreen& mainScreen)
+{
+    const std::shared_ptr<MCLogButton> cinema = mainScreen.CinemaButton.Lock();
+    const std::shared_ptr<MCGuiObject> window = cinema == nullptr ? nullptr : WindowRound(mainScreen, *cinema);
+
+    if (window == nullptr)
+    {
+        SDL_Log("Version line: the main menu has no window round ORIGINAL CINEMA to write under");
+        return;
+    }
+
+    // The letters halfway between the window's bottom and the copyright lines, the line as wide as the window.
+    const int32_t bottom = window->Y() + window->Height();
+    mainScreen.CreateChild<MCVersionLine>(
+        [&](MCVersionLine& line)
+        {
+            line.Init(window->X(), bottom + (CopyrightTop - bottom - WhiteFontInkRows) / 2, window->Width(),
+                      WhiteFont->Height());
+            line.SetTransparent(true);
+            line.ShowGuiWindow(true);
+        },
+        Nearest(mainScreen.Palette, CopyrightOrange));
 }
 
 MCGuiHandle<MCLogObject> AddUpdateLine(MCGuiObject& screen, std::span<const uint8_t> palette, int32_t xPos,

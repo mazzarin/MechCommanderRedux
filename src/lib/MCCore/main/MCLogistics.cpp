@@ -267,6 +267,8 @@ auto MCLogistics::Start() -> void
         AddUpdatePage(*MainScreen);
     }
 
+    // Port (Redux HD): the version running, under the menu's window.
+    AddVersionLine(*MainScreen);
     MCUpdater::CheckAtStart();
     // Port (personal): the reports start once a run (main/MCTelemetry.h); the main menu shows their notice or
     // question when due (MCMission::Run).

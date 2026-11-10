@@ -169,6 +169,19 @@ namespace
     constexpr uint32_t GroundFillShift = 26;
     constexpr uint32_t GroundFillMost = 63;
     /// <summary>
+    /// Port-only: a KindHd draw's op.w, its edges: a picture's border is hard (HdEdges::Picture; shaders/draw.pshader's
+    /// PictureBorder).
+    /// </summary>
+    constexpr uint32_t PictureBorder = 1u;
+    /// <summary>
+    /// Port-only: the most keyed holes a KindHd draw carries that later copies fill (FillHoles), in its draw's span and
+    /// walk from FilledHolesSlot, two words a hole: its first original pixel and the one past its last, x in the low
+    /// half and y in the high (shaders/draw.pshader's FilledHolesMost).
+    /// </summary>
+    constexpr int32_t FilledHolesMost = 4;
+    constexpr size_t FilledHolesSlot = 12;
+    constexpr uint32_t HalfShift = 16;
+    /// <summary>
     /// Port-only (HD lighting's headlights): a unit's draw (MCRenderer::StandingScope) carries the window row its feet
     /// stand on in its colour's bits from FeetShift, FeetSteps a row and 1 more (0: none, so at most FeetMost), which
     /// its pixels write with their indices (shaders/draw.pshader's FeetShift). Only the kinds whose colour leaves those
@@ -2467,26 +2480,115 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
         return;
     }
 
+    // Port-only: on a sharp screen, a copy filling an HD picture's keyed hole edge to edge keeps the hole's edges hard.
+    if (SharpScreenSurface(surface))
+    {
+        FillHoles(surface, at);
+    }
+
+    const std::optional<uint8_t> key = command.ColorKey ? std::optional(command.Key) : std::nullopt;
+
     // Port-only: on a sharp screen, a frame shown over the source's pixels (a movie's HD frame) is drawn over the part
     // of the copy it covers, blended after the pixels themselves, which keep their indices.
     if (const std::optional<ShownHdPart> shown = ShownHdPartOf(surface, command))
     {
         Add(surface, source->Kind, source->Index, at, from, op, color, 0, 0);
-        AddHd(surface, *shown->Frame, shown->At, shown->From, std::nullopt,
-              command.ColorKey ? std::optional(command.Key) : std::nullopt, HdColours::AsMade);
+        AddHd(surface, *shown->Frame, shown->At, shown->From, std::nullopt, key, HdColours::AsMade, HdEdges::Picture);
         return;
     }
 
-    // Port-only: on a sharp screen, a picture the HD art pack has is shown from the pack; the copy keeps the indices.
-    if (const std::shared_ptr<const MCHdArt::Frame> hd = HdPictureFor(surface, command.Source.get());
-        hd != nullptr && AddHd(surface, *hd, at, from, std::nullopt,
-                               command.ColorKey ? std::optional(command.Key) : std::nullopt, HdColours::AsMade))
+    // Port-only: on a sharp screen, a picture the HD art pack has is shown from the pack; the copy keeps the indices. A
+    // keyed one is kept for the copies that may fill its holes (FillHoles).
+    if (const std::shared_ptr<const MCHdArt::Frame> hd = HdPictureFor(surface, command.Source.get()); hd != nullptr)
     {
-        Add(surface, source->Kind, source->Index, at, from, op | IndexOnly, color, 0, 0);
-        return;
+        const size_t drawn = _Draws.size();
+
+        if (AddHd(surface, *hd, at, from, std::nullopt, key, HdColours::AsMade, HdEdges::Picture))
+        {
+            if (key.has_value() && _Draws.size() > drawn)
+            {
+                _KeyedPictures.push_back(KeyedPicture{surface, drawn, hd, at, from, *key, 0});
+            }
+
+            Add(surface, source->Kind, source->Index, at, from, op | IndexOnly, color, 0, 0);
+            return;
+        }
     }
 
     Add(surface, source->Kind, source->Index, at, from, op, color, 0, 0);
+}
+
+void MCVulkanRenderer::FillHoles(uint16_t surface, const Quad& at)
+{
+    for (KeyedPicture& keyed : _KeyedPictures | std::views::reverse)
+    {
+        if (keyed.Surface != surface || keyed.Holes >= FilledHolesMost || at[0] < keyed.At[0] || at[1] < keyed.At[1] ||
+            at[2] > keyed.At[2] || at[3] > keyed.At[3])
+        {
+            continue;
+        }
+
+        // The copy's place in the picture's pixels (inclusive), every one of them the key.
+        const Quad hole = {keyed.From[0] + at[0] - keyed.At[0], keyed.From[1] + at[1] - keyed.At[1],
+                           keyed.From[0] + at[2] - keyed.At[0], keyed.From[1] + at[3] - keyed.At[1]};
+
+        if (!KeyedThroughout(*keyed.Frame, hole, keyed.Key))
+        {
+            continue;
+        }
+
+        // The hole's first pixel and the one past its last, as the draw carries them (a hole it carries already, the same
+        // copy made again, takes no more room).
+        const auto first =
+            static_cast<int32_t>(static_cast<uint32_t>(hole[0]) | static_cast<uint32_t>(hole[1]) << HalfShift);
+        const auto past =
+            static_cast<int32_t>(static_cast<uint32_t>(hole[2] + 1) | static_cast<uint32_t>(hole[3] + 1) << HalfShift);
+        std::array<int32_t, 20>& draw = _Draws[keyed.Draw];
+        bool carried = false;
+
+        for (int32_t held = 0; held < keyed.Holes; ++held)
+        {
+            const size_t slot = FilledHolesSlot + static_cast<size_t>(held) * 2;
+            carried = carried || (draw[slot] == first && draw[slot + 1] == past);
+        }
+
+        if (!carried)
+        {
+            const size_t slot = FilledHolesSlot + static_cast<size_t>(keyed.Holes) * 2;
+            draw[slot] = first;
+            draw[slot + 1] = past;
+            ++keyed.Holes;
+        }
+    }
+}
+
+bool MCVulkanRenderer::KeyedThroughout(const MCHdArt::Frame& frame, const Quad& rect, uint8_t key)
+{
+    const int32_t width = frame.OriginalWidth();
+    const int32_t height = frame.OriginalHeight();
+
+    if (rect[0] < 0 || rect[1] < 0 || rect[2] >= width || rect[3] >= height || rect[2] < rect[0] || rect[3] < rect[1] ||
+        frame.Indices.size() != static_cast<size_t>(width) * height * MCHdArt::IndexBytes)
+    {
+        return false;
+    }
+
+    for (int32_t y = rect[1]; y <= rect[3]; ++y)
+    {
+        for (int32_t x = rect[0]; x <= rect[2]; ++x)
+        {
+            const size_t at = (static_cast<size_t>(y) * width + x) * MCHdArt::IndexBytes;
+
+            // As the draw shader's HdTexel leaves the key out: a pixel with an index (shaders/draw.pshader's
+            // HasIndexIn) of the key.
+            if (frame.Indices[at + 1] < MCHdArt::BakedShadow || frame.Indices[at] != key)
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPictureFor(uint16_t target, const MCWindow& window)
@@ -3293,7 +3395,8 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
         return false;
     }
 
-    // The colour field carries the frame's scale (shaders/draw.pshader's KindHd), and the key a keyed copy leaves out.
+    // The colour field carries the frame's scale (shaders/draw.pshader's KindHd), and the key a keyed copy leaves out;
+    // the last field a picture's hard border.
     uint32_t op = (edges == HdEdges::Smooth ? KindHdSmooth : KindHd) | AlphaBlend | (key.has_value() ? ColorKey : 0) |
                   (colours == HdColours::AsMade ? HdAsMade : 0) | (frame.Blended ? HdLight : 0u) | SwaysOf(frame);
     uint32_t before = 0;
@@ -3305,8 +3408,9 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
     }
 
     const uint32_t color = static_cast<uint32_t>(frame.Scale) | static_cast<uint32_t>(key.value_or(0)) << 8;
+    const uint32_t border = edges == HdEdges::Picture ? PictureBorder : 0u;
 
-    if (Add(surface, SourceKind::Picture, *picture, at, from, op, color, before, 0))
+    if (Add(surface, SourceKind::Picture, *picture, at, from, op, color, before, border))
     {
         ++_HdDrawn;
     }
@@ -7076,6 +7180,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
     _Records.clear();
     _Draws.clear();
+    _KeyedPictures.clear();
     _Uploads.clear();
     _TerrainDraws.clear();
     _Staging.clear();

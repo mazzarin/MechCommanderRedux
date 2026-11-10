@@ -635,13 +635,16 @@ private:
     };
 
     /// <summary>
-    /// Port-only: where an HD art frame's edges come from: its alpha (a menu's picture, an effect's blended pixels), or
-    /// the original's pixels it draws, smoothed at the output's resolution (KindHdSmooth: a sprite's or an overlay's
-    /// frame, whose alpha is only their mask scaled up, steps and all).
+    /// Port-only: where an HD art frame's edges come from: its alpha (an effect's blended pixels), the same within a
+    /// hard border (a picture's: a menu's art, a movie's frame, whose rectangle's edge is drawn whole, nothing outside it
+    /// counting as undrawn, so pictures side by side or one in another's hole meet without a seam), or the original's
+    /// pixels it draws, smoothed at the output's resolution (KindHdSmooth: a sprite's or an overlay's frame, whose alpha
+    /// is only their mask scaled up, steps and all).
     /// </summary>
     enum class HdEdges : uint8_t
     {
         Frame,
+        Picture,
         Smooth,
     };
 
@@ -766,6 +769,19 @@ private:
     /// isn't a sharp screen.
     /// </summary>
     std::shared_ptr<const MCHdArt::Frame> HdPictureFor(uint16_t target, const MCWindow& window);
+
+    /// <summary>
+    /// Port-only: a copy onto sharp screen <paramref name="surface"/> over <paramref name="at"/> (window pixels) that
+    /// lies wholly in the key of a keyed HD picture drawn before it since the draws last ran (_KeyedPictures) fills that
+    /// part of its hole: the picture's draw carries it (at most FilledHolesMost), and where the copy meets the hole's
+    /// edges they aren't softened. Bilinear filtering took the key's transparent texels into the picture's pixels beside
+    /// the hole, and the transparent outside into the copy's border pixels: each covered only part of the pixels where
+    /// they meet, and the black under them showed as a dark line (shaders/draw.pshader's HdColourBesideHoles).
+    /// </summary>
+    void FillHoles(uint16_t surface, const Quad& at);
+    /// <summary>Whether every original pixel of <paramref name="frame"/> in <paramref name="rect"/> (inclusive) is
+    /// <paramref name="key"/>, as a keyed copy leaves it out.</summary>
+    static bool KeyedThroughout(const MCHdArt::Frame& frame, const Quad& rect, uint8_t key);
 
     /// <summary>Where a copy onto a sharp screen shows a frame shown over its source's pixels (OnShowHdPicture).</summary>
     struct ShownHdPart
@@ -1320,6 +1336,23 @@ private:
     void DrawSharpPicture(uint16_t surface, Picture& picture, const Quad& at, const Quad& from, uint32_t tableRow,
                           uint32_t flags);
 
+    /// <summary>
+    /// Port-only: a keyed copy of an HD picture onto a sharp screen since the draws last ran (FillHoles): its surface,
+    /// its draw's place in _Draws, the picture, where it was copied (window pixels) from which of its pixels, the key,
+    /// and how many filled holes its draw carries.
+    /// </summary>
+    struct KeyedPicture
+    {
+        uint16_t Surface = 0;
+        size_t Draw = 0;
+        std::shared_ptr<const MCHdArt::Frame> Frame;
+        Quad At{};
+        Quad From{};
+        uint8_t Key = 0;
+        int32_t Holes = 0;
+    };
+
+    std::vector<KeyedPicture> _KeyedPictures;
     /// <summary>The frame's pictures in use (their textures).</summary>
     std::vector<std::shared_ptr<SDL_GPUTexture>> _FramePictures;
     /// <summary>The HD colours of the frame's pictures that are HD art frames, by their place in _FramePictures.</summary>

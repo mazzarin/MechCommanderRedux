@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCVulkanRenderer.h"
+#include "color/MCPalette.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCSharpLines.h"
@@ -400,10 +401,6 @@ namespace
 
         return colors;
     }
-
-    /// <summary>The free colours (AlphaTable and FindClosest leave out the system's 0..9 and 246..255).</summary>
-    constexpr int32_t FirstFreeColor = 10;
-    constexpr int32_t LastFreeColor = 245;
 
     /// <summary>Key spaces, so one block's bytes read as different formats don't share an atlas place.</summary>
     enum class ImageKind : uint64_t
@@ -1870,57 +1867,23 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTables()
 
 void MCVulkanRenderer::FitTable(uint32_t row, std::span<float, 4> fit) const
 {
-    // What table T does to the free colours, fitted as T(c) = c * k + C over them all (one k, a C a channel); drawn
-    // as C over the pixel with coverage 1 - k.
-    constexpr int32_t count = LastFreeColor - FirstFreeColor + 1;
-    const std::span<const uint8_t> table =
-        std::span<const uint8_t>(_Tables).subspan(static_cast<size_t>(row) * 256, 256);
-    double meanIn[3] = {};
-    double meanOut[3] = {};
-
-    for (int32_t i = FirstFreeColor; i <= LastFreeColor; ++i)
-    {
-        const SDL_Color& in = _Colors[i];
-        const SDL_Color& mapped = _Colors[table[i]];
-        meanIn[0] += in.r;
-        meanIn[1] += in.g;
-        meanIn[2] += in.b;
-        meanOut[0] += mapped.r;
-        meanOut[1] += mapped.g;
-        meanOut[2] += mapped.b;
-    }
-
-    for (size_t c = 0; c < 3; ++c)
-    {
-        meanIn[c] /= count * 255.0;
-        meanOut[c] /= count * 255.0;
-    }
-
-    double covariance = 0.0;
-    double variance = 0.0;
-
-    for (int32_t i = FirstFreeColor; i <= LastFreeColor; ++i)
-    {
-        const SDL_Color& in = _Colors[i];
-        const SDL_Color& mapped = _Colors[table[i]];
-        const double x[3] = {in.r / 255.0, in.g / 255.0, in.b / 255.0};
-        const double y[3] = {mapped.r / 255.0, mapped.g / 255.0, mapped.b / 255.0};
-
-        for (size_t c = 0; c < 3; ++c)
+    // What table T does to the free colours (FitColorTable), drawn as C over the pixel with coverage 1 - k.
+    const MCColorTable table =
+        std::span<const uint8_t>(_Tables).subspan(static_cast<size_t>(row) * 256).first<MCPalette::FadeTableSize>();
+    const MCTableFit fitted = FitColorTable(
+        [this](int32_t index)
         {
-            covariance += (x[c] - meanIn[c]) * (y[c] - meanOut[c]);
-            variance += (x[c] - meanIn[c]) * (x[c] - meanIn[c]);
-        }
-    }
+            const SDL_Color& colour = _Colors[static_cast<size_t>(index)];
+            return std::array<uint8_t, 3>{colour.r, colour.g, colour.b};
+        },
+        table);
 
-    const double k = std::clamp(variance > 0.0 ? covariance / variance : 1.0, 0.0, 1.0);
-
-    for (size_t c = 0; c < 3; ++c)
+    for (size_t c = 0; c < fitted.Offset.size(); ++c)
     {
-        fit[c] = static_cast<float>(std::clamp(meanOut[c] - k * meanIn[c], 0.0, 1.0));
+        fit[c] = static_cast<float>(fitted.Offset[c]);
     }
 
-    fit[3] = static_cast<float>(1.0 - k);
+    fit[3] = static_cast<float>(1.0 - fitted.Slope);
 }
 
 auto MCVulkanRenderer::AtlasFor(int32_t width, int32_t height, const std::function<void(std::span<uint8_t>)>& decode)

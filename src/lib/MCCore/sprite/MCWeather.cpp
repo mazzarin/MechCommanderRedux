@@ -10,6 +10,7 @@
 #include "lib/MCWorkers.h"
 #include "main/MCMissionGlobals.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCPaletteNight.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCWeatherPace.h"
 #include "terrain/MCTerrain.h"
@@ -2420,6 +2421,24 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (Redux HD): <paramref name="speckle"/>'s colours through <paramref name="dim"/>, the dimming of the
+    /// world they're laid over (MCPaletteNight::NightFit): a speck of colour c laid over the dimmed world shows as a
+    /// flake or drop drawn into it before it was dimmed, so long as it shows c * Slope + Offset.
+    /// </summary>
+    void DimSpecks(MCWeather::MCSpeckle& speckle, const MCTableFit& dim)
+    {
+        const auto dimmed = [&dim](MCWeather::MCSpeckLayer& layer)
+        {
+            layer.Red = static_cast<float>(layer.Red * dim.Slope + dim.Offset[0]);
+            layer.Green = static_cast<float>(layer.Green * dim.Slope + dim.Offset[1]);
+            layer.Blue = static_cast<float>(layer.Blue * dim.Slope + dim.Offset[2]);
+        };
+
+        std::ranges::for_each(speckle.Layers, dimmed);
+        dimmed(speckle.OnWater);
+    }
+
+    /// <summary>
     /// Port-only (HD weather's snow): the specks for the flakes the view left out (State::LeftOut) at the game's time
     /// <paramref name="now"/>, dropping those gone: each size's still falling, drifting downwind by the gusts at the
     /// view's middle, then those landed and resting, as AddFlake and AddSplashes draw them (no paler than
@@ -3226,6 +3245,13 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     const bool night = state.Settings.Light > 0.0f && MCSceneLights::TimeOfDay() != MCTimeOfDay::Day;
     const float palest = night ? MCSceneLights::ShownLighting().SelfLit : 1.0f;
     state.Speckle = Specks(state, camera, look, now, palest);
+
+    // Port-only (Redux HD): where the palette draws the night, it dims the world the flakes and drops are drawn into,
+    // so the specks the composite lays over the world after it are dimmed as they would have been.
+    if (const std::optional<MCTableFit> dim = MCPaletteNight::NightFit(); dim.has_value())
+    {
+        DimSpecks(state.Speckle, *dim);
+    }
 
     AddMarks(state, camera, catching, palest);
     state.SnowDrawn = state.SnowDrawn || (look.Snows && !state.Drops.empty());

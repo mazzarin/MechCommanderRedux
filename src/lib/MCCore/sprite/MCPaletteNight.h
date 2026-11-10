@@ -16,6 +16,7 @@
 #include <vector>
 
 struct MCPane;
+struct MCTableFit;
 
 namespace MCPaletteNight
 {
@@ -46,6 +47,12 @@ namespace MCPaletteNight
     /// dark), none at 1 (the ground lit as where a headlight's beam's middle meets the ground, or more).
     /// </summary>
     int32_t DimFor(float lift);
+    /// <summary>
+    /// How the night dims a colour where no beam lifts it (the palette's <see cref="NightDim"/> table as the GPU draws it
+    /// over colours that aren't the palette's, MCTableFit): for what the composite lays over the world after it's
+    /// dimmed (HD weather's specks). None when the night isn't drawn this way (<see cref="Shown"/>) or can't be.
+    /// </summary>
+    std::optional<MCTableFit> NightFit();
 
     /// <summary>
     /// How a world <paramref name="width"/> by <paramref name="height"/> pixels is dimmed for the night, lit by

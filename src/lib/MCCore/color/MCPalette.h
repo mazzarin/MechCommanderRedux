@@ -64,6 +64,11 @@ public:
         return std::span<MCVfxRgb, ColorCount>(reinterpret_cast<MCVfxRgb*>(RgbData.data()), ColorCount);
     }
 
+    std::span<const MCVfxRgb, ColorCount> Colors() const
+    {
+        return std::span<const MCVfxRgb, ColorCount>(reinterpret_cast<const MCVfxRgb*>(RgbData.data()), ColorCount);
+    }
+
     /// <summary>The colours (6 bits per channel), 3 bytes each.</summary>
     std::vector<uint8_t> RgbData;
     /// <summary>The fade tables (256 bytes each); the haze tables are among them.</summary>
@@ -77,3 +82,26 @@ MCPalette& GamePalette();
 
 /// <summary>Where palette files are found (SYSTEM.CFG's "palettePath").</summary>
 extern std::string PalettePath;
+
+/// <summary>
+/// The palette's free colours, first and last (AlphaTable and FindClosest leave out the system's 0..9 and 246..255).
+/// </summary>
+inline constexpr int32_t FirstFreeColor = 10;
+inline constexpr int32_t LastFreeColor = 245;
+
+/// <summary>
+/// Port-only: how a fade table recolours colours, fitted over the free colours as one linear map, T(c) = c * Slope +
+/// Offset (one slope, an offset a channel; colours 0 to 1). The GPU draws a table over colours that aren't the
+/// palette's (HD art's) this way.
+/// </summary>
+struct MCTableFit
+{
+    double Slope = 1.0;
+    std::array<double, 3> Offset{};
+};
+
+/// <summary>
+/// Port-only: <see cref="MCTableFit"/> of <paramref name="table"/> over the free colours, each index's red, green and
+/// blue (0 to 255) as <paramref name="colourOf"/> gives them.
+/// </summary>
+MCTableFit FitColorTable(const std::function<std::array<uint8_t, 3>(int32_t)>& colourOf, MCColorTable table);

@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCFakeUpdaterBackend.h"
 #include "MCHdMovieFixture.h"
 #include "MCInternetSpots.h"
 #include "fakes/MCNullAudioDevice.h"
@@ -128,6 +129,7 @@
 #include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
+#include "MCVersion.h"
 #if __has_include("logistics/MCLogTextButton.h")
 // A build with the preferences' CONTROLS panel (the controls branch): the tour shows it.
 #include "logistics/MCLogTextButton.h"
@@ -10454,6 +10456,9 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+    // The main menu names this build's version under its window, as the app's does (from its updater: a stand-in
+    // here, set once the menu is made, so ORIGINAL CINEMA stays).
+    const MCTestUpdater::MCFakeUpdater updater(MC_VERSION_SHOWN);
 
     int32_t width = 3024;
     int32_t height = 1890;

@@ -18,6 +18,7 @@
         { "Folder": "usrsctp-fec583d5", "Name": "usrsctp", "File": "LICENSE.md" },
         { "Folder": "plog-94899e0b", "Name": "plog", "File": "LICENSE" },
         { "Folder": "mbedtls-3.6.7", "Name": "Mbed TLS 3.6.7", "File": "LICENSE" },
+        { "Folder": "smol-atlas-77a4e174", "Name": "smol-atlas", "File": "license.md" },
         {
             "Folder": "dr_flac",
             "Name": "dr_flac (David Reid)",

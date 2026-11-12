@@ -130,6 +130,12 @@ set(MC_BC7ENC_SOURCES ${MC_SRC}/lib/bc7enc_rdo/bc7enc.cpp ${MC_SRC}/lib/bc7enc_r
 target_sources(MCCore PRIVATE ${MC_BC7ENC_SOURCES})
 set_source_files_properties(${MC_BC7ENC_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -w)
 target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/bc7enc_rdo)
+# smol-atlas (platform/MCVulkanRenderer's shared pages' places): outside MCCore's project, as on Windows, and built
+# without MCCore's precompiled header.
+set(MC_SMOL_ATLAS_SOURCE ${MC_SRC}/lib/smol-atlas-77a4e174/smol-atlas.cpp)
+target_sources(MCCore PRIVATE ${MC_SMOL_ATLAS_SOURCE})
+set_source_files_properties(${MC_SMOL_ATLAS_SOURCE} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -w)
+target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/smol-atlas-77a4e174)
 # xxHash (sound/MCHdAudio's sound identities), header-only.
 target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
 # libdeflate's decompressor (lib/MCInflate's DEFLATE), in C as on Windows, so a library of its own outside MCCore's C++

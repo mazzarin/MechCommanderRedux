@@ -247,16 +247,29 @@ namespace
     }
 }
 
+MCButtonPictures MCTextButtonPictures(std::string_view label)
+{
+    return {.Up = LabelledFace(UpState, label, UpTextColor),
+            .Down = LabelledFace(DownState, label, DownTextColor),
+            .Gray = LabelledFace(GrayState, label, GrayTextColor)};
+}
+
 auto MCLogTextButton::InitWithLabel(int32_t xPos, int32_t yPos, std::string_view label, std::function<void()> clicked)
     -> void
 {
+    if (std::ranges::find(MCTextButtonLabels, label) == MCTextButtonLabels.end())
+    {
+        SDL_Log("Text button %.*s: not in MCTextButtonLabels, so the HD art pack has no copy of it",
+                static_cast<int>(label.size()), label.data());
+    }
+
     _Label = label;
-    const std::shared_ptr<MCLogPort> up = LabelledFace(UpState, label, UpTextColor);
-    Init(xPos, yPos, up->Width(), up->Height(), label);
-    UpPicture = up;
-    OverPicture = up;
-    DownPicture = LabelledFace(DownState, label, DownTextColor);
-    GrayPicture = LabelledFace(GrayState, label, GrayTextColor);
+    MCButtonPictures pictures = MCTextButtonPictures(label);
+    Init(xPos, yPos, pictures.Up->Width(), pictures.Up->Height(), label);
+    UpPicture = pictures.Up;
+    OverPicture = std::move(pictures.Up);
+    DownPicture = std::move(pictures.Down);
+    GrayPicture = std::move(pictures.Gray);
     BackgroundColor = 0xff;
     // The art's corners are the key colour: keyed out, as the screens' own buttons are.
     SetTransparent(true);

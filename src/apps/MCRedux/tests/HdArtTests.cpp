@@ -10719,36 +10719,19 @@ namespace
     }
 }
 
-#if MC_AUDIT_CONTROLS
-namespace
-{
-    /// <summary>Calls <paramref name="each"/> with every text button under <paramref name="parent"/> (at any depth).</summary>
-    void ForEachTextButton(const MCGuiObject& parent, const std::function<void(const MCLogTextButton&)>& each)
-    {
-        for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
-        {
-            if (const auto button = std::dynamic_pointer_cast<MCLogTextButton>(child); button != nullptr)
-            {
-                each(*button);
-            }
-
-            ForEachTextButton(*child, each);
-        }
-    }
-}
-#endif
-
 /// <summary>
 /// Tool: <c>--hd-extract-menus &lt;folder&gt;</c> writes every picture of the menus' and logistics' art for the HD art
 /// generator (tools/upscale/make_menu_pack.py): the TGAs in the install's FastFiles and the GIF packets of the GUI's art
-/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from; the
-/// pictures of the port's text buttons (MCLogTextButton: the preferences' CONTROLS and the CONTROLS panel's), named as
-/// the art's buttons are (<c>textbutton\b&lt;state&gt;_text_&lt;word&gt;.tga</c>, the state's letter h up, g pressed, n
-/// grayed); the main menu's UPDATE button (logistics/MCUpdatePage.h) as the menu's own are named
-/// (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>); the session screen's MATCH OPTIONS tabs
+/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from; and the
+/// pictures the port makes, which the pack draws in its font: every word the port's text buttons show
+/// (MCTextButtonLabels), named as the art's buttons are (<c>textbutton\b&lt;state&gt;_text_&lt;word&gt;.tga</c>, the
+/// state's letter h up, g pressed, n grayed); the main menu's UPDATE button (logistics/MCUpdatePage.h) as the menu's own
+/// are named (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>); the session screen's MATCH OPTIONS tabs
 /// (logistics/MCMatchOptionsTab.h: <c>matchtabs\lsbdw02_match.tga</c> behind MULTIPLAYER CHAT,
-/// <c>matchtabs\lsbdw03_match.tga</c> in front); and the results screen's REMATCH (mission/MCMissionResultsScreen.h),
-/// named as the faces it is made from (<c>rematchbutton\mr_ms01_rematch.tga</c> up, <c>mr_ms02_rematch.tga</c> held).
+/// <c>matchtabs\lsbdw03_match.tga</c> in front); the results screen's REMATCH (mission/MCMissionResultsScreen.h),
+/// named as the faces it is made from (<c>rematchbutton\mr_ms01_rematch.tga</c> up, <c>mr_ms02_rematch.tga</c> held);
+/// and MULTIPLAYER ACCESS's LAN button and the INTERNET screen's panel (logistics/MCArtWords.h), named as the pictures
+/// they're made from (<c>lanbutton\b&lt;state&gt;_lan_lan.tga</c> on NETWORK's plates, <c>internetpanel\lan00_internet.tga</c>).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD art generator")
 {
@@ -10778,6 +10761,18 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     constexpr std::string_view rematchDown = "mr_ms02.tga";
     std::map<std::string, std::optional<std::array<SDL_Color, 256>>, std::less<>> rematchColors = {
         {std::string(rematchUp), std::nullopt}, {std::string(rematchDown), std::nullopt}};
+    // The LAN button in NETWORK's plates' colours, each state's; the INTERNET screen's panel in the LAN screen's.
+    constexpr std::array<std::pair<char, std::string_view>, 3> lanPlates = {
+        {{'h', "bh_lan.tga"}, {'g', "bg_lan.tga"}, {'n', "bn_lan.tga"}}};
+    constexpr std::string_view lanPanel = "lan00.tga";
+    std::map<std::string, std::optional<std::array<SDL_Color, 256>>, std::less<>> madeColors = {
+        {std::string(lanPanel), std::nullopt}};
+
+    for (const auto& [state, plate] : lanPlates)
+    {
+        madeColors.emplace(plate, std::nullopt);
+    }
+
     ForEachPicture(colors, skipped,
                    [&](std::string_view source, std::span<const uint8_t> pixels, int32_t width, int32_t height,
                        std::span<const SDL_Color, 256> pictureColors)
@@ -10803,6 +10798,11 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
                        if (const auto face = rematchColors.find(file); face != rematchColors.end())
                        {
                            std::ranges::copy(pictureColors, face->second.emplace().begin());
+                       }
+
+                       if (const auto made = madeColors.find(file); made != madeColors.end())
+                       {
+                           std::ranges::copy(pictureColors, made->second.emplace().begin());
                        }
                    });
 
@@ -10845,26 +10845,49 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
         ++pictures;
     }
 
+    // MULTIPLAYER ACCESS's LAN button and the INTERNET screen's panel (logistics/MCArtWords.h).
+    const std::optional<MCButtonPictures> lan = MCLanButtonPictures();
+    REQUIRE(lan.has_value());
+
+    for (const auto& [state, plate] : lanPlates)
+    {
+        const std::optional<std::array<SDL_Color, 256>>& plateColors = madeColors.at(std::string(plate));
+        REQUIRE(plateColors.has_value());
+        const std::shared_ptr<MCLogPort>& picture = state == 'h' ? lan->Up : state == 'g' ? lan->Down : lan->Gray;
+        WritePicture(folder, manifest, std::format("lanbutton\\b{}_lan_lan.tga", state), picture->Pixels(),
+                     picture->Width(), picture->Height(), *plateColors, written);
+        ++pictures;
+    }
+
+    const std::shared_ptr<MCLogPort> internetPanel = MCInternetPanel();
+    REQUIRE(internetPanel != nullptr);
+    const std::optional<std::array<SDL_Color, 256>>& panelColors = madeColors.at(std::string(lanPanel));
+    REQUIRE(panelColors.has_value());
+    WritePicture(folder, manifest, "internetpanel\\lan00_internet.tga", internetPanel->Pixels(), internetPanel->Width(),
+                 internetPanel->Height(), *panelColors, written);
+    ++pictures;
+
 #if MC_AUDIT_CONTROLS
+    // Every word the port's text buttons show, in the preferences' colours (ACCEPT's, whose pictures they're made of).
     ShowPreferences();
     MCTestGame::RunFrame(FrameSeconds);
     MCInput::Display()->GetShownColors(colors);
-    ForEachTextButton(*GlobalLog()->PrefScreen,
-                      [&](const MCLogTextButton& button)
-                      {
-                          std::string word = button.Label();
-                          std::ranges::transform(word, word.begin(),
-                                                 [](char c) { return static_cast<char>(std::tolower(c)); });
 
-                          for (const auto& [state, picture] :
-                               {std::pair{'h', button.GetUpPicture()}, std::pair{'g', button.GetDownPicture()},
-                                std::pair{'n', button.GetGrayPicture()}})
-                          {
-                              WritePicture(folder, manifest, std::format("textbutton\\b{}_text_{}.tga", state, word),
-                                           picture->Pixels(), picture->Width(), picture->Height(), colors, written);
-                              ++pictures;
-                          }
-                      });
+    for (const std::string_view label : MCTextButtonLabels)
+    {
+        std::string word(label);
+        std::ranges::transform(word, word.begin(), [](char c) { return static_cast<char>(std::tolower(c)); });
+        const MCButtonPictures faces = MCTextButtonPictures(label);
+
+        for (const auto& [state, picture] :
+             {std::pair{'h', faces.Up}, std::pair{'g', faces.Down}, std::pair{'n', faces.Gray}})
+        {
+            WritePicture(folder, manifest, std::format("textbutton\\b{}_text_{}.tga", state, word), picture->Pixels(),
+                         picture->Width(), picture->Height(), colors, written);
+            ++pictures;
+        }
+    }
+
     CancelPrefs();
 #endif
 
@@ -19260,12 +19283,14 @@ TEST_CASE_ISOLATED("game: HD art draws the logistics' composed pictures in place
 }
 
 /// <summary>
-/// With HD art on and a pack holding the briefing's tabs pictures (lsbdw00-03), the session screen's MATCH OPTIONS tab,
-/// lettered from them, has an HD copy made of theirs, in front and behind: at the pack's scale, every HD pixel its
-/// original pixel's colour as the pack paints it, every index the tab's; the tab itself as with HD art off, which
-/// has none.
+/// Port-only (Redux HD): the pictures the game makes of the art's words (MCArtWords: MULTIPLAYER ACCESS's LAN button,
+/// up, held and grayed, and the INTERNET screen's panel; MCMatchOptionsTab: the session screen's tabs with MATCH
+/// OPTIONS, behind and in front) get no HD copy of the game's making, even from a pack holding every picture they're
+/// made from: their HD copies are the pack's own, found by their pixels as any picture's are (the pack draws their
+/// words in its font, from the pictures --hd-extract-menus writes), and the pictures are the same with HD art on.
 /// </summary>
-TEST_CASE_ISOLATED("game: HD art letters MATCH OPTIONS' tab from the pack's copies of the briefing's tabs")
+TEST_CASE_ISOLATED(
+    "game: HD art takes the made words' pictures (LAN, INTERNET CONNECTION, MATCH OPTIONS) from the pack")
 {
     if (!MCTestGame::Available())
     {
@@ -19275,364 +19300,121 @@ TEST_CASE_ISOLATED("game: HD art letters MATCH OPTIONS' tab from the pack's copi
     REQUIRE(MCTestGame::StartLogistics());
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
-    const std::filesystem::path pack = EmptyPack("mc_tests_hd_match_tabs");
-    std::filesystem::create_directories(PictureFolderOf(pack));
 
-    for (const std::string_view name : {"lsbdw00.tga", "lsbdw01.tga", "lsbdw02.tga", "lsbdw03.tga"})
+    const auto write = [&](const std::filesystem::path& pack, const MCLogPort& picture)
     {
-        const std::shared_ptr<MCLogPort> art = LogScreenArt(name);
         DecodedFrame frame;
-        frame.Width = art->Width();
-        frame.Height = art->Height();
-        frame.Index.assign(art->Pixels().begin(), art->Pixels().end());
+        frame.Width = picture.Width();
+        frame.Height = picture.Height();
+        frame.Index.assign(picture.Pixels().begin(), picture.Pixels().end());
         frame.Drawn.assign(frame.Index.size(), 1);
-        WriteFramePngs(PictureFolderOf(pack) /
-                           MCHdArt::PictureName(MCHdArt::PictureHash(art->Pixels(), art->Width(), art->Height())),
+        WriteFramePngs(PictureFolderOf(pack) / MCHdArt::PictureName(MCHdArt::PictureHash(
+                                                   picture.Pixels(), picture.Width(), picture.Height())),
                        frame, colors, TestPackScale, Inverted, false);
-    }
+    };
 
-    for (const MCSessionTab front : {MCSessionTab::Chat, MCSessionTab::Options})
+    // The made pictures, named for the checks' scopes.
+    const auto made = []
     {
-        MCTest::Scope scope(front == MCSessionTab::Chat ? "MATCH OPTIONS behind" : "MATCH OPTIONS in front");
-        const std::shared_ptr<MCLogPort> plain = MakeMatchTabs(front);
-        REQUIRE(plain != nullptr);
-        CHECK(MCHdArt::FindPicture(plain->Pixels(), plain->Width(), plain->Height()) == nullptr);
-        std::shared_ptr<MCLogPort> tabs;
-        std::shared_ptr<const MCHdArt::Frame> hd;
-
-        {
-            const MCHdArtOn on(pack);
-            tabs = MakeMatchTabs(front);
-            REQUIRE(tabs != nullptr);
-            hd = MCHdArt::FindPicture(tabs->Pixels(), tabs->Width(), tabs->Height());
-        }
-
-        CHECK(std::ranges::equal(tabs->Pixels(), plain->Pixels()));
-        REQUIRE(hd != nullptr);
-        CHECK_EQ(hd->Scale, TestPackScale);
-        CHECK_EQ(hd->OriginalWidth(), tabs->Width());
-        CHECK_EQ(hd->OriginalHeight(), tabs->Height());
-        REQUIRE(hd->Format == MCHdArt::ColorFormat::Rgba8);
-        int32_t wrongPixels = 0;
-
-        for (int32_t y = 0; y < hd->Height; ++y)
-        {
-            for (int32_t x = 0; x < hd->Width; ++x)
-            {
-                const uint8_t index =
-                    tabs->Pixels()[static_cast<size_t>(y / TestPackScale) * tabs->Width() + x / TestPackScale];
-                const SDL_Color expected = Inverted(colors[index]);
-                const uint8_t* shown = &hd->Colors[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
-                wrongPixels += shown[0] == expected.r && shown[1] == expected.g && shown[2] == expected.b ? 0 : 1;
-            }
-        }
-
-        CHECK_EQ(wrongPixels, 0);
-        int32_t wrongIndices = 0;
-
-        for (size_t at = 0; at < tabs->Pixels().size(); ++at)
-        {
-            wrongIndices += hd->Indices[at * MCHdArt::IndexBytes] == tabs->Pixels()[at] &&
-                                    hd->Indices[at * MCHdArt::IndexBytes + 1] == MCHdArt::HasIndex
-                                ? 0
-                                : 1;
-        }
-
-        CHECK_EQ(wrongIndices, 0);
-    }
-
-    std::filesystem::remove_all(pack.parent_path());
-}
-
-namespace
-{
-    /// <summary>
-    /// MULTIPLAYER ACCESS's big buttons (MCArtWords): the face inside the bevel where their words are, each row one
-    /// colour (as at <see cref="ButtonPlainX"/>); and how far the test pack's HD letters reach past their original
-    /// pixels (HD pixels, left of each row of a letter, where no other letter is within three pixels).
-    /// </summary>
-    constexpr int32_t ButtonFaceLeft = 4;
-    constexpr int32_t ButtonFaceTop = 2;
-    constexpr int32_t ButtonFaceRight = 169;
-    constexpr int32_t ButtonFaceBottom = 25;
-    constexpr int32_t ButtonPlainX = 20;
-    constexpr int32_t LetterOverhang = 3;
-
-    using ArtPixel = std::pair<int32_t, int32_t>;
-
-    uint8_t ArtPixelOf(const MCLogPort& art, int32_t x, int32_t y)
-    {
-        return art.Pixels()[static_cast<size_t>(y) * art.Width() + x];
-    }
-
-    bool OnButtonLetter(const MCLogPort& art, int32_t x, int32_t y)
-    {
-        return x >= ButtonFaceLeft && x <= ButtonFaceRight && y >= ButtonFaceTop && y <= ButtonFaceBottom &&
-               ArtPixelOf(art, x, y) != ArtPixelOf(art, ButtonPlainX, y);
-    }
-
-    /// <summary>A big button's letters (each joined run of pixels off the face), left to right.</summary>
-    std::vector<std::set<ArtPixel>> ButtonLetters(const MCLogPort& art)
-    {
-        std::vector<std::set<ArtPixel>> letters;
-        std::set<ArtPixel> seen;
-
-        for (int32_t x = ButtonFaceLeft; x <= ButtonFaceRight; x++)
-        {
-            for (int32_t y = ButtonFaceTop; y <= ButtonFaceBottom; y++)
-            {
-                if (seen.contains({x, y}) || !OnButtonLetter(art, x, y))
-                {
-                    continue;
-                }
-
-                std::set<ArtPixel>& letter = letters.emplace_back();
-                std::vector<ArtPixel> next = {{x, y}};
-                seen.emplace(x, y);
-
-                while (!next.empty())
-                {
-                    const auto [px, py] = next.back();
-                    next.pop_back();
-                    letter.emplace(px, py);
-
-                    for (const auto [nx, ny] :
-                         std::array<ArtPixel, 4>{{{px + 1, py}, {px - 1, py}, {px, py + 1}, {px, py - 1}}})
-                    {
-                        if (!seen.contains({nx, ny}) && OnButtonLetter(art, nx, ny))
-                        {
-                            seen.emplace(nx, ny);
-                            next.emplace_back(nx, ny);
-                        }
-                    }
-                }
-            }
-        }
-
-        return letters;
-    }
-
-    /// <summary>
-    /// The HD pixels (at TestPackScale) the test pack's copy of <paramref name="art"/> paints past
-    /// <paramref name="letter"/>'s original pixels, moved <paramref name="shift"/> columns: <see cref="LetterOverhang"/>
-    /// left of each of its rows, clear of every other letter by three pixels; each its row's first pixel's index.
-    /// </summary>
-    std::map<ArtPixel, uint8_t> LetterOverhangOf(const MCLogPort& art, const std::set<ArtPixel>& letter, int32_t shift)
-    {
-        std::map<int32_t, int32_t> firsts;
-
-        for (const auto [x, y] : letter)
-        {
-            const auto [row, added] = firsts.try_emplace(y, x);
-            row->second = std::min(row->second, x);
-        }
-
-        std::map<ArtPixel, uint8_t> overhang;
-
-        for (const auto [y, x] : firsts)
-        {
-            // Clear of every other letter, on its row and the rows above and below.
-            bool clear = x - LetterOverhang >= ButtonFaceLeft;
-
-            for (int32_t row = y - 1; clear && row <= y + 1; row++)
-            {
-                for (int32_t reach = 1; clear && reach <= LetterOverhang; reach++)
-                {
-                    clear = !OnButtonLetter(art, x - reach, row) || letter.contains({x - reach, row});
-                }
-            }
-
-            if (!clear)
-            {
-                continue;
-            }
-
-            for (int32_t reach = 1; reach <= LetterOverhang; reach++)
-            {
-                for (int32_t row = 0; row < TestPackScale; row++)
-                {
-                    overhang[{(x + shift) * TestPackScale - reach, y * TestPackScale + row}] = ArtPixelOf(art, x, y);
-                }
-            }
-        }
-
-        return overhang;
-    }
-
-    /// <summary>
-    /// Writes the test pack's copy of a big button: each pixel its original pixel's colour as the pack paints it
-    /// (<see cref="Inverted"/>), and its letters' edges past their original pixels (<see cref="LetterOverhangOf"/>).
-    /// </summary>
-    void WriteButtonWithOverhang(const std::filesystem::path& pack, const MCLogPort& art,
-                                 std::span<const SDL_Color, 256> colors)
-    {
-        DecodedFrame frame;
-        frame.Width = art.Width();
-        frame.Height = art.Height();
-        frame.Index.assign(art.Pixels().begin(), art.Pixels().end());
-        frame.Drawn.assign(frame.Index.size(), 1);
-        const std::filesystem::path stem =
-            PictureFolderOf(pack) / MCHdArt::PictureName(MCHdArt::PictureHash(art.Pixels(), art.Width(), art.Height()));
-        WriteFramePngs(stem, frame, colors, TestPackScale, Inverted, false);
-        const int32_t width = art.Width() * TestPackScale;
-        const int32_t height = art.Height() * TestPackScale;
-        std::vector<uint8_t> rgba(static_cast<size_t>(width) * height * BytesPerPixel);
-        const auto paint = [&](int32_t x, int32_t y, uint8_t index)
-        {
-            const SDL_Color painted = Inverted(colors[index]);
-            uint8_t* out = &rgba[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
-            out[0] = painted.r;
-            out[1] = painted.g;
-            out[2] = painted.b;
-            out[3] = HasIndex;
+        const std::optional<MCButtonPictures> lan = MCLanButtonPictures();
+        REQUIRE(lan.has_value());
+        const std::vector<std::pair<std::string_view, std::shared_ptr<MCLogPort>>> pictures = {
+            {"LAN up", lan->Up},
+            {"LAN held", lan->Down},
+            {"LAN grayed", lan->Gray},
+            {"INTERNET CONNECTION", MCInternetPanel()},
+            {"MATCH OPTIONS behind", MakeMatchTabs(MCSessionTab::Chat)},
+            {"MATCH OPTIONS in front", MakeMatchTabs(MCSessionTab::Options)},
         };
 
-        for (int32_t y = 0; y < height; y++)
+        for (const auto& [name, picture] : pictures)
         {
-            for (int32_t x = 0; x < width; x++)
+            MCTest::Scope scope(name);
+            REQUIRE(picture != nullptr);
+        }
+
+        return pictures;
+    };
+
+    const auto plain = made();
+
+    // A pack with every picture they're made from: the access screen's big buttons, the multiplayer panels and the
+    // briefing's tabs. The made pictures get no HD copy from it.
+    const std::filesystem::path sources = EmptyPack("mc_tests_hd_made_words_sources");
+    std::filesystem::create_directories(PictureFolderOf(sources));
+
+    for (const std::string_view state : {"bh_", "bg_", "bn_"})
+    {
+        for (const std::string_view word : {"lan", "seria", "inter"})
+        {
+            write(sources, *LogArt(std::format("{}{}.tga", state, word)));
+        }
+    }
+
+    for (const std::string_view panel : {"lan00.tga", "mm_wn00.tga", "mm_wn01.tga", "mm_wn02.tga", "prefs_00.tga",
+                                         "access00.tga", "rroom00.tga", "modem00.tga", "serial00.tga"})
+    {
+        write(sources, *LogArt(panel));
+    }
+
+    for (const std::string_view tabs : {"lsbdw00.tga", "lsbdw01.tga", "lsbdw02.tga", "lsbdw03.tga"})
+    {
+        write(sources, *LogScreenArt(tabs));
+    }
+
+    {
+        const MCHdArtOn on(sources);
+
+        for (const auto& [name, picture] : made())
+        {
+            MCTest::Scope scope(name);
+            CHECK(MCHdArt::FindPicture(picture->Pixels(), picture->Width(), picture->Height()) == nullptr);
+        }
+    }
+
+    // A pack with the made pictures themselves: each is found there, as the pack paints it.
+    const std::filesystem::path words = EmptyPack("mc_tests_hd_made_words");
+    std::filesystem::create_directories(PictureFolderOf(words));
+
+    for (const auto& [name, picture] : plain)
+    {
+        write(words, *picture);
+    }
+
+    {
+        const MCHdArtOn on(words);
+        const auto shown = made();
+
+        for (size_t i = 0; i < shown.size(); i++)
+        {
+            const auto& [name, picture] = shown[i];
+            MCTest::Scope scope(name);
+            CHECK(std::ranges::equal(picture->Pixels(), plain[i].second->Pixels()));
+            const std::shared_ptr<const MCHdArt::Frame> hd =
+                MCHdArt::FindPicture(picture->Pixels(), picture->Width(), picture->Height());
+            REQUIRE(hd != nullptr);
+            REQUIRE(hd->Scale == TestPackScale);
+            REQUIRE(hd->Format == MCHdArt::ColorFormat::Rgba8);
+            int32_t wrongPixels = 0;
+
+            for (int32_t y = 0; y < hd->Height; ++y)
             {
-                paint(x, y, ArtPixelOf(art, x / TestPackScale, y / TestPackScale));
-            }
-        }
-
-        for (const std::set<ArtPixel>& letter : ButtonLetters(art))
-        {
-            for (const auto [pixel, index] : LetterOverhangOf(art, letter, 0))
-            {
-                paint(pixel.first, pixel.second, index);
-            }
-        }
-
-        SavePng(std::filesystem::path(stem).concat(".png"), width, height, rgba);
-    }
-}
-
-/// <summary>
-/// MULTIPLAYER ACCESS's LAN button with HD art on (its letters cut from SERIAL's and INTERNET's on NETWORK's plate) has
-/// an HD copy made of the pack's copies of those buttons by their letters' HD pixels: each letter's HD edges come with
-/// it past its original pixels, and none of NETWORK's stays past the pixels its word was wiped from (the L's stepped
-/// edge and the slivers seen with the real pack, 7 Nov). Every HD pixel is its original pixel's colour as the test pack
-/// paints it, but where a letter's edge reaches past its pixels, there as its letter's was; every index the button's.
-/// </summary>
-TEST_CASE_ISOLATED("game: HD art letters the LAN button by its letters' HD pixels, their edges whole")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    REQUIRE(MCTestGame::StartLogistics());
-    std::array<SDL_Color, 256> colors{};
-    MCInput::Display()->GetShownColors(colors);
-    const std::filesystem::path pack = EmptyPack("mc_tests_hd_lan_button");
-    std::filesystem::create_directories(PictureFolderOf(pack));
-    constexpr std::array<std::string_view, 3> States = {"bh_", "bg_", "bn_"};
-    constexpr std::array<std::string_view, 3> Words = {"lan", "seria", "inter"};
-
-    for (const std::string_view state : States)
-    {
-        for (const std::string_view word : Words)
-        {
-            WriteButtonWithOverhang(pack, *LogArt(std::format("{}{}.tga", state, word)), colors);
-        }
-    }
-
-    const std::optional<MCButtonPictures> plain = MCLanButtonPictures();
-    REQUIRE(plain.has_value());
-    CHECK(MCHdArt::FindPicture(plain->Up->Pixels(), plain->Up->Width(), plain->Up->Height()) == nullptr);
-    std::optional<MCButtonPictures> made;
-    std::array<std::shared_ptr<const MCHdArt::Frame>, States.size()> hd;
-
-    {
-        const MCHdArtOn on(pack);
-        made = MCLanButtonPictures();
-        REQUIRE(made.has_value());
-        const std::array<std::shared_ptr<MCLogPort>, States.size()> pictures = {made->Up, made->Down, made->Gray};
-
-        for (size_t state = 0; state < States.size(); state++)
-        {
-            hd[state] =
-                MCHdArt::FindPicture(pictures[state]->Pixels(), pictures[state]->Width(), pictures[state]->Height());
-        }
-    }
-
-    const std::array<std::shared_ptr<MCLogPort>, States.size()> pictures = {made->Up, made->Down, made->Gray};
-
-    for (size_t state = 0; state < States.size(); state++)
-    {
-        MCTest::Scope scope(States[state]);
-        const MCLogPort& button = *pictures[state];
-        CHECK(std::ranges::equal(button.Pixels(), std::array{plain->Up, plain->Down, plain->Gray}[state]->Pixels()));
-        REQUIRE(hd[state] != nullptr);
-        REQUIRE(hd[state]->Scale == TestPackScale);
-        REQUIRE(hd[state]->Format == MCHdArt::ColorFormat::Rgba8);
-
-        // Where the LAN letters' edges reach past their pixels: each letter's in the button it was cut from, moved.
-        std::map<ArtPixel, uint8_t> overhang;
-        const std::shared_ptr<MCLogPort> serial = LogArt(std::format("{}seria.tga", States[state]));
-        const std::shared_ptr<MCLogPort> internet = LogArt(std::format("{}inter.tga", States[state]));
-        const std::vector<std::set<ArtPixel>> lan = ButtonLetters(button);
-        REQUIRE(lan.size() == 3);
-
-        for (const std::set<ArtPixel>& letter : lan)
-        {
-            bool found = false;
-
-            for (const std::shared_ptr<MCLogPort>& from : {serial, internet})
-            {
-                for (const std::set<ArtPixel>& cut : ButtonLetters(*from))
+                for (int32_t x = 0; x < hd->Width; ++x)
                 {
-                    const int32_t shift = letter.begin()->first - cut.begin()->first;
-                    const int32_t lift = letter.begin()->second - cut.begin()->second;
-
-                    if (found || cut.size() != letter.size() || lift != 0 ||
-                        !std::ranges::all_of(cut, [&](const ArtPixel& pixel)
-                                             { return letter.contains({pixel.first + shift, pixel.second}); }))
-                    {
-                        continue;
-                    }
-
-                    found = true;
-                    overhang.merge(LetterOverhangOf(*from, cut, shift));
+                    const uint8_t index = picture->Pixels()[static_cast<size_t>(y / TestPackScale) * picture->Width() +
+                                                            static_cast<size_t>(x / TestPackScale)];
+                    const SDL_Color expected = Inverted(colors[index]);
+                    const uint8_t* pixel = &hd->Colors[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
+                    wrongPixels += pixel[0] == expected.r && pixel[1] == expected.g && pixel[2] == expected.b ? 0 : 1;
                 }
             }
 
-            CHECK(found);
+            CHECK_EQ(wrongPixels, 0);
         }
-
-        CHECK(!overhang.empty());
-        int32_t wrongPixels = 0;
-
-        for (int32_t y = 0; y < hd[state]->Height; ++y)
-        {
-            for (int32_t x = 0; x < hd[state]->Width; ++x)
-            {
-                const auto reached = overhang.find({x, y});
-                const uint8_t index = reached != overhang.end()
-                                          ? reached->second
-                                          : ArtPixelOf(button, x / TestPackScale, y / TestPackScale);
-                const SDL_Color expected = Inverted(colors[index]);
-                const uint8_t* shown =
-                    &hd[state]->Colors[(static_cast<size_t>(y) * hd[state]->Width + x) * BytesPerPixel];
-                wrongPixels += shown[0] == expected.r && shown[1] == expected.g && shown[2] == expected.b ? 0 : 1;
-            }
-        }
-
-        CHECK_EQ(wrongPixels, 0);
-        int32_t wrongIndices = 0;
-
-        for (size_t at = 0; at < button.Pixels().size(); ++at)
-        {
-            wrongIndices += hd[state]->Indices[at * MCHdArt::IndexBytes] == button.Pixels()[at] &&
-                                    hd[state]->Indices[at * MCHdArt::IndexBytes + 1] == MCHdArt::HasIndex
-                                ? 0
-                                : 1;
-        }
-
-        CHECK_EQ(wrongIndices, 0);
     }
 
-    std::filesystem::remove_all(pack.parent_path());
+    std::filesystem::remove_all(sources.parent_path());
+    std::filesystem::remove_all(words.parent_path());
 }
 
 /// <summary>

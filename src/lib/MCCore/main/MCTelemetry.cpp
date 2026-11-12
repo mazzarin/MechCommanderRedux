@@ -16,6 +16,7 @@ namespace
     using MCTelemetry::MCBackend;
     using MCTelemetry::MCCrash;
     using MCTelemetry::MCLinkEnd;
+    using MCTelemetry::MCLoadRefusal;
     using MCTelemetry::MCMachine;
     using MCTelemetry::MCPrompt;
     using Clock = std::chrono::steady_clock;
@@ -51,6 +52,8 @@ namespace
     /// can open link after link, and the reports stop.
     /// </summary>
     constexpr int32_t MaxLinkReports = 32;
+    /// <summary>The refused loads' reports a run sends at most: a player tries a save or two; a loop of them stops.</summary>
+    constexpr int32_t MaxLoadReports = 10;
     /// <summary>What the server is given of a string from the system (a model's name, a frame), at most.</summary>
     constexpr size_t MaxTextLength = 200;
 
@@ -101,6 +104,8 @@ namespace
         MessageIn,
         MessageOut,
         PlayerLost,
+        /// <summary>The campaign's load refused a file (the value its MCLoadRefusal).</summary>
+        LoadRefused,
     };
 
     struct MCBlackBoxEvent
@@ -260,6 +265,8 @@ namespace
     float FrameWeather = 1.0f;
     /// <summary>The links reported this run.</summary>
     int32_t LinkReports = 0;
+    /// <summary>The refused loads reported this run.</summary>
+    int32_t LoadReports = 0;
     /// <summary>The black box: in the backend's mapped file, or here without one.</summary>
     MCBlackBox MemoryBox{};
     std::reference_wrapper<MCBlackBox> Box = MemoryBox;
@@ -815,6 +822,34 @@ namespace
         return "unknown";
     }
 
+    /// <summary>A refused load's reason, as its report names it.</summary>
+    std::string_view RefusalName(MCLoadRefusal reason)
+    {
+        switch (reason)
+        {
+            case MCLoadRefusal::Other:
+                return "other";
+            case MCLoadRefusal::Unopened:
+                return "unopened";
+            case MCLoadRefusal::NotPacked:
+                return "notPacked";
+            case MCLoadRefusal::Unreadable:
+                return "unreadable";
+            case MCLoadRefusal::MissionPast:
+                return "missionPast";
+            case MCLoadRefusal::NoMission:
+                return "noMission";
+            case MCLoadRefusal::CampaignEnd:
+                return "campaignEnd";
+            case MCLoadRefusal::Components:
+                return "components";
+            case MCLoadRefusal::NoResults:
+                return "noResults";
+        }
+
+        return "unknown";
+    }
+
     /// <summary>The kinds of address an end offered, as WebRTC's stats name them ("host,srflx,relay"; "" none).</summary>
     std::string OfferedNames(const MCIceLink::Offered& offered)
     {
@@ -890,6 +925,10 @@ namespace
                     break;
                 case MCEventKind::PlayerLost:
                     lines.push_back(std::format("{:.1f}s player lost", seconds));
+                    break;
+                case MCEventKind::LoadRefused:
+                    lines.push_back(std::format("{:.1f}s load refused: {}", seconds,
+                                                RefusalName(static_cast<MCLoadRefusal>(event.Value))));
                     break;
             }
         }
@@ -1043,6 +1082,7 @@ auto MCTelemetry::SetBackend(std::unique_ptr<MCBackend> backend) -> void
     Pending = MCPrompt::None;
     LastFrame.reset();
     LinkReports = 0;
+    LoadReports = 0;
 }
 
 auto MCTelemetry::Available() -> bool
@@ -1356,6 +1396,46 @@ auto MCTelemetry::LinkJson(const MCLink& link) -> std::string
 
     json.Text("here", OfferedNames(link.Here)).Text("there", OfferedNames(link.There)).Text("end", EndName(link.End));
     return json.Close();
+}
+
+auto MCTelemetry::LoadRefused(const MCRefusedLoad& load) -> void
+{
+    Record(MCEventKind::LoadRefused, static_cast<uint16_t>(load.Reason));
+
+    if (!Reporting())
+    {
+        return;
+    }
+
+    if (LoadReports >= MaxLoadReports)
+    {
+        if (LoadReports++ == MaxLoadReports)
+        {
+            SDL_Log("Reports: %d refused loads reported this run: no more are", MaxLoadReports);
+        }
+
+        return;
+    }
+
+    LoadReports++;
+    MCJsonObject json;
+    json.Text("reason", RefusalName(load.Reason)).Text("file", load.Kind).Flag("player", load.Player);
+    const auto optional = [&json](std::string_view name, const auto& value)
+    {
+        if (value.has_value())
+        {
+            json.Integer(name, *value);
+        }
+    };
+
+    optional("bytes", load.Bytes);
+    optional("packets", load.Packets);
+    optional("planet", load.Planet);
+    optional("mission", load.Mission);
+    optional("scenarios", load.Scenarios);
+    optional("at", load.At);
+    optional("entries", load.Entries);
+    SendReport(ReportStart("load", Machine.AppVersion).Raw("load", json.Close()).Close());
 }
 
 auto MCTelemetry::MessageIn(uint16_t type, size_t bytes) -> void

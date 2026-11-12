@@ -27,6 +27,7 @@
 #include "main/MCLogisticsShared.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCGameStrings.h"
+#include "main/MCTelemetry.h"
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCObjectTypeManager.h"
@@ -274,12 +275,24 @@ namespace
 
         return port;
     }
+
+    /// <summary>Notes <paramref name="reason"/> as why the load refused its file, and gives back its error.</summary>
+    int32_t Refused(MCTelemetry::MCRefusedLoad& read, MCTelemetry::MCLoadRefusal reason, int32_t result)
+    {
+        read.Reason = reason;
+        return result;
+    }
 }
 
 auto MCLogistics::LoadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce)
     -> int32_t
 {
-    const int32_t result = ReadCampaign(saveName, extension, newCampaign, loadForce);
+    // The file's kind, for the reports: its extension, without the dot, in lower case.
+    std::string kind(extension.substr(extension.starts_with('.') ? 1 : 0));
+    std::ranges::transform(kind, kind.begin(),
+                           [](char c) { return static_cast<char>(std::tolower(static_cast<uint8_t>(c))); });
+    MCTelemetry::MCRefusedLoad read{.Kind = std::move(kind), .Player = loadForce};
+    const int32_t result = ReadCampaign(saveName, extension, newCampaign, loadForce, read);
 
     if (result != 0)
     {
@@ -290,14 +303,16 @@ auto MCLogistics::LoadCampaign(std::string_view saveName, std::string_view exten
         SDL_Log("MCLogistics: %.*s%.*s refused (%d); no campaign loaded", static_cast<int>(saveName.size()),
                 saveName.data(), static_cast<int>(extension.size()), extension.data(), result);
         CurrentMission = -1;
+        MCTelemetry::LoadRefused(read);
     }
 
     return result;
 }
 
-auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce)
-    -> int32_t
+auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce,
+                               MCTelemetry::MCRefusedLoad& read) -> int32_t
 {
+    using MCTelemetry::MCLoadRefusal;
     MCPacketFile packetFile;
     MCFitIniFile file;
     bool quickStart = false;
@@ -339,21 +354,27 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
     int32_t result = packetFile.Open(GamePath(SavePath, saveName, extension));
     Assert(result == 0, 0, " campaign file NOT Valid! ");
 
-    if (result == 0)
+    if (result != 0)
     {
-        result = packetFile.SeekPacket(0);
-        Assert(result == 0, 0, " could not find initial campaign file ");
+        return Refused(read, MCLoadRefusal::Unopened, result);
     }
 
-    if (result == 0)
-    {
-        result = file.Open(packetFile, packetFile.GetPacketSize());
-        Assert(result == 0, 0, " could not open initial campaign file ");
-    }
+    read.Bytes = packetFile.FileSize();
+    read.Packets = packetFile.GetNumPackets();
+    result = packetFile.SeekPacket(0);
+    Assert(result == 0, 0, " could not find initial campaign file ");
 
     if (result != 0)
     {
-        return result;
+        return Refused(read, MCLoadRefusal::NotPacked, result);
+    }
+
+    result = file.Open(packetFile, packetFile.GetPacketSize());
+    Assert(result == 0, 0, " could not open initial campaign file ");
+
+    if (result != 0)
+    {
+        return Refused(read, MCLoadRefusal::Unreadable, result);
     }
 
     if (!newCampaign)
@@ -368,6 +389,7 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
             CurPlanet = 0;
         }
 
+        read.Planet = CurPlanet;
         const std::string missionName =
             !Solo ? std::string(CurPlanet == 0 ? "mechcmdr1" : "xmechcmdr1") : std::format("campaign{}", saveName);
         MissionName = missionName;
@@ -403,13 +425,16 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
     {
         if (const MCFitResult<int32_t> number = file.Read<int32_t>("MissionNumber"); number.has_value())
         {
+            read.Mission = *number;
+            read.Scenarios = static_cast<int32_t>(Mission()->Scenarios.size());
+
             // Issue #25: the number picks the campaign's scenario (or, one past the last, its end); one the campaign
             // doesn't have refuses the save.
             if (*number < 0 || static_cast<size_t>(*number) > Mission()->Scenarios.size())
             {
                 SDL_Log("MCLogistics: %.*s names mission %d of %zu", static_cast<int>(saveName.size()), saveName.data(),
                         *number, Mission()->Scenarios.size());
-                return READ_ERR;
+                return Refused(read, MCLoadRefusal::MissionPast, READ_ERR);
             }
 
             savedMission = *number;
@@ -561,6 +586,13 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
     if (file.SeekBlock("Components") == 0)
     {
         const auto count = ReadRequired<uint32_t>(file, "NumComponents", " could not read component count ");
+        // Which entry ended the load, of how many, for the reports.
+        const auto badEntry = [&read, count](int32_t index, int32_t error)
+        {
+            read.At = index;
+            read.Entries = static_cast<int32_t>(count);
+            return Refused(read, MCLoadRefusal::Components, error);
+        };
 
         for (int32_t index = 0; index < static_cast<int32_t>(count); index++)
         {
@@ -569,21 +601,21 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
 
             if (result != 0)
             {
-                return result;
+                return badEntry(index, result);
             }
 
             const MCFitResult<uint8_t> masterID = file.Read<uint8_t>("ComponantID");
 
             if (!masterID.has_value())
             {
-                return std::to_underlying(masterID.error());
+                return badEntry(index, std::to_underlying(masterID.error()));
             }
 
             const MCFitResult<int32_t> available = file.Read<int32_t>("NumAvailable");
 
             if (!available.has_value())
             {
-                return std::to_underlying(available.error());
+                return badEntry(index, std::to_underlying(available.error()));
             }
 
             MCInventoryList& inventory = *ComponentInventory;
@@ -617,7 +649,7 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
             (CurrentMission < 0 || static_cast<size_t>(CurrentMission) >= Mission()->Scenarios.size()))
         {
             SDL_Log("MCLogistics: mission %d is past the campaign's %zu", CurrentMission, Mission()->Scenarios.size());
-            return READ_ERR;
+            return Refused(read, CurrentMission < 0 ? MCLoadRefusal::NoMission : MCLoadRefusal::CampaignEnd, READ_ERR);
         }
 
         Mission()->CurrentScenario = CurrentMission;
@@ -634,7 +666,7 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
 
         if (result != 0)
         {
-            return result;
+            return Refused(read, MCLoadRefusal::NoResults, result);
         }
 
         result = resultFile.SeekPacket(0);

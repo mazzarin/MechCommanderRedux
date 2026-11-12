@@ -237,6 +237,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "vulkaninfo failed (exit code $LASTEXITCODE)." }
           if ($summary -notmatch 'llvmpipe') { throw "Vulkan's device isn't lavapipe's (llvmpipe)." }
           if ($summary -notmatch 'VK_LAYER_KHRONOS_validation') { throw "The loader doesn't list the validation layer." }
+          # Calls made wrong on purpose: the layer's error must come out as the report reads it, or no messages means nothing.
+          python scripts\ci\windows_gpu_tests.py canary --loader vulkan\loader\vulkan-1.dll
+          if ($LASTEXITCODE -ne 0) { throw "The validation layer's canary failed." }
 
       - name: Test
         shell: pwsh

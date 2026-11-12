@@ -8,6 +8,9 @@ run     Runs one shard's share of the suite: every n-th test that mc_tests --lis
 report  Reads the shards' logs together: every listed test run once, the failures, the validation layer's messages by
         kind with the tests that showed them, the slowest tests and each shard's time, as Markdown for the run's
         summary. Exits with 1 on a test failed, missing or run twice, or a validation error.
+canary  Makes two Vulkan calls wrong on purpose in a child process, as the suite's processes make theirs, and fails
+        unless the validation layer's error comes out and reads as one here: without it, a suite with no messages
+        could be a layer that wasn't loaded or printed nowhere.
 """
 
 import argparse
@@ -32,6 +35,13 @@ FAILED = re.compile(r"^  FAILED: (.+?)\s*$")
 SUMMARY = re.compile(r"^(\d+) of (\d+) tests passed, (\d+) checks passed, (\d+) failed \((\d+) ms\)")
 VALIDATION = re.compile(r"Validation (Error|Warning|Performance Warning): \[ ?([^\]]+?) ?\]")
 ERROR_KIND = "Error"
+
+# The canary's Vulkan: structure types, and the version it asks for.
+STRUCTURE_TYPE_APPLICATION_INFO = 0
+STRUCTURE_TYPE_INSTANCE_CREATE_INFO = 1
+API_VERSION_1_0 = 1 << 22
+VK_SUCCESS = 0
+CANARY_SECONDS = 60
 
 
 def run(args: argparse.Namespace) -> int:
@@ -201,6 +211,73 @@ def report(args: argparse.Namespace) -> int:
     return 1 if problems else 0
 
 
+def canary(args: argparse.Namespace) -> int:
+    command = [sys.executable, "-I", str(Path(__file__).resolve()), "canary-child", "--loader", args.loader]
+    child = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=CANARY_SECONDS)
+    output = child.stdout + child.stderr
+    print(output, end="")
+    errors = [match.group(2) for match in VALIDATION.finditer(output) if match.group(1) == ERROR_KIND]
+
+    if not errors:
+        print(f"The validation layer reported nothing on calls made wrong on purpose (the child's exit code "
+              f"{child.returncode}): a suite without messages would mean nothing.", file=sys.stderr)
+        return 1
+
+    print(f"The validation layer's canary: {', '.join(errors)}")
+    return 0
+
+
+def canary_child(args: argparse.Namespace) -> int:
+    """Two calls the validation layer refuses: the application's info with the wrong structure type, and a physical
+    device's properties asked for with nowhere to put them (which the layer stops before the driver sees it)."""
+    import ctypes
+
+    vulkan = ctypes.CDLL(str(Path(args.loader).resolve()))
+
+    class ApplicationInfo(ctypes.Structure):
+        _fields_ = [("sType", ctypes.c_int32), ("pNext", ctypes.c_void_p), ("pApplicationName", ctypes.c_char_p),
+                    ("applicationVersion", ctypes.c_uint32), ("pEngineName", ctypes.c_char_p),
+                    ("engineVersion", ctypes.c_uint32), ("apiVersion", ctypes.c_uint32)]
+
+    class InstanceCreateInfo(ctypes.Structure):
+        _fields_ = [("sType", ctypes.c_int32), ("pNext", ctypes.c_void_p), ("flags", ctypes.c_uint32),
+                    ("pApplicationInfo", ctypes.POINTER(ApplicationInfo)), ("enabledLayerCount", ctypes.c_uint32),
+                    ("ppEnabledLayerNames", ctypes.c_void_p), ("enabledExtensionCount", ctypes.c_uint32),
+                    ("ppEnabledExtensionNames", ctypes.c_void_p)]
+
+    def create(application_type: int) -> ctypes.c_void_p | None:
+        application = ApplicationInfo(sType=application_type, pApplicationName=b"canary", apiVersion=API_VERSION_1_0)
+        info = InstanceCreateInfo(sType=STRUCTURE_TYPE_INSTANCE_CREATE_INFO, pApplicationInfo=ctypes.pointer(application))
+        instance = ctypes.c_void_p()
+        result = vulkan.vkCreateInstance(ctypes.byref(info), None, ctypes.byref(instance))
+        print(f"vkCreateInstance (application info's type {application_type}): {result}", flush=True)
+        return instance if result == VK_SUCCESS else None
+
+    # The wrong structure type: the layer reports it, the loader doesn't look.
+    wrong = create(STRUCTURE_TYPE_INSTANCE_CREATE_INFO)
+
+    if wrong is not None:
+        vulkan.vkDestroyInstance(wrong, None)
+
+    instance = create(STRUCTURE_TYPE_APPLICATION_INFO)
+
+    if instance is None:
+        return 1
+
+    count = ctypes.c_uint32(0)
+    vulkan.vkEnumeratePhysicalDevices(instance, ctypes.byref(count), None)
+    devices = (ctypes.c_void_p * count.value)()
+    vulkan.vkEnumeratePhysicalDevices(instance, ctypes.byref(count), devices)
+
+    if count.value > 0:
+        vulkan.vkGetPhysicalDeviceProperties(ctypes.c_void_p(devices[0]), None)
+
+    vulkan.vkDestroyInstance(instance, None)
+    sys.stdout.flush()
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -215,12 +292,19 @@ def main() -> int:
     report_parser.add_argument("results", help="a folder holding a folder of results per shard")
     report_parser.add_argument("--title", required=True, help="the report's heading")
     report_parser.add_argument("--markdown", help="a file for the report as well")
+
+    for name, help_text in (("canary", "check that the validation layer's errors reach the log"),
+                            ("canary-child", "the canary's wrong calls (run by canary)")):
+        canary_parser = commands.add_parser(name, help=help_text)
+        canary_parser.add_argument("--loader", required=True, help="vulkan-1.dll")
+
     args = parser.parse_args()
 
     if args.command == "run" and not 0 <= args.shard < args.shards:
         parser.error(f"--shard {args.shard} isn't one of {args.shards} shards")
 
-    return run(args) if args.command == "run" else report(args)
+    commands_run = {"run": run, "report": report, "canary": canary, "canary-child": canary_child}
+    return commands_run[args.command](args)
 
 
 if __name__ == "__main__":

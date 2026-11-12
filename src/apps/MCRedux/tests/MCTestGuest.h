@@ -789,6 +789,15 @@ namespace MCTestGuest
     }
 
     /// <summary>
+    /// Whether the host's session screen shows guest <paramref name="id"/> and showed it the room with its game up: no
+    /// showing again waits for its ping (which puts the screen back on its chat tab).
+    /// </summary>
+    inline bool RoomShowsReady(uint32_t id)
+    {
+        return RoomShows(id) && GlobalLog()->SessionScreen->ShownWithGameUp(id);
+    }
+
+    /// <summary>
     /// Boots the game as a lobby's host on <paramref name="port"/> (straight into its room, the session screen) and has
     /// <paramref name="guests"/> join it; whether the room came to show them all (the host shows it again for each).
     /// </summary>

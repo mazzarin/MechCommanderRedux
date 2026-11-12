@@ -127,6 +127,15 @@ namespace MCSocket
 
     /// <summary>Closes <paramref name="socket"/> (nothing for <see cref="InvalidHandle"/>).</summary>
     void Close(Handle socket);
+
+    /// <summary>
+    /// Port-only (Redux HD): ends what this end sends on the connection <paramref name="socket"/> (a TCP half-close):
+    /// the other end reads all of it and then that the connection closed, while what it sends can still be read here.
+    /// Close it once the other end has closed its end, or after a while: a socket closed with bytes unread resets the
+    /// connection, and Windows then throws away what the other end hadn't read.
+    /// </summary>
+    /// <returns>Whether the network half-closes connections; when it doesn't, nothing is done (close it).</returns>
+    bool EndSending(Handle socket);
 }
 
 /// <summary>
@@ -164,6 +173,8 @@ public:
     virtual uint16_t LocalPort(MCSocket::Handle socket) = 0;
     /// <summary>See <see cref="MCSocket::Close"/>.</summary>
     virtual void Close(MCSocket::Handle socket) = 0;
+    /// <summary>See <see cref="MCSocket::EndSending"/> (a network that doesn't half-close: false).</summary>
+    virtual bool EndSending(MCSocket::Handle) { return false; }
 };
 
 /// <summary>The operating system's sockets (Winsock on Windows, BSD sockets elsewhere).</summary>
@@ -183,6 +194,7 @@ public:
     int ReceiveFrom(MCSocket::Handle socket, std::span<uint8_t> data, MCSocket::Address& from) override;
     uint16_t LocalPort(MCSocket::Handle socket) override;
     void Close(MCSocket::Handle socket) override;
+    bool EndSending(MCSocket::Handle socket) override;
 
     /// <summary>
     /// The times the operating system watches the TCP connection <paramref name="socket"/> by, as it reports them;

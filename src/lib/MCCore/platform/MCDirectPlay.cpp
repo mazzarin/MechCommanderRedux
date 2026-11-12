@@ -84,6 +84,11 @@ namespace
     constexpr std::ptrdiff_t MaxPendingJoiners = 8;
     /// <summary>Host: how long an accepted connection has to ask to join.</summary>
     constexpr uint64_t JoinTimeoutMs = 10000;
+    /// <summary>
+    /// Port-only (Redux HD), a host that closed its session: how long a joiner's link stays open after the word that
+    /// the session ends, for its machine to read it and close its end (a game reads its links every frame).
+    /// </summary>
+    constexpr uint64_t LingerMs = 2000;
     /// <summary>Unsent bytes a connection may pile up before it is dropped (its peer stopped reading).</summary>
     constexpr size_t MaxUnsentBytes = 8u << 20;
     /// <summary>Host: session queries answered per second at most (the answers are bigger than the questions).</summary>
@@ -474,6 +479,11 @@ namespace
         /// <summary>Close once <see cref="Output"/> is written (a refused join).</summary>
         bool CloseWhenFlushed = false;
         bool Dead = false;
+        /// <summary>
+        /// Port-only (Redux HD): it ended as a send failed, so what had already arrived is still read (its other end's
+        /// last words: a host's that the session ends with it).
+        /// </summary>
+        bool SendFailed = false;
         /// <summary>Port-only (Redux HD), host side: the machine on it, and the address it was accepted from.</summary>
         uint32_t Machine = 0;
         MCSocket::Address From;
@@ -569,6 +579,20 @@ struct MCDirectPlay::Impl
     MCSocket::Handle Udp = MCSocket::InvalidHandle;
     /// <summary>Host: one per joiner (slots are never reused while hosting, so owners stay valid).</summary>
     std::vector<Link> Joiners;
+    /// <summary>
+    /// Port-only (Redux HD), a host that closed its session: its joiners' links, kept open after the word that it ends
+    /// until each joiner's machine closes its end or <see cref="LingerMs"/> passes, what they send meanwhile read and
+    /// dropped (a socket closed with bytes unread resets its connection, and Windows then throws away what the joiner
+    /// hadn't read, the word with it: the joiner then took the session over).
+    /// </summary>
+    struct Lingering
+    {
+        Link Joiner;
+        uint64_t Until = 0;
+        bool SendingEnded = false;
+    };
+
+    std::vector<Lingering> Closing;
     /// <summary>Joiner: the connection to the host, and (Port-only, Redux HD) the address it was made to.</summary>
     Link Server;
     /// <summary>Joiner: the host's address, as it was reached (MCDirectPlay::JoinedAddress); after a rollover, the new hub's.</summary>
@@ -629,8 +653,88 @@ struct MCDirectPlay::Impl
 
     ~Impl()
     {
+        // What the joiners sent since is read first: closing with it unread would reset their links.
+        for (Lingering& closing : Closing)
+        {
+            DropArrived(closing.Joiner);
+            MCSocket::Close(closing.Joiner.Socket);
+        }
+
         Shutdown();
         MCSocket::Close(Udp);
+    }
+
+    // ---- a closed session's links --------------------------------------------------------------------------------
+
+    /// <summary>Host: keeps its joiners' links open as the session closes (see <see cref="Closing"/>).</summary>
+    void LingerJoiners()
+    {
+        const uint64_t until = NowMs() + LingerMs;
+
+        for (Link& link : Joiners)
+        {
+            if (link.Dead || link.Socket == MCSocket::InvalidHandle)
+            {
+                continue;
+            }
+
+            Closing.push_back(Lingering{std::move(link), until});
+            link.Socket = MCSocket::InvalidHandle;
+        }
+
+        PumpClosing();
+    }
+
+    /// <summary>Reads and drops what arrived on <paramref name="link"/>.</summary>
+    /// <returns>Whether its other end closed it (or it failed).</returns>
+    static bool DropArrived(Link& link)
+    {
+        std::array<uint8_t, 4096> chunk{};
+
+        for (;;)
+        {
+            const int received = MCSocket::Receive(link.Socket, chunk);
+
+            if (received <= 0)
+            {
+                return received < 0;
+            }
+        }
+    }
+
+    /// <summary>Sends what a closed session's links have left, ends them, and closes those done.</summary>
+    void PumpClosing()
+    {
+        const uint64_t now = NowMs();
+        std::erase_if(Closing,
+                      [&](Lingering& closing)
+                      {
+                          Link& link = closing.Joiner;
+                          Flush(link);
+
+                          if (!link.Dead && link.Output.empty() && !closing.SendingEnded)
+                          {
+                              closing.SendingEnded = true;
+
+                              // A network that can't half-close a link closes it as it did (an internet game's
+                              // links send what they hold first).
+                              if (!MCSocket::EndSending(link.Socket))
+                              {
+                                  MCSocket::Close(link.Socket);
+                                  return true;
+                              }
+                          }
+
+                          const bool closed = DropArrived(link);
+
+                          if (!link.Dead && !closed && now <= closing.Until)
+                          {
+                              return false;
+                          }
+
+                          MCSocket::Close(link.Socket);
+                          return true;
+                      });
     }
 
     // ---- framing -------------------------------------------------------------------------------------------------
@@ -705,6 +809,7 @@ struct MCDirectPlay::Impl
 
             if (sent < 0)
             {
+                link.SendFailed = true;
                 EndLink(link, "a send failed");
                 return;
             }
@@ -728,7 +833,7 @@ struct MCDirectPlay::Impl
     {
         std::array<uint8_t, 8192> chunk{};
 
-        while (!link.Dead)
+        while (!link.Dead || link.SendFailed)
         {
             const int received = MCSocket::Receive(link.Socket, chunk);
 
@@ -2686,10 +2791,12 @@ uint32_t MCDirectPlay::Close()
         return DPERR_NOSESSIONS;
     }
 
-    // Port-only (Redux HD): the host's joiners are told the session ends with it, so none takes it over.
+    // Port-only (Redux HD): the host's joiners are told the session ends with it, so none takes it over, and their
+    // links stay open until they have read it (Impl::Closing).
     if (_Impl->State == Impl::Mode::Host)
     {
         _Impl->Broadcast(FrameType::Ending, Writer{}, -1);
+        _Impl->LingerJoiners();
     }
 
     _Impl->Shutdown();
@@ -3330,6 +3437,8 @@ DPNAME MCDirectPlayMessageName(std::span<const uint8_t> message, const DPMSG_NAM
 
 void MCDirectPlay::Pump()
 {
+    _Impl->PumpClosing();
+
     switch (_Impl->State)
     {
         case Impl::Mode::Host:

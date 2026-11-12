@@ -175,6 +175,12 @@ uint16_t MCNetSwitch::LocalPort(MCSocket::Handle socket)
     return route.has_value() ? route->Net.LocalPort(route->Inner) : 0;
 }
 
+bool MCNetSwitch::EndSending(MCSocket::Handle socket)
+{
+    const std::optional<Route> route = Find(socket);
+    return route.has_value() && route->Net.EndSending(route->Inner);
+}
+
 void MCNetSwitch::Close(MCSocket::Handle socket)
 {
     std::optional<Route> route;

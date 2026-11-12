@@ -52,6 +52,7 @@ public:
     int ReceiveFrom(MCSocket::Handle socket, std::span<uint8_t> data, MCSocket::Address& from) override;
     uint16_t LocalPort(MCSocket::Handle socket) override;
     void Close(MCSocket::Handle socket) override;
+    bool EndSending(MCSocket::Handle socket) override;
 
 private:
     /// <summary>A socket of the switch's: the network it's on and its handle there.</summary>

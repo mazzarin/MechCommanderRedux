@@ -217,11 +217,16 @@ jobs:
           Copy-Item vulkan\loader\vulkan-1.dll (Split-Path $program)
           $icd = (Get-ChildItem vulkan\lavapipe -Recurse -Filter $env:LAVAPIPE_MANIFEST | Select-Object -First 1).FullName
           if (-not $icd) { throw "No lavapipe manifest ($env:LAVAPIPE_MANIFEST) in the Vulkan cache." }
+          $layer = (Get-Item vulkan\layers\VkLayer_khronos_validation.json).FullName
+          # The runner runs as an administrator, and an elevated process's loader ignores VK_DRIVER_FILES and
+          # VK_ADD_LAYER_PATH: lavapipe (the runner's only Vulkan driver) and the layer go in the machine's registry,
+          # each named by its manifest's path, 0 to use it.
+          foreach ($entry in @(@{ Key = 'Drivers'; Manifest = $icd }, @{ Key = 'ExplicitLayers'; Manifest = $layer })) {
+            $key = "HKLM:\SOFTWARE\Khronos\Vulkan\$($entry.Key)"
+            New-Item -Force $key | Out-Null
+            New-ItemProperty -Force -Path $key -Name $entry.Manifest -PropertyType DWord -Value 0 | Out-Null
+          }
           "MC_TESTS=$program" >> $env:GITHUB_ENV
-          "VK_DRIVER_FILES=$icd" >> $env:GITHUB_ENV
-          "VK_ADD_LAYER_PATH=$pwd\vulkan\layers" >> $env:GITHUB_ENV
-          $env:VK_DRIVER_FILES = $icd
-          $env:VK_ADD_LAYER_PATH = "$pwd\vulkan\layers"
           $env:VK_LOADER_DEBUG = 'error,warn'
           $summary = cmd /c 'vulkan\loader\vulkaninfo.exe --summary 2>&1' | Out-String
           $summary

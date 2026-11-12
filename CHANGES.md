@@ -114,6 +114,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 ### Sound
 
 - Without a sound device, the game runs silently instead of quitting with "DirectSound was unable to initialize".
+  Each sound still takes as long as it would on a device, so the operation briefing no longer waits forever for
+  Betty's line.
 
 ### Multiplayer
 

@@ -7,6 +7,8 @@
 #include "gameos/MCSoundRenderer.h"
 #include "main/MCGameContext.h"
 #include "platform/MCAudio.h"
+#include "platform/MCFileSystem.h"
+#include "platform/MCServices.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
 #include "object/MCMechWarrior.h"
@@ -479,6 +481,53 @@ TEST_CASE("sound: the purge stops the channels and drops the radio messages")
     CHECK_EQ(sound.RadioQueue.Size(), 0u);
     CHECK(sound.Sounds[0].BiteData.empty());
     CHECK_EQ(sound.RadioCount(), 0u);
+}
+
+/// <summary>
+/// On a computer without a playback device, a sound still ends after its length, as it would on one: the operation
+/// tab waits for Betty's line to end (MCBriefingScreen::SetUpOperation), and without a device it waited for good.
+/// SDL's disk driver with nowhere to write stands in for the computer: its default device can't be opened.
+/// </summary>
+TEST_CASE_ISOLATED("sound: without a playback device Betty's line still ends, as the operation tab waits for it")
+{
+    // A tenth of a second at the test wave's 22050 Hz.
+    constexpr uint32_t lineSamples = 2205;
+    constexpr auto lineLength = std::chrono::milliseconds(100);
+    constexpr auto waitLimit = std::chrono::seconds(3);
+    constexpr auto waitStep = std::chrono::milliseconds(2);
+
+    const std::filesystem::path nowhere = std::filesystem::temp_directory_path() / "mc_tests no folder" / "sound.raw";
+    REQUIRE(!std::filesystem::exists(nowhere.parent_path()));
+    SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "disk");
+    SDL_SetHint(SDL_HINT_AUDIO_DISK_OUTPUT_FILE, MCFileSystem::ToUtf8(nowhere).c_str());
+    REQUIRE(!MCAudio::Open().has_value());
+
+    {
+        MCTestContextScope scope;
+        scope.Context().SetAudio(std::make_unique<MCSdlAudioDevice>());
+        scope.Context().SetSoundSystem(std::make_unique<MCSoundSystem>());
+        MCSoundSystem& sound = *SoundSystem();
+        MCSoundRenderer& renderer = *SoundRenderer();
+
+        const std::vector<uint8_t> line = Wave(lineSamples);
+        renderer.Play(BETTY_CHANNEL, renderer.CreateResource(line));
+        const auto start = std::chrono::steady_clock::now();
+        REQUIRE(sound.IsChannelPlaying(BETTY_CHANNEL));
+
+        while (sound.IsChannelPlaying(BETTY_CHANNEL) && std::chrono::steady_clock::now() - start < waitLimit)
+        {
+            std::this_thread::sleep_for(waitStep);
+        }
+
+        const auto took = std::chrono::steady_clock::now() - start;
+        CHECK(!sound.IsChannelPlaying(BETTY_CHANNEL));
+        // Played at a device's rate, not dropped at once.
+        CHECK(took >= lineLength / 2);
+    }
+
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    SDL_ResetHint(SDL_HINT_AUDIO_DRIVER);
+    SDL_ResetHint(SDL_HINT_AUDIO_DISK_OUTPUT_FILE);
 }
 
 /// <summary>

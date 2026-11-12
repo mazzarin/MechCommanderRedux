@@ -19,7 +19,11 @@
 #include "logistics/MCLogButton.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMechBriefBlock.h"
+#include "logistics/MCRepairScreen.h"
 #include "logistics/MCMissionLogisticsBridge.h"
+#include "logistics/MCPurMechList.h"
+#include "logistics/MCPurPilotList.h"
+#include "logistics/MCPurVehicleList.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCReusableDialog.h"
@@ -875,6 +879,123 @@ TEST_CASE_ISOLATED("game: a save naming a mission the campaign doesn't have is r
     CHECK_EQ(logistics->CurrentMission, goodMission);
     MCFileSystem::RemoveFile(GamePath(SavePath, "p3badmission", ".sav"));
     MCFileSystem::RemoveFile(GamePath(SavePath, "p3badmission", ".pur"));
+}
+
+namespace
+{
+    /// <summary>The logistics state of the repair screen, where the main menu's RETURN TO GAME goes back to.</summary>
+    constexpr int32_t RepairScreenState = 4;
+    /// <summary>The asserts the load screen's listing makes for a save naming a mission the campaign hasn't: its
+    /// operation and its mission number, each missing from the master mission file.</summary>
+    constexpr int32_t UnlistedMissionAsserts = 2;
+
+    /// <summary>
+    /// Loads save <paramref name="name"/> as a player does: the main menu's load screen, the save picked, LOAD pressed;
+    /// <paramref name="listingAsserts"/> the asserts listing the saves makes.
+    /// </summary>
+    void LoadFromScreen(std::string_view name, int32_t listingAsserts)
+    {
+        {
+            MCTest::ExpectAssert listing("in master mission file", listingAsserts);
+            LoadScreen();
+            Settle();
+        }
+
+        MCFileScrollPane& pane = *GlobalLog()->LoadScreen->FilePane;
+        const auto file = std::ranges::find(pane.Files, name, &MCFileScrollPane::File::Name);
+        REQUIRE(file != pane.Files.end());
+        pane.SetSelectedFile(static_cast<int32_t>(file - pane.Files.begin()));
+        LoadGame();
+        Settle();
+    }
+}
+
+/// <summary>
+/// A save the load refuses has emptied the campaign's lists, so it leaves no campaign: the load screen says the save
+/// couldn't be loaded, and the main menu's RETURN TO GAME and SAVE GAME wait for the next load. A player's crashes on
+/// 0.6.3 came back through RETURN TO GAME: in the mech lab, a mech dragged to the inventory or a portrait clicked read
+/// a pilot gone from the emptied list, and on a new start the store, and the mission start's save, read the shop's
+/// lists that no campaign had made (here they're there, empty, from the start). Refused before the save's mission
+/// number is taken (past the campaign's end) and after it (the end itself, which picks no scenario).
+/// </summary>
+TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and SAVE GAME wait for the next load")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    REQUIRE(logistics->PurMechList != nullptr);
+    REQUIRE(logistics->PurVehicleList != nullptr);
+    REQUIRE(logistics->PurPilotList != nullptr);
+    CHECK(logistics->PurMechList->Mechs.empty());
+    CHECK(logistics->PurVehicleList->Vehicles.empty());
+    CHECK(logistics->PurPilotList->Pilots.empty());
+    const auto scenarios = static_cast<int32_t>(Mission()->Scenarios.size());
+
+    for (const int32_t mission : {scenarios + 1, scenarios})
+    {
+        MCTest::Scope entry(std::format("mission {}", mission));
+
+        // In a campaign's mech lab, with a good save of it and one naming the mission.
+        NewCampaign();
+        Settle();
+        const int32_t goodMission = logistics->CurrentMission;
+        REQUIRE(goodMission >= 0);
+        REQUIRE_EQ(logistics->SaveCampaign("p3good"), 0);
+        logistics->CurrentMission = mission;
+        REQUIRE_EQ(logistics->SaveCampaign("p3refused"), 0);
+        logistics->CurrentMission = goodMission;
+        logistics->SetUpRepairScreen(true);
+        Settle();
+
+        // The main menu, and the save refused: the load screen stays up, saying so, with no campaign behind it.
+        logistics->SetUpMainScreen(false);
+        Settle();
+        REQUIRE_EQ(logistics->PreviousState, RepairScreenState);
+        LoadFromScreen("p3refused", UnlistedMissionAsserts);
+        CHECK(logistics->CurrentScreen() == logistics->LoadScreen);
+        CHECK_EQ(logistics->CurrentMission, -1);
+        MCReusableDialog& message = *logistics->MessageDialog;
+        REQUIRE(message.IsShowing());
+        CHECK_EQ(message.Text, RefusedSaveText);
+        MCGuiObject& ok = *message.OkButton;
+        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+        Settle();
+        CHECK(!message.IsShowing());
+        CHECK(logistics->CurrentScreen() == logistics->LoadScreen);
+
+        // Back on the main menu, neither goes anywhere.
+        Cancel();
+        Settle();
+        REQUIRE(logistics->CurrentScreen() == logistics->MainScreen);
+        ReturnToGame();
+        Settle();
+        CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+        SaveScreen();
+        Settle();
+        CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+
+        // The next load fills the lists again and opens the campaign.
+        LoadFromScreen("p3good", UnlistedMissionAsserts);
+        CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+        CHECK(!message.IsShowing());
+        CHECK_EQ(logistics->CurrentMission, goodMission);
+        CHECK(!logistics->ForceMechList->Mechs.empty());
+        CHECK(!logistics->AssignedWarriorList->Warriors.empty());
+        CHECK(!logistics->PurMechList->Mechs.empty());
+        logistics->SetUpMainScreen(false);
+        Settle();
+    }
+
+    for (const std::string_view save : {"p3good", "p3refused"})
+    {
+        MCFileSystem::RemoveFile(GamePath(SavePath, save, ".sav"));
+        MCFileSystem::RemoveFile(GamePath(SavePath, save, ".pur"));
+    }
 }
 
 TEST_CASE_ISOLATED("game: the mission's start file puts the deployed mech and its pilot at the drop zone")

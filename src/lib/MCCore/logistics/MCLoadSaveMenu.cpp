@@ -132,6 +132,12 @@ void LoadGame()
         GlobalLog()->SetUpBriefingScreen(false);
         SoundSystem()->PlayDigitalMusic(0x16, true);
     }
+    else
+    {
+        // Port fix: the original said nothing when it refused a save, and the load screen stayed up as if the click
+        // had missed.
+        ShowMenuMessage(RefusedSaveText);
+    }
 }
 
 void LoadMPGame()

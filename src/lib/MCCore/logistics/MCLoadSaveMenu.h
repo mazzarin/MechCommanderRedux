@@ -3,11 +3,16 @@
 // The load and save screens' callbacks: campaign saves (.sav), single missions (.sol) and the host's multiplayer
 // missions. Original source: logistics\logmain.cpp.
 
+#include <string_view>
+
 class MCGuiEvent;
 class MCGuiObject;
 
 /// <summary>Set while the load screen lists single missions (.sol) rather than campaign saves.</summary>
 extern bool LoadingSolo;
+
+/// <summary>What the load screen says when the game refuses the save chosen (the original said nothing).</summary>
+inline constexpr std::string_view RefusedSaveText = "THIS SAVE COULDN'T BE LOADED.";
 
 /// <summary>Opens the save game screen (not before a campaign has a mission).</summary>
 void SaveScreen();
@@ -18,7 +23,10 @@ void LoadScreen();
 /// <summary>Opens the load screen for single missions.</summary>
 void SoloLoadScreen();
 
-/// <summary>Loads the save game (or single mission) chosen on the load screen.</summary>
+/// <summary>
+/// Loads the save game (or single mission) chosen on the load screen; one the game refuses leaves the load screen up,
+/// saying so.
+/// </summary>
 void LoadGame();
 
 /// <summary>Loads the multiplayer mission chosen on the load screen (the host's session screen).</summary>

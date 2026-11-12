@@ -4,9 +4,9 @@
 // MULTIPLAYER ACCESS's LAN button (L and A from SERIAL, N from INTERNET, on NETWORK's plate) and the INTERNET screen's
 // title (INTERNET CONNECTION from NETWORK CONNECTION's letters, on the background every multiplayer panel shares). A
 // word's letters are the pieces of its picture: the pixels that differ from the background behind them, each joined
-// run of them (side by side or above each other) a letter, or two letters the art joined. Each made picture gets an HD
-// copy, made the same way of the HD art pack's copies of its pictures (MCHdArt::KeepPicture), when the pack has them;
-// the LAN button's letters by their own HD pixels, so their HD edges come whole and nothing of a neighbour's with them.
+// run of them (side by side or above each other) a letter, or two letters the art joined. A made picture's HD copy is
+// the HD art pack's own, found by its pixels as any picture's is: the pack draws its word in its font, from the pictures
+// mc_tests' --hd-extract-menus writes, in its lanbutton and internetpanel folders.
 
 #include <memory>
 #include <optional>

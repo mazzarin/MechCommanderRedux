@@ -5,7 +5,6 @@
 #include "main/MCWeaponBans.h"
 #include "logistics/MCLogPort.h"
 #include "network/MCMultiPlayer.h"
-#include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
 #include "vfx/MCVfxFunctions.h"
@@ -216,69 +215,10 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: gives the lettered tabs (<paramref name="tabs"/>, the rows from <paramref name="top"/> down of
-    /// <paramref name="base"/>'s picture with <paramref name="rows"/>' faces put in) an HD copy, made as they are of
-    /// the HD art pack's copies of their pictures, for the pack's pictures to show (MCHdArt::KeepPicture). None while HD
-    /// art is off, or when the pack lacks one of the pictures: the tabs show as they are.
-    /// </summary>
-    void KeepHdTabs(const MCLogPort& tabs, int32_t top, const TabsArt& art, std::string_view base,
-                    std::span<const FaceRow> rows, std::pair<int32_t, int32_t> face)
-    {
-        std::map<std::string_view, std::shared_ptr<const MCHdArt::Frame>> hd;
-
-        for (const auto& [name, picture] : art)
-        {
-            std::shared_ptr<const MCHdArt::Frame> frame =
-                MCHdArt::FindPicture(picture->Pixels(), picture->Width(), picture->Height());
-
-            if (frame == nullptr)
-            {
-                return;
-            }
-
-            hd.emplace(name, std::move(frame));
-        }
-
-        const MCHdArt::Frame& made = *hd.at(base);
-        MCHdArt::Frame lettered = made;
-        const int32_t faceWidth = face.second - face.first + 1;
-        const auto copied = [&](const MCHdArt::Frame& from, int32_t x, int32_t y, int32_t width, int32_t height,
-                                MCHdArt::Frame& to, int32_t toX, int32_t toY)
-        {
-            if (MCHdArt::CopyArea(from, x, y, width, height, to, toX, toY))
-            {
-                return true;
-            }
-
-            SDL_Log(
-                "MATCH OPTIONS: the HD art pack's tabs at %dx (format %d) can't be lettered from %dx (format %d); the "
-                "tab shows as it is",
-                to.Scale, static_cast<int>(to.Format), from.Scale, static_cast<int>(from.Format));
-            return false;
-        };
-
-        for (const FaceRow& row : rows)
-        {
-            if (!copied(*hd.at(row.Picture), face.first, row.From, faceWidth, 1, lettered, face.first, row.To))
-            {
-                return;
-            }
-        }
-
-        MCHdArt::Frame shown = MCHdArt::BlankFrame(made, TabsWidth, TabsHeight - top);
-
-        if (!copied(lettered, 0, top, TabsWidth, TabsHeight - top, shown, 0, 0))
-        {
-            return;
-        }
-
-        MCHdArt::KeepPicture(tabs.Pixels(), tabs.Width(), tabs.Height(), std::move(shown));
-    }
-
-    /// <summary>
     /// The two tabs with the bottom one's word <see cref="MatchOptionsWord"/>, in front (<paramref name="front"/>: as
-    /// lsbdw03, MULTIPLAYER CHAT behind) or behind (as lsbdw02), and their HD copy (KeepHdTabs); null when the art isn't
-    /// the tabs' as expected.
+    /// lsbdw03, MULTIPLAYER CHAT behind) or behind (as lsbdw02); null when the art isn't the tabs' as expected. Their HD
+    /// copy is the HD art pack's, found by their pixels as any picture's is (the pack draws the words in its font, from
+    /// the tabs mc_tests' --hd-extract-menus writes).
     /// </summary>
     std::shared_ptr<MCLogPort> LetterTabs(bool front)
     {
@@ -306,7 +246,6 @@ namespace
         auto tabs = std::make_shared<MCLogPort>();
         tabs->Init(TabsWidth, TabsHeight - top);
         std::ranges::copy(lettered.Pixels().subspan(static_cast<size_t>(top * TabsWidth)), tabs->Pixels().begin());
-        KeepHdTabs(*tabs, top, *art, base, rows, face);
         return tabs;
     }
 

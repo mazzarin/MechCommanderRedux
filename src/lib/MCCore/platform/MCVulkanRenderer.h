@@ -14,6 +14,10 @@ namespace MCHdArt
     struct Frame;
 }
 
+// smol-atlas's (src/lib/smol-atlas-77a4e174): the places in the pages pictures share (MCVulkanRenderer's SharedPage).
+struct smol_atlas_t;
+struct smol_atlas_item_t;
+
 /// <summary>
 /// The hardware renderer: draws the frame surfaces (the screen and the world view's surface, see
 /// <see cref="MCRenderer::AddFrameSurface"/>) on the GPU, through SDL GPU on Vulkan, on the presenter's device.
@@ -321,6 +325,77 @@ private:
         std::shared_ptr<SDL_GPUTexture> Handle;
         uint32_t Width = 0;
         uint32_t Height = 0;
+    };
+
+    /// <summary>A draw's fields (shaders/instance.vshader's <c>Draw</c>).</summary>
+    using DrawFields = std::array<int32_t, 24>;
+
+    /// <summary>
+    /// Port-only: where a picture lies in the textures its draws read: its pixels' corner (an HD art frame's indices'),
+    /// its HD colours' corner, and its size, 0 x 0 for a picture with a texture of its own (whose size it is). Its draws
+    /// carry it (shaders/instance.vshader's <c>Draw::place</c>), so pictures in one page share their bindings.
+    /// </summary>
+    struct PicturePlace
+    {
+        uint16_t X = 0;
+        uint16_t Y = 0;
+        uint16_t HdX = 0;
+        uint16_t HdY = 0;
+        uint16_t Width = 0;
+        uint16_t Height = 0;
+
+        bool operator==(const PicturePlace&) const = default;
+    };
+
+    /// <summary>Port-only: destroys a shared page's places.</summary>
+    struct DestroyPlaces
+    {
+        void operator()(smol_atlas_t* places) const;
+    };
+
+    /// <summary>
+    /// Port-only: a page pictures share (HD art frames, or sharp glyphs), so the draws of any of them share their
+    /// bindings (<see cref="SameBindings"/>): its texture (the HD frames' indices, or the glyphs' pixels) and the HD
+    /// frames' colours, each packed by smol-atlas (the colours in whole BC7 blocks when they're BC7), and how many
+    /// pictures it holds. An emptied page lets its textures go, its slot left for the next page.
+    /// </summary>
+    struct SharedPage
+    {
+        Texture HdColors;
+        Texture Texture;
+        std::unique_ptr<smol_atlas_t, DestroyPlaces> Places;
+        std::unique_ptr<smol_atlas_t, DestroyPlaces> HdPlaces;
+        uint32_t Pictures = 0;
+    };
+
+    /// <summary>Port-only: the pages a picture may share (none: a picture with textures of its own).</summary>
+    enum class PageKind : uint8_t
+    {
+        None,
+        Hd,
+        Sharp,
+    };
+
+    /// <summary>
+    /// Port-only: a kind of shared page: its texture's format and side, and its HD colours' (format
+    /// SDL_GPU_TEXTUREFORMAT_INVALID: none), placed in blocks of HdBlock pixels a side.
+    /// </summary>
+    struct SharedLayout
+    {
+        SDL_GPUTextureFormat Format = SDL_GPU_TEXTUREFORMAT_INVALID;
+        uint32_t Side = 0;
+        SDL_GPUTextureFormat HdFormat = SDL_GPU_TEXTUREFORMAT_INVALID;
+        uint32_t HdSide = 0;
+        uint32_t HdBlock = 1;
+    };
+
+    /// <summary>Port-only: a shared page's place let go, freed once the frame that let it go has run.</summary>
+    struct RetiredPlace
+    {
+        PageKind Kind = PageKind::None;
+        uint32_t Page = 0;
+        smol_atlas_item_t* Item = nullptr;
+        smol_atlas_item_t* HdItem = nullptr;
     };
 
     /// <summary>A frame surface on the GPU.</summary>
@@ -1178,7 +1253,7 @@ private:
     bool _Recording = false;
     uint64_t _Frame = 0;
     std::vector<Record> _Records;
-    std::vector<std::array<int32_t, 20>> _Draws;
+    std::vector<DrawFields> _Draws;
     /// <summary>
     /// Port-only: each draw's next in its record (NoDraw for its record's latest), and whether a draw went into a
     /// record before the latest, so the draws need laying out in their records' order (LayOutDraws).
@@ -1186,7 +1261,7 @@ private:
     std::vector<uint32_t> _DrawNext;
     bool _DrawsMoved = false;
     /// <summary>Port-only: the draws as laid out (LayOutDraws swaps them with _Draws, so neither is made again).</summary>
-    std::vector<std::array<int32_t, 20>> _LaidDraws;
+    std::vector<DrawFields> _LaidDraws;
     /// <summary>
     /// The table rows (256 bytes each, row 0 the identity) and the texture holding them. A row stays while its table
     /// does; rows dropped (the table changed or went) are free again from the next frame on (<c>_ReleasedRows</c>,
@@ -1287,6 +1362,16 @@ private:
         uint64_t LastFrame = 0;
         /// <summary>Port-only: its place in _FramePictures when last used (UsePicture keeps it for the frame).</summary>
         uint32_t FrameIndex = UINT32_MAX;
+        /// <summary>
+        /// Port-only: the pages it shares (none: Texture and HdColors are its own), its page there, its place in the
+        /// page's textures (which Texture and HdColors are then) and its places' items (smol-atlas's, freed by the
+        /// page's places: <see cref="FreeShared"/>).
+        /// </summary>
+        PageKind Shares = PageKind::None;
+        uint32_t Page = 0;
+        PicturePlace Place;
+        smol_atlas_item_t* Item = nullptr;
+        smol_atlas_item_t* HdItem = nullptr;
     };
 
     std::unordered_map<uint64_t, Picture> _Pictures;
@@ -1401,10 +1486,48 @@ private:
     void DrawSharpPicture(uint16_t surface, Picture& picture, const Quad& at, const Quad& from, uint32_t tableRow,
                           uint32_t flags);
 
-    /// <summary>The frame's pictures in use (their textures).</summary>
-    std::vector<std::shared_ptr<SDL_GPUTexture>> _FramePictures;
-    /// <summary>The HD colours of the frame's pictures that are HD art frames, by their place in _FramePictures.</summary>
-    std::unordered_map<uint32_t, std::shared_ptr<SDL_GPUTexture>> _FrameHdColors;
+    /// <summary>
+    /// A picture of the frame: the texture its draws read, an HD art frame's colours (none: not one), and its place in
+    /// them (port-only: a shared page's).
+    /// </summary>
+    struct FramePicture
+    {
+        std::shared_ptr<SDL_GPUTexture> Texture;
+        std::shared_ptr<SDL_GPUTexture> HdColors;
+        PicturePlace Place;
+    };
+
+    /// <summary>The frame's pictures in use.</summary>
+    std::vector<FramePicture> _FramePictures;
+    /// <summary>
+    /// Port-only: the pages the HD art frames share and the sharp glyphs', and the places let go while the frames that
+    /// read them may still run (freed as the next frame's recording starts).
+    /// </summary>
+    std::vector<SharedPage> _HdPages;
+    std::vector<SharedPage> _SharpPages;
+    std::vector<RetiredPlace> _RetiredPlaces;
+    /// <summary>Port-only: the shared pages of kind <paramref name="kind"/>.</summary>
+    std::vector<SharedPage>& PagesOf(PageKind kind);
+    /// <summary>
+    /// Port-only: puts <paramref name="picture"/> in a page of kind <paramref name="kind"/> (<paramref name="layout"/>'s;
+    /// one made when none has room): <paramref name="width"/> x <paramref name="height"/> of its texture's pixels, and an
+    /// HD art frame's colours <paramref name="hdWidth"/> x <paramref name="hdHeight"/> (0 x 0: none); its page's textures
+    /// become its own. False, leaving it as it was, for a picture over half a page or when no page could be made.
+    /// </summary>
+    bool PlaceShared(PageKind kind, const SharedLayout& layout, Picture& picture, uint32_t width, uint32_t height,
+                     uint32_t hdWidth, uint32_t hdHeight);
+    /// <summary>
+    /// Port-only: lets <paramref name="picture"/>'s place in its shared page go (freed as the next frame's recording
+    /// starts, <see cref="FreeRetiredPlaces"/>).
+    /// </summary>
+    void FreeShared(Picture& picture);
+    /// <summary>Port-only: frees the places let go (<see cref="FreeShared"/>), releasing the pages they empty.</summary>
+    void FreeRetiredPlaces();
+    /// <summary>
+    /// Whether draws from source <paramref name="a"/> and source <paramref name="b"/> of kind <paramref name="source"/>
+    /// read the same textures (port-only: pictures in one shared page do).
+    /// </summary>
+    bool SameBindings(SourceKind source, uint32_t a, uint32_t b) const;
     /// <summary>Whether the GPU samples BC7 (unknown: not asked yet); else HD colours are decoded to RGBA8.</summary>
     std::optional<bool> _Bc7;
     /// <summary>The HD art pack whose colours the palette's second row holds (MCHdArt::PackVersion; 0: none).</summary>

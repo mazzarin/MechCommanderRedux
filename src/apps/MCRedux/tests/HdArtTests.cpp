@@ -3493,6 +3493,138 @@ namespace
 }
 
 /// <summary>
+/// Port-only: HD art frames drawn apart share their bindings (the pages the GPU's HD frames share: MCVulkanRenderer's
+/// SharedPage): a shape table's frames, each an HD picture of its own, drawn apart on the screen take as many batches as
+/// one of them does, and each shows its own colours (read from its own place in the page).
+/// </summary>
+TEST_CASE_ISOLATED("game: the GPU draws HD art frames apart in as many batches as one, each in its own colours")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || renderer == nullptr)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+
+    // Frames of one colour each, every colour unlike the others' (each channel 40 or more, as FullColorIndex's).
+    constexpr size_t Frames = 8;
+    constexpr int32_t Width = 24;
+    constexpr int32_t Height = 16;
+    constexpr int32_t FirstFree = 10;
+    constexpr int32_t EndFree = 246;
+    constexpr uint8_t Channel = 40;
+    constexpr int32_t Unlike = 32;
+    const auto apart = [](SDL_Color a, SDL_Color b)
+    { return std::abs(a.r - b.r) >= Unlike || std::abs(a.g - b.g) >= Unlike || std::abs(a.b - b.b) >= Unlike; };
+    std::vector<uint8_t> indices;
+
+    for (int32_t i = FirstFree; i < EndFree && indices.size() < Frames; ++i)
+    {
+        const SDL_Color& c = colors[static_cast<size_t>(i)];
+
+        if (SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= Channel && c.g >= Channel && c.b >= Channel &&
+            std::ranges::all_of(indices, [&](uint8_t chosen) { return apart(c, colors[chosen]); }))
+        {
+            indices.push_back(static_cast<uint8_t>(i));
+        }
+    }
+
+    REQUIRE_EQ(indices.size(), Frames);
+    constexpr uint8_t RowPixels = 2 * Width + 1;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<std::vector<uint8_t>> rows(Frames);
+    std::vector<TableFrame> tableFrames;
+
+    for (size_t f = 0; f < Frames; ++f)
+    {
+        for (int32_t row = 0; row < Height; ++row)
+        {
+            rows[f].push_back(RowPixels);
+            rows[f].insert(rows[f].end(), static_cast<size_t>(Width), indices[f]);
+            rows[f].push_back(RowEnd);
+        }
+
+        tableFrames.push_back(TableFrame{0, -Height, Width, Height, rows[f]});
+    }
+
+    const std::vector<uint8_t> made = FramesTable(tableFrames);
+    MCRegisteredBlock table(made.size(), MCDataKind::Shapes);
+    std::ranges::copy(made, table.Bytes().begin());
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_shared_pages";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table.Bytes()));
+    std::filesystem::create_directories(folder);
+    constexpr int32_t Scale = 2;
+
+    for (size_t f = 0; f < Frames; ++f)
+    {
+        WriteObjectFrame(folder / std::to_string(f), Width, Height, Scale, colors,
+                         [&](int32_t, int32_t) { return indices[f]; });
+    }
+
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCTestGame::RunFrame(FrameSeconds);
+
+    // The first `count` frames, apart: the frame's batches and what it shows.
+    constexpr int32_t Left = 40;
+    constexpr int32_t Foot = 120;
+    constexpr int32_t Step = 40;
+    const auto drawn = [&](size_t count)
+    {
+        for (size_t f = 0; f < count; ++f)
+        {
+            AGShapeDraw(pane, table.Bytes(), static_cast<int32_t>(f), Left + Step * static_cast<int32_t>(f), Foot);
+        }
+
+        auto shown = display->ReadFrame();
+        REQUIRE(shown.has_value());
+        return std::pair{renderer->LastFrameBatches(), std::move(*shown)};
+    };
+
+    // Each frame read from the pack and put on the GPU first.
+    drawn(Frames);
+    const int64_t one = drawn(1).first;
+    const auto [all, shown] = drawn(Frames);
+    std::cout << std::format("  {} batches for one frame, {} for {} apart\n", one, all, Frames);
+    CHECK_EQ(all, one);
+
+    constexpr int32_t Near = 3;
+
+    for (size_t f = 0; f < Frames; ++f)
+    {
+        MCTest::Scope scope(std::format("frame {}", f));
+        const int32_t x = Left + Step * static_cast<int32_t>(f) + Width / 2;
+        const int32_t y = Foot - Height / 2;
+        const SDL_Color at = shown[static_cast<size_t>(y + pane.Y0) * width + x + pane.X0];
+        const SDL_Color expected = colors[indices[f]];
+        CHECK((std::abs(at.r - expected.r) <= Near && std::abs(at.g - expected.g) <= Near &&
+               std::abs(at.b - expected.b) <= Near));
+    }
+
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
 /// Sun shadows (GHdSunShadows), on the screen drawn by the GPU over mission 1, paused: an object's frame from the pack
 /// (its body, its baked shadow in black beside it) shows its shadow solid black with them off, and with them on as
 /// what lies under it at half its light; its body is the same either way. A part drawn as a unit's sun shadow

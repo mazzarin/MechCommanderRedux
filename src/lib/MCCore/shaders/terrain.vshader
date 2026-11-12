@@ -77,6 +77,8 @@ struct Output
     nointerpolation int4 span : TEXCOORD3;
     nointerpolation uint4 walk : TEXCOORD4;
     nointerpolation uint4 ground : TEXCOORD5;
+    // draw.pshader's picture place (instance.vshader's): none.
+    nointerpolation uint4 place : TEXCOORD6;
 };
 
 static const float2 quad[6] = {
@@ -157,6 +159,7 @@ Output Nothing()
     output.span = int4(0, 0, 0, 0);
     output.walk = uint4(0, 0, 0, 0);
     output.ground = uint4(0, 0, 0, 0);
+    output.place = uint4(0, 0, 0, 0);
     return output;
 }
 
@@ -237,6 +240,7 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     output.span = seamPass ? int4(image.atlas.zw, 0, 0) : int4(0, 0, 0, 0);
     output.walk = seamPass ? uint4(0, 0, (uint)image.atlas.x, (uint)image.atlas.y) : uint4(0, 0, 0, 0);
     output.ground = uint4(0, 0, 0, 0);
+    output.place = uint4(0, 0, 0, 0);
 
     // The HD art pack's colours for the tile (draw.pshader's HdColors): the scale, and the tile's place to stay in.
     if (mesh.y != 0 && image.hot.z != 0 && (flags & UseColor) == 0)

@@ -7,6 +7,7 @@
 #include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 #include "platform/MCVulkanShaders.h"
+#include "smol-atlas.h"
 #include "lib/MCFatal.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
@@ -247,6 +248,24 @@ namespace
     /// </summary>
     constexpr uint32_t HdRgbaBytes = 4;
     constexpr uint32_t HdBc7Bytes = 1;
+    /// <summary>BC7's blocks: 4 x 4 pixels.</summary>
+    constexpr uint32_t Bc7Block = 4;
+    /// <summary>
+    /// Port-only: the pages HD art frames share: their colours 2048 a side (BC7, 4 MB; 16 MB as RGBA8 on a GPU without
+    /// BC7) and their indices half that (R8G8, 2 MB). One holds every frame a mission's interface and a forest draw
+    /// together (3.4 million colour pixels over the trees at 1440 lines); a frame over half a page keeps its own
+    /// textures.
+    /// </summary>
+    constexpr uint32_t HdPageSide = 2048;
+    constexpr uint32_t HdIndexPageSide = 1024;
+    /// <summary>Port-only: the pages sharp glyphs share (RGBA8, 4 MB; the interface's take 0.1 MB).</summary>
+    constexpr uint32_t SharpPageSide = 1024;
+    /// <summary>A place's corner or size packed as a draw's field: x in bits 0-15, y in 16-31.</summary>
+    int32_t PackedPair(uint16_t x, uint16_t y)
+    {
+        return static_cast<int32_t>(static_cast<uint32_t>(x) | static_cast<uint32_t>(y) << 16);
+    }
+
     /// <summary>
     /// draw.pshader's textures: the source, the tables, the alpha colours, the fits, the palette, the HD colours (an
     /// HD art frame's, or the terrain's two atlases) and the terrain's relief maps (two atlases); the palette where a
@@ -1210,6 +1229,15 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(picture.Texture);
     }
 
+    for (std::vector<SharedPage>* pages : {&_HdPages, &_SharpPages})
+    {
+        for (SharedPage& page : *pages)
+        {
+            Release(page.Texture);
+            Release(page.HdColors);
+        }
+    }
+
     for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
     {
         OnTextureReleased(*texture);
@@ -1223,7 +1251,6 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _RetiredTransfers.clear();
     _Uploads.clear();
     _FramePictures.clear();
-    _FrameHdColors.clear();
     Release(_Blank);
     Release(_TableTexture);
     Release(_AlphaTexture);
@@ -1320,6 +1347,9 @@ void MCVulkanRenderer::BeginRecording()
         RecordingStarts();
     }
 
+    // Port-only: the shared pages' places let go before the last frame ran are free now.
+    FreeRetiredPlaces();
+
     // The atlas starts again when it has grown too big (nothing of the last frame is drawn from it any more).
     if (_Pages.size() > MaxPages)
     {
@@ -1362,6 +1392,7 @@ auto MCVulkanRenderer::DropPicture(std::unordered_map<uint64_t, Picture>& pictur
     bytes -= it->second.Bytes != 0
                  ? it->second.Bytes
                  : static_cast<size_t>(it->second.Texture.Width) * it->second.Texture.Height * bytesPerPixel;
+    FreeShared(it->second);
     Release(it->second.Texture);
     Release(it->second.HdColors);
     return pictures.erase(it);
@@ -1509,7 +1540,7 @@ std::optional<uint8_t> MCVulkanRenderer::WipeColor(const Record& record, const S
     }
 
     // An opaque fill (no flags: no key, table or blend) over every window pixel the surface's drawn size shows.
-    const std::array<int32_t, 20>& draw = _Draws[record.First];
+    const DrawFields& draw = _Draws[record.First];
 
     if (static_cast<uint32_t>(draw[8]) != KindFill || draw[0] > 0 || draw[1] > 0 ||
         draw[2] < static_cast<int32_t>(surface.MappedWidth) - 1 ||
@@ -1660,7 +1691,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         return false;
     }
 
-    std::array<int32_t, 20> draw{};
+    DrawFields draw{};
     draw[0] = clipped.X0;
     draw[1] = clipped.Y0;
     draw[2] = clipped.X1;
@@ -1715,6 +1746,16 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     draw[9] = static_cast<int32_t>(color);
     draw[10] = static_cast<int32_t>(before);
     draw[11] = static_cast<int32_t>(after);
+
+    // Port-only: where its picture lies in the textures it reads (a shared page's).
+    if (source == SourceKind::Picture)
+    {
+        const PicturePlace& place = _FramePictures[sourceIndex].Place;
+        draw[20] = PackedPair(place.X, place.Y);
+        draw[21] = PackedPair(place.HdX, place.HdY);
+        draw[22] = PackedPair(place.Width, place.Height);
+    }
+
     const bool indexOnly = (op & IndexOnly) != 0;
     const bool shadow = (op & KindMask) == KindShadow;
     // A forest's HD frame marks its sway; an HD frame's index-only draw is its mark pass (HdMarks::Standing).
@@ -1726,8 +1767,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     const auto sameRun = [&](const Record& last)
     {
         return !last.Resize && last.TerrainDraw < 0 && last.SurfaceIndex == surfaceIndex && last.Source == source &&
-               last.SourceIndex == sourceIndex && last.Blend == blend && last.IndexOnly == indexOnly &&
-               last.Shadow == shadow && last.Marks == marks && last.Variant == variant;
+               SameBindings(source, last.SourceIndex, sourceIndex) && last.Blend == blend &&
+               last.IndexOnly == indexOnly && last.Shadow == shadow && last.Marks == marks && last.Variant == variant;
     };
 
     std::optional<size_t> into;
@@ -1830,7 +1871,7 @@ bool MCVulkanRenderer::AddSpan(uint16_t surface, const SourceRef& source, const 
 
     // The span's first column (the values are counted from it, wherever the draw was clipped) and the texture's
     // size, then its values.
-    std::array<int32_t, 20>& draw = _Draws.back();
+    DrawFields& draw = _Draws.back();
     draw[4] = span.X0;
     draw[6] = from[2];
     draw[7] = from[3];
@@ -2250,7 +2291,7 @@ std::optional<uint32_t> MCVulkanRenderer::PictureOf(MCTexture& texture)
         state.Behind = true;
         state.HdLooked = false;
         state.Index = static_cast<uint32_t>(_FramePictures.size());
-        _FramePictures.push_back(picture.Handle);
+        _FramePictures.push_back(FramePicture{picture.Handle, nullptr, {}});
         return state.Index;
     }
 
@@ -2275,7 +2316,7 @@ std::optional<uint32_t> MCVulkanRenderer::PictureOf(MCTexture& texture)
     {
         state.Frame = _Frame;
         state.Index = static_cast<uint32_t>(_FramePictures.size());
-        _FramePictures.push_back(state.Copy.Handle);
+        _FramePictures.push_back(FramePicture{state.Copy.Handle, nullptr, {}});
     }
 
     return state.Index;
@@ -2341,8 +2382,8 @@ std::expected<void, std::string> MCVulkanRenderer::KeepFramePicture(MCTexture& t
         return made;
     }
 
-    _Uploads.push_back(Upload{kept.Handle, 0, 0, width, height, 1, 0, nullptr, 0, _FramePictures[state.Index]});
-    _FramePictures[state.Index] = kept.Handle;
+    _Uploads.push_back(Upload{kept.Handle, 0, 0, width, height, 1, 0, nullptr, 0, _FramePictures[state.Index].Texture});
+    _FramePictures[state.Index].Texture = kept.Handle;
     _Retired.push_back(kept);
     state.Frame = ~0ull;
     return {};
@@ -2469,16 +2510,14 @@ uint32_t MCVulkanRenderer::UsePicture(Picture& picture)
 {
     picture.LastFrame = _Frame;
 
-    // Port-only: a picture drawn again keeps its place while that place still holds it (the frame's, with the same HD
-    // colours), so its draws can share a batch (Add).
-    if (picture.FrameIndex < _FramePictures.size() && _FramePictures[picture.FrameIndex] == picture.Texture.Handle)
+    // Port-only: a picture drawn again keeps its place while that place still holds it (the frame's: the same textures,
+    // and the same place in them, which pictures in a shared page each have their own of).
+    if (picture.FrameIndex < _FramePictures.size())
     {
-        const auto hd = _FrameHdColors.find(picture.FrameIndex);
-        const bool sameHd = picture.HdColors.Handle != nullptr
-                                ? hd != _FrameHdColors.end() && hd->second == picture.HdColors.Handle
-                                : hd == _FrameHdColors.end();
+        const FramePicture& held = _FramePictures[picture.FrameIndex];
 
-        if (sameHd)
+        if (held.Texture == picture.Texture.Handle && held.HdColors == picture.HdColors.Handle &&
+            held.Place == picture.Place)
         {
             return picture.FrameIndex;
         }
@@ -2486,14 +2525,169 @@ uint32_t MCVulkanRenderer::UsePicture(Picture& picture)
 
     const auto index = static_cast<uint32_t>(_FramePictures.size());
     picture.FrameIndex = index;
-    _FramePictures.push_back(picture.Texture.Handle);
+    _FramePictures.push_back(FramePicture{picture.Texture.Handle, picture.HdColors.Handle, picture.Place});
+    return index;
+}
 
-    if (picture.HdColors.Handle != nullptr)
+void MCVulkanRenderer::DestroyPlaces::operator()(smol_atlas_t* places) const
+{
+    sma_atlas_destroy(places);
+}
+
+std::vector<MCVulkanRenderer::SharedPage>& MCVulkanRenderer::PagesOf(PageKind kind)
+{
+    return kind == PageKind::Sharp ? _SharpPages : _HdPages;
+}
+
+bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Picture& picture, uint32_t width,
+                                   uint32_t height, uint32_t hdWidth, uint32_t hdHeight)
+{
+    const bool hd = layout.HdFormat != SDL_GPU_TEXTUREFORMAT_INVALID;
+
+    // A picture over half a page keeps its own textures: a shelf as tall would leave its page to few others.
+    if (width == 0 || height == 0 || width > layout.Side / 2 || height > layout.Side / 2 ||
+        (hd && (hdWidth == 0 || hdHeight == 0 || hdWidth > layout.HdSide / 2 || hdHeight > layout.HdSide / 2)))
     {
-        _FrameHdColors[index] = picture.HdColors.Handle;
+        return false;
     }
 
-    return index;
+    const auto blocks = [&](uint32_t pixels)
+    { return static_cast<int>((pixels + layout.HdBlock - 1) / layout.HdBlock); };
+    std::vector<SharedPage>& pages = PagesOf(kind);
+
+    // In page `at` when it has room for both: the picture then reads the page's textures.
+    const auto placeIn = [&](uint32_t at)
+    {
+        SharedPage& page = pages[at];
+        smol_atlas_item_t* const item =
+            sma_item_add(page.Places.get(), static_cast<int>(width), static_cast<int>(height));
+
+        if (item == nullptr)
+        {
+            return false;
+        }
+
+        smol_atlas_item_t* hdItem = nullptr;
+
+        if (hd)
+        {
+            hdItem = sma_item_add(page.HdPlaces.get(), blocks(hdWidth), blocks(hdHeight));
+
+            if (hdItem == nullptr)
+            {
+                sma_item_remove(page.Places.get(), item);
+                return false;
+            }
+        }
+
+        ++page.Pictures;
+        picture.Shares = kind;
+        picture.Page = at;
+        picture.Item = item;
+        picture.HdItem = hdItem;
+        picture.Place =
+            PicturePlace{static_cast<uint16_t>(sma_item_x(item)),
+                         static_cast<uint16_t>(sma_item_y(item)),
+                         static_cast<uint16_t>(hd ? sma_item_x(hdItem) * static_cast<int>(layout.HdBlock) : 0),
+                         static_cast<uint16_t>(hd ? sma_item_y(hdItem) * static_cast<int>(layout.HdBlock) : 0),
+                         static_cast<uint16_t>(width),
+                         static_cast<uint16_t>(height)};
+        picture.Texture = page.Texture;
+        picture.HdColors = hd ? page.HdColors : Texture{};
+        return true;
+    };
+
+    for (uint32_t at = 0; at < pages.size(); ++at)
+    {
+        if (pages[at].Places != nullptr && placeIn(at))
+        {
+            return true;
+        }
+    }
+
+    // A new page, in an emptied one's slot when there is one.
+    SharedPage page;
+    auto made = EnsureTexture(page.Texture, layout.Format, SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
+
+    if (made && hd)
+    {
+        made =
+            EnsureTexture(page.HdColors, layout.HdFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.HdSide, layout.HdSide);
+    }
+
+    if (!made)
+    {
+        SDL_Log("MCVulkanRenderer: a shared page %ux%u: %s", layout.Side, layout.Side, made.error().c_str());
+        return false;
+    }
+
+    page.Places.reset(sma_atlas_create(static_cast<int>(layout.Side), static_cast<int>(layout.Side)));
+    const auto hdBlocks = static_cast<int>(layout.HdSide / layout.HdBlock);
+    page.HdPlaces.reset(hd ? sma_atlas_create(hdBlocks, hdBlocks) : nullptr);
+    const auto empty = std::ranges::find_if(pages, [](const SharedPage& one) { return one.Places == nullptr; });
+    const auto at = static_cast<uint32_t>(std::distance(pages.begin(), empty));
+
+    if (empty == pages.end())
+    {
+        pages.push_back(std::move(page));
+    }
+    else
+    {
+        *empty = std::move(page);
+    }
+
+    return placeIn(at);
+}
+
+void MCVulkanRenderer::FreeShared(Picture& picture)
+{
+    if (picture.Shares == PageKind::None)
+    {
+        return;
+    }
+
+    // The frame being recorded may have drawn it, and its uploads run before its draws: its place is kept from the
+    // pictures made until the frame has run.
+    _RetiredPlaces.push_back(RetiredPlace{picture.Shares, picture.Page, picture.Item, picture.HdItem});
+    picture.Shares = PageKind::None;
+    picture.Item = nullptr;
+    picture.HdItem = nullptr;
+}
+
+void MCVulkanRenderer::FreeRetiredPlaces()
+{
+    for (const RetiredPlace& retired : _RetiredPlaces)
+    {
+        SharedPage& page = PagesOf(retired.Kind)[retired.Page];
+        sma_item_remove(page.Places.get(), retired.Item);
+
+        if (retired.HdItem != nullptr)
+        {
+            sma_item_remove(page.HdPlaces.get(), retired.HdItem);
+        }
+
+        // An emptied page goes (its textures once the frames that read them have run).
+        if (--page.Pictures == 0)
+        {
+            Release(page.Texture);
+            Release(page.HdColors);
+            page = SharedPage{};
+        }
+    }
+
+    _RetiredPlaces.clear();
+}
+
+bool MCVulkanRenderer::SameBindings(SourceKind source, uint32_t a, uint32_t b) const
+{
+    if (a == b)
+    {
+        return true;
+    }
+
+    // Port-only: pictures in one shared page are read from its textures.
+    return source == SourceKind::Picture && _FramePictures[a].Texture == _FramePictures[b].Texture &&
+           _FramePictures[a].HdColors == _FramePictures[b].HdColors;
 }
 
 std::optional<uint32_t> MCVulkanRenderer::PictureForKey(uint64_t key, uint32_t width, uint32_t height,
@@ -2854,7 +3048,7 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
     // A smooth-edged picture's place in the source is the whole picture.
     if (Add(surface, SourceKind::Picture, *index, place->first, place->second, op, 0, 0, 0) && smoothEdges)
     {
-        std::array<int32_t, 20>& draw = _Draws.back();
+        DrawFields& draw = _Draws.back();
         draw[16] = 0;
         draw[17] = 0;
         draw[18] = width - 1;
@@ -3096,30 +3290,40 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
             colorHeight = height;
         }
 
+        // Port-only: in a page the HD frames share, so draws from any of them share their bindings, or, too big for
+        // one, in textures of its own.
+        const SDL_GPUTextureFormat colorFormat =
+            sendBc7 ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexPageSide, colorFormat, HdPageSide,
+                                  sendBc7 ? Bc7Block : 1};
         Picture picture;
-        auto made = EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                                  originalWidth, originalHeight);
 
-        if (made)
+        if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))
         {
-            made = EnsureTexture(picture.HdColors,
-                                 sendBc7 ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                                 SDL_GPU_TEXTUREUSAGE_SAMPLER, colorWidth, colorHeight);
+            auto made = EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                                      originalWidth, originalHeight);
+
+            if (made)
+            {
+                made =
+                    EnsureTexture(picture.HdColors, colorFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, colorWidth, colorHeight);
+            }
+
+            if (!made)
+            {
+                SDL_Log("MCVulkanRenderer: HD art frame %ux%u: %s", width, height, made.error().c_str());
+                Release(picture.Texture);
+                Release(picture.HdColors);
+                _HdRefused.insert(frame.Id);
+                return std::nullopt;
+            }
         }
 
-        if (!made)
-        {
-            SDL_Log("MCVulkanRenderer: HD art frame %ux%u: %s", width, height, made.error().c_str());
-            Release(picture.Texture);
-            Release(picture.HdColors);
-            _HdRefused.insert(frame.Id);
-            return std::nullopt;
-        }
-
-        std::ranges::copy(frame.Indices, QueueUpload(picture.Texture.Handle, 0, 0, originalWidth, originalHeight,
-                                                     static_cast<uint32_t>(MCHdArt::IndexBytes))
+        const PicturePlace& place = picture.Place;
+        std::ranges::copy(frame.Indices, QueueUpload(picture.Texture.Handle, place.X, place.Y, originalWidth,
+                                                     originalHeight, static_cast<uint32_t>(MCHdArt::IndexBytes))
                                              .begin());
-        std::ranges::copy(colors, QueueUpload(picture.HdColors.Handle, 0, 0, colorWidth, colorHeight,
+        std::ranges::copy(colors, QueueUpload(picture.HdColors.Handle, place.HdX, place.HdY, colorWidth, colorHeight,
                                               sendBc7 ? HdBc7Bytes : HdRgbaBytes)
                                       .begin());
         picture.Bytes = frame.Indices.size() + colors.size();
@@ -3362,13 +3566,26 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
         const auto height = static_cast<uint32_t>(rows * MCSharpText::Scale);
         Picture picture;
 
-        if (redrawn.empty() || !EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
+        if (redrawn.size() != static_cast<size_t>(width) * height * HdRgbaBytes)
         {
             return std::nullopt;
         }
 
-        std::ranges::copy(redrawn, QueueUpload(picture.Texture.Handle, 0, 0, width, height, HdRgbaBytes).begin());
+        // Port-only: in a page the sharp glyphs share, so draws from any of them share their bindings, or, too big
+        // for one, in a texture of its own.
+        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SharpPageSide};
+
+        if (!PlaceShared(PageKind::Sharp, layout, picture, width, height, 0, 0) &&
+            !EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, width,
+                           height))
+        {
+            return std::nullopt;
+        }
+
+        std::ranges::copy(
+            redrawn,
+            QueueUpload(picture.Texture.Handle, picture.Place.X, picture.Place.Y, width, height, HdRgbaBytes).begin());
+        picture.Bytes = redrawn.size();
         found = _SharpGlyphs.emplace(key, picture).first;
         _SharpGlyphBytes += redrawn.size();
         ++_FrameUploads.Pictures;
@@ -3647,7 +3864,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     {
         if (Add(surface, SourceKind::Atlas, place->Page, rect, source, smoothOp, 0, before, after))
         {
-            std::array<int32_t, 20>& draw = _Draws.back();
+            DrawFields& draw = _Draws.back();
             draw[16] = place->X;
             draw[17] = place->Y;
             draw[18] = place->X + width - 1;
@@ -4153,7 +4370,7 @@ bool MCVulkanRenderer::AddMapped(uint16_t surface, SourceKind source, uint32_t s
     }
 
     // The map in span and walk.xy (floats), the texture's size in walk.zw.
-    std::array<int32_t, 20>& draw = _Draws.back();
+    DrawFields& draw = _Draws.back();
     std::ranges::transform(mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
     const MCWindow& texture = command.Texture->get();
     draw[18] = texture.XMax + 1;
@@ -4408,7 +4625,7 @@ bool MCVulkanRenderer::AddMappedSunShadow(uint16_t surface, const MCHdArt::Frame
 void MCVulkanRenderer::SetDrawMapping(const MCHdArt::Frame& frame, const std::array<float, 6>& mapping)
 {
     // The map in span and walk.xy (floats), the picture's size in walk.zw, as AddMapped lays them.
-    std::array<int32_t, 20>& draw = _Draws.back();
+    DrawFields& draw = _Draws.back();
     std::ranges::transform(mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
     draw[18] = frame.OriginalWidth();
     draw[19] = frame.OriginalHeight();
@@ -4517,7 +4734,7 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
 
         // The corners in source (x in the low 16 bits, y in the high), their colour indices in span, the corners'
         // count and turn in walk.xy, and a half's left-out corner (plus 1) and whether it owns the diagonal in walk.zw.
-        std::array<int32_t, 20>& draw = _Draws.back();
+        DrawFields& draw = _Draws.back();
         constexpr uint32_t LowHalf = 0xffff;
         constexpr int HalfShift = 16;
 
@@ -4796,7 +5013,7 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
 
         if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothLine, command.Color, 0, 0))
         {
-            std::array<int32_t, 20>& draw = _Draws.back();
+            DrawFields& draw = _Draws.back();
             std::ranges::copy(std::array{(*first)[0], (*first)[1], last[0], last[1]}, draw.begin() + 12);
 
             // A wider line's half width (shaders/draw.pshader's SmoothShapePixel); 0, the original's, as before.
@@ -4851,7 +5068,7 @@ void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command
         if (at[2] >= at[0] && at[3] >= at[1] &&
             Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothEllipse, command.Color, 0, 0))
         {
-            std::array<int32_t, 20>& draw = _Draws.back();
+            DrawFields& draw = _Draws.back();
             std::ranges::copy(std::array{command.CenterX, command.CenterY, command.Width, command.Height},
                               draw.begin() + 12);
             draw[16] = command.Fill ? 1 : 0;
@@ -4873,7 +5090,7 @@ void MCVulkanRenderer::Shadow(MCWindow& target, const MCShadowCommand& command)
 
     if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindShadow, 0, 0, 0))
     {
-        std::array<int32_t, 20>& draw = _Draws.back();
+        DrawFields& draw = _Draws.back();
         std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Width0,
                                           command.Width1, command.Strength, command.Aspect},
                                draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
@@ -4916,7 +5133,7 @@ void MCVulkanRenderer::AddParticle(uint16_t surface, const MCParticleCommand& co
 
     if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothEllipse | ParticleDraw, color, 0, 0))
     {
-        std::array<int32_t, 20>& draw = _Draws.back();
+        DrawFields& draw = _Draws.back();
         std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Radius,
                                           command.Aspect, command.Softness, command.Ring},
                                draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
@@ -6814,7 +7031,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             }
             case SourceKind::Picture:
             {
-                source = _FramePictures[record.SourceIndex].get();
+                source = _FramePictures[record.SourceIndex].Texture.get();
                 break;
             }
             case SourceKind::Surface:
@@ -6839,12 +7056,9 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
         SDL_GPUTexture* hdColors = _PaletteTexture.Handle.get();
 
-        if (record.Source == SourceKind::Picture)
+        if (record.Source == SourceKind::Picture && _FramePictures[record.SourceIndex].HdColors != nullptr)
         {
-            if (const auto hd = _FrameHdColors.find(record.SourceIndex); hd != _FrameHdColors.end())
-            {
-                hdColors = hd->second.get();
-            }
+            hdColors = _FramePictures[record.SourceIndex].HdColors.get();
         }
 
         const std::array<SDL_GPUTextureSamplerBinding, DrawSamplers> bindings{{
@@ -7225,9 +7439,9 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             const Record& previous = _Records[order[last]];
 
             if (next.Resize || next.TerrainDraw >= 0 || next.SurfaceIndex != record.SurfaceIndex ||
-                next.Source != record.Source || next.SourceIndex != record.SourceIndex || next.Blend != record.Blend ||
-                next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.Marks != record.Marks ||
-                next.Variant != record.Variant || next.ReadsCopy || record.ReadsCopy ||
+                next.Source != record.Source || !SameBindings(record.Source, next.SourceIndex, record.SourceIndex) ||
+                next.Blend != record.Blend || next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow ||
+                next.Marks != record.Marks || next.Variant != record.Variant || next.ReadsCopy || record.ReadsCopy ||
                 next.First != previous.First + previous.Count)
             {
                 break;
@@ -7302,7 +7516,6 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
     }
 
     _FramePictures.clear();
-    _FrameHdColors.clear();
     _StripPixels.clear();
     _StripRows = 0;
 

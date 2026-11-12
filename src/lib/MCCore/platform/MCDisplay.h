@@ -311,7 +311,21 @@ public:
     /// vsync is on). A minimised window's frame (<see cref="Minimised"/>) isn't shown: the GPU draws what was recorded
     /// for it, and the game waits for that rather than the refresh.
     /// </summary>
-    std::expected<void, std::string> Present();
+    /// <param name="ahead">
+    /// Port-only: the frame may be shown after this returns, once the presenter's thread has drawn it
+    /// (<see cref="MCFrame::Ahead"/>): the caller presents again soon, and checks for it meanwhile
+    /// (<see cref="ShowFinished"/>).
+    /// </param>
+    std::expected<void, std::string> Present(bool ahead = false);
+
+    /// <summary>Port-only: shows a frame presented ahead if it's drawn by now (<see cref="MCPresenter::ShowFinished"/>).</summary>
+    void ShowFinished();
+
+    /// <summary>
+    /// Port-only: shows a frame presented ahead, waiting for its drawing (<see cref="MCPresenter::ShowPresented"/>):
+    /// before the game waits for something else.
+    /// </summary>
+    void ShowPresented();
 
     /// <summary>Whether the window is minimised, or a test takes it as minimised (<see cref="TakenAsMinimised"/>).</summary>
     bool Minimised() const;

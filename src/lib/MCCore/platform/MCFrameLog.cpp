@@ -5,8 +5,10 @@ namespace
 {
     struct MCFrameLogState
     {
+        /// <summary>Guards the rest: parts and notes come from any thread (MCFrameLog.h's Threads).</summary>
+        std::mutex Lock;
         std::ofstream File;
-        bool Enabled = false;
+        std::atomic<bool> Enabled = false;
         uint64_t FrameStart = 0;
         uint64_t Frame = 0;
         /// <summary>This frame's parts and their ticks.</summary>
@@ -45,6 +47,7 @@ namespace MCFrameLog
     bool Open(const std::filesystem::path& path)
     {
         MCFrameLogState& log = state();
+        const std::scoped_lock lock(log.Lock);
         log.File.open(path, std::ios::out | std::ios::trunc);
         log.Enabled = log.File.is_open();
 
@@ -72,6 +75,7 @@ namespace MCFrameLog
             return;
         }
 
+        const std::scoped_lock lock(log.Lock);
         const uint64_t now = SDL_GetPerformanceCounter();
 
         if (log.FrameStart != 0)
@@ -131,6 +135,7 @@ namespace MCFrameLog
 
         if (log.Enabled)
         {
+            const std::scoped_lock lock(log.Lock);
             log.Notes.push_back(std::move(text));
         }
     }
@@ -151,7 +156,9 @@ namespace MCFrameLog
         }
 
         const uint64_t ticks = SDL_GetPerformanceCounter() - _Start;
-        std::vector<std::pair<std::string, uint64_t>>& parts = state().Parts;
+        MCFrameLogState& log = state();
+        const std::scoped_lock lock(log.Lock);
+        std::vector<std::pair<std::string, uint64_t>>& parts = log.Parts;
 
         for (auto& [name, total] : parts)
         {

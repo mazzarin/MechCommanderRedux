@@ -633,6 +633,13 @@ namespace MCInput
         }
 
         applyTextInput();
+
+        // Port-only: a check for the frame presented ahead, shown once it's drawn (MCDisplay::ShowFinished).
+        if (const std::shared_ptr<MCDisplay> display = Display(); display != nullptr)
+        {
+            display->ShowFinished();
+        }
+
         return !input.Quit;
     }
 

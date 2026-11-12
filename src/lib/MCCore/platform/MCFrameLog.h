@@ -5,7 +5,10 @@
 /// split into named parts (<see cref="Scope"/>) and carries notes of what happened in it (<see cref="Note"/>); a frame
 /// much slower than the frames around it is written out with them. Costs a flag test per part while off.
 /// </summary>
-/// <remarks>Threads: the game's thread.</remarks>
+/// <remarks>
+/// Threads: <see cref="Open"/> and <see cref="NextFrame"/> on the game's thread; parts and notes on any (the render
+/// thread's parts are named <c>render.*</c>), counted in the frame running as they end.
+/// </remarks>
 namespace MCFrameLog
 {
     /// <summary>Starts logging into <paramref name="path"/> (replaced).</summary>

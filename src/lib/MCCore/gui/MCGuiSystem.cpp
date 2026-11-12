@@ -505,11 +505,20 @@ auto MCGuiSystem::Run() -> void
                 noiseChance = Scenario()->StartUpCountdown;
             }
 
+            // Port-only: the frame may be shown after UpdateDisplay returns, drawn on the presenter's thread while the
+            // next frame's logic runs (MCFramesAhead).
+            const MCFramesAhead ahead;
             UpdateDisplay(TakeScreenShot, staticNoise, noiseChance, false, 0);
             TakeScreenShot = false;
         }
         else if (!quit)
         {
+            // Port-only: the last frame presented ahead is shown before the wait for the window's events.
+            if (_Display != nullptr)
+            {
+                _Display->ShowPresented();
+            }
+
             MCInput::WaitMessage(-1);
             // Port (personal): the wait while the game wasn't the active window isn't play for the reports.
             MCTelemetry::Unseen();
@@ -562,12 +571,24 @@ auto MCGuiSystem::Run() -> void
 
             if (wait > 0)
             {
+                // Port-only: the frame presented ahead is shown before the sleep.
+                if (_Display != nullptr)
+                {
+                    _Display->ShowPresented();
+                }
+
                 std::this_thread::sleep_for(std::chrono::milliseconds(wait));
                 FrameLength = 0.06666667f;
                 FrameRate = 15.0f;
             }
         }
     } while (!quit);
+
+    // Port-only: the last frame presented ahead is shown before the game goes on.
+    if (_Display != nullptr)
+    {
+        _Display->ShowPresented();
+    }
 }
 
 auto MCGuiSystem::AddCallback(std::weak_ptr<MCGuiCallback> callback) -> int32_t

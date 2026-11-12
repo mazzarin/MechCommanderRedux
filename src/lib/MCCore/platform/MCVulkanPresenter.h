@@ -3,6 +3,9 @@
 #include "platform/MCPresenter.h"
 #include "platform/MCVulkanRenderer.h"
 
+#include <condition_variable>
+#include <thread>
+
 /// <summary>
 /// Port-only (HD weather's snow): where the specks' lattices lie on an underlay's world (MCWeather::ShownSpeckle,
 /// composite.pshader's SpecksAt), in its texels, wrapped: each layer's moved as its specks fall, and all with the
@@ -30,6 +33,13 @@ struct MCSpeckLattice
 /// uploaded each frame: R8 (palette indices), the op tables R8 256 x 256 (row 0 the identity).</para>
 /// <para>The palette is RGBA 256 x 1 and the frame texture RGBA: the palette is resolved in the composite, so palette
 /// fades and cycling recolour everything, as in the original.</para>
+/// <para>Port-only: a frame presented ahead (<see cref="MCFrame::Ahead"/>) runs on the render thread (its own command
+/// buffer: the renderer's draws, the uploads and the composite) while the game makes the next; its swapchain image,
+/// which only the window's thread may take, is blitted and submitted by the game's thread once the run is done, at its
+/// next check (<see cref="ShowFinished"/>: as it pumps the window's events, starts a frame's drawing and every so many
+/// draws), else as it presents the next frame. What the run reads of the game is taken as the frame is presented
+/// (<see cref="Plan"/>, the renderer's <see cref="MCVulkanRenderer::Seal"/>), so the next frame's drawing changes none
+/// of it. One frame runs at a time, and it is shown before the next runs, so one frame texture does.</para>
 /// </remarks>
 class MCVulkanPresenter final : public MCPresenter
 {
@@ -69,8 +79,101 @@ public:
     std::expected<std::vector<uint8_t>, std::string> ReadScreen(const MCFrame& frame) override;
     std::expected<void, std::string> Discard(const MCFrame& frame) override;
     MCViewport Viewport(int viewWidth, int viewHeight) const override;
+    void ShowFinished() override;
+    void ShowPresented() override;
 
 private:
+    /// <summary>
+    /// Port-only: what a frame's run reads (the renderer's sealed frame, the composite's plan, the frame's layout and
+    /// colours), taken as it's presented (<see cref="Plan"/>). Defined in the .cpp; shared by the game's thread and the
+    /// render thread while it runs, the error the run's.
+    /// </summary>
+    struct PlannedFrame;
+
+    /// <summary>
+    /// Port-only: the thread frames presented ahead run on: one job at a time, posted by the game's thread, which
+    /// waits for it to return before posting the next or touching what it uses.
+    /// </summary>
+    class RenderThread
+    {
+    public:
+        RenderThread();
+        /// <summary>Lets the job running return, then stops the thread.</summary>
+        ~RenderThread();
+        RenderThread(const RenderThread&) = delete;
+        RenderThread& operator=(const RenderThread&) = delete;
+
+        /// <summary>Runs <paramref name="job"/> on the thread; none may be running (<see cref="Wait"/> first).</summary>
+        void Post(std::function<void()> job);
+
+        /// <summary>Whether no job runs: the last one posted has returned, what it did seen by the caller.</summary>
+        bool Idle() const;
+
+        /// <summary>Returns once no job runs (at once on the thread itself: what it calls is in its own order).</summary>
+        void Wait();
+
+    private:
+        /// <summary>The thread: runs each job posted, until asked to stop.</summary>
+        void Loop(std::stop_token stop);
+
+        mutable std::mutex _Lock;
+        /// <summary>Told when a job is posted (and when the thread is asked to stop).</summary>
+        std::condition_variable_any _Posted;
+        /// <summary>Told when a job returns.</summary>
+        std::condition_variable _Returned;
+        std::function<void()> _Job;
+        bool _Busy = false;
+        /// <summary>The thread; last, so it stops before the rest goes.</summary>
+        std::jthread _Thread;
+    };
+
+    /// <summary>Port-only: where a composited frame (in _Frame) is shown from: its view, and its output size (0: none).</summary>
+    struct ShownLayout
+    {
+        SDL_Rect View{};
+        int OutputWidth = 0;
+        int OutputHeight = 0;
+
+        /// <summary>Whether it's composited at the output's size (<see cref="MCFrame::ScaledOutput"/>).</summary>
+        bool Scaled() const { return OutputWidth > 0 && OutputHeight > 0; }
+    };
+
+    /// <summary>
+    /// Port-only: what <paramref name="frame"/>'s run reads, taken now: the renderer's frame sealed (placed as the
+    /// frame is shown unless only <paramref name="read"/>: see <see cref="Prepare"/>), and the composite's plan. An
+    /// error when the renderer's frame can't be sealed.
+    /// </summary>
+    std::expected<std::shared_ptr<PlannedFrame>, std::string> Plan(const MCFrame& frame, bool read);
+    /// <summary>Port-only: the composite's plan for <paramref name="frame"/> (<see cref="Plan"/>): what it reads of the game.</summary>
+    void PlanComposite(const MCFrame& frame, PlannedFrame& planned);
+    /// <summary>
+    /// Port-only: runs <paramref name="planned"/> on <paramref name="commands"/>: the renderer's draws, the frame's
+    /// uploads, the composite into _Frame. On the render thread, or on the game's with none running.
+    /// </summary>
+    std::expected<void, std::string> RunPlanned(SDL_GPUCommandBuffer& commands, PlannedFrame& planned);
+    /// <summary>Port-only: the render thread's job: <paramref name="planned"/> run and submitted on a command buffer of its own.</summary>
+    void RunAhead(PlannedFrame& planned);
+    /// <summary>Port-only: gives <paramref name="planned"/>'s renderer frame back to the renderer, once it has run.</summary>
+    void Recycle(PlannedFrame& planned);
+    /// <summary>Port-only: logs <paramref name="error"/>, a frame run ahead's, and keeps it for the next present.</summary>
+    void KeepLate(std::string_view error);
+    /// <summary>
+    /// Port-only: blits _Frame (laid out as <paramref name="layout"/>) into a swapchain image taken on
+    /// <paramref name="commands"/>, and submits it, waiting for the image as vsync has it; the game's thread.
+    /// </summary>
+    std::expected<void, std::string> ShowFrame(SDL_GPUCommandBuffer& commands, const ShownLayout& layout);
+    /// <summary>Port-only: shows the frame run ahead (_Unshown), which has run, on a command buffer of its own.</summary>
+    std::expected<void, std::string> Show();
+    /// <summary>
+    /// Port-only: takes back the frame that ran ahead, which has returned: its renderer's frame recycled, its error
+    /// kept for the next present (_LateError).
+    /// </summary>
+    void TakeBack();
+    /// <summary>
+    /// Port-only: waits for the frame running ahead and shows it, so nothing runs or waits to be shown; the errors of
+    /// the frames run ahead since the last present.
+    /// </summary>
+    std::expected<void, std::string> FinishFrames();
     /// <summary>An R8 or RGBA texture, grown as needed (only its top-left Width x Height is in use).</summary>
     struct Texture
     {
@@ -88,8 +191,10 @@ private:
     std::expected<void, std::string> Ensure(Texture& texture, SDL_GPUTextureFormat format,
                                             SDL_GPUTextureUsageFlags usage, uint32_t width, uint32_t height, bool exact,
                                             uint32_t levels = 1);
-    /// <summary>Whether the frame surfaces' GPU textures are composited (the renderer draws them and the screen has
-    /// one).</summary>
+    /// <summary>
+    /// Whether the frame surfaces' GPU textures are composited (the renderer draws them and the screen has one, once
+    /// the frame sealed last has run).
+    /// </summary>
     bool ShowsGpuSurfaces(const MCFrame& frame) const;
     /// <summary>
     /// Tells the renderer the scale the underlays are composited at (the window's pixels per screen pixel of a
@@ -97,19 +202,20 @@ private:
     /// </summary>
     void PlaceUnderlays(const MCFrame& frame);
     /// <summary>
-    /// Runs the renderer's recorded commands on <paramref name="commands"/> when it draws, then uploads the frame's
-    /// textures in a copy pass (with <paramref name="gpuSurfaces"/>, the palette only); sets
-    /// <paramref name="gpuSurfaces"/> to what the composite should read.
+    /// Readies the renderer's commands to run with the frame (<see cref="Plan"/>): its colours, its surfaces placed as
+    /// the frame is shown, then sealed.
     /// </summary>
     /// <remarks>
     /// A frame only <paramref name="read"/> keeps the underlays where the shown frames placed them: read at the
     /// screen's size, it would otherwise place them at another scale than a scaled window's (a Retina screen's), and
     /// a surface placed at a new size is made again, empty, until the game next draws all of it.
     /// </remarks>
-    std::expected<void, std::string> Prepare(SDL_GPUCommandBuffer& commands, const MCFrame& frame, bool& gpuSurfaces,
-                                             bool read);
-    /// <summary>Uploads the frame's textures in a copy pass on <paramref name="commands"/>.</summary>
-    std::expected<void, std::string> Upload(SDL_GPUCommandBuffer& commands, const MCFrame& frame, bool gpuSurfaces);
+    std::expected<MCVulkanRenderer::SealedFrame, std::string> Prepare(const MCFrame& frame, bool read);
+    /// <summary>
+    /// Uploads the frame's textures in a copy pass on <paramref name="commands"/> (with the GPU's surfaces, the palette
+    /// only; else the frame's screen, op plane and underlays, read where the frame lies: on the game's thread).
+    /// </summary>
+    std::expected<void, std::string> Upload(SDL_GPUCommandBuffer& commands, const PlannedFrame& planned);
     /// <summary>Bytes to go up into a texture's top left, and (UploadParts') where they lie in the transfer buffer.</summary>
     struct UploadPart
     {
@@ -127,16 +233,19 @@ private:
     /// </summary>
     std::expected<void, std::string> UploadParts(SDL_GPUCommandBuffer& commands, std::span<UploadPart> parts,
                                                  MCGpuHandle<SDL_GPUTransferBuffer>& buffer, uint32_t& bufferSize);
-    /// <summary>Composites the frame into the frame texture, from the uploaded textures or the GPU's surfaces.</summary>
-    void Composite(SDL_GPUCommandBuffer& commands, const MCFrame& frame, bool gpuSurfaces);
+    /// <summary>
+    /// Composites the frame planned into the frame texture, from the uploaded textures or the GPU's surfaces.
+    /// </summary>
+    void Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& planned);
     /// <summary>
     /// Port-only (HD lighting): the bloom of underlay <paramref name="index"/>'s GPU world <paramref name="world"/>
-    /// (<paramref name="width"/> x <paramref name="height"/>): its bright pass into the underlay's bloom texture
-    /// (_Blooms), at half its size, and that texture's mips, recorded on <paramref name="commands"/> outside any pass.
-    /// None (null) without a bloom.
+    /// (<paramref name="width"/> x <paramref name="height"/>): its bright pass from brightness <paramref name="from"/>
+    /// (the lighting's, as the frame was planned) into the underlay's bloom texture (_Blooms), at half its size, and
+    /// that texture's mips, recorded on <paramref name="commands"/> outside any pass. None (null) for a world too small
+    /// for its levels.
     /// </summary>
     SDL_GPUTexture* Bloom(SDL_GPUCommandBuffer& commands, size_t index, SDL_GPUTexture& world, uint32_t width,
-                          uint32_t height);
+                          uint32_t height, float from);
     static void Release(Texture& texture);
 
     /// <summary>The window shown in (the display's).</summary>
@@ -226,4 +335,13 @@ private:
     uint32_t _LightTileUploadSize = 0;
     /// <summary>The renderer of the frame surfaces (the renderers refer to it while it is set as the hardware one).</summary>
     std::shared_ptr<MCVulkanRenderer> _Renderer;
+    /// <summary>
+    /// Port-only: the frame posted to the render thread and not taken back yet (<see cref="TakeBack"/>), the layout of
+    /// the frame run ahead and not shown yet, and the errors of frames run or shown since the last present.
+    /// </summary>
+    std::shared_ptr<PlannedFrame> _Running;
+    std::optional<ShownLayout> _Unshown;
+    std::string _LateError;
+    /// <summary>Port-only: the render thread; last, so it stops before what it uses goes.</summary>
+    RenderThread _Thread;
 };

@@ -4,7 +4,7 @@
 # That run's build cache is also the one a new windows-* branch's first run starts from, since a run can restore only
 # its own branch's caches and the default branch's. The exes (the tests' mc_tests.exe too, for the test laptop's
 # content installs), the README and licences the setup installs (a release's program zip holds them as built), the
-# setup, the version header and MSBuild's log are kept as the run's artifact.
+# setup, the version header and MSBuild's log are kept as the run's artifact. windows-gpu.yml calls it for its build.
 #
 # A release's setup: the release script (the workspace's tools/release/make_release.py make) runs it by hand with the
 # commit to build and the release's sets' sizes, which the setup shows. That run builds the commit as a release is built
@@ -28,6 +28,13 @@ on:
         description: "The release's HD set, in bytes"
         required: false
         default: ''
+  # windows-gpu.yml's build: a work build of the branch, whose tests that workflow runs itself.
+  workflow_call:
+    inputs:
+      without_tests:
+        description: "Leave out the tests"
+        type: boolean
+        default: false
 
 concurrency:
   group: windows-${{ github.ref }}-${{ inputs.commit }}
@@ -152,6 +159,7 @@ jobs:
       # internet games' WebSocket opens the games service's list (it hosts nothing) and must refuse badssl.com's hosts
       # with bad certificates.
       - name: Test
+        if: ${{ !inputs.without_tests }}
         run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev --websocket-service wss://mechcommander-redux-games.mazzarin.workers.dev/list?proto=1
 
       # The setup (src/installer/windows), stamped with the version built into the exes, with the licences of the code

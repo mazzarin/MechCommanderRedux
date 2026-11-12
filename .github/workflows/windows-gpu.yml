@@ -1,0 +1,255 @@
+# Port-only (the personal build): the whole suite on Windows with the game's files and Vulkan, on a push of the fork's
+# gpu-* branches. GitHub's runners have no GPU and windows.yml's runs have no game, so there every test that draws
+# skips. Here the drawing is Mesa's software Vulkan driver (lavapipe), with every Vulkan call checked by Khronos'
+# validation layer, its thread-safety and synchronization checks on: a validation error fails the run.
+#
+# The build is windows.yml's (called, its own tests left out). While it builds, two jobs ready the game (release 4's
+# game set, zips 1-5 of its list: every file TestInstall has but the installer's leftovers) and Vulkan (the loader and
+# the validation layer from LunarG's SDK, lavapipe from jakoch/rasterizers), each downloaded once into GitHub's cache
+# and checked against its SHA-256. A run on another branch downloads them again: a run on HD would seed every branch.
+# Each download of the game counts as an install on the status page. Then the suite runs in shards, a runner each,
+# every n-th test (scripts/ci/windows_gpu_tests.py), and a last job reads their logs together into the run's summary.
+name: Windows GPU (personal)
+
+on:
+  push:
+    branches: ['gpu-*']
+  workflow_dispatch:
+
+concurrency:
+  group: windows-gpu-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GAME_CACHE: game-release-4-v1
+  VULKAN_SDK_VERSION: 1.4.363.1
+  # LunarG's own SHA-256 (sdk.lunarg.com/sdk/sha/<version>/windows/<file>.txt).
+  VULKAN_SDK_SHA256: c02932bd9a968b22d404536108adaacac908c081cd6b0113f5bfefc523dd0a6a
+  LAVAPIPE_RELEASE: '20261006'
+  LAVAPIPE_FILE: lavapipe-x64-26.2.4.zip
+  # GitHub's digest of the release's file.
+  LAVAPIPE_SHA256: dd6d69c0df698bacf6633711912e8eb1cf6e70b2796d46240c7ee3708e27a438
+  # Windows' own tar, which unpacks zips (Git's GNU tar, if first on the path, doesn't).
+  ZIP_TAR: C:\Windows\System32\tar.exe
+
+jobs:
+  build:
+    uses: ./.github/workflows/windows.yml
+    with:
+      without_tests: true
+
+  game:
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Look for the game in the cache
+        id: cached
+        uses: actions/cache/restore@v4
+        with:
+          path: game
+          key: ${{ env.GAME_CACHE }}
+          lookup-only: true
+
+      # The downloads Worker's files, fetched as the game fetches them (Cloudflare refuses some programs' user agents).
+      - name: Download the game
+        if: steps.cached.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $base = 'https://mechcommander-redux-downloads.mazzarin.workers.dev/zips'
+          $zips = [ordered]@{
+            'base-4-1.zip' = '31f33efe68c9425f15c4fefd141cbffad60a525af52210cb546a11a21d363a0f'
+            'base-4-2.zip' = '0bc70c46c27e312ce11378585017acc6ef86accff1bf3781e178775d14e70c5d'
+            'base-4-3.zip' = 'ad853df7ff8e51cf0771babb4b1139c85ed25c312b6580004d04fc5bbeef8cf1'
+            'base-4-4.zip' = '22f4be1d44b906294bc7500a335d321ac37e0d5387966920595edd223eac2f5e'
+            'base-4-5.zip' = '517feff68662d2cdd75a53c078cfc9f8e59e6af8b3b758829aabd8996b1018ba'
+          }
+          New-Item -ItemType Directory -Force zips, game | Out-Null
+          foreach ($name in $zips.Keys) {
+            curl.exe --fail --silent --show-error --location --retry 3 --user-agent 'MechCommander Redux' -o "zips\$name" "$base/$name"
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't download $name (curl's exit code $LASTEXITCODE)." }
+            $hash = (Get-FileHash -Algorithm SHA256 "zips\$name").Hash.ToLowerInvariant()
+            if ($hash -ne $zips[$name]) { throw "$name's SHA-256 is $hash, not the list's $($zips[$name])." }
+            & $env:ZIP_TAR -xf "zips\$name" -C game
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't unpack $name (tar's exit code $LASTEXITCODE)." }
+          }
+          # The intro movies make the logistics tests time out, so TestInstall leaves them out too.
+          foreach ($movie in 'OPENING.SMK', 'CLOSING.SMK', 'LOGOS1.SMK') { Remove-Item -LiteralPath "game\data\movies\$movie" }
+          $files = Get-ChildItem game -Recurse -File
+          "$($files.Count) files, $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB)) MB"
+
+      - name: Keep the game
+        if: steps.cached.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: game
+          key: ${{ env.GAME_CACHE }}
+
+  vulkan:
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Look for Vulkan in the cache
+        id: cached
+        uses: actions/cache/restore@v4
+        with:
+          path: vulkan
+          key: vulkan-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
+          lookup-only: true
+
+      # The SDK's install puts the loader (vulkan-1.dll) in System32 and the validation layer in its Bin folder. Only
+      # those, vulkaninfo and lavapipe are kept, in one folder: the shards put the loader beside mc_tests.exe and name
+      # the layer's folder and lavapipe's manifest to the loader by its environment, installing nothing.
+      - name: Download Vulkan
+        if: steps.cached.outputs.cache-hit != 'true'
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          function Get-Checked([string] $url, [string] $file, [string] $sha256) {
+            curl.exe --fail --silent --show-error --location --retry 3 -o $file $url
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't download $url (curl's exit code $LASTEXITCODE)." }
+            $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+            if ($hash -ne $sha256) { throw "$file's SHA-256 is $hash, not $sha256." }
+            "$file, $([math]::Round((Get-Item $file).Length / 1MB)) MB, checked"
+          }
+          $version = $env:VULKAN_SDK_VERSION
+          $sdk = "vulkansdk-windows-X64-$version.exe"
+          Get-Checked "https://sdk.lunarg.com/sdk/download/$version/windows/$sdk" $sdk $env:VULKAN_SDK_SHA256
+          $root = "C:\VulkanSDK\$version"
+          $install = Start-Process -FilePath ".\$sdk" -Verb RunAs -Wait -PassThru -ArgumentList '--root', $root, '--accept-licenses', '--default-answer', '--confirm-command', 'install'
+          if ($install.ExitCode -ne 0) { throw "The SDK's install failed (exit code $($install.ExitCode))." }
+
+          New-Item -ItemType Directory -Force vulkan\loader, vulkan\layers, vulkan\lavapipe | Out-Null
+          $loader = "$env:SystemRoot\System32\vulkan-1.dll"
+          if (-not (Test-Path $loader)) { $loader = (Get-ChildItem $root -Recurse -Filter vulkan-1.dll | Select-Object -First 1).FullName }
+          if (-not $loader) { throw "No vulkan-1.dll after the SDK's install (System32 or $root)." }
+          "The loader: $loader, $((Get-Item $loader).VersionInfo.FileVersion)"
+          Copy-Item $loader vulkan\loader
+          $info = @("$env:SystemRoot\System32\vulkaninfo.exe", "$root\Bin\vulkaninfoSDK.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $info) { throw "No vulkaninfo after the SDK's install." }
+          Copy-Item $info vulkan\loader\vulkaninfo.exe
+
+          $manifest = Get-ChildItem $root -Recurse -Filter VkLayer_khronos_validation.json | Select-Object -First 1
+          if (-not $manifest) { throw "No VkLayer_khronos_validation.json under $root." }
+          $library = Join-Path $manifest.DirectoryName ((Get-Content -Raw $manifest.FullName | ConvertFrom-Json).layer.library_path)
+          if (-not (Test-Path $library)) { throw "The validation layer's manifest names $library, which isn't there." }
+          Copy-Item $manifest.FullName, $library vulkan\layers
+
+          Get-Checked "https://github.com/jakoch/rasterizers/releases/download/$env:LAVAPIPE_RELEASE/$env:LAVAPIPE_FILE" $env:LAVAPIPE_FILE $env:LAVAPIPE_SHA256
+          & $env:ZIP_TAR -xf $env:LAVAPIPE_FILE -C vulkan\lavapipe
+          if ($LASTEXITCODE -ne 0) { throw "Couldn't unpack $env:LAVAPIPE_FILE (tar's exit code $LASTEXITCODE)." }
+          $icd = Get-ChildItem vulkan\lavapipe -Recurse -Filter 'lvp_icd*.json' | Select-Object -First 1
+          if (-not $icd) { throw "No lavapipe manifest (lvp_icd*.json) in $env:LAVAPIPE_FILE." }
+          Get-Content $icd.FullName
+          # The manifest's place in the folder, for the shards' VK_DRIVER_FILES.
+          Set-Content -NoNewline vulkan\lavapipe-icd.txt (Resolve-Path -Relative $icd.FullName)
+          Get-ChildItem vulkan -Recurse -File | ForEach-Object { "$($_.FullName.Substring($pwd.Path.Length + 1)) $([math]::Round($_.Length / 1KB)) KB" }
+
+      - name: Keep Vulkan
+        if: steps.cached.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: vulkan
+          key: vulkan-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
+
+  tests:
+    needs: [build, game, vulkan]
+    name: Tests ${{ matrix.shard }}
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      # The shards: each runs every n-th test, n the count of this list. Each name is an argument, so fewer than 4
+      # shards make a command line past Windows' limit.
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    env:
+      # Isolated tests run at once on each runner (4 processors, which lavapipe's threads share).
+      TEST_JOBS: 2
+      VK_LOADER_LAYERS_ENABLE: VK_LAYER_KHRONOS_validation
+      VK_KHRONOS_VALIDATION_VALIDATE_SYNC: 'true'
+      VK_KHRONOS_VALIDATION_THREAD_SAFETY: 'true'
+      VK_KHRONOS_VALIDATION_REPORT_FLAGS: error,warn
+      VK_KHRONOS_VALIDATION_DEBUG_ACTION: VK_DBG_LAYER_ACTION_LOG_MSG
+    steps:
+      - name: Check out the script
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/ci
+
+      - name: Get the build
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-${{ github.sha }}
+          path: build
+
+      - name: Get the game
+        uses: actions/cache/restore@v4
+        with:
+          path: game
+          key: ${{ env.GAME_CACHE }}
+          fail-on-cache-miss: true
+
+      - name: Get Vulkan
+        uses: actions/cache/restore@v4
+        with:
+          path: vulkan
+          key: vulkan-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
+          fail-on-cache-miss: true
+
+      - name: Set up Vulkan
+        shell: pwsh
+        run: |
+          $program = (Get-ChildItem build -Recurse -Filter mc_tests.exe | Select-Object -First 1).FullName
+          if (-not $program) { throw "No mc_tests.exe in windows.yml's artifact." }
+          Copy-Item vulkan\loader\vulkan-1.dll (Split-Path $program)
+          $icd = Join-Path $pwd (Get-Content -Raw vulkan\lavapipe-icd.txt)
+          "MC_TESTS=$program" >> $env:GITHUB_ENV
+          "VK_DRIVER_FILES=$icd" >> $env:GITHUB_ENV
+          "VK_ADD_LAYER_PATH=$pwd\vulkan\layers" >> $env:GITHUB_ENV
+          $env:VK_DRIVER_FILES = $icd
+          $env:VK_ADD_LAYER_PATH = "$pwd\vulkan\layers"
+          $env:VK_LOADER_DEBUG = 'error,warn'
+          $summary = cmd /c 'vulkan\loader\vulkaninfo.exe --summary 2>&1' | Out-String
+          $summary
+          if ($LASTEXITCODE -ne 0) { throw "vulkaninfo failed (exit code $LASTEXITCODE)." }
+          if ($summary -notmatch 'llvmpipe') { throw "Vulkan's device isn't lavapipe's (llvmpipe)." }
+          if ($summary -notmatch 'VK_LAYER_KHRONOS_validation') { throw "The loader doesn't list the validation layer." }
+
+      - name: Test
+        shell: pwsh
+        timeout-minutes: 50
+        run: python scripts\ci\windows_gpu_tests.py run --program $env:MC_TESTS --game game --shard ${{ strategy.job-index }} --shards ${{ strategy.job-total }} --jobs $env:TEST_JOBS --out results
+
+      - name: Keep the results
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-tests-${{ matrix.shard }}
+          path: results
+          retention-days: 7
+
+  report:
+    needs: tests
+    if: ${{ !cancelled() && needs.tests.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the script
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/ci
+
+      - name: Get the shards' results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gpu-tests-*
+          path: results
+
+      - name: Report
+        run: |
+          set +e
+          python3 scripts/ci/windows_gpu_tests.py report results --markdown report.md \
+            --title "Windows GPU tests: ${LAVAPIPE_FILE%.zip}, Khronos validation ${VULKAN_SDK_VERSION} (synchronization and thread safety on)"
+          status=$?
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status

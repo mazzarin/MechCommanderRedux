@@ -139,7 +139,19 @@ jobs:
           & $env:ZIP_TAR -xf $env:LAVAPIPE_FILE -C vulkan\lavapipe
           if ($LASTEXITCODE -ne 0) { throw "Couldn't unpack $env:LAVAPIPE_FILE (tar's exit code $LASTEXITCODE)." }
           $icd = Get-ChildItem vulkan\lavapipe -Recurse -Filter 'lvp_icd*.json' | Select-Object -First 1
-          if (-not $icd) { throw "No lavapipe manifest (lvp_icd*.json) in $env:LAVAPIPE_FILE." }
+          if (-not $icd) {
+            # The 26.2.4 zip has the driver but not its manifest (share\vulkan\icd.d is empty): write the loader's
+            # manifest for it, as Mesa's build does, the driver named by its path from the manifest's folder.
+            $driver = Get-ChildItem vulkan\lavapipe -Recurse -Filter vulkan_lvp.dll | Select-Object -First 1
+            if (-not $driver) { throw "Neither lavapipe's manifest nor its driver (vulkan_lvp.dll) in $env:LAVAPIPE_FILE." }
+            $folder = New-Item -ItemType Directory -Force vulkan\lavapipe\share\vulkan\icd.d
+            $manifest = @{
+              file_format_version = '1.0.1'
+              ICD = @{ library_path = [IO.Path]::GetRelativePath($folder.FullName, $driver.FullName); api_version = '1.4.0' }
+            }
+            $manifest | ConvertTo-Json | Set-Content "$($folder.FullName)\lvp_icd.x86_64.json"
+            $icd = Get-Item "$($folder.FullName)\lvp_icd.x86_64.json"
+          }
           Get-Content $icd.FullName
           # The manifest's place in the folder, for the shards' VK_DRIVER_FILES.
           Set-Content -NoNewline vulkan\lavapipe-icd.txt (Resolve-Path -Relative $icd.FullName)

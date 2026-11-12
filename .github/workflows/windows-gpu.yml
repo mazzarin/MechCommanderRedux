@@ -32,6 +32,8 @@ env:
   LAVAPIPE_FILE: lavapipe-x64-26.2.4.zip
   # GitHub's digest of the release's file.
   LAVAPIPE_SHA256: dd6d69c0df698bacf6633711912e8eb1cf6e70b2796d46240c7ee3708e27a438
+  # The loader's manifest for lavapipe (Mesa names it lvp_icd.<architecture>.json).
+  LAVAPIPE_MANIFEST: lvp_icd*.json
   # Windows' own tar, which unpacks zips (Git's GNU tar, if first on the path, doesn't).
   ZIP_TAR: C:\Windows\System32\tar.exe
 
@@ -138,7 +140,7 @@ jobs:
           Get-Checked "https://github.com/jakoch/rasterizers/releases/download/$env:LAVAPIPE_RELEASE/$env:LAVAPIPE_FILE" $env:LAVAPIPE_FILE $env:LAVAPIPE_SHA256
           & $env:ZIP_TAR -xf $env:LAVAPIPE_FILE -C vulkan\lavapipe
           if ($LASTEXITCODE -ne 0) { throw "Couldn't unpack $env:LAVAPIPE_FILE (tar's exit code $LASTEXITCODE)." }
-          $icd = Get-ChildItem vulkan\lavapipe -Recurse -Filter 'lvp_icd*.json' | Select-Object -First 1
+          $icd = Get-ChildItem vulkan\lavapipe -Recurse -Filter $env:LAVAPIPE_MANIFEST | Select-Object -First 1
           if (-not $icd) {
             # The 26.2.4 zip has the driver but not its manifest (share\vulkan\icd.d is empty): write the loader's
             # manifest for it, as Mesa's build does, the driver named by its path from the manifest's folder.
@@ -153,8 +155,6 @@ jobs:
             $icd = Get-Item "$($folder.FullName)\lvp_icd.x86_64.json"
           }
           Get-Content $icd.FullName
-          # The manifest's place in the folder, for the shards' VK_DRIVER_FILES.
-          Set-Content -NoNewline vulkan\lavapipe-icd.txt (Resolve-Path -Relative $icd.FullName)
           Get-ChildItem vulkan -Recurse -File | ForEach-Object { "$($_.FullName.Substring($pwd.Path.Length + 1)) $([math]::Round($_.Length / 1KB)) KB" }
 
       - name: Keep Vulkan
@@ -215,7 +215,8 @@ jobs:
           $program = (Get-ChildItem build -Recurse -Filter mc_tests.exe | Select-Object -First 1).FullName
           if (-not $program) { throw "No mc_tests.exe in windows.yml's artifact." }
           Copy-Item vulkan\loader\vulkan-1.dll (Split-Path $program)
-          $icd = Join-Path $pwd (Get-Content -Raw vulkan\lavapipe-icd.txt)
+          $icd = (Get-ChildItem vulkan\lavapipe -Recurse -Filter $env:LAVAPIPE_MANIFEST | Select-Object -First 1).FullName
+          if (-not $icd) { throw "No lavapipe manifest ($env:LAVAPIPE_MANIFEST) in the Vulkan cache." }
           "MC_TESTS=$program" >> $env:GITHUB_ENV
           "VK_DRIVER_FILES=$icd" >> $env:GITHUB_ENV
           "VK_ADD_LAYER_PATH=$pwd\vulkan\layers" >> $env:GITHUB_ENV

@@ -1009,6 +1009,11 @@ auto MCSessionScreen::AllShown() -> bool
         { return player == nullptr || !player->HasPlayerNumber || NameOf(player->Id) != nullptr; });
 }
 
+auto MCSessionScreen::ShownWithGameUp(uint32_t playerId) const -> bool
+{
+    return _ShownReady.contains(playerId);
+}
+
 auto MCSessionScreen::WatchRoom() -> void
 {
     MCMultiPlayer& game = *MultiPlayer();

@@ -946,7 +946,10 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
     CHECK(game.PlayersWithout(WithoutArtillery).empty());
     Guest eve("EVE");
     REQUIRE(eve.Join(*manager.DirectPlay, JoinHostAddress));
-    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && MCTestGuest::RoomShows(eve.Id()); }));
+    // Both shown the room with their games up: a slow machine hears EVE's ping a frame after ANN's, and showing the room
+    // again for it after the click below would put the screen back on its chat tab.
+    REQUIRE(
+        SettleUntil([&] { return MCTestGuest::RoomShowsReady(ann.Id()) && MCTestGuest::RoomShowsReady(eve.Id()); }));
     CHECK(game.PlayersWithout(MCMatchRule::WeatherRules) == std::vector{eve.Id()});
     eve.SendRules(hostId, MCTestGuest::ReleaseOneRules);
     REQUIRE(SettleUntil([&] { return game.PlayersWithout(MCMatchRule::WeatherRules).empty(); }));
@@ -1228,8 +1231,9 @@ TEST_CASE_ISOLATED(
     cat.AnswerFiles(MCMissionDataHash(GamePath(SavePath, RolloverMission, ".mpk")));
     REQUIRE(SettleLong([&] { return std::filesystem::exists(folder.Path() / PickedSignal); }));
 
+    // The host's picks come from its process, as the signal did: its wait.
     MCSessionScreen& room = *GlobalLog()->SessionScreen;
-    REQUIRE(SettleUntil(
+    REQUIRE(SettleLong(
         [&]
         {
             return room.Team2Players[0] == ann && room.Team2Players[1] == cat.Id() &&

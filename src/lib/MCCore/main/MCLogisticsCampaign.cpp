@@ -279,6 +279,25 @@ namespace
 auto MCLogistics::LoadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce)
     -> int32_t
 {
+    const int32_t result = ReadCampaign(saveName, extension, newCampaign, loadForce);
+
+    if (result != 0)
+    {
+        // Port fix: a refused save had emptied the lists (and taken its mission number, if it got that far), and the
+        // campaign stayed open: the main menu's RETURN TO GAME showed the screens over the emptied lists, where a mech
+        // whose pilot was gone, the shop never read, or the mission start's save crashed, and SAVE GAME saved them.
+        // With no campaign, both wait for the next load.
+        SDL_Log("MCLogistics: %.*s%.*s refused (%d); no campaign loaded", static_cast<int>(saveName.size()),
+                saveName.data(), static_cast<int>(extension.size()), extension.data(), result);
+        CurrentMission = -1;
+    }
+
+    return result;
+}
+
+auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce)
+    -> int32_t
+{
     MCPacketFile packetFile;
     MCFitIniFile file;
     bool quickStart = false;

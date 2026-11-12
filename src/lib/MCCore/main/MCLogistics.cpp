@@ -97,9 +97,14 @@ MCLogistics::MCLogistics()
     , VehicleList(std::make_unique<MCLogVehicleList>())
     , ForceMechList(std::make_unique<MCLogMechList>())
     , ForceVehicleList(std::make_unique<MCLogVehicleList>())
+    , PurMechList(std::make_unique<MCPurMechList>())
+    , PurVehicleList(std::make_unique<MCPurVehicleList>())
+    , PurPilotList(std::make_unique<MCPurPilotList>())
     , ComponentInventory(std::make_unique<MCInventoryList>())
     , PurchaseComponents(std::make_unique<MCInventoryList>())
 {
+    // Port fix: the shop's lists were made only by a campaign's load, so a screen shown without one (the main menu's
+    // RETURN TO GAME after a refused save) read a null list.
 }
 
 namespace

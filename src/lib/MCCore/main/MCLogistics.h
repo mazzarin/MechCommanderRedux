@@ -242,7 +242,8 @@ public:
     /// <summary>
     /// Loads a campaign (or a saved game) and its force: save <paramref name="saveName"/> with extension
     /// <paramref name="extension"/>; <paramref name="newCampaign"/> starts one, <paramref name="loadForce"/> reloads
-    /// the force without the time passing.
+    /// the force without the time passing. A save it refuses (non-zero) leaves no campaign: the lists it had emptied stay
+    /// empty and <see cref="CurrentMission"/> is -1, so nothing returns to them until a campaign loads.
     /// </summary>
     int32_t LoadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce);
 
@@ -429,8 +430,11 @@ public:
     std::array<std::array<std::unique_ptr<MCLogVehicleList>, SidePlayers>, 2> MpVehicleLists;
     /// <summary>The pilots of mechs received over the network.</summary>
     std::unique_ptr<MCLogWarriorList> MpWarriorList;
+    /// <summary>The mechs for sale (empty until a campaign's shop is read).</summary>
     std::unique_ptr<MCPurMechList> PurMechList;
+    /// <summary>The vehicles for sale.</summary>
     std::unique_ptr<MCPurVehicleList> PurVehicleList;
+    /// <summary>The pilots for hire.</summary>
     std::unique_ptr<MCPurPilotList> PurPilotList;
     /// <summary>The player's spare components.</summary>
     std::unique_ptr<MCInventoryList> ComponentInventory;
@@ -591,6 +595,9 @@ public:
     std::string MpMissionName;
 
 private:
+    /// <summary><see cref="LoadCampaign"/>'s reading: empties the lists, then reads the save into them.</summary>
+    int32_t ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce);
+
     /// <summary>Set by <see cref="Start"/>: the destructor takes the screens and art down.</summary>
     bool _Started = false;
     /// <summary>The screen being shown (one of the screens it owns).</summary>

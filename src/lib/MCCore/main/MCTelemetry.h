@@ -20,11 +20,12 @@
 // (the main menu shows it: logistics/MCReportsNotice.h), nor while REPORTS (HD OPTIONS) is off; a build without a
 // backend (upstream, the tests) sends nothing.
 //
-// Reports: a multiplayer match's at its end; an internet game's link's as it ends (opened or not); single-player
+// Reports: a multiplayer match's at its end; an internet game's link's as it ends (opened or not); a file the campaign's
+// load refused, as it does (why, and what was read of it: never its name); single-player
 // missions' at the end of the first, then of the first a week or more after the last, covering every mission since, and
 // of the first after an update (the play before it under the version it was played on, then its own); a
 // crash's at the next start, with the black box: the last moments' state and events (the match's phases, its messages
-// by type and size, players lost), kept in a file mapped into memory so a crash leaves it behind. Play under two minutes counts for nothing. No name, path or address is in
+// by type and size, players lost, loads refused), kept in a file mapped into memory so a crash leaves it behind. Play under two minutes counts for nothing. No name, path or address is in
 // any report; the copy's random ID (made while REPORTS is on, dropped when it goes off) lets one copy's reports be
 // followed across updates. Everything runs on the main thread: the backend's replies wait for the next frame.
 
@@ -182,6 +183,53 @@ namespace MCTelemetry
         MCLinkEnd End = MCLinkEnd::Left;
     };
 
+    /// <summary>Why the campaign's load refused a file (main/MCLogistics.h's LoadCampaign), for its report.</summary>
+    enum class MCLoadRefusal : uint8_t
+    {
+        /// <summary>A refusal the load names no reason for.</summary>
+        Other,
+        /// <summary>The file couldn't be opened: not there, or the system refused it.</summary>
+        Unopened,
+        /// <summary>It isn't a packet file, or its first packet (the save's settings) isn't in it.</summary>
+        NotPacked,
+        /// <summary>Its first packet doesn't open as the save's settings.</summary>
+        Unreadable,
+        /// <summary>Its mission number is past the campaign's end, or below 0.</summary>
+        MissionPast,
+        /// <summary>It names no mission, and none was set: no scenario to open.</summary>
+        NoMission,
+        /// <summary>Its mission number is the campaign's end itself, which picks no scenario.</summary>
+        CampaignEnd,
+        /// <summary>A component entry (its block, its id or its count) didn't read: the record's At says which.</summary>
+        Components,
+        /// <summary>The mission's results (its .pkk), which a load after a mission applies, couldn't be opened.</summary>
+        NoResults,
+    };
+
+    /// <summary>A file the campaign's load refused: never its name, nor what it holds.</summary>
+    struct MCRefusedLoad
+    {
+        MCLoadRefusal Reason = MCLoadRefusal::Other;
+        /// <summary>
+        /// The file's kind, its extension: "sav" a campaign save, "sol" a single mission, "pkk" the game's own start
+        /// and results files, "mpk" a match's mission.
+        /// </summary>
+        std::string Kind;
+        /// <summary>The player picked it on the load screen (else the game opened its own).</summary>
+        bool Player = false;
+        /// <summary>The file's bytes and packets, once it opened.</summary>
+        std::optional<int64_t> Bytes;
+        std::optional<int32_t> Packets;
+        /// <summary>Its planet (0 the original campaign, 1 Desperate Measures), once read.</summary>
+        std::optional<int32_t> Planet;
+        /// <summary>The mission number it names, and the campaign's scenarios then, once read.</summary>
+        std::optional<int32_t> Mission;
+        std::optional<int32_t> Scenarios;
+        /// <summary>The component entry that didn't read, of the entries the file says it has (Components).</summary>
+        std::optional<int32_t> At;
+        std::optional<int32_t> Entries;
+    };
+
     /// <summary>The app's backend (before the game starts); none takes it away.</summary>
     void SetBackend(std::unique_ptr<MCBackend> backend);
 
@@ -251,6 +299,12 @@ namespace MCTelemetry
 
     /// <summary>A link's part of its report (LinkEnded's "link"), as JSON: the internet games' trial prints it too.</summary>
     std::string LinkJson(const MCLink& link);
+
+    /// <summary>
+    /// The campaign's load refused a file: the black box notes it, and its report goes at once (at most 10 a run), as
+    /// no other report says what a load did.
+    /// </summary>
+    void LoadRefused(const MCRefusedLoad& load);
 
     /// <summary>A multiplayer message came in (<paramref name="type"/>, <paramref name="bytes"/>), for the black box.</summary>
     void MessageIn(uint16_t type, size_t bytes);

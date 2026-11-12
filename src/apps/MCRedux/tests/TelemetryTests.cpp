@@ -5,19 +5,24 @@
 #include "TestGame.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
+#include "lib/MCPacketFile.h"
 #include "logistics/MCLogButton.h"
+#include "logistics/MCMainMenu.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
+#include "main/MCGamePaths.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
+#include "mission/MCMission.h"
 #include "platform/MCFileSystem.h"
 
 // The reports (main/MCTelemetry.h), with a stand-in for the app's backend: nothing sent before the player has seen
 // what the reports hold, the question where the law wants consent first (the system's own region, or the server's),
 // the notice elsewhere; a match's report at its end, the missions' at the first and then a week apart; the last run's
-// crash with its black box; and the main menu's notice and question (logistics/MCReportsNotice.h).
+// crash with its black box; a file the campaign's load refused, at once, saying why; and the main menu's notice and
+// question (logistics/MCReportsNotice.h).
 
 namespace
 {
@@ -525,6 +530,61 @@ TEST_CASE("reports: an internet game's link is reported as it ends, with no addr
     CHECK_EQ(reports.Log->Requests.size(), mostLinks);
 }
 
+TEST_CASE("reports: a refused load is reported at once, saying why and what was read of it, and the black box notes it")
+{
+    using MCTelemetry::MCLoadRefusal;
+    MCFakeReports reports;
+
+    // Nothing before the player has seen what the reports hold.
+    MCTelemetry::LoadRefused({.Reason = MCLoadRefusal::Unopened, .Kind = "sav", .Player = true});
+    CHECK(reports.Log->Requests.empty());
+
+    StartReporting(reports);
+    reports.Log->Crash = MCTelemetry::MCCrash{.What = "EXC_BAD_ACCESS SIGSEGV"};
+    MCTelemetry::LoadRefused({.Reason = MCLoadRefusal::Components,
+                              .Kind = "sav",
+                              .Player = true,
+                              .Bytes = 52'480,
+                              .Packets = 31,
+                              .Planet = 0,
+                              .Mission = 7,
+                              .Scenarios = 71,
+                              .At = 37,
+                              .Entries = 50});
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+    CHECK_EQ(reports.Log->Requests[0].first, std::string("report"));
+    const std::string& report = reports.Log->Requests[0].second;
+    CHECK(report.starts_with(R"j({"v":1,"kind":"load","first":true,"platform":"mac","app":"0.2.1 (468)")j"));
+    CHECK(Holds(report, R"("load":{"reason":"components","file":"sav","player":true,"bytes":52480,"packets":31,)"
+                        R"("planet":0,"mission":7,"scenarios":71,"at":37,"entries":50}})"));
+
+    // What wasn't read isn't said: a game's own file that wasn't there.
+    MCTelemetry::LoadRefused({.Reason = MCLoadRefusal::Unopened, .Kind = "pkk"});
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{2});
+    CHECK(Holds(reports.Log->Requests[1].second, R"("load":{"reason":"unopened","file":"pkk","player":false}})"));
+
+    // A loop of refusals: the reports stop at 10 a run.
+    constexpr int32_t manyLoads = 15;
+    constexpr size_t mostLoads = 10;
+
+    for (int32_t i = 0; i < manyLoads; i++)
+    {
+        MCTelemetry::LoadRefused({.Reason = MCLoadRefusal::MissionPast, .Kind = "sav", .Player = true});
+    }
+
+    CHECK_EQ(reports.Log->Requests.size(), mostLoads);
+
+    // The run then crashed: its black box says what the loads did.
+    reports.Restart();
+    MCTelemetry::Start();
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+    const std::string& crash = reports.Log->Requests[0].second;
+    CHECK(Holds(crash, R"("kind":"crash")"));
+    CHECK(Holds(crash, " load refused: components\""));
+    CHECK(Holds(crash, " load refused: unopened\""));
+    CHECK(Holds(crash, " load refused: missionPast\""));
+}
+
 TEST_CASE("reports: missions are reported at the first, then a week or more after, each report holding all since")
 {
     MCFakeReports reports;
@@ -820,4 +880,139 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     CHECK_EQ(GReports, 0);
     CHECK(!MCTelemetry::Reporting());
     CHECK(MCTelemetry::Prompt() == MCPrompt::None);
+}
+
+namespace
+{
+    /// <summary>
+    /// Copies save <paramref name="from"/> as <paramref name="to"/>, its settings' text (its first packet) with
+    /// <paramref name="was"/> made <paramref name="becomes"/>, as a damaged save's might be.
+    /// </summary>
+    void CopySaveChanged(std::string_view from, std::string_view to, std::string_view was, std::string_view becomes)
+    {
+        MCPacketFile in;
+        REQUIRE_EQ(in.Open(GamePath(SavePath, from, ".sav")), 0);
+        std::vector<std::vector<uint8_t>> packets;
+
+        for (int32_t packet = 0; packet < in.GetNumPackets(); packet++)
+        {
+            REQUIRE_EQ(in.SeekPacket(packet), 0);
+            std::vector<uint8_t>& data = packets.emplace_back(static_cast<size_t>(in.GetPacketSize()));
+            REQUIRE_EQ(in.ReadPacket(packet, data), in.GetPacketSize());
+        }
+
+        in.Close();
+        std::string settings(packets[0].begin(), packets[0].end());
+        const size_t at = settings.find(was);
+        REQUIRE(at != std::string::npos);
+        settings.replace(at, was.size(), becomes);
+        packets[0].assign(settings.begin(), settings.end());
+        MCPacketFile out;
+        REQUIRE_EQ(out.Create(GamePath(SavePath, to, ".sav")), 0);
+        out.Reserve(static_cast<int32_t>(packets.size()));
+
+        for (size_t packet = 0; packet < packets.size(); packet++)
+        {
+            out.WritePacket(static_cast<int32_t>(packet), packets[packet], MCPacketStorage::Nul);
+        }
+
+        out.Close();
+    }
+
+    /// <summary>The bytes and packets of save <paramref name="name"/>, as its report gives them.</summary>
+    std::string FileJson(std::string_view name)
+    {
+        MCPacketFile file;
+        REQUIRE_EQ(file.Open(GamePath(SavePath, name, ".sav")), 0);
+        return std::format(R"("bytes":{},"packets":{})", file.FileSize(), file.GetNumPackets());
+    }
+}
+
+/// <summary>
+/// Each file the campaign's load refuses is reported at once, saying why, with what was read of it and never its name:
+/// a save naming a mission past the campaign, one naming its end, one with a component entry gone, a save that isn't
+/// there, and a start file of the game's that isn't.
+/// </summary>
+TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and what was read of the file")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t damagedEntry = 37;
+    constexpr int32_t componentEntries = 50;
+    const MCKeepPrefs prefs;
+    MCFakeReports reports;
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+    reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    MCReusableDialog& notice = *logistics->MessageDialog;
+    REQUIRE(notice.IsShowing());
+    MCScreenInput::RealClick(notice.OkButton->GlobalX() + notice.OkButton->Width() / 2,
+                             notice.OkButton->GlobalY() + notice.OkButton->Height() / 2);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    REQUIRE(MCTelemetry::Reporting());
+    NewCampaign();
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    const int32_t good = logistics->CurrentMission;
+    REQUIRE(good >= 0);
+    const auto scenarios = static_cast<int32_t>(Mission()->Scenarios.size());
+    REQUIRE_EQ(logistics->SaveCampaign("p3reported"), 0);
+    const std::string mission = std::format("l MissionNumber={}\r\n", good);
+    CopySaveChanged("p3reported", "p3past", mission, std::format("l MissionNumber={}\r\n", scenarios + 1));
+    CopySaveChanged("p3reported", "p3end", mission, std::format("l MissionNumber={}\r\n", scenarios));
+    CopySaveChanged("p3reported", "p3damaged", std::format("[Componant{}]", damagedEntry), "[Xomponant]");
+    reports.Log->Requests.clear();
+
+    // Loads <name> as the player (or the game) does: refused, and its report sent at once, without the name.
+    const auto refused = [&](std::string_view name, std::string_view extension, bool player)
+    {
+        MCTest::Scope scope(name);
+        const size_t before = reports.Log->Requests.size();
+        CHECK(logistics->LoadCampaign(name, extension, false, player) != 0);
+        CHECK_EQ(logistics->CurrentMission, -1);
+        REQUIRE_EQ(reports.Log->Requests.size(), before + 1);
+        const std::string report = reports.Log->Requests.back().second;
+        CHECK(Holds(report, R"("kind":"load")"));
+        CHECK(!Holds(report, name));
+        return report;
+    };
+
+    const std::string read = std::format(R"("planet":0,"mission":{},"scenarios":{})", good, scenarios);
+    CHECK(Holds(refused("p3past", ".sav", true),
+                std::format(R"("load":{{"reason":"missionPast","file":"sav","player":true,{},"planet":0,)"
+                            R"("mission":{},"scenarios":{}}}}})",
+                            FileJson("p3past"), scenarios + 1, scenarios)));
+    CHECK(Holds(refused("p3end", ".sav", true),
+                std::format(R"("load":{{"reason":"campaignEnd","file":"sav","player":true,{},"planet":0,)"
+                            R"("mission":{},"scenarios":{}}}}})",
+                            FileJson("p3end"), scenarios, scenarios)));
+    CHECK(Holds(refused("p3damaged", ".sav", true),
+                std::format(R"("load":{{"reason":"components","file":"sav","player":true,{},{},"at":{},)"
+                            R"("entries":{}}}}})",
+                            FileJson("p3damaged"), read, damagedEntry, componentEntries)));
+
+    {
+        MCTest::ExpectAssert missing("campaign file NOT Valid", 2);
+        CHECK(Holds(refused("p3missing", ".sav", true), R"("load":{"reason":"unopened","file":"sav","player":true}})"));
+        CHECK(
+            Holds(refused("p3missing", ".pkk", false), R"("load":{"reason":"unopened","file":"pkk","player":false}})"));
+    }
+
+    // The good save loads, and says nothing.
+    const size_t reported = reports.Log->Requests.size();
+    CHECK_EQ(logistics->LoadCampaign("p3reported", ".sav", false, true), 0);
+    CHECK_EQ(logistics->CurrentMission, good);
+    CHECK_EQ(reports.Log->Requests.size(), reported);
+
+    for (const std::string_view save : {"p3reported", "p3past", "p3end", "p3damaged"})
+    {
+        MCFileSystem::RemoveFile(GamePath(SavePath, save, ".sav"));
+    }
+
+    MCFileSystem::RemoveFile(GamePath(SavePath, "p3reported", ".pur"));
 }

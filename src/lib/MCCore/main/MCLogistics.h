@@ -37,6 +37,11 @@ class MCTickerLine;
 struct MCDeployForce;
 enum class MCPilotRank : int32_t;
 
+namespace MCTelemetry
+{
+    struct MCRefusedLoad;
+}
+
 /// <summary>
 /// The logistics layer: every screen (main menu, multiplayer, load/save, preferences, briefing, purchase, repair,
 /// session), the player's force and inventory, the art they share; it runs campaign loading/saving and the
@@ -254,7 +259,8 @@ public:
     /// Loads a campaign (or a saved game) and its force: save <paramref name="saveName"/> with extension
     /// <paramref name="extension"/>; <paramref name="newCampaign"/> starts one, <paramref name="loadForce"/> reloads
     /// the force without the time passing. A save it refuses (non-zero) leaves no campaign: the lists it had emptied stay
-    /// empty and <see cref="CurrentMission"/> is -1, so nothing returns to them until a campaign loads.
+    /// empty and <see cref="CurrentMission"/> is -1, so nothing returns to them until a campaign loads. The reports say
+    /// why it was refused (MCTelemetry::LoadRefused).
     /// </summary>
     int32_t LoadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce);
 
@@ -606,8 +612,12 @@ public:
     std::string MpMissionName;
 
 private:
-    /// <summary><see cref="LoadCampaign"/>'s reading: empties the lists, then reads the save into them.</summary>
-    int32_t ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce);
+    /// <summary>
+    /// <see cref="LoadCampaign"/>'s reading: empties the lists, then reads the save into them, noting in
+    /// <paramref name="read"/> what it read of the file and, when it refuses it, why.
+    /// </summary>
+    int32_t ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce,
+                         MCTelemetry::MCRefusedLoad& read);
 
     /// <summary>Set by <see cref="Start"/>: the destructor takes the screens and art down.</summary>
     bool _Started = false;

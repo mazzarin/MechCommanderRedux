@@ -109,8 +109,9 @@ namespace
         /// </summary>
         float SpeckFalls[4] = {};
         /// <summary>
-        /// Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky by how many of a
-        /// tile's corners are seen: 0 none (no edge: 1s), 1 to 3 MCTerrainFogEdgeShades' (rgb, 1 where it doesn't).
+        /// Port-only (HD weather and lighting): how the fog of war's edge darkens the snow, the wet ground's sky and the
+        /// living water's foam and glints by how many of a tile's corners are seen: 0 none (no edge: 1s), 1 to 3
+        /// MCTerrainFogEdgeShades' (rgb, 1 where it doesn't).
         /// </summary>
         float FogEdge[MCTerrainFogEdgeLevels + 1][4] = {
             {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}};
@@ -506,6 +507,16 @@ namespace
         uniforms.Ground[0] = ground.OriginX * across;
         uniforms.Ground[1] = ground.OriginY * down;
 
+        {
+            // The fog of war's edge's shades, for the weather and the living water (composite.pshader's FogEdgeShade).
+            const std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> fogEdge = MCTerrainFogEdgeShades();
+
+            for (size_t level = 0; level < MCTerrainFogEdgeLevels; ++level)
+            {
+                std::copy(fogEdge[level].begin(), fogEdge[level].end(), uniforms.FogEdge[level + 1]);
+            }
+        }
+
         // Port-only (HD weather): the overcast, its veil and the wet look, with the drops (the GPU's drawing alone).
         const bool weather =
             !flat && MCWeather::Shown() != MCWeatherKind::Clear && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
@@ -527,12 +538,6 @@ namespace
             uniforms.Snow[2] = std::clamp(cover.Share, 0.0f, 1.0f);
             uniforms.Snow[3] = look.Snows ? 1.0f : 0.0f;
             SetSpeckle(uniforms, specks, across, down, width, height);
-            const std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> fogEdge = MCTerrainFogEdgeShades();
-
-            for (size_t level = 0; level < MCTerrainFogEdgeLevels; ++level)
-            {
-                std::copy(fogEdge[level].begin(), fogEdge[level].end(), uniforms.FogEdge[level + 1]);
-            }
 
             // The wet look tells the ground from what stands on it, and its slopes, by the relief maps.
             if (MCSceneLights::ReliefMapsOn())

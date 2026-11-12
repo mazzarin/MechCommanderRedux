@@ -480,3 +480,17 @@ void MCSocketTransport::Close(MCSocket::Handle socket)
         CloseNative(ToNative(socket));
     }
 }
+
+bool MCSocketTransport::EndSending(MCSocket::Handle socket)
+{
+    if (socket == MCSocket::InvalidHandle)
+    {
+        return false;
+    }
+
+#ifdef _WIN32
+    return shutdown(ToNative(socket), SD_SEND) == 0;
+#else
+    return shutdown(ToNative(socket), SHUT_WR) == 0;
+#endif
+}

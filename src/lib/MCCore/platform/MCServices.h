@@ -209,7 +209,10 @@ public:
     virtual void BufferStopped([[maybe_unused]] const MCSoundBuffer& buffer) {}
 };
 
-/// <summary>The machine's default playback device through SDL, or a silent mixer when there is none.</summary>
+/// <summary>
+/// The machine's default playback device through SDL or, when there is none, SDL's dummy driver, which plays nowhere
+/// at a device's rate.
+/// </summary>
 class MCSdlAudioDevice final : public MCAudioDevice
 {
 public:

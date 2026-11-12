@@ -290,8 +290,16 @@ public:
     static constexpr uint32_t OutputRate = 48000;
 
     /// <summary>Opens the default playback device (initialising SDL's audio subsystem if needed).</summary>
-    /// <returns>The mixer, or why no device could be had (the game then runs with <see cref="CreateSilent"/>).</returns>
+    /// <returns>The mixer, or why no device could be had (the game then tries <see cref="OpenDummy"/>).</returns>
     static std::expected<std::unique_ptr<MCAudio>, std::string> Open();
+
+    /// <summary>
+    /// Opens the device of SDL's dummy driver, for a computer without a playback device: it takes the sound at a
+    /// device's rate and plays it nowhere, so a sound still ends after its length. SDL's audio is restarted on that
+    /// driver, which destroys every device stream, so only while no other mixer has a device open.
+    /// </summary>
+    /// <returns>The mixer, or why it couldn't be had (the game then runs with <see cref="CreateSilent"/>).</returns>
+    static std::expected<std::unique_ptr<MCAudio>, std::string> OpenDummy();
 
     /// <summary>A mixer without a device: the same API, with <see cref="Render"/> as the only way out.</summary>
     static std::unique_ptr<MCAudio> CreateSilent();

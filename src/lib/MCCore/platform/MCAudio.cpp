@@ -80,6 +80,28 @@ namespace
     {
         return static_cast<uint16_t>(bytes[at] | (bytes[at + 1] << 8));
     }
+
+    /// <summary>SDL's audio driver without a device: it takes the sound at a device's rate and plays it nowhere.</summary>
+    constexpr const char* DummyDriver = "dummy";
+
+    /// <summary>
+    /// The mixers with an SDL device open. SDL's audio is restarted on its dummy driver only while there are none:
+    /// the restart destroys every device stream.
+    /// </summary>
+    std::atomic<int> OpenDevices = 0;
+
+    /// <summary>The audio driver SDL runs on, or "none".</summary>
+    std::string_view CurrentDriver()
+    {
+        const char* driver = SDL_GetCurrentAudioDriver();
+        return driver != nullptr ? std::string_view(driver) : std::string_view("none");
+    }
+
+    /// <summary>Whether SDL's audio was initialised (and not quit as often).</summary>
+    bool AudioInitialised()
+    {
+        return (SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) != 0;
+    }
 }
 
 void MCAudioCore::MixBuffer(MCSoundBuffer& buffer, std::span<float> out) const
@@ -513,7 +535,14 @@ MCAudio::MCAudio(Key) : _Core(std::make_shared<MCAudioCore>())
 {
 }
 
-MCAudio::~MCAudio() = default;
+MCAudio::~MCAudio()
+{
+    if (_Device != nullptr)
+    {
+        _Device.reset();
+        OpenDevices--;
+    }
+}
 
 std::unique_ptr<MCAudio> MCAudio::CreateSilent()
 {
@@ -527,16 +556,69 @@ void MCAudio::SetListener(std::weak_ptr<MCAudioDevice> listener)
 
 std::unique_ptr<MCAudio> MCSdlAudioDevice::OpenMixer()
 {
-    // Without a playback device the game runs silent instead of stopping ("DirectSound was unable to initialize").
+    // Without a playback device the game runs silent instead of stopping ("DirectSound was unable to initialize"),
+    // through SDL's dummy driver: the game waits for some sounds to end (Betty's line on the operation tab), and a
+    // mixer without any device would never end them.
     auto device = MCAudio::Open();
+
+    if (!device)
+    {
+        SDL_Log("MCAudio: no playback device (%s); playing to SDL's dummy driver", device.error().c_str());
+        device = MCAudio::OpenDummy();
+
+        if (!device)
+        {
+            SDL_Log("MCAudio: SDL's dummy driver can't play either (%s); no sound ends", device.error().c_str());
+        }
+    }
+
     std::unique_ptr<MCAudio> mixer = device ? std::move(*device) : MCAudio::CreateSilent();
     mixer->SetListener(weak_from_this());
     return mixer;
 }
 
+std::expected<std::unique_ptr<MCAudio>, std::string> MCAudio::OpenDummy()
+{
+    if (CurrentDriver() != DummyDriver)
+    {
+        if (OpenDevices.load() != 0)
+        {
+            return std::unexpected(std::format("another mixer plays on the {} driver", CurrentDriver()));
+        }
+
+        if (AudioInitialised())
+        {
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+
+            if (AudioInitialised())
+            {
+                // Initialised more than once: SDL's audio stays up on its driver. Give back the one quit.
+                const std::string driver(CurrentDriver());
+                SDL_InitSubSystem(SDL_INIT_AUDIO);
+                return std::unexpected(std::format("SDL's audio is held on the {} driver", driver));
+            }
+        }
+
+        // Over the environment's SDL_AUDIO_DRIVER too: its driver had no device.
+        SDL_SetHintWithPriority(SDL_HINT_AUDIO_DRIVER, DummyDriver, SDL_HINT_OVERRIDE);
+
+        if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+        {
+            return std::unexpected(std::format("SDL_InitSubSystem(audio, {}): {}", DummyDriver, SDL_GetError()));
+        }
+
+        if (CurrentDriver() != DummyDriver)
+        {
+            return std::unexpected(std::format("SDL's audio started on the {} driver", CurrentDriver()));
+        }
+    }
+
+    return Open();
+}
+
 std::expected<std::unique_ptr<MCAudio>, std::string> MCAudio::Open()
 {
-    if ((SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) == 0 && !SDL_InitSubSystem(SDL_INIT_AUDIO))
+    if (!AudioInitialised() && !SDL_InitSubSystem(SDL_INIT_AUDIO))
     {
         return std::unexpected(std::format("SDL_InitSubSystem(audio): {}", SDL_GetError()));
     }
@@ -553,6 +635,7 @@ std::expected<std::unique_ptr<MCAudio>, std::string> MCAudio::Open()
         return std::unexpected(std::format("SDL_OpenAudioDeviceStream: {}", SDL_GetError()));
     }
 
+    OpenDevices++;
     SDL_ResumeAudioStreamDevice(audio->_Device.get());
     return audio;
 }

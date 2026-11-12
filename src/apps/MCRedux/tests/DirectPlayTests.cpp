@@ -908,6 +908,30 @@ TEST_CASE("directplay: a host that leaves hands the session on; one that closes 
 }
 
 /// <summary>
+/// A host that closes its session with a joiner's message still unread on its link, the joiner sending on before it
+/// reads the end: every machine still learns that the session ends, and none takes it over. (A socket closed with bytes
+/// unread resets its connection, and Windows then throws away what the other end hadn't read: the word that the session
+/// ends with it, so the joiner took over a room its host had closed.)
+/// </summary>
+TEST_CASE("directplay: a host that closes its session with a joiner's message unread still ends it for everyone")
+{
+    // Long enough for bytes sent on the loopback to reach the other end's computer.
+    constexpr uint32_t ArrivesMs = 100;
+    ThreeMachines session(28991);
+    const std::vector<uint8_t> message(64, 0x5a);
+    REQUIRE_EQ(session.AnnMachine.Send(session.Ann, session.Cat, 0, message), DP_OK);
+    SDL_Delay(ArrivesMs);
+    REQUIRE_EQ(session.Host->Close(), DP_OK);
+    SDL_Delay(ArrivesMs);
+    REQUIRE_EQ(session.AnnMachine.Send(session.Ann, session.Cat, 0, message), DP_OK);
+    SDL_Delay(ArrivesMs);
+    CHECK(SystemTypes(Drain(session.AnnMachine, {session.CatMachine, *session.Host})) ==
+          std::vector<uint32_t>{uint32_t{DPSYS_SESSIONLOST}});
+    CHECK(SystemTypes(Drain(session.CatMachine, {session.AnnMachine, *session.Host})) ==
+          std::vector<uint32_t>{uint32_t{DPSYS_SESSIONLOST}});
+}
+
+/// <summary>
 /// Only a machine itself comes back as itself: a connection to the new hub asking to be Cat's machine with another key
 /// is refused and closed, and Cat's own comes back after it. (Machines are numbered as they join: the host's 0, Ann's
 /// 1, Cat's 2.)

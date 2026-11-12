@@ -182,7 +182,9 @@ jobs:
     env:
       # Isolated tests run at once on each runner (4 processors, which lavapipe's threads share).
       TEST_JOBS: 2
-      VK_LOADER_LAYERS_ENABLE: VK_LAYER_KHRONOS_validation
+      # The layer forced on in every process. Not VK_LOADER_LAYERS_ENABLE: an elevated process's loader ignores it (as
+      # it does the path variables), and the runner runs as an administrator; VK_INSTANCE_LAYERS it reads all the same.
+      VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
       VK_KHRONOS_VALIDATION_VALIDATE_SYNC: 'true'
       VK_KHRONOS_VALIDATION_THREAD_SAFETY: 'true'
       VK_KHRONOS_VALIDATION_REPORT_FLAGS: error,warn

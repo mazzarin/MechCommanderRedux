@@ -1231,8 +1231,9 @@ TEST_CASE_ISOLATED(
     cat.AnswerFiles(MCMissionDataHash(GamePath(SavePath, RolloverMission, ".mpk")));
     REQUIRE(SettleLong([&] { return std::filesystem::exists(folder.Path() / PickedSignal); }));
 
+    // The host's picks come from its process, as the signal did: its wait.
     MCSessionScreen& room = *GlobalLog()->SessionScreen;
-    REQUIRE(SettleUntil(
+    REQUIRE(SettleLong(
         [&]
         {
             return room.Team2Players[0] == ann && room.Team2Players[1] == cat.Id() &&

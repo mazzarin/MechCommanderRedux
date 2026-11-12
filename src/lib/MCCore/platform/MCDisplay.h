@@ -327,6 +327,12 @@ public:
     /// </summary>
     void ShowPresented();
 
+    /// <summary>
+    /// Port-only: a check for a frame presented ahead before the next frame's input is read
+    /// (<see cref="MCPresenter::ShowBeforeInput"/>).
+    /// </summary>
+    void ShowBeforeInput();
+
     /// <summary>Whether the window is minimised, or a test takes it as minimised (<see cref="TakenAsMinimised"/>).</summary>
     bool Minimised() const;
 

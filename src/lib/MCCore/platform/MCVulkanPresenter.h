@@ -36,10 +36,13 @@ struct MCSpeckLattice
 /// <para>Port-only: a frame presented ahead (<see cref="MCFrame::Ahead"/>) runs on the render thread (its own command
 /// buffer: the renderer's draws, the uploads and the composite) while the game makes the next; its swapchain image,
 /// which only the window's thread may take, is blitted and submitted by the game's thread once the run is done, at its
-/// next check (<see cref="ShowFinished"/>: as it pumps the window's events, starts a frame's drawing and every so many
-/// draws), else as it presents the next frame. What the run reads of the game is taken as the frame is presented
-/// (<see cref="Plan"/>, the renderer's <see cref="MCVulkanRenderer::Seal"/>), so the next frame's drawing changes none
-/// of it. One frame runs at a time, and it is shown before the next runs, so one frame texture does.</para>
+/// next check (<see cref="ShowFinished"/>: as it starts to pump the window's events, starts a frame's drawing and every
+/// so many draws), else as it presents the next frame. When the display paces the frames (they wait for a swapchain
+/// image once drawn), the game waits for the run as it starts to pump instead (<see cref="ShowBeforeInput"/>): the wait
+/// for the image then comes before the next frame's input, not after it. What the run reads of the game is taken as the
+/// frame is presented (<see cref="Plan"/>, the renderer's <see cref="MCVulkanRenderer::Seal"/>), so the next frame's
+/// drawing changes none of it. One frame runs at a time, and it is shown before the next runs, so one frame texture
+/// does.</para>
 /// </remarks>
 class MCVulkanPresenter final : public MCPresenter
 {
@@ -81,6 +84,7 @@ public:
     MCViewport Viewport(int viewWidth, int viewHeight) const override;
     void ShowFinished() override;
     void ShowPresented() override;
+    void ShowBeforeInput() override;
 
 private:
     /// <summary>
@@ -159,7 +163,8 @@ private:
     void KeepLate(std::string_view error);
     /// <summary>
     /// Port-only: blits _Frame (laid out as <paramref name="layout"/>) into a swapchain image taken on
-    /// <paramref name="commands"/>, and submits it, waiting for the image as vsync has it; the game's thread.
+    /// <paramref name="commands"/>, and submits it, waiting for the image as vsync has it (and for the frames held on
+    /// the GPU), the wait's length kept in _LastImageWaitMs; the game's thread.
     /// </summary>
     std::expected<void, std::string> ShowFrame(SDL_GPUCommandBuffer& commands, const ShownLayout& layout);
     /// <summary>Port-only: shows the frame run ahead (_Unshown), which has run, on a command buffer of its own.</summary>
@@ -342,6 +347,13 @@ private:
     std::shared_ptr<PlannedFrame> _Running;
     std::optional<ShownLayout> _Unshown;
     std::string _LateError;
+    /// <summary>
+    /// Port-only: how long the last frame shown waited for its swapchain image (ms; ShowFrame), and the frames run
+    /// ahead's wait, smoothed: a wait once a frame is drawn says the display paces the frames
+    /// (<see cref="ShowBeforeInput"/>).
+    /// </summary>
+    float _LastImageWaitMs = 0.0f;
+    float _ImageWaitMs = 0.0f;
     /// <summary>Port-only: the render thread; last, so it stops before what it uses goes.</summary>
     RenderThread _Thread;
 };

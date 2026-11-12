@@ -644,6 +644,11 @@ void MCDisplay::ShowPresented()
     _Presenter->ShowPresented();
 }
 
+void MCDisplay::ShowBeforeInput()
+{
+    _Presenter->ShowBeforeInput();
+}
+
 bool MCDisplay::Minimised() const
 {
     return TakenAsMinimised || (SDL_GetWindowFlags(_Window.get()) & SDL_WINDOW_MINIMIZED) != 0;

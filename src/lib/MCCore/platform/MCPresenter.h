@@ -214,6 +214,14 @@ public:
     /// the window's events, a load).
     /// </summary>
     virtual void ShowPresented() {}
+
+    /// <summary>
+    /// Port-only: a check before the game reads the next frame's input (the window's events). When the display paces
+    /// the frames, a frame presented ahead is shown now, waiting for its drawing (as <see cref="ShowPresented"/>), so
+    /// the wait for the display comes before the input is read rather than after it; else as
+    /// <see cref="ShowFinished"/>.
+    /// </summary>
+    virtual void ShowBeforeInput() {}
 };
 
 /// <summary>

@@ -751,6 +751,13 @@ namespace
         size_t Lights = 0;
     };
 
+    /// <summary>
+    /// Port-only: the frames run ahead's wait for a swapchain image once drawn (smoothed, ms) past which the display
+    /// paces the frames (MCVulkanPresenter::ShowBeforeInput), and how much of each new wait the smoothing takes in.
+    /// </summary>
+    constexpr float PacedImageWaitMs = 0.25f;
+    constexpr float ImageWaitSmoothing = 0.25f;
+
     /// <summary>Port-only: the frame log's parts of a frame run inline, and of one run ahead (the render thread's).</summary>
     constexpr std::string_view PreparePart = "present.prepare";
     constexpr std::string_view CompositePart = "present.composite";
@@ -2010,6 +2017,20 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
 
     if (MCFrameLog::Scope part("present.acquire"); true)
     {
+        // How long the image (and the frames held on the GPU) kept the frame waiting.
+        const uint64_t waitStart = SDL_GetPerformanceCounter();
+        const struct Waited
+        {
+            float& Ms;
+            uint64_t Start;
+
+            ~Waited()
+            {
+                Ms = static_cast<float>(static_cast<double>(SDL_GetPerformanceCounter() - Start) * 1000.0 /
+                                        static_cast<double>(SDL_GetPerformanceFrequency()));
+            }
+        } waited{_LastImageWaitMs, waitStart};
+
         if (auto held = HoldFramesOnGpu(); !held)
         {
             SDL_SubmitGPUCommandBuffer(&commands);
@@ -2131,7 +2152,9 @@ std::expected<void, std::string> MCVulkanPresenter::Show()
         return std::unexpected(SdlError("SDL_AcquireGPUCommandBuffer (showing a frame run ahead)"));
     }
 
-    return ShowFrame(*commands, layout);
+    auto shown = ShowFrame(*commands, layout);
+    _ImageWaitMs += (_LastImageWaitMs - _ImageWaitMs) * ImageWaitSmoothing;
+    return shown;
 }
 
 void MCVulkanPresenter::TakeBack()
@@ -2191,6 +2214,22 @@ void MCVulkanPresenter::ShowFinished()
     {
         KeepLate(std::format("a frame run ahead wasn't shown: {}", shown.error()));
     }
+}
+
+void MCVulkanPresenter::ShowBeforeInput()
+{
+    // Paced by the display (the frames run ahead wait for their swapchain image once drawn), the frame run ahead is
+    // shown before the next frame's input is read, its drawing waited for: the wait for the image, which takes in the
+    // wait for the drawing, then comes before the input, as when frames were shown at present, rather than after it, a
+    // frame's more lag. Else (the game's thread holds the pace) once it's drawn, the next frame's work going on
+    // meanwhile.
+    if (_ImageWaitMs > PacedImageWaitMs)
+    {
+        ShowPresented();
+        return;
+    }
+
+    ShowFinished();
 }
 
 void MCVulkanPresenter::ShowPresented()

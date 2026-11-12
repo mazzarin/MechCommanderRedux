@@ -18,6 +18,12 @@
 namespace MCTestGuest
 {
     /// <summary>
+    /// How long a test waits for the network's answers (<see cref="SettleUntil"/>): they come in real time, slower on a
+    /// loaded machine.
+    /// </summary>
+    inline constexpr std::chrono::seconds AnswerWait{10};
+
+    /// <summary>
     /// What release 1's game (0.5.0 (724), 16543520) says it plays by, in its rules message once in the room: its join
     /// says nothing (it came before the join card).
     /// </summary>
@@ -424,8 +430,13 @@ namespace MCTestGuest
         template <typename Message> void SendTo(uint32_t to, Message message) { Send(to, message); }
 
     private:
-        /// <summary>How long a guest pings (<see cref="Ping"/>), and how often.</summary>
-        static constexpr std::chrono::seconds PingTime{1};
+        /// <summary>
+        /// How long a guest pings (<see cref="Ping"/>), and how often: as long as a test waits for an answer. A host
+        /// hears no ping from a player it hasn't taken in yet, and a slow machine's host takes a guest in after its
+        /// frames, which may be seconds (the game's own room screen pings for three; a host that heard none shows the
+        /// guest the room after five).
+        /// </summary>
+        static constexpr std::chrono::seconds PingTime = AnswerWait;
         static constexpr std::chrono::milliseconds PingEvery{5};
 
         void Take(uint32_t from, std::span<const uint8_t> message) override
@@ -760,13 +771,11 @@ namespace MCTestGuest
     }
 
     /// <summary>
-    /// Runs frames until <paramref name="done"/> says so, for ten seconds at most (the network's answers come in real
-    /// time, slower on a loaded machine); whether it did.
+    /// Runs frames until <paramref name="done"/> says so, for <see cref="AnswerWait"/> at most; whether it did.
     /// </summary>
     inline bool SettleUntil(const std::function<bool()>& done)
     {
-        constexpr std::chrono::seconds MostWait{10};
-        const auto deadline = std::chrono::steady_clock::now() + MostWait;
+        const auto deadline = std::chrono::steady_clock::now() + AnswerWait;
 
         while (!done())
         {

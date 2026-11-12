@@ -813,8 +813,11 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->InternetScreen);
     MCSplashScreen& screen = *GlobalLog()->InternetScreen;
     screen.Element<MCLogTextObject>(PlayerNameEntry)->SetStringBuffer("Commander");
-    list.Send(
-        Listing({MCServiceScript::ListedGame("W8ZE", "Next version", {"Eve"}, 6, nullptr, NewerVersion, "OC")}, 2, 1));
+    // An array of one game said as one: braces round a single json make that json itself with MSVC (a copy of the
+    // game, so no list), an array of it with Clang.
+    list.Send(Listing(
+        Json::array({MCServiceScript::ListedGame("W8ZE", "Next version", {"Eve"}, 6, nullptr, NewerVersion, "OC")}), 2,
+        1));
     REQUIRE(SettleUntil([] { return InternetCountsShown() == "2 ONLINE, 1 IN GAMES"; }));
     auto games = screen.Element<MCInternetGameList>(GameList);
     auto players = screen.Element<MCLogScrollTextObject>(PlayerList);

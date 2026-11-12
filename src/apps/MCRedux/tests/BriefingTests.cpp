@@ -830,12 +830,12 @@ namespace
 }
 
 /// <summary>
-/// A save the load refuses has emptied the campaign's lists, so it leaves no campaign: the main menu's RETURN TO GAME
-/// and SAVE GAME wait for the next load. A player's crashes on 0.6.3 came back through RETURN TO GAME: in the mech lab, a
-/// mech dragged to the inventory or a portrait clicked read a pilot gone from the emptied list, and on a new start
-/// the store, and the mission start's save, read the shop's lists that no campaign had made (here they're there, empty,
-/// from the start). Refused before the save's mission number is taken (past the campaign's end) and after it (the
-/// end itself, which picks no scenario).
+/// A save the load refuses has emptied the campaign's lists, so it leaves no campaign: the load screen says the save
+/// couldn't be loaded, and the main menu's RETURN TO GAME and SAVE GAME wait for the next load. A player's crashes on
+/// 0.6.3 came back through RETURN TO GAME: in the mech lab, a mech dragged to the inventory or a portrait clicked read
+/// a pilot gone from the emptied list, and on a new start the store, and the mission start's save, read the shop's
+/// lists that no campaign had made (here they're there, empty, from the start). Refused before the save's mission
+/// number is taken (past the campaign's end) and after it (the end itself, which picks no scenario).
 /// </summary>
 TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and SAVE GAME wait for the next load")
 {
@@ -871,13 +871,21 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         logistics->SetUpRepairScreen(true);
         Settle();
 
-        // The main menu, and the save refused: the load screen stays up, with no campaign behind it.
+        // The main menu, and the save refused: the load screen stays up, saying so, with no campaign behind it.
         logistics->SetUpMainScreen(false);
         Settle();
         REQUIRE_EQ(logistics->PreviousState, RepairScreenState);
         LoadFromScreen("p3refused", UnlistedMissionAsserts);
         CHECK(logistics->CurrentScreen() == logistics->LoadScreen);
         CHECK_EQ(logistics->CurrentMission, -1);
+        MCReusableDialog& message = *logistics->MessageDialog;
+        REQUIRE(message.IsShowing());
+        CHECK_EQ(message.Text, RefusedSaveText);
+        MCGuiObject& ok = *message.OkButton;
+        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+        Settle();
+        CHECK(!message.IsShowing());
+        CHECK(logistics->CurrentScreen() == logistics->LoadScreen);
 
         // Back on the main menu, neither goes anywhere.
         Cancel();
@@ -893,6 +901,7 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         // The next load fills the lists again and opens the campaign.
         LoadFromScreen("p3good", UnlistedMissionAsserts);
         CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+        CHECK(!message.IsShowing());
         CHECK_EQ(logistics->CurrentMission, goodMission);
         CHECK(!logistics->ForceMechList->Mechs.empty());
         CHECK(!logistics->AssignedWarriorList->Warriors.empty());

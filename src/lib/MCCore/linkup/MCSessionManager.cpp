@@ -79,7 +79,7 @@ MCSessionManager::MCSessionManager(const _GUID& appGUID) : _AppGuid(appGUID)
 {
     CreateDirectPlayInterface();
     _ServerMessage.Header = LinkupHeader(MCLinkupMessageType::NewServer, FIMSG_GUARANTEED);
-    _NextPingTime = static_cast<uint32_t>(MCPort::PerformanceCounter());
+    _NextPingTime = static_cast<uint64_t>(MCPort::PerformanceCounter());
 }
 
 MCSessionManager::~MCSessionManager()

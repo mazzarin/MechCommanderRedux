@@ -8,7 +8,7 @@ run     Runs one shard's share of the suite: every n-th test that mc_tests --lis
 report  Reads the shards' logs together: every listed test run once, the failures, the validation layer's messages by
         kind with the tests that showed them, the slowest tests and each shard's time, as Markdown for the run's
         summary. Exits with 1 on a test failed, missing or run twice, or a validation error.
-canary  Makes two Vulkan calls wrong on purpose in a child process, as the suite's processes make theirs, and fails
+canary  Makes a Vulkan call wrong on purpose in a child process, as the suite's processes make theirs, and fails
         unless the validation layer's error comes out and reads as one here: without it, a suite with no messages
         could be a layer that wasn't loaded or printed nowhere.
 """
@@ -37,7 +37,6 @@ VALIDATION = re.compile(r"Validation (Error|Warning|Performance Warning): \[ ?([
 ERROR_KIND = "Error"
 
 # The canary's Vulkan: structure types, and the version it asks for.
-STRUCTURE_TYPE_APPLICATION_INFO = 0
 STRUCTURE_TYPE_INSTANCE_CREATE_INFO = 1
 API_VERSION_1_0 = 1 << 22
 VK_SUCCESS = 0
@@ -220,7 +219,7 @@ def canary(args: argparse.Namespace) -> int:
     errors = [match.group(2) for match in VALIDATION.finditer(output) if match.group(1) == ERROR_KIND]
 
     if not errors:
-        print(f"The validation layer reported nothing on calls made wrong on purpose (the child's exit code "
+        print(f"The validation layer reported nothing on a call made wrong on purpose (the child's exit code "
               f"{child.returncode}): a suite without messages would mean nothing.", file=sys.stderr)
         return 1
 
@@ -229,8 +228,8 @@ def canary(args: argparse.Namespace) -> int:
 
 
 def canary_child(args: argparse.Namespace) -> int:
-    """Two calls the validation layer refuses: the application's info with the wrong structure type, and a physical
-    device's properties asked for with nowhere to put them (which the layer stops before the driver sees it)."""
+    """A call the validation layer refuses, and that does no harm past it: the application's info with the wrong
+    structure type (a null pointer the layer reported still reached lavapipe, and crashed the child)."""
     import ctypes
 
     vulkan = ctypes.CDLL(str(Path(args.loader).resolve()))
@@ -254,26 +253,12 @@ def canary_child(args: argparse.Namespace) -> int:
         print(f"vkCreateInstance (application info's type {application_type}): {result}", flush=True)
         return instance if result == VK_SUCCESS else None
 
-    # The wrong structure type: the layer reports it, the loader doesn't look.
-    wrong = create(STRUCTURE_TYPE_INSTANCE_CREATE_INFO)
+    # The wrong structure type: the layer reports it, the loader doesn't look, and the instance is made all the same.
+    instance = create(STRUCTURE_TYPE_INSTANCE_CREATE_INFO)
 
-    if wrong is not None:
-        vulkan.vkDestroyInstance(wrong, None)
+    if instance is not None:
+        vulkan.vkDestroyInstance(instance, None)
 
-    instance = create(STRUCTURE_TYPE_APPLICATION_INFO)
-
-    if instance is None:
-        return 1
-
-    count = ctypes.c_uint32(0)
-    vulkan.vkEnumeratePhysicalDevices(instance, ctypes.byref(count), None)
-    devices = (ctypes.c_void_p * count.value)()
-    vulkan.vkEnumeratePhysicalDevices(instance, ctypes.byref(count), devices)
-
-    if count.value > 0:
-        vulkan.vkGetPhysicalDeviceProperties(ctypes.c_void_p(devices[0]), None)
-
-    vulkan.vkDestroyInstance(instance, None)
     sys.stdout.flush()
     return 0
 

@@ -648,6 +648,21 @@ struct MCDirectPlay::Impl
         }
     }
 
+    /// <summary>
+    /// Ends <paramref name="link"/> for <paramref name="why"/>, saying so the first time (the log is what tells a dropped
+    /// connection's cause, where its game only sees it gone).
+    /// </summary>
+    static void EndLink(Link& link, std::string_view why)
+    {
+        if (!link.Dead)
+        {
+            SDL_Log("MCDirectPlay: a connection ends (machine %u): %.*s", link.Machine, static_cast<int>(why.size()),
+                    why.data());
+        }
+
+        link.Dead = true;
+    }
+
     static void Queue(Link& link, FrameType type, const Writer& payload)
     {
         const uint32_t size = static_cast<uint32_t>(payload.Bytes.size() + 1);
@@ -661,7 +676,7 @@ struct MCDirectPlay::Impl
         // A peer that stopped reading would make this grow without end (issue #25): it is dropped instead.
         if (link.Output.size() > MaxUnsentBytes)
         {
-            link.Dead = true;
+            EndLink(link, "its peer stopped reading (more than MaxUnsentBytes unsent)");
         }
     }
 
@@ -690,7 +705,7 @@ struct MCDirectPlay::Impl
 
             if (sent < 0)
             {
-                link.Dead = true;
+                EndLink(link, "a send failed");
                 return;
             }
 
@@ -719,7 +734,7 @@ struct MCDirectPlay::Impl
 
             if (received < 0)
             {
-                link.Dead = true;
+                EndLink(link, "it closed, or a receive failed");
                 break;
             }
 
@@ -740,7 +755,7 @@ struct MCDirectPlay::Impl
 
             if (size == 0 || size > MaxFrameSize)
             {
-                link.Dead = true;
+                EndLink(link, "a frame's size is out of bounds");
                 break;
             }
 
@@ -1228,7 +1243,7 @@ struct MCDirectPlay::Impl
 
             if (type != FrameType::JoinRequest)
             {
-                link.Dead = true;
+                EndLink(link, "its first frame isn't a join");
                 return;
             }
 
@@ -1535,7 +1550,7 @@ struct MCDirectPlay::Impl
             // A connection that hasn't asked to join in time is dropped (issue #25).
             if (!Joiners[i].Joined && NowMs() - Joiners[i].AcceptedAt > JoinTimeoutMs)
             {
-                Joiners[i].Dead = true;
+                EndLink(Joiners[i], "it didn't ask to join in time");
             }
 
             Flush(Joiners[i]);

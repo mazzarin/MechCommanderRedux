@@ -169,8 +169,11 @@ public:
     /// </summary>
     std::function<void()> Checkpoint;
 
-    /// <summary>Port-only: the draws recorded between two <see cref="Checkpoint"/> calls.</summary>
-    static constexpr uint32_t CheckpointDraws = 64;
+    /// <summary>
+    /// Port-only: the draws recorded between two <see cref="Checkpoint"/> calls. Few: a draw can take tens of
+    /// microseconds to record (HD art, the rain's marks), and a frame that ran waits for the next check to be shown.
+    /// </summary>
+    static constexpr uint32_t CheckpointDraws = 8;
 
     /// <summary>The address of the frame surface <paramref name="window"/> is (or lies over), or none.</summary>
     static MCAddressKey SurfaceKey(const MCWindow& window);

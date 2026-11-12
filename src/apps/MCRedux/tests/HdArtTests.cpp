@@ -17547,6 +17547,8 @@ TEST_CASE_ISOLATED("game: a sharp screen shows a movie's HD frame over the part 
 
     CHECK_EQ(kept, Width * Height);
     MCRenderer::DestroyTexture(*window);
+    // The movie holds its file open, and Windows deletes no open file: it closes before its folder goes.
+    movie->reset();
     std::filesystem::remove_all(scratch);
 }
 
@@ -17746,6 +17748,8 @@ TEST_CASE_ISOLATED("game: the GPU makes a movie's HD frame's colours from its pl
     CHECK_EQ(compared.Frames, frames);
     CHECK_EQ(compared.Differing, size_t{0});
     MCRenderer::DestroyTexture(*window);
+    // The movie holds its file open, and Windows deletes no open file: it closes before its folder goes.
+    decoded->reset();
     std::filesystem::remove_all(scratch);
 }
 

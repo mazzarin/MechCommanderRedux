@@ -6,6 +6,9 @@ name: Checks
 
 on:
   pull_request:
+  # Fork only, never upstream: this branch's run of the checks a pull request gets.
+  push:
+    branches: ['windows-no-audio-hang']
 
 jobs:
   checks:

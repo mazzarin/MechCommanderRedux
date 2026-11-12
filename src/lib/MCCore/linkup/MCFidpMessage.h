@@ -55,10 +55,13 @@ public:
     uint32_t ToID = 0;
     /// <summary>The sender's DPID.</summary>
     uint32_t FromID = 0;
-    /// <summary>Low 32 bits of the performance counter when the message was (last) sent.</summary>
-    uint32_t SendTime = 0;
+    /// <summary>
+    /// The performance counter when the message was (last) sent. Port fix: all of it; the original kept its low 32
+    /// bits, which wrap every 4.3 seconds on a nanosecond counter, so a message was resent at most twice.
+    /// </summary>
+    uint64_t SendTime = 0;
     /// <summary>The <see cref="SendTime"/> of the first send (kept across resends).</summary>
-    uint32_t FirstSendTime = 0;
+    uint64_t FirstSendTime = 0;
     /// <summary>Whether the message was resent (latency is only measured on messages sent once).</summary>
     bool WasResent = false;
     /// <summary>

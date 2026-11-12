@@ -12,7 +12,7 @@ MCFidpPlayer::MCFidpPlayer(uint32_t id, const DPNAME& name, uint32_t flags)
 void MCFidpPlayer::AddToVerifyList(std::shared_ptr<MCFidpMessage> msg)
 {
     std::scoped_lock lock(CriticalSection);
-    msg->SendTime = static_cast<uint32_t>(MCPort::PerformanceCounter());
+    msg->SendTime = static_cast<uint64_t>(MCPort::PerformanceCounter());
 
     if (!msg->WasResent)
     {
@@ -60,11 +60,11 @@ std::shared_ptr<MCFidpMessage> MCFidpPlayer::RemoveFromVerifyList(uint8_t sendCo
     }
 
     std::shared_ptr<MCFidpMessage> msg = *found;
-    const uint32_t now = static_cast<uint32_t>(MCPort::PerformanceCounter());
+    const auto now = static_cast<uint64_t>(MCPort::PerformanceCounter());
 
     if (!msg->WasResent)
     {
-        LastLatency = (now - msg->SendTime) / MCSessionManager::TicksPerMs();
+        LastLatency = static_cast<uint32_t>((now - msg->SendTime) / MCSessionManager::TicksPerMs());
         Latencies[LatencyIndex] = static_cast<int32_t>(LastLatency);
         LatencyIndex++;
 

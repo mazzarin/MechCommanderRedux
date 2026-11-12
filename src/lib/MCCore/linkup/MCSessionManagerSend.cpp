@@ -48,6 +48,9 @@ int MCSessionManager::RemovePlayerFromGame(MCFidpPlayer& player)
     }
 
     _RemovingPlayer = true;
+    // Port-only: said, as the original removed a player in silence.
+    SDL_Log("MCSessionManager: player %u removed from the game: %d of its guaranteed messages unacknowledged",
+            player.Id, player.VerifyCountDifference());
     MCFIValueMessage msg;
     msg.Header = LinkupHeader(MCLinkupMessageType::PlayerRemoved, FIMSG_GUARANTEED);
     msg.Value = player.Id;
@@ -363,16 +366,15 @@ void MCSessionManager::SendMessageToPlayerGuaranteed(uint32_t playerID, std::spa
     }
 
     ChangeHeaderFlags(message, FIMSG_GUARANTEED, FIMSG_GROUP_MESSAGE);
-    const uint32_t sendTime = MCPort::Milliseconds();
     const int32_t result = SendPlainMessage(playerID, message);
     const std::shared_ptr<MCFidpMessage> msg = CopyToFreeMessage(message, playerID);
     player->AddToVerifyList(msg);
 
     if (result != 0)
     {
-        // Original behaviour: a failed send is backdated so it is resent at once; the time is timeGetTime's (ms) where
-        // the verify list keeps performance-counter ticks.
-        msg->SendTime = sendTime - player->ResendDelay * TicksPerMs();
+        // Original behaviour: a failed send is backdated so it is resent at once. Port fix: by the counter's ticks, which
+        // the verify list keeps (the original took timeGetTime's milliseconds).
+        msg->SendTime -= static_cast<uint64_t>(player->ResendDelay) * TicksPerMs();
 
         if (!msg->WasResent)
         {

@@ -34,6 +34,8 @@ env:
   LAVAPIPE_SHA256: dd6d69c0df698bacf6633711912e8eb1cf6e70b2796d46240c7ee3708e27a438
   # The loader's manifest for lavapipe (Mesa names it lvp_icd.<architecture>.json).
   LAVAPIPE_MANIFEST: lvp_icd*.json
+  # Raised when what the Vulkan job keeps changes, so its cache is made again.
+  VULKAN_CACHE_SET: '2'
   # Windows' own tar, which unpacks zips (Git's GNU tar, if first on the path, doesn't).
   ZIP_TAR: C:\Windows\System32\tar.exe
 
@@ -96,7 +98,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: vulkan
-          key: vulkan-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
+          key: vulkan-${{ env.VULKAN_CACHE_SET }}-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
           lookup-only: true
 
       # The SDK's install puts the loader (vulkan-1.dll) in System32 and the validation layer in its Bin folder. Only
@@ -151,10 +153,12 @@ jobs:
               file_format_version = '1.0.1'
               ICD = @{ library_path = [IO.Path]::GetRelativePath($folder.FullName, $driver.FullName); api_version = '1.4.0' }
             }
-            $manifest | ConvertTo-Json | Set-Content "$($folder.FullName)\lvp_icd.x86_64.json"
+            # UTF-8 without a byte-order mark, written by .NET itself: the loader refused the one Set-Content wrote.
+            [IO.File]::WriteAllText("$($folder.FullName)\lvp_icd.x86_64.json", ($manifest | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
             $icd = Get-Item "$($folder.FullName)\lvp_icd.x86_64.json"
           }
           Get-Content $icd.FullName
+          Format-Hex -Path $icd.FullName -Count 16
           Get-ChildItem vulkan -Recurse -File | ForEach-Object { "$($_.FullName.Substring($pwd.Path.Length + 1)) $([math]::Round($_.Length / 1KB)) KB" }
 
       - name: Keep Vulkan
@@ -162,7 +166,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: vulkan
-          key: vulkan-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
+          key: vulkan-${{ env.VULKAN_CACHE_SET }}-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
 
   tests:
     needs: [build, game, vulkan]
@@ -206,7 +210,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: vulkan
-          key: vulkan-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
+          key: vulkan-${{ env.VULKAN_CACHE_SET }}-${{ env.VULKAN_SDK_VERSION }}-${{ env.LAVAPIPE_FILE }}
           fail-on-cache-miss: true
 
       - name: Set up Vulkan

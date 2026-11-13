@@ -20,6 +20,8 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <unordered_set>
+#include <utility>
 
 #include "iface/MCKeyBindings.h"
 #include "lib/MCFatal.h"
@@ -179,6 +181,16 @@ namespace
     constexpr std::string_view JobsOption = "--jobs";
     /// <summary>The runner's own option: the temporary folder this process runs in (a worker's).</summary>
     constexpr std::string_view TempFolderOption = "--temp-folder";
+    /// <summary>The runner's own option: this process runs only the selected tests that share a process (the ones
+    /// run beside the isolated tests' workers).</summary>
+    constexpr std::string_view InProcessOption = "--in-process";
+
+    /// <summary>What starts the line a test's end prints, by whether it passed, and what ends it after its time.</summary>
+    constexpr std::string_view PassedMark = "[   OK ] ";
+    constexpr std::string_view FailedMark = "[ FAIL ] ";
+    constexpr std::string_view MsWords = " ms)";
+    /// <summary>What starts the line naming a process's tests, before its output.</summary>
+    constexpr std::string_view ProcMark = "[ PROC ] ";
 
     /// <summary>The temporary folder of each worker running isolated tests at once, under the run's own: a worker's
     /// tests keep their user folder (mc_tests_user) and scratch files apart from the other workers'.</summary>
@@ -195,14 +207,14 @@ namespace
     }
 
     /// <summary>
-    /// The command (UTF-8) running an isolated test in a process of its own: this program again, with <c>--only</c>,
-    /// the test's name and the options, in <paramref name="tempFolder"/> when given, its output and errors together
+    /// The command (UTF-8) running this program again: with <paramref name="selection"/> (the runner's arguments
+    /// choosing its tests) and the options, in <paramref name="tempFolder"/> when given, its output and errors together
     /// when <paramref name="joinErrors"/>.
     /// </summary>
-    std::string IsolatedCommand(std::string_view program, const MCTest::TestCase& test,
-                                const std::optional<std::filesystem::path>& tempFolder, bool joinErrors)
+    std::string ChildCommand(std::string_view program, std::string_view selection,
+                             const std::optional<std::filesystem::path>& tempFolder, bool joinErrors)
     {
-        std::string command = std::format("\"{}\" --only \"{}\"", program, test.Name);
+        std::string command = std::format("\"{}\" {}", program, selection);
 
         for (const auto& [key, value] : Options())
         {
@@ -219,6 +231,60 @@ namespace
         command = "\"" + command + "\"";
 #endif
         return joinErrors ? command + " 2>&1" : command;
+    }
+
+    /// <summary>
+    /// The command (UTF-8) running an isolated test in a process of its own: <see cref="ChildCommand"/> with
+    /// <c>--only</c> and the test's name.
+    /// </summary>
+    std::string IsolatedCommand(std::string_view program, const MCTest::TestCase& test,
+                                const std::optional<std::filesystem::path>& tempFolder, bool joinErrors)
+    {
+        return ChildCommand(program, std::format("--only \"{}\"", test.Name), tempFolder, joinErrors);
+    }
+
+    /// <summary>
+    /// The command (UTF-8) running the selected tests that share a process in a process of their own, in the run's
+    /// temporary folder: <see cref="ChildCommand"/> with <c>--in-process</c> and the run's name filters.
+    /// </summary>
+    std::string InProcessCommand(std::string_view program, std::span<const std::string> filters)
+    {
+        std::string selection(InProcessOption);
+
+        for (const std::string& filter : filters)
+        {
+            selection += " " + Quoted(filter);
+        }
+
+        return ChildCommand(program, selection, std::nullopt, true);
+    }
+
+    /// <summary>The names of the tests a run's output says passed: its lines "[   OK ] name (n ms)".</summary>
+    std::unordered_set<std::string> PassedNames(std::string_view output)
+    {
+        std::unordered_set<std::string> names;
+
+        for (size_t start = 0; start < output.size();)
+        {
+            const size_t end = std::min(output.find('\n', start), output.size());
+            std::string_view line = output.substr(start, end - start);
+            start = end + 1;
+
+            if (line.ends_with('\r'))
+            {
+                line.remove_suffix(1);
+            }
+
+            const size_t time = line.rfind(" (");
+
+            if (line.starts_with(PassedMark) && line.ends_with(MsWords) && time != std::string_view::npos &&
+                time >= PassedMark.size())
+            {
+                names.emplace(line.substr(PassedMark.size(), time - PassedMark.size()));
+            }
+        }
+
+        return names;
     }
 
     /// <summary>Whether a command's output is printed as it comes, as well as kept.</summary>
@@ -321,13 +387,30 @@ namespace
         return run;
     }
 
+    /// <summary>A command run beside the isolated tests' workers: what it is, and the name its output is printed under.</summary>
+    struct BesideCommand
+    {
+        std::string Command;
+        std::string Name;
+    };
+
+    /// <summary>What the isolated tests' workers ran: each test's run, in their order, and whether the command run
+    /// beside them exited 0, and its output.</summary>
+    struct WorkersRun
+    {
+        std::vector<IsolatedRun> Runs;
+        std::optional<std::pair<bool, std::string>> Beside;
+    };
+
     /// <summary>
     /// Runs <paramref name="tests"/> (isolated ones), <paramref name="jobs"/> at a time, each worker's in a temporary
-    /// folder of its own under this run's, printing each one's output whole as it ends.
+    /// folder of its own under this run's, and <paramref name="beside"/>, if given, from the start beside them, printing
+    /// each one's output whole as it ends.
     /// </summary>
-    /// <returns>Each test's run, in their order, or why the workers' folders can't be made.</returns>
-    std::expected<std::vector<IsolatedRun>, std::string> RunIsolatedAtOnce(
-        std::string_view program, std::span<const std::reference_wrapper<const MCTest::TestCase>> tests, int32_t jobs)
+    /// <returns>What they ran, or why the workers' folders can't be made.</returns>
+    std::expected<WorkersRun, std::string> RunIsolatedAtOnce(
+        std::string_view program, std::span<const std::reference_wrapper<const MCTest::TestCase>> tests, int32_t jobs,
+        const std::optional<BesideCommand>& beside)
     {
         std::vector<std::filesystem::path> folders;
 
@@ -351,22 +434,39 @@ namespace
             folders.push_back(folder);
         }
 
-        std::vector<IsolatedRun> runs(tests.size());
+        WorkersRun run{.Runs = std::vector<IsolatedRun>(tests.size())};
         std::atomic<size_t> next = 0;
         std::mutex lock;
+        const auto print = [&](std::string_view name, std::string_view output)
+        {
+            const std::scoped_lock guard(lock);
+            std::cout << ProcMark << name << "\n" << output << std::flush;
+        };
+
         const auto work = [&](const std::filesystem::path& folder)
         {
             for (size_t i = next++; i < tests.size(); i = next++)
             {
                 const MCTest::TestCase& test = tests[i];
                 const auto [passed, output] = RunCaptured(IsolatedCommand(program, test, folder, true), Echo::No);
-                runs[i] = RunOf(passed, output);
-                const std::scoped_lock guard(lock);
-                std::cout << "[ PROC ] " << test.Name << "\n" << output << std::flush;
+                run.Runs[i] = RunOf(passed, output);
+                print(test.Name, output);
             }
         };
 
         std::vector<std::thread> workers;
+
+        // First, as it is the longest run of all.
+        if (beside.has_value())
+        {
+            workers.emplace_back(
+                [&]
+                {
+                    auto result = RunCaptured(beside->Command, Echo::No);
+                    print(beside->Name, result.second);
+                    run.Beside = std::move(result);
+                });
+        }
 
         for (const std::filesystem::path& folder : folders)
         {
@@ -378,7 +478,7 @@ namespace
             worker.join();
         }
 
-        return runs;
+        return run;
     }
 
     /// <summary>
@@ -441,10 +541,10 @@ std::future<MCTest::PeerResult> MCTest::StartPeer(std::string_view name,
 /// <summary>
 /// Runs the registered tests. Arguments are name filters (a test runs when its name holds any of them, ignoring case);
 /// <c>--list</c> prints the names instead, and <c>--only &lt;name&gt;</c> runs the one test of exactly that name in this
-/// process (how isolated tests are run). <c>--jobs &lt;n&gt;</c> runs the isolated tests n at a time, after the others,
-/// each worker's in a temporary folder of its own (its own user folder: a test that reads what earlier ones saved there
-/// may see less). Any other <c>--name value</c> is an option the tests read (<see cref="MCTest::Option"/>). Exits 0 when
-/// every selected test passed.
+/// process (how isolated tests are run). <c>--jobs &lt;n&gt;</c> runs the isolated tests n at a time, each worker's in a
+/// temporary folder of its own (its own user folder: a test that reads what earlier ones saved there may see less), and
+/// the others beside them, in one process of their own (<c>--in-process</c>). Any other <c>--name value</c> is an option
+/// the tests read (<see cref="MCTest::Option"/>). Exits 0 when every selected test passed.
 /// </summary>
 #ifdef _WIN32
 // Windows hands main the command line in the ANSI code page, which can't spell every folder; wmain gets it whole.
@@ -481,6 +581,7 @@ int main(int argc, char** argv)
 
     std::vector<std::string> filters;
     bool list = false;
+    bool inProcess = false;
     std::optional<std::string_view> only;
     int32_t jobs = 1;
 
@@ -491,6 +592,10 @@ int main(int argc, char** argv)
         if (arg == "--list")
         {
             list = true;
+        }
+        else if (arg == InProcessOption)
+        {
+            inProcess = true;
         }
         else if (arg == "--only" && i + 1 < argc)
         {
@@ -531,7 +636,7 @@ int main(int argc, char** argv)
 
     for (const MCTest::TestCase& test : MCTest::Registry())
     {
-        if (only ? test.Name == *only : Selected(test, filters))
+        if ((only ? test.Name == *only : Selected(test, filters)) && !(inProcess && test.Isolated))
         {
             selected.emplace_back(test);
         }
@@ -549,7 +654,25 @@ int main(int argc, char** argv)
 
     RunState& state = State();
     std::vector<std::reference_wrapper<const MCTest::TestCase>> failed;
+    // The isolated tests run by the workers, and the tests run here.
     std::vector<std::reference_wrapper<const MCTest::TestCase>> atOnce;
+    std::vector<std::reference_wrapper<const MCTest::TestCase>> here;
+
+    for (const MCTest::TestCase& test : selected)
+    {
+        (test.Isolated && !only && jobs > 1 ? atOnce : here).emplace_back(test);
+    }
+
+    // Beside the workers, the tests that share a process run in one of their own: run here, the sockets they open would
+    // pass to each isolated test's process started meanwhile (popen hands a child what this process holds open),
+    // keeping a port bound after its test closed it, and a closed link's other end from seeing it end.
+    std::vector<std::reference_wrapper<const MCTest::TestCase>> sharing;
+
+    if (!atOnce.empty())
+    {
+        sharing = std::exchange(here, {});
+    }
+
     const auto runStart = std::chrono::steady_clock::now();
     // An isolated test's checks and result, counted in this run's.
     const auto count = [&](const MCTest::TestCase& test, const IsolatedRun& run)
@@ -563,17 +686,11 @@ int main(int argc, char** argv)
         }
     };
 
-    for (const MCTest::TestCase& test : selected)
+    for (const MCTest::TestCase& test : here)
     {
-        if (test.Isolated && !only && jobs > 1)
-        {
-            atOnce.emplace_back(test);
-            continue;
-        }
-
         if (test.Isolated && !only)
         {
-            std::cout << "[ PROC ] " << test.Name << std::endl;
+            std::cout << ProcMark << test.Name << std::endl;
             const auto [passed, output] =
                 RunCaptured(IsolatedCommand(arguments[0], test, std::nullopt, true), Echo::Yes);
             count(test, RunOf(passed, output));
@@ -612,22 +729,45 @@ int main(int argc, char** argv)
             failed.emplace_back(test);
         }
 
-        std::cout << (passed ? "[   OK ] " : "[ FAIL ] ") << test.Name << " (" << ms << " ms)" << std::endl;
+        std::cout << (passed ? PassedMark : FailedMark) << test.Name << " (" << ms << MsWords << std::endl;
     }
 
     if (!atOnce.empty())
     {
-        const auto runs = RunIsolatedAtOnce(arguments[0], atOnce, jobs);
+        const std::optional<BesideCommand> besideCommand =
+            sharing.empty() ? std::nullopt
+                            : std::optional<BesideCommand>({.Command = InProcessCommand(arguments[0], filters),
+                                                            .Name = std::format("the other {} tests", sharing.size())});
+        const auto workers = RunIsolatedAtOnce(arguments[0], atOnce, jobs, besideCommand);
 
-        if (!runs)
+        if (!workers)
         {
-            std::cerr << runs.error() << "\n";
+            std::cerr << workers.error() << "\n";
             return 1;
         }
 
         for (size_t i = 0; i < atOnce.size(); ++i)
         {
-            count(atOnce[i], (*runs)[i]);
+            count(atOnce[i], workers->Runs[i]);
+        }
+
+        if (workers->Beside.has_value())
+        {
+            // Their checks by their process's summary; a test failed unless its line says it passed (so all those after
+            // a crash fail too).
+            const auto& [passed, output] = *workers->Beside;
+            const IsolatedRun run = RunOf(passed, output);
+            state.Passes += run.Passes;
+            state.Failures += run.Failures;
+            const std::unordered_set<std::string> passedNames = PassedNames(output);
+
+            for (const MCTest::TestCase& test : sharing)
+            {
+                if (!passedNames.contains(std::string(test.Name)))
+                {
+                    failed.emplace_back(test);
+                }
+            }
         }
     }
 
@@ -635,7 +775,7 @@ int main(int argc, char** argv)
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - runStart).count();
     std::cout << "\n"
               << selected.size() - failed.size() << " of " << selected.size() << TestsPassedWords << state.Passes
-              << ChecksPassedWords << state.Failures << FailedWords << totalMs << " ms)\n";
+              << ChecksPassedWords << state.Failures << FailedWords << totalMs << MsWords << "\n";
 
     for (const MCTest::TestCase& test : failed)
     {

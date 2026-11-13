@@ -606,11 +606,28 @@ auto MCRoomEnd::SessionLost() -> bool
         return false;
     }
 
-    MCLogistics& logistics = *logisticsHeld;
-    game->InLogistics = false;
-    logistics.DestroyMultiplayer();
-    ClearRoom(logistics);
-    game->LeaveSession();
+    LeaveRoomNow(*game);
+    ShowGames(games, line);
+    return true;
+}
+
+auto MCRoomEnd::LeaveRoomSaying(std::string_view line) -> bool
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    if (game == nullptr || GlobalLog() == nullptr)
+    {
+        return false;
+    }
+
+    const MCGames games = GamesOf();
+
+    if (games == MCGames::None)
+    {
+        return false;
+    }
+
+    LeaveRoomNow(*game);
     ShowGames(games, line);
     return true;
 }

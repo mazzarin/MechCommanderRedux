@@ -15,6 +15,7 @@
 #include "main/MCGameStrings.h"
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCMultiPlayerHandlers.h"
 #include "object/MCCollisionSystem.h"
 #include "object/MCContactSystem.h"
 #include "object/MCForces.h"
@@ -156,6 +157,8 @@ auto MCScenario::Run() -> int32_t
     if (MultiPlayer() != nullptr && MultiPlayer()->InMission == 0)
     {
         MultiPlayer()->ProcessReceiveList();
+        // Port-only (Redux HD): a session lost meanwhile ends the wait for the host's start.
+        TakeHeldSessionLoss();
         return 0;
     }
 
@@ -229,6 +232,8 @@ auto MCScenario::Run() -> int32_t
         }
 
         MultiPlayer()->ProcessReceiveList();
+        // Port-only (Redux HD): a session lost in the start-up turns, taken once they've ended.
+        TakeHeldSessionLoss();
     }
 
     return static_cast<int32_t>(ScenarioResult);

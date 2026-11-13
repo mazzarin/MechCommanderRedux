@@ -1789,6 +1789,16 @@ namespace
     }
 
     /// <summary>
+    /// The <paramref name="i"/>th of the StillFallingSpeeds speeds StillFalling takes through a size's range, slowest
+    /// first.
+    /// </summary>
+    template <typename Size> float FallingSpeed(const Size& size, size_t i)
+    {
+        return std::lerp(size.SpeedLow, size.SpeedHigh,
+                         (static_cast<float>(i) + 0.5f) / static_cast<float>(StillFallingSpeeds));
+    }
+
+    /// <summary>
     /// The share of a size's flakes still falling <paramref name="age"/> seconds after they were thrown: those whose fall
     /// over their speed (each even through its range) is longer.
     /// </summary>
@@ -1799,13 +1809,18 @@ namespace
             return 1.0f;
         }
 
+        // Landed from the highest fall even at the slowest speed: every speed's share is none (the sum's own 0).
+        if (size.FallHigh - age * FallingSpeed(size, 0) <= 0.0f)
+        {
+            return 0.0f;
+        }
+
         float share = 0.0f;
 
         for (size_t i = 0; i < StillFallingSpeeds; ++i)
         {
-            const float speed = std::lerp(size.SpeedLow, size.SpeedHigh,
-                                          (static_cast<float>(i) + 0.5f) / static_cast<float>(StillFallingSpeeds));
-            share += std::clamp((size.FallHigh - age * speed) / (size.FallHigh - size.FallLow), 0.0f, 1.0f);
+            share +=
+                std::clamp((size.FallHigh - age * FallingSpeed(size, i)) / (size.FallHigh - size.FallLow), 0.0f, 1.0f);
         }
 
         return share / static_cast<float>(StillFallingSpeeds);
@@ -1856,6 +1871,15 @@ namespace
         }
 
         return longest + FlakeRest;
+    }
+
+    /// <summary>
+    /// Whether a frame's left-out flakes (or drops) have all landed and gone by <paramref name="now"/>: past their own
+    /// kind's longest fall and rest (or splash), where every share StillFalling gives them is none.
+    /// </summary>
+    bool Gone(const LeftOutFlakes& left, float now)
+    {
+        return now - left.Time > (left.Snows ? LongestFlake() : LongestDrop());
     }
 
     /// <summary>
@@ -2305,7 +2329,7 @@ namespace
 
         for (const LeftOutFlakes& left : state.LeftOut)
         {
-            if (left.Snows)
+            if (left.Snows || Gone(left, now))
             {
                 continue;
             }
@@ -2449,6 +2473,8 @@ namespace
     MCWeather::MCSpeckle Specks(State& state, const MCCamera& camera, const MCWeather::MCWeatherLook& look, float now,
                                 float palest)
     {
+        // Kept as long as the longer-lived kind's (the specks' lattices move on while any are kept); a frame's records
+        // gone sooner are skipped (Gone).
         const float longest = std::max(LongestFlake(), LongestDrop());
 
         while (!state.LeftOut.empty() && now - state.LeftOut.front().Time > longest)
@@ -2471,7 +2497,7 @@ namespace
 
         for (const LeftOutFlakes& left : state.LeftOut)
         {
-            if (!left.Snows)
+            if (!left.Snows || Gone(left, now))
             {
                 continue;
             }

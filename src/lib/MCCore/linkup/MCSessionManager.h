@@ -294,6 +294,14 @@ public:
     /// application queues.
     /// </summary>
     void ProcessMessages();
+
+    /// <summary>
+    /// Port-only (Redux HD): pumps the closed sessions whose joiners' links are still open (DestroyDirectPlayInterface),
+    /// dropping each once they've closed: every frame, in or out of a session (MCGuiSystem::Run, ProcessMessages).
+    /// </summary>
+    void PumpClosed();
+    /// <summary>Port-only (Redux HD): whether a closed session's joiners' links are still held open (PumpClosed).</summary>
+    bool KeepsClosedLinks() const;
     /// <summary>Handles the queued DirectPlay system messages.</summary>
     /// <returns>How many were handled, -1 when the session was lost.</returns>
     int ProcessSystemMessages();
@@ -420,6 +428,8 @@ public:
     std::array<int32_t, MaxLinkupPlayers> PlayersByLatency{0, 1, 2, 3, 4, 5};
 
 private:
+    /// <summary>Port-only (Redux HD): closed sessions' DirectPlay objects whose joiners' links linger (PumpClosed).</summary>
+    std::vector<std::unique_ptr<MCDirectPlay>> _Closed;
     /// <summary>
     /// Port (Redux HD): the lobby's internet game started (LobbyLaunchArgs.Internet): hosted on the service, or this
     /// game's link to the host open, waiting as the lobby's join does; DP_OK, or why not.

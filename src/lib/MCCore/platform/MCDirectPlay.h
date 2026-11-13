@@ -350,6 +350,12 @@ public:
     uint32_t Close();
 
     /// <summary>
+    /// Port-only (Redux HD): whether a host's closed session still holds its joiners' links open, for them to read that
+    /// it ends (at most 2 s; <see cref="Pump"/> ends them). Destroyed meanwhile, it closes them at once.
+    /// </summary>
+    bool Lingering() const;
+
+    /// <summary>
     /// Port-only (Redux HD): a joiner's host as it reached it ("address:port"), while in its session; none otherwise. A
     /// guest found on the LAN joins its host's next room there (network/MCRoomEnd.h's REMATCH).
     /// </summary>

@@ -57,6 +57,13 @@ public:
     /// <summary>Makes <paramref name="packet"/> current and moves to its data.</summary>
     int32_t SeekPacket(int32_t packet);
 
+    /// <summary>
+    /// Port-only: refuses (SeekPacket) an LZ packet that claims to unpack to more than <paramref name="bytes"/>, for a
+    /// file whose packets are known to be small (a save's). Otherwise only more than its LZ data can make is refused
+    /// (4096 bytes for each), so a packet of a few hundred kilobytes could claim 2 GiB. Kept until the file closes.
+    /// </summary>
+    void SetMostUnpacked(int32_t bytes) { _MostUnpacked = bytes; }
+
     int32_t GetNumPackets() const { return _NumPackets; }
     int32_t GetCurrentPacket() const { return _CurrentPacket; }
     /// <summary>The current packet's unpacked size.</summary>
@@ -108,4 +115,6 @@ protected:
     std::vector<uint32_t> _SeekTable;
     /// <summary>Whether the header holds a checksum.</summary>
     bool _UsesCheckSum = false;
+    /// <summary>Port-only: the most an LZ packet may unpack to (SetMostUnpacked; 0: what its LZ data can).</summary>
+    int32_t _MostUnpacked = 0;
 };

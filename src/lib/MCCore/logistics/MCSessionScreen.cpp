@@ -33,6 +33,7 @@
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMPGameConfiguration.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCMultiPlayerHandlers.h"
 #include "network/MCRoomEnd.h"
 #include "sound/MCSoundSystem.h"
 #include "vfx/MCVfxFunctions.h"
@@ -184,7 +185,6 @@ namespace
     void StartMissionNow()
     {
         std::string missionName = SplitFileName(Screen().MissionFile);
-        std::string extension = ".MPK";
         // Port-only (the personal build): the room takes players until here (the original locked it at the ready room's
         // GO).
         MultiPlayer()->SessionManager->LockSession();
@@ -195,9 +195,11 @@ namespace
         // Port-only (the personal build): a guest still away updating leaves its team first (network/MCLobbyUpdate.h).
         MCLobbyUpdate::MatchStarts();
         Screen().PublishMatchState();
-        GlobalLog()->InitializeMultiplayer();
-        GlobalLog()->LoadCampaign(missionName, extension, false, false);
-        GlobalLog()->SetUpBriefingScreen(false);
+
+        if (!GlobalLog()->LoadMatchMission(missionName))
+        {
+            LeaveUnloadedMatch();
+        }
     }
 
     /// <summary>

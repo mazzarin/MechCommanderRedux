@@ -803,6 +803,12 @@ public:
     /// scenario instead of going back to the session screen.
     /// </summary>
     bool PrepareScenarioReceived = false;
+    /// <summary>
+    /// Port-only (Redux HD): the session was lost while the scenario started up, when the original only counted the
+    /// word (DPSYS_SESSIONLOST), which the port's DirectPlay gives once: the scenario takes it as it waits for the host's
+    /// start, or once its start-up turns have ended (TakeHeldSessionLoss).
+    /// </summary>
+    bool SessionLostHeld = false;
     /// <summary>The scenario result the end-scenario message carried.</summary>
     int32_t ScenarioResult = 0;
     /// <summary>Each player's DPID and team.</summary>

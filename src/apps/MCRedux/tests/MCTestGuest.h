@@ -605,6 +605,8 @@ namespace MCTestGuest
     class Host final : public Peer
     {
     public:
+        /// <summary>The longest mission name <see cref="SendStart"/> sends, with its NUL.</summary>
+        static constexpr size_t MaxMissionName = 32;
         /// <summary>The most players a room holds.</summary>
         static constexpr uint32_t MaxPlayers = 6;
 
@@ -686,6 +688,45 @@ namespace MCTestGuest
 
         /// <summary>Ends the session once what waits to be sent is out, as the host's game quitting does.</summary>
         void Close() { Disconnect(); }
+
+        /// <summary>
+        /// Tells player <paramref name="to"/> to start <paramref name="mission"/> (a bare name), as a host's START does,
+        /// though not guaranteed (the game takes it either way).
+        /// </summary>
+        void SendStart(uint32_t to, std::string_view mission)
+        {
+            struct Start
+            {
+                MCMPFileNameMessage Header{};
+                std::array<char, MaxMissionName> Name{};
+            } message;
+
+            message.Header.Header = PlainHeader(MCMPMessageType::Start);
+            std::ranges::copy(mission.substr(0, MaxMissionName - 1), message.Name.begin());
+            Send(to, message);
+        }
+
+        /// <summary>
+        /// Puts player <paramref name="player"/> on <paramref name="team"/> (1 or 2) in <paramref name="slot"/>, telling
+        /// player <paramref name="to"/>, as a host's session screen does (not guaranteed).
+        /// </summary>
+        void SendJoinTeam(uint32_t to, uint32_t player, int8_t team, int8_t slot)
+        {
+            MCMPJoinTeamMessage message{};
+            message.Header = PlainHeader(MCMPMessageType::JoinTeam);
+            message.PlayerID = player;
+            message.Team = team;
+            message.Slot = slot;
+            Send(to, message);
+        }
+
+        /// <summary>Tells player <paramref name="to"/> the scenario starts, as a host's game does from the mech bay.</summary>
+        void SendPrepareScenario(uint32_t to)
+        {
+            MCMPLongMessage message{};
+            message.Header = PlainHeader(MCMPMessageType::PrepareScenario);
+            Send(to, message);
+        }
 
     private:
         /// <summary>Counts <paramref name="message"/> from <paramref name="from"/> if it is a guest's Updating or a player joining.</summary>

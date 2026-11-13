@@ -104,8 +104,31 @@ void MCSessionManager::CreateDirectPlayInterface()
 void MCSessionManager::DestroyDirectPlayInterface()
 {
     LeaveSession();
+
+    // Port-only (Redux HD): a host's closed session keeps its joiners' links open until they've read that it ends
+    // (MCDirectPlay::Lingering): kept and pumped until then (PumpClosed), as destroying it would close them at once.
+    if (DirectPlay != nullptr && DirectPlay->Lingering())
+    {
+        _Closed.push_back(std::move(DirectPlay));
+    }
+
     DirectPlay.reset();
     CurrentConnection = MCNetProtocol::None;
+}
+
+void MCSessionManager::PumpClosed()
+{
+    for (const std::unique_ptr<MCDirectPlay>& closed : _Closed)
+    {
+        closed->Pump();
+    }
+
+    std::erase_if(_Closed, [](const std::unique_ptr<MCDirectPlay>& closed) { return !closed->Lingering(); });
+}
+
+bool MCSessionManager::KeepsClosedLinks() const
+{
+    return !_Closed.empty();
 }
 
 // ---- message queues ------------------------------------------------------------------------------------------------

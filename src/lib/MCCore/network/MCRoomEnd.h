@@ -80,6 +80,13 @@ namespace MCRoomEnd
     bool SessionLost();
 
     /// <summary>
+    /// Leaves the room this game is in as its EXIT does, its screens' own cleared, and shows the games screen it came
+    /// from, saying <paramref name="line"/> (a match's mission that wouldn't load: MCMultiPlayerHandlers' LeaveUnloadedMatch).
+    /// </summary>
+    /// <returns>Whether it left; false: not a room the menus opened, so the original's way is the caller's.</returns>
+    bool LeaveRoomSaying(std::string_view line);
+
+    /// <summary>
     /// The match starts (host and guest, as the match's state is published): the room it is played from, and the host's
     /// picks, which a rematch takes again.
     /// </summary>

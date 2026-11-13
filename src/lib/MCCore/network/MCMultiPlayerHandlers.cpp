@@ -1343,9 +1343,11 @@ void HandleAppStart(uint32_t fromID, std::span<const uint8_t> msg)
     // Port-only (the personal build): a guest still away updating leaves its team first (network/MCLobbyUpdate.h).
     MCLobbyUpdate::MatchStarts();
     GlobalLog()->SessionScreen->PublishMatchState();
-    GlobalLog()->InitializeMultiplayer();
-    GlobalLog()->LoadCampaign(missionName, ".MPK", false, false);
-    GlobalLog()->SetUpBriefingScreen(false);
+
+    if (!GlobalLog()->LoadMatchMission(missionName))
+    {
+        LeaveUnloadedMatch();
+    }
 }
 
 void LostConnectionDialogExit()
@@ -1358,6 +1360,51 @@ void LostConnectionDialogExit()
     {
         KillTheGame(1);
     }
+}
+
+namespace
+{
+    /// <summary>What a game whose match's mission wouldn't load says as it leaves (LeaveUnloadedMatch).</summary>
+    constexpr std::string_view UnloadedHostMissionText = "COULDN'T LOAD THE HOST'S MISSION.";
+    constexpr std::string_view UnloadedMissionText = "COULDN'T LOAD THE MISSION.";
+
+    /// <summary>
+    /// The original's way out of a room outside a match: the multiplayer screens' own freed, the session left, back to
+    /// the main menu.
+    /// </summary>
+    void LeaveToMainMenu(MCMultiPlayer& game)
+    {
+        game.InLogistics = false;
+        GlobalLog()->DestroyMultiplayer();
+
+        if (GlobalLog()->CurrentScreen() != GlobalLog()->MainScreen)
+        {
+            WhackTimer = true;
+        }
+
+        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+        GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
+        GlobalLog()->LogisticsState = 1;
+        GlobalLog()->ShowLogScreen(true, true);
+        game.LeaveSession();
+    }
+}
+
+void LeaveUnloadedMatch()
+{
+    MCMultiPlayer& game = Game();
+    const std::string_view line = game.IsHost ? UnloadedMissionText : UnloadedHostMissionText;
+    SDL_Log("MCMultiPlayer: the match's mission wouldn't load; leaving its room");
+    // A host's room ends with it: no guest takes over a start whose mission its host couldn't load.
+    game.SessionManager->HandsOn = false;
+
+    if (MCRoomEnd::LeaveRoomSaying(line))
+    {
+        return;
+    }
+
+    LeaveToMainMenu(game);
+    ShowOkDialog(*GlobalLog()->MessageDialog, std::string(line), LostConnectionDialogExit);
 }
 
 void HandleLocalPlayerRemoved()
@@ -1374,19 +1421,7 @@ void HandleLocalPlayerRemoved()
 
     if (!game.PrepareScenarioReceived && !game.InMission)
     {
-        game.InLogistics = false;
-        GlobalLog()->DestroyMultiplayer();
-
-        if (GlobalLog()->CurrentScreen() != GlobalLog()->MainScreen)
-        {
-            WhackTimer = true;
-        }
-
-        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-        GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
-        GlobalLog()->LogisticsState = 1;
-        GlobalLog()->ShowLogScreen(true, true);
-        game.LeaveSession();
+        LeaveToMainMenu(game);
     }
     else
     {
@@ -1396,6 +1431,25 @@ void HandleLocalPlayerRemoved()
     }
 
     ShowOkDialog(*GlobalLog()->MessageDialog, LoadGameString(0x369, 0xfe), LostConnectionDialogExit);
+}
+
+void TakeHeldSessionLoss()
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    if (game == nullptr || !game->SessionLostHeld)
+    {
+        return;
+    }
+
+    if (const std::shared_ptr<MCScenario> scenario = Scenario();
+        game->InMission && scenario != nullptr && scenario->StartingUp)
+    {
+        return;
+    }
+
+    game->SessionLostHeld = false;
+    HandleLocalPlayerRemoved();
 }
 
 void MultiPlayerSystemCallback(MCFidpMessage& msg)
@@ -1442,6 +1496,9 @@ void MultiPlayerSystemCallback(MCFidpMessage& msg)
             }
             else
             {
+                // Port-only (Redux HD): held for the scenario to take (TakeHeldSessionLoss), where only the count was
+                // kept: the original's DirectPlay may have said it again and again, the port's says it once.
+                Game().SessionLostHeld = true;
                 BadSessionCounter++;
 
                 if (BadSessionCounter > 10)
@@ -1705,9 +1762,11 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         {
             game.PlayerCheckedIn.fill(0);
 
-            if (GlobalLog() != nullptr)
+            // Port fix: refused with no match's mission loaded (MCLogistics::HandlePrepareScenarioMessage).
+            if (GlobalLog() != nullptr && !GlobalLog()->HandlePrepareScenarioMessage())
             {
-                GlobalLog()->HandlePrepareScenarioMessage();
+                Dropped("a scenario's start with no mission loaded", fromID);
+                break;
             }
 
             game.PrepareScenarioReceived = true;

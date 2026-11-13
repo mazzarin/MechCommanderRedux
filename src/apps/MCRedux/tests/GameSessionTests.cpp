@@ -9,6 +9,8 @@
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFitIniFile.h"
+#include "linkup/MCFidpMessage.h"
+#include "linkup/MCLinkupMessages.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenu.h"
@@ -22,6 +24,7 @@
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
+#include "main/MCMissionGlobals.h"
 #include "main/MCSystemConfig.h"
 #include "camera/MCCameraList.h"
 #include "color/MCPalette.h"
@@ -31,6 +34,7 @@
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "object/MCForces.h"
+#include "platform/MCDirectPlay.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
@@ -541,6 +545,95 @@ TEST_CASE_ISOLATED("game: a LAN match's guest whose host is lost mid-battle goes
     CHECK(logistics->CurrentScreen() == logistics->LanScreen);
     CHECK(logistics->MessageDialog->ShowWindow);
     CHECK_EQ(logistics->MessageDialog->Text, std::string("LOST THE CONNECTION TO THE HOST'S GAME."));
+    IsMPlayerGame = false;
+}
+
+namespace
+{
+    /// <summary>The system's word that the session is lost (DPSYS_SESSIONLOST), handed on as the session manager does.</summary>
+    void SessionLostMessage()
+    {
+        DPMSG_GENERIC lost{.dwType = DPSYS_SESSIONLOST};
+        MCFidpMessage msg(0, sizeof(lost));
+        msg.SetMessageBuffer(LinkupBytes(lost));
+        MultiPlayerSystemCallback(msg);
+    }
+
+    /// <summary>
+    /// Whether the game left its match for the LAN games, saying the host's game was lost (the host's name unknown
+    /// here), its scenario ended.
+    /// </summary>
+    void CheckBackAtLanGames()
+    {
+        CHECK(Scenario() == nullptr);
+        CHECK(Mission()->State == MCMissionState::Logistics);
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        REQUIRE(logistics != nullptr);
+        CHECK(logistics->CurrentScreen() == logistics->LanScreen);
+        CHECK(logistics->MessageDialog->ShowWindow);
+        CHECK_EQ(logistics->MessageDialog->Text, std::string("LOST THE CONNECTION TO THE HOST'S GAME."));
+    }
+}
+
+/// <summary>
+/// Port-only (Redux HD): a LAN match's guest whose session is lost after its scenario loaded, as it waits for the
+/// host's start: the wait ends and its game goes back to the LAN games, saying so. The original only counted the
+/// system's word while the scenario started up, ending the game at the eleventh; the port's DirectPlay says it once,
+/// so the guest waited for good.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN match's guest whose session is lost as it waits for the host's start goes back to "
+                   "the LAN games")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+    MCMultiPlayer& game = PlayAsLanGuest();
+    // Its scenario loaded and starting up, waiting for the host's start (MCScenario::Run).
+    game.InMission = false;
+    game.PrepareScenarioReceived = true;
+    Scenario()->StartingUp = true;
+
+    SessionLostMessage();
+    RunFrames(30);
+
+    CheckBackAtLanGames();
+    IsMPlayerGame = false;
+}
+
+/// <summary>
+/// Port-only (Redux HD): a LAN match's guest whose session is lost in its mission's start-up turns (the static before
+/// the battle shows) plays them out, as the original held the loss through them, then goes back to the LAN games,
+/// saying so (it played on, its host gone).
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN match's guest whose session is lost in its mission's start-up turns goes back to the "
+                   "LAN games once they end")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t TurnsLeft = 5;
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+    PlayAsLanGuest();
+    // Its start-up turns not yet over.
+    Scenario()->StartUpTurns = Turn + TurnsLeft;
+    Scenario()->StartingUp = true;
+
+    SessionLostMessage();
+    RunFrames(TurnsLeft - 2);
+    CHECK(Scenario() != nullptr);
+    CHECK(Scenario()->StartingUp);
+
+    RunFrames(30);
+    CheckBackAtLanGames();
     IsMPlayerGame = false;
 }
 

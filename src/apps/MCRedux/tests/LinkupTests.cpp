@@ -457,6 +457,60 @@ TEST_CASE("linkup: a joiner joins the host's session, is numbered, verified, mad
 }
 
 /// <summary>
+/// Port-only (Redux HD): a host that ends its session (its battle over), its joiner sending on before it reads the
+/// end, over the system's own sockets (only they reset a link closed with bytes unread): the host's session manager
+/// keeps the joiner's link open after the session's DirectPlay object goes (MCSessionManager::PumpClosed), so the joiner
+/// reads that the session ends and doesn't take it over, and lets the link go once the joiner closes its end.
+/// (Destroyed with the session, the link was closed with the joiner's bytes unread, which reset it; on Windows the
+/// joiner then lost the word that the session ends, and took it over.)
+/// </summary>
+TEST_CASE("linkup: a host that ends its session keeps its joiner's link until the joiner reads that it ends")
+{
+    // Long enough for bytes sent on the loopback to reach the other end's computer.
+    constexpr uint32_t ArrivesMs = 100;
+    constexpr std::string_view address = "127.0.0.1:28995";
+
+    MCSessionManager host(TestApplication);
+    host.ConnectTcp(address);
+    MCFidpSession hosted(TestApplication);
+    hosted.SetName("Solaris VII");
+    REQUIRE_EQ(host.HostSession(hosted, "Commander"), 0);
+
+    MCSessionManager joiner(TestApplication);
+    joiner.ConnectTcp(address);
+    const std::shared_ptr<MCFidpSession> found = FindSession(host, joiner);
+    REQUIRE(found != nullptr);
+    const _GUID instance = found->SessionDesc.guidInstance;
+    REQUIRE_EQ(WhilePumping(host, [&] { return joiner.JoinSession(instance, "Guest"); }), 0);
+    REQUIRE(Exchange(host, joiner, [&] { return joiner.HasPlayerNumber; }));
+
+    std::vector<uint32_t> joinerSystem;
+    joiner.SystemCallback = [&](MCFidpMessage& msg)
+    { joinerSystem.push_back(ReadLinkupMessage<DPMSG_GENERIC>(msg.Bytes()).dwType); };
+    MCFIValueMessage hello;
+    hello.Header = FIMSG_GUARANTEED | 20;
+    joiner.SendMessageToServerGuaranteed(LinkupBytes(hello));
+    SDL_Delay(ArrivesMs);
+    // The battle over: the session ends for everyone (MCDirectPlay::Close), not handed on.
+    host.HandsOn = false;
+    CHECK(host.LeaveSession());
+    CHECK(host.KeepsClosedLinks());
+    joiner.SendMessageToServerGuaranteed(LinkupBytes(hello));
+    SDL_Delay(ArrivesMs);
+
+    // Only Windows throws away what the joiner hadn't read when its link resets, so only there does a host that
+    // closes the link at once fail these two; the check above fails on every system.
+    REQUIRE(Exchange(host, joiner, [&] { return !joinerSystem.empty(); }));
+    CHECK(joinerSystem == std::vector<uint32_t>{uint32_t{DPSYS_SESSIONLOST}});
+    CHECK(!joiner.IsHost);
+
+    // The joiner's game leaving the lost session closes its end: the host lets the link go.
+    CHECK(host.KeepsClosedLinks());
+    CHECK(joiner.LeaveSession());
+    CHECK(Exchange(host, joiner, [&] { return !host.KeepsClosedLinks(); }));
+}
+
+/// <summary>
 /// A session holds six players, so only a host that breaks the rules can announce a seventh: a joiner leaves it out and
 /// plays on. The original ended the game ("Could not connect to game."); fuzzing the joiner found it (4 Nov).
 /// </summary>

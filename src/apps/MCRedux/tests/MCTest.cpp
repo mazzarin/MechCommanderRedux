@@ -189,6 +189,8 @@ namespace
     constexpr std::string_view PassedMark = "[   OK ] ";
     constexpr std::string_view FailedMark = "[ FAIL ] ";
     constexpr std::string_view MsWords = " ms)";
+    /// <summary>What starts each line the run's summary names a failure on.</summary>
+    constexpr std::string_view FailedLine = "  FAILED: ";
     /// <summary>What starts the line naming a process's tests, before its output.</summary>
     constexpr std::string_view ProcMark = "[ PROC ] ";
 
@@ -732,6 +734,10 @@ int main(int argc, char** argv)
         std::cout << (passed ? PassedMark : FailedMark) << test.Name << " (" << ms << MsWords << std::endl;
     }
 
+    // The process the tests sharing one ran in beside the workers, when it failed past what its tests' lines show (its
+    // exit after the last one's): named so the run fails.
+    std::optional<std::string> besideFailed;
+
     if (!atOnce.empty())
     {
         const std::optional<BesideCommand> besideCommand =
@@ -760,6 +766,7 @@ int main(int argc, char** argv)
             state.Passes += run.Passes;
             state.Failures += run.Failures;
             const std::unordered_set<std::string> passedNames = PassedNames(output);
+            const size_t failedBefore = failed.size();
 
             for (const MCTest::TestCase& test : sharing)
             {
@@ -767,6 +774,11 @@ int main(int argc, char** argv)
                 {
                     failed.emplace_back(test);
                 }
+            }
+
+            if (!passed && failed.size() == failedBefore)
+            {
+                besideFailed = std::format("{}' process, which failed after them", besideCommand->Name);
             }
         }
     }
@@ -779,8 +791,13 @@ int main(int argc, char** argv)
 
     for (const MCTest::TestCase& test : failed)
     {
-        std::cout << "  FAILED: " << test.Name << "\n";
+        std::cout << FailedLine << test.Name << "\n";
     }
 
-    return failed.empty() ? 0 : 1;
+    if (besideFailed.has_value())
+    {
+        std::cout << FailedLine << *besideFailed << "\n";
+    }
+
+    return failed.empty() && !besideFailed.has_value() ? 0 : 1;
 }

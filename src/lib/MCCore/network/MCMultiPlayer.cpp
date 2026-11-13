@@ -1168,6 +1168,7 @@ void MCMultiPlayer::ResetForNewGame()
     InLogistics = false;
     InMission = false;
     PrepareScenarioReceived = false;
+    SessionLostHeld = false;
     ScenarioResult = 0;
     MoverRoster.fill({});
     PlayerTeams = {};
@@ -1206,6 +1207,7 @@ void MCMultiPlayer::InitStartupParameters()
     InLogistics = false;
     InMission = false;
     PrepareScenarioReceived = false;
+    SessionLostHeld = false;
     ScenarioResult = 0;
     MoverRoster.fill({});
     PlayerTeams = {};

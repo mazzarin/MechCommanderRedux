@@ -1398,6 +1398,25 @@ void HandleLocalPlayerRemoved()
     ShowOkDialog(*GlobalLog()->MessageDialog, LoadGameString(0x369, 0xfe), LostConnectionDialogExit);
 }
 
+void TakeHeldSessionLoss()
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    if (game == nullptr || !game->SessionLostHeld)
+    {
+        return;
+    }
+
+    if (const std::shared_ptr<MCScenario> scenario = Scenario();
+        game->InMission && scenario != nullptr && scenario->StartingUp)
+    {
+        return;
+    }
+
+    game->SessionLostHeld = false;
+    HandleLocalPlayerRemoved();
+}
+
 void MultiPlayerSystemCallback(MCFidpMessage& msg)
 {
     const std::span<const uint8_t> buffer = std::as_const(msg).Buffer();
@@ -1442,6 +1461,9 @@ void MultiPlayerSystemCallback(MCFidpMessage& msg)
             }
             else
             {
+                // Port-only (Redux HD): held for the scenario to take (TakeHeldSessionLoss), where only the count was
+                // kept: the original's DirectPlay may have said it again and again, the port's says it once.
+                Game().SessionLostHeld = true;
                 BadSessionCounter++;
 
                 if (BadSessionCounter > 10)

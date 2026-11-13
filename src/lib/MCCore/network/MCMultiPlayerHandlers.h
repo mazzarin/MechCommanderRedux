@@ -81,6 +81,13 @@ void LostConnectionDialogExit();
 void HandleLocalPlayerRemoved();
 
 /// <summary>
+/// Port-only (Redux HD): a session lost while the scenario started up (MCMultiPlayer::SessionLostHeld), taken as
+/// HandleLocalPlayerRemoved takes it once the game waits for the host's start or its mission's start-up turns have
+/// ended (as the original held it through them; the results wait for them too).
+/// </summary>
+void TakeHeldSessionLoss();
+
+/// <summary>
 /// The SessionManager's system-message handler: player created or destroyed, player added to a group, session lost.
 /// </summary>
 void MultiPlayerSystemCallback(MCFidpMessage& msg);

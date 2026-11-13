@@ -44,6 +44,36 @@ namespace
         std::expected<std::unique_ptr<MCGuiFont>, std::string> font = MCGuiFont::Create(fileName);
         return font ? std::shared_ptr<MCGuiFont>(std::move(*font)) : std::make_shared<MCGuiFont>();
     }
+
+    /// <summary>Port-only: the window's screen as the frame log last noted it.</summary>
+    std::string FrameLogScreen;
+
+    /// <summary>
+    /// Port-only: the refresh rate (Hz) of the screen <paramref name="display"/>'s window is on, for the frame log
+    /// (MCFrameLog::NextFrame), and a note when the window, its screen or how it's drawn changed, so a log says what
+    /// it ran on and a hitch at a change shows beside it.
+    /// </summary>
+    double FrameLogRefresh(const MCDisplay& display)
+    {
+        SDL_Window* window = &display.Window();
+        const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+        const double refreshHz = mode != nullptr ? mode->refresh_rate : 0.0;
+        int width = 0;
+        int height = 0;
+        SDL_GetWindowSizeInPixels(window, &width, &height);
+        const bool fullScreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        std::string screen =
+            std::format("display: {}x{} pixels at {:.2f} Hz, {}, vsync {}, {}", width, height, refreshHz,
+                        fullScreen ? "full screen" : "in a window", GVSync ? "on" : "off", display.RendererName());
+
+        if (screen != FrameLogScreen)
+        {
+            MCFrameLog::Note(screen);
+            FrameLogScreen = std::move(screen);
+        }
+
+        return refreshHz;
+    }
 }
 
 auto GuiSystem() -> MCGuiSystem&
@@ -454,7 +484,7 @@ auto MCGuiSystem::Run() -> void
     do
     {
         PerfStartTime = MCPort::PerformanceCounter();
-        MCFrameLog::NextFrame();
+        MCFrameLog::NextFrame(MCFrameLog::Enabled() && _Display != nullptr ? FrameLogRefresh(*_Display) : 0.0);
         // Port-only (HD weather's snow): whether the last frame threw the weather's pieces.
         const bool drewWeather = MCWeather::TakeSnowDrawn();
 

@@ -57,6 +57,7 @@
 #include "main/MCTelemetry.h"
 #include "main/MCUpdater.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
 #include "platform/MCRegistry.h"
 #include "platform/MCRenderer.h"
@@ -76,6 +77,13 @@ namespace
 {
     /// <summary>The logistics screens while they exist (<see cref="GlobalLog"/>).</summary>
     std::weak_ptr<MCLogistics> GlobalLogistics;
+
+    /// <summary>Port-only: the frame log's note of the logistics screen <paramref name="name"/> set up.</summary>
+    void NoteScreen(std::string_view name)
+    {
+        MCFrameLog::Note(std::format("logistics: the {} screen", name));
+    }
+
     /// <summary>Port (Redux HD): the room's chat line telling an internet game's host the code its players join by.</summary>
     constexpr std::string_view InternetCodeFormat = "FRIENDS CAN JOIN WITH CODE {}.";
 }
@@ -834,6 +842,8 @@ auto MCLogistics::ShowLogScreen(bool show, bool redraw) const -> void
 
 auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
 {
+    NoteScreen("main");
+
     if (CurrentScreen() != nullptr)
     {
         ShowLogScreen(false, false);
@@ -958,6 +968,7 @@ namespace
 
 auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 {
+    NoteScreen("purchase");
     MCBriefingScreen& briefing = *BriefingScreen;
     briefing.StopSmackerMovies();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
@@ -1285,6 +1296,7 @@ auto MCLogistics::ShowTickerOn(MCLogObject& screen, bool shuffle) -> void
 
 auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 {
+    NoteScreen("briefing");
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
     const std::shared_ptr<MCLogObject> previous = CurrentScreen();
 
@@ -1357,6 +1369,8 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
 auto MCLogistics::SetUpSessionScreen() -> int32_t
 {
+    NoteScreen("session");
+
     if (MultiplayerInitialized)
     {
         DestroyMultiplayer();
@@ -1382,6 +1396,7 @@ auto MCLogistics::SetUpSessionScreen() -> int32_t
 
 auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
 {
+    NoteScreen("repair");
     MCBriefingScreen& briefing = *BriefingScreen;
     briefing.StopSmackerMovies();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));

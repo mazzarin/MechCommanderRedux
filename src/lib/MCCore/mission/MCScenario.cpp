@@ -24,6 +24,7 @@
 #include "object/MCObjectSystem.h"
 #include "object/MCObjectType.h"
 #include "object/MCTrainManager.h"
+#include "platform/MCFrameLog.h"
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTerrain.h"
 
@@ -169,71 +170,103 @@ auto MCScenario::Run() -> int32_t
     }
 
     Update();
-    CameraList()->Update();
-    Terrain()->Update();
-    PathManager().Update();
 
-    if (MCGameContext::Current().HasTrainManager())
+    // Port-only: the frame log's parts of the game's logic (MCFrameLog), each its own block.
     {
-        TrainManager().UpdateTrains();
+        MCFrameLog::Scope part("logic.camera");
+        CameraList()->Update();
     }
 
-    ObjectList()->Update();
-    ClanTeam()->UpdateSensors();
-
-    if (AlliedTeam() != nullptr)
     {
-        AlliedTeam()->UpdateSensors();
+        MCFrameLog::Scope part("logic.terrain");
+        Terrain()->Update();
     }
 
-    InnerSphereTeam()->UpdateSensors();
-    PotentialContactManager().UpdateStatus();
-    CollisionSystem().CheckObjects();
+    {
+        MCFrameLog::Scope part("logic.paths");
+        PathManager().Update();
+
+        if (MCGameContext::Current().HasTrainManager())
+        {
+            TrainManager().UpdateTrains();
+        }
+    }
+
+    {
+        MCFrameLog::Scope part("logic.objects");
+        ObjectList()->Update();
+    }
+
+    {
+        MCFrameLog::Scope part("logic.sensors");
+        ClanTeam()->UpdateSensors();
+
+        if (AlliedTeam() != nullptr)
+        {
+            AlliedTeam()->UpdateSensors();
+        }
+
+        InnerSphereTeam()->UpdateSensors();
+        PotentialContactManager().UpdateStatus();
+    }
+
+    {
+        MCFrameLog::Scope part("logic.collisions");
+        CollisionSystem().CheckObjects();
+    }
 
     if (Turn < 2)
     {
         StartObjectiveTimers();
     }
 
-    if (MultiPlayer() == nullptr)
     {
-        ScenarioBrain->Execute(std::span(&ScenarioBrainParams, 1));
-        ScenarioResult = static_cast<uint32_t>(ScenarioBrain->ReturnValue());
-    }
-    else
-    {
-        MCAblRuntime& abl = *AblRuntime();
-        abl.MissionMessageCode = 0;
-        abl.MissionMessageParam = 0;
-        ScenarioBrain->Execute(std::span(&ScenarioBrainParams, 1));
-        abl.MissionMessageCode = 0;
-        abl.MissionMessageParam = 0;
+        MCFrameLog::Scope part("logic.script");
 
-        if (MultiPlayer()->IsServer == 0)
+        if (MultiPlayer() == nullptr)
         {
-            ScenarioResult = static_cast<uint32_t>(MultiPlayer()->ScenarioResult);
+            ScenarioBrain->Execute(std::span(&ScenarioBrainParams, 1));
+            ScenarioResult = static_cast<uint32_t>(ScenarioBrain->ReturnValue());
         }
         else
         {
-            ScenarioResult = static_cast<uint32_t>(ScenarioBrain->ReturnValue());
+            MCAblRuntime& abl = *AblRuntime();
+            abl.MissionMessageCode = 0;
+            abl.MissionMessageParam = 0;
+            ScenarioBrain->Execute(std::span(&ScenarioBrainParams, 1));
+            abl.MissionMessageCode = 0;
+            abl.MissionMessageParam = 0;
 
-            if (ScenarioResult != 0)
+            if (MultiPlayer()->IsServer == 0)
             {
-                MultiPlayer()->SendEndScenario(static_cast<int32_t>(ScenarioResult));
+                ScenarioResult = static_cast<uint32_t>(MultiPlayer()->ScenarioResult);
+            }
+            else
+            {
+                ScenarioResult = static_cast<uint32_t>(ScenarioBrain->ReturnValue());
+
+                if (ScenarioResult != 0)
+                {
+                    MultiPlayer()->SendEndScenario(static_cast<int32_t>(ScenarioResult));
+                }
             }
         }
     }
 
-    if (MultiPlayer() != nullptr)
     {
-        if (MultiPlayer()->IsServer != 0)
-        {
-            MultiPlayer()->UpdateClients();
-        }
+        MCFrameLog::Scope part("logic.network");
 
-        MultiPlayer()->ProcessReceiveList();
-        // Port-only (Redux HD): a session lost in the start-up turns, taken once they've ended.
-        TakeHeldSessionLoss();
+        if (MultiPlayer() != nullptr)
+        {
+            if (MultiPlayer()->IsServer != 0)
+            {
+                MultiPlayer()->UpdateClients();
+            }
+
+            MultiPlayer()->ProcessReceiveList();
+            // Port-only (Redux HD): a session lost in the start-up turns, taken once they've ended.
+            TakeHeldSessionLoss();
+        }
     }
 
     return static_cast<int32_t>(ScenarioResult);

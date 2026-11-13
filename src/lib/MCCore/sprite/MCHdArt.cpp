@@ -5,6 +5,7 @@
 #include "lib/MCInflate.h"
 #include "lib/MCOptionalRef.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCSdlHandle.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCInBetween.h"
@@ -68,6 +69,9 @@ namespace
     constexpr size_t MaxAheadBytes = 32u * 1024u * 1024u;
     /// <summary>A shape table's header up to its frame count (VfxShapeCount reads it at byte 4).</summary>
     constexpr size_t ShapeCountEnd = 8;
+    /// <summary>The frame log's part for a frame's first use (read then, or taken from the reading thread), and its count.</summary>
+    constexpr std::string_view FrameLogRead = "hd.read";
+    constexpr std::string_view FrameLogReads = "HD frames first used";
 
     /// <summary>An open archive, and the first folders of its entries' names (upper-cased).</summary>
     struct MCHdArchive
@@ -1403,7 +1407,13 @@ namespace
             }
 
             const auto started = std::chrono::steady_clock::now();
-            auto read = ReadOrTake(key, width, height, cached.Id);
+            // Port-only: a frame's first use reads it here, as the frame draws, unless read ahead (the frame log's).
+            MCFrameLog::Count(FrameLogReads);
+            auto read = [&]
+            {
+                const MCFrameLog::Scope part(FrameLogRead);
+                return ReadOrTake(key, width, height, cached.Id);
+            }();
             state.ReadTime += std::chrono::steady_clock::now() - started;
 
             if (!read)

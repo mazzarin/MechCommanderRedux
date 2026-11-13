@@ -52,6 +52,7 @@
 #include "terrain/MCTacticalMap.h"
 #include "vfx/MCVfxFunctions.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
 #include "platform/MCSmacker.h"
 #include "platform/MCWin32Defs.h"
@@ -173,6 +174,7 @@ auto PlayScenario() -> void
 
     if (SoundSystem() != nullptr && UseSound != 0)
     {
+        MCFrameLog::Scope part("logic.sound");
         SoundSystem()->Update();
     }
 }
@@ -913,6 +915,7 @@ auto MCMission::StartScenario(std::string_view name) -> void
     GuiSystem().AddCallback(_InterfaceUpdateCallback);
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     MCTelemetry::PlayStarted(game != nullptr ? game->NumPlayers() : 1, game != nullptr && game->IsServer);
+    MCFrameLog::Note("mission started");
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void

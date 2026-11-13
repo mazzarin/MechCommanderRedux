@@ -15,6 +15,7 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "object/MCBattleMech.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCNeverDestroyed.h"
 #include "object/MCBattleMechType.h"
 #include "object/MCMechGameSystem.h"
@@ -745,23 +746,43 @@ auto MCCamera::Render() -> void
     // Port-only (HD lighting): the shots, fires and explosions drawn now light the world they're drawn into.
     MCSceneLights::Begin(*GlobalPane);
     MCPaletteNight::Begin();
-    terrainWindow->Render(HazeLevel);
 
-    if (DrawTerrainGrid != 0)
+    // Port-only: the frame log's parts of the world's draw (MCFrameLog), each its own block.
     {
-        Terrain()->DrawLines();
+        MCFrameLog::Scope part("draw.terrain");
+        terrainWindow->Render(HazeLevel);
+
+        if (DrawTerrainGrid != 0)
+        {
+            Terrain()->DrawLines();
+        }
     }
 
-    CraterManager().Render();
-    ObjectList()->Render();
-    // Port-only (HD particles): what flies about the battle, moved on to the game's time.
-    MCParticles::Draw(*this);
-    // Port-only (HD weather): the rain, moved on to the game's time.
-    MCWeather::Draw(*this);
-    MCSceneLights::AddShadows();
-    ElementList().Sort();
-    ElementList().Draw();
-    MCSceneLights::Finish();
+    {
+        MCFrameLog::Scope part("draw.objects");
+        CraterManager().Render();
+        ObjectList()->Render();
+    }
+
+    {
+        MCFrameLog::Scope part("draw.particles");
+        // Port-only (HD particles): what flies about the battle, moved on to the game's time.
+        MCParticles::Draw(*this);
+    }
+
+    {
+        MCFrameLog::Scope part("draw.weather");
+        // Port-only (HD weather): the rain, moved on to the game's time.
+        MCWeather::Draw(*this);
+    }
+
+    {
+        MCFrameLog::Scope part("draw.elements");
+        MCSceneLights::AddShadows();
+        ElementList().Sort();
+        ElementList().Draw();
+        MCSceneLights::Finish();
+    }
 
     // Port-only (Redux HD): where HD lighting doesn't draw the night, the palette does, over the world on its own
     // surface (the units' overlays are on the screen, over the view, so they stay as bright).

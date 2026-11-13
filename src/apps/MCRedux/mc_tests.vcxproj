@@ -162,6 +162,7 @@
     <ClCompile Include="tests\ServiceSignalingTests.cpp" />
     <ClCompile Include="tests\ServicesTests.cpp" />
     <ClCompile Include="tests\SessionScreenTests.cpp" />
+    <ClCompile Include="tests\SharpPicturesTests.cpp" />
     <ClCompile Include="tests\SmackerTests.cpp" />
     <ClCompile Include="tests\SortTests.cpp" />
     <ClCompile Include="tests\SoundTests.cpp" />

@@ -133,5 +133,7 @@ auto AttachHdArtToLoaded() -> void
     if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
     {
         logistics->AttachHdArt();
+        logistics->MakeAhead();
+        logistics->MakeLineArtAhead();
     }
 }

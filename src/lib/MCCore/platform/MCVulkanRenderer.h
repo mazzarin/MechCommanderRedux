@@ -229,6 +229,19 @@ public:
     uint64_t FramesRun() const { return _Frame; }
 
     /// <summary>
+    /// Port-only: the sharp pictures put on the GPU since the start: redrawn as they were first drawn, or taken made
+    /// ahead (platform/MCSharpPictures); and the bytes they take there now.
+    /// </summary>
+    struct SharpCounts
+    {
+        size_t Redrawn = 0;
+        size_t TakenAhead = 0;
+        size_t Bytes = 0;
+    };
+
+    SharpCounts SharpPictures() const { return {_SharpCounts.Redrawn, _SharpCounts.TakenAhead, _SharpGlyphBytes}; }
+
+    /// <summary>
     /// The colour texture of <paramref name="window"/>'s surface (premultiplied RGBA, as <see cref="Execute"/> left it)
     /// and its size in use; null when the window has no surface yet. Waits for a frame running (<see cref="WaitForRun"/>);
     /// the key's (the run's side's, for the thread running frames) doesn't.
@@ -1146,16 +1159,6 @@ private:
     /// </summary>
     bool AddSharpLines(uint16_t surface, std::span<const uint8_t> art, int32_t columns, int32_t rows, const Quad& at,
                        const Quad& from, uint32_t tableRow, std::span<const MCSharpLines::MCDrawnLoop> drawn);
-    /// <summary>What a picture redrawn sharp was redrawn from (its key's space).</summary>
-    enum class SharpKind : uint8_t
-    {
-        Glyph = 1,
-        Lines,
-    };
-
-    /// <summary>The key a picture redrawn sharp is kept by: the kind, size and bytes of what it was redrawn from.</summary>
-    static uint64_t SharpKey(SharpKind kind, std::span<const uint8_t> pixels, int32_t pitch, int32_t columns,
-                             int32_t rows);
     /// <summary>
     /// Draws the picture kept by <paramref name="key"/> (<paramref name="redraw"/> makes it the first time: RGBA8,
     /// <see cref="MCSharpText::Scale"/> times <paramref name="columns"/> x <paramref name="rows"/>, red the byte and green
@@ -1629,6 +1632,7 @@ private:
     /// <summary>Port-only: the glyphs redrawn sharp (RGBA8, MCSharpText), by their bytes' hash, and their bytes.</summary>
     std::unordered_map<uint64_t, Picture> _SharpGlyphs;
     size_t _SharpGlyphBytes = 0;
+    SharpCounts _SharpCounts;
     /// <summary>Port-only: how each font's two-tone glyphs are layered, by the font's address, until its bytes change.</summary>
     std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
@@ -1653,11 +1657,12 @@ private:
 
     /// <summary>
     /// Drops the pictures of <paramref name="pictures"/> unused for a while (looked for every PictureSweepFrames
-    /// frames), then, oldest first, those past <paramref name="budget"/> bytes not drawn in the last frame; at most
-    /// TrimmedBytesPerFrame a frame (the rest go later). <paramref name="bytes"/> counts what they take.
+    /// frames) unless <paramref name="keepIdle"/>, then, oldest first, those past <paramref name="budget"/> bytes not
+    /// drawn in the last frame; at most TrimmedBytesPerFrame a frame (the rest go later). <paramref name="bytes"/>
+    /// counts what they take.
     /// </summary>
     void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
-                      size_t bytesPerPixel);
+                      size_t bytesPerPixel, bool keepIdle = false);
 
     /// <summary>
     /// Drops <paramref name="it"/>'s picture from <paramref name="pictures"/>, taking what it took from

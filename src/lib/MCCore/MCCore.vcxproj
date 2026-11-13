@@ -432,7 +432,9 @@
     <ClCompile Include="platform\MCSdlPresenter.cpp" />
     <ClCompile Include="platform\MCServices.cpp" />
     <ClCompile Include="platform\MCServiceSignaling.cpp" />
+    <ClCompile Include="platform\MCShapeRows.cpp" />
     <ClCompile Include="platform\MCSharpLines.cpp" />
+    <ClCompile Include="platform\MCSharpPictures.cpp" />
     <ClCompile Include="platform\MCSharpText.cpp" />
     <ClCompile Include="platform\MCSmacker.cpp" />
     <ClCompile Include="platform\MCSocket.cpp">
@@ -646,6 +648,7 @@
     <ClInclude Include="lib\MCFile.h" />
     <ClInclude Include="lib\MCFilePatch.h" />
     <ClInclude Include="lib\MCFitIniFile.h" />
+    <ClInclude Include="lib\MCFnvHash.h" />
     <ClInclude Include="lib\MCFrameOfRef.h" />
     <ClInclude Include="lib\MCIDString.h" />
     <ClInclude Include="lib\MCInflate.h" />
@@ -918,7 +921,9 @@
     <ClInclude Include="platform\MCSdlPresenter.h" />
     <ClInclude Include="platform\MCServices.h" />
     <ClInclude Include="platform\MCServiceSignaling.h" />
+    <ClInclude Include="platform\MCShapeRows.h" />
     <ClInclude Include="platform\MCSharpLines.h" />
+    <ClInclude Include="platform\MCSharpPictures.h" />
     <ClInclude Include="platform\MCSharpText.h" />
     <ClInclude Include="platform\MCSmacker.h" />
     <ClInclude Include="platform\MCSocket.h" />

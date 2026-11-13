@@ -3,12 +3,15 @@
 #include "color/MCPalette.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCShapeRows.h"
 #include "platform/MCSharpLines.h"
+#include "platform/MCSharpPictures.h"
 #include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 #include "platform/MCVulkanShaders.h"
 #include "smol-atlas.h"
 #include "lib/MCFatal.h"
+#include "lib/MCFnvHash.h"
 #include "lib/MCWorkers.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
@@ -367,24 +370,20 @@ namespace
     constexpr uint32_t SharpGlyphRunsOn = 1u << 8;
     /// <summary>A VFX font glyph's pixels follow its width (vfx/MCVfxFunctions.h's fonts).</summary>
     constexpr size_t GlyphPixelsAt = 4;
-    /// <summary>FNV-1a's 64-bit offset basis and prime (a redrawn glyph is kept by its bytes' hash).</summary>
-    constexpr uint64_t HashBasis = 0xcbf29ce484222325ull;
-    constexpr uint64_t HashPrime = 0x100000001b3ull;
+    /// <summary>FNV-1a's 64-bit offset basis, and a value mixed into a key (lib/MCFnvHash.h).</summary>
+    constexpr uint64_t HashBasis = MCFnvHash::Basis;
 
-    /// <summary>Mixes <paramref name="value"/> into the FNV-1a hash <paramref name="key"/>.</summary>
     constexpr void MixHash(uint64_t& key, uint64_t value)
     {
-        key ^= value;
-        key *= HashPrime;
+        MCFnvHash::Mix(key, value);
     }
 
     /// <summary>The most colour tables held at once (the table texture's height).</summary>
     constexpr uint32_t MaxTableRows = 8192;
     /// <summary>The table texture's row that leaves every colour as it is.</summary>
     constexpr uint32_t IdentityRow = 0;
-    /// <summary>A decoded shape's bytes a pixel (DecodeShape): its value, then its state (1: drawn).</summary>
-    constexpr size_t DecodedBytes = 2;
-    constexpr uint8_t DecodedDrawn = 1;
+    /// <summary>A decoded shape's bytes a pixel (platform/MCShapeRows): its value, then its state.</summary>
+    constexpr size_t DecodedBytes = MCShapeRows::DecodedBytes;
     /// <summary>The width of the strip of written pixels.</summary>
     constexpr int32_t StripWidth = 4096;
     /// <summary>Upload offsets are kept on this boundary (the strictest any backend asks of a texture copy).</summary>
@@ -458,7 +457,7 @@ namespace
 
         for (size_t at = 0; at + DecodedBytes <= decoded.size(); at += DecodedBytes)
         {
-            if (decoded[at + 1] == DecodedDrawn)
+            if (decoded[at + 1] == MCShapeRows::Drawn)
             {
                 colors.set(decoded[at]);
             }
@@ -546,92 +545,6 @@ namespace
         }
 
         return MCRect{std::min(a.X0, b.X0), std::min(a.Y0, b.Y0), std::max(a.X1, b.X1), std::max(a.Y1, b.Y1)};
-    }
-
-    // Run-length shapes (VFX's format, see MCSoftwareRendererShapes.cpp): each row is tokens; a token's high seven
-    // bits count pixels (bit 0: a literal of that many bytes, else a run of the next byte), 0 with bit 0 set skips the
-    // next byte's count of pixels, 0 ends the row.
-
-    /// <summary>Walks <paramref name="rows"/> rows of <paramref name="bytes"/>: the widest row and the bytes they take.</summary>
-    size_t ShapeExtent(std::span<const uint8_t> bytes, int32_t rows, int32_t& width)
-    {
-        size_t data = 0;
-        width = 0;
-
-        for (int32_t row = 0; row < rows; ++row)
-        {
-            int32_t x = 0;
-
-            for (;;)
-            {
-                const uint8_t token = bytes[data++];
-                const int32_t count = token >> 1;
-
-                if (count == 0)
-                {
-                    if ((token & 1) == 0)
-                    {
-                        break;
-                    }
-
-                    x += bytes[data++];
-                    continue;
-                }
-
-                data += (token & 1) ? count : 1;
-                x += count;
-            }
-
-            width = std::max(width, x);
-        }
-
-        return data;
-    }
-
-    /// <summary>Decodes shape rows into value + state pairs (1 a pixel, 2 a skipped pixel, 0 nothing).</summary>
-    void DecodeShape(std::span<const uint8_t> bytes, int32_t rows, int32_t width, std::span<uint8_t> out)
-    {
-        size_t data = 0;
-        std::memset(out.data(), 0, static_cast<size_t>(width) * rows * 2);
-
-        for (int32_t row = 0; row < rows; ++row)
-        {
-            const std::span<uint8_t> line = out.subspan(static_cast<size_t>(row) * width * 2);
-            int32_t x = 0;
-
-            for (;;)
-            {
-                const uint8_t token = bytes[data++];
-                const int32_t count = token >> 1;
-
-                if (count == 0)
-                {
-                    if ((token & 1) == 0)
-                    {
-                        break;
-                    }
-
-                    const int32_t skip = bytes[data++];
-
-                    for (int32_t i = 0; i < skip; ++i)
-                    {
-                        line[(x + i) * 2 + 1] = 2;
-                    }
-
-                    x += skip;
-                    continue;
-                }
-
-                for (int32_t i = 0; i < count; ++i)
-                {
-                    line[(x + i) * 2] = (token & 1) ? bytes[data + i] : bytes[data];
-                    line[(x + i) * 2 + 1] = 1;
-                }
-
-                data += (token & 1) ? count : 1;
-                x += count;
-            }
-        }
     }
 
     /// <summary>
@@ -1476,7 +1389,10 @@ void MCVulkanRenderer::BeginRecording()
     // each frame, such as the shape transforms' work buffer, make a new one every frame); a few at a time.
     TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
     TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget(), HdRgbaBytes);
-    TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdRgbaBytes);
+    // Port-only: the sharp pictures stay while their budget holds them, drawn lately or not: made again, each costs a
+    // redraw on the CPU, and a screen's are hundreds (at 240 Hz the 300 frames unused took 1.25 s, so a return to a
+    // screen redrew its text and line art).
+    TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdRgbaBytes, true);
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
     if (_Tables.empty())
@@ -1555,11 +1471,11 @@ void MCVulkanRenderer::ReleaseMovie(uint64_t movie)
 }
 
 void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
-                                    size_t bytesPerPixel)
+                                    size_t bytesPerPixel, bool keepIdle)
 {
     // Those unused for a while (looked for every PictureSweepFrames frames), and past the budget those not drawn in
     // the last frame (they'd only go up again).
-    const bool sweep = _Frame % PictureSweepFrames == 0;
+    const bool sweep = !keepIdle && _Frame % PictureSweepFrames == 0;
 
     if (!sweep && bytes <= budget)
     {
@@ -3279,7 +3195,7 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
                     {
                         Extent extent{0, width, height};
                         int32_t widest = 0;
-                        extent.Size = ShapeExtent(data, height, widest);
+                        extent.Size = MCShapeRows::Extent(data, height, widest);
                         return extent;
                     });
 
@@ -3596,31 +3512,13 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
                                      const MCColorTable& table)
 {
     // Kept by the glyph's bytes (and size), so the same glyph from any font or place is redrawn once; a two-tone glyph
-    // by its layers as well (its font's say how its bytes stack).
-    uint64_t key = SharpKey(SharpKind::Glyph, glyph, columns, columns, rows);
-    std::optional<MCSharpText::MCGlyphLayers> layers;
-
-    if (MCSharpText::Layered(glyph, columns, columns, rows))
-    {
-        layers = MCSharpText::LayersOf(glyph, columns, columns, rows, FontLayers(font));
-
-        for (const uint8_t byte : layers->Bytes)
-        {
-            MixHash(key, byte);
-        }
-
-        if (const std::optional<MCSharpText::MCDropShadow>& shadow = layers->Shadow; shadow.has_value())
-        {
-            for (const int32_t offset : {shadow->FromX, shadow->FromY, shadow->ToX, shadow->ToY})
-            {
-                MixHash(key, static_cast<uint64_t>(offset));
-            }
-        }
-    }
+    // by its layers as well (its font's say how its bytes stack): the key the glyphs made ahead are kept by too.
+    const MCSharpPictures::MCGlyphPictures how = MCSharpPictures::GlyphPictures(glyph, columns, rows, FontLayers(font));
+    const std::optional<MCSharpText::MCGlyphLayers>& layers = how.Layers;
 
     // One picture per layer (a one-colour glyph's one), each by the glyph's key and its place, all redrawn together
-    // the first time one is missing; every layer is up before any is drawn.
-    const size_t count = layers.has_value() ? layers->Bytes.size() : 1;
+    // the first time one is missing (unless made ahead); every layer is up before any is drawn.
+    const size_t count = how.Count();
     std::optional<std::vector<std::vector<uint8_t>>> redrawn;
     std::vector<std::reference_wrapper<Picture>> pictures;
 
@@ -3630,15 +3528,13 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
         {
             if (!redrawn.has_value())
             {
-                redrawn = layers.has_value()
-                              ? MCSharpText::RedrawLayers(glyph, columns, columns, rows, *layers)
-                              : std::vector<std::vector<uint8_t>>{MCSharpText::Redraw(glyph, columns, columns, rows)};
+                redrawn = MCSharpPictures::RedrawGlyph(glyph, columns, rows, how);
             }
 
             return layer < redrawn->size() ? (*redrawn)[layer] : std::vector<uint8_t>{};
         };
 
-        const MCOptionalRef<Picture> picture = SharpPicture((key ^ layer) * HashPrime, redrawLayer, columns, rows);
+        const MCOptionalRef<Picture> picture = SharpPicture(how.KeyOf(layer), redrawLayer, columns, rows);
 
         if (!picture)
         {
@@ -3665,49 +3561,10 @@ bool MCVulkanRenderer::AddSharpLines(uint16_t surface, std::span<const uint8_t> 
                                      const Quad& at, const Quad& from, uint32_t tableRow,
                                      std::span<const MCSharpLines::MCDrawnLoop> drawn)
 {
-    uint64_t key = SharpKey(SharpKind::Lines, art, columns, columns, rows);
-
-    // The parts drawn by hand are part of what it's redrawn from.
-    for (const MCSharpLines::MCDrawnLoop& loop : drawn)
-    {
-        for (const int32_t edge : {loop.Left, loop.Top, loop.Right, loop.Bottom})
-        {
-            MixHash(key, static_cast<uint64_t>(static_cast<uint32_t>(edge)));
-        }
-
-        for (const auto& point : loop.Through)
-        {
-            for (const float along : point)
-            {
-                MixHash(key, std::bit_cast<uint32_t>(along));
-            }
-        }
-    }
-
+    const uint64_t key = MCSharpPictures::LineArtKey(art, columns, rows, drawn);
     return AddSharpPicture(
         surface, key, [&] { return MCSharpLines::Redraw(art, columns, columns, rows, drawn); }, columns, rows, at, from,
         tableRow);
-}
-
-uint64_t MCVulkanRenderer::SharpKey(SharpKind kind, std::span<const uint8_t> pixels, int32_t pitch, int32_t columns,
-                                    int32_t rows)
-{
-    // Kept by the pixels' bytes (and size), so the same glyph from any font or place is redrawn once.
-    uint64_t key = HashBasis;
-    MixHash(key, static_cast<uint64_t>(kind));
-    MixHash(key, static_cast<uint64_t>(columns));
-    MixHash(key, static_cast<uint64_t>(rows));
-
-    for (int32_t row = 0; row < rows; ++row)
-    {
-        for (int32_t column = 0; column < columns; ++column)
-        {
-            const size_t offset = static_cast<size_t>(row) * static_cast<size_t>(pitch) + static_cast<size_t>(column);
-            MixHash(key, offset < pixels.size() ? pixels[offset] : MCSharpText::NoInk);
-        }
-    }
-
-    return key;
 }
 
 MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
@@ -3718,12 +3575,15 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
 
     if (found == _SharpGlyphs.end())
     {
-        const std::vector<uint8_t> redrawn = redraw();
+        // Port-only: made ahead (platform/MCSharpPictures), else redrawn now.
+        const std::optional<MCSharpPictures::MCMadePicture> made = MCSharpPictures::Take(key);
+        const std::vector<uint8_t> redrawn = made.has_value() ? std::vector<uint8_t>{} : redraw();
+        const size_t bytes = made.has_value() ? made->RgbaBytes() : redrawn.size();
         const auto width = static_cast<uint32_t>(columns * MCSharpText::Scale);
         const auto height = static_cast<uint32_t>(rows * MCSharpText::Scale);
         Picture picture;
 
-        if (redrawn.size() != static_cast<size_t>(width) * height * HdRgbaBytes)
+        if (bytes != static_cast<size_t>(width) * height * HdRgbaBytes)
         {
             return std::nullopt;
         }
@@ -3739,14 +3599,25 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
             return std::nullopt;
         }
 
-        std::ranges::copy(
-            redrawn,
-            QueueUpload(picture.Texture.Handle, picture.Place.X, picture.Place.Y, width, height, HdRgbaBytes).begin());
-        picture.Bytes = redrawn.size();
+        const std::span<uint8_t> upload =
+            QueueUpload(picture.Texture.Handle, picture.Place.X, picture.Place.Y, width, height, HdRgbaBytes);
+
+        if (made.has_value())
+        {
+            made->CopyRgbaTo(upload);
+            ++_SharpCounts.TakenAhead;
+        }
+        else
+        {
+            std::ranges::copy(redrawn, upload.begin());
+            ++_SharpCounts.Redrawn;
+        }
+
+        picture.Bytes = bytes;
         found = _SharpGlyphs.emplace(key, picture).first;
-        _SharpGlyphBytes += redrawn.size();
+        _SharpGlyphBytes += bytes;
         ++_FrameUploads.Pictures;
-        _FrameUploads.PictureBytes += static_cast<int64_t>(redrawn.size());
+        _FrameUploads.PictureBytes += static_cast<int64_t>(bytes);
     }
 
     return found->second;
@@ -3912,10 +3783,10 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
         {
             Extent extent;
             extent.Height = rows;
-            extent.Size = ShapeExtent(data, rows, extent.Width);
+            extent.Size = MCShapeRows::Extent(data, rows, extent.Width);
             return extent;
         },
-        [&](std::span<uint8_t> out, const Extent& extent) { DecodeShape(data, rows, extent.Width, out); });
+        [&](std::span<uint8_t> out, const Extent& extent) { MCShapeRows::Decode(data, rows, extent.Width, out); });
 
     if (!found.has_value() || found->get().Measured.Width == 0)
     {
@@ -3952,17 +3823,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     if ((command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) && SharpScreenSurface(surface) &&
         MCHdArt::LineArt(command.ShapeTable, command.ShapeNum))
     {
-        std::vector<uint8_t> decoded(static_cast<size_t>(width) * static_cast<size_t>(rows) * DecodedBytes);
-        DecodeShape(data, rows, width, decoded);
-        std::vector<uint8_t> art(static_cast<size_t>(width) * static_cast<size_t>(rows), MCSharpText::NoInk);
-
-        for (size_t pixel = 0; pixel < art.size(); ++pixel)
-        {
-            if (decoded[pixel * DecodedBytes + 1] == DecodedDrawn)
-            {
-                art[pixel] = decoded[pixel * DecodedBytes];
-            }
-        }
+        const std::vector<uint8_t> art = MCSharpPictures::LineArt(data, width, rows);
 
         const Quad artFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
         const uint32_t tableRow = command.Op == MCShapeOp::Xlat ? TableRow(*command.Table) : IdentityRow;
@@ -5468,14 +5329,15 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
 
         // Port-only: on a sharp screen, the text is shown from its glyphs redrawn sharp (whole, the drawn part shown);
         // the original's draw keeps the indices.
-        const int32_t height = VfxFontHeight(font);
-        const size_t whole = static_cast<size_t>(pitch) * static_cast<size_t>(std::max(height, 0));
-
-        if (SharpScreenSurface(surface) && glyphAt + GlyphPixelsAt + whole <= font.size() &&
-            AddSharpGlyph(surface, font, font.subspan(glyphAt + GlyphPixelsAt, whole), pitch, height, at,
-                          command.SourceX, command.SourceY, *command.Table))
+        if (SharpScreenSurface(surface))
         {
-            op |= IndexOnly;
+            if (const std::optional<MCSharpPictures::MCFontGlyph> glyph =
+                    MCSharpPictures::FontGlyph(font, command.Character);
+                glyph.has_value() && AddSharpGlyph(surface, font, glyph->Pixels, glyph->Pitch, glyph->Height, at,
+                                                   command.SourceX, command.SourceY, *command.Table))
+            {
+                op |= IndexOnly;
+            }
         }
     }
 

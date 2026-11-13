@@ -264,6 +264,9 @@
     <ClCompile Include="tests\SessionScreenTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\SharpPicturesTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\SmackerTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

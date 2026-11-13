@@ -10751,8 +10751,10 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     const bool original = MCTest::Option("hd-original").has_value();
     GHdArt = original ? 0 : 1;
     MCHdArt::SetPackFolder(pack);
-    // The logistics' shapes, loaded before HD art came on, tied to the pack as the game ties them with it on.
+    // The logistics' shapes, loaded before HD art came on, tied to the pack as the game ties them with it on, and the
+    // fonts' sharp glyphs made ahead, as the game makes them then (AttachHdArtToLoaded).
     GlobalLog()->AttachHdArt();
+    GlobalLog()->MakeAhead();
     const std::filesystem::path folder(*shots);
     std::filesystem::create_directories(folder);
     // Two seconds settle a screen change's wipe.

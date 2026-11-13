@@ -1222,7 +1222,13 @@
     <ClCompile Include="platform\MCServiceSignaling.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCShapeRows.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCSharpLines.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCSharpPictures.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCSharpText.cpp">
@@ -1808,6 +1814,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCFitIniFile.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCFnvHash.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCFrameOfRef.h">
@@ -2622,7 +2631,13 @@
     <ClInclude Include="platform\MCServiceSignaling.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCShapeRows.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCSharpLines.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCSharpPictures.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCSharpText.h">

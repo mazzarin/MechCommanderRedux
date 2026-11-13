@@ -44,6 +44,10 @@
 #include "logistics/MCUnitLimits.h"
 #include "linkup/MCSessionManager.h"
 #include "main/MCLogisticsShared.h"
+#include "main/MCLogMech.h"
+#include "main/MCLogMechList.h"
+#include "main/MCLogVehicle.h"
+#include "main/MCLogVehicleList.h"
 #include "main/MCGameSession.h"
 #include "mission/MCScenario.h"
 #include "object/MCMoverGameSystem.h"
@@ -61,6 +65,7 @@
 #include "platform/MCInput.h"
 #include "platform/MCRegistry.h"
 #include "platform/MCRenderer.h"
+#include "platform/MCSharpPictures.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
@@ -623,6 +628,7 @@ auto MCLogistics::Start() -> void
     }
 
     ShowLogScreen(false, false);
+    MakeAhead();
 }
 
 namespace
@@ -712,6 +718,115 @@ auto MCLogistics::AttachHdArt() -> void
     MCHdArt::SetLineArtFrames(lineArt);
 }
 
+namespace
+{
+    /// <summary>Port-only: whether the screen is drawn sharp (HD art, the GPU drawing): only then are its pictures.</summary>
+    bool DrawsSharp()
+    {
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        return display != nullptr && display->SharpScreen();
+    }
+}
+
+auto MCLogistics::MakeAhead() const -> void
+{
+    if (!DrawsSharp())
+    {
+        return;
+    }
+
+    // Each font once (the drop fonts serve two sizes).
+    std::set<const MCGuiFont*> fonts;
+
+    for (const std::array<std::shared_ptr<MCGuiFont>, 3>& sizes : Fonts)
+    {
+        for (const std::shared_ptr<MCGuiFont>& font : sizes)
+        {
+            if (font != nullptr && !font->FontData.Empty() && fonts.insert(font.get()).second)
+            {
+                MCSharpPictures::MakeFont(font->FontData.Bytes());
+            }
+        }
+    }
+}
+
+auto MCLogistics::MakeLineArtAhead() const -> void
+{
+    if (!DrawsSharp())
+    {
+        return;
+    }
+
+    // The units' repair shapes, the shop's first (the purchase screen's mechs show first), each once.
+    std::vector<std::span<const uint8_t>> tables;
+    const auto add = [&tables](std::span<const MCRegisteredBlock> shapes, int32_t index)
+    {
+        if (index >= 0 && static_cast<size_t>(index) < shapes.size() && !shapes[static_cast<size_t>(index)].Empty())
+        {
+            const std::span<const uint8_t> table = shapes[static_cast<size_t>(index)].Bytes();
+
+            if (std::ranges::none_of(tables,
+                                     [&](std::span<const uint8_t> kept) { return kept.data() == table.data(); }))
+            {
+                tables.push_back(table);
+            }
+        }
+    };
+
+    if (PurMechList != nullptr)
+    {
+        for (const std::shared_ptr<MCPurMech>& mech : PurMechList->Mechs)
+        {
+            for (const std::unique_ptr<MCPurMechData>& variant : mech->Variants)
+            {
+                if (variant != nullptr)
+                {
+                    add(MechRepShapes, variant->NameIndex);
+                }
+            }
+        }
+    }
+
+    if (MechList != nullptr)
+    {
+        for (const std::shared_ptr<MCLogMech>& mech : MechList->Mechs)
+        {
+            add(MechRepShapes, mech->NameIndex);
+        }
+    }
+
+    if (PurVehicleList != nullptr)
+    {
+        for (const std::shared_ptr<MCPurVehicle>& vehicle : PurVehicleList->Vehicles)
+        {
+            if (vehicle->Data != nullptr)
+            {
+                add(VehicleRepShapes, vehicle->Data->NameIndex);
+            }
+        }
+    }
+
+    if (VehicleList != nullptr)
+    {
+        for (const std::shared_ptr<MCLogVehicle>& vehicle : VehicleList->Vehicles)
+        {
+            add(VehicleRepShapes, vehicle->NameIndex);
+        }
+    }
+
+    // Each one's frames marked as line art (AttachHdArt).
+    for (const std::span<const uint8_t> table : tables)
+    {
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            if (MCHdArt::LineArt(table, frame))
+            {
+                MCSharpPictures::MakeLineArt(table, frame, MCHdArt::LineArtDrawn(table, frame));
+            }
+        }
+    }
+}
+
 MCLogistics::~MCLogistics()
 {
     if (!_Started)
@@ -719,6 +834,8 @@ MCLogistics::~MCLogistics()
         return;
     }
 
+    // Port-only: the line art made ahead for this logistics' lists goes with them.
+    MCSharpPictures::ForgetLineArt();
     MCHdArt::SetLineArtFrames({});
     HdArtOwner.reset();
 
@@ -969,6 +1086,7 @@ namespace
 auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 {
     NoteScreen("purchase");
+    MakeLineArtAhead();
     MCBriefingScreen& briefing = *BriefingScreen;
     briefing.StopSmackerMovies();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
@@ -1297,6 +1415,7 @@ auto MCLogistics::ShowTickerOn(MCLogObject& screen, bool shuffle) -> void
 auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 {
     NoteScreen("briefing");
+    MakeLineArtAhead();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
     const std::shared_ptr<MCLogObject> previous = CurrentScreen();
 
@@ -1397,6 +1516,7 @@ auto MCLogistics::SetUpSessionScreen() -> int32_t
 auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
 {
     NoteScreen("repair");
+    MakeLineArtAhead();
     MCBriefingScreen& briefing = *BriefingScreen;
     briefing.StopSmackerMovies();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));

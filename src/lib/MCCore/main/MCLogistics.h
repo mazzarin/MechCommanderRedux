@@ -94,6 +94,20 @@ public:
     void AttachHdArt();
 
     /// <summary>
+    /// Port-only: on a sharp screen (HD art, the GPU drawing), what the HD menus first show done ahead, off the game's
+    /// thread: every font's sharp glyphs made (platform/MCSharpPictures), so a screen's first frame doesn't redraw its
+    /// text. The end of Start does it, and AttachHdArtToLoaded when HD art comes on.
+    /// </summary>
+    void MakeAhead() const;
+
+    /// <summary>
+    /// Port-only: on a sharp screen, the line art of the units the screens list (the shop's and the player's mechs and
+    /// vehicles: their diagrams and sold-out outlines) made ahead, off the game's thread (platform/MCSharpPictures).
+    /// The briefing, purchase and repair screens ask as they're set up; what's made is never made again.
+    /// </summary>
+    void MakeLineArtAhead() const;
+
+    /// <summary>
     /// The frames of a mech's repair shapes its diagram is drawn with, a frame a location: the armor (from 0) over the
     /// internal structure (from 0xb).
     /// </summary>

@@ -451,13 +451,31 @@ private:
     };
 
     /// <summary>
+    /// Port-only: a kind of shared page: its texture's format and side, and its HD colours' (format
+    /// SDL_GPU_TEXTUREFORMAT_INVALID: none), placed in blocks of HdBlock pixels a side.
+    /// </summary>
+    struct SharedLayout
+    {
+        SDL_GPUTextureFormat Format = SDL_GPU_TEXTUREFORMAT_INVALID;
+        uint32_t Side = 0;
+        SDL_GPUTextureFormat HdFormat = SDL_GPU_TEXTUREFORMAT_INVALID;
+        uint32_t HdSide = 0;
+        uint32_t HdBlock = 1;
+
+        bool operator==(const SharedLayout&) const = default;
+    };
+
+    /// <summary>
     /// Port-only: a page pictures share (HD art frames, or sharp glyphs), so the draws of any of them share their
-    /// bindings (<see cref="SameBindings"/>): its texture (the HD frames' indices, or the glyphs' pixels) and the HD
-    /// frames' colours, each packed by smol-atlas (the colours in whole BC7 blocks when they're BC7), and how many
-    /// pictures it holds. An emptied page lets its textures go, its slot left for the next page.
+    /// bindings (<see cref="SameBindings"/>): its layout, its texture (the HD frames' indices, or the glyphs' pixels) and
+    /// the HD frames' colours, each packed by smol-atlas (the colours in whole BC7 blocks when they're BC7), and how many
+    /// pictures it holds. An emptied page lets its textures go, its slot left for the next page. A page takes only
+    /// pictures of its own layout: HD frames read from PNGs (RGBA8, placed by the pixel) and from the pack's archives
+    /// (BC7, placed by the block) keep to pages of their own.
     /// </summary>
     struct SharedPage
     {
+        SharedLayout Layout;
         Texture HdColors;
         Texture Texture;
         std::unique_ptr<smol_atlas_t, DestroyPlaces> Places;
@@ -471,19 +489,6 @@ private:
         None,
         Hd,
         Sharp,
-    };
-
-    /// <summary>
-    /// Port-only: a kind of shared page: its texture's format and side, and its HD colours' (format
-    /// SDL_GPU_TEXTUREFORMAT_INVALID: none), placed in blocks of HdBlock pixels a side.
-    /// </summary>
-    struct SharedLayout
-    {
-        SDL_GPUTextureFormat Format = SDL_GPU_TEXTUREFORMAT_INVALID;
-        uint32_t Side = 0;
-        SDL_GPUTextureFormat HdFormat = SDL_GPU_TEXTUREFORMAT_INVALID;
-        uint32_t HdSide = 0;
-        uint32_t HdBlock = 1;
     };
 
     /// <summary>Port-only: a shared page's place let go, freed once the frame that let it go has run.</summary>

@@ -2567,9 +2567,10 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         return true;
     };
 
+    // Only a page of the picture's own layout: its formats and its places' unit are the page's.
     for (uint32_t at = 0; at < pages.size(); ++at)
     {
-        if (pages[at].Places != nullptr && placeIn(at))
+        if (pages[at].Places != nullptr && pages[at].Layout == layout && placeIn(at))
         {
             return true;
         }
@@ -2577,6 +2578,7 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
 
     // A new page, in an emptied one's slot when there is one.
     SharedPage page;
+    page.Layout = layout;
     auto made = EnsureTexture(page.Texture, layout.Format, SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
 
     if (made && hd)

@@ -3500,7 +3500,8 @@ namespace
 /// <summary>
 /// Port-only: HD art frames drawn apart share their bindings (the pages the GPU's HD frames share: MCVulkanRenderer's
 /// SharedPage): a shape table's frames, each an HD picture of its own, drawn apart on the screen take as many batches as
-/// one of them does, and each shows its own colours (read from its own place in the page).
+/// one of them does, and each shows its own colours (read from its own place in the page). Frames read from PNGs and
+/// from BC7 files in one pack keep to pages of their own layout, each showing its own colours too.
 /// </summary>
 TEST_CASE_ISOLATED("game: the GPU draws HD art frames apart in as many batches as one, each in its own colours")
 {
@@ -3566,18 +3567,47 @@ TEST_CASE_ISOLATED("game: the GPU draws HD art frames apart in as many batches a
     const std::vector<uint8_t> made = FramesTable(tableFrames);
     MCRegisteredBlock table(made.size(), MCDataKind::Shapes);
     std::ranges::copy(made, table.Bytes().begin());
+    // The same frames in the other order, a table of its own, every other frame a BC7 file (.hdf) and the rest PNGs, as
+    // a modder's pack or a review pack beside the archives' can mix them: frame f is the first table's Frames - 1 - f.
+    const std::vector<uint8_t> mixedMade =
+        FramesTable(std::vector<TableFrame>(tableFrames.rbegin(), tableFrames.rend()));
+    MCRegisteredBlock mixedTable(mixedMade.size(), MCDataKind::Shapes);
+    std::ranges::copy(mixedMade, mixedTable.Bytes().begin());
 
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_shared_pages";
     std::filesystem::remove_all(scratch);
     const std::filesystem::path pack = scratch / "pack";
     const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table.Bytes()));
+    const std::filesystem::path mixedFolder =
+        pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(mixedTable.Bytes()));
+    const std::filesystem::path pngs = scratch / "pngs";
     std::filesystem::create_directories(folder);
+    std::filesystem::create_directories(mixedFolder);
+    std::filesystem::create_directories(pngs);
     constexpr int32_t Scale = 2;
 
     for (size_t f = 0; f < Frames; ++f)
     {
         WriteObjectFrame(folder / std::to_string(f), Width, Height, Scale, colors,
                          [&](int32_t, int32_t) { return indices[f]; });
+        const uint8_t mixedIndex = indices[Frames - 1 - f];
+
+        if (f % 2 == 0)
+        {
+            WriteObjectFrame(mixedFolder / std::to_string(f), Width, Height, Scale, colors,
+                             [&](int32_t, int32_t) { return mixedIndex; });
+            continue;
+        }
+
+        const std::filesystem::path stem = pngs / std::to_string(f);
+        WriteObjectFrame(stem, Width, Height, Scale, colors, [&](int32_t, int32_t) { return mixedIndex; });
+        const auto frame = MCHdArt::FrameFromPngs(std::filesystem::path(stem).concat(".png"),
+                                                  std::filesystem::path(stem).concat("_idx.png"), Scale);
+        REQUIRE(frame.has_value());
+        const std::vector<uint8_t> hdf = MCHdArt::EncodeHdf(*frame);
+        std::ofstream out(mixedFolder / std::format("{}.hdf", f), std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(hdf.data()), static_cast<std::streamsize>(hdf.size()));
+        REQUIRE(out.good());
     }
 
     WritePaletteRgb(pack, colors);
@@ -3593,11 +3623,11 @@ TEST_CASE_ISOLATED("game: the GPU draws HD art frames apart in as many batches a
     constexpr int32_t Left = 40;
     constexpr int32_t Foot = 120;
     constexpr int32_t Step = 40;
-    const auto drawn = [&](size_t count)
+    const auto drawn = [&](MCRegisteredBlock& shapes, size_t count)
     {
         for (size_t f = 0; f < count; ++f)
         {
-            AGShapeDraw(pane, table.Bytes(), static_cast<int32_t>(f), Left + Step * static_cast<int32_t>(f), Foot);
+            AGShapeDraw(pane, shapes.Bytes(), static_cast<int32_t>(f), Left + Step * static_cast<int32_t>(f), Foot);
         }
 
         auto shown = display->ReadFrame();
@@ -3605,24 +3635,36 @@ TEST_CASE_ISOLATED("game: the GPU draws HD art frames apart in as many batches a
         return std::pair{renderer->LastFrameBatches(), std::move(*shown)};
     };
 
+    // Each of the frames drawn in its own colour (frame f in index indexOf(f)'s).
+    constexpr int32_t Near = 3;
+    const auto ownColours = [&](const std::vector<SDL_Color>& shown, const std::function<uint8_t(size_t)>& indexOf)
+    {
+        for (size_t f = 0; f < Frames; ++f)
+        {
+            MCTest::Scope scope(std::format("frame {}", f));
+            const int32_t x = Left + Step * static_cast<int32_t>(f) + Width / 2;
+            const int32_t y = Foot - Height / 2;
+            const SDL_Color at = shown[static_cast<size_t>(y + pane.Y0) * width + x + pane.X0];
+            const SDL_Color expected = colors[indexOf(f)];
+            CHECK((std::abs(at.r - expected.r) <= Near && std::abs(at.g - expected.g) <= Near &&
+                   std::abs(at.b - expected.b) <= Near));
+        }
+    };
+
     // Each frame read from the pack and put on the GPU first.
-    drawn(Frames);
-    const int64_t one = drawn(1).first;
-    const auto [all, shown] = drawn(Frames);
+    drawn(table, Frames);
+    const int64_t one = drawn(table, 1).first;
+    const auto [all, shown] = drawn(table, Frames);
     std::cout << std::format("  {} batches for one frame, {} for {} apart\n", one, all, Frames);
     CHECK_EQ(all, one);
+    ownColours(shown, [&](size_t f) { return indices[f]; });
 
-    constexpr int32_t Near = 3;
-
-    for (size_t f = 0; f < Frames; ++f)
+    // A page takes only pictures of its own layout: the PNGs' (RGBA8, placed by the pixel) and the BC7 files' (placed by
+    // the block) keep to pages of their own, each frame reading its own colours.
     {
-        MCTest::Scope scope(std::format("frame {}", f));
-        const int32_t x = Left + Step * static_cast<int32_t>(f) + Width / 2;
-        const int32_t y = Foot - Height / 2;
-        const SDL_Color at = shown[static_cast<size_t>(y + pane.Y0) * width + x + pane.X0];
-        const SDL_Color expected = colors[indices[f]];
-        CHECK((std::abs(at.r - expected.r) <= Near && std::abs(at.g - expected.g) <= Near &&
-               std::abs(at.b - expected.b) <= Near));
+        MCTest::Scope scope("PNGs and BC7 files mixed");
+        drawn(mixedTable, Frames);
+        ownColours(drawn(mixedTable, Frames).second, [&](size_t f) { return indices[Frames - 1 - f]; });
     }
 
     hdArt.reset();

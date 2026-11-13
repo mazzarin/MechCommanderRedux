@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "lib/MCPacketFile.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "fakes/MCMemoryFileSource.h"
@@ -879,6 +880,123 @@ TEST_CASE_ISOLATED("game: a save naming a mission the campaign doesn't have is r
     CHECK_EQ(logistics->CurrentMission, goodMission);
     MCFileSystem::RemoveFile(GamePath(SavePath, "p3badmission", ".sav"));
     MCFileSystem::RemoveFile(GamePath(SavePath, "p3badmission", ".pur"));
+}
+
+namespace
+{
+    /// <summary>Replaces the one <paramref name="from"/> in <paramref name="text"/> with <paramref name="to"/>.</summary>
+    void ReplaceOnce(std::string& text, std::string_view from, std::string_view to)
+    {
+        const size_t at = text.find(from);
+        REQUIRE(at != std::string::npos);
+        REQUIRE(text.find(from, at + 1) == std::string::npos);
+        text.replace(at, from.size(), to);
+    }
+
+    /// <summary>A save's packets as stored, each with its storage.</summary>
+    struct SavePackets
+    {
+        std::vector<std::vector<uint8_t>> Packets;
+        std::vector<MCPacketStorage> Storages;
+    };
+
+    /// <summary>Save <paramref name="name"/>'s packets.</summary>
+    SavePackets ReadSave(std::string_view name)
+    {
+        SavePackets save;
+        MCPacketFile in;
+        REQUIRE_EQ(in.Open(GamePath(SavePath, name, ".sav")), 0);
+
+        for (int32_t packet = 0; packet < in.GetNumPackets(); ++packet)
+        {
+            REQUIRE_EQ(in.SeekPacket(packet), 0);
+            std::vector<uint8_t> bytes(static_cast<size_t>(in.GetPacketSize()));
+            REQUIRE_EQ(in.ReadPacket(packet, bytes), static_cast<int32_t>(bytes.size()));
+            save.Packets.push_back(std::move(bytes));
+            save.Storages.push_back(in.GetStorageType());
+        }
+
+        REQUIRE(!save.Packets.empty());
+        return save;
+    }
+
+    /// <summary>
+    /// Writes save <paramref name="name"/> as <paramref name="save"/>, its settings (its first packet, a FIT file's
+    /// text) changed by <paramref name="change"/>.
+    /// </summary>
+    void WriteSave(std::string_view name, SavePackets save, const std::function<void(std::string&)>& change)
+    {
+        std::string settings(save.Packets.front().begin(), save.Packets.front().end());
+        change(settings);
+        save.Packets.front().assign(settings.begin(), settings.end());
+        MCPacketFile out;
+        REQUIRE_EQ(out.Create(GamePath(SavePath, name, ".sav")), 0);
+        out.Reserve(static_cast<int32_t>(save.Packets.size()));
+
+        for (size_t packet = 0; packet < save.Packets.size(); ++packet)
+        {
+            out.WritePacket(static_cast<int32_t>(packet), save.Packets[packet], save.Storages[packet]);
+        }
+    }
+}
+
+/// <summary>
+/// Port fix: a save asking for more copies of a spare unit than a campaign could hold (NumAvailable past 1000; one
+/// asking 2^31 hung the load making them) is refused, where the same save asking for none past it loads them. A new
+/// campaign's save, its first mech made a spare one.
+/// </summary>
+TEST_CASE_ISOLATED("game: a save asking for more copies of a spare mech than a campaign could hold is refused")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The most copies a save's unit entry may ask for (MCLogisticsCampaign.cpp's MostCopies).
+    constexpr int32_t MostCopies = 1000;
+    constexpr std::string_view Save = "p3copies";
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    NewCampaign();
+    Settle();
+    std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    REQUIRE_EQ(logistics->SaveCampaign(Save), 0);
+
+    // The force's first mech saved as a spare one (the spares' blocks come first: Mech0), kept to start each try from.
+    WriteSave(Save, ReadSave(Save),
+              [](std::string& settings)
+              {
+                  ReplaceOnce(settings, "ul NumMechs=0", "ul NumMechs=1");
+                  ReplaceOnce(settings, "ul NumAssMechs=3", "ul NumAssMechs=2");
+              });
+    const SavePackets spare = ReadSave(Save);
+    REQUIRE_EQ(logistics->LoadCampaign(Save, ".sav", false, true), 0);
+    CHECK_EQ(logistics->MechList->GetMechCount(), 1);
+
+    // The spare mech's entry asking for that many copies.
+    const auto askFor = [&](int32_t count)
+    {
+        WriteSave(Save, spare,
+                  [count](std::string& settings)
+                  {
+                      const size_t block = settings.find("[Mech0]");
+                      REQUIRE(block != std::string::npos);
+                      const size_t lineEnd = settings.find('\n', block);
+                      REQUIRE(lineEnd != std::string::npos);
+                      const std::string_view newline = settings[lineEnd - 1] == '\r' ? "\r\n" : "\n";
+                      settings.insert(lineEnd + 1, std::format("l NumAvailable={}{}", count, newline));
+                  });
+    };
+
+    askFor(MostCopies);
+    CHECK_EQ(logistics->LoadCampaign(Save, ".sav", false, true), 0);
+    CHECK_EQ(logistics->MechList->GetMechCount(), MostCopies);
+    askFor(MostCopies + 1);
+    CHECK(logistics->LoadCampaign(Save, ".sav", false, true) != 0);
+    CHECK_EQ(logistics->MechList->GetMechCount(), 0);
+
+    MCFileSystem::RemoveFile(GamePath(SavePath, Save, ".sav"));
+    MCFileSystem::RemoveFile(GamePath(SavePath, Save, ".pur"));
 }
 
 namespace

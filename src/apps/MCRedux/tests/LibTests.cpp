@@ -761,6 +761,36 @@ TEST_CASE("packet file: a checksum guards the contents")
     CHECK_EQ(bad.Open(folder / "sum.pak"), static_cast<int32_t>(0xBADF0004));
 }
 
+/// <summary>
+/// Port-only: a file held to a most unpacked size (as a save is, MCPacketFile::SetMostUnpacked) refuses an LZ packet
+/// claiming more, though its LZ data could make it; held to more it opens, and its hold ends as it closes.
+/// </summary>
+TEST_CASE("packet file: a file held to a most unpacked size refuses an LZ packet claiming more")
+{
+    constexpr int32_t Unpacked = 10000;
+    ScratchFolder folder("mostunpacked");
+    {
+        MCPacketFile out;
+        REQUIRE_EQ(out.Create(folder / "held.pak"), NO_ERR);
+        out.Reserve(1);
+        out.WritePacket(0, Repetitive(Unpacked), MCPacketStorage::Lzd);
+    }
+
+    MCPacketFile pak;
+    REQUIRE_EQ(pak.Open(folder / "held.pak"), NO_ERR);
+    pak.SetMostUnpacked(Unpacked - 1);
+    CHECK(pak.SeekPacket(0) != NO_ERR);
+    CHECK_EQ(pak.GetPacketSize(), 0);
+    pak.SetMostUnpacked(Unpacked);
+    REQUIRE_EQ(pak.SeekPacket(0), NO_ERR);
+    CHECK_EQ(pak.GetPacketSize(), Unpacked);
+
+    pak.SetMostUnpacked(Unpacked - 1);
+    pak.Close();
+    REQUIRE_EQ(pak.Open(folder / "held.pak"), NO_ERR);
+    CHECK_EQ(pak.SeekPacket(0), NO_ERR);
+}
+
 /// <summary>A FIT file stored as a packet opens straight from the packet file (read into memory).</summary>
 TEST_CASE("packet file: a FIT file inside a packet opens as a child")
 {

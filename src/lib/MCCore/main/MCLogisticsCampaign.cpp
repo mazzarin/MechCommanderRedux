@@ -202,10 +202,42 @@ namespace
         return ReadRequired<uint32_t>(file, name, error);
     }
 
-    /// <summary>A force entry's NumAvailable (1 when missing).</summary>
-    int32_t CopiesOf(MCFitIniFile& file)
+    /// <summary>
+    /// Port fix: the most copies a save's unit entry holds (NumAvailable), far more than a campaign could buy, and few
+    /// enough that making them stays quick (a save asking 2^31 hung the load making them).
+    /// </summary>
+    constexpr int32_t MostCopies = 1000;
+
+    /// <summary>
+    /// A unit entry's NumAvailable (1 when missing); none past MostCopies, setting <paramref name="tooMany"/> (the
+    /// save is then refused).
+    /// </summary>
+    int32_t CopiesOf(MCFitIniFile& file, bool& tooMany)
     {
-        return file.Read<int32_t>("NumAvailable").value_or(1);
+        const int32_t copies = file.Read<int32_t>("NumAvailable").value_or(1);
+
+        if (copies > MostCopies)
+        {
+            tooMany = true;
+            return 0;
+        }
+
+        return copies;
+    }
+
+    /// <summary>
+    /// Port fix: the most a save's packet (its settings, a unit's or pilot's profile, a mission's results) unpacks to:
+    /// over a thousand times the largest in the game's own saves, starts and results (13.6 KB), so no real save meets
+    /// it (MCPacketFile::SetMostUnpacked).
+    /// </summary>
+    constexpr int32_t MostSavePacket = 16 << 20;
+
+    /// <summary>Opens the save (or a mission's results) at <paramref name="path"/>, its packets held to MostSavePacket.</summary>
+    int32_t OpenSave(MCPacketFile& file, const std::string& path)
+    {
+        const int32_t result = file.Open(path);
+        file.SetMostUnpacked(MostSavePacket);
+        return result;
     }
 
     /// <summary>
@@ -351,7 +383,7 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
 
     // A save that can't be opened is refused (issue #25: the original went on reading it); the caller stays where it
     // is, and the next load fills the lists again.
-    int32_t result = packetFile.Open(GamePath(SavePath, saveName, extension));
+    int32_t result = OpenSave(packetFile, GamePath(SavePath, saveName, extension));
     Assert(result == 0, 0, " campaign file NOT Valid! ");
 
     if (result != 0)
@@ -492,19 +524,21 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
             [&](const std::string& profile) { WarriorList->AddWarrior(profile, true); },
             [&](int32_t packet) { AssignedWarriorList->AddWarrior(packetFile, packet, false); });
 
+        // Port fix: a unit entry asking for more copies than MostCopies refuses the save (none of them made).
+        bool tooManyCopies = false;
         const uint32_t numMechs = ReadForceCount(file, "Mechs", "NumMechs", " could not read mech count ");
         ReadForceEntries(
             file, "Mech", 0, numMechs, " could not find mech block ", " could not find Mech Data ",
             [&](const std::string& profile)
             {
-                for (int32_t copy = CopiesOf(file); copy > 0; copy--)
+                for (int32_t copy = CopiesOf(file, tooManyCopies); copy > 0; copy--)
                 {
                     MechList->AddMech(profile, false, true, true);
                 }
             },
             [&](int32_t packet)
             {
-                for (int32_t copy = CopiesOf(file); copy > 0; copy--)
+                for (int32_t copy = CopiesOf(file, tooManyCopies); copy > 0; copy--)
                 {
                     MechList->AddMech(packetFile, packet);
                 }
@@ -523,14 +557,14 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
             file, "Vehicle", 0, numVehicles, " could not find Vehicle block ", " could not find vehicle Data ",
             [&](const std::string& profile)
             {
-                for (int32_t copy = CopiesOf(file); copy > 0; copy--)
+                for (int32_t copy = CopiesOf(file, tooManyCopies); copy > 0; copy--)
                 {
                     VehicleList->AddVehicle(profile, false, false, true);
                 }
             },
             [&](int32_t packet)
             {
-                const int32_t copies = CopiesOf(file);
+                const int32_t copies = CopiesOf(file, tooManyCopies);
                 // The packet's [General] Assigned says which list the vehicle goes to.
                 const bool assigned =
                     PacketAssigned(packetFile, packet, " Vehicle Packet Not Found ", " Vehicle file could not open ",
@@ -559,6 +593,11 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
                     vehicle->Deployed = false;
                 }
             });
+
+        if (tooManyCopies)
+        {
+            return Refused(read, MCLoadRefusal::Other, READ_ERR);
+        }
     }
 
     // Every component the game knows (allcomp.fit), with no copies.
@@ -662,7 +701,7 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
         const std::string& resultName = CurrentMission - 1 == -1 ? Mission()->Scenarios[Mission()->CurrentScenario]
                                                                  : Mission()->Scenarios[CurrentMission - 1];
         MCPacketFile resultFile;
-        result = resultFile.Open(GamePath(SavePath, resultName, ".pkk"));
+        result = OpenSave(resultFile, GamePath(SavePath, resultName, ".pkk"));
 
         if (result != 0)
         {

@@ -28,6 +28,7 @@ MCPacketFile::~MCPacketFile()
 void MCPacketFile::Clear()
 {
     _CurrentPacket = -1;
+    _MostUnpacked = 0;
     _NumPackets = 0;
     _PacketBase = 0;
     _PacketSize = 0;
@@ -253,12 +254,13 @@ int32_t MCPacketFile::SeekPacket(int32_t packet)
     }
 
     // Issue #25: a read file's table and sizes come from the file. A packet outside the file, or one that claims to
-    // unpack to more than its LZ data can (each 12-bit code gives at most a 4096-byte string), is refused before
-    // anyone allocates its size.
+    // unpack to more than its LZ data can (each 12-bit code gives at most a 4096-byte string), or than the file is held
+    // to (SetMostUnpacked), is refused before anyone allocates its size.
     if (_FileMode == MCFileMode::Read)
     {
         const auto length = static_cast<int64_t>(GetLength());
-        const int64_t maxUnpacked = std::max<int64_t>(_PacketSize - 4, 0) * 4096;
+        const int64_t lzMost = std::max<int64_t>(_PacketSize - 4, 0) * 4096;
+        const int64_t maxUnpacked = _MostUnpacked > 0 ? std::min<int64_t>(lzMost, _MostUnpacked) : lzMost;
 
         if (offset < 0 || next < offset || next > length ||
             (_PacketType == MCPacketStorage::Lzd && (_PacketUnpackedSize < 0 || _PacketUnpackedSize > maxUnpacked)))

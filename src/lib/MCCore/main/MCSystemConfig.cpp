@@ -264,6 +264,20 @@ void ReadPreferences(MCFitIniFile& file)
     MCKeyBindings::ReadPrefs(file);
 }
 
+void OpenGameFastFiles()
+{
+    MCFastFileSet& fastFiles = MCGameContext::Current().FastFiles();
+
+    for (const std::string& name : MCFileSystem::FindFiles("*.fst"))
+    {
+        // Left out, as in the original: the rest of the set plays.
+        if (const auto opened = fastFiles.Open(name); !opened)
+        {
+            SDL_Log("FastFile %s left out: %s", name.c_str(), opened.error().c_str());
+        }
+    }
+}
+
 void SystemInit()
 {
     // Port: the original registered the "QueryCancelAutoPlay" window message to keep the CD's autorun from starting
@@ -278,15 +292,7 @@ void SystemInit()
         }
 
         ReadSystemConfig(systemFile);
-
-        // Every *.fst in the game folder is a FastFile (SYSTEM.CFG's [FastFiles] list isn't read), searched in name
-        // order (MCFastFileSet). One that doesn't open is left out, as in the original.
-        MCFastFileSet& fastFiles = MCGameContext::Current().FastFiles();
-
-        for (const std::string& name : MCFileSystem::FindFiles("*.fst"))
-        {
-            [[maybe_unused]] const auto opened = fastFiles.Open(name);
-        }
+        OpenGameFastFiles();
     }
 
     MCFitIniFile prefsFile;

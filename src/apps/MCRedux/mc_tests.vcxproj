@@ -132,6 +132,7 @@
     <ClCompile Include="tests\InternetGameTests.cpp" />
     <ClCompile Include="tests\InternetLobbyTests.cpp" />
     <ClCompile Include="tests\InternetScreenTests.cpp" />
+    <ClCompile Include="tests\LauncherFolderTests.cpp" />
     <ClCompile Include="tests\LibTests.cpp" />
     <ClCompile Include="tests\LinkupTests.cpp" />
     <ClCompile Include="tests\LobbyUpdateTests.cpp" />
@@ -207,6 +208,7 @@
     <ClInclude Include="tests\GuiTree.h" />
     <ClInclude Include="tests\MCContentFixture.h" />
     <ClInclude Include="tests\MCFakeUpdaterBackend.h" />
+    <ClInclude Include="tests\MCFastFileFixture.h" />
     <ClInclude Include="tests\MCFilePatchFixture.h" />
     <ClInclude Include="tests\MCHdMovieFixture.h" />
     <ClInclude Include="tests\MCInternetSpots.h" />

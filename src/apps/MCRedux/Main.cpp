@@ -656,7 +656,15 @@ int main(int argc, char** argv)
         return dataFolder ? 0 : 1;
     }
 
-    options->DataFolder = *dataFolder;
+    // A launcher's match (--data its own copy, hosting or joining) plays the program's install: its game, HD and
+    // updates; the launcher's folder gives only its maps and mods, and nothing is written into it. The folder found is
+    // --data's only when it's the one --data named (not the current folder found in its place).
+    const bool named = !options->DataFolder.empty() && *dataFolder == options->DataFolder;
+    const MCGameFolder::MCPlayed played =
+        MCGameFolder::Played(*MakeDisk(), *dataFolder, named, options->GameCommandLine, MCGameFolder::InstallFolder());
+    options->DataFolder = played.Game;
+    // The game folder takes updates: in a build that updates its content, unless it's a launcher's copy played as it is.
+    const bool updates = contentUpdates && played.Updates;
 #ifdef _WIN32
     // What the game starts may end with it (a lobby's job): then no RESTART, and no setup is started.
     const bool canStart = MCStartedOutlive() != MCOutlives::No;
@@ -669,12 +677,12 @@ int main(int argc, char** argv)
 
     // A program update stopped midway is finished (or put back); then one armed before the game last ended and never
     // run (a crash) installs first, with its content.
-    if (contentUpdates)
+    if (updates)
     {
         RecoverProgramSwap(options->DataFolder);
     }
 
-    if (contentUpdates && MCSetupBackend::RunLeftOver(options->DataFolder, MC_VERSION_BUILD, SetupPlatform(), canStart))
+    if (updates && MCSetupBackend::RunLeftOver(options->DataFolder, MC_VERSION_BUILD, SetupPlatform(), canStart))
     {
         SDL_Quit();
         return 0;
@@ -682,14 +690,14 @@ int main(int argc, char** argv)
 #endif
 
     // A build that updates its content holds the game's lock for its run, so no other copy swaps an update in under
-    // it (update/MCUpdateLock.h); one that doesn't leaves the game folder as it is.
+    // it (update/MCUpdateLock.h); one that doesn't, or a launcher's copy played as it is, leaves the folder as it is.
     std::unique_ptr<MCUpdateLock> gameLock =
-        contentUpdates ? MCUpdateLock::Open(options->DataFolder, MCUpdateLock::GameLock) : nullptr;
+        updates ? MCUpdateLock::Open(options->DataFolder, MCUpdateLock::GameLock) : nullptr;
     const MCOptionalRef<MCUpdateLock> heldLock =
         gameLock != nullptr ? MCOptionalRef<MCUpdateLock>(*gameLock) : std::nullopt;
     const MCContentAtStart::MCStart start = StartFor(*options, rootKeys);
 
-    if (!MCContentAtStart::SwapStaged(start, options->GameCommandLine, heldLock))
+    if (played.Updates && !MCContentAtStart::SwapStaged(start, options->GameCommandLine, heldLock))
     {
         SDL_Quit();
         return 1;
@@ -697,14 +705,14 @@ int main(int argc, char** argv)
 
     // The installed record, read once the swap is done, for what the start must get first and the build's defaults
     // (one that can't be read asks for nothing: the updater says why).
-    auto installed = contentUpdates ? MCInstalled::Read(*MakeDisk(), options->DataFolder)
-                                    : std::expected<MCInstalled::MCRecord, std::string>();
+    auto installed = updates ? MCInstalled::Read(*MakeDisk(), options->DataFolder)
+                             : std::expected<MCInstalled::MCRecord, std::string>();
 
     if (!installed)
     {
         SDL_Log("Updates: %s", installed.error().c_str());
     }
-    else if (contentUpdates)
+    else if (updates)
     {
         if (const MCInstalled::MCStartNeed need = MCInstalled::AtStart(*MakeDisk(), options->DataFolder, *installed,
                                                                        MC_VERSION_BUILD, LowestContentRelease);
@@ -723,8 +731,14 @@ int main(int argc, char** argv)
 
     MCFileSystem::SetGameRoot(options->DataFolder);
     MCFileSystem::SetUserRoot(options->UserFolder);
+    MCFileSystem::SetLauncherRoot(played.Launcher);
     SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
     SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
+
+    if (!played.Launcher.empty())
+    {
+        SDL_Log("Maps and mods: the launcher's too, in %s", MCFileSystem::ToUtf8(played.Launcher).c_str());
+    }
 
     if (MCFileSystem::SetSettingsRoot(options->SettingsFolder))
     {
@@ -753,9 +767,9 @@ int main(int argc, char** argv)
     bool hd = !contentUpdates || MCInstalled::Has(record, options->DataFolder, MCContentList::HdSet);
     std::error_code packError;
 
-    // A game folder without HD of its own (a launcher's copy of the game, --data) played by a Redux HD install's
-    // program: the install's HD pack shows (art, sound, movies), and its HD answer sets the looks. The install's lock
-    // is held for the run.
+    // A game folder without HD of its own (a copy of the game --data named outside a launcher's match) played by a
+    // Redux HD install's program: the install's HD pack shows (art, sound, movies), and its HD answer sets the looks.
+    // The install's lock is held for the run.
     std::optional<MCGameFolder::MCHdInstall> hdInstall;
 
     if (!std::filesystem::is_directory(MCHdArt::PackFolder(), packError))
@@ -780,14 +794,14 @@ int main(int argc, char** argv)
 #if defined(__APPLE__)
     MCUpdater::SetBackend(MCMakeSparkleBackend());
 #elif defined(_WIN32)
-    if (contentUpdates)
+    if (updates)
     {
         MCUpdater::SetBackend(
             MCSetupBackend::Make(options->DataFolder, MC_VERSION_SHOWN, MakeProgramSource, SetupPlatform()));
     }
 #endif
 
-    if (contentUpdates)
+    if (updates)
     {
         // The record as the start read it (after any install it made), not read again.
         MCUpdater::SetContent(ContentSetup(*options, std::move(rootKeys)), MakeContentSource,

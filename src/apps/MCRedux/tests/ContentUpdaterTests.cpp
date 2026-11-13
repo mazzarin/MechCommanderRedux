@@ -3,6 +3,7 @@
 #include "MCFakeUpdaterBackend.h"
 #include "../MCContentAtStart.h"
 #include "../MCFirstStart.h"
+#include "../MCGameFolder.h"
 #include "../MCHttpGet.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
@@ -735,6 +736,115 @@ TEST_CASE("updater: content alone is checked off the main thread, staged on INST
     CHECK(Stage() == MCStage::Installing);
     CHECK_EQ(*scope.Quits, 1);
     CHECK(MCUpdater::RestartWanted());
+}
+
+namespace
+{
+    /// <summary>A launcher's match as MechCommander Online starts a guest's game (SPEC's A launcher's game folder).</summary>
+    constexpr std::string_view LauncherJoin = "-player ANN -join 127.0.0.1:28800";
+
+    /// <summary>
+    /// A launcher's own copy of the game beside <paramref name="install"/> (a copy that holds the game too, so
+    /// MCGameFolder::Played plays the install): its own copies of the install's files, a mod and a map.
+    /// </summary>
+    struct MCLauncherCopy
+    {
+        MCLauncherCopy(std::string_view name, const std::filesystem::path& install)
+            : Folder(Group, std::string(name) + "-launcher")
+        {
+            Write(install / "SYSTEM.CFG", "FITini\nFITend\n");
+            Write(Folder.Path() / "SYSTEM.CFG", "FITini\nFITend\n");
+            Write(Folder.Path() / "data" / "changed.fit", "the launcher's own");
+            Write(Folder.Path() / "MOD.FST", "a mod");
+            Write(Folder.Path() / "data" / "savegame" / "duel.mpk", "a map");
+            Before = FolderContents(Folder.Path());
+        }
+
+        /// <summary>The folders a start with <paramref name="install"/>'s program plays.</summary>
+        MCGameFolder::MCPlayed Played(const std::filesystem::path& install) const
+        {
+            return MCGameFolder::Played(*MakeDisk(), Folder.Path(), true, LauncherJoin, install);
+        }
+
+        /// <summary>Whether nothing was written into the launcher's copy (no lock, no update's file, no change).</summary>
+        bool Untouched() const { return FolderContents(Folder.Path()) == Before; }
+
+        MCScratchFolder Folder;
+        std::map<std::string, std::string> Before;
+    };
+}
+
+/// <summary>
+/// A launcher's match plays the program's install: the install's staged update swaps in at the start, holding the
+/// install's game lock (shared for the run, so no other copy swaps under it), well within a lobby's start; the
+/// launcher's copy isn't written.
+/// </summary>
+TEST_CASE("launcher's match: the install's staged update swaps in at the start under the install's lock")
+{
+    MCRelease release(Group, "launcher-start");
+    const std::filesystem::path& install = release.Game.Path();
+    const MCLauncherCopy launcher("launcher-start", install);
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    REQUIRE(MCContentStage::Stage(*disk, source, install, plan, release.List, GoOn).has_value());
+    REQUIRE(MCContentStage::Arm(*disk, install, plan).has_value());
+
+    const MCGameFolder::MCPlayed played = launcher.Played(install);
+    REQUIRE(played.Game == install);
+    CHECK(played.Launcher == launcher.Folder.Path());
+    const std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(played.Game, MCUpdateLock::GameLock);
+    REQUIRE(lock != nullptr);
+    const auto began = std::chrono::steady_clock::now();
+    CHECK(MCContentAtStart::SwapStaged({.GameFolder = played.Game, .RunningBuild = RunningBuild}, LauncherJoin, *lock));
+    CHECK(std::chrono::steady_clock::now() - began < MCContentSwap::LobbyStartTime);
+    release.CheckIsRelease2();
+
+    const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(install, MCUpdateLock::GameLock);
+    REQUIRE(other != nullptr);
+    CHECK(!other->TryExclusive());
+    CHECK(other->TryShared());
+    CHECK(launcher.Untouched());
+}
+
+/// <summary>
+/// A launcher's match's UPDATE page (the session screen's update line opens it) checks, plans, stages and arms against
+/// the program's install, so the next match the launcher starts plays the new release; the launcher's copy isn't
+/// written.
+/// </summary>
+TEST_CASE("launcher's match: the UPDATE page checks, plans and stages against the install; the next match plays it")
+{
+    MCHostedRelease release("launcher-update");
+    const MCLauncherCopy launcher("launcher-update", release.Game.Path());
+    const MCGameFolder::MCPlayed played = launcher.Played(release.Game.Path());
+    REQUIRE(played.Game == release.Game.Path());
+
+    // The updater as the start sets it (Main.cpp's ContentSetup): the copy is the game folder played.
+    MCContentUpdater::MCSetup setup = release.Setup();
+    setup.GameFolder = played.Game;
+    MCUpdater::SetContent(setup, [host = release.Host.Path()] { return std::make_unique<MCFolderSource>(host); });
+
+    struct MCContentReset
+    {
+        ~MCContentReset() { MCUpdater::ClearContent(); }
+    } reset;
+
+    MCUpdater::CheckAtStart();
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Found; }));
+    CHECK_EQ(MCUpdater::Status().Expected, release.ContentBytes());
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    REQUIRE(Stage() == MCStage::Ready);
+    CHECK(release.Armed());
+    CHECK(launcher.Untouched());
+
+    // The next match the launcher starts swaps it in.
+    const std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(played.Game, MCUpdateLock::GameLock);
+    REQUIRE(lock != nullptr);
+    CHECK(MCContentAtStart::SwapStaged(
+        {.GameFolder = launcher.Played(release.Game.Path()).Game, .RunningBuild = RunningBuild}, LauncherJoin, *lock));
+    release.CheckIsRelease2();
+    CHECK(launcher.Untouched());
 }
 
 TEST_CASE("updater: the program held to release.json's build; the content stages first and is armed the moment the "

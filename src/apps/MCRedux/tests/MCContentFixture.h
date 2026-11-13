@@ -52,6 +52,24 @@ namespace MCContentFixture
         return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     }
 
+    /// <summary>
+    /// Every file and folder under <paramref name="folder"/> by its path there (a folder's bytes empty, marked by a
+    /// trailing '/'), with each file's bytes: two snapshots are equal only when nothing was written, added or removed.
+    /// </summary>
+    inline std::map<std::string, std::string> FolderContents(const std::filesystem::path& folder)
+    {
+        std::map<std::string, std::string> contents;
+
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(folder))
+        {
+            const std::string path = MCFileSystem::ToUtf8(entry.path().lexically_relative(folder));
+            contents[entry.is_directory() ? path + '/' : path] =
+                entry.is_directory() ? std::string() : Read(entry.path());
+        }
+
+        return contents;
+    }
+
     /// <summary>A stored zip of <paramref name="entries"/> (name, bytes), as the release script makes them.</summary>
     inline std::string StoredZip(const std::vector<std::pair<std::string, std::string>>& entries)
     {

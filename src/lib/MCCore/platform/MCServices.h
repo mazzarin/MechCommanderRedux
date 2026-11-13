@@ -80,13 +80,15 @@ public:
     uint32_t State() const override;
 };
 
-/// <summary>A file a folder listing found, and which of the two folders have it.</summary>
+/// <summary>A file a folder listing found, and which of the folders have it.</summary>
 struct MCFoundFile
 {
     /// <summary>The name, as the first folder that has it spells it.</summary>
     std::string Name;
     /// <summary>Whether the user folder has it.</summary>
     bool InUserFolder = false;
+    /// <summary>Port-only: whether a launcher's folder has it, as a map or mod (MCFileSystem::SetLauncherRoot).</summary>
+    bool InLauncherFolder = false;
     /// <summary>Whether the game's folder (the install) has it.</summary>
     bool InGameFolder = false;
 };
@@ -111,6 +113,12 @@ public:
 
     /// <summary>The writable folder.</summary>
     virtual const std::filesystem::path& UserRoot() const = 0;
+
+    /// <summary>Sets the launcher's folder whose maps and mods play beside the install (empty: none).</summary>
+    virtual void SetLauncherRoot(const std::filesystem::path& root) = 0;
+
+    /// <summary>The launcher's folder, or empty.</summary>
+    virtual const std::filesystem::path& LauncherRoot() const = 0;
 
     /// <summary>Maps a game path to the file on disk, for reading (it may not exist).</summary>
     virtual std::filesystem::path Resolve(std::string_view gamePath) = 0;
@@ -170,6 +178,8 @@ public:
     const std::filesystem::path& GameRoot() const override;
     void SetUserRoot(const std::filesystem::path& root) override;
     const std::filesystem::path& UserRoot() const override;
+    void SetLauncherRoot(const std::filesystem::path& root) override;
+    const std::filesystem::path& LauncherRoot() const override;
     std::filesystem::path Resolve(std::string_view gamePath) override;
     std::filesystem::path ResolveWrite(std::string_view gamePath, bool copyExisting) override;
     bool MakeDirectory(std::string_view gamePath) override;
@@ -186,8 +196,16 @@ private:
     /// <summary>Whether <paramref name="gamePath"/> is looked up in the user folder first.</summary>
     bool HasOverlay(std::string_view gamePath) const;
 
+    /// <summary>
+    /// The launcher's copy of <paramref name="gamePath"/>, when it's a map or mod (MCFileSystem::IsLauncherContent) the
+    /// launcher's folder holds; else none.
+    /// </summary>
+    std::optional<std::filesystem::path> InLauncherFolder(std::string_view gamePath) const;
+
     std::filesystem::path _Root;
     std::filesystem::path _UserRoot;
+    /// <summary>A launcher's folder, read for its maps and mods only and never written (empty: none).</summary>
+    std::filesystem::path _LauncherRoot;
 };
 
 /// <summary>

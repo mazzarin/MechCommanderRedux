@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 /// <summary>
@@ -52,6 +53,34 @@ namespace MCGameFolder
     /// </summary>
     std::filesystem::path InstallFolder();
 
+    /// <summary>The folders a start plays (<see cref="Played"/>).</summary>
+    struct MCPlayed
+    {
+        /// <summary>The game folder: the game's data, HD and updates, and the game's lock.</summary>
+        std::filesystem::path Game;
+        /// <summary>
+        /// A launcher's own copy of the game whose maps and mods play too (MCFileSystem::SetLauncherRoot), never
+        /// written; empty when there's none.
+        /// </summary>
+        std::filesystem::path Launcher;
+        /// <summary>
+        /// Whether the game folder takes updates (its lock, a staged update, the UPDATE page): not when it's a
+        /// launcher's copy played as it is, its install having no game yet.
+        /// </summary>
+        bool Updates = true;
+    };
+
+    /// <summary>
+    /// The folders a start plays (SPEC-install-and-updates.md's A launcher's game folder): <paramref name="found"/>, the
+    /// game folder the start found, unless a launcher started a match with it (<paramref name="named"/>: --data named
+    /// it, and <paramref name="commandLine"/> hosts or joins from the start) while the program is another folder's,
+    /// <paramref name="install"/> (InstallFolder). The install that holds the game is then played, the launcher's folder
+    /// adding its maps and mods; an install with no game yet (its first start never finished) leaves the launcher's copy
+    /// to play as it is, without updates.
+    /// </summary>
+    MCPlayed Played(MCUpdateDisk& disk, const std::filesystem::path& found, bool named, std::string_view commandLine,
+                    const std::filesystem::path& install);
+
     /// <summary>The Redux HD install whose HD a game plays with (<see cref="HdInstall"/>), held for the game's run.</summary>
     struct MCHdInstall
     {
@@ -66,8 +95,8 @@ namespace MCGameFolder
 
     /// <summary>
     /// The Redux HD install whose HD (its pack and the HD answer) a game folder without HD of its own plays with: a
-    /// launcher's copy of the game (--data) played by the program of <paramref name="install"/> (InstallFolder), when
-    /// that's another folder holding HD. None when <paramref name="gameFolder"/> has HD itself
+    /// copy of the game --data named outside a launcher's match (which plays the install itself, <see cref="Played"/>)
+    /// played by the program of <paramref name="install"/> (InstallFolder), when that's another folder holding HD. None when <paramref name="gameFolder"/> has HD itself
     /// (<paramref name="gameRecord"/>, MCInstalled::Has), or the install doesn't, or while the install's files can't be
     /// played (a copy of it swapping an update in, or a swap stopped midway: its next start finishes it). The game's
     /// data stays the game folder's: a room checks it.

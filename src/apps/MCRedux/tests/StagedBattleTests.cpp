@@ -3,7 +3,9 @@
 #include "TestGame.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFile.h"
+#include "main/MCBenchmark.h"
 #include "main/MCGameContext.h"
+#include "mission/MCStagedBattle.h"
 #include "mission/MCTrailerMission.h"
 #include "platform/MCFileSystem.h"
 
@@ -133,4 +135,104 @@ TEST_CASE("game: the game reads a trailer's mission put in place of its own")
     CHECK_EQ(Read(path), put);
     MCFileSystem::ClearPutImages();
     CHECK_EQ(Read(path), std::string(original->begin(), original->end()));
+}
+
+TEST_CASE("benchmark: -benchmark's words name the weather, the time of day and the look")
+{
+    const auto name = [](std::string_view words) -> std::string
+    {
+        MCTest::Scope scope{std::string(words)};
+        const std::expected<MCBenchmark::MCVariant, std::string> variant = MCBenchmark::ReadVariant(words);
+
+        if (!variant.has_value())
+        {
+            FAIL(variant.error());
+        }
+
+        return variant->Name();
+    };
+
+    CHECK_EQ(name(""), "clear-day-hd");
+    CHECK_EQ(name("Rain,NIGHT"), "rain-night-hd");
+    CHECK_EQ(name("blizzard"), "blizzard-day-hd");
+    CHECK_EQ(name("dusk,,lightsnow"), "lightsnow-dusk-hd");
+    CHECK_EQ(name("original"), "clear-day-original");
+    CHECK_EQ(name("day,original,clear"), "clear-day-original");
+
+    const auto refused = [](std::string_view words) -> std::string
+    {
+        MCTest::Scope scope{std::string(words)};
+        const std::expected<MCBenchmark::MCVariant, std::string> variant = MCBenchmark::ReadVariant(words);
+        REQUIRE(!variant.has_value());
+        return variant.error();
+    };
+
+    CHECK(refused("fog").contains("\"fog\" isn't a weather"));
+    CHECK(refused("rain,snow").contains("\"snow\" names a second weather"));
+    CHECK(refused("night,dusk").contains("\"dusk\" names a second time of day"));
+    CHECK(refused("hd,original").contains("\"original\" names a second look"));
+    CHECK(refused("original,rain").contains("the original's look has no weather"));
+    CHECK(refused("night,original").contains("the original's look has no weather, dusk or night"));
+}
+
+TEST_CASE("benchmark: the canyon's spec is built in, and a spec's text is read line by line")
+{
+    const std::optional<std::string_view> canyon = MCBattleSpec::BuiltIn("canyon");
+    REQUIRE(canyon.has_value());
+    CHECK(!MCBattleSpec::BuiltIn("desert").has_value());
+    const std::expected<MCBattleSpec, std::string> spec = MCBattleSpec::Parse(*canyon);
+
+    if (!spec.has_value())
+    {
+        FAIL(spec.error());
+    }
+
+    // lines-canyon.json's battle, as the trailer's tools wrote it.
+    CHECK_EQ(spec->Mission, 16);
+    CHECK_EQ(spec->Force, "mis0304");
+    CHECK_EQ(spec->Frames, 2680);
+    CHECK_EQ(spec->Zoom, 540);
+    CHECK_EQ(spec->Walk, 860);
+    CHECK_EQ(spec->Answer, 860);
+    CHECK_EQ(spec->Contact, 620);
+    CHECK_EQ(spec->ContactStep, 260);
+    CHECK((spec->Watch == std::vector<int32_t>{620, 900}));
+    CHECK_EQ(spec->Converge.value_or(""), "Masakari,Thor");
+    REQUIRE(!spec->Cameras.empty());
+    CHECK_EQ(spec->Cameras.front().Frame, 900);
+    CHECK_EQ(spec->Cameras.front().Mech, 3);
+    REQUIRE_EQ(spec->Volleys.size(), size_t{1});
+    CHECK_EQ(spec->Volleys.front().Frame, 2545);
+    CHECK_EQ(spec->Volleys.front().Mech, 5);
+    REQUIRE(!spec->Losses.empty());
+    CHECK_EQ(spec->Losses.front().What, "hit");
+
+    // Comments and blank lines aside; a value's own spaces kept.
+    const std::expected<MCBattleSpec, std::string> plain =
+        MCBattleSpec::Parse("# a battle\n\n  frames 30   # a second\nmission 5\r\nconverge Thor, Masakari\n");
+
+    if (!plain.has_value())
+    {
+        FAIL(plain.error());
+    }
+
+    CHECK_EQ(plain->Frames, 30);
+    CHECK_EQ(plain->Mission, 5);
+    CHECK_EQ(plain->Converge.value_or(""), "Thor, Masakari");
+    CHECK(plain->Force.empty());
+    CHECK(plain->Cameras.empty());
+
+    const auto refused = [](std::string_view text) -> std::string
+    {
+        MCTest::Scope scope{std::string(text)};
+        const std::expected<MCBattleSpec, std::string> parsed = MCBattleSpec::Parse(text);
+        REQUIRE(!parsed.has_value());
+        return parsed.error();
+    };
+
+    CHECK_EQ(refused("frames 10\nframes 20"), "the battle's spec: line 2: frames twice");
+    CHECK_EQ(refused("colour red"), "the battle's spec: line 1: no spec has colour");
+    CHECK_EQ(refused("zoom"), "the battle's spec: line 1: zoom has no value");
+    CHECK_EQ(refused("zoom wide"), "the battle's spec: zoom wide: not a whole number");
+    CHECK_EQ(refused("camera 900:3,x:1"), "the battle's spec: camera x:1: not frame:mech[:what]");
 }

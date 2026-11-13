@@ -11,6 +11,7 @@
 #include "MCWebSocketOpen.h"
 #include "abl/MCAblRuntime.h"
 #include "gui/MCGuiStartup.h"
+#include "main/MCBenchmark.h"
 #include "main/MCHdSettings.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCUpdater.h"
@@ -141,6 +142,12 @@ namespace
         "  --user         - Where saves, prefs and temp files go (default: the SDL pref path)\n"
         "                   game options, as MCX.EXE takes them.\n"
         "  -mission <n>   - Start game segment n of SYSTEM.CFG's missionName (skips logistics)\n"
+        "  -benchmark [words] - Play the trailer's canyon battle and a pan round the map at\n"
+        "                   real time, then quit: its frames in benchmark-<variant>.txt and\n"
+        "                   its summary added to benchmarks.txt, in the save folder. Words,\n"
+        "                   by commas: a weather (clear, rain, downpour, lightsnow, snow,\n"
+        "                   blizzard), a time of day (day, dusk, night), hd or original\n"
+        "                   (default clear,day,hd); the window and vsync as the game's own\n"
         "  -load <file>   - Load a saved game\n"
         "  -host [port]   - Host a multiplayer game (default port 28800)\n"
         "  -join <addr>   - Join a multiplayer game at host[:port]\n"
@@ -795,6 +802,7 @@ int main(int argc, char** argv)
     }
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));
+    MCBenchmark::SetBuild(MC_VERSION_SHOWN ", commit " MC_VERSION_COMMIT);
     MCInternetGame::Setup({.Open = MCOpenWebSocket, .Get = MCMakeHttpGet, .Version = MC_VERSION_SHOWN});
     // An internet game's leaving reaches the service before the GUI stops (RunGame ends it, waiting up to this).
     const int result = RunGame(options->GameCommandLine, InternetLeaveWait);

@@ -38,6 +38,12 @@ namespace MCFrameLog
     /// <summary>Adds <paramref name="amount"/> to this frame's count <paramref name="name"/> (a phrase: "HD frames read").</summary>
     void Count(std::string_view name, int64_t amount = 1);
 
+    /// <summary>
+    /// Writes <paramref name="text"/> into the log as a line of its own, now (a benchmark's summary), if one is open; on
+    /// the game's thread.
+    /// </summary>
+    void Line(std::string_view text);
+
     /// <summary>The tests' clock instead of the system's (none: the system's again), set while no frame runs.</summary>
     void SetClockForTests(MCClock clock);
 
@@ -68,6 +74,9 @@ namespace MCFrameLog
         double PartMs(std::string_view name) const;
         /// <summary>Count <paramref name="name"/> in all, 0 if none.</summary>
         int64_t Count(std::string_view name) const;
+
+        /// <summary><paramref name="later"/>'s frames added after these (its refresh rate the last seen).</summary>
+        void Add(const MCTally& later);
     };
 
     /// <summary>

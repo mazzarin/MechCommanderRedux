@@ -10,6 +10,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCLinkupMessages.h"
 #include "linkup/MCSessionManager.h"
+#include "main/MCBenchmark.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
@@ -623,6 +624,14 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             }
 
             i++;
+        }
+        else if (MCIEquals(word, "-benchmark"))
+        {
+            // Port-only (Redux HD): "-benchmark [weather,time,hd|original]" plays the trailer's canyon battle and a pan
+            // round the map at real time, logs its frames and quits (main/MCBenchmark.h); the word only when it isn't
+            // a switch.
+            const bool variantGiven = hasArgument && !words[i + 1].empty() && words[i + 1][0] != '-';
+            MCBenchmark::Arm(variantGiven ? std::string_view(words[++i]) : std::string_view());
         }
         else if (MCIEquals(word, "-debug") || MCIEquals(word, "--debug"))
         {

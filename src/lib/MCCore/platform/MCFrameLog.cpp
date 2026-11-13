@@ -373,6 +373,17 @@ namespace MCFrameLog
         }
     }
 
+    void Line(std::string_view text)
+    {
+        MCFrameLogState& log = state();
+
+        if (log.Enabled)
+        {
+            log.File << text << "\n";
+            log.File.flush();
+        }
+    }
+
     void SetClockForTests(MCClock clock)
     {
         testClock() = std::move(clock);
@@ -415,6 +426,24 @@ namespace MCFrameLog
     {
         const auto found = std::ranges::find(Counts, name, &std::pair<std::string, int64_t>::first);
         return found != Counts.end() ? found->second : 0;
+    }
+
+    void MCTally::Add(const MCTally& later)
+    {
+        Times.insert(Times.end(), later.Times.begin(), later.Times.end());
+        Slow += later.Slow;
+        Long += later.Long;
+        RefreshHz = later.Times.empty() ? RefreshHz : later.RefreshHz;
+
+        for (const auto& [name, ms] : later.PartsMs)
+        {
+            AddNamed(PartsMs, name, ms);
+        }
+
+        for (const auto& [name, amount] : later.Counts)
+        {
+            AddNamed(Counts, name, amount);
+        }
     }
 
     void StartTally()

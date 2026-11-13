@@ -249,6 +249,7 @@
     <ClCompile Include="logistics\MCVehicleRepairBlock.cpp" />
     <ClCompile Include="main\MCAblDebuggerConsole.cpp" />
     <ClCompile Include="main\MCArtModes.cpp" />
+    <ClCompile Include="main\MCBenchmark.cpp" />
     <ClCompile Include="main\MCErrorReport.cpp" />
     <ClCompile Include="main\MCForceMessages.cpp" />
     <ClCompile Include="main\MCGameContext.cpp" />
@@ -743,6 +744,7 @@
     <ClInclude Include="logistics\MCVehicleRepairBlock.h" />
     <ClInclude Include="main\MCAblDebuggerConsole.h" />
     <ClInclude Include="main\MCArtModes.h" />
+    <ClInclude Include="main\MCBenchmark.h" />
     <ClInclude Include="main\MCDropSlot.h" />
     <ClInclude Include="main\MCErrorReport.h" />
     <ClInclude Include="main\MCForceMessages.h" />

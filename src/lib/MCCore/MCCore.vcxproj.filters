@@ -687,6 +687,9 @@
     <ClCompile Include="main\MCArtModes.cpp">
       <Filter>main</Filter>
     </ClCompile>
+    <ClCompile Include="main\MCBenchmark.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
     <ClCompile Include="main\MCErrorReport.cpp">
       <Filter>main</Filter>
     </ClCompile>
@@ -2099,6 +2102,9 @@
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCArtModes.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="main\MCBenchmark.h">
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCDropSlot.h">

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "MCScratchFolder.h"
+#include "main/MCBenchmark.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCNeverDestroyed.h"
 #include "platform/MCRenderer.h"
@@ -257,4 +258,72 @@ TEST_CASE("frame log: opened again, it starts a new log; closed, it times nothin
     MCFrameLog::Note("closed");
     log.Frame(4.0, 0.0);
     CHECK(!log.Text().contains("closed"));
+}
+
+TEST_CASE("benchmark: the summary heads with the hitches, the battle's and the pan's frames together, then each's own")
+{
+    FrameLogFixture log("benchmark-summary");
+    REQUIRE(log.Opened);
+    log.Frame(0.0, Refresh240Hz);
+
+    // What is usual, before the benchmark's frames.
+    for (int32_t i = 0; i < 40; i++)
+    {
+        log.Frame(Frame240HzMs, Refresh240Hz);
+    }
+
+    // The battle: 98 frames of 4 ms, each first using two HD frames read in 1 ms, then one late by a refresh and two
+    // (12 ms) and one held for seven (30 ms).
+    MCFrameLog::StartTally();
+
+    for (int32_t i = 0; i < 98; i++)
+    {
+        {
+            MCFrameLog::Scope part("hd.read");
+            log.Advance(1.0);
+        }
+
+        MCFrameLog::Count("HD frames first used", 2);
+        log.Frame(Frame240HzMs - 1.0, Refresh240Hz);
+    }
+
+    log.Frame(12.0, Refresh240Hz);
+    log.Frame(30.0, Refresh240Hz);
+    const MCFrameLog::MCTally battle = MCFrameLog::TakeTally();
+
+    // The pan: 50 frames of 4.5 ms, none late.
+    MCFrameLog::StartTally();
+
+    for (int32_t i = 0; i < 50; i++)
+    {
+        log.Frame(4.5, Refresh240Hz);
+    }
+
+    const MCFrameLog::MCTally pan = MCFrameLog::TakeTally();
+    CHECK(MCFrameLog::TakeTally().Times.empty());
+    REQUIRE_EQ(battle.Times.size(), size_t{100});
+    REQUIRE_EQ(pan.Times.size(), size_t{50});
+    CHECK_EQ(battle.Slow, size_t{2});
+    CHECK_EQ(battle.Long, size_t{2});
+    CHECK_EQ(battle.RefreshHz, Refresh240Hz);
+
+    const MCBenchmark::MCRunInfo run{.Build = "0.6.8 (976), commit 8c9bf531",
+                                     .Variant = "rain-night-hd",
+                                     .Display = "3024x1890 pixels at 240.00 Hz, full screen, vsync on, gpu",
+                                     .Machine = "Apple M4 Pro (10P+4E cores, 20 GPU cores), 48 GB, Mac16,8, mac 26.5"};
+    const std::string summary = MCBenchmark::Summary(run, battle, pan);
+    // The whole: 150 frames, the 99th percentile's the 149th (12 ms), the median 4 ms; 0.434 s and 0.225 s.
+    CHECK_EQ(
+        summary,
+        "MCRedux benchmark 0.6.8 (976), commit 8c9bf531, canyon rain-night-hd, 3024x1890 pixels at 240.00 Hz, full "
+        "screen, vsync on, gpu, Apple M4 Pro (10P+4E cores, 20 GPU cores), 48 GB, Mac16,8, mac 26.5: p99 12.00 ms, "
+        "worst 30.00 ms, 2 frames late by a refresh, 2 over 1.5 refreshes; median 4.00 ms (250.0 fps); 150 frames "
+        "in 0.7 s; 196 HD frames first used, read in 98.0 ms. Battle: p99 30.00 ms, worst 30.00 ms, 2 frames late "
+        "by a refresh, 2 over 1.5 refreshes; median 4.00 ms (250.0 fps); 100 frames in 0.4 s; 196 HD frames first "
+        "used, read in 98.0 ms. Pan: p99 4.50 ms, worst 4.50 ms, 0 frames late by a refresh, 0 over 1.5 refreshes; "
+        "median 4.50 ms (222.2 fps); 50 frames in 0.2 s; 0 HD frames first used, read in 0.0 ms");
+
+    // The summary ends the log, a line of its own.
+    MCFrameLog::Line(summary);
+    CHECK(log.Text().ends_with(summary + "\n"));
 }

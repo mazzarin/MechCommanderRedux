@@ -305,6 +305,11 @@ std::shared_ptr<MCGuiPort> ScreenPort();
 std::shared_ptr<MCFont> LineFont();
 /// <summary>The window's size in pixels when it changed: see <see cref="MCGuiSystem::FollowWindowSize"/>.</summary>
 bool MCFollowWindowSize();
+/// <summary>
+/// Port-only: the window, its screen and how it's drawn, as the frame log notes them: "3024x1890 pixels at 120.00 Hz,
+/// full screen, vsync on, &lt;renderer&gt;"; "no display" before it opens.
+/// </summary>
+std::string DisplayDescription();
 
 /// <summary>Draws every screen into its picture.</summary>
 void ARedrawScreen();

@@ -748,6 +748,20 @@ auto MCLogistics::MakeAhead() const -> void
             }
         }
     }
+
+    // The HD copies of the pictures the screens are made of (their art, loaded by Start, the screens' backgrounds
+    // with it: MCLogInvScreen::InitLive), read ahead by the pack's reading thread.
+    std::vector<MCHdArt::PictureAhead> pictures;
+
+    for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
+    {
+        if (texture != nullptr && !texture->CpuStale && !texture->Pixels.empty())
+        {
+            pictures.push_back({texture->Pixels, texture->Width, texture->Height});
+        }
+    }
+
+    MCHdArt::ReadPicturesAhead(pictures);
 }
 
 auto MCLogistics::MakeLineArtAhead() const -> void

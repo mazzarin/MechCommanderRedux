@@ -542,6 +542,9 @@ auto MCLogInvScreen::Draw() -> void
 auto MCLogInvScreen::InitLive(std::string_view artName) -> void
 {
     BackgroundArt = artName;
+    // Port-only: loaded now, as the original loaded it as the screen's picture, so its HD copy is read ahead with the
+    // other screens' art (MCLogistics::MakeAhead) rather than as the screen first shows.
+    LogScreenArt(BackgroundArt);
     InvScreens.push_back(std::static_pointer_cast<MCLogInvScreen>(shared_from_this()));
 }
 

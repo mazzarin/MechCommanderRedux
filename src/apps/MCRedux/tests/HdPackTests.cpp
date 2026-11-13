@@ -1200,6 +1200,89 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
 /// new pack's frames of the same names: every frame drawn is the new pack's, wherever the thread was in its reads (a
 /// little further each round).
 /// </summary>
+/// <summary>
+/// Port-only: the HD copies of pictures read ahead (the logistics screens' art: MCLogistics::MakeAhead) are kept as a
+/// first draw keeps a frame once the game's thread takes them in (a frame's start): found then without a read, the same
+/// frames as read when drawn. One the pack lacks isn't read; one read already isn't asked for again; and with the frames
+/// kept taking half the cache's budget, none is read ahead.
+/// </summary>
+TEST_CASE("hd art: pictures read ahead are found as drawn ones are, without a read")
+{
+    constexpr int32_t Width = AheadWidth;
+    constexpr int32_t Height = AheadHeight;
+    constexpr size_t InPack = 3;
+    const ScratchFolder scratch("pictures-ahead");
+    std::vector<std::vector<uint8_t>> pixels;
+    std::vector<std::vector<uint8_t>> files;
+    std::vector<ArchiveEntry> entries;
+
+    for (uint8_t picture = 0; picture <= InPack; ++picture)
+    {
+        std::vector<uint8_t>& shown = pixels.emplace_back(static_cast<size_t>(Width) * Height);
+        std::ranges::generate(shown, [&, at = 0]() mutable { return static_cast<uint8_t>(picture * Width + at++); });
+
+        if (picture < InPack)
+        {
+            // A BC7 frame with bytes no other picture's has (as the read-ahead pack's frames).
+            files.push_back(AheadFile({picture, 0}, static_cast<uint8_t>(picture + 1)));
+            entries.push_back(
+                Raw(MCHdArt::PictureName(MCHdArt::PictureHash(shown, Width, Height)) + ".hdf", files.back()));
+        }
+    }
+
+    WriteBytes(scratch.Path() / "menus.hda", BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    std::vector<MCHdArt::PictureAhead> asked;
+
+    for (const std::vector<uint8_t>& shown : pixels)
+    {
+        asked.push_back({shown, Width, Height});
+    }
+
+    const auto readAhead = [&]
+    {
+        MCHdArt::ReadPicturesAhead(asked);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepPicturesRead();
+    };
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    readAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + InPack);
+    const size_t read = MCHdArt::FramesRead();
+
+    for (size_t picture = 0; picture < InPack; ++picture)
+    {
+        MCTest::Scope scope(std::format("picture {}", picture));
+        const std::shared_ptr<const MCHdArt::Frame> found = MCHdArt::FindPicture(pixels[picture], Width, Height);
+        REQUIRE(found != nullptr);
+        const auto decoded = MCHdArt::DecodeHdf(files[picture], Width, Height);
+        REQUIRE(decoded.has_value());
+        CHECK(SameFrame(*found, *decoded));
+        CHECK(found->Id != 0);
+    }
+
+    CHECK(MCHdArt::FindPicture(pixels[InPack], Width, Height) == nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+
+    // Asked again: kept already, none read.
+    readAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + InPack);
+
+    // A new pack (the same files), its cache's budget half taken: none read ahead, each read as drawn.
+    MCHdArt::SetPackFolder(scratch.Path());
+    MCHdArt::SetCacheBudget(1);
+    readAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + InPack);
+    CHECK(MCHdArt::FindPicture(pixels[0], Width, Height) != nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+    MCHdArt::SetCacheBudget(0);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
 TEST_CASE("hd art: frames read ahead from one pack are never drawn from the next")
 {
     constexpr int32_t Rounds = 32;

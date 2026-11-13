@@ -67,6 +67,11 @@ namespace
     constexpr size_t MaxFollows = 256;
     /// <summary>The most bytes of frames read ahead and not taken yet (the oldest dropped past it).</summary>
     constexpr size_t MaxAheadBytes = 32u * 1024u * 1024u;
+    /// <summary>
+    /// Port-only: pictures are read ahead (MCHdArt::ReadPicturesAhead) while they and the frames kept would take at most
+    /// the cache's budget over this: those read ahead are kept as drawn ones are, and mustn't push those out.
+    /// </summary>
+    constexpr size_t PicturesAheadBudgetShare = 2;
     /// <summary>A shape table's header up to its frame count (VfxShapeCount reads it at byte 4).</summary>
     constexpr size_t ShapeCountEnd = 8;
     /// <summary>The frame log's part for a frame's first use (read then, or taken from the reading thread), and its count.</summary>
@@ -210,6 +215,19 @@ namespace
     };
 
     /// <summary>
+    /// A frame for the reading thread to read: its name, its entry in the follow's archive and that's name, and the size
+    /// in original pixels it must have (0 x 0: any; port-only, a picture read ahead's).
+    /// </summary>
+    struct AheadEntry
+    {
+        uint64_t Name = 0;
+        int32_t Index = 0;
+        std::string Entry;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
     /// Port-only (HD art): a numbered folder's frame drawn the first time, whose next ones the reading thread reads: its
     /// key, its shape table's frame count, and copies of what its folder says (the folder may go while it reads): its
     /// archive, its entries' start there, and whether its frames' baked shadows are marked.
@@ -221,6 +239,11 @@ namespace
         std::shared_ptr<MCHdArchive> Archive;
         std::string Prefix;
         bool BakedShadows = false;
+        /// <summary>
+        /// Port-only: the frames to read, when given (pictures read ahead: MCHdArt::ReadPicturesAhead, Key's folder's),
+        /// in place of those drawn after Key's.
+        /// </summary>
+        std::vector<AheadEntry> Entries;
     };
 
     /// <summary>A frame read ahead (numbered when the game's thread takes it), and its place in ReadAhead::Order.</summary>
@@ -252,6 +275,13 @@ namespace
         std::unordered_map<FrameKey, ReadyFrame, FrameKeyHash> Ready;
         std::list<FrameKey> Order;
         size_t Bytes = 0;
+        /// <summary>
+        /// Port-only: the pictures read ahead (Follow::Entries), kept apart from Ready (MCHdArt::ReadPicturesAhead
+        /// bounds them, not MaxAheadBytes) until the game's thread keeps them (MCHdArt::KeepPicturesRead) or a draw
+        /// takes one; and those asked for and not read yet.
+        /// </summary>
+        std::unordered_map<FrameKey, std::shared_ptr<MCHdArt::Frame>, FrameKeyHash> Pictures;
+        std::unordered_set<FrameKey, FrameKeyHash> PicturesAsked;
         /// <summary>Counts the times what was found was forgotten (the pack set): a read begun before is dropped.</summary>
         uint64_t Generation = 0;
         /// <summary>Set while the reading thread works on a follow.</summary>
@@ -1006,14 +1036,6 @@ namespace
         bool _Counted = false;
     };
 
-    /// <summary>A frame for the reading thread to read: its name, its entry in the follow's archive and that's name.</summary>
-    struct AheadEntry
-    {
-        uint64_t Name = 0;
-        int32_t Index = 0;
-        std::string Entry;
-    };
-
     /// <summary>
     /// The frames drawn after <paramref name="follow"/>'s that its archive holds, the soonest drawn first: the rest of its
     /// step's family (its in-betweens, or its turn middle's), then each of the next FramesAhead frames' (looping round to
@@ -1151,7 +1173,7 @@ namespace
             ReaderFile& file = *kept;
             lock.unlock();
             // The archive's directory never changes once read, so it is looked in without a lock.
-            const std::vector<AheadEntry> next = NextFrames(follow);
+            const std::vector<AheadEntry> next = follow.Entries.empty() ? NextFrames(follow) : follow.Entries;
             lock.lock();
             bool failed = false;
 
@@ -1164,7 +1186,7 @@ namespace
                     break;
                 }
 
-                if (ahead.Known.contains(key) || ahead.Ready.contains(key))
+                if (ahead.Known.contains(key) || ahead.Ready.contains(key) || ahead.Pictures.contains(key))
                 {
                     continue;
                 }
@@ -1176,7 +1198,8 @@ namespace
 
                 if (handle)
                 {
-                    if (auto read = ReadEntry(*follow.Archive, entry.Index, entry.Entry, 0, 0, handle);
+                    if (auto read =
+                            ReadEntry(*follow.Archive, entry.Index, entry.Entry, entry.Width, entry.Height, handle);
                         read.has_value())
                     {
                         frame = Finished(std::move(*read), follow.BakedShadows, 0);
@@ -1188,7 +1211,14 @@ namespace
 
                 if (frame != nullptr && ahead.Generation == generation)
                 {
-                    Hold(ahead, key, std::move(frame));
+                    if (follow.Entries.empty())
+                    {
+                        Hold(ahead, key, std::move(frame));
+                    }
+                    else
+                    {
+                        ahead.Pictures.emplace(key, std::move(frame));
+                    }
                 }
 
                 ahead.Changed.notify_all();
@@ -1203,6 +1233,12 @@ namespace
             if (failed)
             {
                 closeKept();
+            }
+
+            // Port-only: pictures not read (failed, or the pack set) may be asked for again.
+            for (const AheadEntry& entry : follow.Entries)
+            {
+                ahead.PicturesAsked.erase(FrameKey{follow.Key.Folder, entry.Name});
             }
 
             ahead.Working = false;
@@ -1262,6 +1298,15 @@ namespace
         std::unique_lock lock(ahead.Lock);
         ahead.Changed.wait(lock, [&] { return ahead.Reading != key; });
         ahead.Known.insert(key);
+
+        // Port-only: a picture read ahead, not kept yet (MCHdArt::KeepPicturesRead).
+        if (const auto picture = ahead.Pictures.find(key); picture != ahead.Pictures.end())
+        {
+            std::shared_ptr<MCHdArt::Frame> frame = std::move(picture->second);
+            ahead.Pictures.erase(picture);
+            return frame;
+        }
+
         const auto found = ahead.Ready.find(key);
 
         if (found == ahead.Ready.end())
@@ -1290,6 +1335,8 @@ namespace
         ahead.Ready.clear();
         ahead.Order.clear();
         ahead.Bytes = 0;
+        ahead.Pictures.clear();
+        ahead.PicturesAsked.clear();
         ++ahead.Generation;
         ahead.Changed.notify_all();
         ahead.Changed.wait(lock, [&ahead] { return !ahead.ReaderKeeps; });
@@ -2158,6 +2205,152 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8
     }
 
     return Cache(FrameKey{FolderIndex(PackFolder() / PictureFolder, Naming::Hash), hash}, width, height);
+}
+
+void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
+{
+    if (!Active() || pictures.empty())
+    {
+        return;
+    }
+
+    State& state = TheState();
+    const uint32_t folderIndex = FolderIndex(PackFolder() / PictureFolder, Naming::Hash);
+    FrameFolder& folder = state.Folders.at(folderIndex);
+    std::error_code error;
+
+    // Only an archive's (as the frames followed): loose files are a generator's, not a player's.
+    if (!folder.Loose.has_value())
+    {
+        folder.Loose = std::filesystem::is_directory(folder.Path, error);
+    }
+
+    const FrameFolder::InArchive& archived = ArchiveOf(folder);
+
+    if (*folder.Loose || archived.Archive == nullptr)
+    {
+        return;
+    }
+
+    // Those the pack has, not kept, looked at or asked for already, while they and the frames kept fit the share of the
+    // budget (an entry's unpacked bytes are about its frame's).
+    const size_t room = CacheBudget() / PicturesAheadBudgetShare;
+    Follow follow{FrameKey{folderIndex, 0}, 0, archived.Archive, archived.Prefix, folder.BakedShadows, {}};
+    std::unordered_set<uint64_t> named;
+    size_t asked = state.Bytes;
+    ReadAhead& ahead = state.Ahead;
+    std::scoped_lock lock(ahead.Lock);
+
+    for (const PictureAhead& picture : pictures)
+    {
+        if (picture.Width <= 0 || picture.Height <= 0)
+        {
+            continue;
+        }
+
+        const uint64_t hash = PictureHash(picture.Pixels, picture.Width, picture.Height);
+        const FrameKey key{folderIndex, hash};
+
+        if (!named.insert(hash).second || state.KeptPictures.contains(hash) || ahead.Known.contains(key) ||
+            ahead.Ready.contains(key) || ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key))
+        {
+            continue;
+        }
+
+        if (const auto cached = state.Frames.find(key);
+            cached != state.Frames.end() && (cached->second.Frame != nullptr || cached->second.Looked))
+        {
+            continue;
+        }
+
+        std::string entry = archived.Prefix + HashName(hash) + std::string(HdfExtension);
+        const std::optional<int32_t> index = archived.Archive->File->Find(entry);
+
+        if (!index.has_value())
+        {
+            continue;
+        }
+
+        const auto bytes =
+            static_cast<size_t>(std::max<int64_t>(archived.Archive->File->GetEntries()[*index].RealSize, 0));
+
+        if (asked + bytes > room)
+        {
+            break;
+        }
+
+        asked += bytes;
+        ahead.PicturesAsked.insert(key);
+        follow.Entries.push_back(AheadEntry{hash, *index, std::move(entry), picture.Width, picture.Height});
+    }
+
+    if (follow.Entries.empty())
+    {
+        return;
+    }
+
+    ahead.Follows.push_back(std::move(follow));
+
+    if (!ahead.Reader.joinable())
+    {
+        ahead.Reader = std::jthread(ReadFramesAhead);
+    }
+
+    ahead.Changed.notify_all();
+}
+
+void MCHdArt::KeepPicturesRead()
+{
+    State& state = TheState();
+    std::vector<std::pair<FrameKey, std::shared_ptr<Frame>>> read;
+
+    {
+        ReadAhead& ahead = state.Ahead;
+        std::scoped_lock lock(ahead.Lock);
+
+        if (ahead.Pictures.empty())
+        {
+            return;
+        }
+
+        for (auto& [key, frame] : ahead.Pictures)
+        {
+            read.emplace_back(key, std::move(frame));
+            ahead.Known.insert(key);
+        }
+
+        ahead.Pictures.clear();
+    }
+
+    // Kept as a first draw keeps a frame read (Cache), numbered as the draw would number it.
+    for (auto& [key, frame] : read)
+    {
+        Cached& cached = state.Frames[key];
+
+        if (cached.Frame != nullptr)
+        {
+            continue;
+        }
+
+        cached.Looked = true;
+
+        if (cached.Id == 0)
+        {
+            cached.Id = NewFrameId();
+        }
+
+        frame->Id = cached.Id;
+        cached.Frame = std::move(frame);
+        cached.InOrder = state.Order.insert(state.Order.end(), key);
+        state.Bytes += cached.Frame->Bytes();
+        ++state.Read;
+        ++state.TakenAhead;
+    }
+
+    if (!read.empty())
+    {
+        Trim();
+    }
 }
 
 void MCHdArt::KeepPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height, Frame&& frame)

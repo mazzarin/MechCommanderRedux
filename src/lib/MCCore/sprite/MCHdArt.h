@@ -348,6 +348,27 @@ namespace MCHdArt
     /// </summary>
     std::shared_ptr<const Frame> FindPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height);
 
+    /// <summary>Port-only: a picture whose HD copy to read ahead (<see cref="ReadPicturesAhead"/>): FindPicture's.</summary>
+    struct PictureAhead
+    {
+        std::span<const uint8_t> Pixels;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Port-only: has the reading thread read the HD copies of <paramref name="pictures"/> ahead of their first draw, those
+    /// the pack's archive has that aren't kept, looked at or asked for already, in order, while they and the frames kept
+    /// take at most half the cache's budget; <see cref="KeepPicturesRead"/> keeps them as drawn ones are kept.
+    /// </summary>
+    void ReadPicturesAhead(std::span<const PictureAhead> pictures);
+
+    /// <summary>
+    /// Port-only: keeps the pictures the reading thread has read ahead (<see cref="ReadPicturesAhead"/>) as a first draw
+    /// keeps a frame (FindPicture then finds them), against the cache's budget. The game's thread, once a frame.
+    /// </summary>
+    void KeepPicturesRead();
+
     /// <summary>
     /// Port-only: keeps <paramref name="frame"/>, numbered anew, as the HD copy of the picture with
     /// <paramref name="pixels"/>: one the game makes of the pack's pictures (the session screen's MATCH OPTIONS tab,

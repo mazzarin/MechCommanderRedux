@@ -95,8 +95,9 @@ public:
 
     /// <summary>
     /// Port-only: on a sharp screen (HD art, the GPU drawing), what the HD menus first show done ahead, off the game's
-    /// thread: every font's sharp glyphs made (platform/MCSharpPictures), so a screen's first frame doesn't redraw its
-    /// text. The end of Start does it, and AttachHdArtToLoaded when HD art comes on.
+    /// thread: every font's sharp glyphs made (platform/MCSharpPictures) and the HD copies of the pictures the screens
+    /// are made of read (MCHdArt::ReadPicturesAhead), so a screen's first frame neither redraws its text nor reads the
+    /// pack. The end of Start does it, and AttachHdArtToLoaded when HD art comes on.
     /// </summary>
     void MakeAhead() const;
 

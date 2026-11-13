@@ -15,6 +15,7 @@
 #include "platform/MCInput.h"
 #include "platform/MCNeverDestroyed.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
 uint32_t MouseTicks = 0;
@@ -319,6 +320,8 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     MCHardwareCursorNewFrame();
     // Port: a new frame's op tables (translucent UI over the world view; see MCUnderlay).
     MCRenderer::ResetOpTables();
+    // Port-only: the HD pictures read ahead kept, before the frame's draws look for them.
+    MCHdArt::KeepPicturesRead();
 
     if (gui.SmackerWindow == nullptr)
     {

@@ -115,6 +115,8 @@ struct Input
     nointerpolation uint4 walk : TEXCOORD4;
     // Port-only: a terrain tile's place and the counts round it that can't be entered (BlockedAt; terrain.vshader's).
     nointerpolation uint4 ground : TEXCOORD5;
+    // Port-only: where a picture lies in the textures it is read from (instance.vshader's Draw::place).
+    nointerpolation uint4 place : TEXCOORD6;
 };
 
 struct Output
@@ -291,6 +293,40 @@ float4 Fetch(Texture2D<float4> tex, SamplerState samp, int2 texel)
     return tex.SampleLevel(samp, (float2(texel) + 0.5) / float2(width, height), 0);
 }
 
+// Port-only: where the draw's picture lies in the textures it is read from (a page pictures share: MCVulkanRenderer's
+// PicturePlace), from main: its pixels' corner in sourceTex (an HD art frame's indices'), its HD colours' corner in
+// hdTex, and its size (0 x 0: the source's own). Every read of a picture goes through SourceAt and HdAt, and keeps
+// inside its size.
+static int2 sourceCorner;
+static int2 hdCorner;
+static int2 placeSize;
+
+// A texel of the draw's source, in its picture.
+float4 SourceAt(int2 texel)
+{
+    return Fetch(sourceTex, sourceSampler, texel + sourceCorner);
+}
+
+// A texel of an HD art frame's colours, in its picture.
+float4 HdAt(int2 texel)
+{
+    return Fetch(hdTex, hdSampler, texel + hdCorner);
+}
+
+// The size of the draw's source: its picture's.
+int2 SourceSize()
+{
+    if (placeSize.x > 0)
+    {
+        return placeSize;
+    }
+
+    uint width;
+    uint height;
+    sourceTex.GetDimensions(width, height);
+    return int2((int)width, (int)height);
+}
+
 uint Byte(float value)
 {
     return (uint)round(value * 255.0);
@@ -340,7 +376,7 @@ Output Blended(float4 color)
 
 float4 FetchSource(int2 texel)
 {
-    return Fetch(sourceTex, sourceSampler, DrawnPixel(texel, sourceScale));
+    return SourceAt(DrawnPixel(texel, sourceScale));
 }
 
 // The colour the HD art pack's pictures were made from for an index.
@@ -611,7 +647,7 @@ bool DrawnTexel(Input input, int2 texel, out uint value)
         return false;
     }
 
-    const float4 sample = Fetch(sourceTex, sourceSampler, texel);
+    const float4 sample = SourceAt(texel);
     value = Byte(sample.r);
 
     // A picture of indices (an opaque source): colours 0 and 255 draw nothing. An atlas page: the state says.
@@ -910,7 +946,7 @@ float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
 
     if ((flags & ColorKey) != 0)
     {
-        const float4 entry = Fetch(sourceTex, sourceSampler, texel / hdScale);
+        const float4 entry = SourceAt(texel / hdScale);
 
         if (HasIndexIn(entry) && Byte(entry.r) == key)
         {
@@ -918,7 +954,7 @@ float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
         }
     }
 
-    return Fetch(hdTex, hdSampler, texel);
+    return HdAt(texel);
 }
 
 // Port-only (sun shadows): an HD frame's baked shadow at `shape` (a place in its original's pixels, their centres at
@@ -942,7 +978,7 @@ float2 BakedShadowWeights(int2 original, float2 shape)
                 continue;
             }
 
-            const float4 entry = Fetch(sourceTex, sourceSampler, texel);
+            const float4 entry = SourceAt(texel);
 
             if (!HasIndexIn(entry))
             {
@@ -988,7 +1024,7 @@ float HdMaskCoverage(int2 original, int hdScale, float2 shape, out int2 nearest)
             const int2 texel = base + int2(x - 1, y - 1);
 
             if (any(texel < 0) || any(texel >= original) ||
-                Fetch(hdTex, hdSampler, texel * hdScale + hdScale / 2).a <= HdMaskAlpha)
+                HdAt(texel * hdScale + hdScale / 2).a <= HdMaskAlpha)
             {
                 continue;
             }
@@ -1154,7 +1190,7 @@ float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original,
                 continue;
             }
 
-            const float4 entry = Fetch(sourceTex, sourceSampler, texel);
+            const float4 entry = SourceAt(texel);
 
             if (!HasIndexIn(entry))
             {
@@ -1174,7 +1210,7 @@ float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original,
         return sum / weight;
     }
 
-    const uint index = Byte(Fetch(sourceTex, sourceSampler, nearest).r);
+    const uint index = Byte(SourceAt(nearest).r);
     return Corrected(color.rgb, color.a, index, table ? Table(input.op.z, index) : index);
 }
 
@@ -1185,10 +1221,7 @@ float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original,
 Output HdPixelAt(Input input, float2 shape)
 {
     const uint hdScale = input.op.y & 255u;
-    uint width;
-    uint height;
-    sourceTex.GetDimensions(width, height);
-    const int2 original = int2((int)width, (int)height);
+    const int2 original = SourceSize();
     const int2 size = original * (int)hdScale;
     const uint flags = input.op.x;
     const uint key = (input.op.y >> 8) & 255u;
@@ -1256,7 +1289,7 @@ Output HdPixelAt(Input input, float2 shape)
 
     // The colour as the original pixels around it show now: through a paint scheme's table, today's palette, cycle and
     // brightness.
-    const float4 entry = Fetch(sourceTex, sourceSampler, texel);
+    const float4 entry = SourceAt(texel);
 
     if (HasIndexIn(entry) && (input.op.x & HdAsMade) == 0)
     {
@@ -1311,10 +1344,7 @@ static const float LengthenedShadowSpread = 0.3;
 
 Output LengthenedShadowPixel(Input input, float2 shape)
 {
-    uint width;
-    uint height;
-    sourceTex.GetDimensions(width, height);
-    const int2 original = int2((int)width, (int)height);
+    const int2 original = SourceSize();
     const int packed = (int)input.op.z;
     const float2 reach = float2((float)((packed << 16) >> 16), (float)(packed >> 16)) / LengthenedShadowSixteenths;
     const float2 across = float2(-reach.y, reach.x) * LengthenedShadowSpread;
@@ -1355,11 +1385,7 @@ Output HdMapPixel(Input input, int2 target)
         return LengthenedShadowPixel(input, picture);
     }
 
-    uint width;
-    uint height;
-    sourceTex.GetDimensions(width, height);
-
-    if (any(picture < 0.0) || any(picture >= float2((float)width, (float)height)))
+    if (any(picture < 0.0) || any(picture >= float2(SourceSize())))
     {
         discard;
     }
@@ -1405,7 +1431,7 @@ float4 GlyphTexel(int2 texel, int2 size, bool runsOn)
 {
     if (runsOn)
     {
-        return Fetch(sourceTex, sourceSampler, clamp(texel, int2(0, 0), size - 1));
+        return SourceAt(clamp(texel, int2(0, 0), size - 1));
     }
 
     if (any(texel < 0) || any(texel >= size))
@@ -1413,7 +1439,7 @@ float4 GlyphTexel(int2 texel, int2 size, bool runsOn)
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    return Fetch(sourceTex, sourceSampler, texel);
+    return SourceAt(texel);
 }
 
 // A sharp glyph's pixel: the source is the place in the glyph of the rectangle's first pixel, op.y the redrawn
@@ -1423,10 +1449,7 @@ Output SharpGlyphPixel(Input input, int2 target)
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
     const float2 glyph = float2(input.source.xy) + (window - float2(input.rect.xy));
     const float glyphScale = (float)(input.op.y & 255u);
-    uint width;
-    uint height;
-    sourceTex.GetDimensions(width, height);
-    const int2 size = int2((int)width, (int)height);
+    const int2 size = SourceSize();
 
     const bool runsOn = (input.op.y & SharpGlyphRunsOn) != 0;
     const float2 at = glyph * glyphScale - 0.5;
@@ -1443,7 +1466,7 @@ Output SharpGlyphPixel(Input input, int2 target)
     }
 
     const int2 nearest = clamp(int2(floor(glyph * glyphScale)), int2(0, 0), size - 1);
-    const uint index = Table(input.op.z, Byte(Fetch(sourceTex, sourceSampler, nearest).r));
+    const uint index = Table(input.op.z, Byte(SourceAt(nearest).r));
 
     if (index == 255u)
     {
@@ -2106,6 +2129,9 @@ Output DrawnOutput(Input input)
 
 Output main(Input input)
 {
+    sourceCorner = int2(input.place.x & 0xffffu, input.place.x >> 16);
+    hdCorner = int2(input.place.y & 0xffffu, input.place.y >> 16);
+    placeSize = int2(input.place.z & 0xffffu, input.place.z >> 16);
     Output output = DrawnOutput(input);
 
     // Port-only (HD lighting): a light's glow, premultiplied through the blend pipeline, fainter as look.x.

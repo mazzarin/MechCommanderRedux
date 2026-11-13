@@ -125,6 +125,12 @@ struct MCFrame
     /// to 255 (black). The presenter applies it to the finished picture; <see cref="Colors"/> don't include it.
     /// </summary>
     int Fade = 0;
+    /// <summary>
+    /// Port-only: the frame may be shown after <see cref="MCPresenter::Present"/> returns, once a thread of the
+    /// presenter's has drawn it (the game's frame loop: it presents again soon, and checks for the frame meanwhile,
+    /// <see cref="MCPresenter::ShowFinished"/>). Else it is shown before Present returns.
+    /// </summary>
+    bool Ahead = false;
 
     /// <summary>Whether the frame is composited at <see cref="OutputWidth"/> x <see cref="OutputHeight"/>.</summary>
     bool ScaledOutput() const { return OutputWidth > 0 && OutputHeight > 0; }
@@ -196,6 +202,26 @@ public:
     /// window pixels (not points).
     /// </summary>
     virtual MCViewport Viewport(int viewWidth, int viewHeight) const = 0;
+
+    /// <summary>
+    /// Port-only: shows a frame presented ahead (<see cref="MCFrame::Ahead"/>) if it's drawn by now; returns at once
+    /// otherwise (the game checks as it goes). Its errors come with the next <see cref="Present"/>.
+    /// </summary>
+    virtual void ShowFinished() {}
+
+    /// <summary>
+    /// Port-only: shows a frame presented ahead, waiting for its drawing (before the game waits for something else:
+    /// the window's events, a load).
+    /// </summary>
+    virtual void ShowPresented() {}
+
+    /// <summary>
+    /// Port-only: a check before the game reads the next frame's input (the window's events). When the display paces
+    /// the frames, a frame presented ahead is shown now, waiting for its drawing (as <see cref="ShowPresented"/>), so
+    /// the wait for the display comes before the input is read rather than after it; else as
+    /// <see cref="ShowFinished"/>.
+    /// </summary>
+    virtual void ShowBeforeInput() {}
 };
 
 /// <summary>

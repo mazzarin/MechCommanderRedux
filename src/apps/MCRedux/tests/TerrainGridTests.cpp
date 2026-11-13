@@ -140,3 +140,40 @@ TEST_CASE("terrain: a grid grown for a larger screen holds the map vertices arou
         }
     }
 }
+
+TEST_CASE("terrain: a grid vertex's quads are those with it as a corner, in the grid's order")
+{
+    // A corner, an edge, the middle and a grown grid's sides.
+    for (int32_t side : {2, 3, 30, 42})
+    {
+        const MCTerrainWindow window(0, side);
+
+        for (uint32_t vertex = 0; vertex < window.Vertices.size(); vertex++)
+        {
+            std::vector<size_t> searched;
+
+            for (size_t quad = 0; quad < window.Blocks.size(); quad++)
+            {
+                if (std::ranges::contains(window.Blocks[quad].Vertices, vertex))
+                {
+                    searched.push_back(quad);
+                }
+            }
+
+            const std::array<std::optional<size_t>, 4> around = window.QuadsAround(vertex);
+            std::vector<size_t> named;
+
+            for (const std::optional<size_t> quad : around)
+            {
+                if (quad.has_value())
+                {
+                    named.push_back(*quad);
+                }
+            }
+
+            CHECK(std::ranges::is_partitioned(around,
+                                              [](const std::optional<size_t>& quad) { return quad.has_value(); }));
+            CHECK(named == searched);
+        }
+    }
+}

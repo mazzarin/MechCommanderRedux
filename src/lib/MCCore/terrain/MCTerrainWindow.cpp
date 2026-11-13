@@ -186,6 +186,29 @@ MCTerrainWindow::MCTerrainWindow(int32_t windowNum, int32_t side)
     }
 }
 
+auto MCTerrainWindow::QuadsAround(uint32_t vertex) const -> std::array<std::optional<size_t>, 4>
+{
+    // The quad at (row, col) has its top-left corner at vertex row * side + col (the constructor's layout).
+    const auto vertexRow = static_cast<int32_t>(vertex) / _Side;
+    const auto vertexCol = static_cast<int32_t>(vertex) % _Side;
+    const int32_t quadsSide = _Side - 1;
+    std::array<std::optional<size_t>, 4> quads{};
+    size_t found = 0;
+
+    for (int32_t row = vertexRow - 1; row <= vertexRow; row++)
+    {
+        for (int32_t col = vertexCol - 1; col <= vertexCol; col++)
+        {
+            if (row >= 0 && col >= 0 && row < quadsSide && col < quadsSide)
+            {
+                quads[found++] = static_cast<size_t>(row * quadsSide + col);
+            }
+        }
+    }
+
+    return quads;
+}
+
 auto MCTerrainWindow::Bind(std::weak_ptr<MCCamera> cam) -> void
 {
     Camera = std::move(cam);
@@ -287,10 +310,13 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
     const int32_t minY = static_cast<int32_t>(std::floor(-stepY));
     const int32_t maxX = (GlobalPane->X1 - GlobalPane->X0) + static_cast<int32_t>(std::floor(stepX));
     const int32_t maxY = GlobalPane->Y1 - GlobalPane->Y0;
-    const int32_t paneWidth = GlobalPane->X1 - GlobalPane->X0;
-    const int32_t paneHeight = GlobalPane->Y1 - GlobalPane->Y0;
     MCVector2D current = rowStart;
     const auto numVertices = static_cast<int32_t>(Vertices.size());
+    // Port-only: the rows and columns of the vertices on the pane, for QuadsOnPane.
+    int32_t lowRow = INT32_MAX;
+    int32_t lowCol = INT32_MAX;
+    int32_t highRow = INT32_MIN;
+    int32_t highCol = INT32_MIN;
 
     for (int32_t index = 0; index < numVertices; index++)
     {
@@ -316,70 +342,20 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
             terrain->ScreenPosY[screenIndex] = static_cast<int32_t>(std::floor(current.Y));
         }
 
-        vertex->EdgeRedraw = false;
-        vertex->Redraw = false;
+        // Every vertex is redrawn, its edges too: this render asked for a forced redraw before the walk, and nothing in
+        // it takes that back, so the original's tests of the scroll (a scroll of a screen or more, the strips it
+        // uncovered) could only ask again.
+        vertex->Redraw = true;
+        vertex->EdgeRedraw = true;
         vertex->Clipped = px < minX || px > maxX || py < minY || py > maxY;
-
-        // A scroll of a screen or more (or ForceAlways) redraws everything; so does a forced redraw, which this
-        // render has just asked for.
-        if (std::abs(scrollX) >= GuiSystem().Width() || std::abs(scrollY) >= GuiSystem().Height() || ForceAlways != 0)
-        {
-            MCTerrain::ForceRedraw = true;
-        }
-
-        if (MCTerrain::ForceRedraw)
-        {
-            vertex->Redraw = true;
-            vertex->EdgeRedraw = true;
-        }
 
         if (!vertex->Clipped)
         {
+            lowRow = std::min(lowRow, row);
+            lowCol = std::min(lowCol, col);
+            highRow = std::max(highRow, row);
+            highCol = std::max(highCol, col);
             terrain->MarkBlockUsed(blockNum);
-            // Vertices over the strip the scroll uncovered are redrawn; those near it get their edges redrawn.
-            const int32_t oldX = px - scrollX;
-
-            if (oldX < 0 && scrollX > 0)
-            {
-                vertex->Redraw = true;
-            }
-
-            if (static_cast<float>(oldX) <= stepX + stepX && scrollX > 0)
-            {
-                vertex->EdgeRedraw = true;
-            }
-
-            if (paneWidth < oldX && scrollX < 0)
-            {
-                vertex->Redraw = true;
-            }
-
-            if (static_cast<float>(paneWidth) - (stepX + stepX) <= static_cast<float>(oldX) && scrollX < 0)
-            {
-                vertex->EdgeRedraw = true;
-            }
-
-            const int32_t oldY = py - scrollY;
-
-            if (oldY < 0 && scrollY > 0)
-            {
-                vertex->Redraw = true;
-            }
-
-            if (static_cast<float>(oldY) <= stepY + stepY && scrollY > 0)
-            {
-                vertex->EdgeRedraw = true;
-            }
-
-            if (static_cast<float>(paneHeight) - stepY < static_cast<float>(oldY) && scrollY < 0)
-            {
-                vertex->Redraw = true;
-            }
-
-            if (static_cast<float>(paneHeight) - (stepY + stepY) <= static_cast<float>(oldY) && scrollY < 0)
-            {
-                vertex->EdgeRedraw = true;
-            }
 
             if (DrawTerrainGrid != 0)
             {
@@ -419,6 +395,39 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
         tileRow = std::clamp(tileRow, 0, mapSide - 1);
     }
 
+    // A quad's corners are its top-left vertex and those a row and a column on (the constructor's layout).
+    _QuadsOnPane.reset();
+
+    if (lowRow <= highRow && _Side >= 2)
+    {
+        _QuadsOnPane = MCGridQuads{.FirstRow = std::max(lowRow - 1, 0),
+                                   .FirstCol = std::max(lowCol - 1, 0),
+                                   .LastRow = std::min(highRow, _Side - 2),
+                                   .LastCol = std::min(highCol, _Side - 2)};
+    }
+
+    // Port-only: the tiles of the quads with a corner on the pane alone, in the grid's order. The grid is made for the
+    // furthest zoom on the largest screen (GrownGridSide), so most of its quads have every corner clipped, and those
+    // draw nothing (MCTerrainBlock::Draw and DrawOverlay return at once): passing over them was most of the two loops'
+    // time at the closer zooms.
+    const auto eachQuadOnPane = [this](const auto& draw)
+    {
+        if (!_QuadsOnPane.has_value())
+        {
+            return;
+        }
+
+        const int32_t quadsSide = _Side - 1;
+
+        for (int32_t quadRow = _QuadsOnPane->FirstRow; quadRow <= _QuadsOnPane->LastRow; quadRow++)
+        {
+            for (int32_t quadCol = _QuadsOnPane->FirstCol; quadCol <= _QuadsOnPane->LastCol; quadCol++)
+            {
+                draw(Blocks[static_cast<size_t>(quadRow * quadsSide + quadCol)]);
+            }
+        }
+    };
+
     ElementList().OpenGroup(50000000, false);
 
     // Port: the GPU draws the pass from the map's ground mesh in one draw; the tiles below then only reach the software
@@ -444,10 +453,7 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
         }
     }
 
-    for (MCTerrainBlock& block : Blocks)
-    {
-        block.Draw(Vertices, *cache, hazeFactor);
-    }
+    eachQuadOnPane([&](MCTerrainBlock& block) { block.Draw(Vertices, *cache, hazeFactor); });
 
     if (layer)
     {
@@ -455,11 +461,7 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
     }
 
     ElementList().OpenGroup(10000000, false);
-
-    for (MCTerrainBlock& block : Blocks)
-    {
-        block.DrawOverlay(Vertices, *cache, hazeFactor);
-    }
+    eachQuadOnPane([&](MCTerrainBlock& block) { block.DrawOverlay(Vertices, *cache, hazeFactor); });
 
     MCTerrain::ForceRedraw = false;
 }

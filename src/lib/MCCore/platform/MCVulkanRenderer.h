@@ -15,6 +15,10 @@ namespace MCHdArt
     struct Frame;
 }
 
+// smol-atlas's (src/lib/smol-atlas-77a4e174): the places in the pages pictures share (MCVulkanRenderer's SharedPage).
+struct smol_atlas_t;
+struct smol_atlas_item_t;
+
 /// <summary>
 /// The hardware renderer: draws the frame surfaces (the screen and the world view's surface, see
 /// <see cref="MCRenderer::AddFrameSurface"/>) on the GPU, through SDL GPU on Vulkan, on the presenter's device.
@@ -115,9 +119,82 @@ public:
     /// Runs the commands recorded since the last call on <paramref name="commands"/>: uploads what they read, then
     /// draws into the surfaces. The kept surfaces (the fog of war the terrain reads) are drawn first, then the
     /// underlays (<paramref name="underlays"/>), then the rest. On a surface shown over an underlay the key colour is
-    /// drawn transparent.
+    /// drawn transparent. <see cref="Seal"/>, then <see cref="Run"/>, on this thread.
     /// </summary>
     std::expected<void, std::string> Execute(SDL_GPUCommandBuffer& commands, std::span<const MCUnderlay> underlays);
+
+    /// <summary>
+    /// Port-only: a frame's commands sealed to be run (<see cref="Seal"/>): what they draw and what they read, taken
+    /// whole from the recording, with what the run reads of the renderer's state and the game's copied in, so the next
+    /// frame can be recorded while it runs on another thread (<see cref="Run"/>). Defined below the class.
+    /// </summary>
+    struct FrameRun;
+
+    /// <summary>Port-only: destroys a sealed frame.</summary>
+    struct DestroyRun
+    {
+        void operator()(FrameRun* frame) const;
+    };
+
+    using SealedFrame = std::unique_ptr<FrameRun, DestroyRun>;
+
+    /// <summary>
+    /// Port-only: ends the frame recorded since the last seal and hands its commands over, ready to run
+    /// (<see cref="Run"/>): each surface placed as <paramref name="underlays"/> show it, the new table rows, the alpha
+    /// colours and the palette queued to go up. Recording goes on into a frame of its own at once. None (null) when
+    /// nothing was recorded; an error when the tables can't go up.
+    /// </summary>
+    std::expected<SealedFrame, std::string> Seal(std::span<const MCUnderlay> underlays);
+
+    /// <summary>
+    /// Port-only: runs sealed frame <paramref name="run"/>'s commands on <paramref name="commands"/>: uploads what
+    /// they read, then draws into the surfaces. It reads only the frame and the run's own side of the renderer (the
+    /// surfaces' textures, the kept ground, the upload and draw buffers; the terrain mesh, which changes only while no
+    /// frame runs: <see cref="WaitForRun"/>), so it may run on another thread while the next frame is recorded: one
+    /// frame at a time, in the order sealed. The frame is left empty, for <see cref="Recycle"/>.
+    /// </summary>
+    std::expected<void, std::string> Run(SDL_GPUCommandBuffer& commands, FrameRun& run);
+
+    /// <summary>Port-only: takes a frame back once run, its memory kept for a frame to come (the recording's thread).</summary>
+    void Recycle(SealedFrame run);
+
+    /// <summary>
+    /// Port-only: set while frames may run on another thread (the presenter's): returns once none runs. Called first by
+    /// whatever touches the run's side from the recording's thread: a read-back, a flush, the terrain mesh's upload.
+    /// </summary>
+    std::function<void()> WaitForRun;
+
+    /// <summary>
+    /// Port-only: called every CheckpointDraws draws recorded, while set (the presenter shows a frame that ran
+    /// meanwhile as soon as it's done, rather than once the frame being recorded is presented).
+    /// </summary>
+    std::function<void()> Checkpoint;
+
+    /// <summary>
+    /// Port-only: the draws recorded between two <see cref="Checkpoint"/> calls. Few: a draw can take tens of
+    /// microseconds to record (HD art, the rain's marks), and a frame that ran waits for the next check to be shown.
+    /// </summary>
+    static constexpr uint32_t CheckpointDraws = 8;
+
+    /// <summary>The address of the frame surface <paramref name="window"/> is (or lies over), or none.</summary>
+    static MCAddressKey SurfaceKey(const MCWindow& window);
+
+    /// <summary>Port-only: a surface's sizes as the last <see cref="Seal"/> placed it.</summary>
+    struct SealedPlace
+    {
+        /// <summary>The size it is drawn at (its textures', once the frame sealed has run).</summary>
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        /// <summary>The part of its window the drawn size covers, from its corner.</summary>
+        uint32_t MappedWidth = 0;
+        uint32_t MappedHeight = 0;
+    };
+
+    /// <summary>
+    /// Port-only: where the last <see cref="Seal"/> placed the surface of <paramref name="key"/>; none when it has no
+    /// surface, or none drawn yet.
+    /// </summary>
+    std::optional<SealedPlace> SealedSize(MCAddressKey key) const;
 
     /// <summary>
     /// Runs the commands recorded so far (<see cref="Execute"/>) in a command buffer of its own and waits for the GPU to
@@ -130,28 +207,36 @@ public:
 
     /// <summary>
     /// The colour texture of <paramref name="window"/>'s surface (premultiplied RGBA, as <see cref="Execute"/> left it)
-    /// and its size in use; null when the window has no surface yet.
+    /// and its size in use; null when the window has no surface yet. Waits for a frame running (<see cref="WaitForRun"/>);
+    /// the key's (the run's side's, for the thread running frames) doesn't.
     /// </summary>
     std::shared_ptr<SDL_GPUTexture> SurfaceTexture(const MCWindow& window, uint32_t& width, uint32_t& height) const;
+    std::shared_ptr<SDL_GPUTexture> SurfaceTexture(MCAddressKey key, uint32_t& width, uint32_t& height) const;
 
     /// <summary>
     /// Port-only (HD lighting's living water): the palette indices of <paramref name="window"/>'s surface (R8, the size
-    /// of its colour texture), as <see cref="Execute"/> left them; null when the window has no surface yet.
+    /// of its colour texture), as <see cref="Execute"/> left them; null when the window has no surface yet. As
+    /// <see cref="SurfaceTexture"/>, the window's waits, the key's doesn't.
     /// </summary>
     std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(const MCWindow& window) const;
+    std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(MCAddressKey key) const;
 
     /// <summary>
     /// Port-only (HD weather's drops catching the light): the light the raindrops on <paramref name="window"/>'s
     /// surface caught (premultiplied RGBA, the size of its colour texture: Surface::Glints), as <see cref="Execute"/>
-    /// left it; null when the window has no surface yet.
+    /// left it; a texture of one transparent texel when its last frame's draws caught none; null when the window has
+    /// no surface yet. As <see cref="SurfaceTexture"/>, the window's waits, the key's doesn't.
     /// </summary>
     std::shared_ptr<SDL_GPUTexture> SurfaceGlintTexture(const MCWindow& window) const;
+    std::shared_ptr<SDL_GPUTexture> SurfaceGlintTexture(MCAddressKey key) const;
 
     /// <summary>
     /// The drawn pixels per window pixel of <paramref name="window"/>'s surface across and down (above 1 for a screen
-    /// drawn at the size it's shown, <see cref="SetScreenScale"/>); 1, 1 when it has none.
+    /// drawn at the size it's shown, <see cref="SetScreenScale"/>); 1, 1 when it has none. As
+    /// <see cref="SurfaceTexture"/>, the window's waits, the key's doesn't.
     /// </summary>
     std::pair<float, float> SurfaceScale(const MCWindow& window) const;
+    std::pair<float, float> SurfaceScale(MCAddressKey key) const;
 
     /// <summary>
     /// <paramref name="screen"/> in palette indices with its layout, for screenshots and tests: flushes, reads the
@@ -213,6 +298,32 @@ public:
     /// <summary>The uploads of the last frame <see cref="Execute"/> ran.</summary>
     const UploadTally& LastFrameUploads() const { return _LastFrameUploads; }
 
+    /// <summary>
+    /// Port-only: the draw calls of the last frame <see cref="Execute"/> ran (each a batch of draws), once it has run
+    /// (<see cref="WaitForRun"/>).
+    /// </summary>
+    int64_t LastFrameBatches() const
+    {
+        WaitForRunning();
+        return _LastFrameBatches;
+    }
+
+    /// <summary>
+    /// Port-only (HD weather): the render passes of the last frame <see cref="Execute"/> ran that drew into a surface's
+    /// glints (Surface::Glints), those on a surface whose draws caught light.
+    /// </summary>
+    int64_t LastFrameGlintPasses() const
+    {
+        WaitForRunning();
+        return _LastFrameGlintPasses;
+    }
+
+    /// <summary>
+    /// Port-only (HD weather), for the tests: every surface drawn with its glints, as though its draws caught light in
+    /// every frame (the frames the same either way).
+    /// </summary>
+    static inline bool GlintsEveryFrame = false;
+
     /// <summary>The terrain layers drawn from the mesh so far.</summary>
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
@@ -230,8 +341,11 @@ public:
     /// </summary>
     static constexpr size_t KeptUploadBytes = 16 * 1024 * 1024;
 
-    /// <summary>The bytes kept for the next frames' uploads (the staging's and the transfer buffer's).</summary>
-    size_t UploadBytesKept() const { return _Staging.capacity() + _TransferSize; }
+    /// <summary>
+    /// The bytes kept for the next frames' uploads (the staging's, the frame being recorded's and the one run last's,
+    /// and the transfer buffer's), once the frame sealed last has run.
+    /// </summary>
+    size_t UploadBytesKept() const;
 
     /// <summary>The shapes drawn from the HD art pack so far (<see cref="MCHdArt"/>).</summary>
     int64_t HdDrawn() const { return _HdDrawn; }
@@ -310,6 +424,77 @@ private:
         uint32_t Height = 0;
     };
 
+    /// <summary>A draw's fields (shaders/instance.vshader's <c>Draw</c>).</summary>
+    using DrawFields = std::array<int32_t, 24>;
+
+    /// <summary>
+    /// Port-only: where a picture lies in the textures its draws read: its pixels' corner (an HD art frame's indices'),
+    /// its HD colours' corner, and its size, 0 x 0 for a picture with a texture of its own (whose size it is). Its draws
+    /// carry it (shaders/instance.vshader's <c>Draw::place</c>), so pictures in one page share their bindings.
+    /// </summary>
+    struct PicturePlace
+    {
+        uint16_t X = 0;
+        uint16_t Y = 0;
+        uint16_t HdX = 0;
+        uint16_t HdY = 0;
+        uint16_t Width = 0;
+        uint16_t Height = 0;
+
+        bool operator==(const PicturePlace&) const = default;
+    };
+
+    /// <summary>Port-only: destroys a shared page's places.</summary>
+    struct DestroyPlaces
+    {
+        void operator()(smol_atlas_t* places) const;
+    };
+
+    /// <summary>
+    /// Port-only: a page pictures share (HD art frames, or sharp glyphs), so the draws of any of them share their
+    /// bindings (<see cref="SameBindings"/>): its texture (the HD frames' indices, or the glyphs' pixels) and the HD
+    /// frames' colours, each packed by smol-atlas (the colours in whole BC7 blocks when they're BC7), and how many
+    /// pictures it holds. An emptied page lets its textures go, its slot left for the next page.
+    /// </summary>
+    struct SharedPage
+    {
+        Texture HdColors;
+        Texture Texture;
+        std::unique_ptr<smol_atlas_t, DestroyPlaces> Places;
+        std::unique_ptr<smol_atlas_t, DestroyPlaces> HdPlaces;
+        uint32_t Pictures = 0;
+    };
+
+    /// <summary>Port-only: the pages a picture may share (none: a picture with textures of its own).</summary>
+    enum class PageKind : uint8_t
+    {
+        None,
+        Hd,
+        Sharp,
+    };
+
+    /// <summary>
+    /// Port-only: a kind of shared page: its texture's format and side, and its HD colours' (format
+    /// SDL_GPU_TEXTUREFORMAT_INVALID: none), placed in blocks of HdBlock pixels a side.
+    /// </summary>
+    struct SharedLayout
+    {
+        SDL_GPUTextureFormat Format = SDL_GPU_TEXTUREFORMAT_INVALID;
+        uint32_t Side = 0;
+        SDL_GPUTextureFormat HdFormat = SDL_GPU_TEXTUREFORMAT_INVALID;
+        uint32_t HdSide = 0;
+        uint32_t HdBlock = 1;
+    };
+
+    /// <summary>Port-only: a shared page's place let go, freed once the frame that let it go has run.</summary>
+    struct RetiredPlace
+    {
+        PageKind Kind = PageKind::None;
+        uint32_t Page = 0;
+        smol_atlas_item_t* Item = nullptr;
+        smol_atlas_item_t* HdItem = nullptr;
+    };
+
     /// <summary>A frame surface on the GPU.</summary>
     struct Surface
     {
@@ -328,9 +513,18 @@ private:
         /// <summary>
         /// Port-only (HD weather): a third colour target, the light the raindrops caught (MCParticleCommand::Glint,
         /// premultiplied RGBA), which the composite adds over the lit world. Every draw covers it as it covers the
-        /// colours (an opaque one clears it), so a unit in front of a drop hides its light.
+        /// colours (an opaque one clears it), so a unit in front of a drop hides its light. Only a frame whose draws
+        /// on the surface catch light (CatchesLight) draws into it, the first made then; the others' passes have the
+        /// colours and indices alone, and the composite reads no light caught.
         /// </summary>
         Texture Glints;
+        /// <summary>
+        /// Port-only (HD weather): whether a draw recorded on the surface this frame caught light (a glint), and
+        /// whether Glints holds what the frames drawn so far left in it (not since a frame drawn without it, nor
+        /// since it was made).
+        /// </summary>
+        bool CatchesLight = false;
+        bool GlintsHeld = false;
         /// <summary>The window rectangles blended draws covered in the frame being recorded, and in the last one run.</summary>
         std::vector<MCRect> Blended;
         std::vector<MCRect> LastBlended;
@@ -413,7 +607,14 @@ private:
         MCRect Reads{0, 0, -1, -1};
         /// <summary>The part of the target drawn.</summary>
         MCRect Writes{0, 0, -1, -1};
+        /// <summary>Port-only: the channels of the targets its pipeline writes (WrittenChannels).</summary>
+        uint32_t Channels = 0;
+        /// <summary>
+        /// Its draws: from First, Count of them, once laid out (LayOutDraws). While recording, First is its first draw
+        /// and Last its latest, each draw linked to its next by _DrawNext.
+        /// </summary>
         uint32_t First = 0;
+        uint32_t Last = 0;
         uint32_t Count = 0;
         /// <summary>A terrain layer (an index into the frame's terrain draws), or -1.</summary>
         int32_t TerrainDraw = -1;
@@ -427,6 +628,34 @@ private:
         uint32_t HazeRows[3] = {};
         /// <summary>The mesh's cells drawn (those of the grid).</summary>
         uint32_t CellCount = 0;
+        /// <summary>
+        /// Port-only (KeepGround), taken as the frame is sealed: the fog's flags (1: the home side sees the vertex;
+        /// FogColumns a row; none without the fog's pixels), and each haze table row's bytes as the table texture holds
+        /// them (none for a row past it; GroundLooks, PlanGround).
+        /// </summary>
+        std::vector<uint8_t> Seen;
+        int32_t FogColumns = 0;
+        std::array<std::optional<std::array<uint8_t, 256>>, std::extent_v<decltype(HazeRows)>> HazeTables;
+    };
+
+    /// <summary>
+    /// Port-only: a surface as a frame was sealed (<see cref="Seal"/>): its window's address (none: let go, its textures
+    /// go once the frame has run), the sizes its commands saw and it is drawn at, whether its draws catch light, where
+    /// it is drawn among the surfaces (0 kept, 1 shown as an underlay, 2 the rest), and whether its key is drawn
+    /// transparent (it lies over an underlay).
+    /// </summary>
+    struct SealedSurface
+    {
+        MCAddressKey Key;
+        uint32_t RecordedWidth = 0;
+        uint32_t RecordedHeight = 0;
+        uint32_t MappedWidth = 0;
+        uint32_t MappedHeight = 0;
+        uint32_t DrawnWidth = 0;
+        uint32_t DrawnHeight = 0;
+        bool CatchesLight = false;
+        int32_t Rank = 2;
+        bool KeyClear = false;
     };
 
     /// <summary>
@@ -500,8 +729,6 @@ private:
     {
         std::array<Texture, 2> Colors;
         std::array<Texture, 2> Indices;
-        /// <summary>The glints the terrain's draws write while it is drawn (its pipelines' third target), never read.</summary>
-        Texture Glints;
         /// <summary>The pair holding the ground, and whether one does.</summary>
         size_t Current = 0;
         bool Held = false;
@@ -559,6 +786,20 @@ private:
     bool Add(uint16_t surface, SourceKind source, uint32_t sourceIndex, const Quad& rect,
              const std::optional<Quad>& sourceAt, uint32_t op, uint32_t color, uint32_t before, uint32_t after,
              bool join = false);
+    /// <summary>
+    /// Port-only: the channels of a surface's targets that a record's pipeline writes (DrawPipelines::For's, or the
+    /// shadow's), four bits a target in the targets' order, red first.
+    /// </summary>
+    static uint32_t WrittenChannels(bool blend, bool indexOnly, bool shadow, bool marks);
+    /// <summary>
+    /// Port-only: whether a draw on <paramref name="surface"/> reading <paramref name="source"/> and writing
+    /// <paramref name="channels"/> over <paramref name="written"/> leaves every pixel as it was when drawn before
+    /// <paramref name="later"/>, a record added before it, rather than after.
+    /// </summary>
+    static bool DrawsApart(const Record& later, uint16_t surface, SourceKind source, uint32_t sourceIndex,
+                           uint32_t channels, const MCRect& written);
+    /// <summary>Port-only: puts <paramref name="run"/>'s draws in their records' order, each record's together (Record::First).</summary>
+    void LayOutDraws(FrameRun& run);
     /// <summary>Adds particle <paramref name="command"/>'s draw to <paramref name="surface"/> (Particle).</summary>
     void AddParticle(uint16_t surface, const MCParticleCommand& command);
     /// <summary>
@@ -568,10 +809,11 @@ private:
     /// </summary>
     static DrawVariant VariantOf(uint32_t op);
     /// <summary>
-    /// Port-only: the colour <paramref name="record"/>'s first draw wipes every texel of <paramref name="surface"/>
-    /// with (an opaque fill of all of its window), if it does, so a pass starting with it can start cleared to that.
+    /// Port-only: the colour <paramref name="record"/>'s first draw (of <paramref name="run"/>'s) wipes every texel
+    /// of <paramref name="surface"/> with (an opaque fill of all of its window), if it does, so a pass starting with it
+    /// can start cleared to that.
     /// </summary>
-    std::optional<uint8_t> WipeColor(const Record& record, const Surface& surface) const;
+    static std::optional<uint8_t> WipeColor(const FrameRun& run, const Record& record, const Surface& surface);
     /// <summary>The part of <paramref name="rect"/> (window pixels) on <paramref name="surface"/>, as Add draws it.</summary>
     static MCRect Clipped(const Surface& surface, const Quad& rect);
     /// <summary>
@@ -844,10 +1086,10 @@ private:
     /// </summary>
     std::optional<uint32_t> MoviePictureOf(const MCHdArt::Frame& frame);
     /// <summary>
-    /// Port-only (HD movies): makes the colours of each movie picture given a frame this frame from its planes
-    /// (shaders/movie.pshader), a render pass each, after the frame's uploads and before its draws.
+    /// Port-only (HD movies): makes the colours of each movie picture given a frame in <paramref name="run"/> from
+    /// its planes (shaders/movie.pshader), a render pass each, after the frame's uploads and before its draws.
     /// </summary>
-    void ConvertMovies(SDL_GPUCommandBuffer& commands);
+    void ConvertMovies(SDL_GPUCommandBuffer& commands, FrameRun& run);
     /// <summary>
     /// Port-only: how HD art frame <paramref name="frame"/> of shape table <paramref name="table"/> draws its edges: its
     /// own when it holds its blended pixels (an effect's) or its table keeps them (MCHdArt::KeepsFrameEdges), else
@@ -976,9 +1218,14 @@ private:
                                           const std::function<void(std::span<uint8_t>, const Extent&)>& decode);
     /// <summary>The frame's picture index of <paramref name="window"/>'s pixels (uploaded when new).</summary>
     std::optional<uint32_t> PictureFor(const MCWindow& window);
-    /// <summary>Queues the bytes of an upload into a rectangle of a texture: where to write them.</summary>
+    /// <summary>
+    /// Queues the bytes of an upload into a rectangle of a texture (in the frame being recorded, or
+    /// <paramref name="run"/>): where to write them.
+    /// </summary>
     std::span<uint8_t> QueueUpload(std::shared_ptr<SDL_GPUTexture> texture, uint32_t x, uint32_t y, uint32_t width,
                                    uint32_t height, uint32_t bytesPerPixel);
+    static std::span<uint8_t> QueueUpload(FrameRun& run, std::shared_ptr<SDL_GPUTexture> texture, uint32_t x,
+                                          uint32_t y, uint32_t width, uint32_t height, uint32_t bytesPerPixel);
     /// <summary>Notes a command the GPU can't draw yet.</summary>
     void NotSupported(std::string_view command);
 
@@ -989,8 +1236,12 @@ private:
     static void TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface, const MCRect& rect);
     /// <summary>Sets each surface's drawn size for this frame (<paramref name="underlays"/> are drawn as shown).</summary>
     void PlaceSurfaces(std::span<const MCUnderlay> underlays);
-    /// <summary>(Re)makes a surface's textures at its drawn size and clears them, as a window's new pixels start.</summary>
-    std::expected<void, std::string> MakeSurfaceTextures(SDL_GPUCommandBuffer& commands, Surface& surface);
+    /// <summary>
+    /// (Re)makes a surface's textures at its drawn size and clears them, as a window's new pixels start (to
+    /// <paramref name="blank"/>, palette index 0's colour, and index 0).
+    /// </summary>
+    std::expected<void, std::string> MakeSurfaceTextures(SDL_GPUCommandBuffer& commands, Surface& surface,
+                                                         SDL_Color blank);
     /// <summary>
     /// Puts <paramref name="mesh"/> on the GPU (its tiles in the terrain atlas, its cells and images; its cells alone
     /// when the tiles up are its own), through a <see cref="ChunkedUpload"/>.
@@ -1015,32 +1266,44 @@ private:
                                                   uint32_t x, uint32_t y);
     /// <summary>Releases the terrain mesh's textures and buffers.</summary>
     void ReleaseTerrainMesh();
-    /// <summary>Execution: draws a terrain layer in the render pass under way.</summary>
-    void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
-                     const TerrainDraw& draw, std::span<const std::byte> frameUniforms);
+    /// <summary>The pipelines drawing into a surface's targets, with its glints or without (defined below).</summary>
+    struct SurfacePipelines;
     /// <summary>
-    /// Port-only (KeepGround): what the kept ground depends on for <paramref name="draw"/> on
-    /// <paramref name="surface"/> but the camera, the fog and the colour cycle's step, as bytes:
+    /// Port-only (HD weather): the pipelines for a pass on <paramref name="surface"/> this frame: with its glints when
+    /// its draws catch light.
+    /// </summary>
+    const SurfacePipelines& PipelinesFor(const Surface& surface) const;
+    /// <summary>
+    /// Execution: draws a terrain layer of <paramref name="run"/> in the render pass under way, through
+    /// <paramref name="pipelines"/>.
+    /// </summary>
+    void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
+                     const FrameRun& run, const Surface& surface, const TerrainDraw& draw,
+                     std::span<const std::byte> frameUniforms);
+    /// <summary>
+    /// Port-only (KeepGround): what the kept ground depends on for <paramref name="draw"/> of <paramref name="run"/>
+    /// on <paramref name="surface"/> but the camera, the fog and the colour cycle's step, as bytes:
     /// <paramref name="frameUniforms"/> are the terrain's (the step left out).
     /// </summary>
-    std::vector<uint8_t> GroundLooks(const Surface& surface, const TerrainDraw& draw,
+    std::vector<uint8_t> GroundLooks(const FrameRun& run, const Surface& surface, const TerrainDraw& draw,
                                      std::span<const std::byte> frameUniforms) const;
     /// <summary>
     /// Port-only (KeepGround): how to bring the kept ground up to date for <paramref name="draw"/> on surface
     /// <paramref name="surfaceIndex"/>, drawn with <paramref name="looks"/>, the fog's flags <paramref name="seen"/>
-    /// (<paramref name="fogColumns"/> a row) and colour cycle step <paramref name="cycleStep"/>: drawn whole, or shifted
-    /// and the parts that changed drawn again.
+    /// (<paramref name="fogColumns"/> a row) and colour cycle <paramref name="cycle"/> (the frame's, as sealed): drawn
+    /// whole, or shifted and the parts that changed drawn again.
     /// </summary>
     GroundPlan PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw, std::span<const uint8_t> looks,
-                          std::span<const uint8_t> seen, int32_t fogColumns, int32_t cycleStep) const;
+                          std::span<const uint8_t> seen, int32_t fogColumns, const MCColorCycle& cycle) const;
     /// <summary>
     /// Port-only (KeepGround): draws kept pair <paramref name="from"/> (none for Clear) as <paramref name="mode"/>
     /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), at the drawn pixels showing
-    /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size.
+    /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size, through
+    /// <paramref name="pipelines"/>.
     /// </summary>
-    void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
-                        const MCRect& clip, KeptGroundMode mode, std::optional<size_t> from = std::nullopt,
-                        std::array<int32_t, 2> shift = {});
+    void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
+                        const Surface& surface, const MCRect& clip, KeptGroundMode mode,
+                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {});
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
         std::span<const std::reference_wrapper<const Surface>> surfaces);
@@ -1085,35 +1348,50 @@ private:
         SDL_GPUGraphicsPipeline* For(const Record& record) const;
     };
 
-    /// <summary>The draws' pipelines, a set for each draw variant (DrawVariant's order).</summary>
-    std::array<DrawPipelines, DrawVariants> _Pipelines;
-    /// <summary>Port-only: shadows (HD lighting), which take the colours' alpha down by theirs and leave the rest.</summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _ShadowPipeline;
-    /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the terrain's fragment shader).</summary>
+    /// <summary>
+    /// The pipelines that draw into a surface's targets. Port-only (HD weather): a set for passes with its glints and
+    /// one for passes with its colours and indices alone (Surface::CatchesLight).
+    /// </summary>
+    struct SurfacePipelines
+    {
+        /// <summary>The draws' pipelines, a set for each draw variant (DrawVariant's order).</summary>
+        std::array<DrawPipelines, DrawVariants> Draws;
+        /// <summary>Port-only: shadows (HD lighting), which take the colours' alpha down by theirs and leave the rest.</summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Shadow;
+        /// <summary>
+        /// The terrain layer's (opaque, with the terrain's fragment shader) and, port-only, its seam pass's, blended
+        /// (shaders/terrain.vshader).
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Terrain;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> TerrainSeam;
+        /// <summary>
+        /// Port-only: the kept ground's (shaders/ground.pshader): opaque (Copy, Clear), blended (Over) and the indices
+        /// alone (Indices).
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Ground;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> GroundOver;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> GroundIndex;
+        /// <summary>Whether every pipeline was made.</summary>
+        bool Made() const;
+    };
+
+    /// <summary>The surfaces' pipelines: for passes without their glints, then for those with them.</summary>
+    std::array<SurfacePipelines, 2> _SurfacePipelines;
+    /// <summary>The terrain layer's vertex shader.</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;
-    /// <summary>Port-only: the terrain's seam pass, blended (shaders/terrain.vshader).</summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainSeamPipeline;
     TerrainMeshState _TerrainMesh;
     /// <summary>Port-only: the terrain meshes uploaded (TerrainMeshState::Upload).</summary>
     uint64_t _TerrainUploads = 0;
-    /// <summary>
-    /// Port-only: the kept ground, and the shaders and pipelines that draw it (shaders/ground.pshader): opaque (Copy,
-    /// Clear), blended (Over) and the indices alone (Indices).
-    /// </summary>
+    /// <summary>Port-only: the kept ground, and the shaders that draw it (shaders/ground.pshader).</summary>
     KeptGround _KeptGround;
     MCGpuHandle<SDL_GPUShader> _QuadShader;
     MCGpuHandle<SDL_GPUShader> _GroundShader;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundPipeline;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundOverPipeline;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundIndexPipeline;
     /// <summary>
     /// Port-only (HD movies): the movie conversion's shader and pipeline (quad.vshader and shaders/movie.pshader, onto
     /// one RGBA8 target, opaque).
     /// </summary>
     MCGpuHandle<SDL_GPUShader> _MovieShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _MoviePipeline;
-    std::vector<TerrainDraw> _TerrainDraws;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
@@ -1123,13 +1401,38 @@ private:
     /// <summary>A 1x1 texture bound where a draw has no source or no world.</summary>
     Texture _Blank;
 
+    /// <summary>
+    /// The surfaces as the frames being recorded see them (the recording's side: their windows, the sizes their
+    /// commands saw, the blended draws'), and port-only, as the frames run see them (the run's side, <see cref="Run"/>:
+    /// their textures, the copies taken, the sizes the frame run was sealed with), in the same order: a surface keeps its
+    /// place for good.
+    /// </summary>
     std::vector<Surface> _Surfaces;
+    std::vector<Surface> _RunSurfaces;
 
     // The frame being recorded.
     bool _Recording = false;
     uint64_t _Frame = 0;
-    std::vector<Record> _Records;
-    std::vector<std::array<int32_t, 20>> _Draws;
+    /// <summary>
+    /// Port-only: the frame being recorded (its records, draws and uploads; never null), and a frame run and taken back,
+    /// kept for the next seal (<see cref="Recycle"/>), so their memory is made once.
+    /// </summary>
+    SealedFrame _Run;
+    SealedFrame _SpareRun;
+    /// <summary>Port-only: draws recorded since the last <see cref="Checkpoint"/>.</summary>
+    uint32_t _DrawsSinceCheckpoint = 0;
+    /// <summary>
+    /// Port-only (the run's side): the draws as laid out (LayOutDraws swaps them with a frame's, so neither is made
+    /// again).
+    /// </summary>
+    std::vector<DrawFields> _LaidDraws;
+    /// <summary>Port-only: waits for a frame running, when frames may run on another thread (<see cref="WaitForRun"/>).</summary>
+    void WaitForRunning() const;
+    /// <summary>
+    /// Port-only: empties <paramref name="run"/> for a frame to come, its memory kept (a burst's staging let go,
+    /// KeptUploadBytes), what it held let go.
+    /// </summary>
+    static void EmptyRun(FrameRun& run);
     /// <summary>
     /// The table rows (256 bytes each, row 0 the identity) and the texture holding them. A row stays while its table
     /// does; rows dropped (the table changed or went) are free again from the next frame on (<c>_ReleasedRows</c>,
@@ -1163,16 +1466,14 @@ private:
     int32_t _ScreenRight = 0;
     int32_t _ScreenBottom = 0;
     MCColorCycle _Cycle;
-    /// <summary>The pixels <see cref="Write"/> was given this frame: a row each (StripWidth wide), and the texture.</summary>
-    std::vector<uint8_t> _StripPixels;
-    uint32_t _StripRows = 0;
+    /// <summary>The texture the pixels <see cref="Write"/> was given go up into (the run's side; FrameRun::StripPixels).</summary>
     Texture _Strip;
 
     /// <summary>
-    /// Uploads waiting for the next <see cref="Execute"/>, run in order: from <c>Buffer</c> at <c>Offset</c> (the
-    /// frame's staging when null; rows <c>RowPixels</c> apart, <c>Width</c> when 0), or with <c>From</c> set, a copy of
-    /// the same rectangle from that texture. A null <c>Texture</c> was dropped. An upload holds what it reads and
-    /// writes until the frame has run.
+    /// An upload waiting for its frame to run (FrameRun::Uploads, run in order): from <c>Buffer</c> at <c>Offset</c>
+    /// (the frame's staging when null; rows <c>RowPixels</c> apart, <c>Width</c> when 0), or with <c>From</c> set, a
+    /// copy of the same rectangle from that texture. A null <c>Texture</c> was dropped. An upload holds what it reads
+    /// and writes until the frame has run.
     /// </summary>
     struct Upload
     {
@@ -1188,12 +1489,10 @@ private:
         std::shared_ptr<SDL_GPUTexture> From;
     };
 
-    std::vector<Upload> _Uploads;
     /// <summary>
-    /// The uploads' bytes, and the transfer buffer they go up through, kept for the next frames up to
-    /// <see cref="KeptUploadBytes"/> (a bigger frame's go once it has run).
+    /// The transfer buffer the frames' uploads (their staging, FrameRun::Staging) go up through, kept for the next
+    /// frames up to <see cref="KeptUploadBytes"/> (a bigger frame's go once it has run); the run's side.
     /// </summary>
-    std::vector<uint8_t> _Staging;
     std::shared_ptr<SDL_GPUTransferBuffer> _Transfer;
     uint32_t _TransferSize = 0;
     MCGpuHandle<SDL_GPUBuffer> _DrawBuffer;
@@ -1228,6 +1527,18 @@ private:
         size_t Bytes = 0;
         Texture Texture;
         uint64_t LastFrame = 0;
+        /// <summary>Port-only: its place in _FramePictures when last used (UsePicture keeps it for the frame).</summary>
+        uint32_t FrameIndex = UINT32_MAX;
+        /// <summary>
+        /// Port-only: the pages it shares (none: Texture and HdColors are its own), its page there, its place in the
+        /// page's textures (which Texture and HdColors are then) and its places' items (smol-atlas's, freed by the
+        /// page's places: <see cref="FreeShared"/>).
+        /// </summary>
+        PageKind Shares = PageKind::None;
+        uint32_t Page = 0;
+        PicturePlace Place;
+        smol_atlas_item_t* Item = nullptr;
+        smol_atlas_item_t* HdItem = nullptr;
     };
 
     std::unordered_map<uint64_t, Picture> _Pictures;
@@ -1266,9 +1577,22 @@ private:
     /// whose colours this frame's draws still wait for (<see cref="ConvertMovies"/> makes them, then drops them).
     /// </summary>
     std::unordered_map<uint64_t, MoviePicture> _HdMovies;
-    std::vector<MoviePicture> _RetiredMovies;
+
+    /// <summary>
+    /// Port-only (HD movies): a movie picture's colours made from its planes as a frame runs (<see cref="ConvertMovies"/>),
+    /// taken as the frame is sealed: the textures, and how the planes make colours.
+    /// </summary>
+    struct MovieConversion
+    {
+        Texture Colors;
+        Texture Luma;
+        Texture Blue;
+        Texture Red;
+        MCYuvFactors Factors;
+    };
+
     /// <summary>Port-only (HD movies): <see cref="ConvertMovies"/> for one picture.</summary>
-    void ConvertMovie(SDL_GPUCommandBuffer& commands, MoviePicture& movie);
+    void ConvertMovie(SDL_GPUCommandBuffer& commands, const MovieConversion& movie);
     /// <summary>
     /// Port-only (HD movies): lets movie <paramref name="movie"/>'s picture go, kept till the frame runs when its draws
     /// wait for its colours.
@@ -1344,7 +1668,7 @@ private:
 
     /// <summary>
     /// Port-only: a keyed copy of an HD picture onto a sharp screen since the draws last ran (FillHoles): its surface,
-    /// its draw's place in _Draws, the picture, where it was copied (window pixels) from which of its pixels, the key,
+    /// its draw's place in the run's draws (_Run), the picture, where it was copied (window pixels) from which of its pixels, the key,
     /// and how many filled holes its draw carries.
     /// </summary>
     struct KeyedPicture
@@ -1359,10 +1683,46 @@ private:
     };
 
     std::vector<KeyedPicture> _KeyedPictures;
-    /// <summary>The frame's pictures in use (their textures).</summary>
-    std::vector<std::shared_ptr<SDL_GPUTexture>> _FramePictures;
-    /// <summary>The HD colours of the frame's pictures that are HD art frames, by their place in _FramePictures.</summary>
-    std::unordered_map<uint32_t, std::shared_ptr<SDL_GPUTexture>> _FrameHdColors;
+    /// <summary>
+    /// A picture of the frame: the texture its draws read, an HD art frame's colours (none: not one), and its place in
+    /// them (port-only: a shared page's).
+    /// </summary>
+    struct FramePicture
+    {
+        std::shared_ptr<SDL_GPUTexture> Texture;
+        std::shared_ptr<SDL_GPUTexture> HdColors;
+        PicturePlace Place;
+    };
+
+    /// <summary>
+    /// Port-only: the pages the HD art frames share and the sharp glyphs', and the places let go while the frames that
+    /// read them may still run (freed as the next frame's recording starts).
+    /// </summary>
+    std::vector<SharedPage> _HdPages;
+    std::vector<SharedPage> _SharpPages;
+    std::vector<RetiredPlace> _RetiredPlaces;
+    /// <summary>Port-only: the shared pages of kind <paramref name="kind"/>.</summary>
+    std::vector<SharedPage>& PagesOf(PageKind kind);
+    /// <summary>
+    /// Port-only: puts <paramref name="picture"/> in a page of kind <paramref name="kind"/> (<paramref name="layout"/>'s;
+    /// one made when none has room): <paramref name="width"/> x <paramref name="height"/> of its texture's pixels, and an
+    /// HD art frame's colours <paramref name="hdWidth"/> x <paramref name="hdHeight"/> (0 x 0: none); its page's textures
+    /// become its own. False, leaving it as it was, for a picture over half a page or when no page could be made.
+    /// </summary>
+    bool PlaceShared(PageKind kind, const SharedLayout& layout, Picture& picture, uint32_t width, uint32_t height,
+                     uint32_t hdWidth, uint32_t hdHeight);
+    /// <summary>
+    /// Port-only: lets <paramref name="picture"/>'s place in its shared page go (freed as the next frame's recording
+    /// starts, <see cref="FreeRetiredPlaces"/>).
+    /// </summary>
+    void FreeShared(Picture& picture);
+    /// <summary>Port-only: frees the places let go (<see cref="FreeShared"/>), releasing the pages they empty.</summary>
+    void FreeRetiredPlaces();
+    /// <summary>
+    /// Whether draws of <paramref name="run"/> from source <paramref name="a"/> and source <paramref name="b"/> of kind
+    /// <paramref name="source"/> read the same textures (port-only: pictures in one shared page do).
+    /// </summary>
+    static bool SameBindings(const FrameRun& run, SourceKind source, uint32_t a, uint32_t b);
     /// <summary>Whether the GPU samples BC7 (unknown: not asked yet); else HD colours are decoded to RGBA8.</summary>
     std::optional<bool> _Bc7;
     /// <summary>The HD art pack whose colours the palette's second row holds (MCHdArt::PackVersion; 0: none).</summary>
@@ -1382,13 +1742,10 @@ private:
         /// <summary>Mirror mode: the pixels last uploaded, to catch a change nobody announced.</summary>
         std::vector<uint8_t> Uploaded;
         /// <summary>
-        /// A stream texture's upload memory (its size), and the frame and <c>_Uploads</c> entry of the stream upload
-        /// queued last.
+        /// A stream texture's memory its locked rows are written into (rows the texture's width apart), copied into the
+        /// frame's staging as it's unlocked: never memory a frame running on another thread reads.
         /// </summary>
-        std::shared_ptr<SDL_GPUTransferBuffer> Stream;
-        uint32_t StreamSize = 0;
-        uint64_t StreamFrame = ~0ull;
-        size_t StreamUpload = 0;
+        std::vector<uint8_t> Stream;
         /// <summary>
         /// Port-only: the HD art pack's copy of the pixels as last uploaded (<see cref="MCHdArt::FindPicture"/>), and
         /// whether it was looked for since, in the pack then set (<see cref="MCHdArt::PackVersion"/>).
@@ -1417,28 +1774,26 @@ private:
     /// it taken now (in upload order), so uploads queued from here on reach only the draws after them.
     /// </summary>
     std::expected<void, std::string> KeepFramePicture(MCTexture& texture, TextureState& state);
-    /// <summary>Maps <paramref name="texture"/>'s stream upload memory for its <c>Locked</c> rows.</summary>
-    std::expected<std::span<uint8_t>, std::string> MapStream(MCTexture& texture, TextureState& state);
-
     /// <summary>Drops what is kept for a texture (its copy goes once the frame recorded has run).</summary>
     void OnTextureReleased(MCTexture& texture) override;
     void OnShowHdPicture(MCTexture& texture, std::shared_ptr<const MCHdArt::Frame> frame, int32_t x,
                          int32_t y) override;
     bool OnShowsHdPictures() const override { return static_cast<bool>(_ScaledScreen); }
-    /// <summary>Maps the texture's own upload memory, cycled so a frame in flight is never waited on.</summary>
+    /// <summary>The texture's own memory for its locked rows (TextureState::Stream).</summary>
     std::span<uint8_t> OnLockStream(MCTexture& texture) override;
-    /// <summary>Queues the locked rectangle's upload from that memory (filled from <paramref name="written"/> when
-    /// not empty).</summary>
+    /// <summary>Queues the locked rectangle's upload from that memory (from <paramref name="written"/> when not
+    /// empty).</summary>
     void OnUnlockStream(MCTexture& texture, std::span<const uint8_t> written) override;
-
-    /// <summary>Textures and transfer buffers to release after the next execution (the frame recorded may still read
-    /// them).</summary>
-    std::vector<Texture> _Retired;
-    std::vector<std::shared_ptr<SDL_GPUTransferBuffer>> _RetiredTransfers;
 
     std::map<std::string, int64_t> _Unsupported;
     /// <summary>The uploads of the frame being recorded, and of the last one run.</summary>
     UploadTally _FrameUploads;
+    /// <summary>Port-only: the frame's draw calls so far, and the last frame's (LastFrameBatches).</summary>
+    int64_t _FrameBatches = 0;
+    int64_t _LastFrameBatches = 0;
+    /// <summary>Port-only (HD weather): the frame's passes with the glints so far, and the last frame's.</summary>
+    int64_t _FrameGlintPasses = 0;
+    int64_t _LastFrameGlintPasses = 0;
     UploadTally _LastFrameUploads;
     /// <summary>The span walks' state (as the software renderer keeps its own).</summary>
     MCSpanState _Spans;
@@ -1451,4 +1806,57 @@ private:
     std::vector<std::array<uint8_t, 256>> _MirrorHaze;
     /// <summary>The surfaces dumped (-gpudump).</summary>
     std::set<MCAddressKey> _Dumped;
+};
+
+/// <summary>
+/// Port-only: a frame's commands as recorded, and once sealed (<see cref="MCVulkanRenderer::Seal"/>), what their run
+/// reads of the renderer's state and the game's, copied in: nothing the recording of the frames after it changes.
+/// </summary>
+struct MCVulkanRenderer::FrameRun
+{
+    // As the frame is recorded.
+
+    std::vector<Record> Records;
+    std::vector<DrawFields> Draws;
+    /// <summary>
+    /// Port-only: each draw's next in its record (NoDraw for its record's latest), and whether a draw went into a
+    /// record before the latest, so the draws need laying out in their records' order (LayOutDraws).
+    /// </summary>
+    std::vector<uint32_t> DrawNext;
+    bool DrawsMoved = false;
+    /// <summary>The uploads, run in order before the draws, and their bytes (the staging; Upload::Offset).</summary>
+    std::vector<Upload> Uploads;
+    std::vector<uint8_t> Staging;
+    std::vector<TerrainDraw> TerrainDraws;
+    /// <summary>The frame's pictures in use (SourceKind::Picture's indices).</summary>
+    std::vector<FramePicture> Pictures;
+    /// <summary>The pixels <see cref="MCVulkanRenderer::Write"/> was given: a row each (StripWidth wide).</summary>
+    std::vector<uint8_t> StripPixels;
+    uint32_t StripRows = 0;
+    /// <summary>
+    /// Textures, transfer buffers and movie pictures let go that the frame's commands may still read: held until it
+    /// has run (SDL frees them once the GPU is done with them).
+    /// </summary>
+    std::vector<Texture> Retired;
+    std::vector<std::shared_ptr<SDL_GPUTransferBuffer>> RetiredTransfers;
+    std::vector<MoviePicture> RetiredMovies;
+
+    // Taken as it is sealed.
+
+    /// <summary>Every surface, in the renderer's order (a surface keeps its place for good).</summary>
+    std::vector<SealedSurface> Surfaces;
+    /// <summary>The atlas's pages (SourceKind::Atlas's indices), and the textures every draw reads.</summary>
+    std::vector<std::shared_ptr<SDL_GPUTexture>> Pages;
+    std::shared_ptr<SDL_GPUTexture> Tables;
+    std::shared_ptr<SDL_GPUTexture> Alpha;
+    std::shared_ptr<SDL_GPUTexture> Fits;
+    std::shared_ptr<SDL_GPUTexture> Palette;
+    /// <summary>The palette as shown, the colour cycle, and the HD art pack whose colours the palette's second row holds.</summary>
+    std::array<SDL_Color, 256> Colors{};
+    MCColorCycle Cycle;
+    uint64_t HdPaletteVersion = 0;
+    /// <summary>The draws' looks (FrameUniforms::Look: the glows' ovals, the sun shadows' darkness, whether they're cast again).</summary>
+    std::array<float, 3> Look{};
+    /// <summary>Port-only (HD movies): the movie pictures whose colours the frame makes from their planes.</summary>
+    std::vector<MovieConversion> Conversions;
 };

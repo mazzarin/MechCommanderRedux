@@ -202,6 +202,31 @@ namespace MCPaletteNight
         return MCSceneLights::PlayedTime() == MCTimeOfDay::Night && !MCSceneLights::LightingDrawn();
     }
 
+    std::optional<MCTableFit> NightFit()
+    {
+        const MCPalette& palette = GamePalette();
+        const std::optional<MCColorTable> table =
+            Shown() && palette.NumBitmapHazeLevels > 0 ? palette.GetHazePalette(-NightDim) : std::nullopt;
+
+        if (!table.has_value())
+        {
+            return std::nullopt;
+        }
+
+        // The palette's colours are 6 bits a channel.
+        constexpr int32_t SixToEightBits = 2;
+        const std::span<const MCVfxRgb, MCPalette::ColorCount> colours = palette.Colors();
+        return FitColorTable(
+            [colours](int32_t index)
+            {
+                const MCVfxRgb& colour = colours[static_cast<size_t>(index)];
+                return std::array<uint8_t, 3>{static_cast<uint8_t>(colour.R << SixToEightBits),
+                                              static_cast<uint8_t>(colour.G << SixToEightBits),
+                                              static_cast<uint8_t>(colour.B << SixToEightBits)};
+            },
+            *table);
+    }
+
     int32_t DimFor(float lift)
     {
         return static_cast<int32_t>(std::lround(static_cast<float>(NightDim) * (1.0f - std::clamp(lift, 0.0f, 1.0f))));

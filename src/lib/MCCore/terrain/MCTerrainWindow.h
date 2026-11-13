@@ -6,6 +6,15 @@ class MCCamera;
 class MCMapBlockManager;
 class MCVector3D;
 
+/// <summary>Port-only: a rectangle of a terrain grid's quads, by the grid's rows and columns (inclusive).</summary>
+struct MCGridQuads
+{
+    int32_t FirstRow = 0;
+    int32_t FirstCol = 0;
+    int32_t LastRow = 0;
+    int32_t LastCol = 0;
+};
+
 /// <summary>
 /// The terrain as one camera sees it: that camera's visible vertex grid and its quads, and the world position of the
 /// grid's top-left corner. <see cref="MCTerrain"/> keeps <c>NumberOfWindows</c> of them; a camera takes one with
@@ -41,7 +50,8 @@ public:
     void Update();
 
     /// <summary>
-    /// Projects the vertex grid, marks what needs redrawing and draws the terrain and overlay tiles of every quad.
+    /// Projects the vertex grid, marks what needs redrawing and draws the terrain and overlay tiles of every quad with a
+    /// corner on the pane (the others draw nothing).
     /// </summary>
     void Render(int32_t hazeFactor);
 
@@ -50,6 +60,19 @@ public:
 
     /// <summary>The vertices along a side of the grid.</summary>
     int32_t Side() const { return _Side; }
+
+    /// <summary>
+    /// The quads with vertex <paramref name="vertex"/> as a corner, as indices into <see cref="Blocks"/> in their order
+    /// there: up to four (up and left of it, up, left, and the one it is the top-left corner of), the rest empty.
+    /// </summary>
+    std::array<std::optional<size_t>, 4> QuadsAround(uint32_t vertex) const;
+
+    /// <summary>
+    /// Port-only: the quads with a corner on the pane (not <see cref="MCVertex::Clipped"/>) at the last
+    /// <see cref="Render"/>, as the smallest rectangle holding them; none when every vertex was clipped. A quad outside
+    /// it has every corner clipped, so it draws nothing.
+    /// </summary>
+    std::optional<MCGridQuads> QuadsOnPane() const { return _QuadsOnPane; }
 
     /// <summary>The camera using the window (none: the window is free). The camera holds the window by
     /// <c>weak_ptr</c> too: each refers to the other, the camera list and the terrain own them.</summary>
@@ -76,4 +99,6 @@ public:
 private:
     /// <summary>The vertices along a side of the grid.</summary>
     int32_t _Side = 0;
+    /// <summary>What <see cref="QuadsOnPane"/> gives.</summary>
+    std::optional<MCGridQuads> _QuadsOnPane;
 };

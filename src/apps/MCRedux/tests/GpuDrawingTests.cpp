@@ -5,6 +5,7 @@
 #include "TestGame.h"
 #include "ai/MCTacticalOrder.h"
 #include "camera/MCCamera.h"
+#include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiSmackerWindow.h"
@@ -26,6 +27,7 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCSmacker.h"
+#include "platform/MCVulkanPresenter.h"
 #include "platform/MCVulkanRenderer.h"
 #include "terrain/MCTerrain.h"
 #include "terrain/MCTerrainWindow.h"
@@ -68,6 +70,53 @@ namespace
         CHECK(tally.Frames > 0);
         CHECK_EQ(tally.DifferentFrames, 0);
         CHECK_EQ(MCRenderer::UnregisteredDraws(), 0);
+    }
+
+    /// <summary>Port-only: the most frames the presenter keeps on the GPU, as two swapchain images held them.</summary>
+    constexpr size_t HeldOnGpu = MCVulkanPresenter::TwoImageFrames;
+
+    /// <summary>
+    /// Port-only: mission 1 drawn by the GPU with the third swapchain image on every driver
+    /// (<see cref="MCVulkanPresenter::ThirdImageEverywhere"/>, so the Mac's Metal runs its waits), started with vsync
+    /// <paramref name="vsync"/>; its presenter, or null (with a note) when this machine has no GPU renderer.
+    /// </summary>
+    const MCVulkanPresenter* StartThirdImageMission(bool vsync)
+    {
+        MCVulkanPresenter::ThirdImageEverywhere = true;
+        GVSync = vsync;
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartMission(1));
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        REQUIRE(display != nullptr);
+        const auto* const presenter = dynamic_cast<const MCVulkanPresenter*>(&display->Presenter());
+
+        if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || presenter == nullptr)
+        {
+            std::cout << "  (skipped: no GPU renderer on this machine)\n";
+            return nullptr;
+        }
+
+        return presenter;
+    }
+
+    /// <summary>
+    /// Port-only: runs two seconds of the mission at 60 fps and gives the most frames <paramref name="presenter"/> had
+    /// on the GPU at once, checking a frame is still drawn after them.
+    /// </summary>
+    size_t MostFramesOnGpu(const MCVulkanPresenter& presenter)
+    {
+        constexpr int32_t Frames = 120;
+        constexpr float FrameTime = 1.0f / 60.0f;
+        size_t most = 0;
+
+        for (int32_t frame = 0; frame < Frames; frame++)
+        {
+            MCTestGame::RunFrame(FrameTime);
+            most = std::max(most, presenter.FramesOnGpu());
+        }
+
+        CHECK(MCInput::Display()->ReadFrame().has_value());
+        return most;
     }
 }
 
@@ -668,6 +717,128 @@ TEST_CASE_ISOLATED("game: the GPU blends translucent colours over what is shown"
     const SDL_Color away = at(*before, 300, 100);
     const SDL_Color still = at(*after, 300, 100);
     CHECK(away.r == still.r && away.g == still.g && away.b == still.b);
+}
+
+/// <summary>
+/// Port-only: draws of two kinds taken in turns go in one batch for each kind where they lie apart, and in the order
+/// drawn where they meet.
+/// </summary>
+TEST_CASE_ISOLATED("game: the GPU draws what lies apart in a batch for each kind, and in order where it meets")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || renderer == nullptr)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    MCPane& pane = ScreenPort()->Frame();
+    constexpr int32_t Light = 4;
+    constexpr uint8_t Dark = 0x10;
+    constexpr int32_t Radius = 6;
+    constexpr int32_t Step = 30;
+
+    // Lights (blended) and dots (opaque) in turns, each apart from the rest: one batch of each, however many.
+    const auto apart = [&](int32_t pairs)
+    {
+        for (int32_t i = 0; i < pairs; i++)
+        {
+            AGEllipseFill(pane, 100 + Step * i, 150, Radius, Radius, Light);
+            VfxPixelWrite(pane, 100 + Step * i, 180, Dark);
+        }
+
+        REQUIRE(display->ReadFrame().has_value());
+        return renderer->LastFrameBatches();
+    };
+
+    const int64_t few = apart(4);
+    const int64_t many = apart(12);
+    std::cout << std::format("  {} batches for 4 pairs apart, {} for 12\n", few, many);
+    CHECK_EQ(few, 2);
+    CHECK_EQ(many, 2);
+
+    // A dot, a light over it, a dot over that: the last dot shows as it does alone, not lit.
+    const int32_t x = 300;
+    const int32_t y = 220;
+    VfxPixelWrite(pane, x, y, Dark);
+    AGEllipseFill(pane, x, y, Radius, Radius, Light);
+    VfxPixelWrite(pane, x, y, Dark);
+    VfxPixelWrite(pane, x, y + Step, Dark);
+    const auto frame = display->ReadFrame();
+    REQUIRE(frame.has_value());
+    CHECK_EQ(renderer->LastFrameBatches(), 3);
+    const int32_t width = display->Width();
+    const auto at = [&](int32_t px, int32_t py)
+    { return (*frame)[static_cast<size_t>(py + pane.Y0) * width + px + pane.X0]; };
+    const SDL_Color over = at(x, y);
+    const SDL_Color alone = at(x, y + Step);
+    const SDL_Color lit = at(x + 2, y);
+    CHECK((over.r == alone.r && over.g == alone.g && over.b == alone.b));
+    CHECK((lit.r != alone.r || lit.g != alone.g || lit.b != alone.b));
+}
+
+/// <summary>
+/// Port-only: the third swapchain image (Vulkan's; here on every driver, so the Mac's Metal runs its waits): with vsync
+/// the swapchain has three images, the game still keeps at most two frames on the GPU, and draws on.
+/// </summary>
+TEST_CASE_ISOLATED("game: with a third swapchain image, the game keeps at most two frames on the GPU")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCVulkanPresenter* const presenter = StartThirdImageMission(true);
+
+    if (presenter == nullptr)
+    {
+        return;
+    }
+
+    CHECK_EQ(presenter->FramesInFlight(), MCVulkanPresenter::ThirdImageFrames);
+    CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+}
+
+/// <summary>
+/// Port-only: the third swapchain image only while vsync is on (without it, a third image can leave Windows'
+/// compositor holding the game's frames after an overlay): a start without vsync (-novsync) makes two images, vsync
+/// turned on gives three and off two again, and the game draws on after each, at most two frames on the GPU.
+/// </summary>
+TEST_CASE_ISOLATED("game: with a third swapchain image, vsync off keeps two images and vsync on three")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCVulkanPresenter* const presenter = StartThirdImageMission(false);
+
+    if (presenter == nullptr)
+    {
+        return;
+    }
+
+    CHECK_EQ(presenter->FramesInFlight(), MCVulkanPresenter::TwoImageFrames);
+    CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+
+    for (const bool vsync : {true, false})
+    {
+        MCInput::Display()->SetVSync(vsync);
+        CHECK_EQ(presenter->FramesInFlight(),
+                 vsync ? MCVulkanPresenter::ThirdImageFrames : MCVulkanPresenter::TwoImageFrames);
+        CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+    }
 }
 
 /// <summary>

@@ -674,7 +674,11 @@ namespace MCTestGame
             noiseChance = Scenario()->StartUpCountdown;
         }
 
-        UpdateDisplay(0, staticNoise, noiseChance, 0, 0);
+        // Port-only: as the game's frame loop, the frame may be shown after UpdateDisplay returns (MCFramesAhead).
+        if (const MCFramesAhead ahead; true)
+        {
+            UpdateDisplay(0, staticNoise, noiseChance, 0, 0);
+        }
 
         // --frames <file>: each frame's movers, to find where two runs part.
         static std::ofstream frameLog = []

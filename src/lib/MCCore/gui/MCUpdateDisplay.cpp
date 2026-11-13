@@ -124,17 +124,21 @@ namespace
 
     /// <summary>
     /// Shows the screen buffer: the original's flip (DirectDraw Blt/Flip full screen, BitBlt in a window, with the
-    /// lost-surface retries and display resets) is the port's present.
+    /// lost-surface retries and display resets) is the port's present. Port-only: <paramref name="ahead"/>, maybe after
+    /// it returns (MCDisplay::Present).
     /// </summary>
-    void PresentScreen()
+    void PresentScreen(bool ahead = false)
     {
         if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
         {
             MCFrameLog::Scope present("present");
             UpdateDisplayView(*display);
-            static_cast<void>(display->Present());
+            static_cast<void>(display->Present(ahead));
         }
     }
+
+    /// <summary>Port-only: whether an MCFramesAhead lives.</summary>
+    bool FramesAheadOn = false;
 
     /// <summary>Where the cursor is on the screen, kept inside it.</summary>
     void ReadCursorPosition()
@@ -264,6 +268,21 @@ namespace
     }
 }
 
+MCFramesAhead::MCFramesAhead() : _Outer(FramesAheadOn)
+{
+    FramesAheadOn = true;
+}
+
+MCFramesAhead::~MCFramesAhead()
+{
+    FramesAheadOn = _Outer;
+}
+
+bool MCFramesAhead::On()
+{
+    return FramesAheadOn;
+}
+
 void BlankScreen()
 {
     ALockScreen();
@@ -282,6 +301,12 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     }
 
     MCGuiSystem& gui = GuiSystem();
+
+    // Port-only: a check for the frame presented ahead, shown once it's drawn, before this one's drawing starts.
+    if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+    {
+        display->ShowFinished();
+    }
 
     if (!gui.PendingPalette.empty())
     {
@@ -379,7 +404,8 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 
     ReadCursorPosition();
     DrawCursorInBuffer();
-    PresentScreen();
+    // Port-only: ahead in a frame loop (MCFramesAhead), unless a palette waits to go in after the frame is shown.
+    PresentScreen(MCFramesAhead::On() && gui.PendingPalette.empty());
 
     if (!gui.PendingPalette.empty())
     {

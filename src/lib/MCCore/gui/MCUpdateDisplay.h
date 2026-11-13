@@ -32,6 +32,29 @@ MCRegisteredBlock& ConnectShape();
 
 /// <summary>Clears the screen buffer and shows it (with the cursor).</summary>
 void BlankScreen();
+
+/// <summary>
+/// Port-only: while one lives, <see cref="UpdateDisplay"/>'s frame may be shown after it returns
+/// (<see cref="MCFrame::Ahead"/>): its GPU work runs on the presenter's thread while the caller makes the next frame. Held
+/// around the frame loops' own UpdateDisplay (MCGuiSystem::Run, the tests' frames), which present again soon and check for
+/// the frame meanwhile (as they pump the window's events); every other present shows its frame before it returns.
+/// </summary>
+class MCFramesAhead
+{
+public:
+    MCFramesAhead();
+    ~MCFramesAhead();
+    MCFramesAhead(const MCFramesAhead&) = delete;
+    MCFramesAhead& operator=(const MCFramesAhead&) = delete;
+
+    /// <summary>Whether one lives.</summary>
+    static bool On();
+
+private:
+    /// <summary>Whether one lived before this one.</summary>
+    bool _Outer = false;
+};
+
 /// <summary>
 /// Shows the frame: lets the GUI draw, then optionally writes a screenshot, fills rows with static, draws the
 /// connect shape with a progress bar of <paramref name="progress"/> percent; records the frame rate; draws the

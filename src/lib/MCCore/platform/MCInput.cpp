@@ -604,6 +604,12 @@ namespace MCInput
 
     bool PumpMessages()
     {
+        // Port-only: a check for the frame presented ahead before the input is read (MCDisplay::ShowBeforeInput).
+        if (const std::shared_ptr<MCDisplay> display = Display(); display != nullptr)
+        {
+            display->ShowBeforeInput();
+        }
+
         MCInputState& input = state();
         std::deque<MCPostedMessage> posted;
         {

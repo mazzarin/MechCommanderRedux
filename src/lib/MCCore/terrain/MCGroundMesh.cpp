@@ -321,56 +321,78 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
         }
     }
 
-    // Each grid vertex must be the map's vertex at its place, projected where the mesh puts it. The mesh is built again
-    // when the map's own data changed since (SetTile).
     const int32_t originX = vertices[0].Px - (firstCol - firstRow) * stepX;
     const int32_t originY = vertices[0].Py - (firstRow + firstCol) * stepY +
                             static_cast<int32_t>(blocks.Vertex(vertices[0].MapVertex).Elevation) * elevStep;
+
+    // Port-only: the cells drawn are the grid's with a corner on the pane (Vertex::clipped), as the terrain's walk
+    // found them (the whole grid when none has). The grid is made for the furthest zoom on the largest screen
+    // (GrownGridSide), so nearer in most of its cells have every corner clipped and draw nothing: launching them was
+    // most of the terrain's GPU vertex work, the kept ground's walk over them (PlanGround) and the checks below over
+    // their corners a share of the CPU's frame.
+    const MCGridQuads drawn = window.QuadsOnPane().value_or(
+        MCGridQuads{.FirstRow = 0, .FirstCol = 0, .LastRow = perSide - 2, .LastCol = perSide - 2});
+
+    // The vertices checked: the drawn cells' corners, and their neighbours' too. A cell holds its neighbours' blocked
+    // counts (MCTerrainMesh::CellBlockedRound), read again when a neighbour's changed tile has the mesh built again, as
+    // when the check took in every vertex.
+    const int32_t checkFirstRow = std::max(drawn.FirstRow - 1, 0);
+    const int32_t checkFirstCol = std::max(drawn.FirstCol - 1, 0);
+    const int32_t checkLastRow = std::min(drawn.LastRow + 2, perSide - 1);
+    const int32_t checkLastCol = std::min(drawn.LastCol + 2, perSide - 1);
 
     for (bool rebuilt = false;;)
     {
         bool current = true;
 
-        for (size_t i = 0; i < vertices.size(); ++i)
+        // Each vertex checked must be the map's vertex at its place, projected where the mesh puts it (the shaders read
+        // a drawn cell's own data and its corners' alone). The mesh is built again when the map's own data there
+        // changed since (SetTile); the kept ground is drawn again whole when it is.
+        for (int32_t r = checkFirstRow; r <= checkLastRow; ++r)
         {
-            const MCVertex& vertex = vertices[i];
-            const int32_t row = firstRow + static_cast<int32_t>(i) / perSide;
-            const int32_t col = firstCol + static_cast<int32_t>(i) % perSide;
-            const MCPrecompVertex& mapVertex = blocks.Vertex(vertex.MapVertex);
-            const uint32_t elevation = mapVertex.Elevation;
-
-            if (vertex.PosTile != static_cast<uint32_t>(row * 0x10000) + (static_cast<uint32_t>(col) & 0xffff))
+            for (int32_t c = checkFirstCol; c <= checkLastCol; ++c)
             {
-                return std::unexpected(std::format("terrain grid vertex {} isn't map vertex ({}, {}) (posTile {:08x})",
-                                                   i, row, col, vertex.PosTile));
+                const size_t i = static_cast<size_t>(r) * perSide + c;
+                const int32_t row = firstRow + r;
+                const int32_t col = firstCol + c;
+                const MCVertex& vertex = vertices[i];
+                const MCPrecompVertex& mapVertex = blocks.Vertex(vertex.MapVertex);
+                const uint32_t elevation = mapVertex.Elevation;
+
+                if (vertex.PosTile != static_cast<uint32_t>(row * 0x10000) + (static_cast<uint32_t>(col) & 0xffff))
+                {
+                    return std::unexpected(
+                        std::format("terrain grid vertex {} isn't map vertex ({}, {}) (posTile {:08x})", i, row, col,
+                                    vertex.PosTile));
+                }
+
+                // OB-102's wrapped grid lands here.
+                if (vertex.MapVertex != blocks.MapVertexIndex(row, col))
+                {
+                    return std::unexpected(std::format(
+                        "terrain grid vertex {} at map vertex ({}, {}) holds another vertex's data", i, row, col));
+                }
+
+                if (!vertex.Redraw)
+                {
+                    return std::unexpected(std::format("terrain grid vertex {} isn't redrawn this frame", i));
+                }
+
+                const int32_t x = originX + (col - row) * stepX;
+                const int32_t y = originY + (row + col) * stepY - static_cast<int32_t>(elevation) * elevStep;
+
+                if (vertex.Px != x || vertex.Py != y)
+                {
+                    return std::unexpected(std::format("terrain grid vertex {} projects to ({}, {}); the mesh puts it "
+                                                       "at ({}, {})",
+                                                       i, vertex.Px, vertex.Py, x, y));
+                }
+
+                const size_t at = static_cast<size_t>(row - GroundMesh->Mesh.FirstRow) * GroundMesh->Side +
+                                  static_cast<size_t>(col - GroundMesh->Mesh.FirstCol);
+                current = current && GroundMesh->Elevations[at] == elevation &&
+                          GroundMesh->Textures[at] == mapVertex.TextureData;
             }
-
-            // OB-102's wrapped grid lands here.
-            if (vertex.MapVertex != blocks.MapVertexIndex(row, col))
-            {
-                return std::unexpected(std::format(
-                    "terrain grid vertex {} at map vertex ({}, {}) holds another vertex's data", i, row, col));
-            }
-
-            if (!vertex.Redraw)
-            {
-                return std::unexpected(std::format("terrain grid vertex {} isn't redrawn this frame", i));
-            }
-
-            const int32_t x = originX + (col - row) * stepX;
-            const int32_t y = originY + (row + col) * stepY - static_cast<int32_t>(elevation) * elevStep;
-
-            if (vertex.Px != x || vertex.Py != y)
-            {
-                return std::unexpected(std::format("terrain grid vertex {} projects to ({}, {}); the mesh puts it at "
-                                                   "({}, {})",
-                                                   i, vertex.Px, vertex.Py, x, y));
-            }
-
-            const size_t at = static_cast<size_t>(row - GroundMesh->Mesh.FirstRow) * GroundMesh->Side +
-                              static_cast<size_t>(col - GroundMesh->Mesh.FirstCol);
-            current =
-                current && GroundMesh->Elevations[at] == elevation && GroundMesh->Textures[at] == mapVertex.TextureData;
         }
 
         if (current)
@@ -387,47 +409,16 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
         rebuilt = true;
     }
 
-    // Port-only: the grid's cells with a corner on the pane (Vertex::clipped), as rows and columns. The grid is made
-    // for the furthest zoom on the largest screen (GrownGridSide), so nearer in most of its cells have every corner
-    // clipped and draw nothing: launching them was most of the terrain's GPU vertex work, and the kept ground's
-    // walk over them (PlanGround) a share of the CPU's frame.
-    int32_t lowRow = INT32_MAX;
-    int32_t lowCol = INT32_MAX;
-    int32_t highRow = INT32_MIN;
-    int32_t highCol = INT32_MIN;
-
-    for (size_t i = 0; i < vertices.size(); ++i)
-    {
-        if (!vertices[i].Clipped)
-        {
-            const int32_t row = firstRow + static_cast<int32_t>(i) / perSide;
-            const int32_t col = firstCol + static_cast<int32_t>(i) % perSide;
-            lowRow = std::min(lowRow, row);
-            lowCol = std::min(lowCol, col);
-            highRow = std::max(highRow, row);
-            highCol = std::max(highCol, col);
-        }
-    }
-
     frame.Mesh = GroundMesh->Mesh;
     frame.OriginX = originX;
     frame.OriginY = originY;
     frame.StepX = stepX;
     frame.StepY = stepY;
     frame.ElevStep = elevStep;
-    frame.FirstRow = firstRow;
-    frame.FirstCol = firstCol;
-    frame.LastRow = firstRow + perSide - 2;
-    frame.LastCol = firstCol + perSide - 2;
-
-    // A cell's corners are its vertex and those a row and a column on.
-    if (lowRow <= highRow)
-    {
-        frame.FirstRow = std::max(frame.FirstRow, lowRow - 1);
-        frame.FirstCol = std::max(frame.FirstCol, lowCol - 1);
-        frame.LastRow = std::min(frame.LastRow, highRow);
-        frame.LastCol = std::min(frame.LastCol, highCol);
-    }
+    frame.FirstRow = firstRow + drawn.FirstRow;
+    frame.FirstCol = firstCol + drawn.FirstCol;
+    frame.LastRow = firstRow + drawn.LastRow;
+    frame.LastCol = firstCol + drawn.LastCol;
 
     frame.MinX = minX;
     frame.MaxX = maxX;

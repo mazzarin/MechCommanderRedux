@@ -2489,6 +2489,15 @@
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
     </ClCompile>
   </ItemGroup>
+  <!-- smol-atlas (src\lib\smol-atlas-77a4e174, MIT or Unlicense): the places of the pictures the GPU renderer's shared
+       pages hold (platform\MCVulkanRenderer), unchanged from upstream. It lives outside MCCore, so it has its own
+       ItemGroup, which sync_projects.py leaves alone. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)smol-atlas-77a4e174\smol-atlas.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
   <!-- dr_flac, public domain or MIT-0: the optional HD audio pack's single FLAC decoder. -->
   <ItemGroup>
     <ClCompile Include="$(MCLibDir)dr_flac\dr_flac.c">

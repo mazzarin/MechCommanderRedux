@@ -199,6 +199,13 @@ cbuffer Composite : register(b0, space3)
     float4 speckSides;
     float4 speckArms;
     float4 speckFalls;
+    // The rain's streaks (MCWeather::MCSpeckLayer::Length, LayRainStreaks): xyz each falling layer's length in texels
+    // down its lattice's columns (0: specks), w how many texels across the columns slant a texel down.
+    float4 speckStreaks;
+    // The rain's splashes on water (MCWeather::MCSpeckle::OnWater, LayRainSplashes): x its specks a texel, y each one's
+    // life, z and w its weakest and strongest; then its colour (rgb).
+    float4 speckWater;
+    float4 speckWaterLook;
     // Port-only (HD weather and lighting): how the fog of war's edge darkens the snow, the wet ground's sky and the
     // living water's foam and glints by FogEdgeOf's count: 0 none (1s), 1 to 3 a tile with one, two and three of its
     // corners seen (rgb; MCTerrainFogEdgeShades, FogEdgeShade).
@@ -2059,6 +2066,139 @@ void LaySpeckLayer(inout float4 laid, inout float glints, float2 texel, uint lay
     }
 }
 
+// Port-only (HD weather's rain, MCWeather::FullDropLines): the drops left out are drawn as streaks on one lattice of
+// columns a texel wide, slanted speckStreaks.w texels across a texel down, each cut into cells StreakCell texels tall; a
+// cell may hold a streak starting anywhere in it that keeps it in the cell (one as long as StreakCell or longer reaches
+// down into those below). Its rows wrap with its columns' wrap (SpeckWrap over StreakCell). Two lattices for the rain
+// (the streaks, and the splashes' dots), as each one a texel costs about as much as the rest of the specks' composite.
+static const float StreakCell = 16.0;
+static const uint StreakRowMask = SpeckWrapMask / 16u;
+// The most cells below the one it starts in a streak reaches into.
+static const int MostStreakCells = 6;
+// The odd numbers a streak's cell is hashed by (its column, row and layer), and its life's by.
+static const uint StreakColumnMix = 2654435761u;
+static const uint StreakRowMix = 2246822519u;
+static const uint StreakLayerMix = 3266489917u;
+static const uint StreakLifeMix = 668265263u;
+
+// A hash of one word with two multiplies (lowbias32): the streaks are drawn for every texel, and a GPU's integer
+// multiplies are slow.
+uint StreakHash(uint x)
+{
+    x ^= x >> 16u;
+    x *= 0x7feb352du;
+    x ^= x >> 15u;
+    x *= 0x846ca68bu;
+    x ^= x >> 16u;
+    return x;
+}
+
+// The top bits of a cell's hash that say whether it shows: a streak's (the next 10 where in its cell it starts), and a
+// splash's, finer, as a texel's share of them can be small (in the last of a shower).
+static const uint StreakShownBits = 12u;
+static const uint SplashShownBits = 22u;
+
+// Whether cell `cell` of streak layer `layer` holds a streak now, at `share` of its cells: each living `life` seconds
+// from the cell's own phase; `hash` its own (its top `shownBits` whether it shows, its last 10 how strong it is and how
+// much light it catches) and `gone`, how much of its life is.
+bool StreakIn(int2 cell, uint layer, float life, float share, uint shownBits, out uint hash, out float gone)
+{
+    const uint2 at = asuint(cell) & SpeckWrapMask;
+    const uint key = StreakHash(at.x * StreakColumnMix ^ at.y * StreakRowMix ^ layer * StreakLayerMix);
+    const float lives = haze.z / max(life, SpeckShortestLife) + SpeckUnit(key);
+    hash = StreakHash(key ^ asuint(int(floor(lives))) * StreakLifeMix);
+    gone = frac(lives);
+    return float(hash >> (32u - shownBits)) / float(1u << shownBits) < share;
+}
+
+// A share, 0 to 1, from 10 bits of `hash` from bit `from` up.
+float StreakUnit(uint hash, uint from)
+{
+    return float((hash >> from) & 1023u) * (1.0 / 1024.0);
+}
+
+// Lays the rain's streaks covering world texel `texel` over `laid`, as the drops left out would be drawn: the three sizes
+// at `shares` of a texel's specks each, on the first layer's lattice (its life and how it moved: the sizes' mean), each
+// cell's streak of the size its own pick falls in, down the texel's slanted column from the cells its streaks start
+// in, as a falling speck of its size is (SpeckHidden, its glints).
+void LayRainStreaks(inout float4 laid, inout float glints, float2 texel, float3 shares, float caught, bool standing)
+{
+    const float share = shares.x + shares.y + shares.z;
+
+    if (share <= 0.0)
+    {
+        return;
+    }
+
+    const float2 moved = speckMoved[0].xy;
+    const float2 centre = floor(texel) + 0.5;
+    const float column = floor(centre.x - speckStreaks.w * centre.y - moved.x);
+    const float down = centre.y - moved.y;
+    const float row = floor(down / StreakCell);
+    const float longest = max(max(speckStreaks.x, speckStreaks.y), speckStreaks.z);
+    const int above = min(int(ceil(max(longest - StreakCell, 0.0) / StreakCell)), MostStreakCells);
+    // A cell's pick below the cells' share holds a streak; the sizes' shares of that, in order, its size.
+    const float picked = share / min(share * StreakCell, 1.0);
+
+    for (int back = 0; back <= above; ++back)
+    {
+        const float cellRow = row - float(back);
+        const int2 cell = int2(int(column), int(asuint(int(cellRow)) & StreakRowMask));
+        uint hash;
+        float gone;
+
+        if (StreakIn(cell, 0u, speckLives[0], share * StreakCell, StreakShownBits, hash, gone))
+        {
+            const float pick = float(hash >> (32u - StreakShownBits)) / float(1u << StreakShownBits) * picked;
+            const uint size = pick < shares.x ? 0u : (pick < shares.x + shares.y ? 1u : 2u);
+            // A streak shorter than its cell starts where it ends in it; a longer one starts in its cell's top texel.
+            const float reach = speckStreaks[size];
+            const float room = max(StreakCell - reach, 1.0);
+            const float start = cellRow * StreakCell + floor(StreakUnit(hash, 10u) * room);
+
+            if (down >= start && down < start + reach && !SpeckHidden(texel, size, gone, standing))
+            {
+                const float strength = lerp(speckLooks[size].a, speckStrongest[size], StreakUnit(hash, 0u));
+                LaySpeck(laid, speckLooks[size].rgb, strength);
+                glints += strength * SpeckGlintStep(hash, caught);
+            }
+        }
+    }
+}
+
+// Lays the rain's splashes covering world texel `texel` over `laid`, at `share` of a texel's specks on the ground and
+// `waterShare` on water (the world's indices'; their rings there, speckWater's): a texel each, on the resting layer's
+// lattice (moved as the view pans), fading over its life; none over what stands on the ground.
+void LayRainSplashes(inout float4 laid, float2 texel, float share, float waterShare, bool standing)
+{
+    if (standing)
+    {
+        return;
+    }
+
+    float4 look = float4(speckLooks[RestingSpecks].rgb, speckLooks[RestingSpecks].a);
+    float strongest = speckStrongest[RestingSpecks];
+    float life = speckLives[RestingSpecks];
+    float shown = share;
+
+    if (IsWater(WorldIndexAt(texel)))
+    {
+        look = float4(speckWaterLook.rgb, speckWater.z);
+        strongest = speckWater.w;
+        life = speckWater.y;
+        shown = waterShare;
+    }
+
+    const int2 cell = int2(floor(floor(texel) + 0.5 - speckMoved[1].zw));
+    uint hash;
+    float gone;
+
+    if (StreakIn(cell, RestingSpecks, life, shown, SplashShownBits, hash, gone))
+    {
+        LaySpeck(laid, look.rgb, lerp(look.a, strongest, StreakUnit(hash, 0u)) * (1.0 - gone));
+    }
+}
+
 // The points along the longest fall the falling specks take the veil's sheets at (MCVulkanPresenter's).
 static const uint SpeckSheetSamples = 4;
 
@@ -2075,13 +2215,34 @@ static const uint SpeckSheetSamples = 4;
 // brightest light in the air there times how much of it they catch, times their strengths.
 float4 SpecksAt(float2 texel, float sheets, float caught, out float4 round, out float glints)
 {
+    round = float4(0.0, 0.0, 0.0, 1.0);
+    glints = 0.0;
+
+    // Port-only (HD weather's rain): the drops left out as streaks and their splashes as dots, the sheets at the texel
+    // standing for their short fall's (none settles, so the snow's shade takes no `round` of them).
+    if (speckStreaks.x > 0.0)
+    {
+        const float sheeted = lerp(1.0, speckSheets.x, sheets);
+        const float4 rainShares = specks * sheeted;
+        const float waterShare = speckWater.x * sheeted;
+        const bool rainStanding = StandsAt(texel);
+        float4 rained = float4(0.0, 0.0, 0.0, 1.0);
+        LayRainStreaks(rained, glints, texel, rainShares.xyz, caught, rainStanding);
+
+        if (rainShares.w > 0.0 || waterShare > 0.0)
+        {
+            LayRainSplashes(rained, texel, rainShares.w, waterShare, rainStanding);
+        }
+
+        return rained;
+    }
+
     float4 fell = float4(sheets, sheets, sheets, sheets);
     float along = 0.0;
     const float3 shareOfLongest = speckFalls.xyz;
     // Each layer's points, rounded by hand (`round` here is the specks' mean).
     const float3 falling = step(SpeckLeastFall, shareOfLongest);
     const float4 points = float4(falling * max(floor(float(SpeckSheetSamples) * shareOfLongest + 0.5), 1.0), 0.0);
-
     for (uint taken = 0; taken < SpeckSheetSamples; ++taken)
     {
         if (any(points > float(taken)))
@@ -2100,8 +2261,6 @@ float4 SpecksAt(float2 texel, float sheets, float caught, out float4 round, out 
 
     const float4 shares = specks * lerp(1.0, speckSheets.x, fell);
     float4 laid = float4(0.0, 0.0, 0.0, 1.0);
-    round = float4(0.0, 0.0, 0.0, 1.0);
-    glints = 0.0;
 
     for (uint layer = 0; layer < SpeckLayers; ++layer)
     {

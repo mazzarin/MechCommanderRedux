@@ -19,6 +19,9 @@ struct Draw
     int4 span;
     // A texel walk's u and v fractions and their steps (16 bits each).
     uint4 walk;
+    // Port-only: where a picture lies in the textures it is read from (MCVulkanRenderer's PicturePlace; x in bits 0-15,
+    // y in 16-31): x its pixels' corner, y its HD colours' corner, z its size (0: the source's own); w nothing.
+    uint4 place;
 };
 
 StructuredBuffer<Draw> draws : register(t0, space0);
@@ -43,6 +46,7 @@ struct Output
     nointerpolation uint4 walk : TEXCOORD4;
     // draw.pshader's ground (terrain.vshader's alone): none.
     nointerpolation uint4 ground : TEXCOORD5;
+    nointerpolation uint4 place : TEXCOORD6;
 };
 
 static const float2 corners[6] = {
@@ -62,5 +66,6 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     output.span = draw.span;
     output.walk = draw.walk;
     output.ground = uint4(0, 0, 0, 0);
+    output.place = draw.place;
     return output;
 }

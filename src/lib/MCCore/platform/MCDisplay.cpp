@@ -615,7 +615,7 @@ MCFrame MCDisplay::BuildFrame(bool allColors)
     return frame;
 }
 
-std::expected<void, std::string> MCDisplay::Present()
+std::expected<void, std::string> MCDisplay::Present(bool ahead)
 {
     MCGameContext::Current().Clock().Presented();
 
@@ -629,7 +629,24 @@ std::expected<void, std::string> MCDisplay::Present()
         return _Presenter->Discard(BuildFrame(false));
     }
 
-    return _Presenter->Present(BuildFrame(false));
+    MCFrame frame = BuildFrame(false);
+    frame.Ahead = ahead;
+    return _Presenter->Present(frame);
+}
+
+void MCDisplay::ShowFinished()
+{
+    _Presenter->ShowFinished();
+}
+
+void MCDisplay::ShowPresented()
+{
+    _Presenter->ShowPresented();
+}
+
+void MCDisplay::ShowBeforeInput()
+{
+    _Presenter->ShowBeforeInput();
 }
 
 bool MCDisplay::Minimised() const

@@ -127,6 +127,59 @@ auto GamePalette() -> MCPalette&
     return MCGameContext::Current().Palette();
 }
 
+auto FitColorTable(const std::function<std::array<uint8_t, 3>(int32_t)>& colourOf, MCColorTable table) -> MCTableFit
+{
+    // T(c) = c * k + C over the free colours (one k, a C a channel).
+    constexpr int32_t count = LastFreeColor - FirstFreeColor + 1;
+    constexpr double Most = 255.0;
+    std::array<double, 3> meanIn{};
+    std::array<double, 3> meanOut{};
+
+    for (int32_t i = FirstFreeColor; i <= LastFreeColor; ++i)
+    {
+        const std::array<uint8_t, 3> in = colourOf(i);
+        const std::array<uint8_t, 3> mapped = colourOf(table[static_cast<size_t>(i)]);
+
+        for (size_t c = 0; c < 3; ++c)
+        {
+            meanIn[c] += in[c];
+            meanOut[c] += mapped[c];
+        }
+    }
+
+    for (size_t c = 0; c < 3; ++c)
+    {
+        meanIn[c] /= count * Most;
+        meanOut[c] /= count * Most;
+    }
+
+    double covariance = 0.0;
+    double variance = 0.0;
+
+    for (int32_t i = FirstFreeColor; i <= LastFreeColor; ++i)
+    {
+        const std::array<uint8_t, 3> in = colourOf(i);
+        const std::array<uint8_t, 3> mapped = colourOf(table[static_cast<size_t>(i)]);
+
+        for (size_t c = 0; c < 3; ++c)
+        {
+            const double x = in[c] / Most;
+            const double y = mapped[c] / Most;
+            covariance += (x - meanIn[c]) * (y - meanOut[c]);
+            variance += (x - meanIn[c]) * (x - meanIn[c]);
+        }
+    }
+
+    MCTableFit fit{.Slope = std::clamp(variance > 0.0 ? covariance / variance : 1.0, 0.0, 1.0)};
+
+    for (size_t c = 0; c < 3; ++c)
+    {
+        fit.Offset[c] = std::clamp(meanOut[c] - fit.Slope * meanIn[c], 0.0, 1.0);
+    }
+
+    return fit;
+}
+
 auto MCPalette::GetHazePalette(int32_t hazeLevel) const -> std::optional<MCColorTable>
 {
     if (hazeLevel == 0)

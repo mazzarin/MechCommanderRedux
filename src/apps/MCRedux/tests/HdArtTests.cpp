@@ -20931,10 +20931,17 @@ TEST_CASE_ISOLATED("game: water under the fog of war's edge keeps its index thro
             for (int32_t x = width / 3; x < width; ++x)
             {
                 const auto i = static_cast<size_t>(y) * width + x;
+
+                // Water (asked first: a cell's corners take the view's projection backwards)...
+                if (!MCParticles::IsWaterColor(whole[i]))
+                {
+                    continue;
+                }
+
+                // ...in a cell seen, wholly or in part.
                 const std::optional<uint32_t> corners = CornersSeenAt(x, y);
 
-                // Water in a cell seen, wholly or in part.
-                if (!corners.has_value() || *corners == 0 || !MCParticles::IsWaterColor(whole[i]))
+                if (!corners.has_value() || *corners == 0)
                 {
                     continue;
                 }

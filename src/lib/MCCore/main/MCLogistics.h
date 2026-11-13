@@ -350,8 +350,19 @@ public:
     /// <summary>A player left: tells the player (once any exiting dialog is answered).</summary>
     void HandleLostPlayer(uint32_t playerID, int hostLeft) const;
 
-    /// <summary>The host started the mission.</summary>
-    void HandlePrepareScenarioMessage() const;
+    /// <summary>
+    /// A match's start (the host's START, its word to a guest, a configured match's): the multiplayer lists made and
+    /// <paramref name="mission"/> (a bare name, as LoadCampaign takes it) loaded, then the briefing's screens shown.
+    /// </summary>
+    /// <returns>
+    /// Whether it loaded. Port fix: the start went on after a refusal into the mech bay with nothing loaded, and the
+    /// scenario's request then quit the game (an empty name, MCScenarioLoad's Fatal): the caller leaves instead.
+    /// </returns>
+    bool LoadMatchMission(std::string_view mission);
+
+    /// <summary>The host started the mission: its scenario requested.</summary>
+    /// <returns>Whether it was: port fix, only a match's mission loaded is (LoadMatchMission).</returns>
+    bool HandlePrepareScenarioMessage() const;
 
     /// <summary>Writes the multiplayer start file <paramref name="startFile"/> (every player's drop slots) and the profiles.</summary>
     int32_t PrepareMultiplayerScenario(std::string_view scenarioName, std::string_view startFile);

@@ -12,6 +12,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCMultiPlayerHandlers.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCFileSystem.h"
 #include "sound/MCSoundSystem.h"
@@ -188,9 +189,11 @@ namespace
         GlobalLog()->SetUpPlayerLights(SortedSessionIds());
         game.SessionManager->SendLatencyInfo();
         SoundSystem()->PlayBettySample(0x19);
-        GlobalLog()->InitializeMultiplayer();
-        GlobalLog()->LoadCampaign(mission, ".MPK", false, false);
-        GlobalLog()->SetUpBriefingScreen(false);
+
+        if (!GlobalLog()->LoadMatchMission(mission))
+        {
+            LeaveUnloadedMatch();
+        }
     }
 
     /// <summary>Every guest has the file: lock the session, tell the guests and go to the mech bay.</summary>

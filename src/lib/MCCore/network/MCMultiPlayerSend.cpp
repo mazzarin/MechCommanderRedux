@@ -266,12 +266,8 @@ int32_t MCMultiPlayer::SendPrepareScenario()
     {
         PlayerCheckedIn.fill(0);
 
-        if (GlobalLog() != nullptr)
-        {
-            GlobalLog()->HandlePrepareScenarioMessage();
-        }
-
-        PrepareScenarioReceived = true;
+        // Port fix: only a match's mission loaded is started (MCLogistics::HandlePrepareScenarioMessage).
+        PrepareScenarioReceived = GlobalLog() == nullptr || GlobalLog()->HandlePrepareScenarioMessage();
     }
 
     return 0;

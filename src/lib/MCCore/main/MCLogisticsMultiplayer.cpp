@@ -540,10 +540,32 @@ auto MCLogistics::HandleLostPlayer(uint32_t playerID, int) const -> void
     LostPlayerHandler(0);
 }
 
-auto MCLogistics::HandlePrepareScenarioMessage() const -> void
+auto MCLogistics::LoadMatchMission(std::string_view mission) -> bool
 {
+    InitializeMultiplayer();
+
+    if (LoadCampaign(mission, ".MPK", false, false) != 0)
+    {
+        // What a refused file named is no mission to start (HandlePrepareScenarioMessage).
+        MpMissionName.clear();
+        return false;
+    }
+
+    SetUpBriefingScreen(false);
+    return true;
+}
+
+auto MCLogistics::HandlePrepareScenarioMessage() const -> bool
+{
+    if (MpMissionName.empty())
+    {
+        SDL_Log("MCLogistics: a match's start with no mission loaded, refused");
+        return false;
+    }
+
     SoundSystem()->PlayInterfaceSample(0x3a);
     Mission()->RequestScenario(MpMissionName);
+    return true;
 }
 
 auto MCLogistics::PrepareMultiplayerScenario(std::string_view scenarioName, std::string_view startFile) -> int32_t

@@ -18,6 +18,7 @@
 #include "main/MCLogistics.h"
 #include "mission/MCMissionResultsScreen.h"
 #include "mission/MCRematchLetters.h"
+#include "mission/MCScenario.h"
 #include "network/MCGameDataHash.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMultiPlayer.h"
@@ -181,6 +182,52 @@ TEST_CASE_ISOLATED("game: a LAN guest whose room ends goes back to the LAN games
     CHECK_EQ(DialogText(), std::string("BOB CLOSED THE GAME."));
     SaveShot("room end 1 host closed", ScreenHash());
     again.Close();
+}
+
+/// <summary>
+/// A LAN guest whose host starts a mission its game can't load (a hostile host, or a start without the file check):
+/// the guest leaves the room for the LAN games, saying so ("COULDN'T LOAD THE HOST'S MISSION."), where it went on into
+/// the mech bay with nothing loaded and the scenario's start quit the game (an empty mission's name, a Fatal); and a
+/// scenario's start with no mission loaded is refused, the guest staying in the room.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN guest whose host starts a mission it can't load leaves the room, saying so")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28956";
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    Host bob;
+    REQUIRE(bob.Open(Port, "BOB", "BOB'S GAME"));
+    JoinFromLan(Port, "ANN");
+    const uint32_t ann = MultiPlayer()->SessionManager->MyPlayerID;
+
+    bob.SendPrepareScenario(ann);
+    Settle();
+    CHECK(InSession());
+    CHECK(OnScreen(GlobalLog()->SessionScreen));
+    CHECK(Scenario() == nullptr);
+
+    // BOB puts ANN on the first team.
+    bob.SendJoinTeam(ann, ann, 1, 0);
+    Settle();
+
+    {
+        // The game logs the file it can't open as it refuses it.
+        const MCTest::ExpectAssert unopened("campaign file NOT Valid", 1);
+        bob.SendStart(ann, "NOSUCHMISSION");
+        REQUIRE(SettleUntil([] { return !InSession(); }));
+    }
+
+    Settle();
+    CHECK(OnScreen(GlobalLog()->LanScreen));
+    CHECK_EQ(DialogText(), std::string("COULDN'T LOAD THE HOST'S MISSION."));
+    SaveShot("room end 2 mission unloaded", ScreenHash());
+    bob.Close();
 }
 
 /// <summary>

@@ -851,20 +851,29 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
 
     presenter->_QuadShader = std::move(*quad);
     // The composite, with the weather (and the snow's specks, or not) and without, and the GPU world's passes before
-    // it, each composite.pshader built for it alone, with the format each draws.
+    // it, each composite.pshader built for it alone, with the format each draws, and whether it's slow to make
+    // (MCVulkanRenderer::PipelineJob): the composite's full builds, which NVIDIA's driver took 0.35-0.66 s each to
+    // compile with its cache empty (the A10, 13 Nov; the GPU world's passes 0.03 s or less).
     constexpr SDL_GPUTextureFormat Rgba = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    constexpr bool Slow = true;
     const std::array composites{
-        std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline, Rgba},
-        std::tuple{&MCVulkanShaders::CompositeDry, &presenter->_DryShader, &presenter->_DryPipeline, Rgba},
+        std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline, Rgba,
+                   Slow},
+        std::tuple{&MCVulkanShaders::CompositeDry, &presenter->_DryShader, &presenter->_DryPipeline, Rgba, Slow},
         std::tuple{&MCVulkanShaders::CompositeUnspecked, &presenter->_UnspeckedShader, &presenter->_UnspeckedPipeline,
-                   Rgba},
-        std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline, Rgba},
-        std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline, Rgba},
+                   Rgba, Slow},
+        std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline, Rgba,
+                   !Slow},
+        std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline, Rgba, !Slow},
         std::tuple{&MCVulkanShaders::CompositePuddle, &presenter->_PuddleShader, &presenter->_PuddlePipeline,
-                   PuddleFormat},
+                   PuddleFormat, !Slow},
     };
 
-    for (const auto& [info, shader, made, format] : composites)
+    // Port-only: each composite's pipeline a job, made with the renderer's all at once (MCVulkanRenderer::MakePipelines)
+    // further on: what the jobs use is the presenter's own, which outlives them.
+    std::vector<MCVulkanRenderer::PipelineJob> jobs;
+
+    for (const auto& [info, shader, made, format, slow] : composites)
     {
         auto loaded = MCVulkanShaders::Load(presenter->_Device, *info);
 
@@ -874,25 +883,24 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
         }
 
         *shader = std::move(*loaded);
-
-        SDL_GPUColorTargetDescription target{};
-        target.format = format;
-        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
-        pipeline.vertex_shader = presenter->_QuadShader.get();
-        pipeline.fragment_shader = shader->get();
-        pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-        pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-        pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-        pipeline.target_info.num_color_targets = 1;
-        pipeline.target_info.color_target_descriptions = &target;
-        *made = MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device, &pipeline),
-                                                     MCGpuRelease{presenter->_Device});
-
-        if (*made == nullptr)
-        {
-            return std::unexpected(
-                SdlError(std::format("SDL_CreateGPUGraphicsPipeline({})", MCVulkanShaders::Name(info->Shader))));
-        }
+        jobs.push_back(MCVulkanRenderer::PipelineJob{
+            std::string(MCVulkanShaders::Name(info->Shader)), slow,
+            [owner = presenter->_Device, quad = presenter->_QuadShader.get(), fragment = shader->get(), made, format]
+            {
+                SDL_GPUColorTargetDescription target{};
+                target.format = format;
+                SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+                pipeline.vertex_shader = quad;
+                pipeline.fragment_shader = fragment;
+                pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+                pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+                pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+                pipeline.target_info.num_color_targets = 1;
+                pipeline.target_info.color_target_descriptions = &target;
+                *made = MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(owner.get(), &pipeline),
+                                                             MCGpuRelease{owner});
+                return *made != nullptr;
+            }});
     }
 
     SDL_GPUSamplerCreateInfo sampler{};
@@ -923,10 +931,32 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
 
     // The renderer of the frame surfaces, drawing when asked to.
     const MCGpuDrawing drawing = MCRenderer::RequestedGpuDrawing();
+    std::optional<std::expected<std::unique_ptr<MCVulkanRenderer>, std::string>> made;
 
     if (drawing != MCGpuDrawing::Off)
     {
-        auto renderer = MCVulkanRenderer::Create(presenter->_Device);
+        made = MCVulkanRenderer::Create(presenter->_Device, jobs);
+    }
+
+    // Port-only: the composites' pipelines, made with the renderer's, or here without a renderer (or one that failed
+    // before making its own).
+    if (!jobs.empty())
+    {
+        MCVulkanRenderer::MakePipelines(jobs);
+    }
+
+    for (const auto& [info, shader, pipeline, format, slow] : composites)
+    {
+        if (*pipeline == nullptr)
+        {
+            return std::unexpected(
+                std::format("SDL_CreateGPUGraphicsPipeline({}) failed", MCVulkanShaders::Name(info->Shader)));
+        }
+    }
+
+    if (made.has_value())
+    {
+        auto& renderer = *made;
 
         if (renderer)
         {

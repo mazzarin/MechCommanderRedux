@@ -51,8 +51,31 @@ public:
     /// <summary>A renderer with no device yet.</summary>
     explicit MCVulkanRenderer(Key) {}
 
-    /// <summary>Makes the renderer's pipelines and fixed textures on <paramref name="device"/>.</summary>
-    static std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> Create(std::shared_ptr<SDL_GPUDevice> device);
+    /// <summary>
+    /// Port-only: a pipeline for <see cref="MakePipelines"/> to make: its name (for the log, should it fail), whether
+    /// it's one of the slow ones, and the call that makes it and keeps it where it goes (false when it wasn't made).
+    /// </summary>
+    struct PipelineJob
+    {
+        std::string Name;
+        bool Slow = false;
+        std::function<bool()> Make;
+    };
+
+    /// <summary>
+    /// Makes the renderer's pipelines and fixed textures on <paramref name="device"/>. Port-only: the pipelines of
+    /// <paramref name="moreJobs"/> (the presenter's) are made with the renderer's, all at once, which empties it; it's
+    /// left as it was when the renderer fails before its pipelines are made.
+    /// </summary>
+    static std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> Create(std::shared_ptr<SDL_GPUDevice> device,
+                                                                                std::vector<PipelineJob>& moreJobs);
+
+    /// <summary>
+    /// Port-only: makes <paramref name="jobs"/> on the machine's threads (this one among them), the slow ones first,
+    /// and empties it; a pipeline not made is logged with SDL's error. A driver compiles each pipeline on the thread
+    /// that asks for it: on one thread an empty shader cache kept the window black for 9.5 s (the A10, 13 Nov).
+    /// </summary>
+    static void MakePipelines(std::vector<PipelineJob>& jobs);
 
     ~MCVulkanRenderer() override;
 

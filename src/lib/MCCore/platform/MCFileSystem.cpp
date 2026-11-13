@@ -64,11 +64,24 @@ namespace
         return !path.empty() && (path[0] == '\\' || path[0] == '/');
     }
 
+    /// <summary>
+    /// Whether <paramref name="part"/> names a drive ("C:"), told by its spelling rather than has_root_name, which only
+    /// knows drives on Windows: elsewhere the part would become a folder of that name.
+    /// </summary>
+    bool IsDrivePart(std::string_view part)
+    {
+        return part.size() >= 2 && part[1] == ':' && std::isalpha(static_cast<unsigned char>(part[0]));
+    }
+
     /// <summary>Resolves <paramref name="gamePath"/> against <paramref name="root"/> (for a relative path).</summary>
     /// <remarks>
     /// A relative path never leaves <paramref name="root"/>: a ".." at the root is ignored, as at a drive's root, and a
     /// part naming a drive ("C:") is skipped, since appending it would replace the path. Paths reach here from saves,
     /// mission data and the network (issue #25).
+    ///
+    /// A path whose parts are all names is looked for whole first, and taken as spelled when it's there, as the walk
+    /// would take it. Windows opens each folder on a path to look in it: walking an HD archive's path folder by folder
+    /// opened ~8 folders an archive, each 86 times a minute in a pan, ~1.3 ms of the game's thread an archive (13 Nov).
     /// </remarks>
     std::filesystem::path ResolveFrom(const std::filesystem::path& root, std::string_view gamePath)
     {
@@ -94,6 +107,26 @@ namespace
             result = root;
         }
 
+        const std::span<const std::string> named = std::span(parts).subspan(first);
+
+        if (std::ranges::none_of(named, [](const std::string& part)
+                                 { return part == "." || part == ".." || IsDrivePart(part); }))
+        {
+            std::filesystem::path whole = result;
+
+            for (const std::string& part : named)
+            {
+                whole /= MCFileSystem::FromUtf8(part);
+            }
+
+            std::error_code error;
+
+            if (std::filesystem::exists(whole, error))
+            {
+                return whole;
+            }
+        }
+
         for (size_t i = first; i < parts.size(); ++i)
         {
             const std::string& part = parts[i];
@@ -114,9 +147,8 @@ namespace
                 continue;
             }
 
-            // A drive ("C:"), told by its spelling rather than has_root_name, which only knows drives on Windows:
-            // elsewhere the part would become a folder of that name instead of being skipped.
-            if (part.size() >= 2 && part[1] == ':' && std::isalpha(static_cast<unsigned char>(part[0])))
+            // A drive: skipped, not made a folder of that name.
+            if (IsDrivePart(part))
             {
                 continue;
             }

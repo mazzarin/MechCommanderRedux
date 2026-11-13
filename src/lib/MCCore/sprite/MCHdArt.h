@@ -489,6 +489,12 @@ namespace MCHdArt
     /// again when read).
     /// </summary>
     size_t ArchiveFilesOpen();
+
+    /// <summary>
+    /// How many times the reading thread has opened its own handle on an archive's file (once for the follows of one
+    /// archive in a row).
+    /// </summary>
+    size_t ReaderFilesOpened();
 }
 
 /// <summary>Port-only: draw the HD art pack's frames where it has them (PREFS "HDArt"; off by default).</summary>

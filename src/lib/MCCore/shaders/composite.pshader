@@ -199,8 +199,9 @@ cbuffer Composite : register(b0, space3)
     float4 speckSides;
     float4 speckArms;
     float4 speckFalls;
-    // Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky by FogEdgeOf's count:
-    // 0 none (1s), 1 to 3 a tile with one, two and three of its corners seen (rgb; MCTerrainFogEdgeShades, FogEdgeShade).
+    // Port-only (HD weather and lighting): how the fog of war's edge darkens the snow, the wet ground's sky and the
+    // living water's foam and glints by FogEdgeOf's count: 0 none (1s), 1 to 3 a tile with one, two and three of its
+    // corners seen (rgb; MCTerrainFogEdgeShades, FogEdgeShade).
     float4 fogEdge[4];
     // Port-only (HD lighting): the light tiles (lightTileTex, MCVulkanPresenter's SetLighting): x their side in the
     // world's texels (0: none, every light is tried everywhere), y and z how many there are across and down.
@@ -965,6 +966,46 @@ bool IsWater(uint index)
     return index - FirstWaterBlue < WaterBlues || index - FirstWaterColor < WaterColors;
 }
 
+// The fog of war's edge on the HD ground at a texel of the index target (`drawn`): how many of its tile's corners the
+// fog leaves seen, kept in its slopes' low bits (1 to 3; 0 where all are, and off the ground).
+uint FogEdgeOf(float4 drawn)
+{
+    const uint2 bits = uint2(drawn.gb * 255.0 + 0.5) & uint2(1u, 1u);
+    return drawn.a > GroundMark ? bits.x | bits.y << 1 : 0u;
+}
+
+// How the fog of war's edge `edge` (FogEdgeOf, FoggedWaterAt) darkens what the weather lays on the ground and the living
+// water's foam and glints, as the haze darkens the ground (fogEdge's; none without one). Read straight by the count,
+// its 0 undarkened: a choice would read both sides (HLSL's ?:), and fogEdge[edge - 1] at 0 far outside the buffer.
+float3 FogEdgeShade(uint edge)
+{
+    return fogEdge[edge].rgb;
+}
+
+// Port-only: how many of its tile's corners the fog of war leaves seen at a water texel the haze's table drew (1 to 3; 0
+// where all are): the GPU world's index target keeps such water's own index (draw.pshader's HazedWater), with the
+// count in the HD ground's slopes (FogEdgeOf) or, without a relief map, in its alpha (FoggedWaterMark each, under
+// CanopyMark). The software renderer's world keeps none (its water there is the haze's entries).
+static const float FoggedWaterMark = 8.0 / 255.0;
+static const uint MostFogEdge = 3;
+
+uint FoggedWaterAt(float2 texel)
+{
+    if (mode.y == 0.0)
+    {
+        return 0u;
+    }
+
+    const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);
+
+    if (drawn.a > GroundMark)
+    {
+        return FogEdgeOf(drawn);
+    }
+
+    return drawn.a < CanopyMark ? min((uint)round(drawn.a / FoggedWaterMark), MostFogEdge) : 0u;
+}
+
 // A water entry's colour at a step of its cycle.
 float3 WaterCycleColour(uint entry, uint step)
 {
@@ -1012,7 +1053,9 @@ float LandAround(float2 texel, float distance)
 }
 
 // The water's colour at a world texel (drawn as `color`), and how much it glints (0 to 1; Lit and main add the lights'
-// and the sun's): `color` as it is but for water.
+// and the sun's): `color` as it is but for water. Water under the fog of war's edge (FoggedWaterAt) moves as the rest
+// does, its foam and glints darkened as the haze darkens it there (FogEdgeShade), but its colour doesn't flow: the
+// haze's colours don't cycle in the original.
 float3 LivingWater(float3 color, float2 texel, out float glint)
 {
     glint = 0.0;
@@ -1023,11 +1066,14 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
         return color;
     }
 
+    const uint fogged = FoggedWaterAt(texel);
+    const float3 fogShade = FogEdgeShade(fogged);
+
     // The colour flowing toward the cycle's next step: the drawn colour (an HD one, recoloured as the entry shows now)
     // changed as the entry's colour changes.
     float3 flowing = color;
 
-    if (cycle.y >= 0 && index - (uint)cycle.x < WaterColors)
+    if (fogged == 0u && cycle.y >= 0 && index - (uint)cycle.x < WaterColors)
     {
         const uint entry = index - (uint)cycle.x;
         const float3 now = WaterCycleColour(entry, (uint)cycle.y);
@@ -1072,8 +1118,8 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
     const float shallow = max(LandAround(texel, ShallowNear), 0.5 * LandAround(texel, ShallowFar));
     shown *= lerp(float3(1.0, 1.0, 1.0), ShallowTint, saturate(max(nearLand, shallow)));
     const float foam = saturate(2.0 * nearLand) * smoothstep(FoamFrom, 1.0, Noise(at / FoamSize + time * FoamDrift));
-    shown = lerp(shown, FoamColour, foam * FoamMost);
-    glint *= water.x * (1.0 - foam);
+    shown = lerp(shown, FoamColour * fogShade, foam * FoamMost);
+    glint *= water.x * (1.0 - foam) * dot(fogShade, Luma);
     return lerp(color, shown, water.x);
 }
 
@@ -1446,22 +1492,6 @@ static const float FarFromPrint = 1.0e6;
 
 // The slope of the HD ground's relief map at a world texel (its rise a texel right and a texel down the picture,
 // MCHdArt's relief maps), and the index target's alpha there (above GroundMark, that ground); none elsewhere.
-// The fog of war's edge on the HD ground at a texel of the index target (`drawn`): how many of its tile's corners the
-// fog leaves seen, kept in its slopes' low bits (1 to 3; 0 where all are, and off the ground).
-uint FogEdgeOf(float4 drawn)
-{
-    const uint2 bits = uint2(drawn.gb * 255.0 + 0.5) & uint2(1u, 1u);
-    return drawn.a > GroundMark ? bits.x | bits.y << 1 : 0u;
-}
-
-// How the fog of war's edge `edge` (FogEdgeOf) darkens what the weather lays on the ground, as the haze darkens the
-// ground (fogEdge's; none without one). Read straight by the count, its 0 undarkened: a choice would read both sides
-// (HLSL's ?:), and fogEdge[edge - 1] at 0 far outside the buffer.
-float3 FogEdgeShade(uint edge)
-{
-    return fogEdge[edge].rgb;
-}
-
 float2 ReliefAt(float2 texel, out float mark, out uint edge)
 {
     const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);

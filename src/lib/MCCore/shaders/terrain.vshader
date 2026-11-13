@@ -104,7 +104,8 @@ static const int SeamReach = 2;
 // from it to the right one (from GroundStepShift, GroundStepMask), how many of its corners the fog of war leaves seen
 // where it's drawn through a haze table (1 to 3, from GroundFogShift; 0 where all are: draw.pshader keeps it for the
 // composite's FogEdgeShade) and the tile's own count of movement cells that can't be entered (from GroundOwnShift); w
-// the neighbours' counts, as the cell's w holds them.
+// the neighbours' counts, as the cell's w holds them. Without a relief map (or HD colours), only that count of corners
+// seen (draw.pshader's HazedWater).
 static const uint GroundStepShift = 16;
 static const uint GroundStepMask = 0x3ffu;
 static const uint GroundFogShift = 26;
@@ -236,7 +237,8 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     // The seam pass reads the tile's place in the atlas (walk.zw) and its size (span.xy).
     output.span = seamPass ? int4(image.atlas.zw, 0, 0) : int4(0, 0, 0, 0);
     output.walk = seamPass ? uint4(0, 0, (uint)image.atlas.x, (uint)image.atlas.y) : uint4(0, 0, 0, 0);
-    output.ground = uint4(0, 0, 0, 0);
+    const uint fogEdge = (flags & TableBefore) != 0 ? seen : 0u;
+    output.ground = uint4(0, 0, fogEdge << GroundFogShift, 0);
 
     // The HD art pack's colours for the tile (draw.pshader's HdColors): the scale, and the tile's place to stay in.
     if (mesh.y != 0 && image.hot.z != 0 && (flags & UseColor) == 0)
@@ -260,7 +262,6 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
             const int right = Point(row, col + 1, e.y).y - topLeft.y;
             const int left = Point(row + 1, col, e.w).y - topLeft.y;
             const int bottom = Point(row + 1, col + 1, e.z).y - topLeft.y;
-            const uint fogEdge = (flags & TableBefore) != 0 ? seen : 0u;
             output.ground = uint4((uint)top.x & 0xffffu | (uint)top.y << 16, (uint)right & 0xffffu | (uint)left << 16,
                                   (uint)bottom & 0xffffu | ((uint)steps.x & GroundStepMask) << GroundStepShift |
                                       fogEdge << GroundFogShift | min(cell.z, MovementCells) << GroundOwnShift,

@@ -27,7 +27,8 @@
 // add light (colour without coverage). A frame whose alpha is only its original's mask scaled up (KindHdSmooth) takes
 // its coverage from the original's pixels, smoothed, as a smooth-edged shape does.
 // A paint scheme's table recolours the pixels whose original index it changes. A terrain tile with HD colours
-// (HdColors, terrain.vshader) writes the pixels and indices it always did, its colours filtered from the HD tile's.
+// (HdColors, terrain.vshader) writes the pixels and indices it always did, its colours filtered from the HD tile's;
+// port-only, any terrain tile's water the haze's table draws keeps its own index (HazedWater).
 // HD colours are corrected by their original index's colour now over the one the pack was made from (Corrected), so
 // another palette, the colour cycle and the brightness show through; a menu's picture, made from its own screen's
 // palette, shows as made (HdAsMade).
@@ -182,9 +183,9 @@ static const uint ReliefPlaceMask = 0xfffu;
 static const int ReliefAtlasMask = 0xff;
 static const float BlockedMarkSpan = 0.25;
 // A terrain tile's ground (terrain.vshader's, BlockedAt): the step across in z's bits from GroundStepShift, how many of
-// its corners the fog of war leaves seen from GroundFogShift (1 to 3 at its edge, 0 elsewhere), the tile's count of
-// movement cells that can't be entered from GroundOwnShift (of MovementCells); w its neighbours' counts,
-// BlockedRoundBits each (MCTerrainMesh::CellBlockedRound).
+// its corners the fog of war leaves seen from GroundFogShift (1 to 3 at its edge, 0 elsewhere; every terrain tile's,
+// with a relief map or not; 0 for any other draw), the tile's count of movement cells that can't be entered from
+// GroundOwnShift (of MovementCells); w its neighbours' counts, BlockedRoundBits each (MCTerrainMesh::CellBlockedRound).
 static const uint GroundStepShift = 16;
 static const uint GroundStepMask = 0x3ffu;
 static const uint GroundFogShift = 26;
@@ -193,6 +194,17 @@ static const uint GroundOwnShift = 28;
 static const uint BlockedRoundBits = 4;
 static const uint BlockedRoundMask = 15u;
 static const float MovementCells = 9.0;
+// Port-only (HD lighting's living water): the water's palette entries, its blues and its colour-cycled ones (the
+// composite's IsWater, which finds the water by them in the index target). The haze's tables at the fog of war's edge
+// map most of them to other ramps' entries (greys, greens) and a few to water blues, so a water pixel there keeps its
+// own index (HazedWater), and the composite finds the water whole, not a speckle of it. Without a relief map, its alpha
+// in the index target is FoggedWaterMark for each of its tile's corners the fog leaves seen (the composite's
+// FoggedWaterAt; under the canopy's mark); with one, the slopes' low bits hold them, as for all the ground.
+static const uint FirstWaterBlue = 0x58;
+static const uint WaterBlues = 6;
+static const uint FirstWaterColor = 0xd8;
+static const uint WaterColors = 8;
+static const float FoggedWaterMark = 8.0 / 255.0;
 // The least the quadratic BlockedAt solves may divide by (a cell squashed flat on the window: its middle's taken).
 static const float LeastCellSpan = 1e-3;
 static const int BlockSide = 4;
@@ -403,9 +415,49 @@ float2 TileLocal(Input input, int2 target)
     return float2(input.source.xy) + (window - float2(input.rect.xy)) - float2(input.walk.zw);
 }
 
+// Whether palette entry `index` is the water's (FirstWaterBlue's, FirstWaterColor's).
+bool IsWaterEntry(uint index)
+{
+    return index - FirstWaterBlue < WaterBlues || index - FirstWaterColor < WaterColors;
+}
+
+// How many of a terrain tile's corners the fog of war leaves seen where the haze's table draws it (1 to 3; 0 where all
+// are, and for any other draw): its ground's (terrain.vshader).
+uint FogEdge(Input input)
+{
+    return (input.ground.z >> GroundFogShift) & GroundFogMask;
+}
+
+// Port-only: whether a terrain tile's pixel of original index `original` is water the haze's table draws (FogEdge).
+bool HazedWater(Input input, uint original)
+{
+    return FogEdge(input) != 0u && IsWaterEntry(original);
+}
+
+// Port-only: how the haze's table `row` changes the water's colour on the whole, a channel at a time: the mean of what it
+// shows the water's entries as over the mean the pack's colours were made from. So the water there is darkened as the
+// original's is on the whole, smoothly, rather than each of its pixels taking the ramp the table gives its entry (a
+// patchwork of the original's pixels), and its colour doesn't cycle, as the original's doesn't there (none of the
+// entries it gives cycles; composite.pshader's LivingWater moves its waves, dimmed).
+float3 WaterHaze(uint row)
+{
+    float3 hazed = float3(0.0, 0.0, 0.0);
+    float3 made = float3(0.0, 0.0, 0.0);
+
+    for (uint i = 0; i < WaterBlues + WaterColors; i++)
+    {
+        const uint entry = i < WaterBlues ? FirstWaterBlue + i : FirstWaterColor + (i - WaterBlues);
+        hazed += Shown(Table(row, entry));
+        made += MadeWith(entry);
+    }
+
+    return clamp(hazed / max(made, 1.0 / 255.0), 0.0, MaxCorrection);
+}
+
 // A terrain tile's HD colour at drawn pixel `target` (terrain.vshader): op.w the HD scale, walk.xy the tile's HD place
 // and walk.zw its place in the atlas (the source's), span.xy its size and span.z its HD atlas; the index is `value`
-// (original, through the haze's table), the HD colour the one made from `original`'s.
+// (original, through the haze's table), the HD colour the one made from `original`'s (water the haze's table draws,
+// darkened by WaterHaze).
 float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
 {
     const int hdScale = (int)(input.op.w & HdScaleMask);
@@ -420,7 +472,24 @@ float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
         lerp(HdAtlasTexel(base, low, high, atlas), HdAtlasTexel(base + int2(1, 0), low, high, atlas), f.x);
     const float3 bottom =
         lerp(HdAtlasTexel(base + int2(0, 1), low, high, atlas), HdAtlasTexel(base + int2(1, 1), low, high, atlas), f.x);
-    return Corrected(lerp(top, bottom, f.y), 1.0, original, value);
+    const float3 hd = lerp(top, bottom, f.y);
+
+    if (HazedWater(input, original))
+    {
+        return saturate(hd * WaterHaze(input.op.z));
+    }
+
+    return Corrected(hd, 1.0, original, value);
+}
+
+// Port-only: a terrain tile's index target at a pixel of original index `original`, shown as `value` (through the
+// haze's table): `value`, but for water the haze's table draws (HazedWater), which keeps `original`, marked without a
+// relief map as FoggedWaterMark for each corner seen.
+float4 TerrainIndex(Input input, uint original, uint value)
+{
+    const bool water = HazedWater(input, original);
+    return float4((float)(water ? original : value) / 255.0, 0.0, 0.0,
+                  water ? (float)FogEdge(input) * FoggedWaterMark : 0.0);
 }
 
 // Port-only (HD lighting's relief maps): a relief atlas's slopes at a texel (span.w: 1 reliefTex, 2 reliefTex2), kept
@@ -509,21 +578,21 @@ float BlockedAt(Input input, int2 target)
     return lerp(row, next, toward.y) / MovementCells;
 }
 
-// A terrain tile's pixel in HD colours (HdTerrainColour), and its index; port-only, with its relief map's slopes beside
-// the index (G, B) and A set where it has one (the composite's SlopeAt): 1 where the ground can be entered, down to
-// BlockedMarkSpan less where none of it can (BlockedAt: cliffs), still above GroundMark. The slopes' bytes keep the fog
-// of war's edge in their low bits (G the first, B the second; the composite's FogEdgeShade), so the weather laid over
-// the ground there is darkened as the haze darkens it.
+// A terrain tile's pixel in HD colours (HdTerrainColour), and its index (TerrainIndex); port-only, with its relief map's
+// slopes beside the index (G, B) and A set where it has one (the composite's SlopeAt): 1 where the ground can be
+// entered, down to BlockedMarkSpan less where none of it can (BlockedAt: cliffs), still above GroundMark. The slopes'
+// bytes keep the fog of war's edge in their low bits (G the first, B the second; the composite's FogEdgeShade), so the
+// weather laid over the ground there is darkened as the haze darkens it.
 Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
 {
     Output output;
     output.color = float4(HdTerrainColour(input, target, original, value), 1.0);
-    output.index = float4((float)value / 255.0, 0.0, 0.0, 0.0);
+    output.index = TerrainIndex(input, original, value);
     output.glint = float4(0.0, 0.0, 0.0, 0.0);
 
     if ((input.span.w & ReliefAtlasMask) != 0)
     {
-        const uint fogEdge = (input.ground.z >> GroundFogShift) & GroundFogMask;
+        const uint fogEdge = FogEdge(input);
         const uint2 slopes =
             (uint2(round(saturate(ReliefAt(input, target)) * 255.0)) & ~uint2(1u, 1u)) | uint2(fogEdge & 1u, fogEdge >> 1);
         output.index.yzw = float3(float2(slopes) / 255.0, 1.0 - BlockedMarkSpan * BlockedAt(input, target));
@@ -1957,6 +2026,15 @@ Output DrawnOutput(Input input)
     if ((flags & HdColors) != 0 && (flags & UseColor) == 0 && !(cycle.z != 0 && value == 255))
     {
         return HdTerrainPixel(input, target, original, value);
+    }
+
+    // Port-only: a terrain tile's water the haze's table draws, in the original's colours: as the original shows it,
+    // its index its own (TerrainIndex).
+    if (HazedWater(input, original) && (flags & (AlphaBlend | TableAfter)) == 0)
+    {
+        Output output = Opaque(value);
+        output.index = TerrainIndex(input, original, value);
+        return output;
     }
 #endif
 

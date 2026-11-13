@@ -16,6 +16,7 @@
 #include "camera/MCCameraList.h"
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
+#include "engine/MCByteFlag.h"
 #include "engine/MCCraterManager.h"
 #include "fakes/MCMemoryFileSource.h"
 #include "gui/MCGuiFont.h"
@@ -20392,6 +20393,64 @@ namespace
     constexpr int32_t ShoreReach = 6;
     /// <summary>The terrain type of the tiles off the map (the corners outside its diamond).</summary>
     constexpr uint32_t OffMapTerrain = 0;
+    /// <summary>MCTerrain::MarkRadiusSeen's side: the Inner Sphere's (RevealAll's).</summary>
+    constexpr uint8_t InnerSphereSight = 1;
+
+    /// <summary>A map tile, and how many of the fewer of water and land lie round it (FindShore).</summary>
+    struct ShoreTile
+    {
+        int32_t Row = 0;
+        int32_t Column = 0;
+        int32_t Fewer = -1;
+    };
+
+    /// <summary>
+    /// The shore of the map in play: the tile with the most of the fewer of water and land within ShoreReach tiles each
+    /// way, all of it on the map (terrain type 0 is off it, the corners outside its diamond); the map's middle when none.
+    /// </summary>
+    ShoreTile FindShore()
+    {
+        const int32_t width = GameMap().Width;
+        const int32_t height = GameMap().Height;
+        const auto typeAt = [&](int32_t row, int32_t column)
+        { return GameMap().Map[static_cast<size_t>(row) * width + column].TerrainType(); };
+        ShoreTile best{height / 2, width / 2, -1};
+
+        for (int32_t row = ShoreReach; row < height - ShoreReach; ++row)
+        {
+            for (int32_t column = ShoreReach; column < width - ShoreReach; ++column)
+            {
+                int32_t water = 0;
+                int32_t land = 0;
+                bool onMap = true;
+
+                for (int32_t r = row - ShoreReach; r <= row + ShoreReach; ++r)
+                {
+                    for (int32_t c = column - ShoreReach; c <= column + ShoreReach; ++c)
+                    {
+                        const uint32_t type = typeAt(r, c);
+                        onMap = onMap && type != OffMapTerrain;
+                        ++(type >= FirstWaterTerrain ? water : land);
+                    }
+                }
+
+                if (onMap && std::min(water, land) > best.Fewer)
+                {
+                    best = ShoreTile{row, column, std::min(water, land)};
+                }
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>The fog of war over the whole map but a circle <paramref name="range"/> meters round <paramref
+    /// name="centre"/> (MCTerrain::MarkRadiusSeen's), so the view round it shows the fog's edge.</summary>
+    void SeenOnlyAround(const MCVector3D& centre, float range)
+    {
+        Terrain()->HomeVisibleBits().ResetAll(false);
+        Terrain()->MarkRadiusSeen(centre, MCVector3D(), 360.0f, range, InnerSphereSight);
+    }
 }
 
 /// <summary>
@@ -20401,7 +20460,9 @@ namespace
 /// <c>--hd-water-frames &lt;n&gt;</c> frames (default 150) at 30 a second, <c>water_NNNN_hd.png</c> (or _original.png
 /// with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks; <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c>
 /// switches the art as it plays (original, hd, day, dusk: the debug console's art command). <c>--hd-water-at
-/// &lt;row&gt;,&lt;column&gt;</c> puts the camera over that tile instead of the shore.
+/// &lt;row&gt;,&lt;column&gt;</c> puts the camera over that tile instead of the shore; <c>--hd-water-fog
+/// &lt;meters&gt;</c> leaves the fog of war over the map but a circle that wide round it (100 shows mission 1's shore
+/// under the fog's edge).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
 {
@@ -20432,55 +20493,26 @@ TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
         std::from_chars(given->data(), given->data() + given->size(), frames);
     }
 
-    // The shore: the tile with the most of the fewer of water and land around it, all of it on the map (terrain type 0
-    // is off it, the corners outside its diamond).
-    const int32_t width = GameMap().Width;
-    const int32_t height = GameMap().Height;
-    const auto typeAt = [&](int32_t row, int32_t column)
-    { return GameMap().Map[static_cast<size_t>(row) * width + column].TerrainType(); };
-    int32_t best = -1;
-    int32_t bestRow = height / 2;
-    int32_t bestColumn = width / 2;
-
-    for (int32_t row = ShoreReach; row < height - ShoreReach; ++row)
-    {
-        for (int32_t column = ShoreReach; column < width - ShoreReach; ++column)
-        {
-            int32_t water = 0;
-            int32_t land = 0;
-            bool onMap = true;
-
-            for (int32_t r = row - ShoreReach; r <= row + ShoreReach; ++r)
-            {
-                for (int32_t c = column - ShoreReach; c <= column + ShoreReach; ++c)
-                {
-                    const uint32_t type = typeAt(r, c);
-                    onMap = onMap && type != OffMapTerrain;
-                    ++(type >= FirstWaterTerrain ? water : land);
-                }
-            }
-
-            if (onMap && std::min(water, land) > best)
-            {
-                best = std::min(water, land);
-                bestRow = row;
-                bestColumn = column;
-            }
-        }
-    }
+    ShoreTile shore = FindShore();
 
     // Port-only, for the HD art audits: --hd-water-at <row>,<column> parks the camera over that tile instead.
     if (const std::optional<std::string_view> at = MCTest::Option("hd-water-at"); at.has_value())
     {
         const size_t comma = at->find(',');
         REQUIRE(comma != std::string_view::npos);
-        std::from_chars(at->data(), at->data() + comma, bestRow);
-        std::from_chars(at->data() + comma + 1, at->data() + at->size(), bestColumn);
+        std::from_chars(at->data(), at->data() + comma, shore.Row);
+        std::from_chars(at->data() + comma + 1, at->data() + at->size(), shore.Column);
     }
 
-    std::cout << std::format("  the shore: tile ({}, {}), {} of the fewer of water and land around it\n", bestRow,
-                             bestColumn, best);
-    Eye()->SetPosition(MCVector3D(TileColToWorld(bestColumn), TileRowToWorld(bestRow), 0.0f));
+    std::cout << std::format("  the shore: tile ({}, {}), {} of the fewer of water and land around it\n", shore.Row,
+                             shore.Column, shore.Fewer);
+    const MCVector3D centre(TileColToWorld(shore.Column), TileRowToWorld(shore.Row), 0.0f);
+    Eye()->SetPosition(centre);
+
+    if (const std::optional<std::string_view> fog = MCTest::Option("hd-water-fog"); fog.has_value())
+    {
+        SeenOnlyAround(centre, std::strtof(std::string(*fog).c_str(), nullptr));
+    }
 
     const std::map<int32_t, MCArtMode> artModes = ArtModesFromOptions();
 
@@ -20492,6 +20524,209 @@ TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
     }
 
     MCFixedZoomHeight = 0.0f;
+}
+
+namespace
+{
+    /// <summary>The fogged water test's circle seen round mission 1's shore (meters): its edge crosses the water in view.</summary>
+    constexpr float FoggedWaterRange = 60.0f;
+    /// <summary>
+    /// How far into its map cell (of a side) a point must lie each way to be taken as that cell's tile's: the tiles'
+    /// art reaches a little past their cells.
+    /// </summary>
+    constexpr float CellInside = 0.2f;
+    /// <summary>The fogged water test's frames between the colours it compares: half a second.</summary>
+    constexpr int32_t FoggedWaterFrames = 15;
+    /// <summary>A pixel whose channel changes by more than this (of 255) moved.</summary>
+    constexpr int32_t MovedBy = 2;
+    /// <summary>The fewest water pixels of each kind (under the fog's edge, seen) the view must show to measure.</summary>
+    constexpr size_t LeastWater = 500;
+    /// <summary>The share of each water's pixels at least that the living water moves in half a second.</summary>
+    constexpr double WaterMoves = 0.05;
+    /// <summary>
+    /// How much the water under the fog's edge changes at most, on average, against the seen water: the haze darkens it
+    /// to about half or less, and its foam and glints with it.
+    /// </summary>
+    constexpr double FoggedWaterDimmed = 0.5;
+    /// <summary>The share of the water at most that may lose its index (a cell's misjudged edge).</summary>
+    constexpr double FoggedStray = 0.01;
+    /// <summary>A map cell's corners: all of them seen, no haze.</summary>
+    constexpr uint32_t CellCorners = 4;
+
+    /// <summary>
+    /// How many of the corners of the map cell shown at screen pixel (<paramref name="x"/>, <paramref name="y"/>) the
+    /// player's side has seen (0 to 4: the terrain's haze level, MCTerrainBlock::Draw's count); none near the cell's
+    /// edge.
+    /// </summary>
+    std::optional<uint32_t> CornersSeenAt(int32_t x, int32_t y)
+    {
+        MCVector3D point;
+        Eye()->InverseProject(
+            MCVector2D(static_cast<float>(x - GlobalPane->X0) + 0.5f, static_cast<float>(y - GlobalPane->Y0) + 0.5f),
+            point);
+        const float across = (point.X - MCTerrain::MapTopLeft3d100.X) * MCTerrain::OneOvermetersPerVertex;
+        const float down = (MCTerrain::MapTopLeft3d100.Y - point.Y) * MCTerrain::OneOvermetersPerVertex;
+        const float column = std::floor(across);
+        const float row = std::floor(down);
+        const auto inside = [](float within) { return within >= CellInside && within <= 1.0f - CellInside; };
+
+        if (row < 0.0f || column < 0.0f || !inside(across - column) || !inside(down - row))
+        {
+            return std::nullopt;
+        }
+
+        const MCByteFlag& seen = Terrain()->HomeVisibleBits();
+        const auto r = static_cast<uint32_t>(row);
+        const auto c = static_cast<uint32_t>(column);
+        return static_cast<uint32_t>(seen.GetFlag(r, c)) + seen.GetFlag(r, c + 1) + seen.GetFlag(r + 1, c) +
+               seen.GetFlag(r + 1, c + 1);
+    }
+}
+
+/// <summary>
+/// Port-only (HD lighting's living water) at the fog of war's edge: on the screen drawn by the GPU over mission 1's
+/// shore, the fog over the map but a circle round it, in the original's art and with the HD ground (a pack of the map's
+/// tiles, with relief maps), the water under the fog's edge (a cell with one to three corners seen) keeps its own index
+/// as the composite reads it, though the haze's table draws its colours (it maps most of the water's entries to other
+/// ramps', a few to water blues: a speckle of water among "land" that the living water's foam and waves moved), and the
+/// living water moves it as it moves the seen water, dimmed as the haze darkens it. The index is the GPU's as the screen
+/// shows it (MCDisplay::ComposeScreen), the water's as the whole map seen shows it; which cells the fog's edge covers,
+/// the fog's own.
+/// </summary>
+TEST_CASE_ISOLATED("game: water under the fog of war's edge keeps its index through the haze, and the living water "
+                   "moves it dimmed")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    const ShoreTile shore = FindShore();
+    const MCVector3D centre(TileColToWorld(shore.Column), TileRowToWorld(shore.Row), 0.0f);
+    Eye()->SetPosition(centre);
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int lightingWas = GHdLighting;
+    const int reliefWas = GHdRelief;
+    GHdLighting = HdLightingOn;
+    REQUIRE(MCSceneLights::Lighting().Water > 0.0f);
+
+    const auto measure = [&](std::string_view look)
+    {
+        MCTest::Scope scope(look);
+        // The water as the whole map seen shows it, then the view under the fog's edge, twice half a second apart.
+        RevealAll();
+        MCTestGame::RunFrame(FrameSeconds);
+        MCTestGame::RunFrame(FrameSeconds);
+        const std::vector<uint8_t> whole = display->ComposeScreen();
+        SeenOnlyAround(centre, FoggedWaterRange);
+        MCTestGame::RunFrame(FrameSeconds);
+        MCTestGame::RunFrame(FrameSeconds);
+        const std::vector<uint8_t> fogged = display->ComposeScreen();
+        const auto first = display->ReadFrame();
+        REQUIRE(first.has_value());
+
+        for (int32_t frame = 0; frame < FoggedWaterFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const auto later = display->ReadFrame();
+        REQUIRE(later.has_value());
+        const int32_t width = display->Width();
+        const int32_t height = display->Height();
+        const auto pixels = static_cast<size_t>(width) * height;
+        REQUIRE_EQ(whole.size(), pixels);
+        REQUIRE_EQ(fogged.size(), pixels);
+        REQUIRE_EQ(first->size(), pixels);
+        REQUIRE_EQ(later->size(), pixels);
+
+        size_t edgeWater = 0;
+        size_t edgeKept = 0;
+        size_t edgeMoved = 0;
+        int64_t edgeChange = 0;
+        int64_t seenChange = 0;
+        size_t seenWater = 0;
+        size_t seenKept = 0;
+        size_t seenMoved = 0;
+
+        // The world clear of the interface (the panels at the left, whose minimap shows the water's colours and the
+        // fog, the mech bar at the bottom).
+        for (int32_t y = height / 4; y < height - height / 8; ++y)
+        {
+            for (int32_t x = width / 3; x < width; ++x)
+            {
+                const auto i = static_cast<size_t>(y) * width + x;
+                const std::optional<uint32_t> corners = CornersSeenAt(x, y);
+
+                // Water in a cell seen, wholly or in part.
+                if (!corners.has_value() || *corners == 0 || !MCParticles::IsWaterColor(whole[i]))
+                {
+                    continue;
+                }
+
+                const SDL_Color a = (*first)[i];
+                const SDL_Color b = (*later)[i];
+                const int32_t change = std::max({std::abs(a.r - b.r), std::abs(a.g - b.g), std::abs(a.b - b.b)});
+                const bool moved = change > MovedBy;
+                const bool kept = fogged[i] == whole[i];
+
+                if (*corners == CellCorners)
+                {
+                    ++seenWater;
+                    seenKept += kept ? 1 : 0;
+                    seenMoved += moved ? 1 : 0;
+                    seenChange += change;
+                }
+                else
+                {
+                    ++edgeWater;
+                    edgeKept += kept ? 1 : 0;
+                    edgeMoved += moved ? 1 : 0;
+                    edgeChange += change;
+                }
+            }
+        }
+
+        REQUIRE(edgeWater >= LeastWater);
+        REQUIRE(seenWater >= LeastWater);
+        const double edgeMean = static_cast<double>(edgeChange) / static_cast<double>(edgeWater);
+        const double seenMean = static_cast<double>(seenChange) / static_cast<double>(seenWater);
+        std::cout << std::format(
+            "  {}: under the fog's edge {} water pixels, {} keeping their index, {} moving (by {:.2f} "
+            "on average); seen {}, {} keeping it, {} moving (by {:.2f})\n",
+            look, edgeWater, edgeKept, edgeMoved, edgeMean, seenWater, seenKept, seenMoved, seenMean);
+        // The seen water as it is, moving.
+        CHECK(static_cast<double>(seenKept) >= (1.0 - FoggedStray) * static_cast<double>(seenWater));
+        CHECK(static_cast<double>(seenMoved) >= WaterMoves * static_cast<double>(seenWater));
+        // The water under the fog's edge: its own index, moving, dimmed.
+        CHECK(static_cast<double>(edgeKept) >= (1.0 - FoggedStray) * static_cast<double>(edgeWater));
+        CHECK(static_cast<double>(edgeMoved) >= WaterMoves * static_cast<double>(edgeWater));
+        CHECK(edgeMean <= FoggedWaterDimmed * seenMean);
+    };
+
+    measure("the original's art");
+
+    // The HD ground: a pack of the map's tiles with relief maps (the index target's slopes keep the fog's edge).
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    display->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_fogged_water";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "ground";
+    constexpr int32_t Rise = 20;
+    REQUIRE(WriteTerrainPack(pack, *inUse, colors, Muted) > 0);
+    REQUIRE(WriteReliefPack(pack, *inUse, Rise) > 0);
+
+    {
+        const MCHdArtOn hdArt(pack);
+        GHdRelief = 1;
+        measure("the HD ground");
+    }
+
+    GHdRelief = reliefWas;
+    GHdLighting = lightingWas;
+    std::filesystem::remove_all(scratch);
 }
 
 namespace

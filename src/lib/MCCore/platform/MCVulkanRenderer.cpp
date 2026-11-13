@@ -9,6 +9,7 @@
 #include "lib/MCFatal.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
@@ -5347,11 +5348,18 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
                              std::min(frame.Clip.X1, static_cast<int32_t>(drawn.RecordedWidth) - 1),
                              std::min(frame.Clip.Y1, static_cast<int32_t>(drawn.RecordedHeight) - 1)};
 
+    _MirrorHaze.clear();
+
     if (!frame.AllFilled)
     {
         for (size_t i = 0; i < 3; ++i)
         {
             draw.HazeRows[i] = frame.Haze[i].has_value() ? TableRow(*frame.Haze[i]) : 0;
+
+            if (frame.Haze[i].has_value())
+            {
+                std::ranges::copy(*frame.Haze[i], _MirrorHaze.emplace_back().begin());
+            }
         }
     }
 
@@ -7736,6 +7744,14 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
         }
 
         const int64_t differentBefore = result.Different;
+        // Water the haze draws keeps its own index on the GPU (draw.pshader's HazedWater): the software renderer's
+        // pixel is a haze table's for it.
+        const auto hazedWater = [this](uint8_t cpu, uint8_t drawn)
+        {
+            return MCParticles::IsWaterColor(drawn) &&
+                   std::ranges::any_of(_MirrorHaze,
+                                       [&](const std::array<uint8_t, 256>& table) { return table[drawn] == cpu; });
+        };
 
         for (int32_t y = 0; y < drawnHeight; ++y)
         {
@@ -7747,7 +7763,7 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
                 const uint8_t cpu = window.Pixels[static_cast<size_t>(wy) * width + wx];
                 const uint8_t drawn = gpu[static_cast<size_t>(y) * drawnWidth + x];
 
-                if (cpu != drawn && blended[static_cast<size_t>(wy) * width + wx] == 0)
+                if (cpu != drawn && blended[static_cast<size_t>(wy) * width + wx] == 0 && !hazedWater(cpu, drawn))
                 {
                     if (result.First.empty())
                     {

@@ -1443,6 +1443,12 @@ private:
     /// <summary>The span walks' state (as the software renderer keeps its own).</summary>
     MCSpanState _Spans;
     MirrorTally _Mirror;
+    /// <summary>
+    /// The last terrain layer's haze tables (for one, two and three corners seen), as copies: the water they draw keeps
+    /// its own index on the GPU (draw.pshader's HazedWater), so <see cref="Compare"/> takes the software renderer's
+    /// pixel there as one of them maps the GPU's.
+    /// </summary>
+    std::vector<std::array<uint8_t, 256>> _MirrorHaze;
     /// <summary>The surfaces dumped (-gpudump).</summary>
     std::set<MCAddressKey> _Dumped;
 };

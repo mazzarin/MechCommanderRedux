@@ -35,10 +35,10 @@ MCOptionalRef<const MCTerrainMesh> MCTerrainMeshInUse();
 inline constexpr size_t MCTerrainFogEdgeLevels = 3;
 
 /// <summary>
-/// Port-only (HD weather): how the fog of war's edge darkens what the weather lays on the ground (the snow's white, the
-/// wet ground's sky) on a tile with one, two and three of its corners seen, as the haze tables darken the ground: each
-/// table's change to the palette's pale greys (red, green, blue; 1 where it doesn't darken), as the last ground frame
-/// drew the edge.
+/// Port-only (HD weather and lighting): how the fog of war's edge darkens what the weather lays on the ground (the snow's
+/// white, the wet ground's sky) and the living water's foam and glints on a tile with one, two and three of its corners
+/// seen, as the haze tables darken the ground: each table's change to the palette's pale greys (red, green, blue; 1
+/// where it doesn't darken), as the last ground frame drew the edge.
 /// </summary>
 std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> MCTerrainFogEdgeShades();
 

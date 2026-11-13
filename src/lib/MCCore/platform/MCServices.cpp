@@ -146,4 +146,9 @@ namespace MCSocket
     {
         Net().Close(socket);
     }
+
+    bool EndSending(Handle socket)
+    {
+        return Net().EndSending(socket);
+    }
 }

@@ -46,14 +46,13 @@ void MCSessionManager::ProcessMessages()
 
     if (HasPlayerNumber && Players.size() > 1 && IsHost)
     {
-        const uint32_t now = static_cast<uint32_t>(MCPort::PerformanceCounter());
+        const auto now = static_cast<uint64_t>(MCPort::PerformanceCounter());
 
-        // Port fix: compared as a signed difference; the low 32 bits of a modern performance counter wrap every few
-        // minutes, and a plain "next < now" then stopped (or flooded) the pings until it wrapped again.
-        if (static_cast<int32_t>(now - _NextPingTime) > 0)
+        // Port fix: the whole counter; its low 32 bits wrap every 4.3 seconds on a nanosecond counter.
+        if (now > _NextPingTime)
         {
             SendPing();
-            _NextPingTime = now + _PingInterval * TicksPerMs();
+            _NextPingTime = now + static_cast<uint64_t>(_PingInterval) * TicksPerMs();
         }
     }
 
@@ -392,12 +391,13 @@ uint32_t MCSessionManager::RTGetIDFromPlayerNumber(int playerNumber)
     return player != nullptr ? player->Id : 0;
 }
 
-void MCSessionManager::UpdatePlayerGuaranteedMessages(MCFidpPlayer& player, uint32_t now)
+void MCSessionManager::UpdatePlayerGuaranteedMessages(MCFidpPlayer& player, uint64_t now)
 {
     for (const std::shared_ptr<MCFidpMessage>& msg : player.VerifyList)
     {
         if ((player.HasPlayerNumber || msg->Type() == PlayerRemovedType) &&
-            player.ResendDelay * msg->TimesSent < (now - msg->SendTime) / TicksPerMs())
+            static_cast<uint64_t>(player.ResendDelay) * static_cast<uint64_t>(msg->TimesSent) <
+                (now - msg->SendTime) / TicksPerMs())
         {
             SendPlainMessage(player.Id, msg->Bytes());
             msg->WasResent = true;
@@ -409,7 +409,7 @@ void MCSessionManager::UpdatePlayerGuaranteedMessages(MCFidpPlayer& player, uint
 
 void MCSessionManager::UpdateGuaranteedMessages()
 {
-    const uint32_t now = static_cast<uint32_t>(MCPort::PerformanceCounter());
+    const auto now = static_cast<uint64_t>(MCPort::PerformanceCounter());
 
     for (const auto& player : Players)
     {

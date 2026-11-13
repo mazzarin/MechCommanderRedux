@@ -87,6 +87,12 @@ public:
     /// <summary>Port-only (the personal build): whether every player in the session is on the screen.</summary>
     bool AllShown();
 
+    /// <summary>
+    /// Port-only (the personal build): on the host, whether guest <paramref name="playerId"/> was shown the room with its
+    /// game up (it had pinged), so no showing again waits for it.
+    /// </summary>
+    bool ShownWithGameUp(uint32_t playerId) const;
+
     /// <summary>Port-only (Redux HD): the host's picks as they stand, the players by name (a rematch's, network/MCRoomEnd.h).</summary>
     MCRoomPicks Picks() const;
 

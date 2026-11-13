@@ -489,7 +489,7 @@ private:
     /// <summary>Adds an entry for <paramref name="sendCount"/> to player number <paramref name="playerNumber"/>'s verify.</summary>
     void AddVerifyEntry(int32_t playerNumber, uint8_t sendCount);
     /// <summary>Resends <paramref name="player"/>'s unverified messages whose delay ran out at <paramref name="now"/>.</summary>
-    void UpdatePlayerGuaranteedMessages(MCFidpPlayer& player, uint32_t now);
+    void UpdatePlayerGuaranteedMessages(MCFidpPlayer& player, uint64_t now);
     /// <summary>Stamps each numbered player's next send count into <paramref name="message"/> for a group send.</summary>
     void SetupMessageSendCounts(std::span<uint8_t> message,
                                 std::span<const std::shared_ptr<MCFidpPlayer>> players) const;
@@ -562,7 +562,7 @@ private:
     /// <summary>Set when every latency report is in (<see cref="ReadyToChooseServer"/>).</summary>
     bool _LatencyReportsIn = false;
     /// <summary>Performance-counter time of the next ping.</summary>
-    uint32_t _NextPingTime = 0;
+    uint64_t _NextPingTime = 0;
     /// <summary>Milliseconds between pings.</summary>
     uint32_t _PingInterval = 2000;
 };

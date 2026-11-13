@@ -51,6 +51,10 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - Rebuilt as a native 64-bit program. DirectDraw, DirectSound, DirectPlay and the Smacker DLL are replaced by SDL3 and
   a built-in Smacker video decoder.
 - Runs on Windows, and on Macs with Apple silicon as `MechCommander Redux.app`. Linux is planned.
+- **Redux HD.** `-benchmark` measures how smoothly the game runs: it plays a staged battle in mission 16's canyon and
+  sweeps the camera round the map, the same on every computer, then quits, adding its result to `benchmarks.txt` in
+  the saves folder (the slowest frames first). Words after it pick the weather, the time of day or the original's look
+  (`-benchmark rain,night`).
 
 ### Display
 

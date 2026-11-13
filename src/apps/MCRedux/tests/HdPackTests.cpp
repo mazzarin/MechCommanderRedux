@@ -1100,8 +1100,8 @@ namespace
 /// Port-only: once a numbered folder's frame is drawn the first time, the reading thread reads the frames drawn after it
 /// (the rest of its in-betweens, then the next frame's, looping round; a turn middle's likewise), and they are drawn as
 /// the game's thread would have read them: the same frames, refused at a size they weren't made for, one dropped for
-/// room and read ahead again keeping its Id. Nothing is read twice, and the reading thread's handle on the archive's
-/// file is closed once it has read.
+/// room and read ahead again keeping its Id. Nothing is read twice; the reading thread opens its own handle on the
+/// archive's file once for all its reads of it, and setting the pack closes it.
 /// </summary>
 TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read when drawn")
 {
@@ -1110,6 +1110,7 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     const int previous = GHdArt;
     GHdArt = 1;
     MCHdArt::SetPackFolder(scratch.Path());
+    const size_t opened = MCHdArt::ReaderFilesOpened();
     const auto drawn = [](const AheadKey& key)
     {
         MCTest::Scope scope(std::format("frame {}", AheadName(key)));
@@ -1148,9 +1149,10 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
 
     CHECK_EQ(MCHdArt::FramesRead(), read + AheadFrames * AheadSteps);
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + AheadFrames * AheadSteps - 1);
-    // The reading thread's own handle on the archive is closed once it has read.
+    // The reading thread opened its own handle on the archive once, and keeps it beside the game's.
     MCHdArt::WaitForReadAhead();
-    CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{1});
+    CHECK_EQ(MCHdArt::ReaderFilesOpened(), opened + 1);
+    CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{2});
 
     // A turn middle: its in-between, then the next frame's turn middle and its in-between.
     drawn({0, TurnStep});
@@ -1179,8 +1181,11 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     CHECK_EQ(again->Id, id);
     MCHdArt::SetCacheBudget(0);
 
-    // Drawn first, with the pack set again, frame 1 is read as drawn: the frame read ahead.
+    // Drawn first, with the pack set again, frame 1 is read as drawn: the frame read ahead. Setting the pack closed
+    // both handles, and the reading thread still opened its own once.
     MCHdArt::SetPackFolder(scratch.Path());
+    CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{0});
+    CHECK_EQ(MCHdArt::ReaderFilesOpened(), opened + 1);
     const size_t fresh = MCHdArt::FramesReadAhead();
     const std::shared_ptr<const MCHdArt::Frame> first = drawn({1, 0});
     CHECK_EQ(MCHdArt::FramesReadAhead(), fresh);

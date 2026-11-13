@@ -252,6 +252,11 @@ namespace
         uint64_t Generation = 0;
         /// <summary>Set while the reading thread works on a follow.</summary>
         bool Working = false;
+        /// <summary>
+        /// Set while the reading thread keeps its handle on the archive it read last for the follows after (ReaderFile);
+        /// ForgetAhead waits until it's closed, as the pack's files may go once another is set.
+        /// </summary>
+        bool ReaderKeeps = false;
         /// <summary>The reading thread, started with the first follow; last, so it stops before the rest goes.</summary>
         std::jthread Reader;
     };
@@ -299,13 +304,15 @@ namespace
         /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
         std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>
-        /// Guards the archives' files kept open (MCFastFile's reads, Release and IsOpen) and the three below: the reading
+        /// Guards the archives' files kept open (MCFastFile's reads, Release and IsOpen) and the four below: the reading
         /// thread reads through a handle of its own (a file's stream can't be read from two threads), so it holds this
         /// only to count that one, which may close one of these. Never held with ReadAhead::Lock.
         /// </summary>
         std::mutex ArchiveFiles;
         /// <summary>The reading thread's own handles open (0 or 1: ReaderFile), counted against MaxOpenArchiveFiles.</summary>
         size_t ReaderFiles = 0;
+        /// <summary>How many times the reading thread has opened its own handle (MCHdArt::ReaderFilesOpened).</summary>
+        size_t ReaderOpens = 0;
         /// <summary>
         /// The archives' files kept open, the most recently read first (at most MaxOpenArchiveFiles), and each one's
         /// place there.
@@ -986,6 +993,7 @@ namespace
             State& state = TheState();
             std::scoped_lock lock(state.ArchiveFiles);
             state.ReaderFiles = open ? 1 : 0;
+            state.ReaderOpens += open ? 1 : 0;
             TrimOpenFiles(state);
         }
 
@@ -1076,22 +1084,72 @@ namespace
     /// checks the size it asks for). A read that fails is left to the game's thread, which reads it again and logs why;
     /// a read begun before what was found was forgotten is dropped.
     /// </summary>
+    /// <remarks>
+    /// The handle is kept for the follows after while they read the same archive, as a pan's mostly do: opened for each
+    /// follow, one archive was opened 136 times in 2 s on Windows (13 Nov). It closes for another archive's follow,
+    /// after a read through it fails (the next follow opens it again), and when the pack is set (ForgetAhead waits).
+    /// </remarks>
     void ReadFramesAhead(std::stop_token stop)
     {
         ReadAhead& ahead = TheState().Ahead;
+        // The archive is held here as long as the handle on it (ReaderFile keeps a reference).
+        std::shared_ptr<MCHdArchive> keptArchive;
+        std::optional<ReaderFile> kept;
+        uint64_t keptGeneration = 0;
         std::unique_lock lock(ahead.Lock);
-
-        while (ahead.Changed.wait(lock, stop, [&ahead] { return !ahead.Follows.empty(); }))
+        // Without the lock: the handle's count takes State::ArchiveFiles.
+        const auto closeKept = [&]
         {
+            lock.unlock();
+            kept.reset();
+            keptArchive.reset();
+            lock.lock();
+            ahead.ReaderKeeps = false;
+            ahead.Changed.notify_all();
+        };
+
+        const auto keptStale = [&] { return ahead.ReaderKeeps && keptGeneration != ahead.Generation; };
+
+        while (ahead.Changed.wait(lock, stop, [&] { return !ahead.Follows.empty() || keptStale(); }))
+        {
+            if (keptStale())
+            {
+                closeKept();
+                continue;
+            }
+
             const Follow follow = std::move(ahead.Follows.front());
             ahead.Follows.pop_front();
             const uint64_t generation = ahead.Generation;
             ahead.Working = true;
+
+            if (ahead.ReaderKeeps && keptArchive != follow.Archive)
+            {
+                closeKept();
+            }
+
+            // Kept is set with ReaderKeeps, both under the lock. The pack may have been set while the lock was let go.
+            if (!ahead.ReaderKeeps && ahead.Generation == generation)
+            {
+                keptArchive = follow.Archive;
+                kept.emplace(*keptArchive);
+                keptGeneration = generation;
+                ahead.ReaderKeeps = true;
+            }
+
+            if (!kept.has_value())
+            {
+                ahead.Working = false;
+                ahead.Changed.notify_all();
+                continue;
+            }
+
+            ReaderFile& file = *kept;
             lock.unlock();
             // The archive's directory never changes once read, so it is looked in without a lock.
             const std::vector<AheadEntry> next = NextFrames(follow);
-            ReaderFile file(*follow.Archive);
             lock.lock();
+            bool failed = false;
 
             for (const AheadEntry& entry : next)
             {
@@ -1133,16 +1191,23 @@ namespace
 
                 if (!handle)
                 {
+                    failed = true;
                     break;
                 }
             }
 
-            lock.unlock();
-            file.Close();
-            lock.lock();
+            if (failed)
+            {
+                closeKept();
+            }
 
             ahead.Working = false;
             ahead.Changed.notify_all();
+        }
+
+        if (ahead.ReaderKeeps)
+        {
+            closeKept();
         }
     }
 
@@ -1207,11 +1272,14 @@ namespace
         return frame;
     }
 
-    /// <summary>Forgets the frames read ahead and those to read, and drops any read begun (the pack is set).</summary>
+    /// <summary>
+    /// Forgets the frames read ahead and those to read, and drops any read begun (the pack is set); returns once the
+    /// reading thread's handle on the old pack's archive is closed.
+    /// </summary>
     void ForgetAhead()
     {
         ReadAhead& ahead = TheState().Ahead;
-        std::scoped_lock lock(ahead.Lock);
+        std::unique_lock lock(ahead.Lock);
         ahead.Follows.clear();
         ahead.Known.clear();
         ahead.Reading.reset();
@@ -1220,6 +1288,7 @@ namespace
         ahead.Bytes = 0;
         ++ahead.Generation;
         ahead.Changed.notify_all();
+        ahead.Changed.wait(lock, [&ahead] { return !ahead.ReaderKeeps; });
     }
 
     /// <summary>
@@ -2369,6 +2438,13 @@ size_t MCHdArt::ArchivesOpen()
 {
     return static_cast<size_t>(
         std::ranges::count_if(TheState().Archives, [](const auto& archive) { return archive.second != nullptr; }));
+}
+
+size_t MCHdArt::ReaderFilesOpened()
+{
+    State& state = TheState();
+    std::scoped_lock lock(state.ArchiveFiles);
+    return state.ReaderOpens;
 }
 
 size_t MCHdArt::ArchiveFilesOpen()

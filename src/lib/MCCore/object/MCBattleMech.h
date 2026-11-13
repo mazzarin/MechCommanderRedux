@@ -145,10 +145,11 @@ public:
     /// </summary>
     void PlanStop(int32_t& newGestureStateGoal);
     /// <summary>
-    /// The margin of error the move path's last step is reached within (the original's MoveMarginOfError[1]); port-only
-    /// (MechBraking): wider while the mech brakes to a halt there.
+    /// The margin of error step <paramref name="step"/> of a move path of <paramref name="numSteps"/> steps is reached
+    /// within (the original's MoveMarginOfError: [1] for the last step, [0] for the others); port-only (MechBraking):
+    /// wider at the step a planned stop ends at (<see cref="StopStep"/>) while the mech brakes to a halt there.
     /// </summary>
-    float LastStepMargin() const;
+    float StepMargin(int32_t step, int32_t numSteps) const;
     /// <summary>
     /// Port-only (MechBraking): whether the mech's move ends where <paramref name="path"/> (its move path) does: no jump
     /// left on the way, and it goes on no further. On a multiplayer client, whose path is the server's latest steps,
@@ -282,6 +283,12 @@ public:
     /// step being walked into. None while the end isn't shown.
     /// </summary>
     std::optional<MCVector3D> ChunkMoveEnd;
+    /// <summary>
+    /// Port-only (MechBraking): the step of the move path the planned stop ends at (<see cref="PlanStop"/>): short of
+    /// the path's end where the original's crash avoidance will end the move (a unit on its end); none for the path's
+    /// last step.
+    /// </summary>
+    std::optional<int32_t> StopStep;
 
 private:
     /// <summary>

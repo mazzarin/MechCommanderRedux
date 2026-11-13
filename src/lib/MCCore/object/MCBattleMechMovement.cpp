@@ -790,7 +790,7 @@ auto MCBattleMech::UpdateMovePath(char& newRotate, char& newThrottleSetting, flo
     LastValidPosition = destination;
     const auto distance = static_cast<float>(DistanceFrom(destination));
     const int32_t numSteps = path.NumSteps;
-    const float margin = step == numSteps - 1 ? LastStepMargin() : MoveMarginOfError[0];
+    const float margin = StepMargin(step, numSteps);
 
     if (margin <= distance)
     {
@@ -1010,11 +1010,13 @@ namespace
     }
 
     /// <summary>
-    /// Port-only (MechBraking): the metres from <paramref name="position"/> along <paramref name="path"/>'s steps left to
-    /// its end, as walked (from step to step; the steps' own distances to the goal count cells), then on to
-    /// <paramref name="end"/> when given (a multiplayer client's move's end, past the server's latest steps).
+    /// Port-only (MechBraking): the metres from <paramref name="position"/> along <paramref name="path"/>'s steps left
+    /// before step <paramref name="until"/> (its end when none), as walked (from step to step; the steps' own distances
+    /// to the goal count cells), then on to <paramref name="end"/> when given (a multiplayer client's move's end, past
+    /// the server's latest steps).
     /// </summary>
-    auto WalkLeft(const MCMovePath& path, const MCVector3D& position, const std::optional<MCVector3D>& end) -> float
+    auto WalkLeft(const MCMovePath& path, const MCVector3D& position, const std::optional<MCVector3D>& end,
+                  std::optional<int32_t> until = std::nullopt) -> float
     {
         double units = 0.0;
         MCVector3D from = position;
@@ -1024,7 +1026,7 @@ namespace
             from = to;
         };
 
-        for (int32_t step = path.CurStep; step < path.NumSteps; ++step)
+        for (int32_t step = path.CurStep; step < until.value_or(path.NumSteps); ++step)
         {
             walk(path.StepList[static_cast<size_t>(step)].Destination);
         }
@@ -1035,6 +1037,32 @@ namespace
         }
 
         return static_cast<float>(units * MetersPerWorldUnit);
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): the step of <paramref name="path"/> at which the original's crash avoidance will end the
+    /// move short of its end (MCBattleMech::CrashAvoidanceSystem: once the steps it looks ahead at, <paramref
+    /// name="lookAhead"/> of them, reach the path's end with one of them another unit's or impassable): the first step
+    /// whose look-ahead reaches the end, when a step from it on is taken. None while the way to the end is clear.
+    /// </summary>
+    auto HaltStep(const MCMovePath& path, int32_t lookAhead) -> std::optional<int32_t>
+    {
+        const int32_t end = path.NumStepsWhenNotPaused;
+        const int32_t from = std::max(path.CurStep, end - lookAhead);
+
+        if (lookAhead < 1 || from >= end)
+        {
+            return std::nullopt;
+        }
+
+        int reachedEnd = 0;
+
+        if (path.IsLocked(from, end - from, reachedEnd) || path.IsBlocked(from, end - from, reachedEnd))
+        {
+            return from;
+        }
+
+        return std::nullopt;
     }
 } // namespace
 
@@ -1050,15 +1078,33 @@ auto MCBattleMech::PlanStop(int32_t& newGestureStateGoal) -> void
     // Only a stride the mover keeps going is fitted to a stop (not one it limps, jumps or halts).
     const bool keepsGoing = newGestureStateGoal == MCStopState::Walk || newGestureStateGoal == MCStopState::Run;
     std::optional<float> metresLeft;
+    StopStep.reset();
 
     if ((stepsLeft || end.has_value()) && (keepsGoing || actor.PlannedStop) && MoveEndsWith(path))
     {
-        // The move ends where the original would stop it: within its last step's margin of error (metres) of the end.
-        const float walkLeft = WalkLeft(path, Position, end) - MoveMarginOfError[1];
+        // A unit on the move's end: the original's crash avoidance ends the move once the mech reaches the step before
+        // the one it halts at (within that step's margin of error), so the stop ends there. A multiplayer client's
+        // stop ends where the server's chunks show the move ending.
+        const std::optional<int32_t> halt = MultiPlayerClient() ? std::nullopt : HaltStep(path, CrashAvoidPath);
 
-        if (stepsLeft || walkLeft > 0.0f)
+        if (halt.has_value())
         {
-            metresLeft = walkLeft;
+            StopStep = *halt - 1;
+
+            if (*halt > path.CurStep)
+            {
+                metresLeft = WalkLeft(path, Position, std::nullopt, *halt) - MoveMarginOfError[0];
+            }
+        }
+        else
+        {
+            // The move ends where the original would stop it: within its last step's margin of error of the end.
+            const float walkLeft = WalkLeft(path, Position, end) - MoveMarginOfError[1];
+
+            if (stepsLeft || walkLeft > 0.0f)
+            {
+                metresLeft = walkLeft;
+            }
         }
     }
 
@@ -1088,15 +1134,19 @@ auto MCBattleMech::MoveEndsWith(const MCMovePath& path) const -> bool
     return warrior != nullptr && !warrior->MoveGoesOnPast(path);
 }
 
-auto MCBattleMech::LastStepMargin() const -> float
+auto MCBattleMech::StepMargin(int32_t step, int32_t numSteps) const -> float
 {
-    // Port-only (MechBraking): a mech braking to a halt there counts as there within the slack its stop ends in.
-    if (Appearance != nullptr && static_cast<const MCMechActor&>(*Appearance).PlannedStop)
+    const float margin = step == numSteps - 1 ? MoveMarginOfError[1] : MoveMarginOfError[0];
+
+    // Port-only (MechBraking): a mech braking to a halt at the step its stop ends at counts as there within the slack
+    // its stop ends in.
+    if (step == StopStep.value_or(numSteps - 1) && Appearance != nullptr &&
+        static_cast<const MCMechActor&>(*Appearance).PlannedStop)
     {
-        return MoveMarginOfError[1] + BrakeArrivalSlack;
+        return margin + BrakeArrivalSlack;
     }
 
-    return MoveMarginOfError[1];
+    return margin;
 }
 
 auto MCBattleMech::MoveHeldUp() const -> bool

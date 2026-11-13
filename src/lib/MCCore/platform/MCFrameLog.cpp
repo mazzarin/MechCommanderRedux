@@ -72,6 +72,8 @@ namespace
         /// <summary>The last frames' times (ms), for what is usual.</summary>
         std::deque<double> Recent;
         MCSecond Second;
+        /// <summary>The stretch being tallied whole (MCFrameLog::StartTally), if one is.</summary>
+        std::optional<MCFrameLog::MCTally> Tally;
     };
 
     /// <summary>A frame's parts, counts and notes, taken from the state to be written.</summary>
@@ -115,6 +117,18 @@ namespace
 
         std::ranges::nth_element(times, times.begin() + static_cast<ptrdiff_t>(times.size() / 2));
         return times[times.size() / 2];
+    }
+
+    /// <summary>The <paramref name="percent"/>th percentile of <paramref name="times"/>, as the second's line takes it.</summary>
+    double percentile(std::vector<double> times, size_t percent)
+    {
+        if (times.empty())
+        {
+            return 0.0;
+        }
+
+        std::ranges::sort(times);
+        return times[std::min(times.size() * percent / Percent, times.size() - 1)];
     }
 
     /// <summary>Whether a frame of <paramref name="ms"/> is slow against the usual one, on a screen of <paramref name="refreshHz"/>.</summary>
@@ -241,6 +255,7 @@ namespace MCFrameLog
         log.Notes.clear();
         log.Recent.clear();
         log.Second = {};
+        log.Tally.reset();
     }
 
     bool Enabled()
@@ -294,10 +309,26 @@ namespace MCFrameLog
             MCSecond& second = log.Second;
             second.Times.push_back(ms);
             second.RefreshHz = refreshHz;
+            const bool longFrame = refreshHz > 0.0 && ms > MsPerSecond / refreshHz * LongFrameRefreshes;
+            second.LongFrames += longFrame ? 1 : 0;
 
-            if (refreshHz > 0.0 && ms > MsPerSecond / refreshHz * LongFrameRefreshes)
+            if (log.Tally.has_value())
             {
-                second.LongFrames++;
+                MCFrameLog::MCTally& tally = *log.Tally;
+                tally.Times.push_back(ms);
+                tally.Slow += slow ? 1 : 0;
+                tally.Long += longFrame ? 1 : 0;
+                tally.RefreshHz = refreshHz;
+
+                for (const auto& [name, ticks] : frame.Parts)
+                {
+                    AddNamed(tally.PartsMs, name, toMs(ticks));
+                }
+
+                for (const auto& [name, amount] : frame.Counts)
+                {
+                    AddNamed(tally.Counts, name, amount);
+                }
             }
 
             for (const auto& [name, ticks] : frame.Parts)
@@ -345,6 +376,63 @@ namespace MCFrameLog
     void SetClockForTests(MCClock clock)
     {
         testClock() = std::move(clock);
+    }
+
+    double MCTally::Seconds() const
+    {
+        double ms = 0.0;
+
+        for (const double time : Times)
+        {
+            ms += time;
+        }
+
+        return ms / MsPerSecond;
+    }
+
+    double MCTally::MedianMs() const
+    {
+        return median(Times);
+    }
+
+    double MCTally::P99Ms() const
+    {
+        return percentile(Times, Percentile99);
+    }
+
+    double MCTally::WorstMs() const
+    {
+        return Times.empty() ? 0.0 : std::ranges::max(Times);
+    }
+
+    double MCTally::PartMs(std::string_view name) const
+    {
+        const auto found = std::ranges::find(PartsMs, name, &std::pair<std::string, double>::first);
+        return found != PartsMs.end() ? found->second : 0.0;
+    }
+
+    int64_t MCTally::Count(std::string_view name) const
+    {
+        const auto found = std::ranges::find(Counts, name, &std::pair<std::string, int64_t>::first);
+        return found != Counts.end() ? found->second : 0;
+    }
+
+    void StartTally()
+    {
+        MCFrameLogState& log = state();
+
+        if (log.Enabled)
+        {
+            log.Tally.emplace();
+        }
+    }
+
+    MCTally TakeTally()
+    {
+        MCFrameLogState& log = state();
+        MCTally tally = log.Tally.value_or(MCTally{});
+        log.Tally.reset();
+        return tally;
     }
 
     Scope::Scope(std::string_view name) : _On(state().Enabled)

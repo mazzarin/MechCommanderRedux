@@ -18,6 +18,41 @@ namespace
         return byte >= 'a' && byte <= 'z' ? static_cast<unsigned char>(byte - 'a' + 'A') : byte;
     }
 
+    /// <summary>A file MCFileSystem::PutImage put: its maker, then (once opened) what it made.</summary>
+    struct MCPutImage
+    {
+        MCFileSystem::MCImageMaker Make;
+        std::optional<std::optional<std::vector<uint8_t>>> Made;
+    };
+
+    /// <summary>The files PutImage put, by their key (PutKey), and whether there are any (MCFile::Open asks often).</summary>
+    struct MCPutImages
+    {
+        std::mutex Lock;
+        std::map<std::string, MCPutImage> Files;
+        std::atomic<bool> Any = false;
+    };
+
+    MCPutImages& PutImages()
+    {
+        static MCPutImages images;
+        return images;
+    }
+
+    /// <summary>A game path as the put files are keyed: upper-cased, its slashes backslashes.</summary>
+    std::string PutKey(std::string_view gamePath)
+    {
+        std::string key;
+        key.reserve(gamePath.size());
+
+        for (const char c : gamePath)
+        {
+            key.push_back(c == '/' ? '\\' : static_cast<char>(AsciiUpper(c)));
+        }
+
+        return key;
+    }
+
     /// <summary><paramref name="c"/>'s byte, so names compare as unsigned bytes (UTF-8 after ASCII).</summary>
     unsigned char Byte(char c)
     {
@@ -572,6 +607,47 @@ namespace MCFileSystem
     std::optional<std::span<const uint8_t>> FindImage(std::string_view gamePath)
     {
         return Files().FindImage(gamePath);
+    }
+
+    void PutImage(std::string_view gamePath, MCImageMaker make)
+    {
+        MCPutImages& images = PutImages();
+        const std::scoped_lock lock(images.Lock);
+        images.Files.insert_or_assign(PutKey(gamePath), MCPutImage{.Make = std::move(make)});
+        images.Any = true;
+    }
+
+    std::optional<std::vector<uint8_t>> PutImageAt(std::string_view gamePath)
+    {
+        MCPutImages& images = PutImages();
+
+        if (!images.Any)
+        {
+            return std::nullopt;
+        }
+
+        const std::scoped_lock lock(images.Lock);
+        const auto found = images.Files.find(PutKey(gamePath));
+
+        if (found == images.Files.end())
+        {
+            return std::nullopt;
+        }
+
+        if (!found->second.Made.has_value())
+        {
+            found->second.Made.emplace(found->second.Make ? found->second.Make() : std::nullopt);
+        }
+
+        return *found->second.Made;
+    }
+
+    void ClearPutImages()
+    {
+        MCPutImages& images = PutImages();
+        const std::scoped_lock lock(images.Lock);
+        images.Files.clear();
+        images.Any = false;
     }
 
     bool Exists(std::string_view gamePath)

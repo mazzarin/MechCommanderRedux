@@ -166,6 +166,7 @@
     <ClCompile Include="tests\SortTests.cpp" />
     <ClCompile Include="tests\SoundTests.cpp" />
     <ClCompile Include="tests\SpriteTests.cpp" />
+    <ClCompile Include="tests\StagedBattleTests.cpp" />
     <ClCompile Include="tests\StateHashTests.cpp" />
     <ClCompile Include="tests\TelemetryBackendTests.cpp" />
     <ClCompile Include="tests\TelemetryTests.cpp" />

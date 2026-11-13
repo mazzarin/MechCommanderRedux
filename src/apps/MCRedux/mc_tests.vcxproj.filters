@@ -276,6 +276,9 @@
     <ClCompile Include="tests\SpriteTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\StagedBattleTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\StateHashTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

@@ -4514,10 +4514,11 @@
   </ItemGroup>
   <!-- End: the internet games' networking. -->
   <!-- dav1d 1.5.4 (src\lib\dav1d-1.5.4, BSD 2-clause): VideoLAN's AV1 decoder, for the HD art pack's movies
-       (sprite\MCHdMovie). Here its C code alone (the Mac build adds its arm64 assembly), 8 bits a sample (its
-       README.md); the template files are built with BITDEPTH=8, as dav1d's meson build does. Outside MCCore, so its
-       own ItemGroup, which sync_projects.py leaves alone; src\mac\CMakeLists.txt reads the list from here. Without
-       /sdl, as dav1d's own builds: it makes C4703 (a pointer maybe used unset, which dav1d's flow rules out) an error. -->
+       (sprite\MCHdMovie). Its C code, 8 bits a sample (its README.md); the template files are built with BITDEPTH=8,
+       as dav1d's meson build does. Outside MCCore, so its own ItemGroup, which sync_projects.py leaves alone;
+       src\mac\CMakeLists.txt reads the list from here (all but src\x86\cpu.c, the x86-64 assembly's C half, below;
+       the Mac adds its arm64 assembly). Without /sdl, as dav1d's own builds: it makes C4703 (a pointer maybe used
+       unset, which dav1d's flow rules out) an error. -->
   <ItemGroup>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\cdef_apply_tmpl.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -4805,7 +4806,75 @@
       <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+    <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\x86\cpu.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ObjectFileName>$(IntDir)dav1d\x86\</ObjectFileName>
+    </ClCompile>
   </ItemGroup>
+  <!-- dav1d's x86-64 assembly: the files its meson build assembles for 8 bits a sample, with the shared ones (its
+       README.md). Only where NASM is on PATH (the Windows workflow fetches 2.16.03, the version dav1d's 1.5 series was
+       tested with): MCDav1dX86Asm then makes each a custom build step, NASM run as meson runs it (-f win64, dav1d's src
+       folder and config.asm's searched for includes), its object archived into MCCore.lib, and builds dav1d's C files
+       with MC_DAV1D_X86_ASM, which turns HAVE_ASM on in its config.h. Without NASM dav1d is its C code alone. -->
+  <ItemGroup>
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\cdef_avx2.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\cdef_avx512.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\cdef_sse.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\cpuid.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\filmgrain_avx2.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\filmgrain_avx512.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\filmgrain_sse.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\ipred_avx2.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\ipred_avx512.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\ipred_sse.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\itx_avx2.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\itx_avx512.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\itx_sse.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\loopfilter_avx2.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\loopfilter_avx512.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\loopfilter_sse.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\looprestoration_avx2.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\looprestoration_avx512.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\looprestoration_sse.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\mc_avx2.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\mc_avx512.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\mc_sse.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\msac.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\pal.asm" />
+    <MCDav1dAsm Include="$(MCLibDir)dav1d-1.5.4\src\x86\refmvs.asm" />
+  </ItemGroup>
+  <PropertyGroup>
+    <MCDav1dAsmDir>$(IntDir)dav1d\x86\</MCDav1dAsmDir>
+  </PropertyGroup>
+  <Target Name="MCDav1dX86Asm" BeforeTargets="PrepareForBuild" Condition="'@(MCDav1dAsm)'!=''">
+    <Exec Command="nasm -v" ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true"
+          EchoOff="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_MCNasmVersion" />
+      <Output TaskParameter="ExitCode" PropertyName="_MCNasmExitCode" />
+    </Exec>
+    <Message Importance="high" Condition="'$(_MCNasmExitCode)'=='0'"
+             Text="dav1d: its x86-64 assembly, by $(_MCNasmVersion)" />
+    <Message Importance="high" Condition="'$(_MCNasmExitCode)'!='0'"
+             Text="dav1d: no NASM on PATH, so its C code alone (the HD movies decode several times slower)" />
+    <ItemGroup Condition="'$(_MCNasmExitCode)'=='0'">
+      <CustomBuild Include="@(MCDav1dAsm)">
+        <Command>nasm -f win64 -Xvc -I"$(MCLibDir)dav1d-1.5.4/" -I"$(MCLibDir)dav1d-1.5.4\src/" -o "$(MCDav1dAsmDir)%(MCDav1dAsm.Filename).obj" "%(MCDav1dAsm.FullPath)"</Command>
+        <Outputs>$(MCDav1dAsmDir)%(MCDav1dAsm.Filename).obj</Outputs>
+        <AdditionalInputs>%(MCDav1dAsm.FullPath);$(MCLibDir)dav1d-1.5.4\config.asm;$(MCLibDir)dav1d-1.5.4\src\ext\x86\x86inc.asm;$(MCLibDir)dav1d-1.5.4\src\x86\filmgrain_common.asm</AdditionalInputs>
+        <Message>Assembling %(MCDav1dAsm.Filename).asm (NASM)</Message>
+        <LinkObjects>true</LinkObjects>
+        <BuildInParallel>true</BuildInParallel>
+      </CustomBuild>
+      <ClCompile Condition="$([System.String]::Copy('%(ClCompile.FullPath)').Contains('\dav1d-1.5.4\'))">
+        <PreprocessorDefinitions>MC_DAV1D_X86_ASM;%(ClCompile.PreprocessorDefinitions)</PreprocessorDefinitions>
+      </ClCompile>
+    </ItemGroup>
+    <MakeDir Directories="$(MCDav1dAsmDir)" Condition="'$(_MCNasmExitCode)'=='0'" />
+  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

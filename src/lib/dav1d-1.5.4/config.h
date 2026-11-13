@@ -1,7 +1,9 @@
 /*
  * dav1d's build configuration for MechCommander Redux, in place of the config.h meson writes: 8 bits a sample only,
  * for clang on macOS and MSVC on Windows (see README.md). The C code alone, but for the arm64 assembly the Mac build
- * assembles (it defines MC_DAV1D_ASM). Only the switches the vendored files read are set.
+ * assembles (it defines MC_DAV1D_ASM) and the x86-64 assembly the Windows build assembles where NASM is on PATH (it
+ * defines MC_DAV1D_X86_ASM; the assembly's own switches are config.asm's). Only the switches the vendored files read are
+ * set.
  */
 #pragma once
 
@@ -9,6 +11,8 @@
 #define CONFIG_16BPC 0
 #define CONFIG_LOG 1
 #if defined(MC_DAV1D_ASM) && defined(__aarch64__)
+#define HAVE_ASM 1
+#elif defined(MC_DAV1D_X86_ASM) && defined(_M_X64)
 #define HAVE_ASM 1
 #else
 #define HAVE_ASM 0

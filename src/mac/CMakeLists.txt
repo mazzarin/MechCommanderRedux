@@ -223,13 +223,15 @@ add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
 target_compile_options(mc_flac PRIVATE -w)
 target_include_directories(mc_flac PUBLIC ${MC_SRC}/lib/dr_flac)
 target_link_libraries(MCCore PUBLIC mc_flac)
-# dav1d (the HD art pack's movies' AV1 decoder): its C code, the files MCCore.vcxproj lists, as on Windows; the
-# template files are built for 8 bits a sample (src/lib/dav1d-1.5.4/README.md). Here its arm64 assembly too, the 8-bit
-# files meson builds, which decode the movies about three times as fast (MC_DAV1D_ASM turns it on in config.h).
+# dav1d (the HD art pack's movies' AV1 decoder): its C code, the files MCCore.vcxproj lists, as on Windows, but for
+# src/x86/cpu.c, Windows' x86-64 assembly's C half; the template files are built for 8 bits a sample
+# (src/lib/dav1d-1.5.4/README.md). Here its arm64 assembly too, the 8-bit files meson builds, which decode the movies
+# about three times as fast (MC_DAV1D_ASM turns it on in config.h).
 set(MC_DAV1D_DIR ${MC_SRC}/lib/dav1d-1.5.4)
 mc_vcxproj_items(MC_DAV1D_ITEMS ${MC_SRC}/lib/MCCore/MCCore.vcxproj "" ClCompile
                  "\\$\\(MCLibDir\\)dav1d-1\\.5\\.4[^\"]+\\.c")
 list(TRANSFORM MC_DAV1D_ITEMS REPLACE "^/\\$\\(MCLibDir\\)" "${MC_SRC}/lib/")
+list(FILTER MC_DAV1D_ITEMS EXCLUDE REGEX "/src/x86/")
 set(MC_DAV1D_ARM ${MC_DAV1D_DIR}/src/arm/cpu.c)
 
 foreach(name cdef filmgrain ipred itx loopfilter looprestoration looprestoration_common mc mc_dotprod msac refmvs)

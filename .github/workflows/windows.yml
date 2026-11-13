@@ -70,6 +70,25 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      # NASM, which assembles dav1d's x86-64 code (MCCore.vcxproj's MCDav1dX86Asm; without it on PATH dav1d builds its C
+      # code alone): 2.16.03, the version dav1d's 1.5 series was tested with, held to the zip's SHA-256 (nasm.us
+      # publishes none). It only builds the game, so it isn't shipped or among the licences.
+      - name: Get NASM
+        shell: pwsh
+        env:
+          NASM_URL: https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip
+          NASM_SHA256: 3EE4782247BCB874378D02F7EAB4E294A84D3D15F3F6EE2DE2F47A46AA7226E6
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'nasm-2.16.03-win64.zip'
+          Invoke-WebRequest -Uri $env:NASM_URL -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 10
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+          if ($hash -ne $env:NASM_SHA256) { throw "NASM's zip has SHA-256 $hash, expected $env:NASM_SHA256." }
+          Expand-Archive -LiteralPath $zip -DestinationPath $env:RUNNER_TEMP -Force
+          $folder = Join-Path $env:RUNNER_TEMP 'nasm-2.16.03'
+          & (Join-Path $folder 'nasm.exe') -v
+          if ($LASTEXITCODE -ne 0) { throw "NASM doesn't run ($LASTEXITCODE)." }
+          $folder >> $env:GITHUB_PATH
+
       # A work build starts from the last run's build folder (GitHub's cache, one per branch), so only what changed
       # since compiles. The key starts with the compiler's version, since objects and precompiled headers from another
       # compiler can't be reused (not the runner image's: images roll out over days, so runners alternate between two

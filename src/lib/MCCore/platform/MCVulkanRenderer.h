@@ -53,6 +53,19 @@ public:
     /// <summary>Makes the renderer's pipelines and fixed textures on <paramref name="device"/>.</summary>
     static std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> Create(std::shared_ptr<SDL_GPUDevice> device);
 
+    /// <summary>Probe (pipeline-probe, never merged): one pipeline to make, by its name.</summary>
+    struct PipelineJob
+    {
+        std::string Name;
+        std::function<void()> Make;
+    };
+
+    /// <summary>Probe (pipeline-probe, never merged): makes <paramref name="jobs"/>, on as many threads as
+    /// pipeline-threads.txt beside the program says (each job writes its own pipeline), and appends each job's time to
+    /// pipeline-times.txt there under <paramref name="label"/>. Without the file, one after another on this thread, as
+    /// before.</summary>
+    static void BuildPipelines(std::string_view label, std::span<PipelineJob> jobs);
+
     ~MCVulkanRenderer() override;
 
     void Clear(MCWindow& target, const MCRect& rect, uint8_t color) override;

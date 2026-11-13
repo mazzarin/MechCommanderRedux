@@ -859,6 +859,9 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
                    PuddleFormat},
     };
 
+    // Probe (pipeline-probe): each composite's pipeline a job, made together by MCVulkanRenderer::BuildPipelines.
+    std::vector<MCVulkanRenderer::PipelineJob> jobs;
+
     for (const auto& [info, shader, made, format] : composites)
     {
         auto loaded = MCVulkanShaders::Load(presenter->_Device, *info);
@@ -869,20 +872,35 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
         }
 
         *shader = std::move(*loaded);
+        jobs.push_back(MCVulkanRenderer::PipelineJob{
+            std::string(MCVulkanShaders::Name(info->Shader)),
+            [device, quad = presenter->_QuadShader.get(), fragment = shader->get(), made, format,
+             owner = presenter->_Device]
+            {
+                SDL_GPUColorTargetDescription target{};
+                target.format = format;
+                SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+                pipeline.vertex_shader = quad;
+                pipeline.fragment_shader = fragment;
+                pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+                pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+                pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+                pipeline.target_info.num_color_targets = 1;
+                pipeline.target_info.color_target_descriptions = &target;
+                *made = MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device, &pipeline),
+                                                             MCGpuRelease{owner});
 
-        SDL_GPUColorTargetDescription target{};
-        target.format = format;
-        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
-        pipeline.vertex_shader = presenter->_QuadShader.get();
-        pipeline.fragment_shader = shader->get();
-        pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-        pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-        pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-        pipeline.target_info.num_color_targets = 1;
-        pipeline.target_info.color_target_descriptions = &target;
-        *made = MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device, &pipeline),
-                                                     MCGpuRelease{presenter->_Device});
+                if (*made == nullptr)
+                {
+                    SDL_Log("pipeline probe: SDL_CreateGPUGraphicsPipeline: %s", SDL_GetError());
+                }
+            }});
+    }
 
+    MCVulkanRenderer::BuildPipelines("presenter", jobs);
+
+    for (const auto& [info, shader, made, format] : composites)
+    {
         if (*made == nullptr)
         {
             return std::unexpected(

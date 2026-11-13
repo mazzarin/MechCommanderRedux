@@ -955,6 +955,94 @@ namespace
     }
 }
 
+namespace
+{
+    // Probe (pipeline-probe): the files beside the program that ask for threads and take the times.
+    constexpr std::string_view ProbeThreadsFile = "pipeline-threads.txt";
+    constexpr std::string_view ProbeTimesFile = "pipeline-times.txt";
+    // The slowest jobs named in the times file.
+    constexpr size_t ProbeSlowestNamed = 12;
+
+    std::filesystem::path ProbeFile(std::string_view name)
+    {
+        const char* const base = SDL_GetBasePath();
+        return base != nullptr ? MCFileSystem::FromUtf8(base) / MCFileSystem::FromUtf8(name) : std::filesystem::path();
+    }
+
+    /// The threads pipeline-threads.txt asks for; none without it (the jobs then run on the calling thread, as before).
+    uint32_t ProbeThreads()
+    {
+        std::ifstream in(ProbeFile(ProbeThreadsFile));
+        uint32_t threads = 0;
+
+        if (in && !(in >> threads))
+        {
+            SDL_Log("pipeline probe: %s holds no thread count; one after another", ProbeThreadsFile.data());
+            return 0;
+        }
+
+        return threads;
+    }
+}
+
+void MCVulkanRenderer::BuildPipelines(std::string_view label, std::span<PipelineJob> jobs)
+{
+    using Clock = std::chrono::steady_clock;
+    const auto msSince = [](Clock::time_point from)
+    { return std::chrono::duration<double, std::milli>(Clock::now() - from).count(); };
+    const uint32_t asked = ProbeThreads();
+    const auto threads = static_cast<uint32_t>(std::clamp<size_t>(asked, 1, std::max<size_t>(jobs.size(), 1)));
+    std::vector<double> took(jobs.size(), 0.0);
+    std::atomic<size_t> next{0};
+    const auto work = [&]
+    {
+        for (size_t i = next.fetch_add(1); i < jobs.size(); i = next.fetch_add(1))
+        {
+            const Clock::time_point started = Clock::now();
+            jobs[i].Make();
+            took[i] = msSince(started);
+        }
+    };
+
+    const Clock::time_point started = Clock::now();
+    {
+        std::vector<std::jthread> helpers;
+
+        for (uint32_t i = 1; i < threads; ++i)
+        {
+            helpers.emplace_back(work);
+        }
+
+        work();
+    }
+
+    const double total = msSince(started);
+
+    if (asked == 0)
+    {
+        return;
+    }
+
+    std::ofstream times(ProbeFile(ProbeTimesFile), std::ios::app);
+
+    if (!times)
+    {
+        SDL_Log("pipeline probe: can't write %s", ProbeTimesFile.data());
+        return;
+    }
+
+    std::vector<size_t> order(jobs.size());
+    std::iota(order.begin(), order.end(), size_t{0});
+    std::ranges::sort(order, std::ranges::greater{}, [&took](size_t i) { return took[i]; });
+    times << std::format("{}: {} pipelines in {:.1f} ms on {} threads (jobs' sum {:.1f} ms)\n", label, jobs.size(),
+                         total, threads, std::accumulate(took.begin(), took.end(), 0.0));
+
+    for (size_t k = 0; k < order.size() && k < ProbeSlowestNamed; ++k)
+    {
+        times << std::format("    {:8.1f} ms  {}\n", took[order[k]], jobs[order[k]].Name);
+    }
+}
+
 std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::Create(
     std::shared_ptr<SDL_GPUDevice> device)
 {
@@ -1100,36 +1188,86 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                                                     MCGpuRelease{device});
     };
 
-    const auto makeSurfacePipelines = [&](SurfacePipelines& pipelines, uint32_t targetCount)
+    // Probe (pipeline-probe): each pipeline a job, made together by BuildPipelines.
+    std::vector<PipelineJob> jobs;
+    const auto job = [&jobs](std::string name, std::function<void()> make)
+    { jobs.push_back(PipelineJob{std::move(name), std::move(make)}); };
+
+    const auto makeSurfacePipelines = [&](SurfacePipelines& pipelines, uint32_t targetCount, std::string_view surface)
     {
-        const auto makeDrawPipelines = [&](DrawPipelines& draws, SDL_GPUShader& fragmentShader)
+        const auto makeDrawPipelines = [&](DrawPipelines& draws, SDL_GPUShader& fragmentShader, std::string_view kind)
         {
             SDL_GPUShader& vertexShader = *renderer->_VertexShader;
-            draws.Opaque = makePipeline(targetCount, vertexShader, false, false, false, false, &fragmentShader);
-            draws.Blend = makePipeline(targetCount, vertexShader, true, false, false, false, &fragmentShader);
-            draws.IndexOnly = makePipeline(targetCount, vertexShader, false, true, false, false, &fragmentShader);
-            draws.BlendMarks = makePipeline(targetCount, vertexShader, true, false, false, true, &fragmentShader);
-            draws.IndexMarks = makePipeline(targetCount, vertexShader, false, true, false, true, &fragmentShader);
+            const auto name = [&](std::string_view what) { return std::format("{} {} {}", surface, kind, what); };
+            job(name("opaque"),
+                [&, targetCount]
+                {
+                    draws.Opaque = makePipeline(targetCount, vertexShader, false, false, false, false, &fragmentShader);
+                });
+            job(name("blend"), [&, targetCount]
+                { draws.Blend = makePipeline(targetCount, vertexShader, true, false, false, false, &fragmentShader); });
+            job(name("index only"),
+                [&, targetCount]
+                {
+                    draws.IndexOnly =
+                        makePipeline(targetCount, vertexShader, false, true, false, false, &fragmentShader);
+                });
+            job(name("blend marks"),
+                [&, targetCount]
+                {
+                    draws.BlendMarks =
+                        makePipeline(targetCount, vertexShader, true, false, false, true, &fragmentShader);
+                });
+            job(name("index marks"),
+                [&, targetCount]
+                {
+                    draws.IndexMarks =
+                        makePipeline(targetCount, vertexShader, false, true, false, true, &fragmentShader);
+                });
         };
 
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], *renderer->_FragmentShader);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], *renderer->_BasicFragmentShader);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], *renderer->_HdFragmentShader);
-        pipelines.Shadow = makePipeline(targetCount, *renderer->_VertexShader, false, false, true);
-        pipelines.Terrain = makePipeline(targetCount, *renderer->_TerrainShader, false, false, false, false,
-                                         renderer->_TerrainFragmentShader.get());
-        pipelines.TerrainSeam = makePipeline(targetCount, *renderer->_TerrainShader, true, false, false, false,
-                                             renderer->_TerrainFragmentShader.get());
-        pipelines.Ground = makePipeline(targetCount, *renderer->_QuadShader, false, false, false, false,
-                                        renderer->_GroundShader.get());
-        pipelines.GroundOver =
-            makePipeline(targetCount, *renderer->_QuadShader, true, false, false, false, renderer->_GroundShader.get());
-        pipelines.GroundIndex =
-            makePipeline(targetCount, *renderer->_QuadShader, false, true, false, false, renderer->_GroundShader.get());
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], *renderer->_FragmentShader,
+                          "every");
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], *renderer->_BasicFragmentShader,
+                          "basic");
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], *renderer->_HdFragmentShader, "hd");
+        job(std::format("{} shadow", surface), [&, targetCount]
+            { pipelines.Shadow = makePipeline(targetCount, *renderer->_VertexShader, false, false, true); });
+        job(std::format("{} terrain", surface),
+            [&, targetCount]
+            {
+                pipelines.Terrain = makePipeline(targetCount, *renderer->_TerrainShader, false, false, false, false,
+                                                 renderer->_TerrainFragmentShader.get());
+            });
+        job(std::format("{} terrain seam", surface),
+            [&, targetCount]
+            {
+                pipelines.TerrainSeam = makePipeline(targetCount, *renderer->_TerrainShader, true, false, false, false,
+                                                     renderer->_TerrainFragmentShader.get());
+            });
+        job(std::format("{} ground", surface),
+            [&, targetCount]
+            {
+                pipelines.Ground = makePipeline(targetCount, *renderer->_QuadShader, false, false, false, false,
+                                                renderer->_GroundShader.get());
+            });
+        job(std::format("{} ground over", surface),
+            [&, targetCount]
+            {
+                pipelines.GroundOver = makePipeline(targetCount, *renderer->_QuadShader, true, false, false, false,
+                                                    renderer->_GroundShader.get());
+            });
+        job(std::format("{} ground index", surface),
+            [&, targetCount]
+            {
+                pipelines.GroundIndex = makePipeline(targetCount, *renderer->_QuadShader, false, true, false, false,
+                                                     renderer->_GroundShader.get());
+            });
     };
 
-    makeSurfacePipelines(renderer->_SurfacePipelines[WithoutGlints], TargetsWithoutGlints);
-    makeSurfacePipelines(renderer->_SurfacePipelines[WithGlints], SurfaceTargets);
+    makeSurfacePipelines(renderer->_SurfacePipelines[WithoutGlints], TargetsWithoutGlints, "plain");
+    makeSurfacePipelines(renderer->_SurfacePipelines[WithGlints], SurfaceTargets, "glints");
+    BuildPipelines("renderer", jobs);
 
     if (!std::ranges::all_of(renderer->_SurfacePipelines, &SurfacePipelines::Made))
     {

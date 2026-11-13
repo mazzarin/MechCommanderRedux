@@ -37,6 +37,8 @@ void MCSessionManager::AddVerifyEntry(int32_t playerNumber, uint8_t sendCount)
 
 void MCSessionManager::ProcessMessages()
 {
+    PumpClosed();
+
     if (MyPlayerID == 0)
     {
         return;

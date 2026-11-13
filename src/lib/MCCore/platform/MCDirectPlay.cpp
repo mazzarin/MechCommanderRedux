@@ -89,6 +89,11 @@ namespace
     /// the session ends, for its machine to read it and close its end (a game reads its links every frame).
     /// </summary>
     constexpr uint64_t LingerMs = 2000;
+    /// <summary>
+    /// Port-only (Redux HD): the reads of a closing link's arrived bytes in one pump at most (4 KB each), so a peer that
+    /// sends as fast as they're read can't hold the pump; the rest wait for the next one.
+    /// </summary>
+    constexpr int32_t MaxDropReads = 16;
     /// <summary>Unsent bytes a connection may pile up before it is dropped (its peer stopped reading).</summary>
     constexpr size_t MaxUnsentBytes = 8u << 20;
     /// <summary>Host: session queries answered per second at most (the answers are bigger than the questions).</summary>
@@ -685,13 +690,13 @@ struct MCDirectPlay::Impl
         PumpClosing();
     }
 
-    /// <summary>Reads and drops what arrived on <paramref name="link"/>.</summary>
+    /// <summary>Reads and drops what arrived on <paramref name="link"/>, at most <see cref="MaxDropReads"/> reads.</summary>
     /// <returns>Whether its other end closed it (or it failed).</returns>
     static bool DropArrived(Link& link)
     {
         std::array<uint8_t, 4096> chunk{};
 
-        for (;;)
+        for (int32_t read = 0; read < MaxDropReads; ++read)
         {
             const int received = MCSocket::Receive(link.Socket, chunk);
 
@@ -700,16 +705,27 @@ struct MCDirectPlay::Impl
                 return received < 0;
             }
         }
+
+        return false;
     }
 
-    /// <summary>Sends what a closed session's links have left, ends them, and closes those done.</summary>
+    /// <summary>
+    /// Sends what a closed session's links have left, ends them, and closes those done: their other end closed, or
+    /// their time up (checked first, so a peer that never stops sending is closed on time).
+    /// </summary>
     void PumpClosing()
     {
-        const uint64_t now = NowMs();
         std::erase_if(Closing,
                       [&](Lingering& closing)
                       {
                           Link& link = closing.Joiner;
+
+                          if (NowMs() > closing.Until)
+                          {
+                              MCSocket::Close(link.Socket);
+                              return true;
+                          }
+
                           Flush(link);
 
                           if (!link.Dead && link.Output.empty() && !closing.SendingEnded)
@@ -725,9 +741,7 @@ struct MCDirectPlay::Impl
                               }
                           }
 
-                          const bool closed = DropArrived(link);
-
-                          if (!link.Dead && !closed && now <= closing.Until)
+                          if (!link.Dead && !DropArrived(link))
                           {
                               return false;
                           }
@@ -2801,6 +2815,11 @@ uint32_t MCDirectPlay::Close()
 
     _Impl->Shutdown();
     return DP_OK;
+}
+
+bool MCDirectPlay::Lingering() const
+{
+    return !_Impl->Closing.empty();
 }
 
 uint32_t MCDirectPlay::Leave()

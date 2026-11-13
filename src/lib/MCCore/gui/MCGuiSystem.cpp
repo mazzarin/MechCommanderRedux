@@ -479,6 +479,15 @@ auto MCGuiSystem::Run() -> void
         // wait while a match's mission plays.
         MCUpdater::PauseWork(MultiPlayer() != nullptr && MultiPlayer()->InMission);
         MCUpdater::Frame();
+
+        // Port-only (Redux HD): a host's closed session keeps its joiners' links open until they've read that it ends,
+        // after the session has gone (MCSessionManager::PumpClosed).
+        if (const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+            game != nullptr && game->SessionManager != nullptr)
+        {
+            game->SessionManager->PumpClosed();
+        }
+
         // Port-only (HD weather's snow): the frames' pace, which a machine that can't keep up thins it by.
         MCWeatherPacing::Frame(drewWeather);
 

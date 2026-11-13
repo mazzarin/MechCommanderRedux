@@ -75,4 +75,10 @@ namespace MCBenchmark
     /// settings it changed aren't saved.
     /// </summary>
     bool Running();
+
+    /// <summary>
+    /// Lets go of the run as the game stops (RunGame, once its frames have ended, before the GUI system stops): its
+    /// battle holds the mission's units, which must go while the game they belong to is still there.
+    /// </summary>
+    void Release();
 }

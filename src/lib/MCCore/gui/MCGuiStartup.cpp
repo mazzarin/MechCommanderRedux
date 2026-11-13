@@ -753,6 +753,9 @@ auto RunGame(std::string_view commandLine, std::chrono::milliseconds internetLea
         exitCode = quit.ExitCode;
     }
 
+    // Port-only (Redux HD): a benchmark's run lets go of the mission's units while the game is still there.
+    MCBenchmark::Release();
+
     // Port (Redux HD): an internet game's leaving reaches the service before the session goes (its place freed, a
     // host's game ended or handed on), and the internet screens let go of their requests.
     if (const std::shared_ptr<MCMultiPlayer> multiPlayer = MultiPlayer();

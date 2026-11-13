@@ -515,4 +515,12 @@ namespace MCBenchmark
     {
         return current().has_value() && current()->Phase != MCPhase::Done;
     }
+
+    void Release()
+    {
+        // Left to the statics' end at the program's exit, the battle's last units were destroyed after their game
+        // (a crash at every quit).
+        MCInput::HoldInput(false);
+        current().reset();
+    }
 }

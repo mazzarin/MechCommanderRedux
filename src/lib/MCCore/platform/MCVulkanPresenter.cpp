@@ -2155,6 +2155,8 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
         return std::unexpected(SdlError("SDL_SubmitGPUCommandBuffer"));
     }
 
+    // The frame handed to the screen: the frame log's time between these is the screen's (a benchmark's hitches).
+    MCFrameLog::Presented();
     return {};
 }
 

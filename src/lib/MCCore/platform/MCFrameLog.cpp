@@ -48,6 +48,9 @@ namespace
         MCNamed<int64_t> Counts;
         size_t LongFrames = 0;
         double RefreshHz = 0.0;
+        /// <summary>The time between the frames handed to the screen in it (MCFrameLog::Presented), and the long ones.</summary>
+        std::vector<double> Shown;
+        size_t ShownLong = 0;
     };
 
     struct MCFrameLogState
@@ -71,6 +74,12 @@ namespace
         uint64_t Frame = 0;
         /// <summary>The last frames' times (ms), for what is usual.</summary>
         std::deque<double> Recent;
+        /// <summary>When a frame was last handed to the screen (MCFrameLog::Presented); none before the first.</summary>
+        std::optional<uint64_t> LastPresent;
+        /// <summary>The times between the frames handed to the screen since the last NextFrame (ms), for it to judge.</summary>
+        std::vector<double> PendingShown;
+        /// <summary>The last of those times (ms), for what is usual on the screen.</summary>
+        std::deque<double> RecentShown;
         MCSecond Second;
         /// <summary>The stretch being tallied whole (MCFrameLog::StartTally), if one is.</summary>
         std::optional<MCFrameLog::MCTally> Tally;
@@ -139,6 +148,51 @@ namespace
         return ms > usual * SlowFactor && ms > usual + margin;
     }
 
+    /// <summary>Whether a frame of <paramref name="ms"/> was on a screen of <paramref name="refreshHz"/> for two refreshes or more.</summary>
+    bool isLong(double ms, double refreshHz)
+    {
+        return refreshHz > 0.0 && ms > MsPerSecond / refreshHz * LongFrameRefreshes;
+    }
+
+    /// <summary>The usual frame among <paramref name="recent"/> ones: their median.</summary>
+    double usualOf(const std::deque<double>& recent)
+    {
+        return median(std::vector<double>(recent.begin(), recent.end()));
+    }
+
+    /// <summary>
+    /// Whether a frame of <paramref name="ms"/> is slow against <paramref name="recent"/> ones (none is until there are
+    /// enough to know the usual), which it then joins, the oldest let go.
+    /// </summary>
+    bool judgeAmong(std::deque<double>& recent, double ms, double usual, double refreshHz)
+    {
+        const bool slow = recent.size() >= MinRecentFrames && isSlow(ms, usual, refreshHz);
+        recent.push_back(ms);
+
+        if (recent.size() > RecentFrames)
+        {
+            recent.pop_front();
+        }
+
+        return slow;
+    }
+
+    /// <summary>A frame of <paramref name="ms"/> added to a tally's <paramref name="times"/>.</summary>
+    void tallyFrame(MCFrameLog::MCFrameTimes& times, double ms, bool slow, bool longFrame)
+    {
+        times.Times.push_back(ms);
+        times.Slow += slow ? 1 : 0;
+        times.Long += longFrame ? 1 : 0;
+    }
+
+    /// <summary>The median, 99th percentile and longest of <paramref name="times"/> (some), as the second's line puts them.</summary>
+    std::string timesText(std::vector<double> times)
+    {
+        std::ranges::sort(times);
+        return std::format("median {:.2f} ms, p99 {:.2f}, max {:.2f}", times[times.size() / 2],
+                           times[times.size() * Percentile99 / Percent], times.back());
+    }
+
     void writeFrame(MCFrameLogState& log, const MCFrameRecord& frame, double ms, double usual, bool slow)
     {
         log.File << std::format("frame {} {:.2f} ms (usual {:.2f}){}\n", log.Frame, ms, usual, slow ? " SLOW" : "");
@@ -163,17 +217,24 @@ namespace
     void writeSecond(MCFrameLogState& log, uint64_t end)
     {
         MCSecond& second = log.Second;
-        std::vector<double> sorted = second.Times;
-        std::ranges::sort(sorted);
-        const double frames = static_cast<double>(sorted.size());
-        log.File << std::format("-- {:.1f} s: {} frames, median {:.2f} ms, p99 {:.2f}, max {:.2f}",
-                                toMs(end - log.Opened) / MsPerSecond, sorted.size(), sorted[sorted.size() / 2],
-                                sorted[sorted.size() * Percentile99 / Percent], sorted.back());
+        const double frames = static_cast<double>(second.Times.size());
+        log.File << std::format("-- {:.1f} s: {} frames, {}", toMs(end - log.Opened) / MsPerSecond, second.Times.size(),
+                                timesText(second.Times));
 
         if (second.RefreshHz > 0.0)
         {
             log.File << std::format("; {} over {} refreshes at {:.0f} Hz", second.LongFrames, LongFrameRefreshes,
                                     second.RefreshHz);
+        }
+
+        if (!second.Shown.empty())
+        {
+            log.File << std::format("; shown: {} frames, {}", second.Shown.size(), timesText(second.Shown));
+
+            if (second.RefreshHz > 0.0)
+            {
+                log.File << std::format(", {} over {} refreshes", second.ShownLong, LongFrameRefreshes);
+            }
         }
 
         log.File << "\n";
@@ -225,7 +286,9 @@ namespace MCFrameLog
             log.Opened = now();
             log.Second = MCSecond{.Start = log.Opened};
             log.File << "MCRedux frame log: frames much slower than the usual one or late by a refresh of the screen\n"
-                        "(SLOW), frames with notes (*), and a line a second (--).\n"
+                        "(SLOW), frames with notes (*), and a line a second (--): the game's loop's frames, then the\n"
+                        "time between the frames handed to the screen (shown), what the screen shows where frames\n"
+                        "queue for it.\n"
                         "Times in ms. A part is listed when it ends, so after the parts inside it; render.* parts are\n"
                         "the render thread's, counted in the frame running as they end. + lines count what the frame\n"
                         "did. The GPU's own time isn't measured: present.acquire and present.wait wait for it and for\n"
@@ -254,6 +317,9 @@ namespace MCFrameLog
         log.Counts.clear();
         log.Notes.clear();
         log.Recent.clear();
+        log.LastPresent.reset();
+        log.PendingShown.clear();
+        log.RecentShown.clear();
         log.Second = {};
         log.Tally.reset();
     }
@@ -287,11 +353,14 @@ namespace MCFrameLog
             log.Counts.clear();
         }
 
+        // The frames handed to the screen while this one ran (before the first, none's).
+        const std::vector<double> shown = std::exchange(log.PendingShown, {});
+
         if (frameStart.has_value())
         {
             const double ms = toMs(frameEnd - *frameStart);
-            const double usual = median(std::vector<double>(log.Recent.begin(), log.Recent.end()));
-            const bool slow = log.Recent.size() >= MinRecentFrames && isSlow(ms, usual, refreshHz);
+            const double usual = usualOf(log.Recent);
+            const bool slow = judgeAmong(log.Recent, ms, usual, refreshHz);
 
             if (slow || !frame.Notes.empty())
             {
@@ -299,25 +368,29 @@ namespace MCFrameLog
                 log.File.flush();
             }
 
-            log.Recent.push_back(ms);
-
-            if (log.Recent.size() > RecentFrames)
-            {
-                log.Recent.pop_front();
-            }
-
             MCSecond& second = log.Second;
             second.Times.push_back(ms);
             second.RefreshHz = refreshHz;
-            const bool longFrame = refreshHz > 0.0 && ms > MsPerSecond / refreshHz * LongFrameRefreshes;
+            const bool longFrame = isLong(ms, refreshHz);
             second.LongFrames += longFrame ? 1 : 0;
+
+            for (const double shownMs : shown)
+            {
+                const bool shownSlow = judgeAmong(log.RecentShown, shownMs, usualOf(log.RecentShown), refreshHz);
+                const bool shownLong = isLong(shownMs, refreshHz);
+                second.Shown.push_back(shownMs);
+                second.ShownLong += shownLong ? 1 : 0;
+
+                if (log.Tally.has_value())
+                {
+                    tallyFrame(log.Tally->Shown, shownMs, shownSlow, shownLong);
+                }
+            }
 
             if (log.Tally.has_value())
             {
                 MCFrameLog::MCTally& tally = *log.Tally;
-                tally.Times.push_back(ms);
-                tally.Slow += slow ? 1 : 0;
-                tally.Long += longFrame ? 1 : 0;
+                tallyFrame(tally.Loop, ms, slow, longFrame);
                 tally.RefreshHz = refreshHz;
 
                 for (const auto& [name, ticks] : frame.Parts)
@@ -349,6 +422,23 @@ namespace MCFrameLog
         }
 
         ++log.Frame;
+    }
+
+    void Presented()
+    {
+        MCFrameLogState& log = state();
+
+        if (!log.Enabled)
+        {
+            return;
+        }
+
+        const uint64_t at = now();
+
+        if (const std::optional<uint64_t> last = std::exchange(log.LastPresent, at); last.has_value())
+        {
+            log.PendingShown.push_back(toMs(at - *last));
+        }
     }
 
     void Note(std::string text)
@@ -389,7 +479,7 @@ namespace MCFrameLog
         testClock() = std::move(clock);
     }
 
-    double MCTally::Seconds() const
+    double MCFrameTimes::Seconds() const
     {
         double ms = 0.0;
 
@@ -401,19 +491,36 @@ namespace MCFrameLog
         return ms / MsPerSecond;
     }
 
-    double MCTally::MedianMs() const
+    double MCFrameTimes::MedianMs() const
     {
         return median(Times);
     }
 
-    double MCTally::P99Ms() const
+    double MCFrameTimes::P99Ms() const
     {
         return percentile(Times, Percentile99);
     }
 
-    double MCTally::WorstMs() const
+    double MCFrameTimes::WorstMs() const
     {
         return Times.empty() ? 0.0 : std::ranges::max(Times);
+    }
+
+    void MCFrameTimes::Add(const MCFrameTimes& later)
+    {
+        Times.insert(Times.end(), later.Times.begin(), later.Times.end());
+        Slow += later.Slow;
+        Long += later.Long;
+    }
+
+    bool MCTally::TimedShown() const
+    {
+        return !Shown.Times.empty();
+    }
+
+    const MCFrameTimes& MCTally::Judged() const
+    {
+        return TimedShown() ? Shown : Loop;
     }
 
     double MCTally::PartMs(std::string_view name) const
@@ -430,10 +537,9 @@ namespace MCFrameLog
 
     void MCTally::Add(const MCTally& later)
     {
-        Times.insert(Times.end(), later.Times.begin(), later.Times.end());
-        Slow += later.Slow;
-        Long += later.Long;
-        RefreshHz = later.Times.empty() ? RefreshHz : later.RefreshHz;
+        Loop.Add(later.Loop);
+        Shown.Add(later.Shown);
+        RefreshHz = later.Loop.Times.empty() ? RefreshHz : later.RefreshHz;
 
         for (const auto& [name, ms] : later.PartsMs)
         {

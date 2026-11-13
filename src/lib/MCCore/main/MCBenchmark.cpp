@@ -152,14 +152,24 @@ namespace
                            machine->Platform, machine->System);
     }
 
-    /// <summary>A tally's hitches and frames, for the summary: "p99 12.10 ms, worst 45.20 ms, ...".</summary>
+    /// <summary>
+    /// A tally's hitches and frames, for the summary: "p99 12.10 ms, worst 45.20 ms, ...": the screen's frames where the
+    /// presenter said (MCFrameLog::Presented), else the game's loop's.
+    /// </summary>
     std::string FramesText(const MCFrameLog::MCTally& tally)
     {
-        const double median = tally.MedianMs();
+        const MCFrameLog::MCFrameTimes& frames = tally.Judged();
+        const double median = frames.MedianMs();
         return std::format("p99 {:.2f} ms, worst {:.2f} ms, {} frames late by a refresh, {} over 1.5 refreshes; "
                            "median {:.2f} ms ({:.1f} fps); {} frames in {:.1f} s",
-                           tally.P99Ms(), tally.WorstMs(), tally.Slow, tally.Long, median,
-                           median > 0.0 ? MsPerSecond / median : 0.0, tally.Times.size(), tally.Seconds());
+                           frames.P99Ms(), frames.WorstMs(), frames.Slow, frames.Long, median,
+                           median > 0.0 ? MsPerSecond / median : 0.0, frames.Times.size(), frames.Seconds());
+    }
+
+    /// <summary>Which frames the summary judges: "frames as shown" (handed to the screen) or the game's loop's.</summary>
+    std::string_view TimingText(const MCFrameLog::MCTally& tally)
+    {
+        return tally.TimedShown() ? "frames as shown" : "frames as the game's loop ran (none shown)";
     }
 
     /// <summary>The HD frames first used in a tally and the time their reading took (sprite/MCHdArt.cpp's names).</summary>
@@ -269,6 +279,8 @@ namespace
             return;
         }
 
+        // The benchmark's own work in the frame log, apart from the game's (its staging of the battle, the camera's pan).
+        MCFrameLog::Scope part("logic.benchmark");
         MCRun& run = *current();
 
         if (run.Stopped)
@@ -446,9 +458,9 @@ namespace MCBenchmark
     {
         MCFrameLog::MCTally whole = battle;
         whole.Add(pan);
-        return std::format("MCRedux benchmark {}, {} {}, {}, {}: {}; {}. Battle: {}; {}. Pan: {}; {}", run.Build,
-                           BattleName, run.Variant, run.Display, run.Machine, FramesText(whole), HdText(whole),
-                           FramesText(battle), HdText(battle), FramesText(pan), HdText(pan));
+        return std::format("MCRedux benchmark {}, {} {}, {}, {}, {}: {}; {}. Battle: {}; {}. Pan: {}; {}", run.Build,
+                           BattleName, run.Variant, run.Display, run.Machine, TimingText(whole), FramesText(whole),
+                           HdText(whole), FramesText(battle), HdText(battle), FramesText(pan), HdText(pan));
     }
 
     void SetBuild(std::string text)

@@ -16,11 +16,10 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: the swapchain images asked for with the third image (SDL's frames in flight; 2 by default), and the
-    /// frames presented the game may still have on the GPU as it shows another (as many as SDL's default holds).
+    /// Port-only: the frames presented the game may still have on the GPU as it shows another (as many as SDL's two
+    /// swapchain images hold), whatever the swapchain's images (MCVulkanPresenter::_FramesInFlight).
     /// </summary>
-    constexpr uint32_t ThirdImageFrames = 3;
-    constexpr size_t FramesHeldOnGpu = 2;
+    constexpr size_t FramesHeldOnGpu = MCVulkanPresenter::TwoImageFrames;
     /// <summary>Port-only: SDL's name for its Vulkan driver (SDL_GetGPUDeviceDriver).</summary>
     constexpr std::string_view VulkanDriver = "vulkan";
 
@@ -821,16 +820,13 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
 
     presenter->_Device = std::shared_ptr<SDL_GPUDevice>(device, MCSdlDeleter{});
 
-    // Port-only: the third swapchain image, asked before the window is claimed so its swapchain is made with it.
+    // Port-only: the third swapchain image, asked for the vsync the presenter starts with before the window is claimed,
+    // so its swapchain is made once, with the images it keeps (two without vsync).
     if (const char* const driver = SDL_GetGPUDeviceDriver(device);
         ThirdImageEverywhere || (driver != nullptr && std::string_view(driver) == VulkanDriver))
     {
-        presenter->_ThirdImage = SDL_SetGPUAllowedFramesInFlight(device, ThirdImageFrames);
-
-        if (!presenter->_ThirdImage)
-        {
-            SDL_Log("MCVulkanPresenter: two swapchain images, not %u: %s", ThirdImageFrames, SDL_GetError());
-        }
+        presenter->_ThirdImage = true;
+        presenter->AskFramesInFlight(vsync);
     }
 
     if (!SDL_ClaimWindowForGPUDevice(device, presenter->_Window.get()))
@@ -1049,6 +1045,9 @@ void MCVulkanPresenter::SetVSync(bool on)
     }
 
     _VSync = on;
+    // Port-only: the third image with vsync alone: without it, a third image can leave Windows' compositor holding the
+    // game's frames after an overlay (_ThirdImage).
+    AskFramesInFlight(on);
     SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
 
     if (!on)
@@ -1064,6 +1063,27 @@ void MCVulkanPresenter::SetVSync(bool on)
     }
 
     SDL_SetGPUSwapchainParameters(_Device.get(), _Window.get(), SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+}
+
+void MCVulkanPresenter::AskFramesInFlight(bool vsync)
+{
+    const uint32_t frames = _ThirdImage && vsync ? ThirdImageFrames : TwoImageFrames;
+
+    // Each change makes the claimed window's swapchain again: none while the count stands.
+    if (frames == _FramesInFlight)
+    {
+        return;
+    }
+
+    // SDL takes the count before it makes the swapchain again, so it stands even when that fails, for the swapchain
+    // made next.
+    if (!SDL_SetGPUAllowedFramesInFlight(_Device.get(), frames))
+    {
+        SDL_Log("MCVulkanPresenter: %u swapchain images (from %u) asked, not made yet: %s", frames, _FramesInFlight,
+                SDL_GetError());
+    }
+
+    _FramesInFlight = frames;
 }
 
 void MCVulkanPresenter::Release(Texture& texture)
@@ -1927,8 +1947,9 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
 
 std::expected<void, std::string> MCVulkanPresenter::HoldFramesOnGpu()
 {
-    // With the third image SDL lets three frames be on the GPU (ThirdImageFrames): the game waits as two let it, so
-    // what it shows is no older than with two.
+    // With three images SDL lets three frames be on the GPU (ThirdImageFrames): the game waits as two let it, so what
+    // it shows is no older than with two. With two (vsync off) SDL's own wait as it takes the image is for the same
+    // frame, which it then finds done.
     while (_Sent.size() >= FramesHeldOnGpu)
     {
         SDL_GPUFence* const oldest = _Sent.front();

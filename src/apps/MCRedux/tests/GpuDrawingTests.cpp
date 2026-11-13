@@ -5,6 +5,7 @@
 #include "TestGame.h"
 #include "ai/MCTacticalOrder.h"
 #include "camera/MCCamera.h"
+#include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiSmackerWindow.h"
@@ -69,6 +70,53 @@ namespace
         CHECK(tally.Frames > 0);
         CHECK_EQ(tally.DifferentFrames, 0);
         CHECK_EQ(MCRenderer::UnregisteredDraws(), 0);
+    }
+
+    /// <summary>Port-only: the most frames the presenter keeps on the GPU, as two swapchain images held them.</summary>
+    constexpr size_t HeldOnGpu = MCVulkanPresenter::TwoImageFrames;
+
+    /// <summary>
+    /// Port-only: mission 1 drawn by the GPU with the third swapchain image on every driver
+    /// (<see cref="MCVulkanPresenter::ThirdImageEverywhere"/>, so the Mac's Metal runs its waits), started with vsync
+    /// <paramref name="vsync"/>; its presenter, or null (with a note) when this machine has no GPU renderer.
+    /// </summary>
+    const MCVulkanPresenter* StartThirdImageMission(bool vsync)
+    {
+        MCVulkanPresenter::ThirdImageEverywhere = true;
+        GVSync = vsync;
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartMission(1));
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        REQUIRE(display != nullptr);
+        const auto* const presenter = dynamic_cast<const MCVulkanPresenter*>(&display->Presenter());
+
+        if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || presenter == nullptr)
+        {
+            std::cout << "  (skipped: no GPU renderer on this machine)\n";
+            return nullptr;
+        }
+
+        return presenter;
+    }
+
+    /// <summary>
+    /// Port-only: runs two seconds of the mission at 60 fps and gives the most frames <paramref name="presenter"/> had
+    /// on the GPU at once, checking a frame is still drawn after them.
+    /// </summary>
+    size_t MostFramesOnGpu(const MCVulkanPresenter& presenter)
+    {
+        constexpr int32_t Frames = 120;
+        constexpr float FrameTime = 1.0f / 60.0f;
+        size_t most = 0;
+
+        for (int32_t frame = 0; frame < Frames; frame++)
+        {
+            MCTestGame::RunFrame(FrameTime);
+            most = std::max(most, presenter.FramesOnGpu());
+        }
+
+        CHECK(MCInput::Display()->ReadFrame().has_value());
+        return most;
     }
 }
 
@@ -741,8 +789,8 @@ TEST_CASE_ISOLATED("game: the GPU draws what lies apart in a batch for each kind
 }
 
 /// <summary>
-/// Port-only: the third swapchain image (Vulkan's; here on every driver, so the Mac's Metal runs its waits): the game
-/// still keeps at most two frames on the GPU, and draws on.
+/// Port-only: the third swapchain image (Vulkan's; here on every driver, so the Mac's Metal runs its waits): with vsync
+/// the swapchain has three images, the game still keeps at most two frames on the GPU, and draws on.
 /// </summary>
 TEST_CASE_ISOLATED("game: with a third swapchain image, the game keeps at most two frames on the GPU")
 {
@@ -751,30 +799,46 @@ TEST_CASE_ISOLATED("game: with a third swapchain image, the game keeps at most t
         return;
     }
 
-    MCVulkanPresenter::ThirdImageEverywhere = true;
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartMission(1));
-    const std::shared_ptr<MCDisplay> display = MCInput::Display();
-    REQUIRE(display != nullptr);
-    const auto* const presenter = dynamic_cast<const MCVulkanPresenter*>(&display->Presenter());
+    const MCVulkanPresenter* const presenter = StartThirdImageMission(true);
 
-    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || presenter == nullptr)
+    if (presenter == nullptr)
     {
-        std::cout << "  (skipped: no GPU renderer on this machine)\n";
         return;
     }
 
-    constexpr int32_t Frames = 120;
-    size_t most = 0;
+    CHECK_EQ(presenter->FramesInFlight(), MCVulkanPresenter::ThirdImageFrames);
+    CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+}
 
-    for (int32_t frame = 0; frame < Frames; frame++)
+/// <summary>
+/// Port-only: the third swapchain image only while vsync is on (without it, a third image can leave Windows'
+/// compositor holding the game's frames after an overlay): a start without vsync (-novsync) makes two images, vsync
+/// turned on gives three and off two again, and the game draws on after each, at most two frames on the GPU.
+/// </summary>
+TEST_CASE_ISOLATED("game: with a third swapchain image, vsync off keeps two images and vsync on three")
+{
+    if (!MCTestGame::Available())
     {
-        MCTestGame::RunFrame(1.0f / 60.0f);
-        most = std::max(most, presenter->FramesOnGpu());
+        return;
     }
 
-    CHECK_EQ(most, 2u);
-    CHECK(display->ReadFrame().has_value());
+    const MCVulkanPresenter* const presenter = StartThirdImageMission(false);
+
+    if (presenter == nullptr)
+    {
+        return;
+    }
+
+    CHECK_EQ(presenter->FramesInFlight(), MCVulkanPresenter::TwoImageFrames);
+    CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+
+    for (const bool vsync : {true, false})
+    {
+        MCInput::Display()->SetVSync(vsync);
+        CHECK_EQ(presenter->FramesInFlight(),
+                 vsync ? MCVulkanPresenter::ThirdImageFrames : MCVulkanPresenter::TwoImageFrames);
+        CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+    }
 }
 
 /// <summary>

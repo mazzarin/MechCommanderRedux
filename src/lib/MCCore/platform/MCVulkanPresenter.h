@@ -69,8 +69,18 @@ public:
     /// </summary>
     static inline bool ThirdImageEverywhere = false;
 
+    /// <summary>
+    /// Port-only: SDL's frames in flight, which it makes the swapchain's images: two, its default, or three with the
+    /// third image while vsync is on (_ThirdImage).
+    /// </summary>
+    static constexpr uint32_t TwoImageFrames = 2;
+    static constexpr uint32_t ThirdImageFrames = 3;
+
     /// <summary>Port-only: the frames presented whose GPU work may not be done yet (_Sent), for the tests.</summary>
     size_t FramesOnGpu() const { return _Sent.size(); }
+
+    /// <summary>Port-only: SDL's frames in flight as last asked (_FramesInFlight), for the tests.</summary>
+    uint32_t FramesInFlight() const { return _FramesInFlight; }
 
     MCRendererKind Kind() const override { return MCRendererKind::Vulkan; }
     std::string Name() const override;
@@ -260,12 +270,20 @@ private:
     bool _Claimed = false;
     bool _VSync = true;
     /// <summary>
-    /// Port-only: three swapchain images rather than SDL's two (where the driver is Vulkan): with vsync, a frame that
-    /// runs past a refresh then waits for that refresh alone, where with two the next frame waits too and the rate
-    /// falls in steps (240, 120, 80 fps on a 240 Hz screen). The game is still held to two frames on the GPU, as two
-    /// images held it (_Sent).
+    /// Port-only: whether the third swapchain image applies (where the driver is Vulkan): three images rather than
+    /// SDL's two while vsync is on (_FramesInFlight). With vsync, a frame that runs past a refresh then waits for that
+    /// refresh alone, where with two the next frame waits too and the rate falls in steps (240, 120, 80 fps on a 240 Hz
+    /// screen). Without vsync it keeps two: on Windows a third image often leaves the desktop's compositor holding the
+    /// game's frames for good after anything brings it in for a moment (a screenshot, an overlay, a notification), at
+    /// 60 fps and some 60 ms late, where with two the game gets the screen back. In either count the game is held to
+    /// two frames on the GPU, as two images held it (_Sent).
     /// </summary>
     bool _ThirdImage = false;
+    /// <summary>
+    /// Port-only: the frames in flight last asked of SDL (SDL_SetGPUAllowedFramesInFlight), its swapchain's images:
+    /// SDL's two until the third image is asked for.
+    /// </summary>
+    uint32_t _FramesInFlight = TwoImageFrames;
     /// <summary>Port-only (with the third image): the fences of the frames presented last, oldest first.</summary>
     std::vector<SDL_GPUFence*> _Sent;
     /// <summary>
@@ -273,6 +291,11 @@ private:
     /// fails (a lost device).
     /// </summary>
     std::expected<void, std::string> HoldFramesOnGpu();
+    /// <summary>
+    /// Port-only: asks SDL for the frames in flight vsync <paramref name="vsync"/> takes (_ThirdImage), when they
+    /// differ from those last asked: each change makes the claimed window's swapchain again.
+    /// </summary>
+    void AskFramesInFlight(bool vsync);
     MCPresentation _Presentation;
     MCGpuHandle<SDL_GPUShader> _QuadShader;
     MCGpuHandle<SDL_GPUShader> _CompositeShader;

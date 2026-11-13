@@ -96,6 +96,90 @@ TEST_CASE("input: a posted WM_CLOSE destroys the window and quits, as DefWindowP
     MCInput::Reset();
 }
 
+TEST_CASE("input: held, the mouse and keys reach nothing but Escape's own, and quitting still works")
+{
+    MCInput::Reset();
+    std::vector<uint32_t> seen;
+    MCInput::SetWindowProc(
+        [&seen](uint32_t message, uint32_t, int32_t)
+        {
+            seen.push_back(message);
+            return 0;
+        });
+
+    const auto key = [](SDL_Keycode code, SDL_Scancode scancode, bool down, bool repeat = false)
+    {
+        SDL_Event made{};
+        made.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        made.key.key = code;
+        made.key.scancode = scancode;
+        made.key.down = down;
+        made.key.repeat = repeat;
+        MCInput::HandleEvent(made);
+    };
+
+    const auto motion = [](float x, float y)
+    {
+        SDL_Event made{};
+        made.type = SDL_EVENT_MOUSE_MOTION;
+        made.motion.x = x;
+        made.motion.y = y;
+        MCInput::HandleEvent(made);
+    };
+
+    // An A held as the hold starts is let go: its release would never come.
+    key(SDLK_A, SDL_SCANCODE_A, true);
+    REQUIRE(MCInput::IsKeyDown('A'));
+    int32_t escapes = 0;
+    MCInput::HoldInput(true, [&escapes] { escapes++; });
+    CHECK(!MCInput::IsKeyDown('A'));
+    MCInput::SetCursorPos(100, 80);
+    seen.clear();
+
+    key(SDLK_B, SDL_SCANCODE_B, true);
+    key(SDLK_B, SDL_SCANCODE_B, false);
+    motion(30.0f, 40.0f);
+    SDL_Event button{};
+    button.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    button.button.button = SDL_BUTTON_LEFT;
+    button.button.down = true;
+    MCInput::HandleEvent(button);
+    SDL_Event wheel{};
+    wheel.type = SDL_EVENT_MOUSE_WHEEL;
+    wheel.wheel.y = 1.0f;
+    MCInput::HandleEvent(wheel);
+    CHECK(seen.empty());
+    CHECK(!MCInput::IsKeyDown('B'));
+    CHECK(!MCInput::IsKeyDown(VK_LBUTTON));
+    CHECK_EQ(MCInput::GetCursorPos().x, 100);
+    CHECK_EQ(MCInput::GetCursorPos().y, 80);
+
+    // Escape is the hold's own, once a press; the game never sees it.
+    key(SDLK_ESCAPE, SDL_SCANCODE_ESCAPE, true);
+    key(SDLK_ESCAPE, SDL_SCANCODE_ESCAPE, true, true);
+    key(SDLK_ESCAPE, SDL_SCANCODE_ESCAPE, false);
+    CHECK_EQ(escapes, 1);
+    CHECK(seen.empty());
+
+    // Closing the window still closes it.
+    SDL_Event close{};
+    close.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+    MCInput::HandleEvent(close);
+    CHECK(seen == (std::vector<uint32_t>{WM_CLOSE, WM_DESTROY}));
+
+    // Let go, the mouse and keys reach the game again.
+    MCInput::HoldInput(false);
+    seen.clear();
+    key(SDLK_B, SDL_SCANCODE_B, true);
+    motion(30.0f, 40.0f);
+    CHECK(MCInput::IsKeyDown('B'));
+    CHECK(std::ranges::find(seen, WM_KEYDOWN) != seen.end());
+    CHECK_EQ(MCInput::GetCursorPos().x, 30);
+    CHECK_EQ(MCInput::GetCursorPos().y, 40);
+    MCInput::SetWindowProc({});
+    MCInput::Reset();
+}
+
 TEST_CASE("game: MCX.EXE string table loads")
 {
     if (!MCTestGame::Available())

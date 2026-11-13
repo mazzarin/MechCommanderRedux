@@ -2,12 +2,13 @@
 
 // Port-only (Redux HD): the benchmark, -benchmark [words]. The game plays the trailer's staged canyon battle
 // (mission/MCStagedBattle.h, its force made from the install's own mission by mission/MCTrailerMission.h) in its own
-// window and frame loop at real time, then pans the camera round the map, and quits, so every build and computer is
-// measured on the same play. The frame log (platform/MCFrameLog.h) records it, -framelog's file or else
+// window and frame loop at real time, then pans the camera round the map (revealed, as the original's cheat does), and
+// quits, so every build and computer is measured on the same play. The frame log (platform/MCFrameLog.h) records it, -framelog's file or else
 // benchmark-<variant>.txt in the user folder, and its summary (the frames' p99 and worst, those late by a refresh and
 // those over 1.5 refreshes, the median, the HD frames first used and their read time) ends that log and is added to
 // the user folder's benchmarks.txt. The window's size, full screen and vsync are the player's own settings (and
-// -novsync); the words choose the rest.
+// -novsync); the words choose the rest. While it runs the player's mouse and keys are held off the game, so a touch
+// changes nothing (MCInput::HoldInput); Escape stops it, and quitting or closing the window still work.
 
 #include <expected>
 #include <string>

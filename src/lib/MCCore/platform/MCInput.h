@@ -184,6 +184,15 @@ namespace MCInput
     /// <summary>Forgets every key, button, counter and queued message (tests).</summary>
     void Reset();
 
+    /// <summary>
+    /// Port-only (Redux HD): holds the player's mouse and keys off the game while <paramref name="held"/> (a benchmark's
+    /// run, main/MCBenchmark.h, the same play whoever's at the computer): the game's cursor stays where it was put
+    /// (<see cref="SetCursorPos"/>) wherever the mouse goes, the mouse's moves, buttons and wheel and the keys reach
+    /// nothing, and the keys down are let go. Quitting and closing the window still work, and Escape calls
+    /// <paramref name="escape"/>.
+    /// </summary>
+    void HoldInput(bool held, std::function<void()> escape = {});
+
     /// <summary>The VK code Windows gives the key at <paramref name="scancode"/> (US layout for the symbol keys; letters follow <paramref name="key"/>).</summary>
     /// <param name="scancode">The physical key.</param>
     /// <param name="key">SDL's keycode for it in the current layout, or SDLK_UNKNOWN.</param>

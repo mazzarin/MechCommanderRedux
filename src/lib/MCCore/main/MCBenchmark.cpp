@@ -72,6 +72,11 @@ namespace
         float PanFrom = 0.0f;
         /// <summary>The battle's last frame staged (-1: none yet).</summary>
         int32_t Staged = -1;
+        /// <summary>Whether the pan's frames are being tallied (from the frame after the one that revealed the map).</summary>
+        bool PanTallied = false;
+        /// <summary>Whether the player's mouse and keys are held off the game yet (MCInput::HoldInput), and whether Escape stopped it.</summary>
+        bool InputHeld = false;
+        bool Stopped = false;
         MCFrameLog::MCTally BattleTally;
     };
 
@@ -110,6 +115,7 @@ namespace
     /// <summary>Ends the game for <paramref name="why"/>, saying so in the log, benchmarks.txt and the frame log.</summary>
     [[noreturn]] void Fail(std::string_view why)
     {
+        MCInput::HoldInput(false);
         const std::string line = std::format("MCRedux benchmark, {}: {}", build(), why);
         SDL_Log("%s", line.c_str());
         AddSummary(line);
@@ -220,8 +226,11 @@ namespace
     {
         run.Battle->Staged(run.Staged);
         run.BattleTally = MCFrameLog::TakeTally();
-        MCFrameLog::StartTally();
-        MCFrameLog::Note("benchmark: the pan starts");
+        // The whole map shown for the pan (the original's reveal cheat), as to a player who has been everywhere: under
+        // the fog of war it drew next to nothing. The battle is over, so its play is as ever; the frame that reveals it
+        // is in neither part's tally.
+        RevealAll();
+        MCFrameLog::Note("benchmark: the pan starts, the map revealed");
 
         if (const std::shared_ptr<MCCamera> eye = Eye(); eye != nullptr)
         {
@@ -244,6 +253,7 @@ namespace
             .Build = build(), .Variant = variant, .Display = DisplayDescription(), .Machine = MachineText()};
         const std::string line = MCBenchmark::Summary(info, run.BattleTally, pan);
         run.Phase = MCPhase::Done;
+        MCInput::HoldInput(false);
         MCFrameLog::Line(line);
         MCFrameLog::Close();
         AddSummary(line);
@@ -260,6 +270,27 @@ namespace
         }
 
         MCRun& run = *current();
+
+        if (run.Stopped)
+        {
+            Fail("stopped by Escape before its end");
+        }
+
+        // From the first frame on (the display up), the player's mouse and keys held off the game, so every run plays
+        // the same whoever's at the computer: the mouse parked in the middle, where it scrolls nothing, and Escape
+        // stopping the run.
+        if (!std::exchange(run.InputHeld, true))
+        {
+            MCInput::HoldInput(true,
+                               []
+                               {
+                                   if (current().has_value())
+                                   {
+                                       current()->Stopped = true;
+                                   }
+                               });
+            ParkMouse();
+        }
 
         // The frame log, -framelog's or the run's own, from the first frame on.
         if (!MCFrameLog::Enabled())
@@ -325,6 +356,11 @@ namespace
             }
             case MCPhase::Pan:
             {
+                if (!std::exchange(run.PanTallied, true))
+                {
+                    MCFrameLog::StartTally();
+                }
+
                 const float panned = ScenarioTime - run.PanStart;
 
                 if (panned >= PanSeconds)

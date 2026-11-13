@@ -10,6 +10,38 @@ only the characters on a keyboard. The release script takes the entry under the 
 (version.json) and refuses a release without one.
 -->
 
+## 0.6.8
+
+- Fixed: the game could crash on a match's results screen when the host left, or on Windows while it was minimised.
+- Fixed: after a save that couldn't be loaded, the campaign's screens could crash the game. The load screen now says
+  so, and a damaged save can no longer make the game hang.
+- Fixed: without a sound device, the operation briefing no longer waits forever.
+- Fixed: a second click on OPERATION BRIEFING restarts its movie instead of stopping it.
+- Fixed: in multiplayer, a match whose mission won't load, or whose host leaves as it starts, takes you back to the
+  games, where the game quit or waited forever.
+- HD art: the menus drawn again, with sharper words and buttons, new metal and stone textures and clearer briefing
+  maps.
+- HD: water at the edge of the fog of war no longer flickers; its waves move, dimmed.
+- Faster: much faster at night and in the rain, with the drawing on a thread of its own. On Windows the HD movies take
+  a third of the CPU, and the first start's black screen is shorter.
+- The main menu shows the version you're running.
+- Fixed: the game could crash as a Hollander or an Atlas fell over. The fall is now drawn from the mech's own art.
+- Fixed: with HD art on, the game could crash as some mechs moved, such as a limping Thor or Hunchback.
+- Fixed: a right-click on a mech or vehicle in your inventory crashed the game.
+- Fixed: a game started from a launcher no longer crashes when you quit on the match's results screen.
+- Fixed: in multiplayer, a joining game can no longer add extra players or send oversized messages, and a short chat
+  message, or one from a player who just left, no longer crashes the game.
+- Night mode is in testing, to see how the community likes it: at night units see half as far, and their headlights
+  light the way but show them to the enemy. LIGHTS (N) turns the selected units' headlights off or on.
+- MATCH OPTIONS: MOST SKILLED PILOT, and a ban on each kind of weapon.
+- Smoother: mechs' legs between frames at any frame rate, guests' mechs walking as the host's do, a falling tree that
+  no longer vanishes, sensor blips at the original's pace.
+- Faster: the HD movies, art, weather and sound do more of their work away from the game.
+- Windows: from 0.6.1 or earlier, this update runs the setup once; after it, the game puts its own updates in place,
+  even when a launcher started it.
+- Multiplayer cleanup: match continues after host leaves, reallocation of mechs after a player leaves, ability to
+  rematch, other bug fixes and enhancements.
+
 ## 0.6.3
 
 - Fixed: the game could crash as a Hollander or an Atlas fell over. The fall is now drawn from the mech's own art.

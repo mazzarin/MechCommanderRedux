@@ -41,6 +41,7 @@
 #include "object/MCMoverGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "platform/MCDisplay.h"
+#include "mission/MCStagedBattle.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 
@@ -763,11 +764,7 @@ std::shared_ptr<MCSpriteTree> MCTestGame::FindMechTree(std::string_view name)
 
 void MCTestGame::FaceMech(MCBattleMech& mech, float degrees)
 {
-    const double radians = static_cast<double>(degrees) * std::numbers::pi / 180.0;
-    const auto c = static_cast<float>(std::cos(radians));
-    const auto s = static_cast<float>(std::sin(radians));
-    MCFrameOfRef frame(MCVector3D(c, s, 0.0f), MCVector3D(-s, c, 0.0f), UnitZ);
-    mech.SetFrame(frame);
+    MCStaging::FaceMech(mech, degrees);
 }
 
 void MCTestGame::StockStore(int32_t count)

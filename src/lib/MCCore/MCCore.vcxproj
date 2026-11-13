@@ -288,6 +288,7 @@
     <ClCompile Include="mission\MCScenarioLoad.cpp" />
     <ClCompile Include="mission\MCScenarioObjectives.cpp" />
     <ClCompile Include="mission\MCScenarioPart.cpp" />
+    <ClCompile Include="mission\MCStagedBattle.cpp" />
     <ClCompile Include="mission\MCTrailerMission.cpp" />
     <ClCompile Include="mission\MCWeatherPlay.cpp" />
     <ClCompile Include="network\MCGameDataHash.cpp" />
@@ -780,6 +781,7 @@
     <ClInclude Include="mission\MCScenarioObjectives.h" />
     <ClInclude Include="mission\MCScenarioPart.h" />
     <ClInclude Include="mission\MCScenarioReading.h" />
+    <ClInclude Include="mission\MCStagedBattle.h" />
     <ClInclude Include="mission\MCTrailerMission.h" />
     <ClInclude Include="mission\MCWeatherPlay.h" />
     <ClInclude Include="network\MCGameDataHash.h" />

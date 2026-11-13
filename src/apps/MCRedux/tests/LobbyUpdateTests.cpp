@@ -897,7 +897,9 @@ TEST_CASE_ISOLATED("game: a lobby's RESTART waits for the match's end when the u
     Settle();
     CHECK_EQ(updater.Log->Answers.size(), size_t{1});
 
-    // The build known, but the note's file taken by a folder.
+    // The build known, but the note's file taken by a folder (any note an earlier test in this worker's user folder
+    // left goes first).
+    std::filesystem::remove(GameNotePath());
     std::filesystem::create_directories(GameNotePath());
     UpdateReady();
     REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));

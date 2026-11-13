@@ -9,6 +9,7 @@
 #include "platform/MCVulkanShaders.h"
 #include "smol-atlas.h"
 #include "lib/MCFatal.h"
+#include "lib/MCWorkers.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
@@ -969,8 +970,43 @@ namespace
     }
 }
 
+namespace
+{
+    // Port-only: the most helper threads MakePipelines takes. The longest single pipeline bounds the wait once a few
+    // run at a time (~50 pipelines, the slowest ~0.7 s on its own on the A10), so more threads would add nothing.
+    constexpr size_t MostPipelineHelpers = 7;
+    // A wait for the pipelines this long is logged (a driver's empty shader cache): warm, they take milliseconds.
+    constexpr std::chrono::duration<double> SlowPipelines{1.0};
+}
+
+void MCVulkanRenderer::MakePipelines(std::vector<PipelineJob>& jobs)
+{
+    // The slow ones first, so that the last to finish is a quick one.
+    std::ranges::stable_partition(jobs, &PipelineJob::Slow);
+    const size_t threads = std::thread::hardware_concurrency();
+    MCWorkers workers(std::min(threads > 1 ? threads - 1 : 0, MostPipelineHelpers));
+    const auto started = std::chrono::steady_clock::now();
+    workers.Run(jobs.size(),
+                [&jobs](size_t i)
+                {
+                    if (!jobs[i].Make())
+                    {
+                        SDL_Log("MCVulkanRenderer: the %s pipeline wasn't made (%s)", jobs[i].Name.c_str(),
+                                SDL_GetError());
+                    }
+                });
+
+    if (const std::chrono::duration<double> took = std::chrono::steady_clock::now() - started; took >= SlowPipelines)
+    {
+        SDL_Log("MCVulkanRenderer: %zu pipelines took %.1f s on %zu threads (the driver's shader cache empty?)",
+                jobs.size(), took.count(), workers.Helpers() + 1);
+    }
+
+    jobs.clear();
+}
+
 std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::Create(
-    std::shared_ptr<SDL_GPUDevice> device)
+    std::shared_ptr<SDL_GPUDevice> device, std::vector<PipelineJob>& moreJobs)
 {
     auto renderer = std::make_unique<MCVulkanRenderer>(Key{});
     renderer->_Device = device;
@@ -1114,61 +1150,115 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                                                     MCGpuRelease{device});
     };
 
-    const auto makeSurfacePipelines = [&](SurfacePipelines& pipelines, uint32_t targetCount)
+    // Port-only: each pipeline a job, all made at once with the presenter's (MakePipelines), here, before Create
+    // returns (so the jobs may use what Create holds). Slow: a full build of the draw shader ("every") and the shadow,
+    // which NVIDIA's driver took 0.48-0.69 s each to compile with its cache empty (the A10, 13 Nov; the rest 0.15 s
+    // or less).
+    std::vector<PipelineJob> jobs;
+    const auto job = [&jobs](std::string name, bool slow, MCGpuHandle<SDL_GPUGraphicsPipeline>& into,
+                             std::function<MCGpuHandle<SDL_GPUGraphicsPipeline>()> make)
     {
-        const auto makeDrawPipelines = [&](DrawPipelines& draws, SDL_GPUShader& fragmentShader)
-        {
-            SDL_GPUShader& vertexShader = *renderer->_VertexShader;
-            draws.Opaque = makePipeline(targetCount, vertexShader, false, false, false, false, &fragmentShader);
-            draws.Blend = makePipeline(targetCount, vertexShader, true, false, false, false, &fragmentShader);
-            draws.IndexOnly = makePipeline(targetCount, vertexShader, false, true, false, false, &fragmentShader);
-            draws.BlendMarks = makePipeline(targetCount, vertexShader, true, false, false, true, &fragmentShader);
-            draws.IndexMarks = makePipeline(targetCount, vertexShader, false, true, false, true, &fragmentShader);
-        };
-
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], *renderer->_FragmentShader);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], *renderer->_BasicFragmentShader);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], *renderer->_HdFragmentShader);
-        pipelines.Shadow = makePipeline(targetCount, *renderer->_VertexShader, false, false, true);
-        pipelines.Terrain = makePipeline(targetCount, *renderer->_TerrainShader, false, false, false, false,
-                                         renderer->_TerrainFragmentShader.get());
-        pipelines.TerrainSeam = makePipeline(targetCount, *renderer->_TerrainShader, true, false, false, false,
-                                             renderer->_TerrainFragmentShader.get());
-        pipelines.Ground = makePipeline(targetCount, *renderer->_QuadShader, false, false, false, false,
-                                        renderer->_GroundShader.get());
-        pipelines.GroundOver =
-            makePipeline(targetCount, *renderer->_QuadShader, true, false, false, false, renderer->_GroundShader.get());
-        pipelines.GroundIndex =
-            makePipeline(targetCount, *renderer->_QuadShader, false, true, false, false, renderer->_GroundShader.get());
+        jobs.push_back(PipelineJob{std::move(name), slow, [&into, make = std::move(make)]
+                                   {
+                                       into = make();
+                                       return into != nullptr;
+                                   }});
     };
 
-    makeSurfacePipelines(renderer->_SurfacePipelines[WithoutGlints], TargetsWithoutGlints);
-    makeSurfacePipelines(renderer->_SurfacePipelines[WithGlints], SurfaceTargets);
+    const auto makeSurfacePipelines = [&](SurfacePipelines& pipelines, uint32_t targetCount, std::string_view surface)
+    {
+        const auto makeDrawPipelines =
+            [&](DrawPipelines& draws, SDL_GPUShader& fragmentShader, std::string_view variant, bool slow)
+        {
+            SDL_GPUShader& vertexShader = *renderer->_VertexShader;
+            const auto draw = [&](std::string_view kind, MCGpuHandle<SDL_GPUGraphicsPipeline>& into, bool blend,
+                                  bool indexOnly, bool marks)
+            {
+                job(std::format("{} draw ({}, {})", surface, variant, kind), slow, into,
+                    [&makePipeline, vertex = &vertexShader, fragment = &fragmentShader, targetCount, blend, indexOnly,
+                     marks] { return makePipeline(targetCount, *vertex, blend, indexOnly, false, marks, fragment); });
+            };
+
+            draw("opaque", draws.Opaque, false, false, false);
+            draw("blend", draws.Blend, true, false, false);
+            draw("index only", draws.IndexOnly, false, true, false);
+            draw("blend marks", draws.BlendMarks, true, false, true);
+            draw("index marks", draws.IndexMarks, false, true, true);
+        };
+
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], *renderer->_FragmentShader, "every",
+                          true);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], *renderer->_BasicFragmentShader,
+                          "basic", false);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], *renderer->_HdFragmentShader, "hd",
+                          false);
+        job(std::format("{} shadow", surface), true, pipelines.Shadow,
+            [&, targetCount] { return makePipeline(targetCount, *renderer->_VertexShader, false, false, true); });
+        job(std::format("{} terrain", surface), false, pipelines.Terrain,
+            [&, targetCount]
+            {
+                return makePipeline(targetCount, *renderer->_TerrainShader, false, false, false, false,
+                                    renderer->_TerrainFragmentShader.get());
+            });
+        job(std::format("{} terrain seam", surface), false, pipelines.TerrainSeam,
+            [&, targetCount]
+            {
+                return makePipeline(targetCount, *renderer->_TerrainShader, true, false, false, false,
+                                    renderer->_TerrainFragmentShader.get());
+            });
+        job(std::format("{} ground", surface), false, pipelines.Ground,
+            [&, targetCount]
+            {
+                return makePipeline(targetCount, *renderer->_QuadShader, false, false, false, false,
+                                    renderer->_GroundShader.get());
+            });
+        job(std::format("{} ground over", surface), false, pipelines.GroundOver,
+            [&, targetCount]
+            {
+                return makePipeline(targetCount, *renderer->_QuadShader, true, false, false, false,
+                                    renderer->_GroundShader.get());
+            });
+        job(std::format("{} ground indices", surface), false, pipelines.GroundIndex,
+            [&, targetCount]
+            {
+                return makePipeline(targetCount, *renderer->_QuadShader, false, true, false, false,
+                                    renderer->_GroundShader.get());
+            });
+    };
+
+    makeSurfacePipelines(renderer->_SurfacePipelines[WithoutGlints], TargetsWithoutGlints, "plain");
+    makeSurfacePipelines(renderer->_SurfacePipelines[WithGlints], SurfaceTargets, "glints");
+
+    // Port-only (HD movies): the movie conversion writes a movie picture's colours alone, every pixel.
+    job("movie", false, renderer->_MoviePipeline,
+        [&]
+        {
+            SDL_GPUColorTargetDescription colors{};
+            colors.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+            pipeline.vertex_shader = renderer->_QuadShader.get();
+            pipeline.fragment_shader = renderer->_MovieShader.get();
+            pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+            pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+            pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+            pipeline.target_info.num_color_targets = 1;
+            pipeline.target_info.color_target_descriptions = &colors;
+            return MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline),
+                                                        MCGpuRelease{device});
+        });
+
+    std::ranges::move(moreJobs, std::back_inserter(jobs));
+    moreJobs.clear();
+    MakePipelines(jobs);
 
     if (!std::ranges::all_of(renderer->_SurfacePipelines, &SurfacePipelines::Made))
     {
-        return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
+        return std::unexpected(std::string("SDL_CreateGPUGraphicsPipeline(draw) failed"));
     }
 
-    // Port-only (HD movies): the movie conversion writes a movie picture's colours alone, every pixel.
+    if (renderer->_MoviePipeline == nullptr)
     {
-        SDL_GPUColorTargetDescription colors{};
-        colors.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
-        pipeline.vertex_shader = renderer->_QuadShader.get();
-        pipeline.fragment_shader = renderer->_MovieShader.get();
-        pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-        pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-        pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-        pipeline.target_info.num_color_targets = 1;
-        pipeline.target_info.color_target_descriptions = &colors;
-        renderer->_MoviePipeline = MCGpuHandle<SDL_GPUGraphicsPipeline>(
-            SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline), MCGpuRelease{device});
-
-        if (renderer->_MoviePipeline == nullptr)
-        {
-            return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(movie)"));
-        }
+        return std::unexpected(std::string("SDL_CreateGPUGraphicsPipeline(movie) failed"));
     }
 
     SDL_GPUSamplerCreateInfo sampler{};

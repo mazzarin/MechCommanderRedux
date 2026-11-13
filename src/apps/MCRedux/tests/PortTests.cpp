@@ -326,6 +326,66 @@ TEST_CASE("frame log: the screen's frames are timed between presents, steady whe
     CHECK(text.contains("p99 8.33, max 8.33, 0 over 1.5 refreshes\n"));
 }
 
+TEST_CASE("frame log: with vsync the screen shows a frame a refresh after the last at the soonest, so uneven "
+          "hand-overs stay even")
+{
+    // As NVIDIA's Vulkan driver on Windows takes the frames (13 Nov, the A10): the game hands one over at the end of each
+    // loop's frame, 4 ms then 12.67 alternately, and the screen shows one every 8.33 ms; then a 30 ms frame.
+    constexpr double Refresh120Hz = 120.0;
+    constexpr double QuickMs = 4.0;
+    constexpr double WaitingMs = 12.6666667;
+    constexpr double LateMs = 30.0;
+    constexpr int32_t WarmPairs = 40;
+    constexpr int32_t TalliedPairs = 50;
+    constexpr bool VSync = true;
+    FrameLogFixture log("frame-log-vsync");
+    REQUIRE(log.Opened);
+    MCFrameLog::NextFrame(Refresh120Hz, VSync);
+
+    const auto frame = [&log](double ms)
+    {
+        log.Advance(ms);
+        MCFrameLog::Presented();
+        MCFrameLog::NextFrame(Refresh120Hz, VSync);
+    };
+
+    for (int32_t i = 0; i < WarmPairs; i++)
+    {
+        frame(QuickMs);
+        frame(WaitingMs);
+    }
+
+    MCFrameLog::StartTally();
+
+    for (int32_t i = 0; i < TalliedPairs; i++)
+    {
+        frame(QuickMs);
+        frame(WaitingMs);
+    }
+
+    frame(LateMs);
+    const MCFrameLog::MCTally tally = MCFrameLog::TakeTally();
+
+    // The loop's and the hand-overs' frames half long; the screen's one, the late frame: every other hand-over came
+    // as its refresh did, so no frame waited in the queue to cover it, and the last showed for its 30 ms.
+    CHECK_EQ(tally.Loop.Long, size_t{51});
+    REQUIRE_EQ(tally.Shown.Times.size(), size_t{101});
+    CHECK_EQ(tally.Shown.Long, size_t{1});
+    CHECK_EQ(std::format("{:.2f} {:.2f}", tally.Shown.MedianMs(), tally.Shown.WorstMs()), "8.33 30.00");
+
+    // Without vsync the screen takes each as it's handed over.
+    MCFrameLog::StartTally();
+    log.Advance(QuickMs);
+    MCFrameLog::Presented();
+    MCFrameLog::NextFrame(Refresh120Hz, false);
+    log.Advance(WaitingMs);
+    MCFrameLog::Presented();
+    MCFrameLog::NextFrame(Refresh120Hz, false);
+    const MCFrameLog::MCTally unsynced = MCFrameLog::TakeTally();
+    REQUIRE_EQ(unsynced.Shown.Times.size(), size_t{2});
+    CHECK_EQ(std::format("{:.2f}", unsynced.Shown.Times[1]), "12.67");
+}
+
 TEST_CASE("benchmark: the summary heads with the hitches, the battle's and the pan's frames together, then each's own")
 {
     FrameLogFixture log("benchmark-summary");

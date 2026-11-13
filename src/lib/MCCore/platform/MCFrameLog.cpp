@@ -18,6 +18,11 @@ namespace
     constexpr double RefreshMarginShare = 0.9;
     /// <summary>A frame longer than this many refreshes was on the screen for two or more.</summary>
     constexpr double LongFrameRefreshes = 1.5;
+    /// <summary>
+    /// With vsync, the most refreshes after its hand-over a frame is taken as shown (MCFrameLog::Presented): the queue
+    /// for the screen holds a few frames, and a frame shown later than that was one the screen never waited for.
+    /// </summary>
+    constexpr double MostQueuedRefreshes = 3.0;
     constexpr double MsPerSecond = 1000.0;
     constexpr size_t Percentile99 = 99;
     constexpr size_t Percent = 100;
@@ -74,10 +79,10 @@ namespace
         uint64_t Frame = 0;
         /// <summary>The last frames' times (ms), for what is usual.</summary>
         std::deque<double> Recent;
-        /// <summary>When a frame was last handed to the screen (MCFrameLog::Presented); none before the first.</summary>
-        std::optional<uint64_t> LastPresent;
-        /// <summary>The times between the frames handed to the screen since the last NextFrame (ms), for it to judge.</summary>
-        std::vector<double> PendingShown;
+        /// <summary>When the screen last showed a frame, as the log takes it (MCFrameLog::Presented); none before the first.</summary>
+        std::optional<uint64_t> LastShown;
+        /// <summary>When the frames were handed to the screen since the last NextFrame, for it to take as shown.</summary>
+        std::vector<uint64_t> PendingPresents;
         /// <summary>The last of those times (ms), for what is usual on the screen.</summary>
         std::deque<double> RecentShown;
         MCSecond Second;
@@ -115,6 +120,44 @@ namespace
     double toMs(uint64_t ticks)
     {
         return static_cast<double>(ticks) * MsPerSecond / static_cast<double>(SDL_GetPerformanceFrequency());
+    }
+
+    uint64_t toTicks(double ms)
+    {
+        return static_cast<uint64_t>(
+            std::llround(ms * static_cast<double>(SDL_GetPerformanceFrequency()) / MsPerSecond));
+    }
+
+    /// <summary>
+    /// The time each frame handed over at <paramref name="presents"/> was on the screen after the one before it (ms),
+    /// as MCFrameLog::Presented takes them: with <paramref name="vsync"/> and a known refresh, shown at the later of its
+    /// hand-over and a refresh after the last (at most MostQueuedRefreshes after its hand-over); else as handed over.
+    /// </summary>
+    std::vector<double> takeShown(std::optional<uint64_t>& lastShown, std::span<const uint64_t> presents,
+                                  double refreshHz, bool vsync)
+    {
+        std::vector<double> shown;
+        const uint64_t refresh = vsync && refreshHz > 0.0 ? toTicks(MsPerSecond / refreshHz) : 0;
+
+        for (const uint64_t at : presents)
+        {
+            uint64_t shownAt = at;
+
+            if (refresh > 0 && lastShown.has_value())
+            {
+                shownAt = std::min(std::max(at, *lastShown + refresh),
+                                   at + static_cast<uint64_t>(static_cast<double>(refresh) * MostQueuedRefreshes));
+            }
+
+            if (lastShown.has_value())
+            {
+                shown.push_back(toMs(shownAt - std::min(shownAt, *lastShown)));
+            }
+
+            lastShown = shownAt;
+        }
+
+        return shown;
     }
 
     double median(std::vector<double> times)
@@ -287,8 +330,8 @@ namespace MCFrameLog
             log.Second = MCSecond{.Start = log.Opened};
             log.File << "MCRedux frame log: frames much slower than the usual one or late by a refresh of the screen\n"
                         "(SLOW), frames with notes (*), and a line a second (--): the game's loop's frames, then the\n"
-                        "time between the frames handed to the screen (shown), what the screen shows where frames\n"
-                        "queue for it.\n"
+                        "frames as the screen showed them (shown: each as it was handed over, with vsync no sooner\n"
+                        "than a refresh after the last, as the queue of frames for the screen shows them).\n"
                         "Times in ms. A part is listed when it ends, so after the parts inside it; render.* parts are\n"
                         "the render thread's, counted in the frame running as they end. + lines count what the frame\n"
                         "did. The GPU's own time isn't measured: present.acquire and present.wait wait for it and for\n"
@@ -317,8 +360,8 @@ namespace MCFrameLog
         log.Counts.clear();
         log.Notes.clear();
         log.Recent.clear();
-        log.LastPresent.reset();
-        log.PendingShown.clear();
+        log.LastShown.reset();
+        log.PendingPresents.clear();
         log.RecentShown.clear();
         log.Second = {};
         log.Tally.reset();
@@ -329,7 +372,7 @@ namespace MCFrameLog
         return state().Enabled;
     }
 
-    void NextFrame(double refreshHz)
+    void NextFrame(double refreshHz, bool vsync)
     {
         MCFrameLogState& log = state();
 
@@ -353,8 +396,9 @@ namespace MCFrameLog
             log.Counts.clear();
         }
 
-        // The frames handed to the screen while this one ran (before the first, none's).
-        const std::vector<double> shown = std::exchange(log.PendingShown, {});
+        // The frames handed to the screen while this one ran, as it showed them (before the first, none's).
+        const std::vector<uint64_t> presents = std::exchange(log.PendingPresents, {});
+        const std::vector<double> shown = takeShown(log.LastShown, presents, refreshHz, vsync);
 
         if (frameStart.has_value())
         {
@@ -433,12 +477,7 @@ namespace MCFrameLog
             return;
         }
 
-        const uint64_t at = now();
-
-        if (const std::optional<uint64_t> last = std::exchange(log.LastPresent, at); last.has_value())
-        {
-            log.PendingShown.push_back(toMs(at - *last));
-        }
+        log.PendingPresents.push_back(now());
     }
 
     void Note(std::string text)

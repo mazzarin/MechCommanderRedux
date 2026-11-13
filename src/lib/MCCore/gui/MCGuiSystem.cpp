@@ -499,7 +499,7 @@ auto MCGuiSystem::Run() -> void
     do
     {
         PerfStartTime = MCPort::PerformanceCounter();
-        MCFrameLog::NextFrame(MCFrameLog::Enabled() && _Display != nullptr ? FrameLogRefresh(*_Display) : 0.0);
+        MCFrameLog::NextFrame(MCFrameLog::Enabled() && _Display != nullptr ? FrameLogRefresh(*_Display) : 0.0, GVSync);
         // Port-only (HD weather's snow): whether the last frame threw the weather's pieces.
         const bool drewWeather = MCWeather::TakeSnowDrawn();
 

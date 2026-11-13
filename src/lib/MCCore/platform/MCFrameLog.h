@@ -29,14 +29,17 @@ namespace MCFrameLog
 
     /// <summary>
     /// Ends the frame running since the last call (written if slow) and starts the next; <paramref name="refreshHz"/> is
-    /// the window's screen's refresh rate (0: not known), by which a frame that skipped a refresh is slow.
+    /// the window's screen's refresh rate (0: not known), by which a frame that skipped a refresh is slow;
+    /// <paramref name="vsync"/>, whether the frames wait for the screen's refresh (<see cref="Presented"/>).
     /// </summary>
-    void NextFrame(double refreshHz = 0.0);
+    void NextFrame(double refreshHz = 0.0, bool vsync = false);
 
     /// <summary>
-    /// A frame handed to the screen now: the presenters call it as they submit the frame shown. The time between two is
-    /// what the screen shows (a frame's time on it): with a queue of frames for the screen (Vulkan's third image) the
-    /// game's loop can run unevenly, a frame quick and the next waiting, while the screen gets one each refresh.
+    /// A frame handed to the screen now: the presenters call it as they submit the frame shown. The log takes each as
+    /// the screen shows it: without vsync as it's handed over; with vsync at the later of that and a refresh after the
+    /// one before, as a queue of frames for the screen shows them. The game's loop, and its hand-overs, can run
+    /// unevenly, a frame quick and the next waiting, while the queue gives the screen one each refresh (Vulkan's third
+    /// image; NVIDIA's Vulkan driver on Windows takes the frames handed to it into its own).
     /// </summary>
     void Presented();
 

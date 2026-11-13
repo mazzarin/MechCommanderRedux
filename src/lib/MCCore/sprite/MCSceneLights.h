@@ -381,6 +381,13 @@ namespace MCSceneLights
     /// </summary>
     std::vector<MCGlowPixel> FrameOutline(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
 
+    /// <summary>
+    /// What the glows measured are kept by while a world is drawn: a hash of the colour tables their light is measured
+    /// with, the palette's water entries the colour cycle steps left out (MCWaterCycle), so a step keeps them; a
+    /// frame with pixels of those entries is measured each time instead.
+    /// </summary>
+    size_t GlowTablesKey();
+
     /// <summary>A shape table's frame.</summary>
     struct MCTableFrame
     {

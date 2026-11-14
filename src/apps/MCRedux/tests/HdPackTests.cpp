@@ -1477,6 +1477,82 @@ TEST_CASE("hd art: pictures read ahead are found as drawn ones are, without a re
 }
 
 /// <summary>
+/// Port-only: the briefing maps' pictures lie in an archive of their own (<c>maps.hda</c>), so the menus' holds only what
+/// the screens show: a picture is found in either, as drawn and as read ahead, and in a pack's loose <c>maps</c> folder.
+/// </summary>
+TEST_CASE("hd art: a briefing map's picture is found in maps.hda, a screen's in menus.hda, drawn or read ahead")
+{
+    constexpr int32_t Width = AheadWidth;
+    constexpr int32_t Height = AheadHeight;
+    // A screen's picture, a map's, and one the pack lacks.
+    constexpr size_t Screen = 0;
+    constexpr size_t Map = 1;
+    constexpr size_t Lacked = 2;
+    const ScratchFolder scratch("pictures-maps");
+    std::vector<std::vector<uint8_t>> pixels;
+    std::vector<std::vector<uint8_t>> files;
+    std::vector<std::string> names;
+
+    for (uint8_t picture = 0; picture <= Lacked; ++picture)
+    {
+        std::vector<uint8_t>& shown = pixels.emplace_back(static_cast<size_t>(Width) * Height);
+        std::ranges::generate(shown, [&, at = 0]() mutable { return static_cast<uint8_t>(picture * Width + at++); });
+        files.push_back(AheadFile({picture, 0}, static_cast<uint8_t>(picture + 1)));
+        names.push_back(MCHdArt::PictureName(MCHdArt::PictureHash(shown, Width, Height)) + ".hdf");
+    }
+
+    const std::filesystem::path archived = scratch.Path() / "archived";
+    std::filesystem::create_directories(archived);
+    WriteBytes(archived / "menus.hda", BuildArchive({Raw(names[Screen], files[Screen])}));
+    WriteBytes(archived / "maps.hda", BuildArchive({Raw(names[Map], files[Map])}));
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    const auto found = [&](size_t picture)
+    {
+        MCTest::Scope scope(std::format("picture {}", picture));
+        const std::shared_ptr<const MCHdArt::Frame> frame = MCHdArt::FindPicture(pixels[picture], Width, Height);
+        REQUIRE(frame != nullptr);
+        const auto decoded = MCHdArt::DecodeHdf(files[picture], Width, Height);
+        REQUIRE(decoded.has_value());
+        CHECK(SameFrame(*frame, *decoded));
+    };
+
+    // Drawn: each read from its archive.
+    MCHdArt::SetPackFolder(archived);
+    size_t read = MCHdArt::FramesRead();
+    found(Screen);
+    found(Map);
+    CHECK(MCHdArt::FindPicture(pixels[Lacked], Width, Height) == nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read + 2);
+
+    // Read ahead, from both archives: found without a read.
+    MCHdArt::SetPackFolder(archived);
+    const std::vector<MCHdArt::PictureAhead> asked = {
+        {pixels[Screen], Width, Height}, {pixels[Map], Width, Height}, {pixels[Lacked], Width, Height}};
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::ReadPicturesAhead(asked);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 2);
+    read = MCHdArt::FramesRead();
+    found(Screen);
+    found(Map);
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+
+    // A generator's pack: the map's frame file loose in maps/.
+    const std::filesystem::path loose = scratch.Path() / "loose";
+    std::filesystem::create_directories(loose / "maps");
+    WriteBytes(loose / "maps" / names[Map], files[Map]);
+    MCHdArt::SetPackFolder(loose);
+    found(Map);
+    CHECK(MCHdArt::FindPicture(pixels[Screen], Width, Height) == nullptr);
+
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only: when another pack is set while the reading thread reads ahead from one, nothing it read is drawn for the
 /// new pack's frames of the same names: every frame drawn is the new pack's, wherever the thread was in its reads (a
 /// little further each round).

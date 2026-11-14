@@ -25,7 +25,9 @@ class MCShape;
 /// way to the next frame, LegsInBetweenSteps) as <c>&lt;frame&gt;_&lt;step&gt;</c>, over a turn middle
 /// <c>&lt;frame&gt;_turn_&lt;step&gt;</c> (TurnBetweenStep), each over both frames' bounds.</para>
 /// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.hdf</c> (or a PNG pair) likewise, named by
-/// their pixels' hash (<see cref="PictureHash"/>).</para>
+/// their pixels' hash (<see cref="PictureHash"/>). Port-only: the briefing maps and their tactical maps are
+/// <c>maps/&lt;hash&gt;.hdf</c>, named the same way, so that the menus' archive holds only what the screens show; a
+/// picture is looked for in <c>menus</c>, then <c>maps</c> (a pack made before keeps its maps in <c>menus</c>).</para>
 /// <para>Every other appearance's shapes (vehicles, Elementals, buildings, trees, terrain objects...) come from its own
 /// PAK, a packet of the shape PAK (<c>shapes90.pak</c>, or <c>shapes.pak</c> for an appearance that one leaves
 /// empty); their frames are <c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;/&lt;frame&gt;</c>, the
@@ -354,8 +356,8 @@ namespace MCHdArt
     std::string PictureName(uint64_t hash);
 
     /// <summary>
-    /// The HD copy of the picture with <paramref name="pixels"/> (<c>menus/&lt;hash&gt;</c> in the pack, kept as a
-    /// frame's), read the first time; null when HD art is off or the pack has none.
+    /// The HD copy of the picture with <paramref name="pixels"/> (<c>menus/&lt;hash&gt;</c> in the pack, or a map's
+    /// <c>maps/&lt;hash&gt;</c>, kept as a frame's), read the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height);
 
@@ -369,8 +371,9 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only: has the reading thread read the HD copies of <paramref name="pictures"/> ahead of their first draw, those
-    /// the pack's archive has that aren't kept, looked at or asked for already, in order, while they and the frames kept
-    /// take at most half the cache's budget; <see cref="KeepReadAhead"/> keeps them as drawn ones are kept.
+    /// the pack's archives have (the menus', the maps') that aren't kept, looked at or asked for already, in order, while
+    /// they and the frames kept take at most half the cache's budget; <see cref="KeepReadAhead"/> keeps them as drawn ones
+    /// are kept.
     /// </summary>
     void ReadPicturesAhead(std::span<const PictureAhead> pictures);
 

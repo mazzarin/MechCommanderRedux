@@ -32,6 +32,13 @@ namespace
     constexpr std::string_view ShapeFolder = "shapes";
     /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
     constexpr std::string_view PictureFolder = "menus";
+    /// <summary>
+    /// Port-only: the pack's folder of the briefing maps and their tactical maps, pictures named as the menus' are, kept
+    /// apart (<c>maps.hda</c>) so that the menus' archive holds only what the screens show (MCHdArt.h).
+    /// </summary>
+    constexpr std::string_view MapFolder = "maps";
+    /// <summary>The folders a picture is looked for in, in order.</summary>
+    constexpr std::array<std::string_view, 2> PictureFolders = {PictureFolder, MapFolder};
     constexpr std::string_view PaletteFile = "palette.rgb";
     /// <summary>The pack's folder of movies' HD frames, and their extension (MCHdArt::FindMovie).</summary>
     constexpr std::string_view MovieFolder = "movies";
@@ -116,6 +123,8 @@ namespace
     constexpr std::string_view TurnMirroredName = "turnm";
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
+    /// <summary>A loose frame's pictures' extension, as the generator writes them.</summary>
+    constexpr std::string_view PngExtension = ".png";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
     constexpr std::string_view HdfExtension = ".hdf";
     constexpr std::array<uint8_t, 4> HdfMagic = {'M', 'C', 'H', 'D'};
@@ -737,6 +746,33 @@ namespace
         return std::optional<MCHdArt::Frame>();
     }
 
+    /// <summary>
+    /// Port-only: whether <paramref name="folder"/> holds frame <paramref name="frame"/> (its frame file or PNG pair, else
+    /// its archive's entry), looked for by name, without a read.
+    /// </summary>
+    bool HoldsFrame(FrameFolder& folder, std::string_view frame)
+    {
+        std::error_code error;
+
+        if (!folder.Loose.has_value())
+        {
+            folder.Loose = std::filesystem::is_directory(folder.Path, error);
+        }
+
+        if (const std::filesystem::path path = folder.Path / frame;
+            *folder.Loose &&
+            (std::filesystem::is_regular_file(std::filesystem::path(path).concat(HdfExtension), error) ||
+             std::filesystem::is_regular_file(std::filesystem::path(path).concat(PngExtension), error)))
+        {
+            return true;
+        }
+
+        const FrameFolder::InArchive& archived = ArchiveOf(folder);
+        return archived.Archive != nullptr &&
+               archived.Archive->File->Find(archived.Prefix + std::string(frame) + std::string(HdfExtension))
+                   .has_value();
+    }
+
     /// <summary>Whether the pack has <paramref name="folder"/>'s frames: the folder, or an archive holding it.</summary>
     bool HasFolder(const std::filesystem::path& folder)
     {
@@ -849,6 +885,27 @@ namespace
     }
 
     /// <summary>
+    /// Port-only: the folder (State::Folders' index) of PictureFolders that holds picture <paramref name="hash"/>, else the
+    /// menus', where its lack is noted as any frame's.
+    /// </summary>
+    uint32_t PictureFolderOf(uint64_t hash)
+    {
+        const std::string name = HashName(hash);
+
+        for (const std::string_view folder : PictureFolders)
+        {
+            const uint32_t index = FolderIndex(MCHdArt::PackFolder() / folder, Naming::Hash);
+
+            if (HoldsFrame(TheState().Folders.at(index), name))
+            {
+                return index;
+            }
+        }
+
+        return FolderIndex(MCHdArt::PackFolder() / PictureFolder, Naming::Hash);
+    }
+
+    /// <summary>
     /// A frame just read: numbered <paramref name="id"/>, its baked shadow marked if it is an object's (its folder's
     /// <paramref name="bakedShadows"/>), else whether the pack marked one (MCHdArt::Frame::PaintedShadow).
     /// </summary>
@@ -908,7 +965,7 @@ namespace
         }
         else
         {
-            const std::filesystem::path colorPath = std::filesystem::path(path).concat(".png");
+            const std::filesystem::path colorPath = std::filesystem::path(path).concat(PngExtension);
 
             if (!loose || !std::filesystem::is_regular_file(colorPath, error))
             {
@@ -929,7 +986,7 @@ namespace
 
             // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
             const std::filesystem::path indexPath =
-                std::filesystem::path(path).concat(std::format("{}.png", IndexSuffix));
+                std::filesystem::path(path).concat(std::format("{}{}", IndexSuffix, PngExtension));
             const std::optional<std::pair<int32_t, int32_t>> declared = PngSize(colorPath);
 
             if (!declared.has_value() || PngSize(indexPath) != declared)
@@ -2355,7 +2412,7 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8
         return kept->second;
     }
 
-    return Cache(FrameKey{FolderIndex(PackFolder() / PictureFolder, Naming::Hash), hash}, width, height);
+    return Cache(FrameKey{PictureFolderOf(hash), hash}, width, height);
 }
 
 void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
@@ -2366,19 +2423,29 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
     }
 
     State& state = TheState();
-    const uint32_t folderIndex = FolderIndex(PackFolder() / PictureFolder, Naming::Hash);
-    FrameFolder& folder = state.Folders.at(folderIndex);
     std::error_code error;
+    // A follow for each archive a picture may lie in (PictureFolders'). Only an archive's (as the frames followed): loose
+    // files are a generator's, not a player's.
+    std::vector<Follow> follows;
 
-    // Only an archive's (as the frames followed): loose files are a generator's, not a player's.
-    if (!folder.Loose.has_value())
+    for (const std::string_view name : PictureFolders)
     {
-        folder.Loose = std::filesystem::is_directory(folder.Path, error);
+        const uint32_t folderIndex = FolderIndex(PackFolder() / name, Naming::Hash);
+        FrameFolder& folder = state.Folders.at(folderIndex);
+
+        if (!folder.Loose.has_value())
+        {
+            folder.Loose = std::filesystem::is_directory(folder.Path, error);
+        }
+
+        if (const FrameFolder::InArchive& archived = ArchiveOf(folder); !*folder.Loose && archived.Archive != nullptr)
+        {
+            follows.push_back(
+                Follow{FrameKey{folderIndex, 0}, 0, archived.Archive, archived.Prefix, folder.BakedShadows, {}});
+        }
     }
 
-    const FrameFolder::InArchive& archived = ArchiveOf(folder);
-
-    if (*folder.Loose || archived.Archive == nullptr)
+    if (follows.empty())
     {
         return;
     }
@@ -2386,7 +2453,6 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
     // Those the pack has, not kept, looked at or asked for already, while they and the frames kept fit the share of the
     // budget (an entry's unpacked bytes are about its frame's).
     const size_t room = CacheBudget() / PicturesAheadBudgetShare;
-    Follow follow{FrameKey{folderIndex, 0}, 0, archived.Archive, archived.Prefix, folder.BakedShadows, {}};
     std::unordered_set<uint64_t> named;
     size_t asked = state.Bytes;
     ReadAhead& ahead = state.Ahead;
@@ -2400,10 +2466,31 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
         }
 
         const uint64_t hash = PictureHash(picture.Pixels, picture.Width, picture.Height);
-        const FrameKey key{folderIndex, hash};
 
-        if (!named.insert(hash).second || state.KeptPictures.contains(hash) || ahead.Known.contains(key) ||
-            ahead.Ready.contains(key) || ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key))
+        if (!named.insert(hash).second || state.KeptPictures.contains(hash))
+        {
+            continue;
+        }
+
+        // The first archive holding it, and its entry there.
+        const std::string frame = HashName(hash) + std::string(HdfExtension);
+        std::optional<int32_t> index;
+        const auto holding = std::ranges::find_if(follows,
+                                                  [&](const Follow& follow)
+                                                  {
+                                                      index = follow.Archive->File->Find(follow.Prefix + frame);
+                                                      return index.has_value();
+                                                  });
+
+        if (holding == follows.end())
+        {
+            continue;
+        }
+
+        const FrameKey key{holding->Key.Folder, hash};
+
+        if (ahead.Known.contains(key) || ahead.Ready.contains(key) || ahead.Pictures.contains(key) ||
+            ahead.PicturesAsked.contains(key))
         {
             continue;
         }
@@ -2414,16 +2501,8 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
             continue;
         }
 
-        std::string entry = archived.Prefix + HashName(hash) + std::string(HdfExtension);
-        const std::optional<int32_t> index = archived.Archive->File->Find(entry);
-
-        if (!index.has_value())
-        {
-            continue;
-        }
-
         const auto bytes =
-            static_cast<size_t>(std::max<int64_t>(archived.Archive->File->GetEntries()[*index].RealSize, 0));
+            static_cast<size_t>(std::max<int64_t>(holding->Archive->File->GetEntries()[*index].RealSize, 0));
 
         if (asked + bytes > room)
         {
@@ -2432,15 +2511,24 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
 
         asked += bytes;
         ahead.PicturesAsked.insert(key);
-        follow.Entries.push_back(AheadEntry{hash, *index, std::move(entry), picture.Width, picture.Height});
+        holding->Entries.push_back(AheadEntry{hash, *index, holding->Prefix + frame, picture.Width, picture.Height});
     }
 
-    if (follow.Entries.empty())
+    bool any = false;
+
+    for (Follow& follow : follows)
+    {
+        if (!follow.Entries.empty())
+        {
+            ahead.Follows.push_back(std::move(follow));
+            any = true;
+        }
+    }
+
+    if (!any)
     {
         return;
     }
-
-    ahead.Follows.push_back(std::move(follow));
 
     if (!ahead.Reader.joinable())
     {

@@ -173,11 +173,15 @@ namespace
         return tally.TimedShown() ? "frames as shown" : "frames as the game's loop ran (none shown)";
     }
 
-    /// <summary>The HD frames first used in a tally and the time their reading took (sprite/MCHdArt.cpp's names).</summary>
+    /// <summary>
+    /// The HD frames first used in a tally, the time their reading took and the readers' reads of the archives
+    /// (sprite/MCHdArt.cpp's names).
+    /// </summary>
     std::string HdText(const MCFrameLog::MCTally& tally)
     {
-        return std::format("{} HD frames first used, read in {:.1f} ms", tally.Count("HD frames first used"),
-                           tally.PartMs("hd.read"));
+        return std::format("{} HD frames first used, read in {:.1f} ms, {} reads by the readers",
+                           tally.Count("HD frames first used"), tally.PartMs("hd.read"),
+                           tally.Count("HD reads by the readers"));
     }
 
     /// <summary>The camera put at <paramref name="angle"/> round the pan's ring, on the ground.</summary>

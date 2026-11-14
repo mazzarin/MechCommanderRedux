@@ -1337,6 +1337,53 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
 }
 
 /// <summary>
+/// Port-only (SPEC-first-use.md: the camera's surroundings): a packet read ahead whole (MCHdArt::ReadPacketAhead, a mech
+/// part's in or near the view) has every frame and its in-betweens read by the readers and kept, not its turn middles
+/// (a follow's as one is drawn), and each is found at its draw without a read, the same frame; asked for again, nothing
+/// more is read.
+/// </summary>
+TEST_CASE("hd art: a packet read ahead whole is found at its draws without a read, its turn middles left")
+{
+    const ScratchFolder scratch("packet-ahead");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+    const auto readAhead = [&]
+    {
+        MCHdArt::ReadPacketAhead(folder, AheadFrames);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+    };
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    readAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>(AheadFrames * AheadSteps));
+    const size_t read = MCHdArt::FramesRead();
+    const size_t reads = MCHdArt::ReaderReads();
+
+    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    readAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>(AheadFrames * AheadSteps));
+    CHECK_EQ(MCHdArt::ReaderReads(), reads);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only (HD art's read-ahead): a mech part's neighbours in a turn are the facings beside its own, nearest first, the
 /// one toward straight ahead first: round the turn where the part's facings go all the way round, else stopping at
 /// straight ahead and back; a fall's every fourth facing steps four.

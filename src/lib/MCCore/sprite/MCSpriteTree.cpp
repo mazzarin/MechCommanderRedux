@@ -630,6 +630,31 @@ auto MCSpriteTree::SetHdNeighbours(const std::shared_ptr<MCShape>& shape, const 
     MCHdArt::SetNeighbours(shape, std::move(folders));
 }
 
+auto MCSpriteTree::ReadPacketAhead(int32_t gesture, int32_t part, float rotation,
+                                   std::optional<MCPacketAsked>& asked) const -> void
+{
+    const std::optional<MCGesturePacket> where = GesturePacket(gesture, part, rotation);
+    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+
+    if (!where.has_value() || spriteManager == nullptr || FileNumbers[where->FilePart] == NoFileNumber)
+    {
+        return;
+    }
+
+    const MCPacketAsked now{where->FilePart, where->Packet};
+
+    if (asked == now)
+    {
+        return;
+    }
+
+    asked = now;
+    // The large art's, as MCMechActor::Render draws.
+    const MCHdArt::MechShapeKey key{spriteManager->PartFileName(where->FilePart, true), FileNumbers[where->FilePart],
+                                    where->Packet};
+    MCHdArt::ReadPacketAhead(MCHdArt::FolderOf(key), static_cast<int32_t>(Gestures[gesture].NumFrames));
+}
+
 auto MCSpriteTree::ArtStandIns(int32_t gesture, int32_t part, float rotation, const MCGesturePacket& where) const
     -> std::vector<MCGesturePacket>
 {

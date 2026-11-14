@@ -307,6 +307,17 @@ namespace MCHdArt
     void SetNeighbours(const std::shared_ptr<MCShape>& shape, std::vector<std::filesystem::path> folders);
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): has the readers read the pack's numbered folder
+    /// <paramref name="folder"/> (FolderOf a key; a packet, its shape table's <paramref name="frames"/> frames) whole, each
+    /// frame with its in-betweens (not its turn middles, which a follow reads as one is drawn), ahead of their first
+    /// draws: a mech part's in or near the view. Its archive's entries for them neighbour each other, so it is one read
+    /// or a few. Read as a set is (yielding to the frames drawn next and what a load waits for), within the cache's room
+    /// for the sets; nothing when HD art doesn't draw numbered folders, and none of a frame kept, read, looked at or asked
+    /// for already.
+    /// </summary>
+    void ReadPacketAhead(const std::filesystem::path& folder, int32_t frames);
+
+    /// <summary>
     /// Notes that shape table <paramref name="table"/> was loaded from <paramref name="key"/>: while
     /// <paramref name="owner"/> lives, its frames are drawn from the pack's when it has them. Does nothing while HD art
     /// is off.

@@ -51,6 +51,11 @@ namespace
     constexpr int32_t GestureFall = 21;
     constexpr int32_t GestureCombat = 0x1a;
     constexpr int32_t GestureCombatChange = 0x1b;
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): how far past the view's edges, as a share of its size,
+    /// a mech has the packets it would draw read ahead (MCMechActor::NearView).
+    /// </summary>
+    constexpr float NearViewShare = 0.5f;
 
     /// <summary>The number of gestures in a state's row of the transition table.</summary>
     constexpr int32_t TransitionRow = 10;
@@ -1756,6 +1761,79 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
     return {frame, box.has_value() ? found(frame, frame, middle->Step, *box) : std::nullopt};
 }
 
+auto MCMechActor::DrawnFacing(MCBattleMech& mech) const -> float
+{
+    return GHdTurns != 0 && TurnedFacing.has_value() ? *TurnedFacing : static_cast<float>(MCActorFacing(mech));
+}
+
+auto MCMechActor::UpperGesture() const -> int32_t
+{
+    return InCombatMode                                ? GestureCombat
+           : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange
+                                                       : CurrentGesture;
+}
+
+auto MCMechActor::ArmRotations(const MCBattleMech& mech, float facing) -> std::pair<float, float>
+{
+    return {facing + mech.LeftArmRotation + mech.TorsoRotation, facing + mech.RightArmRotation + mech.TorsoRotation};
+}
+
+auto MCMechActor::ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPart, float rotation) const -> bool
+{
+    const std::optional<MCGesturePacket> packet = MechTree->GesturePacket(upper, otherPart, rotation);
+    return MechTree->Gestures[legsGesture].ArmSymmetrical != 0 && packet.has_value() && packet->Reverse;
+}
+
+auto MCMechActor::NearView(const MCCamera& view) const -> bool
+{
+    const auto width = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewWidth)));
+    const auto height = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewHeight)));
+    const float marginX = width * NearViewShare;
+    const float marginY = height * NearViewShare;
+    return -marginX <= LowerRight.X && -marginY <= LowerRight.Y && UpperLeft.X <= width + marginX &&
+           UpperLeft.Y <= height + marginY;
+}
+
+auto MCMechActor::ReadAhead() -> void
+{
+    const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
+
+    if (mech == nullptr || MechTree == nullptr)
+    {
+        return;
+    }
+
+    // Each part's packet as Render takes it: its gesture, the tree's part (an arm from the other's sprites when mirrored)
+    // and its rotation; a part gone (an arm blown off, a wreck's torso) none.
+    const float facing = DrawnFacing(*mech);
+    const int32_t upper = UpperGesture();
+    const auto [rotation2, rotation3] = ArmRotations(*mech, facing);
+    struct PartAhead
+    {
+        MCMechPart Part;
+        int32_t Gesture;
+        int32_t TreePart;
+        float Rotation;
+        bool Gone;
+    };
+
+    const std::array<PartAhead, MechPartCount> parts = {
+        {{MCMechPart::Legs, CurrentGesture, 0, facing, false},
+         {MCMechPart::Torso, upper, 1, facing + mech->TorsoRotation, Wrecked},
+         {MCMechPart::RightArm, upper, ArmSwapped(CurrentGesture, upper, 3, rotation2) ? 3 : 2, rotation2,
+          RightArmGone},
+         {MCMechPart::LeftArm, upper, ArmSwapped(CurrentGesture, upper, 2, rotation3) ? 2 : 3, rotation3,
+          LeftArmGone}}};
+
+    for (const PartAhead& part : parts)
+    {
+        if (!part.Gone)
+        {
+            MechTree->ReadPacketAhead(part.Gesture, part.TreePart, part.Rotation, AskedAhead[part.Part]);
+        }
+    }
+}
+
 auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 {
     const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
@@ -1766,20 +1844,15 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     constexpr bool largeSprites = true;
     RenderJump();
 
-    // Port-only (HDTurns): the facing as drawn (eased by update).
-    const float facing =
-        GHdTurns != 0 && TurnedFacing.has_value() ? *TurnedFacing : static_cast<float>(MCActorFacing(*mech));
+    const float facing = DrawnFacing(*mech);
     const float torso = mech->TorsoRotation;
-    const float rightArm = mech->RightArmRotation;
-    const float leftArm = mech->LeftArmRotation;
 
     // The torso and arms play the combat gestures while the gun is up or moving.
     const bool combatAnim = InCombatMode || CombatModeRaising || CombatModeLowering;
-    const int32_t upperGesture = InCombatMode                                ? GestureCombat
-                                 : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange
-                                                                             : CurrentGesture;
-    const float rotation2 = facing + leftArm + torso;
-    const float rotation3 = facing + rightArm + torso;
+    const int32_t upperGesture = UpperGesture();
+    const std::pair<float, float> armRotations = ArmRotations(*mech, facing);
+    const float rotation2 = armRotations.first;
+    const float rotation3 = armRotations.second;
 
     // Each part's shape, the legs in gesture legsGesture and the upper body in upper, its mirroring and rate set in
     // reverse and rate.
@@ -1791,18 +1864,9 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
                                                        rate[MCMechPart::Legs], largeSprites);
         found[MCMechPart::Torso] = MechTree->GetGesture(upper, 1, facing + torso, reverse[MCMechPart::Torso],
                                                         rate[MCMechPart::Torso], largeSprites);
-        const bool armSymmetrical = MechTree->Gestures[legsGesture].ArmSymmetrical != 0;
-
-        // A mirrored arm is drawn from the other arm's sprites. OB-179 fixed: the original swapped on the sign of the
-        // angle alone, also facing straight ahead or back, where the sprite isn't mirrored, so a lone arm jumped sides.
-        const auto mirrored = [&](int32_t part, float rotation)
-        {
-            const std::optional<MCGesturePacket> packet = MechTree->GesturePacket(upper, part, rotation);
-            return armSymmetrical && packet.has_value() && packet->Reverse;
-        };
-
-        const bool swapRightArm = mirrored(3, rotation2);
-        const bool swapLeftArm = mirrored(2, rotation3);
+        // A mirrored arm is drawn from the other arm's sprites (ArmSwapped; OB-179 fixed).
+        const bool swapRightArm = ArmSwapped(legsGesture, upper, 3, rotation2);
+        const bool swapLeftArm = ArmSwapped(legsGesture, upper, 2, rotation3);
 
         if (!RightArmGone)
         {

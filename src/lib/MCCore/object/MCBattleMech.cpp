@@ -68,6 +68,7 @@
 #include "sound/MCRadio.h"
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTerrain.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCMechStops.h"
 #include "sprite/MCParticles.h"
@@ -913,7 +914,22 @@ auto MCBattleMech::OnScreen() -> int
             ((relative.X * camera->SinAngle + camera->HalfHeight) - relative.Y * camera->SinAngle) - relative.Z;
     }
 
-    if (Appearance != nullptr && Appearance->RecalcBounds(*camera) != 0)
+    const bool shown = Appearance != nullptr && Appearance->RecalcBounds(*camera) != 0;
+
+    // Port-only (SPEC-first-use.md: the camera's surroundings): in or near the view, each part's packet is read whole
+    // ahead of its frames' first draws, so a pan or its walk brings it into view with them in hand, and a packet drawn
+    // is read in one go, not a frame at a time.
+    if (Appearance != nullptr && MCHdArt::NumberedFolders())
+    {
+        auto& actor = static_cast<MCMechActor&>(*Appearance);
+
+        if (shown || actor.NearView(*camera))
+        {
+            actor.ReadAhead();
+        }
+    }
+
+    if (shown)
     {
         WindowsVisible = Turn;
         return 1;

@@ -79,6 +79,15 @@ inline constexpr size_t TransitionTableSize = 0x32a;
 /// <summary>A gesture transition table (-1 ends a row).</summary>
 using MCTransitionTable = std::array<char, TransitionTableSize>;
 
+/// <summary>Port-only: a part's packet asked to be read ahead (MCSpriteTree::ReadPacketAhead): its part PAK and packet.</summary>
+struct MCPacketAsked
+{
+    MCMechPart FilePart = MCMechPart::Legs;
+    uint32_t Packet = 0;
+
+    bool operator==(const MCPacketAsked&) const = default;
+};
+
 /// <summary>Where a mech part's shapes go in a tree's shape list, and which part PAK holds them.</summary>
 struct MCGesturePacket
 {
@@ -178,6 +187,15 @@ public:
     /// at <paramref name="rotation"/> degrees is; nothing when the gesture has no frames.
     /// </summary>
     std::optional<MCGesturePacket> GesturePacket(int32_t gesture, int32_t part, float rotation) const;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): has HD art's readers read the packet part
+    /// <paramref name="part"/> (the tree's numbering) of gesture <paramref name="gesture"/> draws at
+    /// <paramref name="rotation"/> degrees, the large art's as GetGesture finds it and MCMechActor::Render draws it, whole
+    /// (MCHdArt::ReadPacketAhead) ahead of its frames' first draws, unless <paramref name="asked"/> (the packet last asked
+    /// for the part, set to this) names it already.
+    /// </summary>
+    void ReadPacketAhead(int32_t gesture, int32_t part, float rotation, std::optional<MCPacketAsked>& asked) const;
 
     /// <summary>
     /// Port-only (HDFootprints): the way part <paramref name="part"/> (the tree's numbering) of gesture

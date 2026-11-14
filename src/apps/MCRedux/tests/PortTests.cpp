@@ -398,8 +398,8 @@ TEST_CASE("benchmark: the summary heads with the hitches, the battle's and the p
         log.Frame(Frame240HzMs, Refresh240Hz);
     }
 
-    // The battle: 98 frames of 4 ms, each first using two HD frames read in 1 ms, then one late by a refresh and two
-    // (12 ms) and one held for seven (30 ms).
+    // The battle: 98 frames of 4 ms, each first using two HD frames read in 1 ms and the readers reading three times,
+    // then one late by a refresh and two (12 ms) and one held for seven (30 ms).
     MCFrameLog::StartTally();
 
     for (int32_t i = 0; i < 98; i++)
@@ -410,6 +410,7 @@ TEST_CASE("benchmark: the summary heads with the hitches, the battle's and the p
         }
 
         MCFrameLog::Count("HD frames first used", 2);
+        MCFrameLog::Count("HD reads by the readers", 3);
         log.Frame(Frame240HzMs - 1.0, Refresh240Hz);
     }
 
@@ -447,10 +448,11 @@ TEST_CASE("benchmark: the summary heads with the hitches, the battle's and the p
         "screen, vsync on, gpu, Apple M4 Pro (10P+4E cores, 20 GPU cores), 48 GB, Mac16,8, mac 26.5, frames as the "
         "game's loop ran (none shown): p99 12.00 ms, "
         "worst 30.00 ms, 2 frames late by a refresh, 2 over 1.5 refreshes; median 4.00 ms (250.0 fps); 150 frames "
-        "in 0.7 s; 196 HD frames first used, read in 98.0 ms. Battle: p99 30.00 ms, worst 30.00 ms, 2 frames late "
-        "by a refresh, 2 over 1.5 refreshes; median 4.00 ms (250.0 fps); 100 frames in 0.4 s; 196 HD frames first "
-        "used, read in 98.0 ms. Pan: p99 4.50 ms, worst 4.50 ms, 0 frames late by a refresh, 0 over 1.5 refreshes; "
-        "median 4.50 ms (222.2 fps); 50 frames in 0.2 s; 0 HD frames first used, read in 0.0 ms");
+        "in 0.7 s; 196 HD frames first used, read in 98.0 ms, 294 reads by the readers. Battle: p99 30.00 ms, worst "
+        "30.00 ms, 2 frames late by a refresh, 2 over 1.5 refreshes; median 4.00 ms (250.0 fps); 100 frames in 0.4 s; "
+        "196 HD frames first used, read in 98.0 ms, 294 reads by the readers. Pan: p99 4.50 ms, worst 4.50 ms, 0 "
+        "frames late by a refresh, 0 over 1.5 refreshes; median 4.50 ms (222.2 fps); 50 frames in 0.2 s; 0 HD frames "
+        "first used, read in 0.0 ms, 0 reads by the readers");
 
     // The summary ends the log, a line of its own.
     MCFrameLog::Line(summary);

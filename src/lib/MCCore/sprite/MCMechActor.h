@@ -126,6 +126,41 @@ public:
 
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): whether the bounds RecalcBounds last found for
+    /// <paramref name="view"/> lie within half the view's size past its edges.
+    /// </summary>
+    bool NearView(const MCCamera& view) const;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): has HD art's readers read the packet each part draws now
+    /// (its gesture and facing as Render takes them) whole, ahead of its frames' first draws: the mech is in or near the
+    /// view (NearView), which a pan or its walk brings it into. Each part's packet is asked for once (AskedAhead), and
+    /// again only for another packet (the mech turns or changes gesture).
+    /// </summary>
+    void ReadAhead();
+
+    /// <summary>Port-only (HDTurns): the facing <paramref name="mech"/> is drawn at (eased by update).</summary>
+    float DrawnFacing(MCBattleMech& mech) const;
+
+    /// <summary>The upper body's gesture: the combat gestures while the gun is up or moving, else the legs'.</summary>
+    int32_t UpperGesture() const;
+
+    /// <summary>
+    /// The arms' rotations as drawn, the original's rotation2 and rotation3: the facing <paramref name="facing"/> with the
+    /// torso's and the left arm's, then the right arm's; the right arm is drawn at the first and the left at the second.
+    /// </summary>
+    static std::pair<float, float> ArmRotations(const MCBattleMech& mech, float facing);
+
+    /// <summary>
+    /// Whether an arm is drawn from the other arm's sprites (part <paramref name="otherPart"/> of the tree) in the upper
+    /// gesture <paramref name="upper"/> at <paramref name="rotation"/>, under legs gesture
+    /// <paramref name="legsGesture"/>: when the gesture's arms are symmetrical and that sprite is mirrored. OB-179 fixed:
+    /// the original swapped on the sign of the angle alone, also facing straight ahead or back, where the sprite isn't
+    /// mirrored, so a lone arm jumped sides.
+    /// </summary>
+    bool ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPart, float rotation) const;
+
     /// <summary>Jumps to gesture <paramref name="gesture"/> (once until the next update).</summary>
     /// <returns>0, or 0xEADE0004 (negative) when a gesture was already set this update.</returns>
     int32_t SetGesture(uint32_t gesture) override;
@@ -412,6 +447,8 @@ public:
     /// by each update.
     /// </summary>
     std::optional<float> TurnedFacing;
+    /// <summary>Port-only: each part's packet last asked to be read ahead (ReadAhead).</summary>
+    MCMechParts<std::optional<MCPacketAsked>> AskedAhead;
     /// <summary>
     /// Port-only (HDFootprints): how the legs were last drawn, in gesture <see cref="DrawnLegsGesture"/>: the way their
     /// facing (or turn middle) points and whether mirrored (MCSpriteTree::DrawnFacing). Set by each render.

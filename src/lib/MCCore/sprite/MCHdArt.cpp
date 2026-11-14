@@ -78,15 +78,18 @@ namespace
     /// <summary>The readers' handles kept open for their next reads, for each reader (MCHdArt::SetReaderSettings).</summary>
     constexpr size_t IdleHandlesPerReader = 2;
     /// <summary>
-    /// Port-only: pictures are read ahead (MCHdArt::ReadPicturesAhead) while they and the frames kept would take at most
-    /// the cache's budget over this: those read ahead are kept as drawn ones are, and mustn't push those out.
+    /// Port-only: the sets (a screen's pictures, MCHdArt::ReadPicturesAhead; a mech's packets near the view,
+    /// MCHdArt::ReadPacketAhead) are read ahead while they and the frames kept would take at most the cache's budget over
+    /// this: those read ahead are kept as drawn ones are, and mustn't push those out.
     /// </summary>
-    constexpr size_t PicturesAheadBudgetShare = 2;
+    constexpr size_t SetsAheadBudgetShare = 2;
     /// <summary>A shape table's header up to its frame count (VfxShapeCount reads it at byte 4).</summary>
     constexpr size_t ShapeCountEnd = 8;
     /// <summary>The frame log's part for a frame's first use (read then, or taken from the reading thread), and its count.</summary>
     constexpr std::string_view FrameLogRead = "hd.read";
     constexpr std::string_view FrameLogReads = "HD frames first used";
+    /// <summary>Port-only: the frame log's count of the readers' reads of the archives (MCHdArt::ReaderReads).</summary>
+    constexpr std::string_view FrameLogReaderReads = "HD reads by the readers";
 
     /// <summary>An open archive, and the first folders of its entries' names (upper-cased).</summary>
     struct MCHdArchive
@@ -387,6 +390,8 @@ namespace
         size_t Read = 0;
         /// <summary>How many of those the reading thread read (ReadAhead).</summary>
         size_t TakenAhead = 0;
+        /// <summary>Port-only: the readers' reads (ReadAhead::ArchiveReads) the frame log has counted.</summary>
+        size_t ReaderReadsLogged = 0;
         std::chrono::nanoseconds ReadTime{0};
         /// <summary>The folders whose problems were logged (once each).</summary>
         std::set<std::filesystem::path> Logged;
@@ -2648,13 +2653,18 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8
 
 namespace
 {
-    /// <summary>A frame to read ahead (AskAhead): its folder (FolderIndex), its key there and its draw's size.</summary>
+    /// <summary>
+    /// A frame to read ahead (AskAhead): its folder (FolderIndex), its key there and its draw's size; or (Steps) a
+    /// numbered folder's frame with its in-betweens, from the first up to the first its archive lacks (not a turn
+    /// middle's), of any size (each checked at its first draw, as a follow's is).
+    /// </summary>
     struct FrameAsk
     {
         uint32_t Folder = 0;
         uint64_t Name = 0;
         int32_t Width = 0;
         int32_t Height = 0;
+        bool Steps = false;
     };
 
     /// <summary>
@@ -2674,20 +2684,28 @@ namespace
         ReadAhead& ahead = state.Ahead;
         std::scoped_lock lock(ahead.Lock);
 
-        for (const FrameAsk& ask : asks)
+        // What asking for one frame found: its archive lacks it, or the room is taken.
+        enum class Found : uint8_t
         {
-            const FrameKey key{ask.Folder, ask.Name};
+            Entry,
+            Lacked,
+            Full,
+        };
 
-            if (ask.Width <= 0 || ask.Height <= 0 || !named.insert(key).second || ahead.Known.contains(key) ||
-                ahead.Ready.contains(key) || ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key))
+        const auto askFor = [&](const FrameAsk& ask, uint64_t name)
+        {
+            const FrameKey key{ask.Folder, name};
+
+            if (!named.insert(key).second || ahead.Known.contains(key) || ahead.Ready.contains(key) ||
+                ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key))
             {
-                continue;
+                return Found::Entry;
             }
 
             if (const auto cached = state.Frames.find(key);
                 cached != state.Frames.end() && (cached->second.Frame != nullptr || cached->second.Looked))
             {
-                continue;
+                return Found::Entry;
             }
 
             FrameFolder& folder = state.Folders.at(ask.Folder);
@@ -2702,17 +2720,16 @@ namespace
 
             if (*folder.Loose || archived.Archive == nullptr)
             {
-                continue;
+                return Found::Lacked;
             }
 
-            std::string entry = archived.Prefix +
-                                (folder.Names == Naming::Hash ? HashName(ask.Name) : NumberedName(ask.Name)) +
+            std::string entry = archived.Prefix + (folder.Names == Naming::Hash ? HashName(name) : NumberedName(name)) +
                                 std::string(HdfExtension);
             const std::optional<int32_t> index = archived.Archive->File->Find(entry);
 
             if (!index.has_value())
             {
-                continue;
+                return Found::Lacked;
             }
 
             const auto bytes =
@@ -2720,7 +2737,7 @@ namespace
 
             if (asked + bytes > room)
             {
-                break;
+                return Found::Full;
             }
 
             std::shared_ptr<const Follow>& from = follows[ask.Folder];
@@ -2734,7 +2751,32 @@ namespace
 
             asked += bytes;
             ahead.PicturesAsked.insert(key);
-            reads.push_back(AheadRead{from, AheadEntry{ask.Name, *index, std::move(entry), ask.Width, ask.Height}});
+            reads.push_back(AheadRead{from, AheadEntry{name, *index, std::move(entry), ask.Width, ask.Height}});
+            return Found::Entry;
+        };
+
+        for (const FrameAsk& ask : asks)
+        {
+            Found found = Found::Entry;
+
+            if (!ask.Steps)
+            {
+                found = ask.Width > 0 && ask.Height > 0 ? askFor(ask, ask.Name) : Found::Entry;
+            }
+            else
+            {
+                const auto frame = static_cast<int32_t>(ask.Name & FrameNumberMask);
+
+                for (int32_t step = 0; step < MaxInBetweenSteps && found == Found::Entry; ++step)
+                {
+                    found = askFor(ask, NumberedKey(frame, step));
+                }
+            }
+
+            if (found == Found::Full)
+            {
+                break;
+            }
         }
 
         if (!reads.empty())
@@ -2779,7 +2821,26 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
         }
     }
 
-    AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / PicturesAheadBudgetShare));
+    AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / SetsAheadBudgetShare));
+}
+
+void MCHdArt::ReadPacketAhead(const std::filesystem::path& folder, int32_t frames)
+{
+    if (!NumberedFolders() || frames <= 0)
+    {
+        return;
+    }
+
+    const uint32_t index = FolderIndex(PackFolder() / folder, Naming::Number);
+    std::vector<FrameAsk> asks;
+    asks.reserve(static_cast<size_t>(frames));
+
+    for (int32_t frame = 0; frame < frames; ++frame)
+    {
+        asks.push_back(FrameAsk{index, NumberedKey(frame, 0), 0, 0, true});
+    }
+
+    AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / SetsAheadBudgetShare));
 }
 
 void MCHdArt::KeepReadAhead()
@@ -2790,6 +2851,14 @@ void MCHdArt::KeepReadAhead()
     {
         ReadAhead& ahead = state.Ahead;
         std::scoped_lock lock(ahead.Lock);
+
+        // Port-only: the readers' reads since the last keep (a frame's, from the display), in the frame log's count.
+        if (ahead.ArchiveReads > state.ReaderReadsLogged)
+        {
+            MCFrameLog::Count(FrameLogReaderReads, static_cast<int64_t>(ahead.ArchiveReads - state.ReaderReadsLogged));
+        }
+
+        state.ReaderReadsLogged = ahead.ArchiveReads;
 
         if (ahead.Pictures.empty() && ahead.Ready.empty())
         {

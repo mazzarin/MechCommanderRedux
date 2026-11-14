@@ -44,6 +44,7 @@
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
+#include "logistics/MCUnitLimits.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCArtModes.h"
 #include "main/MCGameContext.h"
@@ -83,6 +84,7 @@
 #include "platform/MCRegisteredBlock.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCVulkanRenderer.h"
 #include "sprite/MCArmAppearanceType.h"
 #include "sprite/MCElementalTree.h"
@@ -117,6 +119,7 @@
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "platform/MCSharpLines.h"
+#include "platform/MCSharpPictures.h"
 #include "platform/MCSharpText.h"
 // The final audit's screen tour and call stacks.
 #include "gui/MCScrollPane.h"
@@ -18603,4 +18606,813 @@ TEST_CASE_ISOLATED("game: a mech's legs turning cast their turn middle's sun sha
     GamePaused = false;
     hdArt.reset();
     std::filesystem::remove_all(scratch);
+}
+
+// PROBE (first-use stutters, 13 Nov), never commit: each frame's wall time, HD frames first used (read or taken from
+// the reading thread), the time reading them, and the GPU's uploads, on the purchase screen's first visit and mission
+// 1's start, battle and a pan. --first-use-probe <pack> [--probe-out <file>].
+namespace
+{
+    struct ProbeFrame
+    {
+        std::string Label;
+        double Ms = 0;
+        size_t Reads = 0;
+        double ReadMs = 0;
+        size_t Ahead = 0;
+        int32_t Pictures = 0;
+        int64_t PictureBytes = 0;
+    };
+
+    class MCFirstUseProbe
+    {
+    public:
+        void Run(const std::string& label, int32_t frames = 1, float seconds = 1.0f / 60.0f,
+                 const std::function<void()>& each = {})
+        {
+            for (int32_t i = 0; i < frames; ++i)
+            {
+                if (each)
+                {
+                    each();
+                }
+
+                const size_t reads = MCHdArt::FramesRead();
+                const auto readTime = MCHdArt::ReadTime();
+                const size_t ahead = MCHdArt::FramesReadAhead();
+                const auto started = std::chrono::steady_clock::now();
+                MCTestGame::RunFrame(seconds);
+                MCFrameLog::NextFrame(60.0);
+                ProbeFrame frame;
+                frame.Label = label;
+                frame.Ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+                frame.Reads = MCHdArt::FramesRead() - reads;
+                frame.ReadMs = std::chrono::duration<double, std::milli>(MCHdArt::ReadTime() - readTime).count();
+                frame.Ahead = MCHdArt::FramesReadAhead() - ahead;
+
+                if (const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+                    renderer != nullptr)
+                {
+                    frame.Pictures = renderer->LastFrameUploads().Pictures;
+                    frame.PictureBytes = renderer->LastFrameUploads().PictureBytes;
+                }
+
+                Frames.push_back(frame);
+            }
+        }
+
+        /// <summary>A call outside the frames (a screen's setup), measured as a frame.</summary>
+        void Step(const std::string& label, const std::function<void()>& call)
+        {
+            const size_t reads = MCHdArt::FramesRead();
+            const auto readTime = MCHdArt::ReadTime();
+            const auto started = std::chrono::steady_clock::now();
+            call();
+            ProbeFrame frame;
+            frame.Label = label;
+            frame.Ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+            frame.Reads = MCHdArt::FramesRead() - reads;
+            frame.ReadMs = std::chrono::duration<double, std::milli>(MCHdArt::ReadTime() - readTime).count();
+            Frames.push_back(frame);
+        }
+
+        void Print(std::ostream& out) const
+        {
+            std::map<std::string, std::vector<const ProbeFrame*>> byLabel;
+            std::vector<std::string> order;
+
+            for (const ProbeFrame& frame : Frames)
+            {
+                if (!byLabel.contains(frame.Label))
+                {
+                    order.push_back(frame.Label);
+                }
+
+                byLabel[frame.Label].push_back(&frame);
+            }
+
+            for (const std::string& label : order)
+            {
+                const auto& frames = byLabel[label];
+                std::vector<double> ms;
+                size_t reads = 0;
+                double readMs = 0;
+                int64_t bytes = 0;
+
+                for (const ProbeFrame* frame : frames)
+                {
+                    ms.push_back(frame->Ms);
+                    reads += frame->Reads;
+                    readMs += frame->ReadMs;
+                    bytes += frame->PictureBytes;
+                }
+
+                std::ranges::sort(ms);
+                out << std::format("{}: {} frames, median {:.1f} ms, p99 {:.1f}, worst {:.1f}; {} HD frames first used, "
+                                   "{:.1f} ms reading; {:.1f} MB uploaded\n",
+                                   label, frames.size(), ms[ms.size() / 2], ms[ms.size() * 99 / 100], ms.back(), reads,
+                                   readMs, bytes / 1048576.0);
+                std::vector<const ProbeFrame*> worst(frames.begin(), frames.end());
+                std::ranges::sort(worst, [](const ProbeFrame* a, const ProbeFrame* b) { return a->Ms > b->Ms; });
+
+                for (size_t i = 0; i < std::min<size_t>(worst.size(), 6); ++i)
+                {
+                    const ProbeFrame& frame = *worst[i];
+                    out << std::format("    #{}: {:.1f} ms, {} first used ({} ahead), {:.1f} ms reading, {} pictures "
+                                       "{:.1f} MB uploaded\n",
+                                       std::distance(frames.begin(), std::ranges::find(frames, worst[i])), frame.Ms,
+                                       frame.Reads, frame.Ahead, frame.ReadMs, frame.Pictures,
+                                       frame.PictureBytes / 1048576.0);
+                }
+            }
+        }
+
+        std::vector<ProbeFrame> Frames;
+    };
+
+    /// <summary>PROBE: what the build being measured does as the display opens with HD on (stage 1's hook).</summary>
+    void ProbeAtDisplayOpen() {}
+
+    void PrintProbe(const MCFirstUseProbe& probe)
+    {
+        probe.Print(std::cout);
+
+        if (const std::optional<std::string_view> out = MCTest::Option("probe-out"); out.has_value())
+        {
+            std::ofstream file{std::filesystem::path(*out), std::ios::app};
+            probe.Print(file);
+        }
+    }
+}
+
+TEST_CASE_ISOLATED("probe: first use, the logistics screens")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("first-use-probe");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::BootOptions.WindowWidth = 2560;
+    MCTestGame::BootOptions.WindowHeight = 1440;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    const auto started = std::chrono::steady_clock::now();
+    REQUIRE(MCTestGame::StartLogistics());
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(std::filesystem::absolute(std::filesystem::path(*pack)));
+    GlobalLog()->AttachHdArt();
+    if (!MCTest::Option("probe-no-ahead").has_value())
+    {
+        GlobalLog()->MakeAhead();
+    }
+    if (const std::optional<std::string_view> log = MCTest::Option("probe-log"); log.has_value())
+    {
+        REQUIRE(MCFrameLog::Open(std::filesystem::path(*log)));
+    }
+
+    MCFirstUseProbe probe;
+    probe.Run("main menu", 60);
+    std::cout << std::format("boot {:.0f} ms\n",
+                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    probe.Step("to briefing (call)", [] { NewCampaign(); });
+    probe.Run("to briefing", 60);
+    probe.Step("purchase (first, call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+    probe.Run("purchase (first)", 90);
+    GlobalLog()->CurrentInvTab = 3;
+    probe.Step("purchase vehicles (call)", [] { GlobalLog()->SetUpPurchaseScreen(false); });
+    probe.Run("purchase vehicles", 60);
+    GlobalLog()->CurrentInvTab = 2;
+    probe.Step("purchase components (call)", [] { GlobalLog()->SetUpPurchaseScreen(false); });
+    probe.Run("purchase components", 60);
+    GlobalLog()->CurrentInvTab = 1;
+    probe.Step("purchase pilots (call)", [] { GlobalLog()->SetUpPurchaseScreen(false); });
+    probe.Run("purchase pilots", 60);
+    GlobalLog()->CurrentInvTab = 0;
+    probe.Step("purchase mechs again (call)", [] { GlobalLog()->SetUpPurchaseScreen(false); });
+    probe.Run("purchase mechs again", 60);
+    probe.Step("repair (first, call)", [] { GlobalLog()->SetUpRepairScreen(true); });
+    probe.Run("repair (first)", 90);
+    probe.Step("purchase (second, call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+    probe.Run("purchase (second)", 90);
+    const int32_t loops = MCTest::Option("probe-loops").has_value() ? std::stoi(std::string(*MCTest::Option("probe-loops"))) : 2;
+
+    for (int32_t loop = 0; loop < loops; ++loop)
+    {
+        probe.Step("repair (again, call)", [] { GlobalLog()->SetUpRepairScreen(true); });
+        probe.Run("repair (again)", 30);
+        probe.Step("purchase (again, call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+        probe.Run("purchase (again)", 30);
+    }
+
+    PrintProbe(probe);
+    MCFrameLog::Close();
+    const MCSharpPictures::MCMadeTally tally = MCSharpPictures::Tally();
+    std::cout << std::format("made ahead: {} glyphs ({} pictures), {} drawings ({} left), kept {:.1f} MB, RGBA {:.1f} MB; "
+                             "taken {} ({:.1f} MB RGBA); held {} ({:.1f} MB)\n",
+                             tally.Glyphs, tally.GlyphPictures, tally.Drawings, tally.DrawingsLeft,
+                             tally.KeptBytes / 1048576.0, tally.RgbaBytes / 1048576.0, tally.Taken,
+                             tally.TakenRgbaBytes / 1048576.0, tally.Held, tally.HeldBytes / 1048576.0);
+    if (const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware()); renderer != nullptr)
+    {
+        const MCVulkanRenderer::SharpCounts counts = renderer->SharpPictures();
+        std::cout << std::format("renderer: {} redrawn, {} taken ahead, {:.1f} MB on the GPU\n", counts.Redrawn,
+                                 counts.TakenAhead, counts.Bytes / 1048576.0);
+    }
+}
+
+// PROBE (the menus' staged read-ahead, 13 Nov), never commit: the game booted as a player's is, HD on from the display's
+// opening (the pack set there), its first screen the main menu or a launcher's room; when the sharp glyphs' maker ran
+// dry against that screen's first frames, and what the game's thread redrew itself.
+extern std::chrono::steady_clock::time_point ProbeDisplayOpened;
+
+namespace
+{
+    std::chrono::steady_clock::time_point ProbeBootStarted;
+
+    void BootSharpForProbe(std::string_view pack)
+    {
+        MCTestGame::BootOptions.WindowWidth = 2560;
+        MCTestGame::BootOptions.WindowHeight = 1440;
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(pack));
+        MCTestGame::BootOptions.Started = [packFolder]
+        {
+            // From the display's opening (MCGuiSystem::OpenDisplay), as a player's boot with HD on in PREFS: the
+            // test's boot reads the tests' PREFS (HD off) and starts logistics before this.
+            ProbeBootStarted = ProbeDisplayOpened;
+            std::cout << std::format("Started {:.0f} ms after the display opened\n",
+                                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                               ProbeBootStarted)
+                                         .count());
+            GHdArt = 1;
+            MCHdArt::SetPackFolder(packFolder);
+            ProbeAtDisplayOpen();
+            AttachHdArtToLoaded();
+
+            if (const std::optional<std::string_view> log = MCTest::Option("probe-log"); log.has_value())
+            {
+                REQUIRE(MCFrameLog::Open(std::filesystem::path(*log)));
+            }
+        };
+    }
+
+    void PrintSharpCounts(const char* when)
+    {
+        if (const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware()); renderer != nullptr)
+        {
+            const MCVulkanRenderer::SharpCounts counts = renderer->SharpPictures();
+            std::cout << std::format("{}: {:.0f} ms after the display opened; renderer {} redrawn, {} taken ahead, {:.1f} MB\n",
+                                     when,
+                                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                               ProbeBootStarted)
+                                         .count(),
+                                     counts.Redrawn, counts.TakenAhead, counts.Bytes / 1048576.0);
+        }
+    }
+
+    void ProbeLogisticsTour(MCFirstUseProbe& probe)
+    {
+        probe.Step("to briefing (call)", [] { NewCampaign(); });
+        probe.Run("to briefing", 60);
+        PrintSharpCounts("briefing up");
+        probe.Step("purchase (first, call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+        probe.Run("purchase (first)", 90);
+        GlobalLog()->CurrentInvTab = 3;
+        probe.Step("purchase vehicles (call)", [] { GlobalLog()->SetUpPurchaseScreen(false); });
+        probe.Run("purchase vehicles", 60);
+        GlobalLog()->CurrentInvTab = 2;
+        probe.Step("purchase components (call)", [] { GlobalLog()->SetUpPurchaseScreen(false); });
+        probe.Run("purchase components", 60);
+        GlobalLog()->CurrentInvTab = 1;
+        probe.Step("purchase pilots (call)", [] { GlobalLog()->SetUpPurchaseScreen(false); });
+        probe.Run("purchase pilots", 60);
+        GlobalLog()->CurrentInvTab = 0;
+        probe.Step("purchase mechs again (call)", [] { GlobalLog()->SetUpPurchaseScreen(false); });
+        probe.Run("purchase mechs again", 60);
+        probe.Step("repair (first, call)", [] { GlobalLog()->SetUpRepairScreen(true); });
+        probe.Run("repair (first)", 90);
+        probe.Step("purchase (second, call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+        probe.Run("purchase (second)", 90);
+        PrintSharpCounts("tour done");
+    }
+}
+
+TEST_CASE_ISOLATED("probe: first use, booted to the main menu")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("first-use-probe");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    BootSharpForProbe(*pack);
+    REQUIRE(MCTestGame::StartLogistics());
+    PrintSharpCounts("main menu up");
+    std::cout << MCSharpPictures::ProbeTimes(ProbeBootStarted) << "\n";
+    MCFirstUseProbe probe;
+    probe.Run("main menu", 60);
+
+    if (!MCTest::Option("probe-menu-only").has_value())
+    {
+        ProbeLogisticsTour(probe);
+    }
+
+    PrintProbe(probe);
+    MCFrameLog::Close();
+    std::cout << MCSharpPictures::ProbeTimes(ProbeBootStarted) << "\n";
+}
+
+TEST_CASE_ISOLATED("probe: first use, booted to a launcher's room")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("first-use-probe");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    BootSharpForProbe(*pack);
+    REQUIRE(MCTestGame::StartLobby("-host -port 28999 -player BOB"));
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    PrintSharpCounts("room up");
+    std::cout << MCSharpPictures::ProbeTimes(ProbeBootStarted) << "\n";
+    MCFirstUseProbe probe;
+    probe.Run("room", 120);
+    PrintProbe(probe);
+    MCFrameLog::Close();
+    std::cout << MCSharpPictures::ProbeTimes(ProbeBootStarted) << "\n";
+}
+
+namespace
+{
+    /// <summary>A mouse event sent as the frame's input reads it, timed as a step (its handling runs inside it).</summary>
+    void ProbeMouse(MCFirstUseProbe& probe, const std::string& label, int32_t type, int32_t x, int32_t y, bool held)
+    {
+        probe.Step(label, [=] { MCScreenInput::SendMouse(type, x, y, held); });
+    }
+
+    /// <summary>A click as play makes it: down, a frame, up, a frame, each timed.</summary>
+    void ProbeClick(MCFirstUseProbe& probe, const std::string& label, int32_t x, int32_t y)
+    {
+        ProbeMouse(probe, label + " (down)", 7, x, y, false);
+        ProbeMouse(probe, label + " (down)", 1, x, y, true);
+        probe.Run(label, 1);
+        ProbeMouse(probe, label + " (up)", 4, x, y, false);
+        probe.Run(label, 1);
+    }
+
+    /// <summary>A drag as play makes it, over 16 frames at 60 Hz, each timed, then let go.</summary>
+    void ProbeDrag(MCFirstUseProbe& probe, const std::string& label, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+    {
+        ProbeMouse(probe, label + " (press)", 7, x0, y0, false);
+        ProbeMouse(probe, label + " (press)", 1, x0, y0, true);
+        probe.Run(label, 1);
+
+        for (int32_t step = 1; step <= 16; step++)
+        {
+            ProbeMouse(probe, label + " (move)", 7, x0 + (x1 - x0) * step / 16, y0 + (y1 - y0) * step / 16, true);
+            probe.Run(label, 1);
+        }
+
+        ProbeMouse(probe, label + " (let go)", 4, x1, y1, false);
+    }
+
+    /// <summary>The store's first row bought: dragged onto the inventory, the dialog's accept clicked.</summary>
+    void ProbeBuy(MCFirstUseProbe& probe, const std::string& what)
+    {
+        ProbeDrag(probe, "buy " + what + ": drag", 300, 80, 100, 200);
+        probe.Run("buy " + what + ": dialog up", 30);
+        ProbeClick(probe, "buy " + what + ": accept", 316, 299);
+        probe.Run("buy " + what + ": after", 30);
+    }
+
+    /// <summary>The inventory's first row sold: dragged onto the store, the dialog's accept clicked.</summary>
+    void ProbeSell(MCFirstUseProbe& probe, const std::string& what)
+    {
+        ProbeDrag(probe, "sell " + what + ": drag", 100, 120, 300, 200);
+        probe.Run("sell " + what + ": dialog up", 30);
+        ProbeClick(probe, "sell " + what + ": accept", 316, 299);
+        probe.Run("sell " + what + ": after", 30);
+    }
+}
+
+// PROBE (13 Nov), never commit: a player's shopping, each frame timed (buying and selling mechs, a vehicle, the tabs),
+// then the first mission won and the way back to the briefing, as its fade and the slides after it go.
+TEST_CASE_ISOLATED("probe: first use, the shop and back from a mission")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("first-use-probe");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    BootSharpForProbe(*pack);
+    REQUIRE(MCTestGame::StartLogistics());
+    MCFirstUseProbe probe;
+    probe.Run("main menu", 60);
+    probe.Step("to briefing (call)", [] { NewCampaign(); });
+    probe.Run("to briefing", 90);
+    probe.Step("purchase (call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+    probe.Run("purchase", 90);
+    probe.Run("purchase idle", 60);
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
+    ResourcePoints = 1000000;
+
+    for (const std::shared_ptr<MCPurMech>& purMech : GlobalLog()->PurMechList->Mechs)
+    {
+        for (const auto& variant : purMech->Variants)
+        {
+            variant->NumAvailable = 5;
+        }
+    }
+
+    const int32_t mechs = GlobalLog()->MechList->GetMechCount();
+    ProbeBuy(probe, "mech 1");
+    std::cout << std::format("mechs {} -> {}\n", mechs, GlobalLog()->MechList->GetMechCount());
+    ProbeBuy(probe, "mech 2");
+    std::cout << std::format("mechs -> {}\n", GlobalLog()->MechList->GetMechCount());
+    ProbeSell(probe, "mech 1");
+    std::cout << std::format("mechs -> {}\n", GlobalLog()->MechList->GetMechCount());
+    ProbeSell(probe, "mech 2");
+    std::cout << std::format("mechs -> {}\n", GlobalLog()->MechList->GetMechCount());
+    ProbeClick(probe, "vehicles tab", 200, 350);
+    probe.Run("vehicles tab: after", 30);
+
+    for (const auto& vehicle : GlobalLog()->PurVehicleList->Vehicles)
+    {
+        vehicle->Data->NumAvailable = 5;
+    }
+
+    const int32_t vehicles = GlobalLog()->VehicleList->GetVehicleCount();
+    ProbeBuy(probe, "vehicle");
+    std::cout << std::format("vehicles {} -> {}\n", vehicles, GlobalLog()->VehicleList->GetVehicleCount());
+    ProbeClick(probe, "components tab", 200, 280);
+    probe.Run("components tab: after", 30);
+    ProbeClick(probe, "pilots tab", 200, 180);
+    probe.Run("pilots tab: after", 30);
+    ProbeClick(probe, "mechs tab", 200, 120);
+    probe.Run("mechs tab: after", 30);
+    ProbeBuy(probe, "mech 3");
+    std::cout << std::format("mechs -> {}\n", GlobalLog()->MechList->GetMechCount());
+
+    // Back to the briefing and into the first mission with the force's first mech, won.
+    probe.Step("briefing again (call)", [] { GlobalLog()->SetUpBriefingScreen(true); });
+    probe.Run("briefing again", 60);
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        std::shared_ptr<MCLogMech> mech;
+        REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
+        logistics->DeploySlots[0][0].Unit = 0;
+        mech->Deployed = true;
+    }
+    Mission()->StartScenario(Mission()->Scenarios[0]);
+
+    for (int32_t frame = 0; frame < 3000; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+
+        if (Mission()->State == MCMissionState::Scenario && Scenario() != nullptr && !Scenario()->StartingUp)
+        {
+            break;
+        }
+    }
+
+    REQUIRE(Mission()->State == MCMissionState::Scenario);
+    probe.Run("mission", 30);
+    ScenarioResult = 5;
+    Mission()->EndScenarioRequested = -1;
+
+    for (int32_t frame = 0; frame < 300 && Mission()->State != MCMissionState::Results; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    REQUIRE(Mission()->State == MCMissionState::Results);
+    probe.Run("results", 30);
+    MCFrameLog::Note("probe: results closed");
+    probe.Step("results closed (call)", [] { Mission()->CloseResultsScreen(); });
+    probe.Run("back to briefing", 120);
+    std::cout << std::format("back: mission state {}, screen is briefing {}\n", std::to_underlying(Mission()->State),
+                             GlobalLog() != nullptr && GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    probe.Step("purchase after the mission (call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+    probe.Run("purchase after the mission", 90);
+    probe.Step("repair after the mission (call)", [] { GlobalLog()->SetUpRepairScreen(true); });
+    probe.Run("repair after the mission", 90);
+    PrintProbe(probe);
+    MCFrameLog::Close();
+}
+
+namespace
+{
+    /// <summary>Probe: the HD cache's bytes kept and its budget, printed and noted in the frame log.</summary>
+    void ProbeCache(std::string_view when)
+    {
+        constexpr double Megabyte = 1048576.0;
+        const std::string line = std::format("cache {}: {:.1f} MB kept of {:.0f} MB, {} frames read so far", when,
+                                             static_cast<double>(MCHdArt::CachedBytes()) / Megabyte,
+                                             static_cast<double>(MCHdArt::CacheBudget()) / Megabyte,
+                                             MCHdArt::FramesRead());
+        std::cout << line << "\n";
+        MCFrameLog::Note("probe: " + line);
+    }
+
+    /// <summary>Probe: every tab of the purchase screen clicked, as a player browsing the shop.</summary>
+    void ProbeShopTabs(MCFirstUseProbe& probe, const std::string& when)
+    {
+        constexpr std::array<std::pair<std::string_view, int32_t>, 4> tabs = {
+            {{"vehicles", 350}, {"components", 280}, {"pilots", 180}, {"mechs", 120}}};
+        constexpr int32_t TabX = 200;
+        constexpr int32_t AfterFrames = 30;
+
+        for (const auto& [name, y] : tabs)
+        {
+            ProbeClick(probe, std::format("{} {} tab", when, name), TabX, y);
+            probe.Run(std::format("{} {} tab: after", when, name), AfterFrames);
+        }
+    }
+}
+
+/// <summary>
+/// Probe: a real mission between two visits to the logistics: the shop and every tab, then mission 1's staged battle
+/// (MCTestGame::OrderMissionOneAttack) for --probe-mission-frames frames, won or lost (--probe-result won|lost), then
+/// the briefing it goes back to and the shop's every tab again; the HD cache at each stage, under the budget of
+/// --probe-budget-mb (an 8 GB machine's 1024). Never merge.
+/// </summary>
+TEST_CASE_ISOLATED("probe: first use, a real mission and back")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("first-use-probe");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr size_t Megabyte = 1024u * 1024u;
+    constexpr int32_t DefaultMissionFrames = 1800;
+    constexpr uint32_t Won = 5;
+    constexpr uint32_t Lost = 2;
+    const std::optional<std::string_view> budget = MCTest::Option("probe-budget-mb");
+    const std::optional<std::string_view> frames = MCTest::Option("probe-mission-frames");
+    const bool won = MCTest::Option("probe-result").value_or("won") != "lost";
+    const int32_t missionFrames = frames.has_value() ? std::stoi(std::string(*frames)) : DefaultMissionFrames;
+    BootSharpForProbe(*pack);
+    REQUIRE(MCTestGame::StartLogistics());
+
+    if (budget.has_value())
+    {
+        MCHdArt::SetCacheBudget(std::stoull(std::string(*budget)) * Megabyte);
+    }
+
+    MCFirstUseProbe probe;
+    probe.Run("main menu", 60);
+    ProbeCache("main menu");
+    probe.Step("to briefing (call)", [] { NewCampaign(); });
+    probe.Run("to briefing", 90);
+    probe.Step("purchase (call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+    probe.Run("purchase", 90);
+    ProbeShopTabs(probe, "before");
+    probe.Step("repair (call)", [] { GlobalLog()->SetUpRepairScreen(true); });
+    probe.Run("repair", 90);
+    probe.Step("briefing again (call)", [] { GlobalLog()->SetUpBriefingScreen(true); });
+    probe.Run("briefing again", 60);
+    ProbeCache("the logistics toured");
+    MCSharpPictures::WaitForMade();
+    std::cout << "before the mission, " << MCSharpPictures::ProbeTimes(ProbeBootStarted) << "\n";
+
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        std::shared_ptr<MCLogMech> mech;
+        REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
+        logistics->DeploySlots[0][0].Unit = 0;
+        mech->Deployed = true;
+    }
+
+    MCFrameLog::Note("probe: mission start");
+    Mission()->StartScenario(Mission()->Scenarios[0]);
+
+    for (int32_t frame = 0; frame < 3000; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+
+        if (Mission()->State == MCMissionState::Scenario && Scenario() != nullptr && !Scenario()->StartingUp)
+        {
+            break;
+        }
+    }
+
+    REQUIRE(Mission()->State == MCMissionState::Scenario);
+    ProbeCache("the mission loaded");
+    const bool attacking = MCTestGame::OrderMissionOneAttack() != nullptr;
+    std::cout << std::format("staged battle ordered: {}\n", attacking);
+    constexpr int32_t CacheEvery = 450;
+
+    for (int32_t frame = 0; frame < missionFrames && Mission()->State == MCMissionState::Scenario; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+
+        if ((frame + 1) % CacheEvery == 0)
+        {
+            ProbeCache(std::format("the mission, frame {}", frame + 1));
+        }
+    }
+
+    ScenarioResult = won ? Won : Lost;
+    Mission()->EndScenarioRequested = -1;
+
+    for (int32_t frame = 0; frame < 300 && Mission()->State != MCMissionState::Results; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    REQUIRE(Mission()->State == MCMissionState::Results);
+    probe.Run("results", 60);
+    ProbeCache("the results");
+
+    // PROBE: --probe-match 1 makes it a LAN match's guest (not a launcher's), which goes back to the main menu.
+    const bool match = MCTest::Option("probe-match").has_value();
+
+    if (match)
+    {
+        auto game = std::make_shared<MCMultiPlayer>();
+        MCGameContext::Current().SetMultiPlayer(game);
+        REQUIRE_EQ(game->Start(), 0);
+        game->SessionManager->CurrentConnection = MCNetProtocol::TcpIp;
+        game->InMission = true;
+        IsMPlayerGame = false;
+    }
+
+    MCFrameLog::Note("probe: results closed");
+    probe.Step("results closed (call)", [] { Mission()->CloseResultsScreen(); });
+    probe.Run("back to briefing", 120);
+
+    if (match)
+    {
+        std::cout << std::format("back (match): mission state {}, screen is main {}\n", std::to_underlying(Mission()->State),
+                                 GlobalLog() != nullptr && GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+        PrintProbe(probe);
+        MCFrameLog::Close();
+        return;
+    }
+    std::cout << std::format("back ({}): mission {}, mission state {}, screen is briefing {}\n", won ? "won" : "lost",
+                             GlobalLog()->CurrentMission, std::to_underlying(Mission()->State),
+                             GlobalLog() != nullptr && GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    ProbeCache("back at the briefing");
+    MCSharpPictures::WaitForMade();
+    std::cout << "back at the briefing, " << MCSharpPictures::ProbeTimes(ProbeBootStarted) << "\n";
+    probe.Step("purchase after (call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+    probe.Run("purchase after", 90);
+    ProbeShopTabs(probe, "after");
+    probe.Step("repair after (call)", [] { GlobalLog()->SetUpRepairScreen(true); });
+    probe.Run("repair after", 90);
+    ProbeCache("the logistics toured again");
+    PrintProbe(probe);
+    MCFrameLog::Close();
+}
+
+TEST_CASE_ISOLATED("probe: first use, mission 1")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("first-use-probe");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::BootOptions.WindowWidth = 2560;
+    MCTestGame::BootOptions.WindowHeight = 1440;
+    MCTestGame::BootOptions.FixedZoomHeight = 0.0f;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
+    MCTestGame::BootOptions.Started = [packFolder]
+    {
+        GHdArt = 1;
+        MCHdArt::SetPackFolder(packFolder);
+    };
+    const auto started = std::chrono::steady_clock::now();
+    const size_t readsBefore = MCHdArt::FramesRead();
+    REQUIRE(MCTestGame::StartMission(1));
+    REQUIRE(MCHdArt::Active());
+    std::cout << std::format("load {:.0f} ms, {} HD frames first used, {:.0f} ms reading, {:.0f} MB kept\n",
+                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+                             MCHdArt::FramesRead() - readsBefore,
+                             std::chrono::duration<double, std::milli>(MCHdArt::ReadTime()).count(),
+                             MCHdArt::CachedBytes() / 1048576.0);
+    if (const std::optional<std::string_view> log = MCTest::Option("probe-log"); log.has_value())
+    {
+        REQUIRE(MCFrameLog::Open(std::filesystem::path(*log)));
+    }
+
+    std::cout << "attached at the load:\n" << MCHdArt::ProbeAttached();
+    MCFirstUseProbe probe;
+    probe.Run("start", 120);
+    std::cout << "attached after 2 s:\n" << MCHdArt::ProbeAttached();
+    REQUIRE(MCTestGame::OrderMissionOneAttack() != nullptr);
+    probe.Run("battle", 1500);
+    probe.Run("pan", 900, 1.0f / 60.0f, [] { Eye()->ScrollCamera(12.0f, 4.0f); });
+    PrintProbe(probe);
+    std::cout << "attached at the end:\n" << MCHdArt::ProbeAttached();
+    MCFrameLog::Close();
+    std::cout << std::format("kept {:.0f} MB, {} first used in all\n", MCHdArt::CachedBytes() / 1048576.0,
+                             MCHdArt::FramesRead());
+}
+
+// PROBE (first-use), never commit: every loaded font's glyphs and the logistics' line art, counted and timed.
+TEST_CASE_ISOLATED("probe: sharp sizes")
+{
+    if (!MCTest::Option("first-use-probe").has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    std::set<const MCGuiFont*> seen;
+    std::set<uint64_t> keys;
+    size_t glyphs = 0, layersTotal = 0, bytes = 0, blank = 0, printable = 0, printableBytes = 0;
+    double ms = 0;
+
+    for (const auto& row : Fonts)
+    {
+        for (const auto& font : row)
+        {
+            if (font == nullptr || !seen.insert(font.get()).second || font->FontData.Empty())
+            {
+                continue;
+            }
+
+            const std::span<const uint8_t> data = font->FontData.Bytes();
+            const int32_t count = MCRead32(data, 4);
+            const int32_t height = VfxFontHeight(data);
+            const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(data);
+
+            for (int32_t c = 0; c < count; ++c)
+            {
+                const auto at = static_cast<uint32_t>(MCRead32(data, 0x10 + static_cast<size_t>(c) * 4));
+                const int32_t pitch = MCRead32(data, at);
+                if (pitch <= 0 || height <= 0) continue;
+                const std::span<const uint8_t> glyph = data.subspan(at + 4, static_cast<size_t>(pitch) * height);
+                uint64_t key = 1469598103934665603ull ^ (static_cast<uint64_t>(pitch) << 32 | static_cast<uint64_t>(height)); for (auto b : glyph) key = (key ^ b) * 1099511628211ull;
+                const bool layered = MCSharpText::Layered(glyph, pitch, pitch, height);
+                std::optional<MCSharpText::MCGlyphLayers> layers;
+                if (layered) { layers = MCSharpText::LayersOf(glyph, pitch, pitch, height, fontLayers); for (auto b : layers->Bytes) key = key * 31 + b; }
+                if (!keys.insert(key).second) continue;
+                ++glyphs;
+                const bool ink = std::ranges::any_of(glyph, [](uint8_t b) { return b != MCSharpText::NoInk; });
+                blank += ink ? 0 : 1;
+                const auto t = std::chrono::steady_clock::now();
+                const auto made = layered ? MCSharpText::RedrawLayers(glyph, pitch, pitch, height, *layers) : std::vector<std::vector<uint8_t>>{MCSharpText::Redraw(glyph, pitch, pitch, height)};
+                ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+                size_t b = 0; for (const auto& l : made) b += l.size();
+                layersTotal += made.size(); bytes += b;
+                if (c >= 32 && c < 127) { ++printable; printableBytes += b; }
+            }
+        }
+    }
+
+    std::cout << std::format("fonts {}: glyphs {} (blank {}), layers {}, {:.1f} MB, {:.0f} ms; printable {} {:.1f} MB\n",
+                             seen.size(), glyphs, blank, layersTotal, bytes / 1048576.0, ms, printable, printableBytes / 1048576.0);
+}
+
+// PROBE (first-use), never commit: the textures alive once logistics starts, and the HD pictures the pack has for them.
+TEST_CASE_ISOLATED("probe: textures at start")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("first-use-probe");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::BootOptions.WindowWidth = 2560;
+    MCTestGame::BootOptions.WindowHeight = 1440;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartLogistics());
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(std::filesystem::absolute(std::filesystem::path(*pack)));
+    GlobalLog()->AttachHdArt();
+    size_t textures = 0, statics = 0, found = 0, bytes = 0, hashed = 0;
+    double hashMs = 0, readMs = 0;
+    std::map<int, int> uses;
+
+    for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
+    {
+        if (texture == nullptr) continue;
+        ++textures;
+        uses[static_cast<int>(texture->Use)]++;
+        if (texture->Pixels.empty() || texture->CpuStale) continue;
+        ++hashed;
+        auto t = std::chrono::steady_clock::now();
+        const uint64_t hash = MCHdArt::PictureHash(texture->Pixels, texture->Width, texture->Height);
+        hashMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+                t = std::chrono::steady_clock::now();
+        const auto frame = MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
+        readMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+        static std::set<uint64_t> uniq;
+        if (frame != nullptr && uniq.insert(hash).second) { ++found; bytes += frame->Bytes(); }
+    }
+
+    std::cout << std::format("textures {}, hashed {} ({:.1f} ms), with HD {} ({:.1f} MB, {:.1f} ms reading)\n", textures, hashed, hashMs, found, bytes / 1048576.0, readMs);
+    for (auto [u, n] : uses) std::cout << std::format("  use {}: {}\n", u, n);
 }

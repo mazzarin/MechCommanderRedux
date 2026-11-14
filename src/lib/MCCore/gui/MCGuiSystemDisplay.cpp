@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "platform/MCFrameLog.h"
 #include "gui/MCGuiSystem.h"
 #include "camera/MCMainWindow.h"
 #include "gui/MCGuiSmackerWindow.h"
@@ -80,8 +81,12 @@ auto MCGuiSystem::ShowPalette(int32_t first, int32_t count) -> void
     }
 }
 
+// PROBE: when the display opened.
+std::chrono::steady_clock::time_point ProbeDisplayOpened;
+
 auto MCGuiSystem::OpenDisplay() -> void
 {
+    ProbeDisplayOpened = std::chrono::steady_clock::now();
     // The original made the DirectDraw object (exclusive full screen, a primary surface and its palette) or, in a
     // window, a GDI palette and an 8-bit DIB section. The port opens the SDL display, whose 8-bit buffer the game
     // draws into. The screen is the window's size in pixels (at least 640x480), not the mode PREFS "Resolution" asks
@@ -359,8 +364,22 @@ auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> 
 {
     if (!CanFade())
     {
+        MCFrameLog::Note(std::format("probe: fade skipped (display ready {}, entry 10 {},{},{})", _DisplayReady,
+                                     CurrentPalette[FirstGameColor].R, CurrentPalette[FirstGameColor].G,
+                                     CurrentPalette[FirstGameColor].B));
         return;
     }
+
+    const auto probeFadeStart = std::chrono::steady_clock::now();
+    struct ProbeFadeNote
+    {
+        std::chrono::steady_clock::time_point Start;
+        ~ProbeFadeNote()
+        {
+            MCFrameLog::Note(std::format("probe: fade {:.0f} ms",
+                                         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count()));
+        }
+    } probeFadeNote{probeFadeStart};
 
     // Darkens the screen by a step that follows the time each step took (256 levels a second), waiting at least
     // 1/256 s a step, until 256 levels are gone. The original took each step off palette entries 10..245; the port

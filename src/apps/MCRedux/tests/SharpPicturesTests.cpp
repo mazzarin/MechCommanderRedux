@@ -880,3 +880,95 @@ TEST_CASE_ISOLATED("tool: --hd-make-sharp writes the sharp screens' text and lin
     CHECK(drawings > 0);
     GHdArt = 0;
 }
+
+// SCRATCH PROBE (never commit): the maker's time with and without a pack's sharp.hda.
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/resource.h>
+#endif
+TEST_CASE_ISOLATED("probe: sharp maker time")
+{
+    const char* const on = std::getenv("MC_PROBE_SHARP");
+
+    if (on == nullptr || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    GHdArt = 1;
+    GlobalLog()->AttachHdArt();
+
+    if (const char* const pack = std::getenv("MC_PROBE_SHARP_PACK"); pack != nullptr)
+    {
+        MCHdArt::SetPackFolder(pack);
+    }
+
+    // The process's CPU time, user and system, in ms.
+    const auto cpu = []
+    {
+#ifdef _WIN32
+        FILETIME created{}, ended{}, kernel{}, user{};
+        GetProcessTimes(GetCurrentProcess(), &created, &ended, &kernel, &user);
+        const auto ticks = [](const FILETIME& time)
+        { return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime; };
+        return static_cast<double>(ticks(kernel) + ticks(user)) / 10000.0;
+#else
+        rusage use{};
+        getrusage(RUSAGE_SELF, &use);
+        return static_cast<double>(use.ru_utime.tv_sec + use.ru_stime.tv_sec) * 1000.0 +
+               static_cast<double>(use.ru_utime.tv_usec + use.ru_stime.tv_usec) / 1000.0;
+#endif
+    };
+    const auto now = [] { return std::chrono::steady_clock::now(); };
+    const auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    std::set<const MCGuiFont*> fonts;
+    double cpu0 = cpu();
+    auto t0 = now();
+
+    for (const auto& sizes : Fonts)
+    {
+        for (const auto& font : sizes)
+        {
+            if (font != nullptr && !font->FontData.Empty() && fonts.insert(font.get()).second)
+            {
+                MCSharpPictures::MakeFont(font->FontData.Bytes());
+            }
+        }
+    }
+
+    MCSharpPictures::WaitForMade();
+    const double fontsMs = ms(now() - t0);
+    const double fontsCpu = cpu() - cpu0;
+    cpu0 = cpu();
+    t0 = now();
+
+    for (size_t mech = 0; mech < 12; ++mech)
+    {
+        const std::span<const uint8_t> table = GlobalLog()->MechRepShapes[mech].Bytes();
+
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            if (MCHdArt::LineArt(table, frame))
+            {
+                MCSharpPictures::MakeLineArt(table, frame, MCHdArt::LineArtDrawn(table, frame));
+            }
+        }
+    }
+
+    MCSharpPictures::WaitForMade();
+    const double linesMs = ms(now() - t0);
+    const double linesCpu = cpu() - cpu0;
+    const MCSharpPictures::MCMadeTally tally = MCSharpPictures::Tally();
+    std::cout << std::format("PROBE fonts {:.1f} ms ({:.1f} ms cpu), {} glyph pictures; line art {:.1f} ms ({:.1f} ms "
+                             "cpu), {} drawings; from pack {} of {}\n",
+                             fontsMs, fontsCpu, tally.GlyphPictures, linesMs, linesCpu, tally.Drawings, tally.FromPack,
+                             tally.PackPictures);
+}

@@ -908,7 +908,7 @@ auto MCGuiObject::DrawInFramePass(MCGuiPort& port, int32_t scrollY, bool wipe, b
 auto MCGuiObject::SlideStep() -> void
 {
     // Port-only: a rehearsal's draw moves nothing (MCRenderer::RehearsalScope): the frame shown next takes the step.
-    if (HideOffset == 0 || MCRenderer::Rehearsing())
+    if (HideOffset == 0 || (MCRenderer::Rehearsing() && std::getenv("MC_PROBE_NOGUARD") == nullptr))
     {
         return;
     }

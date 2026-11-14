@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "platform/MCFrameLog.h"
 #include "gui/MCScrollPane.h"
 #include "gui/MCGuiFont.h"
 #include "lib/MCFatal.h"
@@ -125,6 +126,7 @@ auto MCScrollPane::SetChildren() -> void
 
 auto MCScrollPane::Draw() -> void
 {
+    const MCFrameLog::Scope probeList("probe.scrollpane");
     MCPane& view = PanePort->Frame();
 
     if (BackgroundCopy != nullptr)

@@ -3618,7 +3618,7 @@ bool MCVulkanRenderer::AddSharpLines(uint16_t surface, std::span<const uint8_t> 
 {
     const uint64_t key = MCSharpPictures::LineArtKey(art, columns, rows, drawn);
     return AddSharpPicture(
-        surface, key, [&] { return MCSharpLines::Redraw(art, columns, columns, rows, drawn); }, columns, rows, at, from,
+        surface, key, [&] { const MCFrameLog::Scope probeLines("probe.sharp.lines"); return MCSharpLines::Redraw(art, columns, columns, rows, drawn); }, columns, rows, at, from,
         tableRow);
 }
 
@@ -3631,8 +3631,12 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
     if (found == _SharpGlyphs.end())
     {
         // Port-only: made ahead or the HD art pack's (platform/MCSharpPictures), else redrawn now.
+        const MCFrameLog::Scope probeSharp("probe.sharp");
         const std::optional<MCSharpPictures::MCMadePicture> made = MCSharpPictures::Take(key, columns, rows);
-        const std::vector<uint8_t> redrawn = made.has_value() ? std::vector<uint8_t>{} : redraw();
+        std::vector<uint8_t> redrawn;
+        if (!made.has_value()) { const MCFrameLog::Scope probeRedraw("probe.sharp.redraw"); redrawn = redraw(); }
+        MCFrameLog::Count(made.has_value() ? "probe sharp taken" : "probe sharp redrawn");
+        MCFrameLog::Count("probe sharp bytes", static_cast<int64_t>(made.has_value() ? made->RgbaBytes() : redrawn.size()));
         const size_t bytes = made.has_value() ? made->RgbaBytes() : redrawn.size();
         const auto width = static_cast<uint32_t>(columns * MCSharpText::Scale);
         const auto height = static_cast<uint32_t>(rows * MCSharpText::Scale);

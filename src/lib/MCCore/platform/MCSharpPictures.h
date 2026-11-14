@@ -188,4 +188,7 @@ namespace MCSharpPictures
     };
 
     MCMadeTally Tally();
+
+    // PROBE
+    std::string ProbeTimes(std::chrono::steady_clock::time_point from);
 }

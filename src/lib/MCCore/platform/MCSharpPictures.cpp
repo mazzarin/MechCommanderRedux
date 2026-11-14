@@ -269,6 +269,16 @@ namespace
         std::jthread Maker;
     };
 
+    // PROBE: when the first job was queued, and when the queue last ran dry.
+    std::chrono::steady_clock::time_point ProbeQueued{};
+    std::chrono::steady_clock::time_point ProbeDone{};
+    size_t ProbeBatches = 0;
+    // PROBE: the helpers' time making each kind (summed over helpers), the plans' time, and line art's span.
+    std::atomic<int64_t> ProbeGlyphNs{0}, ProbeGlyphPlanNs{0}, ProbeLinesNs{0}, ProbeLinesJobs{0}, ProbeLinesPixels{0};
+    std::chrono::steady_clock::time_point ProbeLinesQueued{};
+    std::chrono::steady_clock::time_point ProbeLinesDone{};
+    bool ProbeLinesPending = false;
+
     State& TheState()
     {
         static State state;
@@ -336,7 +346,15 @@ namespace
                 const std::stop_token& stop)
     {
         State& state = TheState();
+        const auto probePlanStart = std::chrono::steady_clock::now();
         const Plan plan = PlanOf(job);
+        const bool probeLines = std::holds_alternative<LinesJob>(job);
+
+        if (!probeLines)
+        {
+            ProbeGlyphPlanNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - probePlanStart).count();
+        }
+
         std::vector<uint64_t> claimed;
         const auto current = [&] { return plan.LineArtBytes == 0 || state.LineArtGeneration == lineArtGeneration; };
 
@@ -367,6 +385,8 @@ namespace
         std::vector<std::optional<MCSharpPictures::MCMadePicture>> made(plan.Keys.size());
         size_t fromPack = 0;
 
+        const auto probeMakeStart = std::chrono::steady_clock::now();
+
         try
         {
             for (size_t picture = 0; pack != nullptr && picture < plan.Keys.size(); ++picture)
@@ -389,6 +409,20 @@ namespace
                         made[picture].emplace(std::move(redrawn[picture]));
                     }
                 }
+            }
+
+            const int64_t probeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - probeMakeStart).count();
+
+            if (probeLines)
+            {
+                const auto& lines = std::get<LinesJob>(job);
+                ProbeLinesNs += probeNs;
+                ++ProbeLinesJobs;
+                ProbeLinesPixels += static_cast<int64_t>(lines.Columns) * lines.Rows;
+            }
+            else
+            {
+                ProbeGlyphNs += probeNs;
             }
         }
         catch (const std::exception& error)
@@ -525,6 +559,19 @@ namespace
 
             lock.lock();
             state.Working = false;
+            ++ProbeBatches;
+
+            if (state.Queue.empty())
+            {
+                ProbeDone = std::chrono::steady_clock::now();
+
+                if (ProbeLinesPending)
+                {
+                    ProbeLinesDone = ProbeDone;
+                    ProbeLinesPending = false;
+                }
+            }
+
             state.Changed.notify_all();
         }
     }
@@ -536,6 +583,18 @@ namespace
     void Queue(State& state, Job&& job, std::optional<std::filesystem::path> pack)
     {
         state.PackPath = std::move(pack);
+        // PROBE
+        if (ProbeQueued == std::chrono::steady_clock::time_point{})
+        {
+            ProbeQueued = std::chrono::steady_clock::now();
+        }
+
+        if (std::holds_alternative<LinesJob>(job) && !ProbeLinesPending)
+        {
+            ProbeLinesPending = true;
+            ProbeLinesQueued = std::chrono::steady_clock::now();
+        }
+
         state.Queue.push_back(std::move(job));
 
         if (!state.Maker.joinable())
@@ -893,4 +952,20 @@ MCSharpPictures::MCMadeTally MCSharpPictures::Tally()
     State& state = TheState();
     std::scoped_lock lock(state.Lock);
     return state.Tally;
+}
+
+// PROBE
+std::string MCSharpPictures::ProbeTimes(std::chrono::steady_clock::time_point from)
+{
+    State& state = TheState();
+    std::scoped_lock lock(state.Lock);
+    const auto ms = [&](std::chrono::steady_clock::time_point at)
+    { return at == std::chrono::steady_clock::time_point{} ? -1.0 : std::chrono::duration<double, std::milli>(at - from).count(); };
+    return std::format("maker: first queued at {:.0f} ms, queue dry at {:.0f} ms ({:.0f} ms making), {} batches, {} glyphs {} pictures; "
+                       "glyphs' helpers {:.0f} ms making, {:.0f} ms planning; line art {} jobs, {} drawings, {} left, {:.0f} ms making ({:.1f} Mpx), "
+                       "its last span {:.0f} ms (queued at {:.0f}); from the pack {} of {}",
+                       ms(ProbeQueued), ms(ProbeDone), ms(ProbeDone) - ms(ProbeQueued), ProbeBatches, state.Tally.Glyphs,
+                       state.Tally.GlyphPictures, ProbeGlyphNs.load() / 1e6, ProbeGlyphPlanNs.load() / 1e6, ProbeLinesJobs.load(),
+                       state.Tally.Drawings, state.Tally.DrawingsLeft, ProbeLinesNs.load() / 1e6, ProbeLinesPixels.load() / 1e6,
+                       ms(ProbeLinesDone) - ms(ProbeLinesQueued), ms(ProbeLinesQueued), state.Tally.FromPack, state.Tally.PackPictures);
 }

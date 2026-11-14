@@ -158,6 +158,13 @@ public:
     void MakeFontsAhead() const;
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md): with the screen drawn sharp (HD art on the GPU), has HD art's readers read the
+    /// screens' whole set of pictures ahead (MCHdArt::ReadMenuSetAhead), the lowest of their reads; nothing otherwise.
+    /// Start does it once the cursors' own reads are in, logistics as it starts and when HD art comes on.
+    /// </summary>
+    void ReadMenuSetAhead() const;
+
+    /// <summary>
     /// Fades the screen to black, then blacks out palette entries 10..245. Port-only: <paramref name="whileFading"/>'s
     /// pieces of work are done in order, one after each step once the fade has reached <paramref name="workFrom"/> of
     /// its <see cref="FadeLevels"/>, any still left once the screen is black; the fade keeps its pace (it follows the

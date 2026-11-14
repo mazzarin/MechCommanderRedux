@@ -739,8 +739,10 @@ auto MCLogistics::MakeAhead() const -> void
     GuiSystem().MakeFontsAhead();
 
     // The HD copies of the pictures the screens are made of (their art, loaded by Start, the screens' backgrounds
-    // with it: MCLogInvScreen::InitLive), read ahead by the pack's reading thread.
+    // with it: MCLogInvScreen::InitLive), read ahead by the pack's reading thread; then (those first, the soonest
+    // needed) the rest of the screens' set, as the display's opening asked.
     ReadTexturesAhead();
+    GuiSystem().ReadMenuSetAhead();
 }
 
 auto MCLogistics::ReadTexturesAhead() -> void

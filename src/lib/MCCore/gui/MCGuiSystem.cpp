@@ -34,6 +34,7 @@
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSmacker.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCWeather.h"
 #include "sprite/MCWeatherPace.h"
 #include "vfx/MCVfxFunctions.h"
@@ -245,6 +246,14 @@ auto MCGuiSystem::MakeFontsAhead() const -> void
     }
 }
 
+auto MCGuiSystem::ReadMenuSetAhead() const -> void
+{
+    if (_Display != nullptr && _Display->SharpScreen())
+    {
+        MCHdArt::ReadMenuSetAhead();
+    }
+}
+
 auto MCGuiSystem::FreeFonts() -> void
 {
     for (std::shared_ptr<MCGuiFont>& global :
@@ -352,6 +361,8 @@ auto MCGuiSystem::Start(std::string_view commandLine, int16_t screenWidth, int16
     // Port-only: the fonts' sharp glyphs made from now, the boot their time.
     MakeFontsAhead();
     LoadCursors();
+    // Port-only: the screens' HD pictures read from now, after the cursors' (which the boot waits for).
+    ReadMenuSetAhead();
     MCInput::ShowCursor(false);
     CursorShape = -1;
     MouseTimerInit();

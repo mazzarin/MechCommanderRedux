@@ -392,6 +392,17 @@ namespace MCHdArt
     void ReadPicturesAhead(std::span<const PictureAhead> pictures);
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md): has the readers read the screens' whole set ahead, every picture in the pack's
+    /// menus archive (a set's reads, the lowest kind, in the archive's order), while they and the frames kept take at
+    /// most half the cache's budget, as <see cref="ReadPicturesAhead"/>'s do: a screen's, a tab's or a dialog's first
+    /// draw then finds its pictures without a read, whichever it is. Only where the briefing maps lie apart, in an
+    /// archive of their own (<c>maps.hda</c>): in a pack made before, they fill the menus' (370 of its 554 MB
+    /// unpacked), and the screens' pictures are read ahead as logistics loads them. A picture read this way is checked
+    /// against the size its first draw asks for, as any frame kept as read ahead is. The bytes asked for.
+    /// </summary>
+    size_t ReadMenuSetAhead();
+
+    /// <summary>
     /// Port-only: keeps the frames and pictures the reading thread has read ahead (<see cref="ReadPicturesAhead"/>) as a
     /// first draw keeps a frame (Find and FindPicture then find them without a read), against the cache's budget, its
     /// least recently used going first, so that one read well before its draw (a neighbouring facing's,

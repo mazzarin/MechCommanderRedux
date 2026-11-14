@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "main/MCArtModes.h"
+#include "gui/MCGuiSystem.h"
 #include "engine/MCCraterManager.h"
 #include "iface/MCFriendlyMechIcon.h"
 #include "iface/MCMechBar.h"
@@ -135,5 +136,10 @@ auto AttachHdArtToLoaded() -> void
         logistics->AttachHdArt();
         logistics->MakeAhead();
         logistics->MakeLineArtAhead();
+    }
+    else if (HasGuiSystem())
+    {
+        // Port-only: the screens' HD pictures read from now (logistics' MakeAhead asks for them after its own).
+        GuiSystem().ReadMenuSetAhead();
     }
 }

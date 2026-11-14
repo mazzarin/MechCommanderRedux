@@ -937,6 +937,10 @@ namespace
         return std::format("{}{}{}", frame, InBetweenSeparator, step);
     }
 
+    /// <summary>The digits of the name a hash gives a frame (HashName), and their base.</summary>
+    constexpr size_t HashNameDigits = 16;
+    constexpr int HashNameBase = 16;
+
     /// <summary>The name a hash gives a frame: 16 hex digits.</summary>
     std::string HashName(uint64_t hash)
     {
@@ -2720,7 +2724,10 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8
 
 namespace
 {
-    /// <summary>A frame to read ahead (AskAhead): its folder (FolderIndex), its key there and its draw's size.</summary>
+    /// <summary>
+    /// A frame to read ahead (AskAhead): its folder (FolderIndex), its key there and its draw's size (0 x 0: any, as
+    /// DecodeHdf takes it; a frame kept as read ahead is checked at its first draw).
+    /// </summary>
     struct FrameAsk
     {
         uint32_t Folder = 0;
@@ -2750,8 +2757,9 @@ namespace
         {
             const FrameKey key{ask.Folder, ask.Name};
 
-            if (ask.Width <= 0 || ask.Height <= 0 || !named.insert(key).second || ahead.Known.contains(key) ||
-                ahead.Ready.contains(key) || ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key))
+            if (ask.Width < 0 || ask.Height < 0 || (ask.Width == 0) != (ask.Height == 0) || !named.insert(key).second ||
+                ahead.Known.contains(key) || ahead.Ready.contains(key) || ahead.Pictures.contains(key) ||
+                ahead.PicturesAsked.contains(key))
             {
                 continue;
             }
@@ -2851,6 +2859,55 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
     }
 
     AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / PicturesAheadBudgetShare));
+}
+
+size_t MCHdArt::ReadMenuSetAhead()
+{
+    if (!Active())
+    {
+        return 0;
+    }
+
+    State& state = TheState();
+    // Both indices first: finding a folder may add one, and moves the others.
+    const uint32_t menus = FolderIndex(PackFolder() / PictureFolder, Naming::Hash);
+    const uint32_t maps = FolderIndex(PackFolder() / MapFolder, Naming::Hash);
+    const std::shared_ptr<MCHdArchive> set = ArchiveOf(state.Folders.at(menus)).Archive;
+    const std::shared_ptr<MCHdArchive> apart = ArchiveOf(state.Folders.at(maps)).Archive;
+
+    if (set == nullptr || apart == nullptr || apart == set)
+    {
+        return 0;
+    }
+
+    const std::string& prefix = ArchiveOf(state.Folders.at(menus)).Prefix;
+    std::vector<FrameAsk> asks;
+
+    for (const MCFileEntry& entry : set->File->GetEntries())
+    {
+        // "<prefix><16 hex digits>.hdf" (the archive's names compared without regard to case): the picture's hash
+        // (HashName), its size any, checked at its first draw.
+        const std::string_view name = entry.GetName();
+
+        if (name.size() != prefix.size() + HashNameDigits + HdfExtension.size() ||
+            MCPort::StrICmp(name.substr(0, prefix.size()), prefix) != 0 ||
+            MCPort::StrICmp(name.substr(name.size() - HdfExtension.size()), HdfExtension) != 0)
+        {
+            continue;
+        }
+
+        const std::string_view hex = name.substr(prefix.size(), HashNameDigits);
+        uint64_t hash = 0;
+
+        if (const std::from_chars_result parsed =
+                std::from_chars(hex.data(), hex.data() + hex.size(), hash, HashNameBase);
+            parsed.ec == std::errc() && parsed.ptr == hex.data() + hex.size())
+        {
+            asks.push_back(FrameAsk{menus, hash, 0, 0});
+        }
+    }
+
+    return AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / PicturesAheadBudgetShare));
 }
 
 void MCHdArt::KeepReadAhead()

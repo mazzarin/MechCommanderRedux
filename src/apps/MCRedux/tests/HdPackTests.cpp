@@ -1690,6 +1690,92 @@ TEST_CASE("hd art: a briefing map's picture is found in maps.hda, a screen's in 
 }
 
 /// <summary>
+/// Port-only (SPEC-first-use.md): with the briefing maps in an archive of their own, the screens' whole set is read
+/// ahead (MCHdArt::ReadMenuSetAhead), every picture in the menus' archive whatever shows it, and each is found as drawn
+/// without a read; one drawn at a size it wasn't made for is refused, as when read at its draw. The maps are left to
+/// their draw, and a pack made before (its maps in the menus' archive) to the screens' own read-ahead.
+/// </summary>
+TEST_CASE("hd art: the screens' whole set is read ahead where the maps lie apart, each found without a read")
+{
+    constexpr int32_t Width = AheadWidth;
+    constexpr int32_t Height = AheadHeight;
+    // The screens' pictures, then one whose name is a picture of another size's (its file made for this size), then a
+    // map.
+    constexpr uint8_t Screens = 4;
+    constexpr uint8_t Misfit = Screens;
+    constexpr uint8_t Map = Screens + 1;
+    constexpr int32_t MisfitWidth = Width + 2;
+    const ScratchFolder scratch("menu-set");
+    std::vector<std::vector<uint8_t>> pixels;
+    std::vector<std::vector<uint8_t>> files;
+    std::vector<std::string> names;
+
+    for (uint8_t picture = 0; picture <= Map; ++picture)
+    {
+        const int32_t width = picture == Misfit ? MisfitWidth : Width;
+        std::vector<uint8_t>& shown = pixels.emplace_back(static_cast<size_t>(width) * Height);
+        std::ranges::generate(shown, [&, at = 0]() mutable { return static_cast<uint8_t>(picture * Width + at++); });
+        files.push_back(AheadFile({picture, 0}, static_cast<uint8_t>(picture + 1)));
+        names.push_back(MCHdArt::PictureName(MCHdArt::PictureHash(shown, width, Height)) + ".hdf");
+    }
+
+    std::vector<ArchiveEntry> set;
+
+    for (uint8_t picture = 0; picture < Map; ++picture)
+    {
+        set.push_back(Raw(names[picture], files[picture]));
+    }
+
+    const std::filesystem::path split = scratch.Path() / "split";
+    std::filesystem::create_directories(split);
+    WriteBytes(split / "menus.hda", BuildArchive(set));
+    WriteBytes(split / "maps.hda", BuildArchive({Raw(names[Map], files[Map])}));
+    const std::filesystem::path before = scratch.Path() / "before";
+    std::filesystem::create_directories(before);
+    set.push_back(Raw(names[Map], files[Map]));
+    WriteBytes(before / "menus.hda", BuildArchive(set));
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    // The split pack: the set read ahead, the map not.
+    MCHdArt::SetPackFolder(split);
+    size_t ahead = MCHdArt::FramesReadAhead();
+    CHECK(MCHdArt::ReadMenuSetAhead() > 0);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Screens + 1);
+    CHECK_EQ(MCHdArt::ReadMenuSetAhead(), 0u);
+    size_t read = MCHdArt::FramesRead();
+
+    for (uint8_t picture = 0; picture < Screens; ++picture)
+    {
+        MCTest::Scope scope(std::format("picture {}", picture));
+        const std::shared_ptr<const MCHdArt::Frame> frame = MCHdArt::FindPicture(pixels[picture], Width, Height);
+        REQUIRE(frame != nullptr);
+        const auto decoded = MCHdArt::DecodeHdf(files[picture], Width, Height);
+        REQUIRE(decoded.has_value());
+        CHECK(SameFrame(*frame, *decoded));
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    CHECK(MCHdArt::FindPicture(pixels[Misfit], MisfitWidth, Height) == nullptr);
+    read = MCHdArt::FramesRead();
+    CHECK(MCHdArt::FindPicture(pixels[Map], Width, Height) != nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+
+    // The pack made before: nothing read ahead.
+    MCHdArt::SetPackFolder(before);
+    ahead = MCHdArt::FramesReadAhead();
+    CHECK_EQ(MCHdArt::ReadMenuSetAhead(), 0u);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead);
+
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only (SPEC-first-use.md): several readers read a set of pictures ahead in its archive's order, the archive's
 /// neighbouring entries in one read, split where a gap between two passes MCHdArt::ReaderRunGap or the read would take
 /// more than MCHdArt::ReaderRunBytes. Each picture is then found as drawn ones are, the same frame, without a read, and

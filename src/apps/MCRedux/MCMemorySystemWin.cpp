@@ -28,11 +28,12 @@ namespace
     using MCKernelHandle = std::unique_ptr<void, MCKernelCloser>;
 
     /// <summary>
-    /// Windows' answers: short from the system's low-memory notification (set where Windows starts taking memory back
-    /// from the programs running) until its high-memory one (three times as much available, by default), so a frame's
-    /// trim doesn't end it only for the next frame read to start it again; and on the card DXGI's video memory budget
-    /// for this process on the adapter SDL's Vulkan device runs on, against what the process uses there (Vulkan's
-    /// allocations among it).
+    /// Windows' answers: short from the system's low-memory notification (by default set while less than about 32 MB a
+    /// 4 GB of memory is available, 64 MB at most) until its high-memory one (three times as much), so a frame's trim
+    /// doesn't end it only for the next frame read to start it again. The available memory itself isn't counted: it
+    /// takes in the system's standby list (its file cache), and any mark on it would be ours, not the system's. On the
+    /// card, DXGI's video memory budget for this process on the adapter SDL's Vulkan device runs on, against what the
+    /// process uses there (Vulkan's allocations among it).
     /// </summary>
     class MCWinMemory final : public MCMemoryRoom::MCSystem
     {
@@ -91,11 +92,9 @@ namespace
 
             if (FAILED(result))
             {
-                // The adapter may have gone (a driver's update): looked for again at the next reading.
+                // Asked again at the next reading.
                 LogOnce(_QueryLogged, std::format("HD caches: DXGI can't say the video memory of \"{}\" (0x{:08x})",
                                                   _DeviceName, static_cast<uint32_t>(result)));
-                _Looked = false;
-                _Adapter.Reset();
                 return std::nullopt;
             }
 

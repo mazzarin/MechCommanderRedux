@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "gameos/MCSoundResource.h"
+#include "lib/MCDiskFile.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "platform/MCFileSystem.h"
@@ -78,18 +79,19 @@ MCSoundResource::~MCSoundResource()
 
 void MCSoundResource::LoadFile()
 {
-    std::ifstream file(MCFileSystem::Resolve(_FileName), std::ios::binary);
+    // Read whole: one call of exactly its bytes.
+    std::optional<MCDiskFile> file =
+        MCDiskFile::Open(MCFileSystem::Resolve(_FileName), MCDiskFileMode::Read, MCDiskFileReads::Direct);
 
     // The original tested CreateFile's result against null, not INVALID_HANDLE_VALUE, so the Fatal never fired.
-    if (!file)
+    if (!file.has_value())
     {
         Fatal(-1, "Cannot load sound resource!");
+        return;
     }
 
-    file.seekg(0, std::ios::end);
-    _Image.resize(static_cast<size_t>(file.tellg()));
-    file.seekg(0, std::ios::beg);
-    file.read(reinterpret_cast<char*>(_Image.data()), static_cast<std::streamsize>(_Image.size()));
+    _Image.resize(file->Length());
+    file->ReadAt(0, _Image);
     ReadWaveInfo(_Image);
 
     if (TryHdSample(_Image))

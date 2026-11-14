@@ -152,7 +152,11 @@
     <ClCompile Include="iface\MCTacticalInterfaceMouseState.cpp" />
     <ClCompile Include="iface\MCTacticalInterfaceSelection.cpp" />
     <ClCompile Include="lib\MCDice.cpp" />
-    <ClCompile Include="lib\MCDiskFile.cpp" />
+    <ClCompile Include="lib\MCDiskFile.cpp">
+      <!-- The disk file is the system's own, so it includes windows.h, which must not meet the game's Win32
+           stand-ins in the precompiled header. -->
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="lib\MCFastFile.cpp" />
     <ClCompile Include="lib\MCFastFileSet.cpp" />
     <ClCompile Include="lib\MCFatal.cpp" />

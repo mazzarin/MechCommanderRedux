@@ -34,7 +34,7 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::
 {
     auto fastFile = std::make_unique<MCFastFile>(Key());
     fastFile->_Path = MCFileSystem::Resolve(fileName);
-    fastFile->_Handle = MCDiskFile::Open(fastFile->_Path, MCDiskFileMode::Read);
+    fastFile->_Handle = MCDiskFile::Open(fastFile->_Path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
 
     if (!fastFile->_Handle.has_value())
     {
@@ -51,7 +51,6 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::
 
     // Issue #25: the directory must lie in the file (the original allocated whatever the count said).
     const int32_t count = std::bit_cast<int32_t>(countBytes);
-    // Once: the length is found by seeking, which drops what the stream has read ahead.
     const uint32_t length = file.Length();
     fastFile->_Length = length;
     std::error_code timeError;
@@ -113,7 +112,7 @@ std::optional<MCDiskFile> MCFastFile::OpenAnother() const
         return std::nullopt;
     }
 
-    std::optional<MCDiskFile> file = MCDiskFile::Open(_Path, MCDiskFileMode::Read);
+    std::optional<MCDiskFile> file = MCDiskFile::Open(_Path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
 
     if (file.has_value() && file->Length() != _Length)
     {

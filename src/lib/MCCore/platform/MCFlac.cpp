@@ -1,11 +1,13 @@
 #include "stdafx.h"
 #include "platform/MCFlac.h"
+#include "lib/MCDiskFile.h"
 #define DR_FLAC_NO_STDIO
 #include "dr_flac.h"
 
 struct MCFlac::Impl
 {
-    std::ifstream File;
+    /// <summary>The file, read a frame at a time through its growing buffer (dr_flac asks a few kilobytes at a time).</summary>
+    std::optional<MCDiskFile> File;
     /// <summary>The file's bytes, when it is read from memory.</summary>
     std::shared_ptr<const std::vector<uint8_t>> Memory;
     drflac* Decoder = nullptr;
@@ -14,26 +16,31 @@ struct MCFlac::Impl
 
     static size_t Read(void* user, void* data, size_t size)
     {
-        auto& file = static_cast<Impl*>(user)->File;
-        file.read(static_cast<char*>(data), static_cast<std::streamsize>(size));
-        return static_cast<size_t>(file.gcount());
+        return static_cast<Impl*>(user)->File->Read(std::span(static_cast<uint8_t*>(data), size));
     }
 
+    /// <summary>As a stream's seek: anywhere from the file's start on, its end included and past it.</summary>
     static drflac_bool32 Seek(void* user, int offset, drflac_seek_origin origin)
     {
-        auto& file = static_cast<Impl*>(user)->File;
-        file.clear();
-        file.seekg(offset, origin == DRFLAC_SEEK_SET   ? std::ios::beg
-                           : origin == DRFLAC_SEEK_END ? std::ios::end
-                                                       : std::ios::cur);
-        return file.good();
+        MCDiskFile& file = *static_cast<Impl*>(user)->File;
+        const int64_t from = origin == DRFLAC_SEEK_SET   ? 0
+                             : origin == DRFLAC_SEEK_END ? int64_t{file.Length()}
+                                                         : int64_t{file.Position()};
+        const int64_t to = from + offset;
+
+        if (to < 0 || to > int64_t{std::numeric_limits<uint32_t>::max()})
+        {
+            return DRFLAC_FALSE;
+        }
+
+        file.SetPosition(static_cast<uint32_t>(to));
+        return DRFLAC_TRUE;
     }
 
     static drflac_bool32 Tell(void* user, drflac_int64* cursor)
     {
-        auto& file = static_cast<Impl*>(user)->File;
-        *cursor = static_cast<drflac_int64>(file.tellg());
-        return *cursor >= 0;
+        *cursor = static_cast<drflac_int64>(static_cast<Impl*>(user)->File->Position());
+        return DRFLAC_TRUE;
     }
 };
 
@@ -46,9 +53,9 @@ MCFlac::~MCFlac() = default;
 std::unique_ptr<MCFlac> MCFlac::Open(const std::filesystem::path& path)
 {
     auto result = std::unique_ptr<MCFlac>(new MCFlac());
-    result->_Impl->File.open(path, std::ios::binary);
+    result->_Impl->File = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Buffered);
 
-    if (!result->_Impl->File)
+    if (!result->_Impl->File.has_value())
     {
         return nullptr;
     }
@@ -73,18 +80,16 @@ std::unique_ptr<MCFlac> MCFlac::Open(std::shared_ptr<const std::vector<uint8_t>>
 
 std::shared_ptr<const std::vector<uint8_t>> MCFlac::ReadFile(const std::filesystem::path& path)
 {
-    std::ifstream file(path, std::ios::binary);
-    std::error_code error;
-    const uintmax_t size = std::filesystem::file_size(path, error);
+    // Read whole: one call of exactly its bytes.
+    std::optional<MCDiskFile> file = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
 
-    if (!file || error)
+    if (!file.has_value())
     {
         return nullptr;
     }
 
-    auto bytes = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(size));
-    file.read(reinterpret_cast<char*>(bytes->data()), static_cast<std::streamsize>(bytes->size()));
-    return file.gcount() == static_cast<std::streamsize>(bytes->size()) ? std::move(bytes) : nullptr;
+    auto bytes = std::make_shared<std::vector<uint8_t>>(file->Length());
+    return file->ReadAt(0, *bytes) == bytes->size() ? std::move(bytes) : nullptr;
 }
 
 bool MCFlac::Opened()

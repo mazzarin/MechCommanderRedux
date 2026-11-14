@@ -144,3 +144,63 @@ TEST_CASE("game: every movie decodes to its header's size, length and sound")
         }
     }
 }
+
+/// <summary>
+/// Port-only: a movie read from its file (a frame at a time through its disk file's growing buffer) decodes the same,
+/// frame for frame and sample for sample, as from its bytes in memory: the game's largest movie.
+/// </summary>
+TEST_CASE("game: a movie decodes the same read from its file as from memory")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::vector<std::string> movies = MCFileSystem::FindFiles("data\\movies\\*.smk");
+    REQUIRE(!movies.empty());
+    std::filesystem::path largest;
+    uintmax_t largestBytes = 0;
+
+    for (const std::string& name : movies)
+    {
+        const std::filesystem::path path = MCFileSystem::Resolve("data\\movies\\" + name);
+        std::error_code error;
+
+        if (const uintmax_t bytes = std::filesystem::file_size(path, error); !error && bytes > largestBytes)
+        {
+            largest = path;
+            largestBytes = bytes;
+        }
+    }
+
+    MCTest::Scope scope(MCFileSystem::ToUtf8(largest.filename()));
+    std::ifstream in(largest, std::ios::binary);
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE_EQ(bytes.size(), static_cast<size_t>(largestBytes));
+    auto fromFile = MCSmacker::Open(largest);
+    auto fromMemory = MCSmacker::OpenMemory(std::move(bytes));
+    REQUIRE(fromFile.has_value());
+    REQUIRE(fromMemory.has_value());
+    MCSmacker& file = **fromFile;
+    MCSmacker& memory = **fromMemory;
+    REQUIRE_EQ(file.FrameCount(), memory.FrameCount());
+    size_t differing = 0;
+
+    for (uint32_t frame = 0; frame < file.FrameCount(); ++frame)
+    {
+        const auto fileFrame = file.DecodeNextFrame();
+        const auto memoryFrame = memory.DecodeNextFrame();
+        REQUIRE(fileFrame.has_value());
+        REQUIRE(memoryFrame.has_value());
+        bool same = std::ranges::equal(file.Pixels(), memory.Pixels()) && file.Palette() == memory.Palette();
+
+        for (int track = 0; track < MCSmacker::MaxTracks; ++track)
+        {
+            same = same && std::ranges::equal(file.Audio(track), memory.Audio(track));
+        }
+
+        differing += same ? 0 : 1;
+    }
+
+    CHECK_EQ(differing, size_t{0});
+}

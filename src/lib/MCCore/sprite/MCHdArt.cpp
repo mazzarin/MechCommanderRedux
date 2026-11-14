@@ -5,6 +5,7 @@
 #include "lib/MCInflate.h"
 #include "lib/MCOptionalRef.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCMemoryRoom.h"
 #include "platform/MCSdlHandle.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCInBetween.h"
@@ -118,11 +119,6 @@ namespace
     using MCHdArt::HasIndex;
     /// <summary>Shapes attached between sweeps of those that are gone.</summary>
     constexpr size_t SweepInterval = 256;
-    /// <summary>The frames' budget: the share of the machine's memory, and the least and most it may be.</summary>
-    constexpr size_t MemoryShare = 8;
-    constexpr size_t MinCacheBudget = 128u * 1024u * 1024u;
-    constexpr size_t MaxCacheBudget = 2048u * 1024u * 1024u;
-    constexpr size_t BytesPerMegabyte = 1024u * 1024u;
     constexpr int32_t BytesPerPixel = 4;
     /// <summary>
     /// The largest scale a frame may have (packs are made at 3x or 4x), and the largest side its colour texture may have
@@ -195,7 +191,8 @@ namespace
 
     /// <summary>
     /// A frame read (null: the pack has none, it is unusable, or it was dropped), its place in State::Order, and its Id,
-    /// kept when it is dropped so that it is read again with the same one (the GPU's copy stays good for it).
+    /// kept when it is dropped so that it is read again with the same one (the GPU's copy stays good for it). Port-only:
+    /// the frame (State::Frame) it was last asked for in, which MCHdArt::NextFrame never lets it go in or after.
     /// </summary>
     struct Cached
     {
@@ -203,6 +200,7 @@ namespace
         std::list<FrameKey>::iterator InOrder;
         bool Looked = false;
         uint64_t Id = 0;
+        uint64_t LastFrame = 0;
     };
 
     /// <summary>
@@ -281,8 +279,10 @@ namespace
         std::list<FrameKey> Order;
         uint64_t LastId = 0;
         size_t Bytes = 0;
-        /// <summary>The budget set (0: none, the machine's).</summary>
+        /// <summary>The budget set (0: none, MCMemoryRoom::MostHdBytes).</summary>
         size_t Budget = 0;
+        /// <summary>Port-only: the frames begun (MCHdArt::NextFrame).</summary>
+        uint64_t Frame = 0;
         size_t Read = 0;
         /// <summary>How many of those the reading thread read (ReadAhead).</summary>
         size_t TakenAhead = 0;
@@ -1388,6 +1388,7 @@ namespace
     {
         State& state = TheState();
         Cached& cached = state.Frames[key];
+        cached.LastFrame = state.Frame;
 
         if (cached.Frame != nullptr)
         {
@@ -2417,21 +2418,55 @@ void MCHdArt::DropGround()
 
 size_t MCHdArt::CacheBudget()
 {
-    if (const size_t set = TheState().Budget; set != 0)
-    {
-        return set;
-    }
-
-    static const size_t machine =
-        std::clamp(static_cast<size_t>(std::max(SDL_GetSystemRAM(), 0)) * BytesPerMegabyte / MemoryShare,
-                   MinCacheBudget, MaxCacheBudget);
-    return machine;
+    const size_t set = TheState().Budget;
+    return set != 0 ? set : static_cast<size_t>(MCMemoryRoom::MostHdBytes);
 }
 
 void MCHdArt::SetCacheBudget(size_t bytes)
 {
     TheState().Budget = bytes;
     Trim();
+}
+
+void MCHdArt::NextFrame(bool memoryShort)
+{
+    State& state = TheState();
+    ++state.Frame;
+
+    if (!memoryShort)
+    {
+        return;
+    }
+
+    // The least recently used first, until TrimmedBytesPerFrame have gone or the next was asked for in the last frame
+    // (it and those after it are drawn, and would only be read again). A frame something else still holds (a texture's
+    // picture, asked for once) leaves the cache too, so its memory goes once that lets go of it, but it frees nothing
+    // now: it isn't counted, or the frames only the cache holds would wait for later frames.
+    size_t freed = 0;
+
+    while (!state.Order.empty() && freed < MCMemoryRoom::TrimmedBytesPerFrame)
+    {
+        const auto oldest = state.Frames.find(state.Order.front());
+
+        if (oldest == state.Frames.end())
+        {
+            state.Order.pop_front();
+            continue;
+        }
+
+        if (oldest->second.LastFrame + 1 >= state.Frame)
+        {
+            break;
+        }
+
+        // The cache's own reference alone: its bytes go with it.
+        if (oldest->second.Frame.use_count() == 1)
+        {
+            freed += oldest->second.Frame->Bytes();
+        }
+
+        Drop(state, oldest->first, oldest->second);
+    }
 }
 
 size_t MCHdArt::ArchivesOpen()

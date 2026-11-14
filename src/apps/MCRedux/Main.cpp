@@ -5,6 +5,7 @@
 #include "MCGameFolder.h"
 #include "MCHttpGet.h"
 #include "MCIceTrial.h"
+#include "MCMemorySystem.h"
 #include "MCRestart.h"
 #include "MCTelemetryBackend.h"
 #include "MCVersion.h"
@@ -802,6 +803,8 @@ int main(int argc, char** argv)
     }
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));
+    // The HD art frames kept, in memory and on the GPU, by what this machine says it can spare.
+    MCMemoryRoom::SetSystem(MCMakeMemorySystem());
     MCInternetGame::Setup({.Open = MCOpenWebSocket, .Get = MCMakeHttpGet, .Version = MC_VERSION_SHOWN});
     // An internet game's leaving reaches the service before the GUI stops (RunGame ends it, waiting up to this).
     const int result = RunGame(options->GameCommandLine, InternetLeaveWait);
@@ -815,6 +818,7 @@ int main(int argc, char** argv)
     MCUpdater::Quit();
     MCTelemetry::Quit();
     MCTelemetry::SetBackend(nullptr);
+    MCMemoryRoom::SetSystem(nullptr);
 
     // RESTART into an update with no program: the new copy waits for this one's lock, which the system lets go once
     // this process has ended and closed every file it held, then swaps the content in.

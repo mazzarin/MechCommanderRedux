@@ -36,9 +36,6 @@ namespace
     /// <summary>The colour of the drop zone markers and their leader lines on the briefing map.</summary>
     constexpr uint32_t DropZoneColor = 0x1f;
 
-    /// <summary>The most units (mechs and vehicles) the player may own when dropping: a save holds no more (a game rule).</summary>
-    constexpr int32_t MaxOwnedUnits = 50;
-
     /// <summary>The briefing screen's timers: the chat button's blink and the operation movie's start delay.</summary>
     constexpr int32_t ChatBlinkTimer = 5;
     constexpr int32_t MovieDelayTimer = 6;
@@ -893,12 +890,11 @@ auto MCBriefingScreen::Launch() -> void
 
     if (MultiPlayer() == nullptr)
     {
-        // Everything the player owns must fit the save.
-        const int32_t units = GlobalLog()->ForceVehicleList->GetVehicleCount() +
-                              GlobalLog()->ForceMechList->GetMechCount() + GlobalLog()->VehicleList->GetVehicleCount() +
-                              GlobalLog()->MechList->GetMechCount();
+        // Everything the player owns must be within the unit limit (a mission's salvage can take it past).
+        const int32_t units = NumUnits();
+        const int32_t most = MaxUnits();
 
-        if (units <= MaxOwnedUnits)
+        if (units <= most)
         {
             SoundSystem()->PlayInterfaceSample(0x3a);
             Mission()->RequestScenario(Mission()->Scenarios[Mission()->CurrentScenario]);
@@ -906,8 +902,7 @@ auto MCBriefingScreen::Launch() -> void
         }
 
         SoundSystem()->PlayInterfaceSample(0x33);
-        ShowLogMessage(
-            MCFormatPrintf(LoadGameString(0x373, 0xfe).c_str(), units, MaxOwnedUnits, units - MaxOwnedUnits));
+        ShowLogMessage(MCFormatPrintf(LoadGameString(0x373, 0xfe).c_str(), units, most, units - most));
         return;
     }
 

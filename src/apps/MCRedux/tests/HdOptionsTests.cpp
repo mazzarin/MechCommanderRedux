@@ -14,6 +14,7 @@
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUnitLimits.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
@@ -94,6 +95,15 @@ namespace
         CHECK(dialog.ShowWindow == 0);
     }
 
+    /// <summary>The HD settings with no row on the HD OPTIONS page yet (PREFS alone sets them).</summary>
+    constexpr std::array<std::string_view, 1> Unlisted = {"MoreUnits"};
+
+    /// <summary>Whether <paramref name="setting"/> has a row on the HD OPTIONS page.</summary>
+    bool Listed(const MCHdSettings::MCSetting& setting)
+    {
+        return !std::ranges::contains(Unlisted, setting.Key);
+    }
+
     /// <summary>Every HD setting as the original's game has it.</summary>
     std::vector<int32_t> OriginalSettings()
     {
@@ -105,6 +115,24 @@ namespace
         }
 
         return values;
+    }
+
+    /// <summary>A PREFS at <paramref name="path"/> whose MechCommander block <paramref name="settings"/> writes.</summary>
+    void WriteHdPrefs(const std::filesystem::path& path, const std::function<void(MCFitIniFile&)>& settings)
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Create(MCFileSystem::ToUtf8(path)), 0);
+        prefs.WriteBlock("MechCommander");
+        settings(prefs);
+    }
+
+    /// <summary>Every HD setting read from the PREFS at <paramref name="path"/>.</summary>
+    void ReadHdPrefs(const std::filesystem::path& path)
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(path)), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        MCHdSettings::Read(prefs);
     }
 
     /// <summary>The value PREFS at <paramref name="path"/> holds for <paramref name="key"/>, if any.</summary>
@@ -146,17 +174,18 @@ TEST_CASE("hd settings: each HD setting has its own key and global, off in the o
         CHECK((setting.Personal != setting.Original) == (setting.Key != "HDFlecks" && !setting.Player));
         // The tests keep the original's defaults (only the app calls UseHdByDefault and UsePersonalGameplay).
         CHECK_EQ(MCHdSettings::Default(setting), setting.Original);
-        CHECK_EQ(setting.Gameplay, setting.Key == "MechBraking");
+        CHECK_EQ(setting.Gameplay, setting.Key == "MechBraking" || setting.Key == "MoreUnits");
     }
 
-    CHECK_EQ(keys.size(), size_t{16});
+    CHECK_EQ(keys.size(), size_t{17});
 }
 
 /// <summary>
-/// A copy without HD, its looks the original's: BRAKING, which plays rather than looks and needs nothing of the pack,
-/// still reads as on when PREFS lacks it; the HD answer then turns the looks on too.
+/// A copy without HD, its looks the original's: BRAKING and MoreUnits, which play rather than look and need nothing of
+/// the pack, still read as on when PREFS lacks them; the HD answer then turns the looks on too.
 /// </summary>
-TEST_CASE_ISOLATED("hd settings: braking is on by default in a copy without HD, whose looks are the original's")
+TEST_CASE_ISOLATED(
+    "hd settings: the gameplay settings are on by default in a copy without HD, whose looks are the original's")
 {
     UsePersonalGameplay();
 
@@ -166,6 +195,18 @@ TEST_CASE_ISOLATED("hd settings: braking is on by default in a copy without HD, 
     }
 
     CHECK_EQ(MCHdSettings::Default(MCHdSettings::Find("MechBraking")), 1);
+    CHECK_EQ(MCHdSettings::Default(MCHdSettings::Find("MoreUnits")), 1);
+
+    // PREFS without MoreUnits: the personal build's player may own 100 units, and the setting at its default isn't
+    // written.
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "mc_personal_gameplay_prefs.cfg";
+    WriteHdPrefs(path, [](MCFitIniFile&) {});
+    ReadHdPrefs(path);
+    CHECK_EQ(GMoreUnits, 1);
+    CHECK_EQ(MaxUnits(), 100);
+    WriteHdPrefs(path, [](MCFitIniFile& prefs) { MCHdSettings::Write(prefs); });
+    CHECK(!SavedSetting(path, "MoreUnits").has_value());
+    std::filesystem::remove(path);
     UseHdByDefault();
 
     for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
@@ -182,21 +223,8 @@ TEST_CASE("hd settings: PREFS keeps every HD setting and reads it back")
 {
     const std::vector<int32_t> was = MCHdSettings::Now();
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "mc_hd_settings_prefs.cfg";
-    const auto write = [&](const std::function<void(MCFitIniFile&)>& settings)
-    {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Create(MCFileSystem::ToUtf8(path)), 0);
-        prefs.WriteBlock("MechCommander");
-        settings(prefs);
-    };
-
-    const auto read = [&]
-    {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(path)), 0);
-        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
-        MCHdSettings::Read(prefs);
-    };
+    const auto write = [&](const std::function<void(MCFitIniFile&)>& settings) { WriteHdPrefs(path, settings); };
+    const auto read = [&] { ReadHdPrefs(path); };
 
     // Each at its most: written and read back.
     for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
@@ -235,6 +263,35 @@ TEST_CASE("hd settings: PREFS keeps every HD setting and reads it back")
 }
 
 /// <summary>
+/// Port-only (MoreUnits): PREFS's MoreUnits raises the unit limit: read as on, a player outside a match may own 100
+/// mechs and vehicles; written only while it differs from its default (off, in the tests), so PREFS without it reads
+/// off, the original's 50.
+/// </summary>
+TEST_CASE("hd settings: PREFS keeps MoreUnits, which raises the unit limit to 100")
+{
+    const std::vector<int32_t> was = MCHdSettings::Now();
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "mc_more_units_prefs.cfg";
+
+    WriteHdPrefs(path, [](MCFitIniFile& prefs) { prefs.WriteIdBoolean("MoreUnits", true); });
+    ReadHdPrefs(path);
+    CHECK_EQ(GMoreUnits, 1);
+    CHECK_EQ(MaxUnits(), 100);
+    WriteHdPrefs(path, [](MCFitIniFile& prefs) { MCHdSettings::Write(prefs); });
+    CHECK_EQ(SavedSetting(path, "MoreUnits"), std::optional<int32_t>(1));
+
+    GMoreUnits = 0;
+    WriteHdPrefs(path, [](MCFitIniFile& prefs) { MCHdSettings::Write(prefs); });
+    CHECK(!SavedSetting(path, "MoreUnits").has_value());
+    GMoreUnits = 1;
+    ReadHdPrefs(path);
+    CHECK_EQ(GMoreUnits, 0);
+    CHECK_EQ(MaxUnits(), 50);
+
+    std::filesystem::remove(path);
+    MCHdSettings::Restore(was);
+}
+
+/// <summary>
 /// PREFS keeps its format and only the settings that differ from their defaults: a PREFS from a build that wrote every
 /// setting, read and saved again, keeps the player's changes (the music turned down, HD LIGHTING at NIGHT) and the
 /// player's own answers (REPORTS), and loses the rest; then a release that changes the defaults (here the personal
@@ -250,13 +307,7 @@ TEST_CASE_ISOLATED("game: PREFS keeps only what differs from the defaults, so a 
     REQUIRE(MCTestGame::StartLogistics());
     constexpr int32_t QuietMusic = MCPrefsDefaults::MusicVolume / 2;
     const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
-    const auto readHd = [&]
-    {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
-        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
-        MCHdSettings::Read(prefs);
-    };
+    const auto readHd = [&] { ReadHdPrefs(prefsPath); };
 
     // An older build's PREFS: every HD setting, at its default but HD LIGHTING.
     {
@@ -394,10 +445,10 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
     CHECK(list->Status().empty());
     MCScreenInput::SaveShot("hd options", MCScreenInput::ScreenHash());
 
-    // Every HD setting is listed once.
+    // Every HD setting is listed once, but those with no row yet.
     for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
     {
-        CHECK(list->RowOf(setting.Key).has_value());
+        CHECK_EQ(list->RowOf(setting.Key).has_value(), Listed(setting));
     }
 
     // HD LIGHTING steps OFF, ON, DUSK, NIGHT and round; a right click goes back.
@@ -548,13 +599,13 @@ TEST_CASE_ISOLATED("game: after the GPU fails to start, HD OPTIONS dims what onl
     REQUIRE(list != nullptr);
     CHECK_EQ(list->Status(), "VULKAN DIDN'T START ON THIS COMPUTER: THE CPU DRAWS THE GAME.");
 
-    // Every setting is one the GPU alone draws or one the CPU keeps.
+    // Every setting on the page is one the GPU alone draws or one the CPU keeps.
     constexpr std::array<std::string_view, 10> gpuOnly = {"HDArt",    "HDLighting", "HDSunShadows", "HDRelief",
                                                           "HDClouds", "HDSway",     "HDParticles",  "HDFlecks",
                                                           "HDShake",  "HDWeather"};
     constexpr std::array<std::string_view, 6> cpuKeeps = {"HDAudio", "HDFootprints", "HDTurns",
                                                           "HDStops", "MechBraking",  "Reports"};
-    CHECK_EQ(gpuOnly.size() + cpuKeeps.size(), MCHdSettings::All().size());
+    CHECK_EQ(gpuOnly.size() + cpuKeeps.size() + Unlisted.size(), MCHdSettings::All().size());
 
     // The settings showing as they shouldn't, named.
     std::string wrong;

@@ -1,7 +1,8 @@
 #include "stdafx.h"
 #include "lib/MCWorkers.h"
 
-MCWorkers::MCWorkers(size_t helpers, Priority priority) : _HelperCount(helpers), _Priority(priority)
+MCWorkers::MCWorkers(size_t helpers, Priority priority, MCThreadPriority like)
+    : _HelperCount(helpers), _Priority(priority), _Like(like)
 {
 }
 
@@ -75,11 +76,11 @@ auto MCWorkers::Run(size_t parts, const std::function<void(size_t)>& work) -> vo
     }
 }
 
-auto MCWorkers::LowerThisThread() -> void
+auto MCWorkers::LowerThisThread(MCThreadPriority like) -> void
 {
-    if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW))
+    if (constexpr bool Below = true; !MCSetCurrentThreadPriority(like, Below))
     {
-        SDL_Log("MCWorkers: could not lower a thread's priority (%s); it runs as the game's", SDL_GetError());
+        SDL_Log("MCWorkers: could not lower a thread's priority (as %d) a step; it runs as it was", like.Value);
     }
 }
 
@@ -87,7 +88,7 @@ auto MCWorkers::Help(std::stop_token stop) -> void
 {
     if (_Priority == Priority::Low)
     {
-        LowerThisThread();
+        LowerThisThread(_Like);
     }
 
     uint64_t seen = 0;

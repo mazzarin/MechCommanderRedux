@@ -123,6 +123,8 @@ namespace
         /// <summary>Set while the making thread works on a batch.</summary>
         bool Working = false;
         MCSharpPictures::MCMadeTally Tally;
+        /// <summary>The game's thread's priority as the making thread started, a step below which it runs.</summary>
+        MCThreadPriority GamePriority;
         /// <summary>The making thread, started with the first job; last, so it stops before the rest goes.</summary>
         std::jthread Maker;
     };
@@ -296,10 +298,11 @@ namespace
     /// </summary>
     void MakePictures(std::stop_token stop)
     {
-        // Ahead of the screens that show them: below the game's threads, as nothing waits for them yet.
-        MCWorkers::LowerThisThread();
+        // Ahead of the screens that show them: a step below the game's thread, as nothing waits for them yet (set before
+        // this thread started).
         State& state = TheState();
-        MCWorkers helpers(MCWorkers::HelpersFor(MostHelpers), MCWorkers::Priority::Low);
+        MCWorkers::LowerThisThread(state.GamePriority);
+        MCWorkers helpers(MCWorkers::HelpersFor(MostHelpers), MCWorkers::Priority::Low, state.GamePriority);
         std::unique_lock lock(state.Lock);
 
         while (state.Changed.wait(lock, stop, [&state] { return !state.Queue.empty(); }))
@@ -354,6 +357,7 @@ namespace
 
         if (!state.Maker.joinable())
         {
+            state.GamePriority = MCCurrentThreadPriority();
             state.Maker = std::jthread(MakePictures);
         }
 

@@ -16,8 +16,10 @@
 #include "lib/MCPriorityQueue.h"
 #include "lib/MCRetryDelay.h"
 #include "lib/MCThreadKeeper.h"
+#include "lib/MCWorkers.h"
 #include "main/MCGameContext.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCThreadPriority.h"
 
 namespace
 {
@@ -858,6 +860,51 @@ TEST_CASE("packet file: a packet file inside one closes with its parent")
     CHECK_EQ(child.SeekPacket(0), static_cast<int32_t>(0xBADF0004));
     CHECK_EQ(child.GetNumPackets(), 0);
     CHECK_EQ(child.ReadPacket(0, buffer), 0);
+}
+
+/// <summary>
+/// Port-only: low-priority workers' helpers (the sharp pictures' maker's) run a step below the thread they were made
+/// for, as HD art's readers do (MCSetCurrentThreadPriority's step below), not at SDL's low priority (Windows' lowest).
+/// </summary>
+TEST_CASE("workers: low-priority helpers run a step below the thread they were made for, as HD art's readers")
+{
+    constexpr size_t Helpers = 2;
+    constexpr size_t Parts = 8;
+    constexpr auto PartTime = std::chrono::milliseconds(20);
+    constexpr bool Below = true;
+    const MCThreadPriority like = MCCurrentThreadPriority();
+    // What a thread a step below it gets by the readers' rule.
+    MCThreadPriority below;
+    std::thread(
+        [&]
+        {
+            MCSetCurrentThreadPriority(like, Below);
+            below = MCCurrentThreadPriority();
+        })
+        .join();
+    MCWorkers workers(Helpers, MCWorkers::Priority::Low, like);
+    const std::thread::id caller = std::this_thread::get_id();
+    std::vector<std::optional<MCThreadPriority>> onHelpers(Parts);
+    workers.Run(Parts,
+                [&](size_t part)
+                {
+                    std::this_thread::sleep_for(PartTime);
+
+                    if (std::this_thread::get_id() != caller)
+                    {
+                        onHelpers[part] = MCCurrentThreadPriority();
+                    }
+                });
+
+    REQUIRE(std::ranges::any_of(onHelpers, [](const auto& priority) { return priority.has_value(); }));
+
+    for (const std::optional<MCThreadPriority>& priority : onHelpers)
+    {
+        if (priority.has_value())
+        {
+            CHECK(*priority == below);
+        }
+    }
 }
 
 /// <summary>

@@ -687,6 +687,9 @@
     <ClCompile Include="main\MCArtModes.cpp">
       <Filter>main</Filter>
     </ClCompile>
+    <ClCompile Include="main\MCBenchmark.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
     <ClCompile Include="main\MCErrorReport.cpp">
       <Filter>main</Filter>
     </ClCompile>
@@ -800,6 +803,12 @@
       <Filter>mission</Filter>
     </ClCompile>
     <ClCompile Include="mission\MCScenarioPart.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
+    <ClCompile Include="mission\MCStagedBattle.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
+    <ClCompile Include="mission\MCTrailerMission.cpp">
       <Filter>mission</Filter>
     </ClCompile>
     <ClCompile Include="mission\MCWeatherPlay.cpp">
@@ -2104,6 +2113,9 @@
     <ClInclude Include="main\MCArtModes.h">
       <Filter>main</Filter>
     </ClInclude>
+    <ClInclude Include="main\MCBenchmark.h">
+      <Filter>main</Filter>
+    </ClInclude>
     <ClInclude Include="main\MCDropSlot.h">
       <Filter>main</Filter>
     </ClInclude>
@@ -2212,6 +2224,12 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCScenarioReading.h">
+      <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="mission\MCStagedBattle.h">
+      <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="mission\MCTrailerMission.h">
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCWeatherPlay.h">

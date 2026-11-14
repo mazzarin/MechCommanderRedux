@@ -245,6 +245,12 @@ namespace MCTelemetry
     /// <summary>The game is quitting as it should: the black box marks the run as ended.</summary>
     void Quit();
 
+    /// <summary>
+    /// Port-only (Redux HD): the computer, as the backend reads it (for the benchmark's summary, main/MCBenchmark.h,
+    /// which may run before the reports start); none without a backend.
+    /// </summary>
+    std::optional<MCMachine> KnownMachine();
+
     /// <summary>What the main menu should show the player now.</summary>
     MCPrompt Prompt();
 

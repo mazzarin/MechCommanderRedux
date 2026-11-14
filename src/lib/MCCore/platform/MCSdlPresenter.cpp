@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCSdlPresenter.h"
+#include "platform/MCFrameLog.h"
 
 namespace
 {
@@ -225,6 +226,8 @@ std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
         return std::unexpected(SdlError("SDL_RenderPresent"));
     }
 
+    // The frame handed to the screen: the frame log's time between these is the screen's (a benchmark's hitches).
+    MCFrameLog::Presented();
     return {};
 }
 

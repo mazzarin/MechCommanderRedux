@@ -68,10 +68,17 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
     _FileName = fileName;
     _FileMode = mode;
 
+    // Port-only: a file the game made for itself (MCFileSystem::PutImage) reads as a FastFile entry does, whatever
+    // the folders hold.
+    std::optional<std::vector<uint8_t>> put =
+        mode == MCFileMode::Read ? MCFileSystem::PutImageAt(_FileName) : std::nullopt;
+
     // Port: files opened to write live in the user folder.
-    std::optional<MCDiskFile> disk = MCDiskFile::Open(
-        mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName) : MCFileSystem::ResolveWrite(_FileName),
-        mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read);
+    std::optional<MCDiskFile> disk =
+        put.has_value() ? std::nullopt
+                        : MCDiskFile::Open(mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName)
+                                                                    : MCFileSystem::ResolveWrite(_FileName),
+                                           mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read);
     _State.reset();
 
     if (!disk.has_value())
@@ -82,7 +89,11 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
         }
 
         // Port: a file the context's source holds in memory (a test's) reads as a FastFile entry does.
-        if (const auto image = MCFileSystem::FindImage(_FileName); image.has_value())
+        if (put.has_value())
+        {
+            _FileImage = std::move(*put);
+        }
+        else if (const auto image = MCFileSystem::FindImage(_FileName); image.has_value())
         {
             _FileImage.assign(image->begin(), image->end());
         }

@@ -51,6 +51,10 @@ namespace
         int LastClickButton = -1;
         uint64_t LastClickTime = 0;
         MCPoint LastClickPos;
+
+        /// <summary>Port-only (Redux HD): the mouse and keys held off the game, and what Escape does then (HoldInput).</summary>
+        std::atomic<bool> Held = false;
+        std::function<void()> HeldEscape;
     };
 
     MCInputState& state()
@@ -730,8 +734,9 @@ namespace MCInput
     {
         MCInputState& input = state();
 
+        // Held (HoldInput), the cursor stays where it was put.
         if (const std::shared_ptr<MCDisplay> display = input.Display.lock();
-            display != nullptr && SDL_GetMouseFocus() == &display->Window())
+            !input.Held && display != nullptr && SDL_GetMouseFocus() == &display->Window())
         {
             float x = 0.0f;
             float y = 0.0f;
@@ -851,6 +856,32 @@ namespace MCInput
     void HandleEvent(const SDL_Event& event)
     {
         MCInputState& input = state();
+
+        // Port-only (Redux HD): held, the mouse and keys reach nothing but Escape's own (HoldInput).
+        if (input.Held)
+        {
+            switch (event.type)
+            {
+                case SDL_EVENT_KEY_DOWN:
+                {
+                    if (event.key.key == SDLK_ESCAPE && !event.key.repeat && input.HeldEscape)
+                    {
+                        input.HeldEscape();
+                    }
+
+                    return;
+                }
+                case SDL_EVENT_KEY_UP:
+                case SDL_EVENT_TEXT_INPUT:
+                case SDL_EVENT_MOUSE_MOTION:
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                case SDL_EVENT_MOUSE_BUTTON_UP:
+                case SDL_EVENT_MOUSE_WHEEL:
+                    return;
+                default:
+                    break;
+            }
+        }
 
         switch (event.type)
         {
@@ -1008,6 +1039,24 @@ namespace MCInput
         input.LastClickButton = -1;
         input.LastClickTime = 0;
         input.LastClickPos = {};
+        input.Held = false;
+        input.HeldEscape = nullptr;
+    }
+
+    void HoldInput(bool held, std::function<void()> escape)
+    {
+        MCInputState& input = state();
+        input.Held = held;
+        input.HeldEscape = held ? std::move(escape) : nullptr;
+
+        // A key down as the hold starts would stay down: its release never reaches the game.
+        if (held)
+        {
+            for (std::atomic<bool>& down : input.Down)
+            {
+                down = false;
+            }
+        }
     }
 
     int VirtualKeyFromScancode(SDL_Scancode scancode, SDL_Keycode key, bool numLock)

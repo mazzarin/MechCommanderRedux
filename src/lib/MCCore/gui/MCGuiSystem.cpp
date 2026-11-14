@@ -15,6 +15,7 @@
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "lib/MCPacketFile.h"
+#include "main/MCBenchmark.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "main/MCGameContext.h"
@@ -48,6 +49,25 @@ namespace
     /// <summary>Port-only: the window's screen as the frame log last noted it.</summary>
     std::string FrameLogScreen;
 
+    /// <summary>Port-only: the refresh rate (Hz) of the screen <paramref name="display"/>'s window is on; 0 when not known.</summary>
+    double RefreshOf(const MCDisplay& display)
+    {
+        const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(&display.Window()));
+        return mode != nullptr ? mode->refresh_rate : 0.0;
+    }
+
+    /// <summary>Port-only: <paramref name="display"/>'s window, its screen and how it's drawn (DisplayDescription).</summary>
+    std::string Describe(const MCDisplay& display)
+    {
+        SDL_Window* window = &display.Window();
+        int width = 0;
+        int height = 0;
+        SDL_GetWindowSizeInPixels(window, &width, &height);
+        const bool fullScreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        return std::format("{}x{} pixels at {:.2f} Hz, {}, vsync {}, {}", width, height, RefreshOf(display),
+                           fullScreen ? "full screen" : "in a window", GVSync ? "on" : "off", display.RendererName());
+    }
+
     /// <summary>
     /// Port-only: the refresh rate (Hz) of the screen <paramref name="display"/>'s window is on, for the frame log
     /// (MCFrameLog::NextFrame), and a note when the window, its screen or how it's drawn changed, so a log says what
@@ -55,25 +75,20 @@ namespace
     /// </summary>
     double FrameLogRefresh(const MCDisplay& display)
     {
-        SDL_Window* window = &display.Window();
-        const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
-        const double refreshHz = mode != nullptr ? mode->refresh_rate : 0.0;
-        int width = 0;
-        int height = 0;
-        SDL_GetWindowSizeInPixels(window, &width, &height);
-        const bool fullScreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-        std::string screen =
-            std::format("display: {}x{} pixels at {:.2f} Hz, {}, vsync {}, {}", width, height, refreshHz,
-                        fullScreen ? "full screen" : "in a window", GVSync ? "on" : "off", display.RendererName());
-
-        if (screen != FrameLogScreen)
+        if (std::string screen = std::format("display: {}", Describe(display)); screen != FrameLogScreen)
         {
             MCFrameLog::Note(screen);
             FrameLogScreen = std::move(screen);
         }
 
-        return refreshHz;
+        return RefreshOf(display);
     }
+}
+
+auto DisplayDescription() -> std::string
+{
+    const std::shared_ptr<MCDisplay> display = HasGuiSystem() ? GuiSystem().Display() : nullptr;
+    return display != nullptr ? Describe(*display) : "no display";
 }
 
 auto GuiSystem() -> MCGuiSystem&
@@ -484,7 +499,7 @@ auto MCGuiSystem::Run() -> void
     do
     {
         PerfStartTime = MCPort::PerformanceCounter();
-        MCFrameLog::NextFrame(MCFrameLog::Enabled() && _Display != nullptr ? FrameLogRefresh(*_Display) : 0.0);
+        MCFrameLog::NextFrame(MCFrameLog::Enabled() && _Display != nullptr ? FrameLogRefresh(*_Display) : 0.0, GVSync);
         // Port-only (HD weather's snow): whether the last frame threw the weather's pieces.
         const bool drewWeather = MCWeather::TakeSnowDrawn();
 
@@ -506,8 +521,8 @@ auto MCGuiSystem::Run() -> void
         }
 
         // Port (personal): the updater's content work, done on a thread of its own (main/MCUpdater.h); its downloads
-        // wait while a match's mission plays.
-        MCUpdater::PauseWork(MultiPlayer() != nullptr && MultiPlayer()->InMission);
+        // wait while a match's mission plays, and while a benchmark runs (Redux HD, main/MCBenchmark.h).
+        MCUpdater::PauseWork((MultiPlayer() != nullptr && MultiPlayer()->InMission) || MCBenchmark::Running());
         MCUpdater::Frame();
 
         // Port-only (Redux HD): a host's closed session keeps its joiners' links open until they've read that it ends,

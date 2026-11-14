@@ -21,7 +21,8 @@ int RunGame(std::string_view commandLine, std::chrono::milliseconds internetLeav
 
 /// <summary>
 /// Reads the command line's switches: <c>-mission n</c> (or <c>+ n</c>), <c>-network file</c>, <c>-load file</c>, and
-/// the port's <c>-renderer</c>, <c>-gpudraw</c>, <c>-gpudump</c>, <c>-framelog</c>, <c>-fps</c> and <c>-novsync</c>.
+/// the port's <c>-renderer</c>, <c>-gpudraw</c>, <c>-gpudump</c>, <c>-framelog</c>, <c>-benchmark</c>, <c>-fps</c> and
+/// <c>-novsync</c>.
 /// </summary>
 void ParseCommandLine(std::string_view commandLine);
 

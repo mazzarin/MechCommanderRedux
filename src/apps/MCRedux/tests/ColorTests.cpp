@@ -6,6 +6,7 @@
 #include "fixtures/MCRetailData.h"
 #include "lib/MCFile.h"
 #include "main/MCGameContext.h"
+#include "sprite/MCSceneLights.h"
 
 namespace
 {
@@ -158,6 +159,39 @@ TEST_CASE("water: each step gives the water entries the next colours of the cycl
     }
 
     CHECK_EQ(CurrentMagic, 2);
+    CurrentMagic = savedMagic;
+}
+
+TEST_CASE("water: the cycle's steps keep the glows measured, a change elsewhere in the palette doesn't")
+{
+    // Every mission turns the cycle on, and its steps threw every glow measured away (13 Nov, the A10).
+    MCTestContextScope scope;
+    scope.Context().SetPalette(std::make_unique<MCPalette>(PalFile(256), std::vector<uint8_t>{}, 1));
+    const uint8_t savedMagic = CurrentMagic;
+    const size_t kept = MCSceneLights::GlowTablesKey();
+    const MCVfxRgb water = GamePalette().Colors()[FirstWaterColor];
+
+    for (int32_t step = 0; step < 3; ++step)
+    {
+        StepWaterColors(GamePalette(), nullptr);
+        CHECK_EQ(MCSceneLights::GlowTablesKey(), kept);
+    }
+
+    const MCVfxRgb stepped = GamePalette().Colors()[FirstWaterColor];
+    CHECK((stepped.R != water.R || stepped.G != water.G || stepped.B != water.B));
+
+    // The entries either side of the water's still count.
+    for (const int32_t entry : {FirstWaterColor - 1, FirstWaterColor + static_cast<int32_t>(WaterMagicColors.size())})
+    {
+        MCTest::Scope at(std::format("entry {:#x}", entry));
+        const MCVfxRgb was = GamePalette().Colors()[static_cast<size_t>(entry)];
+        const MCVfxRgb other{static_cast<uint8_t>((was.R + 1) % 64), was.G, was.B};
+        GamePalette().TweakPalette(entry, std::span(&other, 1));
+        CHECK(MCSceneLights::GlowTablesKey() != kept);
+        GamePalette().TweakPalette(entry, std::span(&was, 1));
+        CHECK_EQ(MCSceneLights::GlowTablesKey(), kept);
+    }
+
     CurrentMagic = savedMagic;
 }
 

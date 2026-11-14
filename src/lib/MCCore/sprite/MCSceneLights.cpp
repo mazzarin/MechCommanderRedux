@@ -284,24 +284,59 @@ namespace
         return ShiningPixel{light, weight};
     }
 
-    std::optional<Glow> MeasurePixels(std::span<const uint8_t> shapeTable, int32_t frame,
-                                      MCSceneLights::MCGlowPixels shining)
+    /// <summary>Each palette entry's Shining, for one frame's measure.</summary>
+    using ShiningColors = std::array<std::optional<ShiningPixel>, MCPalette::ColorCount>;
+
+    /// <summary>
+    /// Each palette entry's light in a frame (Shining's), worked out once a measure rather than once a pixel: a
+    /// first explosion measured its frames' pixels three times each, LightOf's blend for every one (13 Nov, the A10:
+    /// 25-93 ms on the game's thread as an explosion first showed).
+    /// </summary>
+    ShiningColors ShiningOf(bool translucent, MCSceneLights::MCGlowPixels shining)
+    {
+        ShiningColors colors;
+
+        for (size_t color = 0; color < colors.size(); ++color)
+        {
+            colors[color] = Shining(static_cast<uint8_t>(color), translucent, shining);
+        }
+
+        return colors;
+    }
+
+    /// <summary>Whether <paramref name="color"/> is one of the water entries the palette's colour cycle steps.</summary>
+    bool IsCycledWater(uint8_t color)
+    {
+        return color >= FirstWaterColor && color < FirstWaterColor + WaterMagicColors.size();
+    }
+
+    /// <summary>A frame's glow (none without such pixels), and whether it has pixels of the water's cycled entries.</summary>
+    struct Measured
+    {
+        std::optional<Glow> Measure;
+        bool Water = false;
+    };
+
+    Measured MeasurePixels(std::span<const uint8_t> shapeTable, int32_t frame, MCSceneLights::MCGlowPixels shining)
     {
         if (!VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
         {
-            return std::nullopt;
+            return {};
         }
 
         const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
+        const ShiningColors lights = ShiningOf(translucent, shining);
         double sumX = 0.0;
         double sumY = 0.0;
         double weight = 0.0;
         std::array<double, 3> sum{};
         int32_t pixels = 0;
+        bool water = false;
         VfxShapeVisit(shapeTable, frame,
                       [&](int32_t x, int32_t y, uint8_t color)
                       {
-                          const std::optional<ShiningPixel> shone = Shining(color, translucent, shining);
+                          water = water || IsCycledWater(color);
+                          const std::optional<ShiningPixel>& shone = lights[color];
 
                           if (!shone.has_value())
                           {
@@ -324,7 +359,7 @@ namespace
 
         if (pixels == 0)
         {
-            return std::nullopt;
+            return {.Water = water};
         }
 
         Glow glow;
@@ -337,7 +372,7 @@ namespace
         }
 
         glow.Pixels = pixels;
-        return glow;
+        return {glow, water};
     }
 
     /// <summary>A hash of <paramref name="bytes"/> (the standard library's, as for a string).</summary>
@@ -354,10 +389,19 @@ namespace
         return hash ^ (value + GoldenRatio + (hash << 6) + (hash >> 2));
     }
 
-    /// <summary>The hash of the colour tables a frame's light is measured with (LightOf's).</summary>
+    /// <summary>
+    /// The hash of the colour tables a frame's light is measured with (LightOf's): the palette's but its water entries
+    /// the colour cycle steps (MCSceneLights::GlowTablesKey). With them, each step (every few frames of a mission, which
+    /// turns the cycle on) threw every glow measured away, and each was measured again from its pixels: 16% of the
+    /// game's thread in the A10's battle benchmark (13 Nov).
+    /// </summary>
     size_t ColorTablesHash()
     {
-        size_t hash = BytesHash(std::as_bytes(std::span(GamePalette().RgbData)));
+        const std::span<const uint8_t> rgb(GamePalette().RgbData);
+        const size_t waterFrom = std::min(rgb.size(), size_t{FirstWaterColor} * sizeof(MCVfxRgb));
+        const size_t waterTo = std::min(rgb.size(), waterFrom + WaterMagicColors.size() * sizeof(MCVfxRgb));
+        size_t hash = BytesHash(std::as_bytes(rgb.first(waterFrom)));
+        hash = Combined(hash, BytesHash(std::as_bytes(rgb.subspan(waterTo))));
         hash = Combined(hash, BytesHash(std::as_bytes(std::span(SpecialColor))));
         return Combined(hash, BytesHash(std::as_bytes(std::span(MCAlphaColors))));
     }
@@ -399,7 +443,7 @@ namespace
         // OB-190: a frame the table lists but doesn't hold (MCVfxHasShape) has no bytes to key.
         if (state.Drawing.expired() || !VfxIsShapeTable(shapeTable) || !MCVfxHasShape(shapeTable, frame))
         {
-            return MeasurePixels(shapeTable, frame, shining);
+            return MeasurePixels(shapeTable, frame, shining).Measure;
         }
 
         const size_t key =
@@ -410,12 +454,20 @@ namespace
             return kept->second;
         }
 
+        const Measured measured = MeasurePixels(shapeTable, frame, shining);
+
+        // A frame with the cycled water entries' pixels is measured each time: the key leaves their colours out.
+        if (measured.Water)
+        {
+            return measured.Measure;
+        }
+
         if (state.Glows.size() >= MaxGlowMeasures)
         {
             state.Glows.clear();
         }
 
-        return state.Glows.emplace(key, MeasurePixels(shapeTable, frame, shining)).first->second;
+        return state.Glows.emplace(key, measured.Measure).first->second;
     }
 
     /// <summary>A colour <see cref="LightSaturation"/> times further from the grey of its mean.</summary>
@@ -919,11 +971,12 @@ auto MCSceneLights::FrameColors(std::span<const uint8_t> shapeTable, int32_t fra
     }
 
     const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
+    const ShiningColors lights = ShiningOf(translucent, pixels);
     std::array<int32_t, MCPalette::ColorCount> counts{};
     VfxShapeVisit(shapeTable, frame,
                   [&](int32_t, int32_t, uint8_t color)
                   {
-                      if (Shining(color, translucent, pixels).has_value())
+                      if (lights[color].has_value())
                       {
                           ++counts[color];
                       }
@@ -950,12 +1003,12 @@ auto MCSceneLights::FrameOutline(std::span<const uint8_t> shapeTable, int32_t fr
     }
 
     const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
+    const ShiningColors lights = ShiningOf(translucent, pixels);
     std::map<std::pair<int32_t, int32_t>, std::array<float, 3>> shining;
     VfxShapeVisit(shapeTable, frame,
                   [&](int32_t x, int32_t y, uint8_t color)
                   {
-                      if (const std::optional<ShiningPixel> shone = Shining(color, translucent, pixels);
-                          shone.has_value())
+                      if (const std::optional<ShiningPixel>& shone = lights[color]; shone.has_value())
                       {
                           shining[{x, y}] = shone->Light.Color;
                       }
@@ -974,6 +1027,11 @@ auto MCSceneLights::FrameOutline(std::span<const uint8_t> shapeTable, int32_t fr
     }
 
     return outline;
+}
+
+auto MCSceneLights::GlowTablesKey() -> size_t
+{
+    return ColorTablesHash();
 }
 
 auto MCSceneLights::DrawnFrame(const MCVfxAppearance& appearance) -> std::optional<MCTableFrame>

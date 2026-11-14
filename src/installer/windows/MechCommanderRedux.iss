@@ -734,9 +734,10 @@ begin
   Install := InstalledFolder;
   UpdatesOwnCopy := not SameFolder(UpdateGameFolder, Install);
 
+  // (No line here starts with a bracket: Inno would take it for a section's tag.)
   if UpdatesOwnCopy then
-    Log(Format('An update of %s, a copy the setup didn''t install (its install: %s): the program''s files alone',
-               [UpdateGameFolder, Install]))
+    Log(Format('An update of %s, a copy the setup didn''t install (its install: %s): the program''s files alone', [
+               UpdateGameFolder, Install]))
   else
     Log(Format('An update of the setup''s install, %s', [UpdateGameFolder]));
 end;

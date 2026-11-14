@@ -576,6 +576,16 @@ namespace
     /// <summary>A shape table, by its place and length.</summary>
     using TableKey = std::pair<MCAddressKey, size_t>;
 
+    /// <summary>
+    /// A look kept by its table's place, with the shape whose table it is: once the sprite cache drops that shape,
+    /// another table can be made at its place.
+    /// </summary>
+    struct PlacedLook
+    {
+        std::weak_ptr<const MCShape> Shape;
+        BurstLook Look;
+    };
+
     /// <summary>A shape table's frame, by the table's place and length and the frame's number.</summary>
     using FrameKey = std::tuple<MCAddressKey, size_t, int32_t>;
 
@@ -615,10 +625,11 @@ namespace
         std::vector<PendingStep> Steps;
         std::unordered_map<MCAddressKey, Track> Tracks;
         std::vector<Shake> Shakes;
-        std::map<TableKey, BurstLook> Looks;
+        std::map<TableKey, PlacedLook> Looks;
         /// <summary>
-        /// Port-only: the looks measured, by the shapes' HD folders (MCShape::HdFolder), so that one measured before it
-        /// was drawn (MCParticles::MeasureExplosions) is found when its shape is loaded again elsewhere.
+        /// Port-only: the looks measured, by the shapes' HD folders (MCShape::HdFolder, which names a sprite file's
+        /// packet), so that one measured before it was drawn (MCParticles::MeasureExplosions) is found when its shape
+        /// is loaded again elsewhere.
         /// </summary>
         std::map<std::filesystem::path, BurstLook> FolderLooks;
         /// <summary>Port-only: how many looks were measured, and how many explosions began a burst.</summary>
@@ -790,8 +801,10 @@ namespace
     /// square's side (MCSceneLights' measure), and its bright pixels' colours over all its frames, brightest first,
     /// leaving out those few of them have; measured once a shape table.
     /// </summary>
-    BurstLook LookOf(State& state, const MCShape& shape)
+    BurstLook LookOf(State& state, const std::shared_ptr<const MCShape>& shapeKept)
     {
+        const MCShape& shape = *shapeKept;
+
         if (!VfxIsShapeTable(shape.FrameList()))
         {
             return {};
@@ -799,19 +812,23 @@ namespace
 
         const std::span<const uint8_t> table = shape.FrameList();
         const auto [found, isNew] = state.Looks.try_emplace(TableKey{MCAddressKey::OfData(table), table.size()});
+        PlacedLook& placed = found->second;
 
-        if (!isNew)
+        // Port-only: a look found by its place is this shape's only while the shape it was measured for is this one.
+        if (!isNew && !placed.Shape.owner_before(shapeKept) && !shapeKept.owner_before(placed.Shape))
         {
-            return found->second;
+            return placed.Look;
         }
+
+        placed.Shape = shapeKept;
 
         // Port-only: measured already, as loaded before (MCParticles::MeasureExplosions).
         if (!shape.HdFolder.empty())
         {
             if (const auto measured = state.FolderLooks.find(shape.HdFolder); measured != state.FolderLooks.end())
             {
-                found->second = measured->second;
-                return found->second;
+                placed.Look = measured->second;
+                return placed.Look;
             }
         }
 
@@ -836,7 +853,7 @@ namespace
             }
         }
 
-        BurstLook& look = found->second;
+        BurstLook& look = placed.Look;
         look.Size = {std::sqrt(static_cast<float>(fire)), std::sqrt(static_cast<float>(all))};
         int32_t pixels = 0;
 
@@ -875,7 +892,7 @@ namespace
     BurstLook LookOf(State& state, const MCVfxAppearance& appearance)
     {
         const std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
-        return shape != nullptr ? LookOf(state, *shape) : BurstLook{};
+        return shape != nullptr ? LookOf(state, shape) : BurstLook{};
     }
 
     /// <summary>The colours of fire <paramref name="ramp"/> (a burst's, a fleck's), brightest first.</summary>
@@ -2208,15 +2225,21 @@ auto MCParticles::MeasureExplosions() -> void
 
         const std::shared_ptr<MCAppearanceType> appearance = AppearanceTypeList().GetAppearance(type->AppearName);
 
-        if (appearance == nullptr || (appearance->AppearanceNum & AppearanceKind) != VfxAppearance)
+        if (appearance == nullptr)
         {
             continue;
         }
 
-        for (const std::shared_ptr<MCShape>& shape : static_cast<MCVfxAppearanceType&>(*appearance).DrawnShapes())
+        if ((appearance->AppearanceNum & AppearanceKind) == VfxAppearance)
         {
-            static_cast<void>(LookOf(state, *shape));
+            for (const std::shared_ptr<MCShape>& shape : static_cast<MCVfxAppearanceType&>(*appearance).DrawnShapes())
+            {
+                static_cast<void>(LookOf(state, shape));
+            }
         }
+
+        // The user GetAppearance counted, given back (a type no explosion uses yet goes again, its looks kept).
+        AppearanceTypeList().RemoveAppearance(*appearance);
     }
 }
 

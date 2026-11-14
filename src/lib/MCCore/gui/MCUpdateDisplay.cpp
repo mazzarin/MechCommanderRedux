@@ -334,7 +334,7 @@ namespace
     size_t Rehearsals = 0;
 
     /// <summary>A rehearsal of what <paramref name="draw"/> draws (see <see cref="RehearseScreen"/>).</summary>
-    void Rehearse(const std::function<void()>& draw, size_t rideAlong)
+    void Rehearse(const std::function<void()>& draw)
     {
         Rehearsals++;
         std::scoped_lock lock(MouseCritSec);
@@ -348,12 +348,12 @@ namespace
             draw();
         }
 
-        // What it queued sent up now (tens of MB for a screen's first), nothing shown, unless the next frame takes it.
+        // What it queued sent up now (tens of MB for a screen's first), nothing shown.
         if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
         {
             MCFrameLog::Scope sent("render.rehearsal");
 
-            if (const std::expected<void, std::string> ran = display->RunRecorded(rideAlong); !ran)
+            if (const std::expected<void, std::string> ran = display->RunRecorded(); !ran)
             {
                 SDL_Log("Rehearse: sending up what a rehearsal queued failed: %s", ran.error().c_str());
             }
@@ -366,33 +366,64 @@ namespace
 namespace
 {
     /// <summary>
+    /// The inventory tab a screen slid in is readied at in piece <paramref name="step"/> of its readying, with tab
+    /// <paramref name="shown"/> shown: that one first, then the others in order.
+    /// </summary>
+    int32_t TabReadied(int32_t step, int32_t shown)
+    {
+        if (step == 0)
+        {
+            return shown;
+        }
+
+        return step <= shown ? step - 1 : step;
+    }
+
+    /// <summary>
     /// The pieces of work a fade into a screen does, each looked up as it runs (FadeOutWhile's fade starts before the
     /// screens exist): the screen the palette is for rehearsed (RehearseScreen), then the screens a slide from it may
-    /// bring in, a piece each (MCLogistics::ScreensSlidIn).
+    /// bring in (MCLogistics::ScreensSlidIn), a piece for each of their inventory tabs: the one shown first, then the
+    /// others, each put back to the one shown, so a tab's first click finds its art loaded and its pictures sent up.
     /// </summary>
     std::vector<std::function<void()>> IntoScreenPieces()
     {
-        std::vector<std::function<void()>> pieces = {[] { RehearseScreen(NoRideAlong); }};
+        std::vector<std::function<void()>> pieces = {[] { RehearseScreen(); }};
 
         for (size_t slid = 0; slid < MCLogistics::MostScreensSlidIn; slid++)
         {
-            pieces.emplace_back(
-                [slid]
-                {
-                    if (GlobalLog() == nullptr)
+            for (int32_t step = 0; step < MCLogistics::InventoryTabs; step++)
+            {
+                pieces.emplace_back(
+                    [slid, step]
                     {
-                        return;
-                    }
+                        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-                    if (const std::vector<MCGuiHandle<MCLogInvScreen>> screens = GlobalLog()->ScreensSlidIn();
-                        slid < screens.size())
-                    {
+                        if (logistics == nullptr)
+                        {
+                            return;
+                        }
+
+                        const std::vector<MCGuiHandle<MCLogInvScreen>> screens = logistics->ScreensSlidIn();
+                        const int32_t shown = logistics->CurrentInvTab;
+
+                        // With a tab shown that isn't one of the four (none is), only it is readied.
+                        if (slid >= screens.size() || ((shown < 0 || shown >= MCLogistics::InventoryTabs) && step > 0))
+                        {
+                            return;
+                        }
+
                         if (const std::shared_ptr<MCLogInvScreen> screen = screens[slid].Lock(); screen != nullptr)
                         {
-                            RehearseHidden(*screen, [&screen] { GlobalLog()->ReadyForSlide(*screen); });
+                            const int32_t tab = TabReadied(step, shown);
+
+                            if (RehearseHidden(*screen, [&] { logistics->ReadyForSlide(*screen, tab); }) &&
+                                tab != shown)
+                            {
+                                logistics->ReadyForSlide(*screen, shown);
+                            }
                         }
-                    }
-                });
+                    });
+            }
         }
 
         return pieces;
@@ -404,20 +435,20 @@ size_t RehearsalsRun()
     return Rehearsals;
 }
 
-void RehearseScreen(size_t rideAlong)
+void RehearseScreen()
 {
     if (CanRehearse())
     {
-        Rehearse(DrawScreenWindow, rideAlong);
+        Rehearse(DrawScreenWindow);
     }
 }
 
-void RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
+bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
 {
     // A screen shown is the screen window's (RehearseScreen).
     if (!CanRehearse() || screen.IsShowing())
     {
-        return;
+        return false;
     }
 
     setUp();
@@ -427,8 +458,8 @@ void RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
             screen.ShowGuiWindow(true);
             screen.Display();
             screen.ShowGuiWindow(false);
-        },
-        NoRideAlong);
+        });
+    return true;
 }
 
 void FadeOutWhile(const std::function<void()>& work)

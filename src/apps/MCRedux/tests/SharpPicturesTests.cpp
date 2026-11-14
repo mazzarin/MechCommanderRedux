@@ -6,7 +6,9 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCLogPort.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCPurchaseScreen.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "platform/MCDisplay.h"
@@ -344,7 +346,7 @@ TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame 
     NewCampaign();
     MCSharpPictures::WaitForMade();
     const size_t before = SharpTaken(*renderer);
-    RehearseScreen(NoRideAlong);
+    RehearseScreen();
     const size_t rehearsed = SharpTaken(*renderer);
     CHECK(rehearsed > before);
     CHECK(ShownBytes() == menu);
@@ -366,7 +368,7 @@ TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame 
     GHdArt = 0;
 }
 
-TEST_CASE_ISOLATED("game: a slide's screen is rehearsed before its first step, which takes nothing more")
+TEST_CASE_ISOLATED("game: a slide to a tab the briefing's fade left unshown takes nothing, rehearsing nothing")
 {
     if (!MCTestGame::Available())
     {
@@ -378,18 +380,20 @@ TEST_CASE_ISOLATED("game: a slide's screen is rehearsed before its first step, w
     MCSharpPictures::WaitForMade();
     Settle();
 
-    // The shop opened on a tab the fade into the briefing didn't ready (the pilots'; it readied the mechs'): the
-    // purchase screen slides in over the briefing, rehearsed first (nothing presented), so the slide's first step
-    // already finds its pictures taken, and no step takes another.
+    // The shop opened on another tab than the briefing's fade left shown (the pilots'; it left the mechs'): the fade
+    // readied every tab, so the purchase screen slides in over the briefing with nothing rehearsed at the click, and
+    // no step takes a picture but the clock's new digits.
+    constexpr size_t ClockDigits = 2;
     GlobalLog()->CurrentInvTab = 1;
     std::vector<size_t> taken;
     MCTestGame::OnPresent = [&] { taken.push_back(SharpTaken(*renderer)); };
     const size_t before = SharpTaken(*renderer);
+    const size_t rehearsed = RehearsalsRun();
     GlobalLog()->SetUpPurchaseScreen(true);
     MCTestGame::OnPresent = {};
     REQUIRE(taken.size() > 2);
-    CHECK(taken.front() > before);
-    CHECK(std::ranges::all_of(taken, [&](size_t count) { return count == taken.front(); }));
+    CHECK_EQ(RehearsalsRun(), rehearsed);
+    CHECK(taken.back() - before <= ClockDigits);
     GHdArt = 0;
 }
 
@@ -423,6 +427,80 @@ TEST_CASE_ISOLATED(
     GHdArt = 0;
 }
 
+/// <summary>
+/// Port-only: the fade into the briefing readies the purchase and repair screens at every inventory tab, so a tab's
+/// first click on the purchase screen loads no art and takes no sharp picture but the clock's new digits (the original
+/// art's pictures and the HD ones go up with the art: the GPU keeps them). The mechs' tab last: the one the fade left
+/// shown.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: the fade into the briefing readies every inventory tab, whose first clicks load and take nothing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
+    NewCampaign();
+    MCSharpPictures::WaitForMade();
+    Settle();
+    GlobalLog()->SetUpPurchaseScreen(true);
+    Settle();
+    const std::shared_ptr<MCPurchaseScreen> purchase = GlobalLog()->PurchaseScreen.Lock();
+    REQUIRE(purchase != nullptr);
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
+
+    // Each tab's click as the purchase screen takes it (MCPurchaseScreen's tabs): the inventory's, then the store's.
+    struct MCTabClick
+    {
+        std::string_view Name;
+        std::function<void()> Click;
+    };
+
+    const std::array clicks = {
+        MCTabClick{"pilots",
+                   [&]
+                   {
+                       purchase->SetUpPilotInv(true, true);
+                       purchase->SetUpPilotPurchase();
+                   }},
+        MCTabClick{"components",
+                   [&]
+                   {
+                       purchase->SetUpCompInv(true, true);
+                       purchase->SetUpCompPurchase();
+                   }},
+        MCTabClick{"vehicles",
+                   [&]
+                   {
+                       purchase->SetUpVhclInv(true, true);
+                       purchase->SetUpVehiclePurchase();
+                   }},
+        MCTabClick{"mechs",
+                   [&]
+                   {
+                       purchase->SetUpMechInv(true, true);
+                       purchase->SetUpMechPurchase();
+                   }},
+    };
+
+    constexpr size_t ClockDigits = 2;
+
+    for (const MCTabClick& click : clicks)
+    {
+        MCTest::Scope scope{std::string(click.Name)};
+        const size_t art = LogArtLoaded();
+        const size_t taken = SharpTaken(*renderer);
+        click.Click();
+        MCTestGame::RunFrame(FrameSeconds);
+        CHECK_EQ(LogArtLoaded(), art);
+        CHECK(SharpTaken(*renderer) - taken <= ClockDigits);
+    }
+
+    GHdArt = 0;
+}
+
 TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its fade, once the screen is nearly black")
 {
     if (!MCTestGame::Available())
@@ -452,6 +530,25 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
         bool Back = false;
     };
 
+    // The briefing the way back shows: the next mission's on a win, this one's again otherwise; its map as the
+    // briefing's set-up then loads it (read ahead as the fade begins: MCLogistics::ReadBriefingMapAhead).
+    const auto briefedFor = [](uint32_t result)
+    {
+        const uint32_t was = ScenarioResult;
+        ScenarioResult = result;
+        const std::optional<size_t> briefed = Mission()->BriefedAfterResults();
+        ScenarioResult = was;
+        return briefed;
+    };
+
+    constexpr uint32_t Lost = 0;
+    const auto current = static_cast<size_t>(Mission()->CurrentScenario);
+    CHECK(briefedFor(Lost) == std::optional<size_t>(current));
+    REQUIRE(Mission()->BriefedAfterResults() == std::optional<size_t>(current + 1));
+    const std::optional<MCLogistics::MCPicturePixels> map =
+        MCLogistics::BriefingMapOf(Mission()->Scenarios[current + 1]);
+    REQUIRE(map.has_value());
+
     std::vector<MCShown> shown;
     const std::weak_ptr<MCLogistics> before = GlobalLog();
     const size_t rehearsed = RehearsalsRun();
@@ -473,10 +570,16 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
     REQUIRE(GlobalLog() != nullptr);
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
     CHECK(!GuiSystem().CanFade());
+    REQUIRE(GlobalLog()->BriefingScreen->MapPicture != nullptr);
+    const std::shared_ptr<MCTexture> briefingMap = GlobalLog()->BriefingScreen->MapPicture->Bitmap().Texture.lock();
+    REQUIRE(briefingMap != nullptr);
+    CHECK_EQ(briefingMap->Width, map->Width);
+    CHECK_EQ(briefingMap->Height, map->Height);
+    CHECK(std::ranges::equal(briefingMap->Pixels, map->Pixels));
 
     // After the work, the fade did what a fade into the briefing does: the briefing rehearsed and the two screens a
     // slide from it brings in readied. The next frame's fade, from black, does none of it again.
-    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn);
+    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
     const size_t closed = RehearsalsRun();
     MCTestGame::RunFrame(FrameSeconds);
     CHECK_EQ(RehearsalsRun(), closed);

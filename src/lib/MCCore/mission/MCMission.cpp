@@ -1004,11 +1004,40 @@ auto MCMission::CloseResultsScreen() -> void
 
     if (MultiPlayer() == nullptr)
     {
+        // Port-only: the briefing's map read from the fade's start, so the briefing made near black finds it read.
+        if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
+        {
+            MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+        }
+
         FadeOutWhile(back);
         return;
     }
 
     back();
+}
+
+auto MCMission::BriefedAfterResults() const -> std::optional<size_t>
+{
+    // The way back's own choice (EndScenarioLeavingWayBack, BackToLogistics): a solo mission lost goes back to its
+    // campaign's start, won to the main screen.
+    constexpr uint32_t LostBelow = 3;
+    const bool won = ScenarioResult > LostBelow;
+
+    if (MultiPlayer() != nullptr || GlobalGameSegment != 0 || GameOver || (won && Solo))
+    {
+        return std::nullopt;
+    }
+
+    const size_t briefed =
+        Solo && ScenarioResult < LostBelow ? 0 : static_cast<size_t>(std::max(CurrentScenario, 0)) + (won ? 1 : 0);
+
+    if (briefed >= Scenarios.size())
+    {
+        return std::nullopt;
+    }
+
+    return briefed;
 }
 
 auto MCMission::StartLogistics() -> MCLogistics&

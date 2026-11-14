@@ -108,6 +108,28 @@ public:
     /// </summary>
     static void ReadTexturesAhead();
 
+    /// <summary>Port-only: a picture's 8-bit pixels, row by row, and its size (<see cref="BriefingMapOf"/>).</summary>
+    struct MCPicturePixels
+    {
+        std::vector<uint8_t> Pixels;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Port-only: the map campaign mission <paramref name="scenario"/>'s briefing shows (its mission file's MapFile, as
+    /// GetCurrentMission reads it, and the map's <c>.log.tga</c>, as MCBriefingScreen loads it); none when the mission
+    /// file or the map can't be read (the briefing's set-up reports it).
+    /// </summary>
+    static std::optional<MCPicturePixels> BriefingMapOf(std::string_view scenario);
+
+    /// <summary>
+    /// Port-only: on a sharp screen, has the pack's readers read the HD copy of <see cref="BriefingMapOf"/>
+    /// <paramref name="scenario"/> ahead of the briefing's set-up: the way back from a mission's results asks as its
+    /// fade begins, so the briefing made near black finds it read.
+    /// </summary>
+    static void ReadBriefingMapAhead(std::string_view scenario);
+
     /// <summary>
     /// Port-only: on a sharp screen, the line art of the units the screens list (the shop's and the player's mechs and
     /// vehicles: their diagrams and sold-out outlines) made ahead, off the game's thread (platform/MCSharpPictures).
@@ -120,18 +142,22 @@ public:
     /// (<see cref="ReadyForSlide"/>, RehearseHidden), so the slide neither waits for them nor draws them first: from
     /// the briefing, the purchase screen (its store the most to make) then the repair screen; none from any other (they
     /// were readied on the way, and readying one while the other shows would scroll the inventory list shown: each tab
-    /// fills both screens'). At most <see cref="MostScreensSlidIn"/>.
+    /// fills both screens'). At most <see cref="MostScreensSlidIn"/>. Each is readied at every inventory tab, the one
+    /// shown first, so a tab's first click finds its art loaded and its pictures on the GPU too.
     /// </summary>
     std::vector<MCGuiHandle<MCLogInvScreen>> ScreensSlidIn() const;
     /// <summary>Port-only: how many screens <see cref="ScreensSlidIn"/> gives at most.</summary>
     static constexpr size_t MostScreensSlidIn = 2;
+    /// <summary>Port-only: the inventory tabs, <see cref="CurrentInvTab"/>'s values: mechs, pilots, components, vehicles.</summary>
+    static constexpr int32_t InventoryTabs = 4;
 
     /// <summary>
     /// Port-only: hidden <paramref name="screen"/> (the purchase or repair screen) filled as its set-up will fill it for
-    /// the inventory tab shown (<see cref="SetUpPurchaseScreen"/>, <see cref="SetUpRepairScreen"/>): its background and
-    /// lists, the purchase screen's store too. Its set-up does it all again as it's shown, and nothing is selected.
+    /// inventory tab <paramref name="tab"/> (<see cref="SetUpPurchaseScreen"/>, <see cref="SetUpRepairScreen"/>, a tab's
+    /// click): its background and lists, the purchase screen's store too. Its set-up does it all again as it's shown,
+    /// and nothing is selected. <see cref="CurrentInvTab"/> becomes <paramref name="tab"/>, as a tab's click makes it.
     /// </summary>
-    void ReadyForSlide(MCLogInvScreen& screen) const;
+    void ReadyForSlide(MCLogInvScreen& screen, int32_t tab) const;
 
     /// <summary>
     /// The frames of a mech's repair shapes its diagram is drawn with, a frame a location: the armor (from 0) over the

@@ -19,6 +19,7 @@
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogMenus.h"
+#include "logistics/MCLogPort.h"
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCMainMenu.h"
@@ -765,6 +766,53 @@ auto MCLogistics::ReadTexturesAhead() -> void
     MCHdArt::ReadPicturesAhead(pictures);
 }
 
+auto MCLogistics::BriefingMapOf(std::string_view scenario) -> std::optional<MCPicturePixels>
+{
+    // The longest map name GetCurrentMission reads.
+    constexpr size_t MapFileChars = 0xff;
+    MCFitIniFile missionFile;
+    std::string map;
+
+    if (missionFile.Open(GamePath(MissionPath, scenario, ".fit")) != 0 || missionFile.SeekBlock("Campaign") != 0 ||
+        !ReadText(missionFile, "MapFile", MapFileChars, map))
+    {
+        return std::nullopt;
+    }
+
+    MCFile file;
+
+    if (file.Open(GamePath(TerrainPath, map, ".log.tga")) != 0 || file.FileSize() == 0)
+    {
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> data(file.FileSize());
+    file.Read(data);
+    file.Close();
+    const MCLogTga tga = ReadLogTga(data);
+
+    if (tga.Pixels.empty())
+    {
+        return std::nullopt;
+    }
+
+    return MCPicturePixels{{tga.Pixels.begin(), tga.Pixels.end()}, tga.Width, tga.Height};
+}
+
+auto MCLogistics::ReadBriefingMapAhead(std::string_view scenario) -> void
+{
+    if (!DrawsSharp())
+    {
+        return;
+    }
+
+    if (const std::optional<MCPicturePixels> map = BriefingMapOf(scenario); map.has_value())
+    {
+        const std::array pictures = {MCHdArt::PictureAhead{map->Pixels, map->Width, map->Height}};
+        MCHdArt::ReadPicturesAhead(pictures);
+    }
+}
+
 auto MCLogistics::MakeLineArtAhead() const -> void
 {
     if (!DrawsSharp())
@@ -1166,7 +1214,7 @@ auto MCLogistics::ScreensSlidIn() const -> std::vector<MCGuiHandle<MCLogInvScree
     return {PurchaseScreen, RepairScreen};
 }
 
-auto MCLogistics::ReadyForSlide(MCLogInvScreen& screen) const -> void
+auto MCLogistics::ReadyForSlide(MCLogInvScreen& screen, int32_t tab) const -> void
 {
     // The lists the set-ups read (gone with logistics' end).
     if (MechList == nullptr || WarriorList == nullptr || VehicleList == nullptr || ComponentInventory == nullptr ||
@@ -1178,12 +1226,12 @@ auto MCLogistics::ReadyForSlide(MCLogInvScreen& screen) const -> void
     if (const std::shared_ptr<MCPurchaseScreen> purchase = PurchaseScreen.Lock(); purchase.get() == &screen)
     {
         purchase->DrawBackground();
-        SetUpPurchaseLists(*purchase, CurrentInvTab, true);
+        SetUpPurchaseLists(*purchase, tab, true);
     }
     else if (const std::shared_ptr<MCRepairScreen> repair = RepairScreen.Lock(); repair.get() == &screen)
     {
         repair->DrawBackground();
-        SetUpRepairLists(*repair, CurrentInvTab);
+        SetUpRepairLists(*repair, tab);
     }
 }
 
@@ -1777,11 +1825,8 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
         });
     wipe->ShowGuiWindow(true);
     wipe->SetDepth(100);
-    // Port-only: the screen arriving rehearsed first, whole as the slide's last step draws it, so the slide's steps
-    // don't load, read and send up what it shows as it comes in (RehearseScreen; the slide's time starts after). The
-    // fade into the briefing readied it (ScreensSlidIn), so this finds it done unless it changed since.
-    wipe->Offset = SlideWidth;
-    RehearseScreen(FrameUploadShare);
+    // Port-only: the screen arriving was readied at every tab in the fade into the briefing (ScreensSlidIn), so the
+    // slide's steps find what it shows loaded and sent up.
     SoundSystem()->PlayInterfaceSample(0x36);
     const int64_t frequency = MCPort::PerformanceFrequency();
     float elapsed = 0.0f;

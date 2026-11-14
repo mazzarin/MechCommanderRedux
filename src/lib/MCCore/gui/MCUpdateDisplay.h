@@ -67,28 +67,20 @@ private:
 /// <param name="showProgress">Draw the connect shape and the progress bar.</param>
 int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bool showProgress, int32_t progress);
 /// <summary>
-/// Port-only: what a frame takes up along with its own, unwaited (a few MB): a rehearsal before a slide leaves that much
-/// to the slide's first step rather than wait for the frames ahead to send it up (RehearseScreen).
-/// </summary>
-inline constexpr size_t FrameUploadShare = size_t{8} << 20;
-/// <summary>Port-only: nothing left to the next frame: a rehearsal's uploads all sent at once (in a fade).</summary>
-inline constexpr size_t NoRideAlong = 0;
-/// <summary>
 /// Port-only: the screen as it stands drawn once as a rehearsal (MCRenderer::RehearsalScope): what its first frame
 /// would do first (its art loaded, its HD pictures read, its textures made, its pictures, sharp text and line art taken
-/// and queued to go up) done now, nothing shown, and what it queued sent up (MCDisplay::RunRecorded), unless no more
-/// than <paramref name="rideAlong"/> bytes, which the next frame takes. For a screen set up where nothing is redrawn for
-/// a while (a fade, the moment before a slide), so its first frames shown don't do it. Only with the GPU's surfaces
-/// shown and logistics up; nothing otherwise.
+/// and queued to go up) done now, nothing shown, and what it queued sent up (MCDisplay::RunRecorded). For a screen set
+/// up in a fade, where nothing is redrawn for a while, so its first frames shown don't do it. Only with the GPU's
+/// surfaces shown and logistics up; nothing otherwise.
 /// </summary>
-void RehearseScreen(size_t rideAlong);
+void RehearseScreen();
 /// <summary>
 /// Port-only: hidden <paramref name="screen"/> rehearsed as it will be shown (see <see cref="RehearseScreen"/>), after
 /// <paramref name="setUp"/> fills it as its set-up will: for a screen a slide may bring in, readied in a fade, so the
 /// slide's first steps find what it shows ready. Nothing when a rehearsal can't run or the screen is shown (the screen
-/// window's: <see cref="RehearseScreen"/>).
+/// window's: <see cref="RehearseScreen"/>). Whether it ran (<paramref name="setUp"/> with it).
 /// </summary>
-void RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp);
+bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp);
 /// <summary>Port-only, for the tests: the rehearsals run so far (RehearseScreen's and RehearseHidden's).</summary>
 size_t RehearsalsRun();
 /// <summary>

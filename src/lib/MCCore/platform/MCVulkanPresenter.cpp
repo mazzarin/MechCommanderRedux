@@ -2419,10 +2419,10 @@ std::expected<void, std::string> MCVulkanPresenter::Discard(const MCFrame& frame
                       });
 }
 
-std::expected<void, std::string> MCVulkanPresenter::RunRecorded(std::span<const MCUnderlay> underlays, size_t rideAlong)
+std::expected<void, std::string> MCVulkanPresenter::RunRecorded(std::span<const MCUnderlay> underlays)
 {
-    // No more than the next frame takes along: left to it, with no wait for the frames ahead.
-    if (_Renderer == nullptr || (!_Renderer->HoldsDraws() && _Renderer->QueuedUploadBytes() <= rideAlong))
+    // Nothing recorded: nothing to run.
+    if (_Renderer == nullptr || (!_Renderer->HoldsDraws() && _Renderer->QueuedUploadBytes() == 0))
     {
         return {};
     }

@@ -34,6 +34,11 @@ auto ClearLogArt() -> void
     LoadedArt.clear();
 }
 
+auto LogArtLoaded() -> size_t
+{
+    return LoadedArt.size();
+}
+
 auto MCLogPort::Init(int32_t width, int32_t height) -> int32_t
 {
     return MakeBitmap(width, height);
@@ -58,16 +63,38 @@ auto MCLogPort::Load(std::string_view fileName) -> void
     std::vector<uint8_t> data(size);
     file.Read(data);
     file.Close();
-
-    // A TGA header: the 16-bit width and height at +0x0c/+0x0e; the 8-bit pixels follow the 18-byte header and a
-    // 256-entry palette.
-    int16_t tgaWidth = 0;
-    int16_t tgaHeight = 0;
-    std::memcpy(&tgaWidth, data.data() + 0x0c, sizeof(tgaWidth));
-    std::memcpy(&tgaHeight, data.data() + 0x0e, sizeof(tgaHeight));
-    Init(tgaWidth, tgaHeight);
+    const MCLogTga tga = ReadLogTga(data);
+    Init(tga.Width, tga.Height);
     const std::shared_ptr<MCTexture> texture = Bitmap().Texture.lock();
-    std::memcpy(MCRenderer::LockTexture(*texture).data(), data.data() + 0x312,
-                static_cast<size_t>(tgaHeight * tgaWidth));
-    MCRenderer::UnlockTexture(*texture);
+
+    // Port fix: a file too short for its pixels leaves the picture blank (the original copied from past its end).
+    if (texture != nullptr && !tga.Pixels.empty())
+    {
+        std::ranges::copy(tga.Pixels, MCRenderer::LockTexture(*texture).begin());
+        MCRenderer::UnlockTexture(*texture);
+    }
+}
+
+auto ReadLogTga(std::span<const uint8_t> data) -> MCLogTga
+{
+    constexpr size_t WidthAt = 0x0c;
+    constexpr size_t HeightAt = 0x0e;
+    constexpr size_t PixelsAt = 0x312;
+    MCLogTga tga;
+
+    if (data.size() < HeightAt + sizeof(tga.Height))
+    {
+        return tga;
+    }
+
+    std::memcpy(&tga.Width, data.data() + WidthAt, sizeof(tga.Width));
+    std::memcpy(&tga.Height, data.data() + HeightAt, sizeof(tga.Height));
+    const size_t pixels = static_cast<size_t>(std::max<int16_t>(tga.Width, 0)) * std::max<int16_t>(tga.Height, 0);
+
+    if (data.size() >= PixelsAt + pixels)
+    {
+        tga.Pixels = data.subspan(PixelsAt, pixels);
+    }
+
+    return tga;
 }

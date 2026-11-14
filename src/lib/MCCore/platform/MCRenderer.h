@@ -877,7 +877,7 @@ public:
     /// Port-only: while one lives, a frame is drawn as a rehearsal: the hardware renderer does everything a draw needs
     /// done first (its HD pictures found and read, its textures made, its pictures and sharp text and line art taken
     /// and queued to go up) and records no draw, so nothing it draws shows (the screen is drawn again before it's
-    /// shown). A screen's first frame is rehearsed where nothing is redrawn (a fade, before a slide), so its first
+    /// shown). A screen's first frame is rehearsed where nothing is redrawn (a fade), so its first
     /// shown frames find all that done (gui/MCUpdateDisplay.h's RehearseScreen).
     /// </summary>
     class RehearsalScope

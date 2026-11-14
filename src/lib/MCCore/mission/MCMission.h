@@ -110,6 +110,14 @@ public:
     /// <summary>Closes the results screen (which ends the scenario the first time).</summary>
     void CloseResultsScreen();
 
+    /// <summary>
+    /// Port-only: the campaign mission whose briefing the way back from the results shows, once the scenario has ended
+    /// (EndScenarioLeavingWayBack): the next on a win, this one again otherwise (BackToLogistics), a lost solo mission's
+    /// campaign's first (its start); none where the way back goes elsewhere (a won solo mission's main screen, a match,
+    /// the campaign's end).
+    /// </summary>
+    std::optional<size_t> BriefedAfterResults() const;
+
     /// <summary>Writes the interface window states (zoom, tac map, palette) to <c>windows.fit</c>.</summary>
     static void SaveWindowStatus();
 

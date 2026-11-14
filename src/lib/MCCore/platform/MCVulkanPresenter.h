@@ -91,7 +91,7 @@ public:
     std::expected<std::vector<SDL_Color>, std::string> ReadFrame(const MCFrame& frame) override;
     std::expected<std::vector<uint8_t>, std::string> ReadScreen(const MCFrame& frame) override;
     std::expected<void, std::string> Discard(const MCFrame& frame) override;
-    std::expected<void, std::string> RunRecorded(std::span<const MCUnderlay> underlays, size_t rideAlong) override;
+    std::expected<void, std::string> RunRecorded(std::span<const MCUnderlay> underlays) override;
     MCViewport Viewport(int viewWidth, int viewHeight) const override;
     void ShowFinished() override;
     void ShowPresented() override;

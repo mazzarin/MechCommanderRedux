@@ -634,9 +634,9 @@ std::expected<void, std::string> MCDisplay::Present(bool ahead)
     return _Presenter->Present(frame);
 }
 
-std::expected<void, std::string> MCDisplay::RunRecorded(size_t rideAlong)
+std::expected<void, std::string> MCDisplay::RunRecorded()
 {
-    return _Presenter->RunRecorded(_FrameUnderlays, rideAlong);
+    return _Presenter->RunRecorded(_FrameUnderlays);
 }
 
 void MCDisplay::ShowFinished()

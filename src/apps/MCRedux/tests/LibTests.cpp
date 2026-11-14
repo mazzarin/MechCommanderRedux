@@ -377,6 +377,92 @@ TEST_CASE("disk file: a write empties the window, and the bytes read back")
     CHECK(readAt(0, 4).empty());
 }
 
+/// <summary>
+/// Port-only: threads reading one disk file at once at their own offsets (ReadShared: an HD archive's runs and entries,
+/// the game's thread and every reader through the archive's one file) each get the bytes at their offsets, a read one
+/// system call; and an archive's file closed by the cap (MCFastFile::Release) while a read holds it reads on, the next
+/// read opening it again.
+/// </summary>
+TEST_CASE("disk file: threads reading one file at once each get their own bytes")
+{
+    ScratchFolder folder("disk-file-threads");
+    constexpr size_t Window = MCDiskFile::WindowBytes;
+    constexpr size_t FileBytes = Window * 16;
+    constexpr size_t Threads = 8;
+    constexpr size_t ReadsEach = 200;
+    constexpr uint32_t Mix = 2654435761u;
+    // Numerical Recipes' linear congruential step: each thread's own offsets and sizes, the same every run.
+    constexpr uint32_t StepTimes = 1664525u;
+    constexpr uint32_t StepPlus = 1013904223u;
+    std::vector<uint8_t> bytes(FileBytes);
+    std::ranges::generate(bytes, [at = uint32_t{0}]() mutable { return static_cast<uint8_t>((at++ * Mix) >> 24); });
+    const std::filesystem::path path = folder.Path() / "shared.bin";
+    WriteFile(path, bytes);
+    const std::optional<MCDiskFile> opened = MCDiskFile::Open(path, MCDiskFileMode::Read);
+    REQUIRE(opened.has_value());
+    const MCDiskFile& file = *opened;
+    std::atomic<size_t> wrong = 0;
+
+    {
+        std::vector<std::jthread> readers;
+
+        for (size_t thread = 0; thread < Threads; ++thread)
+        {
+            readers.emplace_back(
+                [&, thread]
+                {
+                    uint32_t random = static_cast<uint32_t>(thread) + 1;
+                    const auto next = [&random]
+                    {
+                        random = random * StepTimes + StepPlus;
+                        return random >> 8;
+                    };
+
+                    for (size_t read = 0; read < ReadsEach; ++read)
+                    {
+                        // From an entry's few bytes to a run of two windows, some across the file's end.
+                        const size_t offset = next() % FileBytes;
+                        const size_t size = 1 + next() % (Window * 2);
+                        std::vector<uint8_t> got(size);
+                        got.resize(file.ReadShared(static_cast<uint32_t>(offset), got));
+                        const bool same = got.size() == std::min(size, FileBytes - offset) &&
+                                          std::ranges::equal(got, std::span(bytes).subspan(offset, got.size()));
+                        wrong += same ? 0 : 1;
+                    }
+                });
+        }
+    }
+
+    CHECK_EQ(wrong.load(), size_t{0});
+    CHECK_EQ(file.SystemReads(), Threads * ReadsEach);
+
+    // An archive's file closed by the cap while a read holds it: the read goes on, and the next read opens it again.
+    const std::vector<uint8_t> payload = Bytes("an entry's stored bytes");
+    WriteFile(folder.Path() / "test.fst", BuildFastFile({{"data\\a.bin", payload, false}}));
+    auto fastFile = MCFastFile::Create(folder / "test.fst");
+    REQUIRE(fastFile.has_value());
+    MCFastFile& archive = **fastFile;
+    const std::shared_ptr<MCDiskFile> held = archive.File();
+    REQUIRE(held != nullptr);
+    archive.Release();
+    CHECK(!archive.IsOpen());
+    CHECK(archive.ReadStored(0, *held) == payload);
+    std::vector<uint8_t> data(payload.size());
+    CHECK_EQ(archive.ReadEntry(0, data), static_cast<int32_t>(payload.size()));
+    CHECK(data == payload);
+    CHECK(archive.IsOpen());
+    CHECK(archive.Handle() != held);
+
+    // Opened again by two at once: the one kept first is the archive's, the other closes.
+    archive.Release();
+    const std::shared_ptr<MCDiskFile> first = archive.OpenAgain();
+    const std::shared_ptr<MCDiskFile> second = archive.OpenAgain();
+    REQUIRE(first != nullptr);
+    REQUIRE(second != nullptr);
+    CHECK(archive.Reopened(first) == first);
+    CHECK(archive.Reopened(second) == first);
+}
+
 /// <summary>Seeks are checked against the length; values are little-endian; lines end at CR, CR LF or LF.</summary>
 TEST_CASE("file: seek, typed reads and lines")
 {

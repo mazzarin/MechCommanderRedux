@@ -55,23 +55,37 @@ public:
     int32_t ReadEntry(int32_t index, std::span<uint8_t> data);
 
     /// <summary>
+    /// Port-only: the archive's file, shared by every thread's reads (they read at an offset, MCDiskFile::ReadShared,
+    /// moving nothing shared), opened again after <see cref="Release"/> when it is the file the directory was read from;
+    /// none when it can't be. A read holding it keeps it open through a Release. Call where Release is called: one
+    /// thread, or under one lock.
+    /// </summary>
+    std::shared_ptr<MCDiskFile> File();
+
+    /// <summary>Port-only: the archive's file as open now, without opening it again; none after <see cref="Release"/>.</summary>
+    const std::shared_ptr<MCDiskFile>& Handle() const { return _Handle; }
+
+    /// <summary>
+    /// Port-only: a new handle on the archive's file, from any thread (it reads only the path, length and time kept):
+    /// none when it can't be opened, or the file changed since its directory was read (then reads fail, rather than
+    /// reading another file by this one's offsets). For a caller that opens it again without the lock its
+    /// <see cref="File"/> takes (an open may take milliseconds), handing it to <see cref="Reopened"/>.
+    /// </summary>
+    std::shared_ptr<MCDiskFile> OpenAgain() const;
+
+    /// <summary>
+    /// Port-only: keeps <paramref name="opened"/> (<see cref="OpenAgain"/>'s) as the archive's file, unless it was opened
+    /// again meanwhile (then <paramref name="opened"/> closes).
+    /// </summary>
+    /// <returns>The archive's file now.</returns>
+    std::shared_ptr<MCDiskFile> Reopened(std::shared_ptr<MCDiskFile> opened);
+
+    /// <summary>
     /// Port-only: entry <paramref name="index"/>'s stored bytes as they lie in the archive (Size of them; packed or not),
-    /// for an archive whose entries another packer packed (the HD art pack's).
+    /// for an archive whose entries another packer packed (the HD art pack's), through <paramref name="file"/> (its
+    /// <see cref="File"/>), from any thread.
     /// </summary>
-    std::vector<uint8_t> ReadStored(int32_t index);
-
-    /// <summary>
-    /// Port-only: a handle of its own on the archive's file, for a reader on another thread (a file's stream can't be read
-    /// from two at once); none when it can't be opened, or the file changed since its directory was read (as a released
-    /// archive's reads fail).
-    /// </summary>
-    std::optional<MCDiskFile> OpenAnother() const;
-
-    /// <summary>
-    /// Port-only: entry <paramref name="index"/>'s stored bytes as <see cref="ReadStored(int32_t)"/> reads them, through
-    /// <paramref name="file"/> (a handle <see cref="OpenAnother"/> gave), from any thread.
-    /// </summary>
-    std::vector<uint8_t> ReadStored(int32_t index, MCDiskFile& file) const;
+    std::vector<uint8_t> ReadStored(int32_t index, const MCDiskFile& file) const;
 
     /// <summary>The number of entries in the archive.</summary>
     int32_t GetNumFiles() const { return static_cast<int32_t>(_Entries.size()); }
@@ -81,13 +95,14 @@ public:
 
     /// <summary>
     /// Port-only: closes the archive's file and keeps its directory, for a reader holding more archives than a process
-    /// may keep open (the HD art pack's); the next read opens the file again, unless it changed since its directory was
-    /// read (its size or time): then reads fail, rather than reading another file by this one's offsets.
+    /// may keep open (the HD art pack's), once the reads in hand (holding <see cref="File"/>) end; the next read opens
+    /// the file again, unless it changed since its directory was read (its size or time): then reads fail, rather than
+    /// reading another file by this one's offsets.
     /// </summary>
     void Release() { _Handle.reset(); }
 
     /// <summary>Port-only: whether the archive's file is open (<see cref="Release"/>).</summary>
-    bool IsOpen() const { return _Handle.has_value(); }
+    bool IsOpen() const { return _Handle != nullptr; }
 
     /// <summary>Lets only <see cref="Create"/> construct an archive.</summary>
     class Key
@@ -100,9 +115,6 @@ public:
     explicit MCFastFile(Key) {}
 
 private:
-    /// <summary>The open archive, opened again after <see cref="Release"/>; none when it can't be.</summary>
-    MCOptionalRef<MCDiskFile> File();
-
     /// <summary>The archive's path, as opened, and its length and time then (<see cref="File"/>).</summary>
     std::filesystem::path _Path;
     uint32_t _Length = 0;
@@ -111,6 +123,6 @@ private:
     std::vector<MCFileEntry> _Entries;
     /// <summary>Entry index by upper-cased name (the first entry of a name wins, as the original's search).</summary>
     std::unordered_map<std::string, int32_t> _Index;
-    /// <summary>The open archive.</summary>
-    std::optional<MCDiskFile> _Handle;
+    /// <summary>The open archive, shared with the reads in hand.</summary>
+    std::shared_ptr<MCDiskFile> _Handle;
 };

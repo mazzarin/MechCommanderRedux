@@ -27,7 +27,10 @@ enum class MCDiskFileMode : uint8_t
 /// <remarks>
 /// A read under <see cref="WindowBytes"/> is served from a window of the file's own, filled by one call at its offset:
 /// the original's files read a byte, word or line at a time. The window holds what it read until this file writes or a
-/// read falls outside it; another handle's writes meanwhile aren't seen in it. One thread at a time.
+/// read falls outside it; another handle's writes meanwhile aren't seen in it. Through the window, the position and the
+/// writes, one thread at a time; <see cref="ReadShared"/> from any number at once (on Windows the handle is
+/// overlapped, each call waiting for its own end: a handle opened for synchronous I/O makes the threads' reads wait
+/// for each other).
 /// </remarks>
 class MCDiskFile
 {
@@ -61,6 +64,14 @@ public:
     /// <returns>The number of bytes written.</returns>
     size_t WriteAt(uint32_t offset, std::span<const uint8_t> data);
 
+    /// <summary>
+    /// Reads up to <paramref name="buffer"/>'s size at <paramref name="offset"/> straight into it, in one call, without
+    /// the window or the position: from any thread, with others reading the file at once (an HD archive's runs and
+    /// entries, the game's thread and every reader through the archive's one file).
+    /// </summary>
+    /// <returns>The number of bytes read (fewer at the file's end).</returns>
+    size_t ReadShared(uint32_t offset, std::span<uint8_t> buffer) const;
+
     /// <summary>The file's length in bytes, asked of the system (the position is kept).</summary>
     uint32_t Length() const;
 
@@ -69,9 +80,6 @@ public:
 
 private:
     MCDiskFile() = default;
-
-    /// <summary>Reads <paramref name="buffer"/>'s size at <paramref name="offset"/>, in as few calls as the system takes.</summary>
-    size_t ReadDirect(uint64_t offset, std::span<uint8_t> buffer) const;
 
     /// <summary>A read under WindowBytes, from the window, filled at <paramref name="offset"/> when it lacks the bytes.</summary>
     size_t ReadThroughWindow(uint32_t offset, std::span<uint8_t> buffer);

@@ -722,16 +722,16 @@ namespace MCHdArt
     size_t ArchivesOpen();
 
     /// <summary>
-    /// How many of the open archives' files are open now, the readers' own among them (at most 128: the rest open
-    /// again when read).
+    /// How many of the open archives' files are open now (at most 128: the rest open again when read; one the cap closed
+    /// stays open, uncounted, until the reads in hand end).
     /// </summary>
     size_t ArchiveFilesOpen();
 
     /// <summary>
-    /// How many times the readers have opened handles of their own on the archives' files (each kept for the reads of its
-    /// archive after, while the readers' kept handles hold it).
+    /// How many times the archives' files have been opened: as each archive opens, and again after the cap closed one.
+    /// The game's thread and every reader read an archive through its one file.
     /// </summary>
-    size_t ReaderFilesOpened();
+    size_t ArchiveFileOpens();
 }
 
 /// <summary>Port-only: draw the HD art pack's frames where it has them (PREFS "HDArt"; off by default).</summary>

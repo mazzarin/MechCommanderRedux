@@ -28,13 +28,53 @@ namespace
     constexpr size_t MostInOneCall = size_t{1} << 30;
 
 #ifdef _WIN32
-    /// <summary>An OVERLAPPED naming <paramref name="offset"/>, for a call at it.</summary>
-    OVERLAPPED At(uint64_t offset)
+    /// <summary>
+    /// The calling thread's event, which each of its calls waits on for its own end (null if it couldn't be made): the
+    /// handles are overlapped, so several threads' calls on one go at once, and a call waiting on the handle itself
+    /// could be woken by another thread's.
+    /// </summary>
+    HANDLE CallEvent()
+    {
+        struct Event
+        {
+            HANDLE Handle = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+            Event() = default;
+            Event(const Event&) = delete;
+            Event& operator=(const Event&) = delete;
+
+            ~Event()
+            {
+                if (Handle != nullptr)
+                {
+                    CloseHandle(Handle);
+                }
+            }
+        };
+
+        thread_local Event event;
+        return event.Handle;
+    }
+
+    /// <summary>
+    /// A read or write (<paramref name="call"/>, given the OVERLAPPED naming <paramref name="offset"/>) on
+    /// <paramref name="file"/>, waited for.
+    /// </summary>
+    /// <returns>The bytes it moved: 0 at the file's end (ERROR_HANDLE_EOF, as the call starts or ends) or on failure.</returns>
+    template <typename Call> DWORD CallAt(HANDLE file, uint64_t offset, Call&& call)
     {
         OVERLAPPED at{};
         at.Offset = static_cast<DWORD>(offset);
         at.OffsetHigh = static_cast<DWORD>(offset >> 32);
-        return at;
+        at.hEvent = CallEvent();
+        DWORD moved = 0;
+
+        if (at.hEvent == nullptr || (!call(at) && GetLastError() != ERROR_IO_PENDING))
+        {
+            return 0;
+        }
+
+        return GetOverlappedResult(file, &at, &moved, TRUE) ? moved : 0;
     }
 #else
     /// <summary>The permissions a new file gets before the process's mask, as a stream's.</summary>
@@ -47,10 +87,11 @@ std::optional<MCDiskFile> MCDiskFile::Open(const std::filesystem::path& path, MC
     const bool create = mode == MCDiskFileMode::Create;
     MCDiskFile file;
 #ifdef _WIN32
-    // The path as the system spells it (UTF-16), so any name opens; shared as MSVC's streams are (_SH_DENYNO).
-    const HANDLE handle = CreateFileW(path.c_str(), create ? GENERIC_READ | GENERIC_WRITE : GENERIC_READ,
-                                      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                      create ? CREATE_ALWAYS : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    // The path as the system spells it (UTF-16), so any name opens; shared as MSVC's streams are (_SH_DENYNO);
+    // overlapped, so threads reading it at once (ReadShared) don't wait for each other.
+    const HANDLE handle = CreateFileW(
+        path.c_str(), create ? GENERIC_READ | GENERIC_WRITE : GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+        create ? CREATE_ALWAYS : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
 
     if (handle == INVALID_HANDLE_VALUE)
     {
@@ -125,7 +166,7 @@ void MCDiskFile::Close()
 #endif
 }
 
-size_t MCDiskFile::ReadDirect(uint64_t offset, std::span<uint8_t> buffer) const
+size_t MCDiskFile::ReadShared(uint32_t offset, std::span<uint8_t> buffer) const
 {
     size_t done = 0;
 
@@ -135,17 +176,19 @@ size_t MCDiskFile::ReadDirect(uint64_t offset, std::span<uint8_t> buffer) const
         const size_t ask = std::min(buffer.size() - done, MostInOneCall);
         _SystemReads.fetch_add(1, std::memory_order_relaxed);
 #ifdef _WIN32
-        OVERLAPPED at = At(offset + done);
-        DWORD got = 0;
+        const HANDLE file = static_cast<HANDLE>(_Handle);
+        // Past the end it fails: a short read, as any other failure is.
+        const DWORD got =
+            CallAt(file, uint64_t{offset} + done, [&](OVERLAPPED& at)
+                   { return ReadFile(file, buffer.data() + done, static_cast<DWORD>(ask), nullptr, &at) != FALSE; });
 
-        // Past the end it fails with ERROR_HANDLE_EOF: a short read, as any other failure is.
-        if (!ReadFile(static_cast<HANDLE>(_Handle), buffer.data() + done, static_cast<DWORD>(ask), &got, &at) ||
-            got == 0)
+        if (got == 0)
         {
             break;
         }
 #else
-        const ssize_t got = ::pread(_Descriptor, buffer.data() + done, ask, static_cast<off_t>(offset + done));
+        const ssize_t got =
+            ::pread(_Descriptor, buffer.data() + done, ask, static_cast<off_t>(uint64_t{offset} + done));
 
         if (got < 0 && errno == EINTR)
         {
@@ -182,7 +225,7 @@ size_t MCDiskFile::ReadThroughWindow(uint32_t offset, std::span<uint8_t> buffer)
 
         // Filled from the read's own offset: the original's files read on from there.
         _WindowAt = offset;
-        _WindowHeld = ReadDirect(offset, std::span(_Window.get(), WindowBytes));
+        _WindowHeld = ReadShared(offset, std::span(_Window.get(), WindowBytes));
     }
 
     const size_t skip = offset - _WindowAt;
@@ -198,7 +241,7 @@ size_t MCDiskFile::Read(std::span<uint8_t> buffer)
 
 size_t MCDiskFile::ReadAt(uint32_t offset, std::span<uint8_t> buffer)
 {
-    const size_t read = buffer.size() >= WindowBytes ? ReadDirect(offset, buffer) : ReadThroughWindow(offset, buffer);
+    const size_t read = buffer.size() >= WindowBytes ? ReadShared(offset, buffer) : ReadThroughWindow(offset, buffer);
     _Position = static_cast<uint32_t>(offset + read);
     return read;
 }
@@ -218,11 +261,12 @@ size_t MCDiskFile::WriteAt(uint32_t offset, std::span<const uint8_t> data)
     {
         const size_t give = std::min(data.size() - done, MostInOneCall);
 #ifdef _WIN32
-        OVERLAPPED at = At(uint64_t{offset} + done);
-        DWORD put = 0;
+        const HANDLE file = static_cast<HANDLE>(_Handle);
+        const DWORD put =
+            CallAt(file, uint64_t{offset} + done, [&](OVERLAPPED& at)
+                   { return WriteFile(file, data.data() + done, static_cast<DWORD>(give), nullptr, &at) != FALSE; });
 
-        if (!WriteFile(static_cast<HANDLE>(_Handle), data.data() + done, static_cast<DWORD>(give), &put, &at) ||
-            put == 0)
+        if (put == 0)
         {
             break;
         }

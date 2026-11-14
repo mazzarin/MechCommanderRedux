@@ -1271,8 +1271,8 @@ namespace
 /// Port-only: once a numbered folder's frame is drawn the first time, the reading thread reads the frames drawn after it
 /// (the rest of its in-betweens, then the next frame's, looping round; a turn middle's likewise), and they are drawn as
 /// the game's thread would have read them: the same frames, refused at a size they weren't made for, one dropped for
-/// room and read ahead again keeping its Id. Nothing is read twice; with one reader, it opens its own handle on the
-/// archive's file once for all its reads of it, and setting the pack closes it.
+/// room and read ahead again keeping its Id. Nothing is read twice; the reader reads through the archive's one file,
+/// opened once for the game's thread and it, and setting the pack closes it.
 /// </summary>
 TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read when drawn")
 {
@@ -1282,7 +1282,7 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     const int previous = GHdArt;
     GHdArt = 1;
     MCHdArt::SetPackFolder(scratch.Path());
-    const size_t opened = MCHdArt::ReaderFilesOpened();
+    const size_t opened = MCHdArt::ArchiveFileOpens();
     const auto drawn = [](const AheadKey& key)
     {
         MCTest::Scope scope(std::format("frame {}", AheadName(key)));
@@ -1321,10 +1321,10 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
 
     CHECK_EQ(MCHdArt::FramesRead(), read + AheadFrames * AheadSteps);
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + AheadFrames * AheadSteps - 1);
-    // The reader opened its own handle on the archive once, and keeps it beside the game's.
+    // The archive's file opened once, which the reader reads through too.
     MCHdArt::WaitForReadAhead();
-    CHECK_EQ(MCHdArt::ReaderFilesOpened(), opened + 1);
-    CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{2});
+    CHECK_EQ(MCHdArt::ArchiveFileOpens(), opened + 1);
+    CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{1});
 
     // A turn middle: its in-between, then the next frame's turn middle and its in-between.
     drawn({0, TurnStep});
@@ -1354,10 +1354,10 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     MCHdArt::SetCacheBudget(0);
 
     // Drawn first, with the pack set again, frame 1 is read as drawn: the frame read ahead. Setting the pack closed
-    // both handles, and the reader still opened its own once.
+    // the archive's file, opened once in all.
     MCHdArt::SetPackFolder(scratch.Path());
     CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{0});
-    CHECK_EQ(MCHdArt::ReaderFilesOpened(), opened + 1);
+    CHECK_EQ(MCHdArt::ArchiveFileOpens(), opened + 1);
     const size_t fresh = MCHdArt::FramesReadAhead();
     const std::shared_ptr<const MCHdArt::Frame> first = drawn({1, 0});
     CHECK_EQ(MCHdArt::FramesReadAhead(), fresh);
@@ -1868,7 +1868,7 @@ TEST_CASE("hd art: pictures read ahead are found as drawn ones are, without a re
 /// Port-only (SPEC-first-use.md): several readers read a set of pictures ahead in its archive's order, the archive's
 /// neighbouring entries in one read, split where a gap between two passes MCHdArt::ReaderRunGap or the read would take
 /// more than MCHdArt::ReaderRunBytes. Each picture is then found as drawn ones are, the same frame, without a read, and
-/// the readers open no more handles on the archive than there were reads at once.
+/// the readers read it all through the archive's one file, several at once.
 /// </summary>
 TEST_CASE("hd art: several readers read a set ahead, an archive's neighbouring entries in one read")
 {
@@ -1930,15 +1930,15 @@ TEST_CASE("hd art: several readers read a set ahead, an archive's neighbouring e
         const size_t inRead = std::max<size_t>(1, static_cast<size_t>(MCHdArt::ReaderRunBytes / files.front().size()));
         const size_t reads = halves * ((Pictures / halves + inRead - 1) / inRead);
         const size_t readsBefore = MCHdArt::ReaderReads();
-        const size_t opened = MCHdArt::ReaderFilesOpened();
+        const size_t opened = MCHdArt::ArchiveFileOpens();
         const size_t ahead = MCHdArt::FramesReadAhead();
         MCHdArt::ReadPicturesAhead(asked);
         MCHdArt::WaitForReadAhead();
         MCHdArt::KeepReadAhead();
         CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Pictures);
         CHECK_EQ(MCHdArt::ReaderReads(), readsBefore + reads);
-        CHECK(MCHdArt::ReaderFilesOpened() > opened);
-        CHECK(MCHdArt::ReaderFilesOpened() <= opened + std::min(reads, Readers));
+        // The archive opened once, its file shared by the readers.
+        CHECK_EQ(MCHdArt::ArchiveFileOpens(), opened + 1);
         const size_t read = MCHdArt::FramesRead();
 
         for (size_t picture = 0; picture < Pictures; ++picture)

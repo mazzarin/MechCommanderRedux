@@ -87,8 +87,6 @@ namespace
     constexpr uint64_t AskAgainFrames = 30;
     /// <summary>The most reads of the frames drawn next waiting (the oldest left out past it: the game has drawn on).</summary>
     constexpr size_t MaxNextReads = 4096;
-    /// <summary>The readers' handles kept open for their next reads, for each reader (MCHdArt::SetReaderSettings).</summary>
-    constexpr size_t IdleHandlesPerReader = 2;
     /// <summary>
     /// Port-only: the sets (a screen's pictures, MCHdArt::ReadPicturesAhead; a mech's packets near the view,
     /// MCHdArt::ReadPacketAhead) are read ahead while they and the frames kept would take at most the cache's budget over
@@ -333,13 +331,6 @@ namespace
         AheadEntry Entry;
     };
 
-    /// <summary>Port-only: a reader's handle on an archive's file, kept for the next read of it (ReadAhead::Idle).</summary>
-    struct ReaderHandle
-    {
-        std::shared_ptr<MCHdArchive> Archive;
-        MCDiskFile File;
-    };
-
     /// <summary>A frame read ahead (numbered when the game's thread takes it), and its place in ReadAhead::Order.</summary>
     struct ReadyFrame
     {
@@ -398,7 +389,7 @@ namespace
     struct ReadAhead
     {
         std::mutex Lock;
-        /// <summary>Told of every frame read ahead, follow ended, handle given back and change of what was found.</summary>
+        /// <summary>Told of every frame read ahead, follow ended and change of what was found.</summary>
         std::condition_variable_any Changed;
         /// <summary>The first draws whose followers aren't in Reads yet: a reader makes them reads, in turn.</summary>
         std::deque<Follow> Follows;
@@ -432,13 +423,6 @@ namespace
         size_t NeighbourReads = 0;
         /// <summary>How many reads of the archives they have made (a read of neighbouring entries is one).</summary>
         size_t ArchiveReads = 0;
-        /// <summary>
-        /// The readers' handles on the archives' files not reading now, the most recently given back first (at most
-        /// IdleHandlesPerReader for each reader), and how many are reading: ForgetAhead closes the first and waits for the
-        /// rest, as the pack's files may go once another is set.
-        /// </summary>
-        std::list<ReaderHandle> Idle;
-        size_t Borrowed = 0;
         /// <summary>How the readers read (MCHdArt::SetReaderSettings), and the game's thread's priority as they started.</summary>
         MCHdArt::ReaderSettings Settings;
         MCThreadPriority GamePriority;
@@ -533,15 +517,16 @@ namespace
         /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
         std::unordered_map<PathKey, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>
-        /// Guards the archives' files kept open (MCFastFile's reads, Release and IsOpen) and the four below: the reading
-        /// thread reads through a handle of its own (a file's stream can't be read from two threads), so it holds this
-        /// only to count that one, which may close one of these. Never held with ReadAhead::Lock.
+        /// Guards the archives' files kept open (MCFastFile's File, Release and IsOpen) and the two below. A read takes
+        /// its archive's file under it (ArchiveFile) and reads without it: a read at an offset moves nothing shared, so the
+        /// game's thread and every reader read an archive through its one file at once. Never held with ReadAhead::Lock.
         /// </summary>
         std::mutex ArchiveFiles;
-        /// <summary>The readers' own handles open (ReadAhead's, reading or kept), counted against MaxOpenArchiveFiles.</summary>
-        size_t ReaderFiles = 0;
-        /// <summary>How many times the readers have opened handles of their own (MCHdArt::ReaderFilesOpened).</summary>
-        size_t ReaderOpens = 0;
+        /// <summary>
+        /// How many times the archives' files have been opened (MCHdArt::ArchiveFileOpens): as each archive opens (a
+        /// reader's open ahead takes no lock), and again after the cap closed one.
+        /// </summary>
+        std::atomic<size_t> FileOpens = 0;
         /// <summary>
         /// The archives' files kept open, the most recently read first (at most MaxOpenArchiveFiles), and each one's
         /// place there.
@@ -713,12 +698,12 @@ namespace
     }
 
     /// <summary>
-    /// Closes the least recently read of the archives' files kept open past MaxOpenArchiveFiles, the readers' own
-    /// counted among them. Call with State::ArchiveFiles held.
+    /// Closes the least recently read of the archives' files kept open past MaxOpenArchiveFiles, each once the reads in
+    /// hand end (MCFastFile::Release). Call with State::ArchiveFiles held.
     /// </summary>
     void TrimOpenFiles(State& state)
     {
-        while (!state.OpenFiles.empty() && state.OpenFiles.size() + state.ReaderFiles > MaxOpenArchiveFiles)
+        while (!state.OpenFiles.empty() && state.OpenFiles.size() > MaxOpenArchiveFiles)
         {
             const std::weak_ptr<MCFastFile> oldest = state.OpenFiles.back();
 
@@ -835,8 +820,8 @@ namespace
 
     /// <summary>
     /// The archive standing for <paramref name="folder"/> (its <c>.hda</c>) opened, its directory read: null when there's
-    /// none, what's wrong when it can't be read. Touches nothing shared, so a reader opens archives ahead with it
-    /// (MCHdArt::OpenArchivesAhead).
+    /// none, what's wrong when it can't be read. Touches nothing shared but a count, so a reader opens archives ahead
+    /// with it (MCHdArt::OpenArchivesAhead).
     /// </summary>
     std::expected<std::shared_ptr<MCHdArchive>, std::string> OpenArchive(const std::filesystem::path& folder)
     {
@@ -849,6 +834,7 @@ namespace
         }
 
         auto file = MCFastFile::Create(MCFileSystem::ToUtf8(path));
+        TheState().FileOpens.fetch_add(file ? 1 : 0, std::memory_order_relaxed);
 
         if (!file)
         {
@@ -1048,14 +1034,49 @@ namespace
     }
 
     /// <summary>
+    /// <paramref name="archive"/>'s file for a read from any thread, noted as just read among the files kept open
+    /// (KeepOpen): the game's thread and every reader read an archive through its one file, shared, so the cap closing it
+    /// waits for the reads in hand (MCFastFile::File). Opened again without State::ArchiveFiles when the cap closed it
+    /// (an open can take milliseconds: Windows' Defender looks at the file); none when it can't be. Takes
+    /// State::ArchiveFiles, so never with ReadAhead::Lock held.
+    /// </summary>
+    std::shared_ptr<MCDiskFile> ArchiveFile(const MCHdArchive& archive)
+    {
+        State& state = TheState();
+
+        {
+            std::scoped_lock lock(state.ArchiveFiles);
+
+            if (std::shared_ptr<MCDiskFile> file = archive.File->Handle(); file != nullptr)
+            {
+                KeepOpen(archive.File);
+                return file;
+            }
+        }
+
+        std::shared_ptr<MCDiskFile> opened = archive.File->OpenAgain();
+
+        if (opened == nullptr)
+        {
+            return nullptr;
+        }
+
+        std::scoped_lock lock(state.ArchiveFiles);
+        state.FileOpens.fetch_add(archive.File->IsOpen() ? 0 : 1, std::memory_order_relaxed);
+        std::shared_ptr<MCDiskFile> file = archive.File->Reopened(std::move(opened));
+        KeepOpen(archive.File);
+        return file;
+    }
+
+    /// <summary>
     /// Entry <paramref name="index"/> of <paramref name="archive"/> (named <paramref name="name"/>, for what is wrong),
     /// a <c>.hdf</c> file, inflated when packed, as a frame for a shape of <paramref name="width"/> x
-    /// <paramref name="height"/> (0 x 0: any): read through a reader's handle <paramref name="own"/>, else the archive's
-    /// own, under State::ArchiveFiles.
+    /// <paramref name="height"/> (0 x 0: any): read through <paramref name="file"/> (the archive's, which ReadRun holds),
+    /// else the archive's file taken now (ArchiveFile).
     /// </summary>
     std::expected<MCHdArt::Frame, std::string> ReadEntry(const MCHdArchive& archive, int32_t index,
                                                          std::string_view name, int32_t width, int32_t height,
-                                                         MCOptionalRef<MCDiskFile> own = std::nullopt)
+                                                         MCOptionalRef<const MCDiskFile> file = std::nullopt)
     {
         const MCFileEntry& entry = archive.File->GetEntries()[static_cast<size_t>(index)];
 
@@ -1067,15 +1088,13 @@ namespace
 
         std::vector<uint8_t> stored;
 
-        if (own)
+        if (file)
         {
-            stored = archive.File->ReadStored(index, *own);
+            stored = archive.File->ReadStored(index, *file);
         }
-        else
+        else if (const std::shared_ptr<MCDiskFile> taken = ArchiveFile(archive); taken != nullptr)
         {
-            std::scoped_lock lock(TheState().ArchiveFiles);
-            stored = archive.File->ReadStored(index);
-            KeepOpen(archive.File);
+            stored = archive.File->ReadStored(index, *taken);
         }
 
         return DecodeEntry(entry, std::move(stored), name, width, height);
@@ -1384,105 +1403,6 @@ namespace
     int32_t FramesIn(std::span<const uint8_t> table)
     {
         return table.size() >= ShapeCountEnd && VfxIsShapeTable(table) ? VfxShapeCount(table) : 0;
-    }
-
-    /// <summary>
-    /// Counts <paramref name="opened"/> more of the readers' own handles on the archives' files open (fewer: negative),
-    /// making room for them among the files kept open (MaxOpenArchiveFiles). Takes State::ArchiveFiles, so never with
-    /// ReadAhead::Lock held.
-    /// </summary>
-    void CountReaderFiles(ptrdiff_t opened)
-    {
-        State& state = TheState();
-        std::scoped_lock lock(state.ArchiveFiles);
-        state.ReaderFiles = static_cast<size_t>(static_cast<ptrdiff_t>(state.ReaderFiles) + opened);
-        state.ReaderOpens += opened > 0 ? static_cast<size_t>(opened) : 0;
-        TrimOpenFiles(state);
-    }
-
-    /// <summary>
-    /// Closes the readers' <paramref name="handles"/>, letting go of ReadAhead::Lock (<paramref name="lock"/>)
-    /// meanwhile: their count takes State::ArchiveFiles.
-    /// </summary>
-    void CloseHandles(std::unique_lock<std::mutex>& lock, std::list<ReaderHandle> handles)
-    {
-        if (handles.empty())
-        {
-            return;
-        }
-
-        const auto closed = static_cast<ptrdiff_t>(handles.size());
-        lock.unlock();
-        handles.clear();
-        CountReaderFiles(-closed);
-        lock.lock();
-    }
-
-    /// <summary>
-    /// A handle of a reader's own on <paramref name="archive"/>'s file (a file's stream can't be read from two threads):
-    /// one kept from an earlier read of it, else opened now, letting go of ReadAhead::Lock meanwhile; none when the file
-    /// can't be opened or changed since its directory was read (the game's thread then reads, and logs, as it would have).
-    /// Counted as reading (ReadAhead::Borrowed) until given back (GiveBack).
-    /// </summary>
-    std::optional<ReaderHandle> BorrowHandle(ReadAhead& ahead, std::unique_lock<std::mutex>& lock,
-                                             const std::shared_ptr<MCHdArchive>& archive)
-    {
-        ++ahead.Borrowed;
-
-        if (const auto kept = std::ranges::find(ahead.Idle, archive, &ReaderHandle::Archive); kept != ahead.Idle.end())
-        {
-            std::optional<ReaderHandle> handle(std::move(*kept));
-            ahead.Idle.erase(kept);
-            return handle;
-        }
-
-        lock.unlock();
-        // Counted first, so that another file kept open closes to make room for it.
-        CountReaderFiles(1);
-        std::optional<MCDiskFile> file = archive->File->OpenAnother();
-
-        if (!file.has_value())
-        {
-            CountReaderFiles(-1);
-        }
-
-        lock.lock();
-        return file.has_value() ? std::optional<ReaderHandle>(ReaderHandle{archive, std::move(*file)}) : std::nullopt;
-    }
-
-    /// <summary>
-    /// Gives back a handle BorrowHandle gave: kept for the next read of its archive (<paramref name="keep"/>: its read
-    /// didn't fail, and the pack wasn't set since <paramref name="generation"/>), the least recently given back closed
-    /// past IdleHandlesPerReader for each reader; else closed.
-    /// </summary>
-    /// <remarks>
-    /// Kept across reads, as a pan's mostly read the same archives: a handle opened for each follow had one archive opened
-    /// 136 times in 2 s on Windows (13 Nov).
-    /// </remarks>
-    void GiveBack(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, std::optional<ReaderHandle>&& handle, bool keep,
-                  uint64_t generation)
-    {
-        --ahead.Borrowed;
-        std::list<ReaderHandle> closing;
-
-        if (handle.has_value() && keep && generation == ahead.Generation)
-        {
-            ahead.Idle.push_front(std::move(*handle));
-            const size_t most = IdleHandlesPerReader * ahead.Settings.Readers;
-
-            while (ahead.Idle.size() > most)
-            {
-                closing.splice(closing.end(), ahead.Idle, std::prev(ahead.Idle.end()));
-            }
-        }
-        else if (handle.has_value())
-        {
-            closing.push_back(std::move(*handle));
-        }
-
-        handle.reset();
-        CloseHandles(lock, std::move(closing));
-        ahead.Changed.notify_all();
     }
 
     /// <summary>
@@ -1812,24 +1732,22 @@ namespace
     }
 
     /// <summary>
-    /// Reads <paramref name="run"/> (TakeRun's) through a handle of a reader's own, in one read of the archive, without
-    /// ReadAhead::Lock (<paramref name="lock"/>), and keeps the frames read for the game's thread (Ready for the frames
-    /// drawn next; Pictures for the sets and what a load waits for, bounded where they're asked for) unless the pack was
-    /// set meanwhile. A frame whose read fails is left to the game's thread, which reads it again and logs why.
+    /// Reads <paramref name="run"/> (TakeRun's) through its archive's file (ArchiveFile: the one the game's thread and the
+    /// other readers read at once), in one read of the archive, without ReadAhead::Lock (<paramref name="lock"/>), and
+    /// keeps the frames read for the game's thread (Ready for the frames drawn next; Pictures for the sets and what a
+    /// load waits for, bounded where they're asked for) unless the pack was set meanwhile. A frame whose read fails is
+    /// left to the game's thread, which reads it again and logs why.
     /// </summary>
     void ReadRun(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, const std::vector<AheadRead>& run)
     {
         const uint64_t generation = ahead.Generation;
         const std::shared_ptr<MCHdArchive> archive = run.front().From->Archive;
-        std::optional<ReaderHandle> handle = BorrowHandle(ahead, lock, archive);
-        // Borrowing may have let go of the lock: the pack may have been set meanwhile.
-        const bool current = handle.has_value() && ahead.Generation == generation;
-        ahead.ArchiveReads += current ? 1 : 0;
         lock.unlock();
+        const std::shared_ptr<MCDiskFile> file = ArchiveFile(*archive);
+        const bool current = file != nullptr;
         const int64_t begun = TraceTime();
         int64_t readBy = begun;
         std::vector<std::shared_ptr<MCHdArt::Frame>> frames(run.size());
-        bool readWhole = handle.has_value();
         // The reads handed over (publish): those before it.
         size_t handed = 0;
 
@@ -1866,7 +1784,7 @@ namespace
             const AheadEntry& entry = run.front().Entry;
 
             if (auto read = ReadEntry(*archive, entry.Index, entry.Entry, entry.Width, entry.Height,
-                                      MCOptionalRef<MCDiskFile>(handle->File));
+                                      MCOptionalRef<const MCDiskFile>(*file));
                 read.has_value())
             {
                 frames.front() = Finished(std::move(*read), run.front().From->BakedShadows, 0);
@@ -1879,7 +1797,7 @@ namespace
             const MCFileEntry& last = entries[static_cast<size_t>(run.back().Entry.Index)];
             const auto start = static_cast<uint32_t>(first.Offset);
             std::vector<uint8_t> bytes(static_cast<size_t>(last.Offset) + static_cast<size_t>(last.Size) - start);
-            readWhole = handle->File.ReadAt(start, bytes) == bytes.size();
+            const bool readWhole = file->ReadShared(start, bytes) == bytes.size();
             readBy = TraceTime();
 
             for (size_t at = 0; readWhole && at < run.size(); ++at)
@@ -1916,8 +1834,9 @@ namespace
         }
 
         lock.lock();
+        ahead.ArchiveReads += current ? 1 : 0;
         publish(run.size());
-        GiveBack(ahead, lock, std::move(handle), readWhole, generation);
+        ahead.Changed.notify_all();
     }
 
     /// <summary>
@@ -2345,7 +2264,7 @@ namespace
 
     /// <summary>
     /// Forgets the frames read ahead and those to read, and drops any read begun (the pack is set); returns once the
-    /// readers' handles on the old pack's archives are closed and their reads have ended.
+    /// readers' reads have ended, so nothing they held keeps the old pack's archives open.
     /// </summary>
     void ForgetAhead()
     {
@@ -2389,12 +2308,9 @@ namespace
         ++ahead.Generation;
         ++TheState().Forgets;
         ahead.Changed.notify_all();
-        // The readers' handles on the old pack's archives: those kept closed now, those reading as their reads end; and
-        // their reads ended, each holding its archive (a run's frames are handed over as they're unpacked).
-        std::list<ReaderHandle> idle;
-        idle.splice(idle.end(), ahead.Idle);
-        CloseHandles(lock, std::move(idle));
-        ahead.Changed.wait(lock, [&ahead] { return ahead.Borrowed == 0 && ahead.Working == 0; });
+        // The readers' reads ended, each holding its archive and its file, which may go once another pack is set (a
+        // run's frames are handed over as they're unpacked).
+        ahead.Changed.wait(lock, [&ahead] { return ahead.Working == 0; });
     }
 
     /// <summary>
@@ -4223,24 +4139,21 @@ size_t MCHdArt::ArchivesOpen()
                                std::ranges::count_if(ahead.Opened, openedAhead));
 }
 
-size_t MCHdArt::ReaderFilesOpened()
+size_t MCHdArt::ArchiveFileOpens()
 {
-    State& state = TheState();
-    std::scoped_lock lock(state.ArchiveFiles);
-    return state.ReaderOpens;
+    return TheState().FileOpens.load(std::memory_order_relaxed);
 }
 
 size_t MCHdArt::ArchiveFilesOpen()
 {
     State& state = TheState();
     std::scoped_lock lock(state.ArchiveFiles);
-    return state.ReaderFiles + static_cast<size_t>(std::ranges::count_if(state.OpenFiles,
-                                                                         [](const std::weak_ptr<MCFastFile>& kept)
-                                                                         {
-                                                                             const std::shared_ptr<MCFastFile> file =
-                                                                                 kept.lock();
-                                                                             return file != nullptr && file->IsOpen();
-                                                                         }));
+    return static_cast<size_t>(std::ranges::count_if(state.OpenFiles,
+                                                     [](const std::weak_ptr<MCFastFile>& kept)
+                                                     {
+                                                         const std::shared_ptr<MCFastFile> file = kept.lock();
+                                                         return file != nullptr && file->IsOpen();
+                                                     }));
 }
 
 std::chrono::nanoseconds MCHdArt::ReadTime()

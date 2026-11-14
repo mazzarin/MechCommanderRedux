@@ -1460,9 +1460,8 @@ void MCVulkanRenderer::BeginRecording()
 
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
     // each frame, such as the shape transforms' work buffer, make a new one every frame); a few at a time.
-    const uint64_t idleBefore = _Frame > PictureFrames ? _Frame - PictureFrames : 0;
-    TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1, idleBefore);
-    TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdRgbaBytes, idleBefore);
+    TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
+    TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdRgbaBytes);
 
     // Port-only (HD art): the HD art frames go only past the room the machine gives them (and the frames kept in
     // memory only while it's short of memory), or, once the pack changes, those of the old one (drawn before the
@@ -1476,7 +1475,7 @@ void MCVulkanRenderer::BeginRecording()
     const MCMemoryRoom::MCFrameRoom room =
         _Room.has_value() ? _Room->Frame(_HdPictureBytes) : MCMemoryRoom::MCFrameRoom{};
     MCHdArt::NextFrame(room.MemoryShort);
-    TrimPictures(_HdPictures, _HdPictureBytes, static_cast<size_t>(room.PictureBytes), HdRgbaBytes, _HdPackChanged);
+    TrimHdPictures(static_cast<size_t>(room.PictureBytes));
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
     if (_Tables.empty())
@@ -1514,7 +1513,7 @@ void MCVulkanRenderer::ForgetHdPicture(uint64_t id)
 
     if (const auto found = _HdPictures.find(id); found != _HdPictures.end())
     {
-        DropPicture(_HdPictures, found, _HdPictureBytes, HdRgbaBytes);
+        DropHdPicture(found);
     }
 }
 
@@ -1555,10 +1554,10 @@ void MCVulkanRenderer::ReleaseMovie(uint64_t movie)
 }
 
 void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
-                                    size_t bytesPerPixel, uint64_t idleBefore)
+                                    size_t bytesPerPixel)
 {
-    // Those idle (looked for every PictureSweepFrames frames), and past the budget those not drawn in the last frame
-    // (they'd only go up again).
+    // Those unused for a while (looked for every PictureSweepFrames frames), and past the budget those not drawn in
+    // the last frame (they'd only go up again).
     const bool sweep = _Frame % PictureSweepFrames == 0;
 
     if (!sweep && bytes <= budget)
@@ -1566,7 +1565,7 @@ void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictu
         return;
     }
 
-    const auto idle = [&](uint64_t lastFrame) { return sweep && lastFrame < idleBefore; };
+    const auto idle = [&](uint64_t lastFrame) { return sweep && lastFrame + PictureFrames < _Frame; };
     std::vector<std::pair<uint64_t, uint64_t>> byAge;
 
     for (const auto& [key, picture] : pictures)
@@ -1590,6 +1589,39 @@ void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictu
 
         DropPicture(pictures, pictures.find(key), bytes, bytesPerPixel);
     }
+}
+
+void MCVulkanRenderer::TrimHdPictures(size_t budget)
+{
+    // Least recently drawn first: those of an old pack, then, past the budget, those not drawn in the last frame;
+    // past them, every picture was drawn since.
+    const size_t before = _HdPictureBytes;
+
+    while (!_HdOrder.empty() && before - _HdPictureBytes < TrimmedBytesPerFrame)
+    {
+        const auto oldest = _HdPictures.find(_HdOrder.front());
+
+        if (oldest == _HdPictures.end())
+        {
+            _HdOrder.pop_front();
+            continue;
+        }
+
+        const uint64_t lastFrame = oldest->second.LastFrame;
+
+        if (lastFrame >= _HdPackChanged && (_HdPictureBytes <= budget || lastFrame + 1 >= _Frame))
+        {
+            break;
+        }
+
+        DropHdPicture(oldest);
+    }
+}
+
+void MCVulkanRenderer::DropHdPicture(std::unordered_map<uint64_t, Picture>::iterator it)
+{
+    _HdOrder.erase(it->second.InOrder);
+    DropPicture(_HdPictures, it, _HdPictureBytes, HdRgbaBytes);
 }
 
 uint16_t MCVulkanRenderer::SurfaceFor(const MCWindow& window)
@@ -3479,9 +3511,15 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
                                       .begin());
         picture.Bytes = frame.Indices.size() + colors.size();
         found = _HdPictures.emplace(frame.Id, picture).first;
+        found->second.InOrder = _HdOrder.insert(_HdOrder.end(), frame.Id);
         _HdPictureBytes += picture.Bytes;
         ++_FrameUploads.Pictures;
         _FrameUploads.PictureBytes += static_cast<int64_t>(picture.Bytes);
+    }
+    else if (found->second.LastFrame != _Frame)
+    {
+        // Port-only: the first draw of a frame takes it to the end of the order, so the order is by when last drawn.
+        _HdOrder.splice(_HdOrder.end(), _HdOrder, found->second.InOrder);
     }
 
     return UsePicture(found->second);

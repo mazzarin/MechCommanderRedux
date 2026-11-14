@@ -9,6 +9,7 @@
 #include "sprite/MCHdMovie.h"
 
 #include <bitset>
+#include <list>
 #include <unordered_set>
 
 namespace MCHdArt
@@ -1574,6 +1575,8 @@ private:
         PicturePlace Place;
         smol_atlas_item_t* Item = nullptr;
         smol_atlas_item_t* HdItem = nullptr;
+        /// <summary>Port-only: an HD art frame's place in _HdOrder.</summary>
+        std::list<uint64_t>::iterator InOrder;
     };
 
     std::unordered_map<uint64_t, Picture> _Pictures;
@@ -1584,6 +1587,8 @@ private:
     /// </summary>
     std::unordered_map<uint64_t, Picture> _HdPictures;
     size_t _HdPictureBytes = 0;
+    /// <summary>Port-only: the HD pictures' frames' numbers, the least recently drawn first.</summary>
+    std::list<uint64_t> _HdOrder;
     /// <summary>
     /// Port-only: what the machine says the HD art frames may take (made with the device), the pack the HD pictures were
     /// last made from (MCHdArt::PackVersion), and the frame it last changed in (those drawn before then go).
@@ -1666,13 +1671,22 @@ private:
     };
 
     /// <summary>
-    /// Drops the pictures of <paramref name="pictures"/> last drawn before frame <paramref name="idleBefore"/> (looked
-    /// for every PictureSweepFrames frames), then, oldest first, those past <paramref name="budget"/> bytes not drawn in
-    /// the last frame; at most TrimmedBytesPerFrame a frame (the rest go later). <paramref name="bytes"/> counts what
-    /// they take.
+    /// Drops the pictures of <paramref name="pictures"/> unused for a while (looked for every PictureSweepFrames
+    /// frames), then, oldest first, those past <paramref name="budget"/> bytes not drawn in the last frame; at most
+    /// TrimmedBytesPerFrame a frame (the rest go later). <paramref name="bytes"/> counts what they take.
     /// </summary>
     void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
-                      size_t bytesPerPixel, uint64_t idleBefore);
+                      size_t bytesPerPixel);
+
+    /// <summary>
+    /// Port-only: drops the HD art frames' pictures, least recently drawn first (_HdOrder): those drawn before the pack
+    /// last changed, then, past <paramref name="budget"/> bytes, those not drawn in the last frame; at most
+    /// TrimmedBytesPerFrame a frame. Never one for being unused a while: they stay while there's room.
+    /// </summary>
+    void TrimHdPictures(size_t budget);
+
+    /// <summary>Port-only: drops the HD art frame's picture <paramref name="it"/>, out of _HdOrder too.</summary>
+    void DropHdPicture(std::unordered_map<uint64_t, Picture>::iterator it);
 
     /// <summary>
     /// Drops <paramref name="it"/>'s picture from <paramref name="pictures"/>, taking what it took from

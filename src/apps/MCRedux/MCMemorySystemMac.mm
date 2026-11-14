@@ -34,7 +34,7 @@ namespace
                 return;
             }
 
-            // The flag, not the source, in the block: the source holding its handler holding the source would never go.
+            // The source held weakly by its own handler: held strongly, the two would keep each other.
             const std::shared_ptr<std::atomic<bool>> shortOf = _Short;
             __weak dispatch_source_t source = _Pressure;
             dispatch_source_set_event_handler(_Pressure, ^{

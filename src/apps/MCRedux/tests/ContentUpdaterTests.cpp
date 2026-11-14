@@ -1442,7 +1442,26 @@ namespace
         int32_t Quits = 0;
         /// <summary>Why it won't run a setup (empty: it runs it).</summary>
         std::string Refusal;
+        /// <summary>Whether the setup installed the copy (its uninstall entry names the folder), and the folders asked.</summary>
+        bool SetupOwns = true;
+        std::vector<std::filesystem::path> OwnsAsked;
     };
+
+    /// <summary>The arguments the setup runs with for the copy: release.json's, and the copy's folder.</summary>
+    std::string ArgumentsFor(const std::filesystem::path& game)
+    {
+        return std::format("{} /DIR=\"{}\"", SetupArguments, MCFileSystem::ToUtf8(MCSetupBackend::NamedFolder(game)));
+    }
+
+    /// <summary>The stand-in's answer whether the setup installed a copy: <see cref="MCSetupLog::SetupOwns"/>.</summary>
+    MCProgramSwap::MCSetupOwns OwnsFrom(const std::shared_ptr<MCSetupLog>& log)
+    {
+        return [log](const std::filesystem::path& folder)
+        {
+            log->OwnsAsked.push_back(folder);
+            return log->SetupOwns;
+        };
+    }
 
     MCSetupBackend::MCPlatform FakeWindows(const std::shared_ptr<MCSetupLog>& log)
     {
@@ -1458,7 +1477,8 @@ namespace
                     log->Started.emplace_back(setup, std::string(arguments), restart);
                     return std::string();
                 },
-                .Quit = [log] { log->Quits++; }};
+                .Quit = [log] { log->Quits++; },
+                .SetupOwns = OwnsFrom(log)};
     }
 
     /// <summary>The updater on Windows for the test's length: the content's, and the setup's backend.</summary>
@@ -1480,6 +1500,7 @@ namespace
 
             MCContentUpdater::MCSetup setup = release.Setup();
             setup.Platform = "windows";
+            setup.SetupOwns = OwnsFrom(Log);
             MCUpdater::SetBackend(
                 MCSetupBackend::Make(release.Game.Path(), std::string(RunningShown), programs, FakeWindows(Log)));
             MCUpdater::SetContent(setup,
@@ -1545,7 +1566,7 @@ TEST_CASE("updater on Windows: the setup release.json names is downloaded, check
     MCUpdater::Quit();
     REQUIRE_EQ(scope.Log->Started.size(), size_t{1});
     CHECK(std::get<0>(scope.Log->Started.front()) == Downloaded(release));
-    CHECK_EQ(std::get<1>(scope.Log->Started.front()), std::string(SetupArguments));
+    CHECK_EQ(std::get<1>(scope.Log->Started.front()), ArgumentsFor(release.Game.Path()));
     CHECK(std::get<2>(scope.Log->Started.front()));
     CHECK(!std::filesystem::exists(ArmedRecord(release)));
 }
@@ -1634,6 +1655,7 @@ TEST_CASE("updater on Windows: quitting with the update ready runs the setup; on
     CHECK(heldWhileStarting);
     REQUIRE_EQ(log->Started.size(), size_t{1});
     CHECK(std::get<0>(log->Started.front()) == Downloaded(release));
+    CHECK_EQ(std::get<1>(log->Started.front()), ArgumentsFor(release.Game.Path()));
     CHECK(std::get<2>(log->Started.front()));
     CHECK(!MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log)));
     CHECK_EQ(log->Started.size(), size_t{1});
@@ -1805,6 +1827,56 @@ TEST_CASE("updater on Windows: a release whose setup level is above the copy's r
     CHECK(MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log), true));
     REQUIRE_EQ(log->Started.size(), size_t{1});
     CHECK(std::get<0>(log->Started.front()) == Downloaded(release));
+}
+
+TEST_CASE("updater on Windows: the setup is told the copy's folder in full, with no separator at its end")
+{
+    // A folder in full on this system ("C:\..." on Windows, "/..." on the Mac).
+    const std::filesystem::path full = std::filesystem::temp_directory_path().lexically_normal();
+    const std::filesystem::path redux = full / "games" / "redux";
+    CHECK(MCSetupBackend::NamedFolder("games/redux") == std::filesystem::current_path() / "games" / "redux");
+    CHECK(MCSetupBackend::NamedFolder(redux / "") == redux);
+    CHECK(MCSetupBackend::NamedFolder(full / "games" / "." / "old" / ".." / "redux") == redux);
+    CHECK(MCSetupBackend::NamedFolder(full.root_path()) == full.root_path());
+}
+
+TEST_CASE("updater on Windows: a copy the setup didn't install (a player's own, with no record or an install's) takes "
+          "the program's files in place at any setup level; no setup is fetched or run, so none installs elsewhere")
+{
+    // With an install's record at a lower level (a folder copied from an install), and with none (copied by hand).
+    for (const bool record : {true, false})
+    {
+        MCHostedRelease release(record ? "own-copy-record" : "own-copy-bare");
+        PublishProgram(release, 2, 1);
+
+        if (!record)
+        {
+            std::filesystem::remove(release.Game.Path() / MCFileSystem::FromUtf8(MCProgramSwap::SetupFile));
+        }
+
+        MCSetupScope scope(release);
+        scope.Log->SetupOwns = false;
+        MCUpdater::CheckAtStart();
+        REQUIRE(FramesUntil([] { return Stage() == MCStage::Found; }));
+        CHECK_EQ(MCUpdater::Status().Expected,
+                 release.ContentBytes() +
+                     std::filesystem::file_size(release.Host.Path() / "programs" / ProgramZipName));
+        CHECK(std::ranges::all_of(scope.Log->OwnsAsked,
+                                  [&](const std::filesystem::path& folder) { return folder == release.Game.Path(); }));
+        CHECK(!scope.Log->OwnsAsked.empty());
+
+        MCUpdater::Answer(MCAnswer::Install);
+        REQUIRE(FramesUntil([] { return Stage() == MCStage::Ready || Stage() == MCStage::Failed; }));
+        REQUIRE_EQ(MCUpdater::Status().Error, std::string());
+        REQUIRE(Stage() == MCStage::Ready);
+        CHECK(MCUpdater::Status().GoesIn == MCUpdater::MCGoesIn::NextStart);
+        CHECK(release.Armed());
+        CHECK(ProgramIs(release, NewProgram));
+        CHECK(!std::filesystem::exists(Downloaded(release)));
+        CHECK(!std::filesystem::exists(ArmedRecord(release)));
+        MCUpdater::Quit();
+        CHECK(scope.Log->Started.empty());
+    }
 }
 
 TEST_CASE("update place: every path an update installs, stages, downloads and sets aside is held to Windows' limit; "

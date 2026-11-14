@@ -10,6 +10,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCLinkupMessages.h"
 #include "linkup/MCSessionManager.h"
+#include "main/MCBenchmark.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
@@ -24,6 +25,8 @@
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCWin32Defs.h"
+#include "sprite/MCHdArt.h"
+#include <charconv>
 
 namespace
 {
@@ -302,6 +305,45 @@ namespace
         {
             line += word;
         }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): sets the HD art readers' setting <paramref name="word"/> names to
+    /// <paramref name="value"/>: <c>-hdreaders n</c> (1 to 32), <c>-hdsetreads n</c> (the sets' reads at once; 0 as many
+    /// as there are readers) or <c>-hdreaderpriority level|below</c> (with the game's thread or a step below it). A value
+    /// it can't take is logged and left out.
+    /// </summary>
+    void SetReaderSetting(std::string_view word, std::string_view value)
+    {
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+
+        if (MCIEquals(word, "-hdreaderpriority"))
+        {
+            if (!MCIEquals(value, "level") && !MCIEquals(value, "below"))
+            {
+                SDL_Log("-hdreaderpriority: \"%.*s\" isn't level or below", static_cast<int>(value.size()),
+                        value.data());
+                return;
+            }
+
+            settings.Below = MCIEquals(value, "below");
+        }
+        else
+        {
+            size_t count = 0;
+            const char* const end = value.data() + value.size();
+
+            if (const auto [at, error] = std::from_chars(value.data(), end, count); error != std::errc() || at != end)
+            {
+                SDL_Log("%.*s: \"%.*s\" isn't a number", static_cast<int>(word.size()), word.data(),
+                        static_cast<int>(value.size()), value.data());
+                return;
+            }
+
+            (MCIEquals(word, "-hdreaders") ? settings.Readers : settings.SetReads) = count;
+        }
+
+        MCHdArt::SetReaderSettings(settings);
     }
 }
 
@@ -624,6 +666,25 @@ auto ParseCommandLine(std::string_view commandLine) -> void
 
             i++;
         }
+        else if (MCIEquals(word, "-benchmark"))
+        {
+            // Port-only (Redux HD): "-benchmark [weather,time,hd|original]" plays the trailer's canyon battle and a pan
+            // round the map at real time, logs its frames and quits (main/MCBenchmark.h); the word only when it isn't
+            // a switch.
+            const bool variantGiven = hasArgument && !words[i + 1].empty() && words[i + 1][0] != '-';
+            MCBenchmark::Arm(variantGiven ? std::string_view(words[++i]) : std::string_view());
+        }
+        else if (MCIEquals(word, "-hdreaders") || MCIEquals(word, "-hdsetreads") ||
+                 MCIEquals(word, "-hdreaderpriority"))
+        {
+            // Port-only: how HD art's readers read ahead (SetReaderSetting), each default to be measured.
+            if (hasArgument)
+            {
+                SetReaderSetting(word, words[i + 1]);
+            }
+
+            i++;
+        }
         else if (MCIEquals(word, "-debug") || MCIEquals(word, "--debug"))
         {
             // Port: "-debug" lets Enter open the debug console in a single-player mission (MCGuiConsole).
@@ -743,6 +804,9 @@ auto RunGame(std::string_view commandLine, std::chrono::milliseconds internetLea
     {
         exitCode = quit.ExitCode;
     }
+
+    // Port-only (Redux HD): a benchmark's run lets go of the mission's units while the game is still there.
+    MCBenchmark::Release();
 
     // Port (Redux HD): an internet game's leaving reaches the service before the session goes (its place freed, a
     // host's game ended or handed on), and the internet screens let go of their requests.

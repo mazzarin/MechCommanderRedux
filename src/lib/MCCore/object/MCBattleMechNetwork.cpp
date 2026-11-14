@@ -75,7 +75,7 @@ auto MCBattleMech::NetUpdateMovePath(char& newRotate, char& newThrottleSetting, 
     LastValidPosition = destination;
     const auto distance = static_cast<float>(DistanceFrom(destination));
     const int32_t numSteps = path.NumSteps;
-    const float margin = step == numSteps - 1 ? LastStepMargin() : MoveMarginOfError[0];
+    const float margin = StepMargin(step, numSteps);
 
     if (margin <= distance)
     {

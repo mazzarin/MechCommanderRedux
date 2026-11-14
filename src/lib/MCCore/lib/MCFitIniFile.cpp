@@ -331,10 +331,28 @@ int32_t MCFitIniFile::SeekBlock(std::string_view blockId)
         return BLOCK_NOT_FOUND;
     }
 
+    SeekTo(block);
+    return 0;
+}
+
+int32_t MCFitIniFile::SeekBlockAt(int32_t index)
+{
+    CloseIfOrphaned();
+
+    if (index < 0 || index >= GetNumBlocks())
+    {
+        return BLOCK_NOT_FOUND;
+    }
+
+    SeekTo(_Blocks.begin() + index);
+    return 0;
+}
+
+void MCFitIniFile::SeekTo(std::vector<Block>::const_iterator block)
+{
     Seek(static_cast<int32_t>(block->Offset), SEEK_SET);
     _CurrentBlockOffset = block->Offset;
     _CurrentBlockSize = (block + 1 != _Blocks.end() ? (block + 1)->Offset : GetLength()) - _CurrentBlockOffset;
-    return 0;
 }
 
 MCFitResult<std::string> MCFitIniFile::FindIdLine(std::string_view tag, std::string_view name)

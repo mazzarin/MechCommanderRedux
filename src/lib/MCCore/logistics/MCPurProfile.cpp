@@ -3,25 +3,85 @@
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
+#include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "mission/MCScenario.h"
 #include "object/MCMasterComponent.h"
 #include "object/MCObjectTypeManager.h"
 
+/// <summary>
+/// Port: the object description file's texts, read in one pass. The original opened and read the whole file for each
+/// text, and every item a logistics start makes asks for one (570-761 of them).
+/// </summary>
+struct MCDescriptionTexts
+{
+    /// <summary>Each <c>Desc&lt;n&gt;</c> block's DescString as it read, by the block's name (the first of a name).</summary>
+    std::unordered_map<std::string, MCFitResult<std::string>> Texts;
+};
+
+namespace
+{
+    /// <summary>The prefix of the description file's blocks' names; the number after it is the object's.</summary>
+    constexpr std::string_view DescBlock = "Desc";
+
+    /// <summary>
+    /// The description file's texts, read the first time one is asked for and kept in the game's context. None when the
+    /// file doesn't open (asserted, and tried again at the next ask, as each ask opened it before).
+    /// </summary>
+    auto KeptDescriptionTexts() -> std::shared_ptr<const MCDescriptionTexts>
+    {
+        std::shared_ptr<const MCDescriptionTexts>& kept = MCGameContext::Current().DescriptionTexts();
+
+        if (kept != nullptr)
+        {
+            return kept;
+        }
+
+        MCFitIniFile file;
+        const int32_t result = file.Open(GamePath(ObjectPath, ObjectDesc));
+        Assert(result == 0, result, "Could not open description file");
+
+        if (result != 0)
+        {
+            return nullptr;
+        }
+
+        auto texts = std::make_shared<MCDescriptionTexts>();
+
+        for (int32_t block = 0; block < file.GetNumBlocks(); ++block)
+        {
+            std::string name(file.GetBlockName(block));
+
+            if (name.starts_with(DescBlock) && !texts->Texts.contains(name) && file.SeekBlockAt(block) == 0)
+            {
+                texts->Texts.emplace(std::move(name), file.Read<std::string>("DescString"));
+            }
+        }
+
+        kept = std::move(texts);
+        return kept;
+    }
+} // namespace
+
 auto LoadDescriptionText(int32_t descIndex) -> std::string
 {
-    MCFitIniFile file;
-    int32_t result = file.Open(GamePath(ObjectPath, ObjectDesc));
-    Assert(result == 0, result, "Could not open description file");
+    const std::shared_ptr<const MCDescriptionTexts> texts = KeptDescriptionTexts();
 
-    if (file.SeekBlock(std::format("Desc{}", descIndex)) != 0)
+    if (texts == nullptr)
+    {
+        return {};
+    }
+
+    const auto found = texts->Texts.find(std::format("{}{}", DescBlock, descIndex));
+
+    if (found == texts->Texts.end())
     {
         return {};
     }
 
     // A text too long is cut to the original's buffer (0x3ff characters).
-    const MCFitResult<std::string> text = file.Read<std::string>("DescString");
+    const MCFitResult<std::string>& text = found->second;
     Assert(text.has_value(), text.has_value() ? 0 : std::to_underlying(text.error()),
            "Could not read description string");
     return std::format("%fc4{}", text.has_value() ? std::string_view(*text).substr(0, 0x3ff) : std::string_view());

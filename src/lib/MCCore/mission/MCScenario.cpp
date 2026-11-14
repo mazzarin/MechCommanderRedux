@@ -169,9 +169,12 @@ auto MCScenario::Run() -> int32_t
         return static_cast<int32_t>(ScenarioResult);
     }
 
-    Update();
-
     // Port-only: the frame log's parts of the game's logic (MCFrameLog), each its own block.
+    {
+        MCFrameLog::Scope part("logic.update");
+        Update();
+    }
+
     {
         MCFrameLog::Scope part("logic.camera");
         CameraList()->Update();

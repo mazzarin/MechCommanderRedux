@@ -86,6 +86,17 @@ namespace
     }
 
     /// <summary>
+    /// The arguments the setup runs with: release.json's silent ones, and the copy's own folder (Inno Setup's /DIR), in
+    /// full and with no separator before its closing quote, so it installs there and nowhere else, whatever install it
+    /// registered before.
+    /// </summary>
+    std::string SetupArguments(const MCReleaseFile::MCProgram& program, const std::filesystem::path& gameFolder)
+    {
+        return std::format("{} /DIR=\"{}\"", program.Silent,
+                           MCFileSystem::ToUtf8(MCSetupBackend::NamedFolder(gameFolder)));
+    }
+
+    /// <summary>
     /// <paramref name="url"/> as the folder it's in and its file's name, or why it can't be fetched (a name that would
     /// need escaping, a query).
     /// </summary>
@@ -250,7 +261,8 @@ namespace
             return std::unexpected("stopped");
         }
 
-        const MCArmed armed{.Build = program.Build, .Sha256 = *program.Sha256, .Arguments = program.Silent};
+        const MCArmed armed{
+            .Build = program.Build, .Sha256 = *program.Sha256, .Arguments = SetupArguments(program, gameFolder)};
 
         if (!WriteDurably(*disk, gameFolder, In(gameFolder, MCSetupBackend::ArmedFile), ArmedText(armed)))
         {
@@ -339,8 +351,9 @@ namespace
                 return;
             }
 
-            // The program's files put in place by the game, where the setup's work is as the copy's setup left it.
-            _Swaps = MCProgramSwap::Swaps(MCProgramSwap::SetupLevel(*MakeDisk(), _GameFolder), *_Program);
+            // The program's files put in place by the game: in a copy of the player's own, and where the setup's work
+            // is as the copy's setup left it.
+            _Swaps = MCProgramSwap::Swaps(*MakeDisk(), _GameFolder, _Platform.SetupOwns, *_Program);
 
             if (const std::string problem = Problem(*_Program, _Swaps); !problem.empty())
             {
@@ -462,8 +475,9 @@ namespace
             }
 
             const std::filesystem::path setup = SetupPath(_GameFolder, _Program->Build);
-            const std::string failed = _Platform.Start ? _Platform.Start(setup, _Program->Silent, _Restart)
-                                                       : std::string("this build can't run a setup");
+            const std::string failed = _Platform.Start
+                                           ? _Platform.Start(setup, SetupArguments(*_Program, _GameFolder), _Restart)
+                                           : std::string("this build can't run a setup");
 
             if (!failed.empty())
             {
@@ -580,6 +594,29 @@ std::unique_ptr<MCUpdater::MCBackend> MCSetupBackend::Make(std::filesystem::path
 MCProgramSwap::MCPlatform MCSetupBackend::SwapPlatform(const MCPlatform& platform)
 {
     return {.Runnable = platform.Runnable, .ShowVersion = platform.ShowVersion};
+}
+
+std::filesystem::path MCSetupBackend::NamedFolder(const std::filesystem::path& gameFolder)
+{
+    std::error_code error;
+    std::filesystem::path folder = std::filesystem::absolute(gameFolder, error);
+
+    if (error)
+    {
+        SDL_Log("Updater: %s's full path is unknown (%s): the setup is given it as it is",
+                MCFileSystem::ToUtf8(gameFolder).c_str(), error.message().c_str());
+        folder = gameFolder;
+    }
+
+    folder = folder.lexically_normal();
+
+    // "C:\Games\Redux\" names the folder "C:\Games\Redux" (a drive's root keeps its separator).
+    if (!folder.has_filename() && folder.has_relative_path())
+    {
+        folder = folder.parent_path();
+    }
+
+    return folder;
 }
 
 bool MCSetupBackend::RunLeftOver(const std::filesystem::path& gameFolder, uint64_t runningBuild,

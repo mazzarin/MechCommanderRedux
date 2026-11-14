@@ -249,6 +249,7 @@
     <ClCompile Include="logistics\MCVehicleRepairBlock.cpp" />
     <ClCompile Include="main\MCAblDebuggerConsole.cpp" />
     <ClCompile Include="main\MCArtModes.cpp" />
+    <ClCompile Include="main\MCBenchmark.cpp" />
     <ClCompile Include="main\MCErrorReport.cpp" />
     <ClCompile Include="main\MCForceMessages.cpp" />
     <ClCompile Include="main\MCGameContext.cpp" />
@@ -288,6 +289,8 @@
     <ClCompile Include="mission\MCScenarioLoad.cpp" />
     <ClCompile Include="mission\MCScenarioObjectives.cpp" />
     <ClCompile Include="mission\MCScenarioPart.cpp" />
+    <ClCompile Include="mission\MCStagedBattle.cpp" />
+    <ClCompile Include="mission\MCTrailerMission.cpp" />
     <ClCompile Include="mission\MCWeatherPlay.cpp" />
     <ClCompile Include="network\MCGameDataHash.cpp" />
     <ClCompile Include="network\MCInternetCopy.cpp" />
@@ -424,6 +427,7 @@
     </ClCompile>
     <ClCompile Include="platform\MCIceTransport.cpp" />
     <ClCompile Include="platform\MCInput.cpp" />
+    <ClCompile Include="platform\MCMemoryRoom.cpp" />
     <ClCompile Include="platform\MCNetSwitch.cpp" />
     <ClCompile Include="platform\MCPresenter.cpp" />
     <ClCompile Include="platform\MCRegisteredBlock.cpp" />
@@ -446,6 +450,11 @@
     <ClCompile Include="platform\MCSoftwareRendererPolygons.cpp" />
     <ClCompile Include="platform\MCSoftwareRendererShapes.cpp" />
     <ClCompile Include="platform\MCStringTable.cpp" />
+    <ClCompile Include="platform\MCThreadPriority.cpp">
+      <!-- A thread's priority comes from windows.h, which must not meet the game's Win32 stand-ins in the precompiled
+           header. -->
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="platform\MCTlsThreading.cpp" />
     <ClCompile Include="platform\MCVulkanPresenter.cpp" />
     <ClCompile Include="platform\MCVulkanRenderer.cpp" />
@@ -744,6 +753,7 @@
     <ClInclude Include="logistics\MCVehicleRepairBlock.h" />
     <ClInclude Include="main\MCAblDebuggerConsole.h" />
     <ClInclude Include="main\MCArtModes.h" />
+    <ClInclude Include="main\MCBenchmark.h" />
     <ClInclude Include="main\MCDropSlot.h" />
     <ClInclude Include="main\MCErrorReport.h" />
     <ClInclude Include="main\MCForceMessages.h" />
@@ -782,6 +792,8 @@
     <ClInclude Include="mission\MCScenarioObjectives.h" />
     <ClInclude Include="mission\MCScenarioPart.h" />
     <ClInclude Include="mission\MCScenarioReading.h" />
+    <ClInclude Include="mission\MCStagedBattle.h" />
+    <ClInclude Include="mission\MCTrailerMission.h" />
     <ClInclude Include="mission\MCWeatherPlay.h" />
     <ClInclude Include="network\MCGameDataHash.h" />
     <ClInclude Include="network\MCInternetCopy.h" />
@@ -911,6 +923,7 @@
     <ClInclude Include="platform\MCIceLink.h" />
     <ClInclude Include="platform\MCIceTransport.h" />
     <ClInclude Include="platform\MCInput.h" />
+    <ClInclude Include="platform\MCMemoryRoom.h" />
     <ClInclude Include="platform\MCNetSwitch.h" />
     <ClInclude Include="platform\MCNeverDestroyed.h" />
     <ClInclude Include="platform\MCPresenter.h" />
@@ -929,6 +942,7 @@
     <ClInclude Include="platform\MCSocket.h" />
     <ClInclude Include="platform\MCSoftwareRenderer.h" />
     <ClInclude Include="platform\MCStringTable.h" />
+    <ClInclude Include="platform\MCThreadPriority.h" />
     <ClInclude Include="platform\MCTlsThreading.h" />
     <ClInclude Include="platform\MCUtf8Path.h" />
     <ClInclude Include="platform\MCVulkanPresenter.h" />

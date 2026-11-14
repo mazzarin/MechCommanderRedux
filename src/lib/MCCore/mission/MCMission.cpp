@@ -10,6 +10,7 @@
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogRows.h"
+#include "main/MCBenchmark.h"
 #include "main/MCGamePaths.h"
 #include "main/MCTelemetry.h"
 #include "logistics/MCConnectMenu.h"
@@ -170,6 +171,12 @@ auto PlayScenario() -> void
     if (Scenario() != nullptr && ScenarioResult == 0)
     {
         ScenarioResult = static_cast<uint32_t>(Scenario()->Run());
+
+        // Port-only (Redux HD): a benchmark's battle plays on past the mission's end (main/MCBenchmark.h).
+        if (MCBenchmark::Running())
+        {
+            ScenarioResult = 0;
+        }
     }
 
     if (SoundSystem() != nullptr && UseSound != 0)

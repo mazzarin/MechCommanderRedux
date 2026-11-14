@@ -790,7 +790,7 @@ auto MCBattleMech::UpdateMovePath(char& newRotate, char& newThrottleSetting, flo
     LastValidPosition = destination;
     const auto distance = static_cast<float>(DistanceFrom(destination));
     const int32_t numSteps = path.NumSteps;
-    const float margin = step == numSteps - 1 ? LastStepMargin() : MoveMarginOfError[0];
+    const float margin = StepMargin(step, numSteps);
 
     if (margin <= distance)
     {
@@ -1010,11 +1010,13 @@ namespace
     }
 
     /// <summary>
-    /// Port-only (MechBraking): the metres from <paramref name="position"/> along <paramref name="path"/>'s steps left to
-    /// its end, as walked (from step to step; the steps' own distances to the goal count cells), then on to
-    /// <paramref name="end"/> when given (a multiplayer client's move's end, past the server's latest steps).
+    /// Port-only (MechBraking): the metres from <paramref name="position"/> along <paramref name="path"/>'s steps left
+    /// before step <paramref name="until"/> (its end when none), as walked (from step to step; the steps' own distances
+    /// to the goal count cells), then on to <paramref name="end"/> when given (a multiplayer client's move's end, past
+    /// the server's latest steps).
     /// </summary>
-    auto WalkLeft(const MCMovePath& path, const MCVector3D& position, const std::optional<MCVector3D>& end) -> float
+    auto WalkLeft(const MCMovePath& path, const MCVector3D& position, const std::optional<MCVector3D>& end,
+                  std::optional<int32_t> until = std::nullopt) -> float
     {
         double units = 0.0;
         MCVector3D from = position;
@@ -1024,7 +1026,7 @@ namespace
             from = to;
         };
 
-        for (int32_t step = path.CurStep; step < path.NumSteps; ++step)
+        for (int32_t step = path.CurStep; step < until.value_or(path.NumSteps); ++step)
         {
             walk(path.StepList[static_cast<size_t>(step)].Destination);
         }
@@ -1036,7 +1038,273 @@ namespace
 
         return static_cast<float>(units * MetersPerWorldUnit);
     }
+
+    /// <summary>Port-only (MechBraking): a movement cell as the stop claims key it.</summary>
+    using MCCellKey = std::tuple<int32_t, int32_t, int32_t, int32_t>;
+
+    auto KeyOf(const MCPathRangeLock& cell) -> MCCellKey
+    {
+        return {cell.TileR, cell.TileC, cell.CellR, cell.CellC};
+    }
+
+    auto CellOf(const MCPathStep& step) -> MCPathRangeLock
+    {
+        return {step.TileR, step.TileC, step.CellR, step.CellC};
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): the cells mechs braking to a halt, or nearing where they will, have claimed to
+    /// come to rest in (MCBattleMech::ClaimedCell), each with its mech's part id. Unlike the original's path locks they
+    /// keep no one from passing: only from ending a move there. A claim whose mech has gone, or moved its claim, is
+    /// dropped when next looked at (ClaimedByOther), so none outlives its mission.
+    /// </summary>
+    auto StopClaims() -> std::map<MCCellKey, int32_t>&
+    {
+        static std::map<MCCellKey, int32_t> claims;
+        return claims;
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): whether <paramref name="cell"/> is the claim of a mech other than
+    /// <paramref name="self"/> (a claim whose mech has gone, or moved its claim, is dropped).
+    /// </summary>
+    auto ClaimedByOther(const MCPathRangeLock& cell, int32_t self) -> bool
+    {
+        auto& claims = StopClaims();
+        const auto found = claims.find(KeyOf(cell));
+
+        if (found == claims.end() || found->second == self)
+        {
+            return false;
+        }
+
+        const auto owner = std::dynamic_pointer_cast<MCBattleMech>(GetMoverFromPartId(found->second));
+
+        if (owner == nullptr || owner->IsDestroyed() != 0 || !owner->ClaimedCell.has_value() ||
+            KeyOf(*owner->ClaimedCell) != found->first)
+        {
+            claims.erase(found);
+            return false;
+        }
+
+        // A disabled mech (shut down, legs gone) won't get there: its claim goes (its path locks aren't updated while
+        // it is, so it can't let go itself).
+        if (owner->IsDisabled() != 0)
+        {
+            owner->ClaimedCell.reset();
+            claims.erase(found);
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): the mover other than <paramref name="self"/> that holds
+    /// <paramref name="cell"/> (stands in it, or the original's lock ahead of it took it), if any.
+    /// </summary>
+    auto HolderOf(const MCPathRangeLock& cell, int32_t self) -> std::shared_ptr<MCMover>
+    {
+        const auto same = [&](int32_t tileR, int32_t tileC, int32_t cellR, int32_t cellC)
+        { return tileR == cell.TileR && tileC == cell.TileC && cellR == cell.CellR && cellC == cell.CellC; };
+
+        for (int32_t part = MCMover::FirstPartId; part < MCMover::EndPartId; ++part)
+        {
+            std::shared_ptr<MCMover> mover = part == self ? nullptr : GetMoverFromPartId(part);
+
+            if (mover == nullptr)
+            {
+                continue;
+            }
+
+            if (const std::shared_ptr<MCObjectPosition> at = mover->ObjPosition.lock();
+                at != nullptr && same(at->TileR, at->TileC, at->CellR, at->CellC))
+            {
+                return mover;
+            }
+
+            for (const MCPathRangeLock& lock : mover->PathRangeLocks)
+            {
+                if (same(lock.TileR, lock.TileC, lock.CellR, lock.CellC))
+                {
+                    return mover;
+                }
+            }
+        }
+
+        return nullptr;
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): the first step of <paramref name="path"/> from which every step to
+    /// its end is another mech's claim: there the move ends (MCBattleMech::CrashAvoidanceSystem), as the original's ends a
+    /// cell short of an end another unit holds. None while its last step is no one else's.
+    /// </summary>
+    auto ClaimedTail(const MCMovePath& path, int32_t self) -> std::optional<int32_t>
+    {
+        if (MCMechBrakingVersion() < BrakingVersion2 || MultiPlayerClient())
+        {
+            return std::nullopt;
+        }
+
+        const int32_t end = path.NumStepsWhenNotPaused;
+        int32_t tail = end;
+
+        while (tail > std::max(path.CurStep, 0) &&
+               ClaimedByOther(CellOf(path.StepList[static_cast<size_t>(tail - 1)]), self))
+        {
+            --tail;
+        }
+
+        return tail < end ? std::optional(tail) : std::nullopt;
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): the step of <paramref name="path"/> at which the original's crash avoidance will end the
+    /// move short of its end (MCBattleMech::CrashAvoidanceSystem: once the steps it looks ahead at, <paramref
+    /// name="lookAhead"/> of them, reach the path's end with one of them another unit's or impassable): the first step
+    /// whose look-ahead reaches the end, when a step from it on is taken, or the first of the path's last steps that are
+    /// all other mechs' claims (ClaimedTail; <paramref name="self"/> the mech's part id), whichever is sooner. None while
+    /// the way to the end is clear.
+    /// </summary>
+    auto HaltStep(const MCMovePath& path, int32_t lookAhead, int32_t self) -> std::optional<int32_t>
+    {
+        const int32_t end = path.NumStepsWhenNotPaused;
+        const int32_t from = std::max(path.CurStep, end - lookAhead);
+        // The move ends where its last steps are other mechs' claims.
+        std::optional<int32_t> halt = ClaimedTail(path, self);
+
+        if (halt.has_value())
+        {
+            halt = std::max(*halt, path.CurStep);
+        }
+
+        if (lookAhead < 1 || from >= end)
+        {
+            return halt;
+        }
+
+        int reachedEnd = 0;
+
+        if (path.IsLocked(from, end - from, reachedEnd) || path.IsBlocked(from, end - from, reachedEnd))
+        {
+            return std::min(from, halt.value_or(from));
+        }
+
+        return halt;
+    }
 } // namespace
+
+auto MCBattleMech::UpdatePathLock(int set) -> void
+{
+    MCMover::UpdatePathLock(set);
+
+    if (set == 0 || MCMechBrakingVersion() < BrakingVersion2 || MultiPlayerClient())
+    {
+        return;
+    }
+
+    auto& actor = static_cast<MCMechActor&>(*Appearance);
+    const std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
+    const MCMovePath& path = warrior->GetMovePath();
+    const bool stepsLeft = path.NumStepsWhenNotPaused > 0 && path.CurStep < path.NumStepsWhenNotPaused;
+    std::optional<MCPathRangeLock> wanted;
+
+    if (IsDestroyed() != 0 || IsDisabled() != 0 || warrior->MoveOrders.YieldTime > -1.0f ||
+        (stepsLeft && !MoveEndsWith(path)))
+    {
+        wanted.reset();
+    }
+    else if (stepsLeft)
+    {
+        // Braking, or within its stop and ClaimStrides strides of it: the cell it will come to rest in.
+        const int32_t last =
+            std::min(EndStopStep.value_or(path.NumStepsWhenNotPaused - 1), path.NumStepsWhenNotPaused - 1);
+        const std::optional<float> claim = actor.ClaimMetres();
+
+        if (last >= 0 &&
+            (actor.PlannedStop || (claim.has_value() && WalkLeft(path, Position, std::nullopt, last + 1) <= *claim)))
+        {
+            wanted = CellOf(path.StepList[static_cast<size_t>(last)]);
+        }
+    }
+    else if (actor.PlannedStop && actor.InTransition)
+    {
+        // Its path ended with the mech still braking: the cell its stop had, until it stands.
+        wanted = ClaimedCell;
+    }
+
+    auto& claims = StopClaims();
+
+    if (ClaimedCell.has_value() && (!wanted.has_value() || KeyOf(*wanted) != KeyOf(*ClaimedCell)))
+    {
+        if (const auto found = claims.find(KeyOf(*ClaimedCell)); found != claims.end() && found->second == PartId)
+        {
+            claims.erase(found);
+        }
+
+        ClaimedCell.reset();
+    }
+
+    // The first to claim a cell keeps it.
+    if (wanted.has_value() && !ClaimedCell.has_value() && !ClaimedByOther(*wanted, PartId))
+    {
+        claims[KeyOf(*wanted)] = PartId;
+        ClaimedCell = wanted;
+    }
+}
+
+auto MCBattleMech::WalksBehind(const MCMovePath& path) -> bool
+{
+    auto& actor = static_cast<MCMechActor&>(*Appearance);
+    // The first step ahead another unit holds, short of where the move's end is looked at (HaltStep's).
+    const int32_t limit =
+        EndStopStep.has_value() ? *EndStopStep + 1 : path.NumStepsWhenNotPaused - std::max(CrashAvoidPath, 1);
+    std::optional<int32_t> held;
+
+    for (int32_t step = path.CurStep + 1; step < limit && !held.has_value(); ++step)
+    {
+        const MCPathStep& pathStep = path.StepList[static_cast<size_t>(step)];
+
+        if (GameMap().GetCellPathLocked(pathStep.TileR, pathStep.TileC, pathStep.CellR, pathStep.CellC))
+        {
+            held = step;
+        }
+    }
+
+    // Only a unit slower than it is closed on: one running as fast keeps the distance by itself.
+    bool slower = false;
+
+    if (held.has_value())
+    {
+        const std::shared_ptr<MCMover> holder = HolderOf(CellOf(path.StepList[static_cast<size_t>(*held)]), PartId);
+        const MCVector3D velocity = holder != nullptr ? holder->GetVelocity() : MCVector3D();
+        slower = holder == nullptr || std::hypot(velocity.X, velocity.Y) < FollowSlower * CalcMaxSpeed();
+    }
+
+    // Within a run's stop and FollowStrides stride of that unit's cell, it walks; a stride further off, it runs again.
+    const float behind = held.has_value() ? WalkLeft(path, Position, std::nullopt, *held) : 0.0f;
+    const std::optional<float> keep = actor.StopAndStrides(MCStopState::Run, FollowStrides);
+    const std::optional<float> letGo = actor.StopAndStrides(MCStopState::Run, FollowStrides + 1.0f);
+
+    if (held.has_value() && slower && keep.has_value() && behind <= *keep)
+    {
+        Following = true;
+    }
+    else if (!held.has_value() || !slower || !letGo.has_value() || behind > *letGo)
+    {
+        Following = false;
+    }
+
+    // Not running yet, it starts a run only where it could stop from it before its move's end.
+    const std::optional<float> runStart = actor.StopAndStrides(MCStopState::Run, RunStartStrides);
+    const std::optional<float> endLeft =
+        MoveEndsWith(path) ? std::optional(WalkLeft(path, Position, std::nullopt,
+                                                    EndStopStep.value_or(path.NumStepsWhenNotPaused - 1) + 1))
+                           : std::nullopt;
+    const bool startsRun = actor.CurrentStateGesture != MCStopState::Run;
+    return Following || (startsRun && runStart.has_value() && endLeft.has_value() && *endLeft <= *runStart);
+}
 
 auto MCBattleMech::PlanStop(int32_t& newGestureStateGoal) -> void
 {
@@ -1050,16 +1318,56 @@ auto MCBattleMech::PlanStop(int32_t& newGestureStateGoal) -> void
     // Only a stride the mover keeps going is fitted to a stop (not one it limps, jumps or halts).
     const bool keepsGoing = newGestureStateGoal == MCStopState::Walk || newGestureStateGoal == MCStopState::Run;
     std::optional<float> metresLeft;
+    StopStep.reset();
+    EndStopStep.reset();
 
     if ((stepsLeft || end.has_value()) && (keepsGoing || actor.PlannedStop) && MoveEndsWith(path))
     {
-        // The move ends where the original would stop it: within its last step's margin of error (metres) of the end.
-        const float walkLeft = WalkLeft(path, Position, end) - MoveMarginOfError[1];
+        // A unit on the move's end: the original's crash avoidance ends the move once the mech reaches the step before
+        // the one it halts at (within that step's margin of error), so the stop ends there. A multiplayer client's
+        // stop ends where the server's chunks show the move ending.
+        // Port-only (MechBraking): version 1 fits the stop to the path's end regardless.
+        const std::optional<int32_t> halt = MultiPlayerClient() || MCMechBrakingVersion() < BrakingVersion2
+                                                ? std::nullopt
+                                                : HaltStep(path, CrashAvoidPath, PartId);
 
-        if (stepsLeft || walkLeft > 0.0f)
+        if (halt.has_value())
         {
-            metresLeft = walkLeft;
+            StopStep = *halt - 1;
+
+            if (*halt > path.CurStep)
+            {
+                metresLeft = WalkLeft(path, Position, std::nullopt, *halt) - MoveMarginOfError[0];
+            }
         }
+        else
+        {
+            // The move ends where the original would stop it: within its last step's margin of error of the end.
+            const float walkLeft = WalkLeft(path, Position, end) - MoveMarginOfError[1];
+
+            if (stepsLeft || walkLeft > 0.0f)
+            {
+                metresLeft = walkLeft;
+            }
+        }
+    }
+
+    EndStopStep = StopStep;
+    HeldToWalk = false;
+
+    // Port-only (MechBraking): running, it keeps its stopping distance behind a slower unit on its path, and
+    // starts no run whose end is too near to stop from one (WalksBehind). The server's: its move chunks say walk.
+    const bool mayFollow = MCMechBrakingVersion() >= BrakingVersion2 && !MultiPlayerClient() && stepsLeft &&
+                           warrior->MoveOrders.YieldTime <= -1.0f;
+
+    if (mayFollow && newGestureStateGoal == MCStopState::Run && !actor.PlannedStop)
+    {
+        HeldToWalk = WalksBehind(path);
+        newGestureStateGoal = HeldToWalk ? MCStopState::Walk : newGestureStateGoal;
+    }
+    else if (!mayFollow || newGestureStateGoal != MCStopState::Run)
+    {
+        Following = false;
     }
 
     if (actor.FitStop(metresLeft))
@@ -1088,15 +1396,19 @@ auto MCBattleMech::MoveEndsWith(const MCMovePath& path) const -> bool
     return warrior != nullptr && !warrior->MoveGoesOnPast(path);
 }
 
-auto MCBattleMech::LastStepMargin() const -> float
+auto MCBattleMech::StepMargin(int32_t step, int32_t numSteps) const -> float
 {
-    // Port-only (MechBraking): a mech braking to a halt there counts as there within the slack its stop ends in.
-    if (Appearance != nullptr && static_cast<const MCMechActor&>(*Appearance).PlannedStop)
+    const float margin = step == numSteps - 1 ? MoveMarginOfError[1] : MoveMarginOfError[0];
+
+    // Port-only (MechBraking): a mech braking to a halt at the step its stop ends at counts as there within the slack
+    // its stop ends in.
+    if (step == StopStep.value_or(numSteps - 1) && Appearance != nullptr &&
+        static_cast<const MCMechActor&>(*Appearance).PlannedStop)
     {
-        return MoveMarginOfError[1] + BrakeArrivalSlack;
+        return margin + BrakeArrivalSlack;
     }
 
-    return MoveMarginOfError[1];
+    return margin;
 }
 
 auto MCBattleMech::MoveHeldUp() const -> bool
@@ -1274,6 +1586,8 @@ auto MCBattleMech::SetControlSettings(char& newRotate, char& newThrottleSetting,
 
 auto MCBattleMech::UpdateMovement() -> void
 {
+    // Port-only (MechBraking): held to a walk only in a frame PlanStop says so (none when it returns before).
+    HeldToWalk = false;
     auto& controlData = static_cast<MCMechControlData&>(*Control->ControlData);
     int32_t minThrottle = 0x23;
     int32_t maxThrottle = 100;
@@ -1490,6 +1804,18 @@ auto MCBattleMech::CrashAvoidanceSystem() -> int
     if (static_cast<double>(warrior->MoveOrders.WaitForPointTime) > 999990.0)
     {
         return 0;
+    }
+
+    // Port-only (MechBraking): the rest of the path other mechs' claims to come to rest in, the move ends here,
+    // as the original's ends short of an end another unit holds.
+    if (MCMechBrakingVersion() >= BrakingVersion2)
+    {
+        if (const std::optional<int32_t> tail = ClaimedTail(path, PartId); tail.has_value() && path.CurStep >= *tail)
+        {
+            warrior->ReachedPathEnd();
+            Control->ControlData->Brake();
+            return 1;
+        }
     }
 
     // A look a frame ahead along the frame turned by a quarter pi (its result is unused).

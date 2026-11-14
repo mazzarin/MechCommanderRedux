@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/MCMemoryRoom.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCSharpLines.h"
@@ -8,6 +9,7 @@
 #include "sprite/MCHdMovie.h"
 
 #include <bitset>
+#include <list>
 #include <unordered_set>
 
 namespace MCHdArt
@@ -340,6 +342,12 @@ public:
 
     /// <summary>The uploads of the last frame <see cref="Execute"/> ran.</summary>
     const UploadTally& LastFrameUploads() const { return _LastFrameUploads; }
+
+    /// <summary>
+    /// Port-only: the bytes the HD art frames on the GPU take (their colours and indices), and how many there are.
+    /// </summary>
+    size_t HdPictureBytes() const { return _HdPictureBytes; }
+    size_t HdPictureCount() const { return _HdPictures.size(); }
 
     /// <summary>
     /// Port-only: the draw calls of the last frame <see cref="Execute"/> ran (each a batch of draws), once it has run
@@ -1583,6 +1591,8 @@ private:
         PicturePlace Place;
         smol_atlas_item_t* Item = nullptr;
         smol_atlas_item_t* HdItem = nullptr;
+        /// <summary>Port-only: an HD art frame's place in _HdOrder.</summary>
+        std::list<uint64_t>::iterator InOrder;
     };
 
     std::unordered_map<uint64_t, Picture> _Pictures;
@@ -1593,6 +1603,15 @@ private:
     /// </summary>
     std::unordered_map<uint64_t, Picture> _HdPictures;
     size_t _HdPictureBytes = 0;
+    /// <summary>Port-only: the HD pictures' frames' numbers, the least recently drawn first.</summary>
+    std::list<uint64_t> _HdOrder;
+    /// <summary>
+    /// Port-only: what the machine says the HD art frames may take (made with the device), the pack the HD pictures were
+    /// last made from (MCHdArt::PackVersion), and the frame it last changed in (those drawn before then go).
+    /// </summary>
+    std::optional<MCMemoryRoom::MCReader> _Room;
+    uint64_t _HdPicturesPack = 0;
+    uint64_t _HdPackChanged = 0;
     /// <summary>The HD art frames the GPU couldn't take (logged once each, then drawn from the 1x shape).</summary>
     std::unordered_set<uint64_t> _HdRefused;
 
@@ -1676,6 +1695,16 @@ private:
     /// </summary>
     void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
                       size_t bytesPerPixel, bool keepIdle = false);
+
+    /// <summary>
+    /// Port-only: drops the HD art frames' pictures, least recently drawn first (_HdOrder): those drawn before the pack
+    /// last changed, then, past <paramref name="budget"/> bytes, those not drawn in the last frame; at most
+    /// TrimmedBytesPerFrame a frame. Never one for being unused a while: they stay while there's room.
+    /// </summary>
+    void TrimHdPictures(size_t budget);
+
+    /// <summary>Port-only: drops the HD art frame's picture <paramref name="it"/>, out of _HdOrder too.</summary>
+    void DropHdPicture(std::unordered_map<uint64_t, Picture>::iterator it);
 
     /// <summary>
     /// Drops <paramref name="it"/>'s picture from <paramref name="pictures"/>, taking what it took from

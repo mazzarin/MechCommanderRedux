@@ -187,4 +187,10 @@ namespace MCTestGame
     /// row readied again as the game does when its stock changes.
     /// </summary>
     void StockStore(int32_t count);
+
+    /// <summary>
+    /// Adds spare mechs (the store's first mech) to the inventory until the player owns <paramref name="units"/> mechs
+    /// and vehicles (NumUnits), as purchases or a mission's salvage would.
+    /// </summary>
+    void OwnUnits(int32_t units);
 }

@@ -239,7 +239,9 @@ auto MCMoveChunk::FinishBuild(MCMover& mover) -> void
 
     if (Run != 0 && mover.ObjectClass == MCObjectClass::BattleMech)
     {
-        Run = static_cast<MCBattleMech&>(mover).LegStatus == 0 ? 1 : 0;
+        // Port-only (MechBraking): a mech the server holds to a walk walks on the guests' games too.
+        const auto& mech = static_cast<MCBattleMech&>(mover);
+        Run = mech.LegStatus == 0 && !mech.HeldToWalk ? 1 : 0;
     }
 
     Data = 0;

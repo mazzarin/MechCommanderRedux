@@ -5,12 +5,13 @@
 /// split into named parts (<see cref="Scope"/>), counts what it did (<see cref="Count"/>) and carries notes of what
 /// happened in it (<see cref="Note"/>); a frame much slower than the frames around it, or a skipped refresh of the
 /// screen, is written out with them, and every second a line of its frames: their times, how many took longer than
-/// a refresh and 1.5, and each part's time and each count a frame, so a slowdown that lasts shows with its parts too.
-/// Costs a flag test per part while off.
+/// a refresh and 1.5, and each part's time and each count a frame, so a slowdown that lasts shows with its parts too;
+/// with the time between the frames handed to the screen (<see cref="Presented"/>), which is what the screen shows
+/// where the game queues frames for it. Costs a flag test per part while off.
 /// </summary>
 /// <remarks>
-/// Threads: <see cref="Open"/> and <see cref="NextFrame"/> on the game's thread; parts, counts and notes on any (the
-/// render thread's parts are named <c>render.*</c>), counted in the frame running as they end.
+/// Threads: <see cref="Open"/>, <see cref="NextFrame"/> and <see cref="Presented"/> on the game's thread; parts, counts
+/// and notes on any (the render thread's parts are named <c>render.*</c>), counted in the frame running as they end.
 /// </remarks>
 namespace MCFrameLog
 {
@@ -28,9 +29,19 @@ namespace MCFrameLog
 
     /// <summary>
     /// Ends the frame running since the last call (written if slow) and starts the next; <paramref name="refreshHz"/> is
-    /// the window's screen's refresh rate (0: not known), by which a frame that skipped a refresh is slow.
+    /// the window's screen's refresh rate (0: not known), by which a frame that skipped a refresh is slow;
+    /// <paramref name="vsync"/>, whether the frames wait for the screen's refresh (<see cref="Presented"/>).
     /// </summary>
-    void NextFrame(double refreshHz = 0.0);
+    void NextFrame(double refreshHz = 0.0, bool vsync = false);
+
+    /// <summary>
+    /// A frame handed to the screen now: the presenters call it as they submit the frame shown. The log takes each as
+    /// the screen shows it: without vsync as it's handed over; with vsync at the later of that and a refresh after the
+    /// one before, as a queue of frames for the screen shows them. The game's loop, and its hand-overs, can run
+    /// unevenly, a frame quick and the next waiting, while the queue gives the screen one each refresh (Vulkan's third
+    /// image; NVIDIA's Vulkan driver on Windows takes the frames handed to it into its own).
+    /// </summary>
+    void Presented();
 
     /// <summary>Adds <paramref name="text"/> to this frame's notes (a frame with notes is always written).</summary>
     void Note(std::string text);
@@ -38,8 +49,70 @@ namespace MCFrameLog
     /// <summary>Adds <paramref name="amount"/> to this frame's count <paramref name="name"/> (a phrase: "HD frames read").</summary>
     void Count(std::string_view name, int64_t amount = 1);
 
+    /// <summary>
+    /// Writes <paramref name="text"/> into the log as a line of its own, now (a benchmark's summary), if one is open; on
+    /// the game's thread.
+    /// </summary>
+    void Line(std::string_view text);
+
     /// <summary>The tests' clock instead of the system's (none: the system's again), set while no frame runs.</summary>
     void SetClockForTests(MCClock clock);
+
+    /// <summary>Frames' times in a stretch, with those slow and long among them.</summary>
+    struct MCFrameTimes
+    {
+        /// <summary>Each frame's time (ms), in order.</summary>
+        std::vector<double> Times;
+        /// <summary>Frames much slower than the usual one, or late by a refresh of the screen.</summary>
+        size_t Slow = 0;
+        /// <summary>Frames longer than 1.5 refreshes (on the screen for two or more).</summary>
+        size_t Long = 0;
+
+        /// <summary>The frames' time in all (seconds).</summary>
+        double Seconds() const;
+        /// <summary>The median frame's time (ms); 0 without frames.</summary>
+        double MedianMs() const;
+        /// <summary>The 99th percentile's frame time (ms): one frame in a hundred took longer; 0 without frames.</summary>
+        double P99Ms() const;
+        /// <summary>The longest frame's time (ms); 0 without frames.</summary>
+        double WorstMs() const;
+        /// <summary><paramref name="later"/>'s frames added after these.</summary>
+        void Add(const MCFrameTimes& later);
+    };
+
+    /// <summary>A stretch of frames tallied whole (<see cref="StartTally"/> to <see cref="TakeTally"/>): a benchmark's.</summary>
+    struct MCTally
+    {
+        /// <summary>The game's loop: each frame from its start to the next's (<see cref="NextFrame"/>).</summary>
+        MCFrameTimes Loop;
+        /// <summary>The screen's: the time between the frames handed to it (<see cref="Presented"/>); none where no presenter says.</summary>
+        MCFrameTimes Shown;
+        /// <summary>The refresh rate of the window's screen (Hz) as the last frame saw it; 0 when not known.</summary>
+        double RefreshHz = 0.0;
+        /// <summary>Each part's time in all (ms) and each count in all, in the order first seen.</summary>
+        std::vector<std::pair<std::string, double>> PartsMs;
+        std::vector<std::pair<std::string, int64_t>> Counts;
+
+        /// <summary>Whether the screen's frames were tallied (a presenter said), so <see cref="Judged"/> is theirs.</summary>
+        bool TimedShown() const;
+        /// <summary>The frames a benchmark judges: the screen's where there are any, else the loop's.</summary>
+        const MCFrameTimes& Judged() const;
+        /// <summary>Part <paramref name="name"/>'s time in all (ms), 0 if none.</summary>
+        double PartMs(std::string_view name) const;
+        /// <summary>Count <paramref name="name"/> in all, 0 if none.</summary>
+        int64_t Count(std::string_view name) const;
+
+        /// <summary><paramref name="later"/>'s frames added after these (its refresh rate the last seen).</summary>
+        void Add(const MCTally& later);
+    };
+
+    /// <summary>
+    /// Starts tallying the frames from the next one on (a tally already running starts over), while a log is open.
+    /// </summary>
+    void StartTally();
+
+    /// <summary>The frames tallied since <see cref="StartTally"/>, which ends it; empty when none was running.</summary>
+    MCTally TakeTally();
 
     /// <summary>Adds the time from its construction to its end to the frame's part <c>Name</c>.</summary>
     class Scope

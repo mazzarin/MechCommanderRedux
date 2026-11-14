@@ -66,10 +66,11 @@ struct MCCursorBitmap
 namespace MCCursor
 {
     /// <summary>
-    /// Sets the game's cursor shapes and makes all their SDL cursors now. They are remade, all at once, only for a
-    /// new screen scale or when the palette settles on new colours for them (after a fade), so switching shapes in
-    /// play only selects one. Each is also shown once, unseen, the first time the mouse is over the window: Windows
-    /// builds a cursor's icon then, and that is the slow part.
+    /// Sets the game's cursor shapes and makes all their SDL cursors now, so switching shapes in play only selects
+    /// one. A shape is made again only when it is shown in new colours (a fade, a brightness step, a screen with its
+    /// own palette) or at a new screen scale, so no frame makes more than the one on screen. Each is also shown once,
+    /// unseen, the first time the mouse is over the window: Windows builds a cursor's icon then, and that is the slow
+    /// part.
     /// </summary>
     void Preload(std::vector<MCCursorImage> shapes);
 
@@ -97,9 +98,16 @@ namespace MCCursor
     /// <summary>
     /// <paramref name="image"/> in <paramref name="colors"/> scaled by <paramref name="scaleX"/> x
     /// <paramref name="scaleY"/> (nearest pixel), transparent pixels alpha 0; or, when it has an HD copy, that copy
-    /// sampled between its pixels and corrected by <paramref name="colors"/>. The hot spot lands on the top-left of its
-    /// scaled pixel.
+    /// sampled between its pixels and changed as today's colours changed the pack's. The hot spot lands on the
+    /// top-left of its scaled pixel.
     /// </summary>
+    /// <remarks>
+    /// Port-only, the HD copy's colours: where today's palette is the pack's through one curve (the game's brightness
+    /// steps, the black between screens), every colour of the copy goes through that curve; where it isn't (a
+    /// screen's own palette), the copy is recoloured as the picture's own colours changed, each HD colour by the
+    /// original pixels around it that it is like. The water's entries, which the game rewrites as the water moves, are
+    /// left out of the curve.
+    /// </remarks>
     MCCursorBitmap Rasterize(const MCCursorImage& image, const std::array<SDL_Color, 256>& colors, float scaleX,
                              float scaleY);
 }

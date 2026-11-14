@@ -456,48 +456,82 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
     return {};
 }
 
+namespace
+{
+    /// <summary>
+    /// The map's ground tiles, each once, as the ground mesh draws them (MCTerrainReadHdTiles): none while HD art is off
+    /// or the software renderer draws.
+    /// </summary>
+    std::vector<MCHdArt::GroundAhead> HdGroundTiles()
+    {
+        const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+        // The software renderer draws no HD art.
+        if (!MCHdArt::Active() || MCRenderer::GpuDrawing() == MCGpuDrawing::Off || terrain == nullptr ||
+            terrain->MapBlocks == nullptr || terrain->Tiles == nullptr)
+        {
+            return {};
+        }
+
+        MCMapBlockManager& blocks = *terrain->MapBlocks;
+        const int32_t side = MCTerrain::VerticesBlockSide;
+        const int32_t mapSide = MCTerrain::BlocksMapSide * side;
+        std::unordered_set<int32_t> seen;
+        std::vector<MCHdArt::GroundAhead> tiles;
+
+        // A block's width of off-map vertices too: those are the off-map block's (MapVertexIndex), which the mesh's
+        // ring holds, whatever its width.
+        for (int32_t r = -side; r < mapSide; ++r)
+        {
+            for (int32_t c = -side; c < mapSide; ++c)
+            {
+                const int32_t textureData = blocks.MapVertexAt(r, c).TextureData;
+
+                if (textureData < 0 || !seen.insert(textureData).second)
+                {
+                    continue;
+                }
+
+                if (const std::span<const uint8_t> tile = GroundTile(*terrain->Tiles, textureData); !tile.empty())
+                {
+                    if (const int32_t width = VfxTileWidth(tile); width != 0)
+                    {
+                        tiles.push_back(MCHdArt::GroundAhead{tile, width, tile[2]});
+                    }
+                }
+            }
+        }
+
+        return tiles;
+    }
+}
+
+void MCTerrainReadHdTilesAhead()
+{
+    MCHdArt::ReadGroundAhead(HdGroundTiles(), MCSceneLights::ReliefMapsOn());
+}
+
 void MCTerrainReadHdTiles()
 {
-    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    const std::vector<MCHdArt::GroundAhead> tiles = HdGroundTiles();
 
-    // The software renderer draws no HD art.
-    if (!MCHdArt::Active() || MCRenderer::GpuDrawing() == MCGpuDrawing::Off || terrain == nullptr ||
-        terrain->MapBlocks == nullptr || terrain->Tiles == nullptr)
+    if (tiles.empty())
     {
         return;
     }
 
-    MCMapBlockManager& blocks = *terrain->MapBlocks;
-    const int32_t side = MCTerrain::VerticesBlockSide;
-    const int32_t mapSide = MCTerrain::BlocksMapSide * side;
-    std::unordered_set<int32_t> seen;
+    // Those read ahead (MCTerrainReadHdTilesAhead) are kept; any left, or whose read failed, are read here.
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
 
-    // A block's width of off-map vertices too: those are the off-map block's (MapVertexIndex), which the mesh's ring
-    // holds, whatever its width.
-    for (int32_t r = -side; r < mapSide; ++r)
+    for (const MCHdArt::GroundAhead& tile : tiles)
     {
-        for (int32_t c = -side; c < mapSide; ++c)
+        MCHdArt::FindTerrainTile(tile.Tile, tile.Width, tile.Height);
+
+        // Port-only: its relief map too, when the HD ground takes them.
+        if (MCSceneLights::ReliefMapsOn())
         {
-            const int32_t textureData = blocks.MapVertexAt(r, c).TextureData;
-
-            if (textureData < 0 || !seen.insert(textureData).second)
-            {
-                continue;
-            }
-
-            if (const std::span<const uint8_t> tile = GroundTile(*terrain->Tiles, textureData); !tile.empty())
-            {
-                if (const int32_t width = VfxTileWidth(tile); width != 0)
-                {
-                    MCHdArt::FindTerrainTile(tile, width, tile[2]);
-
-                    // Port-only: its relief map too, when the HD ground takes them.
-                    if (MCSceneLights::ReliefMapsOn())
-                    {
-                        MCHdArt::FindTerrainRelief(tile, width, tile[2]);
-                    }
-                }
-            }
+            MCHdArt::FindTerrainRelief(tile.Tile, tile.Width, tile.Height);
         }
     }
 }

@@ -150,6 +150,7 @@ void MCGameContext::Clear()
     _ElementList.reset();
     _GuiSystem.reset();
     _Palette.reset();
+    _DescriptionTexts.reset();
     _FastFiles.reset();
     _Net.reset();
     _Audio.reset();

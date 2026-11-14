@@ -226,13 +226,21 @@ namespace MCHdArt
     std::filesystem::path FolderOf(const IconShapeKey& key);
 
     /// <summary>
-    /// The bytes of frames kept in memory before the least recently used go: an eighth of the machine's memory (1 GB on
-    /// 8 GB), from 128 MB up to 2 GB, unless <see cref="SetCacheBudget"/> set another.
+    /// The bytes of frames kept in memory before the least recently used go: MCMemoryRoom::MostHdBytes, unless
+    /// <see cref="SetCacheBudget"/> set another. Port-only: below it the frames go only while memory is short
+    /// (<see cref="NextFrame"/>).
     /// </summary>
     size_t CacheBudget();
 
-    /// <summary>Sets the budget (0: the machine's again), dropping frames until the kept ones fit (for the tests).</summary>
+    /// <summary>Sets the budget (0: MostHdBytes again), dropping frames until the kept ones fit (for the tests).</summary>
     void SetCacheBudget(size_t bytes);
+
+    /// <summary>
+    /// Port-only: a frame begins (the renderer's, as it starts recording one). While <paramref name="memoryShort"/>
+    /// (MCMemoryRoom::MCFrameRoom), the least recently used frames go until MCMemoryRoom::TrimmedBytesPerFrame have
+    /// gone, but never one asked for in the frame before or since: those are being drawn.
+    /// </summary>
+    void NextFrame(bool memoryShort);
 
     /// <summary>
     /// Drops the kept frames of the ground and its relief maps, which nothing reads once the GPU has the ground up
@@ -434,6 +442,23 @@ namespace MCHdArt
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainRelief(std::span<const uint8_t> tile, int32_t width, int32_t height);
 
+    /// <summary>Port-only: a ground tile whose HD copy to read ahead (<see cref="ReadGroundAhead"/>): FindTerrainTile's.</summary>
+    struct GroundAhead
+    {
+        std::span<const uint8_t> Tile;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): has the readers read the HD copies of <paramref name="tiles"/>, and their relief
+    /// maps with <paramref name="relief"/>, as a load's reads (first of all their reads, several at once, in the
+    /// archive's order), those the pack's archive has that aren't kept, looked at or asked for already, while they and
+    /// the frames kept take at most the cache's budget. <see cref="WaitForLoadReads"/> waits for them and
+    /// <see cref="KeepReadAhead"/> keeps them; FindTerrainTile and FindTerrainRelief then find them without a read.
+    /// </summary>
+    void ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief);
+
     /// <summary>
     /// The HD copy of terrain overlay <paramref name="shape"/> (a fast shape's bytes, <see cref="FastShapeSize"/>; its
     /// bounds <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when HD art
@@ -460,6 +485,24 @@ namespace MCHdArt
     /// </summary>
     std::shared_ptr<const Frame> FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
                                            int32_t step = 0, int32_t frames = 0);
+
+    /// <summary>Port-only: a shape's frame whose HD copy to read ahead (<see cref="ReadShapesAhead"/>): FindShape's.</summary>
+    struct ShapeAhead
+    {
+        std::span<const uint8_t> Table;
+        int32_t Frame = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): has the readers read the HD copies of <paramref name="shapes"/>' frames (each
+    /// table's own folder, found by its bytes' hash: <see cref="ShapeTableHash"/>) as a load's reads, as
+    /// <see cref="ReadGroundAhead"/> reads the ground: several at once, each archive's in its order, waited for by
+    /// <see cref="WaitForLoadReads"/> and kept by <see cref="KeepReadAhead"/>, so FindShape then finds them without a
+    /// read.
+    /// </summary>
+    void ReadShapesAhead(std::span<const ShapeAhead> shapes);
 
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's
@@ -526,23 +569,71 @@ namespace MCHdArt
     size_t NeighboursReadAhead();
 
     /// <summary>
-    /// Waits until the reading thread has read ahead all it was handed: the tests, and a mission's load for what its
-    /// first frame draws.
+    /// Waits until the readers have read ahead all they were handed: the tests, and a mission's load for what its first
+    /// frame draws.
     /// </summary>
     void WaitForReadAhead();
+
+    /// <summary>
+    /// Port-only: waits until the readers have read what a load waits for (<see cref="ReadGroundAhead"/>), not the rest
+    /// they were handed.
+    /// </summary>
+    void WaitForLoadReads();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): how the readers read ahead: how many there are (each a read in flight, and its
+    /// frames unpacked on it), at most how many reads of the sets read ahead (a screen's pictures) may be in flight at
+    /// once (0: as many as there are readers), and whether they run a step below the game's thread or level with it
+    /// (platform/MCThreadPriority.h). The game's command line sets them (<c>-hdreaders</c>, <c>-hdsetreads</c>,
+    /// <c>-hdreaderpriority level|below</c>); the defaults are to be measured on the M4 Pro and the A10.
+    /// </summary>
+    struct ReaderSettings
+    {
+        size_t Readers = 4;
+        size_t SetReads = 0;
+        bool Below = true;
+
+        bool operator==(const ReaderSettings&) const = default;
+    };
+
+    /// <summary>Port-only: the most readers there may be (<see cref="SetReaderSettings"/>).</summary>
+    constexpr size_t MostReaders = 32;
+
+    /// <summary>
+    /// Port-only: sets how the readers read (1 to <see cref="MostReaders"/> of them). Those running end once the read in
+    /// their hands is done and new ones start for what's left to read.
+    /// </summary>
+    void SetReaderSettings(const ReaderSettings& settings);
+
+    /// <summary>Port-only: how the readers read now.</summary>
+    ReaderSettings GetReaderSettings();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): the most bytes one of the readers' reads of an archive's neighbouring entries takes,
+    /// and the widest gap between two entries one read takes both across (read and thrown away: a read saved costs a slow
+    /// disk more than this many bytes do).
+    /// </summary>
+    constexpr uint64_t ReaderRunBytes = 1024u * 1024u;
+    constexpr uint64_t ReaderRunGap = 64u * 1024u;
+
+    /// <summary>
+    /// Port-only: how many reads of the archives the readers have made: one for a run of neighbouring entries read
+    /// together (at most <see cref="ReaderRunBytes"/>, across gaps of at most <see cref="ReaderRunGap"/>).
+    /// </summary>
+    size_t ReaderReads();
 
     /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
     size_t ArchivesOpen();
 
     /// <summary>
-    /// How many of the open archives' files are open now, the reading thread's own among them (at most 128: the rest open
+    /// How many of the open archives' files are open now, the readers' own among them (at most 128: the rest open
     /// again when read).
     /// </summary>
     size_t ArchiveFilesOpen();
 
     /// <summary>
-    /// How many times the reading thread has opened its own handle on an archive's file (once for the follows of one
-    /// archive in a row).
+    /// How many times the readers have opened handles of their own on the archives' files (each kept for the reads of its
+    /// archive after, while the readers' kept handles hold it).
     /// </summary>
     size_t ReaderFilesOpened();
 }

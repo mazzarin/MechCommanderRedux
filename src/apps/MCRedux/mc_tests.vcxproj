@@ -68,6 +68,9 @@
     <ClCompile Include="MCHttpGetWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="MCMemorySystemWin.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="MCTelemetryWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -144,6 +147,7 @@
     </ClCompile>
     <ClCompile Include="tests\MechHandoverTests.cpp" />
     <ClCompile Include="tests\MechTests.cpp" />
+    <ClCompile Include="tests\MemoryRoomTests.cpp" />
     <ClCompile Include="tests\MissionTests.cpp" />
     <ClCompile Include="tests\MoverTests.cpp" />
     <ClCompile Include="tests\MultiPlayerTests.cpp" />
@@ -167,6 +171,7 @@
     <ClCompile Include="tests\SortTests.cpp" />
     <ClCompile Include="tests\SoundTests.cpp" />
     <ClCompile Include="tests\SpriteTests.cpp" />
+    <ClCompile Include="tests\StagedBattleTests.cpp" />
     <ClCompile Include="tests\StateHashTests.cpp" />
     <ClCompile Include="tests\TelemetryBackendTests.cpp" />
     <ClCompile Include="tests\TelemetryTests.cpp" />
@@ -189,11 +194,13 @@
     <ClInclude Include="MCFirstStart.h" />
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
+    <ClInclude Include="MCMemorySystem.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="tests\fakes\MCFakeGamesService.h" />
+    <ClInclude Include="tests\fakes\MCFakeMemorySystem.h" />
     <ClInclude Include="tests\fakes\MCFakeSignaling.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h" />
     <ClInclude Include="tests\fakes\MCManualClock.h" />

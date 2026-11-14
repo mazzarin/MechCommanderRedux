@@ -687,6 +687,9 @@
     <ClCompile Include="main\MCArtModes.cpp">
       <Filter>main</Filter>
     </ClCompile>
+    <ClCompile Include="main\MCBenchmark.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
     <ClCompile Include="main\MCErrorReport.cpp">
       <Filter>main</Filter>
     </ClCompile>
@@ -800,6 +803,12 @@
       <Filter>mission</Filter>
     </ClCompile>
     <ClCompile Include="mission\MCScenarioPart.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
+    <ClCompile Include="mission\MCStagedBattle.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
+    <ClCompile Include="mission\MCTrailerMission.cpp">
       <Filter>mission</Filter>
     </ClCompile>
     <ClCompile Include="mission\MCWeatherPlay.cpp">
@@ -1198,6 +1207,9 @@
     <ClCompile Include="platform\MCInput.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCMemoryRoom.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCNetSwitch.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -1250,6 +1262,9 @@
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCStringTable.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCThreadPriority.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCTlsThreading.cpp">
@@ -2104,6 +2119,9 @@
     <ClInclude Include="main\MCArtModes.h">
       <Filter>main</Filter>
     </ClInclude>
+    <ClInclude Include="main\MCBenchmark.h">
+      <Filter>main</Filter>
+    </ClInclude>
     <ClInclude Include="main\MCDropSlot.h">
       <Filter>main</Filter>
     </ClInclude>
@@ -2212,6 +2230,12 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCScenarioReading.h">
+      <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="mission\MCStagedBattle.h">
+      <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="mission\MCTrailerMission.h">
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCWeatherPlay.h">
@@ -2601,6 +2625,9 @@
     <ClInclude Include="platform\MCInput.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCMemoryRoom.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCNetSwitch.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2653,6 +2680,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCStringTable.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCThreadPriority.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCTlsThreading.h">

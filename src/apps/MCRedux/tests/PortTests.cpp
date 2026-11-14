@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "MCScratchFolder.h"
+#include "main/MCBenchmark.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCNeverDestroyed.h"
 #include "platform/MCRenderer.h"
@@ -257,4 +258,201 @@ TEST_CASE("frame log: opened again, it starts a new log; closed, it times nothin
     MCFrameLog::Note("closed");
     log.Frame(4.0, 0.0);
     CHECK(!log.Text().contains("closed"));
+}
+
+TEST_CASE("frame log: the screen's frames are timed between presents, steady where the game's loop runs unevenly")
+{
+    // As on the A10 with Vulkan's third image (13 Nov): the loop's frames 4 ms then 12.67 (long at 120 Hz), the screen
+    // given a frame every 8.33 ms all the while; then one frame shown 25 ms after the last.
+    constexpr double Refresh120Hz = 120.0;
+    constexpr double QuickPresentMs = 3.5;
+    constexpr double QuickRestMs = 0.5;
+    constexpr double WaitingPresentMs = 7.8333333;
+    constexpr double WaitingRestMs = 4.8333333;
+    constexpr double LatePresentMs = 20.1666667;
+    constexpr int32_t WarmPairs = 40;
+    constexpr int32_t TalliedPairs = 50;
+    FrameLogFixture log("frame-log-shown");
+    REQUIRE(log.Opened);
+    log.Frame(0.0, Refresh120Hz);
+
+    const auto pair = [&log]
+    {
+        log.Advance(QuickPresentMs);
+        MCFrameLog::Presented();
+        log.Frame(QuickRestMs, Refresh120Hz);
+        log.Advance(WaitingPresentMs);
+        MCFrameLog::Presented();
+        log.Frame(WaitingRestMs, Refresh120Hz);
+    };
+
+    for (int32_t i = 0; i < WarmPairs; i++)
+    {
+        pair();
+    }
+
+    MCFrameLog::StartTally();
+
+    for (int32_t i = 0; i < TalliedPairs; i++)
+    {
+        pair();
+    }
+
+    log.Advance(LatePresentMs);
+    MCFrameLog::Presented();
+    log.Frame(QuickRestMs, Refresh120Hz);
+    const MCFrameLog::MCTally tally = MCFrameLog::TakeTally();
+
+    // The loop: half its frames long. The screen: one frame late, by a refresh and more.
+    REQUIRE_EQ(tally.Loop.Times.size(), size_t{101});
+    CHECK_EQ(tally.Loop.Long, size_t{51});
+    REQUIRE(tally.TimedShown());
+    REQUIRE_EQ(tally.Shown.Times.size(), size_t{101});
+    CHECK_EQ(tally.Shown.Long, size_t{1});
+    CHECK_EQ(tally.Shown.Slow, size_t{1});
+    CHECK_EQ(&tally.Judged(), &tally.Shown);
+    CHECK_EQ(std::format("{:.2f} {:.2f} {:.2f}", tally.Shown.MedianMs(), tally.Shown.P99Ms(), tally.Shown.WorstMs()),
+             "8.33 8.33 25.00");
+
+    const MCBenchmark::MCRunInfo run{
+        .Build = "0.6.8 (983)", .Variant = "clear-day-hd", .Display = "a screen", .Machine = "a computer"};
+    CHECK(MCBenchmark::Summary(run, tally, MCFrameLog::MCTally{})
+              .contains("a computer, frames as shown: p99 8.33 ms, worst 25.00 ms, 1 frames late by a refresh, 1 over "
+                        "1.5 refreshes; median 8.33 ms (120.0 fps); 101 frames in 0.9 s;"));
+
+    // Each second's line says the screen's frames too.
+    const std::string text = log.Text();
+    CHECK(text.contains("; shown: "));
+    CHECK(text.contains("p99 8.33, max 8.33, 0 over 1.5 refreshes\n"));
+}
+
+TEST_CASE("frame log: with vsync the screen shows a frame a refresh after the last at the soonest, so uneven "
+          "hand-overs stay even")
+{
+    // As NVIDIA's Vulkan driver on Windows takes the frames (13 Nov, the A10): the game hands one over at the end of each
+    // loop's frame, 4 ms then 12.67 alternately, and the screen shows one every 8.33 ms; then a 30 ms frame.
+    constexpr double Refresh120Hz = 120.0;
+    constexpr double QuickMs = 4.0;
+    constexpr double WaitingMs = 12.6666667;
+    constexpr double LateMs = 30.0;
+    constexpr int32_t WarmPairs = 40;
+    constexpr int32_t TalliedPairs = 50;
+    constexpr bool VSync = true;
+    FrameLogFixture log("frame-log-vsync");
+    REQUIRE(log.Opened);
+    MCFrameLog::NextFrame(Refresh120Hz, VSync);
+
+    const auto frame = [&log](double ms)
+    {
+        log.Advance(ms);
+        MCFrameLog::Presented();
+        MCFrameLog::NextFrame(Refresh120Hz, VSync);
+    };
+
+    for (int32_t i = 0; i < WarmPairs; i++)
+    {
+        frame(QuickMs);
+        frame(WaitingMs);
+    }
+
+    MCFrameLog::StartTally();
+
+    for (int32_t i = 0; i < TalliedPairs; i++)
+    {
+        frame(QuickMs);
+        frame(WaitingMs);
+    }
+
+    frame(LateMs);
+    const MCFrameLog::MCTally tally = MCFrameLog::TakeTally();
+
+    // The loop's and the hand-overs' frames half long; the screen's one, the late frame: every other hand-over came
+    // as its refresh did, so no frame waited in the queue to cover it, and the last showed for its 30 ms.
+    CHECK_EQ(tally.Loop.Long, size_t{51});
+    REQUIRE_EQ(tally.Shown.Times.size(), size_t{101});
+    CHECK_EQ(tally.Shown.Long, size_t{1});
+    CHECK_EQ(std::format("{:.2f} {:.2f}", tally.Shown.MedianMs(), tally.Shown.WorstMs()), "8.33 30.00");
+
+    // Without vsync the screen takes each as it's handed over.
+    MCFrameLog::StartTally();
+    log.Advance(QuickMs);
+    MCFrameLog::Presented();
+    MCFrameLog::NextFrame(Refresh120Hz, false);
+    log.Advance(WaitingMs);
+    MCFrameLog::Presented();
+    MCFrameLog::NextFrame(Refresh120Hz, false);
+    const MCFrameLog::MCTally unsynced = MCFrameLog::TakeTally();
+    REQUIRE_EQ(unsynced.Shown.Times.size(), size_t{2});
+    CHECK_EQ(std::format("{:.2f}", unsynced.Shown.Times[1]), "12.67");
+}
+
+TEST_CASE("benchmark: the summary heads with the hitches, the battle's and the pan's frames together, then each's own")
+{
+    FrameLogFixture log("benchmark-summary");
+    REQUIRE(log.Opened);
+    log.Frame(0.0, Refresh240Hz);
+
+    // What is usual, before the benchmark's frames.
+    for (int32_t i = 0; i < 40; i++)
+    {
+        log.Frame(Frame240HzMs, Refresh240Hz);
+    }
+
+    // The battle: 98 frames of 4 ms, each first using two HD frames read in 1 ms, then one late by a refresh and two
+    // (12 ms) and one held for seven (30 ms).
+    MCFrameLog::StartTally();
+
+    for (int32_t i = 0; i < 98; i++)
+    {
+        {
+            MCFrameLog::Scope part("hd.read");
+            log.Advance(1.0);
+        }
+
+        MCFrameLog::Count("HD frames first used", 2);
+        log.Frame(Frame240HzMs - 1.0, Refresh240Hz);
+    }
+
+    log.Frame(12.0, Refresh240Hz);
+    log.Frame(30.0, Refresh240Hz);
+    const MCFrameLog::MCTally battle = MCFrameLog::TakeTally();
+
+    // The pan: 50 frames of 4.5 ms, none late.
+    MCFrameLog::StartTally();
+
+    for (int32_t i = 0; i < 50; i++)
+    {
+        log.Frame(4.5, Refresh240Hz);
+    }
+
+    const MCFrameLog::MCTally pan = MCFrameLog::TakeTally();
+    CHECK(MCFrameLog::TakeTally().Loop.Times.empty());
+    REQUIRE_EQ(battle.Loop.Times.size(), size_t{100});
+    REQUIRE_EQ(pan.Loop.Times.size(), size_t{50});
+    CHECK_EQ(battle.Loop.Slow, size_t{2});
+    CHECK_EQ(battle.Loop.Long, size_t{2});
+    // No presenter said (MCFrameLog::Presented): the loop's frames are judged.
+    CHECK(!battle.TimedShown());
+    CHECK_EQ(battle.RefreshHz, Refresh240Hz);
+
+    const MCBenchmark::MCRunInfo run{.Build = "0.6.8 (976), commit 8c9bf531",
+                                     .Variant = "rain-night-hd",
+                                     .Display = "3024x1890 pixels at 240.00 Hz, full screen, vsync on, gpu",
+                                     .Machine = "Apple M4 Pro (10P+4E cores, 20 GPU cores), 48 GB, Mac16,8, mac 26.5"};
+    const std::string summary = MCBenchmark::Summary(run, battle, pan);
+    // The whole: 150 frames, the 99th percentile's the 149th (12 ms), the median 4 ms; 0.434 s and 0.225 s.
+    CHECK_EQ(
+        summary,
+        "MCRedux benchmark 0.6.8 (976), commit 8c9bf531, canyon rain-night-hd, 3024x1890 pixels at 240.00 Hz, full "
+        "screen, vsync on, gpu, Apple M4 Pro (10P+4E cores, 20 GPU cores), 48 GB, Mac16,8, mac 26.5, frames as the "
+        "game's loop ran (none shown): p99 12.00 ms, "
+        "worst 30.00 ms, 2 frames late by a refresh, 2 over 1.5 refreshes; median 4.00 ms (250.0 fps); 150 frames "
+        "in 0.7 s; 196 HD frames first used, read in 98.0 ms. Battle: p99 30.00 ms, worst 30.00 ms, 2 frames late "
+        "by a refresh, 2 over 1.5 refreshes; median 4.00 ms (250.0 fps); 100 frames in 0.4 s; 196 HD frames first "
+        "used, read in 98.0 ms. Pan: p99 4.50 ms, worst 4.50 ms, 0 frames late by a refresh, 0 over 1.5 refreshes; "
+        "median 4.50 ms (222.2 fps); 50 frames in 0.2 s; 0 HD frames first used, read in 0.0 ms");
+
+    // The summary ends the log, a line of its own.
+    MCFrameLog::Line(summary);
+    CHECK(log.Text().ends_with(summary + "\n"));
 }

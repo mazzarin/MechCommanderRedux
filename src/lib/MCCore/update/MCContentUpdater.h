@@ -3,6 +3,7 @@
 #include "update/MCContentList.h"
 #include "update/MCContentPlan.h"
 #include "update/MCContentStage.h"
+#include "update/MCProgramSwap.h"
 #include "update/MCReleaseFile.h"
 
 class MCUpdateDisk;
@@ -64,6 +65,11 @@ namespace MCContentUpdater
         /// <summary>The build running, and its version as shown ("0.2.1 (525)").</summary>
         uint64_t RunningBuild = 0;
         std::string RunningVersion;
+        /// <summary>
+        /// Windows: whether the setup installed the copy, as the program's backend asks it (MCSetupBackend::MCPlatform's
+        /// SetupOwns), so the download offered is the one it fetches. None: the setup's.
+        /// </summary>
+        MCProgramSwap::MCSetupOwns SetupOwns;
     };
 
     /// <summary>A release's content planned for the copy: the list, and the plan, which points into it.</summary>

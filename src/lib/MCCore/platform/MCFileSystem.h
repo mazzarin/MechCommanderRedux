@@ -113,6 +113,23 @@ namespace MCFileSystem
     /// </summary>
     std::optional<std::span<const uint8_t>> FindImage(std::string_view gamePath);
 
+    /// <summary>What <see cref="PutImage"/>'s maker gives: the file's bytes, or none (the file reads as before).</summary>
+    using MCImageMaker = std::function<std::optional<std::vector<uint8_t>>()>;
+
+    /// <summary>
+    /// Port-only: from now on the game reads <paramref name="gamePath"/> (any case, either slash) as the bytes
+    /// <paramref name="make"/> gives the first time it's opened to read (MCFile::Open), whatever the folders and
+    /// FastFiles hold: a file the game makes for itself (the benchmark's battle mission, mission/MCTrailerMission.h).
+    /// A file opened to write is still the folders'.
+    /// </summary>
+    void PutImage(std::string_view gamePath, MCImageMaker make);
+
+    /// <summary>The bytes <see cref="PutImage"/> put at <paramref name="gamePath"/> (made now if not yet), or none.</summary>
+    std::optional<std::vector<uint8_t>> PutImageAt(std::string_view gamePath);
+
+    /// <summary>Takes away every file <see cref="PutImage"/> put.</summary>
+    void ClearPutImages();
+
     /// <summary>Whether <paramref name="gamePath"/> names an existing loose file (not one inside a FastFile).</summary>
     bool Exists(std::string_view gamePath);
 

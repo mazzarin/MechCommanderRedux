@@ -19,9 +19,17 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
                                                       int32_t minY, int32_t maxY, MCTerrainFrame& frame);
 
 /// <summary>
-/// Port-only: reads the HD art pack's copies of the map's ground tiles (MCHdArt::FindTerrainTile) while the mission
-/// loads, so the first frame, which uploads the ground, doesn't wait on the pack. Does nothing while HD art is off or
-/// the software renderer draws.
+/// Port-only (SPEC-first-use.md): has HD art's readers read the pack's copies of the map's ground tiles and their relief
+/// maps as soon as the terrain is in (MCHdArt::ReadGroundAhead), several at once while the rest of the mission loads.
+/// Does nothing while HD art is off or the software renderer draws.
+/// </summary>
+void MCTerrainReadHdTilesAhead();
+
+/// <summary>
+/// Port-only: has the HD art pack's copies of the map's ground tiles (MCHdArt::FindTerrainTile) in hand while the
+/// mission loads, so the first frame, which uploads the ground, doesn't wait on the pack: those read ahead
+/// (MCTerrainReadHdTilesAhead) waited for and kept, the rest read. Does nothing while HD art is off or the software
+/// renderer draws.
 /// </summary>
 void MCTerrainReadHdTiles();
 

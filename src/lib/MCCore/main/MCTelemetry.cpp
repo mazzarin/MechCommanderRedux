@@ -1090,6 +1090,16 @@ auto MCTelemetry::Available() -> bool
     return Backend != nullptr;
 }
 
+auto MCTelemetry::KnownMachine() -> std::optional<MCMachine>
+{
+    if (Backend == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    return Started ? Machine : Backend->Machine();
+}
+
 auto MCTelemetry::Start() -> void
 {
     if (Backend == nullptr || Started)

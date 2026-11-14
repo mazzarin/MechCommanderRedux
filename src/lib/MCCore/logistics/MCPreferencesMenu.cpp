@@ -15,6 +15,7 @@
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCRegistrySettings.h"
+#include "main/MCBenchmark.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
@@ -524,6 +525,13 @@ namespace
 
 void SavePrefs()
 {
+    // Port-only (Redux HD): a benchmark's looks are its own, never the player's (main/MCBenchmark.h).
+    if (MCBenchmark::Running())
+    {
+        SDL_Log("SavePrefs: a benchmark is running; the settings aren't saved");
+        return;
+    }
+
     MCFitIniFile prefs;
 
     if (const int32_t result = prefs.Create(MCFileSystem::SettingsToWrite(PrefsFile)); result != 0)

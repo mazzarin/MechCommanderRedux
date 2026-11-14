@@ -42,9 +42,37 @@ Options:
     -h, --help            Shows the list of options
     -mission <n>          Starts mission segment n directly, skipping logistics
     -load <file>          Loads a saved game
+    -benchmark [words]    Measures how smoothly the game runs, then quits (below)
 
 Saves and preferences go to %APPDATA%\MechCommander Redux\ unless --user is given, so
 they never touch the game folder.
+
+
+Benchmark
+---------
+
+Redux HD only: -benchmark plays a staged battle in mission 16's canyon for a minute and a
+half, sweeps the camera round the map for half a minute, and quits. It plays the same on
+every computer, at your own window size and full screen setting, so its result can be
+compared. From a Command Prompt in the game folder:
+
+    MCRedux.exe -benchmark
+
+On a Mac, from Terminal:
+
+    open -a "MechCommander Redux" --args -benchmark
+
+The mouse and keyboard do nothing while it plays; Esc stops it. Words after -benchmark,
+separated by commas, pick the weather (rain, downpour, lightsnow, snow, blizzard), the
+time of day (dusk, night) or the original's look (original):
+
+    MCRedux.exe -benchmark rain,night
+
+Its result is a line added to benchmarks.txt in the saves folder (on a Mac,
+~/Library/Application Support/MechCommander Redux/). It starts with the slowest frames
+(the 99th percentile and the worst, in milliseconds, and how many came a screen refresh
+late), then the typical one. To report a stutter, send that line; if asked, also send the
+run's full log beside it, named after its words (benchmark-clear-day-hd.txt), zipped.
 
 
 Mission Editor

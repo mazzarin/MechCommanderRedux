@@ -4,12 +4,13 @@ class MCGenericScreen;
 class MCGuiObject;
 class MCLogOptionList;
 
-// Port-only: the preferences screen's HD OPTIONS page, where the player sets every HD setting (main/MCHdSettings.h):
+// Port-only: the preferences screen's HD OPTIONS page, where the player sets the HD settings (main/MCHdSettings.h):
 // the packs, the lighting, the effects, the mechs' motion and the reports (main/MCTelemetry.h), a row each under
-// headings, in a list that scrolls. In a game that manages its content (main/MCUpdater.h), HD PACK's button gets the HD pack
-// or removes it at once, and RESTART puts it in. The OPTIONS button in the preferences panel's HD box shows it in that panel's
-// place; DONE goes back. It edits the settings themselves: the preferences' ACCEPT writes them to PREFS, CANCEL puts
-// back what they were when the screen opened.
+// headings, in a list that scrolls; MoreUnits has no row yet (PREFS alone sets it, and DEFAULTS and ORIGINAL). In a
+// game that manages its content (main/MCUpdater.h), HD PACK's button gets the HD pack or removes it at once, and
+// RESTART puts it in. The OPTIONS button in the preferences panel's HD box shows it in that panel's place; DONE goes
+// back. It edits the settings themselves: the preferences' ACCEPT writes them to PREFS, CANCEL puts back what they were
+// when the screen opened.
 
 /// <summary>
 /// Adds the HD OPTIONS page (hidden) to <paramref name="screen"/>, and the OPTIONS button that shows it to

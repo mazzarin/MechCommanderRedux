@@ -389,6 +389,13 @@ public:
     bool CompositesOnGpu() const { return _Presenter->CompositesOnGpu(); }
 
     /// <summary>
+    /// Port-only: what the GPU renderer has recorded since the last frame (a rehearsal's uploads) run now, nothing shown
+    /// and no frame taken, unless it's no more than <paramref name="rideAlong"/> bytes of uploads, which the next frame
+    /// takes (MCPresenter::RunRecorded).
+    /// </summary>
+    std::expected<void, std::string> RunRecorded(size_t rideAlong);
+
+    /// <summary>
     /// Draws the frame as <see cref="Present"/> would, at the screen's size, into an offscreen texture and reads it
     /// back as RGBA (tests compare it with <see cref="ComposeScreen"/>).
     /// </summary>

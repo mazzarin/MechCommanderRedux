@@ -7,6 +7,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCHardwareCursor.h"
 #include "lib/MCDice.h"
+#include "logistics/MCLogInvScreen.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
@@ -294,6 +295,97 @@ void BlankScreen()
     PresentScreen();
 }
 
+namespace
+{
+    /// <summary>
+    /// The screen window's children drawn, as a frame draws the GUI: under logistics the window wiped first, as its
+    /// screens draw all of it every frame.
+    /// </summary>
+    void DrawScreenWindow()
+    {
+        if (const std::shared_ptr<MCWindow> screen = ScreenWindow()->Frame().Window.lock();
+            GlobalLog() != nullptr && screen != nullptr && screen->Pixels != nullptr)
+        {
+            VfxPaneWipe(ScreenWindow()->Frame(), 0);
+        }
+
+        for (int32_t i = 0; i < ScreenWindow()->NumberOfChildren(); i++)
+        {
+            ScreenWindow()->Child(i)->Display();
+        }
+    }
+}
+
+namespace
+{
+    /// <summary>
+    /// Whether a rehearsal can run: only where nothing it draws can show and its draws only draw: the GPU's surfaces
+    /// are shown (not the screen's pixels, which the GUI draws into too) and logistics' screens are up (a mission's
+    /// results screen steps its tallies as it draws), with no movie playing; and not inside a frame's draw.
+    /// </summary>
+    bool CanRehearse()
+    {
+        return InMouseCritSec == 0 && MCRenderer::GpuDrawing() == MCGpuDrawing::On && GlobalLog() != nullptr &&
+               Mission() != nullptr && Mission()->State == MCMissionState::Logistics &&
+               GuiSystem().SmackerWindow == nullptr;
+    }
+
+    /// <summary>A rehearsal of what <paramref name="draw"/> draws (see <see cref="RehearseScreen"/>).</summary>
+    void Rehearse(const std::function<void()>& draw, size_t rideAlong)
+    {
+        std::scoped_lock lock(MouseCritSec);
+        InMouseCritSec = 1;
+
+        {
+            MCFrameLog::Scope part("draw.rehearsal");
+            // The HD pictures read ahead kept first, as a frame's draws find them.
+            MCHdArt::KeepReadAhead();
+            const MCRenderer::RehearsalScope rehearsal;
+            draw();
+        }
+
+        // What it queued sent up now (tens of MB for a screen's first), nothing shown, unless the next frame takes it.
+        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+        {
+            MCFrameLog::Scope sent("render.rehearsal");
+
+            if (const std::expected<void, std::string> ran = display->RunRecorded(rideAlong); !ran)
+            {
+                SDL_Log("Rehearse: sending up what a rehearsal queued failed: %s", ran.error().c_str());
+            }
+        }
+
+        InMouseCritSec = 0;
+    }
+}
+
+void RehearseScreen(size_t rideAlong)
+{
+    if (CanRehearse())
+    {
+        Rehearse(DrawScreenWindow, rideAlong);
+    }
+}
+
+void RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
+{
+    // A screen shown is the screen window's (RehearseScreen).
+    if (!CanRehearse() || screen.IsShowing())
+    {
+        return;
+    }
+
+    setUp();
+    Rehearse(
+        [&screen]
+        {
+            screen.ShowGuiWindow(true);
+            screen.Display();
+            screen.ShowGuiWindow(false);
+        },
+        NoRideAlong);
+}
+
 int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bool showProgress, int32_t progress)
 {
     if (InMouseCritSec != 0)
@@ -309,9 +401,29 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
         display->ShowFinished();
     }
 
+    // Port-only: the screen the palette is for, set up already, rehearsed as the fade begins (RehearseScreen), then
+    // the screens a slide from it may bring in, a step each (MCLogistics::ScreensSlidIn).
     if (!gui.PendingPalette.empty())
     {
-        gui.FadeDownCurrentPalette();
+        std::vector<std::function<void()>> rehearsals = {[] { RehearseScreen(NoRideAlong); }};
+
+        if (GlobalLog() != nullptr)
+        {
+            for (const MCGuiHandle<MCLogInvScreen>& next : GlobalLog()->ScreensSlidIn())
+            {
+                rehearsals.emplace_back(
+                    [next]
+                    {
+                        if (const std::shared_ptr<MCLogInvScreen> screen = next.Lock();
+                            screen != nullptr && GlobalLog() != nullptr)
+                        {
+                            RehearseHidden(*screen, [&screen] { GlobalLog()->ReadyForSlide(*screen); });
+                        }
+                    });
+            }
+        }
+
+        gui.FadeDownCurrentPalette(rehearsals);
     }
 
     std::scoped_lock lock(MouseCritSec);
@@ -325,18 +437,8 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 
     if (gui.SmackerWindow == nullptr)
     {
-        if (const std::shared_ptr<MCWindow> screen = ScreenWindow()->Frame().Window.lock();
-            GlobalLog() != nullptr && screen != nullptr && screen->Pixels != nullptr)
-        {
-            VfxPaneWipe(ScreenWindow()->Frame(), 0);
-        }
-
         MCFrameLog::Scope draw("draw");
-
-        for (int32_t i = 0; i < ScreenWindow()->NumberOfChildren(); i++)
-        {
-            ScreenWindow()->Child(i)->Display();
-        }
+        DrawScreenWindow();
     }
     else
     {

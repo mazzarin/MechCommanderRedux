@@ -198,6 +198,18 @@ public:
     virtual std::expected<void, std::string> Discard(const MCFrame&) { return {}; }
 
     /// <summary>
+    /// Port-only: what a GPU renderer has recorded since the last frame run now, showing nothing and taking no frame
+    /// (a rehearsal's uploads: gui/MCUpdateDisplay.h's RehearseScreen), <paramref name="underlays"/> the last frame's;
+    /// waited for. Nothing without one, or when it's only uploads of no more than <paramref name="rideAlong"/> bytes:
+    /// they go up with the next frame, with no wait for the frames ahead.
+    /// </summary>
+    virtual std::expected<void, std::string> RunRecorded(std::span<const MCUnderlay> /*underlays*/,
+                                                         size_t /*rideAlong*/)
+    {
+        return {};
+    }
+
+    /// <summary>
     /// Where a view of <paramref name="viewWidth"/> x <paramref name="viewHeight"/> lands in the window now, in
     /// window pixels (not points).
     /// </summary>

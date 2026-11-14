@@ -25,8 +25,20 @@
 class MCWorkers
 {
 public:
-    /// <summary>Workers with <paramref name="helpers"/> threads of their own (0: the calling thread does it all).</summary>
-    explicit MCWorkers(size_t helpers);
+    /// <summary>How the helpers' threads run beside the game's.</summary>
+    enum class Priority : uint8_t
+    {
+        /// <summary>As the game's threads (work the game's thread waits for).</summary>
+        Normal,
+        /// <summary>Below them (work done ahead, which nothing waits for yet): see <see cref="LowerThisThread"/>.</summary>
+        Low,
+    };
+
+    /// <summary>
+    /// Workers with <paramref name="helpers"/> threads of their own (0: the calling thread does it all), running at
+    /// <paramref name="priority"/>.
+    /// </summary>
+    explicit MCWorkers(size_t helpers, Priority priority = Priority::Normal);
     ~MCWorkers();
     MCWorkers(const MCWorkers&) = delete;
     MCWorkers& operator=(const MCWorkers&) = delete;
@@ -47,6 +59,12 @@ public:
     /// </summary>
     static size_t HelpersFor(size_t most);
 
+    /// <summary>
+    /// Runs the calling thread below the game's threads (SDL's low priority), for work done ahead: the system gives
+    /// the game's threads the cores first. Logged when the system refuses.
+    /// </summary>
+    static void LowerThisThread();
+
 private:
     /// <summary>A helper: waits for each batch of parts and takes its share of it, until asked to stop.</summary>
     void Help(std::stop_token stop);
@@ -58,6 +76,7 @@ private:
     void TakeParts(const std::function<void(size_t)>& work, size_t parts);
 
     size_t _HelperCount = 0;
+    Priority _Priority = Priority::Normal;
     /// <summary>Guards what follows, but for the counts the parts take and finish by.</summary>
     std::mutex _Lock;
     /// <summary>Told of every batch handed out, and of the workers' end.</summary>

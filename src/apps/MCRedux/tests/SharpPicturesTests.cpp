@@ -3,6 +3,7 @@
 #include "TestGame.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
+#include "gui/MCUpdateDisplay.h"
 #include "logistics/MCMainMenu.h"
 #include "main/MCLogistics.h"
 #include "platform/MCDisplay.h"
@@ -278,5 +279,143 @@ TEST_CASE_ISOLATED("game: a sharp screen's text and line art are made ahead, and
     const MCVulkanRenderer::SharpCounts back = renderer->SharpPictures();
     CHECK_EQ(back.Redrawn, away.Redrawn);
     CHECK_EQ(back.TakenAhead, away.TakenAhead);
+    GHdArt = 0;
+}
+
+namespace
+{
+    /// <summary>The screen as the GPU shows it now (MCDisplay::ReadFrame), as bytes.</summary>
+    std::vector<uint8_t> ShownBytes()
+    {
+        const std::expected<std::vector<SDL_Color>, std::string> frame = MCInput::Display()->ReadFrame();
+        REQUIRE(frame.has_value());
+        const auto bytes = std::as_bytes(std::span(*frame));
+        std::vector<uint8_t> shown(bytes.size());
+        std::memcpy(shown.data(), bytes.data(), bytes.size());
+        return shown;
+    }
+
+    /// <summary>
+    /// Logistics up in a sharp window, the GPU drawing and HD art on (as AttachHdArtToLoaded turns it on, without a
+    /// pack), the fonts' glyphs made ahead and the main menu settled.
+    /// </summary>
+    std::shared_ptr<MCVulkanRenderer> StartSharpLogistics()
+    {
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartLogistics());
+        REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+        REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), SharpWidth, SharpHeight));
+        SDL_SyncWindow(&MCInput::Display()->Window());
+        std::shared_ptr<MCVulkanRenderer> renderer =
+            std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+        REQUIRE(renderer != nullptr);
+        GHdArt = 1;
+        GlobalLog()->AttachHdArt();
+        GlobalLog()->MakeAhead();
+        MCSharpPictures::WaitForMade();
+        Settle();
+        REQUIRE(MCInput::Display()->SharpScreen());
+        return renderer;
+    }
+
+    /// <summary>The sharp pictures the renderer has taken made ahead and redrawn itself, together.</summary>
+    size_t SharpTaken(const MCVulkanRenderer& renderer)
+    {
+        const MCVulkanRenderer::SharpCounts counts = renderer.SharpPictures();
+        return counts.TakenAhead + counts.Redrawn;
+    }
+}
+
+TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame finds what it shows ready")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
+    const std::vector<uint8_t> menu = ShownBytes();
+
+    // The briefing set up (its palette waits for the next frame's fade), then rehearsed: what it shows is taken and
+    // sent up, and the main menu is still what's shown.
+    NewCampaign();
+    MCSharpPictures::WaitForMade();
+    const size_t before = SharpTaken(*renderer);
+    RehearseScreen(NoRideAlong);
+    const size_t rehearsed = SharpTaken(*renderer);
+    CHECK(rehearsed > before);
+    CHECK(ShownBytes() == menu);
+
+    // The frame that fades the menu out and draws the briefing redraws nothing, and its draw takes next to nothing:
+    // the briefing's text and line art were the rehearsal's (the fade rehearses it again, finding it all done, then
+    // readies the screens a slide from it brings in, which takes theirs). What the draw takes is the letter its text,
+    // typed out as time passes, has come to since (one, here).
+    constexpr size_t MostTyped = 2;
+    std::vector<size_t> taken;
+    MCTestGame::OnPresent = [&] { taken.push_back(SharpTaken(*renderer)); };
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::OnPresent = {};
+    REQUIRE(taken.size() > 1);
+    CHECK_EQ(renderer->SharpPictures().Redrawn, 0u);
+    CHECK(taken.front() >= rehearsed);
+    CHECK(taken.back() - taken[taken.size() - 2] <= MostTyped);
+    CHECK(ShownBytes() != menu);
+    GHdArt = 0;
+}
+
+TEST_CASE_ISOLATED("game: a slide's screen is rehearsed before its first step, which takes nothing more")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
+    NewCampaign();
+    MCSharpPictures::WaitForMade();
+    Settle();
+
+    // The shop opened on a tab the fade into the briefing didn't ready (the pilots'; it readied the mechs'): the
+    // purchase screen slides in over the briefing, rehearsed first (nothing presented), so the slide's first step
+    // already finds its pictures taken, and no step takes another.
+    GlobalLog()->CurrentInvTab = 1;
+    std::vector<size_t> taken;
+    MCTestGame::OnPresent = [&] { taken.push_back(SharpTaken(*renderer)); };
+    const size_t before = SharpTaken(*renderer);
+    GlobalLog()->SetUpPurchaseScreen(true);
+    MCTestGame::OnPresent = {};
+    REQUIRE(taken.size() > 2);
+    CHECK(taken.front() > before);
+    CHECK(std::ranges::all_of(taken, [&](size_t count) { return count == taken.front(); }));
+    GHdArt = 0;
+}
+
+TEST_CASE_ISOLATED(
+    "game: the fade into the briefing readies the purchase and repair screens, whose slides take nothing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
+    NewCampaign();
+    MCSharpPictures::WaitForMade();
+    Settle();
+
+    // The slides to the purchase screen and on to the repair screen take nothing, their rehearsals included: what
+    // they show was the fade's. All they take is the clock's new digits (the screens show the time to the second).
+    constexpr size_t ClockDigits = 2;
+    std::vector<size_t> taken;
+    MCTestGame::OnPresent = [&] { taken.push_back(SharpTaken(*renderer)); };
+    const size_t before = SharpTaken(*renderer);
+    GlobalLog()->SetUpPurchaseScreen(true);
+    const size_t purchaseSteps = taken.size();
+    GlobalLog()->SetUpRepairScreen(true);
+    MCTestGame::OnPresent = {};
+    REQUIRE(purchaseSteps > 2);
+    REQUIRE(taken.size() > purchaseSteps + 2);
+    CHECK(taken.back() - before <= ClockDigits);
+    CHECK_EQ(renderer->SharpPictures().Redrawn, 0u);
     GHdArt = 0;
 }

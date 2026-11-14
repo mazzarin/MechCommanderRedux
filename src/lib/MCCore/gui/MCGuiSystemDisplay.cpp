@@ -350,7 +350,7 @@ auto MCGuiSystem::GammaCorrectCurrentPalette(int32_t level) -> void
     ShowPalette(FirstGameColor, EndGameColor - FirstGameColor);
 }
 
-auto MCGuiSystem::FadeDownCurrentPalette() -> void
+auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading) -> void
 {
     if (!_DisplayReady || CurrentPalette[FirstGameColor].R == 0)
     {
@@ -364,6 +364,7 @@ auto MCGuiSystem::FadeDownCurrentPalette() -> void
     int32_t step = 1;
     int32_t faded = 0;
     const double frequency = static_cast<double>(CountsPerSecond);
+    size_t piece = 0;
 
     do
     {
@@ -371,6 +372,13 @@ auto MCGuiSystem::FadeDownCurrentPalette() -> void
         faded += step;
         _Display->SetFade(faded);
         std::ignore = _Display->Present();
+
+        // Port-only: a piece of the work given each step once it's shown, in the step's time.
+        if (piece < whileFading.size())
+        {
+            whileFading[piece++]();
+        }
+
         float elapsed;
 
         do
@@ -380,6 +388,12 @@ auto MCGuiSystem::FadeDownCurrentPalette() -> void
 
         step = static_cast<int32_t>(elapsed * 256.0f);
     } while (faded < 0x100);
+
+    // Port-only: what the fade had no steps left for, the screen black.
+    while (piece < whileFading.size())
+    {
+        whileFading[piece++]();
+    }
 
     // Where the original ends: entries 10..245 black until the next palette is set. The fade comes off with them, so
     // the screen stays black.

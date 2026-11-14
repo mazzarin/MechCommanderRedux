@@ -150,8 +150,19 @@ public:
     /// <summary>Steps the gamma level (0..3) and re-applies the palette.</summary>
     void GammaCorrectCurrentPalette();
     void GammaCorrectCurrentPalette(int32_t level);
-    /// <summary>Fades the screen to black, then blacks out palette entries 10..245.</summary>
-    void FadeDownCurrentPalette();
+    /// <summary>
+    /// Port-only: on a sharp screen (HD art, the GPU drawing), every font's glyphs made ahead off the game's thread
+    /// (platform/MCSharpPictures), each font once; nothing otherwise. Start does it as the display opens, so the boot is
+    /// its time (a launcher's game shows its room soon after), and logistics when HD art comes on.
+    /// </summary>
+    void MakeFontsAhead() const;
+
+    /// <summary>
+    /// Fades the screen to black, then blacks out palette entries 10..245. Port-only: <paramref name="whileFading"/>'s
+    /// pieces of work are done in order, one after each step from the first, any still left once the screen is black;
+    /// the fade keeps its pace (it follows the time, so a piece's step darkens by more).
+    /// </summary>
+    void FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading = {});
     /// <summary>
     /// Sets the palette's entries from <paramref name="first"/> on, or, with <paramref name="first"/> 0, keeps
     /// <paramref name="count"/> entries in <see cref="PendingPalette"/> for the next frame to fade to.

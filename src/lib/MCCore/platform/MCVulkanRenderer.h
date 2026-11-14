@@ -225,6 +225,13 @@ public:
     /// </summary>
     std::expected<void, std::string> Flush(std::span<const MCUnderlay> underlays);
 
+    /// <summary>
+    /// Port-only: the bytes the frame being recorded has queued to go up (its uploads' staging), and whether it holds
+    /// draws: what MCVulkanPresenter::RunRecorded weighs for a rehearsal (which records no draws).
+    /// </summary>
+    size_t QueuedUploadBytes() const;
+    bool HoldsDraws() const;
+
     /// <summary>The frames whose commands have run (<see cref="Execute"/>), shown or not.</summary>
     uint64_t FramesRun() const { return _Frame; }
 

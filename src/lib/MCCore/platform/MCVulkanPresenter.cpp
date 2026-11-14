@@ -2409,6 +2409,29 @@ std::expected<std::vector<uint8_t>, std::string> MCVulkanPresenter::ReadScreen(c
 std::expected<void, std::string> MCVulkanPresenter::Discard(const MCFrame& frame)
 {
     // Port-only: the frame run ahead before this one goes first (to no swapchain image, as the window's minimised).
+    return RunUnshown(frame.Underlays,
+                      [&]
+                      {
+                          _Renderer->SetColors(frame.PaletteColors, frame.Cycle);
+                          PlaceUnderlays(frame);
+                      });
+}
+
+std::expected<void, std::string> MCVulkanPresenter::RunRecorded(std::span<const MCUnderlay> underlays, size_t rideAlong)
+{
+    // No more than the next frame takes along: left to it, with no wait for the frames ahead.
+    if (_Renderer == nullptr || (!_Renderer->HoldsDraws() && _Renderer->QueuedUploadBytes() <= rideAlong))
+    {
+        return {};
+    }
+
+    // As a frame not shown, the colours and underlays left as the last frame set them.
+    return RunUnshown(underlays, {});
+}
+
+std::expected<void, std::string> MCVulkanPresenter::RunUnshown(std::span<const MCUnderlay> underlays,
+                                                               const std::function<void()>& before)
+{
     std::string errors;
 
     if (auto finished = FinishFrames(); !finished)
@@ -2421,10 +2444,12 @@ std::expected<void, std::string> MCVulkanPresenter::Discard(const MCFrame& frame
         return Outcome(std::move(errors));
     }
 
-    _Renderer->SetColors(frame.PaletteColors, frame.Cycle);
-    PlaceUnderlays(frame);
+    if (before)
+    {
+        before();
+    }
 
-    if (auto flushed = _Renderer->Flush(frame.Underlays); !flushed)
+    if (auto flushed = _Renderer->Flush(underlays); !flushed)
     {
         return std::unexpected(Joined(std::move(errors), flushed.error()));
     }

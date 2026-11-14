@@ -2,6 +2,7 @@
 #include "logistics/MCLogObject.h"
 #include "gui/MCGuiAnimation.h"
 #include "platform/MCInput.h"
+#include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -112,7 +113,8 @@ auto MCLogObject::Display() -> void
         }
     }
 
-    if (HideOffset != 0)
+    // Port-only: a rehearsal's draw moves nothing (MCRenderer::RehearsalScope), as MCGuiObject::SlideStep.
+    if (HideOffset != 0 && !MCRenderer::Rehearsing())
     {
         // A slide (HideMe) moves the whole offset each frame until the object is off the screen, or back home.
         if (HideDirection == MCDirection::Left || HideDirection == MCDirection::Right)

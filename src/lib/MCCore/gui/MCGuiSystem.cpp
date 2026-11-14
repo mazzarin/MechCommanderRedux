@@ -28,6 +28,7 @@
 #include "network/MCMultiPlayer.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCSharpPictures.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
@@ -207,6 +208,28 @@ auto MCGuiSystem::LoadFonts() -> void
     SystemFont = GreyFont;
 }
 
+auto MCGuiSystem::MakeFontsAhead() const -> void
+{
+    if (_Display == nullptr || !_Display->SharpScreen())
+    {
+        return;
+    }
+
+    // Each font once (the drop fonts serve two sizes).
+    std::set<const MCGuiFont*> fonts;
+
+    for (const std::array<std::shared_ptr<MCGuiFont>, 3>& sizes : Fonts)
+    {
+        for (const std::shared_ptr<MCGuiFont>& font : sizes)
+        {
+            if (font != nullptr && !font->FontData.Empty() && fonts.insert(font.get()).second)
+            {
+                MCSharpPictures::MakeFont(font->FontData.Bytes());
+            }
+        }
+    }
+}
+
 auto MCGuiSystem::FreeFonts() -> void
 {
     for (std::shared_ptr<MCGuiFont>& global :
@@ -311,6 +334,8 @@ auto MCGuiSystem::Start(std::string_view commandLine, int16_t screenWidth, int16
     }
 
     OpenDisplay();
+    // Port-only: the fonts' sharp glyphs made from now, the boot their time.
+    MakeFontsAhead();
     LoadCursors();
     MCInput::ShowCursor(false);
     CursorShape = -1;

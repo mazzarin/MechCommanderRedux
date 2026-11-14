@@ -20,6 +20,7 @@ class MCFidpMessage;
 class MCFitIniFile;
 class MCLogChat;
 class MCLogChatWindow;
+class MCLogInvScreen;
 class MCPacketFile;
 struct MCPane;
 class MCPurchaseDlg;
@@ -113,6 +114,22 @@ public:
     /// The briefing, purchase and repair screens ask as they're set up; what's made is never made again.
     /// </summary>
     void MakeLineArtAhead() const;
+
+    /// <summary>
+    /// Port-only: the screens a slide from the one shown may bring in, readied hidden in the fade into it
+    /// (<see cref="ReadyForSlide"/>, RehearseHidden), so the slide neither waits for them nor draws them first: from
+    /// the briefing, the purchase screen (its store the most to make) then the repair screen; none from any other (they
+    /// were readied on the way, and readying one while the other shows would scroll the inventory list shown: each tab
+    /// fills both screens').
+    /// </summary>
+    std::vector<MCGuiHandle<MCLogInvScreen>> ScreensSlidIn() const;
+
+    /// <summary>
+    /// Port-only: hidden <paramref name="screen"/> (the purchase or repair screen) filled as its set-up will fill it for
+    /// the inventory tab shown (<see cref="SetUpPurchaseScreen"/>, <see cref="SetUpRepairScreen"/>): its background and
+    /// lists, the purchase screen's store too. Its set-up does it all again as it's shown, and nothing is selected.
+    /// </summary>
+    void ReadyForSlide(MCLogInvScreen& screen) const;
 
     /// <summary>
     /// The frames of a mech's repair shapes its diagram is drawn with, a frame a location: the armor (from 0) over the

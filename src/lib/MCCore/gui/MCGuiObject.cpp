@@ -3,6 +3,7 @@
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFatal.h"
 #include "platform/MCInput.h"
+#include "platform/MCRenderer.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -906,7 +907,8 @@ auto MCGuiObject::DrawInFramePass(MCGuiPort& port, int32_t scrollY, bool wipe, b
 
 auto MCGuiObject::SlideStep() -> void
 {
-    if (HideOffset == 0)
+    // Port-only: a rehearsal's draw moves nothing (MCRenderer::RehearsalScope): the frame shown next takes the step.
+    if (HideOffset == 0 || MCRenderer::Rehearsing())
     {
         return;
     }

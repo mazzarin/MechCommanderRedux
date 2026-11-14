@@ -91,12 +91,21 @@ public:
     std::expected<std::vector<SDL_Color>, std::string> ReadFrame(const MCFrame& frame) override;
     std::expected<std::vector<uint8_t>, std::string> ReadScreen(const MCFrame& frame) override;
     std::expected<void, std::string> Discard(const MCFrame& frame) override;
+    std::expected<void, std::string> RunRecorded(std::span<const MCUnderlay> underlays, size_t rideAlong) override;
     MCViewport Viewport(int viewWidth, int viewHeight) const override;
     void ShowFinished() override;
     void ShowPresented() override;
     void ShowBeforeInput() override;
 
 private:
+    /// <summary>
+    /// What the renderer recorded run now on this thread, shown nowhere and waited for (Discard, RunRecorded): the frame
+    /// running ahead finished first, then <paramref name="before"/> (with the GPU drawing; none: nothing), then the
+    /// commands with <paramref name="underlays"/>.
+    /// </summary>
+    std::expected<void, std::string> RunUnshown(std::span<const MCUnderlay> underlays,
+                                                const std::function<void()>& before);
+
     /// <summary>
     /// Port-only: what a frame's run reads (the renderer's sealed frame, the composite's plan, the frame's layout and
     /// colours), taken as it's presented (<see cref="Plan"/>). Defined in the .cpp; shared by the game's thread and the

@@ -13,7 +13,7 @@
 /// </summary>
 /// <remarks>
 /// Threads: everything here from the game's thread. The pictures are made on a thread of its own with helpers
-/// (lib/MCWorkers), from copies of what they're cut from.
+/// (lib/MCWorkers), below the game's threads, from copies of what they're cut from.
 /// </remarks>
 namespace MCSharpPictures
 {

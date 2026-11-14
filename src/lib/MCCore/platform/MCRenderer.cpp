@@ -629,6 +629,8 @@ namespace
 
     /// <summary>Whether a <see cref="MCRenderer::GlowScope"/> is drawing a glow.</summary>
     bool GlowDrawn = false;
+    /// <summary>Port-only: set while a frame is drawn as a rehearsal (MCRenderer::RehearsalScope).</summary>
+    bool RehearsalDrawn = false;
 
     /// <summary>The in-between a <see cref="MCRenderer::InBetweenScope"/> is drawing, none outside one.</summary>
     std::optional<MCInBetween> InBetweenDrawn;
@@ -836,6 +838,21 @@ MCRenderer::GlowScope::~GlowScope()
 bool MCRenderer::DrawingGlow()
 {
     return GlowDrawn;
+}
+
+MCRenderer::RehearsalScope::RehearsalScope() : _Was(RehearsalDrawn)
+{
+    RehearsalDrawn = true;
+}
+
+MCRenderer::RehearsalScope::~RehearsalScope()
+{
+    RehearsalDrawn = _Was;
+}
+
+bool MCRenderer::Rehearsing()
+{
+    return RehearsalDrawn;
 }
 
 MCRenderer::InBetweenScope::InBetweenScope(const std::optional<MCInBetween>& inBetween) : _Was(InBetweenDrawn)

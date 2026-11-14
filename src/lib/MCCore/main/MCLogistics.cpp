@@ -735,19 +735,8 @@ auto MCLogistics::MakeAhead() const -> void
         return;
     }
 
-    // Each font once (the drop fonts serve two sizes).
-    std::set<const MCGuiFont*> fonts;
-
-    for (const std::array<std::shared_ptr<MCGuiFont>, 3>& sizes : Fonts)
-    {
-        for (const std::shared_ptr<MCGuiFont>& font : sizes)
-        {
-            if (font != nullptr && !font->FontData.Empty() && fonts.insert(font.get()).second)
-            {
-                MCSharpPictures::MakeFont(font->FontData.Bytes());
-            }
-        }
-    }
+    // The fonts' glyphs (made since the display opened, with HD art on then: only those not made are made).
+    GuiSystem().MakeFontsAhead();
 
     // The HD copies of the pictures the screens are made of (their art, loaded by Start, the screens' backgrounds
     // with it: MCLogInvScreen::InitLive), read ahead by the pack's reading thread.
@@ -1107,6 +1096,95 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>
+    /// The purchase screen's inventory list and store set up for inventory tab <paramref name="tab"/>, the store
+    /// filled though the screen is hidden when <paramref name="ahead"/> (MCLogistics::ReadyForSlide).
+    /// </summary>
+    void SetUpPurchaseLists(MCPurchaseScreen& screen, int32_t tab, bool ahead)
+    {
+        switch (tab)
+        {
+            case 0:
+            {
+                screen.SetUpMechInv(true, true);
+                screen.SetUpMechPurchase(ahead);
+                break;
+            }
+            case 1:
+            {
+                screen.SetUpPilotInv(true, true);
+                screen.SetUpPilotPurchase(ahead);
+                break;
+            }
+            case 2:
+            {
+                screen.SetUpCompInv(true, true);
+                screen.SetUpCompPurchase(ahead);
+                break;
+            }
+            case 3:
+            {
+                screen.SetUpVhclInv(true, true);
+                screen.SetUpVehiclePurchase(ahead);
+                break;
+            }
+        }
+    }
+
+    /// <summary>The repair screen's inventory list set up for inventory tab <paramref name="tab"/>.</summary>
+    void SetUpRepairLists(MCRepairScreen& repair, int32_t tab)
+    {
+        switch (tab)
+        {
+            case 0:
+                repair.SetUpMechInv(true, true);
+                break;
+            case 1:
+                repair.SetUpPilotInv(true, true);
+                break;
+            case 2:
+                repair.SetUpCompInv(true, true);
+                break;
+            case 3:
+                repair.SetUpVhclInv(true, true);
+                break;
+        }
+    }
+}
+
+auto MCLogistics::ScreensSlidIn() const -> std::vector<MCGuiHandle<MCLogInvScreen>>
+{
+    if (CurrentScreen() == nullptr || CurrentScreen() != BriefingScreen)
+    {
+        return {};
+    }
+
+    return {PurchaseScreen, RepairScreen};
+}
+
+auto MCLogistics::ReadyForSlide(MCLogInvScreen& screen) const -> void
+{
+    // The lists the set-ups read (gone with logistics' end).
+    if (MechList == nullptr || WarriorList == nullptr || VehicleList == nullptr || ComponentInventory == nullptr ||
+        PurMechList == nullptr || PurPilotList == nullptr || PurVehicleList == nullptr || PurchaseComponents == nullptr)
+    {
+        return;
+    }
+
+    if (const std::shared_ptr<MCPurchaseScreen> purchase = PurchaseScreen.Lock(); purchase.get() == &screen)
+    {
+        purchase->DrawBackground();
+        SetUpPurchaseLists(*purchase, CurrentInvTab, true);
+    }
+    else if (const std::shared_ptr<MCRepairScreen> repair = RepairScreen.Lock(); repair.get() == &screen)
+    {
+        repair->DrawBackground();
+        SetUpRepairLists(*repair, CurrentInvTab);
+    }
+}
+
 auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 {
     NoteScreen("purchase");
@@ -1148,33 +1226,7 @@ auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
     screen.DrawBackground();
     DrawScreenButtons();
 
-    switch (CurrentInvTab)
-    {
-        case 0:
-        {
-            screen.SetUpMechInv(true, true);
-            screen.SetUpMechPurchase();
-            break;
-        }
-        case 1:
-        {
-            screen.SetUpPilotInv(true, true);
-            screen.SetUpPilotPurchase();
-            break;
-        }
-        case 2:
-        {
-            screen.SetUpCompInv(true, true);
-            screen.SetUpCompPurchase();
-            break;
-        }
-        case 3:
-        {
-            screen.SetUpVhclInv(true, true);
-            screen.SetUpVehiclePurchase();
-            break;
-        }
-    }
+    SetUpPurchaseLists(screen, CurrentInvTab, false);
 
     if (MultiPlayer() != nullptr)
     {
@@ -1576,21 +1628,7 @@ auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
     repair.DrawBackground();
     DrawScreenButtons();
 
-    switch (CurrentInvTab)
-    {
-        case 0:
-            repair.SetUpMechInv(true, true);
-            break;
-        case 1:
-            repair.SetUpPilotInv(true, true);
-            break;
-        case 2:
-            repair.SetUpCompInv(true, true);
-            break;
-        case 3:
-            repair.SetUpVhclInv(true, true);
-            break;
-    }
+    SetUpRepairLists(repair, CurrentInvTab);
 
     // Nothing selected yet: the force's first mech (a null one when the force has none).
     if (repair.SelectedMech() == nullptr && repair.SelectedVehicle() == nullptr)
@@ -1737,6 +1775,11 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
         });
     wipe->ShowGuiWindow(true);
     wipe->SetDepth(100);
+    // Port-only: the screen arriving rehearsed first, whole as the slide's last step draws it, so the slide's steps
+    // don't load, read and send up what it shows as it comes in (RehearseScreen; the slide's time starts after). The
+    // fade into the briefing readied it (ScreensSlidIn), so this finds it done unless it changed since.
+    wipe->Offset = SlideWidth;
+    RehearseScreen(FrameUploadShare);
     SoundSystem()->PlayInterfaceSample(0x36);
     const int64_t frequency = MCPort::PerformanceFrequency();
     float elapsed = 0.0f;

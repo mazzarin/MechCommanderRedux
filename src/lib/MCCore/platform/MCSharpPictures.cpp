@@ -296,8 +296,10 @@ namespace
     /// </summary>
     void MakePictures(std::stop_token stop)
     {
+        // Ahead of the screens that show them: below the game's threads, as nothing waits for them yet.
+        MCWorkers::LowerThisThread();
         State& state = TheState();
-        MCWorkers helpers(MCWorkers::HelpersFor(MostHelpers));
+        MCWorkers helpers(MCWorkers::HelpersFor(MostHelpers), MCWorkers::Priority::Low);
         std::unique_lock lock(state.Lock);
 
         while (state.Changed.wait(lock, stop, [&state] { return !state.Queue.empty(); }))

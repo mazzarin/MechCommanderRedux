@@ -25,6 +25,7 @@
 #include "network/MCMultiPlayer.h"
 #include "platform/MCInput.h"
 #include "platform/MCSmacker.h"
+#include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -577,6 +578,12 @@ auto MCBriefingScreen::Display() -> void
     }
 
     MCLogObject::Display();
+
+    // Port-only: a rehearsal only draws (MCRenderer::RehearsalScope); the movie's steps wait for a frame shown.
+    if (MCRenderer::Rehearsing())
+    {
+        return;
+    }
 
     if (MovieOver == 0)
     {

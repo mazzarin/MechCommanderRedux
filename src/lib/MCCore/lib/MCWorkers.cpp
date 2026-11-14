@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "lib/MCWorkers.h"
 
-MCWorkers::MCWorkers(size_t helpers) : _HelperCount(helpers)
+MCWorkers::MCWorkers(size_t helpers, Priority priority) : _HelperCount(helpers), _Priority(priority)
 {
 }
 
@@ -75,8 +75,21 @@ auto MCWorkers::Run(size_t parts, const std::function<void(size_t)>& work) -> vo
     }
 }
 
+auto MCWorkers::LowerThisThread() -> void
+{
+    if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW))
+    {
+        SDL_Log("MCWorkers: could not lower a thread's priority (%s); it runs as the game's", SDL_GetError());
+    }
+}
+
 auto MCWorkers::Help(std::stop_token stop) -> void
 {
+    if (_Priority == Priority::Low)
+    {
+        LowerThisThread();
+    }
+
     uint64_t seen = 0;
     std::unique_lock lock(_Lock);
 

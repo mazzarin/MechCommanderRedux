@@ -1700,6 +1700,13 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
                            const std::optional<Quad>& sourceAt, uint32_t op, uint32_t color, uint32_t before,
                            uint32_t after, bool join)
 {
+    // Port-only: a rehearsal's draws are left out; what they needed done first (their pictures found and queued to
+    // go up) is done (MCRenderer::RehearsalScope).
+    if (MCRenderer::Rehearsing())
+    {
+        return false;
+    }
+
     // Port-only: a frame that ran meanwhile on another thread is shown now (the presenter's).
     if (Checkpoint && ++_DrawsSinceCheckpoint >= CheckpointDraws)
     {
@@ -5638,7 +5645,7 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     const int32_t firstCol = std::max(frame.FirstCol, _TerrainMesh.FirstCol);
     const int32_t lastCol = std::min(frame.LastCol, _TerrainMesh.FirstCol + _TerrainMesh.Cols - 1);
 
-    if (lastRow >= firstRow && lastCol >= firstCol && !Empty(draw.Frame.Clip))
+    if (lastRow >= firstRow && lastCol >= firstCol && !Empty(draw.Frame.Clip) && !MCRenderer::Rehearsing())
     {
         draw.CellCount = static_cast<uint32_t>((lastRow - firstRow + 1) * (lastCol - firstCol + 1));
         Record record;
@@ -7921,6 +7928,16 @@ size_t MCVulkanRenderer::UploadBytesKept() const
 {
     WaitForRunning();
     return _Run->Staging.capacity() + (_SpareRun != nullptr ? _SpareRun->Staging.capacity() : 0) + _TransferSize;
+}
+
+size_t MCVulkanRenderer::QueuedUploadBytes() const
+{
+    return _Run->Staging.size();
+}
+
+bool MCVulkanRenderer::HoldsDraws() const
+{
+    return !_Run->Records.empty() || !_Run->TerrainDraws.empty();
 }
 
 std::expected<void, std::string> MCVulkanRenderer::Flush(std::span<const MCUnderlay> underlays)

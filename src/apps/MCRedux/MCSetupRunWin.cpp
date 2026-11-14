@@ -6,6 +6,7 @@
 
 #include <SDL3/SDL_log.h>
 #include <format>
+#include <optional>
 
 namespace
 {
@@ -113,6 +114,40 @@ namespace
         return text;
     }
 
+    /// <summary>Whether <paramref name="key"/>'s install folder (InstallLocation) is <paramref name="gameFolder"/>.</summary>
+    bool NamesFolder(HKEY key, const std::filesystem::path& gameFolder)
+    {
+        const std::wstring location = TextValue(key, InstallLocationValue);
+        std::error_code error;
+        return !location.empty() && std::filesystem::equivalent(std::filesystem::path(location), gameFolder, error);
+    }
+
+    /// <summary>
+    /// Whether the uninstall entry under <paramref name="root"/> (<paramref name="view"/>: the registry's 64-bit view,
+    /// where the 64-bit setup writes for every user) names <paramref name="gameFolder"/>: false with none, nothing when
+    /// it can't be read.
+    /// </summary>
+    std::optional<bool> EntryNames(HKEY root, REGSAM view, const std::filesystem::path& gameFolder)
+    {
+        HKEY key = nullptr;
+
+        if (const LSTATUS opened = RegOpenKeyExW(root, UninstallKey, 0, KEY_QUERY_VALUE | view, &key);
+            opened != ERROR_SUCCESS)
+        {
+            if (opened == ERROR_FILE_NOT_FOUND)
+            {
+                return false;
+            }
+
+            SDL_Log("Updater: the setup's uninstall entry can't be read (error %ld)", static_cast<long>(opened));
+            return std::nullopt;
+        }
+
+        const bool names = NamesFolder(key, gameFolder);
+        RegCloseKey(key);
+        return names;
+    }
+
     /// <summary>Starts <paramref name="setup"/> with <paramref name="arguments"/>, with <paramref name="flags"/>.</summary>
     std::string Create(const std::filesystem::path& setup, std::string_view arguments, DWORD flags,
                        PROCESS_INFORMATION& process)
@@ -171,6 +206,16 @@ std::string MCStartSetup(const std::filesystem::path& setup, std::string_view ar
     return {};
 }
 
+bool MCSetupOwns(const std::filesystem::path& gameFolder)
+{
+    const std::optional<bool> player = EntryNames(HKEY_CURRENT_USER, 0, gameFolder);
+    const std::optional<bool> everyone = EntryNames(HKEY_LOCAL_MACHINE, KEY_WOW64_64KEY, gameFolder);
+
+    // An entry that can't be read is taken as the setup's, so the copy's level decides and the setup, if it runs,
+    // tells for itself (a copy it didn't install takes the files alone).
+    return player.value_or(true) || everyone.value_or(true);
+}
+
 MCOutlives MCStartedOutlive()
 {
     static const MCOutlives outlives = AskOutlive();
@@ -191,11 +236,9 @@ std::string MCShowInstalledVersion(const std::filesystem::path& gameFolder, std:
         return "the player has no uninstall entry of their own (an install for every user)";
     }
 
-    const std::wstring location = TextValue(key, InstallLocationValue);
-    std::error_code error;
     std::string failed;
 
-    if (location.empty() || !std::filesystem::equivalent(std::filesystem::path(location), gameFolder, error))
+    if (!NamesFolder(key, gameFolder))
     {
         failed = "the player's uninstall entry is another folder's";
     }

@@ -15,7 +15,9 @@
 /// and the content with it (MCUpdater); RESTART or quitting runs it as the game ends, RESTART asking it to start the
 /// game again. A start that finds a setup armed and never run (the game crashed or was ended first) runs it then.
 /// A release whose setup's level is the copy's gives the program's files instead, which the game puts in place itself as
-/// the update is armed (update/MCProgramSwap.h), the next start running them: no setup runs. Where what the game starts
+/// the update is armed (update/MCProgramSwap.h), the next start running them: no setup runs. So does every release for
+/// a copy the setup didn't install (the player's own: copied by hand, a mod's folder), and a setup runs only for the
+/// folder it installed, named on its command line (/DIR), so an update never installs anywhere else. Where what the game starts
 /// can't outlive it (a lobby's job ends it as the game exits: MCUpdater::CanStartAgain), a setup armed waits for a
 /// start that can run it.
 /// </summary>
@@ -39,6 +41,11 @@ namespace MCSetupBackend
         std::function<void()> Quit;
         /// <summary>The Apps list's version, for the program's swap (MCProgramSwap::MCPlatform's).</summary>
         std::function<std::string(const std::filesystem::path& gameFolder, std::string_view version)> ShowVersion;
+        /// <summary>
+        /// Whether the setup installed the copy (MCProgramSwap::MCSetupOwns): one it didn't takes the program's files
+        /// alone. None: the setup's.
+        /// </summary>
+        MCProgramSwap::MCSetupOwns SetupOwns;
     };
 
     /// <summary>The program's swap's platform, from the backend's.</summary>
@@ -54,6 +61,12 @@ namespace MCSetupBackend
     /// </summary>
     std::unique_ptr<MCUpdater::MCBackend> Make(std::filesystem::path gameFolder, std::string runningVersion,
                                                MCSourceFor sources, MCPlatform platform);
+
+    /// <summary>
+    /// The copy's folder as the setup is told it (/DIR): in full, with no separator at its end (a drive's root keeps its
+    /// own).
+    /// </summary>
+    std::filesystem::path NamedFolder(const std::filesystem::path& gameFolder);
 
     /// <summary>
     /// At a start: a setup armed in an earlier run and never run, for a build newer than <paramref name="runningBuild"/>,

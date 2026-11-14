@@ -162,20 +162,21 @@ namespace
                 ComPtr<IDXGIAdapter1> adapter;
                 const HRESULT found = factory->EnumAdapters1(index, &adapter);
 
-                if (found == DXGI_ERROR_NOT_FOUND)
+                // Past the last adapter, or DXGI failing: either way no later index answers.
+                if (FAILED(found))
                 {
+                    if (found != DXGI_ERROR_NOT_FOUND)
+                    {
+                        SDL_Log("HD caches: DXGI's adapter %u can't be listed (0x%08x)", index,
+                                static_cast<uint32_t>(found));
+                    }
+
                     break;
                 }
 
                 DXGI_ADAPTER_DESC1 description{};
-                HRESULT described = found;
 
-                if (SUCCEEDED(found))
-                {
-                    described = adapter->GetDesc1(&description);
-                }
-
-                if (FAILED(described))
+                if (const HRESULT described = adapter->GetDesc1(&description); FAILED(described))
                 {
                     SDL_Log("HD caches: DXGI's adapter %u can't be described (0x%08x)", index,
                             static_cast<uint32_t>(described));

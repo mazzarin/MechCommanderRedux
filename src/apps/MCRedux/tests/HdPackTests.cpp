@@ -660,7 +660,8 @@ TEST_CASE("hd art: a frame read again keeps its Id")
 /// <summary>
 /// Port-only: while the system says memory is short, the frames kept in memory go least recently used first,
 /// MCMemoryRoom::TrimmedBytesPerFrame a frame, but never one asked for in the frame before (being drawn, it would only be
-/// read again), until it stops saying so; meanwhile and after, those asked for are read and kept.
+/// read again), until it stops saying so; meanwhile and after, those asked for are read and kept. A frame something else
+/// still holds (a texture's picture) leaves the cache too, but frees nothing, so it isn't counted in a frame's share.
 /// </summary>
 TEST_CASE(
     "hd art: while memory is short the frames kept go 64 MB a frame, never one the last frame drew, until it isn't")
@@ -669,9 +670,11 @@ TEST_CASE(
     constexpr int32_t Scale = 8;
     constexpr int32_t Width = 256;
     constexpr int32_t Height = 256;
-    constexpr size_t Frames = 40;
+    constexpr size_t Frames = 44;
     constexpr size_t Drawn = 4;
     constexpr size_t GoneAFrame = 16;
+    // The least recently used, held outside the cache too until the first frame short is over.
+    constexpr size_t Held = 4;
     MCHdArt::Frame frame;
     frame.Width = Width * Scale;
     frame.Height = Height * Scale;
@@ -716,18 +719,29 @@ TEST_CASE(
         return MCHdArt::CachedBytes();
     };
 
-    for (const std::vector<uint8_t>& tile : tiles)
+    // As a texture holds its picture's frame, asked for once.
+    std::vector<std::shared_ptr<const MCHdArt::Frame>> held;
+
+    for (size_t i = 0; i < Frames; ++i)
     {
-        REQUIRE(MCHdArt::FindTerrainTile(tile, Width, Height) != nullptr);
+        std::shared_ptr<const MCHdArt::Frame> found = MCHdArt::FindTerrainTile(tiles[i], Width, Height);
+        REQUIRE(found != nullptr);
+
+        if (i < Held)
+        {
+            held.push_back(std::move(found));
+        }
     }
 
     CHECK_EQ(MCHdArt::CachedBytes(), Frames * frameBytes);
     CHECK_EQ(frameDrawn(), Frames * frameBytes);
 
-    // Short: 16 a frame, then only those drawn, however long it lasts.
+    // Short: the held frames leave the cache, freeing nothing, and 16 only it held go besides them; then 16 a frame, then
+    // only those drawn, however long it lasts.
     system->IsShort = true;
-    CHECK_EQ(frameDrawn(), (Frames - GoneAFrame) * frameBytes);
-    CHECK_EQ(frameDrawn(), (Frames - 2 * GoneAFrame) * frameBytes);
+    CHECK_EQ(frameDrawn(), (Frames - Held - GoneAFrame) * frameBytes);
+    held.clear();
+    CHECK_EQ(frameDrawn(), (Frames - Held - 2 * GoneAFrame) * frameBytes);
     CHECK_EQ(frameDrawn(), Drawn * frameBytes);
     CHECK_EQ(frameDrawn(), Drawn * frameBytes);
     const size_t read = MCHdArt::FramesRead();

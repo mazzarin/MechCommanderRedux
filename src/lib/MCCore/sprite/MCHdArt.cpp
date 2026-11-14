@@ -2439,10 +2439,12 @@ void MCHdArt::NextFrame(bool memoryShort)
     }
 
     // The least recently used first, until TrimmedBytesPerFrame have gone or the next was asked for in the last frame
-    // (it and those after it are drawn, and would only be read again).
-    const size_t before = state.Bytes;
+    // (it and those after it are drawn, and would only be read again). A frame something else still holds (a texture's
+    // picture, asked for once) leaves the cache too, so its memory goes once that lets go of it, but it frees nothing
+    // now: it isn't counted, or the frames only the cache holds would wait for later frames.
+    size_t freed = 0;
 
-    while (!state.Order.empty() && before - state.Bytes < MCMemoryRoom::TrimmedBytesPerFrame)
+    while (!state.Order.empty() && freed < MCMemoryRoom::TrimmedBytesPerFrame)
     {
         const auto oldest = state.Frames.find(state.Order.front());
 
@@ -2455,6 +2457,12 @@ void MCHdArt::NextFrame(bool memoryShort)
         if (oldest->second.LastFrame + 1 >= state.Frame)
         {
             break;
+        }
+
+        // The cache's own reference alone: its bytes go with it.
+        if (oldest->second.Frame.use_count() == 1)
+        {
+            freed += oldest->second.Frame->Bytes();
         }
 
         Drop(state, oldest->first, oldest->second);

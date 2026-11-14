@@ -262,6 +262,15 @@ TEST_CASE("logistics: pilots for hire are listed by rank, then callsign")
 
 namespace
 {
+    /// <summary>MoreUnits on for the scope's length, then off again (the tests' default), however the test ends.</summary>
+    struct MCMoreUnitsOn
+    {
+        MCMoreUnitsOn() { GMoreUnits = 1; }
+        ~MCMoreUnitsOn() { GMoreUnits = 0; }
+        MCMoreUnitsOn(const MCMoreUnitsOn&) = delete;
+        MCMoreUnitsOn& operator=(const MCMoreUnitsOn&) = delete;
+    };
+
     /// <summary>
     /// <paramref name="units"/> made <paramref name="count"/> units with no profile behind them: only their number counts.
     /// </summary>
@@ -325,7 +334,7 @@ TEST_CASE("logistics: with MoreUnits a player outside a match owns up to 100 uni
     }
 
     ShopFixture shop;
-    GMoreUnits = 1;
+    const MCMoreUnitsOn moreUnits;
     CHECK_EQ(MaxUnits(), 100);
     CHECK_EQ(UnitWarning(), 80);
     FillShop(shop, 30);
@@ -337,7 +346,6 @@ TEST_CASE("logistics: with MoreUnits a player outside a match owns up to 100 uni
     CHECK_EQ(MaxPurchase(10), 5);
     FillShop(shop, 85);
     CHECK_EQ(MaxPurchase(10), 0);
-    GMoreUnits = 0;
 }
 
 /// <summary>
@@ -352,7 +360,7 @@ TEST_CASE("logistics: in a match the unit limit stays the original's, whatever M
     }
 
     ShopFixture shop;
-    GMoreUnits = 1;
+    const MCMoreUnitsOn moreUnits;
     // A match (whatever its rules).
     shop.PlayMatch(MCMatchRule::MechBraking);
     CHECK_EQ(MaxUnits(), 50);
@@ -361,7 +369,6 @@ TEST_CASE("logistics: in a match the unit limit stays the original's, whatever M
     CHECK_EQ(MaxPurchase(10), 5);
     FillShop(shop, 35);
     CHECK_EQ(MaxPurchase(10), 0);
-    GMoreUnits = 0;
 }
 
 TEST_CASE("game: the shop prices a mech by its profile and keeps its stock")

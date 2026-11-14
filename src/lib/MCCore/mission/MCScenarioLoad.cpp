@@ -268,6 +268,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     }
 
     LoadTerrain(file, terrainName);
+    // Port-only: the HD art pack's ground read from here, several at once, while the rest loads (MCTerrainReadHdTiles
+    // waits for it).
+    MCTerrainReadHdTilesAhead();
 
     // Port-only: a match without mines clears the map's.
     if (MCMatchPlays(MCMatchRule::NoMines))

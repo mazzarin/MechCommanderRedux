@@ -2623,6 +2623,103 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8
     return Cache(FrameKey{FolderIndex(PackFolder() / PictureFolder, Naming::Hash), hash}, width, height);
 }
 
+namespace
+{
+    /// <summary>One of a hashed folder's frames to read ahead (ReadHashedAhead): its name's hash and its draw's size.</summary>
+    struct HashedAhead
+    {
+        uint64_t Hash = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Has the readers read <paramref name="frames"/> of the hashed folder <paramref name="name"/> (the menus' pictures,
+    /// the ground's tiles or relief maps) ahead as reads of <paramref name="kind"/>, in the archive's order: those its
+    /// archive has that aren't kept, read, looked at or asked for already, in order, while they take at most
+    /// <paramref name="room"/> bytes (an entry's unpacked bytes are about its frame's). Only an archive's, as the
+    /// frames followed: loose files are a generator's, not a player's. The bytes asked for.
+    /// </summary>
+    size_t ReadHashedAhead(std::string_view name, std::span<const HashedAhead> frames, AheadKind kind, size_t room)
+    {
+        State& state = TheState();
+        const uint32_t folderIndex = FolderIndex(MCHdArt::PackFolder() / name, Naming::Hash);
+        FrameFolder& folder = state.Folders.at(folderIndex);
+        std::error_code error;
+
+        if (!folder.Loose.has_value())
+        {
+            folder.Loose = std::filesystem::is_directory(folder.Path, error);
+        }
+
+        const FrameFolder::InArchive& archived = ArchiveOf(folder);
+
+        if (*folder.Loose || archived.Archive == nullptr)
+        {
+            return 0;
+        }
+
+        Follow follow{FrameKey{folderIndex, 0}, 0, archived.Archive, archived.Prefix, folder.BakedShadows, {}};
+        std::unordered_set<uint64_t> named;
+        size_t asked = 0;
+        ReadAhead& ahead = state.Ahead;
+        std::scoped_lock lock(ahead.Lock);
+
+        for (const HashedAhead& frame : frames)
+        {
+            const FrameKey key{folderIndex, frame.Hash};
+
+            if (frame.Width <= 0 || frame.Height <= 0 || !named.insert(frame.Hash).second ||
+                ahead.Known.contains(key) || ahead.Ready.contains(key) || ahead.Pictures.contains(key) ||
+                ahead.PicturesAsked.contains(key))
+            {
+                continue;
+            }
+
+            if (const auto cached = state.Frames.find(key);
+                cached != state.Frames.end() && (cached->second.Frame != nullptr || cached->second.Looked))
+            {
+                continue;
+            }
+
+            std::string entry = archived.Prefix + HashName(frame.Hash) + std::string(HdfExtension);
+            const std::optional<int32_t> index = archived.Archive->File->Find(entry);
+
+            if (!index.has_value())
+            {
+                continue;
+            }
+
+            const auto bytes =
+                static_cast<size_t>(std::max<int64_t>(archived.Archive->File->GetEntries()[*index].RealSize, 0));
+
+            if (asked + bytes > room)
+            {
+                break;
+            }
+
+            asked += bytes;
+            ahead.PicturesAsked.insert(key);
+            follow.Entries.push_back(AheadEntry{frame.Hash, *index, std::move(entry), frame.Width, frame.Height});
+        }
+
+        if (!follow.Entries.empty())
+        {
+            follow.Kind = kind;
+            QueueEntries(ahead, std::move(follow));
+        }
+
+        return asked;
+    }
+
+    /// <summary>The bytes the cache has room for past those it holds, with <paramref name="budget"/> its budget.</summary>
+    size_t RoomIn(size_t budget)
+    {
+        const size_t held = TheState().Bytes;
+        return budget > held ? budget - held : 0;
+    }
+}
+
 void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
 {
     if (!Active() || pictures.empty())
@@ -2630,83 +2727,25 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
         return;
     }
 
-    State& state = TheState();
-    const uint32_t folderIndex = FolderIndex(PackFolder() / PictureFolder, Naming::Hash);
-    FrameFolder& folder = state.Folders.at(folderIndex);
-    std::error_code error;
-
-    // Only an archive's (as the frames followed): loose files are a generator's, not a player's.
-    if (!folder.Loose.has_value())
-    {
-        folder.Loose = std::filesystem::is_directory(folder.Path, error);
-    }
-
-    const FrameFolder::InArchive& archived = ArchiveOf(folder);
-
-    if (*folder.Loose || archived.Archive == nullptr)
-    {
-        return;
-    }
-
-    // Those the pack has, not kept, looked at or asked for already, while they and the frames kept fit the share of the
-    // budget (an entry's unpacked bytes are about its frame's).
-    const size_t room = CacheBudget() / PicturesAheadBudgetShare;
-    Follow follow{FrameKey{folderIndex, 0}, 0, archived.Archive, archived.Prefix, folder.BakedShadows, {}};
-    std::unordered_set<uint64_t> named;
-    size_t asked = state.Bytes;
-    ReadAhead& ahead = state.Ahead;
-    std::scoped_lock lock(ahead.Lock);
+    // While they and the frames kept fit the share of the budget (they're kept as drawn ones are, and mustn't push
+    // those out).
+    std::vector<HashedAhead> frames;
+    frames.reserve(pictures.size());
 
     for (const PictureAhead& picture : pictures)
     {
-        if (picture.Width <= 0 || picture.Height <= 0)
+        if (picture.Width > 0 && picture.Height > 0)
         {
-            continue;
+            const uint64_t hash = PictureHash(picture.Pixels, picture.Width, picture.Height);
+
+            if (!TheState().KeptPictures.contains(hash))
+            {
+                frames.push_back(HashedAhead{hash, picture.Width, picture.Height});
+            }
         }
-
-        const uint64_t hash = PictureHash(picture.Pixels, picture.Width, picture.Height);
-        const FrameKey key{folderIndex, hash};
-
-        if (!named.insert(hash).second || state.KeptPictures.contains(hash) || ahead.Known.contains(key) ||
-            ahead.Ready.contains(key) || ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key))
-        {
-            continue;
-        }
-
-        if (const auto cached = state.Frames.find(key);
-            cached != state.Frames.end() && (cached->second.Frame != nullptr || cached->second.Looked))
-        {
-            continue;
-        }
-
-        std::string entry = archived.Prefix + HashName(hash) + std::string(HdfExtension);
-        const std::optional<int32_t> index = archived.Archive->File->Find(entry);
-
-        if (!index.has_value())
-        {
-            continue;
-        }
-
-        const auto bytes =
-            static_cast<size_t>(std::max<int64_t>(archived.Archive->File->GetEntries()[*index].RealSize, 0));
-
-        if (asked + bytes > room)
-        {
-            break;
-        }
-
-        asked += bytes;
-        ahead.PicturesAsked.insert(key);
-        follow.Entries.push_back(AheadEntry{hash, *index, std::move(entry), picture.Width, picture.Height});
     }
 
-    if (follow.Entries.empty())
-    {
-        return;
-    }
-
-    follow.Kind = AheadKind::Set;
-    QueueEntries(ahead, std::move(follow));
+    ReadHashedAhead(PictureFolder, frames, AheadKind::Set, RoomIn(CacheBudget() / PicturesAheadBudgetShare));
 }
 
 void MCHdArt::KeepReadAhead()
@@ -2942,6 +2981,31 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainRelief(std::span<const
     return FindHashed(ReliefFolder, tile, width, height);
 }
 
+void MCHdArt::ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief)
+{
+    if (!Active() || tiles.empty())
+    {
+        return;
+    }
+
+    std::vector<HashedAhead> frames;
+    frames.reserve(tiles.size());
+
+    for (const GroundAhead& tile : tiles)
+    {
+        frames.push_back(HashedAhead{TerrainTileHash(tile.Tile), tile.Width, tile.Height});
+    }
+
+    // Within the cache's budget: a load reads the ground whole, and the frames past it are read as the load finds them.
+    size_t room = RoomIn(CacheBudget());
+    room -= ReadHashedAhead(TerrainFolder, frames, AheadKind::Load, room);
+
+    if (relief)
+    {
+        ReadHashedAhead(ReliefFolder, frames, AheadKind::Load, room);
+    }
+}
+
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8_t> shape, int32_t width,
                                                            int32_t height)
 {
@@ -3061,6 +3125,14 @@ void MCHdArt::SetReaderSettings(const ReaderSettings& settings)
         StartReaders(ahead);
         ahead.Changed.notify_all();
     }
+}
+
+void MCHdArt::WaitForLoadReads()
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::unique_lock lock(ahead.Lock);
+    constexpr auto load = std::to_underlying(AheadKind::Load);
+    ahead.Changed.wait(lock, [&ahead] { return ahead.Reads[load].empty() && ahead.InFlight[load] == 0; });
 }
 
 MCHdArt::ReaderSettings MCHdArt::GetReaderSettings()

@@ -433,6 +433,23 @@ namespace MCHdArt
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainRelief(std::span<const uint8_t> tile, int32_t width, int32_t height);
 
+    /// <summary>Port-only: a ground tile whose HD copy to read ahead (<see cref="ReadGroundAhead"/>): FindTerrainTile's.</summary>
+    struct GroundAhead
+    {
+        std::span<const uint8_t> Tile;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): has the readers read the HD copies of <paramref name="tiles"/>, and their relief
+    /// maps with <paramref name="relief"/>, as a load's reads (first of all their reads, several at once, in the
+    /// archive's order), those the pack's archive has that aren't kept, looked at or asked for already, while they and
+    /// the frames kept take at most the cache's budget. <see cref="WaitForLoadReads"/> waits for them and
+    /// <see cref="KeepReadAhead"/> keeps them; FindTerrainTile and FindTerrainRelief then find them without a read.
+    /// </summary>
+    void ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief);
+
     /// <summary>
     /// The HD copy of terrain overlay <paramref name="shape"/> (a fast shape's bytes, <see cref="FastShapeSize"/>; its
     /// bounds <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when HD art
@@ -529,6 +546,12 @@ namespace MCHdArt
     /// frame draws.
     /// </summary>
     void WaitForReadAhead();
+
+    /// <summary>
+    /// Port-only: waits until the readers have read what a load waits for (<see cref="ReadGroundAhead"/>), not the rest
+    /// they were handed.
+    /// </summary>
+    void WaitForLoadReads();
 
     /// <summary>
     /// Port-only (SPEC-first-use.md): how the readers read ahead: how many there are (each a read in flight, and its

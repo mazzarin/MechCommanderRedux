@@ -1710,6 +1710,84 @@ TEST_CASE("hd art: several readers read a set ahead, an archive's neighbouring e
 }
 
 /// <summary>
+/// Port-only (SPEC-first-use.md): a load's ground read ahead (MCHdArt::ReadGroundAhead) is read by the readers, its tiles
+/// and their relief maps each archive's in one read, a tile asked for twice read once and one the pack lacks left out;
+/// once waited for and kept, each is found as a drawn one is, the same frame, without a read.
+/// </summary>
+TEST_CASE("hd art: a load's ground is read ahead by the readers, tiles and relief maps, found without a read")
+{
+    constexpr size_t InPack = 12;
+    constexpr int32_t Side = 8;
+    constexpr int32_t ReliefMix = 101;
+    constexpr uint8_t TileByte = 0x5a;
+    const ScratchFolder scratch("ground-ahead");
+    std::vector<std::vector<uint8_t>> tiles;
+    std::vector<std::vector<uint8_t>> tileFiles;
+    std::vector<std::vector<uint8_t>> reliefFiles;
+    std::vector<ArchiveEntry> tileEntries;
+    std::vector<ArchiveEntry> reliefEntries;
+
+    // The last tile isn't in the pack.
+    for (size_t tile = 0; tile <= InPack; ++tile)
+    {
+        tiles.push_back({static_cast<uint8_t>(tile), TileByte});
+
+        if (tile < InPack)
+        {
+            const auto mix = static_cast<int32_t>(tile);
+            tileFiles.push_back(FrameFile(Side, Side, mix + 1));
+            reliefFiles.push_back(FrameFile(Side, Side, mix + ReliefMix));
+            const std::string name = MCHdArt::TerrainTileName(tiles.back()) + ".hdf";
+            tileEntries.push_back(Raw(name, tileFiles.back()));
+            reliefEntries.push_back(Raw(name, reliefFiles.back()));
+        }
+    }
+
+    WriteBytes(scratch.Path() / "terrain.hda", BuildArchive(tileEntries));
+    WriteBytes(scratch.Path() / "relief.hda", BuildArchive(reliefEntries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    std::vector<MCHdArt::GroundAhead> asked;
+
+    for (const std::vector<uint8_t>& tile : tiles)
+    {
+        asked.push_back({tile, Side, Side});
+    }
+
+    asked.push_back(asked.front());
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    const size_t reads = MCHdArt::ReaderReads();
+    MCHdArt::ReadGroundAhead(asked, true);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 2 * InPack);
+    // Each archive's entries back to back: a read each.
+    CHECK_EQ(MCHdArt::ReaderReads(), reads + 2);
+    const size_t read = MCHdArt::FramesRead();
+
+    for (size_t tile = 0; tile < InPack; ++tile)
+    {
+        MCTest::Scope scope(std::format("tile {}", tile));
+        const std::shared_ptr<const MCHdArt::Frame> found = MCHdArt::FindTerrainTile(tiles[tile], Side, Side);
+        const std::shared_ptr<const MCHdArt::Frame> relief = MCHdArt::FindTerrainRelief(tiles[tile], Side, Side);
+        REQUIRE(found != nullptr);
+        REQUIRE(relief != nullptr);
+        const auto decoded = MCHdArt::DecodeHdf(tileFiles[tile], Side, Side);
+        const auto decodedRelief = MCHdArt::DecodeHdf(reliefFiles[tile], Side, Side);
+        REQUIRE(decoded.has_value());
+        REQUIRE(decodedRelief.has_value());
+        CHECK(SameFrame(*found, *decoded));
+        CHECK(SameFrame(*relief, *decodedRelief));
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    CHECK(MCHdArt::FindTerrainTile(tiles.back(), Side, Side) == nullptr);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only (SPEC-first-use.md): the command line sets how HD art's readers read (<c>-hdreaders</c>,
 /// <c>-hdsetreads</c>, <c>-hdreaderpriority</c>), the readers held to 1 to MCHdArt::MostReaders; a value a switch can't
 /// take leaves its setting as it was.

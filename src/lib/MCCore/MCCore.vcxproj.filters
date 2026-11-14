@@ -1264,6 +1264,9 @@
     <ClCompile Include="platform\MCStringTable.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCThreadPriority.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCTlsThreading.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -2677,6 +2680,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCStringTable.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCThreadPriority.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCTlsThreading.h">

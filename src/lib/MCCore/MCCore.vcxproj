@@ -450,6 +450,11 @@
     <ClCompile Include="platform\MCSoftwareRendererPolygons.cpp" />
     <ClCompile Include="platform\MCSoftwareRendererShapes.cpp" />
     <ClCompile Include="platform\MCStringTable.cpp" />
+    <ClCompile Include="platform\MCThreadPriority.cpp">
+      <!-- A thread's priority comes from windows.h, which must not meet the game's Win32 stand-ins in the precompiled
+           header. -->
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="platform\MCTlsThreading.cpp" />
     <ClCompile Include="platform\MCVulkanPresenter.cpp" />
     <ClCompile Include="platform\MCVulkanRenderer.cpp" />
@@ -937,6 +942,7 @@
     <ClInclude Include="platform\MCSocket.h" />
     <ClInclude Include="platform\MCSoftwareRenderer.h" />
     <ClInclude Include="platform\MCStringTable.h" />
+    <ClInclude Include="platform\MCThreadPriority.h" />
     <ClInclude Include="platform\MCTlsThreading.h" />
     <ClInclude Include="platform\MCUtf8Path.h" />
     <ClInclude Include="platform\MCVulkanPresenter.h" />

@@ -525,23 +525,52 @@ namespace MCHdArt
     size_t NeighboursReadAhead();
 
     /// <summary>
-    /// Waits until the reading thread has read ahead all it was handed: the tests, and a mission's load for what its
-    /// first frame draws.
+    /// Waits until the readers have read ahead all they were handed: the tests, and a mission's load for what its first
+    /// frame draws.
     /// </summary>
     void WaitForReadAhead();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): how the readers read ahead: how many there are (each a read in flight, and its
+    /// frames unpacked on it), at most how many reads of the sets read ahead (a screen's pictures) may be in flight at
+    /// once (0: as many as there are readers), and whether they run a step below the game's thread or level with it
+    /// (platform/MCThreadPriority.h). The game's command line sets them (<c>-hdreaders</c>, <c>-hdsetreads</c>,
+    /// <c>-hdreaderpriority level|below</c>); the defaults are to be measured on the M4 Pro and the A10.
+    /// </summary>
+    struct ReaderSettings
+    {
+        size_t Readers = 4;
+        size_t SetReads = 0;
+        bool Below = true;
+    };
+
+    /// <summary>
+    /// Port-only: sets how the readers read (1 to 32 of them). Those running end once the read in their hands is done and
+    /// new ones start for what's left to read.
+    /// </summary>
+    void SetReaderSettings(const ReaderSettings& settings);
+
+    /// <summary>Port-only: how the readers read now.</summary>
+    ReaderSettings GetReaderSettings();
+
+    /// <summary>
+    /// Port-only: how many reads of the archives the readers have made: one for a run of neighbouring entries read
+    /// together.
+    /// </summary>
+    size_t ReaderReads();
 
     /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
     size_t ArchivesOpen();
 
     /// <summary>
-    /// How many of the open archives' files are open now, the reading thread's own among them (at most 128: the rest open
+    /// How many of the open archives' files are open now, the readers' own among them (at most 128: the rest open
     /// again when read).
     /// </summary>
     size_t ArchiveFilesOpen();
 
     /// <summary>
-    /// How many times the reading thread has opened its own handle on an archive's file (once for the follows of one
-    /// archive in a row).
+    /// How many times the readers have opened handles of their own on the archives' files (each kept for the reads of its
+    /// archive after, while the readers' kept handles hold it).
     /// </summary>
     size_t ReaderFilesOpened();
 }

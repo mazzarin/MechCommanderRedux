@@ -52,10 +52,26 @@ namespace MCProgramSwap
     uint64_t SetupLevel(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
 
     /// <summary>
-    /// Whether <paramref name="program"/> goes in by the swap for a copy whose setup was at level <paramref
-    /// name="copyLevel"/>: its files (the game's among them) and zip given, and its setup's level the copy's.
+    /// Whether the setup installed the copy in a game folder (on Windows, the folder its uninstall entry names). A copy
+    /// it didn't install is the player's own (copied by hand, a mod's folder, a launcher's): only the program's files
+    /// reach it, so an update never runs the setup there.
     /// </summary>
-    bool Swaps(uint64_t copyLevel, const MCReleaseFile::MCProgram& program);
+    using MCSetupOwns = std::function<bool(const std::filesystem::path& gameFolder)>;
+
+    /// <summary>
+    /// Whether <paramref name="program"/> goes in by the swap: its files (the game's among them) and zip given, and
+    /// either the copy isn't the setup's (<paramref name="setupOwns"/> false: the files are all it takes) or the
+    /// setup's level that last installed it, <paramref name="copyLevel"/>, is the release's.
+    /// </summary>
+    bool Swaps(uint64_t copyLevel, bool setupOwns, const MCReleaseFile::MCProgram& program);
+
+    /// <summary>
+    /// <see cref="Swaps(uint64_t, bool, const MCReleaseFile::MCProgram&)"/> for the copy in <paramref
+    /// name="gameFolder"/>: its record's level, and <paramref name="setupOwns"/>'s answer (none: the setup's, as
+    /// before copies of the player's own were told apart).
+    /// </summary>
+    bool Swaps(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCSetupOwns& setupOwns,
+               const MCReleaseFile::MCProgram& program);
 
     /// <summary>
     /// Stages <paramref name="program"/>'s files in <paramref name="gameFolder"/>: those staged already and still right

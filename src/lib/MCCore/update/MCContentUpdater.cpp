@@ -477,12 +477,12 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         }
         else
         {
-            // Windows' program put in by the game (its setup's level the copy's) downloads its files' zip, not the setup.
+            // Windows' program put in by the game (a copy of the player's own, or its setup's level the copy's)
+            // downloads its files' zip, not the setup.
             offer.ProgramBuild = program->second.Build;
-            offer.ProgramBytes =
-                MCProgramSwap::Swaps(MCProgramSwap::SetupLevel(disk, setup.GameFolder), program->second)
-                    ? program->second.Zip->Size
-                    : program->second.Size;
+            offer.ProgramBytes = MCProgramSwap::Swaps(disk, setup.GameFolder, setup.SetupOwns, program->second)
+                                     ? program->second.Zip->Size
+                                     : program->second.Size;
         }
     }
 

@@ -38,6 +38,12 @@ unsigned long MCOutlivingFlags();
 /// <returns>Empty, or why not.</returns>
 std::string MCShowInstalledVersion(const std::filesystem::path& gameFolder, std::string_view version);
 
+/// <summary>
+/// Whether the setup installed the copy in <paramref name="gameFolder"/>: the folder its uninstall entry names, the
+/// player's own or one for every user (update/MCProgramSwap.h's MCSetupOwns).
+/// </summary>
+bool MCSetupOwns(const std::filesystem::path& gameFolder);
+
 /// <summary>Whether Windows will run <paramref name="setup"/> (Smart App Control, a policy): empty, or why not.</summary>
 std::string MCSetupRunnable(const std::filesystem::path& setup);
 

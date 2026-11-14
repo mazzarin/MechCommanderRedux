@@ -20,7 +20,11 @@
 ; (a copy still running, an update it can't finish, a file it can't remove), the uninstall says why and stops, so the
 ; program, the content's one remover, stays to try again. A program update is
 ; this setup run silently by the game (main/MCUpdater.h's Windows backend): it waits for the game that started it to
-; end, closes any other copy running (Windows' Restart Manager), and starts the game again when asked.
+; end, closes any other copy running (Windows' Restart Manager), and starts the game again when asked. It updates the
+; copy that ran it, never another folder, and adds no shortcut: in the setup's own install, as an install does; in a
+; copy it didn't install (the player's own: copied by hand, a mod's folder), the program's files alone, with no
+; uninstall entry, shortcut, registry entry or backup (FilesOnly). The game names its folder (/DIR=); an earlier game,
+; which doesn't, ran it from its own Redux update\program folder (UpdateFolder).
 ;
 ; Built by .github/workflows/windows.yml with Inno Setup 6.7:
 ;   ISCC /DAppVersionNumber=0.2.1.548 "/DAppVersionShown=0.2.1 (548)" /DBinDir=<the exes' folder>
@@ -156,6 +160,10 @@ MinVersion=10.0
 CloseApplications=yes
 RestartApplications=no
 SetupIconFile={#SourcePath}..\..\res\MCRedux.ico
+; An update of a copy the setup didn't install puts the program's files in alone (FilesOnly): Windows' Apps list keeps
+; the setup's own install, if any.
+Uninstallable=not FilesOnly
+CreateUninstallRegKey=not FilesOnly
 UninstallDisplayIcon={app}\{#GameExe}
 UninstallDisplayName={#AppName}
 WizardStyle=modern
@@ -216,9 +224,10 @@ Source: "{#DocsDir}\README.txt"; DestDir: "{app}"; DestName: "{#ReadmeName}"; Fl
 Source: "{#LicencesFile}"; DestDir: "{app}"; DestName: "{#LicencesName}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"
-Name: "{autoprograms}\{cm:EditorShortcut}"; Filename: "{app}\{#EditorExe}"; WorkingDir: "{app}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Tasks: desktopicon
+; An update makes again only the shortcuts there already (KeepsShortcut): it never adds one.
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Check: KeepsShortcut('{autoprograms}\{#AppName}')
+Name: "{autoprograms}\{cm:EditorShortcut}"; Filename: "{app}\{#EditorExe}"; WorkingDir: "{app}"; Check: KeepsShortcut('{autoprograms}\{cm:EditorShortcut}')
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Tasks: desktopicon; Check: KeepsShortcut('{autodesktop}\{#AppName}')
 
 [Run]
 Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Description: "{cm:PlayGame}"; Flags: postinstall nowait skipifsilent
@@ -283,6 +292,8 @@ const
   BytesPerKB = 1024;
   // The shortcuts in a folder of them.
   ShortcutExtension = '.lnk';
+  // Where the game puts the setup an update downloads, in its own folder (update/MCSetupBackend.h's ProgramFolder).
+  UpdateSetupFolder = '\redux update\program';
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -303,6 +314,14 @@ var
   CopyShown: Boolean;
   // Whether the install ran the game's download, and whether that ended with the content in place.
   DownloadRan, DownloadDone: Boolean;
+  // The folder of the game that ran this setup as an update (UpdateFolder; '' when it isn't one), and whether the setup
+  // didn't install it, so the program's files go in alone (FilesOnly).
+  UpdateGameFolder: String;
+  UpdatesOwnCopy: Boolean;
+  // In such a copy: its other names that are the game (MCX.EXE, a resolution's copy: the same bytes as its MCRedux.exe
+  // before the update), made again as the new one, and whether they've been looked for.
+  GameNamesInCopy: TArrayOfString;
+  GameNamesFound: Boolean;
 
 function OpenProcess(Access: Cardinal; Inherit: Integer; ProcessId: Cardinal): THandle;
   external 'OpenProcess@kernel32.dll stdcall';
@@ -613,6 +632,52 @@ begin
 end;
 
 function DownloadFolderDefault: String; forward;
+function ComparablePath(const Path: String): String; forward;
+
+// The folder of the game that ran this setup as an update ('' when it isn't one: no game's process to wait for, or not
+// silent): the folder it names (/DIR=), else, for an earlier game, which names none, the one above the Redux
+// update\program folder it downloaded this setup into.
+function UpdateFolder: String;
+var
+  Folder: String;
+begin
+  Result := '';
+
+  if not WizardSilent or (GetEnv('{#UpdatePidVariable}') = '') then
+    Exit;
+
+  Result := RemoveBackslashUnlessRoot(ExpandConstant('{param:DIR|}'));
+
+  if Result <> '' then
+    Exit;
+
+  Folder := RemoveBackslashUnlessRoot(ExtractFileDir(ExpandConstant('{srcexe}')));
+
+  if (Length(Folder) > Length(UpdateSetupFolder)) and
+     (AnsiLowercase(Copy(Folder, Length(Folder) - Length(UpdateSetupFolder) + 1, Length(UpdateSetupFolder))) =
+      UpdateSetupFolder) then
+    Result := Copy(Folder, 1, Length(Folder) - Length(UpdateSetupFolder));
+
+  if (Result <> '') and not DirExists(Result) then
+    Result := '';
+end;
+
+// Whether the setup puts the program's files alone into the copy that ran it as an update: one it didn't install (no
+// install of its own, or its install is another folder).
+function FilesOnly: Boolean;
+begin
+  Result := UpdatesOwnCopy;
+end;
+
+// Whether a shortcut at Name (no extension) is made: always by an install, by an update only where it is already.
+function KeepsShortcut(const Name: String): Boolean;
+begin
+  Result := (UpdateGameFolder = '') or
+            (not FilesOnly and FileExists(ExpandConstant(Name) + ShortcutExtension));
+
+  if not Result then
+    Log(Format('An update adds no shortcut: %s isn''t made', [ExpandConstant(Name)]));
+end;
 
 procedure InitializeWizard;
 var
@@ -681,6 +746,20 @@ begin
 
   GameDownload.OnClick := @GameChosen;
   GameCopy.OnClick := @GameChosen;
+
+  // An update installs into the copy that ran it, whatever install the setup made before.
+  UpdateGameFolder := UpdateFolder;
+  UpdatesOwnCopy := (UpdateGameFolder <> '') and
+                    (ComparablePath(WizardForm.PrevAppDir) <> ComparablePath(UpdateGameFolder));
+
+  if UpdatesOwnCopy then
+  begin
+    Log(Format('An update of %s, a copy the setup didn''t install (its install: %s): the program''s files alone',
+               [UpdateGameFolder, WizardForm.PrevAppDir]));
+    WizardForm.DirEdit.Text := UpdateGameFolder;
+  end
+  else if UpdateGameFolder <> '' then
+    Log(Format('An update of the setup''s install, %s', [UpdateGameFolder]));
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -1062,8 +1141,8 @@ var
 begin
   Result := True;
 
-  // An install keeps its folder, whatever it holds by now.
-  if (CurPageID <> wpSelectDir) or (WizardForm.PrevAppDir <> '') then
+  // An install keeps its folder, whatever it holds by now, and an update the folder of the game that ran it.
+  if (CurPageID <> wpSelectDir) or (WizardForm.PrevAppDir <> '') or FilesOnly then
     Exit;
 
   Folder := RemoveBackslashUnlessRoot(WizardDirValue);
@@ -1237,6 +1316,56 @@ begin
   Result := WizardSilent and (GetEnv('{#UpdateRestartVariable}') = '1');
 end;
 
+function ResolutionCopies(const Folder: String): TArrayOfString; forward;
+
+// In a copy the setup didn't install, its other names that are the game: MCX.EXE and the resolutions' copies with the
+// same bytes as its MCRedux.exe before the update (a link to it, or a copy), noted once, so they're the new game after.
+// One that isn't (the original's, a mod's program) is left as it is.
+procedure FindGameNamesInCopy(const Folder: String);
+var
+  Names: TArrayOfString;
+  Game, GameHash, Path: String;
+  I: Integer;
+begin
+  if GameNamesFound then
+    Exit;
+
+  GameNamesFound := True;
+  SetArrayLength(GameNamesInCopy, 0);
+  Game := AddBackslash(Folder) + '{#GameExe}';
+
+  if not FileExists(Game) then
+    Exit;
+
+  try
+    GameHash := GetSHA256OfFile(Game);
+  except
+    Log(Format('Couldn''t read %s: the game''s other names are left as they are (%s)', [Game, GetExceptionMessage]));
+    Exit;
+  end;
+
+  Names := ResolutionCopies(Folder);
+  Append(Names, '{#OriginalExe}');
+
+  for I := 0 to GetArrayLength(Names) - 1 do
+  begin
+    Path := AddBackslash(Folder) + Names[I];
+
+    if FileExists(Path) then
+    begin
+      try
+        if GetSHA256OfFile(Path) = GameHash then
+        begin
+          Append(GameNamesInCopy, Path);
+          Log(Format('%s is the game: it becomes the new one', [Path]));
+        end;
+      except
+        Log(Format('Couldn''t read %s: left as it is (%s)', [Path, GetExceptionMessage]));
+      end;
+    end;
+  end;
+end;
+
 // Before the files go in: the ones they replace are copied into the backup, unless an earlier install put them there.
 // Copied, not moved: the originals stay where Windows' Restart Manager finds a running game by them, and Setup's
 // rollback puts them back if the install fails.
@@ -1251,6 +1380,13 @@ begin
   // A second call (the player went back) starts afresh.
   DropCopies;
   Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+
+  // A copy the setup didn't install: the program's files replace the earlier ones, which were never the folder's own.
+  if FilesOnly then
+  begin
+    FindGameNamesInCopy(Folder);
+    Exit;
+  end;
 
   if CompareText(RemoveBackslashUnlessRoot(WizardForm.PrevAppDir), Folder) = 0 then
     PutThereBefore := GetPreviousData('{#ProgramFilesData}', '{#FirstProgramFiles}')
@@ -1533,6 +1669,17 @@ var
   I: Integer;
 begin
   Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+
+  if FilesOnly then
+  begin
+    FindGameNamesInCopy(Folder);
+
+    for I := 0 to GetArrayLength(GameNamesInCopy) - 1 do
+      RegisterExtraCloseApplicationsResource(False, GameNamesInCopy[I]);
+
+    Exit;
+  end;
+
   RegisterExtraCloseApplicationsResource(False, OriginalPath(Folder));
   Names := ResolutionCopies(Folder);
 
@@ -1752,11 +1899,24 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Folder: String;
+  I: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
     Installed := True;
     Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+
+    // A copy the setup didn't install: its names that were the game become the new one, and its level is noted. Nothing
+    // else of the setup's is made there (no takeover, answers, download or Apps list entry).
+    if FilesOnly then
+    begin
+      for I := 0 to GetArrayLength(GameNamesInCopy) - 1 do
+        MakeGameName(Folder, GameNamesInCopy[I]);
+
+      NoteLevel(Folder);
+      Exit;
+    end;
+
     LiftCompatibility(OriginalPath(Folder));
     MakeGameName(Folder, OriginalPath(Folder));
     TakeOverResolutionCopies(Folder);

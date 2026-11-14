@@ -765,8 +765,8 @@ TEST_CASE("program swap: nothing is staged while a swap stopped midway awaits a 
     }
 }
 
-TEST_CASE("program swap: the setup's level is the copy's record's (0 without one); a release swaps only at it, with "
-          "its zip and the game among its files")
+TEST_CASE("program swap: the setup's level is the copy's record's (0 without one); the setup's install swaps only at "
+          "it, a copy of the player's own at any level, either only with the zip and the game among its files")
 {
     MCScratchFolder game(Group, "level");
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
@@ -777,18 +777,53 @@ TEST_CASE("program swap: the setup's level is the copy's record's (0 without one
     Write(record, "not JSON");
     CHECK_EQ(MCProgramSwap::SetupLevel(*disk, game.Path()), uint64_t{0});
 
+    // The setup's install: at its level only.
     MCReleaseFile::MCProgram program = Program();
-    CHECK(MCProgramSwap::Swaps(1, program));
-    CHECK(!MCProgramSwap::Swaps(0, program));
-    CHECK(!MCProgramSwap::Swaps(2, program));
+    CHECK(MCProgramSwap::Swaps(1, true, program));
+    CHECK(!MCProgramSwap::Swaps(0, true, program));
+    CHECK(!MCProgramSwap::Swaps(2, true, program));
     program.SetupLevel = 0;
-    CHECK(!MCProgramSwap::Swaps(0, program));
+    CHECK(!MCProgramSwap::Swaps(0, true, program));
+
+    // A copy the setup didn't install (copied by hand, with no record or an install's): the files are all it takes.
     program = Program();
-    program.Zip.reset();
-    CHECK(!MCProgramSwap::Swaps(1, program));
+    CHECK(MCProgramSwap::Swaps(0, false, program));
+    CHECK(MCProgramSwap::Swaps(1, false, program));
+    CHECK(MCProgramSwap::Swaps(2, false, program));
+    program.SetupLevel = 0;
+    CHECK(MCProgramSwap::Swaps(0, false, program));
+
+    // Either way, only with the files' zip and the game among them.
+    for (const bool owned : {true, false})
+    {
+        program = Program();
+        program.Zip.reset();
+        CHECK(!MCProgramSwap::Swaps(1, owned, program));
+        program = Program();
+        std::erase_if(program.Files, [](const MCReleaseFile::MCProgramFile& file) { return file.Name == Game; });
+        CHECK(!MCProgramSwap::Swaps(1, owned, program));
+    }
+
+    // The copy in a folder: its record's level and the platform's answer; no answer, the setup's.
     program = Program();
-    std::erase_if(program.Files, [](const MCReleaseFile::MCProgramFile& file) { return file.Name == Game; });
-    CHECK(!MCProgramSwap::Swaps(1, program));
+    Write(record, R"({"level": 1})");
+    CHECK(MCProgramSwap::Swaps(*disk, game.Path(), nullptr, program));
+    CHECK(MCProgramSwap::Swaps(*disk, game.Path(), [](const std::filesystem::path&) { return true; }, program));
+    Write(record, R"({"level": 3})");
+    CHECK(!MCProgramSwap::Swaps(*disk, game.Path(), nullptr, program));
+    std::filesystem::path asked;
+    CHECK(MCProgramSwap::Swaps(
+        *disk, game.Path(),
+        [&asked](const std::filesystem::path& folder)
+        {
+            asked = folder;
+            return false;
+        },
+        program));
+    CHECK(asked == game.Path());
+    std::filesystem::remove(record);
+    CHECK(MCProgramSwap::Swaps(*disk, game.Path(), [](const std::filesystem::path&) { return false; }, program));
+    CHECK(!MCProgramSwap::Swaps(*disk, game.Path(), [](const std::filesystem::path&) { return true; }, program));
 }
 
 TEST_CASE("program swap: a journal that can't be read, names a file outside the game folder's top, or names another "

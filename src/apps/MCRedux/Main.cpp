@@ -395,21 +395,28 @@ namespace
     MCContentUpdater::MCSetup ContentSetup(const MCLaunchOptions& options,
                                            std::vector<MCSignedFile::MCPublicKey> rootKeys)
     {
-        return {.GameFolder = options.DataFolder,
-                .UserFolder = options.UserFolder,
-                .RootKeys = std::move(rootKeys),
-                .LowestKeyListIssue = LowestKeyListIssue,
-                .Platform = std::string(ReleasePlatform),
-                .RunningBuild = MC_VERSION_BUILD,
-                .RunningVersion = MC_VERSION_SHOWN};
+        MCContentUpdater::MCSetup setup{.GameFolder = options.DataFolder,
+                                        .UserFolder = options.UserFolder,
+                                        .RootKeys = std::move(rootKeys),
+                                        .LowestKeyListIssue = LowestKeyListIssue,
+                                        .Platform = std::string(ReleasePlatform),
+                                        .RunningBuild = MC_VERSION_BUILD,
+                                        .RunningVersion = MC_VERSION_SHOWN};
+#ifdef _WIN32
+        setup.SetupOwns = MCSetupOwns;
+#endif
+        return setup;
     }
 
 #ifdef _WIN32
     /// <summary>What Windows does for the program's updates: the setup judged and started (MCSetupRun.h).</summary>
     MCSetupBackend::MCPlatform SetupPlatform()
     {
-        return {
-            .Runnable = MCSetupRunnable, .Start = MCStartSetup, .Quit = nullptr, .ShowVersion = MCShowInstalledVersion};
+        return {.Runnable = MCSetupRunnable,
+                .Start = MCStartSetup,
+                .Quit = nullptr,
+                .ShowVersion = MCShowInstalledVersion,
+                .SetupOwns = MCSetupOwns};
     }
 
     /// <summary>What the player is told of a program update that can neither finish nor be undone.</summary>

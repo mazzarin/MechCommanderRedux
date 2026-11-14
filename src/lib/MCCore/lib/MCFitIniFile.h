@@ -103,6 +103,13 @@ public:
     /// <returns>0, or BLOCK_NOT_FOUND.</returns>
     int32_t SeekBlock(std::string_view blockId);
 
+    /// <summary>
+    /// Port-only: makes block <paramref name="index"/> (in the file's order) current, for reading every block in one
+    /// pass.
+    /// </summary>
+    /// <returns>0, or BLOCK_NOT_FOUND.</returns>
+    int32_t SeekBlockAt(int32_t index);
+
     /// <summary>The entry <paramref name="name"/> of the current block, with the type tag of <typeparamref name="T"/>.</summary>
     /// <remarks>
     /// A number that doesn't parse reads as 0; <c>0x</c> anywhere in it reads the hex digits after it. A bool is
@@ -299,6 +306,9 @@ private:
 
     /// <summary>The <c>b</c> entry as the original read it: 1 for text starting with T, else the number.</summary>
     MCFitResult<int32_t> ReadBooleanValue(std::string_view name);
+
+    /// <summary>Makes <paramref name="block"/>, one of the block table's, current.</summary>
+    void SeekTo(std::vector<Block>::const_iterator block);
 
     /// <summary>Writes formatted text, returning the bytes written.</summary>
     int32_t WriteText(std::string_view text);

@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "fakes/MCMemoryFileSource.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiTimerManager.h"
 #include "lib/MCFitIniFile.h"
@@ -16,6 +17,7 @@
 #include "logistics/MCPilotInventoryBlock.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCPilotPurchaseBlock.h"
+#include "logistics/MCPurProfile.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
@@ -1345,4 +1347,70 @@ TEST_CASE_ISOLATED("game: a right-click on an inventory mech or vehicle offers i
         CHECK(vehicle->Assigned);
         CHECK_EQ(GlobalLog()->ForceVehicleList->GetVehicleCount(), forceVehicles + 1);
     }
+}
+
+TEST_CASE("logistics: every object description reads as its block in the retail file, the file read once")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestContextScope scope;
+    MCTestGame::OpenFastFiles();
+    MCFitIniFile file;
+    REQUIRE_EQ(file.Open(GamePath(ObjectPath, ObjectDesc)), 0);
+    int32_t described = 0;
+
+    for (int32_t block = 0; block < file.GetNumBlocks(); ++block)
+    {
+        const std::string name(file.GetBlockName(block));
+        int32_t descIndex = 0;
+        const char* const digits = name.data() + std::min<size_t>(name.size(), 4);
+
+        if (!name.starts_with("Desc") ||
+            std::from_chars(digits, name.data() + name.size(), descIndex).ec != std::errc() ||
+            std::format("Desc{}", descIndex) != name)
+        {
+            continue;
+        }
+
+        // As the original read it: the first block of the name, its DescString.
+        REQUIRE_EQ(file.SeekBlock(name), 0);
+        const MCFitResult<std::string> text = file.Read<std::string>("DescString");
+        REQUIRE(text.has_value());
+        CHECK_EQ(LoadDescriptionText(descIndex), "%fc4" + text->substr(0, 0x3ff));
+        ++described;
+    }
+
+    CHECK(described > 100);
+    // One read, kept for every ask.
+    const std::shared_ptr<const MCDescriptionTexts> kept = MCGameContext::Current().DescriptionTexts();
+    REQUIRE(kept != nullptr);
+    CHECK_EQ(LoadDescriptionText(-1), "");
+    CHECK(MCGameContext::Current().DescriptionTexts() == kept);
+}
+
+TEST_CASE("logistics: the object descriptions are kept once read, the first block of a name, each context its own")
+{
+    MCTestContextScope scope;
+    MCMemoryFileSource& files = scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+    const std::string descPath = GamePath(ObjectPath, ObjectDesc);
+    files.AddFile(descPath, "FITini\n[Desc1]\nst DescString = \"Atlas\"\n[Other]\nst DescString = \"no\"\n"
+                            "[Desc1]\nst DescString = \"second\"\n[Desc12]\nst DescString = \"Hunchback\"\nFITend\n");
+    CHECK_EQ(LoadDescriptionText(1), "%fc4Atlas");
+    CHECK_EQ(LoadDescriptionText(12), "%fc4Hunchback");
+    CHECK_EQ(LoadDescriptionText(2), "");
+
+    // Kept: a file changed later doesn't change them.
+    files.AddFile(descPath, "FITini\n[Desc1]\nst DescString = \"Changed\"\nFITend\n");
+    CHECK_EQ(LoadDescriptionText(1), "%fc4Atlas");
+
+    {
+        // A context installed over it reads the file for itself.
+        MCTestContextScope inner;
+        CHECK_EQ(LoadDescriptionText(1), "%fc4Changed");
+    }
+
+    CHECK_EQ(LoadDescriptionText(1), "%fc4Atlas");
 }

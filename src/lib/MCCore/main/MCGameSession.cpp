@@ -148,6 +148,7 @@ MCGameSession::~MCGameSession()
     }
 
     MCGameContext::Current().FastFiles().Clear();
+    MCGameContext::Current().DescriptionTexts().reset();
     MCGameContext::Current().SetSoundSystem(nullptr);
 
     if (_GameSystemWindow != nullptr)

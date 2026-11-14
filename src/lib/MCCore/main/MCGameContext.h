@@ -10,6 +10,7 @@ class MCCameraList;
 class MCCollisionSystem;
 class MCContactSystem;
 class MCCraterManager;
+struct MCDescriptionTexts;
 class MCEffectSystem;
 class MCElementBuffer;
 class MCFastFileSet;
@@ -80,6 +81,13 @@ public:
     /// hashed afresh.
     /// </summary>
     std::optional<uint64_t>& SharedDataHash() { return _SharedDataHash; }
+
+    /// <summary>
+    /// Port: the object description file's texts (logistics/MCPurProfile.h), kept once read, as
+    /// <see cref="SharedDataHash"/> is: every item a logistics start makes asks for one. This context's own; the
+    /// game's session drops them with its FastFiles.
+    /// </summary>
+    std::shared_ptr<const MCDescriptionTexts>& DescriptionTexts() { return _DescriptionTexts; }
 
     /// <summary>The palette the game shows (asserted: there is one from the interface's start).</summary>
     MCPalette& Palette() const;
@@ -360,6 +368,7 @@ private:
     std::unique_ptr<MCNetTransport> _Net;
     std::unique_ptr<MCFastFileSet> _FastFiles;
     std::optional<uint64_t> _SharedDataHash;
+    std::shared_ptr<const MCDescriptionTexts> _DescriptionTexts;
     std::unique_ptr<MCPalette> _Palette;
     std::unique_ptr<MCElementBuffer> _ElementList;
     std::unique_ptr<MCCraterManager> _CraterManager;

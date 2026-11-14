@@ -1515,27 +1515,50 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: hands the readers <paramref name="follow"/>'s given entries (Follow::Entries) as reads of its kind, in
-    /// the archive's order, so that a set's neighbouring entries are read in one read (TakeRun), starting the readers the
-    /// first time. Call with ReadAhead::Lock held.
+    /// Port-only: hands the readers <paramref name="reads"/> as reads of <paramref name="kind"/>, each archive's in its
+    /// offset order, so that its neighbouring entries are read in one read (TakeRun), starting the readers the first
+    /// time. Call with ReadAhead::Lock held.
+    /// </summary>
+    void QueueReads(ReadAhead& ahead, AheadKind kind, std::vector<AheadRead>&& reads)
+    {
+        const auto offset = [](const AheadRead& read)
+        { return read.From->Archive->File->GetEntries()[static_cast<size_t>(read.Entry.Index)].Offset; };
+        std::ranges::stable_sort(reads,
+                                 [&offset](const AheadRead& a, const AheadRead& b)
+                                 {
+                                     const MCHdArchive* const first = a.From->Archive.get();
+                                     const MCHdArchive* const second = b.From->Archive.get();
+                                     return first != second ? std::less<>{}(first, second) : offset(a) < offset(b);
+                                 });
+
+        for (AheadRead& read : reads)
+        {
+            ahead.Reads[std::to_underlying(kind)].push_back(std::move(read));
+        }
+
+        StartReaders(ahead);
+        ahead.Changed.notify_all();
+    }
+
+    /// <summary>
+    /// Port-only: hands the readers <paramref name="follow"/>'s given entries (Follow::Entries) as reads of its kind
+    /// (QueueReads). Call with ReadAhead::Lock held.
     /// </summary>
     void QueueEntries(ReadAhead& ahead, Follow&& follow)
     {
         std::vector<AheadEntry> entries = std::move(follow.Entries);
         follow.Entries.clear();
-        const std::span<const MCFileEntry> stored = follow.Archive->File->GetEntries();
-        std::ranges::stable_sort(entries, {}, [&stored](const AheadEntry& entry)
-                                 { return stored[static_cast<size_t>(entry.Index)].Offset; });
         const AheadKind kind = follow.Kind;
         const auto from = std::make_shared<const Follow>(std::move(follow));
+        std::vector<AheadRead> reads;
+        reads.reserve(entries.size());
 
         for (AheadEntry& entry : entries)
         {
-            ahead.Reads[std::to_underlying(kind)].push_back(AheadRead{from, std::move(entry)});
+            reads.push_back(AheadRead{from, std::move(entry)});
         }
 
-        StartReaders(ahead);
-        ahead.Changed.notify_all();
+        QueueReads(ahead, kind, std::move(reads));
     }
 
     /// <summary>
@@ -2625,53 +2648,38 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8
 
 namespace
 {
-    /// <summary>One of a hashed folder's frames to read ahead (ReadHashedAhead): its name's hash and its draw's size.</summary>
-    struct HashedAhead
+    /// <summary>A frame to read ahead (AskAhead): its folder (FolderIndex), its key there and its draw's size.</summary>
+    struct FrameAsk
     {
-        uint64_t Hash = 0;
+        uint32_t Folder = 0;
+        uint64_t Name = 0;
         int32_t Width = 0;
         int32_t Height = 0;
     };
 
     /// <summary>
-    /// Has the readers read <paramref name="frames"/> of the hashed folder <paramref name="name"/> (the menus' pictures,
-    /// the ground's tiles or relief maps) ahead as reads of <paramref name="kind"/>, in the archive's order: those its
-    /// archive has that aren't kept, read, looked at or asked for already, in order, while they take at most
-    /// <paramref name="room"/> bytes (an entry's unpacked bytes are about its frame's). Only an archive's, as the
-    /// frames followed: loose files are a generator's, not a player's. The bytes asked for.
+    /// Has the readers read <paramref name="asks"/> ahead as reads of <paramref name="kind"/> (QueueReads: each archive's
+    /// in its order, whichever folders they're of): those their folders' archives have that aren't kept, read, looked
+    /// at or asked for already, in order, while they take at most <paramref name="room"/> bytes (an entry's unpacked
+    /// bytes are about its frame's). Only archives' frames, as the frames followed: loose files are a generator's, not
+    /// a player's. The bytes asked for.
     /// </summary>
-    size_t ReadHashedAhead(std::string_view name, std::span<const HashedAhead> frames, AheadKind kind, size_t room)
+    size_t AskAhead(std::span<const FrameAsk> asks, AheadKind kind, size_t room)
     {
         State& state = TheState();
-        const uint32_t folderIndex = FolderIndex(MCHdArt::PackFolder() / name, Naming::Hash);
-        FrameFolder& folder = state.Folders.at(folderIndex);
-        std::error_code error;
-
-        if (!folder.Loose.has_value())
-        {
-            folder.Loose = std::filesystem::is_directory(folder.Path, error);
-        }
-
-        const FrameFolder::InArchive& archived = ArchiveOf(folder);
-
-        if (*folder.Loose || archived.Archive == nullptr)
-        {
-            return 0;
-        }
-
-        Follow follow{FrameKey{folderIndex, 0}, 0, archived.Archive, archived.Prefix, folder.BakedShadows, {}};
-        std::unordered_set<uint64_t> named;
+        std::unordered_map<uint32_t, std::shared_ptr<const Follow>> follows;
+        std::unordered_set<FrameKey, FrameKeyHash> named;
+        std::vector<AheadRead> reads;
         size_t asked = 0;
         ReadAhead& ahead = state.Ahead;
         std::scoped_lock lock(ahead.Lock);
 
-        for (const HashedAhead& frame : frames)
+        for (const FrameAsk& ask : asks)
         {
-            const FrameKey key{folderIndex, frame.Hash};
+            const FrameKey key{ask.Folder, ask.Name};
 
-            if (frame.Width <= 0 || frame.Height <= 0 || !named.insert(frame.Hash).second ||
-                ahead.Known.contains(key) || ahead.Ready.contains(key) || ahead.Pictures.contains(key) ||
-                ahead.PicturesAsked.contains(key))
+            if (ask.Width <= 0 || ask.Height <= 0 || !named.insert(key).second || ahead.Known.contains(key) ||
+                ahead.Ready.contains(key) || ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key))
             {
                 continue;
             }
@@ -2682,7 +2690,24 @@ namespace
                 continue;
             }
 
-            std::string entry = archived.Prefix + HashName(frame.Hash) + std::string(HdfExtension);
+            FrameFolder& folder = state.Folders.at(ask.Folder);
+            std::error_code error;
+
+            if (!folder.Loose.has_value())
+            {
+                folder.Loose = std::filesystem::is_directory(folder.Path, error);
+            }
+
+            const FrameFolder::InArchive& archived = ArchiveOf(folder);
+
+            if (*folder.Loose || archived.Archive == nullptr)
+            {
+                continue;
+            }
+
+            std::string entry = archived.Prefix +
+                                (folder.Names == Naming::Hash ? HashName(ask.Name) : NumberedName(ask.Name)) +
+                                std::string(HdfExtension);
             const std::optional<int32_t> index = archived.Archive->File->Find(entry);
 
             if (!index.has_value())
@@ -2698,15 +2723,23 @@ namespace
                 break;
             }
 
+            std::shared_ptr<const Follow>& from = follows[ask.Folder];
+
+            if (from == nullptr)
+            {
+                Follow follow{FrameKey{ask.Folder, 0}, 0, archived.Archive, archived.Prefix, folder.BakedShadows, {}};
+                follow.Kind = kind;
+                from = std::make_shared<const Follow>(std::move(follow));
+            }
+
             asked += bytes;
             ahead.PicturesAsked.insert(key);
-            follow.Entries.push_back(AheadEntry{frame.Hash, *index, std::move(entry), frame.Width, frame.Height});
+            reads.push_back(AheadRead{from, AheadEntry{ask.Name, *index, std::move(entry), ask.Width, ask.Height}});
         }
 
-        if (!follow.Entries.empty())
+        if (!reads.empty())
         {
-            follow.Kind = kind;
-            QueueEntries(ahead, std::move(follow));
+            QueueReads(ahead, kind, std::move(reads));
         }
 
         return asked;
@@ -2729,8 +2762,9 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
 
     // While they and the frames kept fit the share of the budget (they're kept as drawn ones are, and mustn't push
     // those out).
-    std::vector<HashedAhead> frames;
-    frames.reserve(pictures.size());
+    const uint32_t folder = FolderIndex(PackFolder() / PictureFolder, Naming::Hash);
+    std::vector<FrameAsk> asks;
+    asks.reserve(pictures.size());
 
     for (const PictureAhead& picture : pictures)
     {
@@ -2740,12 +2774,12 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
 
             if (!TheState().KeptPictures.contains(hash))
             {
-                frames.push_back(HashedAhead{hash, picture.Width, picture.Height});
+                asks.push_back(FrameAsk{folder, hash, picture.Width, picture.Height});
             }
         }
     }
 
-    ReadHashedAhead(PictureFolder, frames, AheadKind::Set, RoomIn(CacheBudget() / PicturesAheadBudgetShare));
+    AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / PicturesAheadBudgetShare));
 }
 
 void MCHdArt::KeepReadAhead()
@@ -2988,22 +3022,25 @@ void MCHdArt::ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief)
         return;
     }
 
-    std::vector<HashedAhead> frames;
-    frames.reserve(tiles.size());
+    // Each tile's relief map after the tiles (another archive), within the cache's budget: a load reads the ground
+    // whole, and the frames past it are read as the load finds them.
+    const uint32_t tileFolder = FolderIndex(PackFolder() / TerrainFolder, Naming::Hash);
+    const uint32_t reliefFolder = FolderIndex(PackFolder() / ReliefFolder, Naming::Hash);
+    std::vector<FrameAsk> asks;
+    asks.reserve(tiles.size() * 2);
 
-    for (const GroundAhead& tile : tiles)
+    for (const uint32_t folder : {tileFolder, reliefFolder})
     {
-        frames.push_back(HashedAhead{TerrainTileHash(tile.Tile), tile.Width, tile.Height});
+        for (const GroundAhead& tile : tiles)
+        {
+            if (folder == tileFolder || relief)
+            {
+                asks.push_back(FrameAsk{folder, TerrainTileHash(tile.Tile), tile.Width, tile.Height});
+            }
+        }
     }
 
-    // Within the cache's budget: a load reads the ground whole, and the frames past it are read as the load finds them.
-    size_t room = RoomIn(CacheBudget());
-    room -= ReadHashedAhead(TerrainFolder, frames, AheadKind::Load, room);
-
-    if (relief)
-    {
-        ReadHashedAhead(ReliefFolder, frames, AheadKind::Load, room);
-    }
+    AskAhead(asks, AheadKind::Load, RoomIn(CacheBudget()));
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8_t> shape, int32_t width,
@@ -3022,6 +3059,22 @@ std::filesystem::path MCHdArt::ShapeTableFolder(uint64_t hash)
     return std::filesystem::path(ShapeFolder) / HashName(hash);
 }
 
+namespace
+{
+    /// <summary>The folder (FolderIndex) of the shape table whose bytes hash to <paramref name="hash"/>, found once.</summary>
+    uint32_t ShapeTableFolderIndex(uint64_t hash)
+    {
+        const auto [folder, fresh] = TheState().ShapeTableFolders.try_emplace(hash, 0);
+
+        if (fresh)
+        {
+            folder->second = FolderIndex(MCHdArt::PackFolder() / MCHdArt::ShapeTableFolder(hash), Naming::Number);
+        }
+
+        return folder->second;
+    }
+}
+
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
                                                          int32_t step, int32_t frames)
 {
@@ -3030,14 +3083,26 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t 
         return nullptr;
     }
 
-    const auto [folder, fresh] = TheState().ShapeTableFolders.try_emplace(hash, 0);
+    return Cache(FrameKey{ShapeTableFolderIndex(hash), NumberedKey(frame, step)}, width, height, frames);
+}
 
-    if (fresh)
+void MCHdArt::ReadShapesAhead(std::span<const ShapeAhead> shapes)
+{
+    if (!Active() || shapes.empty())
     {
-        folder->second = FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number);
+        return;
     }
 
-    return Cache(FrameKey{folder->second, NumberedKey(frame, step)}, width, height, frames);
+    std::vector<FrameAsk> asks;
+    asks.reserve(shapes.size());
+
+    for (const ShapeAhead& shape : shapes)
+    {
+        asks.push_back(FrameAsk{ShapeTableFolderIndex(ShapeTableHash(shape.Table)), NumberedKey(shape.Frame, 0),
+                                shape.Width, shape.Height});
+    }
+
+    AskAhead(asks, AheadKind::Load, RoomIn(CacheBudget()));
 }
 
 uint64_t MCHdArt::NewFrameId()

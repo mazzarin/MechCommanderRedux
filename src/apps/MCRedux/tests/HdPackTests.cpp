@@ -1788,6 +1788,66 @@ TEST_CASE("hd art: a load's ground is read ahead by the readers, tiles and relie
 }
 
 /// <summary>
+/// Port-only (SPEC-first-use.md): shapes' frames read ahead (MCHdArt::ReadShapesAhead, the cursors' at the game's start)
+/// are read by the readers as a load's, several tables' folders in one archive in one read, and found once kept as a
+/// drawn one is, the same frames, without a read.
+/// </summary>
+TEST_CASE("hd art: shapes' frames are read ahead by the readers, several tables' in one read, found without a read")
+{
+    constexpr size_t Tables = 6;
+    constexpr int32_t Side = 8;
+    constexpr uint8_t TableByte = 0xc3;
+    const ScratchFolder scratch("shapes-ahead");
+    std::vector<std::vector<uint8_t>> tables;
+    std::vector<std::vector<uint8_t>> files;
+    std::vector<ArchiveEntry> entries;
+
+    for (size_t table = 0; table < Tables; ++table)
+    {
+        tables.push_back({static_cast<uint8_t>(table), TableByte});
+        files.push_back(FrameFile(Side, Side, static_cast<int32_t>(table) + 1));
+        const std::filesystem::path folder = MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(tables.back()));
+        entries.push_back(Raw(MCFileSystem::ToUtf8(folder.filename()) + "\\0.hdf", files.back()));
+    }
+
+    WriteBytes(scratch.Path() / std::filesystem::path(MCHdArt::ShapeTableFolder(0)).parent_path().concat(".hda"),
+               BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    std::vector<MCHdArt::ShapeAhead> asked;
+
+    for (const std::vector<uint8_t>& table : tables)
+    {
+        asked.push_back({table, 0, Side, Side});
+    }
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    const size_t reads = MCHdArt::ReaderReads();
+    MCHdArt::ReadShapesAhead(asked);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Tables);
+    CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+    const size_t read = MCHdArt::FramesRead();
+
+    for (size_t table = 0; table < Tables; ++table)
+    {
+        MCTest::Scope scope(std::format("table {}", table));
+        const std::shared_ptr<const MCHdArt::Frame> found =
+            MCHdArt::FindShape(MCHdArt::ShapeTableHash(tables[table]), 0, Side, Side);
+        REQUIRE(found != nullptr);
+        const auto decoded = MCHdArt::DecodeHdf(files[table], Side, Side);
+        REQUIRE(decoded.has_value());
+        CHECK(SameFrame(*found, *decoded));
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only (SPEC-first-use.md): the command line sets how HD art's readers read (<c>-hdreaders</c>,
 /// <c>-hdsetreads</c>, <c>-hdreaderpriority</c>), the readers held to 1 to MCHdArt::MostReaders; a value a switch can't
 /// take leaves its setting as it was.

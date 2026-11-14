@@ -54,6 +54,22 @@ namespace
         return hd;
     }
 
+    /// <summary>A cursor shape's bounds and hot spot (its origin), as <c>AG_shape_draw</c> draws it.</summary>
+    struct ShapeExtent
+    {
+        int32_t Width = 0;
+        int32_t Height = 0;
+        int32_t HotX = 0;
+        int32_t HotY = 0;
+    };
+
+    ShapeExtent ExtentOf(std::span<const uint8_t> shapeTable, int32_t shapeNum)
+    {
+        const int32_t resolution = VfxShapeResolution(shapeTable, shapeNum);
+        const int32_t minXY = VfxShapeMinxy(shapeTable, shapeNum);
+        return {resolution >> 16, resolution & 0xffff, -(minXY >> 16), -static_cast<int16_t>(minXY)};
+    }
+
     /// <summary>Draws a shape onto a pane of <paramref name="fill"/>, hot spot at (hotX, hotY).</summary>
     std::vector<uint8_t> DrawShape(std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t width, int32_t height,
                                    int32_t hotX, int32_t hotY, uint8_t fill)
@@ -67,18 +83,13 @@ namespace
 
 MCCursorImage MCCursorImageFromShape(std::span<const uint8_t> shapeTable, int32_t shapeNum)
 {
-    const int32_t resolution = VfxShapeResolution(shapeTable, shapeNum);
-    const int32_t minXY = VfxShapeMinxy(shapeTable, shapeNum);
-    const int32_t width = resolution >> 16;
-    const int32_t height = resolution & 0xffff;
+    const auto [width, height, hotX, hotY] = ExtentOf(shapeTable, shapeNum);
 
     if (width <= 0 || height <= 0)
     {
         return {};
     }
 
-    const int32_t hotX = -(minXY >> 16);
-    const int32_t hotY = -static_cast<int16_t>(minXY);
     // Drawn twice, over 0 and over 255: a pixel the shape skips keeps the background, so it differs between the two.
     const std::vector<uint8_t> overBlack = DrawShape(shapeTable, shapeNum, width, height, hotX, hotY, 0);
     const std::vector<uint8_t> overWhite = DrawShape(shapeTable, shapeNum, width, height, hotX, hotY, 0xff);
@@ -137,6 +148,21 @@ void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes)
     PreloadedPack = MCHdArt::PackVersion();
     PreloadedHdArt = MCHdArt::Active();
     ShapeImages.assign(128, {});
+    // Port-only (SPEC-first-use.md): their HD frames read by HD art's readers, several at once, before they're made.
+    std::vector<MCHdArt::ShapeAhead> ahead;
+
+    for (size_t shape = 0; shape < ShapeImages.size() && shape < shapes.size(); ++shape)
+    {
+        if (!shapes[shape].Empty())
+        {
+            const ShapeExtent extent = ExtentOf(shapes[shape].Bytes(), 0);
+            ahead.push_back(MCHdArt::ShapeAhead{shapes[shape].Bytes(), 0, extent.Width, extent.Height});
+        }
+    }
+
+    MCHdArt::ReadShapesAhead(ahead);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
 
     for (size_t shape = 0; shape < ShapeImages.size() && shape < shapes.size(); ++shape)
     {

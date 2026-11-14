@@ -477,6 +477,24 @@ namespace MCHdArt
     std::shared_ptr<const Frame> FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
                                            int32_t step = 0, int32_t frames = 0);
 
+    /// <summary>Port-only: a shape's frame whose HD copy to read ahead (<see cref="ReadShapesAhead"/>): FindShape's.</summary>
+    struct ShapeAhead
+    {
+        std::span<const uint8_t> Table;
+        int32_t Frame = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): has the readers read the HD copies of <paramref name="shapes"/>' frames (each
+    /// table's own folder, found by its bytes' hash: <see cref="ShapeTableHash"/>) as a load's reads, as
+    /// <see cref="ReadGroundAhead"/> reads the ground: several at once, each archive's in its order, waited for by
+    /// <see cref="WaitForLoadReads"/> and kept by <see cref="KeepReadAhead"/>, so FindShape then finds them without a
+    /// read.
+    /// </summary>
+    void ReadShapesAhead(std::span<const ShapeAhead> shapes);
+
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's
     /// resolution while HD art is on, from the 1x shape's coverage; none needs a pack.

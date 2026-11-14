@@ -1924,6 +1924,12 @@ namespace
                 return ReadOrTake(key, width, height, cached.Id);
             }();
             state.ReadTime += std::chrono::steady_clock::now() - started;
+            if (state.Folders.at(key.Folder).Names == Naming::Hash && state.Folders.at(key.Folder).Path.filename() == PictureFolder)
+            {
+                MCFrameLog::Note(std::format("probe: hd read {:016x} {:.2f} ms {}", key.Name,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+                        read && *read != nullptr ? "found" : "none"));
+            }
 
             if (!read)
             {
@@ -3477,4 +3483,76 @@ std::chrono::nanoseconds MCHdArt::ReadTime()
 size_t MCHdArt::CachedBytes()
 {
     return TheState().Bytes;
+}
+
+// PROBE (first-use stutters, 13 Nov), never commit: the attached shapes' folders, their frames and unpacked bytes, by
+// the folder's kind (its path's first two parts).
+std::string MCHdArt::ProbeAttached()
+{
+    State& state = TheState();
+    std::set<uint32_t> folders;
+
+    for (const auto& [table, sequence] : state.Sequences)
+    {
+        if (!sequence.Owner.expired())
+        {
+            folders.insert(sequence.Folder);
+        }
+    }
+
+    struct Tally
+    {
+        size_t Folders = 0;
+        size_t Frames = 0;
+        size_t Bytes = 0;
+        size_t Unarchived = 0;
+    };
+
+    std::map<std::string, Tally> kinds;
+
+    for (const uint32_t index : folders)
+    {
+        const FrameFolder& folder = state.Folders.at(index);
+        const std::filesystem::path relative = folder.Path.lexically_relative(MCHdArt::PackFolder());
+        auto part = relative.begin();
+        std::string kind = part != relative.end() ? part->string() : "?";
+
+        if (part != relative.end() && ++part != relative.end())
+        {
+            kind += "/" + part->string();
+        }
+
+        Tally& tally = kinds[kind];
+        ++tally.Folders;
+
+        if (!folder.Archived.has_value() || folder.Archived->Archive == nullptr)
+        {
+            ++tally.Unarchived;
+            continue;
+        }
+
+        const std::string prefix = Upper(folder.Archived->Prefix);
+
+        for (const MCFileEntry& entry : folder.Archived->Archive->File->GetEntries())
+        {
+            const std::string name = Upper(entry.GetName());
+
+            if (name.starts_with(prefix) && name.find('\\', prefix.size()) == std::string::npos)
+            {
+                ++tally.Frames;
+                tally.Bytes += static_cast<size_t>(entry.RealSize);
+            }
+        }
+    }
+
+    std::string out;
+
+    for (const auto& [kind, tally] : kinds)
+    {
+        out += std::format("  {}: {} shapes, {} frames (with in-betweens), {:.1f} MB unpacked{}\n", kind, tally.Folders,
+                            tally.Frames, tally.Bytes / 1048576.0,
+                            tally.Unarchived > 0 ? std::format(" ({} not looked up yet)", tally.Unarchived) : "");
+    }
+
+    return out;
 }

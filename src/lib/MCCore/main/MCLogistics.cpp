@@ -1839,9 +1839,14 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
     do
     {
         const int64_t start = MCPort::PerformanceCounter();
+        const auto probeStepStart = std::chrono::steady_clock::now();
         wipe->Offset = static_cast<int32_t>(static_cast<double>(elapsed) / SlideSeconds * SlideWidth);
         UpdateDisplay(false, false, 0, false, 0);
         const int64_t end = MCPort::PerformanceCounter();
+        // PROBE: each step's whole time (draw, present, its vsync).
+        MCFrameLog::Note(std::format(
+            "probe: step {:.2f} ms",
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStepStart).count()));
         // The original divided the low 32 bits of the tick difference by the low 32 bits of the frequency.
         const auto ticks = static_cast<uint32_t>(end - start);
         elapsed = static_cast<float>(static_cast<double>(ticks) / static_cast<int32_t>(frequency) + elapsed);

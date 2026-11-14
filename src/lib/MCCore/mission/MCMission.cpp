@@ -23,6 +23,7 @@
 #include "gui/MCGuiButton.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCUpdateDisplay.h"
+#include "platform/MCDisplay.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFile.h"
 #include "lib/MCFilesAhead.h"
@@ -941,6 +942,8 @@ auto MCMission::StopScenarioCallbacks() -> void
 
 auto MCMission::CloseResultsScreen() -> void
 {
+    MCProbeIo::GameThread = std::this_thread::get_id();
+    const MCProbeIo::Snap probeClose = MCProbeIo::Take();
     if (ResultsScreen == nullptr)
     {
         return;
@@ -1009,9 +1012,15 @@ auto MCMission::CloseResultsScreen() -> void
     // A launcher's match ends there (BackToLogistics: KillTheGame).
     const std::shared_ptr<MCMultiPlayer> match = MultiPlayer();
 
-    if (match != nullptr && !MCRoomEnd::TakesOnAfterMatch() && match->InMission && IsMPlayerGame)
+    // PROBE A/B: MC_PROBE_OLDMATCH, a match's results closed at once as before; MC_PROBE_NOWAYBACKFADE, everything at
+    // once as before piece 4.
+    if (std::getenv("MC_PROBE_NOWAYBACKFADE") != nullptr ||
+        (match != nullptr && (std::getenv("MC_PROBE_OLDMATCH") != nullptr ||
+                              (!MCRoomEnd::TakesOnAfterMatch() && match->InMission && IsMPlayerGame))))
     {
+        const MCProbeIo::Snap probeAtOnce = MCProbeIo::Take();
         back();
+        MCFrameLog::Note("probe io: way back at once: " + MCProbeIo::Since(probeAtOnce));
         return;
     }
 
@@ -1024,14 +1033,42 @@ auto MCMission::CloseResultsScreen() -> void
         ~MCForget() { MCFilesAhead::Forget(); }
     } forget;
 
-    MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles());
-
-    if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
+    // PROBE A/B: MC_PROBE_NOFILESAHEAD leaves the files' read ahead out.
+    if (std::getenv("MC_PROBE_NOFILESAHEAD") == nullptr)
     {
-        MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+        const auto probeAheadStart = std::chrono::steady_clock::now();
+        const std::vector<std::string> probeNoted = MCFilesAhead::Noted();
+        MCFilesAhead::ReadAhead(probeNoted, MCGameContext::Current().FastFiles());
+        MCFrameLog::Note(std::format("probe: {} files read ahead from the click, asked in {:.2f} ms", probeNoted.size(),
+                                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeAheadStart).count()));
     }
 
-    FadeOutWhile(back);
+    // PROBE A/B: MC_PROBE_NOMAPAHEAD leaves the briefing's map out.
+    if (const std::optional<size_t> briefed = BriefedAfterResults();
+        briefed.has_value() && std::getenv("MC_PROBE_NOMAPAHEAD") == nullptr)
+    {
+        MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+        MCFrameLog::Note(std::format("probe: briefing map read ahead for {}", Scenarios[*briefed]));
+    }
+
+    FadeOutWhile(
+        [&back]
+        {
+            const auto probeStart = std::chrono::steady_clock::now();
+            const int probeLevel = MCInput::Display() != nullptr ? MCInput::Display()->Fade() : -1;
+            const MCProbeIo::Snap probeBack = MCProbeIo::Take();
+            back();
+            MCFrameLog::Note("probe io: way back's work: " + MCProbeIo::Since(probeBack));
+            MCFrameLog::Note(std::format(
+                "probe: way back's work from fade level {}: {:.1f} ms", probeLevel,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count()));
+        });
+    MCFrameLog::Note("probe io: the close, its fade and pieces: " + MCProbeIo::Since(probeClose));
+    extern std::atomic<double> ProbeFilesAheadMs;
+    extern std::atomic<size_t> ProbeFilesAheadBytes;
+    MCFrameLog::Note(std::format("probe: {} files taken read ahead in all, {} held at the fade's end; the reads took {:.1f} ms from the ask, {:.1f} MB kept",
+                                 MCFilesAhead::TakenCount(), MCFilesAhead::HeldCount(), ProbeFilesAheadMs.load(),
+                                 static_cast<double>(ProbeFilesAheadBytes.load()) / (1024.0 * 1024.0)));
 }
 
 auto MCMission::BriefedAfterResults() const -> std::optional<size_t>
@@ -1103,7 +1140,7 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
     // (MCX.EXE worked out the resource points here and threw them away: the results screen already counted them.)
     if (Scenario() != nullptr)
     {
-        Scenario()->Unload();
+        { const MCFrameLog::Scope probeUnload("probe.back.unload"); Scenario()->Unload(); }
         MCGameContext::Current().SetScenario(nullptr);
     }
 
@@ -1165,7 +1202,11 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
 
 auto MCMission::BackToLogistics() -> void
 {
+    std::optional<MCFrameLog::Scope> probeStart(std::in_place, "probe.back.startlogistics");
+    const MCProbeIo::Snap probeStartIo = MCProbeIo::Take();
     MCLogistics& logistics = StartLogistics();
+    MCFrameLog::Note("probe io: StartLogistics: " + MCProbeIo::Since(probeStartIo));
+    probeStart.reset();
 
     if (MultiPlayer() == nullptr)
     {
@@ -1189,8 +1230,19 @@ auto MCMission::BackToLogistics() -> void
         std::string startName =
             std::format("start{}", replay ? logistics.CurrentMission + 1 : logistics.CurrentMission);
         char extension[] = ".pkk";
-        logistics.LoadCampaign(startName, extension, replay, false);
-        logistics.SetUpBriefingScreen(false);
+        {
+            const MCFrameLog::Scope probeLoad("probe.back.loadcampaign");
+            const MCProbeIo::Snap io = MCProbeIo::Take();
+            logistics.LoadCampaign(startName, extension, replay, false);
+            MCFrameLog::Note("probe io: LoadCampaign: " + MCProbeIo::Since(io));
+        }
+        {
+            const MCFrameLog::Scope probeBriefing("probe.back.briefing");
+            const MCProbeIo::Snap io = MCProbeIo::Take();
+            logistics.SetUpBriefingScreen(false);
+            MCFrameLog::Note("probe io: SetUpBriefingScreen: " + MCProbeIo::Since(io));
+        }
+        const MCFrameLog::Scope probeShow("probe.back.show");
         logistics.ShowLogScreen(true, false);
         return;
     }

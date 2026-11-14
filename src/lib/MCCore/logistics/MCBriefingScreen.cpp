@@ -577,7 +577,7 @@ auto MCBriefingScreen::Display() -> void
     MCLogObject::Display();
 
     // Port-only: a rehearsal only draws (MCRenderer::RehearsalScope); the movie's steps wait for a frame shown.
-    if (MCRenderer::Rehearsing())
+    if (MCRenderer::Rehearsing() && std::getenv("MC_PROBE_NOGUARD") == nullptr)
     {
         return;
     }

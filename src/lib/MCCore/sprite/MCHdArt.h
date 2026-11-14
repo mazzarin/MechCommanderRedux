@@ -655,6 +655,9 @@ namespace MCHdArt
     /// archive after, while the readers' kept handles hold it).
     /// </summary>
     size_t ReaderFilesOpened();
+
+    /// <summary>PROBE (first-use stutters), never commit.</summary>
+    std::string ProbeAttached();
 }
 
 /// <summary>Port-only: draw the HD art pack's frames where it has them (PREFS "HDArt"; off by default).</summary>

@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "platform/MCFrameLog.h"
 #include "logistics/MCSmuti.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
@@ -56,6 +57,7 @@ auto MCSmuti::WriteLine(int32_t xPos) -> void
 
 auto MCSmuti::Process(std::string_view text, MCOptionalRef<MCGuiPort> port, int32_t width, int32_t startY) -> int32_t
 {
+    const MCFrameLog::Scope probeSmuti("probe.smuti");
     text = text.substr(0, text.find('\0'));
 
     if (port.has_value())

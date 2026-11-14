@@ -2,6 +2,62 @@
 
 #include "lib/MCDiskFile.h"
 
+#include <atomic>
+#include <format>
+#include <string>
+#include <chrono>
+#include <thread>
+
+// PROBE: the game's thread's file work, summed.
+namespace MCProbeIo
+{
+    inline std::atomic<std::thread::id> GameThread{};
+    inline std::atomic<int64_t> FstNs{0}, Fsts{0}, ResolveNs{0}, Resolves{0}, TakeNs{0}, Takes{0};
+    inline std::atomic<int64_t> OpenNs{0}, Opens{0}, DiskReadNs{0}, DiskReads{0}, TgaNs{0}, Tgas{0}, FitNs{0}, Fits{0};
+    struct Timer
+    {
+        std::atomic<int64_t>& Ns;
+        std::chrono::steady_clock::time_point Start = std::chrono::steady_clock::now();
+        bool On = std::this_thread::get_id() == GameThread.load();
+        explicit Timer(std::atomic<int64_t>& ns, std::atomic<int64_t>& count) : Ns(ns)
+        {
+            if (On)
+            {
+                ++count;
+            }
+        }
+        ~Timer()
+        {
+            if (On)
+            {
+                Ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - Start).count();
+            }
+        }
+    };
+    struct Snap
+    {
+        int64_t V[14];
+        std::chrono::steady_clock::time_point At;
+    };
+    inline Snap Take()
+    {
+        return {{OpenNs.load(), Opens.load(), DiskReadNs.load(), DiskReads.load(), TgaNs.load(), Tgas.load(), FitNs.load(),
+                 Fits.load(), FstNs.load(), Fsts.load(), ResolveNs.load(), Resolves.load(), TakeNs.load(), Takes.load()},
+                std::chrono::steady_clock::now()};
+    }
+    inline std::string Since(const Snap& from)
+    {
+        const Snap now = Take();
+        const auto ms = [&](int i) { return static_cast<double>(now.V[i] - from.V[i]) / 1e6; };
+        const auto n = [&](int i) { return now.V[i] - from.V[i]; };
+        return std::format("{:.2f} ms in all; opens {} {:.2f} ms (ahead looked {} {:.2f} ms, resolve and disk {} {:.2f} ms, archive reads {} {:.2f} ms), disk reads {} {:.2f} ms, art {} {:.2f} ms, fit {} {:.2f} ms",
+                           std::chrono::duration<double, std::milli>(now.At - from.At).count(), n(1), ms(0), now.V[13] - from.V[13],
+                           (now.V[12] - from.V[12]) / 1e6, now.V[11] - from.V[11],
+                           (now.V[10] - from.V[10]) / 1e6, now.V[9] - from.V[9], (now.V[8] - from.V[8]) / 1e6, n(3), ms(2),
+                           n(5), ms(4), n(7), ms(6));
+    }
+}
+
 // Result codes of the file layer. The values are the original's (0xBADF00xx, returned as negative longs); the names
 // are the port's, since the original's weren't kept. Open failures from the OS return small positive codes as
 // GetLastError did (FILE_NOT_FOUND = 2). They stay int32_t constants while the game's int32_t result chains carry them.

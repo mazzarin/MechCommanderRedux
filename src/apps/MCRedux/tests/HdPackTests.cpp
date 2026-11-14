@@ -1871,7 +1871,7 @@ TEST_CASE("hd art: shapes' frames are read ahead by the readers, several tables'
 
     const size_t ahead = MCHdArt::FramesReadAhead();
     const size_t reads = MCHdArt::ReaderReads();
-    MCHdArt::ReadShapesAhead(asked);
+    MCHdArt::ReadShapesAhead(asked, MCHdArt::ReadAs::Load);
     MCHdArt::WaitForLoadReads();
     MCHdArt::KeepReadAhead();
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Tables);

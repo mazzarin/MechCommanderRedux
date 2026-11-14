@@ -9,8 +9,8 @@
 
 namespace
 {
-    /// <summary>The cursor shapes as pictures, made by MCHardwareCursorPreload.</summary>
-    std::vector<MCCursorImage> ShapeImages;
+    /// <summary>The GUI's slots for cursor shapes (MCGuiSystem::CursorShapes; those past them aren't shown).</summary>
+    constexpr size_t CursorShapeSlots = 128;
 
     /// <summary>What this frame's cursor carries (MCHardwareCursorCarry).</summary>
     bool Carrying = false;
@@ -147,32 +147,36 @@ void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes)
     Preloaded = true;
     PreloadedPack = MCHdArt::PackVersion();
     PreloadedHdArt = MCHdArt::Active();
-    ShapeImages.assign(128, {});
-    // Port-only (SPEC-first-use.md): their HD frames read by HD art's readers, several at once, before they're made.
-    std::vector<MCHdArt::ShapeAhead> ahead;
+    const size_t count = std::min(shapes.size(), CursorShapeSlots);
+    // Port-only (SPEC-first-use.md): each shape's picture made the first time it's shown (MCCursor::ShapeImage), its
+    // HD frame in hand by then: the shape shown first (the one up, else the arrow) read now, by HD art's readers, and
+    // the rest read by them as a set, several at once.
+    const size_t first = GuiSystem().CursorShape >= 0 ? static_cast<size_t>(GuiSystem().CursorShape) : 0;
+    std::vector<MCHdArt::ShapeAhead> now;
+    std::vector<MCHdArt::ShapeAhead> later;
 
-    for (size_t shape = 0; shape < ShapeImages.size() && shape < shapes.size(); ++shape)
+    for (size_t shape = 0; shape < count; ++shape)
     {
         if (!shapes[shape].Empty())
         {
             const ShapeExtent extent = ExtentOf(shapes[shape].Bytes(), 0);
-            ahead.push_back(MCHdArt::ShapeAhead{shapes[shape].Bytes(), 0, extent.Width, extent.Height});
+            (shape == first ? now : later)
+                .push_back(MCHdArt::ShapeAhead{shapes[shape].Bytes(), 0, extent.Width, extent.Height});
         }
     }
 
-    MCHdArt::ReadShapesAhead(ahead);
+    MCHdArt::ReadShapesAhead(now, MCHdArt::ReadAs::Load);
     MCHdArt::WaitForLoadReads();
     MCHdArt::KeepReadAhead();
-
-    for (size_t shape = 0; shape < ShapeImages.size() && shape < shapes.size(); ++shape)
-    {
-        if (!shapes[shape].Empty())
-        {
-            ShapeImages[shape] = MCCursorImageFromShape(shapes[shape].Bytes(), 0);
-        }
-    }
-
-    MCCursor::Preload(ShapeImages);
+    MCHdArt::ReadShapesAhead(later, MCHdArt::ReadAs::Set);
+    // The shapes are the GUI's, kept while it runs (it preloads again when it loads others).
+    MCCursor::Preload(count,
+                      [shapes](size_t shape)
+                      {
+                          return shape < shapes.size() && !shapes[shape].Empty()
+                                     ? MCCursorImageFromShape(shapes[shape].Bytes(), 0)
+                                     : MCCursorImage{};
+                      });
 }
 
 void MCHardwareCursorNewFrame()
@@ -219,13 +223,13 @@ void MCHardwareCursorUpdate()
     }
 
     const int32_t shape = GuiSystem().CursorShape;
-    const bool hasShape = shape >= 0 && static_cast<size_t>(shape) < ShapeImages.size() &&
-                          ShapeImages[static_cast<size_t>(shape)].Width > 0;
+    const bool hasShape = shape >= 0 && MCCursor::ShapeImage(static_cast<size_t>(shape)).Width > 0;
 
     if (Carrying)
     {
         Carrying = false;
-        MCCursor::Show(hasShape ? MCCursorImage::Overlay(Carried, ShapeImages[static_cast<size_t>(shape)]) : Carried);
+        MCCursor::Show(hasShape ? MCCursorImage::Overlay(Carried, MCCursor::ShapeImage(static_cast<size_t>(shape)))
+                                : Carried);
     }
     else if (hasShape)
     {

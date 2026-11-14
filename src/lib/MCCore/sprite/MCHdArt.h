@@ -498,13 +498,22 @@ namespace MCHdArt
     };
 
     /// <summary>
-    /// Port-only (SPEC-first-use.md): has the readers read the HD copies of <paramref name="shapes"/>' frames (each
-    /// table's own folder, found by its bytes' hash: <see cref="ShapeTableHash"/>) as a load's reads, as
-    /// <see cref="ReadGroundAhead"/> reads the ground: several at once, each archive's in its order, waited for by
-    /// <see cref="WaitForLoadReads"/> and kept by <see cref="KeepReadAhead"/>, so FindShape then finds them without a
-    /// read.
+    /// Port-only (SPEC-first-use.md): what reads ahead are for: a load's, which it waits for
+    /// (<see cref="WaitForLoadReads"/>), or a set's, read when nothing else is, within the cache's room for the sets.
     /// </summary>
-    void ReadShapesAhead(std::span<const ShapeAhead> shapes);
+    enum class ReadAs : uint8_t
+    {
+        Load,
+        Set,
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): has the readers read the HD copies of <paramref name="shapes"/>' frames (each
+    /// table's own folder, found by its bytes' hash: <see cref="ShapeTableHash"/>) as <paramref name="as"/>' reads:
+    /// several at once, each archive's in its order, kept by <see cref="KeepReadAhead"/>, so FindShape then finds them
+    /// without a read.
+    /// </summary>
+    void ReadShapesAhead(std::span<const ShapeAhead> shapes, ReadAs as);
 
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's

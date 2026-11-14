@@ -3155,7 +3155,7 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t 
     return Cache(FrameKey{ShapeTableFolderIndex(hash), NumberedKey(frame, step)}, width, height, frames);
 }
 
-void MCHdArt::ReadShapesAhead(std::span<const ShapeAhead> shapes)
+void MCHdArt::ReadShapesAhead(std::span<const ShapeAhead> shapes, ReadAs as)
 {
     if (!Active() || shapes.empty())
     {
@@ -3171,7 +3171,9 @@ void MCHdArt::ReadShapesAhead(std::span<const ShapeAhead> shapes)
                                 shape.Width, shape.Height});
     }
 
-    AskAhead(asks, AheadKind::Load, RoomIn(CacheBudget()));
+    const bool load = as == ReadAs::Load;
+    AskAhead(asks, load ? AheadKind::Load : AheadKind::Set,
+             RoomIn(load ? CacheBudget() : CacheBudget() / SetsAheadBudgetShare));
 }
 
 uint64_t MCHdArt::NewFrameId()

@@ -66,13 +66,19 @@ struct MCCursorBitmap
 namespace MCCursor
 {
     /// <summary>
-    /// Sets the game's cursor shapes and makes all their SDL cursors now, so switching shapes in play only selects
-    /// one. A shape is made again only when it is shown in new colours (a fade, a brightness step, a screen with its
-    /// own palette) or at a new screen scale, so no frame makes more than the one on screen. Each is also shown once,
-    /// unseen, the first time the mouse is over the window: Windows builds a cursor's icon then, and that is the slow
-    /// part.
+    /// Sets the game's cursor shapes: <paramref name="count"/> of them, each one's picture made by
+    /// <paramref name="make"/> (an empty picture: no shape) and its SDL cursor made the first time it is shown, so no
+    /// frame makes more than the one on screen (SPEC-first-use.md). A shape is made again only when it is shown in new
+    /// colours (a fade, a brightness step, a screen with its own palette) or at a new screen scale. Windows builds a
+    /// cursor's icon the first time it is shown over the window.
     /// </summary>
-    void Preload(std::vector<MCCursorImage> shapes);
+    void Preload(size_t count, std::function<MCCursorImage(size_t)> make);
+
+    /// <summary>
+    /// Shape <paramref name="shape"/>'s picture, made the first time it is asked for (Preload's maker); empty for no
+    /// shape.
+    /// </summary>
+    const MCCursorImage& ShapeImage(size_t shape);
 
     /// <summary>Makes preloaded shape <paramref name="shape"/> the cursor; cheap to call every frame.</summary>
     void ShowShape(size_t shape);

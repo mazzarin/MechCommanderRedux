@@ -751,6 +751,16 @@ auto MCLogistics::MakeAhead() const -> void
 
     // The HD copies of the pictures the screens are made of (their art, loaded by Start, the screens' backgrounds
     // with it: MCLogInvScreen::InitLive), read ahead by the pack's reading thread.
+    ReadTexturesAhead();
+}
+
+auto MCLogistics::ReadTexturesAhead() -> void
+{
+    if (!DrawsSharp())
+    {
+        return;
+    }
+
     std::vector<MCHdArt::PictureAhead> pictures;
 
     for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())

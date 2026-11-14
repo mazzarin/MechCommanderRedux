@@ -102,6 +102,12 @@ public:
     void MakeAhead() const;
 
     /// <summary>
+    /// Port-only: on a sharp screen, has the pack's reading thread read the HD copies of the pictures every live texture
+    /// shows (MCHdArt::ReadPicturesAhead): MakeAhead's for the menus, and a mission's interface as its load ends.
+    /// </summary>
+    static void ReadTexturesAhead();
+
+    /// <summary>
     /// Port-only: on a sharp screen, the line art of the units the screens list (the shop's and the player's mechs and
     /// vehicles: their diagrams and sold-out outlines) made ahead, off the game's thread (platform/MCSharpPictures).
     /// The briefing, purchase and repair screens ask as they're set up; what's made is never made again.

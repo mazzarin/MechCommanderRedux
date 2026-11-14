@@ -516,7 +516,10 @@ namespace MCHdArt
     /// <summary>Port-only: how many frames the reading thread has read as a neighbour's in a turn (<see cref="SetNeighbours"/>).</summary>
     size_t NeighboursReadAhead();
 
-    /// <summary>For the tests: waits until the reading thread has read ahead all it was handed.</summary>
+    /// <summary>
+    /// Waits until the reading thread has read ahead all it was handed: the tests, and a mission's load for what its
+    /// first frame draws.
+    /// </summary>
     void WaitForReadAhead();
 
     /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>

@@ -18,6 +18,7 @@
 #include "lib/MCFile.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
+#include "main/MCLogistics.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCDifficultySettings.h"
@@ -48,6 +49,7 @@
 #include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCElementalActor.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCGVAppearance.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCParticles.h"
@@ -310,6 +312,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     // Port-only (HD particles, HD weather): none from the last mission, and their dice from the start.
     MCParticles::Clear();
     MCWeather::Clear();
+    // Port-only (HD particles): the explosions' looks measured here, under the loading bar, rather than as each shows.
+    MCParticles::MeasureExplosions();
     MissionStartTime = 0;
     RunningTime = 0.0f;
     ActualTime = 0.0f;
@@ -344,6 +348,12 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
             }
         }
     }
+
+    // Port-only (HD art): the interface's HD pictures read here, under the loading bar, and kept, rather than read in
+    // the mission's first frame.
+    MCLogistics::ReadTexturesAhead();
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
 
     HasOutputBlock = file.SeekBlock("Output") == 0;
     file.Close();

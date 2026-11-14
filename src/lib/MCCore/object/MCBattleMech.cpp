@@ -69,6 +69,7 @@
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTerrain.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCWeather.h"
 #include "object/MCObjectTypeManager.h"
@@ -1256,6 +1257,31 @@ auto MCBattleMech::Update() -> int32_t
             if (JumpFX[0] != nullptr || JumpFX[1] != nullptr)
             {
                 EndJumpFX();
+            }
+        }
+
+        // Port-only (MechBraking): a quick stop never walks into a cell another unit holds (its own locks are
+        // off while it updates): it stops dead short of one, as the original.
+        if (actor.QuickStopped && actor.InTransition && (Velocity.X != 0.0f || Velocity.Y != 0.0f))
+        {
+            const float metres = std::hypot(Velocity.X, Velocity.Y);
+            const float ahead = (metres * FrameLength + QuickStopClearance) / metres * WorldUnitsPerMeter;
+            const MCVector3D look(Position.X + Velocity.X * ahead, Position.Y + Velocity.Y * ahead, Position.Z);
+            int32_t tileR = 0;
+            int32_t tileC = 0;
+            int32_t cellR = 0;
+            int32_t cellC = 0;
+            MCScenarioMap::WorldToMapPos(look, tileR, tileC, cellR, cellC);
+            const std::shared_ptr<MCObjectPosition> at = ObjPosition.lock();
+            const bool own =
+                at != nullptr && at->TileR == tileR && at->TileC == tileC && at->CellR == cellR && at->CellC == cellC;
+            const MCScenarioMap& map = GameMap();
+
+            if (!own && (!map.OnMap(tileR, tileC) || map.GetCellPathLocked(tileR, tileC, cellR, cellC) ||
+                         map.TileAt(tileR, tileC).GetCellPassable(cellR, cellC) == 0))
+            {
+                Velocity = MCVector3D(0.0f, 0.0f, 0.0f);
+                actor.EndQuickStop();
             }
         }
 

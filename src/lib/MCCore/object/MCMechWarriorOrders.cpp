@@ -9,6 +9,8 @@
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
 #include "object/MCMoverGroup.h"
+#include "object/MCBattleMech.h"
+#include "sprite/MCMechActor.h"
 #include "object/MCElemental.h"
 #include "object/MCElementalType.h"
 #include "object/MCElementalGameSystem.h"
@@ -443,6 +445,13 @@ auto MCMechWarrior::OrderStop(int unitOrder, int setTacOrder) -> int32_t
     ClearMoveOrders();
     ClearAttackOrders();
     SetLastTarget(nullptr, 0, 0);
+
+    // Port-only (MechBraking): the player's STOP, which a quick stop brakes (MCMechActor::QuickStop).
+    if (const auto mech = std::dynamic_pointer_cast<MCBattleMech>(GetVehicle()); mech != nullptr)
+    {
+        static_cast<MCMechActor&>(*mech->Appearance).QuickStopAsked = true;
+    }
+
     return order.Status(*this);
 }
 

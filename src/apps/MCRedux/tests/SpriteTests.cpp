@@ -1521,6 +1521,358 @@ TEST_CASE_ISOLATED("game: with MechBraking a mech brakes to a halt through its s
 
 namespace
 {
+    /// <summary>A mech's frame in a crowd's move: where it is, its speed over the ground, and how it moves.</summary>
+    struct CrowdFrame
+    {
+        MCVector3D Position;
+        float Speed = 0.0f;
+        int32_t Gesture = 0;
+        bool Following = false;
+        bool QuickStopped = false;
+        int32_t ExtraWalks = 0;
+    };
+
+    /// <summary>The metres between two points on the ground.</summary>
+    float GroundMetres(const MCVector3D& a, const MCVector3D& b)
+    {
+        return std::hypot(a.X - b.X, a.Y - b.Y) * MetersPerWorldUnit;
+    }
+
+    /// <summary>The point <paramref name="metres"/> from <paramref name="from"/> along <paramref name="way"/> degrees.</summary>
+    MCVector3D PointAlong(const MCVector3D& from, float way, float metres)
+    {
+        const double radians = way * MCMoverMath::DegreesToRadians;
+        const float units = metres * WorldUnitsPerMeter;
+        return {from.X + static_cast<float>(std::cos(radians)) * units,
+                from.Y + static_cast<float>(std::sin(radians)) * units, from.Z};
+    }
+
+    /// <summary>
+    /// Runs frames of <paramref name="seconds"/> until every one of <paramref name="mechs"/> has stood with no move
+    /// left for a second (a minute and a half of game time at most), and hands each mech's frames.
+    /// </summary>
+    std::vector<std::vector<CrowdFrame>> RunUntilStill(std::span<const std::shared_ptr<MCBattleMech>> mechs,
+                                                       float seconds)
+    {
+        constexpr float MostSeconds = 90.0f;
+        constexpr float StillSeconds = 1.0f;
+        // Standing, with no move left (none asked for, not yielding).
+        const auto stands = [](MCBattleMech& mech)
+        {
+            const auto& actor = static_cast<const MCMechActor&>(*mech.Appearance);
+            const std::shared_ptr<MCMechWarrior> pilot = mech.GetPilot();
+            const MCMovePath& path = pilot->GetMovePath();
+            const bool going = path.NumStepsWhenNotPaused > 0 && path.CurStep < path.NumStepsWhenNotPaused;
+            return actor.CurrentGesture == MCStopGesture::Stand && !actor.InTransition && !going &&
+                   pilot->MovePathRequest.lock() == nullptr && pilot->MoveOrders.YieldTime <= -1.0f;
+        };
+
+        std::vector<std::vector<CrowdFrame>> frames(mechs.size());
+        std::vector<int32_t> still(mechs.size(), 0);
+        bool moved = !std::ranges::all_of(mechs, [&](const auto& mech) { return stands(*mech); });
+
+        for (int32_t frame = 0; static_cast<float>(frame) * seconds < MostSeconds; ++frame)
+        {
+            std::vector<MCVector3D> before;
+
+            for (const auto& mech : mechs)
+            {
+                before.push_back(mech->GetPosition());
+            }
+
+            MCTestGame::RunFrame(seconds);
+            bool allStill = true;
+
+            for (size_t i = 0; i < mechs.size(); ++i)
+            {
+                MCBattleMech& mech = *mechs[i];
+                const auto& actor = static_cast<const MCMechActor&>(*mech.Appearance);
+                const bool standing = stands(mech);
+                moved = moved || !standing;
+                frames[i].push_back({mech.GetPosition(), GroundMetres(mech.GetPosition(), before[i]) / seconds,
+                                     actor.CurrentGesture, mech.Following, actor.QuickStopped, actor.ExtraWalks});
+                still[i] = standing ? still[i] + 1 : 0;
+                allStill = allStill && static_cast<float>(still[i]) * seconds >= StillSeconds;
+            }
+
+            if (moved && allStill)
+            {
+                return frames;
+            }
+        }
+
+        FAIL("the mechs never all stood still");
+        return frames;
+    }
+
+    /// <summary>The speed a mech's frames last came to rest from (0 if it never moved).</summary>
+    float HaltSpeed(const std::vector<CrowdFrame>& frames)
+    {
+        constexpr float Moving = 0.05f;
+        float halt = 0.0f;
+
+        for (size_t i = 1; i < frames.size(); ++i)
+        {
+            halt = frames[i].Speed < Moving && frames[i - 1].Speed >= Moving ? frames[i - 1].Speed : halt;
+        }
+
+        return halt;
+    }
+
+    /// <summary>
+    /// Orders <paramref name="mechs"/> to <paramref name="goal"/> as a player's click on it with them selected orders
+    /// them: each ranked by its distance to it, nearest first.
+    /// </summary>
+    void OrderGroupMove(std::span<const std::shared_ptr<MCBattleMech>> mechs, const MCVector3D& goal, bool run)
+    {
+        std::vector<std::pair<float, size_t>> ranked;
+
+        for (size_t i = 0; i < mechs.size(); ++i)
+        {
+            ranked.emplace_back(GroundMetres(mechs[i]->GetPosition(), goal), i);
+        }
+
+        std::ranges::sort(ranked);
+
+        for (size_t rank = 0; rank < ranked.size(); ++rank)
+        {
+            MCTacticalOrder order;
+            const MCWayPathPoint point{goal, run};
+            order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::MoveToPoint, 0);
+            order.InitWayPath(std::span(&point, 1));
+            order.MoveParams.Wait = 0;
+            order.SelectionIndex = static_cast<int32_t>(rank);
+            mechs[ranked[rank].second]->HandleTacticalOrder(order, 1, 0);
+        }
+    }
+
+    /// <summary>The metres between the nearest two of <paramref name="mechs"/>.</summary>
+    float ClosestPair(std::span<const std::shared_ptr<MCBattleMech>> mechs)
+    {
+        float closest = std::numeric_limits<float>::max();
+
+        for (size_t i = 0; i < mechs.size(); ++i)
+        {
+            for (size_t j = i + 1; j < mechs.size(); ++j)
+            {
+                closest = std::min(closest, GroundMetres(mechs[i]->GetPosition(), mechs[j]->GetPosition()));
+            }
+        }
+
+        return closest;
+    }
+} // namespace
+
+/// <summary>
+/// With MechBraking a lance's group move ends as the original's does,
+/// every mech a cell or so from the others, each braked to a halt through its stopping art rather than stopped dead:
+/// mission 1's three mechs, ordered as a player's click orders them, walk and run to points round them at 60 frames a
+/// second. The first to near the goal claims it (MCBattleMech::ClaimedCell) and the others end their moves short of it,
+/// fitted there; a running mech walks behind a slower one ahead on its path; a run's stop plays walk strides where its
+/// run's can't reach. Release 8's braking (version 1, played now only in a match with a game of release 8's) fitted the
+/// stops to the goal, so a mech whose end another took glided on past where crash avoidance ended its move, onto that
+/// mech (two mechs under 5 m apart in 58 of 69 of these moves; the original none, its closest 7.8 m), or, fitted short,
+/// stopped dead when its end was taken late. A mech the server holds to a walk is sent to the guests' games walking
+/// (MCMoveChunk::Run).
+/// </summary>
+TEST_CASE_ISOLATED("game: with MechBraking a lance's group move brakes each mech to a halt a cell or so from the "
+                   "others, as the original halts them")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    GMechBraking = 1;
+    REQUIRE_EQ(MCMechBrakingVersion(), BrakingVersion2);
+    constexpr float FrameSeconds = 1.0f / 60.0f;
+    // A mech that stops dead halts from walking speed (5.9 m/s and up); one braked from its stopping art's last frame.
+    constexpr float DeadHalt = 5.0f;
+    std::vector<std::shared_ptr<MCBattleMech>> mechs;
+
+    for (int32_t part = 0x200; part < 0x203; ++part)
+    {
+        mechs.push_back(std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(part)));
+        REQUIRE(mechs.back() != nullptr);
+    }
+
+    for (float time = 0.0f; time < 1.0f; time += FrameSeconds)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    struct Move
+    {
+        float Way = 0.0f;
+        float Metres = 0.0f;
+        bool Run = false;
+    };
+
+    const std::array moves = {Move{200.0f, 120.0f, false}, Move{20.0f, 150.0f, true},  Move{290.0f, 100.0f, false},
+                              Move{110.0f, 200.0f, true},  Move{240.0f, 120.0f, true}, Move{60.0f, 120.0f, false}};
+    bool followed = false;
+
+    for (const Move& move : moves)
+    {
+        MCTest::Scope scope(
+            std::format("{} {} m at {} degrees", move.Run ? "running" : "walking", move.Metres, move.Way));
+        MCVector3D middle;
+
+        for (const auto& mech : mechs)
+        {
+            middle.X += mech->GetPosition().X / static_cast<float>(mechs.size());
+            middle.Y += mech->GetPosition().Y / static_cast<float>(mechs.size());
+            middle.Z = mech->GetPosition().Z;
+        }
+
+        OrderGroupMove(mechs, PointAlong(middle, move.Way, move.Metres), move.Run);
+        const std::vector<std::vector<CrowdFrame>> frames = RunUntilStill(mechs, FrameSeconds);
+        std::string halts;
+
+        for (size_t i = 0; i < mechs.size(); ++i)
+        {
+            const float halt = HaltSpeed(frames[i]);
+            followed = followed || std::ranges::any_of(frames[i], &CrowdFrame::Following);
+            halts += std::format(" {:#x} {:.1f}", mechs[i]->PartId, halt);
+            CHECK(halt < DeadHalt);
+        }
+
+        const float closest = ClosestPair(mechs);
+        std::cout << std::format("  {} {} m at {}: halts (m/s){}; closest {:.1f} m\n", move.Run ? "run" : "walk",
+                                 move.Metres, move.Way, halts, closest);
+        CHECK(closest >= MapCellDiagonal() * MetersPerWorldUnit / 2.0f);
+    }
+
+    CHECK(followed);
+
+    // A mech the server holds to a walk where its orders run is sent walking, so the guests' games walk it too.
+    MCBattleMech& lead = *mechs.front();
+    lead.GetPilot()->MoveOrders.Run = 1;
+    lead.BuildMoveChunk();
+    CHECK(lead.GetMoveChunk().Run == 1);
+    lead.HeldToWalk = true;
+    lead.BuildMoveChunk();
+    CHECK(lead.GetMoveChunk().Run == 0);
+    lead.HeldToWalk = false;
+    lead.GetPilot()->MoveOrders.Run = 0;
+    GMechBraking = 0;
+}
+
+/// <summary>
+/// With MechBraking a Mad Cat ordered to run 145 m, where no stop from its run's strides fits (a run's stop starts only
+/// at one frame of its stride, the stride paced 0.8 to 1.25 times: 145 m falls between), plays a walk stride more before
+/// its walk to stand and halts where the original stops it; release 8's braking found no stop, so it ran to the end and
+/// dropped from its stride to standing, as without braking. Mission 1's own mech told to STOP as it walks brakes through
+/// its stopping art from its stride's next frame drawn as one of the art's (MCMechActor::QuickStop) rather than stopping
+/// dead, as without braking and with release 8's (a run has no frame drawn close enough to the walk to stand: a running
+/// mech told to STOP still stops dead).
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: with MechBraking a run's stop plays walk strides more where its run's can't reach, and a STOP "
+    "brakes through the stopping art")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    GMechBraking = 1;
+    constexpr float RunMetres = 145.0f;
+    constexpr float Slack = 0.01f;
+    const auto stopping = [](int32_t gesture)
+    { return gesture == MCStopGesture::WalkToStand || gesture == MCStopGesture::RunToWalk; };
+    const auto stride = [](int32_t gesture) { return gesture == MCStopGesture::Walk || gesture == MCStopGesture::Run; };
+    const auto mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x200));
+    const auto actor = std::static_pointer_cast<MCMechActor>(mech->Appearance);
+    float way = 30.0f;
+
+    for (const int braking : {1, 0})
+    {
+        MCTest::Scope scope(std::format("MechBraking {}", braking));
+        GMechBraking = braking;
+        MCVector3D end;
+        const std::vector<StopFrame> frames = MoveToHalt("madcat", true, way, RunMetres, end);
+        way += 180.0f;
+        std::cout << std::format("  madcat run {} m, braking {}:{}\n", RunMetres, braking, GestureRuns(frames));
+        const bool played = std::ranges::any_of(frames, [&](const StopFrame& f) { return stopping(f.Gesture); });
+        const bool dropped = std::ranges::adjacent_find(
+                                 frames, [&](const StopFrame& a, const StopFrame& b)
+                                 { return stride(a.Gesture) && b.Gesture == MCStopGesture::Stand; }) != frames.end();
+
+        if (braking == 0)
+        {
+            CHECK(!played);
+            CHECK(dropped);
+            continue;
+        }
+
+        REQUIRE(played);
+        CHECK(!dropped);
+
+        // A walk stride more than the stop's own between its run to walk and walk to stand.
+        const auto toWalk = std::ranges::find(frames, MCStopGesture::RunToWalk, &StopFrame::Gesture);
+        const auto toStand = std::ranges::find(frames, MCStopGesture::WalkToStand, &StopFrame::Gesture);
+        REQUIRE(toWalk < toStand);
+        const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree("madcat");
+        const auto walkFrames = static_cast<int32_t>(tree->Gestures[MCStopGesture::Walk].NumFrames);
+        CHECK(std::count_if(toWalk, toStand, [](const StopFrame& f) { return f.Gesture == MCStopGesture::Walk; }) >
+              walkFrames);
+
+        for (const StopFrame& frame : frames)
+        {
+            CHECK(frame.StrideRate >= MinStrideRate - Slack);
+            CHECK(frame.StrideRate <= MaxStrideRate + Slack);
+        }
+
+        const MCVector3D last = frames.back().Position;
+        const float off = GroundMetres(last, end) - MoveMarginOfError[1];
+        std::cout << std::format("    ends {:.2f} m off where the original stops\n", off);
+        CHECK(frames.back().Speed == 0.0f);
+        CHECK(std::fabs(off) <= BrakeArrivalSlack);
+    }
+
+    // Mission 1's own mech (not drawn as the Mad Cat), told to STOP a second into its walk.
+    constexpr float FrameSeconds = 1.0f / 60.0f;
+    constexpr float WalkFor = 1.0f;
+    constexpr float MostSeconds = 15.0f;
+    const auto walker = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x201));
+    const auto walkerActor = std::static_pointer_cast<MCMechActor>(walker->Appearance);
+    const std::array crowd = {walker};
+
+    for (const int braking : {1, 0})
+    {
+        MCTest::Scope scope(std::format("STOP, MechBraking {}", braking));
+        GMechBraking = braking;
+        walker->GetPilot()->OrderMoveToPoint(0, 1, MCOrderOrigin::Player,
+                                             PointAlong(walker->GetPosition(), way, 200.0f), -1, 0);
+        way += 180.0f;
+        float walking = 0.0f;
+
+        for (float time = 0.0f; time < MostSeconds && walking < WalkFor; time += FrameSeconds)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            walking = walkerActor->CurrentGesture == MCStopGesture::Walk ? walking + FrameSeconds : 0.0f;
+        }
+
+        REQUIRE(walking >= WalkFor);
+        walker->GetPilot()->OrderStop(1, 1);
+        const std::vector<std::vector<CrowdFrame>> frames = RunUntilStill(crowd, FrameSeconds);
+        const bool quick = std::ranges::any_of(frames[0], &CrowdFrame::QuickStopped);
+        const bool played = std::ranges::any_of(frames[0], [&](const CrowdFrame& f) { return stopping(f.Gesture); });
+        std::cout << std::format("  STOP walking, braking {}: braked {}, first frame's gesture {}\n", braking, quick,
+                                 frames[0].front().Gesture);
+        CHECK_EQ(quick, braking != 0);
+        CHECK_EQ(played, braking != 0);
+        CHECK_EQ(frames[0].front().Gesture == MCStopGesture::Stand, braking == 0);
+    }
+
+    GMechBraking = 0;
+}
+
+namespace
+{
     /// <summary>The pixels a frame of a shape draws, as offsets from its hot spot, in order.</summary>
     using PixelSet = std::vector<std::pair<int32_t, int32_t>>;
 

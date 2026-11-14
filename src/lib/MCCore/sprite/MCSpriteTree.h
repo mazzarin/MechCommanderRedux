@@ -214,6 +214,11 @@ public:
     /// <summary>Port-only (MechBraking): the run to walk made from the run and walk (MCRunToWalkMade), once worked out.</summary>
     std::optional<MCMadeRunToWalk> MadeRunToWalk;
     bool MadeRunToWalkKnown = false;
+    /// <summary>
+    /// Port-only (MechBraking): each stride gesture's frames' way into the walk to stand (MCStopEntries), once
+    /// worked out.
+    /// </summary>
+    std::map<int32_t, std::vector<int32_t>> StopEntries;
 
 private:
     /// <summary>The shape at <paramref name="where"/>, loading it if needed (none without its part's PAK).</summary>

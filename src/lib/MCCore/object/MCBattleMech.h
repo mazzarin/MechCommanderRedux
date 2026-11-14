@@ -66,6 +66,11 @@ public:
     int32_t GetSpeedState() override;
     void PilotingCheck(uint32_t situation, float modifier) override;
     int CrashAvoidanceSystem() override;
+    /// <summary>
+    /// The original's (MCMover::UpdatePathLock); port-only (MechBraking, version 2): braking to a
+    /// halt, or nearing where it will, the mech also claims the cell it will come to rest in (<see cref="ClaimedCell"/>).
+    /// </summary>
+    void UpdatePathLock(int set) override;
     void MineCheck() override;
     void UpdateMovement() override;
     int32_t UpdateCriticalHitChunks(int32_t which) override;
@@ -145,10 +150,18 @@ public:
     /// </summary>
     void PlanStop(int32_t& newGestureStateGoal);
     /// <summary>
-    /// The margin of error the move path's last step is reached within (the original's MoveMarginOfError[1]); port-only
-    /// (MechBraking): wider while the mech brakes to a halt there.
+    /// Port-only (MechBraking): whether the mech, set to run along <paramref name="path"/>, walks instead: within
+    /// a run's stop and <see cref="FollowStrides"/> stride of a slower unit's cell on its path (<see cref="Following"/>,
+    /// until a stride further off), or not yet running with its move's end within a run's stop and
+    /// <see cref="RunStartStrides"/> strides.
     /// </summary>
-    float LastStepMargin() const;
+    bool WalksBehind(const MCMovePath& path);
+    /// <summary>
+    /// The margin of error step <paramref name="step"/> of a move path of <paramref name="numSteps"/> steps is reached
+    /// within (the original's MoveMarginOfError: [1] for the last step, [0] for the others); port-only (MechBraking):
+    /// wider at the step a planned stop ends at (<see cref="StopStep"/>) while the mech brakes to a halt there.
+    /// </summary>
+    float StepMargin(int32_t step, int32_t numSteps) const;
     /// <summary>
     /// Port-only (MechBraking): whether the mech's move ends where <paramref name="path"/> (its move path) does: no jump
     /// left on the way, and it goes on no further. On a multiplayer client, whose path is the server's latest steps,
@@ -282,6 +295,36 @@ public:
     /// step being walked into. None while the end isn't shown.
     /// </summary>
     std::optional<MCVector3D> ChunkMoveEnd;
+    /// <summary>
+    /// Port-only (MechBraking): the step of the move path the planned stop ends at (<see cref="PlanStop"/>): short of
+    /// the path's end where the original's crash avoidance will end the move (a unit on its end); none for the path's
+    /// last step.
+    /// </summary>
+    std::optional<int32_t> StopStep;
+    /// <summary>
+    /// Port-only (MechBraking): the cell the mech claims to come to rest in (its stop's end,
+    /// <see cref="EndStopStep"/> or its path's last step) once within its stop and <see cref="ClaimStrides"/> strides of
+    /// it, or braking there, the first to claim it keeping it: others' moves end short of it (MCBattleMech's
+    /// CrashAvoidanceSystem), as the original's end short of a cell held; none passing through it is held up. Kept once
+    /// its path has ended with the mech still braking, until it stands (<see cref="UpdatePathLock"/>). The server's.
+    /// </summary>
+    std::optional<MCPathRangeLock> ClaimedCell;
+    /// <summary>
+    /// Port-only (MechBraking): the step the stop at the move's end ends at (<see cref="StopStep"/> when short of
+    /// the path's last), which <see cref="ClaimedCell"/> is.
+    /// </summary>
+    std::optional<int32_t> EndStopStep;
+    /// <summary>
+    /// Port-only (MechBraking): walking where its orders run, behind a slower unit on its path (PlanStop),
+    /// until a stride further off than it walks from. The server's.
+    /// </summary>
+    bool Following = false;
+    /// <summary>
+    /// Port-only (MechBraking): walking where its orders run, following (<see cref="Following"/>) or with its
+    /// move's end too near to stop from a run. The move chunks the server sends say walk (MCMoveChunk::Run), so the
+    /// guests' games walk it too.
+    /// </summary>
+    bool HeldToWalk = false;
 
 private:
     /// <summary>

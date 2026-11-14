@@ -437,7 +437,7 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.ChoiceName(WeatherRow) == "RAIN");
     CHECK(list.ChoiceName(TimeRow) == "NIGHT");
     sentIs(static_cast<int8_t>(MCWeatherKind::Rain), static_cast<int8_t>(MCTimeOfDay::Night),
-           MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules | MCMatchRule::WeatherPlay |
+           MCMatchRule::MechBraking | MCMatchRule::BrakingV2 | MCMatchRule::TimeOfDayRules | MCMatchRule::WeatherPlay |
                MCMatchRule::NightLights);
     // The guest heard every player's rules from the host (its own, and the host's).
     const std::optional<MCMPPlayersRulesMessage> players = guest.PlayersRules();

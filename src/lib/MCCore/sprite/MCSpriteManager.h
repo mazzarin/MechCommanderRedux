@@ -81,6 +81,15 @@ public:
                                               std::weak_ptr<MCAppearanceType> owner, bool zoomedOut);
 
     /// <summary>
+    /// Port-only: packets <paramref name="first"/> to <paramref name="first"/> + <paramref name="count"/> - 1 of
+    /// <paramref name="part"/> of mech <paramref name="mechNum"/> as stored, from the PAK <see cref="GetMechShapeData"/>
+    /// reads them from with <paramref name="zoomedOut"/> (MCPacketFile::ReadStoredPackets: none unpacked), for a hash of
+    /// its art; empty when it can't read them.
+    /// </summary>
+    std::vector<uint8_t> MechPacketsStored(uint32_t mechNum, MCMechPart part, uint32_t first, uint32_t count,
+                                           bool zoomedOut);
+
+    /// <summary>
     /// The name of the part PAK <see cref="GetMechShapeData"/> reads <paramref name="part"/> from with
     /// <paramref name="zoomedOut"/> ("legs", or "legs90" when the 90-pixel PAKs are open).
     /// </summary>
@@ -126,6 +135,12 @@ private:
     /// <see cref="_AppearanceFiles"/>). False when it has none.
     /// </summary>
     bool OpenAppearanceFile(uint32_t appearanceNum);
+
+    /// <summary>
+    /// The PAK of <paramref name="part"/> of mech <paramref name="mechNum"/>, a packet of the part PAK (the 90-pixel one
+    /// when open and <paramref name="zoomedOut"/>), opened when first asked for; none when it can't be.
+    /// </summary>
+    MCOptionalRef<MCPacketFile> MechFile(uint32_t mechNum, MCMechPart part, bool zoomedOut);
 
     /// <summary>
     /// Reads the current packet (<paramref name="packetNum"/>, <paramref name="size"/> bytes) of

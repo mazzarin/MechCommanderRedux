@@ -970,6 +970,7 @@
     <ClInclude Include="sprite\MCInBetween.h" />
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCMechStops.h" />
+    <ClInclude Include="sprite\MCMechStopsKnown.h" />
     <ClInclude Include="sprite\MCPaletteNight.h" />
     <ClInclude Include="sprite\MCParticles.h" />
     <ClInclude Include="sprite\MCPUAppearance.h" />
@@ -1024,6 +1025,7 @@
     <ClInclude Include="vfx\MCVfx.h" />
     <ClInclude Include="vfx\MCVfxClip.h" />
     <ClInclude Include="vfx\MCVfxFunctions.h" />
+    <ClInclude Include="vfx\MCVfxShapeRuns.h" />
     <ClInclude Include="vfx\MCVfxView.h" />
   </ItemGroup>
   <!-- HLSL shaders, compiled to SPIR-V headers in build\generated\shaders (the pinned dxc, $(MCDxc): see

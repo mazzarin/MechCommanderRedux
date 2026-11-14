@@ -52,9 +52,11 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCGVAppearance.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
+#include "sprite/MCSpriteTree.h"
 #include "sprite/MCWeather.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCTacticalMap.h"
@@ -940,6 +942,21 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
         CreatePartObject(i);
     }
 
+    // Port-only (MechBraking): every mech type's stops before play, from the table the program carries.
+    std::vector<std::shared_ptr<MCSpriteTree>> trees;
+
+    for (const MCPart& part : Parts)
+    {
+        const auto object = std::static_pointer_cast<MCGameObject>(part.Object.lock());
+        const std::shared_ptr<MCAppearance> appearance = object != nullptr ? object->GetAppearance() : nullptr;
+
+        if (appearance != nullptr && object->ObjectClass == MCObjectClass::BattleMech)
+        {
+            trees.push_back(std::static_pointer_cast<MCSpriteTree>(appearance->GetAppearanceType()));
+        }
+    }
+
+    MCPrepareStops(trees);
     UpdateDisplay(false, true, 20, true, 90);
 }
 

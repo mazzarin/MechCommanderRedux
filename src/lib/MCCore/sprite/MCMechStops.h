@@ -7,8 +7,13 @@
 // (MCMechActor::CheckStop). With MechBraking a mech brakes there instead, its last strides fitted so that the stop ends
 // on the spot.
 
+#include "lib/MCOptionalRef.h"
+#include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <span>
+#include <string_view>
 #include <vector>
 
 class MCSpriteTree;
@@ -173,7 +178,8 @@ struct MCGestureVelocities
 /// <summary>
 /// Port-only (MechBraking): whether <paramref name="tree"/> has gesture <paramref name="gesture"/> drawn: every part's
 /// shape has its frames, and draws (the expansion's Wendigo, Turkina, BushWhacker and Mauler list a run to walk with
-/// no shapes; ShadowCat and FireFalcon one whose shapes are blank). Looked at once a tree.
+/// no shapes; ShadowCat and FireFalcon one whose shapes are blank). The stopping art's (<see cref="MCStopArt"/>) from
+/// the table (<see cref="MCPrepareStops"/>); another gesture's looked at once a tree.
 /// </summary>
 [[nodiscard]] bool MCHasGestureArt(MCSpriteTree& tree, int32_t gesture);
 
@@ -193,8 +199,8 @@ struct MCMadeRunToWalk
 };
 
 /// <summary>
-/// Port-only (MechBraking): the run to walk made for <paramref name="tree"/> (<see cref="MCMakeRunToWalk"/>, worked
-/// out once a tree, as its gestures preload); none when it has its own drawn, or without <paramref name="braking"/>.
+/// Port-only (MechBraking): the run to walk made for <paramref name="tree"/> (<see cref="MCMakeRunToWalk"/>'s, from the
+/// table: <see cref="MCPrepareStops"/>); none when it has its own drawn, or without <paramref name="braking"/>.
 /// </summary>
 [[nodiscard]] std::optional<MCMadeRunToWalk> MCRunToWalkMade(MCSpriteTree& tree, bool braking);
 
@@ -225,9 +231,81 @@ struct MCLikeness
 /// <summary>
 /// Port-only (MechBraking): for each frame of stride <paramref name="stride"/> (walk or run), the walk to
 /// stand's frame it goes into as drawn alike (MCGestureLikeness) as the art's own way in (the walk's frame it gives way
-/// at into the stop's first), or -1 where none is: the frames a stop goes in at without a jump. Worked out once a tree.
+/// at into the stop's first), or -1 where none is: the frames a stop goes in at without a jump. The walk's and the run's
+/// from the table (<see cref="MCPrepareStops"/>).
 /// </summary>
 [[nodiscard]] const std::vector<int32_t>& MCStopEntries(MCSpriteTree& tree, int32_t stride);
+
+/// <summary>
+/// Port-only (MechBraking): what braking reads of a tree's stopping art, which depends on the art alone: whether the walk
+/// to stand, walk to run and run to walk are drawn (<see cref="MCHasGestureArt"/>, in <see cref="MCStopArt"/>'s order),
+/// the walk's and the run's frames' ways into the walk to stand (<see cref="MCStopEntries"/>), and the run to walk made
+/// for a tree without one drawn (<see cref="MCRunToWalkMade"/>). The program carries every shipped tree's
+/// (sprite/MCMechStopsKnown.h, made by mc_tests' <c>--mech-stops-table</c>), so none is worked out in play.
+/// </summary>
+struct MCTreeStops
+{
+    std::array<bool, 3> Drawn{};
+    std::vector<int32_t> WalkEntries;
+    std::vector<int32_t> RunEntries;
+    std::optional<MCMadeRunToWalk> MadeRunToWalk;
+
+    bool operator==(const MCTreeStops&) const = default;
+};
+
+/// <summary>Port-only (MechBraking): the stopping art <see cref="MCTreeStops::Drawn"/> says is drawn, in its order.</summary>
+inline constexpr std::array<int32_t, 3> MCStopArt = {MCStopGesture::WalkToStand, MCStopGesture::WalkToRun,
+                                                     MCStopGesture::RunToWalk};
+
+/// <summary>
+/// Port-only (MechBraking): <paramref name="tree"/>'s stops worked out as braking first did, frame by frame through
+/// <see cref="MCGestureLikeness"/>, pixel by pixel (8 to 60 ms a tree on an M4 Pro, half of it a call a pixel): what
+/// the table is made from.
+/// </summary>
+[[nodiscard]] MCTreeStops MCMakeStops(MCSpriteTree& tree);
+
+/// <summary>
+/// Port-only (MechBraking): <paramref name="tree"/>'s stops worked out the fast way, the same as
+/// <see cref="MCMakeStops"/>'s: each shape loaded once, its frames' runs set straight into rows of bits. For art the
+/// table hasn't (<see cref="MCPrepareStops"/>).
+/// </summary>
+[[nodiscard]] MCTreeStops MCMakeStopsFast(MCSpriteTree& tree);
+
+/// <summary>
+/// Port-only (MechBraking): the hash of everything <paramref name="tree"/>'s stops are worked out from: the gestures'
+/// frame counts, the walk's frame into the walk to stand, the packet each facing of the art looked at shows, and the
+/// bytes of every packet of those gestures as stored in the part PAKs (a facing without art borrows another's), read as
+/// stored, none unpacked: about 2 MB a tree, the walk's, run's and stopping art's that play draws.
+/// </summary>
+[[nodiscard]] uint64_t MCStopsArtHash(MCSpriteTree& tree);
+
+/// <summary>
+/// Port-only (MechBraking): <paramref name="tree"/>'s stops from the table, by its art's hash
+/// (<see cref="MCStopsArtHash"/>), once a tree. For art the table hasn't (a mod's, never the game's: a test holds every
+/// tree of the game's data to the table) they are worked out (<see cref="MCMakeStopsFast"/>), logged.
+/// </summary>
+void MCPrepareStops(MCSpriteTree& tree);
+
+/// <summary>
+/// Port-only (MechBraking): <see cref="MCPrepareStops(MCSpriteTree&)"/> for a mission's trees, at its load; those the
+/// table hasn't worked out on threads of their own together, their shapes loaded first on this one.
+/// </summary>
+void MCPrepareStops(std::span<const std::shared_ptr<MCSpriteTree>> trees);
+
+/// <summary>Port-only (MechBraking): a tree's stops the table holds, by its name and its art's hash.</summary>
+struct MCKnownStops
+{
+    /// <summary>The tree's FIT name ("Main Info"'s Name), for the logs and the tests.</summary>
+    std::string_view Tree;
+    uint64_t ArtHash = 0;
+    MCTreeStops Stops;
+};
+
+/// <summary>Port-only (MechBraking): the table's stops of the art whose hash is <paramref name="artHash"/>.</summary>
+[[nodiscard]] MCOptionalRef<const MCKnownStops> MCFindKnownStops(uint64_t artHash);
+
+/// <summary>Port-only (MechBraking): every tree's stops the table holds.</summary>
+[[nodiscard]] std::span<const MCKnownStops> MCKnownStopsTable();
 
 /// <summary>
 /// Port-only (MechBraking): the run's frame a run to walk starts after (FIT RunToRWFrame). The expansion's mechs leave

@@ -274,9 +274,6 @@ auto MCSpriteTree::PreloadGestures() -> void
     }
 
     GesturesPreloaded = true;
-    // Port-only (MechBraking): the run to walk made for a tree without one drawn, worked out now the run and walk are
-    // in, not as a mech first slows.
-    static_cast<void>(MCRunToWalkMade(*this, true));
 }
 
 auto MCSpriteTree::PrepareHdArt() const -> void
@@ -336,7 +333,7 @@ auto MCSpriteTree::Load(MCFile& apprFile, uint32_t fileSize) -> MCAppearanceLoad
 {
     MCAppearanceFit fit(apprFile, fileSize);
     fit.SeekBlock("Main Info");
-    fit.Read<std::string>("Name");
+    Name = fit.Read<std::string>("Name");
     FileNumbers[MCMechPart::Legs] = fit.Read<uint32_t>("legFileNumber");
     FileNumbers[MCMechPart::Torso] = fit.Read<uint32_t>("torsoFileNumber");
     FileNumbers[MCMechPart::RightArm] = fit.Read<uint32_t>("rightArmFileNumber");

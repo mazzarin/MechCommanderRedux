@@ -58,6 +58,13 @@ public:
     int32_t SeekPacket(int32_t packet);
 
     /// <summary>
+    /// Port-only: packets <paramref name="first"/> to <paramref name="first"/> + <paramref name="count"/> - 1 as stored
+    /// (none unpacked), in one read: each packet's storage and stored size (4 bytes each), then their bytes. For a hash of
+    /// what they hold. Empty when the packets aren't all in the file, in order.
+    /// </summary>
+    std::vector<uint8_t> ReadStoredPackets(int32_t first, int32_t count);
+
+    /// <summary>
     /// Port-only: refuses (SeekPacket) an LZ packet that claims to unpack to more than <paramref name="bytes"/>, for a
     /// file whose packets are known to be small (a save's). Otherwise only more than its LZ data can make is refused
     /// (4096 bytes for each), so a packet of a few hundred kilobytes could claim 2 GiB. Kept until the file closes.

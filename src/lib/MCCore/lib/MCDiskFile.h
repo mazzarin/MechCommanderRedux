@@ -45,7 +45,9 @@ enum class MCDiskFileReads : uint8_t
 /// <see cref="MostFillBytes"/> or less is read whole at its first read; a read of the next fill's size or more goes
 /// straight into the caller's bytes; a read across the buffer's end takes what it holds and carries on from there; a
 /// write empties it. It holds what it read until this file writes or a read falls outside
-/// it: another handle's writes meanwhile aren't seen in it. One thread at a time.
+/// it: another handle's writes meanwhile aren't seen in it. Through the buffer, the position and the writes, one thread
+/// at a time; <see cref="ReadShared"/> from any number at once (on Windows the handle is overlapped, each call waiting
+/// for its own end: on a handle opened for synchronous I/O the threads' reads wait for each other).
 /// </remarks>
 class MCDiskFile
 {
@@ -89,6 +91,15 @@ public:
     uint32_t Position() const { return _Position; }
     void SetPosition(uint32_t position) { _Position = position; }
 
+    /// <summary>
+    /// Reads up to <paramref name="buffer"/>'s size at <paramref name="offset"/> straight into it, one call of exactly
+    /// those bytes (more only past a call's most), without the buffer or the position: from any thread, with others
+    /// reading the file at once (an HD archive's runs and entries: the game's thread and every reader read an archive
+    /// through its one file). A direct file's reads.
+    /// </summary>
+    /// <returns>The number of bytes read (fewer at the file's end).</returns>
+    size_t ReadShared(uint32_t offset, std::span<uint8_t> buffer) const;
+
     /// <summary>The file's length in bytes, asked of the system (the position is kept).</summary>
     uint32_t Length() const;
 
@@ -97,9 +108,6 @@ public:
 
 private:
     MCDiskFile() = default;
-
-    /// <summary>One call (more only past a call's most) reading <paramref name="buffer"/>'s size at <paramref name="offset"/>.</summary>
-    size_t ReadDirect(uint32_t offset, std::span<uint8_t> buffer) const;
 
     /// <summary>A buffered file's read: from the buffer, filled as the remarks say when it lacks the bytes.</summary>
     size_t ReadBuffered(uint32_t offset, std::span<uint8_t> buffer);

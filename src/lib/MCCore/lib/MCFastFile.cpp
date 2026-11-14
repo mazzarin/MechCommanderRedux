@@ -21,11 +21,11 @@ namespace
         return key;
     }
 
-    /// <summary><paramref name="entry"/>'s stored bytes, read through <paramref name="file"/>.</summary>
-    std::vector<uint8_t> StoredBytes(const MCFileEntry& entry, MCDiskFile& file)
+    /// <summary><paramref name="entry"/>'s stored bytes, read through <paramref name="file"/> (from any thread).</summary>
+    std::vector<uint8_t> StoredBytes(const MCFileEntry& entry, const MCDiskFile& file)
     {
         std::vector<uint8_t> stored(static_cast<size_t>(std::max(entry.Size, 0)));
-        stored.resize(file.ReadAt(static_cast<uint32_t>(entry.Offset), stored));
+        stored.resize(file.ReadShared(static_cast<uint32_t>(entry.Offset), stored));
         return stored;
     }
 }
@@ -34,17 +34,18 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::
 {
     auto fastFile = std::make_unique<MCFastFile>(Key());
     fastFile->_Path = MCFileSystem::Resolve(fileName);
-    fastFile->_Handle = MCDiskFile::Open(fastFile->_Path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+    std::optional<MCDiskFile> opened = MCDiskFile::Open(fastFile->_Path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
 
-    if (!fastFile->_Handle.has_value())
+    if (!opened.has_value())
     {
         return std::unexpected(std::format("{}: not found", fileName));
     }
 
-    MCDiskFile& file = *fastFile->_Handle;
+    fastFile->_Handle = std::make_shared<MCDiskFile>(std::move(*opened));
+    const MCDiskFile& file = *fastFile->_Handle;
     std::array<uint8_t, sizeof(int32_t)> countBytes{};
 
-    if (file.Read(countBytes) != countBytes.size())
+    if (file.ReadShared(0, countBytes) != countBytes.size())
     {
         return std::unexpected(std::format("{}: no directory", fileName));
     }
@@ -65,7 +66,8 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::
     // short directory leaves the rest zeroed.
     std::vector<MCFileEntry>& entries = fastFile->_Entries;
     entries.assign(static_cast<size_t>(count), MCFileEntry{});
-    file.Read(std::span(reinterpret_cast<uint8_t*>(entries.data()), entries.size() * sizeof(MCFileEntry)));
+    file.ReadShared(static_cast<uint32_t>(countBytes.size()),
+                    std::span(reinterpret_cast<uint8_t*>(entries.data()), entries.size() * sizeof(MCFileEntry)));
     fastFile->_Index.reserve(entries.size());
 
     for (size_t i = 0; i < entries.size(); ++i)
@@ -101,7 +103,7 @@ std::optional<int32_t> MCFastFile::Find(std::string_view gamePath) const
     return std::nullopt;
 }
 
-std::optional<MCDiskFile> MCFastFile::OpenAnother() const
+std::shared_ptr<MCDiskFile> MCFastFile::OpenAgain() const
 {
     // A file changed since (another written in its place) would be read by the old directory's offsets.
     std::error_code error;
@@ -109,38 +111,30 @@ std::optional<MCDiskFile> MCFastFile::OpenAnother() const
 
     if (error || written != _Written)
     {
-        return std::nullopt;
+        return nullptr;
     }
 
     std::optional<MCDiskFile> file = MCDiskFile::Open(_Path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+    return file.has_value() && file->Length() == _Length ? std::make_shared<MCDiskFile>(std::move(*file)) : nullptr;
+}
 
-    if (file.has_value() && file->Length() != _Length)
+std::shared_ptr<MCDiskFile> MCFastFile::Reopened(std::shared_ptr<MCDiskFile> opened)
+{
+    if (_Handle == nullptr)
     {
-        file.reset();
+        _Handle = std::move(opened);
     }
 
-    return file;
+    return _Handle;
 }
 
-MCOptionalRef<MCDiskFile> MCFastFile::File()
+std::shared_ptr<MCDiskFile> MCFastFile::File()
 {
-    if (!_Handle.has_value())
-    {
-        // Released: opened again only if it is the file the directory was read from.
-        _Handle = OpenAnother();
-    }
-
-    return _Handle.has_value() ? MCOptionalRef<MCDiskFile>(*_Handle) : std::nullopt;
+    // Released: opened again only if it is the file the directory was read from.
+    return _Handle != nullptr ? _Handle : Reopened(OpenAgain());
 }
 
-std::vector<uint8_t> MCFastFile::ReadStored(int32_t index)
-{
-    const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
-    const MCOptionalRef<MCDiskFile> opened = File();
-    return opened ? StoredBytes(entry, *opened) : std::vector<uint8_t>();
-}
-
-std::vector<uint8_t> MCFastFile::ReadStored(int32_t index, MCDiskFile& file) const
+std::vector<uint8_t> MCFastFile::ReadStored(int32_t index, const MCDiskFile& file) const
 {
     return StoredBytes(_Entries.at(static_cast<size_t>(index)), file);
 }
@@ -148,26 +142,26 @@ std::vector<uint8_t> MCFastFile::ReadStored(int32_t index, MCDiskFile& file) con
 int32_t MCFastFile::ReadEntry(int32_t index, std::span<uint8_t> data)
 {
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
-    const MCOptionalRef<MCDiskFile> opened = File();
+    const std::shared_ptr<MCDiskFile> opened = File();
 
-    if (!opened)
+    if (opened == nullptr)
     {
         return 0;
     }
 
-    MCDiskFile& file = *opened;
+    const MCDiskFile& file = *opened;
     data = data.first(std::min(data.size(), static_cast<size_t>(std::max(entry.RealSize, 0))));
     const auto offset = static_cast<uint32_t>(entry.Offset);
 
     if (entry.Size == entry.RealSize)
     {
-        return static_cast<int32_t>(file.ReadAt(offset, data));
+        return static_cast<int32_t>(file.ReadShared(offset, data));
     }
 
     // Packed: read the whole stored entry and unpack it (no more than the archive holds past the entry's start).
     const uint32_t stored = file.Length() - std::min(file.Length(), offset);
     std::vector<uint8_t> packed(std::min<size_t>(static_cast<size_t>(std::max(entry.Size, 0)), stored));
-    packed.resize(file.ReadAt(offset, packed));
+    packed.resize(file.ReadShared(offset, packed));
     const int32_t unpacked = LZDecomp(data, packed);
     return unpacked == entry.RealSize ? unpacked : 0;
 }

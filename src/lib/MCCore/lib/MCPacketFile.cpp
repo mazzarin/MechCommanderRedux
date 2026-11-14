@@ -274,6 +274,48 @@ int32_t MCPacketFile::SeekPacket(int32_t packet)
     return offset > 0 ? NO_ERR : PacketOutOfRange;
 }
 
+std::vector<uint8_t> MCPacketFile::ReadStoredPackets(int32_t first, int32_t count)
+{
+    CloseIfOrphaned();
+    _CurrentPacket = -1;
+
+    if (first < 0 || count <= 0 || first > _NumPackets - count || _SeekTable.empty())
+    {
+        return {};
+    }
+
+    const auto length = static_cast<int64_t>(GetLength());
+    std::vector<uint8_t> stored;
+    int64_t start = -1;
+    int64_t end = -1;
+
+    for (int32_t packet = first; packet < first + count; ++packet)
+    {
+        MCPacketStorage storage = MCPacketStorage::Raw;
+        const int64_t offset = ReadPacketOffset(packet, storage);
+        const int64_t next = packet + 1 == _NumPackets ? length : ReadPacketOffset(packet + 1);
+
+        if (offset <= 0 || next < offset || next > length || (end >= 0 && offset != end))
+        {
+            return {};
+        }
+
+        start = start < 0 ? offset : start;
+        end = next;
+        const auto size = static_cast<uint32_t>(next - offset);
+        stored.push_back(static_cast<uint8_t>(storage));
+        stored.push_back(static_cast<uint8_t>(size));
+        stored.push_back(static_cast<uint8_t>(size >> 8));
+        stored.push_back(static_cast<uint8_t>(size >> 16));
+    }
+
+    const size_t table = stored.size();
+    stored.resize(table + static_cast<size_t>(end - start));
+    Seek(static_cast<int32_t>(start));
+    const int32_t read = Read(std::span(stored).subspan(table));
+    return read == end - start ? stored : std::vector<uint8_t>{};
+}
+
 void MCPacketFile::Reserve(int32_t count, bool useCheckSum)
 {
     if (_NumPackets != 0)

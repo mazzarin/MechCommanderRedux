@@ -225,6 +225,13 @@ public:
     std::optional<MCTransitionTable> TransitionArray;
     /// <summary>Whether <see cref="PreloadGestures"/> has run.</summary>
     bool GesturesPreloaded = false;
+    /// <summary>Port-only: FIT "Name" ("Main Info"), for the logs.</summary>
+    std::string Name;
+    /// <summary>
+    /// Port-only (MechBraking): whether the tree's stops have been looked up or worked out (MCPrepareStops), filling
+    /// what follows.
+    /// </summary>
+    bool StopsPrepared = false;
     /// <summary>Port-only (MechBraking): whether each gesture looked at has its art drawn (MCHasGestureArt).</summary>
     std::map<int32_t, bool> GestureArtDrawn;
     /// <summary>Port-only (MechBraking): the run to walk made from the run and walk (MCRunToWalkMade), once worked out.</summary>

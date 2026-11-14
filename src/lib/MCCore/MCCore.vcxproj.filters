@@ -2760,6 +2760,9 @@
     <ClInclude Include="sprite\MCMechStops.h">
       <Filter>sprite</Filter>
     </ClInclude>
+    <ClInclude Include="sprite\MCMechStopsKnown.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
     <ClInclude Include="sprite\MCPaletteNight.h">
       <Filter>sprite</Filter>
     </ClInclude>
@@ -2916,6 +2919,9 @@
       <Filter>vfx</Filter>
     </ClInclude>
     <ClInclude Include="vfx\MCVfxFunctions.h">
+      <Filter>vfx</Filter>
+    </ClInclude>
+    <ClInclude Include="vfx\MCVfxShapeRuns.h">
       <Filter>vfx</Filter>
     </ClInclude>
     <ClInclude Include="vfx\MCVfxView.h">

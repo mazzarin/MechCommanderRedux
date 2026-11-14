@@ -286,9 +286,7 @@ auto MCSpriteManager::GetShapeData(uint32_t appearanceNum, uint32_t packetNum, i
     return shape;
 }
 
-auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
-                                       std::weak_ptr<MCAppearanceType> owner, bool zoomedOut)
-    -> std::shared_ptr<MCShape>
+auto MCSpriteManager::MechFile(uint32_t mechNum, MCMechPart part, bool zoomedOut) -> MCOptionalRef<MCPacketFile>
 {
     const bool use90 = zoomedOut && _PartFiles90[part] != nullptr;
     MCPacketFile& parent = use90 ? *_PartFiles90[part] : *_PartFiles[part];
@@ -299,14 +297,14 @@ auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCM
         // The mech's PAK, a packet of the part PAK, opened when first asked for.
         if (parent.SeekPacket(static_cast<int32_t>(mechNum)) != 0)
         {
-            return nullptr;
+            return std::nullopt;
         }
 
         auto opened = std::make_unique<MCPacketFile>();
 
         if (opened->Open(parent, static_cast<uint32_t>(parent.GetPacketSize())) != 0)
         {
-            return nullptr;
+            return std::nullopt;
         }
 
         if (table.size() <= mechNum)
@@ -317,7 +315,29 @@ auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCM
         table[mechNum] = std::move(opened);
     }
 
-    MCPacketFile& file = *table[mechNum];
+    return *table[mechNum];
+}
+
+auto MCSpriteManager::MechPacketsStored(uint32_t mechNum, MCMechPart part, uint32_t first, uint32_t count,
+                                        bool zoomedOut) -> std::vector<uint8_t>
+{
+    const MCOptionalRef<MCPacketFile> file = MechFile(mechNum, part, zoomedOut);
+    return file ? file->get().ReadStoredPackets(static_cast<int32_t>(first), static_cast<int32_t>(count))
+                : std::vector<uint8_t>{};
+}
+
+auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
+                                       std::weak_ptr<MCAppearanceType> owner, bool zoomedOut)
+    -> std::shared_ptr<MCShape>
+{
+    const MCOptionalRef<MCPacketFile> opened = MechFile(mechNum, part, zoomedOut);
+
+    if (!opened)
+    {
+        return nullptr;
+    }
+
+    MCPacketFile& file = opened->get();
 
     if (file.SeekPacket(static_cast<int32_t>(packetNum)) != 0)
     {

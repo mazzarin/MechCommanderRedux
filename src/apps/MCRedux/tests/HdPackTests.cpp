@@ -9,6 +9,11 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
 #include "lib/MCLz.h"
+#include "gui/MCGuiFont.h"
+#include "gui/MCGuiGlobals.h"
+#include "main/MCLogistics.h"
+#include "platform/MCSharpPictures.h"
+#include "vfx/MCVfxFunctions.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
@@ -2404,4 +2409,147 @@ TEST_CASE_ISOLATED("tool: --hd-measure-lz packs frame files with the game's LZ")
                              static_cast<double>(raw) / 1e6, static_cast<double>(packed) / 1e6,
                              100.0 * static_cast<double>(packed) / static_cast<double>(std::max<uint64_t>(raw, 1)),
                              std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+}
+
+/// <summary>
+/// Port-only: the pack's sharp.hda (MCHdArt::SharpArchive) holds the sharp screens' pictures, each named by its key
+/// (<c>&lt;key&gt;.rg8</c>, its red and green bytes): a font's glyphs and line art made ahead are taken from it where
+/// it has them, of the size the key's picture is; the rest are redrawn; and a picture never made ahead is read from it
+/// as it's first drawn.
+/// </summary>
+TEST_CASE_ISOLATED("hd art: the sharp screens' pictures are the pack's sharp.hda's where it has them, the rest redrawn")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    GHdArt = 1;
+    GlobalLog()->AttachHdArt();
+    REQUIRE(WhiteFont != nullptr);
+    const std::span<const uint8_t> font = WhiteFont->FontData.Bytes();
+    const MCSharpText::MCFontLayers layers = MCSharpText::LayersOf(font);
+
+    // A picture's red and green bytes, and the pack's of it: each byte changed, so that one taken from the pack is
+    // told from one redrawn.
+    const auto redGreen = [](std::vector<uint8_t> rgba)
+    {
+        const MCSharpPictures::MCMadePicture picture(std::move(rgba));
+        REQUIRE(picture.RedGreen().has_value());
+        return std::vector<uint8_t>(picture.RedGreen()->begin(), picture.RedGreen()->end());
+    };
+
+    const auto marked = [](std::vector<uint8_t> bytes)
+    {
+        std::ranges::transform(bytes, bytes.begin(), [](uint8_t byte) { return static_cast<uint8_t>(byte ^ 0x5a); });
+        return bytes;
+    };
+
+    const auto name = [](uint64_t key) { return std::format("{:016x}.rg8", key); };
+
+    // The printable glyphs' pictures: every other one in the pack (one stored raw, the rest packed), one of another
+    // size, the rest not.
+    struct Glyph
+    {
+        uint64_t Key = 0;
+        int32_t Columns = 0;
+        int32_t Rows = 0;
+        std::vector<uint8_t> Redrawn;
+    };
+
+    std::vector<Glyph> glyphs;
+    std::set<uint64_t> seen;
+
+    for (int32_t character = 0x20; character <= 0x7e; ++character)
+    {
+        const std::optional<MCSharpPictures::MCFontGlyph> glyph = MCSharpPictures::FontGlyph(font, character);
+
+        if (!glyph.has_value() || glyph->Pitch <= 0)
+        {
+            continue;
+        }
+
+        const MCSharpPictures::MCGlyphPictures how =
+            MCSharpPictures::GlyphPictures(glyph->Pixels, glyph->Pitch, glyph->Height, layers);
+        std::vector<std::vector<uint8_t>> redrawn =
+            MCSharpPictures::RedrawGlyph(glyph->Pixels, glyph->Pitch, glyph->Height, how);
+
+        for (size_t picture = 0; picture < how.Count(); ++picture)
+        {
+            if (seen.insert(how.KeyOf(picture)).second)
+            {
+                glyphs.push_back({how.KeyOf(picture), glyph->Pitch, glyph->Height, redGreen(redrawn[picture])});
+            }
+        }
+    }
+
+    REQUIRE(glyphs.size() > 10);
+    std::vector<ArchiveEntry> entries;
+    std::set<uint64_t> packed;
+
+    for (size_t at = 0; at < glyphs.size(); at += 2)
+    {
+        const Glyph& glyph = glyphs[at];
+        const std::vector<uint8_t> bytes = marked(glyph.Redrawn);
+
+        if (at == 2)
+        {
+            // Another size: left out.
+            const std::vector<uint8_t> longer(bytes.size() + 2);
+            entries.push_back({name(glyph.Key), StoredDeflate(longer), longer.size(), std::nullopt});
+            continue;
+        }
+
+        entries.push_back(at == 0 ? Raw(name(glyph.Key), bytes)
+                                  : ArchiveEntry{name(glyph.Key), StoredDeflate(bytes), bytes.size(), std::nullopt});
+        packed.insert(glyph.Key);
+    }
+
+    // A mech's diagram's first frame, never made ahead: read from the pack as it's first drawn.
+    const std::span<const uint8_t> atlas = GlobalLog()->MechRepShapes[0].Bytes();
+    const int32_t frame = MCLogistics::MechArmorShapes;
+    REQUIRE(MCHdArt::LineArt(atlas, frame));
+    const std::optional<MCSharpPictures::MCLineArtCut> cut =
+        MCSharpPictures::CutLineArt(atlas, frame, MCHdArt::LineArtDrawn(atlas, frame));
+    REQUIRE(cut.has_value());
+    const std::vector<uint8_t> lines = marked(redGreen(
+        MCSharpLines::Redraw(cut->Art, cut->Columns, cut->Columns, cut->Rows, MCHdArt::LineArtDrawn(atlas, frame))));
+    entries.push_back({name(cut->Key), StoredDeflate(lines), lines.size(), std::nullopt});
+
+    const ScratchFolder scratch("sharp-pictures");
+    WriteBytes(scratch.Path() / "sharp.hda", BuildArchive(entries));
+    MCHdArt::SetPackFolder(scratch.Path());
+    REQUIRE(MCHdArt::SharpArchive() == scratch.Path() / "sharp.hda");
+    MCSharpPictures::MakeFont(font);
+    MCSharpPictures::WaitForMade();
+    CHECK_EQ(MCSharpPictures::Tally().PackPictures, entries.size());
+    CHECK_EQ(MCSharpPictures::Tally().FromPack, packed.size());
+
+    for (const Glyph& glyph : glyphs)
+    {
+        const MCTest::Scope scope(std::format("picture {}", name(glyph.Key)));
+        const std::optional<MCSharpPictures::MCMadePicture> taken =
+            MCSharpPictures::Take(glyph.Key, glyph.Columns, glyph.Rows);
+        REQUIRE(taken.has_value());
+        REQUIRE(taken->RedGreen().has_value());
+        CHECK(
+            std::ranges::equal(*taken->RedGreen(), packed.contains(glyph.Key) ? marked(glyph.Redrawn) : glyph.Redrawn));
+    }
+
+    // Drawn first: the pack's, the size the key's picture is.
+    const size_t fromPack = MCSharpPictures::Tally().TakenFromPack;
+    CHECK(!MCSharpPictures::Take(cut->Key, cut->Columns + 1, cut->Rows).has_value());
+    const std::optional<MCSharpPictures::MCMadePicture> drawn =
+        MCSharpPictures::Take(cut->Key, cut->Columns, cut->Rows);
+    REQUIRE(drawn.has_value());
+    REQUIRE(drawn->RedGreen().has_value());
+    CHECK(std::ranges::equal(*drawn->RedGreen(), lines));
+    CHECK_EQ(MCSharpPictures::Tally().TakenFromPack, fromPack + 1);
+
+    // A pack without one: none.
+    const ScratchFolder bare("sharp-pictures-none");
+    MCHdArt::SetPackFolder(bare.Path());
+    CHECK(!MCHdArt::SharpArchive().has_value());
+    GHdArt = 0;
 }

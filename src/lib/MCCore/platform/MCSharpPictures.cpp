@@ -1,9 +1,13 @@
 #include "stdafx.h"
 #include "platform/MCSharpPictures.h"
+#include "lib/MCFastFile.h"
 #include "lib/MCFnvHash.h"
+#include "lib/MCInflate.h"
 #include "lib/MCWorkers.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCShapeRows.h"
 #include "platform/MCSoftwareRenderer.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
 #include <condition_variable>
@@ -42,11 +46,30 @@ namespace
     constexpr size_t BatchJobs = 32;
     /// <summary>The most helpers the making thread has (MCWorkers::HelpersFor: half the machine's threads, less one).</summary>
     constexpr size_t MostHelpers = 7;
+    /// <summary>
+    /// The extension of a picture in the pack's sharp.hda (MCHdArt::SharpArchive): named by its key, 16 hex digits, and
+    /// holding its pixels' red and green bytes.
+    /// </summary>
+    constexpr std::string_view PackedExtension = ".rg8";
+    /// <summary>
+    /// The most bytes of the pack's sharp.hda read (its pictures as stored: about 3 MB, 14 Nov); past it the pack is
+    /// left out, as a malformed one.
+    /// </summary>
+    constexpr size_t MostPackBytes = size_t{64} * 1024 * 1024;
 
-    /// <summary>The key of what's redrawn from <paramref name="pixels"/>: its kind, size and bytes.</summary>
+    /// <summary>The bytes of a picture redrawn from <paramref name="columns"/> x <paramref name="rows"/> pixels, as kept.</summary>
+    size_t RedGreenBytes(int32_t columns, int32_t rows)
+    {
+        constexpr auto Scale = static_cast<size_t>(MCSharpText::Scale);
+        return static_cast<size_t>(std::max(columns, 0)) * static_cast<size_t>(std::max(rows, 0)) * Scale * Scale *
+               RedGreenPixelBytes;
+    }
+
+    /// <summary>The key of what's redrawn from <paramref name="pixels"/>: the redraws' version, its kind, size and bytes.</summary>
     uint64_t PixelsKey(Kind kind, std::span<const uint8_t> pixels, int32_t pitch, int32_t columns, int32_t rows)
     {
         uint64_t key = MCFnvHash::Basis;
+        MCFnvHash::Mix(key, MCSharpPictures::RedrawVersion);
         MCFnvHash::Mix(key, static_cast<uint64_t>(kind));
         MCFnvHash::Mix(key, static_cast<uint64_t>(columns));
         MCFnvHash::Mix(key, static_cast<uint64_t>(rows));
@@ -94,6 +117,116 @@ namespace
 
     using Job = std::variant<FontJob, GlyphJob, LinesJob>;
 
+    /// <summary>
+    /// The pack's sharp.hda read whole: its directory (MCFastFile::Find; its file closed once read) and its pictures as
+    /// stored, from <see cref="StoredAt"/> in the file on: about 3 MB (14 Nov), so that the helpers and a late draw
+    /// take them without reading the disk.
+    /// </summary>
+    struct Packed
+    {
+        std::unique_ptr<MCFastFile> Archive;
+        std::vector<uint8_t> Stored;
+        size_t StoredAt = 0;
+    };
+
+    /// <summary>The archive at <paramref name="path"/> read whole; null (logged) when it can't be.</summary>
+    std::shared_ptr<const Packed> ReadPack(const std::filesystem::path& path)
+    {
+        const std::string name = MCFileSystem::ToUtf8(path);
+        std::expected<std::unique_ptr<MCFastFile>, std::string> archive = MCFastFile::Create(name);
+
+        if (!archive)
+        {
+            SDL_Log("MCSharpPictures: the pack's %s can't be opened: %s (its pictures are made)", name.c_str(),
+                    archive.error().c_str());
+            return nullptr;
+        }
+
+        // Where its entries' stored bytes lie, checked before they're read.
+        auto packed = std::make_shared<Packed>();
+        size_t first = std::numeric_limits<size_t>::max();
+        size_t end = 0;
+
+        for (const MCFileEntry& entry : (*archive)->GetEntries())
+        {
+            if (entry.Offset < 0 || entry.Size < 0 || entry.RealSize < 0)
+            {
+                SDL_Log("MCSharpPictures: the pack's %s has an entry that can't be (%.*s; its pictures are made)",
+                        name.c_str(), static_cast<int>(entry.GetName().size()), entry.GetName().data());
+                return nullptr;
+            }
+
+            first = std::min(first, static_cast<size_t>(entry.Offset));
+            end = std::max(end, static_cast<size_t>(entry.Offset) + static_cast<size_t>(entry.Size));
+        }
+
+        if (end > first && end - first > MostPackBytes)
+        {
+            SDL_Log("MCSharpPictures: the pack's %s holds %zu bytes, more than %zu (its pictures are made)",
+                    name.c_str(), end - first, MostPackBytes);
+            return nullptr;
+        }
+
+        if (end > first)
+        {
+            std::optional<MCDiskFile> file = (*archive)->OpenAnother();
+            packed->Stored.resize(end - first);
+            packed->StoredAt = first;
+
+            if (!file.has_value() ||
+                file->ReadAt(static_cast<uint32_t>(first), packed->Stored) != packed->Stored.size())
+            {
+                SDL_Log("MCSharpPictures: the pack's %s can't be read (its pictures are made)", name.c_str());
+                return nullptr;
+            }
+        }
+
+        (*archive)->Release();
+        packed->Archive = std::move(*archive);
+        return packed;
+    }
+
+    /// <summary>
+    /// The picture under <paramref name="key"/> in <paramref name="pack"/>, <paramref name="bytes"/> its red and green
+    /// bytes; none when the pack has no such picture, or one of another size or that doesn't unpack (logged).
+    /// </summary>
+    std::optional<MCSharpPictures::MCMadePicture> FromPack(const Packed& pack, uint64_t key, size_t bytes)
+    {
+        const std::optional<int32_t> index = pack.Archive->Find(std::format("{:016x}{}", key, PackedExtension));
+
+        if (!index.has_value())
+        {
+            return std::nullopt;
+        }
+
+        const MCFileEntry& entry = pack.Archive->GetEntries()[static_cast<size_t>(*index)];
+
+        if (static_cast<size_t>(entry.RealSize) != bytes)
+        {
+            return std::nullopt;
+        }
+
+        const std::span<const uint8_t> stored =
+            std::span(pack.Stored)
+                .subspan(static_cast<size_t>(entry.Offset) - pack.StoredAt, static_cast<size_t>(entry.Size));
+
+        if (entry.Size == entry.RealSize)
+        {
+            return MCSharpPictures::MCMadePicture::OfRedGreen({stored.begin(), stored.end()});
+        }
+
+        std::expected<std::vector<uint8_t>, std::string> inflated = MCInflate::Inflate(stored, bytes);
+
+        if (!inflated)
+        {
+            SDL_Log("MCSharpPictures: the pack's picture %016llx doesn't unpack: %s (it's made)",
+                    static_cast<unsigned long long>(key), inflated.error().c_str());
+            return std::nullopt;
+        }
+
+        return MCSharpPictures::MCMadePicture::OfRedGreen(std::move(*inflated));
+    }
+
     /// <summary>A picture made, and the bytes it counts against MostLineArtBytes (0: a glyph's).</summary>
     struct Made
     {
@@ -122,6 +255,13 @@ namespace
         uint64_t LineArtGeneration = 0;
         /// <summary>Set while the making thread works on a batch.</summary>
         bool Working = false;
+        /// <summary>
+        /// The pack's sharp.hda as last asked (MCHdArt::SharpArchive, as a job is queued), and the one read (Pack; by
+        /// the making thread, before the batch after it changed).
+        /// </summary>
+        std::optional<std::filesystem::path> PackPath;
+        std::optional<std::filesystem::path> PackReadFrom;
+        std::shared_ptr<const Packed> Pack;
         MCSharpPictures::MCMadeTally Tally;
         /// <summary>The game's thread's priority as the making thread started, a step below which it runs.</summary>
         MCThreadPriority GamePriority;
@@ -135,10 +275,11 @@ namespace
         return state;
     }
 
-    /// <summary>A job's pictures' keys and how to make them (empty: nothing to make).</summary>
+    /// <summary>A job's pictures' keys, the bytes each is kept in and how to make them (empty: nothing to make).</summary>
     struct Plan
     {
         std::vector<uint64_t> Keys;
+        size_t PictureBytes = 0;
         std::function<std::vector<std::vector<uint8_t>>()> Make;
         size_t LineArtBytes = 0;
     };
@@ -166,12 +307,14 @@ namespace
                 plan.Keys.push_back(pictures.KeyOf(picture));
             }
 
+            plan.PictureBytes = RedGreenBytes(glyph->Pitch, glyph->Height);
             plan.Make = [glyph = *glyph, pictures = std::move(pictures)]
             { return MCSharpPictures::RedrawGlyph(glyph.Pixels, glyph.Pitch, glyph.Height, pictures); };
         }
         else if (const auto* lines = std::get_if<LinesJob>(&job))
         {
             plan.Keys.push_back(lines->Key);
+            plan.PictureBytes = RedGreenBytes(lines->Columns, lines->Rows);
             plan.LineArtBytes = lines->Bytes;
             plan.Make = [lines]
             {
@@ -184,12 +327,13 @@ namespace
     }
 
     /// <summary>
-    /// Runs <paramref name="job"/> on a helper: claims the keys of its pictures no one has (Making), makes them and
-    /// keeps them (Done) unless the renderer has taken to making them meanwhile (Known) or, line art, the line art made
-    /// before <paramref name="lineArtGeneration"/> was forgotten. A job that fails is logged; its pictures are left to
-    /// the renderer.
+    /// Runs <paramref name="job"/> on a helper: claims the keys of its pictures no one has (Making), takes them from
+    /// <paramref name="pack"/> (none: none there) or makes them, and keeps them (Done) unless the renderer has taken to
+    /// making them meanwhile (Known) or, line art, the line art made before <paramref name="lineArtGeneration"/> was
+    /// forgotten. A job that fails is logged; its pictures are left to the renderer.
     /// </summary>
-    void RunJob(const Job& job, uint64_t lineArtGeneration, const std::stop_token& stop)
+    void RunJob(const Job& job, uint64_t lineArtGeneration, const std::shared_ptr<const Packed>& pack,
+                const std::stop_token& stop)
     {
         State& state = TheState();
         const Plan plan = PlanOf(job);
@@ -219,11 +363,33 @@ namespace
             }
         }
 
-        std::vector<std::vector<uint8_t>> made;
+        // The pack's pictures, then (any missing) the job's redrawn for the rest: a glyph's layers are redrawn together.
+        std::vector<std::optional<MCSharpPictures::MCMadePicture>> made(plan.Keys.size());
+        size_t fromPack = 0;
 
         try
         {
-            made = plan.Make();
+            for (size_t picture = 0; pack != nullptr && picture < plan.Keys.size(); ++picture)
+            {
+                if (std::ranges::contains(claimed, plan.Keys[picture]))
+                {
+                    made[picture] = FromPack(*pack, plan.Keys[picture], plan.PictureBytes);
+                    fromPack += made[picture].has_value() ? 1 : 0;
+                }
+            }
+
+            if (fromPack < claimed.size())
+            {
+                std::vector<std::vector<uint8_t>> redrawn = plan.Make();
+
+                for (size_t picture = 0; picture < std::min(made.size(), redrawn.size()); ++picture)
+                {
+                    if (!made[picture].has_value() && !redrawn[picture].empty())
+                    {
+                        made[picture].emplace(std::move(redrawn[picture]));
+                    }
+                }
+            }
         }
         catch (const std::exception& error)
         {
@@ -239,19 +405,19 @@ namespace
         std::scoped_lock lock(state.Lock);
         const bool kept = current();
         bool any = false;
+        state.Tally.FromPack += fromPack;
 
         for (const uint64_t key : claimed)
         {
             state.Making.erase(key);
-            const auto picture = std::ranges::find(plan.Keys, key) - plan.Keys.begin();
+            const auto picture = static_cast<size_t>(std::ranges::find(plan.Keys, key) - plan.Keys.begin());
 
-            if (!kept || state.Known.contains(key) || static_cast<size_t>(picture) >= made.size() ||
-                made[static_cast<size_t>(picture)].empty())
+            if (!kept || state.Known.contains(key) || picture >= made.size() || !made[picture].has_value())
             {
                 continue;
             }
 
-            MCSharpPictures::MCMadePicture done(std::move(made[static_cast<size_t>(picture)]));
+            MCSharpPictures::MCMadePicture done(std::move(*made[picture]));
             MCSharpPictures::MCMadeTally& tally = state.Tally;
             tally.KeptBytes += done.KeptBytes();
             tally.RgbaBytes += done.RgbaBytes();
@@ -280,8 +446,7 @@ namespace
     std::vector<Job> GlyphJobs(const FontJob& font)
     {
         const auto layers = std::make_shared<const MCSharpText::MCFontLayers>(MCSharpText::LayersOf(*font.Font));
-        const int32_t count =
-            font.Font->size() >= FontCountAt + sizeof(int32_t) ? MCRead32(*font.Font, FontCountAt) : 0;
+        const int32_t count = MCSharpPictures::FontGlyphCount(*font.Font);
         std::vector<Job> jobs;
 
         for (int32_t character = FirstMadeCharacter; character <= std::min(LastMadeCharacter, count - 1); ++character)
@@ -330,13 +495,27 @@ namespace
             }
 
             const uint64_t generation = state.LineArtGeneration;
+
+            // The pack's pictures, read again whenever its archive changed (the pack, or whether it has one).
+            if (state.PackPath != state.PackReadFrom)
+            {
+                const std::optional<std::filesystem::path> path = state.PackPath;
+                lock.unlock();
+                std::shared_ptr<const Packed> pack = path.has_value() ? ReadPack(*path) : nullptr;
+                lock.lock();
+                state.Pack = std::move(pack);
+                state.PackReadFrom = path;
+                state.Tally.PackPictures = state.Pack != nullptr ? state.Pack->Archive->GetEntries().size() : 0;
+            }
+
+            const std::shared_ptr<const Packed> pack = state.Pack;
             lock.unlock();
 
             try
             {
                 if (!batch.empty())
                 {
-                    helpers.Run(batch.size(), [&](size_t part) { RunJob(batch[part], generation, stop); });
+                    helpers.Run(batch.size(), [&](size_t part) { RunJob(batch[part], generation, pack, stop); });
                 }
             }
             catch (const std::exception& error)
@@ -350,9 +529,13 @@ namespace
         }
     }
 
-    /// <summary>Queues <paramref name="job"/>, starting the making thread the first time. Call with State::Lock held.</summary>
-    void Queue(State& state, Job&& job)
+    /// <summary>
+    /// Queues <paramref name="job"/>, starting the making thread the first time, the pack's sharp.hda as
+    /// <paramref name="pack"/> (MCHdArt::SharpArchive, asked on the game's thread). Call with State::Lock held.
+    /// </summary>
+    void Queue(State& state, Job&& job, std::optional<std::filesystem::path> pack)
     {
+        state.PackPath = std::move(pack);
         state.Queue.push_back(std::move(job));
 
         if (!state.Maker.joinable())
@@ -363,6 +546,11 @@ namespace
 
         state.Changed.notify_all();
     }
+}
+
+int32_t MCSharpPictures::FontGlyphCount(std::span<const uint8_t> font)
+{
+    return font.size() >= FontCountAt + sizeof(int32_t) ? std::max(MCRead32(font, FontCountAt), 0) : 0;
 }
 
 std::optional<MCSharpPictures::MCFontGlyph> MCSharpPictures::FontGlyph(std::span<const uint8_t> font, int32_t character)
@@ -476,6 +664,39 @@ uint64_t MCSharpPictures::LineArtKey(std::span<const uint8_t> art, int32_t colum
     return key;
 }
 
+std::optional<MCSharpPictures::MCLineArtCut> MCSharpPictures::CutLineArt(
+    std::span<const uint8_t> table, int32_t frame, std::span<const MCSharpLines::MCDrawnLoop> drawn)
+{
+    // A frame whose header the table holds whole.
+    if (frame < 0 || frame >= VfxShapeCount(table) || table.size() < MCShapeRows::RowsAt ||
+        MCShapeOffset(table, frame) > table.size() - MCShapeRows::RowsAt)
+    {
+        return std::nullopt;
+    }
+
+    // Whole, as the game draws it: the rows its header covers.
+    const std::span<const uint8_t> header = table.subspan(MCShapeOffset(table, frame));
+    const std::span<const uint8_t> shapeRows = header.subspan(MCShapeRows::RowsAt);
+    const int32_t rows = MCShapeRows::HeaderRows(header);
+    int32_t columns = 0;
+
+    if (rows <= 0)
+    {
+        return std::nullopt;
+    }
+
+    MCShapeRows::Extent(shapeRows, rows, columns);
+
+    if (columns <= 0)
+    {
+        return std::nullopt;
+    }
+
+    MCLineArtCut cut{LineArt(shapeRows, columns, rows), columns, rows, 0};
+    cut.Key = LineArtKey(cut.Art, columns, rows, drawn);
+    return cut;
+}
+
 MCSharpPictures::MCMadePicture::MCMadePicture(std::vector<uint8_t> rgba) : _RgbaBytes(rgba.size())
 {
     // Blue and alpha are 0 throughout as the redraws leave them: kept as red and green alone, half the bytes.
@@ -500,6 +721,20 @@ MCSharpPictures::MCMadePicture::MCMadePicture(std::vector<uint8_t> rgba) : _Rgba
         _Bytes[pixel * RedGreenPixelBytes] = rgba[pixel * RgbaPixelBytes];
         _Bytes[pixel * RedGreenPixelBytes + 1] = rgba[pixel * RgbaPixelBytes + 1];
     }
+}
+
+MCSharpPictures::MCMadePicture MCSharpPictures::MCMadePicture::OfRedGreen(std::vector<uint8_t> redGreen)
+{
+    MCMadePicture picture;
+    picture._RgbaBytes = redGreen.size() / RedGreenPixelBytes * RgbaPixelBytes;
+    picture._Bytes = std::move(redGreen);
+    picture._RedGreen = true;
+    return picture;
+}
+
+std::optional<std::span<const uint8_t>> MCSharpPictures::MCMadePicture::RedGreen() const
+{
+    return _RedGreen ? std::optional<std::span<const uint8_t>>(_Bytes) : std::nullopt;
 }
 
 void MCSharpPictures::MCMadePicture::CopyRgbaTo(std::span<uint8_t> out) const
@@ -532,41 +767,26 @@ void MCSharpPictures::MakeFont(std::span<const uint8_t> font)
 
     State& state = TheState();
     auto bytes = std::make_shared<const std::vector<uint8_t>>(font.begin(), font.end());
+    std::optional<std::filesystem::path> pack = MCHdArt::SharpArchive();
     std::scoped_lock lock(state.Lock);
-    Queue(state, FontJob{std::move(bytes)});
+    Queue(state, FontJob{std::move(bytes)}, std::move(pack));
 }
 
 void MCSharpPictures::MakeLineArt(std::span<const uint8_t> table, int32_t frame,
                                   std::span<const MCSharpLines::MCDrawnLoop> drawn)
 {
-    if (frame < 0 || frame >= VfxShapeCount(table))
+    std::optional<MCLineArtCut> cut = CutLineArt(table, frame, drawn);
+
+    if (!cut.has_value())
     {
         return;
     }
 
-    // Whole, as the game draws it: the rows its header covers.
-    const std::span<const uint8_t> header = table.subspan(MCShapeOffset(table, frame));
-    const std::span<const uint8_t> shapeRows = header.subspan(MCShapeRows::RowsAt);
-    const int32_t rows = MCShapeRows::HeaderRows(header);
-    int32_t columns = 0;
-
-    if (rows <= 0)
-    {
-        return;
-    }
-
-    MCShapeRows::Extent(shapeRows, rows, columns);
-
-    if (columns <= 0)
-    {
-        return;
-    }
-
-    LinesJob job{LineArt(shapeRows, columns, rows), columns, rows, {drawn.begin(), drawn.end()}, 0, 0};
-    job.Key = LineArtKey(job.Art, columns, rows, drawn);
     constexpr auto Scale = static_cast<size_t>(MCSharpText::Scale);
-    job.Bytes = static_cast<size_t>(columns) * static_cast<size_t>(rows) * Scale * Scale * RedGreenPixelBytes;
+    LinesJob job{std::move(cut->Art), cut->Columns, cut->Rows, {drawn.begin(), drawn.end()}, cut->Key, 0};
+    job.Bytes = static_cast<size_t>(job.Columns) * static_cast<size_t>(job.Rows) * Scale * Scale * RedGreenPixelBytes;
     State& state = TheState();
+    std::optional<std::filesystem::path> pack = MCHdArt::SharpArchive();
     std::scoped_lock lock(state.Lock);
 
     if (state.Known.contains(job.Key) || state.Done.contains(job.Key) || state.Making.contains(job.Key) ||
@@ -583,10 +803,10 @@ void MCSharpPictures::MakeLineArt(std::span<const uint8_t> table, int32_t frame,
 
     state.LineArtBytes += job.Bytes;
     state.Asked.insert(job.Key);
-    Queue(state, std::move(job));
+    Queue(state, std::move(job), std::move(pack));
 }
 
-std::optional<MCSharpPictures::MCMadePicture> MCSharpPictures::Take(uint64_t key)
+std::optional<MCSharpPictures::MCMadePicture> MCSharpPictures::Take(uint64_t key, int32_t columns, int32_t rows)
 {
     State& state = TheState();
     std::unique_lock lock(state.Lock);
@@ -595,9 +815,24 @@ std::optional<MCSharpPictures::MCMadePicture> MCSharpPictures::Take(uint64_t key
     state.Asked.erase(key);
     const auto found = state.Done.find(key);
 
+    // Not made ahead: from the pack's pictures, read (none: made by the caller).
     if (found == state.Done.end())
     {
-        return std::nullopt;
+        const std::shared_ptr<const Packed> pack = state.Pack;
+        lock.unlock();
+        std::optional<MCMadePicture> packed =
+            pack != nullptr ? FromPack(*pack, key, RedGreenBytes(columns, rows)) : std::nullopt;
+        lock.lock();
+
+        if (packed.has_value())
+        {
+            MCMadeTally& tally = state.Tally;
+            ++tally.TakenFromPack;
+            ++tally.Taken;
+            tally.TakenRgbaBytes += packed->RgbaBytes();
+        }
+
+        return packed;
     }
 
     MCMadePicture picture = std::move(found->second.Picture);

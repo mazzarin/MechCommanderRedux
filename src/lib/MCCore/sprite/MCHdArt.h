@@ -267,6 +267,14 @@ namespace MCHdArt
     bool Active();
 
     /// <summary>
+    /// Port-only: the pack's archive of the pictures a sharp screen draws its text and line art with
+    /// (<c>sharp.hda</c>, platform/MCSharpPictures's, each named by its key), when the pack folder exists, its
+    /// <c>pack.cfg</c> is of a format this code reads and it has one (looked for once a pack); none otherwise. HD art
+    /// needn't be on: the pictures are the same whatever the pack's art.
+    /// </summary>
+    std::optional<std::filesystem::path> SharpArchive();
+
+    /// <summary>
     /// Whether the pack's mech and object folders, named by the game's sprite files' numbers, are drawn: <see
     /// cref="Active"/>, and the pack was made from this game's sprite files (<c>pack.cfg</c>'s Sprites, when it says).
     /// A pack made from other files would put another mech's frames in a mech's place; its ground and menu pictures,

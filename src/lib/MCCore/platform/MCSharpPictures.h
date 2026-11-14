@@ -17,6 +17,13 @@
 /// </remarks>
 namespace MCSharpPictures
 {
+    /// <summary>
+    /// The redraws' version, part of every picture's key: one more whenever what MCSharpText or MCSharpLines draws
+    /// changes, so the pictures of the HD art pack's sharp.hda, made by the version before, are left alone (made here
+    /// again) until it's made again (tools/upscale/make_sharp_pack.py). Tests pin the redraws of this version.
+    /// </summary>
+    inline constexpr uint64_t RedrawVersion = 1;
+
     /// <summary>A VFX font's glyph: where it lies in the font, its width (its rows' pitch), the font's height, its bytes.</summary>
     struct MCFontGlyph
     {
@@ -25,6 +32,9 @@ namespace MCSharpPictures
         int32_t Height = 0;
         std::span<const uint8_t> Pixels;
     };
+
+    /// <summary>The glyphs in the VFX font <paramref name="font"/>'s table (0 when it has none).</summary>
+    int32_t FontGlyphCount(std::span<const uint8_t> font);
 
     /// <summary>
     /// Glyph <paramref name="character"/> of the VFX font <paramref name="font"/> whole, as it's redrawn: its width by
@@ -69,6 +79,23 @@ namespace MCSharpPictures
     uint64_t LineArtKey(std::span<const uint8_t> art, int32_t columns, int32_t rows,
                         std::span<const MCSharpLines::MCDrawnLoop> drawn);
 
+    /// <summary>Line art cut from a shape frame: its pixels (<see cref="LineArt"/>'s), its size and its key.</summary>
+    struct MCLineArtCut
+    {
+        std::vector<uint8_t> Art;
+        int32_t Columns = 0;
+        int32_t Rows = 0;
+        uint64_t Key = 0;
+    };
+
+    /// <summary>
+    /// Frame <paramref name="frame"/> of the shape table <paramref name="table"/> cut as line art whole (the rows its
+    /// header covers, as the game draws it), <paramref name="drawn"/> its parts drawn by hand: none when the table has no
+    /// such frame or it draws nothing.
+    /// </summary>
+    std::optional<MCLineArtCut> CutLineArt(std::span<const uint8_t> table, int32_t frame,
+                                           std::span<const MCSharpLines::MCDrawnLoop> drawn);
+
     /// <summary>
     /// A picture made ahead, as the renderer uploads it: RGBA8 (<see cref="MCSharpText::Redraw"/>'s form, red the byte,
     /// green the coverage), kept as its red and green alone when its blue and alpha are 0 throughout, as the redraws
@@ -79,14 +106,21 @@ namespace MCSharpPictures
     public:
         explicit MCMadePicture(std::vector<uint8_t> rgba);
 
+        /// <summary>A picture kept as <paramref name="redGreen"/>, its pixels' red and green bytes (blue and alpha 0).</summary>
+        static MCMadePicture OfRedGreen(std::vector<uint8_t> redGreen);
+
         /// <summary>Its bytes as RGBA8.</summary>
         size_t RgbaBytes() const { return _RgbaBytes; }
         /// <summary>The bytes it's kept in.</summary>
         size_t KeptBytes() const { return _Bytes.size(); }
+        /// <summary>Its pixels' red and green bytes, when it's kept so (none: kept whole).</summary>
+        std::optional<std::span<const uint8_t>> RedGreen() const;
         /// <summary>Writes it as RGBA8 into <paramref name="out"/> (<see cref="RgbaBytes"/> of them).</summary>
         void CopyRgbaTo(std::span<uint8_t> out) const;
 
     private:
+        MCMadePicture() = default;
+
         std::vector<uint8_t> _Bytes;
         size_t _RgbaBytes = 0;
         bool _RedGreen = false;
@@ -94,14 +128,16 @@ namespace MCSharpPictures
 
     /// <summary>
     /// Has the glyphs of the printable characters (space to tilde, the game's text) of the VFX font
-    /// <paramref name="font"/> made ahead, those not made or drawn already (its bytes are copied).
+    /// <paramref name="font"/> made ahead, those not made or drawn already (its bytes are copied): taken from the HD art
+    /// pack's sharp.hda (MCHdArt::SharpArchive, read whole by the making thread the first time) where it has them.
     /// </summary>
     void MakeFont(std::span<const uint8_t> font);
 
     /// <summary>
     /// Has frame <paramref name="frame"/> of the shape table <paramref name="table"/> made ahead as line art whole (the
     /// rows its header covers, as the game draws it), <paramref name="drawn"/> its parts drawn by hand, unless made or
-    /// drawn already, or the line art made ahead and not taken would take more than <see cref="MostLineArtBytes"/>.
+    /// drawn already, or the line art made ahead and not taken would take more than <see cref="MostLineArtBytes"/>:
+    /// taken from the pack's sharp.hda where it has it, as a font's glyphs are.
     /// </summary>
     void MakeLineArt(std::span<const uint8_t> table, int32_t frame, std::span<const MCSharpLines::MCDrawnLoop> drawn);
 
@@ -113,9 +149,10 @@ namespace MCSharpPictures
 
     /// <summary>
     /// The picture made ahead under <paramref name="key"/>, handed over (kept here no more), waiting while it's being
-    /// made. None when it wasn't asked for, or not begun yet: then it never is (the caller makes it).
+    /// made; else the pack's sharp.hda's, when read already and it has one redrawn from <paramref name="columns"/> x
+    /// <paramref name="rows"/> pixels. None when neither: then it's never made here (the caller makes it).
     /// </summary>
-    std::optional<MCMadePicture> Take(uint64_t key);
+    std::optional<MCMadePicture> Take(uint64_t key, int32_t columns, int32_t rows);
 
     /// <summary>
     /// Drops the line art asked for and made, not taken (a logistics' lists go with it; what's being made is dropped
@@ -135,12 +172,16 @@ namespace MCSharpPictures
         /// <summary>Line art drawings made ahead, and those left to be made as drawn (past MostLineArtBytes).</summary>
         size_t Drawings = 0;
         size_t DrawingsLeft = 0;
+        /// <summary>The pictures in the pack's sharp.hda as last read, and those of the above taken from it.</summary>
+        size_t PackPictures = 0;
+        size_t FromPack = 0;
         /// <summary>The bytes all those were kept in, and would take as RGBA8 (on the GPU).</summary>
         size_t KeptBytes = 0;
         size_t RgbaBytes = 0;
-        /// <summary>The pictures the renderer took, and their RGBA8 bytes.</summary>
+        /// <summary>The pictures the renderer took, and their RGBA8 bytes; and of those, the ones not made ahead, read from the pack then.</summary>
         size_t Taken = 0;
         size_t TakenRgbaBytes = 0;
+        size_t TakenFromPack = 0;
         /// <summary>The pictures made and not taken, and the bytes they're kept in.</summary>
         size_t Held = 0;
         size_t HeldBytes = 0;

@@ -40,6 +40,8 @@ namespace
     /// apart (<c>maps.hda</c>) so that the menus' archive holds only what the screens show (MCHdArt.h).
     /// </summary>
     constexpr std::string_view MapFolder = "maps";
+    /// <summary>Port-only: the pack's archive of the sharp screens' pictures (MCHdArt::SharpArchive).</summary>
+    constexpr std::string_view SharpArchiveName = "sharp.hda";
     /// <summary>The folders a picture is looked for in, in order.</summary>
     constexpr std::array<std::string_view, 2> PictureFolders = {PictureFolder, MapFolder};
     constexpr std::string_view PaletteFile = "palette.rgb";
@@ -374,6 +376,8 @@ namespace
         /// <summary>The folder set (empty: the default), and whether the folder in use exists (unknown: not looked).</summary>
         std::filesystem::path Folder;
         std::optional<bool> FolderExists;
+        /// <summary>The pack's sharp.hda, once looked for (MCHdArt::SharpArchive).</summary>
+        std::optional<std::optional<std::filesystem::path>> Sharp;
         std::unordered_map<MCAddressKey, Sequence> Sequences;
         size_t Attached = 0;
         /// <summary>The folders frames were looked up in, and each one's index there.</summary>
@@ -2199,6 +2203,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Folder = folder;
     state.FoundFolder.reset();
     state.FolderExists.reset();
+    state.Sharp.reset();
     state.PackFileLooked = false;
     state.PackFormatReadable = true;
     state.PackSprites.reset();
@@ -2360,28 +2365,48 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>Whether the pack folder exists and its pack.cfg (if it has one) is of a format this code reads.</summary>
+    bool PackReadable()
+    {
+        State& state = TheState();
+
+        if (!state.FolderExists.has_value())
+        {
+            std::error_code error;
+            state.FolderExists = std::filesystem::is_directory(MCHdArt::PackFolder(), error);
+        }
+
+        if (!*state.FolderExists)
+        {
+            return false;
+        }
+
+        ReadPackFile();
+        return state.PackFormatReadable;
+    }
+}
+
 bool MCHdArt::Active()
 {
-    if (GHdArt == 0)
-    {
-        return false;
-    }
+    return GHdArt != 0 && PackReadable();
+}
 
+std::optional<std::filesystem::path> MCHdArt::SharpArchive()
+{
     State& state = TheState();
 
-    if (!state.FolderExists.has_value())
+    if (!state.Sharp.has_value())
     {
+        const std::filesystem::path path = PackFolder() / SharpArchiveName;
         std::error_code error;
-        state.FolderExists = std::filesystem::is_directory(PackFolder(), error);
+        state.Sharp = PackReadable() && std::filesystem::is_regular_file(path, error)
+                          ? std::optional<std::filesystem::path>(path)
+                          : std::nullopt;
     }
 
-    if (!*state.FolderExists)
-    {
-        return false;
-    }
-
-    ReadPackFile();
-    return state.PackFormatReadable;
+    return *state.Sharp;
 }
 
 bool MCHdArt::NumberedFolders()

@@ -838,17 +838,45 @@ uint64_t MCProgramSwap::SetupLevel(MCUpdateDisk& disk, const std::filesystem::pa
 
     if (!level)
     {
-        SDL_Log("Updater: the setup's level can't be read (%s): its setup runs", level.error().c_str());
+        SDL_Log("Updater: the setup's level can't be read (%s): taken as none", level.error().c_str());
         return 0;
     }
 
     return level->value_or(0);
 }
 
-bool MCProgramSwap::Swaps(uint64_t copyLevel, const MCReleaseFile::MCProgram& program)
+namespace
 {
-    return program.Zip.has_value() && program.SetupLevel != 0 && copyLevel == program.SetupLevel &&
-           std::ranges::contains(program.Files, GameName, &MCProgramFile::Name);
+    /// <summary>Whether release.json gives <paramref name="program"/>'s files for the swap: their zip, the game among them.</summary>
+    bool GivesFiles(const MCReleaseFile::MCProgram& program)
+    {
+        return program.Zip.has_value() &&
+               std::ranges::contains(program.Files, MCProgramSwap::GameName, &MCProgramFile::Name);
+    }
+}
+
+bool MCProgramSwap::Swaps(uint64_t copyLevel, bool setupOwns, const MCReleaseFile::MCProgram& program)
+{
+    return GivesFiles(program) && (!setupOwns || (program.SetupLevel != 0 && copyLevel == program.SetupLevel));
+}
+
+bool MCProgramSwap::Swaps(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCSetupOwns& setupOwns,
+                          const MCReleaseFile::MCProgram& program)
+{
+    // A program that comes only as its setup (the Mac's, an older release.json's) asks nothing of the copy.
+    if (!GivesFiles(program))
+    {
+        return false;
+    }
+
+    const bool owned = !setupOwns || setupOwns(gameFolder);
+    const uint64_t level = SetupLevel(disk, gameFolder);
+    const bool swaps = Swaps(level, owned, program);
+    SDL_Log("Updater: build %llu goes in by %s (the copy %s; its setup's level %llu, the release's %llu)",
+            static_cast<unsigned long long>(program.Build), swaps ? "the game's swap" : "the setup",
+            owned ? "is the setup's install" : "isn't the setup's install", static_cast<unsigned long long>(level),
+            static_cast<unsigned long long>(program.SetupLevel));
+    return swaps;
 }
 
 std::expected<void, std::string> MCProgramSwap::Stage(MCUpdateDisk& disk, MCContentStage::MCSource& source,

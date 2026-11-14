@@ -32,6 +32,7 @@
 #include "main/MCArtModes.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
+#include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "logistics/MCUnitLimits.h"
@@ -339,6 +340,37 @@ namespace
         return std::static_pointer_cast<MCLogMech>(briefing.DeployUnits.front());
     }
 
+    /// <summary>The briefing screen's launch button, its middle.</summary>
+    constexpr POINT LaunchButton{0x230, 0x152};
+
+    /// <summary>On the briefing screen, the first mech the deploy pane lists dragged into the first drop slot.</summary>
+    void DeployFirstMech()
+    {
+        // Pinned only for the set-up: the launch takes logistics down.
+        const std::shared_ptr<MCLogistics> pinned = GlobalLog();
+        REQUIRE(pinned->CurrentScreen() == pinned->BriefingScreen);
+        std::shared_ptr<MCLogMech> mech = FirstDeployMech(*pinned->BriefingScreen);
+        REQUIRE(mech != nullptr);
+        MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
+        DragMech(*mech, SlotMiddle(0).x, SlotMiddle(0).y);
+        REQUIRE(mech->Deployed != 0);
+    }
+
+    /// <summary>The launch button, then frames until the scenario is up.</summary>
+    /// <returns>Whether the scenario is up.</returns>
+    bool Launch()
+    {
+        constexpr int32_t mostFrames = 300;
+        RealClick(LaunchButton.x, LaunchButton.y);
+
+        for (int32_t frame = 0; frame < mostFrames && Scenario() == nullptr; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+
+        return Scenario() != nullptr;
+    }
+
     /// <summary>
     /// From the main menu, a new campaign's first mission: its briefing, the first mech in the first drop slot, the
     /// launch button, then frames until the scenario is up.
@@ -348,30 +380,8 @@ namespace
     {
         NewCampaign();
         Settle();
-
-        {
-            // Pinned only for the set-up: the launch takes logistics down.
-            const std::shared_ptr<MCLogistics> pinned = GlobalLog();
-            REQUIRE(pinned->CurrentScreen() == pinned->BriefingScreen);
-            std::shared_ptr<MCLogMech> mech = FirstDeployMech(*pinned->BriefingScreen);
-            REQUIRE(mech != nullptr);
-            MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
-            DragMech(*mech, SlotMiddle(0).x, SlotMiddle(0).y);
-            REQUIRE(mech->Deployed != 0);
-        }
-
-        // The launch button.
-        constexpr int32_t launchX = 0x230;
-        constexpr int32_t launchY = 0x152;
-        constexpr int32_t mostFrames = 300;
-        RealClick(launchX, launchY);
-
-        for (int32_t frame = 0; frame < mostFrames && Scenario() == nullptr; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-
-        return Scenario() != nullptr;
+        DeployFirstMech();
+        return Launch();
     }
 }
 
@@ -1114,6 +1124,123 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         MCFileSystem::RemoveFile(GamePath(SavePath, save, ".sav"));
         MCFileSystem::RemoveFile(GamePath(SavePath, save, ".pur"));
     }
+}
+
+namespace
+{
+    /// <summary>
+    /// A new campaign saved as <paramref name="name"/> with spare mechs making <paramref name="units"/> units (as a
+    /// player with MoreUnits buys, or a mission's salvage brings), the inventory sold off since, then loaded from the
+    /// load screen as a player does: its briefing comes up.
+    /// </summary>
+    void LoadCampaignOwning(std::string_view name, int32_t units)
+    {
+        NewCampaign();
+        Settle();
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        MCTestGame::OwnUnits(units);
+        REQUIRE_EQ(NumUnits(), units);
+        REQUIRE_EQ(logistics->SaveCampaign(name), 0);
+        logistics->MechList->Clear();
+        LoadFromScreen(name, 0);
+        REQUIRE(logistics->CurrentScreen() == logistics->BriefingScreen);
+    }
+
+    /// <summary>The menus' message dialog, showing <paramref name="text"/>, closed with its OK.</summary>
+    void CloseMessage(std::string_view text)
+    {
+        MCReusableDialog& message = *GlobalLog()->MessageDialog;
+        REQUIRE(message.IsShowing());
+        CHECK_EQ(message.Text, text);
+        MCGuiObject& ok = *message.OkButton;
+        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+        Settle();
+        CHECK(!message.IsShowing());
+    }
+
+    /// <summary>
+    /// The launch button, refused with <paramref name="units"/> owned over the limit of <paramref name="most"/>: no
+    /// mission, and the message saying how many units to sell first.
+    /// </summary>
+    void LaunchRefused(int32_t units, int32_t most)
+    {
+        RealClick(LaunchButton.x, LaunchButton.y);
+        Settle();
+        CHECK(Scenario() == nullptr);
+        CloseMessage(MCFormatPrintf(LoadGameString(0x373, 0xfe), units, most, units - most));
+    }
+
+    /// <summary>Spare mechs sold off (the inventory's first) until the player owns <paramref name="units"/>.</summary>
+    void SellDownTo(int32_t units)
+    {
+        while (NumUnits() > units)
+        {
+            REQUIRE_EQ(GlobalLog()->MechList->RemoveMech(0), 0);
+        }
+    }
+
+    /// <summary>Save <paramref name="name"/>'s files deleted.</summary>
+    void RemoveSave(std::string_view name)
+    {
+        MCFileSystem::RemoveFile(GamePath(SavePath, name, ".sav"));
+        MCFileSystem::RemoveFile(GamePath(SavePath, name, ".pur"));
+    }
+}
+
+/// <summary>
+/// Port-only (MoreUnits): with MoreUnits a save holding more than the original's 50 units loads whole, the shop has
+/// room for more, and LAUNCH starts the mission; past 100 (a mission's salvage can take it there) LAUNCH asks to sell
+/// down to 100 first.
+/// </summary>
+TEST_CASE_ISOLATED("game: with MoreUnits a save holding more than 50 units is bought into and launched")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Save = "p3moreunits";
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    GMoreUnits = 1;
+    LoadCampaignOwning(Save, 101);
+    RemoveSave(Save);
+    CHECK_EQ(NumUnits(), 101);
+    DeployFirstMech();
+    LaunchRefused(101, 100);
+
+    // Sold down to 60: room in the shop for 40 more, and the mission starts.
+    SellDownTo(60);
+    CHECK_EQ(MaxPurchase(-1), 40);
+    CHECK(!CheckMaxUnits());
+    CHECK(Launch());
+}
+
+/// <summary>
+/// A save holding more units than the original's 50 (60: one made with MoreUnits, loaded without it or by an older
+/// build) loads whole, as the original's did a save taken past its limit by salvage: the shop sells nothing more, and
+/// LAUNCH asks to sell down to 50 first, then starts the mission.
+/// </summary>
+TEST_CASE_ISOLATED("game: without MoreUnits a save holding more than 50 units launches once sold down to 50")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Save = "p3overlimit";
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    REQUIRE_EQ(GMoreUnits, 0);
+    LoadCampaignOwning(Save, 60);
+    RemoveSave(Save);
+    CHECK_EQ(NumUnits(), 60);
+    CHECK(CheckMaxUnits());
+    CloseMessage(LoadGameString(0x374, 0xfe));
+    DeployFirstMech();
+    LaunchRefused(60, 50);
+    SellDownTo(50);
+    CHECK(Launch());
 }
 
 TEST_CASE_ISOLATED("game: the mission's start file puts the deployed mech and its pilot at the drop zone")

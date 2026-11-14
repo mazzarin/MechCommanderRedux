@@ -3,6 +3,7 @@
 #include "engine/MCCraterManager.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
+#include "logistics/MCUnitLimits.h"
 #include "main/MCTelemetry.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
@@ -65,6 +66,9 @@ namespace
         MCSetting{.Key = "HDStops", .Value = GHdStops},
         // MechBraking (gameplay) has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
         MCSetting{.Key = "MechBraking", .Value = GMechBraking, .Gameplay = true},
+        // MoreUnits (gameplay) lets the player own 100 mechs and vehicles outside a match, not 50
+        // (logistics/MCUnitLimits.h).
+        MCSetting{.Key = "MoreUnits", .Value = GMoreUnits, .Gameplay = true},
         // Reports sends reports of the computer, how the game runs, its settings and its crashes, under a random ID, once
         // the player has seen what they hold (main/MCTelemetry.h): off until then, whatever the build.
         MCSetting{.Key = "Reports", .Value = GReports, .Personal = 0, .Player = true},

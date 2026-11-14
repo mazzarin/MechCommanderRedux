@@ -218,13 +218,21 @@ namespace MCHdArt
     std::filesystem::path FolderOf(const IconShapeKey& key);
 
     /// <summary>
-    /// The bytes of frames kept in memory before the least recently used go: an eighth of the machine's memory (1 GB on
-    /// 8 GB), from 128 MB up to 2 GB, unless <see cref="SetCacheBudget"/> set another.
+    /// The bytes of frames kept in memory before the least recently used go: MCMemoryRoom::MostHdBytes, unless
+    /// <see cref="SetCacheBudget"/> set another. Port-only: below it the frames go only while memory is short
+    /// (<see cref="NextFrame"/>).
     /// </summary>
     size_t CacheBudget();
 
-    /// <summary>Sets the budget (0: the machine's again), dropping frames until the kept ones fit (for the tests).</summary>
+    /// <summary>Sets the budget (0: MostHdBytes again), dropping frames until the kept ones fit (for the tests).</summary>
     void SetCacheBudget(size_t bytes);
+
+    /// <summary>
+    /// Port-only: a frame begins (the renderer's, as it starts recording one). While <paramref name="memoryShort"/>
+    /// (MCMemoryRoom::MCFrameRoom), the least recently used frames go until MCMemoryRoom::TrimmedBytesPerFrame have
+    /// gone, but never one asked for in the frame before or since: those are being drawn.
+    /// </summary>
+    void NextFrame(bool memoryShort);
 
     /// <summary>
     /// Drops the kept frames of the ground and its relief maps, which nothing reads once the GPU has the ground up

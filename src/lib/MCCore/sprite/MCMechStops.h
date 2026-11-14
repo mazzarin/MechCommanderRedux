@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 class MCSpriteTree;
 
@@ -24,6 +25,21 @@ extern int GMechBraking;
 /// server's MechBraking when every player's build brakes too; MCMultiPlayer::MatchRules).
 /// </summary>
 [[nodiscard]] bool MCMechBrakingInForce();
+
+/// <summary>
+/// Port-only: the version of braking in force, 0 for none. To the player it is BRAKING whatever its version; a version
+/// is how a match whose builds brake differently plays the same. Version 2 keeps a group move's mechs to where the
+/// original halts them: a stop fitted to where crash avoidance ends the move short of a unit on its end, the cell a mech
+/// will come to rest in claimed so that a mech headed there too ends short of it, a run's stop playing walk strides
+/// where its run's strides can't reach, a running mech walking behind a slower unit on its path, a planned stop whose
+/// move ends early halting where the original halts it, and outside a match a STOP braked through the stopping art.
+/// The latest outside a match; in one, the latest every player's build plays (MCOptionVersions::Braking, by the
+/// match's rules, MCMultiPlayer::MatchRules).
+/// </summary>
+[[nodiscard]] int32_t MCMechBrakingVersion();
+
+/// <summary>Port-only: braking's version 2 (<see cref="MCMechBrakingVersion"/>).</summary>
+inline constexpr int32_t BrakingVersion2 = 2;
 
 /// <summary>Port-only (MechBraking, HDStops): the tree's gestures standing, walking, running and between them.</summary>
 namespace MCStopGesture
@@ -54,6 +70,48 @@ inline constexpr float MaxStrideRate = 1.25f;
 /// (the original's, the last step's margin of error, 4 m from its end): its stop ends there, within this.
 /// </summary>
 inline constexpr float BrakeArrivalSlack = 1.5f;
+/// <summary>
+/// Port-only (MechBraking): the strides, beyond its stop's metres, within which a striding mech claims the cell
+/// its move ends at (MCBattleMech::ClaimedCell): early enough that a mech behind it, headed there too, still fits its stop
+/// to the cell before.
+/// </summary>
+inline constexpr float ClaimStrides = 2.0f;
+/// <summary>
+/// Port-only (MechBraking): the least metres, beyond its stop's, within which a striding mech claims its move's
+/// end (a walk's two strides are too few: a mech behind, a cell short, can't fit its stop).
+/// </summary>
+inline constexpr float ClaimLeastMetres = 60.0f;
+/// <summary>
+/// Port-only (MechBraking): the most walk strides a run's stop plays beyond its one (run to walk, walk strides,
+/// walk to stand), so that it reaches distances its run's strides alone can't: a run's stop starts only at one frame of
+/// its stride, the stride paced <see cref="MinStrideRate"/> to <see cref="MaxStrideRate"/>, so some fall between.
+/// </summary>
+inline constexpr int32_t StopWalksMost = 3;
+/// <summary>
+/// Port-only (MechBraking): the strides, beyond a run's stop, a running mech keeps behind a slower unit on its
+/// path (MCBattleMech::PlanStop: it walks within them, and runs again a stride further off).
+/// </summary>
+inline constexpr float FollowStrides = 1.0f;
+/// <summary>
+/// Port-only (MechBraking): the share of its running speed below which a unit ahead counts as slower, so a
+/// running mech walks behind it (one running too keeps its distance by itself).
+/// </summary>
+inline constexpr float FollowSlower = 0.9f;
+/// <summary>
+/// Port-only (MechBraking): the strides, beyond a run's stop, its move's end must be off for a mech not yet
+/// running to start a run (nearer, it couldn't stop from it there).
+/// </summary>
+inline constexpr float RunStartStrides = 1.5f;
+/// <summary>
+/// Port-only (MechBraking): the least share of the stride's speed the stopping art has where a STOP's stop
+/// (MCMechActor::QuickStop) goes into it (further in, it halts in a frame or two: no pose jumps, but no braking either).
+/// </summary>
+inline constexpr float QuickEntryShare = 0.5f;
+/// <summary>
+/// Port-only (MechBraking): the metres past its next position a STOP's stop keeps clear of cells other units
+/// hold.
+/// </summary>
+inline constexpr float QuickStopClearance = 2.5f;
 
 /// <summary>Port-only (MechBraking): a stride fitted to start a stop where the stop then ends on the spot.</summary>
 struct MCStridePlan
@@ -146,6 +204,30 @@ struct MCMadeRunToWalk
 /// none without a run and a walk drawn.
 /// </summary>
 [[nodiscard]] std::optional<MCMadeRunToWalk> MCMakeRunToWalk(MCSpriteTree& tree);
+
+/// <summary>
+/// Port-only (MechBraking): how alike each frame of one gesture is to each of another's, as drawn: the pixels the legs
+/// and torso draw in both and in either, over the legs' sixteen facings, frame by frame (first's frame times second's
+/// frames plus second's). Likeness is shared over either.
+/// </summary>
+struct MCLikeness
+{
+    uint32_t FirstFrames = 0;
+    uint32_t SecondFrames = 0;
+    std::vector<int64_t> Shared;
+    std::vector<int64_t> Either;
+};
+
+/// <summary>Port-only (MechBraking): <see cref="MCLikeness"/> of <paramref name="first"/>'s frames to
+/// <paramref name="second"/>'s in <paramref name="tree"/>; none without both drawn.</summary>
+[[nodiscard]] std::optional<MCLikeness> MCGestureLikeness(MCSpriteTree& tree, int32_t first, int32_t second);
+
+/// <summary>
+/// Port-only (MechBraking): for each frame of stride <paramref name="stride"/> (walk or run), the walk to
+/// stand's frame it goes into as drawn alike (MCGestureLikeness) as the art's own way in (the walk's frame it gives way
+/// at into the stop's first), or -1 where none is: the frames a stop goes in at without a jump. Worked out once a tree.
+/// </summary>
+[[nodiscard]] const std::vector<int32_t>& MCStopEntries(MCSpriteTree& tree, int32_t stride);
 
 /// <summary>
 /// Port-only (MechBraking): the run's frame a run to walk starts after (FIT RunToRWFrame). The expansion's mechs leave

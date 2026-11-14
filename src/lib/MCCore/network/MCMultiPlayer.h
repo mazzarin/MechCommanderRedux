@@ -128,6 +128,12 @@ namespace MCMatchRule
     /// </summary>
     inline constexpr uint32_t Rematch = 1u << 27;
     /// <summary>
+    /// Port-only (Redux HD): braking at version 2 (MCOptionVersions::Braking; sprite/MCMechStops.h's
+    /// MCMechBrakingVersion), BRAKING to the player as ever. In the match's rules with MechBraking whenever every
+    /// player's build plays it; with a build that doesn't in the match, braking plays at version 1.
+    /// </summary>
+    inline constexpr uint32_t BrakingV2 = 1u << 28;
+    /// <summary>
     /// Not a rule, never sent: in the host's chosen rules (MCMatchOptions::Rules, from the command line), braking as the
     /// host's PREFS say (MCWantedRules), with the other rules chosen.
     /// </summary>
@@ -135,7 +141,7 @@ namespace MCMatchRule
     /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
     inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
                                           NoMines | NoProbes | PilotRanks | WeaponBans | DataHash | RejoinsHost |
-                                          NightLights | MechHandover | Rematch;
+                                          NightLights | MechHandover | Rematch | BrakingV2;
 } // namespace MCMatchRule
 
 /// <summary>A pilot's rank (MCPurPilotData::Rank, MCLogWarrior's): the purchase files' PilotCosts order.</summary>
@@ -225,6 +231,15 @@ namespace MCOptionVersions
         MCValueVersion{.Version = 2, .Rules = MCMatchRule::TimeOfDayRules | MCMatchRule::NightLights}};
     inline constexpr std::array TimeOfDay = {
         MCValueVersions{.Value = static_cast<int32_t>(MCTimeOfDay::Night), .Versions = Night}};
+    /// <summary>
+    /// BRAKING on: version 1 braking to a halt (Redux HD release 1); version 2 a group move's mechs braked to where the
+    /// original halts them too (MCMatchRule::BrakingV2; MCMechBrakingVersion), whose games play version 1 with a game
+    /// of version 1 in the room.
+    /// </summary>
+    inline constexpr std::array BrakingOn = {
+        MCValueVersion{.Version = 1, .Rules = MCMatchRule::MechBraking},
+        MCValueVersion{.Version = 2, .Rules = MCMatchRule::MechBraking | MCMatchRule::BrakingV2}};
+    inline constexpr std::array Braking = {MCValueVersions{.Value = 1, .Versions = BrakingOn}};
 }
 
 /// <summary>
@@ -242,7 +257,10 @@ inline constexpr std::array MCOptionCapabilities = {
                        .Name = "TIME OF DAY",
                        .Rules = MCMatchRule::TimeOfDayRules,
                        .Changed = MCOptionVersions::TimeOfDay},
-    MCOptionCapability{.Option = MCMatchOption::Braking, .Name = "BRAKING", .Rules = MCMatchRule::MechBraking},
+    MCOptionCapability{.Option = MCMatchOption::Braking,
+                       .Name = "BRAKING",
+                       .Rules = MCMatchRule::MechBraking,
+                       .Changed = MCOptionVersions::Braking},
     MCOptionCapability{.Option = MCMatchOption::Artillery, .Name = "ARTILLERY", .Rules = MCMatchRule::NoArtillery},
     MCOptionCapability{.Option = MCMatchOption::Probes, .Name = "PROBES", .Rules = MCMatchRule::NoProbes},
     MCOptionCapability{.Option = MCMatchOption::Sensors, .Name = "SENSORS", .Rules = MCMatchRule::NoSensors},
@@ -347,7 +365,8 @@ bool MCMatchPlays(uint32_t rules);
 
 /// <summary>
 /// Port: the rules a host wants of its <paramref name="chosen"/> ones (none: braking as its PREFS,
-/// <paramref name="prefsBraking"/>; MCMatchRule::BrakingFromPrefs the same, with the others chosen).
+/// <paramref name="prefsBraking"/>; MCMatchRule::BrakingFromPrefs the same, with the others chosen). Braking is wanted
+/// with its latest version's rules (MCMatchRule::BrakingV2), so the match plays the latest every build plays.
 /// </summary>
 uint32_t MCWantedRules(std::optional<uint32_t> chosen, bool prefsBraking);
 

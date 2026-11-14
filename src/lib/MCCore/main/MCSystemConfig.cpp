@@ -194,7 +194,7 @@ void ReadPreferences(MCFitIniFile& file)
     const bool showFps = file.Read<bool>("ShowFps").value_or(MCPrefsDefaults::ShowFps);
     GShowFpsPreference = showFps ? 1 : 0;
     GShowFps = showFps ? 1 : GShowFps;
-    // Port-only: the HD settings, from HDArt to MechBraking (main/MCHdSettings.h).
+    // Port-only: the HD settings, from HDArt to MoreUnits (main/MCHdSettings.h).
     MCHdSettings::Read(file);
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.

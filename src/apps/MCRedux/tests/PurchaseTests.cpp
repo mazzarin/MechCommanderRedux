@@ -9,6 +9,7 @@
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCInventoryBlock.h"
+#include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCMechPurchaseBlock.h"
@@ -22,6 +23,7 @@
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCUnitLimits.h"
 #include "logistics/MCVehicleInventoryBlock.h"
@@ -29,6 +31,7 @@
 #include "main/MCGamePaths.h"
 #include "logistics/MCMainMenu.h"
 #include "main/MCGameContext.h"
+#include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
 #include "main/MCWeaponBans.h"
 #include "network/MCMultiPlayer.h"
@@ -259,6 +262,44 @@ TEST_CASE("logistics: pilots for hire are listed by rank, then callsign")
     CHECK(Callsigns(quirk) == (std::vector<std::string>{"Bravo", "Zulu"}));
 }
 
+namespace
+{
+    /// <summary>MoreUnits on for the scope's length, then off again (the tests' default), however the test ends.</summary>
+    struct MCMoreUnitsOn
+    {
+        MCMoreUnitsOn() { GMoreUnits = 1; }
+        ~MCMoreUnitsOn() { GMoreUnits = 0; }
+        MCMoreUnitsOn(const MCMoreUnitsOn&) = delete;
+        MCMoreUnitsOn& operator=(const MCMoreUnitsOn&) = delete;
+    };
+
+    /// <summary>
+    /// <paramref name="units"/> made <paramref name="count"/> units with no profile behind them: only their number counts.
+    /// </summary>
+    template <typename Units> void Fill(Units& units, size_t count)
+    {
+        using Unit = typename Units::value_type::element_type;
+        units.clear();
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            units.push_back(std::make_unique<Unit>());
+        }
+    }
+
+    /// <summary>
+    /// The shop's player owning <paramref name="spareMechs"/> spare mechs, besides 10 spare vehicles and a force of 3
+    /// mechs and 2 vehicles (15 units).
+    /// </summary>
+    void FillShop(ShopFixture& shop, size_t spareMechs)
+    {
+        Fill(shop.Mechs.Mechs, spareMechs);
+        Fill(shop.Vehicles.Vehicles, 10);
+        Fill(shop.ForceMechs.Mechs, 3);
+        Fill(shop.ForceVehicles.Vehicles, 2);
+    }
+}
+
 TEST_CASE("logistics: the unit limit caps a purchase at the room left")
 {
     if (!MCTestGame::Available())
@@ -267,22 +308,11 @@ TEST_CASE("logistics: the unit limit caps a purchase at the room left")
     }
 
     ShopFixture shop;
-    // Units with no profile behind them: only their number counts.
-    auto fill = [](auto& units, size_t count)
-    {
-        using Unit = typename std::remove_reference_t<decltype(units)>::value_type::element_type;
-        units.clear();
-
-        for (size_t i = 0; i < count; ++i)
-        {
-            units.push_back(std::make_unique<Unit>());
-        }
-    };
-
-    fill(shop.Mechs.Mechs, 30);
-    fill(shop.Vehicles.Vehicles, 10);
-    fill(shop.ForceMechs.Mechs, 3);
-    fill(shop.ForceVehicles.Vehicles, 2);
+    // MoreUnits off (the tests' default): the original's limit, 50 warned from 40.
+    REQUIRE_EQ(GMoreUnits, 0);
+    CHECK_EQ(MaxUnits(), 50);
+    CHECK_EQ(UnitWarning(), 40);
+    FillShop(shop, 30);
     CHECK_EQ(NumUnits(), 45);
     CHECK_EQ(MaxPurchase(10), 5);
     CHECK_EQ(MaxPurchase(3), 3);
@@ -290,7 +320,56 @@ TEST_CASE("logistics: the unit limit caps a purchase at the room left")
     // Unlimited stock (-1) is capped by the room.
     CHECK_EQ(MaxPurchase(-1), 5);
     CHECK(!CheckMaxUnits());
-    fill(shop.Mechs.Mechs, 35);
+    FillShop(shop, 35);
+    CHECK_EQ(MaxPurchase(10), 0);
+}
+
+/// <summary>
+/// Port-only (MoreUnits): with MoreUnits a player outside a match may own 100 units, warned from 80: a purchase past
+/// the original's 50 is capped only by the room under 100.
+/// </summary>
+TEST_CASE("logistics: with MoreUnits a player outside a match owns up to 100 units, warned from 80")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    ShopFixture shop;
+    const MCMoreUnitsOn moreUnits;
+    CHECK_EQ(MaxUnits(), 100);
+    CHECK_EQ(UnitWarning(), 80);
+    FillShop(shop, 30);
+    CHECK_EQ(NumUnits(), 45);
+    CHECK_EQ(MaxPurchase(10), 10);
+    CHECK_EQ(MaxPurchase(-1), 55);
+    FillShop(shop, 80);
+    CHECK_EQ(NumUnits(), 95);
+    CHECK_EQ(MaxPurchase(10), 5);
+    FillShop(shop, 85);
+    CHECK_EQ(MaxPurchase(10), 0);
+}
+
+/// <summary>
+/// Port-only (MoreUnits): a match keeps the original's limit, 50 warned from 40, whatever the player's MoreUnits says
+/// (every player buys under the same rule).
+/// </summary>
+TEST_CASE("logistics: in a match the unit limit stays the original's, whatever MoreUnits says")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    ShopFixture shop;
+    const MCMoreUnitsOn moreUnits;
+    // A match (whatever its rules).
+    shop.PlayMatch(MCMatchRule::MechBraking);
+    CHECK_EQ(MaxUnits(), 50);
+    CHECK_EQ(UnitWarning(), 40);
+    FillShop(shop, 30);
+    CHECK_EQ(MaxPurchase(10), 5);
+    FillShop(shop, 35);
     CHECK_EQ(MaxPurchase(10), 0);
 }
 
@@ -1023,6 +1102,76 @@ TEST_CASE_ISOLATED("game: the purchase screen buys and sells mechs, vehicles, co
         CHECK_EQ(GlobalLog()->MechList->GetMechCount(), mechs);
         CHECK_EQ(ResourcePoints, 10);
     }
+}
+
+namespace
+{
+    /// <summary>The menus' message dialog's OK, clicked.</summary>
+    void CloseMessage()
+    {
+        MCLogDialogButton& ok = *GlobalLog()->MessageDialog->OkButton;
+        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+        Settle();
+    }
+}
+
+/// <summary>
+/// Port-only (MoreUnits): with MoreUnits a campaign's shop sells past the original's 50 units, a mech at a time dragged
+/// from the store onto the inventory: from 50 a purchase goes through with no word; at 80 it warns how many the player
+/// owns of the 100; at 100 it says the inventory is at its maximum, and there it sells no more.
+/// </summary>
+TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 100, warning from 80")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t Points = 10'000'000;
+    constexpr int32_t Stock = 10;
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    NewCampaign();
+    Settle();
+    GlobalLog()->SetUpPurchaseScreen(true);
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
+    GMoreUnits = 1;
+    ResourcePoints = Points;
+    MCTestGame::StockStore(Stock);
+    const MCReusableDialog& message = *GlobalLog()->MessageDialog;
+
+    // From 50: bought, no word.
+    MCTestGame::OwnUnits(50);
+    BuyFirst();
+    Accept();
+    CHECK_EQ(NumUnits(), 51);
+    CHECK(!message.ShowWindow);
+
+    // From 80: bought, with the warning of the 100.
+    MCTestGame::OwnUnits(79);
+    BuyFirst();
+    Accept();
+    CHECK_EQ(NumUnits(), 80);
+    REQUIRE(message.ShowWindow);
+    CHECK_EQ(message.Text, MCFormatPrintf(LoadGameString(0x372, 0xfe), 80, 100));
+    CloseMessage();
+
+    // The 100th: bought, the inventory at its maximum.
+    MCTestGame::OwnUnits(99);
+    BuyFirst();
+    Accept();
+    CHECK_EQ(NumUnits(), 100);
+    REQUIRE(message.ShowWindow);
+    CHECK_EQ(message.Text, LoadGameString(0x374, 0xfe));
+    CloseMessage();
+
+    // At 100: none sold, the same word.
+    BuyFirst();
+    CHECK_EQ(NumUnits(), 100);
+    REQUIRE(message.ShowWindow);
+    CHECK_EQ(message.Text, LoadGameString(0x374, 0xfe));
+    CloseMessage();
 }
 
 TEST_CASE_ISOLATED("game: a pilot dragged onto a force mech on the repair screen becomes its pilot")

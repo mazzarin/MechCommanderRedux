@@ -184,12 +184,39 @@ public:
     /// Gives a stop up while the stride still plays out when the move goes on further.
     /// </summary>
     bool FitStop(std::optional<float> metresLeft);
+    /// <summary>
+    /// Port-only (MechBraking): within how many metres of its move's end a striding mech claims it: its stop's
+    /// from a stride's end, plus <see cref="ClaimStrides"/> strides or <see cref="ClaimLeastMetres"/>, whichever is
+    /// more (none unless walking or running).
+    /// </summary>
+    std::optional<float> ClaimMetres();
+    /// <summary>
+    /// Port-only (MechBraking): the metres of a stop from state
+    /// <paramref name="state"/> (walking or running) plus <paramref name="strides"/> of its strides; none without the art.
+    /// </summary>
+    std::optional<float> StopAndStrides(int32_t state, float strides);
 
     /// <summary>
     /// Port-only (MechBraking): gives up the stop planned (<see cref="PlannedStop"/>) while the stride is still being
     /// played out, back to walking or running on; true when it did.
     /// </summary>
     bool CancelPlannedStop();
+
+    /// <summary>
+    /// Port-only (MechBraking): a move that ends without warning, not held up. Told to STOP
+    /// (<see cref="QuickStopAsked"/>; outside a match), the mech brakes through its stopping art from where it is: its
+    /// stride on, at <see cref="MaxStrideRate"/>, to its next frame drawn as one of the stopping art's (MCStopEntries,
+    /// from where the art still has <see cref="QuickEntryShare"/> of the stride's speed), round its end if need be, and
+    /// into the art there. Without the art, or such a frame, it stops dead as the original. A planned stop whose move
+    /// ended for a unit in its way (its end taken after the stop was fitted) halts where the original halts it.
+    /// </summary>
+    void QuickStop(MCBattleMech& mech);
+
+    /// <summary>
+    /// Port-only (MechBraking): gives up a quick stop (<see cref="QuickStop"/>), or a planned stop whose move
+    /// ended early: the mech stops dead there, as the original.
+    /// </summary>
+    void EndQuickStop();
 
     /// <summary>
     /// Port-only (HDStops): as the mech stands from a stride (<see cref="CheckStop"/>) with its move held up
@@ -398,10 +425,33 @@ public:
     /// </summary>
     bool PlannedStop = false;
     /// <summary>
+    /// Port-only (MechBraking): the walk strides a run's planned stop plays beyond its own before its walk to
+    /// stand (up to <see cref="StopWalksMost"/>). Cleared with the stop.
+    /// </summary>
+    int32_t ExtraWalks = 0;
+    /// <summary>
+    /// Port-only (MechBraking): the pace planned for a run's stop's walk strides (a scale on their frame rate,
+    /// as a stride's). Cleared with the stop.
+    /// </summary>
+    float PlannedWalkRate = 1.0f;
+    /// <summary>
     /// Port-only (MechBraking): the scale on the legs' frame rate the mover fits the stride and stop with (1 as the
     /// original).
     /// </summary>
     float StrideRate = 1.0f;
+    /// <summary>Port-only (MechBraking): the stop playing is a quick stop (<see cref="QuickStop"/>).</summary>
+    bool QuickStopped = false;
+    /// <summary>
+    /// Port-only (MechBraking): the pilot was told to STOP (MCMechWarrior::OrderStop), so the move's end is
+    /// the player's, not a unit in its way: <see cref="QuickStop"/> brakes it. Till a new move.
+    /// </summary>
+    bool QuickStopAsked = false;
+    /// <summary>Port-only (MechBraking): the stride's frame a quick stop gives way at.</summary>
+    std::optional<int32_t> QuickGiveWay;
+    /// <summary>Port-only (MechBraking): the walk to stand's frame a quick stop goes in at.</summary>
+    std::optional<int32_t> QuickEntry;
+    /// <summary>Port-only (MechBraking): a quick stop's stride goes round its end before it gives way.</summary>
+    bool QuickLoops = false;
     /// <summary>
     /// Port-only (HDStops): the stride drawn on while the mech stands with its move held up, and until its stride is in
     /// step with it again (<see cref="StepDrawnStride"/>); none while the mech is drawn as it plays.

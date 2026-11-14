@@ -4,6 +4,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCShapeRows.h"
+#include "platform/MCMemoryRoom.h"
 #include "platform/MCSharpLines.h"
 #include "platform/MCSharpPictures.h"
 #include "platform/MCSharpText.h"
@@ -234,31 +235,12 @@ namespace
     /// than holding them a little longer.
     /// </summary>
     constexpr uint64_t PictureSweepFrames = 32;
-    /// <summary>The bytes the pictures may take before the oldest go.</summary>
+    /// <summary>
+    /// The bytes the pictures may take before the oldest go. Port-only: the HD art frames' room on the GPU is what the
+    /// machine says it can spare (MCMemoryRoom::MCReader), and they go only past it: never for being unused a while.
+    /// </summary>
     constexpr size_t PictureBudget = 128 * 1024 * 1024;
-    /// <summary>
-    /// The same for the HD art frames on the GPU: this share of the machine's memory (which the GPU shares on Apple
-    /// silicon and with integrated graphics), at least and at most these, as MCHdArt::CacheBudget sizes the frames
-    /// kept on the CPU. It's what may be kept, not what is set aside.
-    /// </summary>
-    constexpr size_t HdPictureMemoryShare = 16;
-    constexpr size_t MinHdPictureBudget = size_t{128} * 1024 * 1024;
-    constexpr size_t MaxHdPictureBudget = size_t{2048} * 1024 * 1024;
-    constexpr size_t BytesPerMegabyte = 1024 * 1024;
-    /// <summary>
-    /// The most bytes of pictures let go in a frame (past their budget or unused for a while; the rest go in the
-    /// frames after), so no frame drops a pile of them at once.
-    /// </summary>
-    constexpr size_t TrimmedBytesPerFrame = 64 * 1024 * 1024;
-
-    /// <summary>The HD art frames' budget on the GPU (HdPictureMemoryShare).</summary>
-    size_t HdPictureBudget()
-    {
-        static const size_t budget =
-            std::clamp(static_cast<size_t>(std::max(SDL_GetSystemRAM(), 0)) * BytesPerMegabyte / HdPictureMemoryShare,
-                       MinHdPictureBudget, MaxHdPictureBudget);
-        return budget;
-    }
+    using MCMemoryRoom::TrimmedBytesPerFrame;
 
     /// <summary>
     /// The bytes a pixel of an HD art frame's RGBA8 colours, and of its BC7 colours (a 16-byte block per 4x4; BC5's, a
@@ -924,6 +906,10 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     auto renderer = std::make_unique<MCVulkanRenderer>(Key{});
     renderer->_Device = device;
     renderer->_Run = SealedFrame(new FrameRun);
+    // Port-only: the card the HD art frames' room is asked of is the one SDL's device runs on, which SDL names.
+    const char* const deviceName =
+        SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device.get()), SDL_PROP_GPU_DEVICE_NAME_STRING, "");
+    renderer->_Room.emplace(deviceName != nullptr ? deviceName : "");
 
     auto vertex = MCVulkanShaders::Load(device, MCVulkanShaders::DrawVertex);
 
@@ -1388,11 +1374,24 @@ void MCVulkanRenderer::BeginRecording()
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
     // each frame, such as the shape transforms' work buffer, make a new one every frame); a few at a time.
     TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
-    TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget(), HdRgbaBytes);
     // Port-only: the sharp pictures stay while their budget holds them, drawn lately or not: made again, each costs a
     // redraw on the CPU, and a screen's are hundreds (at 240 Hz the 300 frames unused took 1.25 s, so a return to a
     // screen redrew its text and line art).
     TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdRgbaBytes, true);
+
+    // Port-only (HD art): the HD art frames go only past the room the machine gives them (and the frames kept in
+    // memory only while it's short of memory), or, once the pack changes, those of the old one (drawn before the
+    // change: no frame of the new pack has their numbers).
+    if (const uint64_t pack = MCHdArt::PackVersion(); pack != _HdPicturesPack)
+    {
+        _HdPicturesPack = pack;
+        _HdPackChanged = _Frame;
+    }
+
+    const MCMemoryRoom::MCFrameRoom room =
+        _Room.has_value() ? _Room->Frame(_HdPictureBytes) : MCMemoryRoom::MCFrameRoom{};
+    MCHdArt::NextFrame(room.MemoryShort);
+    TrimHdPictures(static_cast<size_t>(room.PictureBytes));
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
     if (_Tables.empty())
@@ -1430,7 +1429,7 @@ void MCVulkanRenderer::ForgetHdPicture(uint64_t id)
 
     if (const auto found = _HdPictures.find(id); found != _HdPictures.end())
     {
-        DropPicture(_HdPictures, found, _HdPictureBytes, HdRgbaBytes);
+        DropHdPicture(found);
     }
 }
 
@@ -1506,6 +1505,39 @@ void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictu
 
         DropPicture(pictures, pictures.find(key), bytes, bytesPerPixel);
     }
+}
+
+void MCVulkanRenderer::TrimHdPictures(size_t budget)
+{
+    // Least recently drawn first: those of an old pack, then, past the budget, those not drawn in the last frame;
+    // past them, every picture was drawn since.
+    const size_t before = _HdPictureBytes;
+
+    while (!_HdOrder.empty() && before - _HdPictureBytes < TrimmedBytesPerFrame)
+    {
+        const auto oldest = _HdPictures.find(_HdOrder.front());
+
+        if (oldest == _HdPictures.end())
+        {
+            _HdOrder.pop_front();
+            continue;
+        }
+
+        const uint64_t lastFrame = oldest->second.LastFrame;
+
+        if (lastFrame >= _HdPackChanged && (_HdPictureBytes <= budget || lastFrame + 1 >= _Frame))
+        {
+            break;
+        }
+
+        DropHdPicture(oldest);
+    }
+}
+
+void MCVulkanRenderer::DropHdPicture(std::unordered_map<uint64_t, Picture>::iterator it)
+{
+    _HdOrder.erase(it->second.InOrder);
+    DropPicture(_HdPictures, it, _HdPictureBytes, HdRgbaBytes);
 }
 
 uint16_t MCVulkanRenderer::SurfaceFor(const MCWindow& window)
@@ -3395,9 +3427,15 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
                                       .begin());
         picture.Bytes = frame.Indices.size() + colors.size();
         found = _HdPictures.emplace(frame.Id, picture).first;
+        found->second.InOrder = _HdOrder.insert(_HdOrder.end(), frame.Id);
         _HdPictureBytes += picture.Bytes;
         ++_FrameUploads.Pictures;
         _FrameUploads.PictureBytes += static_cast<int64_t>(picture.Bytes);
+    }
+    else if (found->second.LastFrame != _Frame)
+    {
+        // Port-only: the first draw of a frame takes it to the end of the order, so the order is by when last drawn.
+        _HdOrder.splice(_HdOrder.end(), _HdOrder, found->second.InOrder);
     }
 
     return UsePicture(found->second);

@@ -56,6 +56,25 @@ auto MCMechBrakingInForce() -> bool
     return game != nullptr ? (game->MatchRules & MCMatchRule::MechBraking) != 0 : GMechBraking != 0;
 }
 
+auto MCMechBrakingVersion() -> int32_t
+{
+    if (!MCMechBrakingInForce())
+    {
+        return 0;
+    }
+
+    // Oldest first: the last whose rules the match plays (every one outside a match).
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+    int32_t version = 0;
+
+    for (const MCValueVersion& each : MCOptionVersions::BrakingOn)
+    {
+        version = game == nullptr || (game->MatchRules & each.Rules) == each.Rules ? each.Version : version;
+    }
+
+    return version;
+}
+
 auto MCPlanStride(float framesLeft, int32_t strideFrames, float metresPerFrame, float metres)
     -> std::optional<MCStridePlan>
 {
@@ -211,15 +230,15 @@ namespace
     }
 } // namespace
 
-auto MCMakeRunToWalk(MCSpriteTree& tree) -> std::optional<MCMadeRunToWalk>
+auto MCGestureLikeness(MCSpriteTree& tree, int32_t first, int32_t second) -> std::optional<MCLikeness>
 {
-    if (MCStopGesture::Run >= tree.NumGestures)
+    if (std::max(first, second) >= static_cast<int32_t>(tree.NumGestures))
     {
         return std::nullopt;
     }
 
-    const uint32_t runFrames = tree.Gestures[MCStopGesture::Run].NumFrames;
-    const uint32_t walkFrames = tree.Gestures[MCStopGesture::Walk].NumFrames;
+    const uint32_t runFrames = tree.Gestures[static_cast<size_t>(first)].NumFrames;
+    const uint32_t walkFrames = tree.Gestures[static_cast<size_t>(second)].NumFrames;
 
     if (runFrames == 0 || walkFrames == 0)
     {
@@ -238,10 +257,8 @@ auto MCMakeRunToWalk(MCSpriteTree& tree) -> std::optional<MCMadeRunToWalk>
         {
             int32_t reverse = 0;
             float frameRate = 0.0f;
-            const std::shared_ptr<MCShape> run =
-                tree.GetGesture(MCStopGesture::Run, part, rotation, reverse, frameRate, true);
-            const std::shared_ptr<MCShape> walk =
-                tree.GetGesture(MCStopGesture::Walk, part, rotation, reverse, frameRate, true);
+            const std::shared_ptr<MCShape> run = tree.GetGesture(first, part, rotation, reverse, frameRate, true);
+            const std::shared_ptr<MCShape> walk = tree.GetGesture(second, part, rotation, reverse, frameRate, true);
 
             if (run == nullptr || walk == nullptr ||
                 VfxShapeCount(run->FrameList()) < static_cast<int32_t>(runFrames) ||
@@ -316,6 +333,21 @@ auto MCMakeRunToWalk(MCSpriteTree& tree) -> std::optional<MCMadeRunToWalk>
         }
     }
 
+    return MCLikeness{runFrames, walkFrames, std::move(shared), std::move(either)};
+}
+
+auto MCMakeRunToWalk(MCSpriteTree& tree) -> std::optional<MCMadeRunToWalk>
+{
+    const std::optional<MCLikeness> likeness = MCGestureLikeness(tree, MCStopGesture::Run, MCStopGesture::Walk);
+
+    if (!likeness.has_value())
+    {
+        return std::nullopt;
+    }
+
+    const std::vector<int64_t>& shared = likeness->Shared;
+    const std::vector<int64_t>& either = likeness->Either;
+    const uint32_t walkFrames = likeness->SecondFrames;
     // The most alike, the first of equals (the counts compared exactly, so every machine picks the same).
     std::optional<size_t> best;
 
@@ -334,6 +366,55 @@ auto MCMakeRunToWalk(MCSpriteTree& tree) -> std::optional<MCMadeRunToWalk>
 
     return MCMadeRunToWalk{static_cast<uint32_t>(*best / walkFrames),
                            static_cast<uint32_t>((*best % walkFrames + 1) % walkFrames)};
+}
+
+auto MCStopEntries(MCSpriteTree& tree, int32_t stride) -> const std::vector<int32_t>&
+{
+    if (const auto found = tree.StopEntries.find(stride); found != tree.StopEntries.end())
+    {
+        return found->second;
+    }
+
+    std::vector<int32_t>& entries = tree.StopEntries[stride];
+    const std::optional<MCLikeness> walk = MCGestureLikeness(tree, MCStopGesture::Walk, MCStopGesture::WalkToStand);
+    const std::optional<MCLikeness> like =
+        stride == MCStopGesture::Walk ? walk : MCGestureLikeness(tree, stride, MCStopGesture::WalkToStand);
+
+    if (!walk.has_value() || !like.has_value())
+    {
+        return entries;
+    }
+
+    const auto likeness = [](const MCLikeness& of, uint32_t first, uint32_t second)
+    {
+        const size_t at = static_cast<size_t>(first) * of.SecondFrames + second;
+        return of.Either[at] > 0 ? static_cast<double>(of.Shared[at]) / static_cast<double>(of.Either[at]) : 0.0;
+    };
+
+    // The art's own way in: the walk's frame it gives way at (its last, without one) into the stop's first.
+    const uint32_t givesWay =
+        tree.SpecialInfo.WalkToWSFrame != NoFrame && tree.SpecialInfo.WalkToWSFrame < walk->FirstFrames
+            ? tree.SpecialInfo.WalkToWSFrame
+            : walk->FirstFrames - 1;
+    const double bar = likeness(*walk, givesWay, 0);
+    entries.assign(like->FirstFrames, -1);
+
+    for (uint32_t frame = 0; frame < like->FirstFrames; ++frame)
+    {
+        uint32_t best = 0;
+
+        for (uint32_t stop = 1; stop < like->SecondFrames; ++stop)
+        {
+            best = likeness(*like, frame, stop) > likeness(*like, frame, best) ? stop : best;
+        }
+
+        if (likeness(*like, frame, best) >= bar)
+        {
+            entries[frame] = static_cast<int32_t>(best);
+        }
+    }
+
+    return entries;
 }
 
 auto MCRunToWalkMade(MCSpriteTree& tree, bool braking) -> std::optional<MCMadeRunToWalk>

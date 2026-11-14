@@ -659,14 +659,14 @@ bool MCMatchPlays(uint32_t rules)
 uint32_t MCWantedRules(std::optional<uint32_t> chosen, bool prefsBraking)
 {
     const uint32_t rules = chosen.value_or(MCMatchRule::BrakingFromPrefs);
-
-    if ((rules & MCMatchRule::BrakingFromPrefs) == 0)
-    {
-        return rules;
-    }
-
-    return (rules & ~(MCMatchRule::BrakingFromPrefs | MCMatchRule::MechBraking)) |
-           (prefsBraking ? MCMatchRule::MechBraking : 0);
+    const uint32_t wanted = (rules & MCMatchRule::BrakingFromPrefs) == 0
+                                ? rules
+                                : (rules & ~(MCMatchRule::BrakingFromPrefs | MCMatchRule::MechBraking)) |
+                                      (prefsBraking ? MCMatchRule::MechBraking : 0);
+    // Braking with its latest version's rules (MCOptionVersions::Braking), which the match keeps as far as every
+    // player's build plays them; none without braking (a host's choices are made from the rules it wanted before).
+    return (wanted & MCMatchRule::MechBraking) != 0 ? wanted | MCMatchRule::BrakingV2
+                                                    : wanted & ~MCMatchRule::BrakingV2;
 }
 
 uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const std::map<uint32_t, uint32_t>& said)

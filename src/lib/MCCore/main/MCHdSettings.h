@@ -1,6 +1,6 @@
 #pragma once
 
-// Port-only: the HD settings PREFS.CFG keeps, from "HDArt" to "MechBraking", and "Reports" (main/MCTelemetry.h): the
+// Port-only: the HD settings PREFS.CFG keeps, from "HDArt" to "MoreUnits", and "Reports" (main/MCTelemetry.h): the
 // setting each key holds, its choices, what it reads as when PREFS lacks it, and how it is read and written. The
 // preferences' HD OPTIONS page edits them (logistics/MCHdOptionsPanel.h).
 
@@ -16,9 +16,9 @@ class MCFitIniFile;
 void UseHdByDefault();
 
 /// <summary>
-/// Personal build: PREFS.CFG's gameplay settings (<see cref="MCHdSettings::MCSetting::Gameplay"/>: BRAKING) read as
-/// their personal defaults when it lacks them, whether or not the looks do (<see cref="UseHdByDefault"/>, which follows
-/// the HD answer): they need nothing of the HD pack. The app calls it before the game starts; the tests don't.
+/// Personal build: PREFS.CFG's gameplay settings (<see cref="MCHdSettings::MCSetting::Gameplay"/>: BRAKING, MoreUnits)
+/// read as their personal defaults when it lacks them, whether or not the looks do (<see cref="UseHdByDefault"/>, which
+/// follows the HD answer): they need nothing of the HD pack. The app calls it before the game starts; the tests don't.
 /// </summary>
 void UsePersonalGameplay();
 
@@ -42,7 +42,8 @@ namespace MCHdSettings
         /// <summary>The player's own answer, not a look (REPORTS): DEFAULTS and ORIGINAL leave it.</summary>
         bool Player = false;
         /// <summary>
-        /// Changes play, not the look (BRAKING): its personal default needs no HD (<see cref="UsePersonalGameplay"/>).
+        /// Changes play, not the look (BRAKING, MoreUnits): its personal default needs no HD
+        /// (<see cref="UsePersonalGameplay"/>).
         /// </summary>
         bool Gameplay = false;
     };

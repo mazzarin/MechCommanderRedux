@@ -14,6 +14,11 @@
 /// (saves, PREFS.CFG, the temp FITs). The one exception is deleting a save (<see cref="RemoveSave"/>), which also
 /// removes the install's copy. Without one (the tests), both roots are the install.
 ///
+/// Port-only: a launcher's match (a lobby app that starts the game with <c>--data</c> naming its own copy of the game)
+/// plays the Redux HD install, and the launcher's folder (<see cref="SetLauncherRoot"/>) adds only its maps and mods
+/// (<see cref="IsLauncherContent"/>): those are looked up there after the user folder and before the install, listed
+/// with the folder's other files, and never written. SPEC-install-and-updates.md's A launcher's game folder.
+///
 /// Every function forwards to the current context's <see cref="MCFileSource"/> (platform/MCServices.h): the disk
 /// (<see cref="MCDiskFileSource"/>) in the game, maybe files in memory in a test.
 ///
@@ -44,6 +49,23 @@ namespace MCFileSystem
     const std::filesystem::path& UserRoot();
 
     /// <summary>
+    /// Port-only: sets the folder of a launcher's own copy of the game, whose maps and mods play beside the install
+    /// (empty: none). Nothing is ever written there: a file the game changes is copied into the user folder first.
+    /// </summary>
+    void SetLauncherRoot(const std::filesystem::path& root);
+
+    /// <summary>The launcher's folder, or empty when there's none.</summary>
+    const std::filesystem::path& LauncherRoot();
+
+    /// <summary>
+    /// Whether <paramref name="gamePath"/> names a map or a mod as a launcher's folder holds them (MechCommander Online's
+    /// community content): an archive (<c>.fst</c>) in the folder's root other than the original's five (ART, MISC,
+    /// MISSION, SHAPES, TERRAIN), or a mission (<c>.mpk</c>) in <c>data\savegame\</c>. Case and <c>\</c> versus
+    /// <c>/</c> are ignored.
+    /// </summary>
+    bool IsLauncherContent(std::string_view gamePath);
+
+    /// <summary>
     /// Port-only: sets the folder that keeps the player's own settings (PREFS.CFG, the reports' state) when it isn't the
     /// user folder, as when a launcher gives a match a user folder of its own (created if missing; empty: the user
     /// folder keeps them, as it keeps everything else). A folder the game's paths can't reach (a network share), or
@@ -66,16 +88,17 @@ namespace MCFileSystem
 
     /// <summary>
     /// Maps a path as the game writes it to the file on disk, for reading. A relative path is taken from the user
-    /// folder when it exists there, else from the game root; each component is matched without regard to case
-    /// against what exists. Components that don't exist yet (a file about to be created) are kept as written.
+    /// folder when it exists there, else (a map or mod, IsLauncherContent) from the launcher's folder when it's there,
+    /// else from the game root; each component is matched without regard to case against what exists. Components that
+    /// don't exist yet (a file about to be created) are kept as written.
     /// </summary>
     /// <param name="gamePath">The path as the original code spells it.</param>
     std::filesystem::path Resolve(std::string_view gamePath);
 
     /// <summary>
     /// Maps a path to where the game may write it: under the user folder for a relative path (its folders are
-    /// created). When <paramref name="copyExisting"/> is set and the file exists only in the install, it is copied
-    /// over first, so opening it for update changes the copy.
+    /// created). When <paramref name="copyExisting"/> is set and the file exists only in the launcher's folder or the
+    /// install (as <see cref="Resolve"/> finds it), it is copied over first, so opening it for update changes the copy.
     /// </summary>
     std::filesystem::path ResolveWrite(std::string_view gamePath, bool copyExisting = false);
 
@@ -95,15 +118,17 @@ namespace MCFileSystem
 
     /// <summary>
     /// The files in a folder whose names match a DOS wildcard (<c>*</c>, <c>?</c>; case ignored), as the CRT's
-    /// <c>_findfirst</c>/<c>_findnext</c> list them: names only, user folder and install merged. Port: in name order
+    /// <c>_findfirst</c>/<c>_findnext</c> list them: names only, user folder, the launcher's maps and mods, and install
+    /// merged. Port: in name order
     /// (<see cref="NameLess"/>), whatever order the system lists the folder in (APFS's and NTFS's differ, and neither
     /// promises one).
     /// </summary>
     std::vector<std::string> FindFiles(std::string_view gamePattern);
 
     /// <summary>
-    /// The same files as <see cref="FindFiles"/>, each with the folders that have it: the user folder, the install or
-    /// both. Without a user folder, every file is the install's.
+    /// The same files as <see cref="FindFiles"/>, each with the folders that have it: the user folder, the launcher's
+    /// folder (a map or mod), the install. Without a user folder, every file the launcher's folder doesn't give is the
+    /// install's.
     /// </summary>
     std::vector<MCFoundFile> FindFileSources(std::string_view gamePattern);
 

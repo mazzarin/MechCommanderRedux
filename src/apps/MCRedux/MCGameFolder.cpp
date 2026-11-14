@@ -1,8 +1,10 @@
 // Built without the precompiled header: macOS's CoreGraphics and MCCore's Win32 stand-ins (MCWin32Defs.h) cannot meet.
 #include "MCGameFolder.h"
+#include "gui/MCGuiStartup.h"
 #include "platform/MCUtf8Path.h"
 #include "update/MCContentList.h"
 #include "update/MCContentSwap.h"
+#include "update/MCContentUpdater.h"
 #include "update/MCUpdateDisk.h"
 
 #include <SDL3/SDL.h>
@@ -533,6 +535,35 @@ std::filesystem::path MCGameFolder::InstallFolder()
     const char* basePath = SDL_GetBasePath();
     return basePath != nullptr ? FromUtf8(basePath) : std::filesystem::path();
 #endif
+}
+
+MCGameFolder::MCPlayed MCGameFolder::Played(MCUpdateDisk& disk, const std::filesystem::path& found, bool named,
+                                            std::string_view commandLine, const std::filesystem::path& install)
+{
+    std::error_code error;
+
+    if (!named || !StartsInLobby(commandLine) || install.empty() || std::filesystem::equivalent(install, found, error))
+    {
+        return {.Game = found};
+    }
+
+    if (HasGameData(install))
+    {
+        SDL_Log("A launcher's match: the install (%s) plays, with the maps and mods of %s", ToUtf8(install).c_str(),
+                ToUtf8(found).c_str());
+        return {.Game = install, .Launcher = found};
+    }
+
+    // An installer's install whose first start never finished: nothing of it to play, and nothing to write into the
+    // launcher's copy, which plays as it is.
+    if (MCContentUpdater::AwaitsInstall(disk, install))
+    {
+        SDL_Log("A launcher's match: the install (%s) has no game yet; %s plays as it is, without updates",
+                ToUtf8(install).c_str(), ToUtf8(found).c_str());
+        return {.Game = found, .Updates = false};
+    }
+
+    return {.Game = found};
 }
 
 std::optional<MCGameFolder::MCHdInstall> MCGameFolder::HdInstall(MCUpdateDisk& disk,

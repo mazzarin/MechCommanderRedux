@@ -43,6 +43,9 @@ public:
     const std::filesystem::path& GameRoot() const override;
     void SetUserRoot(const std::filesystem::path& root) override;
     const std::filesystem::path& UserRoot() const override;
+    /// <summary>Kept as set, never looked in: the files are in memory (a test of the launcher's folder uses the disk).</summary>
+    void SetLauncherRoot(const std::filesystem::path& root) override;
+    const std::filesystem::path& LauncherRoot() const override;
     std::filesystem::path Resolve(std::string_view gamePath) override;
     std::filesystem::path ResolveWrite(std::string_view gamePath, bool copyExisting) override;
     bool MakeDirectory(std::string_view gamePath) override;
@@ -79,4 +82,5 @@ private:
     std::map<std::string, Entry> _User;
     std::filesystem::path _Scratch;
     std::filesystem::path _GameRoot;
+    std::filesystem::path _LauncherRoot;
 };

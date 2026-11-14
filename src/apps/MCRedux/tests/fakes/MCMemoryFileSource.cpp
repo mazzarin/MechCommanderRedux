@@ -144,6 +144,16 @@ const std::filesystem::path& MCMemoryFileSource::UserRoot() const
     return _Scratch;
 }
 
+void MCMemoryFileSource::SetLauncherRoot(const std::filesystem::path& root)
+{
+    _LauncherRoot = root;
+}
+
+const std::filesystem::path& MCMemoryFileSource::LauncherRoot() const
+{
+    return _LauncherRoot;
+}
+
 std::filesystem::path MCMemoryFileSource::Resolve(std::string_view gamePath)
 {
     return ScratchPath(gamePath);

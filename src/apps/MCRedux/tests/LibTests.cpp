@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "MCFastFileFixture.h"
 #include "MCFilePatchFixture.h"
 #include "MCScratchFolder.h"
 #include "TestGame.h"
@@ -62,50 +63,9 @@ namespace
         return unpacked;
     }
 
-    void Put32(std::vector<uint8_t>& out, int32_t value)
-    {
-        const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(value);
-        out.insert(out.end(), bytes.begin(), bytes.end());
-    }
-
     int32_t Get32(const std::vector<uint8_t>& bytes, size_t at)
     {
         return std::bit_cast<int32_t>(std::array{bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]});
-    }
-
-    /// <summary>One entry of a FastFile built by <see cref="BuildFastFile"/>.</summary>
-    struct FastEntry
-    {
-        std::string Name;
-        std::vector<uint8_t> Data;
-        bool Packed = false;
-    };
-
-    /// <summary>
-    /// A FastFile as the format lays it out: the entry count, a 262-byte directory record per entry (offset, stored
-    /// size, real size, name), then the data, each entry raw or LZ-packed.
-    /// </summary>
-    std::vector<uint8_t> BuildFastFile(const std::vector<FastEntry>& entries)
-    {
-        std::vector<uint8_t> out;
-        Put32(out, static_cast<int32_t>(entries.size()));
-        std::vector<uint8_t> data;
-        const size_t dataStart = 4 + entries.size() * 262;
-
-        for (const FastEntry& entry : entries)
-        {
-            const std::vector<uint8_t> stored = entry.Packed ? LZCompress(entry.Data) : entry.Data;
-            Put32(out, static_cast<int32_t>(dataStart + data.size()));
-            Put32(out, static_cast<int32_t>(stored.size()));
-            Put32(out, static_cast<int32_t>(entry.Data.size()));
-            std::array<char, 250> name{};
-            std::ranges::copy(entry.Name, name.begin());
-            out.insert(out.end(), name.begin(), name.end());
-            data.insert(data.end(), stored.begin(), stored.end());
-        }
-
-        out.insert(out.end(), data.begin(), data.end());
-        return out;
     }
 
     /// <summary>Text that packs well.</summary>
@@ -135,6 +95,7 @@ namespace
         return data;
     }
 
+    using namespace MCFastFileFixture;
     using namespace MCFilePatchFixture;
 }
 

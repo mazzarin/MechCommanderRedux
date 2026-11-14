@@ -181,6 +181,9 @@
     <ClCompile Include="tests\InternetScreenTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\LauncherFolderTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\LibTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -393,6 +396,9 @@
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCFakeUpdaterBackend.h">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\MCFastFileFixture.h">
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCFilePatchFixture.h">

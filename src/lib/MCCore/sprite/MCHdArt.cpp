@@ -215,6 +215,10 @@ namespace
         std::list<FrameKey>::iterator InOrder;
         bool Looked = false;
         uint64_t Id = 0;
+        /// <summary>
+        /// Port-only: kept as read ahead (MCHdArt::KeepReadAhead), not yet checked against the size a draw asks for.
+        /// </summary>
+        bool SizeUnchecked = false;
     };
 
     /// <summary>
@@ -285,7 +289,7 @@ namespace
         size_t Bytes = 0;
         /// <summary>
         /// Port-only: the pictures read ahead (Follow::Entries), kept apart from Ready (MCHdArt::ReadPicturesAhead
-        /// bounds them, not MaxAheadBytes) until the game's thread keeps them (MCHdArt::KeepPicturesRead) or a draw
+        /// bounds them, not MaxAheadBytes) until the game's thread keeps them (MCHdArt::KeepReadAhead) or a draw
         /// takes one; and those asked for and not read yet.
         /// </summary>
         std::unordered_map<FrameKey, std::shared_ptr<MCHdArt::Frame>, FrameKeyHash> Pictures;
@@ -1384,7 +1388,7 @@ namespace
         ahead.Changed.wait(lock, [&] { return ahead.Reading != key; });
         ahead.Known.insert(key);
 
-        // Port-only: a picture read ahead, not kept yet (MCHdArt::KeepPicturesRead).
+        // Port-only: a picture read ahead, not kept yet (MCHdArt::KeepReadAhead).
         if (const auto picture = ahead.Pictures.find(key); picture != ahead.Pictures.end())
         {
             std::shared_ptr<MCHdArt::Frame> frame = std::move(picture->second);
@@ -1524,6 +1528,19 @@ namespace
     {
         State& state = TheState();
         Cached& cached = state.Frames[key];
+
+        // Port-only: a frame kept as read ahead (MCHdArt::KeepReadAhead) is checked at its first draw, as one taken from
+        // the reading thread is (ReadOrTake): one not of the size asked for is read again, as drawn, which refuses it.
+        if (cached.Frame != nullptr && cached.SizeUnchecked)
+        {
+            cached.SizeUnchecked = false;
+
+            if ((width != 0 || height != 0) &&
+                (cached.Frame->OriginalWidth() != width || cached.Frame->OriginalHeight() != height))
+            {
+                Drop(state, key, cached);
+            }
+        }
 
         if (cached.Frame != nullptr)
         {
@@ -2426,31 +2443,45 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
     ahead.Changed.notify_all();
 }
 
-void MCHdArt::KeepPicturesRead()
+void MCHdArt::KeepReadAhead()
 {
     State& state = TheState();
-    std::vector<std::pair<FrameKey, std::shared_ptr<Frame>>> read;
+    // Each frame read, and whether it was asked for at its size (a picture: its size checked as it was read).
+    std::vector<std::tuple<FrameKey, std::shared_ptr<Frame>, bool>> read;
 
     {
         ReadAhead& ahead = state.Ahead;
         std::scoped_lock lock(ahead.Lock);
 
-        if (ahead.Pictures.empty())
+        if (ahead.Pictures.empty() && ahead.Ready.empty())
         {
             return;
         }
 
         for (auto& [key, frame] : ahead.Pictures)
         {
-            read.emplace_back(key, std::move(frame));
+            read.emplace_back(key, std::move(frame), true);
             ahead.Known.insert(key);
         }
 
+        // The oldest read first, so that kept in the cache's order they go first.
+        for (const FrameKey& key : ahead.Order)
+        {
+            if (const auto ready = ahead.Ready.find(key); ready != ahead.Ready.end())
+            {
+                read.emplace_back(key, std::move(ready->second.Frame), false);
+                ahead.Known.insert(key);
+            }
+        }
+
         ahead.Pictures.clear();
+        ahead.Ready.clear();
+        ahead.Order.clear();
+        ahead.Bytes = 0;
     }
 
     // Kept as a first draw keeps a frame read (Cache), numbered as the draw would number it.
-    for (auto& [key, frame] : read)
+    for (auto& [key, frame, sized] : read)
     {
         Cached& cached = state.Frames[key];
 
@@ -2460,6 +2491,7 @@ void MCHdArt::KeepPicturesRead()
         }
 
         cached.Looked = true;
+        cached.SizeUnchecked = !sized;
 
         if (cached.Id == 0)
         {

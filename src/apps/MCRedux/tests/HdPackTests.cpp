@@ -1346,10 +1346,45 @@ TEST_CASE("hd art: a frame drawn the first time has the same frame at its neighb
 }
 
 /// <summary>
-/// Port-only: when another pack is set while the reading thread reads ahead from one, nothing it read is drawn for the
-/// new pack's frames of the same names: every frame drawn is the new pack's, wherever the thread was in its reads (a
-/// little further each round).
+/// Port-only: the frames the reading thread read ahead are kept in the cache at a frame's start (MCHdArt::KeepReadAhead),
+/// so that one drawn long after its read is still there: its draw finds it without a read, the same frame; asked for at
+/// a size it wasn't made for, it is refused at that draw, as one read then is.
 /// </summary>
+TEST_CASE("hd art: frames read ahead are kept at a frame's start and found by their draw, checked against its size")
+{
+    const ScratchFolder scratch("read-ahead-kept");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    REQUIRE(FindAhead({0, 0}) != nullptr);
+    MCHdArt::WaitForReadAhead();
+    // The rest of frame 0's steps and frame 1's, kept.
+    const size_t read = MCHdArt::FramesRead();
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesRead(), read + 2 * AheadSteps - 1);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 2 * AheadSteps - 1);
+
+    for (const AheadKey& key : {AheadKey{0, 1}, AheadKey{0, 2}, AheadKey{1, 0}})
+    {
+        MCTest::Scope scope(std::format("frame {}", AheadName(key)));
+        const std::shared_ptr<const MCHdArt::Frame> frame = FindAhead(key);
+        REQUIRE(frame != nullptr);
+        CHECK(SameFrame(*frame, AheadFrame(key, 0)));
+        CHECK(frame->Id != 0);
+    }
+
+    // Asked for at another size, frame 1's in-between is refused, and stays so, as a frame read when drawn would.
+    CHECK(MCHdArt::FindShape(AheadTable, 1, AheadWidth + 1, AheadHeight, 1, AheadFrames) == nullptr);
+    CHECK(FindAhead({1, 1}) == nullptr);
+    // None of them was read by its draw.
+    CHECK_EQ(MCHdArt::FramesRead(), read + 2 * AheadSteps - 1);
+
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
 /// <summary>
 /// Port-only: the HD copies of pictures read ahead (the logistics screens' art: MCLogistics::MakeAhead) are kept as a
 /// first draw keeps a frame once the game's thread takes them in (a frame's start): found then without a read, the same
@@ -1395,7 +1430,7 @@ TEST_CASE("hd art: pictures read ahead are found as drawn ones are, without a re
     {
         MCHdArt::ReadPicturesAhead(asked);
         MCHdArt::WaitForReadAhead();
-        MCHdArt::KeepPicturesRead();
+        MCHdArt::KeepReadAhead();
     };
 
     const size_t ahead = MCHdArt::FramesReadAhead();
@@ -1433,6 +1468,11 @@ TEST_CASE("hd art: pictures read ahead are found as drawn ones are, without a re
     MCHdArt::SetPackFolder({});
 }
 
+/// <summary>
+/// Port-only: when another pack is set while the reading thread reads ahead from one, nothing it read is drawn for the
+/// new pack's frames of the same names: every frame drawn is the new pack's, wherever the thread was in its reads (a
+/// little further each round).
+/// </summary>
 TEST_CASE("hd art: frames read ahead from one pack are never drawn from the next")
 {
     constexpr int32_t Rounds = 32;

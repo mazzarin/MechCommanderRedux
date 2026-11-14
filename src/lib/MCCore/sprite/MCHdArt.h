@@ -370,15 +370,18 @@ namespace MCHdArt
     /// <summary>
     /// Port-only: has the reading thread read the HD copies of <paramref name="pictures"/> ahead of their first draw, those
     /// the pack's archive has that aren't kept, looked at or asked for already, in order, while they and the frames kept
-    /// take at most half the cache's budget; <see cref="KeepPicturesRead"/> keeps them as drawn ones are kept.
+    /// take at most half the cache's budget; <see cref="KeepReadAhead"/> keeps them as drawn ones are kept.
     /// </summary>
     void ReadPicturesAhead(std::span<const PictureAhead> pictures);
 
     /// <summary>
-    /// Port-only: keeps the pictures the reading thread has read ahead (<see cref="ReadPicturesAhead"/>) as a first draw
-    /// keeps a frame (FindPicture then finds them), against the cache's budget. The game's thread, once a frame.
+    /// Port-only: keeps the frames and pictures the reading thread has read ahead (<see cref="ReadPicturesAhead"/>) as a
+    /// first draw keeps a frame (Find and FindPicture then find them without a read), against the cache's budget, its
+    /// least recently used going first, so that one read well before its draw (a neighbouring facing's,
+    /// <see cref="SetNeighbours"/>) is kept until then. A frame is checked against the size its draw asks for at that
+    /// draw, as one read then is. The game's thread, once a frame.
     /// </summary>
-    void KeepPicturesRead();
+    void KeepReadAhead();
 
     /// <summary>
     /// Port-only: keeps <paramref name="frame"/>, numbered anew, as the HD copy of the picture with

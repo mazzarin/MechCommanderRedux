@@ -321,7 +321,7 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     // Port: a new frame's op tables (translucent UI over the world view; see MCUnderlay).
     MCRenderer::ResetOpTables();
     // Port-only: the HD pictures read ahead kept, before the frame's draws look for them.
-    MCHdArt::KeepPicturesRead();
+    MCHdArt::KeepReadAhead();
 
     if (gui.SmackerWindow == nullptr)
     {

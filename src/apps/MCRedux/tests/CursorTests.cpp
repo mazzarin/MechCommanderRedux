@@ -543,28 +543,47 @@ TEST_CASE("game: every cursor shape becomes a picture that draws exactly as the 
     CHECK_EQ(withTransparency, pak.GetNumPackets());
 }
 
-TEST_CASE_ISOLATED("game: every cursor shape is made before play and switching between them makes none")
+namespace
+{
+    /// <summary>The cursor shapes the game has (each a slot of the GUI's 128 with a picture in it).</summary>
+    std::vector<size_t> CursorShapesInPlay()
+    {
+        constexpr size_t ShapeSlots = 128;
+        std::vector<size_t> shapes;
+
+        for (size_t shape = 0; shape < ShapeSlots; ++shape)
+        {
+            if (!GuiSystem().CursorShapeData(static_cast<int32_t>(shape)).empty())
+            {
+                shapes.push_back(shape);
+            }
+        }
+
+        return shapes;
+    }
+}
+
+TEST_CASE_ISOLATED(
+    "game: every cursor shape is made at load, and switching between shapes shown in today's colours makes none")
 {
     if (!MCTestGame::Available() || !MCTestGame::StartMission(1))
     {
         return;
     }
 
-    std::vector<size_t> shapes;
+    const std::vector<size_t> shapes = CursorShapesInPlay();
+    REQUIRE(shapes.size() > 2);
+    // The boot made one per shape. The mission's palette isn't the boot's, so each is made again the first time it
+    // shows in the mission, once; then an unchanged palette and window make no more, whatever is shown. (The slow
+    // part on Windows is the icon built when one is first shown over the window, which a hidden test window never
+    // has, so the count is what is checked.)
+    CHECK(MCCursor::CursorsMade() >= shapes.size());
 
-    for (size_t shape = 0; shape < 128; ++shape)
+    for (const size_t shape : shapes)
     {
-        if (!GuiSystem().CursorShapeData(static_cast<int32_t>(shape)).empty())
-        {
-            shapes.push_back(shape);
-        }
+        MCCursor::ShowShape(shape);
     }
 
-    REQUIRE(shapes.size() > 2);
-    // The boot made one per shape; a settled palette and an unchanged window make no more, whatever is shown. (The
-    // slow part on Windows is the icon built when one is first shown over the window, which a hidden test window
-    // never has, so the count is what is checked.)
-    CHECK(MCCursor::CursorsMade() >= shapes.size());
     const uint64_t before = MCCursor::CursorsMade();
 
     for (int i = 0; i < 200; ++i)
@@ -591,45 +610,46 @@ TEST_CASE_ISOLATED("game: every cursor shape is made before play and switching b
 }
 
 /// <summary>
-/// After a brightness step in play every shape is made again in its new colours over the calls after it (a
-/// millisecond's worth a call, so no one frame makes them all; the shape shown at once), each once, then none.
+/// After a brightness step in play only the shape on screen is made again in its new colours, however many frames
+/// show it; each other shape is made again when it is next shown, once.
 /// </summary>
-TEST_CASE_ISOLATED("game: a brightness step makes the cursor shapes again over the calls after it, each once")
+TEST_CASE_ISOLATED("game: a brightness step makes only the cursor shown again, and each other shape when shown")
 {
     if (!MCTestGame::Available() || !MCTestGame::StartMission(1))
     {
         return;
     }
 
-    std::vector<size_t> shapes;
-
-    for (size_t shape = 0; shape < 128; ++shape)
-    {
-        if (!GuiSystem().CursorShapeData(static_cast<int32_t>(shape)).empty())
-        {
-            shapes.push_back(shape);
-        }
-    }
-
+    const std::vector<size_t> shapes = CursorShapesInPlay();
     REQUIRE(shapes.size() > 2);
     MCCursor::ShowShape(shapes[0]);
     const uint64_t before = MCCursor::CursorsMade();
     GuiSystem().GammaCorrectCurrentPalette(1);
-    // Far more calls than a millisecond each needs to make them all; the palette doesn't move between them.
-    constexpr size_t Calls = 2000;
+    constexpr int Frames = 100;
 
-    for (size_t i = 0; i < Calls; ++i)
+    for (int i = 0; i < Frames; ++i)
     {
-        MCCursor::ShowShape(shapes[i % shapes.size()]);
+        MCCursor::ShowShape(shapes[0]);
     }
 
+    CHECK_EQ(MCCursor::CursorsMade() - before, uint64_t{1});
+
+    for (int round = 0; round < 2; ++round)
+    {
+        for (const size_t shape : shapes)
+        {
+            MCCursor::ShowShape(shape);
+        }
+    }
+
+    // Shapes whose colours the step left as they were aren't made again.
     const uint64_t made = MCCursor::CursorsMade() - before;
     CHECK(made > uint64_t{2});
     CHECK(made <= shapes.size());
 
-    for (size_t i = 0; i < Calls; ++i)
+    for (const size_t shape : shapes)
     {
-        MCCursor::ShowShape(shapes[i % shapes.size()]);
+        MCCursor::ShowShape(shape);
     }
 
     CHECK_EQ(MCCursor::CursorsMade() - before, made);

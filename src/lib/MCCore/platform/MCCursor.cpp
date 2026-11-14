@@ -310,34 +310,10 @@ namespace
         float ScaleX = 0.0f;
         float ScaleY = 0.0f;
         float Density = 0.0f;
-        /// <summary>The shown colours of the previous call, to tell a settled palette from a fade.</summary>
-        std::array<SDL_Color, 256> LastColors{};
-        /// <summary>The colours every shape was last made in, or is being made in.</summary>
-        std::array<SDL_Color, 256> ReadyColors{};
-        /// <summary>Every shape made in <see cref="ReadyColors"/>; false when a shape may be missing.</summary>
-        bool Ready = false;
-        /// <summary>The next shape to make in <see cref="ReadyColors"/>: those before it are (see prepare).</summary>
-        size_t NextShape = 0;
-        /// <summary>Whether SDL made every shape before <see cref="NextShape"/>.</summary>
-        bool AllMade = true;
+        /// <summary>The colours shown, as the last call read them.</summary>
+        std::array<SDL_Color, 256> ShownColors{};
         uint64_t MadeCount = 0;
     };
-
-    /// <summary>
-    /// How long one call in play spends making shapes in new colours (an HD copy takes ~0.05 ms); the rest are made in
-    /// the next calls, the shape shown at once whenever it is (ensure).
-    /// </summary>
-    constexpr uint64_t MakingBudgetNs = 1'000'000;
-    /// <summary>No limit: <see cref="MCCursor::Preload"/> makes every shape at once.</summary>
-    constexpr uint64_t NoBudget = std::numeric_limits<uint64_t>::max();
-
-    /// <summary>Every shape to be made again, from the first.</summary>
-    void restart(MCCursorState& cursor)
-    {
-        cursor.Ready = false;
-        cursor.NextShape = 0;
-        cursor.AllMade = true;
-    }
 
     MCCursorState& state()
     {
@@ -480,15 +456,13 @@ namespace
     }
 
     /// <summary>
-    /// Takes the display's scale and colours. A new scale drops every cursor. Once the palette has settled (the
-    /// same two calls running; not mid-fade) every shape gets its cursor in the colours now shown, so switching
-    /// shapes in play only selects one: <paramref name="budgetNs"/>'s worth a call (<see cref="MakingBudgetNs"/> in
-    /// play, so no one frame makes them all).
+    /// Takes the display's scale and colours. A new scale drops every cursor. Nothing is made here: a shape is made
+    /// again in new colours or at a new scale when it is next shown (ensure), so no frame makes more than the one on
+    /// screen.
     /// </summary>
-    void prepare(MCCursorState& cursor, MCDisplay& display, uint64_t budgetNs = MakingBudgetNs)
+    void prepare(MCCursorState& cursor, MCDisplay& display)
     {
-        std::array<SDL_Color, 256> colors{};
-        display.GetShownColors(colors);
+        display.GetShownColors(cursor.ShownColors);
         float scaleX = 1.0f;
         float scaleY = 1.0f;
         display.PixelScale(scaleX, scaleY);
@@ -503,7 +477,7 @@ namespace
         {
             if (MCFrameLog::Enabled())
             {
-                MCFrameLog::Note(std::format("cursor scale {}x{} density {} -> {}x{} density {}: all remade",
+                MCFrameLog::Note(std::format("cursor scale {}x{} density {} -> {}x{} density {}: all dropped",
                                              cursor.ScaleX, cursor.ScaleY, cursor.Density, scaleX, scaleY, density));
             }
 
@@ -516,43 +490,7 @@ namespace
             cursor.ScaleX = scaleX;
             cursor.ScaleY = scaleY;
             cursor.Density = density;
-            restart(cursor);
         }
-
-        const bool settled = sameColors(colors, cursor.LastColors);
-        cursor.LastColors = colors;
-
-        if (!settled || (cursor.Ready && sameColors(colors, cursor.ReadyColors)))
-        {
-            return;
-        }
-
-        // New colours, or a pass SDL failed somewhere in: every shape again.
-        if (!sameColors(colors, cursor.ReadyColors) || cursor.NextShape >= cursor.Shapes.size())
-        {
-            restart(cursor);
-            cursor.ReadyColors = colors;
-        }
-
-        const uint64_t started = SDL_GetTicksNS();
-
-        while (cursor.NextShape < cursor.Shapes.size())
-        {
-            const size_t shape = cursor.NextShape++;
-
-            if (cursor.Shapes[shape].Width > 0)
-            {
-                cursor.AllMade =
-                    ensure(cursor, cursor.ShapeCursors[shape], cursor.Shapes[shape], colors) && cursor.AllMade;
-            }
-
-            if (SDL_GetTicksNS() - started >= budgetNs && cursor.NextShape < cursor.Shapes.size())
-            {
-                return;
-            }
-        }
-
-        cursor.Ready = cursor.AllMade;
     }
 
     /// <summary>
@@ -988,14 +926,19 @@ namespace MCCursor
 
         cursor.Shapes = std::move(shapes);
         cursor.ShapeCursors.assign(cursor.Shapes.size(), {});
-        restart(cursor);
-        // Made now in the colours shown now, not waiting for a settled palette: the game may show one at once.
-        cursor.LastColors = {};
 
+        // Every shape made now, at load, in the colours shown now, so each is warmed (Windows' slow part) before play.
         if (const std::shared_ptr<MCDisplay> display = shownDisplay())
         {
-            display->GetShownColors(cursor.LastColors);
-            prepare(cursor, *display, NoBudget);
+            prepare(cursor, *display);
+
+            for (size_t shape = 0; shape < cursor.Shapes.size(); ++shape)
+            {
+                if (cursor.Shapes[shape].Width > 0)
+                {
+                    ensure(cursor, cursor.ShapeCursors[shape], cursor.Shapes[shape], cursor.ShownColors);
+                }
+            }
         }
     }
 
@@ -1013,8 +956,8 @@ namespace MCCursor
         prepare(cursor, *display);
         MCMadeCursor& made = cursor.ShapeCursors[shape];
 
-        // Mid-fade only the shape on screen follows the colours; all of them are remade once the palette settles.
-        if (!ensure(cursor, made, cursor.Shapes[shape], cursor.LastColors))
+        // Only the shape on screen follows the colours and scale; another is made again when it is next shown.
+        if (!ensure(cursor, made, cursor.Shapes[shape], cursor.ShownColors))
         {
             return;
         }
@@ -1043,7 +986,7 @@ namespace MCCursor
             cursor.OtherImage = picture;
         }
 
-        if (!ensure(cursor, cursor.Other, picture, cursor.LastColors))
+        if (!ensure(cursor, cursor.Other, picture, cursor.ShownColors))
         {
             return;
         }

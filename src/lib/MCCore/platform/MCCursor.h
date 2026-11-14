@@ -66,10 +66,11 @@ struct MCCursorBitmap
 namespace MCCursor
 {
     /// <summary>
-    /// Sets the game's cursor shapes and makes all their SDL cursors now. They are remade only for a new screen scale
-    /// or when the palette settles on new colours for them (after a fade), a millisecond's worth a frame (the shape
-    /// shown at once), so switching shapes in play only selects one. Each is also shown once, unseen, the first time
-    /// the mouse is over the window: Windows builds a cursor's icon then, and that is the slow part.
+    /// Sets the game's cursor shapes and makes all their SDL cursors now, so switching shapes in play only selects
+    /// one. A shape is made again only when it is shown in new colours (a fade, a brightness step, a screen with its
+    /// own palette) or at a new screen scale, so no frame makes more than the one on screen. Each is also shown once,
+    /// unseen, the first time the mouse is over the window: Windows builds a cursor's icon then, and that is the slow
+    /// part.
     /// </summary>
     void Preload(std::vector<MCCursorImage> shapes);
 

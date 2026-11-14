@@ -17817,6 +17817,45 @@ TEST_CASE_ISOLATED("game: HD art outlines the tactical map's objective numbers, 
     std::filesystem::remove_all(pack.parent_path());
 }
 
+namespace
+{
+    /// <summary>The pictures of their own the HD picture tests copy: upright stripes, each a colour on from the first.</summary>
+    constexpr int32_t StripedSide = 32;
+    constexpr int32_t StripeWidth = 8;
+
+    /// <summary>A striped picture (<see cref="StripedSide"/>) from palette index <paramref name="first"/> on, a texture.</summary>
+    std::shared_ptr<MCWindow> StripedPicture(uint8_t first)
+    {
+        const std::shared_ptr<MCWindow> picture = MCWindow::Make(StripedSide, StripedSide);
+
+        for (int32_t y = 0; y < StripedSide; ++y)
+        {
+            for (int32_t x = 0; x < StripedSide; ++x)
+            {
+                picture->Pixels[static_cast<size_t>(y) * StripedSide + x] =
+                    static_cast<uint8_t>(first + x / StripeWidth);
+            }
+        }
+
+        MCRenderer::CreateTexture(*picture, MCTextureUse::Static);
+        return picture;
+    }
+
+    /// <summary>Writes <paramref name="picture"/>'s HD copy into <paramref name="pack"/>'s pictures, in its colours shown.</summary>
+    void WritePackPicture(const std::filesystem::path& pack, const MCWindow& picture,
+                          const std::array<SDL_Color, 256>& colors)
+    {
+        std::filesystem::create_directories(PictureFolderOf(pack));
+        DecodedFrame frame;
+        frame.Width = picture.XMax + 1;
+        frame.Height = picture.YMax + 1;
+        frame.Index.assign(picture.Bytes().begin(), picture.Bytes().end());
+        frame.Drawn.assign(frame.Index.size(), 1);
+        const std::string name = MCHdArt::PictureName(MCHdArt::PictureHash(picture.Bytes(), frame.Width, frame.Height));
+        WriteFramePngs(PictureFolderOf(pack) / name, frame, colors, TestPackScale, Inverted, false);
+    }
+}
+
 /// <summary>
 /// A picture the HD art pack has is drawn from it from the first frame the screen is sharp (HD art just turned on, the
 /// game's first frame), not one frame on: copied onto mission 1's screen (shown larger) right after a frame shown with
@@ -17838,33 +17877,15 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
     }
 
     // A picture of its own: upright stripes of four colours.
-    constexpr int32_t Side = 32;
-    constexpr int32_t Stripe = 8;
+    constexpr int32_t Side = StripedSide;
     constexpr uint8_t FirstColor = 0x30;
-    const std::shared_ptr<MCWindow> picture = MCWindow::Make(Side, Side);
-
-    for (int32_t y = 0; y < Side; ++y)
-    {
-        for (int32_t x = 0; x < Side; ++x)
-        {
-            picture->Pixels[static_cast<size_t>(y) * Side + x] = static_cast<uint8_t>(FirstColor + x / Stripe);
-        }
-    }
-
-    MCRenderer::CreateTexture(*picture, MCTextureUse::Static);
+    const std::shared_ptr<MCWindow> picture = StripedPicture(FirstColor);
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_first_frame";
     std::filesystem::remove_all(scratch);
     const std::filesystem::path pack = scratch / "pack";
-    std::filesystem::create_directories(PictureFolderOf(pack));
-    DecodedFrame frame;
-    frame.Width = Side;
-    frame.Height = Side;
-    frame.Index.assign(picture->Bytes().begin(), picture->Bytes().end());
-    frame.Drawn.assign(frame.Index.size(), 1);
-    const std::string name = MCHdArt::PictureName(MCHdArt::PictureHash(picture->Bytes(), Side, Side));
-    WriteFramePngs(PictureFolderOf(pack) / name, frame, colors, TestPackScale, Inverted, false);
+    WritePackPicture(pack, *picture, colors);
     WritePaletteRgb(pack, colors);
 
     MCPane& screen = ScreenPort()->Frame();
@@ -17936,6 +17957,97 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
 
     CHECK_EQ(kept, Side * Side);
     MCRenderer::DestroyTexture(*picture);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only: once the GPU holds a picture's HD copy, the texture keeps the frame without its colours, so the pack's
+/// cache alone holds them and its trim frees them, the picture still drawn from the GPU's copy; once the GPU lets the
+/// picture go, the frame is read again (the same Id) and the picture drawn from the pack as before.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: an HD picture's colours are the cache's alone once on the GPU, and read again when it lets go")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // Two pictures of their own, both in the pack: the one copied, and one read to have the cache trim it.
+    constexpr uint8_t CopiedColor = 0x30;
+    constexpr uint8_t OtherColor = 0x40;
+    const std::shared_ptr<MCWindow> copied = StripedPicture(CopiedColor);
+    const std::shared_ptr<MCWindow> other = StripedPicture(OtherColor);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_picture_colours";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    WritePackPicture(pack, *copied, colors);
+    WritePackPicture(pack, *other, colors);
+    WritePaletteRgb(pack, colors);
+
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+    const auto find = [](const MCWindow& picture)
+    { return MCHdArt::FindPicture(picture.Bytes(), StripedSide, StripedSide); };
+    GamePaused = true;
+    const MCHdArtOn on(pack);
+
+    // The pictures from the pack copied onto the screen this frame.
+    const auto copy = [&]
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        const int64_t before = renderer->HdDrawn();
+        VfxPaneCopy(MCPane::Over(copied), 0, 0, screen, left, top, VfxNoColor);
+        return renderer->HdDrawn() - before;
+    };
+
+    // Up with its first copy; the next lets the texture's colours go.
+    CHECK_EQ(copy(), 1);
+    CHECK_EQ(copy(), 1);
+    std::shared_ptr<const MCHdArt::Frame> found = find(*copied);
+    REQUIRE(found != nullptr);
+    const uint64_t id = found->Id;
+    // The cache's, and this one.
+    CHECK_EQ(found.use_count(), 2);
+    const std::weak_ptr<const MCHdArt::Frame> cached = found;
+    found.reset();
+
+    // The other read, then the cache held to a byte: the copied picture's frame goes, nothing else holding it.
+    REQUIRE(find(*other) != nullptr);
+    MCHdArt::SetCacheBudget(1);
+    CHECK(cached.expired());
+
+    // Drawn from the GPU's copy, nothing read.
+    size_t read = MCHdArt::FramesRead();
+    CHECK_EQ(copy(), 1);
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+
+    // The GPU lets it go: read again as it's copied, with its Id, and drawn from the pack.
+    MCTestGame::RunFrame(FrameSeconds);
+    renderer->ForgetHdPictureForTests(id);
+    read = MCHdArt::FramesRead();
+    CHECK_EQ(copy(), 1);
+    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+    found = find(*copied);
+    REQUIRE(found != nullptr);
+    CHECK_EQ(found->Id, id);
+    CHECK(!renderer->Unsupported().contains("an HD art frame whose pixels don't match its size"));
+
+    found.reset();
+    MCHdArt::SetCacheBudget(0);
+    GamePaused = false;
+    MCRenderer::DestroyTexture(*copied);
+    MCRenderer::DestroyTexture(*other);
     std::filesystem::remove_all(scratch);
 }
 

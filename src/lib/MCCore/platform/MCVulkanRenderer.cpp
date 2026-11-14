@@ -2965,7 +2965,17 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow
     {
         state.HdLooked = true;
         state.HdPack = MCHdArt::PackVersion();
+        state.HdOnGpu = false;
         state.Hd = MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
+    }
+    else if (state.Hd != nullptr && state.HdOnGpu != _HdPictures.contains(state.Hd->Id))
+    {
+        // Port-only: once the GPU holds the picture (its colours copied up), the texture keeps the frame without them,
+        // so the pack's cache alone holds them and may let them go; once the GPU has let the picture go, the frame is
+        // found again (the cache's, or read again with its Id) to go up again.
+        state.HdOnGpu = !state.HdOnGpu;
+        state.Hd = state.HdOnGpu ? std::make_shared<const MCHdArt::Frame>(state.Hd->WithoutColors())
+                                 : MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
     }
 
     return state.Hd;

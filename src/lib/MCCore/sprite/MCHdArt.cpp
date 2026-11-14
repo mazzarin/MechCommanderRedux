@@ -2392,6 +2392,21 @@ uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, in
     return hash;
 }
 
+MCHdArt::Frame MCHdArt::Frame::WithoutColors() const
+{
+    return Frame{.Id = Id,
+                 .Width = Width,
+                 .Height = Height,
+                 .Scale = Scale,
+                 .Format = Format,
+                 .Colors = {},
+                 .Indices = Indices,
+                 .Blended = Blended,
+                 .PaintedShadow = PaintedShadow,
+                 .Colorspace = Colorspace,
+                 .Movie = Movie};
+}
+
 std::string MCHdArt::PictureName(uint64_t hash)
 {
     return HashName(hash);

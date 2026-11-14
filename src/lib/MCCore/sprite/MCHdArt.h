@@ -127,6 +127,12 @@ namespace MCHdArt
 
         /// <summary>The bytes it keeps.</summary>
         size_t Bytes() const { return Colors.size() + Indices.size(); }
+
+        /// <summary>
+        /// Port-only: a copy without its colours, all a draw reads of a frame the GPU holds (MCVulkanRenderer's
+        /// TextureState::Hd): every field but <see cref="Colors"/> (a field added here is copied there too).
+        /// </summary>
+        Frame WithoutColors() const;
     };
 
     /// <summary>The bytes an index picture's pixel takes (R8G8), and the green of a pixel with an index.</summary>

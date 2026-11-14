@@ -394,6 +394,12 @@ public:
     int64_t HdDrawn() const { return _HdDrawn; }
 
     /// <summary>
+    /// Port-only, for the tests: lets go of the GPU's copy of HD frame <paramref name="id"/> between frames, as the
+    /// pictures' trim does with one unused a while.
+    /// </summary>
+    void ForgetHdPictureForTests(uint64_t id) { ForgetHdPicture(id); }
+
+    /// <summary>
     /// Port-only (HD movies), for the tests: the colours the GPU made of movie frame <paramref name="frame"/>
     /// (<see cref="MCHdArt::ColorFormat::Yuv420"/>; RGBA8 rows, its size), read back, waiting for the GPU. The frame
     /// must have been drawn, and its frame run, and be its movie's latest.
@@ -1788,11 +1794,14 @@ private:
         std::vector<uint8_t> Stream;
         /// <summary>
         /// Port-only: the HD art pack's copy of the pixels as last uploaded (<see cref="MCHdArt::FindPicture"/>), and
-        /// whether it was looked for since, in the pack then set (<see cref="MCHdArt::PackVersion"/>).
+        /// whether it was looked for since, in the pack then set (<see cref="MCHdArt::PackVersion"/>). Once the GPU
+        /// holds the picture (HdOnGpu), the copy without its colours (<see cref="MCHdArt::Frame::WithoutColors"/>), so
+        /// the pack's cache alone holds them; the GPU having let it go, it is found again (the same Id).
         /// </summary>
         std::shared_ptr<const MCHdArt::Frame> Hd;
         bool HdLooked = false;
         uint64_t HdPack = 0;
+        bool HdOnGpu = false;
         /// <summary>
         /// Port-only: a frame shown over the pixels from (ShownHdX, ShownHdY) on (MCRenderer::ShowHdPicture: a movie's
         /// HD frame), or null.

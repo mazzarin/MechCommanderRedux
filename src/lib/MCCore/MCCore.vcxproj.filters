@@ -1198,6 +1198,9 @@
     <ClCompile Include="platform\MCInput.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCMemoryRoom.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCNetSwitch.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -2590,6 +2593,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCInput.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCMemoryRoom.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCNetSwitch.h">

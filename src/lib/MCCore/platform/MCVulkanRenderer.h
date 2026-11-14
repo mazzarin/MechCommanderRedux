@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/MCMemoryRoom.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCSharpLines.h"
@@ -320,6 +321,12 @@ public:
 
     /// <summary>The uploads of the last frame <see cref="Execute"/> ran.</summary>
     const UploadTally& LastFrameUploads() const { return _LastFrameUploads; }
+
+    /// <summary>
+    /// Port-only: the bytes the HD art frames on the GPU take (their colours and indices), and how many there are.
+    /// </summary>
+    size_t HdPictureBytes() const { return _HdPictureBytes; }
+    size_t HdPictureCount() const { return _HdPictures.size(); }
 
     /// <summary>
     /// Port-only: the draw calls of the last frame <see cref="Execute"/> ran (each a batch of draws), once it has run
@@ -1577,6 +1584,13 @@ private:
     /// </summary>
     std::unordered_map<uint64_t, Picture> _HdPictures;
     size_t _HdPictureBytes = 0;
+    /// <summary>
+    /// Port-only: what the machine says the HD art frames may take (made with the device), the pack the HD pictures were
+    /// last made from (MCHdArt::PackVersion), and the frame it last changed in (those drawn before then go).
+    /// </summary>
+    std::optional<MCMemoryRoom::MCReader> _Room;
+    uint64_t _HdPicturesPack = 0;
+    uint64_t _HdPackChanged = 0;
     /// <summary>The HD art frames the GPU couldn't take (logged once each, then drawn from the 1x shape).</summary>
     std::unordered_set<uint64_t> _HdRefused;
 
@@ -1652,12 +1666,13 @@ private:
     };
 
     /// <summary>
-    /// Drops the pictures of <paramref name="pictures"/> unused for a while (looked for every PictureSweepFrames
-    /// frames), then, oldest first, those past <paramref name="budget"/> bytes not drawn in the last frame; at most
-    /// TrimmedBytesPerFrame a frame (the rest go later). <paramref name="bytes"/> counts what they take.
+    /// Drops the pictures of <paramref name="pictures"/> last drawn before frame <paramref name="idleBefore"/> (looked
+    /// for every PictureSweepFrames frames), then, oldest first, those past <paramref name="budget"/> bytes not drawn in
+    /// the last frame; at most TrimmedBytesPerFrame a frame (the rest go later). <paramref name="bytes"/> counts what
+    /// they take.
     /// </summary>
     void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
-                      size_t bytesPerPixel);
+                      size_t bytesPerPixel, uint64_t idleBefore);
 
     /// <summary>
     /// Drops <paramref name="it"/>'s picture from <paramref name="pictures"/>, taking what it took from

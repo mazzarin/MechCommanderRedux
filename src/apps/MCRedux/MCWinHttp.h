@@ -44,6 +44,28 @@ namespace MCWinHttp
         return wide;
     }
 
+    /// <summary><paramref name="text"/> (Windows' UTF-16) as UTF-8.</summary>
+    inline std::string Narrow(std::wstring_view text)
+    {
+        if (text.empty())
+        {
+            return {};
+        }
+
+        const int length =
+            WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+
+        if (length <= 0)
+        {
+            return {};
+        }
+
+        std::string narrow(static_cast<size_t>(length), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), narrow.data(), length, nullptr,
+                            nullptr);
+        return narrow;
+    }
+
     struct MCHandleCloser
     {
         void operator()(HINTERNET handle) const { WinHttpCloseHandle(handle); }

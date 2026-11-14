@@ -2,6 +2,7 @@
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "TestGame.h"
+#include "fakes/MCFakeMemorySystem.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
@@ -654,6 +655,100 @@ TEST_CASE("hd art: a frame read again keeps its Id")
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
     std::filesystem::remove_all(pack);
+}
+
+/// <summary>
+/// Port-only: while the system says memory is short, the frames kept in memory go least recently used first,
+/// MCMemoryRoom::TrimmedBytesPerFrame a frame, but never one asked for in the frame before (being drawn, it would only be
+/// read again), until it stops saying so; meanwhile and after, those asked for are read and kept.
+/// </summary>
+TEST_CASE(
+    "hd art: while memory is short the frames kept go 64 MB a frame, never one the last frame drew, until it isn't")
+{
+    // Frames of 4 MB of BC7 colours and 128 KB of indices: 16 go in a frame (the 16th takes it past 64 MB).
+    constexpr int32_t Scale = 8;
+    constexpr int32_t Width = 256;
+    constexpr int32_t Height = 256;
+    constexpr size_t Frames = 40;
+    constexpr size_t Drawn = 4;
+    constexpr size_t GoneAFrame = 16;
+    MCHdArt::Frame frame;
+    frame.Width = Width * Scale;
+    frame.Height = Height * Scale;
+    frame.Scale = Scale;
+    frame.Format = MCHdArt::ColorFormat::Bc7;
+    frame.Colors.assign(static_cast<size_t>(frame.Width) * frame.Height, 0);
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, MCHdArt::HasIndex);
+    const size_t frameBytes = frame.Bytes();
+    REQUIRE_EQ(MCMemoryRoom::TrimmedBytesPerFrame / frameBytes + 1, GoneAFrame);
+    const std::vector<uint8_t> file = MCHdArt::EncodeHdf(frame);
+
+    // Every tile's entry shares the first's bytes.
+    std::vector<std::vector<uint8_t>> tiles;
+    std::vector<ArchiveEntry> entries;
+
+    for (size_t i = 0; i < Frames; ++i)
+    {
+        tiles.push_back({static_cast<uint8_t>(i), static_cast<uint8_t>(i >> 8)});
+        const std::string name = MCHdArt::TerrainTileName(tiles.back()) + ".hdf";
+        entries.push_back(i == 0 ? Raw(name, file) : ArchiveEntry{name, {}, file.size(), size_t{0}});
+    }
+
+    ScratchFolder pack("mc_hd_memory_short_test");
+    WriteBytes(pack.Path() / "terrain.hda", BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack.Path());
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    MCFakeMemoryScope memory(system);
+    MCMemoryRoom::MCReader reader{"Test GPU"};
+
+    // A frame begins (MCHdArt::NextFrame as the renderer calls it) and draws the last `Drawn` tiles.
+    const auto frameDrawn = [&]
+    {
+        MCHdArt::NextFrame(reader.Frame(0).MemoryShort);
+
+        for (size_t i = Frames - Drawn; i < Frames; ++i)
+        {
+            REQUIRE(MCHdArt::FindTerrainTile(tiles[i], Width, Height) != nullptr);
+        }
+
+        return MCHdArt::CachedBytes();
+    };
+
+    for (const std::vector<uint8_t>& tile : tiles)
+    {
+        REQUIRE(MCHdArt::FindTerrainTile(tile, Width, Height) != nullptr);
+    }
+
+    CHECK_EQ(MCHdArt::CachedBytes(), Frames * frameBytes);
+    CHECK_EQ(frameDrawn(), Frames * frameBytes);
+
+    // Short: 16 a frame, then only those drawn, however long it lasts.
+    system->IsShort = true;
+    CHECK_EQ(frameDrawn(), (Frames - GoneAFrame) * frameBytes);
+    CHECK_EQ(frameDrawn(), (Frames - 2 * GoneAFrame) * frameBytes);
+    CHECK_EQ(frameDrawn(), Drawn * frameBytes);
+    CHECK_EQ(frameDrawn(), Drawn * frameBytes);
+    const size_t read = MCHdArt::FramesRead();
+    CHECK_EQ(frameDrawn(), Drawn * frameBytes);
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+
+    // No longer short: the frames asked for are read again and kept.
+    system->IsShort = false;
+    frameDrawn();
+
+    for (const std::vector<uint8_t>& tile : tiles)
+    {
+        REQUIRE(MCHdArt::FindTerrainTile(tile, Width, Height) != nullptr);
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read + Frames - Drawn);
+    CHECK_EQ(frameDrawn(), Frames * frameBytes);
+    CHECK_EQ(frameDrawn(), Frames * frameBytes);
+
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
 }
 
 /// <summary>

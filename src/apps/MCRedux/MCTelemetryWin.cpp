@@ -45,15 +45,7 @@ namespace
     constexpr BYTE BatterySaverOn = 1;
     constexpr BYTE OnLinePower = 1;
 
-    std::string Narrow(std::wstring_view text)
-    {
-        const int length =
-            WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-        std::string narrow(static_cast<size_t>(std::max(length, 0)), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), narrow.data(), length, nullptr,
-                            nullptr);
-        return narrow;
-    }
+    using MCWinHttp::Narrow;
 
     /// <summary>A string from HKEY_LOCAL_MACHINE, or empty.</summary>
     std::string MachineValue(const wchar_t* key, const wchar_t* name)

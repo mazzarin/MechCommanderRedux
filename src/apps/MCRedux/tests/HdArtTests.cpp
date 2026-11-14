@@ -18,6 +18,7 @@
 #include "color/MCPalette.h"
 #include "engine/MCByteFlag.h"
 #include "engine/MCCraterManager.h"
+#include "fakes/MCFakeMemorySystem.h"
 #include "fakes/MCMemoryFileSource.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
@@ -3666,6 +3667,201 @@ TEST_CASE_ISOLATED("game: the GPU draws HD art frames apart in as many batches a
         drawn(mixedTable, Frames);
         ownColours(drawn(mixedTable, Frames).second, [&](size_t f) { return indices[Frames - 1 - f]; });
     }
+
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only: the HD art frames on the GPU go only past the room the machine says the card gives them
+/// (MCMemoryRoom::MCReader): drawn once they stay, however long since (once, unused for 300 frames, they went). As the
+/// card's room falls they go oldest first, MCMemoryRoom::TrimmedBytesPerFrame a frame, down to it, but never one the
+/// last frame drew, however little room is left. While the system is short of memory, a card sharing it lets go of
+/// them the same way, and the frames kept in memory go too, down to those the last frame drew; once it isn't, every
+/// frame drawn is kept again on both sides.
+/// </summary>
+TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never fewer than the last frame drew")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr uint64_t MB = uint64_t{1} << 20;
+    constexpr uint64_t GB = uint64_t{1} << 30;
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    system->Budget = 8 * GB;
+    system->Rest = 512 * MB;
+    MCFakeMemoryScope memory(system);
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || renderer == nullptr)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    // The card counts the HD pictures among the game's use of it, as a real one does.
+    system->Held = [weak = std::weak_ptr(renderer)]
+    {
+        const std::shared_ptr<MCVulkanRenderer> held = weak.lock();
+        return held != nullptr ? uint64_t{held->HdPictureBytes()} : uint64_t{0};
+    };
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t index = FullColorIndex(colors);
+
+    // A shape table of Frames frames alike, each its own HD frame: BC7 colours 960 a side (0.9 MB).
+    constexpr size_t Frames = 160;
+    constexpr size_t Drawn = 8;
+    constexpr int32_t Width = 120;
+    constexpr int32_t Height = 120;
+    constexpr int32_t Scale = 8;
+    constexpr uint8_t RowPixels = 2 * Width + 1;
+    constexpr uint8_t RowEnd = 0;
+    constexpr int32_t Left = 40;
+    constexpr int32_t Foot = 160;
+    // Past PictureFrames (300) and a sweep's PictureSweepFrames (32).
+    constexpr int32_t IdleFrames = 340;
+    constexpr int32_t MostTrimFrames = 10;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Height; ++row)
+    {
+        rows.push_back(RowPixels);
+        rows.insert(rows.end(), static_cast<size_t>(Width), index);
+        rows.push_back(RowEnd);
+    }
+
+    const std::vector<uint8_t> made =
+        FramesTable(std::vector<TableFrame>(Frames, TableFrame{0, -Height, Width, Height, rows}));
+    MCRegisteredBlock table(made.size(), MCDataKind::Shapes);
+    std::ranges::copy(made, table.Bytes().begin());
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_gpu_room";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table.Bytes()));
+    std::filesystem::create_directories(folder);
+    MCHdArt::Frame frame;
+    frame.Width = Width * Scale;
+    frame.Height = Height * Scale;
+    frame.Scale = Scale;
+    frame.Format = MCHdArt::ColorFormat::Bc7;
+    frame.Colors.assign(static_cast<size_t>(frame.Width) * frame.Height, 0);
+
+    for (int32_t i = 0; i < Width * Height; ++i)
+    {
+        frame.Indices.insert(frame.Indices.end(), {index, HasIndex});
+    }
+
+    const std::vector<uint8_t> hdf = MCHdArt::EncodeHdf(frame);
+
+    for (size_t f = 0; f < Frames; ++f)
+    {
+        std::ofstream out(folder / std::format("{}.hdf", f), std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(hdf.data()), static_cast<std::streamsize>(hdf.size()));
+        REQUIRE(out.good());
+    }
+
+    WritePaletteRgb(pack, colors);
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    MCPane& pane = ScreenPort()->Frame();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCTestGame::RunFrame(FrameSeconds);
+
+    // A frame drawing the first `count` frames, all in one place.
+    const auto drawn = [&](size_t count)
+    {
+        for (size_t f = 0; f < count; ++f)
+        {
+            AGShapeDraw(pane, table.Bytes(), static_cast<int32_t>(f), Left, Foot);
+        }
+
+        REQUIRE(display->ReadFrame().has_value());
+        return renderer->HdPictureBytes();
+    };
+
+    // The bytes a picture takes, and what the frames kept in memory take with every one read.
+    const size_t one = drawn(1);
+    REQUIRE(one > 0);
+    CHECK_EQ(drawn(Frames), Frames * one);
+    const size_t kept = MCHdArt::CachedBytes();
+    REQUIRE_EQ(kept, Frames * frame.Bytes());
+
+    // Frames drawing the first `count` while the pictures go, down to `least` at most (a frame after one that drew
+    // them all lets go of none): the first that lets go of any lets go of 64 MB, or all down to `least` when that's
+    // less; none more than 64 MB and a picture. The bytes left.
+    const auto settled = [&](size_t count, size_t least)
+    {
+        size_t bytes = renderer->HdPictureBytes();
+        bool trimming = false;
+
+        for (int32_t step = 0; step < MostTrimFrames; ++step)
+        {
+            MCTest::Scope where(std::format("trim frame {}", step));
+            const size_t before = bytes;
+            bytes = drawn(count);
+            CHECK(before - bytes < MCMemoryRoom::TrimmedBytesPerFrame + one);
+            CHECK(trimming || before == bytes ||
+                  before - bytes >= std::min(MCMemoryRoom::TrimmedBytesPerFrame, before - least));
+            trimming = trimming || before != bytes;
+        }
+
+        return bytes;
+    };
+
+    // Unused for longer than any picture once was, they stay while the card has room.
+    for (int32_t i = 0; i < IdleFrames; ++i)
+    {
+        drawn(Drawn);
+    }
+
+    CHECK_EQ(renderer->HdPictureCount(), Frames);
+    CHECK_EQ(renderer->HdPictureBytes(), Frames * one);
+
+    // Another program takes most of the card: down to its room, oldest first; those drawn stay.
+    const uint64_t room = 40 * one + one / 2;
+    system->Budget = system->Rest + room;
+    MCMemoryRoom::AskAgain();
+    const size_t trimmed = settled(Drawn, room);
+    CHECK(trimmed <= room);
+    CHECK(trimmed + one > room);
+
+    // None left: the pictures the last frame drew stay, as does what they hold.
+    system->Budget = system->Rest;
+    MCMemoryRoom::AskAgain();
+    CHECK_EQ(settled(Drawn, Drawn * one), Drawn * one);
+    CHECK_EQ(renderer->HdPictureCount(), Drawn);
+    CHECK_EQ(drawn(Drawn), Drawn * one);
+
+    // Room again: every frame drawn is kept.
+    system->Budget = 8 * GB;
+    MCMemoryRoom::AskAgain();
+    drawn(Frames);
+    CHECK_EQ(drawn(Frames), Frames * one);
+
+    // The system short of memory, which the card shares: both sides let go down to what the last frame drew.
+    system->SharesMemory = true;
+    system->IsShort = true;
+    MCMemoryRoom::AskAgain();
+    CHECK_EQ(settled(Drawn, Drawn * one), Drawn * one);
+
+    for (int32_t step = 0; step < MostTrimFrames; ++step)
+    {
+        drawn(Drawn);
+    }
+
+    CHECK_EQ(MCHdArt::CachedBytes(), kept - (Frames - Drawn) * frame.Bytes());
+
+    // No longer short: both keep every frame drawn again.
+    system->IsShort = false;
+    drawn(Frames);
+    CHECK_EQ(drawn(Frames), Frames * one);
+    CHECK_EQ(MCHdArt::CachedBytes(), kept);
 
     hdArt.reset();
     std::filesystem::remove_all(scratch);

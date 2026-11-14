@@ -883,13 +883,10 @@ TEST_CASE_ISOLATED("tool: --hd-make-sharp writes the sharp screens' text and lin
 
 // SCRATCH PROBE (never commit): the maker's time with and without a pack's sharp.hda.
 #ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
+// kernel32's two, declared alone: windows.h after this file's headers doesn't compile (its types clash with theirs).
+extern "C" __declspec(dllimport) int __stdcall GetProcessTimes(void* process, uint64_t* created, uint64_t* ended,
+                                                               uint64_t* kernel, uint64_t* user);
+extern "C" __declspec(dllimport) void* __stdcall GetCurrentProcess();
 #else
 #include <sys/resource.h>
 #endif
@@ -915,11 +912,10 @@ TEST_CASE_ISOLATED("probe: sharp maker time")
     const auto cpu = []
     {
 #ifdef _WIN32
-        FILETIME created{}, ended{}, kernel{}, user{};
+        // FILETIMEs: 100 ns units, as two 32-bit halves, low first (a uint64_t's layout on x64).
+        uint64_t created = 0, ended = 0, kernel = 0, user = 0;
         GetProcessTimes(GetCurrentProcess(), &created, &ended, &kernel, &user);
-        const auto ticks = [](const FILETIME& time)
-        { return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime; };
-        return static_cast<double>(ticks(kernel) + ticks(user)) / 10000.0;
+        return static_cast<double>(kernel + user) / 10000.0;
 #else
         rusage use{};
         getrusage(RUSAGE_SELF, &use);

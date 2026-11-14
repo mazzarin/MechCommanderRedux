@@ -5466,6 +5466,48 @@ TEST_CASE_ISOLATED(
 }
 
 /// <summary>
+/// Port-only: with HD particles on, a mission's load measures the looks of the explosions whose types it loaded
+/// (MCParticles::MeasureExplosions: the weapons' hits and misses, the units' own ends), so that mission 1's staged
+/// battle measures none as its explosions are first drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's explosions are measured at its load, none as its battle first draws them")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // Up to a minute of the battle, until a few explosions have been drawn.
+    constexpr int32_t MostFrames = 3600;
+    constexpr size_t LeastBursts = 4;
+    const int previous = GHdParticles;
+    // On as the boot reads the preferences, so the mission loads with it.
+    MCTestGame::BootOptions.Started = [] { GHdParticles = 1; };
+    const size_t before = MCParticles::LooksMeasured();
+    REQUIRE(MCTestGame::StartMission(1));
+    const size_t loaded = MCParticles::LooksMeasured();
+    CHECK(loaded > before);
+    const size_t begun = MCParticles::BurstsBegun();
+    // The view follows the Uller, the fight's target, so its explosions are drawn.
+    const std::shared_ptr<MCMover> target = MCTestGame::OrderMissionOneAttack();
+    REQUIRE(target != nullptr);
+    Eye()->ChangeTarget(target, true);
+    int32_t frames = 0;
+
+    for (; frames < MostFrames && MCParticles::BurstsBegun() < begun + LeastBursts; ++frames)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    std::cout << std::format(
+        "  {} looks measured at the load; {} explosions drawn in {} frames, {} looks measured then\n", loaded - before,
+        MCParticles::BurstsBegun() - begun, frames, MCParticles::LooksMeasured() - loaded);
+    CHECK(MCParticles::BurstsBegun() >= begun + LeastBursts);
+    CHECK_EQ(MCParticles::LooksMeasured(), loaded);
+    GHdParticles = previous;
+}
+
+/// <summary>
 /// HD particles (GHdParticles), on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
 /// interface: with them off a burst makes nothing. On, a shot's hit on a unit and a big explosion on the ground in the
 /// view's middle show there as they're made and nowhere else; as the game's time goes on they fly out from it, and by the

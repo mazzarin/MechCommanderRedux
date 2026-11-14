@@ -36,6 +36,8 @@ public:
     std::shared_ptr<MCObjectType> Find(int32_t objTypeNum) const;
     /// <summary>Types loaded.</summary>
     size_t Size() const { return _Types.size(); }
+    /// <summary>Port-only: the types loaded (MCParticles::MeasureExplosions).</summary>
+    std::span<const std::shared_ptr<MCObjectType>> Types() const { return _Types; }
     /// <summary>Makes a new object of type <paramref name="objTypeNum"/>, loading the type if needed.</summary>
     std::shared_ptr<MCBaseObject> Get(int32_t objTypeNum);
     /// <summary>

@@ -61,6 +61,43 @@ auto MCVfxAppearanceType::Load(MCFile& apprFile, uint32_t fileSize) -> MCAppeara
     return MakeShapeList(ShapeList);
 }
 
+auto MCVfxAppearanceType::DrawnShapes() -> std::vector<std::shared_ptr<MCShape>>
+{
+    std::vector<uint32_t> packets;
+    // As GetShape finds them: from the state's first packet, a facing each (every other packet in a scaled type).
+    const auto addState = [&](const MCActorData& data)
+    {
+        if (data.NumFrames == 0)
+        {
+            return;
+        }
+
+        for (uint32_t facing = 0; facing < std::max<uint32_t>(data.NumRotations, 1); ++facing)
+        {
+            packets.push_back(data.BasePacketNumber + (Scaled ? facing << 1 : facing));
+        }
+    };
+
+    std::ranges::for_each(States, addState);
+    std::ranges::for_each(SubStates, addState);
+    std::ranges::sort(packets);
+    packets.erase(std::ranges::unique(packets).begin(), packets.end());
+    std::vector<std::shared_ptr<MCShape>> shapes;
+
+    for (const uint32_t packet : packets)
+    {
+        if (packet < ShapeList.size())
+        {
+            if (std::shared_ptr<MCShape> shape = PacketShape(ShapeList[packet], packet); shape != nullptr)
+            {
+                shapes.push_back(std::move(shape));
+            }
+        }
+    }
+
+    return shapes;
+}
+
 auto MCVfxAppearanceType::GetShape(MCActorState state, uint8_t subState, int32_t rotation, float& frameRate,
                                    bool& reverse) -> std::shared_ptr<MCShape>
 {

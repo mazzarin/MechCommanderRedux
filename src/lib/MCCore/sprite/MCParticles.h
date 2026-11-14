@@ -155,6 +155,18 @@ namespace MCParticles
     /// <summary>Drops every particle and shake, and throws the dice from their start again (a mission's start).</summary>
     void Clear();
 
+    /// <summary>
+    /// Port-only: measures how the bursts of every explosion whose type is loaded look (its shapes' fire, as the first of
+    /// each to show would), so that none is measured in a mission's frame: at a mission's load, after Clear (the
+    /// weapons' hits and misses and the units' own explosions load with the units). Kept by each shape's HD folder
+    /// (MCShape::HdFolder), which a shape loaded again keeps. Does nothing while no burst is wanted.
+    /// </summary>
+    void MeasureExplosions();
+
+    /// <summary>Port-only: how many bursts' looks have been measured, and how many explosions' bursts were begun.</summary>
+    size_t LooksMeasured();
+    size_t BurstsBegun();
+
     /// <summary>How many particles there are.</summary>
     size_t Count();
 

@@ -73,6 +73,12 @@ public:
     std::shared_ptr<MCShape> GetShape(MCActorState state, uint8_t subState, int32_t rotation, float& frameRate,
                                       bool& reverse);
 
+    /// <summary>
+    /// Port-only (HD particles, MCParticles::MeasureExplosions): every shape GetShape gives, each state's and sub-state's
+    /// at each of its facings (a scaled type's full size ones), loading them if needed.
+    /// </summary>
+    std::vector<std::shared_ptr<MCShape>> DrawnShapes();
+
     /// <summary>The states (at least <see cref="ActorStateCount"/>; those past NumStates are empty).</summary>
     std::vector<MCActorData> States;
     /// <summary>The sub-states of the first state that has them (state 0 in practice); empty when none.</summary>

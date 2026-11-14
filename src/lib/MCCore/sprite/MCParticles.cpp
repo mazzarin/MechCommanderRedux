@@ -9,11 +9,16 @@
 #include "engine/MCElementBuffer.h"
 #include "lib/MCOptionalRef.h"
 #include "lib/MCVector3D.h"
+#include "appear/MCAppearanceTypeList.h"
 #include "main/MCMissionGlobals.h"
+#include "object/MCExplosionType.h"
+#include "object/MCObjectSystem.h"
+#include "object/MCObjectTypeManager.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
+#include "sprite/MCVfxAppearanceType.h"
 #include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTerrain.h"
 #include "terrain/MCTerrainTiles.h"
@@ -611,6 +616,14 @@ namespace
         std::unordered_map<MCAddressKey, Track> Tracks;
         std::vector<Shake> Shakes;
         std::map<TableKey, BurstLook> Looks;
+        /// <summary>
+        /// Port-only: the looks measured, by the shapes' HD folders (MCShape::HdFolder), so that one measured before it
+        /// was drawn (MCParticles::MeasureExplosions) is found when its shape is loaded again elsewhere.
+        /// </summary>
+        std::map<std::filesystem::path, BurstLook> FolderLooks;
+        /// <summary>Port-only: how many looks were measured, and how many explosions began a burst.</summary>
+        size_t Measured = 0;
+        size_t Begun = 0;
         /// <summary>The fires' colours flecks are drawn in, brightest first (index 0 is FallbackFire, kept apart).</summary>
         std::vector<std::vector<FleckColor>> Ramps;
         /// <summary>The frames' outlines, measured once a frame (their nodes stay put, so PendingEdge keeps them).</summary>
@@ -777,22 +790,32 @@ namespace
     /// square's side (MCSceneLights' measure), and its bright pixels' colours over all its frames, brightest first,
     /// leaving out those few of them have; measured once a shape table.
     /// </summary>
-    BurstLook LookOf(State& state, const MCVfxAppearance& appearance)
+    BurstLook LookOf(State& state, const MCShape& shape)
     {
-        const std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
-
-        if (shape == nullptr || !VfxIsShapeTable(shape->FrameList()))
+        if (!VfxIsShapeTable(shape.FrameList()))
         {
             return {};
         }
 
-        const std::span<const uint8_t> table = shape->FrameList();
+        const std::span<const uint8_t> table = shape.FrameList();
         const auto [found, isNew] = state.Looks.try_emplace(TableKey{MCAddressKey::OfData(table), table.size()});
 
         if (!isNew)
         {
             return found->second;
         }
+
+        // Port-only: measured already, as loaded before (MCParticles::MeasureExplosions).
+        if (!shape.HdFolder.empty())
+        {
+            if (const auto measured = state.FolderLooks.find(shape.HdFolder); measured != state.FolderLooks.end())
+            {
+                found->second = measured->second;
+                return found->second;
+            }
+        }
+
+        ++state.Measured;
 
         using enum MCSceneLights::MCGlowPixels;
         int32_t fire = 0;
@@ -840,7 +863,19 @@ namespace
             look.Ramp = static_cast<uint16_t>(state.Ramps.size());
         }
 
+        if (!shape.HdFolder.empty())
+        {
+            state.FolderLooks.emplace(shape.HdFolder, look);
+        }
+
         return look;
+    }
+
+    /// <summary>How <paramref name="appearance"/>'s bursts look: its current shape's (LookOf).</summary>
+    BurstLook LookOf(State& state, const MCVfxAppearance& appearance)
+    {
+        const std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
+        return shape != nullptr ? LookOf(state, *shape) : BurstLook{};
     }
 
     /// <summary>The colours of fire <paramref name="ramp"/> (a burst's, a fleck's), brightest first.</summary>
@@ -1748,6 +1783,7 @@ namespace
         state.Tracks.clear();
         state.Shakes.clear();
         state.Looks.clear();
+        state.FolderLooks.clear();
         state.Ramps.clear();
         state.Outlines.clear();
         state.Edges.clear();
@@ -1774,6 +1810,7 @@ auto MCParticles::AddExplosion(const MCVfxAppearance& appearance, const MCVector
     {
         State& state = TheState();
         const BurstLook look = LookOf(state, appearance);
+        ++state.Begun;
         state.Bursts.push_back({position.X, position.Y, position.Z, look.Size, look.Ramp, shakes});
     }
 }
@@ -2147,6 +2184,50 @@ auto MCParticles::Draw(const MCCamera& camera) -> void
     {
         AddElements(state, camera);
     }
+}
+
+auto MCParticles::MeasureExplosions() -> void
+{
+    // An explosion's appearance is a VFX one (MCExplosion::Init).
+    constexpr uint32_t AppearanceKind = 0xff000000;
+    constexpr uint32_t VfxAppearance = 0x2000000;
+
+    if (!Wanted())
+    {
+        return;
+    }
+
+    State& state = TheState();
+
+    for (const std::shared_ptr<MCObjectType>& type : ObjectTypeManager().Types())
+    {
+        if (dynamic_cast<const MCExplosionType*>(type.get()) == nullptr)
+        {
+            continue;
+        }
+
+        const std::shared_ptr<MCAppearanceType> appearance = AppearanceTypeList().GetAppearance(type->AppearName);
+
+        if (appearance == nullptr || (appearance->AppearanceNum & AppearanceKind) != VfxAppearance)
+        {
+            continue;
+        }
+
+        for (const std::shared_ptr<MCShape>& shape : static_cast<MCVfxAppearanceType&>(*appearance).DrawnShapes())
+        {
+            static_cast<void>(LookOf(state, *shape));
+        }
+    }
+}
+
+auto MCParticles::LooksMeasured() -> size_t
+{
+    return TheState().Measured;
+}
+
+auto MCParticles::BurstsBegun() -> size_t
+{
+    return TheState().Begun;
 }
 
 auto MCParticles::Clear() -> void

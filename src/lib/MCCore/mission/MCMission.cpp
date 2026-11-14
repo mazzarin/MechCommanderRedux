@@ -25,6 +25,7 @@
 #include "gui/MCUpdateDisplay.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFile.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCControlsPanel.h"
@@ -983,11 +984,14 @@ auto MCMission::CloseResultsScreen() -> void
         GamePaused = false;
     };
 
-    // Port-only: the way back to logistics from a campaign's or a solo mission's results (the screens made again, the
-    // campaign loaded, the briefing set up: 88 ms on the M4 Pro) is done in the fade into logistics once the screen is
-    // nearly black, then what the fade into the briefing does (FadeOutWhile), where the results screen sat frozen for
-    // it before its fade began. A match's goes back as the original's, at once: it may end the game (a launcher's,
-    // KillTheGame) or take it to its room (MCRoomEnd::AfterMatch).
+    // Port-only: the way back to logistics from the results (the screens made again, the campaign loaded, the briefing
+    // set up, or a match's room: 75-100 ms on the M4 Pro, two-thirds of it looking for and reading files) is done in
+    // the fade into logistics once the screen is nearly black, then what the fade into the screen it shows does
+    // (FadeOutWhile), where the results screen sat frozen for it before its fade began. From the click the files it
+    // will look for are read ahead on threads of their own (MCFilesAhead: those looked for in the archives while
+    // logistics was up before, its screens made of the same files every time), and the next briefing's map with the
+    // HD pictures; near black the game's thread makes the screens from them. A launcher's match ends at its results
+    // (KillTheGame), at once as the original's.
     const std::function<void()> wayBack = EndScenarioLeavingWayBack();
 
     if (wayBack == nullptr)
@@ -1002,19 +1006,32 @@ auto MCMission::CloseResultsScreen() -> void
         nextState();
     };
 
-    if (MultiPlayer() == nullptr)
-    {
-        // Port-only: the briefing's map read from the fade's start, so the briefing made near black finds it read.
-        if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
-        {
-            MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
-        }
+    // A launcher's match ends there (BackToLogistics: KillTheGame).
+    const std::shared_ptr<MCMultiPlayer> match = MultiPlayer();
 
-        FadeOutWhile(back);
+    if (match != nullptr && !MCRoomEnd::TakesOnAfterMatch() && match->InMission && IsMPlayerGame)
+    {
+        back();
         return;
     }
 
-    back();
+    // What was read ahead and not taken goes once the screen is up, whatever happens on the way.
+    struct MCForget
+    {
+        MCForget() = default;
+        MCForget(const MCForget&) = delete;
+        MCForget& operator=(const MCForget&) = delete;
+        ~MCForget() { MCFilesAhead::Forget(); }
+    } forget;
+
+    MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles());
+
+    if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
+    {
+        MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+    }
+
+    FadeOutWhile(back);
 }
 
 auto MCMission::BriefedAfterResults() const -> std::optional<size_t>

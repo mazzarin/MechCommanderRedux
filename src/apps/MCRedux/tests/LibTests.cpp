@@ -8,6 +8,7 @@
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFilePatch.h"
 #include "lib/MCFile.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCFrameOfRef.h"
 #include "lib/MCIDString.h"
@@ -1066,6 +1067,94 @@ TEST_CASE("game: File falls back to the FastFiles")
     CHECK(imageType == 1 || imageType == 2 || imageType == 9 || imageType == 10);
     file.Close();
     CHECK(!file.IsOpen());
+}
+
+TEST_CASE(
+    "game: files read ahead open as the archives and the folders give them until let go, and one written is looked for "
+    "again")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::OpenFastFiles();
+    MCFastFileSet& archives = MCGameContext::Current().FastFiles();
+    REQUIRE(!archives.Files().empty());
+
+    // An entry stored packed and one stored as is, a name no archive or folder holds, a loose file, one dropped.
+    std::optional<std::string> packed;
+    std::optional<std::string> raw;
+
+    for (const std::unique_ptr<MCFastFile>& archive : archives.Files())
+    {
+        for (const MCFileEntry& entry : archive->GetEntries())
+        {
+            std::optional<std::string>& kind = entry.Size != entry.RealSize ? packed : raw;
+
+            if (!kind.has_value() && entry.RealSize > 0 && !MCFileSystem::Exists(entry.GetName()))
+            {
+                kind = std::string(entry.GetName());
+            }
+        }
+    }
+
+    REQUIRE(packed.has_value());
+    REQUIRE(raw.has_value());
+    const std::string missing = "data\\art\\no such picture.tga";
+    const std::string loose = "system.cfg";
+    REQUIRE(MCFileSystem::Exists(loose));
+    const std::string dropped = *raw;
+    const auto read = [](const std::string& name)
+    {
+        MCFile file;
+        const int32_t opened = file.Open(name);
+        std::vector<uint8_t> bytes(file.IsOpen() ? file.GetLength() : 0);
+        file.Read(bytes);
+        return std::pair(opened, bytes);
+    };
+
+    const auto [packedOpened, packedBytes] = read(*packed);
+    REQUIRE_EQ(packedOpened, 0);
+    const size_t taken = MCFilesAhead::TakenCount();
+    MCFilesAhead::ReadAhead({*packed, missing, loose, dropped}, archives);
+    MCFilesAhead::Drop(dropped);
+    const auto [aheadOpened, aheadBytes] = read(*packed);
+    CHECK_EQ(aheadOpened, 0);
+    CHECK(aheadBytes == packedBytes);
+    CHECK(read(*packed).second == packedBytes);
+    CHECK_EQ(read(missing).first, FILE_NOT_FOUND);
+    CHECK_EQ(MCFilesAhead::TakenCount() - taken, 3u);
+
+    // The loose file and the one dropped were left to their opens.
+    CHECK(!MCFilesAhead::Take(loose).has_value());
+    CHECK(!MCFilesAhead::Take(dropped).has_value());
+    CHECK_EQ(read(loose).first, 0);
+
+    // A write to any spelling of a path drops it; a spelling the archives don't hold (they match slashes as spelled) is
+    // not found as spelled, not in another's place.
+    std::string slashed = *packed;
+    std::ranges::replace(slashed, '\\', '/');
+    REQUIRE(slashed != *packed);
+    MCFilesAhead::Drop(slashed);
+    CHECK(!MCFilesAhead::Take(*packed).has_value());
+    MCFilesAhead::ReadAhead({slashed}, archives);
+    CHECK_EQ(read(slashed).first, FILE_NOT_FOUND);
+    CHECK(read(*packed).second == packedBytes);
+    MCFilesAhead::Forget();
+    CHECK_EQ(MCFilesAhead::HeldCount(), 0u);
+    CHECK(!MCFilesAhead::Take(slashed).has_value());
+
+    // What's noted: the files looked for in the archives, found or not; not a loose file.
+    MCFilesAhead::StartNoting();
+    std::ignore = read(*raw);
+    std::ignore = read(missing);
+    std::ignore = read(loose);
+    MCFilesAhead::StopNoting();
+    const std::vector<std::string> noted = MCFilesAhead::Noted();
+    CHECK(std::ranges::find(noted, *raw) != noted.end());
+    CHECK(std::ranges::find(noted, missing) != noted.end());
+    CHECK(std::ranges::find(noted, loose) == noted.end());
 }
 
 TEST_CASE("game: packet files open and read")

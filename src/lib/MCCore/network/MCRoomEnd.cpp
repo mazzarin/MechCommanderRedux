@@ -698,6 +698,18 @@ auto MCRoomEnd::PlaceReturning(MCSessionScreen& room) -> void
     }
 }
 
+auto MCRoomEnd::TakesOnAfterMatch() -> bool
+{
+    if (AfterScenario.has_value() || HostAfterResults || JoinAfterResults)
+    {
+        return true;
+    }
+
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+    return game != nullptr && game->InMission && !LaunchedFromLobby && MatchRoom.has_value() &&
+           MatchRoom->From != MCGames::None;
+}
+
 auto MCRoomEnd::AfterMatch() -> bool
 {
     if (std::optional<MCBackToGames> back = std::exchange(AfterScenario, std::nullopt); back.has_value())

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCFileSystem.h"
+#include "lib/MCFilesAhead.h"
 #include "main/MCGameContext.h"
 
 namespace
@@ -581,6 +582,8 @@ namespace MCFileSystem
 
     std::filesystem::path ResolveWrite(std::string_view gamePath, bool copyExisting)
     {
+        // Port-only: a file about to be written is looked for again by its next open (lib/MCFilesAhead.h).
+        MCFilesAhead::Drop(gamePath);
         return Files().ResolveWrite(gamePath, copyExisting);
     }
 
@@ -611,6 +614,7 @@ namespace MCFileSystem
 
     void PutImage(std::string_view gamePath, MCImageMaker make)
     {
+        MCFilesAhead::Drop(gamePath);
         MCPutImages& images = PutImages();
         const std::scoped_lock lock(images.Lock);
         images.Files.insert_or_assign(PutKey(gamePath), MCPutImage{.Make = std::move(make)});
@@ -642,6 +646,19 @@ namespace MCFileSystem
         return *found->second.Made;
     }
 
+    bool PutsImage(std::string_view gamePath)
+    {
+        MCPutImages& images = PutImages();
+
+        if (!images.Any)
+        {
+            return false;
+        }
+
+        const std::scoped_lock lock(images.Lock);
+        return images.Files.contains(PutKey(gamePath));
+    }
+
     void ClearPutImages()
     {
         MCPutImages& images = PutImages();
@@ -657,21 +674,26 @@ namespace MCFileSystem
 
     bool RemoveFile(std::string_view gamePath)
     {
+        MCFilesAhead::Drop(gamePath);
         return Files().RemoveFile(gamePath);
     }
 
     bool RemoveSave(std::string_view gamePath)
     {
+        MCFilesAhead::Drop(gamePath);
         return Files().RemoveSave(gamePath);
     }
 
     bool RenameFile(std::string_view fromGamePath, std::string_view toGamePath)
     {
+        MCFilesAhead::Drop(fromGamePath);
+        MCFilesAhead::Drop(toGamePath);
         return Files().RenameFile(fromGamePath, toGamePath);
     }
 
     bool CopyFile(std::string_view fromGamePath, std::string_view toGamePath)
     {
+        MCFilesAhead::Drop(toGamePath);
         return Files().CopyFile(fromGamePath, toGamePath);
     }
 }

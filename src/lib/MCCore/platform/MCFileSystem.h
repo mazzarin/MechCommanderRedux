@@ -127,6 +127,9 @@ namespace MCFileSystem
     /// <summary>The bytes <see cref="PutImage"/> put at <paramref name="gamePath"/> (made now if not yet), or none.</summary>
     std::optional<std::vector<uint8_t>> PutImageAt(std::string_view gamePath);
 
+    /// <summary>Whether <see cref="PutImage"/> put <paramref name="gamePath"/> (not making it), from any thread.</summary>
+    bool PutsImage(std::string_view gamePath);
+
     /// <summary>Takes away every file <see cref="PutImage"/> put.</summary>
     void ClearPutImages();
 

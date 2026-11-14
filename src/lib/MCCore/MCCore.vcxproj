@@ -158,6 +158,7 @@
     <ClCompile Include="lib\MCFatal.cpp" />
     <ClCompile Include="lib\MCFile.cpp" />
     <ClCompile Include="lib\MCFilePatch.cpp" />
+    <ClCompile Include="lib\MCFilesAhead.cpp" />
     <ClCompile Include="lib\MCFitIniFile.cpp" />
     <ClCompile Include="lib\MCInflate.cpp" />
     <ClCompile Include="lib\MCLzCompress.cpp" />
@@ -656,6 +657,7 @@
     <ClInclude Include="lib\MCFatal.h" />
     <ClInclude Include="lib\MCFile.h" />
     <ClInclude Include="lib\MCFilePatch.h" />
+    <ClInclude Include="lib\MCFilesAhead.h" />
     <ClInclude Include="lib\MCFitIniFile.h" />
     <ClInclude Include="lib\MCFnvHash.h" />
     <ClInclude Include="lib\MCFrameOfRef.h" />

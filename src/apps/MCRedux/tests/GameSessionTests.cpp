@@ -8,6 +8,7 @@
 #include "gui/MCUpdateDisplay.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFastFileSet.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCFitIniFile.h"
 #include "linkup/MCFidpMessage.h"
 #include "linkup/MCLinkupMessages.h"
@@ -35,6 +36,8 @@
 #include "network/MCMultiPlayerHandlers.h"
 #include "object/MCForces.h"
 #include "platform/MCDirectPlay.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
@@ -516,6 +519,47 @@ TEST_CASE_ISOLATED("game: a match's guest whose session is lost at the results k
     CHECK(quit == std::optional<int32_t>(0));
     CHECK(Scenario() == nullptr);
     IsMPlayerGame = false;
+}
+
+/// <summary>
+/// Port-only: a match's results close in the fade into the screens the game goes back to, as a campaign's do: the
+/// results fade from the click, the files the menus' screens are made of read ahead meanwhile, and the screens made
+/// once it's nearly black (they sat frozen through that before the fade began). A LAN match the menus didn't take to
+/// a room goes back to the main menu, its multiplayer game ended.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's results close in the fade into the menus, their screens made near black from "
+                   "files read ahead")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(ReachFirstResults(5));
+    PlayAsLanGuest();
+    IsMPlayerGame = false;
+    const size_t taken = MCFilesAhead::TakenCount();
+    // At each present of the close, how far the fade had gone and whether the menus' screens had been made again.
+    std::vector<std::pair<int, bool>> shown;
+    MCTestGame::OnPresent = [&] { shown.emplace_back(MCInput::Display()->Fade(), GlobalLog() != nullptr); };
+
+    Mission()->CloseResultsScreen();
+    MCTestGame::OnPresent = {};
+    REQUIRE(!shown.empty());
+    CHECK(!shown.front().second);
+    const auto firstBack = std::ranges::find_if(shown, [](const auto& present) { return present.second; });
+    REQUIRE(firstBack != shown.end());
+    REQUIRE(firstBack != shown.begin());
+    CHECK(std::prev(firstBack)->first >= MCGuiSystem::FadeNearBlack);
+    CHECK(Mission()->State == MCMissionState::Logistics);
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    REQUIRE(logistics != nullptr);
+    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+    CHECK(MultiPlayer() == nullptr);
+    CHECK(!GuiSystem().CanFade());
+    CHECK(MCFilesAhead::TakenCount() > taken);
+    CHECK_EQ(MCFilesAhead::HeldCount(), 0u);
 }
 
 /// <summary>

@@ -6,6 +6,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
 #include "logistics/MCBriefingScreen.h"
+#include "lib/MCFilesAhead.h"
 #include "logistics/MCLogPort.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -552,6 +553,8 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
     std::vector<MCShown> shown;
     const std::weak_ptr<MCLogistics> before = GlobalLog();
     const size_t rehearsed = RehearsalsRun();
+    const size_t noted = MCFilesAhead::Noted().size();
+    const size_t taken = MCFilesAhead::TakenCount();
     MCTestGame::OnPresent = [&]
     {
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
@@ -576,6 +579,11 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
     CHECK_EQ(briefingMap->Width, map->Width);
     CHECK_EQ(briefingMap->Height, map->Height);
     CHECK(std::ranges::equal(briefingMap->Pixels, map->Pixels));
+
+    // The screens were made of files read ahead from the click (those logistics looked for in the archives before),
+    // most of what it looked for there (555 of 585, 14 Nov); none is held past the fade.
+    CHECK(MCFilesAhead::TakenCount() - taken >= noted / 2);
+    CHECK_EQ(MCFilesAhead::HeldCount(), 0u);
 
     // After the work, the fade did what a fade into the briefing does: the briefing rehearsed and the two screens a
     // slide from it brings in readied. The next frame's fade, from black, does none of it again.

@@ -120,6 +120,9 @@ namespace MCRoomEnd
     /// <returns>Whether it took it; false: the original's way (a launcher's game ends).</returns>
     bool AfterMatch();
 
+    /// <summary>Whether <see cref="AfterMatch"/> would take the game on now (doing nothing).</summary>
+    bool TakesOnAfterMatch();
+
     /// <summary>
     /// Each frame, in the menus and at the results: a host's wait for its guests to leave on its word, its internet
     /// game's way back to its place on the service, and a guest's leave on its host's REMATCH.

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "lib/MCFile.h"
 #include "lib/MCFastFileSet.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGameContext.h"
 #include "platform/MCFileSystem.h"
@@ -68,6 +69,34 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
     _FileName = fileName;
     _FileMode = mode;
 
+    // Read whole into memory: a file like this takes no children.
+    const auto inRam = [this](std::vector<uint8_t>&& image)
+    {
+        _FileImage = std::move(image);
+        _InRam = true;
+        _Length = static_cast<uint32_t>(_FileImage.size());
+        _LogicalPosition = 0;
+        return NO_ERR;
+    };
+
+    // Port-only: a file read ahead (lib/MCFilesAhead.h) was looked for already, as below: an archive's entry, or none.
+    if (mode == MCFileMode::Read)
+    {
+        if (std::optional<MCFilesAhead::MCAheadFile> ahead = MCFilesAhead::Take(_FileName); ahead.has_value())
+        {
+            MCFilesAhead::Looked(_FileName);
+            _State.reset();
+
+            if (!ahead->Found)
+            {
+                _FileName.clear();
+                return FILE_NOT_FOUND;
+            }
+
+            return inRam(std::move(ahead->Bytes));
+        }
+    }
+
     // Port-only: a file the game made for itself (MCFileSystem::PutImage) reads as a FastFile entry does, whatever
     // the folders hold.
     std::optional<std::vector<uint8_t>> put =
@@ -91,27 +120,27 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
         // Port: a file the context's source holds in memory (a test's) reads as a FastFile entry does.
         if (put.has_value())
         {
-            _FileImage = std::move(*put);
-        }
-        else if (const auto image = MCFileSystem::FindImage(_FileName); image.has_value())
-        {
-            _FileImage.assign(image->begin(), image->end());
-        }
-        else if (auto entry = MCGameContext::Current().FastFiles().Read(_FileName); entry.has_value())
-        {
-            _FileImage = std::move(*entry);
-        }
-        else
-        {
-            _FileName.clear();
-            return FILE_NOT_FOUND;
+            return inRam(std::move(*put));
         }
 
-        // Read whole into memory: a file like this takes no children.
-        _InRam = true;
-        _Length = static_cast<uint32_t>(_FileImage.size());
-        _LogicalPosition = 0;
-        return NO_ERR;
+        if (const auto image = MCFileSystem::FindImage(_FileName); image.has_value())
+        {
+            return inRam(std::vector<uint8_t>(image->begin(), image->end()));
+        }
+
+        // Port-only: a file looked for in the archives, found or not, may be read ahead next time (lib/MCFilesAhead.h).
+        if (mode == MCFileMode::Read)
+        {
+            MCFilesAhead::Looked(_FileName);
+        }
+
+        if (auto entry = MCGameContext::Current().FastFiles().Read(_FileName); entry.has_value())
+        {
+            return inRam(std::move(*entry));
+        }
+
+        _FileName.clear();
+        return FILE_NOT_FOUND;
     }
 
     _LogicalPosition = 0;

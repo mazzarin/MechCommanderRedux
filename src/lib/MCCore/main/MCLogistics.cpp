@@ -6,6 +6,7 @@
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCFitIniFile.h"
 #include "ai/MCMoveGeometry.h"
 #include "logistics/MCBriefingBox.h"
@@ -209,6 +210,9 @@ auto MCLogistics::Start() -> void
 
     _Started = true;
     SetGlobalLog(weak_from_this());
+    // Port-only: what the screens look for in the archives is noted while they're up, to be read ahead when they're
+    // made again (MCMission::CloseResultsScreen).
+    MCFilesAhead::StartNoting();
     AutoPlayMovie = false;
     SetCurrentScreen({});
     DragIcon = nullptr;
@@ -897,6 +901,7 @@ MCLogistics::~MCLogistics()
         return;
     }
 
+    MCFilesAhead::StopNoting();
     // Port-only: the line art made ahead for this logistics' lists goes with them.
     MCSharpPictures::ForgetLineArt();
     MCHdArt::SetLineArtFrames({});

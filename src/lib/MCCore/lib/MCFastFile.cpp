@@ -51,7 +51,6 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::
 
     // Issue #25: the directory must lie in the file (the original allocated whatever the count said).
     const int32_t count = std::bit_cast<int32_t>(countBytes);
-    // Once: the length is found by seeking, which drops what the stream has read ahead.
     const uint32_t length = file.Length();
     fastFile->_Length = length;
     std::error_code timeError;

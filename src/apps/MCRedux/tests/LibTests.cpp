@@ -5,6 +5,7 @@
 #include "TestGame.h"
 #include "fakes/MCMemoryFileSource.h"
 #include "lib/MCDice.h"
+#include "lib/MCDiskFile.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFilePatch.h"
 #include "lib/MCFile.h"
@@ -238,6 +239,142 @@ TEST_CASE("fastfile: entries are found by name and read raw or unpacked")
 
     CHECK_EQ(file.Open("data\\nothere.bin"), FILE_NOT_FOUND);
     CHECK(file.GetFilename().empty());
+}
+
+/// <summary>
+/// Port-only: a disk file reads at an offset, as the system's file: the small reads the original's files make come from
+/// its window, one system read for many, the same bytes as a plain read; a read across the window's end fills it again
+/// at its own offset; a read of the window's size or more goes straight into the caller's bytes in one; past the end a
+/// read comes back short.
+/// </summary>
+TEST_CASE("disk file: reads at an offset, small ones through its window, the same bytes as a plain read")
+{
+    ScratchFolder folder("disk-file");
+    constexpr size_t Window = MCDiskFile::WindowBytes;
+    constexpr size_t FileBytes = Window * 3 + 123;
+    // Bytes no two neighbouring stretches share, so a read from the wrong place shows.
+    constexpr uint32_t Mix = 2654435761u;
+    std::vector<uint8_t> bytes(FileBytes);
+    std::ranges::generate(bytes, [at = uint32_t{0}]() mutable { return static_cast<uint8_t>((at++ * Mix) >> 24); });
+    const std::filesystem::path path = folder.Path() / "bytes.bin";
+    WriteFile(path, bytes);
+    std::optional<MCDiskFile> file = MCDiskFile::Open(path, MCDiskFileMode::Read);
+    REQUIRE(file.has_value());
+    CHECK_EQ(file->Length(), static_cast<uint32_t>(FileBytes));
+    CHECK(!MCDiskFile::Open(folder.Path() / "missing.bin", MCDiskFileMode::Read).has_value());
+    const auto readAt = [&file](size_t offset, size_t size)
+    {
+        std::vector<uint8_t> got(size);
+        got.resize(file->ReadAt(static_cast<uint32_t>(offset), got));
+        return got;
+    };
+
+    const auto expected = [&bytes](size_t offset, size_t size)
+    {
+        const size_t from = std::min(offset, bytes.size());
+        return std::vector<uint8_t>(bytes.begin() + static_cast<ptrdiff_t>(from),
+                                    bytes.begin() + static_cast<ptrdiff_t>(std::min(bytes.size(), from + size)));
+    };
+
+    // Byte by byte from the start, as the original reads: one system read for the window's bytes.
+    std::vector<uint8_t> sequential;
+
+    for (size_t at = 0; at < Window; ++at)
+    {
+        std::array<uint8_t, 1> one{};
+
+        if (file->Read(one) == one.size())
+        {
+            sequential.push_back(one.front());
+        }
+    }
+
+    CHECK(sequential == expected(0, Window));
+    CHECK_EQ(file->SystemReads(), size_t{1});
+
+    // Words at scattered offsets inside it: no more.
+    for (const size_t offset : {size_t{7}, size_t{4095}, size_t{4096}, Window - 2})
+    {
+        CHECK(readAt(offset, 2) == expected(offset, 2));
+    }
+
+    CHECK_EQ(file->SystemReads(), size_t{1});
+
+    // Across the window's end: filled again at the read's offset, and read on from there.
+    CHECK(readAt(Window - 10, 20) == expected(Window - 10, 20));
+    CHECK_EQ(file->SystemReads(), size_t{2});
+    CHECK(readAt(Window + 5, 100) == expected(Window + 5, 100));
+    CHECK_EQ(file->SystemReads(), size_t{2});
+
+    // The window's size or more: one read straight into the bytes, the window kept.
+    CHECK(readAt(1, Window * 2) == expected(1, Window * 2));
+    CHECK_EQ(file->SystemReads(), size_t{3});
+    CHECK(readAt(Window, 8) == expected(Window, 8));
+    CHECK_EQ(file->SystemReads(), size_t{3});
+
+    // Read goes on from where the last read ended.
+    CHECK(readAt(10, 2) == expected(10, 2));
+    std::array<uint8_t, 4> next{};
+    REQUIRE_EQ(file->Read(next), next.size());
+    CHECK(std::vector<uint8_t>(next.begin(), next.end()) == expected(12, 4));
+
+    // Past the end, short: across it, at it, beyond it, and a large read across it.
+    CHECK_EQ(readAt(FileBytes - 5, 20).size(), size_t{5});
+    CHECK(readAt(FileBytes - 5, 20) == expected(FileBytes - 5, 5));
+    CHECK(readAt(FileBytes, 4).empty());
+    CHECK(readAt(FileBytes + 1000, 4).empty());
+    CHECK(readAt(Window * 2, Window * 2) == expected(Window * 2, Window + 123));
+    CHECK(readAt(FileBytes + 1000, Window).empty());
+}
+
+/// <summary>
+/// Port-only: a disk file's writes go at their offset and empty its window, so what it reads after is what it wrote;
+/// writing past the end makes the file longer; a file created over one empties it; and another handle opens it while
+/// it's open, as a stream's could.
+/// </summary>
+TEST_CASE("disk file: a write empties the window, and the bytes read back")
+{
+    ScratchFolder folder("disk-file-write");
+    const std::filesystem::path path = folder.Path() / "written.bin";
+    constexpr size_t Written = 1000;
+    const std::vector<uint8_t> filler(Written, 'a');
+    std::optional<MCDiskFile> file = MCDiskFile::Open(path, MCDiskFileMode::Create);
+    REQUIRE(file.has_value());
+    CHECK_EQ(file->Write(filler), Written);
+    CHECK_EQ(file->Length(), static_cast<uint32_t>(Written));
+    const auto readAt = [&file](size_t offset, size_t size)
+    {
+        std::vector<uint8_t> got(size);
+        got.resize(file->ReadAt(static_cast<uint32_t>(offset), got));
+        return got;
+    };
+
+    // Read into the window, written over, read again: the new bytes.
+    CHECK(readAt(8, 7) == Bytes("aaaaaaa"));
+    CHECK_EQ(file->WriteAt(10, Bytes("XYZ")), size_t{3});
+    CHECK(readAt(8, 7) == Bytes("aaXYZaa"));
+
+    // Written on from the position the write left, and past the end: longer.
+    CHECK_EQ(file->WriteAt(Written - 2, Bytes("yz")), size_t{2});
+    CHECK_EQ(file->Write(Bytes("end")), size_t{3});
+    CHECK_EQ(file->Length(), static_cast<uint32_t>(Written + 3));
+    CHECK(readAt(Written - 4, 7) == Bytes("aayzend"));
+
+    // Another handle opens it meanwhile and reads what was written.
+    std::optional<MCDiskFile> reader = MCDiskFile::Open(path, MCDiskFileMode::Read);
+    REQUIRE(reader.has_value());
+    std::array<uint8_t, 3> written{};
+    CHECK_EQ(reader->ReadAt(static_cast<uint32_t>(Written), written), written.size());
+    CHECK(std::vector<uint8_t>(written.begin(), written.end()) == Bytes("end"));
+    reader.reset();
+    file.reset();
+    CHECK(ReadFile(path).size() == Written + 3);
+
+    // Created again: empty.
+    file = MCDiskFile::Open(path, MCDiskFileMode::Create);
+    REQUIRE(file.has_value());
+    CHECK_EQ(file->Length(), uint32_t{0});
+    CHECK(readAt(0, 4).empty());
 }
 
 /// <summary>Seeks are checked against the length; values are little-endian; lines end at CR, CR LF or LF.</summary>

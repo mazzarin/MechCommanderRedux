@@ -3,9 +3,12 @@
 #include "TestGame.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
+#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenu.h"
 #include "main/MCLogistics.h"
+#include "mission/MCMission.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
@@ -417,5 +420,65 @@ TEST_CASE_ISOLATED(
     REQUIRE(taken.size() > purchaseSteps + 2);
     CHECK(taken.back() - before <= ClockDigits);
     CHECK_EQ(renderer->SharpPictures().Redrawn, 0u);
+    GHdArt = 0;
+}
+
+TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its fade, once the screen is nearly black")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartSharpLogistics();
+    REQUIRE(MCTestGame::StartCampaignMission());
+    constexpr uint32_t Won = 4;
+    constexpr int32_t MostFramesToResults = 300;
+    ScenarioResult = Won;
+    Mission()->EndScenarioRequested = -1;
+
+    for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    REQUIRE(Mission()->State == MCMissionState::Results);
+
+    // At each present of the results' close, how far the fade had gone and whether logistics had been made again: the
+    // results screen fades from the click, and the way back's work waits until it's nearly black.
+    struct MCShown
+    {
+        int Fade = 0;
+        bool Back = false;
+    };
+
+    std::vector<MCShown> shown;
+    const std::weak_ptr<MCLogistics> before = GlobalLog();
+    const size_t rehearsed = RehearsalsRun();
+    MCTestGame::OnPresent = [&]
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        shown.push_back(
+            {.Fade = MCInput::Display()->Fade(), .Back = logistics != nullptr && logistics != before.lock()});
+    };
+
+    Mission()->CloseResultsScreen();
+    MCTestGame::OnPresent = {};
+    REQUIRE(!shown.empty());
+    REQUIRE(!shown.front().Back);
+    const auto firstBack = std::ranges::find_if(shown, &MCShown::Back);
+    REQUIRE(firstBack != shown.end());
+    CHECK(std::prev(firstBack)->Fade >= MCGuiSystem::FadeNearBlack);
+    CHECK(Mission()->State == MCMissionState::Logistics);
+    REQUIRE(GlobalLog() != nullptr);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(!GuiSystem().CanFade());
+
+    // After the work, the fade did what a fade into the briefing does: the briefing rehearsed and the two screens a
+    // slide from it brings in readied. The next frame's fade, from black, does none of it again.
+    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn);
+    const size_t closed = RehearsalsRun();
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK_EQ(RehearsalsRun(), closed);
     GHdArt = 0;
 }

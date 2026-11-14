@@ -89,6 +89,16 @@ void RehearseScreen(size_t rideAlong);
 /// window's: <see cref="RehearseScreen"/>).
 /// </summary>
 void RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp);
+/// <summary>Port-only, for the tests: the rehearsals run so far (RehearseScreen's and RehearseHidden's).</summary>
+size_t RehearsalsRun();
+/// <summary>
+/// Port-only: <paramref name="work"/> done in a fade of the screen shown (MCGuiSystem::FadeDownCurrentPalette) once it's
+/// nearly black (MCGuiSystem::FadeNearBlack), then what a fade into a screen does (the screen rehearsed, the screens a
+/// slide from it may bring in readied): for work that sets up the next screen where the one shown would sit frozen
+/// until its fade begins (the way back from a mission's results). With no fade (the screen black already, the display
+/// not up, the GUI stopping), only <paramref name="work"/>, as before.
+/// </summary>
+void FadeOutWhile(const std::function<void()>& work);
 
 /// <summary>Starts the mouse timer.</summary>
 void MouseTimerInit();

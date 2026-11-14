@@ -350,9 +350,14 @@ auto MCGuiSystem::GammaCorrectCurrentPalette(int32_t level) -> void
     ShowPalette(FirstGameColor, EndGameColor - FirstGameColor);
 }
 
-auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading) -> void
+auto MCGuiSystem::CanFade() const -> bool
 {
-    if (!_DisplayReady || CurrentPalette[FirstGameColor].R == 0)
+    return _DisplayReady && !_Stopping && CurrentPalette[FirstGameColor].R != 0;
+}
+
+auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading, int32_t workFrom) -> void
+{
+    if (!CanFade())
     {
         return;
     }
@@ -373,8 +378,8 @@ auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> 
         _Display->SetFade(faded);
         std::ignore = _Display->Present();
 
-        // Port-only: a piece of the work given each step once it's shown, in the step's time.
-        if (piece < whileFading.size())
+        // Port-only: a piece of the work given each step once it's shown, in the step's time, from its level on.
+        if (piece < whileFading.size() && faded >= workFrom)
         {
             whileFading[piece++]();
         }
@@ -387,7 +392,7 @@ auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> 
         } while (elapsed < 0.00390625f);
 
         step = static_cast<int32_t>(elapsed * 256.0f);
-    } while (faded < 0x100);
+    } while (faded < FadeLevels);
 
     // Port-only: what the fade had no steps left for, the screen black.
     while (piece < whileFading.size())

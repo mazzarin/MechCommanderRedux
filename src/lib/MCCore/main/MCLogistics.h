@@ -120,9 +120,11 @@ public:
     /// (<see cref="ReadyForSlide"/>, RehearseHidden), so the slide neither waits for them nor draws them first: from
     /// the briefing, the purchase screen (its store the most to make) then the repair screen; none from any other (they
     /// were readied on the way, and readying one while the other shows would scroll the inventory list shown: each tab
-    /// fills both screens').
+    /// fills both screens'). At most <see cref="MostScreensSlidIn"/>.
     /// </summary>
     std::vector<MCGuiHandle<MCLogInvScreen>> ScreensSlidIn() const;
+    /// <summary>Port-only: how many screens <see cref="ScreensSlidIn"/> gives at most.</summary>
+    static constexpr size_t MostScreensSlidIn = 2;
 
     /// <summary>
     /// Port-only: hidden <paramref name="screen"/> (the purchase or repair screen) filled as its set-up will fill it for

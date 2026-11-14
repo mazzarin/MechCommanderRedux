@@ -330,9 +330,13 @@ namespace
                GuiSystem().SmackerWindow == nullptr;
     }
 
+    /// <summary>The rehearsals run so far (RehearsalsRun).</summary>
+    size_t Rehearsals = 0;
+
     /// <summary>A rehearsal of what <paramref name="draw"/> draws (see <see cref="RehearseScreen"/>).</summary>
     void Rehearse(const std::function<void()>& draw, size_t rideAlong)
     {
+        Rehearsals++;
         std::scoped_lock lock(MouseCritSec);
         InMouseCritSec = 1;
 
@@ -357,6 +361,47 @@ namespace
 
         InMouseCritSec = 0;
     }
+}
+
+namespace
+{
+    /// <summary>
+    /// The pieces of work a fade into a screen does, each looked up as it runs (FadeOutWhile's fade starts before the
+    /// screens exist): the screen the palette is for rehearsed (RehearseScreen), then the screens a slide from it may
+    /// bring in, a piece each (MCLogistics::ScreensSlidIn).
+    /// </summary>
+    std::vector<std::function<void()>> IntoScreenPieces()
+    {
+        std::vector<std::function<void()>> pieces = {[] { RehearseScreen(NoRideAlong); }};
+
+        for (size_t slid = 0; slid < MCLogistics::MostScreensSlidIn; slid++)
+        {
+            pieces.emplace_back(
+                [slid]
+                {
+                    if (GlobalLog() == nullptr)
+                    {
+                        return;
+                    }
+
+                    if (const std::vector<MCGuiHandle<MCLogInvScreen>> screens = GlobalLog()->ScreensSlidIn();
+                        slid < screens.size())
+                    {
+                        if (const std::shared_ptr<MCLogInvScreen> screen = screens[slid].Lock(); screen != nullptr)
+                        {
+                            RehearseHidden(*screen, [&screen] { GlobalLog()->ReadyForSlide(*screen); });
+                        }
+                    }
+                });
+        }
+
+        return pieces;
+    }
+}
+
+size_t RehearsalsRun()
+{
+    return Rehearsals;
 }
 
 void RehearseScreen(size_t rideAlong)
@@ -386,6 +431,27 @@ void RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
         NoRideAlong);
 }
 
+void FadeOutWhile(const std::function<void()>& work)
+{
+    MCGuiSystem& gui = GuiSystem();
+
+    if (!gui.CanFade())
+    {
+        work();
+        return;
+    }
+
+    // The frame presented ahead shown first, as a frame's fade waits for it (UpdateDisplay).
+    if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+    {
+        display->ShowFinished();
+    }
+
+    std::vector<std::function<void()>> pieces = IntoScreenPieces();
+    pieces.insert(pieces.begin(), work);
+    gui.FadeDownCurrentPalette(pieces, MCGuiSystem::FadeNearBlack);
+}
+
 int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bool showProgress, int32_t progress)
 {
     if (InMouseCritSec != 0)
@@ -401,29 +467,11 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
         display->ShowFinished();
     }
 
-    // Port-only: the screen the palette is for, set up already, rehearsed as the fade begins (RehearseScreen), then
-    // the screens a slide from it may bring in, a step each (MCLogistics::ScreensSlidIn).
+    // Port-only: the screen the palette is for, set up already, rehearsed as the fade begins, then the screens a slide
+    // from it may bring in, a step each (IntoScreenPieces). A fade of FadeOutWhile's did them already.
     if (!gui.PendingPalette.empty())
     {
-        std::vector<std::function<void()>> rehearsals = {[] { RehearseScreen(NoRideAlong); }};
-
-        if (GlobalLog() != nullptr)
-        {
-            for (const MCGuiHandle<MCLogInvScreen>& next : GlobalLog()->ScreensSlidIn())
-            {
-                rehearsals.emplace_back(
-                    [next]
-                    {
-                        if (const std::shared_ptr<MCLogInvScreen> screen = next.Lock();
-                            screen != nullptr && GlobalLog() != nullptr)
-                        {
-                            RehearseHidden(*screen, [&screen] { GlobalLog()->ReadyForSlide(*screen); });
-                        }
-                    });
-            }
-        }
-
-        gui.FadeDownCurrentPalette(rehearsals);
+        gui.FadeDownCurrentPalette(IntoScreenPieces());
     }
 
     std::scoped_lock lock(MouseCritSec);

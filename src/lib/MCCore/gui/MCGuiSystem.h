@@ -159,10 +159,23 @@ public:
 
     /// <summary>
     /// Fades the screen to black, then blacks out palette entries 10..245. Port-only: <paramref name="whileFading"/>'s
-    /// pieces of work are done in order, one after each step from the first, any still left once the screen is black;
-    /// the fade keeps its pace (it follows the time, so a piece's step darkens by more).
+    /// pieces of work are done in order, one after each step once the fade has reached <paramref name="workFrom"/> of
+    /// its <see cref="FadeLevels"/>, any still left once the screen is black; the fade keeps its pace (it follows the
+    /// time, so a piece's step darkens by more). Nothing is done when it can't fade (<see cref="CanFade"/>).
     /// </summary>
-    void FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading = {});
+    void FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading = {}, int32_t workFrom = 0);
+    /// <summary>
+    /// Port-only: whether <see cref="FadeDownCurrentPalette"/> fades: the display up, the screen not black already, and
+    /// the GUI not stopping.
+    /// </summary>
+    bool CanFade() const;
+    /// <summary>The fade's levels, a second's worth (the original's palette steps).</summary>
+    static constexpr int32_t FadeLevels = 0x100;
+    /// <summary>
+    /// Port-only: the level of the fade (of <see cref="FadeLevels"/>) long work given it waits for, an eighth of the
+    /// light left: a piece's time darkens the step after it by as much (256 levels a second), which can't be seen there.
+    /// </summary>
+    static constexpr int32_t FadeNearBlack = FadeLevels - FadeLevels / 8;
     /// <summary>
     /// Sets the palette's entries from <paramref name="first"/> on, or, with <paramref name="first"/> 0, keeps
     /// <paramref name="count"/> entries in <see cref="PendingPalette"/> for the next frame to fade to.
@@ -278,6 +291,8 @@ private:
     std::shared_ptr<MCDisplay> _Display;
     /// <summary>Set once the display is up: palette changes and repaints wait for it.</summary>
     bool _DisplayReady = false;
+    /// <summary>Port-only: set while <see cref="Stop"/> closes a results screen still up: nothing fades then.</summary>
+    bool _Stopping = false;
     /// <summary>The palette as shown: <see cref="CurrentPalette"/> through the gamma table.</summary>
     std::array<MCVfxRgb, 256> _LogicalPalette = {};
     /// <summary>The frame callbacks (their holders keep them).</summary>

@@ -97,6 +97,12 @@ public:
     /// the next movie / game over).
     /// </summary>
     void EndScenario();
+    /// <summary>
+    /// Port-only: <see cref="EndScenario"/> but for the way back to logistics, which it returns for the caller to do (the
+    /// results screen's close does it in the fade into logistics: FadeOutWhile); none when the game doesn't go back
+    /// there (on to the next movie or the game's end, a game's second segment).
+    /// </summary>
+    [[nodiscard]] std::function<void()> EndScenarioLeavingWayBack();
 
     /// <summary>Unhooks and frees the scenario's per-frame callbacks (the results screen is up).</summary>
     void StopScenarioCallbacks();
@@ -146,6 +152,11 @@ public:
 private:
     /// <summary>Starts a new logistics phase after a scenario.</summary>
     MCLogistics& StartLogistics();
+    /// <summary>
+    /// The way back to logistics after a campaign's mission (its next briefing, or the same one's again) or a match's
+    /// (the main screen; a launcher's game ends there): <see cref="EndScenarioLeavingWayBack"/>'s last.
+    /// </summary>
+    void BackToLogistics();
     /// <summary>The demo's feature screen (state 20).</summary>
     /// <returns>False when its picture is missing (the frame ends there).</returns>
     bool RunFeatureScreen();

@@ -948,32 +948,60 @@ auto MCMission::CloseResultsScreen() -> void
         return;
     }
 
-    EndScenario();
-
-    if (GlobalGameSegment == 0)
+    const auto nextState = [this]
     {
-        if (!GameOver)
+        if (GlobalGameSegment == 0)
         {
-            GamePaused = false;
-            State = MCMissionState::Logistics;
-            return;
+            if (!GameOver)
+            {
+                GamePaused = false;
+                State = MCMissionState::Logistics;
+                return;
+            }
+
+            if (InDemo != 0)
+            {
+                GamePaused = false;
+                CurrentMovie = 2;
+                State = MCMissionState::FeatureScreen;
+                NextState = MCMissionState::FeatureScreen;
+                return;
+            }
+
+            CurrentMovie = 3;
+            State = MCMissionState::PlayMovie;
+            NextState = MCMissionState::PlayMovie;
         }
 
-        if (InDemo != 0)
-        {
-            GamePaused = false;
-            CurrentMovie = 2;
-            State = MCMissionState::FeatureScreen;
-            NextState = MCMissionState::FeatureScreen;
-            return;
-        }
+        GamePaused = false;
+    };
 
-        CurrentMovie = 3;
-        State = MCMissionState::PlayMovie;
-        NextState = MCMissionState::PlayMovie;
+    // Port-only: the way back to logistics from a campaign's or a solo mission's results (the screens made again, the
+    // campaign loaded, the briefing set up: 88 ms on the M4 Pro) is done in the fade into logistics once the screen is
+    // nearly black, then what the fade into the briefing does (FadeOutWhile), where the results screen sat frozen for
+    // it before its fade began. A match's goes back as the original's, at once: it may end the game (a launcher's,
+    // KillTheGame) or take it to its room (MCRoomEnd::AfterMatch).
+    const std::function<void()> wayBack = EndScenarioLeavingWayBack();
+
+    if (wayBack == nullptr)
+    {
+        nextState();
+        return;
     }
 
-    GamePaused = false;
+    const auto back = [&wayBack, &nextState]
+    {
+        wayBack();
+        nextState();
+    };
+
+    if (MultiPlayer() == nullptr)
+    {
+        FadeOutWhile(back);
+        return;
+    }
+
+    back();
 }
 
 auto MCMission::StartLogistics() -> MCLogistics&
@@ -985,6 +1013,14 @@ auto MCMission::StartLogistics() -> MCLogistics&
 }
 
 auto MCMission::EndScenario() -> void
+{
+    if (const std::function<void()> wayBack = EndScenarioLeavingWayBack(); wayBack != nullptr)
+    {
+        wayBack();
+    }
+}
+
+auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
 {
     // The play's end, if the results screen didn't mark it (twice is harmless).
     MCTelemetry::PlayEnded();
@@ -1018,20 +1054,23 @@ auto MCMission::EndScenario() -> void
         MCGameContext::Current().SetScenario(nullptr);
     }
 
+    // Port-only: each way back to logistics is returned to be done by the caller (EndScenario at once).
     if (ScenarioResult > 3)
     {
         if (Solo != 0)
         {
             // A won solo (quick-start) mission: back to the main screen.
-            MCLogistics& logistics = StartLogistics();
-            LastLogisticsMissionState = 0;
-            State = MCMissionState::Logistics;
-            logistics.CurrentScreen()->ShowGuiWindow(false);
-            logistics.SetCurrentScreen(logistics.MainScreen);
-            logistics.LogisticsState = 1;
-            logistics.ShowLogScreen(true, true);
-            Solo = false;
-            return;
+            return [this]
+            {
+                MCLogistics& logistics = StartLogistics();
+                LastLogisticsMissionState = 0;
+                State = MCMissionState::Logistics;
+                logistics.CurrentScreen()->ShowGuiWindow(false);
+                logistics.SetCurrentScreen(logistics.MainScreen);
+                logistics.LogisticsState = 1;
+                logistics.ShowLogScreen(true, true);
+                Solo = false;
+            };
         }
 
         if (static_cast<uint32_t>(CurrentScenario) == LastScenario)
@@ -1043,82 +1082,88 @@ auto MCMission::EndScenario() -> void
     if (ScenarioResult < 3 && Solo != 0)
     {
         // A lost solo mission: restart the campaign at its first briefing.
-        MCLogistics& logistics = StartLogistics();
-        LastLogisticsMissionState = 0;
-        State = MCMissionState::Logistics;
-        Solo = true;
-        logistics.CurrentMission = 0;
-        CurrentScenario = 0;
-        CurrentMovie = 1;
-        char startName[] = "start1";
+        return [this]
+        {
+            MCLogistics& logistics = StartLogistics();
+            LastLogisticsMissionState = 0;
+            State = MCMissionState::Logistics;
+            Solo = true;
+            logistics.CurrentMission = 0;
+            CurrentScenario = 0;
+            CurrentMovie = 1;
+            char startName[] = "start1";
+            char extension[] = ".pkk";
+            logistics.LoadCampaign(startName, extension, true, false);
+            logistics.SetUpBriefingScreen(false);
+            logistics.ShowLogScreen(true, false);
+        };
+    }
+
+    if (GlobalGameSegment == 0 && !GameOver)
+    {
+        return [this] { BackToLogistics(); };
+    }
+
+    State = MCMissionState::Quit;
+    WaitTimer = WaitTime;
+    CurrentScenario = -1;
+    return {};
+}
+
+auto MCMission::BackToLogistics() -> void
+{
+    MCLogistics& logistics = StartLogistics();
+
+    if (MultiPlayer() == nullptr)
+    {
+        // The campaign: a win moves on to the next mission, anything else replays this one.
+        int32_t missionId = CurrentScenario;
+
+        if (ScenarioResult < 4)
+        {
+            logistics.CurrentMission = missionId;
+        }
+        else
+        {
+            missionId++;
+            logistics.CurrentMission = missionId;
+            CurrentScenario = missionId;
+        }
+
+        CurrentMovie = missionId + 1;
+        logistics.GetCurrentMission();
+        const bool replay = ScenarioResult < 4;
+        std::string startName =
+            std::format("start{}", replay ? logistics.CurrentMission + 1 : logistics.CurrentMission);
         char extension[] = ".pkk";
-        logistics.LoadCampaign(startName, extension, true, false);
+        logistics.LoadCampaign(startName, extension, replay, false);
         logistics.SetUpBriefingScreen(false);
         logistics.ShowLogScreen(true, false);
         return;
     }
 
-    if (GlobalGameSegment == 0 && !GameOver)
+    LastLogisticsMissionState = 0;
+    MultiPlayer()->ChatCallback = LogisticsChatCallback;
+    State = MCMissionState::Logistics;
+    logistics.CurrentScreen()->ShowGuiWindow(false);
+    logistics.SetCurrentScreen(logistics.MainScreen);
+    logistics.LogisticsState = 1;
+    logistics.ShowLogScreen(true, true);
+
+    // Port-only (Redux HD): a game the menus took to its room goes back to its games screen (network/MCRoomEnd.h).
+    if (MCRoomEnd::AfterMatch())
     {
-        MCLogistics& logistics = StartLogistics();
-
-        if (MultiPlayer() == nullptr)
-        {
-            // The campaign: a win moves on to the next mission, anything else replays this one.
-            int32_t missionId = CurrentScenario;
-
-            if (ScenarioResult < 4)
-            {
-                logistics.CurrentMission = missionId;
-            }
-            else
-            {
-                missionId++;
-                logistics.CurrentMission = missionId;
-                CurrentScenario = missionId;
-            }
-
-            CurrentMovie = missionId + 1;
-            logistics.GetCurrentMission();
-            const bool replay = ScenarioResult < 4;
-            std::string startName =
-                std::format("start{}", replay ? logistics.CurrentMission + 1 : logistics.CurrentMission);
-            char extension[] = ".pkk";
-            logistics.LoadCampaign(startName, extension, replay, false);
-            logistics.SetUpBriefingScreen(false);
-            logistics.ShowLogScreen(true, false);
-            return;
-        }
-
-        LastLogisticsMissionState = 0;
-        MultiPlayer()->ChatCallback = LogisticsChatCallback;
-        State = MCMissionState::Logistics;
-        logistics.CurrentScreen()->ShowGuiWindow(false);
-        logistics.SetCurrentScreen(logistics.MainScreen);
-        logistics.LogisticsState = 1;
-        logistics.ShowLogScreen(true, true);
-
-        // Port-only (Redux HD): a game the menus took to its room goes back to its games screen (network/MCRoomEnd.h).
-        if (MCRoomEnd::AfterMatch())
-        {
-            return;
-        }
-
-        if (MultiPlayer()->InMission != 0)
-        {
-            if (IsMPlayerGame != 0)
-            {
-                KillTheGame();
-            }
-
-            MCGameContext::Current().SetMultiPlayer(nullptr);
-        }
+        return;
     }
-    else
+
+    if (MultiPlayer()->InMission != 0)
     {
-        State = MCMissionState::Quit;
-        WaitTimer = WaitTime;
-        CurrentScenario = -1;
+        if (IsMPlayerGame != 0)
+        {
+            KillTheGame();
+        }
+
+        MCGameContext::Current().SetMultiPlayer(nullptr);
     }
 }
 

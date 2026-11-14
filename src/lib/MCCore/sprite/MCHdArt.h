@@ -284,8 +284,9 @@ namespace MCHdArt
     void Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key);
 
     /// <summary>
-    /// Opens now the pack's archive holding <paramref name="key"/>'s frames, if it has one, so that the first draw of a
-    /// shape loaded from it doesn't read the archive's directory. Does nothing while HD art is off.
+    /// Has the readers open the pack's archive holding <paramref name="key"/>'s frames, if it has one
+    /// (<see cref="OpenArchivesAhead"/>), so that the first draw of a shape loaded from it doesn't read the archive's
+    /// directory. Does nothing while HD art is off.
     /// </summary>
     void Prepare(const MechShapeKey& key);
 
@@ -307,15 +308,99 @@ namespace MCHdArt
     void SetNeighbours(const std::shared_ptr<MCShape>& shape, std::vector<std::filesystem::path> folders);
 
     /// <summary>
-    /// Port-only (SPEC-first-use.md: the camera's surroundings): has the readers read the pack's numbered folder
-    /// <paramref name="folder"/> (FolderOf a key; a packet, its shape table's <paramref name="frames"/> frames) whole, each
-    /// frame with its in-betweens (not its turn middles, which a follow reads as one is drawn), ahead of their first
-    /// draws: a mech part's in or near the view. Its archive's entries for them neighbour each other, so it is one read
-    /// or a few. Read as a set is (yielding to the frames drawn next and what a load waits for), within the cache's room
-    /// for the sets; nothing when HD art doesn't draw numbered folders, and none of a frame kept, read, looked at or asked
-    /// for already.
+    /// Port-only (SPEC-first-use.md): what reads ahead are for: a load's, which it waits for
+    /// (<see cref="WaitForLoadReads"/>); what the camera's surroundings draw soon (a unit's packets now and next), read
+    /// after the frames drawn next; or a set's, read when nothing else is. Those but a load's within the cache's room for
+    /// the sets.
     /// </summary>
-    void ReadPacketAhead(const std::filesystem::path& folder, int32_t frames);
+    enum class ReadAs : uint8_t
+    {
+        Load,
+        Soon,
+        Set,
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): a packet to read ahead whole: the pack's numbered folder
+    /// (FolderOf a key), its first <see cref="Frames"/> frames (none given: every frame its archive holds), each with its
+    /// in-betweens, and with <see cref="TurnMiddles"/> its frames' turn middles too (a legs packet's).
+    /// </summary>
+    struct PacketAhead
+    {
+        std::filesystem::path Folder;
+        std::optional<int32_t> Frames;
+        bool TurnMiddles = false;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): has the readers read <paramref name="packets"/> whole,
+    /// ahead of their first draws, as <paramref name="as"/> (Soon or Set): a unit's or object's in or near the view. A
+    /// packet's archive entries neighbour each other, so it is one read or a few. Nothing when HD art doesn't draw
+    /// numbered folders, and none of a frame kept, read, looked at or asked for already.
+    /// </summary>
+    void ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as);
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: a load): has the readers open the archives standing for the pack's numbered
+    /// <paramref name="folders"/> (FolderOf keys) and read their directories, ahead of everything else they read, so the
+    /// game's thread takes them open when it first looks in one (waiting while a reader opens it) rather than read a
+    /// directory itself (up to a few MB a mech part's): a mission's mechs and objects at its load. Nothing for those found
+    /// or asked for already, or when HD art doesn't draw numbered folders.
+    /// </summary>
+    void OpenArchivesAhead(std::span<const std::filesystem::path> folders);
+
+    /// <summary>Port-only: how many archives the game's thread has taken open from the readers (OpenArchivesAhead).</summary>
+    size_t ArchivesOpenedAhead();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: proving nothing is late): starts the HD trace into <paramref name="path"/>
+    /// (replaced; <c>-hdtrace &lt;file&gt;</c>), a line a time, tab-separated, times in microseconds from its start:
+    /// each frame begun (<c>F</c>), each read asked of the readers (<c>A</c>: its kind, archive, offset, stored bytes and
+    /// entry), each of their reads (<c>R</c>: begun, its bytes in, its frames unpacked, its kind, archive, offset, bytes,
+    /// entries), each archive named once (<c>P</c>), each frame's first use (<c>U</c>: kept as read ahead, taken from the
+    /// readers, read by the game's thread or lacked, its folder and name, and the game's thread's microseconds on it),
+    /// and notes (<c>N</c>: a benchmark's sections), for replaying the reads against another disk
+    /// (tools: the read-ahead replay). False when it can't be written.
+    /// </summary>
+    bool OpenTrace(const std::filesystem::path& path);
+
+    /// <summary>Port-only: ends the HD trace, if one is open (OpenTrace).</summary>
+    void CloseTrace();
+
+    /// <summary>Port-only: adds a note to the HD trace, if one is open (OpenTrace): <c>N time text</c>.</summary>
+    void TraceNote(std::string_view text);
+
+    /// <summary>
+    /// Port-only: <see cref="ReadPacketsAhead"/> of one packet, without its turn middles, as a set's: folder
+    /// <paramref name="folder"/>'s first <paramref name="frames"/> frames (none given: all its archive holds).
+    /// </summary>
+    void ReadPacketAhead(const std::filesystem::path& folder, std::optional<int32_t> frames = std::nullopt);
+
+    /// <summary>
+    /// Port-only: counts the times the readers forgot what they read and were asked (the pack set), and the times some of
+    /// what was asked for ahead was dropped or left out for want of room (at most every few frames: NextFrame): an ask
+    /// made before is asked again. The game's thread's, without the readers' lock.
+    /// </summary>
+    uint64_t AheadGeneration();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): the packets an asker has had read ahead, each asked for
+    /// once while the readers remember what they read (AheadGeneration), so an appearance can ask for what it draws every
+    /// frame and only a packet it hasn't asked for costs a look in the archive.
+    /// </summary>
+    class MCAskedPackets
+    {
+    public:
+        /// <summary>
+        /// Whether <paramref name="packet"/> (a number naming it to the asker) is yet to be asked for since the readers
+        /// last forgot; it is noted as asked.
+        /// </summary>
+        bool Ask(uint64_t packet);
+
+    private:
+        /// <summary>Each packet asked for: the generation it was asked in, plus one.</summary>
+        std::unordered_map<uint64_t, uint64_t> _Asked;
+    };
 
     /// <summary>
     /// Notes that shape table <paramref name="table"/> was loaded from <paramref name="key"/>: while
@@ -462,6 +547,13 @@ namespace MCHdArt
     void ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief);
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: a load): has the readers read the HD frames of the map's <paramref name="overlays"/>
+    /// (each a fast shape's bytes up to its last row's end and its size, as the renderer finds them: FindOverlay) as a
+    /// load's reads, as ReadGroundAhead does the ground's, so the first frame of play finds them without a read.
+    /// </summary>
+    void ReadOverlaysAhead(std::span<const GroundAhead> overlays);
+
+    /// <summary>
     /// The HD copy of terrain overlay <paramref name="shape"/> (a fast shape's bytes, <see cref="FastShapeSize"/>; its
     /// bounds <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when HD art
     /// is off or the pack has none.
@@ -495,16 +587,6 @@ namespace MCHdArt
         int32_t Frame = 0;
         int32_t Width = 0;
         int32_t Height = 0;
-    };
-
-    /// <summary>
-    /// Port-only (SPEC-first-use.md): what reads ahead are for: a load's, which it waits for
-    /// (<see cref="WaitForLoadReads"/>), or a set's, read when nothing else is, within the cache's room for the sets.
-    /// </summary>
-    enum class ReadAs : uint8_t
-    {
-        Load,
-        Set,
     };
 
     /// <summary>
@@ -633,7 +715,10 @@ namespace MCHdArt
     /// </summary>
     size_t ReaderReads();
 
-    /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
+    /// <summary>
+    /// How many of the pack's archives are open (each opened once, the first time it is needed, or by the readers when
+    /// asked ahead: OpenArchivesAhead).
+    /// </summary>
     size_t ArchivesOpen();
 
     /// <summary>

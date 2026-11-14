@@ -25,6 +25,12 @@ public:
 
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): the damage level's packet and the tile's as Render takes
+    /// them, and the next level's, which a hit takes it to, read ahead (MCAppearanceType::MCAskingAhead).
+    /// </summary>
+    void ReadAhead() override;
+
     /// <summary>Picks damage frame <paramref name="damageLevel"/> (low 4 bits, clamped to the type's frames).</summary>
     void SetDamageLvl(uint32_t damageLevel) override;
 

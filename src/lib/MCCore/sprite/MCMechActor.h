@@ -127,18 +127,14 @@ public:
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
     /// <summary>
-    /// Port-only (SPEC-first-use.md: the camera's surroundings): whether the bounds RecalcBounds last found for
-    /// <paramref name="view"/> lie within half the view's size past its edges.
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): has HD art's readers read whole, ahead of their frames'
+    /// first draws, the packets each part draws now (its gesture and facing as Render takes them) and those a turn comes
+    /// to, and the next gesture's a transition plays, all soon (MCHdArt::ReadAs::Soon); and as sets, a move's first
+    /// gesture from standing, walking or running, and the upper parts raised for combat or lowered from it. The mech is
+    /// in or near the view (MCAppearance::ReadAheadNear), which a pan or its walk brings it into. Each packet is asked
+    /// for once (MCSpriteTree::PacketsAhead).
     /// </summary>
-    bool NearView(const MCCamera& view) const;
-
-    /// <summary>
-    /// Port-only (SPEC-first-use.md: the camera's surroundings): has HD art's readers read the packet each part draws now
-    /// (its gesture and facing as Render takes them) whole, ahead of its frames' first draws: the mech is in or near the
-    /// view (NearView), which a pan or its walk brings it into. Each part's packet is asked for once (AskedAhead), and
-    /// again only for another packet (the mech turns or changes gesture).
-    /// </summary>
-    void ReadAhead();
+    void ReadAhead() override;
 
     /// <summary>Port-only (HDTurns): the facing <paramref name="mech"/> is drawn at (eased by update).</summary>
     float DrawnFacing(MCBattleMech& mech) const;
@@ -447,8 +443,6 @@ public:
     /// by each update.
     /// </summary>
     std::optional<float> TurnedFacing;
-    /// <summary>Port-only: each part's packet last asked to be read ahead (ReadAhead).</summary>
-    MCMechParts<std::optional<MCPacketAsked>> AskedAhead;
     /// <summary>
     /// Port-only (HDFootprints): how the legs were last drawn, in gesture <see cref="DrawnLegsGesture"/>: the way their
     /// facing (or turn middle) points and whether mirrored (MCSpriteTree::DrawnFacing). Set by each render.

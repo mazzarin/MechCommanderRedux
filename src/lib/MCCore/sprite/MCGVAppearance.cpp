@@ -31,6 +31,13 @@
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
+namespace
+{
+    /// <summary>A whole turn, in the degrees the types' rotations divide.</summary>
+    constexpr float FullTurnDegrees = 360.0f;
+    constexpr int32_t FullTurn = 360;
+}
+
 MCGVAppearance::~MCGVAppearance()
 {
     if (AppearType != nullptr)
@@ -114,6 +121,114 @@ auto MCGVAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     return 0;
 }
 
+auto MCGVAppearance::DrawnRotations(MCGameObject& obj) const -> MCGVRotations
+{
+    float body = BodyRotation;
+    float turret = TurretRotation;
+
+    // The body's and the turret's facings.
+    if (obj.ObjectClass == MCObjectClass::GroundVehicle)
+    {
+        const double facing = MCActorFacing(obj) + 5.0;
+        body = static_cast<float>(facing);
+        turret = static_cast<float>(facing + static_cast<MCGroundVehicle&>(obj).TurretRotation);
+    }
+    else if (obj.ObjectClass == MCObjectClass::Turret)
+    {
+        const float rotation = static_cast<MCTurret&>(obj).TurretRotation;
+        turret = rotation;
+        body = rotation;
+    }
+    else if (obj.ObjectClass == MCObjectClass::TrainCar)
+    {
+        body = static_cast<float>(MCActorFacing(obj) + 10.0);
+        turret = 0.0f;
+    }
+    else if (obj.ObjectClass == MCObjectClass::CameraDrone)
+    {
+        turret = 0.0f;
+        // Faithful: 45 and -134 swap (-135 is left as it is).
+        auto whole = static_cast<int32_t>(MCActorFacing(obj));
+
+        if (whole == 45)
+        {
+            whole = -135;
+        }
+        else if (whole == -134)
+        {
+            whole = 45;
+        }
+
+        body = static_cast<float>(whole);
+    }
+
+    while (turret > 180.0f)
+    {
+        turret -= 360.0f;
+    }
+
+    while (turret < -180.0f)
+    {
+        turret += 360.0f;
+    }
+
+    if (turret < 0.0f)
+    {
+        turret += 360.0f;
+    }
+
+    // The body snaps to its nearest drawn rotation.
+    const int32_t numRotations = AppearType->StateData(CurrentState).NumRotations + 1;
+    const int32_t rotationIndex = static_cast<int16_t>(
+        static_cast<int32_t>(std::floor(static_cast<double>(numRotations) * body * (1.0 / 360.0))));
+    body = static_cast<float>(360.0 / numRotations * rotationIndex);
+    return {body, turret};
+}
+
+auto MCGVAppearance::ReadAhead() -> void
+{
+    const std::shared_ptr<MCGameObject> obj = Owner.lock();
+
+    if (obj == nullptr || AppearType == nullptr)
+    {
+        return;
+    }
+
+    // The packets Render takes now, and the next rotation's either way, which a turn takes next.
+    const MCGVRotations rotations = DrawnRotations(*obj);
+    const MCAppearanceType::MCAskingAhead asking;
+    float frameRate = 0.0f;
+
+    for (const int32_t side : {0, -1, 1})
+    {
+        AppearType->GetShape(CurrentState, TurnedRotation(CurrentState, rotations.Body, side), 0, frameRate);
+
+        if (static_cast<uint32_t>(NumParts) >= 2 && CurrentState != MCGVActorState::Destroyed)
+        {
+            AppearType->GetShape(CurrentState, TurnedRotation(CurrentState, rotations.Turret, side), 1, frameRate);
+        }
+    }
+}
+
+auto MCGVAppearance::TurnedRotation(MCGVActorState state, float rotation, int32_t side) const -> int32_t
+{
+    const auto rotations = static_cast<int32_t>(AppearType->StateData(state).NumRotations);
+    const auto whole = static_cast<int32_t>(rotation);
+
+    if (side == 0 || rotations <= 0)
+    {
+        return whole;
+    }
+
+    // The packet's index as GetShape finds it (the degrees whole, in a turn), then the middle of its neighbour's
+    // degrees, which GetShape finds as that neighbour's.
+    const int32_t degrees = ((whole % FullTurn) + FullTurn) % FullTurn;
+    const int32_t index = rotations * degrees / FullTurn;
+    const int32_t next = ((index + side) % rotations + rotations) % rotations;
+    const float width = FullTurnDegrees / static_cast<float>(rotations);
+    return static_cast<int32_t>(width * static_cast<float>(next) + width / 2.0f);
+}
+
 auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
 {
     const std::shared_ptr<MCGameObject> obj = Owner.lock();
@@ -126,63 +241,10 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
         ScreenPos.Y = static_cast<float>(static_cast<MCTurret&>(*obj).TileOffsetY) + ScreenPos.Y;
     }
 
-    // The body's and the turret's facings.
-    if (objectClass == MCObjectClass::GroundVehicle)
-    {
-        const double body = MCActorFacing(*obj) + 5.0;
-        BodyRotation = static_cast<float>(body);
-        TurretRotation = static_cast<float>(body + static_cast<MCGroundVehicle&>(*obj).TurretRotation);
-    }
-    else if (objectClass == MCObjectClass::Turret)
-    {
-        const float rotation = static_cast<MCTurret&>(*obj).TurretRotation;
-        TurretRotation = rotation;
-        BodyRotation = rotation;
-    }
-    else if (objectClass == MCObjectClass::TrainCar)
-    {
-        BodyRotation = static_cast<float>(MCActorFacing(*obj) + 10.0);
-        TurretRotation = 0.0f;
-    }
-    else if (objectClass == MCObjectClass::CameraDrone)
-    {
-        TurretRotation = 0.0f;
-        // Faithful: 45 and -134 swap (-135 is left as it is).
-        auto whole = static_cast<int32_t>(MCActorFacing(*obj));
-
-        if (whole == 45)
-        {
-            whole = -135;
-        }
-        else if (whole == -134)
-        {
-            whole = 45;
-        }
-
-        BodyRotation = static_cast<float>(whole);
-    }
-
-    while (TurretRotation > 180.0f)
-    {
-        TurretRotation -= 360.0f;
-    }
-
-    while (TurretRotation < -180.0f)
-    {
-        TurretRotation += 360.0f;
-    }
-
-    if (TurretRotation < 0.0f)
-    {
-        TurretRotation += 360.0f;
-    }
-
-    // The body snaps to its nearest drawn rotation.
+    const MCGVRotations rotations = DrawnRotations(*obj);
+    BodyRotation = rotations.Body;
+    TurretRotation = rotations.Turret;
     const MCGVActorState state = CurrentState;
-    const int32_t numRotations = AppearType->StateData(state).NumRotations + 1;
-    const int32_t rotationIndex = static_cast<int16_t>(
-        static_cast<int32_t>(std::floor(static_cast<double>(numRotations) * BodyRotation * (1.0 / 360.0))));
-    BodyRotation = static_cast<float>(360.0 / numRotations * rotationIndex);
     std::array<std::shared_ptr<MCShape>, 2> shapes;
     shapes[0] = AppearType->GetShape(state, static_cast<int32_t>(BodyRotation), 0, FrameRate);
 

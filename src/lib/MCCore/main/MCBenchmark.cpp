@@ -122,6 +122,7 @@ namespace
         AddSummary(line);
         MCFrameLog::Line(line);
         MCFrameLog::Close();
+        MCHdArt::CloseTrace();
 
         // Done, its callback kept to its end (this may be it).
         if (current().has_value())
@@ -246,6 +247,7 @@ namespace
         // is in neither part's tally.
         RevealAll();
         MCFrameLog::Note("benchmark: the pan starts, the map revealed");
+        MCHdArt::TraceNote("benchmark: the pan starts");
 
         if (const std::shared_ptr<MCCamera> eye = Eye(); eye != nullptr)
         {
@@ -292,6 +294,7 @@ namespace
         MCInput::HoldInput(false);
         MCFrameLog::Line(line);
         MCFrameLog::Close();
+        MCHdArt::CloseTrace();
         AddSummary(line);
         SDL_Log("%s", line.c_str());
         KillTheGame(0);
@@ -371,6 +374,7 @@ namespace
 
                 ParkMouse();
                 MCFrameLog::Note("benchmark: the battle starts");
+                MCHdArt::TraceNote("benchmark: the battle starts");
                 MCFrameLog::StartTally();
                 run.BattleStart = ScenarioTime;
                 run.Phase = MCPhase::Battle;

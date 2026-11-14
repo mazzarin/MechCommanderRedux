@@ -10,6 +10,7 @@
 #include "object/MCElementalGameSystem.h"
 #include "object/MCForces.h"
 #include "platform/MCRenderer.h"
+#include "platform/MCSoftwareRenderer.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
 #include "terrain/MCMapBlockManager.h"
@@ -18,6 +19,7 @@
 #include "terrain/MCTerrainWindow.h"
 #include "vfx/MCVfx.h"
 #include "vfx/MCVfxClip.h"
+#include "vfx/MCVfxFunctions.h"
 
 #include <unordered_set>
 
@@ -458,6 +460,10 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
 
 namespace
 {
+    /// <summary>Where a fast shape's header keeps its height and its width less one (as the renderer reads them).</summary>
+    constexpr size_t FastShapeHeightAt = 8;
+    constexpr size_t FastShapeWidthAt = 10;
+
     /// <summary>
     /// The map's ground tiles, each once, as the ground mesh draws them (MCTerrainReadHdTiles): none while HD art is off
     /// or the software renderer draws.
@@ -506,9 +512,57 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: a load): the map's overlays (the fast shapes over the ground: roads, rivers' banks,
+    /// rubble), each once, as MCTerrainBlock::Draw draws them and the renderer finds their HD frames (the shape up to its
+    /// last row's end, its size): none while HD art is off or the software renderer draws.
+    /// </summary>
+    std::vector<MCHdArt::GroundAhead> HdGroundOverlays()
+    {
+        const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+        if (!MCHdArt::Active() || MCRenderer::GpuDrawing() == MCGpuDrawing::Off || terrain == nullptr ||
+            terrain->MapBlocks == nullptr || terrain->Tiles == nullptr)
+        {
+            return {};
+        }
+
+        MCMapBlockManager& blocks = *terrain->MapBlocks;
+        const int32_t mapSide = MCTerrain::BlocksMapSide * MCTerrain::VerticesBlockSide;
+        std::unordered_set<int32_t> seen;
+        std::vector<MCHdArt::GroundAhead> overlays;
+
+        for (int32_t r = 0; r < mapSide; ++r)
+        {
+            for (int32_t c = 0; c < mapSide; ++c)
+            {
+                const int32_t overlayData = blocks.MapVertexAt(r, c).OverlayData;
+
+                if (overlayData < 0 || !seen.insert(overlayData).second)
+                {
+                    continue;
+                }
+
+                const std::span<const uint8_t> shape = terrain->Tiles->Lookup(overlayData);
+
+                if (const std::optional<size_t> size = FastShapeSize(shape); size.has_value())
+                {
+                    overlays.push_back(MCHdArt::GroundAhead{shape.first(*size), MCRead16(shape, FastShapeWidthAt) + 1,
+                                                            MCRead16(shape, FastShapeHeightAt)});
+                }
+            }
+        }
+
+        return overlays;
+    }
+}
+
 void MCTerrainReadHdTilesAhead()
 {
     MCHdArt::ReadGroundAhead(HdGroundTiles(), MCSceneLights::ReliefMapsOn());
+    MCHdArt::ReadOverlaysAhead(HdGroundOverlays());
 }
 
 void MCTerrainReadHdTiles()

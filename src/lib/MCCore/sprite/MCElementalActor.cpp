@@ -157,6 +157,19 @@ auto MCElementalActor::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     return 0;
 }
 
+auto MCElementalActor::ReadAhead() -> void
+{
+    const std::shared_ptr<MCGameObject> obj = Owner.lock();
+
+    if (obj == nullptr || AppearType == nullptr)
+    {
+        return;
+    }
+
+    const MCAppearanceType::MCAskingAhead asking;
+    AppearType->GetGesture(CurrentGesture, static_cast<float>(MCActorFacing(*obj)));
+}
+
 auto MCElementalActor::Render(int32_t depthFixup) -> int32_t
 {
     const std::shared_ptr<MCGameObject> obj = Owner.lock();

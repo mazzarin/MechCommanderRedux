@@ -666,6 +666,17 @@ auto ParseCommandLine(std::string_view commandLine) -> void
 
             i++;
         }
+        else if (MCIEquals(word, "-hdtrace"))
+        {
+            // Port-only: "-hdtrace <file>" traces HD art's reads ahead and first uses there (MCHdArt::OpenTrace), for the
+            // read-ahead replay.
+            if (hasArgument && !MCHdArt::OpenTrace(MCFileSystem::FromUtf8(words[i + 1])))
+            {
+                SDL_Log("-hdtrace: can't write %s", std::string(words[i + 1]).c_str());
+            }
+
+            i++;
+        }
         else if (MCIEquals(word, "-benchmark"))
         {
             // Port-only (Redux HD): "-benchmark [weather,time,hd|original]" plays the trailer's canyon battle and a pan

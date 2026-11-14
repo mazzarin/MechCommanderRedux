@@ -192,6 +192,19 @@ auto MCVfxBuildingAppearance::CalcCollideBounds() -> void
     LowerRight.Y = bounds.Height + UpperLeft.Y;
 }
 
+auto MCVfxBuildingAppearance::ReadAhead() -> void
+{
+    if (BuildType == nullptr)
+    {
+        return;
+    }
+
+    const MCAppearanceType::MCAskingAhead asking;
+    BuildType->GetShape(DamageLevel);
+    BuildType->GetShape(DamageLevel + 1);
+    BuildType->GetTileShape(TileNum);
+}
+
 auto MCVfxBuildingAppearance::Render(int32_t) -> int32_t
 {
     const std::shared_ptr<MCGameObject> obj = Owner.lock();

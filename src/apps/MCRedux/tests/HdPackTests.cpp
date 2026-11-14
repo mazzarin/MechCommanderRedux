@@ -987,10 +987,13 @@ TEST_CASE("hd art: a mech's archive opens before its shapes are drawn")
     MCHdArt::SetPackFolder(pack);
     CHECK_EQ(MCHdArt::ArchivesOpen(), 0);
 
+    // Opened by the readers.
     MCHdArt::Prepare({"legs90", 5, 0});
+    MCHdArt::WaitForReadAhead();
     CHECK_EQ(MCHdArt::ArchivesOpen(), 1);
     MCHdArt::Prepare({"legs90", 5, 3});
     MCHdArt::Prepare({"legs90", 6, 0});
+    MCHdArt::WaitForReadAhead();
     CHECK_EQ(MCHdArt::ArchivesOpen(), 1);
 
     GHdArt = 0;
@@ -1044,11 +1047,13 @@ TEST_CASE("hd art: no more than 128 archive files stay open, a closed one openin
     CHECK(MCHdArt::FindTerrainTile(tiles[0], TileWidth, TileHeight) != nullptr);
     CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{1});
 
+    // Opened by the readers, their files among those kept open before the game takes them.
     for (uint32_t n = 0; n < Mechs; ++n)
     {
         MCHdArt::Prepare({"legs90", n, 0});
     }
 
+    MCHdArt::WaitForReadAhead();
     CHECK_EQ(MCHdArt::ArchivesOpen(), size_t{Mechs + 1});
     CHECK_EQ(MCHdArt::ArchiveFilesOpen(), MaxOpen);
 
@@ -1072,7 +1077,33 @@ TEST_CASE("hd art: no more than 128 archive files stay open, a closed one openin
         MCHdArt::Prepare({"legs90", n, 0});
     }
 
+    MCHdArt::WaitForReadAhead();
     CHECK(MCHdArt::FindTerrainTile(tiles[2], TileWidth, TileHeight) == nullptr);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// The game's thread asks the pack's listing, made once, which folders and archives it holds (MCHdArt's ListPack), not
+/// the disk: a packet's frames are found in their part's archive whichever case the pack's names are in, and an archive
+/// put in the pack after it was listed is found once the pack is set again.
+/// </summary>
+TEST_CASE("hd art: the pack is listed once, its names found in any case")
+{
+    const ScratchFolder scratch("listed");
+    const std::filesystem::path& pack = scratch.Path();
+    const std::vector<uint8_t> frame = TileFrameFile();
+    std::filesystem::create_directories(pack / "Mechs" / "LEGS90");
+    WriteBytes(pack / "Mechs" / "LEGS90" / "5.HDA", BuildArchive({Raw("0\\0.hdf", frame)}));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+    CHECK(MCHdArt::FindInFolder("mechs/legs90/5/0", 0, TileWidth, TileHeight) != nullptr);
+
+    WriteBytes(pack / "Mechs" / "LEGS90" / "6.HDA", BuildArchive({Raw("0\\0.hdf", frame)}));
+    CHECK(MCHdArt::FindInFolder("mechs/legs90/6/0", 0, TileWidth, TileHeight) == nullptr);
+    MCHdArt::SetPackFolder(pack);
+    CHECK(MCHdArt::FindInFolder("mechs/legs90/6/0", 0, TileWidth, TileHeight) != nullptr);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }
@@ -1379,6 +1410,179 @@ TEST_CASE("hd art: a packet read ahead whole is found at its draws without a rea
     readAhead();
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>(AheadFrames * AheadSteps));
     CHECK_EQ(MCHdArt::ReaderReads(), reads);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: proving nothing is late): the HD trace (MCHdArt::OpenTrace, -hdtrace) has a line for
+/// each read asked of the readers, each of their reads, each archive once, each first use and each note, tab-separated:
+/// a packet read ahead is its frames' asks and a read, and its first frame's draw a use of one kept.
+/// </summary>
+TEST_CASE("hd art: the HD trace has each read asked, each reader's read and each first use")
+{
+    const ScratchFolder scratch("hd-trace");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::filesystem::path trace = scratch.Path() / "trace.tsv";
+    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+    REQUIRE(MCHdArt::OpenTrace(trace));
+    MCHdArt::ReadPacketAhead(folder, AheadFrames);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    REQUIRE(MCHdArt::FindShape(AheadTable, 0, AheadWidth, AheadHeight, 0) != nullptr);
+    MCHdArt::TraceNote("done");
+    MCHdArt::CloseTrace();
+
+    std::map<std::string, std::vector<std::vector<std::string>>> lines;
+    std::ifstream in(trace);
+
+    for (std::string line; std::getline(in, line);)
+    {
+        std::vector<std::string> fields;
+
+        for (const auto part : std::views::split(line, '\t'))
+        {
+            fields.emplace_back(part.begin(), part.end());
+        }
+
+        lines[fields.front()].push_back(std::move(fields));
+    }
+
+    CHECK_EQ(lines["A"].size(), static_cast<size_t>(AheadFrames * AheadSteps));
+    CHECK(!lines["R"].empty());
+    REQUIRE_EQ(lines["P"].size(), 1u);
+    REQUIRE_EQ(lines["U"].size(), 1u);
+    CHECK_EQ(lines["U"].front()[2], "kept");
+    CHECK_EQ(lines["U"].front()[3], MCFileSystem::ToUtf8(folder));
+    CHECK_EQ(lines["U"].front()[4], "0");
+    REQUIRE_EQ(lines["N"].size(), 1u);
+    CHECK_EQ(lines["N"].front()[2], "done");
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a load): an archive the readers open ahead (MCHdArt::OpenArchivesAhead, a mission's
+/// mechs' and objects' at its load) is taken open by the game's thread at its first look in it, which draws its frames
+/// as before; one asked for again isn't opened twice; and with the pack set before it's taken, the readers' is
+/// forgotten and the game's thread opens it as it looks.
+/// </summary>
+TEST_CASE("hd art: an archive the readers open ahead is taken open at the first look in it")
+{
+    const ScratchFolder scratch("archive-ahead");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::array<std::filesystem::path, 1> folder{MCHdArt::ShapeTableFolder(AheadTable)};
+
+    const size_t opened = MCHdArt::ArchivesOpenedAhead();
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::WaitForLoadReads();
+    const std::shared_ptr<const MCHdArt::Frame> found = FindAhead({0, 0});
+    REQUIRE(found != nullptr);
+    CHECK(SameFrame(*found, AheadFrame({0, 0}, 0)));
+    CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
+    // Open already: asked again, nothing.
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::WaitForLoadReads();
+    CHECK(FindAhead({1, 0}) != nullptr);
+    CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
+
+    MCHdArt::SetPackFolder(scratch.Path());
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::SetPackFolder(scratch.Path());
+    CHECK(FindAhead({0, 0}) != nullptr);
+    CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: the camera's surroundings): a legs packet read ahead with its turn middles
+/// (MCHdArt::PacketAhead::TurnMiddles, read soon) has every frame's steps and turn middles read by the readers, and each
+/// is found at its draw without a read.
+/// </summary>
+TEST_CASE("hd art: a packet read ahead with its turn middles has them found at their draws without a read")
+{
+    const ScratchFolder scratch("packet-ahead-turns");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::array<MCHdArt::PacketAhead, 1> packet{{{MCHdArt::ShapeTableFolder(AheadTable), AheadFrames, true}}};
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::ReadPacketsAhead(packet, MCHdArt::ReadAs::Soon);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + AheadKeys().size());
+    const size_t read = MCHdArt::FramesRead();
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        MCTest::Scope scope(std::format("frame {}", AheadName(key)));
+        const std::shared_ptr<const MCHdArt::Frame> found =
+            MCHdArt::FindShape(AheadTable, key.first, AheadWidth, AheadHeight, key.second);
+        REQUIRE(found != nullptr);
+        CHECK(SameFrame(*found, AheadFrame(key, 0)));
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: the camera's surroundings): a packet read ahead without its frames' count (an object's,
+/// whose shape isn't loaded) has every frame its archive holds read with its in-betweens, past a number the packet
+/// skips (an empty frame of the original's), and each is found at its draw without a read.
+/// </summary>
+TEST_CASE("hd art: a packet read ahead without its count reads every frame its archive holds, past a number skipped")
+{
+    constexpr int32_t Skipped = 2;
+    const ScratchFolder scratch("packet-ahead-count");
+    std::vector<ArchiveEntry> entries;
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        if (key.first != Skipped)
+        {
+            entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
+        }
+    }
+
+    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+    std::filesystem::create_directories((scratch.Path() / folder).parent_path());
+    WriteBytes(std::filesystem::path(scratch.Path() / folder).concat(".hda"), BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::ReadPacketAhead(folder);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>((AheadFrames - 1) * AheadSteps));
+    const size_t read = MCHdArt::FramesRead();
+
+    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps && frame != Skipped; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }
@@ -1830,6 +2034,61 @@ TEST_CASE("hd art: a load's ground is read ahead by the readers, tiles and relie
 
     CHECK_EQ(MCHdArt::FramesRead(), read);
     CHECK(MCHdArt::FindTerrainTile(tiles.back(), Side, Side) == nullptr);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a load): a load's overlays read ahead (MCHdArt::ReadOverlaysAhead, the map's roads,
+/// banks and rubble) are read by the readers as a load's reads, and once waited for and kept, each is found as a drawn
+/// one is (MCHdArt::FindOverlay), the same frame, without a read.
+/// </summary>
+TEST_CASE("hd art: a load's overlays are read ahead by the readers, found without a read")
+{
+    constexpr size_t Overlays = 6;
+    constexpr int32_t Side = 8;
+    constexpr uint8_t ShapeByte = 0x3c;
+    const ScratchFolder scratch("overlays-ahead");
+    std::vector<std::vector<uint8_t>> shapes;
+    std::vector<std::vector<uint8_t>> files;
+    std::vector<ArchiveEntry> entries;
+
+    for (size_t overlay = 0; overlay < Overlays; ++overlay)
+    {
+        shapes.push_back({static_cast<uint8_t>(overlay), ShapeByte, ShapeByte});
+        files.push_back(FrameFile(Side, Side, static_cast<int32_t>(overlay) + 1));
+        entries.push_back(Raw(MCHdArt::TerrainTileName(shapes.back()) + ".hdf", files.back()));
+    }
+
+    WriteBytes(scratch.Path() / "overlays.hda", BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    std::vector<MCHdArt::GroundAhead> asked;
+
+    for (const std::vector<uint8_t>& shape : shapes)
+    {
+        asked.push_back({shape, Side, Side});
+    }
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::ReadOverlaysAhead(asked);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Overlays);
+    const size_t read = MCHdArt::FramesRead();
+
+    for (size_t overlay = 0; overlay < Overlays; ++overlay)
+    {
+        MCTest::Scope scope(std::format("overlay {}", overlay));
+        const std::shared_ptr<const MCHdArt::Frame> found = MCHdArt::FindOverlay(shapes[overlay], Side, Side);
+        REQUIRE(found != nullptr);
+        const auto decoded = MCHdArt::DecodeHdf(files[overlay], Side, Side);
+        REQUIRE(decoded.has_value());
+        CHECK(SameFrame(*found, *decoded));
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }

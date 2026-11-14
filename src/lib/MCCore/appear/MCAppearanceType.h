@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lib/MCFitIniFile.h"
+#include "sprite/MCHdArt.h"
 
 class MCAppearance;
 class MCShape;
@@ -144,6 +145,25 @@ public:
     int32_t BoundsLowerRightX = 0;
     int32_t BoundsLowerRightY = 0;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): while one lives, the types' shape lookups (GetShape,
+    /// GetGesture: PacketShape) load nothing: each has HD art's readers read the packet it would load whole instead
+    /// (once a packet, MCHdArt::ReadPacketAhead) and gives only a shape already loaded. An appearance's ReadAhead makes
+    /// its Render's lookups under one, so its packets are asked for as its Render would draw them. The game's thread's.
+    /// </summary>
+    class MCAskingAhead
+    {
+    public:
+        MCAskingAhead() { Asking = true; }
+        ~MCAskingAhead() { Asking = false; }
+        MCAskingAhead(const MCAskingAhead&) = delete;
+        MCAskingAhead& operator=(const MCAskingAhead&) = delete;
+
+    private:
+        friend class MCAppearanceType;
+        static inline bool Asking = false;
+    };
+
 protected:
     /// <summary>The packet in the sprite PAK whose PAK holds the type's shapes.</summary>
     uint32_t ShapeFileNum() const { return AppearanceNum & 0xffffff; }
@@ -159,4 +179,14 @@ protected:
     /// one (marked used this turn), else loaded from the sprite manager into the slot. Null when it can't be loaded.
     /// </summary>
     std::shared_ptr<MCShape> PacketShape(std::weak_ptr<MCShape>& slot, uint32_t packet);
+
+private:
+    /// <summary>
+    /// Port-only (MCAskingAhead): has HD art's readers read packet <paramref name="packet"/> of the type's PAK whole,
+    /// unless asked for since the readers last forgot what they read (MCHdArt::MCAskedPackets).
+    /// </summary>
+    void AskPacketAhead(uint32_t packet);
+
+    /// <summary>Port-only: the packets asked to be read ahead (AskPacketAhead).</summary>
+    MCHdArt::MCAskedPackets _AskedAhead;
 };

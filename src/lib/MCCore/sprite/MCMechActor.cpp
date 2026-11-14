@@ -51,11 +51,6 @@ namespace
     constexpr int32_t GestureFall = 21;
     constexpr int32_t GestureCombat = 0x1a;
     constexpr int32_t GestureCombatChange = 0x1b;
-    /// <summary>
-    /// Port-only (SPEC-first-use.md: the camera's surroundings): how far past the view's edges, as a share of its size,
-    /// a mech has the packets it would draw read ahead (MCMechActor::NearView).
-    /// </summary>
-    constexpr float NearViewShare = 0.5f;
 
     /// <summary>The number of gestures in a state's row of the transition table.</summary>
     constexpr int32_t TransitionRow = 10;
@@ -1784,16 +1779,6 @@ auto MCMechActor::ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPa
     return MechTree->Gestures[legsGesture].ArmSymmetrical != 0 && packet.has_value() && packet->Reverse;
 }
 
-auto MCMechActor::NearView(const MCCamera& view) const -> bool
-{
-    const auto width = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewWidth)));
-    const auto height = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewHeight)));
-    const float marginX = width * NearViewShare;
-    const float marginY = height * NearViewShare;
-    return -marginX <= LowerRight.X && -marginY <= LowerRight.Y && UpperLeft.X <= width + marginX &&
-           UpperLeft.Y <= height + marginY;
-}
-
 auto MCMechActor::ReadAhead() -> void
 {
     const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
@@ -1803,35 +1788,81 @@ auto MCMechActor::ReadAhead() -> void
         return;
     }
 
-    // Each part's packet as Render takes it: its gesture, the tree's part (an arm from the other's sprites when mirrored)
-    // and its rotation; a part gone (an arm blown off, a wreck's torso) none.
     const float facing = DrawnFacing(*mech);
-    const int32_t upper = UpperGesture();
     const auto [rotation2, rotation3] = ArmRotations(*mech, facing);
-    struct PartAhead
+    const auto isGesture = [&](int32_t gesture)
+    { return gesture >= 0 && static_cast<size_t>(gesture) < MechTree->Gestures.size(); };
+    std::vector<MCHdArt::PacketAhead> soon;
+    std::vector<MCHdArt::PacketAhead> later;
+
+    // Each part's packets with the legs in gesture legs and the upper parts in upper, as Render takes them: the tree's
+    // part (an arm from the other's sprites when mirrored) at its rotation, and with turns the facings either side; a
+    // part gone (an arm blown off, a wreck's torso) none.
+    const auto add = [&](int32_t legs, int32_t upper, bool turns, std::vector<MCHdArt::PacketAhead>& packets)
     {
-        MCMechPart Part;
-        int32_t Gesture;
-        int32_t TreePart;
-        float Rotation;
-        bool Gone;
+        if (!isGesture(legs) || !isGesture(upper))
+        {
+            return;
+        }
+
+        MechTree->PacketsAhead(legs, 0, facing, turns, packets);
+
+        if (!Wrecked)
+        {
+            MechTree->PacketsAhead(upper, 1, facing + mech->TorsoRotation, turns, packets);
+        }
+
+        if (!RightArmGone)
+        {
+            MechTree->PacketsAhead(upper, ArmSwapped(legs, upper, 3, rotation2) ? 3 : 2, rotation2, turns, packets);
+        }
+
+        if (!LeftArmGone)
+        {
+            MechTree->PacketsAhead(upper, ArmSwapped(legs, upper, 2, rotation3) ? 2 : 3, rotation3, turns, packets);
+        }
     };
 
-    const std::array<PartAhead, MechPartCount> parts = {
-        {{MCMechPart::Legs, CurrentGesture, 0, facing, false},
-         {MCMechPart::Torso, upper, 1, facing + mech->TorsoRotation, Wrecked},
-         {MCMechPart::RightArm, upper, ArmSwapped(CurrentGesture, upper, 3, rotation2) ? 3 : 2, rotation2,
-          RightArmGone},
-         {MCMechPart::LeftArm, upper, ArmSwapped(CurrentGesture, upper, 2, rotation3) ? 2 : 3, rotation3,
-          LeftArmGone}}};
-
-    for (const PartAhead& part : parts)
+    // The upper parts' gesture over the legs' gesture legs, as UpperGesture takes it.
+    const auto upperOver = [&](int32_t legs)
     {
-        if (!part.Gone)
+        return InCombatMode ? GestureCombat : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange : legs;
+    };
+
+    // Soon: the gestures drawn now, at their facing and those a turn comes to, and the one a transition plays next.
+    add(CurrentGesture, UpperGesture(), true, soon);
+
+    if (InTransition)
+    {
+        add(NextGesture, upperOver(NextGesture), false, soon);
+    }
+
+    // Later, as sets: a move's first gesture from standing, walking or running to either of the others, and the upper
+    // parts raised for combat or lowered from it.
+    if (!InTransition && CurrentStateGesture >= MCStopState::Stand && CurrentStateGesture <= MCStopState::Run)
+    {
+        for (const int32_t goal : {MCStopState::Stand, MCStopState::Walk, MCStopState::Run})
         {
-            MechTree->ReadPacketAhead(part.Gesture, part.TreePart, part.Rotation, AskedAhead[part.Part]);
+            if (goal != CurrentStateGesture)
+            {
+                const int32_t first = MCStopTransition(*MechTree, goal, CurrentStateGesture, 0, MCMechBrakingInForce());
+                add(first, upperOver(first), false, later);
+            }
         }
     }
+
+    if (!CombatModeRaising && !CombatModeLowering)
+    {
+        add(CurrentGesture, GestureCombatChange, false, later);
+
+        if (!InCombatMode)
+        {
+            add(CurrentGesture, GestureCombat, false, later);
+        }
+    }
+
+    MCHdArt::ReadPacketsAhead(soon, MCHdArt::ReadAs::Soon);
+    MCHdArt::ReadPacketsAhead(later, MCHdArt::ReadAs::Set);
 }
 
 auto MCMechActor::Render(int32_t depthFixup) -> int32_t

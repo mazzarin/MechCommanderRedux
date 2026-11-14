@@ -15,7 +15,9 @@
 #include "vfx/MCVfxFunctions.h"
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
+#include <fstream>
 #include <unordered_set>
 
 int GHdArt = 0;
@@ -73,6 +75,16 @@ namespace
     constexpr size_t MaxFollows = 1024;
     /// <summary>The most bytes of frames read ahead and not taken yet (the oldest dropped past it).</summary>
     constexpr size_t MaxAheadBytes = 32u * 1024u * 1024u;
+    /// <summary>
+    /// Port-only (ExpandAsks): the frames a reader checks against what's kept, read and asked for at a time under the
+    /// readers' lock, which the game's thread takes every frame.
+    /// </summary>
+    constexpr size_t AskChunk = 256;
+    /// <summary>
+    /// Port-only (MCHdArt::AheadGeneration): the fewest frames between two times the askers ask again for what was asked
+    /// ahead, when some of it was dropped or left out for want of room since (a quarter of a second at 120 Hz).
+    /// </summary>
+    constexpr uint64_t AskAgainFrames = 30;
     /// <summary>The most reads of the frames drawn next waiting (the oldest left out past it: the game has drawn on).</summary>
     constexpr size_t MaxNextReads = 4096;
     /// <summary>The readers' handles kept open for their next reads, for each reader (MCHdArt::SetReaderSettings).</summary>
@@ -87,6 +99,8 @@ namespace
     constexpr size_t ShapeCountEnd = 8;
     /// <summary>The frame log's part for a frame's first use (read then, or taken from the reading thread), and its count.</summary>
     constexpr std::string_view FrameLogRead = "hd.read";
+    /// <summary>Port-only: the frame log's part for an archive looked for or opened by the game's thread (ArchiveFor).</summary>
+    constexpr std::string_view FrameLogOpen = "hd.open";
     constexpr std::string_view FrameLogReads = "HD frames first used";
     /// <summary>Port-only: the frame log's count of the readers' reads of the archives (MCHdArt::ReaderReads).</summary>
     constexpr std::string_view FrameLogReaderReads = "HD reads by the readers";
@@ -97,6 +111,14 @@ namespace
         /// <summary>Shared, so the files kept open (KeepOpen) can tell an archive that's gone.</summary>
         std::shared_ptr<MCFastFile> File;
         std::unordered_set<std::string> Folders;
+        /// <summary>Port-only: its file's path (the HD trace names it: MCHdArt::OpenTrace).</summary>
+        std::filesystem::path Path;
+        /// <summary>
+        /// Port-only: the numbered frames each of its folders holds (ArchivedFrames), by the start of their entries'
+        /// names (upper-cased, as Find compares them): one past the highest frame number, not an in-between's or a turn
+        /// middle's; found as it opens.
+        /// </summary>
+        std::unordered_map<std::string, int32_t> FrameCounts;
     };
 
     std::string Upper(std::string_view text)
@@ -106,6 +128,18 @@ namespace
         std::ranges::transform(upper, upper.begin(),
                                [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         return upper;
+    }
+
+    /// <summary>
+    /// Port-only: a folder's path as the folders and archives found are kept by (State::FolderIndices,
+    /// State::Archives): its text, normalized (one separator, the system's), so hashed: a mech coming into view asks for
+    /// hundreds of packets' folders in a frame, and a map of paths compares them part by part.
+    /// </summary>
+    using PathKey = std::filesystem::path::string_type;
+
+    PathKey KeyOfPath(const std::filesystem::path& path)
+    {
+        return path.lexically_normal().native();
     }
 
     /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName, MCHdArt::PictureHash).</summary>
@@ -128,6 +162,11 @@ namespace
     constexpr std::string_view IndexSuffix = "_idx";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
     constexpr std::string_view HdfExtension = ".hdf";
+    /// <summary>
+    /// The most frames a packet's folder is taken to hold (ArchivedFrames): a number past it is a damaged archive's (the
+    /// pack's packets hold at most 151).
+    /// </summary>
+    constexpr int32_t MostArchivedFrames = 1024;
     constexpr std::array<uint8_t, 4> HdfMagic = {'M', 'C', 'H', 'D'};
     constexpr uint32_t HdfVersion = 1;
     constexpr uint32_t HdfBc7 = 1;
@@ -249,17 +288,19 @@ namespace
     /// </summary>
     /// <summary>
     /// Port-only (SPEC-first-use.md): the kinds of reads, in the order the readers take them: what a load waits for, then
-    /// the frames drawn next (a first draw's followers and its neighbours'), then the sets read ahead (a screen's
-    /// pictures), which go as far as MCHdArt::ReaderSettings::SetReads lets them.
+    /// the frames drawn next (a first draw's followers and its neighbours'), then what the camera's surroundings draw
+    /// soon (a unit's packets now and next: MCHdArt::ReadAs::Soon), then the sets read ahead (a screen's pictures, the
+    /// objects near the view), which go as far as MCHdArt::ReaderSettings::SetReads lets them.
     /// </summary>
     enum class AheadKind : uint8_t
     {
         Load,
         Next,
+        Soon,
         Set,
     };
 
-    constexpr size_t AheadKinds = 3;
+    constexpr size_t AheadKinds = 4;
 
     struct Follow
     {
@@ -304,6 +345,48 @@ namespace
     {
         std::shared_ptr<MCHdArt::Frame> Frame;
         std::list<FrameKey>::iterator InOrder;
+    };
+
+    /// <summary>
+    /// Port-only (MCHdArt::OpenArchivesAhead): an archive for a reader to open: the folders ArchiveOf looks in for it,
+    /// nearest first (each looked in until one has an archive), and the pack's generation it was asked in.
+    /// </summary>
+    struct ArchiveOpen
+    {
+        std::vector<std::filesystem::path> Folders;
+        uint64_t Generation = 0;
+    };
+
+    /// <summary>
+    /// Port-only (AskAhead): a frame asked for ahead, for a reader to look for in its folder's archive with its
+    /// in-betweens (Steps) and a legs packet's turn middles: its folder's follow in its batch (AskBatch::Follows), its
+    /// name, the shape size a picture is asked for at (0 x 0 with Steps: a numbered frame's, any), and whether its
+    /// folder's frames are named by a hash.
+    /// </summary>
+    struct AheadAsk
+    {
+        uint32_t From = 0;
+        uint64_t Name = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+        bool Steps = false;
+        bool TurnMiddles = false;
+        bool Hashed = false;
+    };
+
+    /// <summary>
+    /// Port-only (AskAhead): frames asked for ahead as reads of one kind, at most Room bytes of them, which a reader makes
+    /// reads (ExpandAsks), not the game's thread: a unit's packets are hundreds of frames and in-betweens, each a look in
+    /// its archive. Each folder's follow once (its archive, its entries' start, its shadows, the kind), and the pack's
+    /// generation they were asked in.
+    /// </summary>
+    struct AskBatch
+    {
+        std::vector<std::shared_ptr<const Follow>> Follows;
+        std::vector<AheadAsk> Asks;
+        AheadKind Kind = AheadKind::Set;
+        size_t Room = 0;
+        uint64_t Generation = 0;
     };
 
     /// <summary>
@@ -359,6 +442,20 @@ namespace
         /// <summary>How the readers read (MCHdArt::SetReaderSettings), and the game's thread's priority as they started.</summary>
         MCHdArt::ReaderSettings Settings;
         MCThreadPriority GamePriority;
+        /// <summary>
+        /// Port-only (MCHdArt::OpenArchivesAhead): the archives to open, ahead of everything else (a read needs its
+        /// archive's directory); the folders the game's thread waits on while their archives are opened (each open's, not
+        /// in Opened yet); and those opened, until it takes them (ArchiveFor), by the folder each stands for.
+        /// </summary>
+        std::deque<ArchiveOpen> Opens;
+        std::set<std::filesystem::path> Opening;
+        std::map<std::filesystem::path, std::expected<std::shared_ptr<MCHdArchive>, std::string>> Opened;
+        /// <summary>
+        /// Port-only (AskAhead): the frames asked for ahead, not made reads yet, in turn; and how many of those batches,
+        /// with one a reader is making reads of, are a load's (MCHdArt::WaitForLoadReads waits for them too).
+        /// </summary>
+        std::deque<AskBatch> Asks;
+        size_t LoadAsks = 0;
         /// <summary>The readers, started with the first follow or set; last, so they stop before the rest goes.</summary>
         std::vector<std::jthread> Readers;
     };
@@ -372,7 +469,7 @@ namespace
         size_t Attached = 0;
         /// <summary>The folders frames were looked up in, and each one's index there.</summary>
         std::vector<FrameFolder> Folders;
-        std::map<std::filesystem::path, uint32_t> FolderIndices;
+        std::unordered_map<PathKey, uint32_t> FolderIndices;
         /// <summary>
         /// FindShape's folders' indices by their shape table's hash: making a folder's path and finding it among the
         /// folders' cost more, every draw, than finding its frame.
@@ -392,6 +489,21 @@ namespace
         size_t TakenAhead = 0;
         /// <summary>Port-only: the readers' reads (ReadAhead::ArchiveReads) the frame log has counted.</summary>
         size_t ReaderReadsLogged = 0;
+        /// <summary>Port-only: the archives taken open from the readers (MCHdArt::OpenArchivesAhead).</summary>
+        size_t OpenedAhead = 0;
+        /// <summary>
+        /// Port-only: the times the readers forgot what they read (ReadAhead::Generation's count, the game's thread's
+        /// own: MCHdArt::AheadGeneration reads it without their lock).
+        /// </summary>
+        uint64_t Forgets = 0;
+        /// <summary>
+        /// Port-only: whether some of what was asked for ahead was dropped (from the cache or the readers' own) or left
+        /// out for want of room (set by the readers too), and the times and frame the askers were last told to ask
+        /// again for it all (MCHdArt::NextFrame, at most every AskAgainFrames).
+        /// </summary>
+        std::atomic<bool> AskAgain = false;
+        uint64_t ReAsks = 0;
+        uint64_t AskAgainAt = 0;
         std::chrono::nanoseconds ReadTime{0};
         /// <summary>The folders whose problems were logged (once each).</summary>
         std::set<std::filesystem::path> Logged;
@@ -407,8 +519,19 @@ namespace
         std::optional<std::string> PackSprites;
         /// <summary>This game's sprite files (MCHdArt::SetSpriteFiles; empty: not known yet).</summary>
         std::string SpriteFiles;
+        /// <summary>
+        /// Whether the pack's sprite files are this game's (MCHdArt::NumberedFolders), once worked out: asked each frame
+        /// for every object near the view (MCAppearance::ReadAheadNear). Forgotten when either changes.
+        /// </summary>
+        std::optional<bool> SpritesMatch;
+        /// <summary>
+        /// Port-only (ListPack): the pack's folders and archives as found once, the first time the game's thread asks
+        /// (IsDirectory, IsArchive), by ListedName: it holds a few dozen folders and about a thousand files, so it is
+        /// listed in milliseconds, and nothing the game's thread asks of the pack's layout looks at the disk after.
+        /// </summary>
+        std::optional<std::unordered_set<std::string>> Listed;
         /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
-        std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
+        std::unordered_map<PathKey, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>
         /// Guards the archives' files kept open (MCFastFile's reads, Release and IsOpen) and the four below: the reading
         /// thread reads through a handle of its own (a file's stream can't be read from two threads), so it holds this
@@ -630,16 +753,93 @@ namespace
         TrimOpenFiles(state);
     }
 
-    /// <summary>The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once; null when none.</summary>
-    std::shared_ptr<MCHdArchive> ArchiveFor(const std::filesystem::path& folder)
+    /// <summary>Whether <paramref name="rest"/> is a frame file's extension (.hdf), in either case as Find compares.</summary>
+    bool IsHdfExtension(std::string_view rest)
     {
-        auto [found, fresh] = TheState().Archives.try_emplace(folder);
+        return rest.size() == HdfExtension.size() && Upper(rest) == Upper(HdfExtension);
+    }
 
-        if (!fresh)
+    /// <summary>
+    /// Port-only: <paramref name="path"/> as the pack's listing names it (State::Listed): in the generic form, upper-cased,
+    /// a folder's with a trailing separator, so that every way of writing a path finds it (the systems compare names
+    /// without regard to case).
+    /// </summary>
+    std::string ListedName(const std::filesystem::path& path, bool folder)
+    {
+        std::string name = Upper(MCFileSystem::ToUtf8(path.lexically_normal()));
+        std::ranges::replace(name, '\\', '/');
+
+        while (name.size() > 1 && name.back() == '/')
         {
-            return found->second;
+            name.pop_back();
         }
 
+        return folder ? name + '/' : name;
+    }
+
+    /// <summary>
+    /// Port-only: the pack's listing (State::Listed), made the first time it's asked for: the pack's folder, each folder
+    /// in it and each file. A pack set again is listed again (MCHdArt::SetPackFolder).
+    /// </summary>
+    const std::unordered_set<std::string>& ListPack()
+    {
+        State& state = TheState();
+
+        if (state.Listed.has_value())
+        {
+            return *state.Listed;
+        }
+
+        std::unordered_set<std::string>& listed = state.Listed.emplace();
+        const std::filesystem::path pack = MCHdArt::PackFolder();
+        std::error_code error;
+
+        if (!std::filesystem::is_directory(pack, error))
+        {
+            return listed;
+        }
+
+        listed.insert(ListedName(pack, true));
+
+        for (auto at = std::filesystem::recursive_directory_iterator(
+                 pack, std::filesystem::directory_options::skip_permission_denied, error);
+             !error && at != std::filesystem::recursive_directory_iterator(); at.increment(error))
+        {
+            std::error_code kind;
+            listed.insert(ListedName(at->path(), at->is_directory(kind)));
+        }
+
+        if (error)
+        {
+            LogOnce(pack, std::format("listing the pack stopped: {}", error.message()));
+        }
+
+        return listed;
+    }
+
+    /// <summary>
+    /// Port-only: whether <paramref name="path"/>, in the pack, is a folder: from the pack's listing (ListPack), so
+    /// without a look at the disk (a look is tens of microseconds, more with Windows' file scanning, and the game's
+    /// thread asks of each folder it finds frames in). The game's thread's.
+    /// </summary>
+    bool IsDirectory(const std::filesystem::path& path)
+    {
+        return ListPack().contains(ListedName(path, true));
+    }
+
+    /// <summary>Port-only: whether the pack holds <paramref name="folder"/>'s archive (its <c>.hda</c>), as IsDirectory.</summary>
+    bool IsArchive(const std::filesystem::path& folder)
+    {
+        return ListPack().contains(ListedName(std::filesystem::path(folder).concat(ArchiveExtension), false));
+    }
+
+    /// <summary>
+    /// The archive standing for <paramref name="folder"/> (its <c>.hda</c>) opened, its directory read: null when there's
+    /// none, what's wrong when it can't be read. Touches nothing shared, so a reader opens archives ahead with it
+    /// (MCHdArt::OpenArchivesAhead).
+    /// </summary>
+    std::expected<std::shared_ptr<MCHdArchive>, std::string> OpenArchive(const std::filesystem::path& folder)
+    {
         const std::filesystem::path path = std::filesystem::path(folder).concat(ArchiveExtension);
         std::error_code error;
 
@@ -652,25 +852,105 @@ namespace
 
         if (!file)
         {
-            LogOnce(path, file.error());
-            return nullptr;
+            return std::unexpected(std::move(file.error()));
         }
 
         auto archive = std::make_shared<MCHdArchive>();
         archive->File = std::move(*file);
-
-        {
-            std::scoped_lock lock(TheState().ArchiveFiles);
-            KeepOpen(archive->File);
-        }
+        archive->Path = path;
+        // The last numbered entry's folder and its count: a folder's entries come together.
+        std::string_view lastFolder;
+        int32_t* lastFrames = nullptr;
 
         for (const MCFileEntry& entry : archive->File->GetEntries())
         {
             const std::string_view name = entry.GetName();
             archive->Folders.insert(Upper(name.substr(0, name.find(ArchiveSeparator))));
+
+            // A numbered frame's entry, <folder>\<frame>.hdf: its folder holds at least the frames up to it.
+            const size_t split = name.rfind(ArchiveSeparator);
+            const std::string_view folder =
+                split == std::string_view::npos ? std::string_view() : name.substr(0, split + 1);
+            const std::string_view leaf = name.substr(folder.size());
+            int32_t frame = 0;
+            const auto [end, error] = std::from_chars(leaf.data(), leaf.data() + leaf.size(), frame);
+
+            if (error == std::errc() && end != leaf.data() && frame >= 0 && frame < MostArchivedFrames &&
+                IsHdfExtension(leaf.substr(static_cast<size_t>(end - leaf.data()))))
+            {
+                if (lastFrames == nullptr || folder != lastFolder)
+                {
+                    lastFolder = folder;
+                    lastFrames = &archive->FrameCounts[Upper(folder)];
+                }
+
+                *lastFrames = std::max(*lastFrames, frame + 1);
+            }
         }
 
-        found->second = std::move(archive);
+        return archive;
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::OpenArchivesAhead): the archive the readers opened for <paramref name="folder"/>, taken from
+    /// them, waiting while they open it; none when they weren't asked to. Never with ReadAhead::Lock held.
+    /// </summary>
+    std::optional<std::expected<std::shared_ptr<MCHdArchive>, std::string>> TakeOpened(
+        const std::filesystem::path& folder)
+    {
+        ReadAhead& ahead = TheState().Ahead;
+        std::unique_lock lock(ahead.Lock);
+        ahead.Changed.wait(lock, [&] { return !ahead.Opening.contains(folder); });
+        auto opened = ahead.Opened.extract(folder);
+
+        if (opened.empty())
+        {
+            return std::nullopt;
+        }
+
+        return std::move(opened.mapped());
+    }
+
+    /// <summary>
+    /// The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once (by the readers when asked
+    /// ahead: TakeOpened); null when none. Never with ReadAhead::Lock held.
+    /// </summary>
+    std::shared_ptr<MCHdArchive> ArchiveFor(const std::filesystem::path& folder)
+    {
+        auto [found, fresh] = TheState().Archives.try_emplace(KeyOfPath(folder));
+
+        if (!fresh)
+        {
+            return found->second;
+        }
+
+        // Port-only: the game's thread's wait for a reader's open, or its own (the frame log's).
+        const MCFrameLog::Scope part(FrameLogOpen);
+        // None when the pack's listing has none (a packet's folder, its frames in its part's archive).
+        std::optional<std::expected<std::shared_ptr<MCHdArchive>, std::string>> opened = TakeOpened(folder);
+        std::expected<std::shared_ptr<MCHdArchive>, std::string> archive =
+            opened.has_value()  ? std::move(*opened)
+            : IsArchive(folder) ? OpenArchive(folder)
+                                : std::expected<std::shared_ptr<MCHdArchive>, std::string>(nullptr);
+
+        if (!archive)
+        {
+            LogOnce(std::filesystem::path(folder).concat(ArchiveExtension), archive.error());
+            return nullptr;
+        }
+
+        // One the readers opened is among the files kept open since (OpenAhead), or closed since as read longest ago.
+        if (*archive != nullptr && opened.has_value())
+        {
+            ++TheState().OpenedAhead;
+        }
+        else if (*archive != nullptr)
+        {
+            std::scoped_lock lock(TheState().ArchiveFiles);
+            KeepOpen((*archive)->File);
+        }
+
+        found->second = std::move(*archive);
         return found->second;
     }
 
@@ -708,6 +988,24 @@ namespace
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// The frames <paramref name="folder"/>'s archive holds: one past the highest numbered frame (not an in-between or
+    /// turn middle) among its entries (a packet may skip a number: an empty frame of the original's), as the archive
+    /// found them when it opened (MCHdArchive::FrameCounts). 0 outside an archive.
+    /// </summary>
+    int32_t ArchivedFrames(FrameFolder& folder)
+    {
+        const FrameFolder::InArchive& archived = ArchiveOf(folder);
+
+        if (archived.Archive == nullptr)
+        {
+            return 0;
+        }
+
+        const auto found = archived.Archive->FrameCounts.find(Upper(archived.Prefix));
+        return found == archived.Archive->FrameCounts.end() ? 0 : found->second;
     }
 
     /// <summary>Whether <paramref name="entry"/> unpacks to no more than a frame file may be (MaxHdfBytes).</summary>
@@ -916,7 +1214,8 @@ namespace
     uint32_t FolderIndex(const std::filesystem::path& path, Naming names)
     {
         State& state = TheState();
-        const auto [found, fresh] = state.FolderIndices.try_emplace(path, static_cast<uint32_t>(state.Folders.size()));
+        const auto [found, fresh] =
+            state.FolderIndices.try_emplace(KeyOfPath(path), static_cast<uint32_t>(state.Folders.size()));
 
         if (fresh)
         {
@@ -966,7 +1265,7 @@ namespace
         // Loose frame files lie in a folder; an archive's, in none (a pack of archives costs no file checks a frame).
         if (!folder.Loose.has_value())
         {
-            folder.Loose = std::filesystem::is_directory(folder.Path, error);
+            folder.Loose = IsDirectory(folder.Path);
         }
 
         const std::string frame = folder.Names == Naming::Hash ? HashName(key.Name) : NumberedName(key.Name);
@@ -1048,6 +1347,13 @@ namespace
         state.Bytes -= cached.Frame->Bytes();
         cached.Frame.reset();
         cached.Looked = false;
+
+        // Port-only: a unit's packet near the view may hold it (MCHdArt::MCAskedPackets).
+        if (state.Folders.at(key.Folder).Names == Naming::Number)
+        {
+            state.AskAgain = true;
+        }
+
         std::scoped_lock lock(state.Ahead.Lock);
         state.Ahead.Known.erase(key);
     }
@@ -1247,6 +1553,7 @@ namespace
             {
                 ahead.Bytes -= oldest->second.Frame->Bytes();
                 ahead.Ready.erase(oldest);
+                TheState().AskAgain = true;
             }
 
             ahead.Order.pop_front();
@@ -1257,6 +1564,121 @@ namespace
     FrameKey KeyOf(const AheadRead& read)
     {
         return FrameKey{read.From->Key.Folder, read.Entry.Name};
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::OpenTrace): the HD trace: its file, its clock's start, whether it's open (tested without the
+    /// lock), and the archives it has named, each by a number.
+    /// </summary>
+    struct Trace
+    {
+        std::mutex Lock;
+        std::ofstream Out;
+        std::chrono::steady_clock::time_point Start;
+        std::atomic<bool> On = false;
+        std::unordered_map<const MCHdArchive*, size_t> Archives;
+        /// <summary>
+        /// The pack's folder, which the archives' paths are given from: set by the game's thread (OpenTrace,
+        /// SetPackFolder), read by the readers' (TraceArchive), so never MCHdArt::PackFolder's state there.
+        /// </summary>
+        std::filesystem::path Pack;
+    };
+
+    Trace& TheTrace()
+    {
+        static Trace trace;
+        return trace;
+    }
+
+    /// <summary>Whether the HD trace is open: its lines cost a test each while it isn't.</summary>
+    bool Tracing()
+    {
+        return TheTrace().On.load(std::memory_order_relaxed);
+    }
+
+    /// <summary>The microseconds since the trace opened. With Trace::Lock held.</summary>
+    int64_t TraceNow(const Trace& trace)
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - trace.Start)
+            .count();
+    }
+
+    /// <summary>
+    /// The trace's number for <paramref name="archive"/>, its path (from the pack's folder) written the first time:
+    /// <c>P number path</c>. With Trace::Lock held.
+    /// </summary>
+    size_t TraceArchive(Trace& trace, const MCHdArchive& archive)
+    {
+        const auto [found, fresh] = trace.Archives.try_emplace(&archive, trace.Archives.size());
+
+        if (fresh)
+        {
+            trace.Out << std::format("P\t{}\t{}\n", found->second,
+                                     MCFileSystem::ToUtf8(archive.Path.lexically_relative(trace.Pack)));
+        }
+
+        return found->second;
+    }
+
+    /// <summary>The name the trace gives reads of <paramref name="kind"/>.</summary>
+    std::string_view TraceKind(AheadKind kind)
+    {
+        constexpr std::array<std::string_view, AheadKinds> names{"load", "next", "soon", "set"};
+        return names[std::to_underlying(kind)];
+    }
+
+    /// <summary>
+    /// Traces <paramref name="read"/> asked for as a read of <paramref name="kind"/>: <c>A time kind archive offset
+    /// stored entry</c>.
+    /// </summary>
+    void TraceAsked(const AheadRead& read, AheadKind kind)
+    {
+        if (!Tracing())
+        {
+            return;
+        }
+
+        Trace& trace = TheTrace();
+        std::scoped_lock lock(trace.Lock);
+        const MCFileEntry& entry = read.From->Archive->File->GetEntries()[static_cast<size_t>(read.Entry.Index)];
+        trace.Out << std::format("A\t{}\t{}\t{}\t{}\t{}\t{}\n", TraceNow(trace), TraceKind(kind),
+                                 TraceArchive(trace, *read.From->Archive), entry.Offset, entry.Size, read.Entry.Entry);
+    }
+
+    /// <summary>
+    /// Traces a reader's read of <paramref name="run"/>, begun <paramref name="begun"/> (TraceNow's), its bytes in by
+    /// <paramref name="read"/>, its frames unpacked by now: <c>R begun read unpacked kind archive offset bytes
+    /// entries</c>.
+    /// </summary>
+    void TraceRun(const std::vector<AheadRead>& run, int64_t begun, int64_t read)
+    {
+        if (!Tracing() || run.empty())
+        {
+            return;
+        }
+
+        Trace& trace = TheTrace();
+        std::scoped_lock lock(trace.Lock);
+        const std::span<const MCFileEntry> entries = run.front().From->Archive->File->GetEntries();
+        const MCFileEntry& first = entries[static_cast<size_t>(run.front().Entry.Index)];
+        const MCFileEntry& last = entries[static_cast<size_t>(run.back().Entry.Index)];
+        trace.Out << std::format("R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", begun, read, TraceNow(trace),
+                                 TraceKind(run.front().From->Kind), TraceArchive(trace, *run.front().From->Archive),
+                                 first.Offset, static_cast<int64_t>(last.Offset) + last.Size - first.Offset,
+                                 run.size());
+    }
+
+    /// <summary>TraceNow's time, when tracing (0 when not).</summary>
+    int64_t TraceTime()
+    {
+        if (!Tracing())
+        {
+            return 0;
+        }
+
+        Trace& trace = TheTrace();
+        std::scoped_lock lock(trace.Lock);
+        return TraceNow(trace);
     }
 
     /// <summary>
@@ -1283,8 +1705,8 @@ namespace
 
     /// <summary>
     /// The kind of read a reader takes next (SPEC-first-use.md: what a load waits for, the frames drawn next with the
-    /// follows still to make reads of, then the sets, as many at once as SetReadsAllowed); none while there is none it may
-    /// take.
+    /// follows still to make reads of, what the camera's surroundings draw soon, then the sets, as many at once as
+    /// SetReadsAllowed); none while there is none it may take.
     /// </summary>
     std::optional<AheadKind> NextKind(const ReadAhead& ahead)
     {
@@ -1298,6 +1720,11 @@ namespace
         if (waiting(AheadKind::Next) || !ahead.Follows.empty())
         {
             return AheadKind::Next;
+        }
+
+        if (waiting(AheadKind::Soon))
+        {
+            return AheadKind::Soon;
         }
 
         if (waiting(AheadKind::Set) && ahead.InFlight[std::to_underlying(AheadKind::Set)] < SetReadsAllowed(ahead))
@@ -1322,6 +1749,7 @@ namespace
         for (AheadEntry& entry : next)
         {
             reads.push_back(AheadRead{from, std::move(entry)});
+            TraceAsked(reads.back(), AheadKind::Next);
         }
 
         while (reads.size() > MaxNextReads)
@@ -1398,8 +1826,40 @@ namespace
         const bool current = handle.has_value() && ahead.Generation == generation;
         ahead.ArchiveReads += current ? 1 : 0;
         lock.unlock();
+        const int64_t begun = TraceTime();
+        int64_t readBy = begun;
         std::vector<std::shared_ptr<MCHdArt::Frame>> frames(run.size());
         bool readWhole = handle.has_value();
+        // The reads handed over (publish): those before it.
+        size_t handed = 0;
+
+        // Hands the game's thread the run's frames up to at (not including it): kept for it, or left to it when its read
+        // failed or the pack was set meanwhile. With ReadAhead::Lock held.
+        const auto publish = [&](size_t at)
+        {
+            for (; handed < at; ++handed)
+            {
+                const AheadRead& read = run[handed];
+                const FrameKey key = KeyOf(read);
+                ahead.Reading.erase(key);
+
+                if (frames[handed] != nullptr && ahead.Generation == generation)
+                {
+                    ahead.NeighbourReads += read.From->Itself ? 1 : 0;
+
+                    if (read.From->Kind == AheadKind::Next)
+                    {
+                        Hold(ahead, key, std::move(frames[handed]));
+                    }
+                    else
+                    {
+                        ahead.Pictures.emplace(key, std::move(frames[handed]));
+                    }
+                }
+
+                Unasked(ahead, read);
+            }
+        };
 
         if (current && run.size() == 1)
         {
@@ -1420,6 +1880,7 @@ namespace
             const auto start = static_cast<uint32_t>(first.Offset);
             std::vector<uint8_t> bytes(static_cast<size_t>(last.Offset) + static_cast<size_t>(last.Size) - start);
             readWhole = handle->File.ReadAt(start, bytes) == bytes.size();
+            readBy = TraceTime();
 
             for (size_t at = 0; readWhole && at < run.size(); ++at)
             {
@@ -1433,36 +1894,80 @@ namespace
                 {
                     frames[at] = Finished(std::move(*decoded), run[at].From->BakedShadows, 0);
                 }
+
+                // Each handed over as it's unpacked, so a draw waiting for one (TakeAhead) waits for it alone, not the run;
+                // the rest dropped once the pack is set.
+                lock.lock();
+                publish(at + 1);
+                ahead.Changed.notify_all();
+                const bool forgotten = ahead.Generation != generation;
+                lock.unlock();
+
+                if (forgotten)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (current)
+        {
+            TraceRun(run, begun, run.size() == 1 ? TraceTime() : readBy);
+        }
+
+        lock.lock();
+        publish(run.size());
+        GiveBack(ahead, lock, std::move(handle), readWhole, generation);
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::OpenArchivesAhead): opens <paramref name="open"/>'s archive, without ReadAhead::Lock
+    /// (<paramref name="lock"/>): looks in its folders in turn until one has an archive (or one can't be read), and hands
+    /// the game's thread what each held (Opened) unless the pack was set meanwhile.
+    /// </summary>
+    void OpenAhead(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, ArchiveOpen open)
+    {
+        lock.unlock();
+        std::vector<std::pair<std::filesystem::path, std::expected<std::shared_ptr<MCHdArchive>, std::string>>> opened;
+
+        for (const std::filesystem::path& folder : open.Folders)
+        {
+            std::expected<std::shared_ptr<MCHdArchive>, std::string> archive = OpenArchive(folder);
+            const bool ends = !archive.has_value() || *archive != nullptr;
+
+            // Its file among those kept open from now (MaxOpenArchiveFiles), not only once the game takes it: a
+            // mission's types ask for more archives than it draws.
+            if (archive.has_value() && *archive != nullptr)
+            {
+                std::scoped_lock files(TheState().ArchiveFiles);
+                KeepOpen((*archive)->File);
+            }
+
+            opened.emplace_back(folder, std::move(archive));
+
+            if (ends)
+            {
+                break;
             }
         }
 
         lock.lock();
 
-        for (size_t at = 0; at < run.size(); ++at)
+        if (open.Generation == ahead.Generation)
         {
-            const AheadRead& read = run[at];
-            const FrameKey key = KeyOf(read);
-            ahead.Reading.erase(key);
-
-            if (frames[at] != nullptr && ahead.Generation == generation)
+            for (auto& [folder, archive] : opened)
             {
-                ahead.NeighbourReads += read.From->Itself ? 1 : 0;
-
-                if (read.From->Kind == AheadKind::Next)
-                {
-                    Hold(ahead, key, std::move(frames[at]));
-                }
-                else
-                {
-                    ahead.Pictures.emplace(key, std::move(frames[at]));
-                }
+                ahead.Opened.insert_or_assign(folder, std::move(archive));
             }
-
-            Unasked(ahead, read);
         }
 
-        GiveBack(ahead, lock, std::move(handle), readWhole, generation);
+        for (const std::filesystem::path& folder : open.Folders)
+        {
+            ahead.Opening.erase(folder);
+        }
     }
+
+    void ExpandAsks(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, AskBatch&& batch);
 
     /// <summary>
     /// A reader (SPEC-first-use.md; several read at once): takes the kind of read due next (NextKind), makes a first
@@ -1477,12 +1982,26 @@ namespace
         MCSetCurrentThreadPriority(ahead.GamePriority, ahead.Settings.Below);
         std::optional<AheadKind> kind;
 
-        while (ahead.Changed.wait(lock, stop, [&] { return (kind = NextKind(ahead)).has_value(); }) &&
+        while (ahead.Changed.wait(
+                   lock, stop, [&]
+                   { return (kind = NextKind(ahead)).has_value() || !ahead.Opens.empty() || !ahead.Asks.empty(); }) &&
                !stop.stop_requested())
         {
             ++ahead.Working;
 
-            if (*kind == AheadKind::Next && ahead.Reads[std::to_underlying(AheadKind::Next)].empty())
+            if (!ahead.Opens.empty())
+            {
+                ArchiveOpen open = std::move(ahead.Opens.front());
+                ahead.Opens.pop_front();
+                OpenAhead(ahead, lock, std::move(open));
+            }
+            else if (!ahead.Asks.empty())
+            {
+                AskBatch batch = std::move(ahead.Asks.front());
+                ahead.Asks.pop_front();
+                ExpandAsks(ahead, lock, std::move(batch));
+            }
+            else if (*kind == AheadKind::Next && ahead.Reads[std::to_underlying(AheadKind::Next)].empty())
             {
                 Follow follow = std::move(ahead.Follows.front());
                 ahead.Follows.pop_front();
@@ -1538,6 +2057,7 @@ namespace
 
         for (AheadRead& read : reads)
         {
+            TraceAsked(read, kind);
             ahead.Reads[std::to_underlying(kind)].push_back(std::move(read));
         }
 
@@ -1564,6 +2084,137 @@ namespace
         }
 
         QueueReads(ahead, kind, std::move(reads));
+    }
+
+    /// <summary>
+    /// Port-only: makes <paramref name="batch"/>'s frames (AskAhead's) reads of its kind (QueueReads: each archive's in
+    /// its order): each frame with its in-betweens up to the first its archive lacks, and a legs packet's turn middles
+    /// with theirs, those not kept, read, looked at or asked for already, in order, while they take at most the batch's
+    /// room (an entry's unpacked bytes are about its frame's). Looks in the archives without ReadAhead::Lock
+    /// (<paramref name="lock"/>; an archive's directory never changes once read), then takes it AskChunk frames at a
+    /// time. Some left out for want of room are asked for again later (State::AskAgain).
+    /// </summary>
+    void ExpandAsks(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, AskBatch&& batch)
+    {
+        lock.unlock();
+
+        struct Found
+        {
+            uint32_t From = 0;
+            AheadEntry Entry;
+            size_t Bytes = 0;
+        };
+
+        std::vector<Found> found;
+        const auto look = [&](const AheadAsk& ask, uint64_t name)
+        {
+            const Follow& from = *batch.Follows[ask.From];
+            std::string entry =
+                from.Prefix + (ask.Hashed ? HashName(name) : NumberedName(name)) + std::string(HdfExtension);
+            const std::optional<int32_t> index = from.Archive->File->Find(entry);
+
+            if (!index.has_value())
+            {
+                return false;
+            }
+
+            const auto bytes =
+                static_cast<size_t>(std::max<int64_t>(from.Archive->File->GetEntries()[*index].RealSize, 0));
+            found.push_back(Found{ask.From, AheadEntry{name, *index, std::move(entry), ask.Width, ask.Height}, bytes});
+            return true;
+        };
+
+        for (const AheadAsk& ask : batch.Asks)
+        {
+            if (!ask.Steps)
+            {
+                if (ask.Width > 0 && ask.Height > 0)
+                {
+                    look(ask, ask.Name);
+                }
+
+                continue;
+            }
+
+            const auto frame = static_cast<int32_t>(ask.Name & FrameNumberMask);
+
+            for (int32_t step = 0; step < MaxInBetweenSteps && look(ask, NumberedKey(frame, step)); ++step)
+            {
+            }
+
+            // Each turn middle, then its in-betweens, up to the first the archive lacks.
+            for (const int32_t turn : {TurnStep, TurnMirroredStep})
+            {
+                for (int32_t step = 0; ask.TurnMiddles && step < LegsInBetweenSteps &&
+                                       look(ask, NumberedKey(frame, step == 0 ? turn : TurnBetweenStep(turn, step)));
+                     ++step)
+                {
+                }
+            }
+        }
+
+        std::unordered_set<FrameKey, FrameKeyHash> named;
+        size_t asked = 0;
+        bool full = false;
+
+        for (size_t start = 0;;)
+        {
+            lock.lock();
+
+            // The pack set meanwhile: what was looked up is the old one's.
+            if (ahead.Generation != batch.Generation)
+            {
+                break;
+            }
+
+            std::vector<AheadRead> reads;
+            const size_t end = std::min(found.size(), start + AskChunk);
+
+            for (size_t at = start; at < end && !full; ++at)
+            {
+                Found& next = found[at];
+                const std::shared_ptr<const Follow>& from = batch.Follows[next.From];
+                const FrameKey key{from->Key.Folder, next.Entry.Name};
+
+                if (!named.insert(key).second || ahead.Known.contains(key) || ahead.Ready.contains(key) ||
+                    ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key) || ahead.Reading.contains(key))
+                {
+                    continue;
+                }
+
+                if (asked + next.Bytes > batch.Room)
+                {
+                    full = true;
+                    break;
+                }
+
+                asked += next.Bytes;
+                ahead.PicturesAsked.insert(key);
+                reads.push_back(AheadRead{from, std::move(next.Entry)});
+            }
+
+            if (!reads.empty())
+            {
+                QueueReads(ahead, batch.Kind, std::move(reads));
+            }
+
+            start = end;
+
+            if (full || start >= found.size())
+            {
+                break;
+            }
+
+            lock.unlock();
+        }
+
+        if (full)
+        {
+            TheState().AskAgain = true;
+        }
+
+        ahead.LoadAsks -= batch.Kind == AheadKind::Load ? 1 : 0;
+        ahead.Changed.notify_all();
     }
 
     /// <summary>
@@ -1694,7 +2345,7 @@ namespace
 
     /// <summary>
     /// Forgets the frames read ahead and those to read, and drops any read begun (the pack is set); returns once the
-    /// reading thread's handle on the old pack's archive is closed.
+    /// readers' handles on the old pack's archives are closed and their reads have ended.
     /// </summary>
     void ForgetAhead()
     {
@@ -1715,13 +2366,55 @@ namespace
         ahead.Bytes = 0;
         ahead.Pictures.clear();
         ahead.PicturesAsked.clear();
+
+        // The archives to open; those being opened stay waited on (Opening) until their opens end, dropped then.
+        for (const ArchiveOpen& open : ahead.Opens)
+        {
+            for (const std::filesystem::path& folder : open.Folders)
+            {
+                ahead.Opening.erase(folder);
+            }
+        }
+
+        ahead.Opens.clear();
+        ahead.Opened.clear();
+
+        // The frames asked for and not made reads yet; a batch a reader makes reads of is dropped as it relocks.
+        for (const AskBatch& batch : ahead.Asks)
+        {
+            ahead.LoadAsks -= batch.Kind == AheadKind::Load ? 1 : 0;
+        }
+
+        ahead.Asks.clear();
         ++ahead.Generation;
+        ++TheState().Forgets;
         ahead.Changed.notify_all();
-        // The readers' handles on the old pack's archives: those kept closed now, those reading as their reads end.
+        // The readers' handles on the old pack's archives: those kept closed now, those reading as their reads end; and
+        // their reads ended, each holding its archive (a run's frames are handed over as they're unpacked).
         std::list<ReaderHandle> idle;
         idle.splice(idle.end(), ahead.Idle);
         CloseHandles(lock, std::move(idle));
-        ahead.Changed.wait(lock, [&ahead] { return ahead.Borrowed == 0; });
+        ahead.Changed.wait(lock, [&ahead] { return ahead.Borrowed == 0 && ahead.Working == 0; });
+    }
+
+    /// <summary>
+    /// Traces frame <paramref name="key"/>'s first use, <paramref name="how"/> it came (kept: read ahead and kept; taken
+    /// from the readers as drawn; read by the game's thread; lacked: not in the pack), the game's thread's
+    /// <paramref name="micros"/> on it: <c>U time how folder name micros</c>, the folder from the pack's.
+    /// </summary>
+    void TraceUse(const FrameKey& key, std::string_view how, int64_t micros)
+    {
+        if (!Tracing())
+        {
+            return;
+        }
+
+        const FrameFolder& folder = TheState().Folders.at(key.Folder);
+        const std::string name = folder.Names == Naming::Hash ? HashName(key.Name) : NumberedName(key.Name);
+        const std::string path = MCFileSystem::ToUtf8(folder.Path.lexically_relative(MCHdArt::PackFolder()));
+        Trace& trace = TheTrace();
+        std::scoped_lock lock(trace.Lock);
+        trace.Out << std::format("U\t{}\t{}\t{}\t{}\t{}\n", TraceNow(trace), how, path, name, micros);
     }
 
     /// <summary>
@@ -1829,6 +2522,7 @@ namespace
         if (cached.Frame != nullptr && cached.Undrawn)
         {
             cached.Undrawn = false;
+            TraceUse(key, "kept", 0);
 
             if ((width != 0 || height != 0) &&
                 (cached.Frame->OriginalWidth() != width || cached.Frame->OriginalHeight() != height))
@@ -1858,12 +2552,19 @@ namespace
             const auto started = std::chrono::steady_clock::now();
             // Port-only: a frame's first use reads it here, as the frame draws, unless read ahead (the frame log's).
             MCFrameLog::Count(FrameLogReads);
+            const size_t taken = state.TakenAhead;
             auto read = [&]
             {
                 const MCFrameLog::Scope part(FrameLogRead);
                 return ReadOrTake(key, width, height, cached.Id);
             }();
-            state.ReadTime += std::chrono::steady_clock::now() - started;
+            const std::chrono::nanoseconds spent = std::chrono::steady_clock::now() - started;
+            state.ReadTime += spent;
+            TraceUse(key,
+                     state.TakenAhead > taken               ? "taken"
+                     : read.has_value() && *read == nullptr ? "lacked"
+                                                            : "read",
+                     std::chrono::duration_cast<std::chrono::microseconds>(spent).count());
 
             if (!read)
             {
@@ -2146,6 +2847,8 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.PackFileLooked = false;
     state.PackFormatReadable = true;
     state.PackSprites.reset();
+    state.SpritesMatch.reset();
+    state.Listed.reset();
     state.Sequences.clear();
     state.Frames.clear();
     state.Order.clear();
@@ -2167,6 +2870,10 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.KeptPictures.clear();
     state.Neighbours.clear();
     ++state.Version;
+
+    Trace& trace = TheTrace();
+    std::scoped_lock lock(trace.Lock);
+    trace.Pack = PackFolder();
 }
 
 const std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>>& MCHdArt::MadeWith()
@@ -2300,6 +3007,7 @@ namespace
         if (MCFitResult<std::string> sprites = file.Read<std::string>(PackSpritesKey); sprites.has_value())
         {
             state.PackSprites = std::move(*sprites);
+            state.SpritesMatch.reset();
         }
     }
 }
@@ -2342,6 +3050,11 @@ bool MCHdArt::NumberedFolders()
         return true;
     }
 
+    if (state.SpritesMatch.has_value())
+    {
+        return *state.SpritesMatch;
+    }
+
     // Only the files both opened count: the 90-pixel parts are opened only when the player's preference asks.
     const std::map<std::string, std::string> made = SpriteSizes(*state.PackSprites);
     const std::map<std::string, std::string> here = SpriteSizes(state.SpriteFiles);
@@ -2358,6 +3071,7 @@ bool MCHdArt::NumberedFolders()
                 "the pack was made from another release of the game's sprites; its mechs and objects are left out");
     }
 
+    state.SpritesMatch = same;
     return same;
 }
 
@@ -2372,6 +3086,7 @@ void MCHdArt::SetSpriteFiles(std::span<const std::pair<std::string, uint32_t>> f
     }
 
     TheState().SpriteFiles = std::move(text);
+    TheState().SpritesMatch.reset();
 }
 
 const std::string& MCHdArt::SpriteFiles()
@@ -2500,10 +3215,61 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey
 
 void MCHdArt::Prepare(const MechShapeKey& key)
 {
-    if (NumberedFolders())
+    // The archive standing for the folder opened by the readers, before Attach looks in it.
+    const std::array<std::filesystem::path, 1> folder{FolderOf(key)};
+    OpenArchivesAhead(folder);
+}
+
+void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
+{
+    if (!NumberedFolders() || folders.empty())
     {
-        // Finding the folder opens the archive standing for it, as Attach would.
-        static_cast<void>(HasFolder(PackFolder() / FolderOf(key)));
+        return;
+    }
+
+    State& state = TheState();
+    const std::filesystem::path pack = PackFolder();
+    ReadAhead& ahead = state.Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    bool asked = false;
+
+    for (const std::filesystem::path& folder : folders)
+    {
+        // The folders ArchiveOf looks in, nearest first, up to one whose archive is found or asked for already.
+        ArchiveOpen open{{}, ahead.Generation};
+
+        for (std::filesystem::path at = pack / folder; at.has_relative_path() && at != pack; at = at.parent_path())
+        {
+            if (const auto known = state.Archives.find(KeyOfPath(at)); known != state.Archives.end())
+            {
+                if (known->second != nullptr)
+                {
+                    break;
+                }
+
+                continue;
+            }
+
+            if (ahead.Opening.contains(at) || ahead.Opened.contains(at))
+            {
+                break;
+            }
+
+            open.Folders.push_back(at);
+        }
+
+        if (!open.Folders.empty())
+        {
+            ahead.Opening.insert(open.Folders.begin(), open.Folders.end());
+            ahead.Opens.push_back(std::move(open));
+            asked = true;
+        }
+    }
+
+    if (asked)
+    {
+        StartReaders(ahead);
+        ahead.Changed.notify_all();
     }
 }
 
@@ -2655,8 +3421,8 @@ namespace
 {
     /// <summary>
     /// A frame to read ahead (AskAhead): its folder (FolderIndex), its key there and its draw's size; or (Steps) a
-    /// numbered folder's frame with its in-betweens, from the first up to the first its archive lacks (not a turn
-    /// middle's), of any size (each checked at its first draw, as a follow's is).
+    /// numbered folder's frame with its in-betweens, from the first up to the first its archive lacks (and with
+    /// TurnMiddles its turn middles'), of any size (each checked at its first draw, as a follow's is).
     /// </summary>
     struct FrameAsk
     {
@@ -2665,126 +3431,75 @@ namespace
         int32_t Width = 0;
         int32_t Height = 0;
         bool Steps = false;
+        /// <summary>With Steps: the frame's turn middles too (a legs packet's: MCInBetween.h's TurnStep), each with its
+        /// in-betweens.</summary>
+        bool TurnMiddles = false;
     };
 
     /// <summary>
-    /// Has the readers read <paramref name="asks"/> ahead as reads of <paramref name="kind"/> (QueueReads: each archive's
-    /// in its order, whichever folders they're of): those their folders' archives have that aren't kept, read, looked
-    /// at or asked for already, in order, while they take at most <paramref name="room"/> bytes (an entry's unpacked
-    /// bytes are about its frame's). Only archives' frames, as the frames followed: loose files are a generator's, not
-    /// a player's. The bytes asked for.
+    /// Has the readers read <paramref name="asks"/> ahead as reads of <paramref name="kind"/>, at most
+    /// <paramref name="room"/> bytes of them: a reader makes them reads (ExpandAsks: each frame with its steps, those
+    /// not kept, read, looked at or asked for already, in order), so the game's thread only finds each folder's archive
+    /// (once: ArchiveOf, which may take it from the readers, so before their lock). Only archives' frames, as the frames
+    /// followed: loose files are a generator's, not a player's.
     /// </summary>
-    size_t AskAhead(std::span<const FrameAsk> asks, AheadKind kind, size_t room)
+    void AskAhead(std::span<const FrameAsk> asks, AheadKind kind, size_t room)
     {
         State& state = TheState();
-        std::unordered_map<uint32_t, std::shared_ptr<const Follow>> follows;
-        std::unordered_set<FrameKey, FrameKeyHash> named;
-        std::vector<AheadRead> reads;
-        size_t asked = 0;
-        ReadAhead& ahead = state.Ahead;
-        std::scoped_lock lock(ahead.Lock);
+        AskBatch batch;
+        batch.Kind = kind;
+        batch.Room = room;
+        batch.Asks.reserve(asks.size());
 
-        // What asking for one frame found: its archive lacks it, or the room is taken.
-        enum class Found : uint8_t
+        // Each folder's follow in the batch, and whether its frames are named by a hash; none outside an archive.
+        struct InBatch
         {
-            Entry,
-            Lacked,
-            Full,
+            std::optional<uint32_t> From;
+            bool Hashed = false;
         };
 
-        const auto askFor = [&](const FrameAsk& ask, uint64_t name)
-        {
-            const FrameKey key{ask.Folder, name};
-
-            if (!named.insert(key).second || ahead.Known.contains(key) || ahead.Ready.contains(key) ||
-                ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key))
-            {
-                return Found::Entry;
-            }
-
-            if (const auto cached = state.Frames.find(key);
-                cached != state.Frames.end() && (cached->second.Frame != nullptr || cached->second.Looked))
-            {
-                return Found::Entry;
-            }
-
-            FrameFolder& folder = state.Folders.at(ask.Folder);
-            std::error_code error;
-
-            if (!folder.Loose.has_value())
-            {
-                folder.Loose = std::filesystem::is_directory(folder.Path, error);
-            }
-
-            const FrameFolder::InArchive& archived = ArchiveOf(folder);
-
-            if (*folder.Loose || archived.Archive == nullptr)
-            {
-                return Found::Lacked;
-            }
-
-            std::string entry = archived.Prefix + (folder.Names == Naming::Hash ? HashName(name) : NumberedName(name)) +
-                                std::string(HdfExtension);
-            const std::optional<int32_t> index = archived.Archive->File->Find(entry);
-
-            if (!index.has_value())
-            {
-                return Found::Lacked;
-            }
-
-            const auto bytes =
-                static_cast<size_t>(std::max<int64_t>(archived.Archive->File->GetEntries()[*index].RealSize, 0));
-
-            if (asked + bytes > room)
-            {
-                return Found::Full;
-            }
-
-            std::shared_ptr<const Follow>& from = follows[ask.Folder];
-
-            if (from == nullptr)
-            {
-                Follow follow{FrameKey{ask.Folder, 0}, 0, archived.Archive, archived.Prefix, folder.BakedShadows, {}};
-                follow.Kind = kind;
-                from = std::make_shared<const Follow>(std::move(follow));
-            }
-
-            asked += bytes;
-            ahead.PicturesAsked.insert(key);
-            reads.push_back(AheadRead{from, AheadEntry{name, *index, std::move(entry), ask.Width, ask.Height}});
-            return Found::Entry;
-        };
+        std::unordered_map<uint32_t, InBatch> folders;
 
         for (const FrameAsk& ask : asks)
         {
-            Found found = Found::Entry;
+            const auto [at, fresh] = folders.try_emplace(ask.Folder);
 
-            if (!ask.Steps)
+            if (fresh)
             {
-                found = ask.Width > 0 && ask.Height > 0 ? askFor(ask, ask.Name) : Found::Entry;
-            }
-            else
-            {
-                const auto frame = static_cast<int32_t>(ask.Name & FrameNumberMask);
+                FrameFolder& folder = state.Folders.at(ask.Folder);
+                folder.Loose = folder.Loose.has_value() ? folder.Loose : IsDirectory(folder.Path);
+                at->second.Hashed = folder.Names == Naming::Hash;
 
-                for (int32_t step = 0; step < MaxInBetweenSteps && found == Found::Entry; ++step)
+                if (const FrameFolder::InArchive* const archived = *folder.Loose ? nullptr : &ArchiveOf(folder);
+                    archived != nullptr && archived->Archive != nullptr)
                 {
-                    found = askFor(ask, NumberedKey(frame, step));
+                    Follow follow{FrameKey{ask.Folder, 0}, 0, archived->Archive, archived->Prefix,
+                                  folder.BakedShadows,     {}};
+                    follow.Kind = kind;
+                    at->second.From = static_cast<uint32_t>(batch.Follows.size());
+                    batch.Follows.push_back(std::make_shared<const Follow>(std::move(follow)));
                 }
             }
 
-            if (found == Found::Full)
+            if (at->second.From.has_value())
             {
-                break;
+                batch.Asks.push_back(AheadAsk{*at->second.From, ask.Name, ask.Width, ask.Height, ask.Steps,
+                                              ask.TurnMiddles, at->second.Hashed});
             }
         }
 
-        if (!reads.empty())
+        if (batch.Asks.empty())
         {
-            QueueReads(ahead, kind, std::move(reads));
+            return;
         }
 
-        return asked;
+        ReadAhead& ahead = state.Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        batch.Generation = ahead.Generation;
+        ahead.LoadAsks += kind == AheadKind::Load ? 1 : 0;
+        ahead.Asks.push_back(std::move(batch));
+        StartReaders(ahead);
+        ahead.Changed.notify_all();
     }
 
     /// <summary>The bytes the cache has room for past those it holds, with <paramref name="budget"/> its budget.</summary>
@@ -2792,6 +3507,31 @@ namespace
     {
         const size_t held = TheState().Bytes;
         return budget > held ? budget - held : 0;
+    }
+
+    /// <summary>The kind of reads asked for as <paramref name="as"/>.</summary>
+    AheadKind KindOf(MCHdArt::ReadAs as)
+    {
+        switch (as)
+        {
+            case MCHdArt::ReadAs::Load:
+                return AheadKind::Load;
+            case MCHdArt::ReadAs::Soon:
+                return AheadKind::Soon;
+            case MCHdArt::ReadAs::Set:
+                return AheadKind::Set;
+        }
+
+        return AheadKind::Set;
+    }
+
+    /// <summary>
+    /// The cache's budget the reads asked for as <paramref name="as"/> may fill: all of it for a load's, else the sets'
+    /// share (they're kept as drawn ones are, and mustn't push those out).
+    /// </summary>
+    size_t RoomFor(MCHdArt::ReadAs as)
+    {
+        return as == MCHdArt::ReadAs::Load ? MCHdArt::CacheBudget() : MCHdArt::CacheBudget() / SetsAheadBudgetShare;
     }
 }
 
@@ -2824,23 +3564,33 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
     AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / SetsAheadBudgetShare));
 }
 
-void MCHdArt::ReadPacketAhead(const std::filesystem::path& folder, int32_t frames)
+void MCHdArt::ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as)
 {
-    if (!NumberedFolders() || frames <= 0)
+    if (!NumberedFolders() || packets.empty())
     {
         return;
     }
 
-    const uint32_t index = FolderIndex(PackFolder() / folder, Naming::Number);
     std::vector<FrameAsk> asks;
-    asks.reserve(static_cast<size_t>(frames));
 
-    for (int32_t frame = 0; frame < frames; ++frame)
+    for (const PacketAhead& packet : packets)
     {
-        asks.push_back(FrameAsk{index, NumberedKey(frame, 0), 0, 0, true});
+        const uint32_t index = FolderIndex(PackFolder() / packet.Folder, Naming::Number);
+        const int32_t count = packet.Frames.value_or(ArchivedFrames(TheState().Folders.at(index)));
+
+        for (int32_t frame = 0; frame < count; ++frame)
+        {
+            asks.push_back(FrameAsk{index, NumberedKey(frame, 0), 0, 0, true, packet.TurnMiddles});
+        }
     }
 
-    AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / SetsAheadBudgetShare));
+    AskAhead(asks, KindOf(as), RoomIn(RoomFor(as)));
+}
+
+void MCHdArt::ReadPacketAhead(const std::filesystem::path& folder, std::optional<int32_t> frames)
+{
+    const std::array<PacketAhead, 1> packet{{{folder, frames, false}}};
+    ReadPacketsAhead(packet, ReadAs::Set);
 }
 
 void MCHdArt::KeepReadAhead()
@@ -3112,6 +3862,25 @@ void MCHdArt::ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief)
     AskAhead(asks, AheadKind::Load, RoomIn(CacheBudget()));
 }
 
+void MCHdArt::ReadOverlaysAhead(std::span<const GroundAhead> overlays)
+{
+    if (!Active() || overlays.empty())
+    {
+        return;
+    }
+
+    const uint32_t folder = FolderIndex(PackFolder() / OverlayFolder, Naming::Hash);
+    std::vector<FrameAsk> asks;
+    asks.reserve(overlays.size());
+
+    for (const GroundAhead& overlay : overlays)
+    {
+        asks.push_back(FrameAsk{folder, TerrainTileHash(overlay.Tile), overlay.Width, overlay.Height});
+    }
+
+    AskAhead(asks, AheadKind::Load, RoomIn(CacheBudget()));
+}
+
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8_t> shape, int32_t width,
                                                            int32_t height)
 {
@@ -3171,9 +3940,7 @@ void MCHdArt::ReadShapesAhead(std::span<const ShapeAhead> shapes, ReadAs as)
                                 shape.Width, shape.Height});
     }
 
-    const bool load = as == ReadAs::Load;
-    AskAhead(asks, load ? AheadKind::Load : AheadKind::Set,
-             RoomIn(load ? CacheBudget() : CacheBudget() / SetsAheadBudgetShare));
+    AskAhead(asks, KindOf(as), RoomIn(RoomFor(as)));
 }
 
 uint64_t MCHdArt::NewFrameId()
@@ -3208,6 +3975,68 @@ size_t MCHdArt::FramesRead()
     return TheState().Read;
 }
 
+bool MCHdArt::OpenTrace(const std::filesystem::path& path)
+{
+    CloseTrace();
+    Trace& trace = TheTrace();
+    std::scoped_lock lock(trace.Lock);
+    trace.Out.open(path, std::ios::binary | std::ios::trunc);
+
+    if (!trace.Out)
+    {
+        return false;
+    }
+
+    trace.Start = std::chrono::steady_clock::now();
+    trace.Archives.clear();
+    trace.Pack = PackFolder();
+    trace.On = true;
+    return true;
+}
+
+void MCHdArt::CloseTrace()
+{
+    Trace& trace = TheTrace();
+    std::scoped_lock lock(trace.Lock);
+    trace.On = false;
+    trace.Out.close();
+}
+
+void MCHdArt::TraceNote(std::string_view text)
+{
+    if (Tracing())
+    {
+        Trace& trace = TheTrace();
+        std::scoped_lock lock(trace.Lock);
+        trace.Out << std::format("N\t{}\t{}\n", TraceNow(trace), text);
+    }
+}
+
+size_t MCHdArt::ArchivesOpenedAhead()
+{
+    return TheState().OpenedAhead;
+}
+
+uint64_t MCHdArt::AheadGeneration()
+{
+    const State& state = TheState();
+    return state.Forgets + state.ReAsks;
+}
+
+bool MCHdArt::MCAskedPackets::Ask(uint64_t packet)
+{
+    const uint64_t generation = AheadGeneration() + 1;
+    const auto [asked, added] = _Asked.try_emplace(packet, generation);
+
+    if (!added && asked->second == generation)
+    {
+        return false;
+    }
+
+    asked->second = generation;
+    return true;
+}
+
 size_t MCHdArt::FramesReadAhead()
 {
     return TheState().TakenAhead;
@@ -3227,7 +4056,8 @@ void MCHdArt::WaitForReadAhead()
     ahead.Changed.wait(lock,
                        [&ahead]
                        {
-                           return ahead.Follows.empty() && ahead.Working == 0 &&
+                           return ahead.Follows.empty() && ahead.Working == 0 && ahead.Opens.empty() &&
+                                  ahead.Asks.empty() &&
                                   std::ranges::all_of(ahead.Reads, [](const auto& reads) { return reads.empty(); });
                        });
 }
@@ -3251,11 +4081,11 @@ void MCHdArt::SetReaderSettings(const ReaderSettings& settings)
         ahead.Changed.notify_all();
     }
 
-    // Each ends once the read in its hands is done; what's left to read waits for the new ones.
+    // Each ends once the read or open in its hands is done; what's left to read or open waits for the new ones.
     stopping.clear();
     std::scoped_lock lock(ahead.Lock);
 
-    if (!ahead.Follows.empty() ||
+    if (!ahead.Follows.empty() || !ahead.Opens.empty() || !ahead.Asks.empty() ||
         std::ranges::any_of(ahead.Reads, [](const std::deque<AheadRead>& reads) { return !reads.empty(); }))
     {
         StartReaders(ahead);
@@ -3268,7 +4098,12 @@ void MCHdArt::WaitForLoadReads()
     ReadAhead& ahead = TheState().Ahead;
     std::unique_lock lock(ahead.Lock);
     constexpr auto load = std::to_underlying(AheadKind::Load);
-    ahead.Changed.wait(lock, [&ahead] { return ahead.Reads[load].empty() && ahead.InFlight[load] == 0; });
+    ahead.Changed.wait(lock,
+                       [&ahead]
+                       {
+                           return ahead.Reads[load].empty() && ahead.InFlight[load] == 0 && ahead.Opens.empty() &&
+                                  ahead.Opening.empty() && ahead.LoadAsks == 0;
+                       });
 }
 
 MCHdArt::ReaderSettings MCHdArt::GetReaderSettings()
@@ -3293,7 +4128,7 @@ void MCHdArt::DropGround()
 
     for (const std::string_view name : {TerrainFolder, ReliefFolder})
     {
-        if (const auto found = state.FolderIndices.find(pack / name); found != state.FolderIndices.end())
+        if (const auto found = state.FolderIndices.find(KeyOfPath(pack / name)); found != state.FolderIndices.end())
         {
             folders.push_back(found->second);
         }
@@ -3324,6 +4159,21 @@ void MCHdArt::NextFrame(bool memoryShort)
 {
     State& state = TheState();
     ++state.Frame;
+
+    // Port-only: what was asked for ahead and dropped since, or left out for want of room, asked for again, at most
+    // every AskAgainFrames (MCHdArt::MCAskedPackets asks again in a new generation).
+    if (state.Frame >= state.AskAgainAt && state.AskAgain.exchange(false))
+    {
+        ++state.ReAsks;
+        state.AskAgainAt = state.Frame + AskAgainFrames;
+    }
+
+    if (Tracing())
+    {
+        Trace& trace = TheTrace();
+        std::scoped_lock lock(trace.Lock);
+        trace.Out << std::format("F\t{}\t{}\n", TraceNow(trace), state.Frame);
+    }
 
     if (!memoryShort)
     {
@@ -3363,8 +4213,14 @@ void MCHdArt::NextFrame(bool memoryShort)
 
 size_t MCHdArt::ArchivesOpen()
 {
-    return static_cast<size_t>(
-        std::ranges::count_if(TheState().Archives, [](const auto& archive) { return archive.second != nullptr; }));
+    State& state = TheState();
+    const auto open = [](const auto& archive) { return archive.second != nullptr; };
+    ReadAhead& ahead = state.Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    const auto openedAhead = [](const auto& archive)
+    { return archive.second.has_value() && *archive.second != nullptr; };
+    return static_cast<size_t>(std::ranges::count_if(state.Archives, open) +
+                               std::ranges::count_if(ahead.Opened, openedAhead));
 }
 
 size_t MCHdArt::ReaderFilesOpened()

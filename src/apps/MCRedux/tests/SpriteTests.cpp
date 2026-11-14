@@ -373,6 +373,40 @@ TEST_CASE("sprites: a part shape comes from the mech's packet of that part's PAK
     CHECK(SpriteManager()->GetMechShapeData(1, 0, MCMechPart::RightArm, 1, {}, false) == nullptr);
 }
 
+/// <summary>
+/// Port-only (SPEC-first-use.md: the camera's surroundings): while an MCAskingAhead lives, a type's shape lookups load
+/// nothing (the packet's HD frames are asked for instead) and give a shape only when it's loaded already; after it, they
+/// load as before.
+/// </summary>
+TEST_CASE("sprites: asked ahead, a type's shape lookup loads nothing and gives only a shape already loaded")
+{
+    SpriteFiles files({FortyShapes()}, {{}}, {Fit(VfxFit)});
+    auto type = std::static_pointer_cast<MCVfxAppearanceType>(AppearanceTypeList().GetAppearance(0x02000000));
+    REQUIRE(type != nullptr);
+    float frameRate = 0.0f;
+    bool reverse = false;
+
+    {
+        const MCAppearanceType::MCAskingAhead asking;
+        CHECK(type->GetShape(MCActorState::Damaged, NoSubState, 0, frameRate, reverse) == nullptr);
+        CHECK(SpriteManager()->Shapes().empty());
+    }
+
+    const std::shared_ptr<MCShape> shape = type->GetShape(MCActorState::Damaged, NoSubState, 0, frameRate, reverse);
+    REQUIRE(shape != nullptr);
+    CHECK_EQ(SpriteManager()->Shapes().size(), 1u);
+
+    {
+        const MCAppearanceType::MCAskingAhead asking;
+        CHECK(type->GetShape(MCActorState::Damaged, NoSubState, 0, frameRate, reverse) == shape);
+        CHECK(type->GetShape(MCActorState::Normal, NoSubState, 0, frameRate, reverse) == nullptr);
+        CHECK_EQ(SpriteManager()->Shapes().size(), 1u);
+    }
+
+    CHECK(type->GetShape(MCActorState::Normal, NoSubState, 0, frameRate, reverse) != nullptr);
+    CHECK_EQ(SpriteManager()->Shapes().size(), 2u);
+}
+
 TEST_CASE("sprites: a type finds its shapes once, and the cache drops shapes unused for two turns")
 {
     SpriteFiles files({FortyShapes()}, {{}}, {Fit(VfxFit)});
@@ -658,6 +692,57 @@ namespace
 
         return fit + "FITend\n";
     }
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: the camera's surroundings): the packets a mech part has read ahead (MCSpriteTree::
+/// PacketsAhead) are its gesture's at its facing and, with turns, those of the facings a turn comes to (the legs' one
+/// either side, the upper parts' two), each its gesture's frames whole, the legs' with their turn middles; each is asked
+/// for once (the tree's, for any mech of it).
+/// </summary>
+TEST_CASE("sprites: a part's packets read ahead are its facing's and those a turn comes to, each asked for once")
+{
+    SpriteFiles files({}, {}, {Fit(MechFit(false))});
+    auto tree = std::static_pointer_cast<MCSpriteTree>(AppearanceTypeList().GetAppearance(0x01000000));
+    REQUIRE(tree != nullptr);
+    constexpr int32_t Stand = 2;
+    const auto folderOf = [&](MCMechPart part, uint32_t packet)
+    {
+        return MCHdArt::FolderOf(
+            MCHdArt::MechShapeKey{SpriteManager()->PartFileName(part, true), tree->FileNumbers[part], packet});
+    };
+
+    const std::optional<MCGesturePacket> legs = tree->GesturePacket(Stand, 0, 90.0f);
+    REQUIRE(legs.has_value());
+    std::vector<uint32_t> expected{legs->Packet};
+    std::ranges::copy(MCSpriteTree::NeighbourPackets(*legs, 1), std::back_inserter(expected));
+    std::vector<MCHdArt::PacketAhead> packets;
+    tree->PacketsAhead(Stand, 0, 90.0f, true, packets);
+    REQUIRE_EQ(packets.size(), expected.size());
+
+    for (size_t at = 0; at < packets.size(); ++at)
+    {
+        MCTest::Scope scope(std::format("packet {}", expected[at]));
+        CHECK(packets[at].Folder == folderOf(MCMechPart::Legs, expected[at]));
+        CHECK(packets[at].Frames == std::optional(static_cast<int32_t>(tree->Gestures[Stand].NumFrames)));
+        CHECK(packets[at].TurnMiddles);
+    }
+
+    // Asked for again, by any mech of the tree: none.
+    packets.clear();
+    tree->PacketsAhead(Stand, 0, 90.0f, true, packets);
+    CHECK(packets.empty());
+
+    // The torso: its own facing's alone without turns, with no turn middles; with them, two facings either side.
+    const std::optional<MCGesturePacket> torso = tree->GesturePacket(Stand, 1, 90.0f);
+    REQUIRE(torso.has_value());
+    tree->PacketsAhead(Stand, 1, 90.0f, false, packets);
+    REQUIRE_EQ(packets.size(), 1u);
+    CHECK(packets.front().Folder == folderOf(MCMechPart::Torso, torso->Packet));
+    CHECK(!packets.front().TurnMiddles);
+    packets.clear();
+    tree->PacketsAhead(Stand, 1, 90.0f, true, packets);
+    CHECK_EQ(packets.size(), MCSpriteTree::NeighbourPackets(*torso, 2).size());
 }
 
 TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrored where the gesture is symmetrical")

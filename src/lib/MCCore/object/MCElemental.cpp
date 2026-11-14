@@ -494,7 +494,15 @@ auto MCElemental::OnScreen() -> int
             ((relative.X * camera->SinAngle + camera->HalfHeight) - relative.Y * camera->SinAngle) - relative.Z;
     }
 
-    if (Appearance != nullptr && Appearance->RecalcBounds(*camera) != 0)
+    const bool shown = Appearance != nullptr && Appearance->RecalcBounds(*camera) != 0;
+
+    // Port-only (SPEC-first-use.md: the camera's surroundings): its packets read ahead in or near the view.
+    if (Appearance != nullptr)
+    {
+        Appearance->ReadAheadNear(*camera, shown);
+    }
+
+    if (shown)
     {
         WindowsVisible = Turn;
         return 1;

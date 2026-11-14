@@ -106,11 +106,14 @@ namespace
     constexpr int32_t FourthFacingStep = 4;
 
     /// <summary>
-    /// Port-only (HD art's read-ahead, MCHdArt::SetNeighbours): how many facings on each side of a part's own have their
-    /// frames read with it: the legs turn with the mech's way; the torso and arms with its aim too, and faster.
+    /// Port-only (HD art's read-ahead, MCHdArt::SetNeighbours; MCSpriteTree::PacketsAhead's whole packets): how many
+    /// facings on each side of a part's own have their frames read with it: the legs turn with the mech's way; the torso
+    /// and arms with its aim too, and faster.
     /// </summary>
     constexpr int32_t LegNeighbours = 1;
     constexpr int32_t UpperNeighbours = 2;
+    /// <summary>Port-only: where a packet's part PAK sits in the key it is asked for by (MCSpriteTree::PacketsAhead).</summary>
+    constexpr int32_t PartKeyShift = 32;
 
     /// <summary>
     /// The fall a fall from a run looks most like when it has no art, and the other way round: the same fall from
@@ -630,29 +633,50 @@ auto MCSpriteTree::SetHdNeighbours(const std::shared_ptr<MCShape>& shape, const 
     MCHdArt::SetNeighbours(shape, std::move(folders));
 }
 
-auto MCSpriteTree::ReadPacketAhead(int32_t gesture, int32_t part, float rotation,
-                                   std::optional<MCPacketAsked>& asked) const -> void
+auto MCSpriteTree::PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns,
+                                std::vector<MCHdArt::PacketAhead>& packets) -> void
 {
     const std::optional<MCGesturePacket> where = GesturePacket(gesture, part, rotation);
-    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
 
-    if (!where.has_value() || spriteManager == nullptr || FileNumbers[where->FilePart] == NoFileNumber)
+    if (!where.has_value() || FileNumbers[where->FilePart] == NoFileNumber)
     {
         return;
     }
 
-    const MCPacketAsked now{where->FilePart, where->Packet};
-
-    if (asked == now)
+    // Asked for every frame, so nothing is made until a packet is new to this tree: its part's file name (the large
+    // art's, as MCMechActor::Render draws) and folder.
+    const bool legs = where->FilePart == MCMechPart::Legs;
+    std::optional<std::string> partFile;
+    const auto add = [&](uint32_t packet)
     {
-        return;
-    }
+        if (!_AskedAhead.Ask(static_cast<uint64_t>(where->FilePart) << PartKeyShift | packet))
+        {
+            return;
+        }
 
-    asked = now;
-    // The large art's, as MCMechActor::Render draws.
-    const MCHdArt::MechShapeKey key{spriteManager->PartFileName(where->FilePart, true), FileNumbers[where->FilePart],
-                                    where->Packet};
-    MCHdArt::ReadPacketAhead(MCHdArt::FolderOf(key), static_cast<int32_t>(Gestures[gesture].NumFrames));
+        if (!partFile.has_value())
+        {
+            const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+            partFile = spriteManager == nullptr ? std::string() : spriteManager->PartFileName(where->FilePart, true);
+        }
+
+        if (!partFile->empty())
+        {
+            packets.push_back(MCHdArt::PacketAhead{
+                MCHdArt::FolderOf(MCHdArt::MechShapeKey{*partFile, FileNumbers[where->FilePart], packet}),
+                static_cast<int32_t>(Gestures[gesture].NumFrames), legs});
+        }
+    };
+
+    add(where->Packet);
+
+    if (turns)
+    {
+        for (const uint32_t packet : NeighbourPackets(*where, legs ? LegNeighbours : UpperNeighbours))
+        {
+            add(packet);
+        }
+    }
 }
 
 auto MCSpriteTree::ArtStandIns(int32_t gesture, int32_t part, float rotation, const MCGesturePacket& where) const

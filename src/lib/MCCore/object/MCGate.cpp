@@ -239,6 +239,8 @@ auto MCGate::IsVisible() -> bool
     if (Appearance != nullptr)
     {
         visible = Appearance->RecalcBounds(EyeRef());
+        // Port-only (SPEC-first-use.md: the camera's surroundings): its packets read ahead in or near the view.
+        Appearance->ReadAheadNear(*Eye(), visible != 0);
     }
 
     if (visible == 0)

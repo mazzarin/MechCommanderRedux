@@ -378,8 +378,8 @@ namespace MCHdArt
     /// Port-only: keeps the frames and pictures the reading thread has read ahead (<see cref="ReadPicturesAhead"/>) as a
     /// first draw keeps a frame (Find and FindPicture then find them without a read), against the cache's budget, its
     /// least recently used going first, so that one read well before its draw (a neighbouring facing's,
-    /// <see cref="SetNeighbours"/>) is kept until then. A frame is checked against the size its draw asks for at that
-    /// draw, as one read then is. The game's thread, once a frame.
+    /// <see cref="SetNeighbours"/>) is kept until then. At its first draw a frame is checked against the size the draw
+    /// asks for, as one read then is, and has the frames drawn after it read ahead. The game's thread, once a frame.
     /// </summary>
     void KeepReadAhead();
 

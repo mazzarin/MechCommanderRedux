@@ -216,9 +216,10 @@ namespace
         bool Looked = false;
         uint64_t Id = 0;
         /// <summary>
-        /// Port-only: kept as read ahead (MCHdArt::KeepReadAhead), not yet checked against the size a draw asks for.
+        /// Port-only: kept as read ahead (MCHdArt::KeepReadAhead) and not drawn yet: its first draw checks it against the
+        /// size it asks for and hands the reading thread the frames drawn after it, as a first draw that reads it does.
         /// </summary>
-        bool SizeUnchecked = false;
+        bool Undrawn = false;
     };
 
     /// <summary>
@@ -1530,15 +1531,21 @@ namespace
         Cached& cached = state.Frames[key];
 
         // Port-only: a frame kept as read ahead (MCHdArt::KeepReadAhead) is checked at its first draw, as one taken from
-        // the reading thread is (ReadOrTake): one not of the size asked for is read again, as drawn, which refuses it.
-        if (cached.Frame != nullptr && cached.SizeUnchecked)
+        // the reading thread is (ReadOrTake): one not of the size asked for is read again, as drawn, which refuses it;
+        // one that is has the frames drawn after it read ahead, as a first draw that reads one does.
+        if (cached.Frame != nullptr && cached.Undrawn)
         {
-            cached.SizeUnchecked = false;
+            cached.Undrawn = false;
 
             if ((width != 0 || height != 0) &&
                 (cached.Frame->OriginalWidth() != width || cached.Frame->OriginalHeight() != height))
             {
                 Drop(state, key, cached);
+            }
+            else
+            {
+                FollowAhead(key, frames);
+                FollowNeighbours(key, frames);
             }
         }
 
@@ -2446,8 +2453,7 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
 void MCHdArt::KeepReadAhead()
 {
     State& state = TheState();
-    // Each frame read, and whether it was asked for at its size (a picture: its size checked as it was read).
-    std::vector<std::tuple<FrameKey, std::shared_ptr<Frame>, bool>> read;
+    std::vector<std::pair<FrameKey, std::shared_ptr<Frame>>> read;
 
     {
         ReadAhead& ahead = state.Ahead;
@@ -2460,7 +2466,7 @@ void MCHdArt::KeepReadAhead()
 
         for (auto& [key, frame] : ahead.Pictures)
         {
-            read.emplace_back(key, std::move(frame), true);
+            read.emplace_back(key, std::move(frame));
             ahead.Known.insert(key);
         }
 
@@ -2469,7 +2475,7 @@ void MCHdArt::KeepReadAhead()
         {
             if (const auto ready = ahead.Ready.find(key); ready != ahead.Ready.end())
             {
-                read.emplace_back(key, std::move(ready->second.Frame), false);
+                read.emplace_back(key, std::move(ready->second.Frame));
                 ahead.Known.insert(key);
             }
         }
@@ -2481,7 +2487,7 @@ void MCHdArt::KeepReadAhead()
     }
 
     // Kept as a first draw keeps a frame read (Cache), numbered as the draw would number it.
-    for (auto& [key, frame, sized] : read)
+    for (auto& [key, frame] : read)
     {
         Cached& cached = state.Frames[key];
 
@@ -2491,7 +2497,7 @@ void MCHdArt::KeepReadAhead()
         }
 
         cached.Looked = true;
-        cached.SizeUnchecked = !sized;
+        cached.Undrawn = true;
 
         if (cached.Id == 0)
         {

@@ -25,6 +25,8 @@
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCWin32Defs.h"
+#include "sprite/MCHdArt.h"
+#include <charconv>
 
 namespace
 {
@@ -303,6 +305,45 @@ namespace
         {
             line += word;
         }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): sets the HD art readers' setting <paramref name="word"/> names to
+    /// <paramref name="value"/>: <c>-hdreaders n</c> (1 to 32), <c>-hdsetreads n</c> (the sets' reads at once; 0 as many
+    /// as there are readers) or <c>-hdreaderpriority level|below</c> (with the game's thread or a step below it). A value
+    /// it can't take is logged and left out.
+    /// </summary>
+    void SetReaderSetting(std::string_view word, std::string_view value)
+    {
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+
+        if (MCIEquals(word, "-hdreaderpriority"))
+        {
+            if (!MCIEquals(value, "level") && !MCIEquals(value, "below"))
+            {
+                SDL_Log("-hdreaderpriority: \"%.*s\" isn't level or below", static_cast<int>(value.size()),
+                        value.data());
+                return;
+            }
+
+            settings.Below = MCIEquals(value, "below");
+        }
+        else
+        {
+            size_t count = 0;
+            const char* const end = value.data() + value.size();
+
+            if (const auto [at, error] = std::from_chars(value.data(), end, count); error != std::errc() || at != end)
+            {
+                SDL_Log("%.*s: \"%.*s\" isn't a number", static_cast<int>(word.size()), word.data(),
+                        static_cast<int>(value.size()), value.data());
+                return;
+            }
+
+            (MCIEquals(word, "-hdreaders") ? settings.Readers : settings.SetReads) = count;
+        }
+
+        MCHdArt::SetReaderSettings(settings);
     }
 }
 
@@ -632,6 +673,17 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             // a switch.
             const bool variantGiven = hasArgument && !words[i + 1].empty() && words[i + 1][0] != '-';
             MCBenchmark::Arm(variantGiven ? std::string_view(words[++i]) : std::string_view());
+        }
+        else if (MCIEquals(word, "-hdreaders") || MCIEquals(word, "-hdsetreads") ||
+                 MCIEquals(word, "-hdreaderpriority"))
+        {
+            // Port-only: how HD art's readers read ahead (SetReaderSetting), each default to be measured.
+            if (hasArgument)
+            {
+                SetReaderSetting(word, words[i + 1]);
+            }
+
+            i++;
         }
         else if (MCIEquals(word, "-debug") || MCIEquals(word, "--debug"))
         {

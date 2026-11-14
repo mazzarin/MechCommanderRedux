@@ -4,6 +4,7 @@
 #include "MCTestShapes.h"
 #include "TestGame.h"
 #include "fakes/MCFakeMemorySystem.h"
+#include "gui/MCGuiStartup.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
@@ -1130,29 +1131,26 @@ namespace
     }
 
     /// <summary>
-    /// <paramref name="key"/>'s frame file in a read-ahead pack made with <paramref name="seed"/>: BC7 blocks of bytes
-    /// no other key's (or seed's) has, and indices.
+    /// The frame file of a <paramref name="width"/> by <paramref name="height"/> frame at the read-ahead pack's scale:
+    /// BC7 blocks of bytes made from <paramref name="mix"/>, which no other mix (below 256) makes, and indices.
     /// </summary>
-    std::vector<uint8_t> AheadFile(const AheadKey& key, uint8_t seed)
+    std::vector<uint8_t> FrameFile(int32_t width, int32_t height, int32_t mix)
     {
-        constexpr int32_t KeyFrameMix = 31;
-        constexpr int32_t KeyStepMix = 3;
         constexpr int32_t ByteMix = 7;
         MCHdArt::Frame frame;
         frame.Scale = AheadScale;
-        frame.Width = AheadWidth * AheadScale;
-        frame.Height = AheadHeight * AheadScale;
+        frame.Width = width * AheadScale;
+        frame.Height = height * AheadScale;
         frame.Format = MCHdArt::ColorFormat::Bc7;
         frame.Colors.resize(static_cast<size_t>(MCBc7::Padded(frame.Width) / MCBc7::BlockSide) *
                             static_cast<size_t>(MCBc7::Padded(frame.Height) / MCBc7::BlockSide) * MCBc7::BlockBytes);
-        const int32_t mix = key.first * KeyFrameMix + key.second * KeyStepMix + seed;
 
         for (size_t at = 0; at < frame.Colors.size(); ++at)
         {
             frame.Colors[at] = static_cast<uint8_t>(static_cast<int32_t>(at) * ByteMix + mix);
         }
 
-        frame.Indices.resize(static_cast<size_t>(AheadWidth) * AheadHeight * MCHdArt::IndexBytes);
+        frame.Indices.resize(static_cast<size_t>(width) * height * MCHdArt::IndexBytes);
 
         for (size_t at = 0; at < frame.Indices.size(); at += MCHdArt::IndexBytes)
         {
@@ -1161,6 +1159,17 @@ namespace
         }
 
         return MCHdArt::EncodeHdf(frame);
+    }
+
+    /// <summary>
+    /// <paramref name="key"/>'s frame file in a read-ahead pack made with <paramref name="seed"/>: BC7 blocks of bytes
+    /// no other key's (or seed's) has, and indices.
+    /// </summary>
+    std::vector<uint8_t> AheadFile(const AheadKey& key, uint8_t seed)
+    {
+        constexpr int32_t KeyFrameMix = 31;
+        constexpr int32_t KeyStepMix = 3;
+        return FrameFile(AheadWidth, AheadHeight, key.first * KeyFrameMix + key.second * KeyStepMix + seed);
     }
 
     /// <summary>
@@ -1207,17 +1216,36 @@ namespace
                a.Blended == b.Blended && a.PaintedShadow == b.PaintedShadow && a.Colors == b.Colors &&
                a.Indices == b.Indices;
     }
+
+    /// <summary>The HD art's readers read as <c>settings</c> says while this lives, as they read before once it ends.</summary>
+    class ReaderScope
+    {
+    public:
+        explicit ReaderScope(const MCHdArt::ReaderSettings& settings) : _Before(MCHdArt::GetReaderSettings())
+        {
+            MCHdArt::SetReaderSettings(settings);
+        }
+
+        ~ReaderScope() { MCHdArt::SetReaderSettings(_Before); }
+
+        ReaderScope(const ReaderScope&) = delete;
+        ReaderScope& operator=(const ReaderScope&) = delete;
+
+    private:
+        MCHdArt::ReaderSettings _Before;
+    };
 }
 
 /// <summary>
 /// Port-only: once a numbered folder's frame is drawn the first time, the reading thread reads the frames drawn after it
 /// (the rest of its in-betweens, then the next frame's, looping round; a turn middle's likewise), and they are drawn as
 /// the game's thread would have read them: the same frames, refused at a size they weren't made for, one dropped for
-/// room and read ahead again keeping its Id. Nothing is read twice; the reading thread opens its own handle on the
+/// room and read ahead again keeping its Id. Nothing is read twice; with one reader, it opens its own handle on the
 /// archive's file once for all its reads of it, and setting the pack closes it.
 /// </summary>
 TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read when drawn")
 {
+    const ReaderScope oneReader({.Readers = 1});
     const ScratchFolder scratch("read-ahead");
     WriteAheadPack(scratch.Path(), 0);
     const int previous = GHdArt;
@@ -1262,7 +1290,7 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
 
     CHECK_EQ(MCHdArt::FramesRead(), read + AheadFrames * AheadSteps);
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + AheadFrames * AheadSteps - 1);
-    // The reading thread opened its own handle on the archive once, and keeps it beside the game's.
+    // The reader opened its own handle on the archive once, and keeps it beside the game's.
     MCHdArt::WaitForReadAhead();
     CHECK_EQ(MCHdArt::ReaderFilesOpened(), opened + 1);
     CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{2});
@@ -1295,7 +1323,7 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     MCHdArt::SetCacheBudget(0);
 
     // Drawn first, with the pack set again, frame 1 is read as drawn: the frame read ahead. Setting the pack closed
-    // both handles, and the reading thread still opened its own once.
+    // both handles, and the reader still opened its own once.
     MCHdArt::SetPackFolder(scratch.Path());
     CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{0});
     CHECK_EQ(MCHdArt::ReaderFilesOpened(), opened + 1);
@@ -1583,6 +1611,129 @@ TEST_CASE("hd art: pictures read ahead are found as drawn ones are, without a re
     MCHdArt::SetCacheBudget(0);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): several readers read a set of pictures ahead in its archive's order, the archive's
+/// neighbouring entries in one read, split where a gap between two passes MCHdArt::ReaderRunGap or the read would take
+/// more than MCHdArt::ReaderRunBytes. Each picture is then found as drawn ones are, the same frame, without a read, and
+/// the readers open no more handles on the archive than there were reads at once.
+/// </summary>
+TEST_CASE("hd art: several readers read a set ahead, an archive's neighbouring entries in one read")
+{
+    constexpr size_t Readers = 4;
+    constexpr size_t Pictures = 24;
+    constexpr int32_t SmallSide = 8;
+    constexpr int32_t PixelMix = 3;
+    constexpr int32_t FileMix = 5;
+
+    struct Layout
+    {
+        std::string_view Name;
+        int32_t Width = 0;
+        int32_t Height = 0;
+        bool Gap = false;
+    };
+
+    const ReaderScope readers({.Readers = Readers});
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    for (const Layout& layout : {Layout{"small, back to back", SmallSide, SmallSide, false},
+                                 Layout{"small, a gap past the widest read across", SmallSide, SmallSide, true},
+                                 Layout{"large, past the most bytes a read takes", AheadWidth, AheadHeight, false}})
+    {
+        MCTest::Scope scope{std::string(layout.Name)};
+        const ScratchFolder scratch("set-ahead");
+        std::vector<std::vector<uint8_t>> pixels;
+        std::vector<std::vector<uint8_t>> files;
+        std::vector<ArchiveEntry> entries;
+
+        for (size_t picture = 0; picture < Pictures; ++picture)
+        {
+            // Bytes no picture of the set holds, between its halves.
+            if (layout.Gap && picture == Pictures / 2)
+            {
+                entries.push_back(Raw("between.bin", std::vector<uint8_t>(MCHdArt::ReaderRunGap + 1)));
+            }
+
+            std::vector<uint8_t>& shown = pixels.emplace_back(static_cast<size_t>(layout.Width) * layout.Height);
+            std::ranges::generate(shown, [at = 0]() mutable { return static_cast<uint8_t>(at++ * PixelMix); });
+            shown.front() = static_cast<uint8_t>(picture);
+            files.push_back(FrameFile(layout.Width, layout.Height, static_cast<int32_t>(picture) * FileMix + 1));
+            const uint64_t hash = MCHdArt::PictureHash(shown, layout.Width, layout.Height);
+            entries.push_back(Raw(MCHdArt::PictureName(hash) + ".hdf", files.back()));
+        }
+
+        WriteBytes(scratch.Path() / "menus.hda", BuildArchive(entries));
+        MCHdArt::SetPackFolder(scratch.Path());
+        std::vector<MCHdArt::PictureAhead> asked;
+
+        for (const std::vector<uint8_t>& shown : pixels)
+        {
+            asked.push_back({shown, layout.Width, layout.Height});
+        }
+
+        // The reads the set takes: its halves apart, each in as many as its bytes need at the most a read takes.
+        const size_t halves = layout.Gap ? 2 : 1;
+        const size_t inRead = std::max<size_t>(1, static_cast<size_t>(MCHdArt::ReaderRunBytes / files.front().size()));
+        const size_t reads = halves * ((Pictures / halves + inRead - 1) / inRead);
+        const size_t readsBefore = MCHdArt::ReaderReads();
+        const size_t opened = MCHdArt::ReaderFilesOpened();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::ReadPicturesAhead(asked);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Pictures);
+        CHECK_EQ(MCHdArt::ReaderReads(), readsBefore + reads);
+        CHECK(MCHdArt::ReaderFilesOpened() > opened);
+        CHECK(MCHdArt::ReaderFilesOpened() <= opened + std::min(reads, Readers));
+        const size_t read = MCHdArt::FramesRead();
+
+        for (size_t picture = 0; picture < Pictures; ++picture)
+        {
+            MCTest::Scope pictureScope(std::format("picture {}", picture));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindPicture(pixels[picture], layout.Width, layout.Height);
+            REQUIRE(found != nullptr);
+            const auto decoded = MCHdArt::DecodeHdf(files[picture], layout.Width, layout.Height);
+            REQUIRE(decoded.has_value());
+            CHECK(SameFrame(*found, *decoded));
+        }
+
+        CHECK_EQ(MCHdArt::FramesRead(), read);
+        // Closed before the scratch folder goes (a file open can't be deleted on Windows).
+        MCHdArt::SetPackFolder({});
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): the command line sets how HD art's readers read (<c>-hdreaders</c>,
+/// <c>-hdsetreads</c>, <c>-hdreaderpriority</c>), the readers held to 1 to MCHdArt::MostReaders; a value a switch can't
+/// take leaves its setting as it was.
+/// </summary>
+TEST_CASE("hd art: the command line sets the readers, the sets' reads at once and the readers' priority")
+{
+    constexpr size_t Readers = 8;
+    constexpr size_t SetReads = 2;
+    const ReaderScope defaults({});
+    const auto set = [](std::string_view line, const MCHdArt::ReaderSettings& expected)
+    {
+        MCTest::Scope scope{std::string(line)};
+        ParseCommandLine(line);
+        const MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        CHECK_EQ(settings.Readers, expected.Readers);
+        CHECK_EQ(settings.SetReads, expected.SetReads);
+        CHECK_EQ(settings.Below, expected.Below);
+    };
+
+    set(std::format("-hdreaders {} -hdsetreads {} -hdreaderpriority level", Readers, SetReads),
+        {.Readers = Readers, .SetReads = SetReads, .Below = false});
+    set(std::format("-hdreaders {} -hdsetreads two -hdreaderpriority lowest", MCHdArt::MostReaders + 1),
+        {.Readers = MCHdArt::MostReaders, .SetReads = SetReads, .Below = false});
+    set("-HDREADERS 0 -hdsetreads 3x -hdreaderpriority below", {.Readers = 1, .SetReads = SetReads, .Below = true});
 }
 
 /// <summary>

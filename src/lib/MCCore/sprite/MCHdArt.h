@@ -542,11 +542,16 @@ namespace MCHdArt
         size_t Readers = 4;
         size_t SetReads = 0;
         bool Below = true;
+
+        bool operator==(const ReaderSettings&) const = default;
     };
 
+    /// <summary>Port-only: the most readers there may be (<see cref="SetReaderSettings"/>).</summary>
+    constexpr size_t MostReaders = 32;
+
     /// <summary>
-    /// Port-only: sets how the readers read (1 to 32 of them). Those running end once the read in their hands is done and
-    /// new ones start for what's left to read.
+    /// Port-only: sets how the readers read (1 to <see cref="MostReaders"/> of them). Those running end once the read in
+    /// their hands is done and new ones start for what's left to read.
     /// </summary>
     void SetReaderSettings(const ReaderSettings& settings);
 
@@ -554,8 +559,16 @@ namespace MCHdArt
     ReaderSettings GetReaderSettings();
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md): the most bytes one of the readers' reads of an archive's neighbouring entries takes,
+    /// and the widest gap between two entries one read takes both across (read and thrown away: a read saved costs a slow
+    /// disk more than this many bytes do).
+    /// </summary>
+    constexpr uint64_t ReaderRunBytes = 1024u * 1024u;
+    constexpr uint64_t ReaderRunGap = 64u * 1024u;
+
+    /// <summary>
     /// Port-only: how many reads of the archives the readers have made: one for a run of neighbouring entries read
-    /// together.
+    /// together (at most <see cref="ReaderRunBytes"/>, across gaps of at most <see cref="ReaderRunGap"/>).
     /// </summary>
     size_t ReaderReads();
 

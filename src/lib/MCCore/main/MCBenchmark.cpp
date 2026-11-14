@@ -18,6 +18,7 @@
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
 #include "platform/MCUtf8Path.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
 #include "sprite/MCWeatherPace.h"
@@ -251,14 +252,35 @@ namespace
         run.Phase = MCPhase::Pan;
     }
 
+    /// <summary>
+    /// The HD art readers' settings where the command line changed them from the defaults (-hdreaders, -hdsetreads,
+    /// -hdreaderpriority; SPEC-first-use.md, each default measured): "HD readers 8, set reads 2, level"; else nothing.
+    /// </summary>
+    std::string ReadersText()
+    {
+        const MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+
+        if (settings == MCHdArt::ReaderSettings{})
+        {
+            return {};
+        }
+
+        return std::format("HD readers {}, set reads {}, {}", settings.Readers,
+                           settings.SetReads == 0 ? std::string("all") : std::to_string(settings.SetReads),
+                           settings.Below ? "below" : "level");
+    }
+
     [[noreturn]] void Finish(MCRun& run)
     {
         const MCFrameLog::MCTally pan = MCFrameLog::TakeTally();
         // The weather's share of its pieces thrown (the snow thins itself where the frames can't keep up with it).
-        const std::string variant = run.Variant.Weather == Weathers.front()
-                                        ? run.Variant.Name()
-                                        : std::format("{} (weather pieces {:.0f}% thrown)", run.Variant.Name(),
-                                                      MCWeatherPacing::Share() * Percent);
+        std::string notes = run.Variant.Weather == Weathers.front()
+                                ? std::string()
+                                : std::format("weather pieces {:.0f}% thrown", MCWeatherPacing::Share() * Percent);
+        const std::string readers = ReadersText();
+        notes += notes.empty() || readers.empty() ? readers : ", " + readers;
+        const std::string variant =
+            notes.empty() ? run.Variant.Name() : std::format("{} ({})", run.Variant.Name(), notes);
         const MCBenchmark::MCRunInfo info{
             .Build = build(), .Variant = variant, .Display = DisplayDescription(), .Machine = MachineText()};
         const std::string line = MCBenchmark::Summary(info, run.BattleTally, pan);

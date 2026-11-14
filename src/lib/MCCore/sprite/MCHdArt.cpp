@@ -75,14 +75,6 @@ namespace
     constexpr size_t MaxAheadBytes = 32u * 1024u * 1024u;
     /// <summary>The most reads of the frames drawn next waiting (the oldest left out past it: the game has drawn on).</summary>
     constexpr size_t MaxNextReads = 4096;
-    /// <summary>
-    /// Port-only (SPEC-first-use.md): the most readers (MCHdArt::SetReaderSettings), the most bytes one read of
-    /// neighbouring entries takes, and the widest gap between two entries one read takes both across (read and thrown
-    /// away: a read saved costs a slow disk more than this many bytes do).
-    /// </summary>
-    constexpr size_t MaxReaders = 32;
-    constexpr uint64_t MaxRunBytes = 1024u * 1024u;
-    constexpr uint64_t MaxRunGap = 64u * 1024u;
     /// <summary>The readers' handles kept open for their next reads, for each reader (MCHdArt::SetReaderSettings).</summary>
     constexpr size_t IdleHandlesPerReader = 2;
     /// <summary>
@@ -1336,8 +1328,8 @@ namespace
     /// <summary>
     /// Takes the next reads of <paramref name="kind"/> for one read of their archive: the first not read, being read or
     /// looked at already (those are left out), and the reads after it whose entries come next in the same archive,
-    /// across gaps of at most MaxRunGap and up to MaxRunBytes in all (a set's, in the archive's order: QueueEntries), each
-    /// counted as being read (ReadAhead::Reading). Call with ReadAhead::Lock held.
+    /// across gaps of at most MCHdArt::ReaderRunGap and up to MCHdArt::ReaderRunBytes in all (a set's, in the archive's
+    /// order: QueueEntries), each counted as being read (ReadAhead::Reading). Call with ReadAhead::Lock held.
     /// </summary>
     std::vector<AheadRead> TakeRun(ReadAhead& ahead, AheadKind kind)
     {
@@ -1366,7 +1358,7 @@ namespace
             const uint64_t after = at + static_cast<uint64_t>(std::max(entry.Size, 0));
 
             if (!run.empty() && (!joins || next.From->Archive != run.front().From->Archive || at < end ||
-                                 at - end > MaxRunGap || after - start > MaxRunBytes))
+                                 at - end > MCHdArt::ReaderRunGap || after - start > MCHdArt::ReaderRunBytes))
             {
                 break;
             }
@@ -3048,7 +3040,7 @@ void MCHdArt::SetReaderSettings(const ReaderSettings& settings)
     {
         std::scoped_lock lock(ahead.Lock);
         ahead.Settings = settings;
-        ahead.Settings.Readers = std::clamp<size_t>(settings.Readers, 1, MaxReaders);
+        ahead.Settings.Readers = std::clamp<size_t>(settings.Readers, 1, MCHdArt::MostReaders);
         stopping.swap(ahead.Readers);
 
         for (std::jthread& reader : stopping)

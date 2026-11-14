@@ -315,9 +315,10 @@ var
   // Whether the install ran the game's download, and whether that ended with the content in place.
   DownloadRan, DownloadDone: Boolean;
   // The folder of the game that ran this setup as an update (UpdateFolder; '' when it isn't one), and whether the setup
-  // didn't install it, so the program's files go in alone (FilesOnly).
+  // didn't install it, so the program's files go in alone (FilesOnly): worked out once, whenever first asked
+  // (KnowUpdate), as Inno may ask for its directives before the wizard is made.
   UpdateGameFolder: String;
-  UpdatesOwnCopy: Boolean;
+  UpdatesOwnCopy, UpdateKnown: Boolean;
   // In such a copy: its other names that are the game (MCX.EXE, a resolution's copy: the same bytes as its MCRedux.exe
   // before the update), made again as the new one, and whether they've been looked for.
   GameNamesInCopy: TArrayOfString;
@@ -662,18 +663,98 @@ begin
     Result := '';
 end;
 
+// The folder the setup's uninstall entry names (its install), as the game reads it (MCSetupRunWin.cpp's MCSetupOwns):
+// the player's own entry, else every user's; '' with none.
+function InstalledFolder: String;
+begin
+  if not RegQueryStringValue(HKCU, '{#UninstallKey}', 'InstallLocation', Result) and
+     not RegQueryStringValue(HKLM64, '{#UninstallKey}', 'InstallLocation', Result) then
+    Result := '';
+end;
+
+// Whether Folder and Other are one folder, however each is spelled (a junction, a subst drive, a short name), as the
+// game tells them (std::filesystem::equivalent): the same path, or a file made in one seen in the other.
+function SameFolder(const Folder, Other: String): Boolean;
+var
+  Probe: String;
+  Attempt: Integer;
+begin
+  Result := False;
+
+  if (Folder = '') or (Other = '') then
+    Exit;
+
+  if ComparablePath(Folder) = ComparablePath(Other) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  if not DirExists(Folder) or not DirExists(Other) then
+    Exit;
+
+  for Attempt := 1 to WriteTestTries do
+  begin
+    Probe := Format(WriteTestName, [GetDateTimeString(WriteTestTime, '-', '-'), Random(WriteTestRange)]);
+
+    if not FileOrDirExists(AddBackslash(Folder) + Probe) and not FileOrDirExists(AddBackslash(Other) + Probe) then
+    begin
+      if SaveStringToFile(AddBackslash(Folder) + Probe, '', False) then
+      begin
+        Result := FileExists(AddBackslash(Other) + Probe);
+
+        if not DeleteFile(AddBackslash(Folder) + Probe) then
+          Log(Format('Couldn''t delete the folders'' test %s', [AddBackslash(Folder) + Probe]));
+      end
+      else
+        Log(Format('Couldn''t write in %s to tell whether it is %s: taken as another folder', [Folder, Other]));
+
+      Exit;
+    end;
+  end;
+
+  Log(Format('No free name for the folders'' test in %s', [Folder]));
+end;
+
+// Works out, the first time it's asked, the folder of the game that ran this setup as an update and whether the setup
+// installed it.
+procedure KnowUpdate;
+var
+  Install: String;
+begin
+  if UpdateKnown then
+    Exit;
+
+  UpdateKnown := True;
+  UpdateGameFolder := UpdateFolder;
+
+  if UpdateGameFolder = '' then
+    Exit;
+
+  Install := InstalledFolder;
+  UpdatesOwnCopy := not SameFolder(UpdateGameFolder, Install);
+
+  if UpdatesOwnCopy then
+    Log(Format('An update of %s, a copy the setup didn''t install (its install: %s): the program''s files alone',
+               [UpdateGameFolder, Install]))
+  else
+    Log(Format('An update of the setup''s install, %s', [UpdateGameFolder]));
+end;
+
 // Whether the setup puts the program's files alone into the copy that ran it as an update: one it didn't install (no
 // install of its own, or its install is another folder).
 function FilesOnly: Boolean;
 begin
+  KnowUpdate;
   Result := UpdatesOwnCopy;
 end;
 
 // Whether a shortcut at Name (no extension) is made: always by an install, by an update only where it is already.
 function KeepsShortcut(const Name: String): Boolean;
 begin
+  KnowUpdate;
   Result := (UpdateGameFolder = '') or
-            (not FilesOnly and FileExists(ExpandConstant(Name) + ShortcutExtension));
+            (not UpdatesOwnCopy and FileExists(ExpandConstant(Name) + ShortcutExtension));
 
   if not Result then
     Log(Format('An update adds no shortcut: %s isn''t made', [ExpandConstant(Name)]));
@@ -747,19 +828,9 @@ begin
   GameDownload.OnClick := @GameChosen;
   GameCopy.OnClick := @GameChosen;
 
-  // An update installs into the copy that ran it, whatever install the setup made before.
-  UpdateGameFolder := UpdateFolder;
-  UpdatesOwnCopy := (UpdateGameFolder <> '') and
-                    (ComparablePath(WizardForm.PrevAppDir) <> ComparablePath(UpdateGameFolder));
-
-  if UpdatesOwnCopy then
-  begin
-    Log(Format('An update of %s, a copy the setup didn''t install (its install: %s): the program''s files alone',
-               [UpdateGameFolder, WizardForm.PrevAppDir]));
+  // An update of a copy the setup didn't install goes into that copy, whatever install the setup made before.
+  if FilesOnly then
     WizardForm.DirEdit.Text := UpdateGameFolder;
-  end
-  else if UpdateGameFolder <> '' then
-    Log(Format('An update of the setup''s install, %s', [UpdateGameFolder]));
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

@@ -1831,11 +1831,13 @@ TEST_CASE("updater on Windows: a release whose setup level is above the copy's r
 
 TEST_CASE("updater on Windows: the setup is told the copy's folder in full, with no separator at its end")
 {
-    const std::filesystem::path current = std::filesystem::current_path();
-    CHECK(MCSetupBackend::NamedFolder("games/redux") == current / "games" / "redux");
-    CHECK(MCSetupBackend::NamedFolder("/games/redux/") == std::filesystem::path("/games/redux"));
-    CHECK(MCSetupBackend::NamedFolder("/games/./old/../redux") == std::filesystem::path("/games/redux"));
-    CHECK(MCSetupBackend::NamedFolder("/") == std::filesystem::path("/"));
+    // A folder in full on this system ("C:\..." on Windows, "/..." on the Mac).
+    const std::filesystem::path full = std::filesystem::temp_directory_path().lexically_normal();
+    const std::filesystem::path redux = full / "games" / "redux";
+    CHECK(MCSetupBackend::NamedFolder("games/redux") == std::filesystem::current_path() / "games" / "redux");
+    CHECK(MCSetupBackend::NamedFolder(redux / "") == redux);
+    CHECK(MCSetupBackend::NamedFolder(full / "games" / "." / "old" / ".." / "redux") == redux);
+    CHECK(MCSetupBackend::NamedFolder(full.root_path()) == full.root_path());
 }
 
 TEST_CASE("updater on Windows: a copy the setup didn't install (a player's own, with no record or an install's) takes "

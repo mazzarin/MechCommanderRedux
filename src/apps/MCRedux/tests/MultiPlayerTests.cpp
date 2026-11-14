@@ -907,8 +907,18 @@ TEST_CASE("network: a match plays by the server's rules that every player's buil
     Deliver(7, every);
     CHECK_EQ(game.MatchRules, MCMatchRule::Supported);
     CHECK(MCMechBrakingInForce());
+    CHECK_EQ(MCMechBrakingVersion(), BrakingVersion2);
     GMechBraking = 0;
     CHECK(MCMechBrakingInForce());
+
+    // Braking at version 1 with a build without version 2 in the match; version 2's rule alone is no braking.
+    Deliver(7, rulesMessage(MCMPMessageType::MatchRules, MCMatchRule::MechBraking));
+    CHECK(MCMechBrakingInForce());
+    CHECK_EQ(MCMechBrakingVersion(), 1);
+    Deliver(7, rulesMessage(MCMPMessageType::MatchRules, MCMatchRule::BrakingV2));
+    CHECK(!MCMechBrakingInForce());
+    CHECK_EQ(MCMechBrakingVersion(), 0);
+    Deliver(7, every);
 
     std::vector<uint8_t> none = rulesMessage(MCMPMessageType::MatchRules, 0);
     none.pop_back();
@@ -975,11 +985,12 @@ TEST_CASE("network: a guest keeps what the match plays of the host's options as 
     CHECK(game.Played.Rules == 0u);
 
     // The host's choice, else the server's own PREFS.
+    constexpr uint32_t braking = MCMatchRule::MechBraking | MCMatchRule::BrakingV2;
     game.MatchOptions.Rules = MCMatchRule::MechBraking;
-    CHECK_EQ(game.WantedRules(), MCMatchRule::MechBraking);
+    CHECK_EQ(game.WantedRules(), braking);
     game.MatchOptions.Rules.reset();
     GMechBraking = 1;
-    CHECK_EQ(game.WantedRules(), MCMatchRule::MechBraking);
+    CHECK_EQ(game.WantedRules(), braking);
     GMechBraking = 0;
     CHECK_EQ(game.WantedRules(), 0u);
 }
@@ -1111,6 +1122,19 @@ TEST_CASE("network: a joiner is refused at the door only for a value the host ch
     CHECK(refusing(brakingOn, supported, older, true).empty());
     CHECK(refusing(brakingOff, supported, older, true).empty());
     CHECK(refusing(brakingOff, supported, older).empty());
+
+    // Braking's version 2 (MCMatchRule::BrakingV2), which release 8's games lack: a room of this build's games plays the
+    // host's ON at it, refusing theirs; with one of their games in the room it plays at version 1, and theirs and this
+    // build's join.
+    constexpr uint32_t brakingBehind = supported & ~MCMatchRule::BrakingV2;
+    CHECK((refusing(brakingOn, supported, brakingBehind) == Refusing{Braking}));
+    CHECK(refusing(brakingOn, supported, brakingBehind, true).empty());
+    CHECK(refusing(brakingOn, brakingBehind, brakingBehind).empty());
+    CHECK(refusing(brakingOn, brakingBehind, supported).empty());
+    const MCOptionCapability& braking = MCCapabilityOf(Braking);
+    CHECK(MCRoomVersion(braking, 1, supported)->Version == 2);
+    CHECK(MCRoomVersion(braking, 1, brakingBehind)->Version == 1);
+    CHECK(!MCRoomVersion(braking, 1, older).has_value());
 
     // MOST SKILLED PILOT and the weapon bans, which releases 1 and 2 lack: a pilot cap or a banned family keeps their
     // games out; a room holding one of their games doesn't play either, so refuses no one for them.
@@ -1415,18 +1439,20 @@ TEST_CASE("network: the command line's match options set the weather, the time o
     CHECK(MPIsMatchOptionFlag("-MATCHSENSORS"));
     CHECK(MPIsMatchOptionFlag("-matchprobes"));
 
-    // A ban without a braking flag keeps the PREFS' braking, and the PREFS' braking keeps the bans.
+    // A ban without a braking flag keeps the PREFS' braking (at its latest version), and the PREFS' braking keeps the
+    // bans.
+    constexpr uint32_t braking = MCMatchRule::MechBraking | MCMatchRule::BrakingV2;
     MCMatchOptions prefs;
     CHECK(MPReadMatchOption(MatchMinesFlag, "off", prefs));
-    CHECK_EQ(MCWantedRules(prefs.Rules, true), MCMatchRule::MechBraking | MCMatchRule::NoMines);
+    CHECK_EQ(MCWantedRules(prefs.Rules, true), braking | MCMatchRule::NoMines);
     CHECK_EQ(MCWantedRules(prefs.Rules, false), MCMatchRule::NoMines);
     CHECK(MPReadMatchOption(MatchBrakingFlag, "off", prefs));
     CHECK_EQ(MCWantedRules(prefs.Rules, true), MCMatchRule::NoMines);
     CHECK(MPReadMatchOption(MatchBrakingFlag, "prefs", prefs));
-    CHECK_EQ(MCWantedRules(prefs.Rules, true), MCMatchRule::MechBraking | MCMatchRule::NoMines);
+    CHECK_EQ(MCWantedRules(prefs.Rules, true), braking | MCMatchRule::NoMines);
     CHECK(MPReadMatchOption(MatchMinesFlag, "on", prefs));
-    CHECK_EQ(MCWantedRules(prefs.Rules, true), MCMatchRule::MechBraking);
-    CHECK_EQ(MCWantedRules(std::nullopt, true), MCMatchRule::MechBraking);
+    CHECK_EQ(MCWantedRules(prefs.Rules, true), braking);
+    CHECK_EQ(MCWantedRules(std::nullopt, true), braking);
     CHECK_EQ(MCWantedRules(std::nullopt, false), 0u);
     CHECK(!MPIsMatchOptionFlag("-matchpilots"));
     CHECK(!MPReadMatchOption(MatchBrakingFlag, "mission", options));

@@ -405,6 +405,9 @@
     <ClInclude Include="tests\MCTestGuest.h">
       <Filter>tests</Filter>
     </ClInclude>
+    <ClInclude Include="tests\MCTestShapes.h">
+      <Filter>tests</Filter>
+    </ClInclude>
     <ClInclude Include="tests\ScreenInput.h">
       <Filter>tests</Filter>
     </ClInclude>

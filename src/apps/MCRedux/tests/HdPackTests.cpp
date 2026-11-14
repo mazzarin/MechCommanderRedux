@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
+#include "MCTestShapes.h"
 #include "TestGame.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
@@ -9,7 +10,10 @@
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
+#include "sprite/MCShape.h"
+#include "sprite/MCSpriteTree.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCRegisteredBlock.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCUtf8Path.h"
 #include "sound/MCHdAudio.h"
@@ -1190,6 +1194,152 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     const std::shared_ptr<const MCHdArt::Frame> first = drawn({1, 0});
     CHECK_EQ(MCHdArt::FramesReadAhead(), fresh);
     CHECK(SameFrame(*first, *again));
+
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (HD art's read-ahead): a mech part's neighbours in a turn are the facings beside its own, nearest first, the
+/// one toward straight ahead first: round the turn where the part's facings go all the way round, else stopping at
+/// straight ahead and back; a fall's every fourth facing steps four.
+/// </summary>
+TEST_CASE("sprite tree: a part's neighbours in a turn are the facings beside its own, round only where they go round")
+{
+    const auto near = [](uint32_t first, int32_t facings, int32_t step, bool mirrored, uint32_t index, int32_t reach)
+    {
+        MCGesturePacket where;
+        where.Packet = first + index;
+        where.FirstPacket = first;
+        where.Facings = facings;
+        where.FacingStep = step;
+        where.Mirrored = mirrored;
+        return MCSpriteTree::NeighbourPackets(where, reach);
+    };
+
+    // The legs' nine mirrored facings (straight ahead 0, straight back 8), from packet 18.
+    CHECK((near(18, 9, 1, true, 0, 1) == std::vector<uint32_t>{19}));
+    CHECK((near(18, 9, 1, true, 4, 1) == std::vector<uint32_t>{21, 23}));
+    CHECK((near(18, 9, 1, true, 8, 1) == std::vector<uint32_t>{25}));
+    // An unmirrored torso's 32 go round: straight ahead's are the last two and the next two.
+    CHECK((near(64, 32, 1, false, 0, 2) == std::vector<uint32_t>{95, 65, 94, 66}));
+    // A mirrored arm's 17, two each side of straight back.
+    CHECK((near(17, 17, 1, true, 16, 2) == std::vector<uint32_t>{32, 31}));
+    // A fall's every fourth facing, round the turn.
+    CHECK((near(0, 32, 4, false, 28, 1) == std::vector<uint32_t>{24, 0}));
+    // A packet outside its gesture's facings has none.
+    CHECK(near(18, 9, 1, true, 9, 1).empty());
+}
+
+/// <summary>
+/// Port-only: once a mech part's frame is drawn the first time, the reading thread reads the same frame (and its steps)
+/// at the facings its shape has as neighbours in a turn, those its archive holds (none from another mech's archive, none
+/// the archive lacks), and they are drawn as read when drawn; another facing's is read as drawn. The shapes keep their
+/// neighbours, so with the pack set again they are read ahead again once the shapes are attached again.
+/// </summary>
+TEST_CASE("hd art: a frame drawn the first time has the same frame at its neighbouring facings read ahead")
+{
+    constexpr uint32_t Mech = 1;
+    constexpr uint32_t OtherMech = 2;
+    constexpr uint32_t Packets = 4;
+    constexpr uint32_t Missing = 9;
+    constexpr int32_t Frames = 2;
+    constexpr int32_t Steps = 2;
+    const ScratchFolder scratch("read-ahead-neighbours");
+    const std::filesystem::path legs = scratch.Path() / "mechs" / "legs90";
+    std::filesystem::create_directories(legs);
+    // Each packet's frames made with its own seed, so no facing's frame is another's.
+    const auto archive = [&](uint32_t mech)
+    {
+        std::vector<ArchiveEntry> entries;
+
+        for (uint32_t packet = 0; packet < Packets; ++packet)
+        {
+            for (int32_t frame = 0; frame < Frames; ++frame)
+            {
+                for (int32_t step = 0; step < Steps; ++step)
+                {
+                    entries.push_back(Raw(std::format("{}\\{}.hdf", packet, AheadName({frame, step})),
+                                          AheadFile({frame, step}, static_cast<uint8_t>(mech * Packets + packet))));
+                }
+            }
+        }
+
+        WriteBytes(legs / std::format("{}.hda", mech), BuildArchive(entries));
+    };
+
+    archive(Mech);
+    archive(OtherMech);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::vector<uint8_t> table =
+        MCTestShapes::FramesTable(std::vector<MCTestShapes::TableFrame>(Frames, {0, 0, AheadWidth, AheadHeight, {}}));
+    std::vector<std::shared_ptr<MCShape>> shapes;
+
+    for (uint32_t packet = 0; packet < Packets; ++packet)
+    {
+        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+        std::ranges::copy(table, block.Bytes().begin());
+        shapes.push_back(std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0));
+        const MCHdArt::MechShapeKey key{"legs90", Mech, packet};
+        shapes.back()->HdFolder = MCHdArt::FolderOf(key);
+        MCHdArt::Attach(shapes.back(), key);
+    }
+
+    // Packet 1's neighbours: packets 0 and 2, one the archive lacks, and another mech's.
+    MCHdArt::SetNeighbours(shapes[1], {MCHdArt::FolderOf(MCHdArt::MechShapeKey{"legs90", Mech, 0}),
+                                       MCHdArt::FolderOf(MCHdArt::MechShapeKey{"legs90", Mech, 2}),
+                                       MCHdArt::FolderOf(MCHdArt::MechShapeKey{"legs90", Mech, Missing}),
+                                       MCHdArt::FolderOf(MCHdArt::MechShapeKey{"legs90", OtherMech, 1})});
+    const auto drawn = [&](uint32_t packet, int32_t frame, int32_t step)
+    {
+        MCTest::Scope scope(std::format("packet {}, frame {}", packet, AheadName({frame, step})));
+        const std::shared_ptr<const MCHdArt::Frame> found =
+            MCHdArt::Find(shapes[packet]->FrameList(), frame, AheadWidth, AheadHeight, step);
+        REQUIRE(found != nullptr);
+        CHECK(SameFrame(*found, AheadFrame({frame, step}, static_cast<uint8_t>(Mech * Packets + packet))));
+    };
+
+    // Frame 0 of packet 1 drawn: frame 0 and its in-between at packets 0 and 2 are read ahead, and drawn so.
+    const size_t neighbours = MCHdArt::NeighboursReadAhead();
+    drawn(1, 0, 0);
+    MCHdArt::WaitForReadAhead();
+    CHECK_EQ(MCHdArt::NeighboursReadAhead(), neighbours + 2 * Steps);
+    const size_t ahead = MCHdArt::FramesReadAhead();
+
+    for (const uint32_t packet : {0u, 2u})
+    {
+        for (int32_t step = 0; step < Steps; ++step)
+        {
+            drawn(packet, 0, step);
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 2 * Steps);
+    // Packet 3, no neighbour of packet 1's, is read as drawn.
+    MCHdArt::WaitForReadAhead();
+    const size_t unrelated = MCHdArt::FramesReadAhead();
+    drawn(3, 0, 0);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), unrelated);
+
+    // The pack set again: the shapes attached again keep their neighbours, so frame 1 of packet 1 has packet 0's and
+    // packet 2's read ahead.
+    MCHdArt::SetPackFolder(scratch.Path());
+
+    for (const std::shared_ptr<MCShape>& shape : shapes)
+    {
+        MCHdArt::AttachFolder(shape);
+    }
+
+    const size_t again = MCHdArt::NeighboursReadAhead();
+    drawn(1, 1, 0);
+    MCHdArt::WaitForReadAhead();
+    CHECK_EQ(MCHdArt::NeighboursReadAhead(), again + 2 * Steps);
+    const size_t takenAgain = MCHdArt::FramesReadAhead();
+    drawn(0, 1, 0);
+    drawn(2, 1, 1);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), takenAgain + 2);
 
     GHdArt = previous;
     MCHdArt::SetPackFolder({});

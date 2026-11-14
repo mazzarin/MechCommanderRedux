@@ -106,6 +106,13 @@ namespace
     constexpr int32_t FourthFacingStep = 4;
 
     /// <summary>
+    /// Port-only (HD art's read-ahead, MCHdArt::SetNeighbours): how many facings on each side of a part's own have their
+    /// frames read with it: the legs turn with the mech's way; the torso and arms with its aim too, and faster.
+    /// </summary>
+    constexpr int32_t LegNeighbours = 1;
+    constexpr int32_t UpperNeighbours = 2;
+
+    /// <summary>
     /// The fall a fall from a run looks most like when it has no art, and the other way round: the same fall from
     /// standing (back from a run 16 and from standing 18; forward from a run 17 and from standing 19). None for any
     /// other gesture.
@@ -236,10 +243,16 @@ auto MCSpriteTree::PreloadGestures() -> void
                 continue;
             }
 
-            const auto packet =
-                static_cast<uint32_t>(static_cast<int32_t>(PacketFinderArray[gesture]) * numRotations + i);
-            ShapeList[PartShapeStart[part] + packet] =
+            const auto first = static_cast<uint32_t>(static_cast<int32_t>(PacketFinderArray[gesture]) * numRotations);
+            const uint32_t packet = first + static_cast<uint32_t>(i);
+            std::shared_ptr<MCShape> shape =
                 spriteManager->GetMechShapeData(fileNumber, packet, part, 1, weak_from_this(), true);
+            // Port-only: stand, walk and run have every facing.
+            SetHdNeighbours(shape,
+                            MCGesturePacket{part, packet, PartShapeStart[part] + packet, false, first, numRotations, 1,
+                                            numRotations != PartRotations(false)},
+                            true);
+            ShapeList[PartShapeStart[part] + packet] = std::move(shape);
         }
     };
 
@@ -280,6 +293,40 @@ auto MCSpriteTree::PrepareHdArt() const -> void
             MCHdArt::Prepare(MCHdArt::MechShapeKey{spriteManager->PartFileName(part, true), fileNumber, 0});
         }
     }
+}
+
+auto MCSpriteTree::NeighbourPackets(const MCGesturePacket& where, int32_t reach) -> std::vector<uint32_t>
+{
+    std::vector<uint32_t> packets;
+    const int32_t stored = where.Facings;
+    const int32_t index = static_cast<int32_t>(where.Packet) - static_cast<int32_t>(where.FirstPacket);
+
+    if (stored <= 0 || index < 0 || index >= stored)
+    {
+        return packets;
+    }
+
+    for (int32_t away = 1; away <= reach; ++away)
+    {
+        for (const int32_t side : {-1, 1})
+        {
+            int32_t other = index + side * away * where.FacingStep;
+
+            if (!where.Mirrored)
+            {
+                other = (other % stored + stored) % stored;
+            }
+
+            const auto packet = where.FirstPacket + static_cast<uint32_t>(other);
+
+            if (other >= 0 && other < stored && other != index && std::ranges::find(packets, packet) == packets.end())
+            {
+                packets.push_back(packet);
+            }
+        }
+    }
+
+    return packets;
 }
 
 auto MCSpriteTree::Load(MCFile& apprFile, uint32_t fileSize) -> MCAppearanceLoad
@@ -429,9 +476,17 @@ auto MCSpriteTree::GesturePacket(int32_t gesture, int32_t part, float rotation) 
         return std::nullopt;
     }
 
-    const auto packet = static_cast<uint32_t>(finder * rotationsStored + index);
+    const auto first = static_cast<uint32_t>(finder * rotationsStored);
+    const uint32_t packet = first + static_cast<uint32_t>(index);
     const MCMechPart file = filePart[part];
-    return MCGesturePacket{file, packet, PartShapeStart[file] + packet, reverse};
+    return MCGesturePacket{file,
+                           packet,
+                           PartShapeStart[file] + packet,
+                           reverse,
+                           first,
+                           rotationsStored,
+                           EveryFourthFacing(gesture) ? FourthFacingStep : 1,
+                           symmetrical};
 }
 
 auto MCSpriteTree::DrawnFacing(int32_t gesture, int32_t part, float rotation) const -> std::optional<MCDrawnFacing>
@@ -547,8 +602,32 @@ auto MCSpriteTree::LoadGesturePacket(const MCGesturePacket& where, bool zoomedOu
 
     std::shared_ptr<MCShape> shape =
         spriteManager->GetMechShapeData(fileNumber, where.Packet, where.FilePart, Turn, weak_from_this(), zoomedOut);
+    SetHdNeighbours(shape, where, zoomedOut);
     slot = shape;
     return shape;
+}
+
+auto MCSpriteTree::SetHdNeighbours(const std::shared_ptr<MCShape>& shape, const MCGesturePacket& where,
+                                   bool zoomedOut) const -> void
+{
+    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+    const uint32_t fileNumber = FileNumbers[where.FilePart];
+
+    if (shape == nullptr || spriteManager == nullptr || fileNumber == NoFileNumber)
+    {
+        return;
+    }
+
+    const std::string partFile = spriteManager->PartFileName(where.FilePart, zoomedOut);
+    std::vector<std::filesystem::path> folders;
+
+    for (const uint32_t packet :
+         NeighbourPackets(where, where.FilePart == MCMechPart::Legs ? LegNeighbours : UpperNeighbours))
+    {
+        folders.push_back(MCHdArt::FolderOf(MCHdArt::MechShapeKey{partFile, fileNumber, packet}));
+    }
+
+    MCHdArt::SetNeighbours(shape, std::move(folders));
 }
 
 auto MCSpriteTree::ArtStandIns(int32_t gesture, int32_t part, float rotation, const MCGesturePacket& where) const

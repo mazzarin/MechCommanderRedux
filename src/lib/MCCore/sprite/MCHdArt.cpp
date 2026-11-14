@@ -63,8 +63,11 @@ namespace
     /// rest of its steps (its in-betweens, or its turn middle's), then this many frames on with theirs.
     /// </summary>
     constexpr int32_t FramesAhead = 1;
-    /// <summary>The most first draws waiting for the reading thread to read after (the oldest left out past it).</summary>
-    constexpr size_t MaxFollows = 256;
+    /// <summary>
+    /// The most first draws waiting for the reading thread to read after (the oldest left out past it); each hands it its
+    /// own frame's follow and its neighbours' in a turn (up to four).
+    /// </summary>
+    constexpr size_t MaxFollows = 1024;
     /// <summary>The most bytes of frames read ahead and not taken yet (the oldest dropped past it).</summary>
     constexpr size_t MaxAheadBytes = 32u * 1024u * 1024u;
     /// <summary>
@@ -244,6 +247,11 @@ namespace
         /// in place of those drawn after Key's.
         /// </summary>
         std::vector<AheadEntry> Entries;
+        /// <summary>
+        /// Port-only: whether to read Key's own frame (its steps from the first), not those drawn after it: a neighbour's
+        /// in a turn (MCHdArt::SetNeighbours).
+        /// </summary>
+        bool Itself = false;
     };
 
     /// <summary>A frame read ahead (numbered when the game's thread takes it), and its place in ReadAhead::Order.</summary>
@@ -286,6 +294,8 @@ namespace
         uint64_t Generation = 0;
         /// <summary>Set while the reading thread works on a follow.</summary>
         bool Working = false;
+        /// <summary>Port-only: how many frames it has read as a neighbour's in a turn (Follow::Itself).</summary>
+        size_t NeighbourReads = 0;
         /// <summary>
         /// Set while the reading thread keeps its handle on the archive it read last for the follows after (ReaderFile);
         /// ForgetAhead waits until it's closed, as the pack's files may go once another is set.
@@ -359,6 +369,11 @@ namespace
         std::map<std::pair<MCAddressKey, int32_t>, std::vector<MCSharpLines::MCDrawnLoop>> LineArtFrames;
         /// <summary>The pictures the game made of the pack's (MCHdArt::KeepPicture), by their pixels' hash.</summary>
         std::unordered_map<uint64_t, std::shared_ptr<const MCHdArt::Frame>> KeptPictures;
+        /// <summary>
+        /// Port-only: a folder's neighbours in a turn (MCHdArt::SetNeighbours), nearest first, by their indices in
+        /// Folders, whose frames the reading thread reads when one of its own is drawn the first time.
+        /// </summary>
+        std::unordered_map<uint32_t, std::vector<uint32_t>> Neighbours;
         /// <summary>The frames read ahead; last, so its thread stops before the rest it reads goes.</summary>
         ReadAhead Ahead;
     };
@@ -1065,6 +1080,13 @@ namespace
             }
         };
 
+        // Port-only: a neighbour's in a turn, its own frame.
+        if (follow.Itself)
+        {
+            addFamily(frame, 0);
+            return next;
+        }
+
         addFamily(frame, family.Member + 1);
 
         for (int32_t on = 1; on <= FramesAhead && on < follow.Frames; ++on)
@@ -1211,6 +1233,8 @@ namespace
 
                 if (frame != nullptr && ahead.Generation == generation)
                 {
+                    ahead.NeighbourReads += follow.Itself ? 1 : 0;
+
                     if (follow.Entries.empty())
                     {
                         Hold(ahead, key, std::move(frame));
@@ -1253,10 +1277,11 @@ namespace
 
     /// <summary>
     /// Hands the reading thread <paramref name="key"/>, a frame just drawn the first time, to read the frames drawn after
-    /// it (starting the thread the first time): only a numbered folder's frame in an archive (not loose files, which
-    /// are a generator's, not a player's), and of a shape table of <paramref name="frames"/> frames.
+    /// it (starting the thread the first time), or (<paramref name="itself"/>) a neighbour's frame, to read it: only a
+    /// numbered folder's frame in an archive (not loose files, which are a generator's, not a player's), and of a shape
+    /// table of <paramref name="frames"/> frames.
     /// </summary>
-    void FollowAhead(const FrameKey& key, int32_t frames)
+    void FollowAhead(const FrameKey& key, int32_t frames, bool itself = false)
     {
         State& state = TheState();
         const FrameFolder& folder = state.Folders.at(key.Folder);
@@ -1278,7 +1303,7 @@ namespace
         }
 
         ahead.Follows.push_back(
-            Follow{key, frames, folder.Archived->Archive, folder.Archived->Prefix, folder.BakedShadows});
+            Follow{key, frames, folder.Archived->Archive, folder.Archived->Prefix, folder.BakedShadows, {}, itself});
 
         if (!ahead.Reader.joinable())
         {
@@ -1286,6 +1311,66 @@ namespace
         }
 
         ahead.Changed.notify_all();
+    }
+
+    /// <summary>
+    /// Port-only: whether neighbour folder <paramref name="neighbour"/>'s frames are in the archive holding
+    /// <paramref name="drawn"/>'s, which stands for both folders' parent (as a mech part's archive holds every packet of
+    /// the mech's): then it is taken as the neighbour's, its entries' names starting with the neighbour's own folder, and
+    /// no file is looked at.
+    /// </summary>
+    bool SharesArchive(const FrameFolder& drawn, FrameFolder& neighbour)
+    {
+        if (neighbour.Archived.has_value())
+        {
+            return neighbour.Loose == std::optional(false) && neighbour.Archived->Archive != nullptr;
+        }
+
+        if (drawn.Loose != std::optional(false) || !drawn.Archived.has_value() || drawn.Archived->Archive == nullptr ||
+            drawn.Path.parent_path() != neighbour.Path.parent_path())
+        {
+            return false;
+        }
+
+        const std::string own = MCFileSystem::ToUtf8(drawn.Path.filename()) + ArchiveSeparator;
+        const std::string& prefix = drawn.Archived->Prefix;
+
+        // Not when the archive stands for the drawn folder itself (no prefix).
+        if (!prefix.ends_with(own) ||
+            (prefix.size() > own.size() && prefix[prefix.size() - own.size() - 1] != ArchiveSeparator))
+        {
+            return false;
+        }
+
+        neighbour.Loose = false;
+        neighbour.Archived = FrameFolder::InArchive{
+            drawn.Archived->Archive, prefix.substr(0, prefix.size() - own.size()) +
+                                         MCFileSystem::ToUtf8(neighbour.Path.filename()) + ArchiveSeparator};
+        return true;
+    }
+
+    /// <summary>
+    /// Port-only: hands the reading thread the same frame as <paramref name="key"/> (just drawn the first time, of a shape
+    /// table of <paramref name="frames"/> frames) in each of its folder's neighbours in a turn (MCHdArt::SetNeighbours)
+    /// whose frames its archive holds.
+    /// </summary>
+    void FollowNeighbours(const FrameKey& key, int32_t frames)
+    {
+        State& state = TheState();
+        const auto found = state.Neighbours.find(key.Folder);
+
+        if (found == state.Neighbours.end())
+        {
+            return;
+        }
+
+        for (const uint32_t neighbour : found->second)
+        {
+            if (SharesArchive(state.Folders.at(key.Folder), state.Folders.at(neighbour)))
+            {
+                FollowAhead(FrameKey{neighbour, key.Name & FrameNumberMask}, frames, true);
+            }
+        }
     }
 
     /// <summary>
@@ -1475,6 +1560,7 @@ namespace
                 ++state.Read;
                 std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
                 FollowAhead(key, frames);
+                FollowNeighbours(key, frames);
                 Trim();
                 return kept;
             }
@@ -1762,6 +1848,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
 
     state.Archives.clear();
     state.KeptPictures.clear();
+    state.Neighbours.clear();
     ++state.Version;
 }
 
@@ -2024,6 +2111,36 @@ namespace
 
         state.Sequences[MCAddressKey::OfData(table)] = Sequence{owner, FolderIndex(path, Naming::Number), keepsEdges};
     }
+
+    /// <summary>
+    /// Port-only: notes <paramref name="shape"/>'s neighbours in a turn (its HdNeighbours) for its folder, once it is
+    /// attached (MCHdArt::SetNeighbours).
+    /// </summary>
+    void NoteNeighbours(const MCShape& shape)
+    {
+        if (shape.HdNeighbours.empty())
+        {
+            return;
+        }
+
+        const MCOptionalRef<const Sequence> sequence = AttachedSequence(shape.FrameList());
+
+        if (!sequence)
+        {
+            return;
+        }
+
+        const uint32_t folder = sequence->get().Folder;
+        std::vector<uint32_t> neighbours;
+        neighbours.reserve(shape.HdNeighbours.size());
+
+        for (const std::filesystem::path& neighbour : shape.HdNeighbours)
+        {
+            neighbours.push_back(FolderIndex(MCHdArt::PackFolder() / neighbour, Naming::Number));
+        }
+
+        TheState().Neighbours[folder] = std::move(neighbours);
+    }
 }
 
 std::filesystem::path MCHdArt::FolderOf(const MechShapeKey& key)
@@ -2078,6 +2195,16 @@ void MCHdArt::AttachFolder(const std::shared_ptr<MCShape>& shape)
     if (shape != nullptr && !shape->HdFolder.empty())
     {
         AttachTo(shape->FrameList(), shape, shape->HdFolder);
+        NoteNeighbours(*shape);
+    }
+}
+
+void MCHdArt::SetNeighbours(const std::shared_ptr<MCShape>& shape, std::vector<std::filesystem::path> folders)
+{
+    if (shape != nullptr)
+    {
+        shape->HdNeighbours = std::move(folders);
+        NoteNeighbours(*shape);
     }
 }
 
@@ -2586,6 +2713,13 @@ size_t MCHdArt::FramesRead()
 size_t MCHdArt::FramesReadAhead()
 {
     return TheState().TakenAhead;
+}
+
+size_t MCHdArt::NeighboursReadAhead()
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    return ahead.NeighbourReads;
 }
 
 void MCHdArt::WaitForReadAhead()

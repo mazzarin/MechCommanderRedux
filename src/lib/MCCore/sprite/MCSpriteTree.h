@@ -90,6 +90,15 @@ struct MCGesturePacket
     uint32_t ListIndex = 0;
     /// <summary>Whether the shape is drawn mirrored.</summary>
     bool Reverse = false;
+    /// <summary>
+    /// Port-only (HD art's read-ahead): the gesture's facings of the part: the packet of its first, how many it
+    /// stores, the step between those it has, and whether they stop at straight ahead and back (a mirrored part's)
+    /// rather than going all the way round.
+    /// </summary>
+    uint32_t FirstPacket = 0;
+    int32_t Facings = 0;
+    int32_t FacingStep = 1;
+    bool Mirrored = true;
 };
 
 /// <summary>Port-only (HDFootprints): which way a mech part is drawn facing (<see cref="MCSpriteTree::DrawnFacing"/>).</summary>
@@ -149,6 +158,13 @@ public:
 
     /// <summary>Port-only: opens the HD art pack's archives of the mech's parts (MCHdArt::Prepare).</summary>
     void PrepareHdArt() const;
+
+    /// <summary>
+    /// Port-only (HD art's read-ahead, MCHdArt::SetNeighbours): the packets at the facings within
+    /// <paramref name="reach"/> of <paramref name="where"/>'s on each side, nearest first, the one toward straight ahead
+    /// first: round the turn where the part's facings go all the way round, else stopping at straight ahead and back.
+    /// </summary>
+    static std::vector<uint32_t> NeighbourPackets(const MCGesturePacket& where, int32_t reach);
 
     /// <summary>
     /// The frame rate of gesture <paramref name="gesture"/> (made positive), and whether part
@@ -218,6 +234,13 @@ public:
 private:
     /// <summary>The shape at <paramref name="where"/>, loading it if needed (none without its part's PAK).</summary>
     std::shared_ptr<MCShape> LoadGesturePacket(const MCGesturePacket& where, bool zoomedOut);
+
+    /// <summary>
+    /// Port-only: tells HD art the folders of <paramref name="shape"/>'s neighbours in a turn, the packets at the facings
+    /// next to <paramref name="where"/>'s (MCHdArt::SetNeighbours), as the large art's (<paramref name="zoomedOut"/>) or
+    /// not, as it was loaded.
+    /// </summary>
+    void SetHdNeighbours(const std::shared_ptr<MCShape>& shape, const MCGesturePacket& where, bool zoomedOut) const;
 
     /// <summary>
     /// The packets whose art stands in for <paramref name="where"/>'s (part <paramref name="part"/> of gesture

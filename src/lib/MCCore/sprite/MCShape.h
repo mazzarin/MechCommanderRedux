@@ -44,6 +44,11 @@ public:
     /// loaded while HD art was off can be attached when it goes on (MCSpriteManager::AttachHdArt).
     /// </summary>
     std::filesystem::path HdFolder;
+    /// <summary>
+    /// Port-only: the HD art pack's folders of the shapes next to this one in a turn (a mech part's gesture at the
+    /// facings beside its own, nearest first: sprite/MCHdArt.h's SetNeighbours), kept with HdFolder.
+    /// </summary>
+    std::vector<std::filesystem::path> HdNeighbours;
 
 private:
     /// <summary>The packet.</summary>

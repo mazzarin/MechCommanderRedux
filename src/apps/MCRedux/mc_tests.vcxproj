@@ -215,6 +215,7 @@
     <ClInclude Include="tests\MCScratchFolder.h" />
     <ClInclude Include="tests\MCTest.h" />
     <ClInclude Include="tests\MCTestGuest.h" />
+    <ClInclude Include="tests\MCTestShapes.h" />
     <ClInclude Include="tests\ScreenInput.h" />
     <ClInclude Include="tests\TestGame.h" />
   </ItemGroup>

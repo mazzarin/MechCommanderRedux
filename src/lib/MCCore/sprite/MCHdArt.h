@@ -283,9 +283,20 @@ namespace MCHdArt
 
     /// <summary>
     /// Notes that <paramref name="shape"/>'s frames are in its <c>HdFolder</c> (none: nothing), as <see cref="Attach"/>
-    /// with its key does. Does nothing while HD art is off.
+    /// with its key does, and its neighbours in a turn in its <c>HdNeighbours</c> (<see cref="SetNeighbours"/>). Does
+    /// nothing while HD art is off.
     /// </summary>
     void AttachFolder(const std::shared_ptr<MCShape>& shape);
+
+    /// <summary>
+    /// Port-only: notes that the shapes next to <paramref name="shape"/> in a turn (a mech part's gesture at the facings
+    /// beside its own, nearest first) have their frames in the pack's <paramref name="folders"/> (FolderOf their keys),
+    /// kept with the shape (<c>HdNeighbours</c>) as its folder is. Once one of its frames is drawn the first time, the
+    /// reading thread reads the same frame of each (with its steps) where the shape's archive holds it, as it reads the
+    /// frames drawn after it, so that the facing a turn comes to is seldom read by the game's thread. Their frames are
+    /// noted only while HD art is on (AttachFolder notes them when it goes on).
+    /// </summary>
+    void SetNeighbours(const std::shared_ptr<MCShape>& shape, std::vector<std::filesystem::path> folders);
 
     /// <summary>
     /// Notes that shape table <paramref name="table"/> was loaded from <paramref name="key"/>: while
@@ -498,6 +509,9 @@ namespace MCHdArt
 
     /// <summary>Port-only: how many of the frames read the reading thread read ahead.</summary>
     size_t FramesReadAhead();
+
+    /// <summary>Port-only: how many frames the reading thread has read as a neighbour's in a turn (<see cref="SetNeighbours"/>).</summary>
+    size_t NeighboursReadAhead();
 
     /// <summary>For the tests: waits until the reading thread has read ahead all it was handed.</summary>
     void WaitForReadAhead();

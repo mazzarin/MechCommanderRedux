@@ -22,6 +22,7 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUnitLimits.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "lib/MCPacketFile.h"
@@ -794,4 +795,19 @@ void MCTestGame::StockStore(int32_t count)
     }
 
     MCLogInvScreen::RefreshStoreRows();
+}
+
+void MCTestGame::OwnUnits(int32_t units)
+{
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    REQUIRE(logistics != nullptr);
+    REQUIRE(!logistics->PurMechList->Mechs.empty());
+    const std::unique_ptr<MCPurMechData>& variant = logistics->PurMechList->Mechs.front()->Variants.front();
+    REQUIRE(variant != nullptr);
+    const std::string profile = variant->FileName;
+
+    while (NumUnits() < units)
+    {
+        REQUIRE(logistics->MechList->AddMech(profile, false, true, true) != nullptr);
+    }
 }

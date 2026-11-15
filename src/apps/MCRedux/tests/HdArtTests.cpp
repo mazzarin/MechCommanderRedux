@@ -17623,7 +17623,8 @@ TEST_CASE_ISOLATED("tool: --hd-map-shots pictures the ground across a map")
 /// Tool: <c>--hd-map-mosaic &lt;pack&gt; --shots &lt;folder&gt;</c> pictures a whole map (<c>--mission</c>, default 1)
 /// for a mosaic, the map revealed and the view zoomed out as far as it goes: the camera stepped along the screen's own
 /// axes by half a view, so each shot's middle half meets its neighbours', <c>tile_&lt;row&gt;_&lt;column&gt;_hd.png</c>
-/// (or _original.png with <c>--hd-original 1</c>) over the map's diamond, each tile's world point printed.
+/// (or _original.png with <c>--hd-original 1</c>) over the map's diamond, each tile's world point printed. The game is
+/// paused while it shoots, so the mission's script and battles don't move the camera or end the mission.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-map-mosaic pictures a whole map in tiles")
 {
@@ -17651,6 +17652,10 @@ TEST_CASE_ISOLATED("tool: --hd-map-mosaic pictures a whole map in tiles")
     {
         MCTestGame::RunFrame(FrameSeconds);
     }
+
+    // The game paused while the camera steps: a big map's 12,000 shots are half an hour of game time, in which the
+    // mission would play on (its script taking the camera, or the parked lance lost and the results screen shown).
+    GamePaused = true;
 
     // How a world step projects on screen, from the map's middle and two points a probe's length from it.
     constexpr float Probe = 1000.0f;
@@ -17715,6 +17720,8 @@ TEST_CASE_ISOLATED("tool: --hd-map-mosaic pictures a whole map in tiles")
             Shoot(folder, name, original);
         }
     }
+
+    GamePaused = false;
 }
 
 /// <summary>
@@ -17787,6 +17794,89 @@ TEST_CASE_ISOLATED("tool: --hd-terrain-layout writes how a map lays its ground t
     std::cout << std::format("  mission {}: {} cells, {} tiles, steps {} {} {}\n", mission, cells, names.size(),
                              steps->Across, steps->Down, steps->Up);
     CHECK(cells > 0);
+}
+
+/// <summary>
+/// Tool (the briefing maps drawn from the map, tools/briefing-maps): <c>--hd-map-objects &lt;folder&gt;</c> writes
+/// mission <c>--mission</c>'s (default 1) objects and movement map: <c>objects_&lt;n&gt;.tsv</c>, a line an object (its
+/// class, type number, alignment, its point in tiles across and down, its extent radius in tiles) and
+/// <c>cells_&lt;n&gt;.tsv</c>, a line a tile (row, column, its nine cells' passable bits by cell row then column, overlay
+/// type, terrain type).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-map-objects writes a map's objects and movement map")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-map-objects");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    int32_t mission = 1;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("mission"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), mission);
+    }
+
+    REQUIRE(MCTestGame::StartMission(mission));
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::filesystem::path folder(*out);
+    std::filesystem::create_directories(folder);
+    std::ofstream objects(folder / std::format("objects_{}.tsv", mission));
+    const double half = MetersMapSideDivTwo();
+    const double perTile = MCTerrain::MetersPerVertex;
+    size_t written = 0;
+
+    const auto write = [&](const std::shared_ptr<MCBaseObject>& object)
+    {
+        const std::shared_ptr<MCGameObject> game = std::dynamic_pointer_cast<MCGameObject>(object);
+
+        if (game == nullptr)
+        {
+            return;
+        }
+
+        const MCVector3D at = game->GetPosition();
+        const std::shared_ptr<MCObjectType> type = game->GetObjectType();
+        objects << std::format("{}\t{}\t{}\t{:.4f}\t{:.4f}\t{:.4f}\n", static_cast<int32_t>(game->ObjectClass),
+                               type != nullptr ? type->ObjTypeNum : -1, game->GetAlignment(), (at.X + half) / perTile,
+                               (half - at.Y) / perTile, game->GetExtentRadius() / perTile);
+        ++written;
+    };
+
+    for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
+    {
+        for (const std::shared_ptr<MCBaseObject> object : *list)
+        {
+            write(object);
+        }
+    }
+
+    std::ofstream cells(folder / std::format("cells_{}.tsv", mission));
+    const MCScenarioMap& map = GameMap();
+
+    for (int32_t r = 0; r < map.Height; ++r)
+    {
+        for (int32_t c = 0; c < map.Width; ++c)
+        {
+            const MCMapTile& tile = map.Map[static_cast<size_t>(r) * map.Width + c];
+            uint32_t passable = 0;
+
+            for (int32_t cellR = 0; cellR < MapCellDim; ++cellR)
+            {
+                for (int32_t cellC = 0; cellC < MapCellDim; ++cellC)
+                {
+                    passable |= tile.GetCellPassable(cellR, cellC) << (cellR * MapCellDim + cellC);
+                }
+            }
+
+            cells << std::format("{}\t{}\t{}\t{}\t{}\n", r, c, passable, tile.OverlayType(), tile.TerrainType());
+        }
+    }
+
+    std::cout << std::format("  mission {}: {} objects, {} x {} tiles\n", mission, written, map.Height, map.Width);
+    CHECK(written > 0);
 }
 
 namespace

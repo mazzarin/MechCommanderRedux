@@ -89,6 +89,20 @@ public:
     /// <summary>Port-only: whether the archive's file is open (<see cref="Release"/>).</summary>
     bool IsOpen() const { return _Handle.has_value(); }
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): reads the whole archive into memory on the held files' readers (MCHeldFile), its
+    /// entries' reads taking their bytes from there from now on, until <see cref="LetGo"/> or <see cref="Release"/>. Not
+    /// for an archive that can't be opened again or changed since its directory was read.
+    /// </summary>
+    void Hold();
+    void LetGo();
+
+    /// <summary>Port-only: the archive's length in bytes, as its directory was read.</summary>
+    uint32_t Length() const { return _Length; }
+
+    /// <summary>Port-only, for the tests: the reads the archive's open file has asked of the system.</summary>
+    size_t SystemReads() const { return _Handle.has_value() ? _Handle->SystemReads() : 0; }
+
     /// <summary>Lets only <see cref="Create"/> construct an archive.</summary>
     class Key
     {
@@ -102,6 +116,9 @@ public:
 private:
     /// <summary>The open archive, opened again after <see cref="Release"/>; none when it can't be.</summary>
     MCOptionalRef<MCDiskFile> File();
+
+    /// <summary>Whether the archive's file was written since its directory was read (or can't be asked).</summary>
+    bool Changed() const;
 
     /// <summary>The archive's path, as opened, and its length and time then (<see cref="File"/>).</summary>
     std::filesystem::path _Path;

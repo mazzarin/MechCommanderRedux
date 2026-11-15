@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "lib/MCFastFile.h"
+#include "lib/MCHeldFile.h"
 #include "lib/MCLz.h"
 #include "platform/MCFileSystem.h"
 
@@ -101,13 +102,17 @@ std::optional<int32_t> MCFastFile::Find(std::string_view gamePath) const
     return std::nullopt;
 }
 
+bool MCFastFile::Changed() const
+{
+    std::error_code error;
+    const std::filesystem::file_time_type written = std::filesystem::last_write_time(_Path, error);
+    return error || written != _Written;
+}
+
 std::optional<MCDiskFile> MCFastFile::OpenAnother() const
 {
     // A file changed since (another written in its place) would be read by the old directory's offsets.
-    std::error_code error;
-    const std::filesystem::file_time_type written = std::filesystem::last_write_time(_Path, error);
-
-    if (error || written != _Written)
+    if (Changed())
     {
         return std::nullopt;
     }
@@ -131,6 +136,24 @@ MCOptionalRef<MCDiskFile> MCFastFile::File()
     }
 
     return _Handle.has_value() ? MCOptionalRef<MCDiskFile>(*_Handle) : std::nullopt;
+}
+
+void MCFastFile::Hold()
+{
+    // Its bytes as the directory knows them: read again from the file (MCHeldFile refuses one of another length).
+    if (const MCOptionalRef<MCDiskFile> opened = File(); opened && opened->get().Held() == nullptr && !Changed())
+    {
+        opened->get().Hold(MCHeldFile::Read(_Path, _Length, _Path.filename().string()));
+    }
+}
+
+void MCFastFile::LetGo()
+{
+    // Only a held archive's handle changed: another's may be read on other threads meanwhile.
+    if (_Handle.has_value() && _Handle->Held() != nullptr)
+    {
+        _Handle->LetGo();
+    }
 }
 
 std::vector<uint8_t> MCFastFile::ReadStored(int32_t index)

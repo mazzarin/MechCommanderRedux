@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "appear/MCAppearanceType.h"
+#include "lib/MCHeldFile.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
 #include "sprite/MCArmAppearanceType.h"
@@ -59,6 +60,8 @@ auto MCAppearanceTypeList::Create(std::string_view fileName)
         return std::unexpected(std::format("could not open {}", spriteName));
     }
 
+    // Port-only (SPEC-first-use.md): read whole as the mission's load begins, its appearances' fits from memory.
+    file->HoldWhole(MCHeldFile::MostPacketFileBytes);
     return std::make_unique<MCAppearanceTypeList>(std::move(file));
 }
 

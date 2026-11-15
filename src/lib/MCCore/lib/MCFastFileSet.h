@@ -39,6 +39,13 @@ public:
     /// <summary>The open archives, in search order.</summary>
     const std::vector<std::unique_ptr<MCFastFile>>& Files() const { return _Files; }
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): holds every archive of at most <paramref name="mostBytes"/> (MCFastFile::Hold),
+    /// in search order, until <see cref="LetGo"/>.
+    /// </summary>
+    void HoldSmall(uint32_t mostBytes);
+    void LetGo();
+
 private:
     /// <summary>The open archives, in search order.</summary>
     std::vector<std::unique_ptr<MCFastFile>> _Files;

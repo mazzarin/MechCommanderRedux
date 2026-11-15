@@ -5,9 +5,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
+
+class MCHeldFile;
 
 /// <summary>How an <see cref="MCDiskFile"/> is opened.</summary>
 enum class MCDiskFileMode : uint8_t
@@ -103,6 +106,17 @@ public:
     /// <summary>Port-only, for the tests: the reads this file has asked of the system.</summary>
     size_t SystemReads() const { return _SystemReads.load(std::memory_order_relaxed); }
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): reads from now on take their bytes from <paramref name="held"/> (this file's
+    /// bytes read whole into memory) rather than the system, until <see cref="LetGo"/>, a write, or the hold failing,
+    /// when they read the disk as ever.
+    /// </summary>
+    void Hold(std::shared_ptr<MCHeldFile> held) { _Held = std::move(held); }
+    void LetGo() { _Held.reset(); }
+
+    /// <summary>Port-only: the hold reads take their bytes from (<see cref="Hold"/>), if any.</summary>
+    const std::shared_ptr<MCHeldFile>& Held() const { return _Held; }
+
 private:
     MCDiskFile() = default;
 
@@ -145,4 +159,6 @@ private:
     bool _Whole = false;
     /// <summary>The reads asked of the system (SystemReads).</summary>
     mutable std::atomic<size_t> _SystemReads{0};
+    /// <summary>Port-only: the file's bytes held in memory that reads take (Hold).</summary>
+    std::shared_ptr<MCHeldFile> _Held;
 };

@@ -2,6 +2,7 @@
 // stand-ins.
 
 #include "lib/MCDiskFile.h"
+#include "lib/MCHeldFile.h"
 
 #include <algorithm>
 #include <cstring>
@@ -95,6 +96,7 @@ MCDiskFile& MCDiskFile::operator=(MCDiskFile&& other) noexcept
         _ReadEnd = std::exchange(other._ReadEnd, 0);
         _Whole = std::exchange(other._Whole, false);
         _SystemReads.store(other._SystemReads.exchange(0, std::memory_order_relaxed), std::memory_order_relaxed);
+        _Held = std::move(other._Held);
     }
 
     return *this;
@@ -125,6 +127,15 @@ void MCDiskFile::Close()
 
 size_t MCDiskFile::ReadDirect(uint32_t offset, std::span<uint8_t> buffer) const
 {
+    // Port-only: the file's bytes held in memory, unless the hold failed.
+    if (_Held != nullptr)
+    {
+        if (const std::optional<size_t> held = _Held->ReadAt(offset, buffer); held.has_value())
+        {
+            return *held;
+        }
+    }
+
     size_t done = 0;
 
     // One call for a whole read (more only past MostInOneCall): the system returns fewer bytes only at the file's end.
@@ -278,8 +289,9 @@ size_t MCDiskFile::Write(std::span<const uint8_t> data)
 
 size_t MCDiskFile::WriteAt(uint32_t offset, std::span<const uint8_t> data)
 {
-    // What the buffer held may be what this writes over.
+    // What the buffer held, or the hold, may be what this writes over.
     EmptyBuffer();
+    _Held.reset();
     size_t done = 0;
 
     while (done < data.size())

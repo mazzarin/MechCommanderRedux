@@ -12,6 +12,7 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCFrameOfRef.h"
+#include "lib/MCHeldFile.h"
 #include "lib/MCIDString.h"
 #include "lib/MCLz.h"
 #include "lib/MCPacketFile.h"
@@ -435,6 +436,268 @@ TEST_CASE("disk file: a write empties the buffer, and the bytes read back")
     REQUIRE(file.has_value());
     CHECK_EQ(file->Length(), uint32_t{0});
     CHECK(DiskBytes(*file, 0, 4).empty());
+}
+
+namespace
+{
+    /// <summary>The held file named <paramref name="name"/>'s doings, if one is held now.</summary>
+    std::optional<MCHeldFile::MCHeldStats> HeldNamed(std::string_view name)
+    {
+        for (MCHeldFile::MCHeldStats& stats : MCHeldFile::Live())
+        {
+            if (stats.Name == name)
+            {
+                return std::move(stats);
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    /// <summary>
+    /// Whether the held file named <paramref name="name"/> goes within a second: its last holder let go, a reader may
+    /// still be reading a piece of it.
+    /// </summary>
+    bool HeldGoes(std::string_view name)
+    {
+        constexpr auto Most = std::chrono::seconds(1);
+        constexpr auto Poll = std::chrono::milliseconds(1);
+        const auto until = std::chrono::steady_clock::now() + Most;
+
+        while (HeldNamed(name).has_value())
+        {
+            if (std::chrono::steady_clock::now() > until)
+            {
+                return false;
+            }
+
+            std::this_thread::sleep_for(Poll);
+        }
+
+        return true;
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): a disk file held (MCDiskFile::Hold, an MCHeldFile) reads the bytes the disk gives,
+/// direct or buffered, from memory with no read of its own: within a piece, across pieces' edges, all of them in one
+/// read, short at the end, nothing past it. A hold of another length (the file changed since) fails and the disk is read
+/// as ever; let go, or written to, the file reads its disk again; the hold is listed while a holder keeps it.
+/// </summary>
+TEST_CASE("disk file: a held file's reads come from memory, the bytes the disk gives")
+{
+    ScratchFolder folder("disk-file-held");
+    constexpr size_t Piece = MCHeldFile::PieceBytes;
+    constexpr size_t FileBytes = Piece * 2 + Piece / 2 + 123;
+    const std::vector<uint8_t> bytes = MixedBytes(FileBytes);
+    const std::filesystem::path path = folder.Path() / "held.bin";
+    WriteFile(path, bytes);
+    std::shared_ptr<MCHeldFile> held = MCHeldFile::Read(path, static_cast<uint32_t>(FileBytes), "held.bin");
+    CHECK(HeldNamed("held.bin").has_value());
+
+    for (const MCDiskFileReads reads : {MCDiskFileReads::Direct, MCDiskFileReads::Buffered})
+    {
+        MCTest::Scope scope(reads == MCDiskFileReads::Direct ? "direct" : "buffered");
+        std::optional<MCDiskFile> file = MCDiskFile::Open(path, MCDiskFileMode::Read, reads);
+        REQUIRE(file.has_value());
+        file->Hold(held);
+
+        for (const auto& [offset, size] : {std::pair<size_t, size_t>{0, 5},
+                                           {Piece - 3, 10},
+                                           {Piece * 2 - 1, 2},
+                                           {Piece + 7, Piece / 3},
+                                           {100, FileBytes - 200},
+                                           {0, FileBytes},
+                                           {FileBytes - 3, 10},
+                                           {FileBytes, 4},
+                                           {FileBytes + 1000, 4},
+                                           {50, 0}})
+        {
+            MCTest::Scope at(std::format("{} bytes at {}", size, offset));
+            CHECK(DiskBytes(*file, offset, size) == BytesAt(bytes, offset, size));
+        }
+
+        // Read goes on from where the last read ended.
+        CHECK(DiskBytes(*file, Piece - 2, 1) == BytesAt(bytes, Piece - 2, 1));
+        std::array<uint8_t, 4> next{};
+        REQUIRE_EQ(file->Read(next), next.size());
+        CHECK(std::vector<uint8_t>(next.begin(), next.end()) == BytesAt(bytes, Piece - 1, 4));
+        CHECK_EQ(file->SystemReads(), size_t{0});
+    }
+
+    const MCHeldFile::MCHeldStats stats = held->Stats();
+    CHECK(stats.Done);
+    CHECK(!stats.Failed);
+    CHECK_EQ(stats.Pieces, size_t{3});
+    CHECK_EQ(stats.Bytes, static_cast<uint32_t>(FileBytes));
+    CHECK(stats.Served > 0);
+
+    // Held as longer than it is, as a file changed since would be: the hold fails, and the disk gives the bytes.
+    std::optional<MCDiskFile> changed = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+    REQUIRE(changed.has_value());
+    changed->Hold(MCHeldFile::Read(path, static_cast<uint32_t>(FileBytes + 1), "changed.bin"));
+    CHECK(DiskBytes(*changed, Piece - 3, 10) == BytesAt(bytes, Piece - 3, 10));
+    CHECK_EQ(changed->SystemReads(), size_t{1});
+    REQUIRE(changed->Held() != nullptr);
+    CHECK(changed->Held()->Stats().Failed);
+    changed.reset();
+    CHECK(HeldGoes("changed.bin"));
+
+    // Let go: the disk again.
+    std::optional<MCDiskFile> file = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+    REQUIRE(file.has_value());
+    file->Hold(held);
+    CHECK(DiskBytes(*file, 5, 5) == BytesAt(bytes, 5, 5));
+    CHECK_EQ(file->SystemReads(), size_t{0});
+    file->LetGo();
+    CHECK(file->Held() == nullptr);
+    CHECK(DiskBytes(*file, 5, 5) == BytesAt(bytes, 5, 5));
+    CHECK_EQ(file->SystemReads(), size_t{1});
+    file.reset();
+    held.reset();
+    CHECK(HeldGoes("held.bin"));
+
+    // Written to: the hold goes, and the file reads what was written.
+    const std::filesystem::path written = folder.Path() / "written.bin";
+    std::optional<MCDiskFile> writer = MCDiskFile::Open(written, MCDiskFileMode::Create, MCDiskFileReads::Buffered);
+    REQUIRE(writer.has_value());
+    CHECK_EQ(writer->Write(std::vector<uint8_t>(1000, 'a')), size_t{1000});
+    writer->Hold(MCHeldFile::Read(written, 1000, "written.bin"));
+    CHECK(DiskBytes(*writer, 8, 7) == Bytes("aaaaaaa"));
+    CHECK_EQ(writer->SystemReads(), size_t{0});
+    CHECK_EQ(writer->WriteAt(10, Bytes("XYZ")), size_t{3});
+    CHECK(writer->Held() == nullptr);
+    CHECK(DiskBytes(*writer, 8, 7) == Bytes("aaXYZaa"));
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): a packet file held whole (MCFile::HoldWhole: a type or sprite manager's) reads every
+/// packet, alone or together, as a plain open of it does, with no read of its own file after the hold, its readers'
+/// reads from the hold too; one longer than the most asked, or a test's file in memory, isn't held; closed, the hold
+/// goes.
+/// </summary>
+TEST_CASE("packet file: a file held whole reads its packets as ever, from memory")
+{
+    using namespace MCPakBytes;
+    constexpr int32_t Packets = 12;
+    std::vector<MCStored> stored;
+
+    // About 1.8 MB, two pieces: LZ packets among raw ones over 64 KB apart, so read together they take several reads.
+    for (uint32_t i = 0; i < static_cast<uint32_t>(Packets); ++i)
+    {
+        stored.push_back(i % 3 == 0 ? Lz(Filled(5000, i)) : Raw(Filled(200000 + i, i)));
+    }
+
+    ScratchFolder folder("packet-file-held");
+    WriteFile(folder.Path() / "held.pak", Pak(stored));
+    MCPacketFile plain;
+    REQUIRE_EQ(plain.Open(folder / "held.pak"), NO_ERR);
+    MCPacketFile pak;
+    REQUIRE_EQ(pak.Open(folder / "held.pak"), NO_ERR);
+    CHECK(!pak.HoldWhole(pak.GetLength() - 1));
+    CHECK(!HeldNamed("held.pak").has_value());
+    REQUIRE(pak.HoldWhole(MCHeldFile::MostPacketFileBytes));
+    const size_t opened = pak.SystemReads();
+    const size_t plainOpened = plain.SystemReads();
+
+    for (int32_t packet = 0; packet < Packets; ++packet)
+    {
+        MCTest::Scope scope(std::format("packet {}", packet));
+        CHECK(ReadAlone(pak, packet) == ReadAlone(plain, packet));
+    }
+
+    CHECK_EQ(pak.SystemReads(), opened);
+    CHECK(plain.SystemReads() > plainOpened);
+
+    // Together, through readers of their own: each from the hold.
+    const std::optional<MCHeldFile::MCHeldStats> before = HeldNamed("held.pak");
+    REQUIRE(before.has_value());
+    std::vector<int32_t> every(static_cast<size_t>(Packets));
+    std::iota(every.begin(), every.end(), 0);
+    const MCPacketBatch batch = pak.ReadPackets(every);
+    REQUIRE_EQ(batch.Packets.size(), static_cast<size_t>(Packets));
+
+    for (int32_t packet = 0; packet < Packets; ++packet)
+    {
+        MCTest::Scope scope(std::format("packet {} together", packet));
+        REQUIRE(batch.Packets[static_cast<size_t>(packet)].has_value());
+        CHECK(*batch.Packets[static_cast<size_t>(packet)] == ReadAlone(plain, packet));
+    }
+
+    const std::optional<MCHeldFile::MCHeldStats> after = HeldNamed("held.pak");
+    REQUIRE(after.has_value());
+    CHECK_EQ(after->Served, before->Served + batch.Reads);
+    CHECK(!after->Failed);
+    CHECK_EQ(pak.SystemReads(), opened);
+    pak.Close();
+    CHECK(HeldGoes("held.pak"));
+
+    // A test's file in memory has no disk to hold.
+    MCTestContextScope scope;
+    MCMemoryFileSource& files = scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+    files.AddFile("data\\memory.pak", Pak(stored));
+    MCPacketFile memory;
+    REQUIRE_EQ(memory.Open("data\\memory.pak"), NO_ERR);
+    CHECK(!memory.HoldWhole(MCHeldFile::MostPacketFileBytes));
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): the FastFiles a mission's load holds (MCFastFileSet::HoldSmall) are those up to the
+/// most asked, not changed since their directories were read; their entries read as ever, raw or unpacked, with no read
+/// of their own files; let go, they read their files again.
+/// </summary>
+TEST_CASE("fastfile: archives held read their entries as ever, from memory, and let go read their files again")
+{
+    ScratchFolder folder("fastfile-held");
+    const std::vector<uint8_t> packed = Repetitive(5000);
+    const std::vector<uint8_t> big = MixedBytes(MCHeldFile::PieceBytes + 1000);
+    WriteFile(folder.Path() / "held.fst", BuildFastFile({{"data\\a.txt", Bytes("first"), false},
+                                                         {"data\\b.bin", packed, true},
+                                                         {"data\\c.bin", big, false}}));
+    WriteFile(folder.Path() / "large.fst", BuildFastFile({{"data\\d.bin", big, false}, {"data\\e.bin", big, false}}));
+    WriteFile(folder.Path() / "changed.fst", BuildFastFile({{"data\\f.txt", Bytes("changed"), false}}));
+
+    MCTestContextScope scope;
+    MCFastFileSet& fastFiles = scope.Context().SetFastFiles(std::make_unique<MCFastFileSet>());
+
+    for (const std::string_view name : {"held.fst", "large.fst", "changed.fst"})
+    {
+        REQUIRE(fastFiles.Open(folder / name).has_value());
+    }
+
+    // In name order: changed.fst, held.fst, large.fst. changed.fst is written since its directory was read (its time
+    // moved on), large.fst past the most held.
+    const std::vector<std::unique_ptr<MCFastFile>>& archives = fastFiles.Files();
+    REQUIRE_EQ(archives.size(), 3u);
+    const MCFastFile& held = *archives[1];
+    const MCFastFile& large = *archives[2];
+    const std::filesystem::path changed = folder.Path() / "changed.fst";
+    std::filesystem::last_write_time(changed, std::filesystem::last_write_time(changed) + std::chrono::seconds(2));
+    fastFiles.HoldSmall(held.Length());
+    CHECK(HeldNamed("held.fst").has_value());
+    CHECK(!HeldNamed("large.fst").has_value());
+    CHECK(!HeldNamed("changed.fst").has_value());
+    const size_t heldOpened = held.SystemReads();
+    const size_t largeOpened = large.SystemReads();
+
+    // The entries, raw and unpacked, each as stored; twice, the second time from memory too.
+    for (int round = 0; round < 2; ++round)
+    {
+        MCTest::Scope scope(std::format("round {}", round));
+        CHECK(fastFiles.Read("data\\a.txt") == std::optional(Bytes("first")));
+        CHECK(fastFiles.Read("data\\b.bin") == std::optional(packed));
+        CHECK(fastFiles.Read("data\\c.bin") == std::optional(big));
+        CHECK(fastFiles.Read("data\\d.bin") == std::optional(big));
+    }
+
+    CHECK_EQ(held.SystemReads(), heldOpened);
+    CHECK(large.SystemReads() > largeOpened);
+
+    // Let go: the archive's file again.
+    fastFiles.LetGo();
+    CHECK(HeldGoes("held.fst"));
+    CHECK(fastFiles.Read("data\\b.bin") == std::optional(packed));
+    CHECK(held.SystemReads() > heldOpened);
 }
 
 /// <summary>Seeks are checked against the length; values are little-endian; lines end at CR, CR LF or LF.</summary>

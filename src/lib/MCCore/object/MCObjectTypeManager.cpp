@@ -3,6 +3,7 @@
 #include "appear/MCAppearanceTypeList.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
+#include "lib/MCHeldFile.h"
 #include "main/MCGamePaths.h"
 #include "lib/MCPacketFile.h"
 #include "platform/MCFrameLog.h"
@@ -158,6 +159,9 @@ auto MCObjectTypeManager::Create(std::string_view objectFileName)
         return std::unexpected(std::format("could not open {} ({:#x})", fileName, static_cast<uint32_t>(result)));
     }
 
+    // Port-only (SPEC-first-use.md): read whole as the mission's load begins, its types' fits (and those first made in
+    // play) from memory.
+    manager->_ObjectFile->HoldWhole(MCHeldFile::MostPacketFileBytes);
     return manager;
 }
 

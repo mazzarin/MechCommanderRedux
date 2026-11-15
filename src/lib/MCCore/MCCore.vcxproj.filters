@@ -417,6 +417,9 @@
     <ClCompile Include="lib\MCFitIniFile.cpp">
       <Filter>lib</Filter>
     </ClCompile>
+    <ClCompile Include="lib\MCHeldFile.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
     <ClCompile Include="lib\MCInflate.cpp">
       <Filter>lib</Filter>
     </ClCompile>
@@ -1835,6 +1838,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCFrameOfRef.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCHeldFile.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCIDString.h">

@@ -163,6 +163,7 @@
     <ClCompile Include="lib\MCFile.cpp" />
     <ClCompile Include="lib\MCFilePatch.cpp" />
     <ClCompile Include="lib\MCFitIniFile.cpp" />
+    <ClCompile Include="lib\MCHeldFile.cpp" />
     <ClCompile Include="lib\MCInflate.cpp" />
     <ClCompile Include="lib\MCLzCompress.cpp" />
     <ClCompile Include="lib\MCLzDecompress.cpp" />
@@ -663,6 +664,7 @@
     <ClInclude Include="lib\MCFitIniFile.h" />
     <ClInclude Include="lib\MCFnvHash.h" />
     <ClInclude Include="lib\MCFrameOfRef.h" />
+    <ClInclude Include="lib\MCHeldFile.h" />
     <ClInclude Include="lib\MCIDString.h" />
     <ClInclude Include="lib\MCInflate.h" />
     <ClInclude Include="lib\MCLz.h" />

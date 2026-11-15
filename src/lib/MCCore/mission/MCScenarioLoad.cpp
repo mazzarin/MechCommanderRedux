@@ -16,7 +16,9 @@
 #include "engine/MCElementBuffer.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
+#include "lib/MCFastFileSet.h"
 #include "lib/MCFile.h"
+#include "lib/MCHeldFile.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
@@ -110,6 +112,85 @@ namespace
         }
     }
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): the original's FastFiles small enough held while the load runs (MCHeldFile: read
+    /// whole on threads of their own as it begins, its entries' reads taking their bytes from there), let go as it ends.
+    /// </summary>
+    class MCLoadFastFiles
+    {
+    public:
+        MCLoadFastFiles()
+        {
+            MCFastFileSet& fastFiles = MCGameContext::Current().FastFiles();
+            fastFiles.HoldSmall(MCHeldFile::MostFastFileBytes);
+            _ReadsAtStart = SmallFilesReads(fastFiles);
+        }
+
+        ~MCLoadFastFiles() { MCGameContext::Current().FastFiles().LetGo(); }
+        MCLoadFastFiles(const MCLoadFastFiles&) = delete;
+        MCLoadFastFiles& operator=(const MCLoadFastFiles&) = delete;
+
+        /// <summary>The system reads of the small FastFiles' own files since the load began: none while held.</summary>
+        size_t OwnReads() const
+        {
+            // A count only rises while the file stays open (the original's FastFiles are never released).
+            const size_t now = SmallFilesReads(MCGameContext::Current().FastFiles());
+            return now >= _ReadsAtStart ? now - _ReadsAtStart : 0;
+        }
+
+    private:
+        static size_t SmallFilesReads(const MCFastFileSet& fastFiles)
+        {
+            size_t reads = 0;
+
+            for (const std::unique_ptr<MCFastFile>& fastFile : fastFiles.Files())
+            {
+                reads += fastFile->Length() <= MCHeldFile::MostFastFileBytes ? fastFile->SystemReads() : 0;
+            }
+
+            return reads;
+        }
+
+        size_t _ReadsAtStart = 0;
+    };
+
+    /// <summary>
+    /// Port-only: the frame log's note of the files held (MCHeldFile): how many, their bytes, the time to read them, the
+    /// reads they gave, the pieces the load's own reads read first, and the reads the small FastFiles' own files made
+    /// all the same (<paramref name="fastFiles"/>).
+    /// </summary>
+    void NoteHeldFiles(const MCLoadFastFiles& fastFiles)
+    {
+        if (!MCFrameLog::Enabled())
+        {
+            return;
+        }
+
+        const std::vector<MCHeldFile::MCHeldStats> held = MCHeldFile::Live();
+        uint64_t bytes = 0;
+        size_t served = 0;
+        size_t pieces = 0;
+        size_t asked = 0;
+        double slowest = 0.0;
+        bool done = true;
+
+        for (const MCHeldFile::MCHeldStats& file : held)
+        {
+            bytes += file.Bytes;
+            served += file.Served;
+            pieces += file.Pieces;
+            asked += file.PiecesAsked;
+            slowest = std::max(slowest, file.ReadMs);
+            done = done && file.Done && !file.Failed;
+        }
+
+        constexpr double BytesPerMb = 1024.0 * 1024.0;
+        MCFrameLog::Note(std::format("original files held: {} files, {:.1f} MB in {} pieces, {} ({:.1f} ms), {} reads "
+                                     "from them, {} pieces read by the load itself, {} reads of the FastFiles' own",
+                                     held.size(), static_cast<double>(bytes) / BytesPerMb, pieces,
+                                     done ? "read" : "not all read", slowest, served, asked, fastFiles.OwnReads()));
+    }
+
     /// <summary>Turns a frame about its k axis (MC2's inline frame_of_ref::rotate_about_k).</summary>
     void RotateAboutK(MCFrameOfRef& frame, float s, float c)
     {
@@ -164,6 +245,7 @@ namespace
 
 auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainName) -> int32_t
 {
+    const MCLoadFastFiles fastFilesHeld;
     NumCameraDrones = 0;
     // Port fix: the original freed the connect shapes with free() while the renderer still had them registered.
     const MCConnectShapeScope connectShape;
@@ -386,6 +468,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         MultiPlayer()->SendPlayerCheckIn();
     }
 
+    NoteHeldFiles(fastFilesHeld);
     StartingUp = true;
     StartUpCountdown = 100;
     _Loaded = true;

@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "TestGame.h"
 #include "ai/MCMoveSystem.h"
@@ -6,6 +7,7 @@
 #include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
 #include "engine/MCByteFlag.h"
+#include "lib/MCHeldFile.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "object/MCBattleMech.h"
@@ -19,6 +21,8 @@
 #include "object/MCObjectType.h"
 #include "object/MCObjectTypeManager.h"
 #include "object/MCMechWarrior.h"
+#include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
@@ -703,4 +707,65 @@ TEST_CASE_ISOLATED("game: mission 3's lookout on the central hill reveals the Co
     }
 
     CHECK_EQ(commandos, 2);
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): a mission's load holds the original's small files it reads all through, each read
+/// whole on threads of its own as it opens or the load begins (MCHeldFile): its FastFiles (ART, MISC, MISSION and
+/// SHAPES.FST) read none of their own files while it runs (its frame log's note says so), and the type and sprite
+/// managers' packet files (sprites.pak, object2.pak and shapes.pak, not shapes90.pak) stay held for the mission, every
+/// piece read, their reads from memory.
+/// </summary>
+TEST_CASE_ISOLATED("game: mission 16's load reads its small original files whole, none of its reads from their disks")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCScratchFolder folder("mc_mission_tests", "load-held");
+    const std::filesystem::path log = folder.Path() / "load.framelog";
+    REQUIRE(MCFrameLog::Open(log));
+    REQUIRE(MCTestGame::StartMission(16));
+    // The test game's frames don't move the log's on: its first frame, which the notes so far go to, then written.
+    MCFrameLog::NextFrame();
+    MCFrameLog::NextFrame();
+    MCFrameLog::Close();
+
+    // The managers' files, held for the mission.
+    const std::vector<MCHeldFile::MCHeldStats> live = MCHeldFile::Live();
+
+    for (const std::string_view name : {"sprites.pak", "object2.pak", "shapes.pak"})
+    {
+        MCTest::Scope scope(name);
+        const auto held = std::ranges::find_if(
+            live, [&](const MCHeldFile::MCHeldStats& stats)
+            { return !MCFileSystem::NameLess(stats.Name, name) && !MCFileSystem::NameLess(name, stats.Name); });
+        REQUIRE(held != live.end());
+        CHECK(held->Done);
+        CHECK(!held->Failed);
+        CHECK(held->Served > 0);
+        std::cout << std::format("  {}: {:.1f} MB, {} reads from it, {} of {} pieces read by an asker\n", held->Name,
+                                 held->Bytes / (1024.0 * 1024.0), held->Served, held->PiecesAsked, held->Pieces);
+    }
+
+    CHECK_EQ(live.size(), 3u);
+
+    // The load's note: the FastFiles and the managers' files held, and no read of the FastFiles' own.
+    std::ifstream in(log);
+    const std::string text((std::istreambuf_iterator<char>(in)), {});
+    const size_t at = text.find("original files held: ");
+    REQUIRE(at != std::string::npos);
+    size_t files = 0;
+    size_t served = 0;
+    size_t own = 0;
+    const int scanned = std::sscanf(text.c_str() + at,
+                                    "original files held: %zu files, %*f MB in %*u pieces, %*[^(](%*f ms), %zu reads "
+                                    "from them, %*u pieces read by the load itself, %zu reads of the FastFiles' own",
+                                    &files, &served, &own);
+    REQUIRE_EQ(scanned, 3);
+    CHECK_EQ(files, 7u);
+    CHECK(served > 300);
+    CHECK_EQ(own, 0u);
+    std::cout << "  " << text.substr(at, text.find('\n', at) - at) << "\n";
 }

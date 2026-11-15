@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "lib/MCFile.h"
+#include "lib/MCHeldFile.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGameContext.h"
@@ -524,8 +525,36 @@ namespace
             return std::nullopt;
         }
 
+        // Port-only: a file held in memory is read from there by its readers too.
+        if (state.Disk.has_value())
+        {
+            disk->Hold(state.Disk->Held());
+        }
+
         return std::tuple(std::move(*disk), base, length);
     }
+}
+
+bool MCFile::HoldWhole(uint32_t mostBytes)
+{
+    if (_IsChild || _FileMode != MCFileMode::Read || _State == nullptr || !_State->Disk.has_value() ||
+        _State->Path.empty() || _State->Length > mostBytes)
+    {
+        return false;
+    }
+
+    if (_State->Disk->Held() == nullptr)
+    {
+        _State->Disk->Hold(MCHeldFile::Read(_State->Path, _State->Length, _State->Path.filename().string()));
+    }
+
+    return true;
+}
+
+size_t MCFile::SystemReads() const
+{
+    const std::shared_ptr<OpenState> state = DiskState();
+    return state != nullptr ? state->Disk->SystemReads() : 0;
 }
 
 std::optional<MCFileReader> MCFile::OpenReader() const

@@ -2,6 +2,7 @@
 #include "sprite/MCSpriteManager.h"
 #include "appear/MCAppearanceType.h"
 #include "lib/MCFatal.h"
+#include "lib/MCHeldFile.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
@@ -101,6 +102,10 @@ auto MCSpriteManager::Create(std::string_view spriteFileName, bool use90PixelPar
         return std::unexpected(fallback.error());
     }
 
+    // Port-only (SPEC-first-use.md): a sprite PAK small enough (shapes.pak, not shapes90.pak) read whole as the mission's
+    // load begins, its appearances' shape tables and shapes from memory.
+    (*preferred)->HoldWhole(MCHeldFile::MostPacketFileBytes);
+    (*fallback)->HoldWhole(MCHeldFile::MostPacketFileBytes);
     manager->_NumAppearances = (*preferred)->GetNumPackets() + 1;
     manager->_SpriteFiles[PreferredSprites] = std::move(*preferred);
     manager->_SpriteFiles[FallbackSprites] = std::move(*fallback);

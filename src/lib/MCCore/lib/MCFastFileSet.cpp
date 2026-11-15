@@ -34,3 +34,22 @@ std::optional<std::vector<uint8_t>> MCFastFileSet::Read(std::string_view gamePat
 
     return std::nullopt;
 }
+
+void MCFastFileSet::HoldSmall(uint32_t mostBytes)
+{
+    for (const std::unique_ptr<MCFastFile>& fastFile : _Files)
+    {
+        if (fastFile->Length() <= mostBytes)
+        {
+            fastFile->Hold();
+        }
+    }
+}
+
+void MCFastFileSet::LetGo()
+{
+    for (const std::unique_ptr<MCFastFile>& fastFile : _Files)
+    {
+        fastFile->LetGo();
+    }
+}

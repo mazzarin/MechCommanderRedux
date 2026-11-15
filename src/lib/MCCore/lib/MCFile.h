@@ -211,6 +211,17 @@ public:
     MCAddressKey RootKey() const;
     uint32_t RootOffset() const;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): a file opened from disk to read, of at most <paramref name="mostBytes"/>, read
+    /// whole into memory on the held files' readers (MCHeldFile), its reads, its windows' and its readers'
+    /// (<see cref="OpenReader"/>) taking their bytes from there until it closes.
+    /// </summary>
+    /// <returns>Whether it is held.</returns>
+    bool HoldWhole(uint32_t mostBytes);
+
+    /// <summary>Port-only, for the tests: the reads its file on disk (a window's, its parents') has asked of the system.</summary>
+    size_t SystemReads() const;
+
 protected:
     /// <summary>
     /// What a file's child windows read through while the file is open. A file opened from disk holds its disk file

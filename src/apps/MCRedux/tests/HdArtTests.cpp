@@ -18714,6 +18714,27 @@ namespace
         int64_t PictureBytes = 0;
     };
 
+    /// <summary>PROBE: when NEW CAMPAIGN's click was made, its first present's time from it, and whether in the click.</summary>
+    std::chrono::steady_clock::time_point ProbeClickAt;
+    std::optional<double> ProbeClickFirst;
+    bool ProbeClickInCall = false;
+
+    /// <summary>PROBE: NEW CAMPAIGN's click to its first present, once the frames after it ran; the hook dropped.</summary>
+    void PrintProbeClick()
+    {
+        if (!MCTestGame::OnPresent)
+        {
+            return;
+        }
+
+        MCTestGame::OnPresent = {};
+        std::cout << std::format("probe: NEW CAMPAIGN's click to its first present: {}\n",
+                                 ProbeClickFirst.has_value()
+                                     ? std::format("{:.1f} ms ({})", *ProbeClickFirst,
+                                                   ProbeClickInCall ? "in the click" : "the next frame's")
+                                     : std::string("none"));
+    }
+
     class MCFirstUseProbe
     {
     public:
@@ -18735,7 +18756,8 @@ namespace
                 MCFrameLog::NextFrame(60.0);
                 ProbeFrame frame;
                 frame.Label = label;
-                frame.Ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+                frame.Ms =
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
                 frame.Reads = MCHdArt::FramesRead() - reads;
                 frame.ReadMs = std::chrono::duration<double, std::milli>(MCHdArt::ReadTime() - readTime).count();
                 frame.Ahead = MCHdArt::FramesReadAhead() - ahead;
@@ -18798,10 +18820,11 @@ namespace
                 }
 
                 std::ranges::sort(ms);
-                out << std::format("{}: {} frames, median {:.1f} ms, p99 {:.1f}, worst {:.1f}; {} HD frames first used, "
-                                   "{:.1f} ms reading; {:.1f} MB uploaded\n",
-                                   label, frames.size(), ms[ms.size() / 2], ms[ms.size() * 99 / 100], ms.back(), reads,
-                                   readMs, bytes / 1048576.0);
+                out << std::format(
+                    "{}: {} frames, median {:.1f} ms, p99 {:.1f}, worst {:.1f}; {} HD frames first used, "
+                    "{:.1f} ms reading; {:.1f} MB uploaded\n",
+                    label, frames.size(), ms[ms.size() / 2], ms[ms.size() * 99 / 100], ms.back(), reads, readMs,
+                    bytes / 1048576.0);
                 std::vector<const ProbeFrame*> worst(frames.begin(), frames.end());
                 std::ranges::sort(worst, [](const ProbeFrame* a, const ProbeFrame* b) { return a->Ms > b->Ms; });
 
@@ -18821,7 +18844,9 @@ namespace
     };
 
     /// <summary>PROBE: what the build being measured does as the display opens with HD on (stage 1's hook).</summary>
-    void ProbeAtDisplayOpen() {}
+    void ProbeAtDisplayOpen()
+    {
+    }
 
     void PrintProbe(const MCFirstUseProbe& probe)
     {
@@ -18852,10 +18877,12 @@ TEST_CASE_ISOLATED("probe: first use, the logistics screens")
     GHdArt = 1;
     MCHdArt::SetPackFolder(std::filesystem::absolute(std::filesystem::path(*pack)));
     GlobalLog()->AttachHdArt();
+
     if (!MCTest::Option("probe-no-ahead").has_value())
     {
         GlobalLog()->MakeAhead();
     }
+
     if (const std::optional<std::string_view> log = MCTest::Option("probe-log"); log.has_value())
     {
         REQUIRE(MCFrameLog::Open(std::filesystem::path(*log)));
@@ -18863,10 +18890,24 @@ TEST_CASE_ISOLATED("probe: first use, the logistics screens")
 
     MCFirstUseProbe probe;
     probe.Run("main menu", 60);
-    std::cout << std::format("boot {:.0f} ms\n",
-                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    std::cout << std::format(
+        "boot {:.0f} ms\n",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    ProbeClickAt = std::chrono::steady_clock::now();
+    ProbeClickFirst.reset();
+    MCTestGame::OnPresent = []
+    {
+        if (!ProbeClickFirst.has_value())
+        {
+            ProbeClickFirst =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ProbeClickAt).count();
+        }
+    };
+
     probe.Step("to briefing (call)", [] { NewCampaign(); });
+    ProbeClickInCall = ProbeClickFirst.has_value();
     probe.Run("to briefing", 60);
+    PrintProbeClick();
     probe.Step("purchase (first, call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
     probe.Run("purchase (first)", 90);
     GlobalLog()->CurrentInvTab = 3;
@@ -18885,7 +18926,8 @@ TEST_CASE_ISOLATED("probe: first use, the logistics screens")
     probe.Run("repair (first)", 90);
     probe.Step("purchase (second, call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
     probe.Run("purchase (second)", 90);
-    const int32_t loops = MCTest::Option("probe-loops").has_value() ? std::stoi(std::string(*MCTest::Option("probe-loops"))) : 2;
+    const int32_t loops =
+        MCTest::Option("probe-loops").has_value() ? std::stoi(std::string(*MCTest::Option("probe-loops"))) : 2;
 
     for (int32_t loop = 0; loop < loops; ++loop)
     {
@@ -18898,11 +18940,13 @@ TEST_CASE_ISOLATED("probe: first use, the logistics screens")
     PrintProbe(probe);
     MCFrameLog::Close();
     const MCSharpPictures::MCMadeTally tally = MCSharpPictures::Tally();
-    std::cout << std::format("made ahead: {} glyphs ({} pictures), {} drawings ({} left), kept {:.1f} MB, RGBA {:.1f} MB; "
-                             "taken {} ({:.1f} MB RGBA); held {} ({:.1f} MB)\n",
-                             tally.Glyphs, tally.GlyphPictures, tally.Drawings, tally.DrawingsLeft,
-                             tally.KeptBytes / 1048576.0, tally.RgbaBytes / 1048576.0, tally.Taken,
-                             tally.TakenRgbaBytes / 1048576.0, tally.Held, tally.HeldBytes / 1048576.0);
+    std::cout << std::format(
+        "made ahead: {} glyphs ({} pictures), {} drawings ({} left), kept {:.1f} MB, RGBA {:.1f} MB; "
+        "taken {} ({:.1f} MB RGBA); held {} ({:.1f} MB)\n",
+        tally.Glyphs, tally.GlyphPictures, tally.Drawings, tally.DrawingsLeft, tally.KeptBytes / 1048576.0,
+        tally.RgbaBytes / 1048576.0, tally.Taken, tally.TakenRgbaBytes / 1048576.0, tally.Held,
+        tally.HeldBytes / 1048576.0);
+
     if (const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware()); renderer != nullptr)
     {
         const MCVulkanRenderer::SharpCounts counts = renderer->SharpPictures();
@@ -18931,10 +18975,9 @@ namespace
             // From the display's opening (MCGuiSystem::OpenDisplay), as a player's boot with HD on in PREFS: the
             // test's boot reads the tests' PREFS (HD off) and starts logistics before this.
             ProbeBootStarted = ProbeDisplayOpened;
-            std::cout << std::format("Started {:.0f} ms after the display opened\n",
-                                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                                               ProbeBootStarted)
-                                         .count());
+            std::cout << std::format(
+                "Started {:.0f} ms after the display opened\n",
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ProbeBootStarted).count());
             GHdArt = 1;
             MCHdArt::SetPackFolder(packFolder);
             ProbeAtDisplayOpen();
@@ -18949,22 +18992,35 @@ namespace
 
     void PrintSharpCounts(const char* when)
     {
-        if (const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware()); renderer != nullptr)
+        if (const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+            renderer != nullptr)
         {
             const MCVulkanRenderer::SharpCounts counts = renderer->SharpPictures();
-            std::cout << std::format("{}: {:.0f} ms after the display opened; renderer {} redrawn, {} taken ahead, {:.1f} MB\n",
-                                     when,
-                                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                                               ProbeBootStarted)
-                                         .count(),
-                                     counts.Redrawn, counts.TakenAhead, counts.Bytes / 1048576.0);
+            std::cout << std::format(
+                "{}: {:.0f} ms after the display opened; renderer {} redrawn, {} taken ahead, {:.1f} MB\n", when,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ProbeBootStarted).count(),
+                counts.Redrawn, counts.TakenAhead, counts.Bytes / 1048576.0);
         }
     }
 
     void ProbeLogisticsTour(MCFirstUseProbe& probe)
     {
+        ProbeClickAt = std::chrono::steady_clock::now();
+        ProbeClickFirst.reset();
+        MCTestGame::OnPresent = []
+        {
+            if (!ProbeClickFirst.has_value())
+            {
+                ProbeClickFirst =
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ProbeClickAt).count();
+            }
+        };
+
         probe.Step("to briefing (call)", [] { NewCampaign(); });
+        ProbeClickInCall = ProbeClickFirst.has_value();
         probe.Run("to briefing", 60);
+        PrintProbeClick();
+        PrintProbeClick();
         PrintSharpCounts("briefing up");
         probe.Step("purchase (first, call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
         probe.Run("purchase (first)", 90);
@@ -19103,8 +19159,21 @@ TEST_CASE_ISOLATED("probe: first use, the shop and back from a mission")
     REQUIRE(MCTestGame::StartLogistics());
     MCFirstUseProbe probe;
     probe.Run("main menu", 60);
+    ProbeClickAt = std::chrono::steady_clock::now();
+    ProbeClickFirst.reset();
+    MCTestGame::OnPresent = []
+    {
+        if (!ProbeClickFirst.has_value())
+        {
+            ProbeClickFirst =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ProbeClickAt).count();
+        }
+    };
+
     probe.Step("to briefing (call)", [] { NewCampaign(); });
+    ProbeClickInCall = ProbeClickFirst.has_value();
     probe.Run("to briefing", 90);
+    PrintProbeClick();
     probe.Step("purchase (call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
     probe.Run("purchase", 90);
     probe.Run("purchase idle", 60);
@@ -19158,6 +19227,7 @@ TEST_CASE_ISOLATED("probe: first use, the shop and back from a mission")
         logistics->DeploySlots[0][0].Unit = 0;
         mech->Deployed = true;
     }
+
     Mission()->StartScenario(Mission()->Scenarios[0]);
 
     for (int32_t frame = 0; frame < 3000; frame++)
@@ -19201,10 +19271,10 @@ namespace
     void ProbeCache(std::string_view when)
     {
         constexpr double Megabyte = 1048576.0;
-        const std::string line = std::format("cache {}: {:.1f} MB kept of {:.0f} MB, {} frames read so far", when,
-                                             static_cast<double>(MCHdArt::CachedBytes()) / Megabyte,
-                                             static_cast<double>(MCHdArt::CacheBudget()) / Megabyte,
-                                             MCHdArt::FramesRead());
+        const std::string line =
+            std::format("cache {}: {:.1f} MB kept of {:.0f} MB, {} frames read so far", when,
+                        static_cast<double>(MCHdArt::CachedBytes()) / Megabyte,
+                        static_cast<double>(MCHdArt::CacheBudget()) / Megabyte, MCHdArt::FramesRead());
         std::cout << line << "\n";
         MCFrameLog::Note("probe: " + line);
     }
@@ -19259,8 +19329,21 @@ TEST_CASE_ISOLATED("probe: first use, a real mission and back")
     MCFirstUseProbe probe;
     probe.Run("main menu", 60);
     ProbeCache("main menu");
+    ProbeClickAt = std::chrono::steady_clock::now();
+    ProbeClickFirst.reset();
+    MCTestGame::OnPresent = []
+    {
+        if (!ProbeClickFirst.has_value())
+        {
+            ProbeClickFirst =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ProbeClickAt).count();
+        }
+    };
+
     probe.Step("to briefing (call)", [] { NewCampaign(); });
+    ProbeClickInCall = ProbeClickFirst.has_value();
     probe.Run("to briefing", 90);
+    PrintProbeClick();
     probe.Step("purchase (call)", [] { GlobalLog()->SetUpPurchaseScreen(true); });
     probe.Run("purchase", 90);
     ProbeShopTabs(probe, "before");
@@ -19340,12 +19423,14 @@ TEST_CASE_ISOLATED("probe: first use, a real mission and back")
 
     if (match)
     {
-        std::cout << std::format("back (match): mission state {}, screen is main {}\n", std::to_underlying(Mission()->State),
+        std::cout << std::format("back (match): mission state {}, screen is main {}\n",
+                                 std::to_underlying(Mission()->State),
                                  GlobalLog() != nullptr && GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
         PrintProbe(probe);
         MCFrameLog::Close();
         return;
     }
+
     std::cout << std::format("back ({}): mission {}, mission state {}, screen is briefing {}\n", won ? "won" : "lost",
                              GlobalLog()->CurrentMission, std::to_underlying(Mission()->State),
                              GlobalLog() != nullptr && GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
@@ -19381,15 +19466,17 @@ TEST_CASE_ISOLATED("probe: first use, mission 1")
         GHdArt = 1;
         MCHdArt::SetPackFolder(packFolder);
     };
+
     const auto started = std::chrono::steady_clock::now();
     const size_t readsBefore = MCHdArt::FramesRead();
     REQUIRE(MCTestGame::StartMission(1));
     REQUIRE(MCHdArt::Active());
-    std::cout << std::format("load {:.0f} ms, {} HD frames first used, {:.0f} ms reading, {:.0f} MB kept\n",
-                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
-                             MCHdArt::FramesRead() - readsBefore,
-                             std::chrono::duration<double, std::milli>(MCHdArt::ReadTime()).count(),
-                             MCHdArt::CachedBytes() / 1048576.0);
+    std::cout << std::format(
+        "load {:.0f} ms, {} HD frames first used, {:.0f} ms reading, {:.0f} MB kept\n",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+        MCHdArt::FramesRead() - readsBefore, std::chrono::duration<double, std::milli>(MCHdArt::ReadTime()).count(),
+        MCHdArt::CachedBytes() / 1048576.0);
+
     if (const std::optional<std::string_view> log = MCTest::Option("probe-log"); log.has_value())
     {
         REQUIRE(MCFrameLog::Open(std::filesystem::path(*log)));
@@ -19441,28 +19528,69 @@ TEST_CASE_ISOLATED("probe: sharp sizes")
             {
                 const auto at = static_cast<uint32_t>(MCRead32(data, 0x10 + static_cast<size_t>(c) * 4));
                 const int32_t pitch = MCRead32(data, at);
-                if (pitch <= 0 || height <= 0) continue;
+
+                if (pitch <= 0 || height <= 0)
+                {
+                    continue;
+                }
+
                 const std::span<const uint8_t> glyph = data.subspan(at + 4, static_cast<size_t>(pitch) * height);
-                uint64_t key = 1469598103934665603ull ^ (static_cast<uint64_t>(pitch) << 32 | static_cast<uint64_t>(height)); for (auto b : glyph) key = (key ^ b) * 1099511628211ull;
+                uint64_t key =
+                    1469598103934665603ull ^ (static_cast<uint64_t>(pitch) << 32 | static_cast<uint64_t>(height));
+
+                for (auto b : glyph)
+                {
+                    key = (key ^ b) * 1099511628211ull;
+                }
+
                 const bool layered = MCSharpText::Layered(glyph, pitch, pitch, height);
                 std::optional<MCSharpText::MCGlyphLayers> layers;
-                if (layered) { layers = MCSharpText::LayersOf(glyph, pitch, pitch, height, fontLayers); for (auto b : layers->Bytes) key = key * 31 + b; }
-                if (!keys.insert(key).second) continue;
+
+                if (layered)
+                {
+                    layers = MCSharpText::LayersOf(glyph, pitch, pitch, height, fontLayers);
+
+                    for (auto b : layers->Bytes)
+                    {
+                        key = key * 31 + b;
+                    }
+                }
+
+                if (!keys.insert(key).second)
+                {
+                    continue;
+                }
+
                 ++glyphs;
                 const bool ink = std::ranges::any_of(glyph, [](uint8_t b) { return b != MCSharpText::NoInk; });
                 blank += ink ? 0 : 1;
                 const auto t = std::chrono::steady_clock::now();
-                const auto made = layered ? MCSharpText::RedrawLayers(glyph, pitch, pitch, height, *layers) : std::vector<std::vector<uint8_t>>{MCSharpText::Redraw(glyph, pitch, pitch, height)};
+                const auto made =
+                    layered ? MCSharpText::RedrawLayers(glyph, pitch, pitch, height, *layers)
+                            : std::vector<std::vector<uint8_t>>{MCSharpText::Redraw(glyph, pitch, pitch, height)};
                 ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
-                size_t b = 0; for (const auto& l : made) b += l.size();
-                layersTotal += made.size(); bytes += b;
-                if (c >= 32 && c < 127) { ++printable; printableBytes += b; }
+                size_t b = 0;
+
+                for (const auto& l : made)
+                {
+                    b += l.size();
+                }
+
+                layersTotal += made.size();
+                bytes += b;
+
+                if (c >= 32 && c < 127)
+                {
+                    ++printable;
+                    printableBytes += b;
+                }
             }
         }
     }
 
-    std::cout << std::format("fonts {}: glyphs {} (blank {}), layers {}, {:.1f} MB, {:.0f} ms; printable {} {:.1f} MB\n",
-                             seen.size(), glyphs, blank, layersTotal, bytes / 1048576.0, ms, printable, printableBytes / 1048576.0);
+    std::cout << std::format(
+        "fonts {}: glyphs {} (blank {}), layers {}, {:.1f} MB, {:.0f} ms; printable {} {:.1f} MB\n", seen.size(),
+        glyphs, blank, layersTotal, bytes / 1048576.0, ms, printable, printableBytes / 1048576.0);
 }
 
 // PROBE (first-use), never commit: the textures alive once logistics starts, and the HD pictures the pack has for them.
@@ -19488,21 +19616,40 @@ TEST_CASE_ISOLATED("probe: textures at start")
 
     for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
     {
-        if (texture == nullptr) continue;
+        if (texture == nullptr)
+        {
+            continue;
+        }
+
         ++textures;
         uses[static_cast<int>(texture->Use)]++;
-        if (texture->Pixels.empty() || texture->CpuStale) continue;
+
+        if (texture->Pixels.empty() || texture->CpuStale)
+        {
+            continue;
+        }
+
         ++hashed;
         auto t = std::chrono::steady_clock::now();
         const uint64_t hash = MCHdArt::PictureHash(texture->Pixels, texture->Width, texture->Height);
         hashMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
-                t = std::chrono::steady_clock::now();
+        t = std::chrono::steady_clock::now();
         const auto frame = MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
         readMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
         static std::set<uint64_t> uniq;
-        if (frame != nullptr && uniq.insert(hash).second) { ++found; bytes += frame->Bytes(); }
+
+        if (frame != nullptr && uniq.insert(hash).second)
+        {
+            ++found;
+            bytes += frame->Bytes();
+        }
     }
 
-    std::cout << std::format("textures {}, hashed {} ({:.1f} ms), with HD {} ({:.1f} MB, {:.1f} ms reading)\n", textures, hashed, hashMs, found, bytes / 1048576.0, readMs);
-    for (auto [u, n] : uses) std::cout << std::format("  use {}: {}\n", u, n);
+    std::cout << std::format("textures {}, hashed {} ({:.1f} ms), with HD {} ({:.1f} MB, {:.1f} ms reading)\n",
+                             textures, hashed, hashMs, found, bytes / 1048576.0, readMs);
+
+    for (auto [u, n] : uses)
+    {
+        std::cout << std::format("  use {}: {}\n", u, n);
+    }
 }

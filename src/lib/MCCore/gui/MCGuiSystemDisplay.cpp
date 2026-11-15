@@ -374,12 +374,60 @@ auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> 
     struct ProbeFadeNote
     {
         std::chrono::steady_clock::time_point Start;
+        std::chrono::steady_clock::time_point LastPresent{};
+        int LastLevel = 0;
+        int Steps = 0;
+        double FirstMs = -1;
+        double LitWorst = 0;
+        int LitLevel = 0;
+        double DarkWorst = 0;
+        int DarkLevel = 0;
+        int WorkFrom = 0;
+        size_t Pieces = 0;
+
+        void Presented(int level)
+        {
+            const auto now = std::chrono::steady_clock::now();
+
+            if (Steps == 0)
+            {
+                FirstMs = std::chrono::duration<double, std::milli>(now - Start).count();
+            }
+            else
+            {
+                const double ms = std::chrono::duration<double, std::milli>(now - LastPresent).count();
+
+                if (LastLevel < MCGuiSystem::FadeNearBlack && ms > LitWorst)
+                {
+                    LitWorst = ms;
+                    LitLevel = LastLevel;
+                }
+                else if (LastLevel >= MCGuiSystem::FadeNearBlack && ms > DarkWorst)
+                {
+                    DarkWorst = ms;
+                    DarkLevel = LastLevel;
+                }
+            }
+
+            LastPresent = now;
+            LastLevel = level;
+            Steps++;
+        }
+
         ~ProbeFadeNote()
         {
-            MCFrameLog::Note(std::format("probe: fade {:.0f} ms",
-                                         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count()));
+            const auto now = std::chrono::steady_clock::now();
+            const double afterLast =
+                Steps > 0 ? std::chrono::duration<double, std::milli>(now - LastPresent).count() : 0.0;
+            MCFrameLog::Note(std::format(
+                "probe: fade {:.0f} ms, {} pieces from level {}, {} steps, first present {:.1f} ms, longest lit step "
+                "{:.1f} ms (at level {}), longest dark step {:.1f} ms (at level {}), after the last present {:.1f} ms",
+                std::chrono::duration<double, std::milli>(now - Start).count(), Pieces, WorkFrom, Steps, FirstMs,
+                LitWorst, LitLevel, DarkWorst, DarkLevel, afterLast));
         }
     } probeFadeNote{probeFadeStart};
+    probeFadeNote.WorkFrom = workFrom;
+    probeFadeNote.Pieces = whileFading.size();
 
     // Darkens the screen by a step that follows the time each step took (256 levels a second), waiting at least
     // 1/256 s a step, until 256 levels are gone. The original took each step off palette entries 10..245; the port
@@ -396,6 +444,7 @@ auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> 
         faded += step;
         _Display->SetFade(faded);
         std::ignore = _Display->Present();
+        probeFadeNote.Presented(faded);
 
         // Port-only: a piece of the work given each step once it's shown, in the step's time, from its level on.
         if (piece < whileFading.size() && faded >= workFrom)

@@ -26,35 +26,42 @@ namespace MCProbeIo
                 ++count;
             }
         }
+
         ~Timer()
         {
             if (On)
             {
-                Ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - Start).count();
+                Ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - Start)
+                          .count();
             }
         }
     };
+
     struct Snap
     {
         int64_t V[14];
         std::chrono::steady_clock::time_point At;
     };
+
     inline Snap Take()
     {
-        return {{OpenNs.load(), Opens.load(), DiskReadNs.load(), DiskReads.load(), TgaNs.load(), Tgas.load(), FitNs.load(),
-                 Fits.load(), FstNs.load(), Fsts.load(), ResolveNs.load(), Resolves.load(), TakeNs.load(), Takes.load()},
+        return {{OpenNs.load(), Opens.load(), DiskReadNs.load(), DiskReads.load(), TgaNs.load(), Tgas.load(),
+                 FitNs.load(), Fits.load(), FstNs.load(), Fsts.load(), ResolveNs.load(), Resolves.load(), TakeNs.load(),
+                 Takes.load()},
                 std::chrono::steady_clock::now()};
     }
+
     inline std::string Since(const Snap& from)
     {
         const Snap now = Take();
         const auto ms = [&](int i) { return static_cast<double>(now.V[i] - from.V[i]) / 1e6; };
         const auto n = [&](int i) { return now.V[i] - from.V[i]; };
-        return std::format("{:.2f} ms in all; opens {} {:.2f} ms (ahead looked {} {:.2f} ms, resolve and disk {} {:.2f} ms, archive reads {} {:.2f} ms), disk reads {} {:.2f} ms, art {} {:.2f} ms, fit {} {:.2f} ms",
-                           std::chrono::duration<double, std::milli>(now.At - from.At).count(), n(1), ms(0), now.V[13] - from.V[13],
-                           (now.V[12] - from.V[12]) / 1e6, now.V[11] - from.V[11],
-                           (now.V[10] - from.V[10]) / 1e6, now.V[9] - from.V[9], (now.V[8] - from.V[8]) / 1e6, n(3), ms(2),
-                           n(5), ms(4), n(7), ms(6));
+        return std::format(
+            "{:.2f} ms in all; opens {} {:.2f} ms (ahead looked {} {:.2f} ms, resolve and disk {} {:.2f} ms, archive "
+            "reads {} {:.2f} ms), disk reads {} {:.2f} ms, art {} {:.2f} ms, fit {} {:.2f} ms",
+            std::chrono::duration<double, std::milli>(now.At - from.At).count(), n(1), ms(0), now.V[13] - from.V[13],
+            (now.V[12] - from.V[12]) / 1e6, now.V[11] - from.V[11], (now.V[10] - from.V[10]) / 1e6,
+            now.V[9] - from.V[9], (now.V[8] - from.V[8]) / 1e6, n(3), ms(2), n(5), ms(4), n(7), ms(6));
     }
 }
 

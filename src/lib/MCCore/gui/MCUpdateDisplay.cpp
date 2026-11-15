@@ -317,6 +317,7 @@ namespace
             ScreenWindow()->Child(i)->Display();
             const double childMs =
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - childStart).count();
+
             if (childMs > 0.5)
             {
                 const MCGuiObject& probeChild = *ScreenWindow()->Child(i);
@@ -430,7 +431,8 @@ namespace
 
                         // A tab past the four (none is) readied only as shown. PROBE A/B: MC_PROBE_NOTABS readies only
                         // the tab shown, as before piece 3.
-                        if (slid >= screens.size() || ((shown < 0 || shown >= MCLogistics::InventoryTabs) && step > 0) ||
+                        if (slid >= screens.size() ||
+                            ((shown < 0 || shown >= MCLogistics::InventoryTabs) && step > 0) ||
                             (step > 0 && std::getenv("MC_PROBE_NOTABS") != nullptr))
                         {
                             return;
@@ -485,11 +487,11 @@ bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
             screen.Display();
             screen.ShowGuiWindow(false);
         });
-    MCFrameLog::Note(std::format(
-        "probe: hidden {} tab {} readied: set-up {:.2f} ms, rehearsal {:.2f} ms", typeid(screen).name(),
-        GlobalLog() != nullptr ? GlobalLog()->CurrentInvTab : -1,
-        std::chrono::duration<double, std::milli>(probeSetUp - probeStart).count(),
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeSetUp).count()));
+    MCFrameLog::Note(
+        std::format("probe: hidden {} tab {} readied: set-up {:.2f} ms, rehearsal {:.2f} ms", typeid(screen).name(),
+                    GlobalLog() != nullptr ? GlobalLog()->CurrentInvTab : -1,
+                    std::chrono::duration<double, std::milli>(probeSetUp - probeStart).count(),
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeSetUp).count()));
     return true;
 }
 
@@ -542,7 +544,9 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     // FadeOutWhile's did them already.
     if (!gui.PendingPalette.empty())
     {
-        gui.FadeDownCurrentPalette(IntoScreenPieces(), MCGuiSystem::FadeNearBlack);
+        // PROBE A/B: MC_PROBE_OLDFADE, the pieces from the fade's start (release 9's).
+        gui.FadeDownCurrentPalette(IntoScreenPieces(),
+                                   std::getenv("MC_PROBE_OLDFADE") != nullptr ? 0 : MCGuiSystem::FadeNearBlack);
     }
 
     std::scoped_lock lock(MouseCritSec);

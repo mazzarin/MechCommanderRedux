@@ -23,10 +23,14 @@ auto LogArt(std::string_view fileName) -> std::shared_ptr<MCLogPort>
 
     auto art = std::make_shared<MCLogPort>();
     art->Load(name);
+
     if (const std::shared_ptr<MCTexture> probeTexture = art->Bitmap().Texture.lock(); probeTexture != nullptr)
     {
-        MCFrameLog::Note(std::format("probe: art {} hash {:016x}", name, MCHdArt::PictureHash(probeTexture->Pixels, probeTexture->Width, probeTexture->Height)));
+        MCFrameLog::Note(
+            std::format("probe: art {} hash {:016x}", name,
+                        MCHdArt::PictureHash(probeTexture->Pixels, probeTexture->Width, probeTexture->Height)));
     }
+
     return LoadedArt.emplace(name, std::move(art)).first->second;
 }
 

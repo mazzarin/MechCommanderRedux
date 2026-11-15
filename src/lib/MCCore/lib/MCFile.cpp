@@ -141,7 +141,13 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
             MCFilesAhead::Looked(_FileName);
         }
 
-        if (auto entry = [&] { const MCProbeIo::Timer t(MCProbeIo::FstNs, MCProbeIo::Fsts); return MCGameContext::Current().FastFiles().Read(_FileName); }(); entry.has_value())
+        if (auto entry =
+                [&]
+            {
+                const MCProbeIo::Timer t(MCProbeIo::FstNs, MCProbeIo::Fsts);
+                return MCGameContext::Current().FastFiles().Read(_FileName);
+            }();
+            entry.has_value())
         {
             return inRam(std::move(*entry));
         }

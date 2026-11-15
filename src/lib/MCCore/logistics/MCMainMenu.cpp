@@ -35,6 +35,13 @@ namespace
         // Port-only: the campaign started and its briefing set up in the fade from the click once the screen is nearly
         // black, then what the fade into the briefing does (FadeOutWhile), where the main menu sat frozen for it before
         // its fade began (64-65 ms on the A10, 18-38 on the M4 Pro). Betty's line and the music's stop at the click.
+        // PROBE A/B: MC_PROBE_OLDFADE, the campaign started at the click, before its fade (release 9's).
+        if (std::getenv("MC_PROBE_OLDFADE") != nullptr)
+        {
+            BeginCampaign(campaign, startFile, firstPlanet);
+            return;
+        }
+
         FadeOutWhile([&] { BeginCampaign(campaign, startFile, firstPlanet); });
     }
 }

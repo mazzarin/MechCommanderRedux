@@ -1012,6 +1012,7 @@ TEST_CASE_ISOLATED("probe: sharp maker time")
                static_cast<double>(use.ru_utime.tv_usec + use.ru_stime.tv_usec) / 1000.0;
 #endif
     };
+
     const auto now = [] { return std::chrono::steady_clock::now(); };
     const auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
     std::set<const MCGuiFont*> fonts;

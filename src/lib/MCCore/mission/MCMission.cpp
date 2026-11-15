@@ -944,6 +944,7 @@ auto MCMission::CloseResultsScreen() -> void
 {
     MCProbeIo::GameThread = std::this_thread::get_id();
     const MCProbeIo::Snap probeClose = MCProbeIo::Take();
+
     if (ResultsScreen == nullptr)
     {
         return;
@@ -1039,8 +1040,9 @@ auto MCMission::CloseResultsScreen() -> void
         const auto probeAheadStart = std::chrono::steady_clock::now();
         const std::vector<std::string> probeNoted = MCFilesAhead::Noted();
         MCFilesAhead::ReadAhead(probeNoted, MCGameContext::Current().FastFiles());
-        MCFrameLog::Note(std::format("probe: {} files read ahead from the click, asked in {:.2f} ms", probeNoted.size(),
-                                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeAheadStart).count()));
+        MCFrameLog::Note(std::format(
+            "probe: {} files read ahead from the click, asked in {:.2f} ms", probeNoted.size(),
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeAheadStart).count()));
     }
 
     // PROBE A/B: MC_PROBE_NOMAPAHEAD leaves the briefing's map out.
@@ -1066,7 +1068,8 @@ auto MCMission::CloseResultsScreen() -> void
     MCFrameLog::Note("probe io: the close, its fade and pieces: " + MCProbeIo::Since(probeClose));
     extern std::atomic<double> ProbeFilesAheadMs;
     extern std::atomic<size_t> ProbeFilesAheadBytes;
-    MCFrameLog::Note(std::format("probe: {} files taken read ahead in all, {} held at the fade's end; the reads took {:.1f} ms from the ask, {:.1f} MB kept",
+    MCFrameLog::Note(std::format("probe: {} files taken read ahead in all, {} held at the fade's end; the reads took "
+                                 "{:.1f} ms from the ask, {:.1f} MB kept",
                                  MCFilesAhead::TakenCount(), MCFilesAhead::HeldCount(), ProbeFilesAheadMs.load(),
                                  static_cast<double>(ProbeFilesAheadBytes.load()) / (1024.0 * 1024.0)));
 }
@@ -1140,7 +1143,11 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
     // (MCX.EXE worked out the resource points here and threw them away: the results screen already counted them.)
     if (Scenario() != nullptr)
     {
-        { const MCFrameLog::Scope probeUnload("probe.back.unload"); Scenario()->Unload(); }
+        {
+            const MCFrameLog::Scope probeUnload("probe.back.unload");
+            Scenario()->Unload();
+        }
+
         MCGameContext::Current().SetScenario(nullptr);
     }
 
@@ -1236,12 +1243,14 @@ auto MCMission::BackToLogistics() -> void
             logistics.LoadCampaign(startName, extension, replay, false);
             MCFrameLog::Note("probe io: LoadCampaign: " + MCProbeIo::Since(io));
         }
+
         {
             const MCFrameLog::Scope probeBriefing("probe.back.briefing");
             const MCProbeIo::Snap io = MCProbeIo::Take();
             logistics.SetUpBriefingScreen(false);
             MCFrameLog::Note("probe io: SetUpBriefingScreen: " + MCProbeIo::Since(io));
         }
+
         const MCFrameLog::Scope probeShow("probe.back.show");
         logistics.ShowLogScreen(true, false);
         return;

@@ -1924,11 +1924,14 @@ namespace
                 return ReadOrTake(key, width, height, cached.Id);
             }();
             state.ReadTime += std::chrono::steady_clock::now() - started;
-            if (state.Folders.at(key.Folder).Names == Naming::Hash && state.Folders.at(key.Folder).Path.filename() == PictureFolder)
+
+            if (state.Folders.at(key.Folder).Names == Naming::Hash &&
+                state.Folders.at(key.Folder).Path.filename() == PictureFolder)
             {
-                MCFrameLog::Note(std::format("probe: hd read {:016x} {:.2f} ms {}", key.Name,
-                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
-                        read && *read != nullptr ? "found" : "none"));
+                MCFrameLog::Note(std::format(
+                    "probe: hd read {:016x} {:.2f} ms {}", key.Name,
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+                    read && *read != nullptr ? "found" : "none"));
             }
 
             if (!read)
@@ -3550,8 +3553,8 @@ std::string MCHdArt::ProbeAttached()
     for (const auto& [kind, tally] : kinds)
     {
         out += std::format("  {}: {} shapes, {} frames (with in-betweens), {:.1f} MB unpacked{}\n", kind, tally.Folders,
-                            tally.Frames, tally.Bytes / 1048576.0,
-                            tally.Unarchived > 0 ? std::format(" ({} not looked up yet)", tally.Unarchived) : "");
+                           tally.Frames, tally.Bytes / 1048576.0,
+                           tally.Unarchived > 0 ? std::format(" ({} not looked up yet)", tally.Unarchived) : "");
     }
 
     return out;

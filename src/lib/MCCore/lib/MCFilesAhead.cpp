@@ -291,7 +291,8 @@ void MCFilesAhead::ReadAhead(std::vector<std::string> gamePaths, MCFastFileSet& 
     }
 
     state.Reader = std::jthread(
-        [paths = std::move(gamePaths), &archives, probeStart = std::chrono::steady_clock::now()](const std::stop_token& stop) mutable
+        [paths = std::move(gamePaths), &archives,
+         probeStart = std::chrono::steady_clock::now()](const std::stop_token& stop) mutable
         {
             // Each file claims its room as it's read: past MostBytes in all, the rest are left to their opens.
             std::atomic<size_t> room = MostBytes;
@@ -314,7 +315,8 @@ void MCFilesAhead::ReadAhead(std::vector<std::string> gamePaths, MCFastFileSet& 
             std::scoped_lock lock(state.Lock);
             state.Pending.clear();
             state.Read.notify_all();
-            ProbeFilesAheadMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count();
+            ProbeFilesAheadMs =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count();
             ProbeFilesAheadBytes = MostBytes - room.load();
         });
 }

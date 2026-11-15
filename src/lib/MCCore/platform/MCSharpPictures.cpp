@@ -352,7 +352,9 @@ namespace
 
         if (!probeLines)
         {
-            ProbeGlyphPlanNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - probePlanStart).count();
+            ProbeGlyphPlanNs +=
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - probePlanStart)
+                    .count();
         }
 
         std::vector<uint64_t> claimed;
@@ -411,7 +413,9 @@ namespace
                 }
             }
 
-            const int64_t probeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - probeMakeStart).count();
+            const int64_t probeNs =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - probeMakeStart)
+                    .count();
 
             if (probeLines)
             {
@@ -583,6 +587,7 @@ namespace
     void Queue(State& state, Job&& job, std::optional<std::filesystem::path> pack)
     {
         state.PackPath = std::move(pack);
+
         // PROBE
         if (ProbeQueued == std::chrono::steady_clock::time_point{})
         {
@@ -960,12 +965,21 @@ std::string MCSharpPictures::ProbeTimes(std::chrono::steady_clock::time_point fr
     State& state = TheState();
     std::scoped_lock lock(state.Lock);
     const auto ms = [&](std::chrono::steady_clock::time_point at)
-    { return at == std::chrono::steady_clock::time_point{} ? -1.0 : std::chrono::duration<double, std::milli>(at - from).count(); };
-    return std::format("maker: first queued at {:.0f} ms, queue dry at {:.0f} ms ({:.0f} ms making), {} batches, {} glyphs {} pictures; "
-                       "glyphs' helpers {:.0f} ms making, {:.0f} ms planning; line art {} jobs, {} drawings, {} left, {:.0f} ms making ({:.1f} Mpx), "
+    {
+        return at == std::chrono::steady_clock::time_point{}
+                   ? -1.0
+                   : std::chrono::duration<double, std::milli>(at - from).count();
+    };
+
+    return std::format("maker: first queued at {:.0f} ms, queue dry at {:.0f} ms ({:.0f} ms making), {} batches, {} "
+                       "glyphs {} pictures; "
+                       "glyphs' helpers {:.0f} ms making, {:.0f} ms planning; line art {} jobs, {} drawings, {} left, "
+                       "{:.0f} ms making ({:.1f} Mpx), "
                        "its last span {:.0f} ms (queued at {:.0f}); from the pack {} of {}",
-                       ms(ProbeQueued), ms(ProbeDone), ms(ProbeDone) - ms(ProbeQueued), ProbeBatches, state.Tally.Glyphs,
-                       state.Tally.GlyphPictures, ProbeGlyphNs.load() / 1e6, ProbeGlyphPlanNs.load() / 1e6, ProbeLinesJobs.load(),
-                       state.Tally.Drawings, state.Tally.DrawingsLeft, ProbeLinesNs.load() / 1e6, ProbeLinesPixels.load() / 1e6,
-                       ms(ProbeLinesDone) - ms(ProbeLinesQueued), ms(ProbeLinesQueued), state.Tally.FromPack, state.Tally.PackPictures);
+                       ms(ProbeQueued), ms(ProbeDone), ms(ProbeDone) - ms(ProbeQueued), ProbeBatches,
+                       state.Tally.Glyphs, state.Tally.GlyphPictures, ProbeGlyphNs.load() / 1e6,
+                       ProbeGlyphPlanNs.load() / 1e6, ProbeLinesJobs.load(), state.Tally.Drawings,
+                       state.Tally.DrawingsLeft, ProbeLinesNs.load() / 1e6, ProbeLinesPixels.load() / 1e6,
+                       ms(ProbeLinesDone) - ms(ProbeLinesQueued), ms(ProbeLinesQueued), state.Tally.FromPack,
+                       state.Tally.PackPictures);
 }

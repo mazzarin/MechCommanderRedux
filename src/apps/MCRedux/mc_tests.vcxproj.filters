@@ -377,6 +377,9 @@
     <ClInclude Include="tests\fakes\MCServiceScript.h">
       <Filter>tests\fakes</Filter>
     </ClInclude>
+    <ClInclude Include="tests\fixtures\MCPakBytes.h">
+      <Filter>tests\fixtures</Filter>
+    </ClInclude>
     <ClInclude Include="tests\fixtures\MCRegisteredData.h">
       <Filter>tests\fixtures</Filter>
     </ClInclude>

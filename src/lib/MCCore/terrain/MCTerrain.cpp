@@ -14,6 +14,7 @@
 #include "object/MCObjectBlockManager.h"
 #include "object/MCForces.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCMapBlockManager.h"
@@ -270,7 +271,8 @@ auto MCTerrain::Load(std::string_view fileName) -> std::expected<void, std::stri
     }
 
     Tiles = std::move(*tiles);
-    Tiles->Preload(fileName);
+    // The tiles the .pre lists, read with the map's below.
+    std::vector<int32_t> tilesAhead = Tiles->PreloadSlots(fileName);
 
     const auto flagSide = static_cast<uint32_t>(BlocksMapSide * VerticesBlockSide);
     ISVisibleBits = std::make_unique<MCByteFlag>(flagSide, flagSide, false);
@@ -291,6 +293,19 @@ auto MCTerrain::Load(std::string_view fileName) -> std::expected<void, std::stri
 
     MapBlocks = std::move(*blocks);
     MapTopLeft3d100.Z = MapBlocks->GetTopLeftElevation();
+    // Port: the original's tiles, the .pre's first, then every one the map's vertices name, read now in a few large
+    // reads, not one at a time on the game's thread as the ground is first put up or drawn.
+    const auto tilesStart = std::chrono::steady_clock::now();
+    const std::vector<int32_t> tilesUsed = MapBlocks->TilesUsed();
+    tilesAhead.insert(tilesAhead.end(), tilesUsed.begin(), tilesUsed.end());
+    const MCTileReads tilesRead = Tiles->ReadTiles(tilesAhead);
+
+    if (MCFrameLog::Enabled())
+    {
+        MCFrameLog::Note(std::format(
+            "original tiles: {} in {} reads, {:.1f} ms", tilesRead.Tiles, tilesRead.Reads,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tilesStart).count()));
+    }
 
     std::expected<std::unique_ptr<MCObjectBlockManager>, std::string> objectBlocks =
         MCObjectBlockManager::Create(fileName);

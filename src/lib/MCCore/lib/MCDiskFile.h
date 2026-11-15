@@ -56,6 +56,14 @@ public:
     static constexpr size_t MostFillBytes = 256u * 1024u;
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md): the most bytes one read of a file's neighbouring pieces takes (HD art's readers'
+    /// reads of an archive's entries, a packet file's batch of packets), and the widest gap between two pieces one read
+    /// takes both across (read and thrown away: a read saved costs a slow disk more than this many bytes do).
+    /// </summary>
+    static constexpr uint64_t RunMostBytes = 1024u * 1024u;
+    static constexpr uint64_t RunGapBytes = 64u * 1024u;
+
+    /// <summary>
     /// Opens <paramref name="path"/>, reading as <paramref name="reads"/> says, shared for reading and writing with other
     /// handles (as MSVC's streams).
     /// </summary>

@@ -2,6 +2,7 @@
 #include "lib/MCPacketFile.h"
 #include "lib/MCFatal.h"
 #include "lib/MCLz.h"
+#include "lib/MCWorkers.h"
 
 namespace
 {
@@ -12,6 +13,10 @@ namespace
     constexpr int32_t PacketOutOfRange = static_cast<int32_t>(0xBADF0004);
     constexpr int32_t BadPacketVersion = static_cast<int32_t>(0xBADF0004);
     constexpr int32_t PacketWrongStorage = static_cast<int32_t>(0xBADF000B);
+    /// <summary>An LZ packet's unpacked size, before its LZ data.</summary>
+    constexpr int64_t UnpackedSizeBytes = sizeof(int32_t);
+    /// <summary>Issue #25: the most a byte of LZ data unpacks to (a 12-bit code's string is at most 4096 bytes).</summary>
+    constexpr int64_t MostUnpackedPerByte = 4096;
 
     /// <summary>The table as the bytes a file holds.</summary>
     std::span<uint8_t> TableBytes(std::vector<uint32_t>& table)
@@ -189,6 +194,12 @@ int32_t MCPacketFile::ReadPacketOffset(int32_t packet) const
     return ReadPacketOffset(packet, storage);
 }
 
+int64_t MCPacketFile::MostUnpacked(int64_t storedSize) const
+{
+    const int64_t lzMost = std::max<int64_t>(storedSize - UnpackedSizeBytes, 0) * MostUnpackedPerByte;
+    return _MostUnpacked > 0 ? std::min<int64_t>(lzMost, _MostUnpacked) : lzMost;
+}
+
 int32_t MCPacketFile::ReadPacket(int32_t packet, std::span<uint8_t> buffer)
 {
     CloseIfOrphaned();
@@ -259,8 +270,7 @@ int32_t MCPacketFile::SeekPacket(int32_t packet)
     if (_FileMode == MCFileMode::Read)
     {
         const auto length = static_cast<int64_t>(GetLength());
-        const int64_t lzMost = std::max<int64_t>(_PacketSize - 4, 0) * 4096;
-        const int64_t maxUnpacked = _MostUnpacked > 0 ? std::min<int64_t>(lzMost, _MostUnpacked) : lzMost;
+        const int64_t maxUnpacked = MostUnpacked(_PacketSize);
 
         if (offset < 0 || next < offset || next > length ||
             (_PacketType == MCPacketStorage::Lzd && (_PacketUnpackedSize < 0 || _PacketUnpackedSize > maxUnpacked)))
@@ -314,6 +324,227 @@ std::vector<uint8_t> MCPacketFile::ReadStoredPackets(int32_t first, int32_t coun
     Seek(static_cast<int32_t>(start));
     const int32_t read = Read(std::span(stored).subspan(table));
     return read == end - start ? stored : std::vector<uint8_t>{};
+}
+
+std::optional<MCStoredPacket> MCPacketFile::StoredPacket(int32_t packet) const
+{
+    if (_FileMode != MCFileMode::Read || !IsOpen() || packet < 0 || packet >= _NumPackets || _SeekTable.empty())
+    {
+        return std::nullopt;
+    }
+
+    MCPacketStorage storage = MCPacketStorage::Raw;
+    const int64_t offset = ReadPacketOffset(packet, storage);
+    const int64_t length = _IsChild ? _PhysicalLength : _Length;
+    const int64_t next = packet + 1 == _NumPackets ? length : ReadPacketOffset(packet + 1);
+
+    // SeekPacket's checks; and its success, which a packet at 0 fails (ReadTile then reads the header as it).
+    if (offset <= 0 || next < offset || next > length)
+    {
+        return std::nullopt;
+    }
+
+    switch (storage)
+    {
+        case MCPacketStorage::Raw:
+        case MCPacketStorage::Lzd:
+        case MCPacketStorage::Nul:
+            return MCStoredPacket{.Packet = packet,
+                                  .Offset = static_cast<uint32_t>(offset),
+                                  .Size = static_cast<uint32_t>(next - offset),
+                                  .Storage = storage};
+        default:
+            return std::nullopt;
+    }
+}
+
+std::optional<std::vector<uint8_t>> MCPacketFile::UnpackStored(const MCStoredPacket& stored,
+                                                               std::span<const uint8_t> bytes) const
+{
+    if (stored.Storage == MCPacketStorage::Nul)
+    {
+        return std::vector<uint8_t>{};
+    }
+
+    if (bytes.size() != stored.Size)
+    {
+        return std::nullopt;
+    }
+
+    switch (stored.Storage)
+    {
+        case MCPacketStorage::Raw:
+            return std::vector<uint8_t>(bytes.begin(), bytes.end());
+        case MCPacketStorage::Lzd:
+        {
+            if (std::cmp_less(bytes.size(), UnpackedSizeBytes))
+            {
+                return std::nullopt;
+            }
+
+            int32_t size = 0;
+            std::memcpy(&size, bytes.data(), sizeof(size));
+
+            if (size < 0 || size > MostUnpacked(stored.Size))
+            {
+                return std::nullopt;
+            }
+
+            std::vector<uint8_t> unpacked(static_cast<size_t>(size));
+
+            if (LZDecomp(unpacked, bytes.subspan(UnpackedSizeBytes)) != size)
+            {
+                return std::nullopt;
+            }
+
+            return unpacked;
+        }
+        default:
+            return std::nullopt;
+    }
+}
+
+MCPacketBatch MCPacketFile::ReadPackets(std::span<const int32_t> packets) const
+{
+    MCPacketBatch batch;
+    batch.Packets.resize(packets.size());
+
+    /// <summary>A packet to read: where it lies, where its result goes, and whether it's the one before it again.</summary>
+    struct MCWanted
+    {
+        MCStoredPacket Stored;
+        size_t Asked = 0;
+        bool Again = false;
+    };
+
+    std::vector<MCWanted> wanted;
+
+    for (size_t asked = 0; asked < packets.size(); ++asked)
+    {
+        const std::optional<MCStoredPacket> stored = StoredPacket(packets[asked]);
+
+        // A Nul packet reads as empty, whatever its bytes: none are read for it.
+        if (stored.has_value() && stored->Storage == MCPacketStorage::Nul)
+        {
+            batch.Packets[asked] = UnpackStored(*stored, {});
+        }
+        else if (stored.has_value())
+        {
+            wanted.push_back(MCWanted{.Stored = *stored, .Asked = asked});
+        }
+    }
+
+    std::ranges::sort(wanted, {}, [](const MCWanted& packet)
+                      { return std::tuple(packet.Stored.Offset, packet.Stored.Packet, packet.Asked); });
+
+    for (size_t k = 1; k < wanted.size(); ++k)
+    {
+        wanted[k].Again = wanted[k].Stored.Packet == wanted[k - 1].Stored.Packet;
+    }
+
+    /// <summary>One read: wanted's packets from First, Count of them, the bytes from Start to End.</summary>
+    struct MCRun
+    {
+        size_t First = 0;
+        size_t Count = 0;
+        uint64_t Start = 0;
+        uint64_t End = 0;
+    };
+
+    std::vector<MCRun> runs;
+
+    for (size_t k = 0; k < wanted.size(); ++k)
+    {
+        const uint64_t start = wanted[k].Stored.Offset;
+        const uint64_t end = start + wanted[k].Stored.Size;
+
+        if (!runs.empty())
+        {
+            MCRun& run = runs.back();
+            const uint64_t joined = std::max(run.End, end);
+
+            if (start <= run.End + MCDiskFile::RunGapBytes && joined - run.Start <= MCDiskFile::RunMostBytes)
+            {
+                run.End = joined;
+                ++run.Count;
+                continue;
+            }
+        }
+
+        runs.push_back(MCRun{.First = k, .Count = 1, .Start = start, .End = end});
+    }
+
+    // A reader a thread, opened here (none: every packet the caller's).
+    std::vector<MCFileReader> readers;
+
+    while (readers.size() < std::min(runs.size(), BatchReadsAtOnce))
+    {
+        std::optional<MCFileReader> reader = OpenReader();
+
+        if (!reader.has_value())
+        {
+            break;
+        }
+
+        readers.push_back(std::move(*reader));
+    }
+
+    if (readers.empty())
+    {
+        return batch;
+    }
+
+    std::atomic<size_t> nextRun{0};
+    std::vector<size_t> reads(readers.size(), 0);
+    std::vector<size_t> mostBytes(readers.size(), 0);
+    // The reads wait on the disk, not the cores: as many threads as reads at once, whatever the machine.
+    MCWorkers workers(readers.size() - 1);
+    workers.Run(readers.size(),
+                [&](size_t thread)
+                {
+                    MCFileReader& reader = readers[thread];
+                    std::vector<uint8_t> bytes;
+
+                    for (size_t r = nextRun.fetch_add(1, std::memory_order_relaxed); r < runs.size();
+                         r = nextRun.fetch_add(1, std::memory_order_relaxed))
+                    {
+                        const MCRun& run = runs[r];
+                        bytes.resize(static_cast<size_t>(run.End - run.Start));
+                        size_t got = 0;
+
+                        if (!bytes.empty())
+                        {
+                            got = reader.ReadAt(static_cast<uint32_t>(run.Start), bytes);
+                            ++reads[thread];
+                            mostBytes[thread] = std::max(mostBytes[thread], bytes.size());
+                        }
+
+                        for (size_t k = run.First; k < run.First + run.Count; ++k)
+                        {
+                            const MCWanted& packet = wanted[k];
+                            const uint64_t from = packet.Stored.Offset - run.Start;
+
+                            if (!packet.Again && from + packet.Stored.Size <= got)
+                            {
+                                batch.Packets[packet.Asked] =
+                                    UnpackStored(packet.Stored, std::span(bytes).subspan(static_cast<size_t>(from),
+                                                                                         packet.Stored.Size));
+                            }
+                        }
+                    }
+                });
+
+    for (size_t k = 1; k < wanted.size(); ++k)
+    {
+        if (wanted[k].Again)
+        {
+            batch.Packets[wanted[k].Asked] = batch.Packets[wanted[k - 1].Asked];
+        }
+    }
+
+    batch.Reads = std::accumulate(reads.begin(), reads.end(), size_t{0});
+    batch.MostReadBytes = std::ranges::max(mostBytes);
+    return batch;
 }
 
 void MCPacketFile::Reserve(int32_t count, bool useCheckSum)

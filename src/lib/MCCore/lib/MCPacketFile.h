@@ -21,6 +21,33 @@ enum class MCPacketStorage : uint8_t
     Nul = 7
 };
 
+/// <summary>Port-only: where a packet lies in its file, as stored (<see cref="MCPacketFile::StoredPacket"/>).</summary>
+struct MCStoredPacket
+{
+    /// <summary>The packet's number.</summary>
+    int32_t Packet = 0;
+    /// <summary>Where its bytes start in the file.</summary>
+    uint32_t Offset = 0;
+    /// <summary>Its bytes: to the next packet's start, or the file's end.</summary>
+    uint32_t Size = 0;
+    /// <summary>How it's stored: raw, LZ or Nul.</summary>
+    MCPacketStorage Storage = MCPacketStorage::Raw;
+};
+
+/// <summary>Port-only: what <see cref="MCPacketFile::ReadPackets"/> read.</summary>
+struct MCPacketBatch
+{
+    /// <summary>
+    /// Each packet asked for, in the order asked: its bytes as <see cref="MCPacketFile::ReadPacket"/> gives them (none
+    /// for an empty packet), or nothing (std::nullopt) where the caller must read it itself.
+    /// </summary>
+    std::vector<std::optional<std::vector<uint8_t>>> Packets;
+    /// <summary>The reads of the file made.</summary>
+    size_t Reads = 0;
+    /// <summary>The bytes the largest of them read.</summary>
+    size_t MostReadBytes = 0;
+};
+
 /// <summary>
 /// A file of numbered packets (PAK, MPK, ...): a header, a table of packet offsets whose top 3 bits give each
 /// packet's storage, then the packets, each raw or LZ-packed (preceded by its unpacked size).
@@ -63,6 +90,47 @@ public:
     /// what they hold. Empty when the packets aren't all in the file, in order.
     /// </summary>
     std::vector<uint8_t> ReadStoredPackets(int32_t first, int32_t count);
+
+    /// <summary>Port-only: the most reads <see cref="ReadPackets"/> has under way at once (the disk's queue).</summary>
+    static constexpr size_t BatchReadsAtOnce = 4;
+
+    /// <summary>
+    /// Port-only: where packet <paramref name="packet"/> lies and how it's stored, checked as SeekPacket checks it
+    /// (issue #25).
+    /// </summary>
+    /// <returns>
+    /// None for a packet not in the table, one starting at or before the table's start (SeekPacket fails it), ending
+    /// before it starts or past the file's end, or stored other than raw, LZ or Nul (SeekPacket then keeps the size the
+    /// packet sought before it gave); and for a file not open to read.
+    /// </returns>
+    std::optional<MCStoredPacket> StoredPacket(int32_t packet) const;
+
+    /// <summary>
+    /// Port-only: what ReadPacket gives for the packet <paramref name="stored"/>, from its stored bytes
+    /// <paramref name="bytes"/>: a raw packet's bytes, an LZ packet unpacked to exactly the size it gives, nothing for a
+    /// Nul packet (whatever its bytes) or one of no bytes.
+    /// </summary>
+    /// <returns>
+    /// None (std::nullopt) where ReadPacket's result isn't that: an LZ packet too short to hold its size, one whose size
+    /// SeekPacket refuses (issue #25, <see cref="SetMostUnpacked"/>) or that doesn't unpack to it; and bytes not the
+    /// packet's size.
+    /// </returns>
+    std::optional<std::vector<uint8_t>> UnpackStored(const MCStoredPacket& stored,
+                                                     std::span<const uint8_t> bytes) const;
+
+    /// <summary>
+    /// Port-only: reads the packets <paramref name="packets"/> as ReadPacket does, together: in the order they lie in the
+    /// file, each run of neighbours within MCDiskFile::RunGapBytes of each other in one read of at most
+    /// MCDiskFile::RunMostBytes (a bigger packet read alone; a Nul packet's bytes not read), up to
+    /// <see cref="BatchReadsAtOnce"/> reads at once, each thread on its own reader (<see cref="OpenReader"/>), and each
+    /// packet unpacked on the thread that read it. A packet asked for twice is read once. The file's position and
+    /// current packet stay as they were.
+    /// </summary>
+    /// <returns>
+    /// Each packet's bytes, or none where the caller must read it itself: StoredPacket or UnpackStored refuses it, its
+    /// read came up short, or the file can't be read so (a child, a file written).
+    /// </returns>
+    MCPacketBatch ReadPackets(std::span<const int32_t> packets) const;
 
     /// <summary>
     /// Port-only: refuses (SeekPacket) an LZ packet that claims to unpack to more than <paramref name="bytes"/>, for a
@@ -109,6 +177,11 @@ protected:
     int32_t ReadPacketOffset(int32_t packet, MCPacketStorage& storage) const;
     /// <summary>The offset of packet <paramref name="packet"/>; -1 past the end.</summary>
     int32_t ReadPacketOffset(int32_t packet) const;
+    /// <summary>
+    /// Issue #25: the most an LZ packet of <paramref name="storedSize"/> bytes may unpack to (what its LZ data can make,
+    /// each 12-bit code a string of at most 4096 bytes, or less, <see cref="SetMostUnpacked"/>).
+    /// </summary>
+    int64_t MostUnpacked(int64_t storedSize) const;
 
     int32_t _NumPackets = 0;
     int32_t _CurrentPacket = -1;

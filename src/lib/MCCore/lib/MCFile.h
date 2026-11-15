@@ -33,6 +33,35 @@ enum class MCFileClass : uint8_t
 };
 
 /// <summary>
+/// Port-only: one thread's reader of a file's bytes at any offset (<see cref="MCFile::OpenReader"/>): the file on disk
+/// opened again, on a handle of its own whose each read is one call of the system's (reads through one handle on
+/// Windows wait on each other), or a file in memory's bytes, borrowed.
+/// </summary>
+/// <remarks>Threads: one at a time. A reader of a file in memory lives no longer than its file stays open.</remarks>
+class MCFileReader
+{
+public:
+    /// <summary>Reads up to <paramref name="buffer"/>'s size at <paramref name="offset"/>.</summary>
+    /// <returns>The number of bytes read (fewer at the file's end).</returns>
+    size_t ReadAt(uint32_t offset, std::span<uint8_t> buffer);
+
+    /// <summary>The file's length in bytes.</summary>
+    uint32_t Length() const { return _Length; }
+
+private:
+    friend class MCFile;
+
+    /// <summary>A reader of <paramref name="disk"/>, or else of <paramref name="bytes"/>, of <paramref name="length"/> bytes.</summary>
+    MCFileReader(std::optional<MCDiskFile> disk, std::span<const uint8_t> bytes, uint32_t length);
+
+    /// <summary>The file on disk, opened again for this reader; none for a file in memory.</summary>
+    std::optional<MCDiskFile> _Disk;
+    /// <summary>A file in memory's bytes.</summary>
+    std::span<const uint8_t> _Bytes;
+    uint32_t _Length = 0;
+};
+
+/// <summary>
 /// The game's file: a file on disk, a file read whole into memory (a FastFile entry, a test's in-memory file), or a
 /// "child" window into a parent file (a packet of a <c>PacketFile</c>). Every read of game data goes through it.
 /// </summary>
@@ -152,6 +181,14 @@ public:
     /// <summary>Whether this is an open child of another file.</summary>
     bool IsChild() const { return _IsChild && !Orphaned(); }
 
+    /// <summary>
+    /// Port-only: a reader of this file's bytes for one thread, for reads at once on several (each its own): the file on
+    /// disk opened again by the path it was opened at, read directly, refused unless its length is still this file's; or
+    /// this file's bytes, borrowed, for a file read whole into memory (a FastFile entry, a test's file).
+    /// </summary>
+    /// <returns>The reader, or none for a file not open to read, a child, or a file on disk that can't be opened again.</returns>
+    std::optional<MCFileReader> OpenReader() const;
+
 protected:
     /// <summary>
     /// What a file's child windows read through while the file is open. A file opened from disk holds its disk file
@@ -164,6 +201,8 @@ protected:
         std::optional<MCDiskFile> Disk;
         /// <summary>The parent's state, for a window.</summary>
         std::weak_ptr<OpenState> Parent;
+        /// <summary>Port-only: where the file on disk was opened (<see cref="OpenReader"/> opens it again there).</summary>
+        std::filesystem::path Path;
     };
 
     /// <summary>

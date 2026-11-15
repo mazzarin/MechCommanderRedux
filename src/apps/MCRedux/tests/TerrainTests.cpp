@@ -6,12 +6,16 @@
 #include "object/MCGameObject.h"
 #include "engine/MCByteFlag.h"
 #include "fakes/MCMemoryFileSource.h"
+#include "MCScratchFolder.h"
+#include "fixtures/MCPakBytes.h"
 #include "fixtures/MCTerrainGeometryScope.h"
 #include "fixtures/MCTinyMap.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
+#include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 #include "object/MCObjectBlockManager.h"
 #include "object/MCObjectSystem.h"
 #include "terrain/MCMapBlockManager.h"
@@ -380,6 +384,272 @@ TEST_CASE("terrain: tiles are read from the tile PAKs once, and a missing one st
     CHECK(tiles.Lookup(-1).empty());
     CHECK(tiles.Lookup(4).empty());
     CHECK(tiles.Lookup(2, true).empty());
+}
+
+namespace
+{
+    /// <summary>
+    /// Whether every slot of <paramref name="read"/>, and those just outside the table, is as <paramref name="expected"/>'s:
+    /// read or not, missing or not, the same bytes.
+    /// </summary>
+    void CheckSameSlots(const MCTerrainTiles& read, const MCTerrainTiles& expected)
+    {
+        REQUIRE_EQ(read.NumTiles(), expected.NumTiles());
+
+        for (int32_t slot = -1; slot <= expected.NumTiles() + 1; ++slot)
+        {
+            const MCOptionalRef<const MCTerrainTile> got = read.Slot(slot);
+            const MCOptionalRef<const MCTerrainTile> want = expected.Slot(slot);
+            REQUIRE_EQ(got.has_value(), want.has_value());
+
+            if (want.has_value() && (got->get().Missing != want->get().Missing ||
+                                     !std::ranges::equal(got->get().TileData(), want->get().TileData())))
+            {
+                FAIL_CHECK(std::format("slot {}: missing {} ({} bytes), expected missing {} ({} bytes)", slot,
+                                       got->get().Missing, got->get().TileData().size(), want->get().Missing,
+                                       want->get().TileData().size()));
+            }
+        }
+    }
+
+    /// <summary>
+    /// ReadTile on each slot of <paramref name="slots"/> Lookup would read (in the table or one past it, not read and not
+    /// missing), one at a time in the order listed.
+    /// </summary>
+    void ReadOneAtATime(MCTerrainTiles& tiles, std::span<const int32_t> slots)
+    {
+        for (const int32_t slot : slots)
+        {
+            const MCOptionalRef<const MCTerrainTile> tile = tiles.Slot(slot);
+
+            if (tile.has_value() && !tile->get().Missing && tile->get().TileData().empty())
+            {
+                tiles.ReadTile(slot);
+            }
+        }
+    }
+
+    /// <summary>Slots <paramref name="first"/> to <paramref name="last"/>, either way round.</summary>
+    std::vector<int32_t> SlotsFrom(int32_t first, int32_t last)
+    {
+        std::vector<int32_t> slots;
+
+        for (int32_t slot = first; slot != last + (last >= first ? 1 : -1); slot += last >= first ? 1 : -1)
+        {
+            slots.push_back(slot);
+        }
+
+        return slots;
+    }
+
+    /// <summary>Where a test's tile files are: on disk (the memory source's scratch folder), or in memory.</summary>
+    enum class MCPakPlace : uint8_t
+    {
+        Disk,
+        Memory
+    };
+
+    /// <summary>Puts the file <paramref name="name"/> of <paramref name="bytes"/> where <paramref name="place"/> says.</summary>
+    void PutFile(MCMemoryFileSource& files, MCPakPlace place, std::string_view name, const std::vector<uint8_t>& bytes)
+    {
+        if (place == MCPakPlace::Memory)
+        {
+            files.AddFile(name, bytes);
+            return;
+        }
+
+        MCFile out;
+        REQUIRE_EQ(out.Create(name), NO_ERR);
+        REQUIRE_EQ(out.Write(bytes), static_cast<int32_t>(bytes.size()));
+    }
+}
+
+/// <summary>
+/// Port-only: tiles read together (MCTerrainTiles::ReadTiles, the load's) leave the cache as ReadTile leaves it, read
+/// one at a time in the order listed, slot by slot: from both files, raw, LZ, empty and Nul packets; those the batch
+/// leaves to ReadTile (a packet stored as Fwf, which takes the size of the packet its file sought before; an LZ packet
+/// claiming more than its data could make, or failing to unpack to its size, its block as far as it went; a packet past
+/// the file's end; one past the table) read by it, after the packet ReadTile would have sought last before. Slots listed
+/// twice, negative or two past the table are passed over; a slot read or missing isn't read again. On disk and in memory.
+/// </summary>
+TEST_CASE("terrain: tiles read together leave the cache as ReadTile leaves it, one at a time in the order listed")
+{
+    using namespace MCPakBytes;
+    const std::vector<uint8_t> data = Filled(4000, 50);
+    const auto lzMost = static_cast<int32_t>((Lz(data).Bytes.size() - sizeof(int32_t)) * 4096);
+    // Twelve slots: 0-5 the rotated PAK's packets, 6-11 the normal PAK's (its packets 0-5 never read), 12 one past.
+    const std::vector<uint8_t> rotated =
+        Pak({Lz(Filled(5000, 0)), As(MCPacketStorage::Fwf, Filled(300, 1)), Raw(Filled(2000, 2)),
+             As(MCPacketStorage::Nul, {}), Lz(data, lzMost + 1), Lz(data, static_cast<int32_t>(data.size()) + 50)});
+    std::vector<MCStored> normalPackets;
+
+    for (uint32_t i = 0; i < 6; ++i)
+    {
+        normalPackets.push_back(Raw(Filled(10, 100 + i)));
+    }
+
+    normalPackets.push_back(Raw({}));
+    normalPackets.push_back(Lz(Filled(8000, 7)));
+    normalPackets.push_back(Raw(Filled(70000, 8)));
+    normalPackets.push_back(Raw(Filled(100, 9)));
+    normalPackets.push_back(As(MCPacketStorage::Fwf, Filled(200, 10)));
+    normalPackets.push_back(MCStored{.Offset = 0x100000});
+    const std::vector<uint8_t> normal = Pak(normalPackets);
+
+    std::vector<int32_t> ascending = SlotsFrom(0, 12);
+    ascending.insert(ascending.end(), {-1, 13, 14, 3, 0});
+    const std::vector<std::vector<int32_t>> lists{ascending, SlotsFrom(12, 0), {1, 0}, {2, 1}, {10, 7, 11, 6, 8}};
+
+    for (const MCPakPlace place : {MCPakPlace::Disk, MCPakPlace::Memory})
+    {
+        for (size_t list = 0; list < lists.size(); ++list)
+        {
+            MCTest::Scope scope(std::format("{}, list {}", place == MCPakPlace::Disk ? "on disk" : "in memory", list));
+            MCTestContextScope context;
+            MCMemoryFileSource& files = context.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+            TilePathScope paths;
+            PutFile(files, place, "rtest90.pak", rotated);
+            PutFile(files, place, "rtest.pak", normal);
+            std::expected<std::unique_ptr<MCTerrainTiles>, std::string> one = MCTerrainTiles::Create("rtest");
+            std::expected<std::unique_ptr<MCTerrainTiles>, std::string> together = MCTerrainTiles::Create("rtest");
+            REQUIRE(one.has_value() && together.has_value());
+            REQUIRE_EQ((*together)->NumTiles(), 12);
+            ReadOneAtATime(**one, lists[list]);
+            const MCTileReads read = (*together)->ReadTiles(lists[list]);
+            CheckSameSlots(**together, **one);
+
+            if (list == 0)
+            {
+                // Each file's batch one read (the rotated file's 0, 2, 4 and 5; the normal one's 6-9), and ReadTile's six
+                // (1, 4, 5; 10, 11, 12).
+                CHECK_EQ(read.Tiles, size_t{13});
+                CHECK_EQ(read.Reads, size_t{8});
+                // Read or missing: nothing read again, the same bytes kept.
+                const std::span<const uint8_t> first = (*together)->Lookup(0);
+                CHECK_EQ((*together)->ReadTiles(ascending).Tiles, size_t{0});
+                CHECK((*together)->Lookup(0).data() == first.data());
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Port-only: a tile set without its rotated file reads the table's lower half as missing whether read together or
+/// one at a time, and its upper half as ever.
+/// </summary>
+TEST_CASE("terrain: tiles read together from a set without its rotated file are as ReadTile reads them")
+{
+    using namespace MCPakBytes;
+    MCTestContextScope context;
+    MCMemoryFileSource& files = context.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+    TilePathScope paths;
+    files.AddFile("ctest.pak", Pak({Raw(Filled(10, 0)), Raw(Filled(10, 1)), Lz(Filled(900, 2)), Raw(Filled(90, 3))}));
+    std::expected<std::unique_ptr<MCTerrainTiles>, std::string> one = MCTerrainTiles::Create("ctest");
+    std::expected<std::unique_ptr<MCTerrainTiles>, std::string> together = MCTerrainTiles::Create("ctest");
+    REQUIRE(one.has_value() && together.has_value());
+    const std::vector<int32_t> slots = SlotsFrom(0, 4);
+    ReadOneAtATime(**one, slots);
+    CHECK_EQ((*together)->ReadTiles(slots).Tiles, size_t{5});
+    CheckSameSlots(**together, **one);
+    CHECK((*together)->Slot(0)->get().Missing);
+    CHECK_EQ((*together)->Lookup(2).size(), size_t{900});
+}
+
+/// <summary>
+/// Port-only: every slot of the retail tile sets, the original's (TILES) and the expansion's (GTILES), read together
+/// comes as ReadTile reads it alone, in a few reads (a file's packets lie in order, so its whole is about a read a
+/// megabyte).
+/// </summary>
+TEST_CASE("game: every retail tile read together is as ReadTile reads it, in a read a megabyte")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    for (const std::string_view set : {"tiles", "gtiles"})
+    {
+        MCTest::Scope scope(set);
+        std::expected<std::unique_ptr<MCTerrainTiles>, std::string> one = MCTerrainTiles::Create(set);
+        std::expected<std::unique_ptr<MCTerrainTiles>, std::string> together = MCTerrainTiles::Create(set);
+        REQUIRE(one.has_value() && together.has_value());
+        REQUIRE((*together)->NumTiles() > 0);
+        const std::vector<int32_t> slots = SlotsFrom(0, (*together)->NumTiles());
+        ReadOneAtATime(**one, slots);
+        const auto start = std::chrono::steady_clock::now();
+        const MCTileReads read = (*together)->ReadTiles(slots);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        CheckSameSlots(**together, **one);
+        CHECK_EQ(read.Tiles, slots.size());
+        // The two files' bytes, at least half a megabyte a read (each up to a megabyte, a packet short of it at most),
+        // and the one past the table's ReadTile.
+        const uint64_t bytes = std::filesystem::file_size(MCFileSystem::Resolve(GamePath(TilePath, set, ".pak"))) +
+                               std::filesystem::file_size(MCFileSystem::Resolve(GamePath(Tile90Path, set, "90.pak")));
+        CHECK(read.Reads <= bytes / (MCDiskFile::RunMostBytes / 2) + 1);
+        std::cout << std::format("  {}: {} tiles in {} reads, {:.1f} ms\n", set, read.Tiles, read.Reads, ms);
+    }
+}
+
+/// <summary>
+/// Port-only: the tiles a map uses (MCMapBlockManager::TilesUsed, which the load reads together) are every vertex's
+/// terrain tile and overlay that isn't negative, once each, the off-map block's included.
+/// </summary>
+TEST_CASE("terrain: the tiles a map uses are every vertex's tile and overlay once, the off-map block's included")
+{
+    MCTerrainGeometryScope geometry(2, 1, MetersPerVertex, MetersPerLevel);
+    const auto vertex = [](int16_t tile, int16_t overlay)
+    { return MCPrecompVertex{.TextureData = tile, .OverlayData = overlay}; };
+    // The map's one block, then the off-map block.
+    const std::vector<MCPrecompVertex> vertices{vertex(7, -1),  vertex(3, 7),  vertex(3, 12), vertex(-1, -1),
+                                                vertex(40, -1), vertex(7, 41), vertex(7, -5), vertex(7, -1)};
+    const MCMapBlockManager blocks(vertices, 1);
+    const std::vector<int32_t> expected{3, 7, 12, 40, 41};
+    CHECK(blocks.TilesUsed() == expected);
+}
+
+/// <summary>
+/// Port-only: a mission's load reads every tile its map uses together (its frame log's note says how many in how many
+/// reads, a few dozen), so none is read one at a time as the ground is first drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's load reads every tile its map uses together, in a few reads")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCScratchFolder folder("mc_terrain_tests", "load-tiles");
+    const std::filesystem::path log = folder.Path() / "load.framelog";
+    REQUIRE(MCFrameLog::Open(log));
+    REQUIRE(MCTestGame::StartMission(1));
+    // The test game's frames don't move the log's on: its first frame, which the notes so far go to, then written.
+    MCFrameLog::NextFrame();
+    MCFrameLog::NextFrame();
+    MCFrameLog::Close();
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    REQUIRE(terrain != nullptr && terrain->MapBlocks != nullptr && terrain->Tiles != nullptr);
+    size_t used = 0;
+
+    for (const int32_t slot : terrain->MapBlocks->TilesUsed())
+    {
+        if (const MCOptionalRef<const MCTerrainTile> tile = terrain->Tiles->Slot(slot); tile.has_value())
+        {
+            ++used;
+            CHECK(tile->get().Missing || !tile->get().TileData().empty());
+        }
+    }
+
+    std::ifstream in(log);
+    const std::string text((std::istreambuf_iterator<char>(in)), {});
+    const size_t at = text.find("original tiles: ");
+    REQUIRE(at != std::string::npos);
+    size_t tiles = 0;
+    size_t reads = 0;
+    const int scanned = std::sscanf(text.c_str() + at, "original tiles: %zu in %zu reads", &tiles, &reads);
+    REQUIRE_EQ(scanned, 2);
+    CHECK(tiles >= used);
+    CHECK(reads * 10 <= tiles);
+    std::cout << "  " << text.substr(at, text.find('\n', at) - at) << "\n";
 }
 
 TEST_CASE("terrain: a map's .bdg or .obj placing objects off the map, or counting more than it holds, is refused")

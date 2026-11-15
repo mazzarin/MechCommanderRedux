@@ -14,6 +14,8 @@ class MCMiscTerrainObjectType : public MCObjectType
 public:
     /// <summary>Makes a <see cref="MCMiscTerrainObject"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
+    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
+    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({ForestFireFX}); }
     /// <summary>
     /// Reads the damage levels and effect ids from the "BridgeData" block, loads the ForestEdges shape file, then the
     /// common type data.

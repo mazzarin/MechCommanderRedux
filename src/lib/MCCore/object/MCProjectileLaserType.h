@@ -15,6 +15,12 @@ class MCProjectileLaserType : public MCObjectType
 public:
     /// <summary>Makes a <see cref="MCProjectileLaser"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
+    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
+    std::vector<int32_t> MadeTypes() const override
+    {
+        return MadeTypesAnd({ProjectileHitEffect, ProjectileMissEffect, SmokeObjectId, LightObjectId});
+    }
+
     /// <summary>
     /// Reads the "ProjectileLaserData" block (if present) and the common type data, then loads the hit and miss types.
     /// </summary>

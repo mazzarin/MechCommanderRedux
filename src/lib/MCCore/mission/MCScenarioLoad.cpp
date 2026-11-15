@@ -6,6 +6,7 @@
 #include "platform/MCInput.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 #include "abl/MCAblRuntime.h"
 #include "ai/MCMoveSystem.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -42,6 +43,7 @@
 #include "object/MCMoverGameSystem.h"
 #include "object/MCMoverGroup.h"
 #include "object/MCObjectSystem.h"
+#include "object/MCObjectType.h"
 #include "object/MCObjectTypeManager.h"
 #include "object/MCTrain.h"
 #include "object/MCTrainCar.h"
@@ -317,7 +319,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     // Port-only (HD particles, HD weather): none from the last mission, and their dice from the start.
     MCParticles::Clear();
     MCWeather::Clear();
-    // Port-only (HD particles): the explosions' looks measured here, under the loading bar, rather than as each shows.
+    // Port-only: the original's packets the mission's first uses would read, read here together; then the explosions'
+    // looks (HD particles) measured here, under the loading bar, rather than as each shows.
+    LoadOriginalPackets();
     MCParticles::MeasureExplosions();
     MissionStartTime = 0;
     RunningTime = 0.0f;
@@ -960,6 +964,94 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
     UpdateDisplay(false, true, 20, true, 90);
 }
 
+auto MCScenario::LoadOriginalPackets() -> void
+{
+    const auto started = std::chrono::steady_clock::now();
+    const MCPacketsHeld types = ObjectTypeManager().LoadMadeTypes();
+
+    // Every side's mechs: each mech type's PreloadGestures packets once, and each mech's packets drawn now.
+    std::vector<MCSpriteTree::MCTreePacket> mechPackets;
+
+    for (const MCPart& part : Parts)
+    {
+        const auto object = std::static_pointer_cast<MCGameObject>(part.Object.lock());
+
+        if (object == nullptr || object->ObjectClass != MCObjectClass::BattleMech)
+        {
+            continue;
+        }
+
+        const auto actor = std::static_pointer_cast<MCMechActor>(object->GetAppearance());
+        const auto tree =
+            actor != nullptr ? std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType()) : nullptr;
+
+        if (tree == nullptr)
+        {
+            continue;
+        }
+
+        if (!tree->GesturesPreloaded)
+        {
+            std::ranges::transform(tree->PreloadPackets(), std::back_inserter(mechPackets),
+                                   [&](const MCGesturePacket& where)
+                                   { return MCSpriteTree::MCTreePacket{tree, where}; });
+            tree->GesturesPreloaded = true;
+        }
+
+        std::ranges::transform(actor->DrawnPackets(), std::back_inserter(mechPackets),
+                               [&](const MCGesturePacket& where) { return MCSpriteTree::MCTreePacket{tree, where}; });
+    }
+
+    const MCShapesLoaded mechs = MCSpriteTree::LoadPacketsTogether(mechPackets, 1);
+
+    // The kept types' appearances' shapes (the effects', the wrecks'), every packet of their PAKs, kept with them.
+    std::vector<MCShapeWanted> wanted;
+    std::unordered_set<uint32_t> appearances;
+
+    for (const std::shared_ptr<MCObjectType>& type : ObjectTypeManager().Types())
+    {
+        if (type->KeepMe == 0 || !appearances.insert(type->AppearName).second)
+        {
+            continue;
+        }
+
+        const std::span<const std::shared_ptr<MCAppearanceType>> listed = AppearanceTypeList().Types();
+
+        if (const auto found = std::ranges::find(listed, type->AppearName, &MCAppearanceType::AppearanceNum);
+            found != listed.end())
+        {
+            std::ranges::move((*found)->ShapesUnloaded(), std::back_inserter(wanted));
+        }
+    }
+
+    const MCShapesLoaded shapes =
+        SpriteManager() != nullptr ? SpriteManager()->GetShapesData(wanted, Turn) : MCShapesLoaded{};
+
+    for (size_t i = 0; i < shapes.Shapes.size(); ++i)
+    {
+        if (const std::shared_ptr<MCAppearanceType> owner = wanted[i].Owner.lock(); owner != nullptr)
+        {
+            owner->KeepShape(wanted[i].Packet, shapes.Shapes[i]);
+        }
+    }
+
+    if (MCFrameLog::Enabled())
+    {
+        const auto loaded = [](const MCShapesLoaded& batch)
+        {
+            return static_cast<size_t>(
+                std::ranges::count_if(batch.Shapes, [](const auto& shape) { return shape != nullptr; }));
+        };
+
+        constexpr double BytesPerMb = 1024.0 * 1024.0;
+        MCFrameLog::Note(
+            std::format("original packets: {} in {} reads, {:.1f} ms, {:.1f} MB",
+                        types.Packets + loaded(mechs) + loaded(shapes), types.Reads + mechs.Reads + shapes.Reads,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+                        static_cast<double>(types.Bytes + mechs.Bytes + shapes.Bytes) / BytesPerMb));
+    }
+}
+
 auto MCScenario::LoadCarriers(MCFitIniFile& file) -> void
 {
     MCGameContext::Current().SetTrainManager(nullptr);
@@ -1291,10 +1383,8 @@ auto MCScenario::CreatePartObject(int32_t partNumber) -> void
             actor->SetGesture(part.GestureId);
         }
 
-        if (part.Alignment == HomeTeam()->Alignment)
-        {
-            actor->PreloadGestures();
-        }
+        // Port: every side's mechs' gestures are read with the rest at the load's end (LoadOriginalPackets), not the home
+        // team's alone here, one at a time.
 
         // Port-only: every side's HD archives open under the loading bar, not when the mech first comes into view.
         if (actor != nullptr)

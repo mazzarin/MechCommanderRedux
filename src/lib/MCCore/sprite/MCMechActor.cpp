@@ -406,11 +406,6 @@ auto MCMechActor::GetHotSpotIndex(uint32_t location) -> uint32_t
     return HotSpotFinderArray[location];
 }
 
-auto MCMechActor::PreloadGestures() const -> void
-{
-    MechTree->PreloadGestures();
-}
-
 auto MCMechActor::PrepareHdArt() const -> void
 {
     MechTree->PrepareHdArt();
@@ -1779,6 +1774,59 @@ auto MCMechActor::ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPa
     return MechTree->Gestures[legsGesture].ArmSymmetrical != 0 && packet.has_value() && packet->Reverse;
 }
 
+auto MCMechActor::ForEachPartDrawn(MCBattleMech& mech, int32_t legs, int32_t upper,
+                                   const std::function<void(int32_t, int32_t, float)>& part) const -> void
+{
+    const auto isGesture = [&](int32_t gesture)
+    { return gesture >= 0 && static_cast<size_t>(gesture) < MechTree->Gestures.size(); };
+
+    if (MechTree == nullptr || !isGesture(legs) || !isGesture(upper))
+    {
+        return;
+    }
+
+    const float facing = DrawnFacing(mech);
+    const auto [rotation2, rotation3] = ArmRotations(mech, facing);
+    part(legs, 0, facing);
+
+    if (!Wrecked)
+    {
+        part(upper, 1, facing + mech.TorsoRotation);
+    }
+
+    if (!RightArmGone)
+    {
+        part(upper, ArmSwapped(legs, upper, 3, rotation2) ? 3 : 2, rotation2);
+    }
+
+    if (!LeftArmGone)
+    {
+        part(upper, ArmSwapped(legs, upper, 2, rotation3) ? 2 : 3, rotation3);
+    }
+}
+
+auto MCMechActor::DrawnPackets() -> std::vector<MCGesturePacket>
+{
+    const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
+    std::vector<MCGesturePacket> packets;
+
+    if (mech == nullptr || MechTree == nullptr)
+    {
+        return packets;
+    }
+
+    ForEachPartDrawn(*mech, CurrentGesture, UpperGesture(),
+                     [&](int32_t gesture, int32_t part, float rotation)
+                     {
+                         if (const std::optional<MCGesturePacket> where =
+                                 MechTree->GesturePacket(gesture, part, rotation))
+                         {
+                             packets.push_back(*where);
+                         }
+                     });
+    return packets;
+}
+
 auto MCMechActor::ReadAhead() -> void
 {
     const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
@@ -1788,39 +1836,15 @@ auto MCMechActor::ReadAhead() -> void
         return;
     }
 
-    const float facing = DrawnFacing(*mech);
-    const auto [rotation2, rotation3] = ArmRotations(*mech, facing);
-    const auto isGesture = [&](int32_t gesture)
-    { return gesture >= 0 && static_cast<size_t>(gesture) < MechTree->Gestures.size(); };
     std::vector<MCHdArt::PacketAhead> soon;
     std::vector<MCHdArt::PacketAhead> later;
 
-    // Each part's packets with the legs in gesture legs and the upper parts in upper, as Render takes them: the tree's
-    // part (an arm from the other's sprites when mirrored) at its rotation, and with turns the facings either side; a
-    // part gone (an arm blown off, a wreck's torso) none.
+    // Each part's packets with the legs in gesture legs and the upper parts in upper, and with turns the facings either
+    // side.
     const auto add = [&](int32_t legs, int32_t upper, bool turns, std::vector<MCHdArt::PacketAhead>& packets)
     {
-        if (!isGesture(legs) || !isGesture(upper))
-        {
-            return;
-        }
-
-        MechTree->PacketsAhead(legs, 0, facing, turns, packets);
-
-        if (!Wrecked)
-        {
-            MechTree->PacketsAhead(upper, 1, facing + mech->TorsoRotation, turns, packets);
-        }
-
-        if (!RightArmGone)
-        {
-            MechTree->PacketsAhead(upper, ArmSwapped(legs, upper, 3, rotation2) ? 3 : 2, rotation2, turns, packets);
-        }
-
-        if (!LeftArmGone)
-        {
-            MechTree->PacketsAhead(upper, ArmSwapped(legs, upper, 2, rotation3) ? 2 : 3, rotation3, turns, packets);
-        }
+        ForEachPartDrawn(*mech, legs, upper, [&](int32_t gesture, int32_t part, float rotation)
+                         { MechTree->PacketsAhead(gesture, part, rotation, turns, packets); });
     };
 
     // The upper parts' gesture over the legs' gesture legs, as UpperGesture takes it.

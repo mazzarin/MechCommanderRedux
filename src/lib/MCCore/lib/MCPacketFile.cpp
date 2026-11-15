@@ -38,6 +38,7 @@ void MCPacketFile::Clear()
     _PacketBase = 0;
     _PacketSize = 0;
     _SeekTable.clear();
+    _Held.clear();
 }
 
 void MCPacketFile::AtClose()
@@ -209,6 +210,24 @@ int32_t MCPacketFile::ReadPacket(int32_t packet, std::span<uint8_t> buffer)
         return 0;
     }
 
+    // Port-only (HoldPackets): what the read below gives, from what's held, the position left as it leaves it.
+    if (const auto held = _Held.find(_CurrentPacket);
+        held != _Held.end() && held->second.Stored.Storage != MCPacketStorage::Nul)
+    {
+        const std::vector<uint8_t>& bytes = held->second.Bytes;
+        const size_t count = std::min(buffer.size(), bytes.size());
+        std::copy_n(bytes.begin(), count, buffer.begin());
+
+        if (held->second.Stored.Storage == MCPacketStorage::Raw)
+        {
+            Seek(_PacketBase + static_cast<int32_t>(count));
+            return static_cast<int32_t>(count);
+        }
+
+        Seek(_PacketBase + _PacketSize);
+        return count == bytes.size() ? static_cast<int32_t>(count) : 0;
+    }
+
     switch (_PacketType)
     {
         case MCPacketStorage::Raw:
@@ -240,6 +259,20 @@ int32_t MCPacketFile::SeekPacket(int32_t packet)
     if (packet < 0)
     {
         return PacketOutOfRange;
+    }
+
+    // Port-only (HoldPackets): as the seek below leaves the file, from what's held, reading nothing.
+    if (const auto held = _Held.find(packet); held != _Held.end())
+    {
+        const MCStoredPacket& stored = held->second.Stored;
+        _CurrentPacket = packet;
+        _PacketType = stored.Storage;
+        _PacketBase = static_cast<int32_t>(stored.Offset);
+        _PacketSize = static_cast<int32_t>(stored.Size);
+        _PacketUnpackedSize =
+            stored.Storage == MCPacketStorage::Nul ? 0 : static_cast<int32_t>(held->second.Bytes.size());
+        Seek(_PacketBase + (stored.Storage == MCPacketStorage::Lzd ? static_cast<int32_t>(UnpackedSizeBytes) : 0));
+        return NO_ERR;
     }
 
     const int32_t offset = ReadPacketOffset(packet, _PacketType);
@@ -406,47 +439,87 @@ std::optional<std::vector<uint8_t>> MCPacketFile::UnpackStored(const MCStoredPac
 
 MCPacketBatch MCPacketFile::ReadPackets(std::span<const int32_t> packets) const
 {
-    MCPacketBatch batch;
-    batch.Packets.resize(packets.size());
+    const std::array<MCPacketsWanted, 1> one{MCPacketsWanted{*this, packets}};
+    return std::move(ReadPackets(one).front());
+}
 
-    /// <summary>A packet to read: where it lies, where its result goes, and whether it's the one before it again.</summary>
+std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWanted> files)
+{
+    std::vector<MCPacketBatch> batches(files.size());
+
+    /// <summary>
+    /// A packet to read: where it lies, where in its root (the file on disk or in memory its file's bytes lie in, an
+    /// index into roots) it starts, its file and where its result goes, and whether it's the one before it again.
+    /// </summary>
     struct MCWanted
     {
         MCStoredPacket Stored;
+        uint64_t Start = 0;
+        size_t Root = 0;
+        size_t File = 0;
         size_t Asked = 0;
         bool Again = false;
     };
 
+    // Each root once, with the first file of it (a reader of it is opened through that file).
+    std::vector<std::pair<MCAddressKey, size_t>> roots;
     std::vector<MCWanted> wanted;
 
-    for (size_t asked = 0; asked < packets.size(); ++asked)
+    for (size_t at = 0; at < files.size(); ++at)
     {
-        const std::optional<MCStoredPacket> stored = StoredPacket(packets[asked]);
+        const MCPacketFile& file = files[at].File;
+        batches[at].Packets.resize(files[at].Packets.size());
+        const MCAddressKey key = file.RootKey();
 
-        // A Nul packet reads as empty, whatever its bytes: none are read for it.
-        if (stored.has_value() && stored->Storage == MCPacketStorage::Nul)
+        if (key == MCAddressKey())
         {
-            batch.Packets[asked] = UnpackStored(*stored, {});
+            continue;
         }
-        else if (stored.has_value())
+
+        auto root = std::ranges::find(roots, key, &std::pair<MCAddressKey, size_t>::first);
+
+        if (root == roots.end())
         {
-            wanted.push_back(MCWanted{.Stored = *stored, .Asked = asked});
+            roots.emplace_back(key, at);
+            root = std::prev(roots.end());
+        }
+
+        const auto rootIndex = static_cast<size_t>(root - roots.begin());
+        const uint64_t base = file.RootOffset();
+
+        for (size_t asked = 0; asked < files[at].Packets.size(); ++asked)
+        {
+            const std::optional<MCStoredPacket> stored = file.StoredPacket(files[at].Packets[asked]);
+
+            // A Nul packet reads as empty, whatever its bytes: none are read for it.
+            if (stored.has_value() && stored->Storage == MCPacketStorage::Nul)
+            {
+                batches[at].Packets[asked] = file.UnpackStored(*stored, {});
+            }
+            else if (stored.has_value())
+            {
+                wanted.push_back(MCWanted{
+                    .Stored = *stored, .Start = base + stored->Offset, .Root = rootIndex, .File = at, .Asked = asked});
+            }
         }
     }
 
-    std::ranges::sort(wanted, {}, [](const MCWanted& packet)
-                      { return std::tuple(packet.Stored.Offset, packet.Stored.Packet, packet.Asked); });
+    std::ranges::sort(
+        wanted, {}, [](const MCWanted& packet)
+        { return std::tuple(packet.Root, packet.Start, packet.File, packet.Stored.Packet, packet.Asked); });
 
     for (size_t k = 1; k < wanted.size(); ++k)
     {
-        wanted[k].Again = wanted[k].Stored.Packet == wanted[k - 1].Stored.Packet;
+        wanted[k].Again =
+            wanted[k].File == wanted[k - 1].File && wanted[k].Stored.Packet == wanted[k - 1].Stored.Packet;
     }
 
-    /// <summary>One read: wanted's packets from First, Count of them, the bytes from Start to End.</summary>
+    /// <summary>One read: wanted's packets from First, Count of them, of root Root, the bytes from Start to End there.</summary>
     struct MCRun
     {
         size_t First = 0;
         size_t Count = 0;
+        size_t Root = 0;
         uint64_t Start = 0;
         uint64_t End = 0;
     };
@@ -455,10 +528,10 @@ MCPacketBatch MCPacketFile::ReadPackets(std::span<const int32_t> packets) const
 
     for (size_t k = 0; k < wanted.size(); ++k)
     {
-        const uint64_t start = wanted[k].Stored.Offset;
+        const uint64_t start = wanted[k].Start;
         const uint64_t end = start + wanted[k].Stored.Size;
 
-        if (!runs.empty())
+        if (!runs.empty() && runs.back().Root == wanted[k].Root)
         {
             MCRun& run = runs.back();
             const uint64_t joined = std::max(run.End, end);
@@ -471,64 +544,66 @@ MCPacketBatch MCPacketFile::ReadPackets(std::span<const int32_t> packets) const
             }
         }
 
-        runs.push_back(MCRun{.First = k, .Count = 1, .Start = start, .End = end});
+        runs.push_back(MCRun{.First = k, .Count = 1, .Root = wanted[k].Root, .Start = start, .End = end});
     }
 
-    // A reader a thread, opened here (none: every packet the caller's).
-    std::vector<MCFileReader> readers;
-
-    while (readers.size() < std::min(runs.size(), BatchReadsAtOnce))
+    if (runs.empty())
     {
-        std::optional<MCFileReader> reader = OpenReader();
-
-        if (!reader.has_value())
-        {
-            break;
-        }
-
-        readers.push_back(std::move(*reader));
+        return batches;
     }
 
-    if (readers.empty())
-    {
-        return batch;
-    }
-
+    // Each thread's reads and largest read, by the file of each read's first packet.
+    const size_t threads = std::min(runs.size(), BatchReadsAtOnce);
+    std::vector<std::vector<size_t>> reads(threads, std::vector<size_t>(files.size(), 0));
+    std::vector<std::vector<size_t>> mostBytes(threads, std::vector<size_t>(files.size(), 0));
     std::atomic<size_t> nextRun{0};
-    std::vector<size_t> reads(readers.size(), 0);
-    std::vector<size_t> mostBytes(readers.size(), 0);
     // The reads wait on the disk, not the cores: as many threads as reads at once, whatever the machine.
-    MCWorkers workers(readers.size() - 1);
-    workers.Run(readers.size(),
+    MCWorkers workers(threads - 1);
+    workers.Run(threads,
                 [&](size_t thread)
                 {
-                    MCFileReader& reader = readers[thread];
+                    // This thread's reader of each root, opened as it first reads it (none: the caller's).
+                    std::vector<std::optional<MCFileReader>> readers(roots.size());
+                    std::vector<bool> opened(roots.size(), false);
                     std::vector<uint8_t> bytes;
 
                     for (size_t r = nextRun.fetch_add(1, std::memory_order_relaxed); r < runs.size();
                          r = nextRun.fetch_add(1, std::memory_order_relaxed))
                     {
                         const MCRun& run = runs[r];
+
+                        if (!opened[run.Root])
+                        {
+                            opened[run.Root] = true;
+                            readers[run.Root] = files[roots[run.Root].second].File.get().OpenRootReader();
+                        }
+
+                        if (!readers[run.Root].has_value())
+                        {
+                            continue;
+                        }
+
                         bytes.resize(static_cast<size_t>(run.End - run.Start));
                         size_t got = 0;
+                        const size_t first = wanted[run.First].File;
 
                         if (!bytes.empty())
                         {
-                            got = reader.ReadAt(static_cast<uint32_t>(run.Start), bytes);
-                            ++reads[thread];
-                            mostBytes[thread] = std::max(mostBytes[thread], bytes.size());
+                            got = readers[run.Root]->ReadAt(static_cast<uint32_t>(run.Start), bytes);
+                            ++reads[thread][first];
+                            mostBytes[thread][first] = std::max(mostBytes[thread][first], bytes.size());
                         }
 
                         for (size_t k = run.First; k < run.First + run.Count; ++k)
                         {
                             const MCWanted& packet = wanted[k];
-                            const uint64_t from = packet.Stored.Offset - run.Start;
+                            const uint64_t from = packet.Start - run.Start;
 
                             if (!packet.Again && from + packet.Stored.Size <= got)
                             {
-                                batch.Packets[packet.Asked] =
-                                    UnpackStored(packet.Stored, std::span(bytes).subspan(static_cast<size_t>(from),
-                                                                                         packet.Stored.Size));
+                                batches[packet.File].Packets[packet.Asked] = files[packet.File].File.get().UnpackStored(
+                                    packet.Stored,
+                                    std::span(bytes).subspan(static_cast<size_t>(from), packet.Stored.Size));
                             }
                         }
                     }
@@ -538,13 +613,40 @@ MCPacketBatch MCPacketFile::ReadPackets(std::span<const int32_t> packets) const
     {
         if (wanted[k].Again)
         {
-            batch.Packets[wanted[k].Asked] = batch.Packets[wanted[k - 1].Asked];
+            batches[wanted[k].File].Packets[wanted[k].Asked] = batches[wanted[k - 1].File].Packets[wanted[k - 1].Asked];
         }
     }
 
-    batch.Reads = std::accumulate(reads.begin(), reads.end(), size_t{0});
-    batch.MostReadBytes = std::ranges::max(mostBytes);
-    return batch;
+    for (size_t at = 0; at < files.size(); ++at)
+    {
+        for (size_t thread = 0; thread < threads; ++thread)
+        {
+            batches[at].Reads += reads[thread][at];
+            batches[at].MostReadBytes = std::max(batches[at].MostReadBytes, mostBytes[thread][at]);
+        }
+    }
+
+    return batches;
+}
+
+MCPacketsHeld MCPacketFile::HoldPackets(std::span<const int32_t> packets)
+{
+    MCPacketBatch batch = ReadPackets(packets);
+    MCPacketsHeld held{.Reads = batch.Reads};
+
+    for (size_t at = 0; at < packets.size(); ++at)
+    {
+        std::optional<MCStoredPacket> stored = StoredPacket(packets[at]);
+
+        if (batch.Packets[at].has_value() && stored.has_value() && !_Held.contains(packets[at]))
+        {
+            held.Bytes += batch.Packets[at]->size();
+            _Held.emplace(packets[at], MCHeldPacket{*stored, std::move(*batch.Packets[at])});
+            ++held.Packets;
+        }
+    }
+
+    return held;
 }
 
 void MCPacketFile::Reserve(int32_t count, bool useCheckSum)

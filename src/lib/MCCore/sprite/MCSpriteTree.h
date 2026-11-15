@@ -154,7 +154,29 @@ public:
     MCAppearanceLoad Load(MCFile& apprFile, uint32_t fileSize) override;
 
     /// <summary>Loads (once) the shapes of the stand, walk and run gestures, every facing of every part.</summary>
+    /// <remarks>Port: their packets read together (<see cref="LoadPacketsTogether"/>), those loaded already kept.</remarks>
     void PreloadGestures();
+
+    /// <summary>
+    /// Port-only: the packets <see cref="PreloadGestures"/> loads (the large art's): stand, walk and run at every stored
+    /// facing of every part.
+    /// </summary>
+    std::vector<MCGesturePacket> PreloadPackets() const;
+
+    /// <summary>Port-only: a tree's packet, to load with others' (<see cref="LoadPacketsTogether"/>).</summary>
+    struct MCTreePacket
+    {
+        std::shared_ptr<MCSpriteTree> Tree;
+        MCGesturePacket Where;
+    };
+
+    /// <summary>
+    /// Port-only: loads each of <paramref name="packets"/> its tree hasn't loaded (the large art's, as MCMechActor::Render
+    /// draws), each once, together (MCSpriteManager::GetMechShapesData: a few large reads, on threads), into its tree's
+    /// shape list, tied to the facings either side in a turn as LoadGesturePacket ties one, used at
+    /// <paramref name="turnUsed"/>.
+    /// </summary>
+    static MCShapesLoaded LoadPacketsTogether(std::span<const MCTreePacket> packets, int32_t turnUsed);
 
     /// <summary>Port-only: opens the HD art pack's archives of the mech's parts (MCHdArt::Prepare).</summary>
     void PrepareHdArt() const;

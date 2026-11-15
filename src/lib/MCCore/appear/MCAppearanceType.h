@@ -2,6 +2,7 @@
 
 #include "lib/MCFitIniFile.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSpriteManager.h"
 
 class MCAppearance;
 class MCShape;
@@ -146,6 +147,16 @@ public:
     int32_t BoundsLowerRightY = 0;
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: the original's packets at the load): the packets of the type's PAK with no shape
+    /// loaded, by the slots MakeShapeList made (none for a type without them: a mech's tree), to load with others'
+    /// (MCSpriteManager::GetShapesData).
+    /// </summary>
+    std::vector<MCShapeWanted> ShapesUnloaded();
+
+    /// <summary>Port-only: keeps <paramref name="shape"/>, loaded with others', as packet <paramref name="packet"/>'s.</summary>
+    void KeepShape(uint32_t packet, const std::shared_ptr<MCShape>& shape);
+
+    /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): while one lives, the types' shape lookups (GetShape,
     /// GetGesture: PacketShape) load nothing: each has HD art's readers read the packet it would load whole instead
     /// (once a packet, MCHdArt::ReadPacketAhead) and gives only a shape already loaded. An appearance's ReadAhead makes
@@ -189,4 +200,7 @@ private:
 
     /// <summary>Port-only: the packets asked to be read ahead (AskPacketAhead).</summary>
     MCHdArt::MCAskedPackets _AskedAhead;
+
+    /// <summary>Port-only: the type's slots of its PAK's packets' shapes, one a packet (MakeShapeList's); none without.</summary>
+    mutable MCOptionalRef<std::vector<std::weak_ptr<MCShape>>> _PacketSlots;
 };

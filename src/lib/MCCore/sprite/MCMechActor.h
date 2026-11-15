@@ -136,8 +136,23 @@ public:
     /// </summary>
     void ReadAhead() override;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: a unit's first frames): the packets each part draws now, as Render takes them (the
+    /// tree's part at its rotation, an arm from the other's sprites when mirrored; a part gone none), for a mission's load
+    /// to read with the rest.
+    /// </summary>
+    std::vector<MCGesturePacket> DrawnPackets();
+
     /// <summary>Port-only (HDTurns): the facing <paramref name="mech"/> is drawn at (eased by update).</summary>
     float DrawnFacing(MCBattleMech& mech) const;
+
+    /// <summary>
+    /// Port-only: <paramref name="part"/>(gesture, the tree's part, rotation) for each part <paramref name="mech"/> draws
+    /// with its legs in gesture <paramref name="legs"/> and its upper parts in <paramref name="upper"/>, as Render takes
+    /// them: the legs, the torso (not a wreck's), each arm it has (from the other's sprites when mirrored).
+    /// </summary>
+    void ForEachPartDrawn(MCBattleMech& mech, int32_t legs, int32_t upper,
+                          const std::function<void(int32_t, int32_t, float)>& part) const;
 
     /// <summary>The upper body's gesture: the combat gestures while the gun is up or moving, else the legs'.</summary>
     int32_t UpperGesture() const;
@@ -181,9 +196,6 @@ public:
 
     /// <summary>The hot spot (weapon mount) table index for <paramref name="location"/>.</summary>
     static uint32_t GetHotSpotIndex(uint32_t location);
-
-    /// <summary>Loads the tree's stand, walk and run shapes.</summary>
-    void PreloadGestures() const;
 
     /// <summary>Port-only: opens the tree's HD art archives (MCSpriteTree::PrepareHdArt).</summary>
     void PrepareHdArt() const;

@@ -32,6 +32,36 @@ template <typename T> struct MCMechParts : std::array<T, MechPartCount>
 };
 
 /// <summary>
+/// Port-only: a shape to load with others (<see cref="MCSpriteManager::GetMechShapesData"/>,
+/// <see cref="MCSpriteManager::GetShapesData"/>): the mech's number and part, or the appearance's number, its packet,
+/// and the type it's for.
+/// </summary>
+struct MCShapeWanted
+{
+    uint32_t FileNum = 0;
+    uint32_t Packet = 0;
+    MCMechPart Part = MCMechPart::Legs;
+    std::weak_ptr<MCAppearanceType> Owner;
+};
+
+/// <summary>Port-only: the shapes read one at a time (as each is first needed), not together: mechs' parts', and others'.</summary>
+struct MCShapesReadAlone
+{
+    size_t Mechs = 0;
+    size_t Others = 0;
+};
+
+/// <summary>Port-only: shapes loaded together, in the order asked (none where one would be), and what it took.</summary>
+struct MCShapesLoaded
+{
+    std::vector<std::shared_ptr<MCShape>> Shapes;
+    /// <summary>The reads of the files made: the batch's, and one for each shape read alone.</summary>
+    size_t Reads = 0;
+    /// <summary>The shapes' bytes.</summary>
+    size_t Bytes = 0;
+};
+
+/// <summary>
 /// The sprite cache: the sprite PAKs (one packet per appearance, itself a PAK of that appearance's shapes), the mech
 /// part PAKs (one packet per mech, likewise), the mech shadow shapes, and the loaded shapes in the order they were
 /// loaded.
@@ -79,6 +109,23 @@ public:
     /// </summary>
     std::shared_ptr<MCShape> GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
                                               std::weak_ptr<MCAppearanceType> owner, bool zoomedOut);
+
+    /// <summary>
+    /// Port-only: <see cref="GetMechShapeData"/> of each of <paramref name="wanted"/> at <paramref name="turnUsed"/>
+    /// (each the same shape, tied to HD art as it ties one), their packets read together (MCPacketFile::ReadPackets: the
+    /// mechs' PAKs a part PAK holds as one file, a few large reads on threads) and made into shapes here; one the batch
+    /// leaves read as GetMechShapeData reads it.
+    /// </summary>
+    MCShapesLoaded GetMechShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed, bool zoomedOut);
+
+    /// <summary>
+    /// Port-only: <see cref="GetShapeData"/> of each of <paramref name="wanted"/> (FileNum the appearance's number), read
+    /// together as <see cref="GetMechShapesData"/> reads mechs' (the appearances' PAKs a sprite PAK holds as one file).
+    /// </summary>
+    MCShapesLoaded GetShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed);
+
+    /// <summary>Port-only: the shapes read one at a time so far (GetMechShapeData's, GetShapeData's).</summary>
+    MCShapesReadAlone ShapesReadAlone() const { return _ReadAlone; }
 
     /// <summary>
     /// Port-only: packets <paramref name="first"/> to <paramref name="first"/> + <paramref name="count"/> - 1 of
@@ -149,6 +196,27 @@ private:
     std::shared_ptr<MCShape> LoadShape(MCPacketFile& file, uint32_t packetNum, uint32_t size, int32_t turnUsed,
                                        std::weak_ptr<MCAppearanceType> owner, bool checkSize);
 
+    /// <summary>Port-only: a new shape of <paramref name="bytes"/> (a packet's, read already), added to the cache.</summary>
+    std::shared_ptr<MCShape> AddShape(std::span<const uint8_t> bytes, int32_t turnUsed,
+                                      std::weak_ptr<MCAppearanceType> owner);
+
+    /// <summary>Port-only: ties <paramref name="shape"/>, packet <paramref name="packetNum"/> of appearance <paramref name="appearanceNum"/>'s PAK, to the HD art pack's frames.</summary>
+    void TieShape(const std::shared_ptr<MCShape>& shape, uint32_t appearanceNum, uint32_t packetNum) const;
+
+    /// <summary>Port-only: ties <paramref name="shape"/>, a mech part's packet, to the HD art pack's frames.</summary>
+    void TieMechShape(const std::shared_ptr<MCShape>& shape, uint32_t mechNum, uint32_t packetNum, MCMechPart part,
+                      bool zoomedOut) const;
+
+    /// <summary>
+    /// Port-only: the shapes of <paramref name="wanted"/> read together: each packet from the file
+    /// <paramref name="fileOf"/> gives (none: <paramref name="alone"/>'s), made into a shape and tied by
+    /// <paramref name="tie"/>; one the batch leaves (or of no file) is <paramref name="alone"/>'s, as one at a time.
+    /// </summary>
+    MCShapesLoaded LoadTogether(std::span<const MCShapeWanted> wanted, int32_t turnUsed,
+                                const std::function<MCOptionalRef<MCPacketFile>(const MCShapeWanted&)>& fileOf,
+                                const std::function<std::shared_ptr<MCShape>(const MCShapeWanted&)>& alone,
+                                const std::function<void(const std::shared_ptr<MCShape>&, const MCShapeWanted&)>& tie);
+
     /// <summary>Removes the shapes <paramref name="dump"/> picks (their users' references expire).</summary>
     void Dump(const std::function<bool(const MCShape&)>& dump);
 
@@ -177,6 +245,8 @@ private:
     std::vector<MCRegisteredBlock> _MechShadows;
     /// <summary>The loaded shapes, oldest first.</summary>
     std::vector<std::shared_ptr<MCShape>> _Shapes;
+    /// <summary>Port-only: the shapes read one at a time so far (ShapesReadAlone).</summary>
+    MCShapesReadAlone _ReadAlone;
 };
 
 /// <summary>The mission's sprite cache (null outside a mission); the caller keeps it as its pin.</summary>

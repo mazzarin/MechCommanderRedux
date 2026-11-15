@@ -13,6 +13,8 @@ class MCBuildingType : public MCObjectType
 public:
     /// <summary>Makes a <see cref="MCBuilding"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
+    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
+    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({BlownEffectId}); }
     /// <summary>
     /// Reads the "BuildingData" block, then the common type data; the building's own ExtentRadius (-1 when missing:
     /// measured from the appearance) wins.

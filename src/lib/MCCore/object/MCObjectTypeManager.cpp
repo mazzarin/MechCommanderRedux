@@ -5,6 +5,7 @@
 #include "lib/MCFitIniFile.h"
 #include "main/MCGamePaths.h"
 #include "lib/MCPacketFile.h"
+#include "platform/MCFrameLog.h"
 #include "object/MCBaseObject.h"
 #include "object/MCObjectType.h"
 #include "object/MCArtillery.h"
@@ -63,8 +64,11 @@
 
 namespace
 {
-    /// <summary>A new, empty type of the class an "ObjectClass" block numbers; null for 0xd, which has none.</summary>
-    std::shared_ptr<MCObjectType> NewType(int32_t objectClassNum)
+    /// <summary>
+    /// A new, empty type of the class an "ObjectClass" block numbers; null for 0xd, which has none. A number no class
+    /// has gives the original's Fatal code for it.
+    /// </summary>
+    std::expected<std::shared_ptr<MCObjectType>, int32_t> NewType(int32_t objectClassNum)
     {
         switch (objectClassNum)
         {
@@ -116,11 +120,14 @@ namespace
             case 0x17:
                 return std::make_shared<MCLightType>();
             case -1:
-                Fatal(static_cast<int32_t>(0xbeef0001));
+                return std::unexpected(static_cast<int32_t>(0xbeef0001));
             default:
-                Fatal(static_cast<int32_t>(0xbeef0003));
+                return std::unexpected(static_cast<int32_t>(0xbeef0003));
         }
     }
+
+    /// <summary>The original's Fatal code for an object type's packet that won't open as a type (Load).</summary>
+    constexpr int32_t BadTypePacket = static_cast<int32_t>(0xbeef0006);
 }
 
 MCObjectTypeManager::MCObjectTypeManager() = default;
@@ -217,11 +224,33 @@ auto MCObjectTypeManager::Get(int32_t objTypeNum) -> std::shared_ptr<MCBaseObjec
 
 auto MCObjectTypeManager::Load(int32_t objTypeNum, int keepMe) -> std::shared_ptr<MCObjectType>
 {
+    return LoadType(objTypeNum, keepMe, true);
+}
+
+auto MCObjectTypeManager::LoadType(int32_t objTypeNum, int keepMe, bool fatal) -> std::shared_ptr<MCObjectType>
+{
     // Original behaviour: a type already loaded isn't returned; the caller gets null.
     if (objTypeNum < 1 || Find(objTypeNum) != nullptr || _ObjectFile->SeekPacket(objTypeNum) != 0)
     {
         return nullptr;
     }
+
+    // Port-only: a packet read here as the type is first needed (the frame log's), not with the load's (LoadMadeTypes).
+    if (!_ObjectFile->Holds(objTypeNum))
+    {
+        MCFrameLog::Count(MCPacketsFirstUsedCount);
+    }
+
+    // The original stops the game on a packet that won't make a type; a type read ahead (fatal false) is left out.
+    const auto refused = [fatal](int32_t errCode) -> std::shared_ptr<MCObjectType>
+    {
+        if (fatal)
+        {
+            Fatal(errCode);
+        }
+
+        return nullptr;
+    };
 
     // The packet's "ObjectClass" block names the class to make.
     int32_t objectClassNum = -1;
@@ -231,14 +260,14 @@ auto MCObjectTypeManager::Load(int32_t objTypeNum, int keepMe) -> std::shared_pt
         if (classFile.Open(*_ObjectFile, static_cast<uint32_t>(_ObjectFile->GetPacketSize())) != 0 ||
             classFile.SeekBlock("ObjectClass") != 0)
         {
-            Fatal(static_cast<int32_t>(0xbeef0006));
+            return refused(BadTypePacket);
         }
 
         const MCFitResult<int32_t> classNum = classFile.Read<int32_t>("ObjectTypeNum");
 
         if (!classNum)
         {
-            Fatal(static_cast<int32_t>(0xbeef0006));
+            return refused(BadTypePacket);
         }
 
         objectClassNum = *classNum;
@@ -246,7 +275,14 @@ auto MCObjectTypeManager::Load(int32_t objTypeNum, int keepMe) -> std::shared_pt
     }
 
     _ObjectFile->SeekPacket(objTypeNum);
-    std::shared_ptr<MCObjectType> objType = NewType(objectClassNum);
+    std::expected<std::shared_ptr<MCObjectType>, int32_t> made = NewType(objectClassNum);
+
+    if (!made.has_value())
+    {
+        return refused(made.error());
+    }
+
+    std::shared_ptr<MCObjectType> objType = std::move(*made);
 
     if (objType == nullptr)
     {
@@ -255,7 +291,7 @@ auto MCObjectTypeManager::Load(int32_t objTypeNum, int keepMe) -> std::shared_pt
 
     if (objType->Init(*_ObjectFile, static_cast<uint32_t>(_ObjectFile->GetPacketSize())) != 0)
     {
-        Fatal(static_cast<int32_t>(0xbeef0006));
+        return refused(BadTypePacket);
     }
 
     if (keepMe != 0)
@@ -268,4 +304,67 @@ auto MCObjectTypeManager::Load(int32_t objTypeNum, int keepMe) -> std::shared_pt
 
     objType->ObjTypeNum = objTypeNum;
     return Add(std::move(objType));
+}
+
+auto MCObjectTypeManager::LoadMadeTypes() -> MCPacketsHeld
+{
+    MCPacketsHeld read;
+    // The types asked for (one that won't load is asked once).
+    std::unordered_set<int32_t> asked;
+    // Kept as Load keeps a type: its appearance with it (its explosion loaded and kept the next round).
+    const auto keep = [](MCObjectType& type)
+    {
+        type.KeepMe = 1;
+        AppearanceTypeList().GetAppearance(type.AppearName);
+    };
+
+    for (;;)
+    {
+        std::vector<int32_t> wanted;
+        std::vector<std::shared_ptr<MCObjectType>> loaded;
+
+        for (const std::shared_ptr<MCObjectType>& type : _Types)
+        {
+            for (const int32_t made : type->MadeTypes())
+            {
+                if (made < 1 || !asked.insert(made).second)
+                {
+                    continue;
+                }
+
+                if (std::shared_ptr<MCObjectType> found = Find(made); found == nullptr)
+                {
+                    wanted.push_back(made);
+                }
+                else if (found->KeepMe == 0)
+                {
+                    loaded.push_back(std::move(found));
+                }
+            }
+        }
+
+        if (wanted.empty() && loaded.empty())
+        {
+            return read;
+        }
+
+        std::ranges::for_each(loaded, [&](const std::shared_ptr<MCObjectType>& type) { keep(*type); });
+
+        if (wanted.empty() || _ObjectFile == nullptr)
+        {
+            continue;
+        }
+
+        read += _ObjectFile->HoldPackets(wanted);
+
+        for (const int32_t objTypeNum : wanted)
+        {
+            if (const std::shared_ptr<MCObjectType> type = LoadType(objTypeNum, 0, false); type != nullptr)
+            {
+                keep(*type);
+            }
+        }
+
+        _ObjectFile->ReleaseHeld();
+    }
 }

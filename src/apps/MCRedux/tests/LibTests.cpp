@@ -1167,10 +1167,10 @@ TEST_CASE("packet file: packets read together leave the caller what ReadPacket d
 }
 
 /// <summary>
-/// Port-only: a packet file that can't hand out readers of its own (a child of another file, a file written, a file
-/// closed, a file on disk changed since it opened) leaves every packet read together to the caller.
+/// Port-only: a packet file that can't hand out readers of its own (a file written, a file closed, a file on disk
+/// changed since it opened) leaves every packet read together to the caller.
 /// </summary>
-TEST_CASE("packet file: packets read together are the caller's from a child, a file written, closed or changed")
+TEST_CASE("packet file: packets read together are the caller's from a file written, closed or changed")
 {
     using namespace MCPakBytes;
     ScratchFolder folder("packets-readers");
@@ -1183,13 +1183,6 @@ TEST_CASE("packet file: packets read together are the caller's from a child, a f
         return !pak.OpenReader().has_value() && !batch.Packets[0].has_value() && !batch.Packets[1].has_value() &&
                batch.Reads == 0;
     };
-
-    MCFile parent;
-    REQUIRE_EQ(parent.Open(folder / "test.pak"), NO_ERR);
-    MCPacketFile child;
-    REQUIRE_EQ(child.Open(parent, parent.GetLength()), NO_ERR);
-    REQUIRE_EQ(child.GetNumPackets(), 2);
-    CHECK(noneRead(child));
 
     MCPacketFile written;
     REQUIRE_EQ(written.Create(folder / "written.pak"), NO_ERR);
@@ -1206,6 +1199,118 @@ TEST_CASE("packet file: packets read together are the caller's from a child, a f
     longer.push_back(0);
     WriteFile(folder.Path() / "test.pak", longer);
     CHECK(noneRead(changed));
+}
+
+/// <summary>
+/// Port-only: a child window into a packet file on disk (a mech's PAK inside a part PAK's packet) hands out readers of
+/// its own bytes, read from its parent's file at its place there and no further, so its packets read together are
+/// ReadPacket's; and two windows into one file read together share reads, their neighbours joined across them.
+/// </summary>
+TEST_CASE("packet file: a child window's packets read together come from its parent's file, two windows' in one read")
+{
+    using namespace MCPakBytes;
+    const std::vector<uint8_t> first = Pak({Raw(Filled(100, 0)), Lz(Filled(3000, 1)), Raw(Filled(200, 2))});
+    const std::vector<uint8_t> second = Pak({Raw(Filled(150, 3)), Lz(Filled(2000, 4))});
+    ScratchFolder folder("packets-children");
+    WriteFile(folder.Path() / "parts.pak", Pak({Raw(Filled(500, 5)), Raw(first), Raw(second)}));
+    MCPacketFile parts;
+    REQUIRE_EQ(parts.Open(folder / "parts.pak"), NO_ERR);
+    std::array<MCPacketFile, 2> children;
+
+    for (int32_t k = 0; k < 2; ++k)
+    {
+        REQUIRE_EQ(parts.SeekPacket(k + 1), NO_ERR);
+        REQUIRE_EQ(children[static_cast<size_t>(k)].Open(parts, static_cast<uint32_t>(parts.GetPacketSize())), NO_ERR);
+    }
+
+    // A reader of the first child reads its bytes, and none past them.
+    std::optional<MCFileReader> reader = children[0].OpenReader();
+    REQUIRE(reader.has_value());
+    std::vector<uint8_t> read(first.size() + 10, 0);
+    CHECK_EQ(reader->ReadAt(0, read), first.size());
+    CHECK(std::equal(first.begin(), first.end(), read.begin()));
+    CHECK_EQ(reader->ReadAt(static_cast<uint32_t>(first.size()), read), 0u);
+
+    const std::vector<int32_t> ofFirst = PacketsFrom(0, 2);
+    const std::vector<int32_t> ofSecond = PacketsFrom(0, 1);
+    const MCPacketBatch alone = children[0].ReadPackets(ofFirst);
+    CHECK_EQ(alone.Reads, 1u);
+
+    for (size_t i = 0; i < ofFirst.size(); ++i)
+    {
+        REQUIRE(alone.Packets[i].has_value());
+        CHECK(*alone.Packets[i] == ReadAlone(children[0], ofFirst[i]));
+    }
+
+    const std::array<MCPacketsWanted, 2> both{MCPacketsWanted{children[0], ofFirst},
+                                              MCPacketsWanted{children[1], ofSecond}};
+    const std::vector<MCPacketBatch> together = MCPacketFile::ReadPackets(both);
+    REQUIRE_EQ(together.size(), 2u);
+    CHECK_EQ(together[0].Reads + together[1].Reads, 1u);
+
+    for (size_t i = 0; i < ofSecond.size(); ++i)
+    {
+        REQUIRE(together[1].Packets[i].has_value());
+        CHECK(*together[1].Packets[i] == ReadAlone(children[1], ofSecond[i]));
+    }
+
+    CHECK(together[0].Packets == alone.Packets);
+}
+
+/// <summary>
+/// Port-only: packets held (MCPacketFile::HoldPackets: a mission's load's object types) seek and read as SeekPacket and
+/// ReadPacket leave and give them, the file's position and the packet's size included; let go, they're read as ever.
+/// A FIT file inside one opens from what's held.
+/// </summary>
+TEST_CASE("packet file: packets held seek and read as SeekPacket and ReadPacket do")
+{
+    using namespace MCPakBytes;
+    const std::vector<uint8_t> fit = Bytes("FITini\r\n[ObjectClass]\r\nl ObjectTypeNum = 3\r\n\r\nFITend\r\n");
+    const std::vector<MCStored> stored{Raw(Filled(300, 0)), Lz(Filled(4000, 1)), As(MCPacketStorage::Nul, {}), Lz(fit),
+                                       Raw(Filled(100, 2))};
+
+    OnDiskAndInMemory("packets-held", Pak(stored),
+                      [&](MCPacketFile& pak)
+                      {
+                          MCPacketFile plain;
+                          REQUIRE_EQ(plain.Open(pak.GetFilename()), NO_ERR);
+                          const std::vector<int32_t> held = PacketsFrom(0, 3);
+                          const MCPacketsHeld kept = pak.HoldPackets(held);
+                          CHECK_EQ(kept.Packets, held.size());
+                          CHECK_EQ(kept.Bytes, 300u + 4000u + fit.size());
+
+                          for (const int32_t packet : PacketsFrom(-1, 5))
+                          {
+                              MCTest::Scope scope(std::format("packet {}", packet));
+                              CHECK_EQ(pak.Holds(packet), packet >= 0 && packet <= 3);
+                              CHECK_EQ(pak.SeekPacket(packet), plain.SeekPacket(packet));
+                              CHECK_EQ(pak.GetPacketSize(), plain.GetPacketSize());
+                              CHECK_EQ(pak.GetLogicalPosition(), plain.GetLogicalPosition());
+                              std::vector<uint8_t> ours(static_cast<size_t>(std::max(pak.GetPacketSize(), 0)) + 5,
+                                                        0xcc);
+                              std::vector<uint8_t> theirs = ours;
+                              CHECK_EQ(pak.ReadPacket(packet, ours), plain.ReadPacket(packet, theirs));
+                              CHECK(ours == theirs);
+                              CHECK_EQ(pak.GetLogicalPosition(), plain.GetLogicalPosition());
+                          }
+
+                          pak.ReleaseHeld();
+                          CHECK(!pak.Holds(0));
+                          CHECK(ReadAlone(pak, 1) == ReadAlone(plain, 1));
+                      });
+
+    // A FIT file in a held packet opens from what's held, as MCObjectTypeManager::Load opens a type's (a child window
+    // reads only from a file on disk).
+    ScratchFolder folder("packets-held-fit");
+    WriteFile(folder.Path() / "test.pak", Pak(stored));
+    MCPacketFile pak;
+    REQUIRE_EQ(pak.Open(folder / "test.pak"), NO_ERR);
+    CHECK_EQ(pak.HoldPackets(std::vector{3}).Packets, 1u);
+    REQUIRE_EQ(pak.SeekPacket(3), NO_ERR);
+    MCFitIniFile classFile;
+    REQUIRE_EQ(classFile.Open(pak, static_cast<uint32_t>(pak.GetPacketSize())), 0);
+    REQUIRE_EQ(classFile.SeekBlock("ObjectClass"), 0);
+    CHECK(classFile.Read<int32_t>("ObjectTypeNum") == MCFitResult<int32_t>(3));
 }
 
 /// <summary>A FIT file stored as a packet opens straight from the packet file (read into memory).</summary>

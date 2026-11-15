@@ -34,6 +34,15 @@ struct MCStoredPacket
     MCPacketStorage Storage = MCPacketStorage::Raw;
 };
 
+class MCPacketFile;
+
+/// <summary>Port-only: a packet file's packets to read with other files' (<see cref="MCPacketFile::ReadPackets"/>).</summary>
+struct MCPacketsWanted
+{
+    std::reference_wrapper<const MCPacketFile> File;
+    std::span<const int32_t> Packets;
+};
+
 /// <summary>Port-only: what <see cref="MCPacketFile::ReadPackets"/> read.</summary>
 struct MCPacketBatch
 {
@@ -42,11 +51,36 @@ struct MCPacketBatch
     /// for an empty packet), or nothing (std::nullopt) where the caller must read it itself.
     /// </summary>
     std::vector<std::optional<std::vector<uint8_t>>> Packets;
-    /// <summary>The reads of the file made.</summary>
+    /// <summary>The reads of the file made (a read of several files' packets counted for the first's).</summary>
     size_t Reads = 0;
     /// <summary>The bytes the largest of them read.</summary>
     size_t MostReadBytes = 0;
 };
+
+/// <summary>Port-only: what <see cref="MCPacketFile::HoldPackets"/> read and holds.</summary>
+struct MCPacketsHeld
+{
+    /// <summary>The packets held (each once).</summary>
+    size_t Packets = 0;
+    /// <summary>The reads of the file made.</summary>
+    size_t Reads = 0;
+    /// <summary>The bytes they give (ReadPacket's).</summary>
+    size_t Bytes = 0;
+
+    MCPacketsHeld& operator+=(const MCPacketsHeld& more)
+    {
+        Packets += more.Packets;
+        Reads += more.Reads;
+        Bytes += more.Bytes;
+        return *this;
+    }
+};
+
+/// <summary>
+/// Port-only: the frame log's count of the original's packets (a shape's, an object type's) read on the game's thread as
+/// they're first needed, not with a mission's load's (MCSpriteManager's shapes, MCObjectTypeManager's types).
+/// </summary>
+inline constexpr std::string_view MCPacketsFirstUsedCount = "original packets first used";
 
 /// <summary>
 /// A file of numbered packets (PAK, MPK, ...): a header, a table of packet offsets whose top 3 bits give each
@@ -122,15 +156,38 @@ public:
     /// Port-only: reads the packets <paramref name="packets"/> as ReadPacket does, together: in the order they lie in the
     /// file, each run of neighbours within MCDiskFile::RunGapBytes of each other in one read of at most
     /// MCDiskFile::RunMostBytes (a bigger packet read alone; a Nul packet's bytes not read), up to
-    /// <see cref="BatchReadsAtOnce"/> reads at once, each thread on its own reader (<see cref="OpenReader"/>), and each
-    /// packet unpacked on the thread that read it. A packet asked for twice is read once. The file's position and
+    /// <see cref="BatchReadsAtOnce"/> reads at once, each thread on its own reader (<see cref="OpenRootReader"/>), and
+    /// each packet unpacked on the thread that read it. A packet asked for twice is read once. The file's position and
     /// current packet stay as they were.
     /// </summary>
     /// <returns>
     /// Each packet's bytes, or none where the caller must read it itself: StoredPacket or UnpackStored refuses it, its
-    /// read came up short, or the file can't be read so (a child, a file written).
+    /// read came up short, or the file can't be read so (a file written, one changed on disk since it opened).
     /// </returns>
     MCPacketBatch ReadPackets(std::span<const int32_t> packets) const;
+
+    /// <summary>
+    /// Port-only: <see cref="ReadPackets(std::span{const int32_t})"/> for several packet files at once, their reads
+    /// planned together by the file their bytes lie in (<see cref="RootKey"/>: the windows of one file, a part PAK's
+    /// mechs' PAKs, are read as one file), so that they share the reads at once and neighbours join across them.
+    /// </summary>
+    /// <returns>Each file's batch, in the order given.</returns>
+    static std::vector<MCPacketBatch> ReadPackets(std::span<const MCPacketsWanted> files);
+
+    /// <summary>
+    /// Port-only: reads <paramref name="packets"/> together (<see cref="ReadPackets(std::span{const int32_t})"/>) and
+    /// holds what they give, so that SeekPacket and ReadPacket of them leave the file as they would and give the same,
+    /// reading nothing more, until <see cref="ReleaseHeld"/> or the file closes. A packet the batch leaves is read as
+    /// ever.
+    /// </summary>
+    /// <returns>The packets read and held (each once), the reads and their bytes.</returns>
+    MCPacketsHeld HoldPackets(std::span<const int32_t> packets);
+
+    /// <summary>Port-only: whether packet <paramref name="packet"/> is held (<see cref="HoldPackets"/>).</summary>
+    bool Holds(int32_t packet) const { return _Held.contains(packet); }
+
+    /// <summary>Port-only: lets go of the packets held (<see cref="HoldPackets"/>).</summary>
+    void ReleaseHeld() { _Held.clear(); }
 
     /// <summary>
     /// Port-only: refuses (SeekPacket) an LZ packet that claims to unpack to more than <paramref name="bytes"/>, for a
@@ -197,4 +254,14 @@ protected:
     bool _UsesCheckSum = false;
     /// <summary>Port-only: the most an LZ packet may unpack to (SetMostUnpacked; 0: what its LZ data can).</summary>
     int32_t _MostUnpacked = 0;
+
+    /// <summary>Port-only: a packet held (HoldPackets): where it lies, and what ReadPacket gives for it.</summary>
+    struct MCHeldPacket
+    {
+        MCStoredPacket Stored;
+        std::vector<uint8_t> Bytes;
+    };
+
+    /// <summary>Port-only: the packets held (HoldPackets), by number.</summary>
+    std::unordered_map<int32_t, MCHeldPacket> _Held;
 };

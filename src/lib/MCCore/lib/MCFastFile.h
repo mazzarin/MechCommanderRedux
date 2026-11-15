@@ -89,6 +89,36 @@ public:
     /// <summary>Port-only: whether the archive's file is open (<see cref="Release"/>).</summary>
     bool IsOpen() const { return _Handle.has_value(); }
 
+    /// <summary>
+    /// Port-only: whether this is a version 2 HD archive (SPEC-pack-v2.md): its entries found by their paths' keys, with
+    /// no names, and packed together in streams. Its <see cref="GetEntries"/> give each entry its stream's place
+    /// (Offset and Size, so a read of neighbouring entries reads a stream once) and its own bytes (RealSize).
+    /// </summary>
+    bool IsVersion2() const { return _Version2; }
+
+    /// <summary>
+    /// Port-only (the HD art pack's archives): entry <paramref name="index"/>'s bytes from its stored bytes
+    /// <paramref name="stored"/> as <see cref="ReadStored(int32_t)"/> gives them: a version 1 entry inflated when packed
+    /// (DEFLATE), a version 2 entry cut from its stream, unpacked once and kept a while for its neighbours; or what is
+    /// wrong with them.
+    /// </summary>
+    std::expected<std::vector<uint8_t>, std::string> Unpack(int32_t index, std::span<const uint8_t> stored) const;
+
+    /// <summary>
+    /// Port-only (version 2): whether the archive has folder <paramref name="path"/> (below the archive, <c>\</c>
+    /// between names, case ignored; the empty path its own), found by its key with nothing read.
+    /// </summary>
+    bool HasFolder(std::string_view path) const;
+
+    /// <summary>
+    /// Port-only (version 2): folder <paramref name="path"/>'s facts records, each its type and data, in order; none for
+    /// a folder without facts or an archive of version 1.
+    /// </summary>
+    std::vector<std::pair<uint16_t, std::span<const uint8_t>>> Facts(std::string_view path) const;
+
+    /// <summary>Port-only: the key a version 2 archive finds <paramref name="path"/> by (XXH3-64 of it lower-cased).</summary>
+    static uint64_t PathKey(std::string_view path);
+
     /// <summary>Lets only <see cref="Create"/> construct an archive.</summary>
     class Key
     {
@@ -113,4 +143,36 @@ private:
     std::unordered_map<std::string, int32_t> _Index;
     /// <summary>The open archive.</summary>
     std::optional<MCDiskFile> _Handle;
+
+    /// <summary>Port-only: reads a version 2 archive's header and table (<see cref="IsVersion2"/>) into this one.</summary>
+    std::expected<void, std::string> ReadVersion2(std::string_view fileName);
+
+    /// <summary>Port-only (version 2): a stream's place, sizes and codec.</summary>
+    struct Stream
+    {
+        uint64_t At = 0;
+        uint32_t Stored = 0;
+        uint32_t Unpacked = 0;
+        uint8_t Codec = 0;
+    };
+
+    /// <summary>Port-only (version 2): an entry's stream, and where it lies in the stream unpacked.</summary>
+    struct Placed
+    {
+        uint32_t Stream = 0;
+        uint32_t At = 0;
+        uint32_t Bytes = 0;
+    };
+
+    bool _Version2 = false;
+    /// <summary>Port-only (version 2): this archive's own number, keying its unpacked streams kept a while.</summary>
+    uint64_t _Serial = 0;
+    std::vector<Stream> _Streams;
+    /// <summary>Port-only (version 2): the entries' keys, sorted, and each one's place (by the same index).</summary>
+    std::vector<uint64_t> _EntryKeys;
+    std::vector<Placed> _Placed;
+    /// <summary>Port-only (version 2): the folders' keys, sorted, each one's facts (start and bytes), and the facts.</summary>
+    std::vector<uint64_t> _FolderKeys;
+    std::vector<std::pair<uint32_t, uint32_t>> _FolderFacts;
+    std::vector<uint8_t> _Facts;
 };

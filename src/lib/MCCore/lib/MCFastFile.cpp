@@ -4,6 +4,9 @@
 #include "lib/MCLz.h"
 #include "lib/MCZstd.h"
 #include "platform/MCFileSystem.h"
+
+// xxHash, header-only: its functions inline in this file alone.
+#define XXH_INLINE_ALL
 #include "xxhash.h"
 
 namespace

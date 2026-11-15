@@ -1030,6 +1030,22 @@ namespace
             return 0;
         }
 
+        // A version 2 archive keeps no names: its numbered frames are found by their keys.
+        if (archived.Archive->File->IsVersion2())
+        {
+            int32_t count = 0;
+
+            for (int32_t frame = 0; frame < MostArchivedFrames; ++frame)
+            {
+                if (archived.Archive->File->Find(std::format("{}{}{}", archived.Prefix, frame, HdfExtension)))
+                {
+                    count = frame + 1;
+                }
+            }
+
+            return count;
+        }
+
         const auto found = archived.Archive->FrameCounts.find(Upper(archived.Prefix));
         return found == archived.Archive->FrameCounts.end() ? 0 : found->second;
     }
@@ -1041,36 +1057,28 @@ namespace
     }
 
     /// <summary>
-    /// Archive entry <paramref name="entry"/> (named <paramref name="name"/>, for what is wrong) from its
-    /// <paramref name="stored"/> bytes, a <c>.hdf</c> file, inflated when packed, as a frame for a shape of
-    /// <paramref name="width"/> x <paramref name="height"/> (0 x 0: any).
+    /// Entry <paramref name="index"/> of <paramref name="file"/> (named <paramref name="name"/>, for what is wrong) from
+    /// its <paramref name="stored"/> bytes, a <c>.hdf</c> file, unpacked (MCFastFile::Unpack: inflated when packed, or
+    /// cut from its version 2 stream), as a frame for a shape of <paramref name="width"/> x <paramref name="height"/>
+    /// (0 x 0: any).
     /// </summary>
-    std::expected<MCHdArt::Frame, std::string> DecodeEntry(const MCFileEntry& entry, std::vector<uint8_t> stored,
-                                                           std::string_view name, int32_t width, int32_t height)
+    std::expected<MCHdArt::Frame, std::string> DecodeEntry(const MCFastFile& file, int32_t index,
+                                                           std::span<const uint8_t> stored, std::string_view name,
+                                                           int32_t width, int32_t height)
     {
-        if (!FitsFrameFile(entry))
+        if (!FitsFrameFile(file.GetEntries()[static_cast<size_t>(index)]))
         {
             return std::unexpected(std::format("{} is too large", name));
         }
 
-        if (stored.size() != static_cast<size_t>(entry.Size))
+        std::expected<std::vector<uint8_t>, std::string> unpacked = file.Unpack(index, stored);
+
+        if (!unpacked)
         {
-            return std::unexpected(std::format("{} can't be read", name));
+            return std::unexpected(std::format("{} doesn't unpack: {}", name, unpacked.error()));
         }
 
-        if (entry.Size != entry.RealSize)
-        {
-            auto inflated = MCInflate::Inflate(stored, static_cast<size_t>(entry.RealSize));
-
-            if (!inflated)
-            {
-                return std::unexpected(std::format("{} doesn't unpack: {}", name, inflated.error()));
-            }
-
-            stored = std::move(*inflated);
-        }
-
-        return MCHdArt::DecodeHdf(stored, width, height);
+        return MCHdArt::DecodeHdf(*unpacked, width, height);
     }
 
     /// <summary>
@@ -1104,7 +1112,7 @@ namespace
             KeepOpen(archive.File);
         }
 
-        return DecodeEntry(entry, std::move(stored), name, width, height);
+        return DecodeEntry(*archive.File, index, stored, name, width, height);
     }
 
     /// <summary>
@@ -1161,7 +1169,10 @@ namespace
             if (const std::shared_ptr<MCHdArchive> archive = ArchiveFor(ancestor); archive != nullptr)
             {
                 const std::filesystem::path rest = folder.lexically_relative(ancestor);
-                return !rest.empty() && archive->Folders.contains(Upper(MCFileSystem::ToUtf8(*rest.begin())));
+                // A version 2 archive keeps no names: its folders are found by their keys.
+                const std::string first = rest.empty() ? std::string() : MCFileSystem::ToUtf8(*rest.begin());
+                return !rest.empty() && (archive->File->IsVersion2() ? archive->File->HasFolder(first)
+                                                                     : archive->Folders.contains(Upper(first)));
             }
         }
 
@@ -2092,8 +2103,9 @@ namespace
                 const AheadEntry& read = run[at].Entry;
                 const MCFileEntry& entry = entries[static_cast<size_t>(read.Index)];
                 const auto from = bytes.begin() + (static_cast<ptrdiff_t>(entry.Offset) - start);
-                auto decoded = DecodeEntry(entry, std::vector<uint8_t>(from, from + entry.Size), read.Entry, read.Width,
-                                           read.Height);
+                auto decoded =
+                    DecodeEntry(*archive->File, read.Index, std::span<const uint8_t>(from, from + entry.Size),
+                                read.Entry, read.Width, read.Height);
 
                 if (decoded.has_value())
                 {

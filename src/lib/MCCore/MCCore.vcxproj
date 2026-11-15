@@ -479,6 +479,7 @@
     <ClCompile Include="sprite\MCHdMovie.cpp" />
     <ClCompile Include="sprite\MCMechActor.cpp" />
     <ClCompile Include="sprite\MCMechStops.cpp" />
+    <ClCompile Include="sprite\MCPackRecords.cpp" />
     <ClCompile Include="sprite\MCPaletteNight.cpp" />
     <ClCompile Include="sprite\MCParticles.cpp" />
     <ClCompile Include="sprite\MCPUAppearance.cpp" />
@@ -974,6 +975,7 @@
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCMechStops.h" />
     <ClInclude Include="sprite\MCMechStopsKnown.h" />
+    <ClInclude Include="sprite\MCPackRecords.h" />
     <ClInclude Include="sprite\MCPaletteNight.h" />
     <ClInclude Include="sprite\MCParticles.h" />
     <ClInclude Include="sprite\MCPUAppearance.h" />

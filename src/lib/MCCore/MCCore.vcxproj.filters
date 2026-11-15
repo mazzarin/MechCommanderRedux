@@ -1327,6 +1327,9 @@
     <ClCompile Include="sprite\MCMechStops.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
+    <ClCompile Include="sprite\MCPackRecords.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
     <ClCompile Include="sprite\MCPaletteNight.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
@@ -2764,6 +2767,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCMechStopsKnown.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCPackRecords.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCPaletteNight.h">

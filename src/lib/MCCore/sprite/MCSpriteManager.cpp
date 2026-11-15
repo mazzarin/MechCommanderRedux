@@ -478,6 +478,33 @@ auto MCSpriteManager::MechPacketsStored(uint32_t mechNum, MCMechPart part, uint3
                 : std::vector<uint8_t>{};
 }
 
+auto MCSpriteManager::MechPacketsPlace(uint32_t mechNum, MCMechPart part, uint32_t first, uint32_t count,
+                                       bool zoomedOut) -> std::optional<MCMechPacketsPlace>
+{
+    const bool use90 = zoomedOut && _PartFiles90[part] != nullptr;
+    const auto& parent = use90 ? _PartFiles90[part] : _PartFiles[part];
+    const MCOptionalRef<MCPacketFile> file = MechFile(mechNum, part, zoomedOut);
+
+    if (parent == nullptr || !file || count == 0)
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<MCStoredPacket> mech = parent->StoredPacket(static_cast<int32_t>(mechNum));
+    const std::optional<MCStoredPacket> from = file->get().StoredPacket(static_cast<int32_t>(first));
+    const std::optional<MCStoredPacket> to = file->get().StoredPacket(static_cast<int32_t>(first + count - 1));
+
+    if (!mech.has_value() || !from.has_value() || !to.has_value() || to->Offset < from->Offset)
+    {
+        return std::nullopt;
+    }
+
+    return MCMechPacketsPlace{.MechAt = mech->Offset,
+                              .MechBytes = mech->Size,
+                              .RunAt = from->Offset,
+                              .RunBytes = to->Offset + to->Size - from->Offset};
+}
+
 auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
                                        std::weak_ptr<MCAppearanceType> owner, bool zoomedOut)
     -> std::shared_ptr<MCShape>

@@ -380,3 +380,80 @@ std::optional<std::vector<uint8_t>> MCRebuildGroundTile(std::span<const uint8_t>
     packet.insert(packet.end(), shape.Tip.begin(), shape.Tip.end());
     return packet;
 }
+
+auto MCGroundSet::View() const -> MCKnownGroundNames
+{
+    return MCKnownGroundNames{.FilesHash = FilesHash,
+                              .Slots = Slots,
+                              .Tiles = Tiles,
+                              .Overlays = Overlays,
+                              .Shapes = Shapes,
+                              .Tips = Tips,
+                              .Spots = Spots};
+}
+
+namespace
+{
+    /// <summary>Slot <paramref name="slot"/>'s <paramref name="name"/> as a table's row; none where it doesn't fit.</summary>
+    auto NameRow(int32_t slot, const MCGroundName& name) -> std::optional<MCGroundNameRow>
+    {
+        constexpr int32_t Most = std::numeric_limits<uint16_t>::max();
+
+        if (slot < 0 || slot > Most || name.Width <= 0 || name.Width > Most || name.Height <= 0 || name.Height > Most ||
+            name.Key == 0)
+        {
+            return std::nullopt;
+        }
+
+        return MCGroundNameRow{name.Key, static_cast<uint16_t>(slot), static_cast<uint16_t>(name.Width),
+                               static_cast<uint16_t>(name.Height)};
+    }
+} // namespace
+
+auto MCWorkOutGroundSet(MCTerrainTiles& tiles) -> std::expected<MCGroundSet, std::string>
+{
+    MCGroundSet set{.FilesHash = tiles.FilesHash(), .Slots = tiles.NumTiles()};
+
+    for (int32_t slot = 0; slot < tiles.NumTiles(); ++slot)
+    {
+        const MCGroundSlotNames names = MCWorkOutGroundNames(tiles, slot);
+
+        if (names.Tile.has_value())
+        {
+            const std::optional<MCGroundNameRow> row = NameRow(slot, *names.Tile);
+            const std::optional<MCGroundTileShape> shape = MCWorkOutGroundTileShape(tiles, slot);
+
+            if (!row.has_value() || !shape.has_value() || shape->Tip.size() > std::numeric_limits<uint8_t>::max() ||
+                set.Tips.size() > std::numeric_limits<uint32_t>::max())
+            {
+                return std::unexpected(std::format("tile set {:016x}, slot {}: its ground tile's name or shape doesn't "
+                                                   "fit the table",
+                                                   set.FilesHash, slot));
+            }
+
+            set.Tiles.push_back(*row);
+            set.Shapes.push_back(MCGroundShapeRow{shape->HotX, shape->HotY, shape->BoxWidth,
+                                                  static_cast<uint8_t>(shape->Tip.size()),
+                                                  static_cast<uint32_t>(set.Tips.size())});
+            set.Tips.insert(set.Tips.end(), shape->Tip.begin(), shape->Tip.end());
+        }
+
+        if (names.Overlay.has_value())
+        {
+            const std::optional<MCGroundNameRow> row = NameRow(slot, *names.Overlay);
+            const std::optional<MCGroundOverlaySpot> spot = MCWorkOutGroundOverlaySpot(tiles, slot);
+
+            if (!row.has_value() || !spot.has_value())
+            {
+                return std::unexpected(std::format("tile set {:016x}, slot {}: its overlay's name or hot spot doesn't "
+                                                   "fit the table",
+                                                   set.FilesHash, slot));
+            }
+
+            set.Overlays.push_back(*row);
+            set.Spots.push_back(*spot);
+        }
+    }
+
+    return set;
+}

@@ -749,18 +749,40 @@ std::vector<std::pair<std::string, int32_t>> MCTestGame::MechTrees()
     return trees;
 }
 
+namespace
+{
+    /// <summary>The mech tree in packet <paramref name="packet"/> of the game's sprite PAK.</summary>
+    auto MechTreeAt(int32_t packet) -> std::shared_ptr<MCSpriteTree>
+    {
+        constexpr uint32_t MechTreeType = 0x01000000u;
+        return std::static_pointer_cast<MCSpriteTree>(
+            AppearanceTypeList().GetAppearance(MechTreeType | static_cast<uint32_t>(packet)));
+    }
+} // namespace
+
 std::shared_ptr<MCSpriteTree> MCTestGame::FindMechTree(std::string_view name)
 {
     for (const auto& [treeName, packet] : MechTrees())
     {
         if (treeName == name)
         {
-            return std::static_pointer_cast<MCSpriteTree>(
-                AppearanceTypeList().GetAppearance(0x01000000u | static_cast<uint32_t>(packet)));
+            return MechTreeAt(packet);
         }
     }
 
     return nullptr;
+}
+
+std::vector<std::shared_ptr<MCSpriteTree>> MCTestGame::EveryMechTree()
+{
+    std::vector<std::shared_ptr<MCSpriteTree>> trees;
+
+    for (const auto& [name, packet] : MechTrees())
+    {
+        trees.push_back(MechTreeAt(packet));
+    }
+
+    return trees;
 }
 
 void MCTestGame::FaceMech(MCBattleMech& mech, float degrees)

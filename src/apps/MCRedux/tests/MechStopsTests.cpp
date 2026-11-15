@@ -1,11 +1,11 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "TestGame.h"
-#include "appear/MCAppearanceTypeList.h"
 #include "object/MCBattleMech.h"
 #include "mission/MCScenario.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCMechStops.h"
+#include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
@@ -22,20 +22,6 @@ namespace
     auto MsSince(Clock::time_point start) -> double
     {
         return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
-    }
-
-    /// <summary>Every mech tree of the game's data, once each (two trees may share a name: their packets differ).</summary>
-    auto EveryTree() -> std::vector<std::shared_ptr<MCSpriteTree>>
-    {
-        std::vector<std::shared_ptr<MCSpriteTree>> trees;
-
-        for (const auto& [name, packet] : MCTestGame::MechTrees())
-        {
-            trees.push_back(std::static_pointer_cast<MCSpriteTree>(
-                AppearanceTypeList().GetAppearance(0x01000000u | static_cast<uint32_t>(packet))));
-        }
-
-        return trees;
     }
 
     /// <summary>Forgets <paramref name="tree"/>'s stops, as a tree just loaded has none.</summary>
@@ -143,7 +129,7 @@ TEST_CASE_ISOLATED("tool: --mech-stops-table writes every mech tree's stops for 
     std::array<double, 8> totals{};
     std::cout << "tree             today cold  loads  visits  compare | fast cold  warm | hash ms    MB\n";
 
-    for (const std::shared_ptr<MCSpriteTree>& tree : EveryTree())
+    for (const std::shared_ptr<MCSpriteTree>& tree : MCTestGame::EveryMechTree())
     {
         REQUIRE(tree != nullptr);
         MCTest::Scope scope(tree->Name);
@@ -259,7 +245,7 @@ TEST_CASE_ISOLATED("game: the program's table holds every mech tree's stops, and
     }
 
     REQUIRE(MCTestGame::StartMission(1));
-    const std::vector<std::shared_ptr<MCSpriteTree>> trees = EveryTree();
+    const std::vector<std::shared_ptr<MCSpriteTree>> trees = MCTestGame::EveryMechTree();
     REQUIRE(trees.size() >= 24);
     std::set<uint64_t> held;
 
@@ -276,6 +262,77 @@ TEST_CASE_ISOLATED("game: the program's table holds every mech tree's stops, and
 
     // Nothing the game's data hasn't.
     CHECK_EQ(held.size(), MCKnownStopsTable().size());
+}
+
+/// <summary>
+/// The version 2 HD pack's stops key (SPEC-pack-v2.md's record 4, sprite/MCPackRecords.h): every mech tree of the game's
+/// data finds its stops by its key, from the tree and the PAKs' tables alone, none of its art read as stored; a key
+/// whose art lies elsewhere finds none, so that tree takes the art's way; and the record reads back as written, a
+/// damaged one refused.
+/// </summary>
+TEST_CASE_ISOLATED("game: every mech tree's stops found by the HD pack's stops key, none of its art read")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+    REQUIRE(spriteManager != nullptr);
+    const std::vector<std::shared_ptr<MCSpriteTree>> trees = MCTestGame::EveryMechTree();
+    std::vector<MCStopsKey> keys;
+
+    for (const std::shared_ptr<MCSpriteTree>& tree : trees)
+    {
+        REQUIRE(tree != nullptr);
+        MCTest::Scope scope(tree->Name);
+        std::optional<MCStopsKey> key = MCStopsKeyOf(*tree);
+        REQUIRE(key.has_value());
+        key->ArtHash = MCStopsArtHash(*tree);
+        REQUIRE(MCFindKnownStops(key->ArtHash).has_value());
+        keys.push_back(*key);
+    }
+
+    const std::vector<uint8_t> record = MCPackRecords::StopsKey(keys);
+    const std::expected<std::vector<MCStopsKey>, std::string> read = MCPackRecords::ReadStopsKey(record);
+    REQUIRE(read.has_value());
+    CHECK(*read == keys);
+
+    for (size_t i = 0; i < trees.size(); ++i)
+    {
+        MCSpriteTree& tree = *trees[i];
+        MCTest::Scope scope(tree.Name);
+        ForgetStops(tree);
+        const size_t storedBefore = spriteManager->ShapesReadAlone().MechsStored;
+        CHECK(MCPrepareStopsByKey(tree, *read));
+        CHECK(tree.StopsPrepared);
+        CHECK_EQ(tree.StopsLookedUpBy, keys[i].ArtHash);
+        CHECK_EQ(spriteManager->ShapesReadAlone().MechsStored, storedBefore);
+    }
+
+    // A key whose legs lie a byte further on is of other art: nothing is prepared, so the tree takes the art's way.
+    std::vector<MCStopsKey> moved = keys;
+
+    for (MCStopsKey& key : moved)
+    {
+        ++key.Parts[static_cast<size_t>(MCMechPart::Legs)].Place.RunBytes;
+    }
+
+    ForgetStops(*trees.front());
+    CHECK(!MCPrepareStopsByKey(*trees.front(), moved));
+    CHECK(!trees.front()->StopsPrepared);
+
+    // A damaged record is refused, saying how.
+    std::vector<uint8_t> damaged = record;
+    damaged.pop_back();
+    CHECK(!MCPackRecords::ReadStopsKey(damaged).has_value());
+    damaged = record;
+    damaged.push_back(0);
+    CHECK(!MCPackRecords::ReadStopsKey(damaged).has_value());
+    damaged = record;
+    damaged[0] = static_cast<uint8_t>(MCPackRecords::Version + 1);
+    CHECK(!MCPackRecords::ReadStopsKey(damaged).has_value());
 }
 
 /// <summary>

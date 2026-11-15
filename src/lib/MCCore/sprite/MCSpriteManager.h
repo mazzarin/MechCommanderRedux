@@ -56,6 +56,20 @@ struct MCStoredWanted
 };
 
 /// <summary>
+/// Port-only: where a run of a mech's packets lies, as <see cref="MCSpriteManager::MechPacketsPlace"/> gives it: the
+/// mech's PAK in its part PAK, and the run in the mech's PAK, each its start and bytes.
+/// </summary>
+struct MCMechPacketsPlace
+{
+    uint32_t MechAt = 0;
+    uint32_t MechBytes = 0;
+    uint32_t RunAt = 0;
+    uint32_t RunBytes = 0;
+
+    bool operator==(const MCMechPacketsPlace&) const = default;
+};
+
+/// <summary>
 /// Port-only: the shapes read one at a time (as each is first needed), not together: mechs' parts', and others'; and the
 /// runs of a mech's packets read as stored alone (MechPacketsStored's, for a hash of its art).
 /// </summary>
@@ -157,6 +171,13 @@ public:
     /// </summary>
     std::vector<uint8_t> MechPacketsStored(uint32_t mechNum, MCMechPart part, uint32_t first, uint32_t count,
                                            bool zoomedOut);
+
+    /// <summary>
+    /// Port-only (the HD pack's stops key): where <see cref="MechPacketsStored"/>'s packets lie, from the PAKs' tables
+    /// alone: the mech's PAK in the part PAK, and the run of packets in the mech's PAK. None when they aren't all there.
+    /// </summary>
+    std::optional<MCMechPacketsPlace> MechPacketsPlace(uint32_t mechNum, MCMechPart part, uint32_t first,
+                                                       uint32_t count, bool zoomedOut);
 
     /// <summary>
     /// The name of the part PAK <see cref="GetMechShapeData"/> reads <paramref name="part"/> from with

@@ -179,6 +179,9 @@ namespace MCTestGame
     /// <summary>The mech tree named <paramref name="name"/> (its FIT's Main Info "Name") in the game's sprite PAK.</summary>
     std::shared_ptr<MCSpriteTree> FindMechTree(std::string_view name);
 
+    /// <summary>Every mech tree of the game's data, once each (two trees may share a name: their packets differ).</summary>
+    std::vector<std::shared_ptr<MCSpriteTree>> EveryMechTree();
+
     /// <summary>Turns <paramref name="mech"/> to face <paramref name="degrees"/> (about the world's up axis).</summary>
     void FaceMech(MCBattleMech& mech, float degrees);
 

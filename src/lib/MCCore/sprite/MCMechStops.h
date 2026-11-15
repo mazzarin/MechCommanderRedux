@@ -300,6 +300,52 @@ using MCStopsArtStored = MCMechParts<std::optional<std::vector<uint8_t>>>;
 [[nodiscard]] uint64_t MCStopsArtHash(MCSpriteTree& tree, const MCStopsArtStored& stored);
 
 /// <summary>
+/// Port-only (MechBraking, the HD pack's stops key): a part's share of a tree's <see cref="MCStopsKey"/>: the mech's
+/// packet in the part PAK (the FIT's file number, MCSpriteTree.h's NoFileNumber for none), the run of its packets
+/// <see cref="MCStopsArtHash"/> reads (none: a count of 0) and where that lies.
+/// </summary>
+struct MCStopsKeyPart
+{
+    uint32_t FileNumber = 0;
+    uint32_t First = 0;
+    uint32_t Count = 0;
+    MCMechPacketsPlace Place;
+
+    bool operator==(const MCStopsKeyPart&) const = default;
+};
+
+/// <summary>
+/// Port-only (MechBraking): what finds a tree's stops without reading its art (SPEC-pack-v2.md's stops key, a legs
+/// archive's record 4): the hash of what <see cref="MCStopsArtHash"/> hashes before the packets' bytes (the tree's own
+/// layout), each part's run and where it lies in the part PAK, and the art's hash the stops table is looked up by.
+/// </summary>
+struct MCStopsKey
+{
+    uint64_t Layout = 0;
+    std::array<MCStopsKeyPart, MechPartCount> Parts{};
+    uint64_t ArtHash = 0;
+
+    /// <summary>Whether this key and <paramref name="other"/> are of the same art: all but the art's hash.</summary>
+    [[nodiscard]] bool SameArt(const MCStopsKey& other) const;
+
+    bool operator==(const MCStopsKey&) const = default;
+};
+
+/// <summary>
+/// Port-only (MechBraking): <paramref name="tree"/>'s stops key from the tree and the PAKs' tables alone, its
+/// <c>ArtHash</c> 0 (the tool fills it in: <see cref="MCStopsArtHash"/>); none when a run's place isn't in its PAK.
+/// </summary>
+[[nodiscard]] std::optional<MCStopsKey> MCStopsKeyOf(MCSpriteTree& tree);
+
+/// <summary>
+/// Port-only (MechBraking): <see cref="MCPrepareStops(MCSpriteTree&)"/> by the HD pack's stops keys, reading none of
+/// the tree's art: its stops from the table by the art hash of the key in <paramref name="keys"/> of the same art. False,
+/// with nothing prepared, when no key is or the table hasn't its hash (a pack of another build's), so the caller takes
+/// the art's way.
+/// </summary>
+[[nodiscard]] bool MCPrepareStopsByKey(MCSpriteTree& tree, std::span<const MCStopsKey> keys);
+
+/// <summary>
 /// Port-only (MechBraking): <paramref name="tree"/>'s stops from the table, by its art's hash
 /// (<see cref="MCStopsArtHash"/>), once a tree. For art the table hasn't (a mod's, never the game's: a test holds every
 /// tree of the game's data to the table) they are worked out (<see cref="MCMakeStopsFast"/>), logged.

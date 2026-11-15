@@ -10,6 +10,9 @@
 #include "object/MCObjectQueue.h"
 #include "object/MCObjectSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCMechStops.h"
+#include "sprite/MCPackRecords.h"
+#include "sprite/MCSpriteTree.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCGroundNames.h"
 #include "terrain/MCGroundNamesKnown.h"
@@ -32,35 +35,16 @@ namespace
         return std::format("MCGroundNames_{}_{}", name, part);
     }
 
-    /// <summary>
-    /// A row of the table, for slot <paramref name="slot"/>'s <paramref name="name"/>, which must fit its 16 bits.
-    /// </summary>
-    auto RowText(int32_t slot, const MCGroundName& name) -> std::string
+    /// <summary>A row of the table, as the source writes it.</summary>
+    auto RowText(const MCGroundNameRow& row) -> std::string
     {
-        constexpr int32_t Most = std::numeric_limits<uint16_t>::max();
-        REQUIRE(slot <= Most);
-        REQUIRE(name.Width > 0 && name.Width <= Most);
-        REQUIRE(name.Height > 0 && name.Height <= Most);
-        REQUIRE(name.Key != 0);
-        return std::format("    {{0x{:016x}, {}, {}, {}}},\n", name.Key, slot, name.Width, name.Height);
+        return std::format("    {{0x{:016x}, {}, {}, {}}},\n", row.Key, row.Slot, row.Width, row.Height);
     }
 
     /// <summary>Rows <paramref name="rows"/> as the table's array <paramref name="arrayName"/> of <paramref name="type"/>.</summary>
     auto ArrayText(std::string_view type, const std::string& arrayName, const std::string& rows) -> std::string
     {
         return std::format("inline constexpr {} {}[] = {{\n{}}};\n\n", type, arrayName, rows);
-    }
-
-    /// <summary>
-    /// A shape row of the table, for <paramref name="shape"/>, whose tip starts <paramref name="tipAt"/> bytes into its
-    /// set's tips and must fit its row's 8 bits.
-    /// </summary>
-    auto ShapeRowText(const MCGroundTileShape& shape, size_t tipAt) -> std::string
-    {
-        REQUIRE(shape.Tip.size() <= std::numeric_limits<uint8_t>::max());
-        REQUIRE(tipAt <= std::numeric_limits<uint32_t>::max());
-        return std::format("    {{{}, {}, {}, {}, {}}},\n", shape.HotX, shape.HotY, shape.BoxWidth, shape.Tip.size(),
-                           tipAt);
     }
 
     /// <summary>Bytes <paramref name="bytes"/> as a table array's rows, sixteen a line.</summary>
@@ -265,6 +249,165 @@ namespace
     }
 } // namespace
 
+namespace
+{
+    /// <summary>Whether sets <paramref name="a"/> and <paramref name="b"/> hold the same rows, tips and spots.</summary>
+    auto SameSet(const MCKnownGroundNames& a, const MCKnownGroundNames& b) -> bool
+    {
+        return a.FilesHash == b.FilesHash && a.Slots == b.Slots && std::ranges::equal(a.Tiles, b.Tiles) &&
+               std::ranges::equal(a.Overlays, b.Overlays) && std::ranges::equal(a.Shapes, b.Shapes) &&
+               std::ranges::equal(a.Tips, b.Tips) && std::ranges::equal(a.Spots, b.Spots);
+    }
+
+    /// <summary>Every shipped tile set worked out from its art (MCWorkOutGroundSet), as the records hold them.</summary>
+    auto WorkedOutSets() -> std::vector<MCGroundSet>
+    {
+        std::vector<MCGroundSet> sets;
+
+        for (const std::string_view setName : ShippedTileSets)
+        {
+            const std::unique_ptr<MCTerrainTiles> tiles = OpenTileSet(setName);
+            std::expected<MCGroundSet, std::string> set = MCWorkOutGroundSet(*tiles);
+
+            if (!set.has_value())
+            {
+                FAIL(std::format("tile set {}: {}", setName, set.error()));
+            }
+
+            sets.push_back(std::move(*set));
+        }
+
+        return sets;
+    }
+
+    /// <summary>Views of <paramref name="sets"/>, for the records' writers.</summary>
+    auto ViewsOf(std::span<const MCGroundSet> sets) -> std::vector<MCKnownGroundNames>
+    {
+        std::vector<MCKnownGroundNames> views;
+
+        for (const MCGroundSet& set : sets)
+        {
+            views.push_back(set.View());
+        }
+
+        return views;
+    }
+} // namespace
+
+/// <summary>
+/// The version 2 HD pack's records 2 and 3 (sprite/MCPackRecords.h): each shipped tile set worked out from its art is
+/// the program's table's, and written as the ground table and the overlay spots it reads back the same; either record
+/// alone gives its half; a damaged one is refused, saying how.
+/// </summary>
+TEST_CASE_ISOLATED("ground names: the pack's ground table and overlay spots hold the tile sets as the program's table")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::vector<MCGroundSet> sets = WorkedOutSets();
+    const std::vector<MCKnownGroundNames> views = ViewsOf(sets);
+
+    for (const std::string_view setName : ShippedTileSets)
+    {
+        MCTest::Scope scope(setName);
+        const std::unique_ptr<MCTerrainTiles> tiles = OpenTileSet(setName);
+        const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(*tiles);
+        REQUIRE(known.has_value());
+        const auto worked = std::ranges::find(views, tiles->FilesHash(), &MCKnownGroundNames::FilesHash);
+        REQUIRE(worked != views.end());
+        CHECK(SameSet(*worked, known->get()));
+    }
+
+    const std::vector<uint8_t> ground = MCPackRecords::GroundTable(views);
+    const std::vector<uint8_t> spots = MCPackRecords::OverlaySpots(views);
+    const std::expected<std::vector<MCGroundSet>, std::string> read = MCPackRecords::ReadGround(ground, spots);
+    REQUIRE(read.has_value());
+    REQUIRE_EQ(read->size(), sets.size());
+
+    for (size_t i = 0; i < sets.size(); ++i)
+    {
+        CHECK(SameSet((*read)[i].View(), views[i]));
+    }
+
+    const std::expected<std::vector<MCGroundSet>, std::string> tilesOnly = MCPackRecords::ReadGround(ground, {});
+    REQUIRE(tilesOnly.has_value());
+    CHECK(std::ranges::equal(tilesOnly->front().Tiles, sets.front().Tiles));
+    CHECK(tilesOnly->front().Overlays.empty());
+
+    for (const std::vector<uint8_t>& whole : {ground, spots})
+    {
+        std::vector<uint8_t> damaged = whole;
+        damaged.pop_back();
+        CHECK(!MCPackRecords::ReadGround(damaged, {}).has_value());
+        damaged = whole;
+        damaged.push_back(0);
+        CHECK(!MCPackRecords::ReadGround({}, damaged).has_value());
+    }
+
+    std::vector<uint8_t> otherVersion = ground;
+    otherVersion[0] = static_cast<uint8_t>(MCPackRecords::Version + 1);
+    CHECK(!MCPackRecords::ReadGround(otherVersion, spots).has_value());
+}
+
+/// <summary>
+/// Tool: <c>--pack-records &lt;folder&gt;</c> writes the version 2 HD pack's records the game owns (SPEC-pack-v2.md's
+/// "The facts"), one file a record holding its data as it goes in the archive, under the archive's path below the pack:
+/// <c>terrain.hda/2.rec</c> (the ground table), <c>overlays.hda/3.rec</c> (the overlay spots) and each
+/// <c>mechs/legs90/&lt;n&gt;.hda/4.rec</c> (the stops key of the trees whose legs are mech <c>n</c>'s).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --pack-records writes the HD pack's ground table, overlay spots and stops keys")
+{
+    const std::optional<std::string_view> out = MCTest::Option("pack-records");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::filesystem::path folder{*out};
+    const auto write =
+        [&](const std::filesystem::path& archive, MCPackRecords::Type type, std::span<const uint8_t> data)
+    {
+        const std::filesystem::path path = folder / archive / std::format("{}.rec", static_cast<uint16_t>(type));
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream file{path, std::ios::binary};
+        file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        REQUIRE(file.good());
+        std::cout << std::format("{}: {} bytes\n", path.lexically_relative(folder).generic_string(), data.size());
+    };
+
+    const std::vector<MCGroundSet> sets = WorkedOutSets();
+    const std::vector<MCKnownGroundNames> views = ViewsOf(sets);
+    write("terrain.hda", MCPackRecords::Type::GroundTable, MCPackRecords::GroundTable(views));
+    write("overlays.hda", MCPackRecords::Type::OverlaySpots, MCPackRecords::OverlaySpots(views));
+
+    // Each tree's key in the legs archive of its legs (mech n's legs90 packet: mechs/legs90/<n>.hda).
+    std::map<uint32_t, std::vector<MCStopsKey>> byLegs;
+
+    for (const std::shared_ptr<MCSpriteTree>& tree : MCTestGame::EveryMechTree())
+    {
+        REQUIRE(tree != nullptr);
+        MCTest::Scope scope(tree->Name);
+        std::optional<MCStopsKey> key = MCStopsKeyOf(*tree);
+        REQUIRE(key.has_value());
+        key->ArtHash = MCStopsArtHash(*tree);
+        REQUIRE(MCFindKnownStops(key->ArtHash).has_value());
+        const uint32_t legs = tree->FileNumbers[MCMechPart::Legs];
+        REQUIRE(legs != NoFileNumber);
+        byLegs[legs].push_back(*key);
+    }
+
+    for (const auto& [legs, keys] : byLegs)
+    {
+        write(std::filesystem::path("mechs") / "legs90" / std::format("{}.hda", legs), MCPackRecords::Type::StopsKey,
+              MCPackRecords::StopsKey(keys));
+    }
+}
+
 /// <summary>
 /// Tool: <c>--ground-names-table &lt;file&gt;</c> works out every slot's names in each of the original's tile sets from
 /// its tiles (MCWorkOutGroundNames) and writes them as terrain/MCGroundNamesKnown.h, the table the program carries.
@@ -285,37 +428,41 @@ TEST_CASE_ISOLATED("tool: --ground-names-table writes the original's tile sets' 
     for (const std::string_view setName : ShippedTileSets)
     {
         const std::unique_ptr<MCTerrainTiles> tiles = OpenTileSet(setName);
+        const std::expected<MCGroundSet, std::string> set = MCWorkOutGroundSet(*tiles);
+
+        if (!set.has_value())
+        {
+            FAIL(set.error());
+        }
+
         std::string tileRows;
         std::string overlayRows;
         std::string shapeRows;
         std::string spotRows;
-        std::vector<uint8_t> tips;
-        size_t named = 0;
+        const std::vector<uint8_t>& tips = set->Tips;
+        const size_t named = set->Tiles.size() + set->Overlays.size();
 
-        for (int32_t slot = 0; slot < tiles->NumTiles(); ++slot)
+        for (const MCGroundNameRow& row : set->Tiles)
         {
-            const MCGroundSlotNames names = MCWorkOutGroundNames(*tiles, slot);
+            tileRows += RowText(row);
+        }
 
-            if (names.Tile.has_value())
-            {
-                tileRows += RowText(slot, *names.Tile);
-                // Its shape beside it (MCKnownGroundNames::Shapes), so the tile is rebuilt from its HD frame.
-                const std::optional<MCGroundTileShape> shape = MCWorkOutGroundTileShape(*tiles, slot);
-                REQUIRE(shape.has_value());
-                shapeRows += ShapeRowText(*shape, tips.size());
-                tips.insert(tips.end(), shape->Tip.begin(), shape->Tip.end());
-                ++named;
-            }
+        // Each tile's shape beside it (MCKnownGroundNames::Shapes), so the tile is rebuilt from its HD frame.
+        for (const MCGroundShapeRow& shape : set->Shapes)
+        {
+            shapeRows += std::format("    {{{}, {}, {}, {}, {}}},\n", shape.HotX, shape.HotY, shape.BoxWidth,
+                                     shape.TipLength, shape.TipAt);
+        }
 
-            if (names.Overlay.has_value())
-            {
-                overlayRows += RowText(slot, *names.Overlay);
-                // Its hot spot beside it (MCKnownGroundNames::Spots), so the overlay is rebuilt from its HD frame.
-                const std::optional<MCGroundOverlaySpot> spot = MCWorkOutGroundOverlaySpot(*tiles, slot);
-                REQUIRE(spot.has_value());
-                spotRows += std::format("    {{{}, {}}},\n", spot->X, spot->Y);
-                ++named;
-            }
+        for (const MCGroundNameRow& row : set->Overlays)
+        {
+            overlayRows += RowText(row);
+        }
+
+        // Each overlay's hot spot beside it (MCKnownGroundNames::Spots), so the overlay is rebuilt from its HD frame.
+        for (const MCGroundOverlaySpot& spot : set->Spots)
+        {
+            spotRows += std::format("    {{{}, {}}},\n", spot.X, spot.Y);
         }
 
         std::cout << std::format("{}: {} slots, {} names, {} bytes of tips, files 0x{:016x}\n", setName,

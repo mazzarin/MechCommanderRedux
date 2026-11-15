@@ -921,6 +921,77 @@ auto MCStopsArtHash(MCSpriteTree& tree, const MCStopsArtStored& stored) -> uint6
     return XXH3_64bits_digest(&hashed);
 }
 
+auto MCStopsKey::SameArt(const MCStopsKey& other) const -> bool
+{
+    return Layout == other.Layout && Parts == other.Parts;
+}
+
+auto MCStopsKeyOf(MCSpriteTree& tree) -> std::optional<MCStopsKey>
+{
+    XXH3_state_t hashed;
+    XXH3_64bits_reset(&hashed);
+    const MCMechParts<std::optional<MCStoredWanted>> runs = HashArtLayout(tree, hashed);
+    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+
+    if (spriteManager == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    MCStopsKey key{.Layout = XXH3_64bits_digest(&hashed)};
+
+    for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+    {
+        MCStopsKeyPart& keyed = key.Parts[static_cast<size_t>(part)];
+        keyed.FileNumber = tree.FileNumbers[part];
+
+        if (!runs[part].has_value())
+        {
+            continue;
+        }
+
+        const MCStoredWanted& run = *runs[part];
+        const std::optional<MCMechPacketsPlace> place =
+            spriteManager->MechPacketsPlace(run.Of.FileNum, part, run.Of.Packet, run.Count, true);
+
+        if (!place.has_value())
+        {
+            return std::nullopt;
+        }
+
+        keyed.First = run.Of.Packet;
+        keyed.Count = run.Count;
+        keyed.Place = *place;
+    }
+
+    return key;
+}
+
+auto MCPrepareStopsByKey(MCSpriteTree& tree, std::span<const MCStopsKey> keys) -> bool
+{
+    if (tree.StopsPrepared || keys.empty())
+    {
+        return tree.StopsPrepared;
+    }
+
+    const std::optional<MCStopsKey> own = MCStopsKeyOf(tree);
+
+    if (!own.has_value())
+    {
+        return false;
+    }
+
+    for (const MCStopsKey& key : keys)
+    {
+        if (key.SameArt(*own) && MCFindKnownStops(key.ArtHash))
+        {
+            return LookUpStops(tree, key.ArtHash);
+        }
+    }
+
+    return false;
+}
+
 auto MCPrepareStops(MCSpriteTree& tree) -> void
 {
     if (!tree.StopsPrepared && !LookUpStops(tree, MCStopsArtHash(tree)))

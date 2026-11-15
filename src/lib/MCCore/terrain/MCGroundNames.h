@@ -1,6 +1,9 @@
 #pragma once
 
 #include "lib/MCOptionalRef.h"
+#include <expected>
+#include <string>
+#include <vector>
 
 class MCTerrainTiles;
 
@@ -40,6 +43,8 @@ struct MCGroundNameRow
     uint16_t Slot = 0;
     uint16_t Width = 0;
     uint16_t Height = 0;
+
+    bool operator==(const MCGroundNameRow&) const = default;
 };
 
 /// <summary>
@@ -67,6 +72,8 @@ struct MCGroundShapeRow
     uint8_t BoxWidth = 0;
     uint8_t TipLength = 0;
     uint32_t TipAt = 0;
+
+    bool operator==(const MCGroundShapeRow&) const = default;
 };
 
 /// <summary>
@@ -107,6 +114,24 @@ struct MCKnownGroundNames
 };
 
 /// <summary>
+/// Port-only (the version 2 HD pack's records 2 and 3, sprite/MCPackRecords.h): a tile set's names, shapes and spots,
+/// owned, so that <see cref="View"/> stands for the table the program carries.
+/// </summary>
+struct MCGroundSet
+{
+    uint64_t FilesHash = 0;
+    int32_t Slots = 0;
+    std::vector<MCGroundNameRow> Tiles;
+    std::vector<MCGroundShapeRow> Shapes;
+    std::vector<uint8_t> Tips;
+    std::vector<MCGroundNameRow> Overlays;
+    std::vector<MCGroundOverlaySpot> Spots;
+
+    /// <summary>The set as the program's table's type, viewing this one's rows.</summary>
+    [[nodiscard]] MCKnownGroundNames View() const;
+};
+
+/// <summary>
 /// Works out slot <paramref name="slot"/>'s names from its art, reading it into the cache when it isn't there: the
 /// tool's way (mc_tests --ground-names-table), and the test's that holds the table to the game's data.
 /// </summary>
@@ -124,6 +149,14 @@ std::optional<MCGroundTileShape> MCWorkOutGroundTileShape(MCTerrainTiles& tiles,
 /// bytes; none where the slot holds no overlay.
 /// </summary>
 std::optional<MCGroundOverlaySpot> MCWorkOutGroundOverlaySpot(MCTerrainTiles& tiles, int32_t slot);
+
+/// <summary>
+/// Port-only (the version 2 HD pack's records 2 and 3): every slot of <paramref name="tiles"/> worked out from its art
+/// (<see cref="MCWorkOutGroundNames"/>, <see cref="MCWorkOutGroundTileShape"/>, <see cref="MCWorkOutGroundOverlaySpot"/>),
+/// as the program's table holds a set; an error naming the slot for a name or tip too big for its row, or a ground tile
+/// or overlay whose shape or spot can't be worked out.
+/// </summary>
+std::expected<MCGroundSet, std::string> MCWorkOutGroundSet(MCTerrainTiles& tiles);
 
 /// <summary>Whether shapes <paramref name="a"/> and <paramref name="b"/> are the same, their tips byte for byte.</summary>
 bool MCSameGroundTileShape(const MCGroundTileShape& a, const MCGroundTileShape& b);

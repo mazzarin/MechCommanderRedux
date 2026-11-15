@@ -498,11 +498,13 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
         display->ShowFinished();
     }
 
-    // Port-only: the screen the palette is for, set up already, rehearsed as the fade begins, then the screens a slide
-    // from it may bring in, a step each (IntoScreenPieces). A fade of FadeOutWhile's did them already.
+    // Port-only: the screen the palette is for, set up already, rehearsed once the fade is nearly black, then the
+    // screens a slide from it may bring in, a step each (IntoScreenPieces): there a piece's step, darkened by its time,
+    // can't be seen, where at the fade's start each held the bright screen (up to 35 ms on the A10). A fade of
+    // FadeOutWhile's did them already.
     if (!gui.PendingPalette.empty())
     {
-        gui.FadeDownCurrentPalette(IntoScreenPieces());
+        gui.FadeDownCurrentPalette(IntoScreenPieces(), MCGuiSystem::FadeNearBlack);
     }
 
     std::scoped_lock lock(MouseCritSec);

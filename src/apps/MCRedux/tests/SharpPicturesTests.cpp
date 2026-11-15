@@ -11,6 +11,8 @@
 #include "logistics/MCLogPort.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCSplashScreen.h"
+#include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "platform/MCDisplay.h"
@@ -347,9 +349,9 @@ TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame 
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     const std::vector<uint8_t> menu = ShownBytes();
 
-    // The briefing set up (its palette waits for the next frame's fade), then rehearsed: what it shows is taken and
-    // sent up, and the main menu is still what's shown.
-    NewCampaign();
+    // The briefing set up as NEW CAMPAIGN's fade sets it up, at once (its palette waits for the next frame's fade),
+    // then rehearsed: what it shows is taken and sent up, and the main menu is still what's shown.
+    BeginCampaign("mechcmdr1", "start0", true);
     MCSharpPictures::WaitForMade();
     const size_t before = SharpTaken(*renderer);
     RehearseScreen();
@@ -596,6 +598,93 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
     const size_t closed = RehearsalsRun();
     MCTestGame::RunFrame(FrameSeconds);
     CHECK_EQ(RehearsalsRun(), closed);
+    GHdArt = 0;
+}
+
+/// <summary>
+/// Port-only: NEW CAMPAIGN's click fades the main menu at once and starts the campaign (its load, the briefing's
+/// set-up) once the screen is nearly black, then does what a fade into the briefing does; the next frame's fade, from
+/// black, does none of it again.
+/// </summary>
+TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its click, once the screen is nearly black")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartSharpLogistics();
+    REQUIRE(GlobalLog()->MainScreen->IsShowing());
+    REQUIRE(GuiSystem().CanFade());
+
+    // At each present of the click, how far the fade had gone and whether the campaign had started (the main menu
+    // hidden: the work's last step).
+    struct MCShown
+    {
+        int Fade = 0;
+        bool Started = false;
+    };
+
+    std::vector<MCShown> shown;
+    const size_t rehearsed = RehearsalsRun();
+    MCTestGame::OnPresent = [&]
+    { shown.push_back({.Fade = MCInput::Display()->Fade(), .Started = !GlobalLog()->MainScreen->IsShowing()}); };
+
+    NewCampaign();
+    MCTestGame::OnPresent = {};
+    REQUIRE(!shown.empty());
+    REQUIRE(!shown.front().Started);
+    const auto firstStarted = std::ranges::find_if(shown, &MCShown::Started);
+    REQUIRE(firstStarted != shown.end());
+    CHECK(std::prev(firstStarted)->Fade >= MCGuiSystem::FadeNearBlack);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(!GuiSystem().CanFade());
+    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
+    const size_t started = RehearsalsRun();
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK_EQ(RehearsalsRun(), started);
+    GHdArt = 0;
+}
+
+/// <summary>
+/// Port-only: a fade into a screen (a new palette for the next frame, as a campaign's load sets) rehearses it and
+/// readies the screens a slide from it brings in once the screen is nearly black, where a piece's longer step can't be
+/// seen.
+/// </summary>
+TEST_CASE_ISOLATED("game: a fade into a screen rehearses it once the screen is nearly black")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartSharpLogistics();
+    NewCampaign();
+    MCSharpPictures::WaitForMade();
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    REQUIRE(GuiSystem().CanFade());
+
+    // At each present of the next frame, how far its fade had gone and the rehearsals run.
+    struct MCShown
+    {
+        int Fade = 0;
+        size_t Rehearsals = 0;
+    };
+
+    std::vector<MCShown> shown;
+    const size_t rehearsed = RehearsalsRun();
+    MCTestGame::OnPresent = [&]
+    { shown.push_back({.Fade = MCInput::Display()->Fade(), .Rehearsals = RehearsalsRun()}); };
+    GuiSystem().ActivatePaletteFromTga(ArtPath + "logart\\lsrupm05.tga");
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::OnPresent = {};
+    const auto firstRehearsed =
+        std::ranges::find_if(shown, [rehearsed](const MCShown& at) { return at.Rehearsals > rehearsed; });
+    REQUIRE(firstRehearsed != shown.end());
+    REQUIRE(firstRehearsed != shown.begin());
+    CHECK(std::prev(firstRehearsed)->Fade >= MCGuiSystem::FadeNearBlack);
+    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
     GHdArt = 0;
 }
 

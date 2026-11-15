@@ -641,6 +641,9 @@ namespace
     /// INTERFACE SIZE box, the right column's boxes 42 lines tall, the HD box level with SCROLL SPEED, SOUND's box in
     /// line with RENDERER's and the text buttons in the art's lettering (personal, 2026-11-02) took the preferences
     /// step to 0x1366f9ea (software and GPU agree) and the folds to 0x9a2c0b40 and 0xee685b12 (GPU 0x7c367c58 and 0xba21a105).
+    /// NEW CAMPAIGN's click fading the main menu from the click, the campaign started near black, and a fade into a
+    /// screen rehearsing it near black (port-only, 2026-11-15) took the folds to 0x0a3f55ec and 0x98c24128 (GPU
+    /// 0x4cf80294 and 0x600d1763), every step as it was.
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
@@ -832,8 +835,8 @@ namespace
 
         MCTestGame::OnPresent = nullptr;
         SaveShot("logistics every frame", frames);
-        CHECK_EQ(frames, gpu ? 0x7c367c58u : 0x9a2c0b40u);
-        CHECK_EQ(presents, gpu ? 0xba21a105u : 0xee685b12u);
+        CHECK_EQ(frames, gpu ? 0x4cf80294u : 0x0a3f55ecu);
+        CHECK_EQ(presents, gpu ? 0x600d1763u : 0x98c24128u);
         CheckGpuAlone(gpu);
     }
 }

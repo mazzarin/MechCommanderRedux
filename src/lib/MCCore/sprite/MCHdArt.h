@@ -702,6 +702,13 @@ namespace MCHdArt
     ReaderSettings GetReaderSettings();
 
     /// <summary>
+    /// Port-only, for the tests: with <paramref name="hold"/>, the readers take none of the reads waiting (they still
+    /// open archives and make reads of what is asked for ahead), so a test lays out what waits before one is taken; let
+    /// go, once what was asked for is made reads, they take them again.
+    /// </summary>
+    void HoldReads(bool hold);
+
+    /// <summary>
     /// Port-only (SPEC-first-use.md): the most bytes one of the readers' reads of an archive's neighbouring entries takes,
     /// and the widest gap between two entries one read takes both across (read and thrown away: a read saved costs a slow
     /// disk more than this many bytes do).
@@ -710,8 +717,9 @@ namespace MCHdArt
     constexpr uint64_t ReaderRunGap = 64u * 1024u;
 
     /// <summary>
-    /// Port-only: how many reads of the archives the readers have made: one for a run of neighbouring entries read
-    /// together (at most <see cref="ReaderRunBytes"/>, across gaps of at most <see cref="ReaderRunGap"/>).
+    /// Port-only: how many reads of the archives the readers have made: one for a run of an archive's entries read
+    /// together, the first read waiting and those waiting of any kind, asked for in any order, whose entries lie within
+    /// <see cref="ReaderRunGap"/> of it (at most <see cref="ReaderRunBytes"/> in all).
     /// </summary>
     size_t ReaderReads();
 

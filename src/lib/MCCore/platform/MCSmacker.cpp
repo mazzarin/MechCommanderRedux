@@ -397,16 +397,14 @@ MCSmacker::~MCSmacker() = default;
 std::expected<std::unique_ptr<MCSmacker>, std::string> MCSmacker::Open(const std::filesystem::path& path)
 {
     auto smacker = std::make_unique<MCSmacker>(Key{});
-    smacker->_File.open(path, std::ios::binary);
+    smacker->_File = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Buffered);
 
-    if (!smacker->_File)
+    if (!smacker->_File.has_value())
     {
         return std::unexpected(std::format("can't open {}", MCFileSystem::ToUtf8(path)));
     }
 
-    smacker->_File.seekg(0, std::ios::end);
-    smacker->_FileSize = static_cast<uint64_t>(smacker->_File.tellg());
-    smacker->_File.seekg(0);
+    smacker->_FileSize = smacker->_File->Length();
 
     if (auto result = smacker->ReadHeader(); !result)
     {
@@ -446,10 +444,8 @@ bool MCSmacker::ReadAt(uint64_t offset, std::span<uint8_t> dest)
         return true;
     }
 
-    _File.clear();
-    _File.seekg(static_cast<std::streamoff>(offset));
-    _File.read(reinterpret_cast<char*>(dest.data()), static_cast<std::streamsize>(count));
-    return static_cast<size_t>(_File.gcount()) == count;
+    // Within _FileSize, which the file's 32-bit length bounds.
+    return _File->ReadAt(static_cast<uint32_t>(offset), dest) == count;
 }
 
 std::expected<void, std::string> MCSmacker::ReadHeader()

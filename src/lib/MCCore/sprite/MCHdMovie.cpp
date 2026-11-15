@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "sprite/MCHdMovie.h"
+#include "lib/MCDiskFile.h"
 #include "main/MCTelemetry.h"
 #include "platform/MCUtf8Path.h"
 
@@ -144,7 +145,8 @@ namespace
 
 struct MCHdMovie::Impl
 {
-    std::ifstream File;
+    /// <summary>The file, read a frame at a time through its growing buffer.</summary>
+    std::optional<MCDiskFile> File;
     std::string Name;
     /// <summary>The movie's number, which its frames carry (MCHdArt::Frame::Movie).</summary>
     uint64_t Id = MCHdArt::NewFrameId();
@@ -189,14 +191,14 @@ struct MCHdMovie::Impl
     std::expected<bool, std::string> ReadFrame()
     {
         std::array<uint8_t, IvfFrameHeaderBytes> header;
-        File.read(reinterpret_cast<char*>(header.data()), header.size());
+        const size_t got = File->Read(header);
 
-        if (File.gcount() == 0 && File.eof())
+        if (got == 0)
         {
             return false;
         }
 
-        if (static_cast<size_t>(File.gcount()) != header.size())
+        if (got != header.size())
         {
             return std::unexpected(std::format("{} is cut short in a frame's header", Name));
         }
@@ -215,9 +217,7 @@ struct MCHdMovie::Impl
             return std::unexpected(std::format("{}: no memory for a frame of {} bytes", Name, size));
         }
 
-        File.read(reinterpret_cast<char*>(data), size);
-
-        if (static_cast<size_t>(File.gcount()) != size)
+        if (File->Read(std::span(data, size)) != size)
         {
             dav1d_data_unref(&Pending);
             return std::unexpected(std::format("{} is cut short in a frame", Name));
@@ -441,11 +441,10 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
     auto movie = std::unique_ptr<MCHdMovie>(new MCHdMovie());
     Impl& impl = *movie->_Impl;
     impl.Name = MCFileSystem::ToUtf8(path.filename());
-    impl.File.open(path, std::ios::binary);
+    impl.File = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Buffered);
     std::array<uint8_t, IvfHeaderBytes> header;
-    impl.File.read(reinterpret_cast<char*>(header.data()), header.size());
 
-    if (static_cast<size_t>(impl.File.gcount()) != header.size() || !HasText(header, 0, IvfSignature))
+    if (!impl.File.has_value() || impl.File->Read(header) != header.size() || !HasText(header, 0, IvfSignature))
     {
         return std::unexpected(std::format("{} isn't an IVF file", impl.Name));
     }
@@ -467,7 +466,7 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
                                            movie->_Width, movie->_Height));
     }
 
-    impl.File.seekg(headerBytes);
+    impl.File->SetPosition(headerBytes);
     Dav1dSettings settings;
     dav1d_default_settings(&settings);
     settings.n_threads = DecoderThreads;

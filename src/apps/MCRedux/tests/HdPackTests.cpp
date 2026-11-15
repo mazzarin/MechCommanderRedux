@@ -2153,6 +2153,218 @@ TEST_CASE("hd art: shapes' frames are read ahead by the readers, several tables'
     MCHdArt::SetPackFolder({});
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only: an archive of shapes' frames for the readers' runs (TakeRun): each piece a frame (a table's frame 0, of
+    /// <see cref="Side"/>'s or its own size) or bytes no frame holds, in the archive's order as given.
+    /// </summary>
+    struct RunPiece
+    {
+        int32_t Width = 0;
+        int32_t Height = 0;
+        size_t FillerBytes = 0;
+    };
+
+    class RunArchive
+    {
+    public:
+        static constexpr int32_t Side = 8;
+
+        RunArchive(std::string_view name, std::span<const RunPiece> pieces) : _Scratch(name)
+        {
+            constexpr uint8_t TableByte = 0x5e;
+            std::vector<ArchiveEntry> entries;
+
+            for (const RunPiece& piece : pieces)
+            {
+                if (piece.FillerBytes > 0)
+                {
+                    entries.push_back(
+                        Raw(std::format("filler{}.bin", entries.size()), std::vector<uint8_t>(piece.FillerBytes)));
+                    continue;
+                }
+
+                const auto number = static_cast<uint8_t>(_Tables.size());
+                _Tables.push_back({number, TableByte, static_cast<uint8_t>(entries.size())});
+                _Sizes.emplace_back(piece.Width, piece.Height);
+                _Files.push_back(FrameFile(piece.Width, piece.Height, static_cast<int32_t>(number) + 1));
+                const std::filesystem::path folder = MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(_Tables.back()));
+                entries.push_back(Raw(MCFileSystem::ToUtf8(folder.filename()) + "\\0.hdf", _Files.back()));
+            }
+
+            WriteBytes(_Scratch.Path() /
+                           std::filesystem::path(MCHdArt::ShapeTableFolder(0)).parent_path().concat(".hda"),
+                       BuildArchive(entries));
+            MCHdArt::SetPackFolder(_Scratch.Path());
+        }
+
+        ~RunArchive() { MCHdArt::SetPackFolder({}); }
+        RunArchive(const RunArchive&) = delete;
+        RunArchive& operator=(const RunArchive&) = delete;
+
+        /// <summary>Has the readers read frame <paramref name="frame"/> (the archive's frames counted) as <paramref name="as"/>.</summary>
+        void Ask(size_t frame, MCHdArt::ReadAs as) const
+        {
+            const MCHdArt::ShapeAhead shape{_Tables[frame], 0, _Sizes[frame].first, _Sizes[frame].second};
+            MCHdArt::ReadShapesAhead(std::span(&shape, 1), as);
+        }
+
+        /// <summary>Frame <paramref name="frame"/> as drawn.</summary>
+        std::shared_ptr<const MCHdArt::Frame> Find(size_t frame) const
+        {
+            return MCHdArt::FindShape(MCHdArt::ShapeTableHash(_Tables[frame]), 0, _Sizes[frame].first,
+                                      _Sizes[frame].second);
+        }
+
+        /// <summary>Checks each frame is found without a read, as its own file decodes.</summary>
+        void CheckFound() const
+        {
+            const size_t read = MCHdArt::FramesRead();
+
+            for (size_t frame = 0; frame < _Tables.size(); ++frame)
+            {
+                MCTest::Scope scope(std::format("frame {}", frame));
+                const std::shared_ptr<const MCHdArt::Frame> found = Find(frame);
+                REQUIRE(found != nullptr);
+                const auto decoded = MCHdArt::DecodeHdf(_Files[frame], _Sizes[frame].first, _Sizes[frame].second);
+                REQUIRE(decoded.has_value());
+                CHECK(SameFrame(*found, *decoded));
+            }
+
+            CHECK_EQ(MCHdArt::FramesRead(), read);
+        }
+
+        size_t Frames() const { return _Tables.size(); }
+        size_t FileBytes(size_t frame) const { return _Files[frame].size(); }
+
+    private:
+        ScratchFolder _Scratch;
+        std::vector<std::vector<uint8_t>> _Tables;
+        std::vector<std::pair<int32_t, int32_t>> _Sizes;
+        std::vector<std::vector<uint8_t>> _Files;
+    };
+
+    /// <summary>A small frame, of RunArchive::Side.</summary>
+    constexpr RunPiece Small{RunArchive::Side, RunArchive::Side, 0};
+} // namespace
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): a reader takes the first read waiting and with it every read of the same archive
+/// waiting whose entry lies within MCHdArt::ReaderRunGap of the read's span, before it or after it, asked for in any
+/// order, in one read of at most MCHdArt::ReaderRunBytes: a gap wider than that splits them, the read's limit too, and an
+/// entry larger than it is read alone. Each frame is then found as drawn ones are, the same frame, without a read.
+/// </summary>
+TEST_CASE("hd art: the readers read an archive's waiting entries near each other in one read, in any order asked")
+{
+    // A frame of a third of the most a read takes (64 bytes of BC7 a shape pixel at the scale), one larger than it all.
+    constexpr RunPiece Third{80, 60, 0};
+    constexpr RunPiece Larger{130, 130, 0};
+    constexpr RunPiece Gap{0, 0, MCHdArt::ReaderRunGap + 1};
+    const ReaderScope readers({.Readers = 1});
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    struct Layout
+    {
+        std::string_view Name;
+        std::vector<RunPiece> Pieces;
+        std::vector<size_t> Asked;
+        size_t Reads = 0;
+    };
+
+    for (const Layout& layout :
+         {Layout{"back to back", std::vector<RunPiece>(8, Small), {5, 2, 7, 0, 3, 6, 1, 4}, 1},
+          Layout{"a gap past the widest read across",
+                 {Small, Small, Small, Small, Gap, Small, Small, Small, Small},
+                 {6, 1, 4, 3, 0, 7, 2, 5},
+                 2},
+          Layout{"three to the most a read takes", std::vector<RunPiece>(9, Third), {0, 1, 2, 3, 4, 5, 6, 7, 8}, 3},
+          Layout{"one larger than a read takes", {Small, Small, Larger, Small, Small}, {3, 2, 0, 4, 1}, 3}})
+    {
+        MCTest::Scope scope{std::string(layout.Name)};
+        const RunArchive archive("runs", layout.Pieces);
+        REQUIRE(archive.FileBytes(0) * 3 <= MCHdArt::ReaderRunBytes);
+        const size_t reads = MCHdArt::ReaderReads();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::HoldReads(true);
+
+        for (const size_t frame : layout.Asked)
+        {
+            archive.Ask(frame, MCHdArt::ReadAs::Set);
+        }
+
+        MCHdArt::HoldReads(false);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
+        CHECK_EQ(MCHdArt::ReaderReads(), reads + layout.Reads);
+        archive.CheckFound();
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): the read a reader takes first is the most urgent waiting (a load's before the sets'),
+/// and the less urgent reads waiting near it come in the same read; a read whose frame the game's thread read itself
+/// meanwhile isn't read.
+/// </summary>
+TEST_CASE("hd art: the readers' first read takes the less urgent reads near it, and none the game's thread read")
+{
+    const ReaderScope readers({.Readers = 1});
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    {
+        MCTest::Scope scope("a load's frame amid a set's");
+        const RunArchive archive("runs-urgent", std::vector<RunPiece>(8, Small));
+        const size_t reads = MCHdArt::ReaderReads();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::HoldReads(true);
+
+        for (const size_t frame : {0, 1, 2, 3, 5, 6, 7})
+        {
+            archive.Ask(frame, MCHdArt::ReadAs::Set);
+        }
+
+        archive.Ask(4, MCHdArt::ReadAs::Load);
+        MCHdArt::HoldReads(false);
+        MCHdArt::WaitForLoadReads();
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
+        archive.CheckFound();
+    }
+
+    {
+        MCTest::Scope scope("a frame the game's thread read while it waited");
+        const RunArchive archive("runs-read", std::vector<RunPiece>(8, Small));
+        constexpr size_t ReadByTheGame = 2;
+        const size_t reads = MCHdArt::ReaderReads();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::HoldReads(true);
+
+        for (size_t frame = 0; frame < archive.Frames(); ++frame)
+        {
+            archive.Ask(frame, MCHdArt::ReadAs::Set);
+        }
+
+        const size_t read = MCHdArt::FramesRead();
+        REQUIRE(archive.Find(ReadByTheGame) != nullptr);
+        CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+        MCHdArt::HoldReads(false);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames() - 1);
+        archive.CheckFound();
+    }
+
+    GHdArt = previous;
+}
+
 /// <summary>
 /// Port-only (SPEC-first-use.md): the command line sets how HD art's readers read (<c>-hdreaders</c>,
 /// <c>-hdsetreads</c>, <c>-hdreaderpriority</c>), the readers held to 1 to MCHdArt::MostReaders; a value a switch can't

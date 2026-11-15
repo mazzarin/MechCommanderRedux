@@ -78,7 +78,8 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
         put.has_value() ? std::nullopt
                         : MCDiskFile::Open(mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName)
                                                                     : MCFileSystem::ResolveWrite(_FileName),
-                                           mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read);
+                                           mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read,
+                                           MCDiskFileReads::Buffered);
     _State.reset();
 
     if (!disk.has_value())

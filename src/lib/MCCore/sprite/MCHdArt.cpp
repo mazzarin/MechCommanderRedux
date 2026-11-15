@@ -18,6 +18,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <fstream>
+#include <map>
 #include <unordered_set>
 
 int GHdArt = 0;
@@ -340,6 +341,17 @@ namespace
         MCDiskFile File;
     };
 
+    /// <summary>
+    /// A read waiting (ReadAhead::Waiting): the read, the kind it was asked as, and its place in its archive's index
+    /// (ReadAhead::ByOffset).
+    /// </summary>
+    struct WaitingRead
+    {
+        AheadRead Read;
+        AheadKind Kind = AheadKind::Set;
+        std::multimap<int64_t, uint64_t>::iterator Place;
+    };
+
     /// <summary>A frame read ahead (numbered when the game's thread takes it), and its place in ReadAhead::Order.</summary>
     struct ReadyFrame
     {
@@ -402,8 +414,22 @@ namespace
         std::condition_variable_any Changed;
         /// <summary>The first draws whose followers aren't in Reads yet: a reader makes them reads, in turn.</summary>
         std::deque<Follow> Follows;
-        /// <summary>The frames to read, by kind (AheadKind), each in the order its reads are taken.</summary>
-        std::array<std::deque<AheadRead>, AheadKinds> Reads;
+        /// <summary>
+        /// The frames to read, by kind (AheadKind), each kind's in the order they were asked for: their numbers in Waiting
+        /// (a number no longer there was read with a neighbour, or dropped).
+        /// </summary>
+        std::array<std::deque<uint64_t>, AheadKinds> Reads;
+        /// <summary>
+        /// The reads waiting, by number (the next given ReadNumbers), how many of each kind, and each archive's by its
+        /// entries' offsets, so a reader finds a read's neighbours waiting to read with it (TakeRun) without looking
+        /// through them all.
+        /// </summary>
+        std::unordered_map<uint64_t, WaitingRead> Waiting;
+        std::array<size_t, AheadKinds> WaitingOfKind{};
+        std::unordered_map<std::shared_ptr<MCHdArchive>, std::multimap<int64_t, uint64_t>> ByOffset;
+        uint64_t ReadNumbers = 0;
+        /// <summary>Port-only, for the tests: the readers take no reads (MCHdArt::HoldReads).</summary>
+        bool Held = false;
         /// <summary>How many of each kind the readers read now.</summary>
         std::array<size_t, AheadKinds> InFlight{};
         /// <summary>
@@ -1566,6 +1592,28 @@ namespace
         return FrameKey{read.From->Key.Folder, read.Entry.Name};
     }
 
+    /// <summary>The entry <paramref name="read"/> reads, in its archive's directory.</summary>
+    const MCFileEntry& EntryOf(const AheadRead& read)
+    {
+        return read.From->Archive->File->GetEntries()[static_cast<size_t>(read.Entry.Index)];
+    }
+
+    /// <summary>The bytes of its archive <paramref name="run"/>'s entries lie in, from its first to its last.</summary>
+    std::pair<uint32_t, uint32_t> RunSpan(const std::vector<AheadRead>& run)
+    {
+        uint32_t start = std::numeric_limits<uint32_t>::max();
+        uint32_t end = 0;
+
+        for (const AheadRead& read : run)
+        {
+            const MCFileEntry& entry = EntryOf(read);
+            start = std::min(start, static_cast<uint32_t>(entry.Offset));
+            end = std::max(end, static_cast<uint32_t>(entry.Offset) + static_cast<uint32_t>(entry.Size));
+        }
+
+        return {start, end};
+    }
+
     /// <summary>
     /// Port-only (MCHdArt::OpenTrace): the HD trace: its file, its clock's start, whether it's open (tested without the
     /// lock), and the archives it has named, each by a number.
@@ -1659,13 +1707,10 @@ namespace
 
         Trace& trace = TheTrace();
         std::scoped_lock lock(trace.Lock);
-        const std::span<const MCFileEntry> entries = run.front().From->Archive->File->GetEntries();
-        const MCFileEntry& first = entries[static_cast<size_t>(run.front().Entry.Index)];
-        const MCFileEntry& last = entries[static_cast<size_t>(run.back().Entry.Index)];
+        const auto [start, end] = RunSpan(run);
         trace.Out << std::format("R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", begun, read, TraceNow(trace),
                                  TraceKind(run.front().From->Kind), TraceArchive(trace, *run.front().From->Archive),
-                                 first.Offset, static_cast<int64_t>(last.Offset) + last.Size - first.Offset,
-                                 run.size());
+                                 start, end - start, run.size());
     }
 
     /// <summary>TraceNow's time, when tracing (0 when not).</summary>
@@ -1695,6 +1740,84 @@ namespace
     }
 
     /// <summary>
+    /// Whether <paramref name="entry"/> may be read with its neighbours: one a frame file can hold, in its place (one too
+    /// large, or misplaced, is read alone, and ReadEntry says why).
+    /// </summary>
+    bool JoinsRun(const MCFileEntry& entry)
+    {
+        return FitsFrameFile(entry) && entry.Offset >= 0;
+    }
+
+    /// <summary>
+    /// Puts <paramref name="read"/> among those waiting (ReadAhead::Waiting) as a read of <paramref name="kind"/>, after
+    /// those of its kind asked before it, and in its archive's index. Call with ReadAhead::Lock held.
+    /// </summary>
+    void AddWaiting(ReadAhead& ahead, AheadKind kind, AheadRead&& read)
+    {
+        TraceAsked(read, kind);
+        const uint64_t number = ahead.ReadNumbers++;
+        std::multimap<int64_t, uint64_t>& index = ahead.ByOffset[read.From->Archive];
+        const auto place = index.emplace(EntryOf(read).Offset, number);
+        ahead.Waiting.emplace(number, WaitingRead{std::move(read), kind, place});
+        ahead.Reads[std::to_underlying(kind)].push_back(number);
+        ++ahead.WaitingOfKind[std::to_underlying(kind)];
+    }
+
+    /// <summary>
+    /// Takes read <paramref name="number"/> from those waiting, and from its archive's index (the archive's left in
+    /// ReadAhead::ByOffset, empty, for <see cref="DropEmptyIndex"/>); its number stays in its kind's queue, skipped.
+    /// None when it isn't waiting (read with a neighbour already). Call with ReadAhead::Lock held.
+    /// </summary>
+    std::optional<WaitingRead> TakeWaiting(ReadAhead& ahead, uint64_t number)
+    {
+        const auto found = ahead.Waiting.find(number);
+
+        if (found == ahead.Waiting.end())
+        {
+            return std::nullopt;
+        }
+
+        WaitingRead waiting = std::move(found->second);
+        ahead.Waiting.erase(found);
+        ahead.ByOffset.at(waiting.Read.From->Archive).erase(waiting.Place);
+        --ahead.WaitingOfKind[std::to_underlying(waiting.Kind)];
+        return waiting;
+    }
+
+    /// <summary>Drops <paramref name="archive"/>'s index from ReadAhead::ByOffset once none of its reads wait.</summary>
+    void DropEmptyIndex(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive)
+    {
+        if (const auto found = ahead.ByOffset.find(archive); found != ahead.ByOffset.end() && found->second.empty())
+        {
+            ahead.ByOffset.erase(found);
+        }
+    }
+
+    /// <summary>Forgets every read waiting. Call with ReadAhead::Lock held.</summary>
+    void ForgetWaiting(ReadAhead& ahead)
+    {
+        for (std::deque<uint64_t>& reads : ahead.Reads)
+        {
+            reads.clear();
+        }
+
+        ahead.Waiting.clear();
+        ahead.WaitingOfKind.fill(0);
+        ahead.ByOffset.clear();
+    }
+
+    /// <summary>
+    /// Whether <paramref name="read"/> is to be read still: not looked at by the game's thread, read ahead or being read
+    /// (else it is let go of: Unasked). Call with ReadAhead::Lock held.
+    /// </summary>
+    bool StillToRead(const ReadAhead& ahead, const AheadRead& read)
+    {
+        const FrameKey key = KeyOf(read);
+        return !ahead.Known.contains(key) && !ahead.Ready.contains(key) && !ahead.Pictures.contains(key) &&
+               !ahead.Reading.contains(key);
+    }
+
+    /// <summary>
     /// How many of the sets' reads may be in flight at once (MCHdArt::ReaderSettings::SetReads; 0: as many as there are
     /// readers).
     /// </summary>
@@ -1710,7 +1833,12 @@ namespace
     /// </summary>
     std::optional<AheadKind> NextKind(const ReadAhead& ahead)
     {
-        const auto waiting = [&ahead](AheadKind kind) { return !ahead.Reads[std::to_underlying(kind)].empty(); };
+        const auto waiting = [&ahead](AheadKind kind) { return ahead.WaitingOfKind[std::to_underlying(kind)] > 0; };
+
+        if (ahead.Held)
+        {
+            return std::nullopt;
+        }
 
         if (waiting(AheadKind::Load))
         {
@@ -1744,68 +1872,147 @@ namespace
     {
         std::vector<AheadEntry> next = NextFrames(follow);
         const auto from = std::make_shared<const Follow>(std::move(follow));
-        std::deque<AheadRead>& reads = ahead.Reads[std::to_underlying(AheadKind::Next)];
+        constexpr auto kind = std::to_underlying(AheadKind::Next);
 
         for (AheadEntry& entry : next)
         {
-            reads.push_back(AheadRead{from, std::move(entry)});
-            TraceAsked(reads.back(), AheadKind::Next);
+            AddWaiting(ahead, AheadKind::Next, AheadRead{from, std::move(entry)});
         }
 
-        while (reads.size() > MaxNextReads)
+        while (ahead.WaitingOfKind[kind] > MaxNextReads)
         {
-            reads.pop_front();
+            if (std::optional<WaitingRead> dropped = TakeWaiting(ahead, ahead.Reads[kind].front()))
+            {
+                DropEmptyIndex(ahead, dropped->Read.From->Archive);
+            }
+
+            ahead.Reads[kind].pop_front();
         }
     }
 
     /// <summary>
-    /// Takes the next reads of <paramref name="kind"/> for one read of their archive: the first not read, being read or
-    /// looked at already (those are left out), and the reads after it whose entries come next in the same archive,
-    /// across gaps of at most MCHdArt::ReaderRunGap and up to MCHdArt::ReaderRunBytes in all (a set's, in the archive's
-    /// order: QueueEntries), each counted as being read (ReadAhead::Reading). Call with ReadAhead::Lock held.
+    /// Adds to <paramref name="taken"/> (its first, an entry that joins a run: JoinsRun, being read) every read waiting
+    /// of the archive's, of any kind and asked for in any order, whose entry lies within MCHdArt::ReaderRunGap of the span
+    /// the read takes, before it or after it, while the span takes at most MCHdArt::ReaderRunBytes: found by offset in the
+    /// archive's index (ReadAhead::ByOffset), each counted as being read. Those no longer to read are let go of on the
+    /// way. Call with ReadAhead::Lock held.
+    /// </summary>
+    void GatherNeighbours(ReadAhead& ahead, std::vector<std::pair<AheadKind, AheadRead>>& taken)
+    {
+        const auto index = ahead.ByOffset.find(taken.front().second.From->Archive);
+
+        if (index == ahead.ByOffset.end())
+        {
+            return;
+        }
+
+        std::multimap<int64_t, uint64_t>& byOffset = index->second;
+        const MCFileEntry& first = EntryOf(taken.front().second);
+        auto start = static_cast<uint64_t>(first.Offset);
+        uint64_t end = start + static_cast<uint64_t>(first.Size);
+
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            // An entry that starts further back than the most bytes a read takes before the span's end can't join.
+            const uint64_t from = end > MCHdArt::ReaderRunBytes ? end - MCHdArt::ReaderRunBytes : 0;
+
+            for (auto at = byOffset.lower_bound(static_cast<int64_t>(from));
+                 at != byOffset.end() && static_cast<uint64_t>(at->first) <= end + MCHdArt::ReaderRunGap;)
+            {
+                // On before it may be taken (which takes it from the index).
+                const uint64_t number = (at++)->second;
+                const MCFileEntry& entry = EntryOf(ahead.Waiting.at(number).Read);
+
+                if (!JoinsRun(entry))
+                {
+                    continue;
+                }
+
+                const auto entryStart = static_cast<uint64_t>(entry.Offset);
+                const uint64_t entryEnd = entryStart + static_cast<uint64_t>(entry.Size);
+                const bool near = entryStart >= end   ? entryStart - end <= MCHdArt::ReaderRunGap
+                                  : entryEnd <= start ? start - entryEnd <= MCHdArt::ReaderRunGap
+                                                      : true;
+                const uint64_t spanStart = std::min(start, entryStart);
+                const uint64_t spanEnd = std::max(end, entryEnd);
+
+                if (!near || spanEnd - spanStart > MCHdArt::ReaderRunBytes)
+                {
+                    continue;
+                }
+
+                std::optional<WaitingRead> read = TakeWaiting(ahead, number);
+
+                if (!StillToRead(ahead, read->Read))
+                {
+                    Unasked(ahead, read->Read);
+                    continue;
+                }
+
+                ahead.Reading.insert(KeyOf(read->Read));
+                taken.emplace_back(read->Kind, std::move(read->Read));
+                start = spanStart;
+                end = spanEnd;
+                grew = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Takes the next reads for one read of their archive: the first of <paramref name="kind"/>'s asked for that is still
+    /// to read (those before it that aren't are left out), and with it its archive's reads waiting near it
+    /// (GatherNeighbours); the first first, then the rest by kind, the more urgent first, then by offset, as ReadRun
+    /// hands them over. Each counted as being read (ReadAhead::Reading). Call with ReadAhead::Lock held.
     /// </summary>
     std::vector<AheadRead> TakeRun(ReadAhead& ahead, AheadKind kind)
     {
-        std::deque<AheadRead>& queue = ahead.Reads[std::to_underlying(kind)];
-        std::vector<AheadRead> run;
-        uint64_t start = 0;
-        uint64_t end = 0;
+        std::deque<uint64_t>& queue = ahead.Reads[std::to_underlying(kind)];
+        std::vector<std::pair<AheadKind, AheadRead>> taken;
 
-        while (!queue.empty())
+        while (!queue.empty() && taken.empty())
         {
-            AheadRead& next = queue.front();
-            const FrameKey key = KeyOf(next);
+            std::optional<WaitingRead> first = TakeWaiting(ahead, queue.front());
+            queue.pop_front();
 
-            if (ahead.Known.contains(key) || ahead.Ready.contains(key) || ahead.Pictures.contains(key) ||
-                ahead.Reading.contains(key))
+            if (!first.has_value())
             {
-                Unasked(ahead, next);
-                queue.pop_front();
                 continue;
             }
 
-            const MCFileEntry& entry = next.From->Archive->File->GetEntries()[static_cast<size_t>(next.Entry.Index)];
-            // An entry too large for a frame file, or misplaced, is read alone (ReadEntry says why).
-            const bool joins = FitsFrameFile(entry) && entry.Offset >= 0;
-            const auto at = static_cast<uint64_t>(std::max(entry.Offset, 0));
-            const uint64_t after = at + static_cast<uint64_t>(std::max(entry.Size, 0));
-
-            if (!run.empty() && (!joins || next.From->Archive != run.front().From->Archive || at < end ||
-                                 at - end > MCHdArt::ReaderRunGap || after - start > MCHdArt::ReaderRunBytes))
+            if (!StillToRead(ahead, first->Read))
             {
-                break;
+                Unasked(ahead, first->Read);
+                DropEmptyIndex(ahead, first->Read.From->Archive);
+                continue;
             }
 
-            start = run.empty() ? at : start;
-            end = after;
-            ahead.Reading.insert(key);
-            run.push_back(std::move(next));
-            queue.pop_front();
+            ahead.Reading.insert(KeyOf(first->Read));
+            taken.emplace_back(first->Kind, std::move(first->Read));
+        }
 
-            if (!joins)
-            {
-                break;
-            }
+        if (taken.empty())
+        {
+            return {};
+        }
+
+        const std::shared_ptr<MCHdArchive> archive = taken.front().second.From->Archive;
+
+        if (JoinsRun(EntryOf(taken.front().second)))
+        {
+            GatherNeighbours(ahead, taken);
+        }
+
+        DropEmptyIndex(ahead, archive);
+        std::stable_sort(
+            taken.begin() + 1, taken.end(), [](const auto& a, const auto& b)
+            { return a.first != b.first ? a.first < b.first : EntryOf(a.second).Offset < EntryOf(b.second).Offset; });
+        std::vector<AheadRead> run;
+        run.reserve(taken.size());
+
+        for (auto& [readKind, read] : taken)
+        {
+            run.push_back(std::move(read));
         }
 
         return run;
@@ -1875,10 +2082,8 @@ namespace
         else if (current)
         {
             const std::span<const MCFileEntry> entries = archive->File->GetEntries();
-            const MCFileEntry& first = entries[static_cast<size_t>(run.front().Entry.Index)];
-            const MCFileEntry& last = entries[static_cast<size_t>(run.back().Entry.Index)];
-            const auto start = static_cast<uint32_t>(first.Offset);
-            std::vector<uint8_t> bytes(static_cast<size_t>(last.Offset) + static_cast<size_t>(last.Size) - start);
+            const auto [start, end] = RunSpan(run);
+            std::vector<uint8_t> bytes(end - start);
             readWhole = handle->File.ReadAt(start, bytes) == bytes.size();
             readBy = TraceTime();
 
@@ -2001,7 +2206,7 @@ namespace
                 ahead.Asks.pop_front();
                 ExpandAsks(ahead, lock, std::move(batch));
             }
-            else if (*kind == AheadKind::Next && ahead.Reads[std::to_underlying(AheadKind::Next)].empty())
+            else if (*kind == AheadKind::Next && ahead.WaitingOfKind[std::to_underlying(AheadKind::Next)] == 0)
             {
                 Follow follow = std::move(ahead.Follows.front());
                 ahead.Follows.pop_front();
@@ -2057,8 +2262,7 @@ namespace
 
         for (AheadRead& read : reads)
         {
-            TraceAsked(read, kind);
-            ahead.Reads[std::to_underlying(kind)].push_back(std::move(read));
+            AddWaiting(ahead, kind, std::move(read));
         }
 
         StartReaders(ahead);
@@ -2352,11 +2556,7 @@ namespace
         ReadAhead& ahead = TheState().Ahead;
         std::unique_lock lock(ahead.Lock);
         ahead.Follows.clear();
-
-        for (std::deque<AheadRead>& reads : ahead.Reads)
-        {
-            reads.clear();
-        }
+        ForgetWaiting(ahead);
 
         // The frames being read stay counted as read (Reading) until their reads end, dropped then: the game's thread
         // waits for one it asks for rather than read it beside them.
@@ -4057,8 +4257,7 @@ void MCHdArt::WaitForReadAhead()
                        [&ahead]
                        {
                            return ahead.Follows.empty() && ahead.Working == 0 && ahead.Opens.empty() &&
-                                  ahead.Asks.empty() &&
-                                  std::ranges::all_of(ahead.Reads, [](const auto& reads) { return reads.empty(); });
+                                  ahead.Asks.empty() && ahead.Waiting.empty();
                        });
 }
 
@@ -4085,8 +4284,7 @@ void MCHdArt::SetReaderSettings(const ReaderSettings& settings)
     stopping.clear();
     std::scoped_lock lock(ahead.Lock);
 
-    if (!ahead.Follows.empty() || !ahead.Opens.empty() || !ahead.Asks.empty() ||
-        std::ranges::any_of(ahead.Reads, [](const std::deque<AheadRead>& reads) { return !reads.empty(); }))
+    if (!ahead.Follows.empty() || !ahead.Opens.empty() || !ahead.Asks.empty() || !ahead.Waiting.empty())
     {
         StartReaders(ahead);
         ahead.Changed.notify_all();
@@ -4101,9 +4299,24 @@ void MCHdArt::WaitForLoadReads()
     ahead.Changed.wait(lock,
                        [&ahead]
                        {
-                           return ahead.Reads[load].empty() && ahead.InFlight[load] == 0 && ahead.Opens.empty() &&
+                           return ahead.WaitingOfKind[load] == 0 && ahead.InFlight[load] == 0 && ahead.Opens.empty() &&
                                   ahead.Opening.empty() && ahead.LoadAsks == 0;
                        });
+}
+
+void MCHdArt::HoldReads(bool hold)
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::unique_lock lock(ahead.Lock);
+
+    if (!hold)
+    {
+        // What was asked for made reads first, so the readers find them all waiting.
+        ahead.Changed.wait(lock, [&ahead] { return ahead.Asks.empty() && ahead.Opens.empty() && ahead.Working == 0; });
+    }
+
+    ahead.Held = hold;
+    ahead.Changed.notify_all();
 }
 
 MCHdArt::ReaderSettings MCHdArt::GetReaderSettings()

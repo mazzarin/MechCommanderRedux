@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lib/MCDiskFile.h"
+
 class MCAudio;
 class MCAudioStream;
 
@@ -186,7 +188,8 @@ private:
     std::expected<void, std::string> DecodeAudio(int track, std::span<const uint8_t> chunk);
     std::expected<void, std::string> DecodeVideo(std::span<const uint8_t> chunk);
 
-    std::ifstream _File;
+    /// <summary>The file, read a frame at a time through its growing buffer (none for one in memory).</summary>
+    std::optional<MCDiskFile> _File;
     std::vector<uint8_t> _Memory;
     bool _InMemory = false;
     uint64_t _FileSize = 0;

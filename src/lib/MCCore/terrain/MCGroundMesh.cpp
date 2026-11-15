@@ -661,7 +661,7 @@ bool MCTerrainAskHdGroundByName(const MCTerrain& terrain)
     return true;
 }
 
-std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain)
+std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain, MCMinesAhead cells)
 {
     std::vector<int32_t> slots;
 
@@ -683,7 +683,7 @@ std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain)
             const MCMineView view = MCTerrainMineView(map.TileAt(row, col).Overlay, true, true);
             mined = mined || view.InnerSphereMine || view.ClanMine || view.Crater;
 
-            if (!view.InnerSphereMine && !view.ClanMine)
+            if (cells == MCMinesAhead::Mined && !view.InnerSphereMine && !view.ClanMine)
             {
                 continue;
             }
@@ -699,7 +699,7 @@ std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain)
         }
     }
 
-    if (mined)
+    if (mined || (cells == MCMinesAhead::EveryCell && !slots.empty()))
     {
         slots.push_back(MCMineCraterTile);
     }
@@ -707,7 +707,7 @@ std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain)
     return slots;
 }
 
-void MCTerrainReadMinesAhead()
+void MCTerrainReadMinesAhead(MCMinesAhead cells)
 {
     const std::shared_ptr<MCTerrain> terrain = Terrain();
 
@@ -716,7 +716,7 @@ void MCTerrainReadMinesAhead()
         return;
     }
 
-    const std::vector<int32_t> slots = MCTerrainMineSlots(*terrain);
+    const std::vector<int32_t> slots = MCTerrainMineSlots(*terrain, cells);
 
     if (slots.empty())
     {
@@ -753,9 +753,10 @@ void MCTerrainReadMinesAhead()
 
     if (MCFrameLog::Enabled())
     {
-        MCFrameLog::Note(
-            std::format("mines' tiles: {}, {} read in {} reads, {:.1f} ms", slots.size(), read.Tiles, read.Reads,
-                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
+        MCFrameLog::Note(std::format(
+            "mines' tiles ({}): {}, {} read in {} reads, {:.1f} ms",
+            cells == MCMinesAhead::EveryCell ? "every cell's" : "the mined cells'", slots.size(), read.Tiles,
+            read.Reads, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
     }
 }
 

@@ -79,20 +79,30 @@ MCHdArt::GroundAhead MCGroundTileOf(MCTerrainTiles& tiles, int32_t slot);
 /// </summary>
 std::optional<MCHdArt::GroundAhead> MCGroundOverlayOf(MCTerrainTiles& tiles, int32_t slot);
 
-/// <summary>
-/// Port-only (PLAN.md's first-use item 10): the tiles <paramref name="terrain"/>'s mines can draw at the start, each
-/// once: each mined cell's laid mine, either side's, by its corners' levels (as MCTerrainBlock::DrawMineTile picks it),
-/// and the crater when the map has a mine. The map's vertices name none of them, so the ground's asks pass them by.
-/// </summary>
-std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain);
+/// <summary>Port-only: which cells' mine tiles MCTerrainMineSlots takes.</summary>
+enum class MCMinesAhead
+{
+    /// <summary>The cells mined (either side's laid mine) and the crater when one is.</summary>
+    Mined,
+    /// <summary>Every cell's and the crater: a mission with a mine layer, which may lay one on any cell.</summary>
+    EveryCell,
+};
 
 /// <summary>
-/// Port-only (PLAN.md's first-use item 10): reads the tiles the map's mines can draw (MCTerrainMineSlots) while the
-/// mission loads, the original's and, while the HD ground is drawn, their HD overlays (by name when the program knows
-/// the tile set), so a minefield's first frame on screen reads none. Call it once the map's mines are set (a match
-/// without mines clears them).
+/// Port-only (PLAN.md's first-use item 10): the tiles <paramref name="terrain"/>'s mines can draw, each once: the laid
+/// mine of each cell <paramref name="cells"/> takes, by its corners' levels (as MCTerrainBlock::DrawMineTile picks it),
+/// and the crater when it takes one. The map's vertices name none of them, so the ground's asks pass them by.
 /// </summary>
-void MCTerrainReadMinesAhead();
+std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain, MCMinesAhead cells = MCMinesAhead::Mined);
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): reads the tiles the map's mines can draw (MCTerrainMineSlots of
+/// <paramref name="cells"/>) while the mission loads, the original's and, while the HD ground is drawn, their HD
+/// overlays (by name when the program knows the tile set), so a minefield's first frame on screen reads none, nor a
+/// mine a mine layer lays with EveryCell. Call it once the map's mines are set (a match without mines clears them); a
+/// tile read already isn't read again.
+/// </summary>
+void MCTerrainReadMinesAhead(MCMinesAhead cells = MCMinesAhead::Mined);
 
 /// <summary>Port-only (PLAN.md's first-use item 10): the original ground tiles MCTerrainReadHdTiles rebuilt and read.</summary>
 struct MCGroundRebuilt

@@ -6,10 +6,14 @@
 #include "ai/MCScenarioMap.h"
 #include "camera/MCCamera.h"
 #include "mission/MCScenario.h"
+#include "object/MCGroundVehicle.h"
+#include "object/MCObjectQueue.h"
+#include "object/MCObjectSystem.h"
 #include "sprite/MCHdArt.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCGroundNames.h"
 #include "terrain/MCGroundNamesKnown.h"
+#include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTerrain.h"
 #include "terrain/MCTerrainTiles.h"
 
@@ -213,6 +217,27 @@ namespace
         return indices;
     }
 
+    /// <summary>
+    /// The mine tiles (a laid mine's, the crater, to <paramref name="last"/>: a cell whose corner stands more than two
+    /// levels over its lowest picks a slot past the crater) a draw or a read has looked at: read, or found missing.
+    /// </summary>
+    auto MineTilesTouched(const MCTerrain& terrain, int32_t last = MCMineCraterTile) -> std::vector<int32_t>
+    {
+        std::vector<int32_t> seen;
+
+        for (int32_t slot = MCMineTileNumber(0, 0, 0, 0); slot <= last; ++slot)
+        {
+            const MCOptionalRef<const MCTerrainTile> tile = terrain.Tiles->Slot(slot);
+
+            if (tile.has_value() && (tile->get().Missing || !tile->get().TileData().empty()))
+            {
+                seen.push_back(slot);
+            }
+        }
+
+        return seen;
+    }
+
     /// <summary>Why overlay <paramref name="own"/>'s pixels weren't rebuilt from its HD frame's <paramref name="hd"/>.</summary>
     auto WhyOverlayNotRebuilt(std::span<const uint8_t> own, std::span<const uint8_t> hd) -> std::string
     {
@@ -400,10 +425,18 @@ TEST_CASE_ISOLATED("ground names: a mission's HD ground asked by name is what it
     const auto laid = std::ranges::count_if(
         GameMap().Map, [](const MCMapTile& tile)
         { return ((tile.Overlay >> 11) & 3) == LaidMine || ((tile.Overlay >> 13) & 3) == LaidMine; });
+    // Its mine layers, every side's, which may lay a mine on any cell (MCScenarioLoad's MissionLaysMines).
+    const auto layers = std::ranges::count_if(ObjectList()->DefaultList(),
+                                              [](const std::shared_ptr<MCBaseObject>& object)
+                                              {
+                                                  return object->ObjectClass == MCObjectClass::GroundVehicle &&
+                                                         static_cast<const MCGroundVehicle&>(*object).MineLayer;
+                                              });
     std::cout << std::format("  mission {}: tile set 0x{:016x}, {} tiles and {} overlays by name, {} and {} by bytes, "
-                             "{} cells mined\n",
+                             "{} cells mined, {} mine tiles, {} mine layers, {} mine tiles any cell can draw\n",
                              mission, terrain->Tiles->FilesHash(), byName->Tiles.size(), byName->Overlays.size(),
-                             byBytes.Tiles.size(), byBytes.Overlays.size(), laid);
+                             byBytes.Tiles.size(), byBytes.Overlays.size(), laid, MCTerrainMineSlots(*terrain).size(),
+                             layers, MCTerrainMineSlots(*terrain, MCMinesAhead::EveryCell).size());
     CHECK(!byBytes.Tiles.empty());
     CHECK(NamesOf(byName->Tiles) == NamesOf(byBytes.Tiles));
     CHECK(NamesOf(byName->Overlays) == NamesOf(byBytes.Overlays));
@@ -556,25 +589,7 @@ TEST_CASE_ISOLATED("ground names: the load reads the tiles its mines draw, so dr
     const std::vector<int32_t> slots = MCTerrainMineSlots(*terrain);
     REQUIRE(!slots.empty());
     CHECK(std::ranges::contains(slots, MCMineCraterTile));
-    // The mine tiles a draw has looked at: read, or found missing.
-    const auto touched = [&terrain]
-    {
-        std::vector<int32_t> seen;
-
-        for (int32_t slot = MCMineTileNumber(0, 0, 0, 0); slot <= MCMineCraterTile; ++slot)
-        {
-            const MCOptionalRef<const MCTerrainTile> tile = terrain->Tiles->Slot(slot);
-
-            if (tile.has_value() && (tile->get().Missing || !tile->get().TileData().empty()))
-            {
-                seen.push_back(slot);
-            }
-        }
-
-        return seen;
-    };
-
-    const std::vector<int32_t> loaded = touched();
+    const std::vector<int32_t> loaded = MineTilesTouched(*terrain);
 
     for (const int32_t slot : slots)
     {
@@ -603,6 +618,75 @@ TEST_CASE_ISOLATED("ground names: the load reads the tiles its mines draw, so dr
     std::cout << std::format("  mission {}: {} mined cells, {} mine tiles read at the load\n", MinedMission, mined,
                              slots.size());
     CHECK(mined > 0);
-    CHECK(touched() == loaded);
+    CHECK(MineTilesTouched(*terrain) == loaded);
+    Scenario()->GodMode = 0;
+}
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): with a mine layer in the mission (a match's bought one: no campaign or
+/// expansion mission starts with one), the load reads every cell's mine tile (MCTerrainReadMinesAhead's EveryCell), so
+/// a mine laid on any cell reads none at its first draw: read so here, every cell mined as a mine layer lays one
+/// (MCGroundVehicle's Update), then the camera over a cell of each tile, the draw picking its tile by the corners'
+/// levels.
+/// </summary>
+TEST_CASE_ISOLATED("ground names: every cell's mine tile read ahead, a mine laid on any cell reads no tile at its draw")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t LayersMission = 8;
+    constexpr float FrameSeconds = 1.0f / 15.0f;
+    // A laid mine's overlay bits, the Inner Sphere's (13-14) and the Clans' (11-12), as the mine layer sets them.
+    constexpr uint32_t InnerSphereLaid = 0x4000;
+    constexpr uint32_t ClanLaid = 0x1000;
+    constexpr uint32_t MineBits = 0x7800;
+    REQUIRE(MCTestGame::StartMission(LayersMission));
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    REQUIRE(terrain != nullptr);
+    MCTerrainReadMinesAhead(MCMinesAhead::EveryCell);
+    const std::vector<int32_t> slots = MCTerrainMineSlots(*terrain, MCMinesAhead::EveryCell);
+    REQUIRE(!slots.empty());
+    const int32_t last = std::ranges::max(slots);
+    const std::vector<int32_t> loaded = MineTilesTouched(*terrain, last);
+
+    for (const int32_t slot : slots)
+    {
+        CHECK(std::ranges::contains(loaded, slot));
+    }
+
+    MCScenarioMap& map = GameMap();
+    const MCMapBlockManager& blocks = *terrain->MapBlocks;
+    const auto level = [&blocks](int32_t row, int32_t col) { return uint32_t{blocks.MapVertexAt(row, col).Elevation}; };
+    // A cell of each mine tile, by its slot.
+    std::map<int32_t, std::pair<int32_t, int32_t>> cellOf;
+
+    for (int32_t row = 0; row < map.Height; ++row)
+    {
+        for (int32_t col = 0; col < map.Width; ++col)
+        {
+            MCMapTile& tile = map.TileAt(row, col);
+            tile.Overlay = ((row + col) % 2 == 0 ? InnerSphereLaid : ClanLaid) | (tile.Overlay & ~MineBits);
+            cellOf.try_emplace(
+                MCMineTileNumber(level(row, col), level(row, col + 1), level(row + 1, col + 1), level(row + 1, col)),
+                row, col);
+        }
+    }
+
+    RevealAll();
+    Scenario()->GodMode = 1;
+
+    for (const auto& picked : cellOf)
+    {
+        const auto [row, col] = picked.second;
+        Eye()->SetPosition(MCVector3D(TileColToWorld(col), TileRowToWorld(row), 0.0f));
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    std::cout << std::format("  mission {}: {} mine tiles any cell can draw, read ahead; drawn over {} cells\n",
+                             LayersMission, slots.size(), cellOf.size());
+    CHECK_EQ(cellOf.size() + 1, slots.size());
+    CHECK(MineTilesTouched(*terrain, last) == loaded);
     Scenario()->GodMode = 0;
 }

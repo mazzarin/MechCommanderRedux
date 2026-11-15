@@ -67,6 +67,20 @@
 
 namespace
 {
+    /// <summary>
+    /// Port-only: whether a unit of the mission's parts (every side's, made by LoadParts) can lay mines: a ground
+    /// vehicle with mines to lay (none in a match without mines).
+    /// </summary>
+    auto MissionLaysMines() -> bool
+    {
+        return std::ranges::any_of(ObjectList()->DefaultList(),
+                                   [](const std::shared_ptr<MCBaseObject>& object)
+                                   {
+                                       return object->ObjectClass == MCObjectClass::GroundVehicle &&
+                                              static_cast<const MCGroundVehicle&>(*object).MineLayer;
+                                   });
+    }
+
     /// <summary>Degrees to radians, as MCX.EXE stores it (a hair under pi / 180).</summary>
     constexpr double DegreesToRadians = 0x1.1df46a2526c7ap-6;
 
@@ -291,6 +305,13 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     LoadCarriers(file);
     LoadObjectives(file);
     LoadGroups(file);
+
+    // Port-only: a mine layer in the mission may lay a mine on any cell, so every cell's mine tile is read with the
+    // ground, not by its first draw.
+    if (MissionLaysMines())
+    {
+        MCTerrainReadMinesAhead(MCMinesAhead::EveryCell);
+    }
 
     ClanTeam()->BuildRoster(*this);
     InnerSphereTeam()->BuildRoster(*this);

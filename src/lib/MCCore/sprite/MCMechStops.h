@@ -8,6 +8,7 @@
 // on the spot.
 
 #include "lib/MCOptionalRef.h"
+#include "sprite/MCSpriteManager.h"
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -280,6 +281,25 @@ inline constexpr std::array<int32_t, 3> MCStopArt = {MCStopGesture::WalkToStand,
 [[nodiscard]] uint64_t MCStopsArtHash(MCSpriteTree& tree);
 
 /// <summary>
+/// Port-only (MechBraking): the run of each part's packets <see cref="MCStopsArtHash"/> reads as stored (the large art's,
+/// as MCSpriteManager::MechPacketsStored reads them), none for a part it reads none of: for a load to read them with its
+/// other packets (MCSpriteTree::LoadPacketsTogether) and hash them from there.
+/// </summary>
+[[nodiscard]] MCMechParts<std::optional<MCStoredWanted>> MCStopsArtPackets(MCSpriteTree& tree);
+
+/// <summary>
+/// Port-only (MechBraking): each part's packets as stored (<see cref="MCStopsArtPackets"/>'s runs, as
+/// MCSpriteManager::MechPacketsStored gives them), read with a load's other packets; none where they weren't.
+/// </summary>
+using MCStopsArtStored = MCMechParts<std::optional<std::vector<uint8_t>>>;
+
+/// <summary>
+/// Port-only (MechBraking): <see cref="MCStopsArtHash(MCSpriteTree&)"/>, each part's packets as stored taken from
+/// <paramref name="stored"/> where it has them (the same bytes), read where it hasn't.
+/// </summary>
+[[nodiscard]] uint64_t MCStopsArtHash(MCSpriteTree& tree, const MCStopsArtStored& stored);
+
+/// <summary>
 /// Port-only (MechBraking): <paramref name="tree"/>'s stops from the table, by its art's hash
 /// (<see cref="MCStopsArtHash"/>), once a tree. For art the table hasn't (a mod's, never the game's: a test holds every
 /// tree of the game's data to the table) they are worked out (<see cref="MCMakeStopsFast"/>), logged.
@@ -287,10 +307,13 @@ inline constexpr std::array<int32_t, 3> MCStopArt = {MCStopGesture::WalkToStand,
 void MCPrepareStops(MCSpriteTree& tree);
 
 /// <summary>
-/// Port-only (MechBraking): <see cref="MCPrepareStops(MCSpriteTree&)"/> for a mission's trees, at its load; those the
-/// table hasn't worked out on threads of their own together, their shapes loaded first on this one.
+/// Port-only (MechBraking): <see cref="MCPrepareStops(MCSpriteTree&)"/> for a mission's trees, at its load, each tree's
+/// art hashed from its entry of <paramref name="stored"/> where there is one (its packets read with the load's:
+/// <see cref="MCStopsArtPackets"/>); those the table hasn't worked out on threads of their own together, their shapes
+/// loaded first on this one.
 /// </summary>
-void MCPrepareStops(std::span<const std::shared_ptr<MCSpriteTree>> trees);
+void MCPrepareStops(std::span<const std::shared_ptr<MCSpriteTree>> trees,
+                    std::span<const MCStopsArtStored> stored = {});
 
 /// <summary>Port-only (MechBraking): a tree's stops the table holds, by its name and its art's hash.</summary>
 struct MCKnownStops

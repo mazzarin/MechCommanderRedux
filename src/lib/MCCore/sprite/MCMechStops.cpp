@@ -622,13 +622,13 @@ namespace
     }
 
     /// <summary>
-    /// Looks <paramref name="tree"/>'s stops up in the table (once a tree), giving them to it; false, logged, for art the
-    /// table hasn't (its stops still to be worked out).
+    /// Looks <paramref name="tree"/>'s stops up in the table by its art's hash <paramref name="hash"/> (once a tree),
+    /// giving them to it; false, logged, for art the table hasn't (its stops still to be worked out).
     /// </summary>
-    auto LookUpStops(MCSpriteTree& tree) -> bool
+    auto LookUpStops(MCSpriteTree& tree, uint64_t hash) -> bool
     {
         tree.StopsPrepared = true;
-        const uint64_t hash = MCStopsArtHash(tree);
+        tree.StopsLookedUpBy = hash;
 
         if (const MCOptionalRef<const MCKnownStops> known = MCFindKnownStops(hash))
         {
@@ -802,80 +802,120 @@ auto MCMakeStopsFast(MCSpriteTree& tree) -> MCTreeStops
     return StopsFrom(LoadStopShapes(tree));
 }
 
+namespace
+{
+    /// <summary>
+    /// Adds to <paramref name="hashed"/> what MCStopsArtHash hashes of <paramref name="tree"/> before its packets' bytes,
+    /// and gives the run of each part's packets it then hashes as stored (none: a part it reads none of).
+    /// </summary>
+    auto HashArtLayout(MCSpriteTree& tree, XXH3_state_t& hashed) -> MCMechParts<std::optional<MCStoredWanted>>
+    {
+        AddBytes(hashed, StopsHashVersion);
+        AddBytes(hashed, tree.NumGestures);
+        AddBytes(hashed, tree.SpecialInfo.WalkToWSFrame);
+
+        for (const int32_t gesture : {MCStopGesture::Walk, MCStopGesture::WalkToStand, MCStopGesture::WalkToRun,
+                                      MCStopGesture::Run, MCStopGesture::RunToWalk})
+        {
+            AddBytes(hashed, HasFrames(tree, gesture) ? tree.Gestures[static_cast<size_t>(gesture)].NumFrames : 0u);
+        }
+
+        // The packets each facing of the art looked at shows (MCGestureLikeness's and MCHasGestureArt's), and every
+        // packet of their gestures (a facing without art borrows another's: MCSpriteTree::GetGesture), by part PAK.
+        MCMechParts<std::pair<uint32_t, uint32_t>> spans;
+        spans.fill({std::numeric_limits<uint32_t>::max(), 0});
+        const auto shows = [&](int32_t gesture, int32_t part, float rotation)
+        {
+            const std::optional<MCGesturePacket> where = tree.GesturePacket(gesture, part, rotation);
+            AddBytes(hashed, where.has_value());
+
+            if (!where.has_value())
+            {
+                return;
+            }
+
+            AddBytes(hashed, where->FilePart);
+            AddBytes(hashed, where->Packet);
+            AddBytes(hashed, where->FirstPacket);
+            AddBytes(hashed, where->Facings);
+            AddBytes(hashed, where->FacingStep);
+            AddBytes(hashed, where->Mirrored);
+            auto& [from, to] = spans[where->FilePart];
+            from = std::min(from, where->FirstPacket);
+            to = std::max(to, where->FirstPacket + static_cast<uint32_t>(std::max(where->Facings, 0)));
+        };
+
+        for (const int32_t gesture : MCStopArt)
+        {
+            for (int32_t part = 0; part < MechPartCount; ++part)
+            {
+                shows(gesture, part, ArtFacing);
+            }
+        }
+
+        for (const int32_t gesture : Compared)
+        {
+            for (int32_t facing = 0; facing < CutFacings; ++facing)
+            {
+                for (const int32_t part : CutParts)
+                {
+                    shows(gesture, part, CutRotation(facing));
+                }
+            }
+        }
+
+        MCMechParts<std::optional<MCStoredWanted>> runs;
+
+        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+        {
+            const auto [from, to] = spans[part];
+
+            if (from < to && tree.FileNumbers[part] != NoFileNumber)
+            {
+                runs[part] = MCStoredWanted{MCShapeWanted{tree.FileNumbers[part], from, part, {}}, to - from};
+            }
+        }
+
+        return runs;
+    }
+} // namespace
+
 auto MCStopsArtHash(MCSpriteTree& tree) -> uint64_t
+{
+    return MCStopsArtHash(tree, MCStopsArtStored{});
+}
+
+auto MCStopsArtPackets(MCSpriteTree& tree) -> MCMechParts<std::optional<MCStoredWanted>>
+{
+    // The layout's bytes go nowhere: only the runs are wanted.
+    XXH3_state_t unused;
+    XXH3_64bits_reset(&unused);
+    return HashArtLayout(tree, unused);
+}
+
+auto MCStopsArtHash(MCSpriteTree& tree, const MCStopsArtStored& stored) -> uint64_t
 {
     XXH3_state_t hashed;
     XXH3_64bits_reset(&hashed);
-    AddBytes(hashed, StopsHashVersion);
-    AddBytes(hashed, tree.NumGestures);
-    AddBytes(hashed, tree.SpecialInfo.WalkToWSFrame);
-
-    for (const int32_t gesture : {MCStopGesture::Walk, MCStopGesture::WalkToStand, MCStopGesture::WalkToRun,
-                                  MCStopGesture::Run, MCStopGesture::RunToWalk})
-    {
-        AddBytes(hashed, HasFrames(tree, gesture) ? tree.Gestures[static_cast<size_t>(gesture)].NumFrames : 0u);
-    }
-
-    // The packets each facing of the art looked at shows (MCGestureLikeness's and MCHasGestureArt's), and every packet
-    // of their gestures (a facing without art borrows another's: MCSpriteTree::GetGesture), by part PAK.
-    MCMechParts<std::pair<uint32_t, uint32_t>> spans;
-    spans.fill({std::numeric_limits<uint32_t>::max(), 0});
-    const auto shows = [&](int32_t gesture, int32_t part, float rotation)
-    {
-        const std::optional<MCGesturePacket> where = tree.GesturePacket(gesture, part, rotation);
-        AddBytes(hashed, where.has_value());
-
-        if (!where.has_value())
-        {
-            return;
-        }
-
-        AddBytes(hashed, where->FilePart);
-        AddBytes(hashed, where->Packet);
-        AddBytes(hashed, where->FirstPacket);
-        AddBytes(hashed, where->Facings);
-        AddBytes(hashed, where->FacingStep);
-        AddBytes(hashed, where->Mirrored);
-        auto& [from, to] = spans[where->FilePart];
-        from = std::min(from, where->FirstPacket);
-        to = std::max(to, where->FirstPacket + static_cast<uint32_t>(std::max(where->Facings, 0)));
-    };
-
-    for (const int32_t gesture : MCStopArt)
-    {
-        for (int32_t part = 0; part < MechPartCount; ++part)
-        {
-            shows(gesture, part, ArtFacing);
-        }
-    }
-
-    for (const int32_t gesture : Compared)
-    {
-        for (int32_t facing = 0; facing < CutFacings; ++facing)
-        {
-            for (const int32_t part : CutParts)
-            {
-                shows(gesture, part, CutRotation(facing));
-            }
-        }
-    }
-
+    const MCMechParts<std::optional<MCStoredWanted>> runs = HashArtLayout(tree, hashed);
     const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
 
     for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
     {
-        const auto [from, to] = spans[part];
-        const uint32_t fileNumber = tree.FileNumbers[part];
-
-        if (from >= to || fileNumber == NoFileNumber || spriteManager == nullptr)
+        if (!runs[part].has_value() || spriteManager == nullptr)
         {
             AddBytes(hashed, uint64_t{0});
             continue;
         }
 
-        const std::vector<uint8_t> stored = spriteManager->MechPacketsStored(fileNumber, part, from, to - from, true);
-        AddBytes(hashed, static_cast<uint64_t>(stored.size()));
-        XXH3_64bits_update(&hashed, stored.data(), stored.size());
+        const MCStoredWanted& run = *runs[part];
+        const std::vector<uint8_t> read =
+            stored[part].has_value()
+                ? std::vector<uint8_t>{}
+                : spriteManager->MechPacketsStored(run.Of.FileNum, part, run.Of.Packet, run.Count, true);
+        const std::vector<uint8_t>& bytes = stored[part].has_value() ? *stored[part] : read;
+        AddBytes(hashed, static_cast<uint64_t>(bytes.size()));
+        XXH3_64bits_update(&hashed, bytes.data(), bytes.size());
     }
 
     return XXH3_64bits_digest(&hashed);
@@ -883,26 +923,29 @@ auto MCStopsArtHash(MCSpriteTree& tree) -> uint64_t
 
 auto MCPrepareStops(MCSpriteTree& tree) -> void
 {
-    if (!tree.StopsPrepared && !LookUpStops(tree))
+    if (!tree.StopsPrepared && !LookUpStops(tree, MCStopsArtHash(tree)))
     {
         GiveStops(tree, MCMakeStopsFast(tree));
     }
 }
 
-auto MCPrepareStops(std::span<const std::shared_ptr<MCSpriteTree>> trees) -> void
+auto MCPrepareStops(std::span<const std::shared_ptr<MCSpriteTree>> trees, std::span<const MCStopsArtStored> stored)
+    -> void
 {
     const auto start = std::chrono::steady_clock::now();
     std::vector<std::shared_ptr<MCSpriteTree>> unknown;
     size_t known = 0;
 
-    for (const std::shared_ptr<MCSpriteTree>& tree : trees)
+    for (size_t i = 0; i < trees.size(); ++i)
     {
+        const std::shared_ptr<MCSpriteTree>& tree = trees[i];
+
         if (tree == nullptr || tree->StopsPrepared)
         {
             continue;
         }
 
-        if (LookUpStops(*tree))
+        if (LookUpStops(*tree, i < stored.size() ? MCStopsArtHash(*tree, stored[i]) : MCStopsArtHash(*tree)))
         {
             ++known;
         }

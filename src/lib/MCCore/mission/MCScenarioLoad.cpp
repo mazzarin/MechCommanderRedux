@@ -946,21 +946,8 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
         CreatePartObject(i);
     }
 
-    // Port-only (MechBraking): every mech type's stops before play, from the table the program carries.
-    std::vector<std::shared_ptr<MCSpriteTree>> trees;
-
-    for (const MCPart& part : Parts)
-    {
-        const auto object = std::static_pointer_cast<MCGameObject>(part.Object.lock());
-        const std::shared_ptr<MCAppearance> appearance = object != nullptr ? object->GetAppearance() : nullptr;
-
-        if (appearance != nullptr && object->ObjectClass == MCObjectClass::BattleMech)
-        {
-            trees.push_back(std::static_pointer_cast<MCSpriteTree>(appearance->GetAppearanceType()));
-        }
-    }
-
-    MCPrepareStops(trees);
+    // Port-only (MechBraking): every mech type's stops are given at the load's end, with its packets
+    // (LoadOriginalPackets).
     UpdateDisplay(false, true, 20, true, 90);
 }
 
@@ -969,8 +956,12 @@ auto MCScenario::LoadOriginalPackets() -> void
     const auto started = std::chrono::steady_clock::now();
     const MCPacketsHeld types = ObjectTypeManager().LoadMadeTypes();
 
-    // Every side's mechs: each mech type's PreloadGestures packets once, and each mech's packets drawn now.
+    // Every side's mechs: each mech type's PreloadGestures packets once, and each mech's packets drawn now; and
+    // (MechBraking) each type's art its stops are looked up by, as stored, in the same reads (MCStopsArtPackets).
     std::vector<MCSpriteTree::MCTreePacket> mechPackets;
+    std::vector<std::shared_ptr<MCSpriteTree>> stopsTrees;
+    std::vector<MCStoredWanted> stopsArt;
+    std::vector<MCMechParts<std::optional<size_t>>> stopsArtAt;
 
     for (const MCPart& part : Parts)
     {
@@ -1000,9 +991,42 @@ auto MCScenario::LoadOriginalPackets() -> void
 
         std::ranges::transform(actor->DrawnPackets(), std::back_inserter(mechPackets),
                                [&](const MCGesturePacket& where) { return MCSpriteTree::MCTreePacket{tree, where}; });
+
+        if (!tree->StopsPrepared && std::ranges::find(stopsTrees, tree) == stopsTrees.end())
+        {
+            MCMechParts<std::optional<size_t>>& at = stopsArtAt.emplace_back();
+            const MCMechParts<std::optional<MCStoredWanted>> art = MCStopsArtPackets(*tree);
+            stopsTrees.push_back(tree);
+
+            for (size_t part = 0; part < art.size(); ++part)
+            {
+                if (art[part].has_value())
+                {
+                    at[part] = stopsArt.size();
+                    stopsArt.push_back(*art[part]);
+                }
+            }
+        }
     }
 
-    const MCShapesLoaded mechs = MCSpriteTree::LoadPacketsTogether(mechPackets, 1);
+    MCShapesLoaded mechs = MCSpriteTree::LoadPacketsTogether(mechPackets, 1, stopsArt);
+
+    // Port-only (MechBraking): every mech type's stops before play, from the table the program carries.
+    std::vector<MCStopsArtStored> stopsStored(stopsTrees.size());
+
+    for (size_t tree = 0; tree < stopsTrees.size(); ++tree)
+    {
+        for (size_t part = 0; part < stopsArtAt[tree].size(); ++part)
+        {
+            if (const std::optional<size_t> at = stopsArtAt[tree][part]; at.has_value() && *at < mechs.Stored.size())
+            {
+                stopsStored[tree][part] = std::move(mechs.Stored[*at]);
+            }
+        }
+    }
+
+    MCPrepareStops(stopsTrees, stopsStored);
+    stopsStored.clear();
 
     // The kept types' appearances' shapes (the effects', the wrecks'), every packet of their PAKs, kept with them.
     std::vector<MCShapeWanted> wanted;

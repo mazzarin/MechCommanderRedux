@@ -36,11 +36,23 @@ struct MCStoredPacket
 
 class MCPacketFile;
 
+/// <summary>
+/// Port-only: a run of a packet file's packets wanted as stored (<see cref="MCPacketFile::ReadStoredPackets"/>'s), read
+/// with its other packets (<see cref="MCPacketsWanted"/>): from <c>First</c>, <c>Count</c> of them.
+/// </summary>
+struct MCStoredRun
+{
+    int32_t First = 0;
+    int32_t Count = 0;
+};
+
 /// <summary>Port-only: a packet file's packets to read with other files' (<see cref="MCPacketFile::ReadPackets"/>).</summary>
 struct MCPacketsWanted
 {
     std::reference_wrapper<const MCPacketFile> File;
     std::span<const int32_t> Packets;
+    /// <summary>Runs of its packets wanted as stored too, read in the same reads as the packets.</summary>
+    std::span<const MCStoredRun> Stored = {};
 };
 
 /// <summary>Port-only: what <see cref="MCPacketFile::ReadPackets"/> read.</summary>
@@ -51,6 +63,11 @@ struct MCPacketBatch
     /// for an empty packet), or nothing (std::nullopt) where the caller must read it itself.
     /// </summary>
     std::vector<std::optional<std::vector<uint8_t>>> Packets;
+    /// <summary>
+    /// Each run of packets asked for as stored, in the order asked: as <see cref="MCPacketFile::ReadStoredPackets"/>
+    /// gives it, or nothing (std::nullopt) where the caller must read it itself.
+    /// </summary>
+    std::vector<std::optional<std::vector<uint8_t>>> Stored;
     /// <summary>The reads of the file made (a read of several files' packets counted for the first's).</summary>
     size_t Reads = 0;
     /// <summary>The bytes the largest of them read.</summary>
@@ -155,7 +172,8 @@ public:
     /// <summary>
     /// Port-only: reads the packets <paramref name="packets"/> as ReadPacket does, together: in the order they lie in the
     /// file, each run of neighbours within MCDiskFile::RunGapBytes of each other in one read of at most
-    /// MCDiskFile::RunMostBytes (a bigger packet read alone; a Nul packet's bytes not read), up to
+    /// MCDiskFile::RunMostBytes (a bigger packet read alone, one lying within a read joined to it; a Nul packet's bytes
+    /// not read), up to
     /// <see cref="BatchReadsAtOnce"/> reads at once, each thread on its own reader (<see cref="OpenRootReader"/>), and
     /// each packet unpacked on the thread that read it. A packet asked for twice is read once. The file's position and
     /// current packet stay as they were.
@@ -169,7 +187,9 @@ public:
     /// <summary>
     /// Port-only: <see cref="ReadPackets(std::span{const int32_t})"/> for several packet files at once, their reads
     /// planned together by the file their bytes lie in (<see cref="RootKey"/>: the windows of one file, a part PAK's
-    /// mechs' PAKs, are read as one file), so that they share the reads at once and neighbours join across them.
+    /// mechs' PAKs, are read as one file), so that they share the reads at once and neighbours join across them. Each
+    /// file's runs of packets wanted as stored (<see cref="MCPacketsWanted::Stored"/>) are read with them, packet by
+    /// packet, so that one both wanted and in a run is read once.
     /// </summary>
     /// <returns>Each file's batch, in the order given.</returns>
     static std::vector<MCPacketBatch> ReadPackets(std::span<const MCPacketsWanted> files);

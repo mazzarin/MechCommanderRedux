@@ -283,7 +283,8 @@ auto MCSpriteTree::PreloadPackets() const -> std::vector<MCGesturePacket>
     return packets;
 }
 
-auto MCSpriteTree::LoadPacketsTogether(std::span<const MCTreePacket> packets, int32_t turnUsed) -> MCShapesLoaded
+auto MCSpriteTree::LoadPacketsTogether(std::span<const MCTreePacket> packets, int32_t turnUsed,
+                                       std::span<const MCStoredWanted> stored) -> MCShapesLoaded
 {
     const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
 
@@ -313,7 +314,7 @@ auto MCSpriteTree::LoadPacketsTogether(std::span<const MCTreePacket> packets, in
         into.emplace_back(packet);
     }
 
-    MCShapesLoaded loaded = spriteManager->GetMechShapesData(wanted, turnUsed, true);
+    MCShapesLoaded loaded = spriteManager->GetMechShapesData(wanted, turnUsed, true, stored);
 
     for (size_t i = 0; i < into.size(); ++i)
     {

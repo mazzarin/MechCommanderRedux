@@ -18,6 +18,21 @@ namespace
     /// <summary>Issue #25: the most a byte of LZ data unpacks to (a 12-bit code's string is at most 4096 bytes).</summary>
     constexpr int64_t MostUnpackedPerByte = 4096;
 
+    /// <summary>The bytes a packet's entry in ReadStoredPackets' table takes.</summary>
+    constexpr size_t StoredEntryBytes = 4;
+
+    /// <summary>
+    /// A packet's entry in ReadStoredPackets' table, at the start of <paramref name="into"/>: its storage, then its stored
+    /// size's three low bytes, lowest first.
+    /// </summary>
+    void WriteStoredEntry(std::span<uint8_t> into, MCPacketStorage storage, uint32_t size)
+    {
+        into[0] = static_cast<uint8_t>(storage);
+        into[1] = static_cast<uint8_t>(size);
+        into[2] = static_cast<uint8_t>(size >> 8);
+        into[3] = static_cast<uint8_t>(size >> 16);
+    }
+
     /// <summary>The table as the bytes a file holds.</summary>
     std::span<uint8_t> TableBytes(std::vector<uint32_t>& table)
     {
@@ -345,11 +360,8 @@ std::vector<uint8_t> MCPacketFile::ReadStoredPackets(int32_t first, int32_t coun
 
         start = start < 0 ? offset : start;
         end = next;
-        const auto size = static_cast<uint32_t>(next - offset);
-        stored.push_back(static_cast<uint8_t>(storage));
-        stored.push_back(static_cast<uint8_t>(size));
-        stored.push_back(static_cast<uint8_t>(size >> 8));
-        stored.push_back(static_cast<uint8_t>(size >> 16));
+        stored.resize(stored.size() + StoredEntryBytes);
+        WriteStoredEntry(std::span(stored).last(StoredEntryBytes), storage, static_cast<uint32_t>(next - offset));
     }
 
     const size_t table = stored.size();
@@ -449,7 +461,8 @@ std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWa
 
     /// <summary>
     /// A packet to read: where it lies, where in its root (the file on disk or in memory its file's bytes lie in, an
-    /// index into roots) it starts, its file and where its result goes, and whether it's the one before it again.
+    /// index into roots) it starts, its file and where its result goes (wanted as stored: a run of Stored, At its bytes'
+    /// place in that run's result), and whether it's the one before it again.
     /// </summary>
     struct MCWanted
     {
@@ -458,6 +471,8 @@ std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWa
         size_t Root = 0;
         size_t File = 0;
         size_t Asked = 0;
+        bool AsStored = false;
+        size_t At = 0;
         bool Again = false;
     };
 
@@ -469,6 +484,7 @@ std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWa
     {
         const MCPacketFile& file = files[at].File;
         batches[at].Packets.resize(files[at].Packets.size());
+        batches[at].Stored.resize(files[at].Stored.size());
         const MCAddressKey key = file.RootKey();
 
         if (key == MCAddressKey())
@@ -502,16 +518,64 @@ std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWa
                     .Stored = *stored, .Start = base + stored->Offset, .Root = rootIndex, .File = at, .Asked = asked});
             }
         }
+
+        // A run as stored: its table, then its packets' bytes (a Nul packet's too) where each lands, read with the
+        // rest; none for a run ReadStoredPackets would refuse (its packets not all in the file, in order).
+        for (size_t asked = 0; asked < files[at].Stored.size(); ++asked)
+        {
+            const MCStoredRun& run = files[at].Stored[asked];
+            std::vector<MCStoredPacket> packets;
+
+            for (int32_t packet = run.First; run.Count > 0 && packet - run.First < run.Count; ++packet)
+            {
+                const std::optional<MCStoredPacket> stored = file.StoredPacket(packet);
+
+                if (!stored.has_value() ||
+                    (!packets.empty() && stored->Offset != packets.back().Offset + packets.back().Size))
+                {
+                    packets.clear();
+                    break;
+                }
+
+                packets.push_back(*stored);
+            }
+
+            if (packets.empty())
+            {
+                continue;
+            }
+
+            const size_t table = packets.size() * StoredEntryBytes;
+            std::vector<uint8_t>& result = batches[at].Stored[asked].emplace(
+                table + packets.back().Offset + packets.back().Size - packets.front().Offset);
+
+            for (size_t k = 0; k < packets.size(); ++k)
+            {
+                const MCStoredPacket& packet = packets[k];
+                WriteStoredEntry(std::span(result).subspan(k * StoredEntryBytes), packet.Storage, packet.Size);
+                wanted.push_back(MCWanted{.Stored = packet,
+                                          .Start = base + packet.Offset,
+                                          .Root = rootIndex,
+                                          .File = at,
+                                          .Asked = asked,
+                                          .AsStored = true,
+                                          .At = table + packet.Offset - packets.front().Offset});
+            }
+        }
     }
 
-    std::ranges::sort(
-        wanted, {}, [](const MCWanted& packet)
-        { return std::tuple(packet.Root, packet.Start, packet.File, packet.Stored.Packet, packet.Asked); });
+    std::ranges::sort(wanted, {},
+                      [](const MCWanted& packet)
+                      {
+                          return std::tuple(packet.Root, packet.Start, packet.File, packet.Stored.Packet,
+                                            packet.AsStored, packet.Asked, packet.At);
+                      });
 
     for (size_t k = 1; k < wanted.size(); ++k)
     {
-        wanted[k].Again =
-            wanted[k].File == wanted[k - 1].File && wanted[k].Stored.Packet == wanted[k - 1].Stored.Packet;
+        wanted[k].Again = wanted[k].File == wanted[k - 1].File &&
+                          wanted[k].Stored.Packet == wanted[k - 1].Stored.Packet &&
+                          wanted[k].AsStored == wanted[k - 1].AsStored;
     }
 
     /// <summary>One read: wanted's packets from First, Count of them, of root Root, the bytes from Start to End there.</summary>
@@ -536,7 +600,9 @@ std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWa
             MCRun& run = runs.back();
             const uint64_t joined = std::max(run.End, end);
 
-            if (start <= run.End + MCDiskFile::RunGapBytes && joined - run.Start <= MCDiskFile::RunMostBytes)
+            // A packet within the read already (another's, wanted again or as stored) adds no bytes, whatever its size.
+            if (end <= run.End ||
+                (start <= run.End + MCDiskFile::RunGapBytes && joined - run.Start <= MCDiskFile::RunMostBytes))
             {
                 run.End = joined;
                 ++run.Count;
@@ -552,10 +618,11 @@ std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWa
         return batches;
     }
 
-    // Each thread's reads and largest read, by the file of each read's first packet.
+    // Each thread's reads and largest read, by the file of each read's first packet; and which packets' bytes came.
     const size_t threads = std::min(runs.size(), BatchReadsAtOnce);
     std::vector<std::vector<size_t>> reads(threads, std::vector<size_t>(files.size(), 0));
     std::vector<std::vector<size_t>> mostBytes(threads, std::vector<size_t>(files.size(), 0));
+    std::vector<uint8_t> landed(wanted.size(), 0);
     std::atomic<size_t> nextRun{0};
     // The reads wait on the disk, not the cores: as many threads as reads at once, whatever the machine.
     MCWorkers workers(threads - 1);
@@ -599,11 +666,25 @@ std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWa
                             const MCWanted& packet = wanted[k];
                             const uint64_t from = packet.Start - run.Start;
 
-                            if (!packet.Again && from + packet.Stored.Size <= got)
+                            if (packet.Again || from + packet.Stored.Size > got)
                             {
-                                batches[packet.File].Packets[packet.Asked] = files[packet.File].File.get().UnpackStored(
-                                    packet.Stored,
-                                    std::span(bytes).subspan(static_cast<size_t>(from), packet.Stored.Size));
+                                continue;
+                            }
+
+                            const std::span<const uint8_t> read =
+                                std::span(bytes).subspan(static_cast<size_t>(from), packet.Stored.Size);
+
+                            // Each run as stored is its own result, its packets' places apart: one thread writes each.
+                            if (packet.AsStored)
+                            {
+                                std::ranges::copy(read, std::next(batches[packet.File].Stored[packet.Asked]->begin(),
+                                                                  static_cast<std::ptrdiff_t>(packet.At)));
+                                landed[k] = 1;
+                            }
+                            else
+                            {
+                                batches[packet.File].Packets[packet.Asked] =
+                                    files[packet.File].File.get().UnpackStored(packet.Stored, read);
                             }
                         }
                     }
@@ -611,9 +692,30 @@ std::vector<MCPacketBatch> MCPacketFile::ReadPackets(std::span<const MCPacketsWa
 
     for (size_t k = 1; k < wanted.size(); ++k)
     {
-        if (wanted[k].Again)
+        const MCWanted& packet = wanted[k];
+        const MCWanted& before = wanted[k - 1];
+
+        if (packet.Again && packet.AsStored && landed[k - 1] != 0)
         {
-            batches[wanted[k].File].Packets[wanted[k].Asked] = batches[wanted[k - 1].File].Packets[wanted[k - 1].Asked];
+            const std::vector<uint8_t>& from = *batches[before.File].Stored[before.Asked];
+            const auto first = std::next(from.begin(), static_cast<std::ptrdiff_t>(before.At));
+            std::copy(
+                first, std::next(first, static_cast<std::ptrdiff_t>(packet.Stored.Size)),
+                std::next(batches[packet.File].Stored[packet.Asked]->begin(), static_cast<std::ptrdiff_t>(packet.At)));
+            landed[k] = 1;
+        }
+        else if (packet.Again && !packet.AsStored)
+        {
+            batches[packet.File].Packets[packet.Asked] = batches[before.File].Packets[before.Asked];
+        }
+    }
+
+    // A run as stored whose packets didn't all come is the caller's to read.
+    for (size_t k = 0; k < wanted.size(); ++k)
+    {
+        if (wanted[k].AsStored && landed[k] == 0)
+        {
+            batches[wanted[k].File].Stored[wanted[k].Asked].reset();
         }
     }
 

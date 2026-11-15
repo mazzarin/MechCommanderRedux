@@ -245,46 +245,77 @@ auto MCSpriteManager::LoadTogether(
     std::span<const MCShapeWanted> wanted, int32_t turnUsed,
     const std::function<MCOptionalRef<MCPacketFile>(const MCShapeWanted&)>& fileOf,
     const std::function<std::shared_ptr<MCShape>(const MCShapeWanted&)>& alone,
-    const std::function<void(const std::shared_ptr<MCShape>&, const MCShapeWanted&)>& tie) -> MCShapesLoaded
+    const std::function<void(const std::shared_ptr<MCShape>&, const MCShapeWanted&)>& tie,
+    std::span<const MCStoredWanted> stored) -> MCShapesLoaded
 {
-    // Each file once with the packets wanted of it, and where each wanted's result is (its file, its place there).
+    // Each file once with the packets and runs as stored wanted of it, and where each wanted's and run's result is (its
+    // file, its place there).
     std::vector<std::reference_wrapper<MCPacketFile>> files;
     std::vector<std::vector<int32_t>> packets;
+    std::vector<std::vector<MCStoredRun>> runs;
     std::vector<std::optional<std::pair<size_t, size_t>>> at(wanted.size());
-
-    for (size_t i = 0; i < wanted.size(); ++i)
+    std::vector<std::optional<std::pair<size_t, size_t>>> storedAt(stored.size());
+    const auto indexOf = [&](const MCShapeWanted& of) -> std::optional<size_t>
     {
-        const MCOptionalRef<MCPacketFile> file = fileOf(wanted[i]);
+        const MCOptionalRef<MCPacketFile> file = fileOf(of);
 
         if (!file.has_value())
         {
-            continue;
+            return std::nullopt;
         }
 
         const auto found =
             std::ranges::find_if(files, [&](const MCPacketFile& known) { return &known == &file->get(); });
-        const auto index = static_cast<size_t>(found - files.begin());
 
         if (found == files.end())
         {
             files.push_back(*file);
             packets.emplace_back();
+            runs.emplace_back();
+            return files.size() - 1;
         }
 
-        at[i] = std::pair(index, packets[index].size());
-        packets[index].push_back(static_cast<int32_t>(wanted[i].Packet));
+        return static_cast<size_t>(found - files.begin());
+    };
+
+    for (size_t i = 0; i < wanted.size(); ++i)
+    {
+        if (const std::optional<size_t> index = indexOf(wanted[i]))
+        {
+            at[i] = std::pair(*index, packets[*index].size());
+            packets[*index].push_back(static_cast<int32_t>(wanted[i].Packet));
+        }
+    }
+
+    for (size_t i = 0; i < stored.size(); ++i)
+    {
+        if (const std::optional<size_t> index = indexOf(stored[i].Of))
+        {
+            storedAt[i] = std::pair(*index, runs[*index].size());
+            runs[*index].push_back(
+                MCStoredRun{static_cast<int32_t>(stored[i].Of.Packet), static_cast<int32_t>(stored[i].Count)});
+        }
     }
 
     std::vector<MCPacketsWanted> asks;
 
     for (size_t index = 0; index < files.size(); ++index)
     {
-        asks.push_back(MCPacketsWanted{files[index].get(), packets[index]});
+        asks.push_back(MCPacketsWanted{files[index].get(), packets[index], runs[index]});
     }
 
     std::vector<MCPacketBatch> batches = MCPacketFile::ReadPackets(asks);
     MCShapesLoaded loaded;
     loaded.Shapes.resize(wanted.size());
+    loaded.Stored.resize(stored.size());
+
+    for (size_t i = 0; i < stored.size(); ++i)
+    {
+        if (storedAt[i].has_value())
+        {
+            loaded.Stored[i] = std::move(batches[storedAt[i]->first].Stored[storedAt[i]->second]);
+        }
+    }
 
     for (const MCPacketBatch& batch : batches)
     {
@@ -320,15 +351,15 @@ auto MCSpriteManager::LoadTogether(
     return loaded;
 }
 
-auto MCSpriteManager::GetMechShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed, bool zoomedOut)
-    -> MCShapesLoaded
+auto MCSpriteManager::GetMechShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed, bool zoomedOut,
+                                        std::span<const MCStoredWanted> stored) -> MCShapesLoaded
 {
     return LoadTogether(
         wanted, turnUsed, [&](const MCShapeWanted& shape) { return MechFile(shape.FileNum, shape.Part, zoomedOut); },
         [&](const MCShapeWanted& shape)
         { return GetMechShapeData(shape.FileNum, shape.Packet, shape.Part, turnUsed, shape.Owner, zoomedOut); },
         [&](const std::shared_ptr<MCShape>& shape, const MCShapeWanted& of)
-        { TieMechShape(shape, of.FileNum, of.Packet, of.Part, zoomedOut); });
+        { TieMechShape(shape, of.FileNum, of.Packet, of.Part, zoomedOut); }, stored);
 }
 
 auto MCSpriteManager::GetShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed) -> MCShapesLoaded
@@ -442,6 +473,7 @@ auto MCSpriteManager::MechPacketsStored(uint32_t mechNum, MCMechPart part, uint3
                                         bool zoomedOut) -> std::vector<uint8_t>
 {
     const MCOptionalRef<MCPacketFile> file = MechFile(mechNum, part, zoomedOut);
+    ++_ReadAlone.MechsStored;
     return file ? file->get().ReadStoredPackets(static_cast<int32_t>(first), static_cast<int32_t>(count))
                 : std::vector<uint8_t>{};
 }

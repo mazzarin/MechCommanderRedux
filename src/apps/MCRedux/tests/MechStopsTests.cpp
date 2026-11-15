@@ -341,3 +341,69 @@ TEST_CASE_ISOLATED("game: a mission's load gives every mech its stops from the t
 
     CHECK(mechs > 0);
 }
+
+namespace
+{
+    /// <summary>
+    /// Checks that mission <paramref name="segment"/>'s load gave every mech type its stops from the table, their art
+    /// hashed from the bytes the load's batch read with the mechs' packets (LoadOriginalPackets): none of it read again
+    /// for the hash, and the hash the stops were looked up by the one their art gives read today's way, alone.
+    /// </summary>
+    auto CheckStopsFromTheBatch(int32_t segment) -> void
+    {
+        REQUIRE(MCTestGame::StartMission(segment));
+        // Before anything here hashes a tree's art, which reads it as stored.
+        CHECK_EQ(SpriteManager()->ShapesReadAlone().MechsStored, 0u);
+        CHECK_EQ(SpriteManager()->ShapesReadAlone().Mechs, 0u);
+        std::set<std::shared_ptr<MCSpriteTree>> trees;
+
+        for (const std::weak_ptr<MCMover>& each : MoverRoster)
+        {
+            const std::shared_ptr<MCMover> object = each.lock();
+
+            if (object != nullptr && object->ObjectClass == MCObjectClass::BattleMech)
+            {
+                trees.insert(std::static_pointer_cast<MCSpriteTree>(object->GetAppearance()->GetAppearanceType()));
+            }
+        }
+
+        CHECK(!trees.empty());
+
+        for (const std::shared_ptr<MCSpriteTree>& tree : trees)
+        {
+            REQUIRE(tree != nullptr);
+            MCTest::Scope scope(tree->Name);
+            CHECK(tree->StopsPrepared);
+            REQUIRE(tree->StopsLookedUpBy.has_value());
+            const uint64_t hash = MCStopsArtHash(*tree);
+            CHECK_EQ(*tree->StopsLookedUpBy, hash);
+            CHECK(MCFindKnownStops(hash).has_value());
+        }
+
+        std::cout << std::format("  {} mech types' stops from the table\n", trees.size());
+    }
+} // namespace
+
+/// <summary>
+/// Mission 1's load hashes its mechs' art for their stops from the bytes its batch read, none read twice, and the hashes
+/// are those the art gives read alone, so every type's stops come from the table.
+/// </summary>
+TEST_CASE_ISOLATED("game: mission 1's load hashes its mechs' stops from its batch's bytes, read once")
+{
+    if (MCTestGame::Available())
+    {
+        CheckStopsFromTheBatch(1);
+    }
+}
+
+/// <summary>
+/// Mission 16's (the canyon's) load hashes its mechs' art for their stops from the bytes its batch read, none read twice,
+/// and the hashes are those the art gives read alone, so every type's stops come from the table.
+/// </summary>
+TEST_CASE_ISOLATED("game: mission 16's load hashes its mechs' stops from its batch's bytes, read once")
+{
+    if (MCTestGame::Available())
+    {
+        CheckStopsFromTheBatch(16);
+    }
+}

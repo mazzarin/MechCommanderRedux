@@ -174,9 +174,11 @@ public:
     /// Port-only: loads each of <paramref name="packets"/> its tree hasn't loaded (the large art's, as MCMechActor::Render
     /// draws), each once, together (MCSpriteManager::GetMechShapesData: a few large reads, on threads), into its tree's
     /// shape list, tied to the facings either side in a turn as LoadGesturePacket ties one, used at
-    /// <paramref name="turnUsed"/>.
+    /// <paramref name="turnUsed"/>; and the runs <paramref name="stored"/> of the large art's packets as stored, in the
+    /// same reads (MCShapesLoaded::Stored).
     /// </summary>
-    static MCShapesLoaded LoadPacketsTogether(std::span<const MCTreePacket> packets, int32_t turnUsed);
+    static MCShapesLoaded LoadPacketsTogether(std::span<const MCTreePacket> packets, int32_t turnUsed,
+                                              std::span<const MCStoredWanted> stored = {});
 
     /// <summary>Port-only: opens the HD art pack's archives of the mech's parts (MCHdArt::Prepare).</summary>
     void PrepareHdArt() const;
@@ -264,6 +266,8 @@ public:
     /// what follows.
     /// </summary>
     bool StopsPrepared = false;
+    /// <summary>Port-only (MechBraking): the art's hash the stops were looked up by (MCStopsArtHash), once prepared.</summary>
+    std::optional<uint64_t> StopsLookedUpBy;
     /// <summary>Port-only (MechBraking): whether each gesture looked at has its art drawn (MCHasGestureArt).</summary>
     std::map<int32_t, bool> GestureArtDrawn;
     /// <summary>Port-only (MechBraking): the run to walk made from the run and walk (MCRunToWalkMade), once worked out.</summary>

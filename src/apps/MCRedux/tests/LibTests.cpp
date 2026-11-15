@@ -1103,6 +1103,88 @@ TEST_CASE("packet file: packets read together come in few reads, neighbours with
 }
 
 /// <summary>
+/// Port-only: runs of a file's packets wanted as stored (MCPacketsWanted::Stored: a mech's art, for its stops' hash)
+/// come with the packets read together, each as ReadStoredPackets gives it (a Nul packet's bytes in it), in the same
+/// reads: a packet both wanted and in a run, or in two runs, read once, and one bigger than a read in one read however
+/// it's wanted. A run of none, or one past the table's end, comes as nothing, the caller's to read.
+/// </summary>
+TEST_CASE("packet file: runs wanted as stored come in the packets' reads, as ReadStoredPackets gives them")
+{
+    using namespace MCPakBytes;
+    constexpr size_t Most = MCDiskFile::RunMostBytes;
+    constexpr size_t Small = 3000;
+    constexpr size_t NulBytes = 100;
+    constexpr size_t Last = 100;
+    // The small packets (0-5), then the Nul one (6), the one bigger than a read (7) and the last (8).
+    constexpr int32_t SmallCount = 6;
+    constexpr int32_t Nul = SmallCount;
+    constexpr int32_t Big = Nul + 1;
+    std::vector<MCStored> stored;
+
+    for (uint32_t i = 0; i < static_cast<uint32_t>(SmallCount); ++i)
+    {
+        stored.push_back(i % 2 == 0 ? Raw(Filled(Small, i)) : Lz(Filled(Small, i)));
+    }
+
+    stored.push_back(As(MCPacketStorage::Nul, Filled(NulBytes, Nul)));
+    stored.push_back(Raw(Filled(Most + 1, Big)));
+    stored.push_back(Raw(Filled(Last, Big + 1)));
+    const auto count = static_cast<int32_t>(stored.size());
+
+    OnDiskAndInMemory(
+        "packets-stored", Pak(stored),
+        [&](MCPacketFile& pak)
+        {
+            const std::vector<int32_t> packets{1, 3, Big, Big + 1};
+            // Two runs sharing 2 and 3, one from the Nul packet to the end, one of none, one past the end.
+            const std::vector<MCStoredRun> runs{
+                MCStoredRun{.First = 0, .Count = 4}, MCStoredRun{.First = 2, .Count = 5},
+                MCStoredRun{.First = Nul, .Count = 3}, MCStoredRun{.First = 0, .Count = 0},
+                MCStoredRun{.First = count - 2, .Count = 3}};
+            const std::set<size_t> none{3, 4};
+            const std::array<MCPacketsWanted, 1> withPackets{MCPacketsWanted{pak, packets, runs}};
+            const std::array<MCPacketsWanted, 1> runsAlone{MCPacketsWanted{pak, {}, runs}};
+
+            for (const auto& [wanted, name] : {std::pair{withPackets, "with packets"}, std::pair{runsAlone, "alone"}})
+            {
+                MCTest::Scope scope(name);
+                const std::vector<MCPacketBatch> batches = MCPacketFile::ReadPackets(wanted);
+                REQUIRE_EQ(batches.size(), 1u);
+                const MCPacketBatch& batch = batches[0];
+                // 0-6 in one read, 7 alone, 8 alone (7 fills a read).
+                CHECK_EQ(batch.Reads, 3u);
+                REQUIRE_EQ(batch.Packets.size(), wanted[0].Packets.size());
+
+                for (size_t i = 0; i < batch.Packets.size(); ++i)
+                {
+                    MCTest::Scope packet(std::format("packet {}", packets[i]));
+                    REQUIRE(batch.Packets[i].has_value());
+                    CHECK(*batch.Packets[i] == ReadAlone(pak, packets[i]));
+                }
+
+                REQUIRE_EQ(batch.Stored.size(), runs.size());
+
+                for (size_t i = 0; i < runs.size(); ++i)
+                {
+                    MCTest::Scope run(std::format("run from {}, {} of them", runs[i].First, runs[i].Count));
+                    const std::vector<uint8_t> alone = pak.ReadStoredPackets(runs[i].First, runs[i].Count);
+                    REQUIRE_EQ(batch.Stored[i].has_value(), !none.contains(i));
+                    CHECK_EQ(alone.empty(), none.contains(i));
+
+                    if (batch.Stored[i].has_value())
+                    {
+                        CHECK(*batch.Stored[i] == alone);
+                    }
+                }
+
+                // The Nul packet's stored bytes are in its runs: the table, then 6's, 7's and 8's bytes.
+                REQUIRE(batch.Stored[2].has_value());
+                CHECK_EQ(batch.Stored[2]->size(), 3 * sizeof(uint32_t) + NulBytes + Most + 1 + Last);
+            }
+        });
+}
+
+/// <summary>
 /// Port-only: packets read together leave the caller what ReadPacket doesn't read plainly, to read itself: a packet
 /// stored other than raw, LZ or Nul (SeekPacket keeps the size the packet before gave), an LZ packet claiming more than
 /// its data could make or the file is held to (issue #25), one that doesn't unpack to its size or is too short to hold

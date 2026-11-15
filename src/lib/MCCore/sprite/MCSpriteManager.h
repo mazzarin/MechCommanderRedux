@@ -44,11 +44,26 @@ struct MCShapeWanted
     std::weak_ptr<MCAppearanceType> Owner;
 };
 
-/// <summary>Port-only: the shapes read one at a time (as each is first needed), not together: mechs' parts', and others'.</summary>
+/// <summary>
+/// Port-only: a run of packets wanted as stored with shapes read together (<see cref="MCSpriteManager::GetMechShapesData"/>),
+/// as <see cref="MCSpriteManager::MechPacketsStored"/> reads them: from <c>Of</c>'s packet (its file's: the mech's
+/// number and part), <c>Count</c> of them.
+/// </summary>
+struct MCStoredWanted
+{
+    MCShapeWanted Of;
+    uint32_t Count = 0;
+};
+
+/// <summary>
+/// Port-only: the shapes read one at a time (as each is first needed), not together: mechs' parts', and others'; and the
+/// runs of a mech's packets read as stored alone (MechPacketsStored's, for a hash of its art).
+/// </summary>
 struct MCShapesReadAlone
 {
     size_t Mechs = 0;
     size_t Others = 0;
+    size_t MechsStored = 0;
 };
 
 /// <summary>Port-only: shapes loaded together, in the order asked (none where one would be), and what it took.</summary>
@@ -59,6 +74,11 @@ struct MCShapesLoaded
     size_t Reads = 0;
     /// <summary>The shapes' bytes.</summary>
     size_t Bytes = 0;
+    /// <summary>
+    /// Each run of packets asked for as stored (<see cref="MCStoredWanted"/>), in the order asked: as
+    /// MCSpriteManager::MechPacketsStored gives it, or nothing (std::nullopt) where the batch didn't read it.
+    /// </summary>
+    std::vector<std::optional<std::vector<uint8_t>>> Stored;
 };
 
 /// <summary>
@@ -114,9 +134,11 @@ public:
     /// Port-only: <see cref="GetMechShapeData"/> of each of <paramref name="wanted"/> at <paramref name="turnUsed"/>
     /// (each the same shape, tied to HD art as it ties one), their packets read together (MCPacketFile::ReadPackets: the
     /// mechs' PAKs a part PAK holds as one file, a few large reads on threads) and made into shapes here; one the batch
-    /// leaves read as GetMechShapeData reads it.
+    /// leaves read as GetMechShapeData reads it. The runs <paramref name="stored"/> are read as stored in the same reads
+    /// (MCShapesLoaded::Stored), a packet in both read once.
     /// </summary>
-    MCShapesLoaded GetMechShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed, bool zoomedOut);
+    MCShapesLoaded GetMechShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed, bool zoomedOut,
+                                     std::span<const MCStoredWanted> stored = {});
 
     /// <summary>
     /// Port-only: <see cref="GetShapeData"/> of each of <paramref name="wanted"/> (FileNum the appearance's number), read
@@ -210,12 +232,14 @@ private:
     /// <summary>
     /// Port-only: the shapes of <paramref name="wanted"/> read together: each packet from the file
     /// <paramref name="fileOf"/> gives (none: <paramref name="alone"/>'s), made into a shape and tied by
-    /// <paramref name="tie"/>; one the batch leaves (or of no file) is <paramref name="alone"/>'s, as one at a time.
+    /// <paramref name="tie"/>; one the batch leaves (or of no file) is <paramref name="alone"/>'s, as one at a time. The
+    /// runs <paramref name="stored"/> (each of <paramref name="fileOf"/>'s file) are read as stored with them.
     /// </summary>
     MCShapesLoaded LoadTogether(std::span<const MCShapeWanted> wanted, int32_t turnUsed,
                                 const std::function<MCOptionalRef<MCPacketFile>(const MCShapeWanted&)>& fileOf,
                                 const std::function<std::shared_ptr<MCShape>(const MCShapeWanted&)>& alone,
-                                const std::function<void(const std::shared_ptr<MCShape>&, const MCShapeWanted&)>& tie);
+                                const std::function<void(const std::shared_ptr<MCShape>&, const MCShapeWanted&)>& tie,
+                                std::span<const MCStoredWanted> stored = {});
 
     /// <summary>Removes the shapes <paramref name="dump"/> picks (their users' references expire).</summary>
     void Dump(const std::function<bool(const MCShape&)>& dump);

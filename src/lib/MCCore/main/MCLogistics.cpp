@@ -754,7 +754,7 @@ auto MCLogistics::MakeAhead() const -> void
     ReadTexturesAhead();
 }
 
-auto MCLogistics::ReadTexturesAhead() -> void
+auto MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs as) -> void
 {
     if (!DrawsSharp())
     {
@@ -771,7 +771,7 @@ auto MCLogistics::ReadTexturesAhead() -> void
         }
     }
 
-    MCHdArt::ReadPicturesAhead(pictures);
+    MCHdArt::ReadPicturesAhead(pictures, as);
 }
 
 auto MCLogistics::MakeLineArtAhead() const -> void

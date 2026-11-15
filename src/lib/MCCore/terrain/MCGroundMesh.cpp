@@ -516,8 +516,9 @@ namespace
 {
     /// <summary>
     /// Port-only (SPEC-first-use.md: a load): the map's overlays (the fast shapes over the ground: roads, rivers' banks,
-    /// rubble), each once, as MCTerrainBlock::Draw draws them and the renderer finds their HD frames (the shape up to its
-    /// last row's end, its size): none while HD art is off or the software renderer draws.
+    /// rubble), each once, as MCTerrainBlock::Draw draws them (shape 0 of the tile's fast-shape table) and the renderer
+    /// finds their HD frames (the shape up to its last row's end, its size): none while HD art is off or the software
+    /// renderer draws.
     /// </summary>
     std::vector<MCHdArt::GroundAhead> HdGroundOverlays()
     {
@@ -545,12 +546,14 @@ namespace
                     continue;
                 }
 
-                const std::span<const uint8_t> shape = terrain->Tiles->Lookup(overlayData);
+                const std::optional<std::span<const uint8_t>> shape =
+                    FastShapeAt(terrain->Tiles->Lookup(overlayData), 0);
+                const std::optional<size_t> size = shape.has_value() ? FastShapeSize(*shape) : std::nullopt;
 
-                if (const std::optional<size_t> size = FastShapeSize(shape); size.has_value())
+                if (size.has_value())
                 {
-                    overlays.push_back(MCHdArt::GroundAhead{shape.first(*size), MCRead16(shape, FastShapeWidthAt) + 1,
-                                                            MCRead16(shape, FastShapeHeightAt)});
+                    overlays.push_back(MCHdArt::GroundAhead{shape->first(*size), MCRead16(*shape, FastShapeWidthAt) + 1,
+                                                            MCRead16(*shape, FastShapeHeightAt)});
                 }
             }
         }

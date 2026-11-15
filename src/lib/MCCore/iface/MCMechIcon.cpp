@@ -98,7 +98,11 @@ auto MCMechIcon::AttachHdArt() -> void
 
     if (MCHdArt::Active() && !DamageShapes.Empty())
     {
-        MCHdArt::Attach(DamageShapes.Bytes(), _HdArtOwner, MCHdArt::IconShapeKey{DamageShapeName});
+        const MCHdArt::IconShapeKey key{DamageShapeName};
+        MCHdArt::Attach(DamageShapes.Bytes(), _HdArtOwner, key);
+        // Its diagram's frames read ahead of its first draw, as a load's (a mission's start waits for them).
+        const std::array<MCHdArt::PacketAhead, 1> diagram{MCHdArt::PacketAhead{MCHdArt::FolderOf(key)}};
+        MCHdArt::ReadPacketsAhead(diagram, MCHdArt::ReadAs::Load);
     }
 }
 

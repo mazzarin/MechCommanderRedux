@@ -50,6 +50,7 @@
 #include "object/MCMasterComponent.h"
 #include "object/MCObjectTypeManager.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCHdArt.h"
 #include "terrain/MCTacticalMap.h"
 #include "vfx/MCVfxFunctions.h"
 #include "platform/MCFileSystem.h"
@@ -905,7 +906,7 @@ auto MCMission::StartScenario(std::string_view name) -> void
         Fatal(result, " Couldnt init scenario ");
     }
 
-    TacticalInterface()->StartScenario();
+    StartInterface();
     LoadWindowStatus();
     ScenarioResult = 0;
     State = MCMissionState::Scenario;
@@ -923,6 +924,14 @@ auto MCMission::StartScenario(std::string_view name) -> void
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     MCTelemetry::PlayStarted(game != nullptr ? game->NumPlayers() : 1, game != nullptr && game->IsServer);
     MCFrameLog::Note("mission started");
+}
+
+auto MCMission::StartInterface() -> void
+{
+    TacticalInterface()->StartScenario();
+    MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs::Load);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void

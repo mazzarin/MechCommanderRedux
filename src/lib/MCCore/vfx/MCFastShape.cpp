@@ -161,12 +161,10 @@ std::optional<size_t> FastShapeSize(std::span<const uint8_t> shape)
     return bytes.has_value() ? std::optional(std::max(header, last + *bytes)) : std::nullopt;
 }
 
-std::optional<uint8_t> FastShapePixel(std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t x, int32_t y)
+std::optional<std::span<const uint8_t>> FastShapeAt(std::span<const uint8_t> shapeTable, int32_t shapeNum)
 {
     constexpr size_t FirstShape = 8;
     constexpr size_t RowOffsets = 0xc;
-    constexpr uint32_t Literal = 0x80;
-    constexpr uint8_t SeeThrough = 0xff;
 
     if (shapeNum < 0 || shapeTable.size() < FirstShape + (static_cast<size_t>(shapeNum) + 1) * 4 ||
         MCVfxRead32(shapeTable) != FastShapeTag)
@@ -181,7 +179,22 @@ std::optional<uint8_t> FastShapePixel(std::span<const uint8_t> shapeTable, int32
         return std::nullopt;
     }
 
-    const std::span<const uint8_t> shape = shapeTable.subspan(at);
+    return shapeTable.subspan(at);
+}
+
+std::optional<uint8_t> FastShapePixel(std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t x, int32_t y)
+{
+    constexpr size_t RowOffsets = 0xc;
+    constexpr uint32_t Literal = 0x80;
+    constexpr uint8_t SeeThrough = 0xff;
+    const std::optional<std::span<const uint8_t>> found = FastShapeAt(shapeTable, shapeNum);
+
+    if (!found.has_value())
+    {
+        return std::nullopt;
+    }
+
+    const std::span<const uint8_t> shape = *found;
     const int32_t column = x + static_cast<int16_t>(Read16(shape, 4));
     const int32_t row = y + static_cast<int16_t>(Read16(shape, 6));
     const int32_t height = Read16(shape, 8);

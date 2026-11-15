@@ -4,6 +4,7 @@
 #include "MCInternetSpots.h"
 #include "fakes/MCNullAudioDevice.h"
 #include "MCTest.h"
+#include "MCTestArchive.h"
 #include "MCTestShapes.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -18489,6 +18490,204 @@ TEST_CASE_ISOLATED("game: a mech's legs turning cast their turn middle's sun sha
     lighting = kept;
     GHdSunShadows = 0;
     GamePaused = false;
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// Puts the PNG pairs under the pack's folder <paramref name="folder"/> (MCHdArt::FrameFromPngs's, at
+    /// <paramref name="scale"/>) into the archive beside it, <c>&lt;folder&gt;.hda</c>, as the pack's tools lay it out:
+    /// each frame an entry named by its path under the folder (a backslash between folders), in name order; then the
+    /// folder deleted, so that the game reads them from the archive, as it does the shipped pack's.
+    /// </summary>
+    void ArchiveFolderPngs(const std::filesystem::path& folder, int32_t scale)
+    {
+        constexpr std::string_view IndexSuffix = "_idx";
+        std::vector<MCTestArchive::ArchiveEntry> entries;
+
+        for (const std::filesystem::directory_entry& file : std::filesystem::recursive_directory_iterator(folder))
+        {
+            const std::string stem = MCFileSystem::ToUtf8(file.path().stem());
+
+            if (!file.is_regular_file() || file.path().extension() != ".png" || stem.ends_with(IndexSuffix))
+            {
+                continue;
+            }
+
+            const std::expected<MCHdArt::Frame, std::string> frame = MCHdArt::FrameFromPngs(
+                file.path(), file.path().parent_path() / (stem + std::string(IndexSuffix) + ".png"), scale);
+
+            if (!frame.has_value())
+            {
+                MCTest::Scope scope(frame.error());
+                REQUIRE(false);
+            }
+
+            std::string name =
+                MCFileSystem::ToUtf8(std::filesystem::relative(file.path(), folder).replace_extension(".hdf"));
+            std::ranges::replace(name, '/', '\\');
+            entries.push_back(MCTestArchive::Raw(std::move(name), MCHdArt::EncodeHdf(*frame)));
+        }
+
+        REQUIRE(!entries.empty());
+        std::ranges::sort(entries, [](const MCTestArchive::ArchiveEntry& a, const MCTestArchive::ArchiveEntry& b)
+                          { return MCFileSystem::NameLess(a.Name, b.Name); });
+        std::filesystem::remove_all(folder);
+        MCTestArchive::WriteBytes(std::filesystem::path(folder).concat(".hda"), MCTestArchive::BuildArchive(entries));
+    }
+
+    /// <summary>The frames read from the pack on the game's thread so far: those the reading thread didn't read ahead.</summary>
+    size_t FramesReadOnTheGamesThread()
+    {
+        return MCHdArt::FramesRead() - MCHdArt::FramesReadAhead();
+    }
+
+    /// <summary>Frames of play drawn after a load, as its first are.</summary>
+    constexpr int32_t FirstFrames = 10;
+
+    /// <summary>Draws <see cref="FirstFrames"/> frames of play.</summary>
+    void RunFirstFrames()
+    {
+        for (int32_t frame = 0; frame < FirstFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    }
+}
+
+/// <summary>
+/// Port-only: a mission's load reads ahead, as its own reads, the HD copy of every terrain overlay its map uses (the
+/// shape its blocks draw, the first of the overlay's table, as the renderer finds it), so its first frames read none on
+/// the game's thread; from the pack's archive, as the shipped pack holds them. The same frames with nothing read ahead
+/// read them.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's load reads its map's HD overlays ahead, its first frames reading none")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_overlays_ahead";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    REQUIRE(WriteOverlays(OverlayFolderOf(pack), colors, TestPackScale, Inverted).Written > 0);
+    WritePaletteRgb(pack, colors);
+    ArchiveFolderPngs(OverlayFolderOf(pack), TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // As the load asks for them, waits for them and keeps them.
+    const size_t aheadBefore = MCHdArt::FramesReadAhead();
+    MCTerrainReadHdTilesAhead();
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+    const size_t kept = MCHdArt::FramesReadAhead() - aheadBefore;
+    const size_t onThread = FramesReadOnTheGamesThread();
+    RunFirstFrames();
+    CHECK(kept > 0);
+    CHECK_EQ(FramesReadOnTheGamesThread(), onThread);
+
+    // The pack afresh and nothing asked: the same frames read the overlays they draw.
+    MCHdArt::SetPackFolder(pack);
+    RunFirstFrames();
+    const size_t unasked = FramesReadOnTheGamesThread() - onThread;
+    std::cout << std::format("  {} overlays kept from the load; {} read by the frames without it\n", kept, unasked);
+    CHECK(unasked > 0);
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only: a mission's interface, as it starts (MCMission::StartInterface), reads ahead as the load's reads the HD
+/// copies of the pictures it made (the lance icons' among them, made after the load's own asks) and of its mech icons'
+/// damage diagrams, and waits for them, so its first frames read none on the game's thread; from the pack's archives,
+/// as the shipped pack holds them. The interface started without them reads them.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a mission's interface reads its HD pictures and damage diagrams as it starts, its frames none")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_interface_ahead";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    std::filesystem::create_directories(PictureFolderOf(pack));
+    std::set<std::string> pictures;
+
+    // Every picture the interface has made, under its name in the pack.
+    for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
+    {
+        if (texture == nullptr || texture->CpuStale || texture->Pixels.empty() || texture->Width <= 0 ||
+            texture->Height <= 0)
+        {
+            continue;
+        }
+
+        const std::string name =
+            MCHdArt::PictureName(MCHdArt::PictureHash(texture->Pixels, texture->Width, texture->Height));
+
+        if (pictures.insert(name).second)
+        {
+            DecodedFrame picture;
+            picture.Width = texture->Width;
+            picture.Height = texture->Height;
+            picture.Index.assign(texture->Pixels.begin(), texture->Pixels.end());
+            picture.Drawn.assign(picture.Index.size(), 1);
+            WriteFramePngs(PictureFolderOf(pack) / name, picture, colors, TestPackScale, Inverted, false);
+        }
+    }
+
+    size_t translucent = 0;
+    const std::vector<Sequence> icons = IconSequences(translucent);
+    REQUIRE(!pictures.empty());
+    REQUIRE(!icons.empty());
+    WritePack(pack, icons, colors, TestPackScale, Inverted);
+    WritePaletteRgb(pack, colors);
+    ArchiveFolderPngs(PictureFolderOf(pack), TestPackScale);
+    ArchiveFolderPngs(pack / "icons", TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // The interface started again as a mission's start starts it (as the mech handover's tests do): its icons made anew.
+    const auto restart = [](bool readAhead)
+    {
+        TacticalInterface()->EndScenario();
+        HomeCommander()->AddToGui(1);
+
+        if (readAhead)
+        {
+            MCMission::StartInterface();
+        }
+        else
+        {
+            TacticalInterface()->StartScenario();
+        }
+    };
+
+    const size_t aheadBefore = MCHdArt::FramesReadAhead();
+    restart(true);
+    const size_t kept = MCHdArt::FramesReadAhead() - aheadBefore;
+    const size_t onThread = FramesReadOnTheGamesThread();
+    RunFirstFrames();
+    CHECK(kept > 0);
+    CHECK_EQ(FramesReadOnTheGamesThread(), onThread);
+
+    // The pack afresh and the interface started without its asks: its frames read its pictures.
+    MCHdArt::SetPackFolder(pack);
+    restart(false);
+    RunFirstFrames();
+    const size_t unasked = FramesReadOnTheGamesThread() - onThread;
+    std::cout << std::format(
+        "  {} pictures and diagrams kept as the interface started; {} read by its frames without\n", kept, unasked);
+    CHECK(unasked > 0);
     hdArt.reset();
     std::filesystem::remove_all(scratch);
 }

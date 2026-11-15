@@ -474,10 +474,11 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only: has the reading thread read the HD copies of <paramref name="pictures"/> ahead of their first draw, those
-    /// the pack's archive has that aren't kept, looked at or asked for already, in order, while they and the frames kept
-    /// take at most half the cache's budget; <see cref="KeepReadAhead"/> keeps them as drawn ones are kept.
+    /// the pack's archive has that aren't kept, looked at or asked for already, in order, as <paramref name="as"/>: as
+    /// sets while they and the frames kept take at most half the cache's budget, or as a load's (a mission's interface)
+    /// within the whole budget; <see cref="KeepReadAhead"/> keeps them as drawn ones are kept.
     /// </summary>
-    void ReadPicturesAhead(std::span<const PictureAhead> pictures);
+    void ReadPicturesAhead(std::span<const PictureAhead> pictures, ReadAs as = ReadAs::Set);
 
     /// <summary>
     /// Port-only: keeps the frames and pictures the reading thread has read ahead (<see cref="ReadPicturesAhead"/>) as a

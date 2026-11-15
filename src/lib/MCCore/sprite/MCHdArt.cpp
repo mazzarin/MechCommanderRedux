@@ -3735,15 +3735,15 @@ namespace
     }
 }
 
-void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
+void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures, ReadAs as)
 {
     if (!Active() || pictures.empty())
     {
         return;
     }
 
-    // While they and the frames kept fit the share of the budget (they're kept as drawn ones are, and mustn't push
-    // those out).
+    // As sets, while they and the frames kept fit the share of the budget (they're kept as drawn ones are, and mustn't
+    // push those out).
     const uint32_t folder = FolderIndex(PackFolder() / PictureFolder, Naming::Hash);
     std::vector<FrameAsk> asks;
     asks.reserve(pictures.size());
@@ -3761,7 +3761,7 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures)
         }
     }
 
-    AskAhead(asks, AheadKind::Set, RoomIn(CacheBudget() / SetsAheadBudgetShare));
+    AskAhead(asks, KindOf(as), RoomIn(RoomFor(as)));
 }
 
 void MCHdArt::ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as)

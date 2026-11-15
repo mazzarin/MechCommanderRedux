@@ -30,6 +30,7 @@
             "Name": "dr_flac (David Reid)",
             "Note": "Public domain (Unlicense) or MIT No Attribution, at your choice (dr_flac.h)."
         },
-        { "Folder": "sqlite-3.50.4", "Name": "SQLite 3.50.4", "Note": "Public domain (https://sqlite.org/copyright.html)." }
+        { "Folder": "sqlite-3.50.4", "Name": "SQLite 3.50.4", "Note": "Public domain (https://sqlite.org/copyright.html)." },
+        { "Folder": "zstd-1.5.7", "Name": "Zstandard 1.5.7", "File": "LICENSE" }
     ]
 }

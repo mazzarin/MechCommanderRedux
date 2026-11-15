@@ -171,6 +171,7 @@
     <ClCompile Include="lib\MCSha256.cpp" />
     <ClCompile Include="lib\MCThreadKeeper.cpp" />
     <ClCompile Include="lib\MCWorkers.cpp" />
+    <ClCompile Include="lib\MCZstd.cpp" />
     <ClCompile Include="linkup\MCFidpGroup.cpp" />
     <ClCompile Include="linkup\MCFidpMessage.cpp" />
     <ClCompile Include="linkup\MCFidpNetworkProtocol.cpp" />
@@ -678,6 +679,7 @@
     <ClInclude Include="lib\MCVector2D.h" />
     <ClInclude Include="lib\MCVector3D.h" />
     <ClInclude Include="lib\MCWorkers.h" />
+    <ClInclude Include="lib\MCZstd.h" />
     <ClInclude Include="linkup\MCFidpGroup.h" />
     <ClInclude Include="linkup\MCFidpMessage.h" />
     <ClInclude Include="linkup\MCFidpNetworkProtocol.h" />
@@ -1202,6 +1204,91 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+  <!-- Zstandard 1.5.7 (src\lib\zstd-1.5.7, BSD): its decompressor unpacks the version 2 HD art pack's streams
+       (its README.md). C units outside MCCore, so their own ItemGroup, each object in a folder of its own;
+       src\mac\CMakeLists.txt reads the list from here. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\debug.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\entropy_common.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\error_private.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\fse_decompress.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\xxhash.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\zstd_common.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\decompress\huf_decompress.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\decompress\zstd_ddict.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\decompress\zstd_decompress.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\decompress\zstd_decompress_block.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemGroup>
   <!-- HDiffPatch 5.1.3's patcher (src\lib\HDiffPatch-5.1.3, MIT): applies updates' patches (lib\MCFilePatch),

@@ -9,6 +9,7 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
 #include "lib/MCLz.h"
+#include "lib/MCZstd.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
@@ -342,6 +343,31 @@ namespace
     constexpr uint64_t DynamicHash = 0xbd94f97d8dc50624ull;
     constexpr std::string_view DynamicEnd = "The Mad Cat walks. ";
 
+    /// <summary>
+    /// Zstandard frames made by the zstd tool (1.5.7, level 19, with its content checksum, as the version 2 pack's streams
+    /// are): "MechCommander Gold: the Atlas falls.", and 60 lines of "Frame n: the Mad Cat walks, the Atlas falls, the
+    /// Raven runs.", which unpack to ZstdSize bytes of ZstdHash (64-bit FNV-1a) ending ZstdEnd.
+    /// </summary>
+    constexpr std::array<uint8_t, 49> ZstdSmallStream = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x21, 0x01, 0x00, 0x4d, 0x65, 0x63, 0x68, 0x43, 0x6f, 0x6d, 0x6d,
+        0x61, 0x6e, 0x64, 0x65, 0x72, 0x20, 0x47, 0x6f, 0x6c, 0x64, 0x3a, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41,
+        0x74, 0x6c, 0x61, 0x73, 0x20, 0x66, 0x61, 0x6c, 0x6c, 0x73, 0x2e, 0xce, 0x85, 0xf8, 0xd7};
+    constexpr std::array<uint8_t, 185> ZstdStream = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x65, 0x05, 0x00, 0x32, 0x88, 0x19, 0x18, 0x80, 0x6d, 0x0e, 0x00,
+        0xc0, 0xf8, 0xdf, 0x41, 0xa5, 0x02, 0x8e, 0xe2, 0xfa, 0xdd, 0xbd, 0x93, 0x94, 0x62, 0x29, 0xda, 0xe4,
+        0x12, 0x3d, 0x01, 0xef, 0xee, 0xed, 0xec, 0x7f, 0x9f, 0xbf, 0xd7, 0xf5, 0xd7, 0xae, 0x5b, 0xb3, 0x7e,
+        0x77, 0xf3, 0xea, 0xea, 0xc7, 0x8e, 0x1b, 0x33, 0x3e, 0x37, 0xaf, 0x2e, 0x7e, 0xae, 0xb1, 0x37, 0xaf,
+        0xae, 0x7d, 0xae, 0xb1, 0x37, 0xaf, 0xea, 0x73, 0x8d, 0xbd, 0x79, 0x15, 0x10, 0xa2, 0x67, 0x82, 0xf2,
+        0x51, 0x28, 0x88, 0xc4, 0x08, 0x97, 0x8c, 0x60, 0x94, 0x88, 0x20, 0x6a, 0x22, 0xac, 0x52, 0x82, 0x45,
+        0x26, 0xf0, 0x48, 0x85, 0x91, 0x72, 0x58, 0xa9, 0x38, 0x10, 0x32, 0x02, 0x3e, 0xa8, 0x11, 0x70, 0xf2,
+        0x1e, 0xc3, 0x9e, 0x01, 0xe0, 0xa5, 0x61, 0x0d, 0x11, 0x24, 0x08, 0x42, 0xf0, 0xff, 0xff, 0x0a, 0x3f,
+        0x9b, 0x22, 0x45, 0x8e, 0x18, 0x48, 0x88, 0x1c, 0x71, 0x44, 0xa9, 0x8c, 0x11, 0x44, 0x86, 0x8a, 0x94,
+        0x11, 0x95, 0x28, 0x09, 0xa5, 0x11, 0x95, 0x24, 0x92, 0xa1, 0x40, 0x9e, 0x99, 0xc8, 0x44, 0x99, 0xc8,
+        0xbc, 0x0d, 0x01, 0xe4, 0xaa, 0xd2, 0xb6, 0xfe, 0x0d, 0xd8, 0x55, 0x5e, 0x47, 0xb6, 0x72};
+    constexpr size_t ZstdSize = 3710;
+    constexpr uint64_t ZstdHash = 0xfaa3c4740cbbd29bull;
+    constexpr std::string_view ZstdEnd = "the Raven runs.\n";
+
     uint64_t Fnv(std::span<const uint8_t> bytes)
     {
         uint64_t hash = 0xcbf29ce484222325ull;
@@ -492,6 +518,42 @@ TEST_CASE("hd art: DEFLATE streams inflate, and damaged ones are refused")
     std::array<uint8_t, StoredStream.size()> damaged = StoredStream;
     damaged[3] ^= 0xff;
     CHECK(!MCInflate::Inflate(damaged, 28).has_value());
+}
+
+/// <summary>
+/// Zstandard: a small frame and one of Huffman-coded sequences (the zstd tool's, level 19, with a checksum) unpack to what
+/// was packed; a frame cut short, one with a byte past it, one asked for another size, one whose checksum fails, and one
+/// made without a checksum are refused.
+/// </summary>
+TEST_CASE("hd art: Zstandard streams unpack, and damaged ones are refused")
+{
+    const std::string_view smallText = "MechCommander Gold: the Atlas falls.";
+    const auto small = MCZstd::Unpack(ZstdSmallStream, smallText.size());
+    REQUIRE(small.has_value());
+    CHECK(std::ranges::equal(*small, AsBytes(smallText)));
+
+    const auto big = MCZstd::Unpack(ZstdStream, ZstdSize);
+    REQUIRE(big.has_value());
+    CHECK_EQ(Fnv(*big), ZstdHash);
+    CHECK(std::ranges::equal(std::span(*big).last(ZstdEnd.size()), AsBytes(ZstdEnd)));
+
+    CHECK(!MCZstd::Unpack(std::span(ZstdStream).first(ZstdStream.size() / 2), ZstdSize).has_value());
+    CHECK(!MCZstd::Unpack(ZstdStream, ZstdSize - 1).has_value());
+    CHECK(!MCZstd::Unpack(ZstdStream, ZstdSize + 1).has_value());
+
+    std::vector<uint8_t> trailing(ZstdStream.begin(), ZstdStream.end());
+    trailing.push_back(0);
+    CHECK(!MCZstd::Unpack(trailing, ZstdSize).has_value());
+
+    // The last 4 bytes are the checksum: a changed one fails it, the content unchanged.
+    std::array<uint8_t, ZstdSmallStream.size()> damaged = ZstdSmallStream;
+    damaged.back() ^= 0xff;
+    CHECK(!MCZstd::Unpack(damaged, smallText.size()).has_value());
+
+    // The frame header's descriptor without its checksum flag (bit 2), the checksum cut off: a whole frame, refused.
+    std::vector<uint8_t> unchecked(ZstdSmallStream.begin(), ZstdSmallStream.end() - 4);
+    unchecked[4] &= static_cast<uint8_t>(~0x04);
+    CHECK(!MCZstd::Unpack(unchecked, smallText.size()).has_value());
 }
 
 /// <summary>

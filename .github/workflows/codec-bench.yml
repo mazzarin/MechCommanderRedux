@@ -25,12 +25,23 @@ jobs:
           $deflate = 'src\lib\libdeflate-1.26\lib\deflate_decompress.c', 'src\lib\libdeflate-1.26\lib\utils.c', 'src\lib\libdeflate-1.26\lib\x86\cpu_features.c'
           $sources = @('tools\codec-bench\unpack_bench.c') + $zstd + $deflate
           New-Item -ItemType Directory -Force out | Out-Null
-          $cl = "cl /nologo /O2 /Oi /Gy /MT /std:c11 /DNDEBUG /DZSTD_DISABLE_ASM /W1 /Isrc\lib\zstd-1.5.7\lib /Isrc\lib\libdeflate-1.26 /Foout\ /Feout\unpack_bench.exe $($sources -join ' ')"
-          cmd /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && $cl"
-          if ($LASTEXITCODE -ne 0) { throw "cl failed with exit code $LASTEXITCODE." }
-          cmd /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl 2>&1" | Select-Object -First 1 | Set-Content out\compiler.txt
+          $vcvars = "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul"
+          $common = "/nologo /O2 /Oi /Gy /MT /std:c11 /DNDEBUG /DZSTD_DISABLE_ASM /W1 /Isrc\lib\zstd-1.5.7\lib /Isrc\lib\libdeflate-1.26"
+          # The game's build (MCCore.vcxproj's settings); the same with AVX2 (zstd's BMI2 code compiled in); and
+          # clang-cl, whose zstd picks its BMI2 code at run time (DYNAMIC_BMI2, which MSVC lacks).
+          $builds = [ordered]@{ 'msvc' = "cl $common"; 'msvc-avx2' = "cl $common /arch:AVX2"; 'clangcl' = "clang-cl $common" }
+          foreach ($name in $builds.Keys) {
+            New-Item -ItemType Directory -Force "out\$name" | Out-Null
+            cmd /c "call $vcvars && $($builds[$name]) /Foout\$name\ /Feout\unpack_bench-$name.exe $($sources -join ' ')"
+            if ($LASTEXITCODE -ne 0) {
+              if ($name -eq 'msvc') { throw "cl failed with exit code $LASTEXITCODE." }
+              Write-Warning "The $name build failed with exit code $LASTEXITCODE."
+            }
+          }
+          cmd /c "call $vcvars && cl 2>&1" | Select-Object -First 1 | Set-Content out\compiler.txt
+          cmd /c "call $vcvars && clang-cl --version 2>&1" | Select-Object -First 1 | Add-Content out\compiler.txt
           Get-Content out\compiler.txt
-          # cl's version banner comes from a run without sources, whose exit code isn't the build's.
+          # The version banners come from runs without sources, whose exit codes aren't the builds'.
           exit 0
 
       - name: Keep the exe
@@ -38,5 +49,5 @@ jobs:
         with:
           name: unpack-bench
           path: |
-            out/unpack_bench.exe
+            out/unpack_bench-*.exe
             out/compiler.txt

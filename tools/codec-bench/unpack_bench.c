@@ -8,7 +8,8 @@
 // A sample file, little-endian: "MCCB1\0\0\0"; the kind (u32 length, its bytes); u32 entries, each u32 packet,
 // u32 real, u32 stored and its stored bytes (raw deflate; the bytes themselves when stored equals real); u32
 // candidates, each a 16-byte name, u32 packets, each u32 real, u32 stored and a zstd frame carrying its checksum.
-// Every candidate's result is checked against today's, byte for byte, before it's timed.
+// Every candidate's result is checked against today's, byte for byte, before it's timed; each zstd candidate is timed
+// again with its checksums ignored, for the checksum's share.
 
 #include <errno.h>
 #include <stdint.h>
@@ -88,7 +89,7 @@ static const unsigned char* TakeBytes(Reader* r, size_t n)
 // One candidate's units (entries or packets): each one's stored bytes and real size.
 typedef struct
 {
-    char name[NAME_FIELD + 1];
+    char name[NAME_FIELD + 8];
     int packets;  // a packet at a time, or today's entries a frame at a time
     uint32_t count;
     const unsigned char** stored;
@@ -251,6 +252,17 @@ static void BenchFile(Decoders* d, const char* path)
         if (memcmp(out, reference, (size_t)total))
             Fail("doesn't give back today's bytes", list[k].name);
         Time(d, kind, &list[k], out, total);
+        if (!list[k].packets)
+            continue;
+        // The same frames with their checksums not checked (zstd's experimental parameter): the checksum's share.
+        Units unchecked = list[k];
+        snprintf(unchecked.name, sizeof unchecked.name, "%.*s-nocheck", (int)(strcspn(list[k].name, "+")),
+                 list[k].name);
+        if (ZSTD_isError(ZSTD_DCtx_setParameter(d->zstd, ZSTD_d_forceIgnoreChecksum, ZSTD_d_ignoreChecksum)))
+            Fail("zstd won't ignore its checksums", unchecked.name);
+        Time(d, kind, &unchecked, out, total);
+        if (ZSTD_isError(ZSTD_DCtx_setParameter(d->zstd, ZSTD_d_forceIgnoreChecksum, ZSTD_d_validateChecksum)))
+            Fail("zstd won't check its checksums again", unchecked.name);
     }
     for (uint32_t k = 0; k <= candidates; k++)
     {
@@ -271,6 +283,17 @@ int main(int argc, char** argv)
         fprintf(stderr, "usage: unpack_bench <sample file>... (see the file's head)\n");
         return 2;
     }
+#if defined(__clang__)
+    printf("built by clang %d.%d", __clang_major__, __clang_minor__);
+#elif defined(_MSC_VER)
+    printf("built by MSVC %d", _MSC_VER);
+#else
+    printf("built by an unnamed compiler");
+#endif
+#if defined(__AVX2__)
+    printf(", AVX2 on");
+#endif
+    printf(", zstd %s, libdeflate %s\n", ZSTD_versionString(), LIBDEFLATE_VERSION_STRING);
     Decoders d = {libdeflate_alloc_decompressor(), ZSTD_createDCtx()};
     if (!d.inflater || !d.zstd)
         Fail("can't make the decoders", argv[0]);

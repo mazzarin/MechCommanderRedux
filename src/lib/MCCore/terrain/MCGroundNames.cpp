@@ -4,6 +4,7 @@
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCGroundNamesKnown.h"
 #include "terrain/MCTerrainTiles.h"
+#include "vfx/MCVfxFunctions.h"
 
 MCGroundSlotNames MCWorkOutGroundNames(MCTerrainTiles& tiles, int32_t slot)
 {
@@ -78,6 +79,165 @@ std::optional<MCGroundTileShape> MCWorkOutGroundTileShape(MCTerrainTiles& tiles,
     return MCGroundTileShape{packet[0], packet[1], packet[3], packet.subspan(TileRowAt(packet, packet[2]))};
 }
 
+namespace
+{
+    /// <summary>
+    /// An overlay's packet (VFX's fast shapes, vfx/MCVfxFastShape.cpp, as the original's tile sets lay them out): a
+    /// shape table of one shape (the tag, the count, shape 0's offset, a zero word), then shape 0: its tag, its hot
+    /// spot's x and y, its height, the width its rows add up to, then its rows' table of 16-bit offsets.
+    /// </summary>
+    constexpr size_t OverlayTableBytes = 16;
+    constexpr size_t OverlayXAt = 4;
+    constexpr size_t OverlayYAt = 6;
+    constexpr size_t OverlayHeightAt = 8;
+    constexpr size_t OverlayWidthAt = 10;
+    constexpr size_t OverlayRowsAt = 12;
+    constexpr size_t OverlayOffsetBytes = sizeof(uint16_t);
+    /// <summary>A row's code below this is a run of the byte after it (0xff see-through), else literals less it.</summary>
+    constexpr uint8_t OverlayLiterals = 0x80;
+    constexpr uint8_t OverlaySeeThrough = 0xff;
+    constexpr int32_t OverlayMostInCode = 0x7f;
+
+    void Put16(std::vector<uint8_t>& bytes, size_t at, uint16_t value)
+    {
+        std::memcpy(bytes.data() + at, &value, sizeof(value));
+    }
+
+    void Put32(std::vector<uint8_t>& bytes, size_t at, uint32_t value)
+    {
+        std::memcpy(bytes.data() + at, &value, sizeof(value));
+    }
+
+    /// <summary>
+    /// Appends a row of <paramref name="width"/> pixels, <paramref name="drawn"/>'s see-through as runs and drawn
+    /// stretches as literals of <paramref name="index"/>'s, as the original's overlays encode them.
+    /// </summary>
+    template <typename Drawn, typename Index>
+    void PutOverlayRow(std::vector<uint8_t>& bytes, int32_t width, Drawn drawn, Index index)
+    {
+        for (int32_t x = 0; x < width;)
+        {
+            const bool opaque = drawn(x);
+            int32_t end = x + 1;
+
+            while (end < width && end - x < OverlayMostInCode && drawn(end) == opaque)
+            {
+                ++end;
+            }
+
+            if (!opaque)
+            {
+                bytes.push_back(static_cast<uint8_t>(end - x));
+                bytes.push_back(OverlaySeeThrough);
+            }
+            else
+            {
+                bytes.push_back(static_cast<uint8_t>(OverlayLiterals + (end - x)));
+
+                for (int32_t at = x; at < end; ++at)
+                {
+                    bytes.push_back(index(at));
+                }
+            }
+
+            x = end;
+        }
+    }
+} // namespace
+
+std::optional<MCGroundOverlaySpot> MCWorkOutGroundOverlaySpot(MCTerrainTiles& tiles, int32_t slot)
+{
+    if (!MCGroundOverlayOf(tiles, slot).has_value())
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<std::span<const uint8_t>> shape = FastShapeAt(tiles.Lookup(slot), 0);
+    int16_t x = 0;
+    int16_t y = 0;
+    std::memcpy(&x, shape->data() + OverlayXAt, sizeof(x));
+    std::memcpy(&y, shape->data() + OverlayYAt, sizeof(y));
+    return MCGroundOverlaySpot{x, y};
+}
+
+std::optional<std::vector<uint8_t>> MCRebuildGroundOverlay(std::span<const uint8_t> indices, const MCGroundName& name,
+                                                           MCGroundOverlaySpot spot)
+{
+    // The rows hold a column fewer than the frame.
+    const int32_t frameWidth = name.Width;
+    const int32_t width = frameWidth - 1;
+    const int32_t height = name.Height;
+
+    if (width <= 0 || height <= 0 || width > UINT16_MAX || height > UINT16_MAX - 2 ||
+        indices.size() != static_cast<size_t>(frameWidth) * height * MCHdArt::IndexBytes)
+    {
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> packet(OverlayTableBytes + OverlayRowsAt +
+                                (static_cast<size_t>(height) + 2) * OverlayOffsetBytes);
+    Put32(packet, 0, static_cast<uint32_t>(FastShapeTag));
+    Put32(packet, 4, 1);
+    Put32(packet, 8, static_cast<uint32_t>(OverlayTableBytes));
+    Put32(packet, OverlayTableBytes, static_cast<uint32_t>(FastShapeTag));
+    std::memcpy(packet.data() + OverlayTableBytes + OverlayXAt, &spot.X, sizeof(spot.X));
+    std::memcpy(packet.data() + OverlayTableBytes + OverlayYAt, &spot.Y, sizeof(spot.Y));
+    Put16(packet, OverlayTableBytes + OverlayHeightAt, static_cast<uint16_t>(height));
+    Put16(packet, OverlayTableBytes + OverlayWidthAt, static_cast<uint16_t>(width));
+    // Each offset from the shape's start, which must fit its 16 bits.
+    const auto putOffset = [&packet](int32_t entry) -> bool
+    {
+        const size_t offset = packet.size() - OverlayTableBytes;
+
+        if (offset > UINT16_MAX)
+        {
+            return false;
+        }
+
+        Put16(packet, OverlayTableBytes + OverlayRowsAt + static_cast<size_t>(entry) * OverlayOffsetBytes,
+              static_cast<uint16_t>(offset));
+        return true;
+    };
+
+    for (int32_t row = 0; row < height; ++row)
+    {
+        if (!putOffset(row))
+        {
+            return std::nullopt;
+        }
+
+        const size_t line = static_cast<size_t>(row) * frameWidth * MCHdArt::IndexBytes;
+        PutOverlayRow(
+            packet, width,
+            [&](int32_t x) { return indices[line + static_cast<size_t>(x) * MCHdArt::IndexBytes + 1] != 0; },
+            [&](int32_t x) { return indices[line + static_cast<size_t>(x) * MCHdArt::IndexBytes]; });
+    }
+
+    if (!putOffset(height))
+    {
+        return std::nullopt;
+    }
+
+    PutOverlayRow(packet, width, [](int32_t) { return false; }, [](int32_t) { return uint8_t{0}; });
+
+    if (!putOffset(height + 1))
+    {
+        return std::nullopt;
+    }
+
+    // Checked by its name, the bytes FastShapeSize takes as the shape's (MCGroundOverlayOf): it reads the last row a
+    // column wider, so a little way into the tip.
+    const std::span<const uint8_t> shape = std::span<const uint8_t>(packet).subspan(OverlayTableBytes);
+    const std::optional<size_t> named = FastShapeSize(shape);
+
+    if (!named.has_value() || MCHdArt::TerrainTileKey(shape.first(*named)) != name.Key)
+    {
+        return std::nullopt;
+    }
+
+    return packet;
+}
+
 bool MCSameGroundTileShape(const MCGroundTileShape& a, const MCGroundTileShape& b)
 {
     return a.HotX == b.HotX && a.HotY == b.HotY && a.BoxWidth == b.BoxWidth && std::ranges::equal(a.Tip, b.Tip);
@@ -110,6 +270,18 @@ std::optional<MCGroundTileShape> MCKnownGroundNames::ShapeAt(int32_t slot) const
     }
 
     return MCGroundTileShape{row.HotX, row.HotY, row.BoxWidth, Tips.subspan(row.TipAt, row.TipLength)};
+}
+
+std::optional<MCGroundOverlaySpot> MCKnownGroundNames::SpotAt(int32_t slot) const
+{
+    const std::optional<size_t> at = slot >= 0 && slot < Slots ? RowOf(Overlays, slot) : std::nullopt;
+
+    if (!at.has_value() || *at >= Spots.size())
+    {
+        return std::nullopt;
+    }
+
+    return Spots[*at];
 }
 
 MCOptionalRef<const MCKnownGroundNames> MCKnownGroundNamesOf(const MCTerrainTiles& tiles)

@@ -155,6 +155,89 @@ namespace
                            TileRowAt(packet, 0),
                            TileHeaderBytes + (static_cast<size_t>(name.Height) + 2) * sizeof(uint32_t));
     }
+
+    /// <summary>An overlay packet's shape 0 (after its one-shape table) and its row table's place in the shape.</summary>
+    constexpr size_t OverlayShapeAt = 16;
+    constexpr size_t OverlayRowTableAt = 12;
+    /// <summary>A row's code from this up is that many literals less it; below it a run of the byte after it.</summary>
+    constexpr uint8_t OverlayLiterals = 0x80;
+    constexpr uint8_t OverlaySeeThrough = 0xff;
+
+    /// <summary>
+    /// The index picture overlay <paramref name="packet"/>'s own pixels make (R8G8, as MCHdArt::Frame::Indices: its
+    /// frame a column wider than its rows, each drawn pixel's green HasIndex): what the original draws, which an HD
+    /// frame's indices spread past. Empty where a row's codes run past the packet.
+    /// </summary>
+    auto OverlayOwnIndices(std::span<const uint8_t> packet, const MCGroundName& name) -> std::vector<uint8_t>
+    {
+        const std::span<const uint8_t> shape = packet.subspan(OverlayShapeAt);
+        std::vector<uint8_t> indices(static_cast<size_t>(name.Width) * name.Height * MCHdArt::IndexBytes);
+
+        for (int32_t row = 0; row < name.Height; ++row)
+        {
+            uint16_t at = 0;
+            std::memcpy(&at, shape.data() + OverlayRowTableAt + static_cast<size_t>(row) * sizeof(at), sizeof(at));
+            const size_t line = static_cast<size_t>(row) * name.Width;
+
+            for (int32_t x = 0; x < name.Width - 1;)
+            {
+                if (at + size_t{1} >= shape.size())
+                {
+                    return {};
+                }
+
+                const uint8_t code = shape[at++];
+                const bool literals = code >= OverlayLiterals;
+                const int32_t count = literals ? code - OverlayLiterals : code;
+
+                for (int32_t n = 0; n < count; ++n, ++x)
+                {
+                    const uint8_t index = literals ? shape[at++] : shape[at];
+
+                    if (at > shape.size() || x >= name.Width - 1)
+                    {
+                        return {};
+                    }
+
+                    if (literals || index != OverlaySeeThrough)
+                    {
+                        indices[(line + x) * MCHdArt::IndexBytes] = index;
+                        indices[(line + x) * MCHdArt::IndexBytes + 1] = MCHdArt::HasIndex;
+                    }
+                }
+
+                at += literals ? 0 : 1;
+            }
+        }
+
+        return indices;
+    }
+
+    /// <summary>Why overlay <paramref name="own"/>'s pixels weren't rebuilt from its HD frame's <paramref name="hd"/>.</summary>
+    auto WhyOverlayNotRebuilt(std::span<const uint8_t> own, std::span<const uint8_t> hd) -> std::string
+    {
+        if (own.size() != hd.size())
+        {
+            return "an overlay whose HD frame's indices are another size";
+        }
+
+        size_t spread = 0;
+
+        for (size_t at = 0; at < own.size(); at += MCHdArt::IndexBytes)
+        {
+            const bool drawn = own[at + 1] != 0;
+
+            if (drawn && (hd[at + 1] == 0 || hd[at] != own[at]))
+            {
+                return "an overlay whose HD frame's indices differ where the original draws";
+            }
+
+            spread += !drawn && hd[at + 1] != 0 ? 1 : 0;
+        }
+
+        return spread == 0 ? "an overlay not rebuilt, its HD frame's indices the original's"
+                           : "an overlay whose HD frame's indices spread past the original's pixels, marked as drawn";
+    }
 } // namespace
 
 /// <summary>
@@ -180,6 +263,7 @@ TEST_CASE_ISOLATED("tool: --ground-names-table writes the original's tile sets' 
         std::string tileRows;
         std::string overlayRows;
         std::string shapeRows;
+        std::string spotRows;
         std::vector<uint8_t> tips;
         size_t named = 0;
 
@@ -201,6 +285,10 @@ TEST_CASE_ISOLATED("tool: --ground-names-table writes the original's tile sets' 
             if (names.Overlay.has_value())
             {
                 overlayRows += RowText(slot, *names.Overlay);
+                // Its hot spot beside it (MCKnownGroundNames::Spots), so the overlay is rebuilt from its HD frame.
+                const std::optional<MCGroundOverlaySpot> spot = MCWorkOutGroundOverlaySpot(*tiles, slot);
+                REQUIRE(spot.has_value());
+                spotRows += std::format("    {{{}, {}}},\n", spot->X, spot->Y);
                 ++named;
             }
         }
@@ -210,10 +298,11 @@ TEST_CASE_ISOLATED("tool: --ground-names-table writes the original's tile sets' 
         arrays += std::format("// {}\n", setName) + ArrayText("MCGroundNameRow", RowsName(setName, "tiles"), tileRows) +
                   ArrayText("MCGroundNameRow", RowsName(setName, "overlays"), overlayRows) +
                   ArrayText("MCGroundShapeRow", RowsName(setName, "shapes"), shapeRows) +
-                  ArrayText("uint8_t", RowsName(setName, "tips"), BytesText(tips));
-        sets += std::format("    {{0x{:016x}, {}, {}, {}, {}, {}}},\n", tiles->FilesHash(), tiles->NumTiles(),
+                  ArrayText("uint8_t", RowsName(setName, "tips"), BytesText(tips)) +
+                  ArrayText("MCGroundOverlaySpot", RowsName(setName, "spots"), spotRows);
+        sets += std::format("    {{0x{:016x}, {}, {}, {}, {}, {}, {}}},\n", tiles->FilesHash(), tiles->NumTiles(),
                             RowsName(setName, "tiles"), RowsName(setName, "overlays"), RowsName(setName, "shapes"),
-                            RowsName(setName, "tips"));
+                            RowsName(setName, "tips"), RowsName(setName, "spots"));
     }
 
     std::ofstream file{std::filesystem::path(*out)};
@@ -257,8 +346,10 @@ TEST_CASE_ISOLATED("ground names: the program's table holds the original's tile 
         const MCKnownGroundNames& names = known->get();
         REQUIRE_EQ(names.Slots, tiles->NumTiles());
         REQUIRE_EQ(names.Shapes.size(), names.Tiles.size());
+        REQUIRE_EQ(names.Spots.size(), names.Overlays.size());
         size_t wrong = 0;
         size_t wrongShapes = 0;
+        size_t wrongSpots = 0;
 
         for (int32_t slot = 0; slot < tiles->NumTiles(); ++slot)
         {
@@ -269,10 +360,12 @@ TEST_CASE_ISOLATED("ground names: the program's table holds the original's tile 
                 shape.has_value() == held.has_value() && (!shape.has_value() || MCSameGroundTileShape(*shape, *held))
                     ? 0
                     : 1;
+            wrongSpots += MCWorkOutGroundOverlaySpot(*tiles, slot) == names.SpotAt(slot) ? 0 : 1;
         }
 
         CHECK_EQ(wrong, 0);
         CHECK_EQ(wrongShapes, 0);
+        CHECK_EQ(wrongSpots, 0);
     }
 }
 
@@ -320,6 +413,8 @@ TEST_CASE_ISOLATED("ground names: a mission's HD ground asked by name is what it
 /// Tool: <c>--ground-rebuild-check &lt;pack folder&gt;</c> rebuilds every ground tile of the original's tile sets from the
 /// pack's HD frame (its indices) and the shape the program's table carries for it (MCRebuildGroundTile, PLAN.md's
 /// first-use item 10), held to the tile's packet byte for byte; those that aren't, counted by why, with an example each.
+/// Every overlay too (MCRebuildGroundOverlay, with its hot spot from the table): from its own pixels, which must come
+/// back byte for byte (the encoding is the original's), and from its HD frame, counted by why not.
 /// Reads the pack and the game, writes nothing.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --ground-rebuild-check rebuilds the original's ground tiles from a pack's HD frames")
@@ -336,6 +431,8 @@ TEST_CASE_ISOLATED("tool: --ground-rebuild-check rebuilds the original's ground 
     MCHdArt::SetPackFolder(std::filesystem::absolute(std::filesystem::path(*pack)));
     REQUIRE(MCHdArt::Active());
     constexpr std::string_view Rebuilt = "rebuilt byte for byte";
+    constexpr std::string_view RebuiltOverlay = "an overlay rebuilt byte for byte from its HD frame";
+    constexpr std::string_view RebuiltOwn = "an overlay rebuilt byte for byte from its own pixels";
 
     for (const std::string_view setName : ShippedTileSets)
     {
@@ -384,15 +481,55 @@ TEST_CASE_ISOLATED("tool: --ground-rebuild-check rebuilds the original's ground 
             note(std::ranges::equal(*rebuilt, packet) ? std::string(Rebuilt) : "its name's, but not its packet", slot);
         }
 
-        std::cout << std::format("{}: {} ground tiles\n", setName, known->get().Tiles.size());
+        for (const MCGroundNameRow& row : known->get().Overlays)
+        {
+            const int32_t slot = row.Slot;
+            const std::span<const uint8_t> packet = tiles->Lookup(slot);
+            const MCGroundName name{row.Key, row.Width, row.Height};
+            const std::optional<MCHdArt::GroundAhead> overlay = MCGroundOverlayOf(*tiles, slot);
+            REQUIRE(overlay.has_value());
+            const std::shared_ptr<const MCHdArt::Frame> frame =
+                MCHdArt::FindOverlay(overlay->Tile, name.Width, name.Height);
+            const std::optional<MCGroundOverlaySpot> spot = known->get().SpotAt(slot);
+            REQUIRE(spot.has_value());
+            const std::vector<uint8_t> own = OverlayOwnIndices(packet, name);
+            const std::optional<std::vector<uint8_t>> fromOwn = MCRebuildGroundOverlay(own, name, *spot);
+            note(fromOwn.has_value() && std::ranges::equal(*fromOwn, packet)
+                     ? std::string(RebuiltOwn)
+                     : "an overlay not rebuilt from its own pixels",
+                 slot);
+
+            if (frame == nullptr)
+            {
+                note("an overlay without an HD frame", slot);
+                continue;
+            }
+
+            const std::optional<std::vector<uint8_t>> rebuilt = MCRebuildGroundOverlay(frame->Indices, name, *spot);
+            note(!rebuilt.has_value()                   ? WhyOverlayNotRebuilt(own, frame->Indices)
+                 : std::ranges::equal(*rebuilt, packet) ? std::string(RebuiltOverlay)
+                                                        : std::string("an overlay of its name, but not its packet"),
+                 slot);
+        }
+
+        std::cout << std::format("{}: {} ground tiles, {} overlays\n", setName, known->get().Tiles.size(),
+                                 known->get().Overlays.size());
 
         for (const auto& [outcome, count] : outcomes)
         {
             std::cout << std::format("  {:5} {} (e.g. slot {})\n", count.first, outcome, count.second);
         }
 
-        const auto rebuilt = outcomes.find(std::string(Rebuilt));
-        CHECK_EQ(rebuilt == outcomes.end() ? size_t{0} : rebuilt->second.first, known->get().Tiles.size());
+        const auto countOf = [&outcomes](std::string_view outcome)
+        {
+            const auto found = outcomes.find(std::string(outcome));
+            return found == outcomes.end() ? size_t{0} : found->second.first;
+        };
+
+        CHECK_EQ(countOf(Rebuilt), known->get().Tiles.size());
+        // From the HD frames only once the pack marks the pixels the original draws apart from those its indices
+        // spread to (PLAN.md's item 10): counted above, not held.
+        CHECK_EQ(countOf(RebuiltOwn), known->get().Overlays.size());
     }
 
     GHdArt = 0;

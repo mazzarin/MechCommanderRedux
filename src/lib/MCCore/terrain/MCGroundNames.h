@@ -70,9 +70,21 @@ struct MCGroundShapeRow
 };
 
 /// <summary>
+/// Port-only (PLAN.md's first-use item 10): what the program carries of an original overlay besides its HD frame's
+/// indices, so it is rebuilt without reading it (MCRebuildGroundOverlay): its shape's hot spot.
+/// </summary>
+struct MCGroundOverlaySpot
+{
+    int16_t X = 0;
+    int16_t Y = 0;
+
+    bool operator==(const MCGroundOverlaySpot&) const = default;
+};
+
+/// <summary>
 /// A tile set the program knows: its files' hash (MCTerrainTiles::FilesHash), its slots' count, and the names of the
 /// slots that hold a ground tile and of those that hold an overlay, each in slot order; each ground tile's shape beside
-/// its name (PLAN.md's first-use item 10), and the bytes of their tips.
+/// its name (PLAN.md's first-use item 10), the bytes of their tips, and each overlay's hot spot beside its name.
 /// </summary>
 struct MCKnownGroundNames
 {
@@ -82,12 +94,16 @@ struct MCKnownGroundNames
     std::span<const MCGroundNameRow> Overlays;
     std::span<const MCGroundShapeRow> Shapes;
     std::span<const uint8_t> Tips;
+    std::span<const MCGroundOverlaySpot> Spots;
 
     /// <summary>Slot <paramref name="slot"/>'s names (none for a slot outside the set).</summary>
     MCGroundSlotNames At(int32_t slot) const;
 
     /// <summary>The shape of the ground tile in slot <paramref name="slot"/> (none for a slot without one).</summary>
     std::optional<MCGroundTileShape> ShapeAt(int32_t slot) const;
+
+    /// <summary>The hot spot of the overlay in slot <paramref name="slot"/> (none for a slot without one).</summary>
+    std::optional<MCGroundOverlaySpot> SpotAt(int32_t slot) const;
 };
 
 /// <summary>
@@ -102,6 +118,12 @@ MCGroundSlotNames MCWorkOutGroundNames(MCTerrainTiles& tiles, int32_t slot);
 /// ground tile.
 /// </summary>
 std::optional<MCGroundTileShape> MCWorkOutGroundTileShape(MCTerrainTiles& tiles, int32_t slot);
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): works out the hot spot of the overlay in slot <paramref name="slot"/> from its
+/// bytes; none where the slot holds no overlay.
+/// </summary>
+std::optional<MCGroundOverlaySpot> MCWorkOutGroundOverlaySpot(MCTerrainTiles& tiles, int32_t slot);
 
 /// <summary>Whether shapes <paramref name="a"/> and <paramref name="b"/> are the same, their tips byte for byte.</summary>
 bool MCSameGroundTileShape(const MCGroundTileShape& a, const MCGroundTileShape& b);
@@ -123,3 +145,17 @@ MCOptionalRef<const MCKnownGroundNames> MCKnownGroundNamesOf(const MCTerrainTile
 /// </summary>
 std::optional<std::vector<uint8_t>> MCRebuildGroundTile(std::span<const uint8_t> indices, const MCGroundName& name,
                                                         const MCGroundTileShape& shape);
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): the original's packet of the overlay <paramref name="name"/> names, rebuilt
+/// from its HD frame's <paramref name="indices"/> (as MCRebuildGroundTile's) and its hot spot <paramref name="spot"/>,
+/// laid out as the original's overlays are: a shape table of one fast shape, its header, its rows' table (each row's
+/// start, the rows' end, the shape's end), each row's see-through pixels as runs and every stretch of drawn ones as
+/// literals (at most 127 each, the frame's last column left out, as the original's rows leave it), then a blank row.
+/// The indices must mark drawn only the pixels the original draws: the shipped pack's overlay frames spread their
+/// indices a few pixels past them, marked the same, so they aren't rebuilt from it (PLAN.md's item 10). None unless the
+/// bytes the name hashes (FastShapeSize's, as MCGroundOverlayOf takes them) are the name's, so a pack or table that
+/// doesn't match the game's overlays leaves them to be read.
+/// </summary>
+std::optional<std::vector<uint8_t>> MCRebuildGroundOverlay(std::span<const uint8_t> indices, const MCGroundName& name,
+                                                           MCGroundOverlaySpot spot);

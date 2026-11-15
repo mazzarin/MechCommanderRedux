@@ -1,0 +1,42 @@
+# Probe, never merged (15 Nov, the menu-stage session): builds tools/codec-bench/unpack_bench.c on Windows with the
+# game's own decoders, zstd 1.5.7's decompressor (src/lib/zstd-1.5.7, ZSTD_DISABLE_ASM, as MCCore.vcxproj builds it)
+# and libdeflate 1.26's, at the Release configuration's settings (/O2 /Oi /Gy /MT, NDEBUG), for the test laptop's
+# unpacking times. The exe is the run's artifact. This branch drops windows.yml, so the game isn't built.
+name: Codec bench (probe)
+
+on:
+  push:
+    branches: ['windows-codec-bench']
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'No Visual Studio with the x64 C++ tools.' }
+          $zstd = Get-ChildItem src\lib\zstd-1.5.7\lib\common\*.c, src\lib\zstd-1.5.7\lib\decompress\*.c | ForEach-Object { $_.FullName }
+          $deflate = 'src\lib\libdeflate-1.26\lib\deflate_decompress.c', 'src\lib\libdeflate-1.26\lib\utils.c', 'src\lib\libdeflate-1.26\lib\x86\cpu_features.c'
+          $sources = @('tools\codec-bench\unpack_bench.c') + $zstd + $deflate
+          New-Item -ItemType Directory -Force out | Out-Null
+          $cl = "cl /nologo /O2 /Oi /Gy /MT /std:c11 /DNDEBUG /DZSTD_DISABLE_ASM /W1 /Isrc\lib\zstd-1.5.7\lib /Isrc\lib\libdeflate-1.26 /Foout\ /Feout\unpack_bench.exe $($sources -join ' ')"
+          cmd /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && $cl"
+          if ($LASTEXITCODE -ne 0) { throw "cl failed with exit code $LASTEXITCODE." }
+          cmd /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl 2>&1" | Select-Object -First 1 | Set-Content out\compiler.txt
+          Get-Content out\compiler.txt
+          # cl's version banner comes from a run without sources, whose exit code isn't the build's.
+          exit 0
+
+      - name: Keep the exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: unpack-bench
+          path: |
+            out/unpack_bench.exe
+            out/compiler.txt

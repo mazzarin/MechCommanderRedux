@@ -114,6 +114,36 @@ auto MCAppearanceType::ShapesUnloaded() -> std::vector<MCShapeWanted>
     return wanted;
 }
 
+auto MCAppearanceType::ShapesHeld() const -> std::vector<std::shared_ptr<MCShape>>
+{
+    std::vector<std::shared_ptr<MCShape>> held;
+
+    if (_PacketSlots.has_value())
+    {
+        for (const std::weak_ptr<MCShape>& slot : _PacketSlots->get())
+        {
+            if (std::shared_ptr<MCShape> shape = slot.lock(); shape != nullptr)
+            {
+                held.push_back(std::move(shape));
+            }
+        }
+    }
+
+    return held;
+}
+
+auto MCAppearanceType::ReadShapesAhead(MCHdArt::ReadAs as) const -> size_t
+{
+    const std::vector<std::shared_ptr<MCShape>> held = ShapesHeld();
+
+    for (const std::shared_ptr<MCShape>& shape : held)
+    {
+        MCHdArt::ReadShapeTableAhead(shape->FrameList(), as);
+    }
+
+    return held.size();
+}
+
 auto MCAppearanceType::KeepShape(uint32_t packet, const std::shared_ptr<MCShape>& shape) -> void
 {
     if (_PacketSlots.has_value() && packet < _PacketSlots->get().size() && shape != nullptr)

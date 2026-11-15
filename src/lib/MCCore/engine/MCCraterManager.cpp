@@ -118,6 +118,18 @@ void MCCraterManager::AttachHdArt() const
     }
 }
 
+auto MCCraterManager::ReadAhead(MCHdArt::ReadAs as) const -> size_t
+{
+    const auto count = std::min(static_cast<size_t>(std::max(_ShapeCount, 0)), _Shapes.size());
+
+    for (size_t packet = 0; packet < count; ++packet)
+    {
+        MCHdArt::ReadShapeTableAhead(_Shapes[packet], as);
+    }
+
+    return count;
+}
+
 auto MCCraterManager::AddCrater(int32_t craterType, const MCVector3D& position, int32_t rotation) -> void
 {
     int32_t tileR;

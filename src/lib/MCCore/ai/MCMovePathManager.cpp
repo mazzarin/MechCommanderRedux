@@ -1,7 +1,27 @@
 #include "stdafx.h"
 #include "ai/MCMovePathManager.h"
+#include "ai/MCMovePath.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMoverGameSystem.h"
+#include "sprite/MCMechActor.h"
+
+namespace
+{
+    /// <summary>Port-only: how many steps past a path's current one its heading is taken toward (the first steps may
+    /// step aside round a corner).</summary>
+    constexpr int32_t HeadingSteps = 2;
+}
+
+auto MCPathHeading(const MCMovePath& path) -> std::optional<MCVector3D>
+{
+    if (path.NumSteps <= 0)
+    {
+        return std::nullopt;
+    }
+
+    const auto step = static_cast<size_t>(std::clamp(path.CurStep + HeadingSteps, 0, path.NumSteps - 1));
+    return step < path.StepList.size() ? std::optional(path.StepList[step].Destination) : std::nullopt;
+}
 
 auto MCMovePathManager::Remove(const MCPathQueueRec& rec) -> void
 {
@@ -46,9 +66,16 @@ auto MCMovePathManager::CalcPath() -> void
     std::shared_ptr<MCMechWarrior> pilot = rec->Pilot.lock();
     pilot->MovePathRequest.reset();
 
-    if (pilot->GetVehicle() != nullptr)
+    if (const std::shared_ptr<MCGameObject> vehicle = pilot->GetVehicle(); vehicle != nullptr)
     {
         pilot->CalcMovePath(rec->SelectionIndex, rec->MoveParams, rec->InitPath);
+
+        // Port-only (HD art, SPEC-first-use.md: a unit's first frames, by intent): a mech's walk and run toward its new
+        // path's heading read before it turns.
+        if (const std::optional<MCVector3D> heading = MCPathHeading(*pilot->MoveOrders.Path[0]); heading.has_value())
+        {
+            MCReadMechMoveAhead(*vehicle, *heading);
+        }
     }
 }
 

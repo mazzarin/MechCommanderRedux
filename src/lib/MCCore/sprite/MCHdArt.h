@@ -625,6 +625,13 @@ namespace MCHdArt
     void ReadShapesAhead(std::span<const ShapeAhead> shapes, ReadAs as);
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: what a mission can make): has the readers read every frame of the shapes
+    /// <paramref name="table"/> holds (a VFX shape table) as <paramref name="as"/>' reads, found as the renderer finds
+    /// them: in the folder they are attached to (Attach), else by the table's hash (ReadShapesAhead).
+    /// </summary>
+    void ReadShapeTableAhead(std::span<const uint8_t> table, ReadAs as);
+
+    /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's
     /// resolution while HD art is on, from the 1x shape's coverage; none needs a pack.
     /// </summary>

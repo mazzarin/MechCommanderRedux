@@ -16,6 +16,7 @@
 #include "network/MCMultiPlayer.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
+#include "object/MCMechDynamics.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCObjectQueue.h"
@@ -1758,14 +1759,19 @@ auto MCMechActor::DrawnFacing(MCBattleMech& mech) const -> float
 
 auto MCMechActor::UpperGesture() const -> int32_t
 {
-    return InCombatMode                                ? GestureCombat
-           : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange
-                                                       : CurrentGesture;
+    return UpperOver(CurrentGesture);
 }
 
-auto MCMechActor::ArmRotations(const MCBattleMech& mech, float facing) -> std::pair<float, float>
+auto MCMechActor::UpperOver(int32_t legs) const -> int32_t
 {
-    return {facing + mech.LeftArmRotation + mech.TorsoRotation, facing + mech.RightArmRotation + mech.TorsoRotation};
+    return InCombatMode ? GestureCombat : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange : legs;
+}
+
+auto MCMechActor::ArmRotations(const MCBattleMech& mech, float facing, std::optional<float> torso)
+    -> std::pair<float, float>
+{
+    const float turned = torso.value_or(mech.TorsoRotation);
+    return {facing + mech.LeftArmRotation + turned, facing + mech.RightArmRotation + turned};
 }
 
 auto MCMechActor::ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPart, float rotation) const -> bool
@@ -1777,6 +1783,12 @@ auto MCMechActor::ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPa
 auto MCMechActor::ForEachPartDrawn(MCBattleMech& mech, int32_t legs, int32_t upper,
                                    const std::function<void(int32_t, int32_t, float)>& part) const -> void
 {
+    ForEachPartAt(mech, legs, upper, DrawnFacing(mech), mech.TorsoRotation, part);
+}
+
+auto MCMechActor::ForEachPartAt(MCBattleMech& mech, int32_t legs, int32_t upper, float facing, float torso,
+                                const std::function<void(int32_t, int32_t, float)>& part) const -> void
+{
     const auto isGesture = [&](int32_t gesture)
     { return gesture >= 0 && static_cast<size_t>(gesture) < MechTree->Gestures.size(); };
 
@@ -1785,13 +1797,12 @@ auto MCMechActor::ForEachPartDrawn(MCBattleMech& mech, int32_t legs, int32_t upp
         return;
     }
 
-    const float facing = DrawnFacing(mech);
-    const auto [rotation2, rotation3] = ArmRotations(mech, facing);
+    const auto [rotation2, rotation3] = ArmRotations(mech, facing, torso);
     part(legs, 0, facing);
 
     if (!Wrecked)
     {
-        part(upper, 1, facing + mech.TorsoRotation);
+        part(upper, 1, facing + torso);
     }
 
     if (!RightArmGone)
@@ -1853,18 +1864,12 @@ auto MCMechActor::ReadAhead(MCHdArt::ReadAs now) -> void
                          { MechTree->PacketsAhead(gesture, part, rotation, turns, as, packets); });
     };
 
-    // The upper parts' gesture over the legs' gesture legs, as UpperGesture takes it.
-    const auto upperOver = [&](int32_t legs)
-    {
-        return InCombatMode ? GestureCombat : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange : legs;
-    };
-
     // Soon: the gestures drawn now, at their facing and those a turn comes to, and the one a transition plays next.
     add(CurrentGesture, UpperGesture(), true, now, soon);
 
     if (InTransition)
     {
-        add(NextGesture, upperOver(NextGesture), false, now, soon);
+        add(NextGesture, UpperOver(NextGesture), false, now, soon);
     }
 
     // Later, as sets: a move's first gesture from standing, walking or running to either of the others, and the upper
@@ -1876,7 +1881,7 @@ auto MCMechActor::ReadAhead(MCHdArt::ReadAs now) -> void
             if (goal != CurrentStateGesture)
             {
                 const int32_t first = MCStopTransition(*MechTree, goal, CurrentStateGesture, 0, MCMechBrakingInForce());
-                add(first, upperOver(first), false, MCHdArt::ReadAs::Set, later);
+                add(first, UpperOver(first), false, MCHdArt::ReadAs::Set, later);
             }
         }
     }
@@ -1895,16 +1900,106 @@ auto MCMechActor::ReadAhead(MCHdArt::ReadAs now) -> void
     MCHdArt::ReadPacketsAhead(later, MCHdArt::ReadAs::Set);
 }
 
-void MCReadMechAhead(MCGameObject& object, MCHdArt::ReadAs now)
+auto MCMechActor::IntentShows() const -> bool
 {
-    if (object.ObjectClass != MCObjectClass::BattleMech)
+    const std::shared_ptr<MCCamera> eye = Eye();
+    return eye != nullptr && NearView(*eye);
+}
+
+auto MCMechActor::ReadAimAhead(const MCVector3D& target) -> void
+{
+    const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
+
+    if (mech == nullptr || MechTree == nullptr || !MCHdArt::Active() || !IntentShows())
     {
         return;
     }
 
-    if (const auto actor = std::static_pointer_cast<MCMechActor>(object.GetAppearance()); actor != nullptr)
+    // The torso turned as UpdateTorso turns it: to bring the target dead ahead, up to its limit either way.
+    const auto& dynamics = static_cast<const MCMechDynamicsType&>(*mech->TypeAs<MCBattleMechType>().DynamicsType);
+    const auto limit = static_cast<float>(dynamics.MaxTorsoYaw);
+    const float torso = std::clamp(-mech->RelFacingTo(target, -1), -limit, limit);
+    std::vector<MCHdArt::PacketAhead> soon;
+
+    // Raised, then held (held only, when up already); the legs as drawn now.
+    for (const int32_t upper :
+         InCombatMode ? std::vector{GestureCombat} : std::vector{GestureCombatChange, GestureCombat})
+    {
+        ForEachPartAt(*mech, CurrentGesture, upper, DrawnFacing(*mech), torso,
+                      [&](int32_t gesture, int32_t part, float rotation)
+                      { MechTree->PacketsAhead(gesture, part, rotation, part != 0, MCHdArt::ReadAs::Soon, soon); });
+    }
+
+    MCHdArt::ReadPacketsAhead(soon, MCHdArt::ReadAs::Soon);
+}
+
+auto MCMechActor::ReadMoveAhead(const MCVector3D& toward) -> void
+{
+    const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
+
+    if (mech == nullptr || MechTree == nullptr || !MCHdArt::Active() || !IntentShows())
+    {
+        return;
+    }
+
+    // The legs turned as the move turns them, to bring the heading dead ahead; the torso as it is.
+    const float facing = DrawnFacing(*mech) - mech->RelFacingTo(toward, -1);
+    std::vector<MCHdArt::PacketAhead> soon;
+
+    // Each gesture of the move from what the mech plays now to a walk and to a run, its own steady one last.
+    for (const int32_t goal : {MCStopState::Walk, MCStopState::Run})
+    {
+        for (int32_t step = 0;; ++step)
+        {
+            const int32_t gesture =
+                MCStopTransition(*MechTree, goal, CurrentStateGesture, step, MCMechBrakingInForce());
+
+            if (gesture < 0)
+            {
+                break;
+            }
+
+            ForEachPartAt(*mech, gesture, UpperOver(gesture), facing, mech->TorsoRotation,
+                          [&](int32_t drawn, int32_t part, float rotation)
+                          { MechTree->PacketsAhead(drawn, part, rotation, true, MCHdArt::ReadAs::Soon, soon); });
+        }
+    }
+
+    MCHdArt::ReadPacketsAhead(soon, MCHdArt::ReadAs::Soon);
+}
+
+namespace
+{
+    /// <summary>Port-only: <paramref name="object"/>'s actor, if it's a mech with one.</summary>
+    std::shared_ptr<MCMechActor> MechActorOf(MCGameObject& object)
+    {
+        return object.ObjectClass == MCObjectClass::BattleMech
+                   ? std::static_pointer_cast<MCMechActor>(object.GetAppearance())
+                   : nullptr;
+    }
+}
+
+void MCReadMechAhead(MCGameObject& object, MCHdArt::ReadAs now)
+{
+    if (const std::shared_ptr<MCMechActor> actor = MechActorOf(object); actor != nullptr)
     {
         actor->ReadAhead(now);
+    }
+}
+
+void MCReadMechAimAhead(MCGameObject& object, const MCVector3D& target)
+{
+    if (const std::shared_ptr<MCMechActor> actor = MechActorOf(object); actor != nullptr)
+    {
+        actor->ReadAimAhead(target);
+    }
+}
+
+void MCReadMechMoveAhead(MCGameObject& object, const MCVector3D& toward)
+{
+    if (const std::shared_ptr<MCMechActor> actor = MechActorOf(object); actor != nullptr)
+    {
+        actor->ReadMoveAhead(toward);
     }
 }
 

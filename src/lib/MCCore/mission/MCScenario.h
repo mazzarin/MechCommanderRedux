@@ -12,6 +12,7 @@
 // cameras, objects, sprites, terrain, ABL, teams, warriors, parts, objectives); Run is the per-frame update; Unload
 // shuts it all down again.
 
+class MCAppearanceType;
 class MCGuiObject;
 class MCFitIniFile;
 class MCMechWarrior;
@@ -80,6 +81,16 @@ public:
     /// first mech. The load calls it once the parts are made.
     /// </summary>
     void ReadPartsAhead() const;
+
+    /// <summary>Port-only: the appearances of the types kept for the mission (each once): those loaded and those made.</summary>
+    static std::vector<std::shared_ptr<MCAppearanceType>> KeptAppearances();
+
+    /// <summary>
+    /// Port-only (HD art, SPEC-first-use.md: what a mission can make): every frame of the kept types' appearances' shapes
+    /// (the effects', the wrecks') and the craters' and footprints' asked as sets. The load calls it once its own reads
+    /// are in hand, so it never waits for them.
+    /// </summary>
+    static void ReadMadeAhead();
 
     /// <summary>Takes part <paramref name="partNumber"/>'s object out of play and marks the part destroyed.</summary>
     void DestroyPartObject(int32_t partNumber);

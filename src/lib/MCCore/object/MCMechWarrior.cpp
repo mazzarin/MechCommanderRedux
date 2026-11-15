@@ -16,6 +16,7 @@
 #include "object/MCObjectQueue.h"
 #include "object/MCObjectSystem.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCMechActor.h"
 #include "terrain/MCTerrain.h"
 
 const std::array<std::string_view, NumSkills> SkillsTable = {"Piloting", "Jumping", "Sensors", "Gunnery"};
@@ -798,6 +799,7 @@ auto MCMechWarrior::SetLastTarget(std::shared_ptr<MCGameObject> target, int obli
         }
     }
 
+    const bool taken = target != nullptr && target != LockObject(LastTarget);
     LastTarget = target;
 
     if (target == nullptr)
@@ -812,6 +814,13 @@ auto MCMechWarrior::SetLastTarget(std::shared_ptr<MCGameObject> target, int obli
     LastTargetTime = ScenarioTime;
     LastTargetObliterate = obliterate;
     LastTargetConserveAmmo = conserveAmmo;
+
+    // Port-only (HD art, SPEC-first-use.md: a unit's first frames, by intent): a target taken, its mech's firing pose
+    // toward it read before its torso turns.
+    if (const std::shared_ptr<MCGameObject> vehicle = LockObject(Vehicle); taken && vehicle != nullptr)
+    {
+        MCReadMechAimAhead(*vehicle, target->GetPosition());
+    }
 }
 
 auto MCMechWarrior::SetCurrentTarget(std::shared_ptr<MCGameObject> target) -> void

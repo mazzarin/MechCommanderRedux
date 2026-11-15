@@ -144,6 +144,29 @@ public:
     void ReadAhead(MCHdArt::ReadAs now);
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: a unit's first frames, by intent): a target taken at <paramref name="target"/>: the
+    /// torso's and arms' firing pose (the combat gestures, raised then held) at the facing the torso turns to toward it
+    /// (MCBattleMech::UpdateTorso's, up to its limit) and the facings either side, with the legs' gesture drawn now, as
+    /// soon reads (not the frames drawn next, whose reads would hold up those a first draw follows on with): read before
+    /// the torso turns. Only while the mech is in or near the view (IntentShows).
+    /// </summary>
+    void ReadAimAhead(const MCVector3D& target);
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: a unit's first frames, by intent): a move toward <paramref name="toward"/> (its path's
+    /// heading): each gesture of the move from what it plays now to a walk and to a run, at the facing the legs turn to
+    /// and the facings either side, as soon reads: read before the mech turns. Only while the mech is in or near the view
+    /// (IntentShows).
+    /// </summary>
+    void ReadMoveAhead(const MCVector3D& toward);
+
+    /// <summary>
+    /// Port-only: whether the mech is in or near the view (MCAppearance::NearView), where what it means to do soon may
+    /// show: a target or a move far off is asked for as it nears the view instead.
+    /// </summary>
+    bool IntentShows() const;
+
+    /// <summary>
     /// Port-only (SPEC-first-use.md: a unit's first frames): the packets each part draws now, as Render takes them (the
     /// tree's part at its rotation, an arm from the other's sprites when mirrored; a part gone none), for a mission's load
     /// to read with the rest.
@@ -161,14 +184,29 @@ public:
     void ForEachPartDrawn(MCBattleMech& mech, int32_t legs, int32_t upper,
                           const std::function<void(int32_t, int32_t, float)>& part) const;
 
+    /// <summary>
+    /// Port-only: <see cref="ForEachPartDrawn"/> with the legs at <paramref name="facing"/> and the torso turned
+    /// <paramref name="torso"/> from them (the arms with it), not as they are drawn now.
+    /// </summary>
+    void ForEachPartAt(MCBattleMech& mech, int32_t legs, int32_t upper, float facing, float torso,
+                       const std::function<void(int32_t, int32_t, float)>& part) const;
+
     /// <summary>The upper body's gesture: the combat gestures while the gun is up or moving, else the legs'.</summary>
     int32_t UpperGesture() const;
 
     /// <summary>
-    /// The arms' rotations as drawn, the original's rotation2 and rotation3: the facing <paramref name="facing"/> with the
-    /// torso's and the left arm's, then the right arm's; the right arm is drawn at the first and the left at the second.
+    /// The upper body's gesture over the legs' gesture <paramref name="legs"/>: the combat gestures while the gun is up
+    /// or moving, else the legs'.
     /// </summary>
-    static std::pair<float, float> ArmRotations(const MCBattleMech& mech, float facing);
+    int32_t UpperOver(int32_t legs) const;
+
+    /// <summary>
+    /// The arms' rotations as drawn, the original's rotation2 and rotation3: the facing <paramref name="facing"/> with the
+    /// torso's (<paramref name="torso"/>, the mech's own when none is given) and the left arm's, then the right arm's; the
+    /// right arm is drawn at the first and the left at the second.
+    /// </summary>
+    static std::pair<float, float> ArmRotations(const MCBattleMech& mech, float facing,
+                                                std::optional<float> torso = std::nullopt);
 
     /// <summary>
     /// Whether an arm is drawn from the other arm's sprites (part <paramref name="otherPart"/> of the tree) in the upper
@@ -560,6 +598,18 @@ float MCEaseFacing(float shown, float facing, float maxTurn, float lagMost);
 /// the script bringing it in, the staged battle setting it down), not once it comes near the view.
 /// </summary>
 void MCReadMechAhead(MCGameObject& object, MCHdArt::ReadAs now);
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a unit's first frames, by intent): <paramref name="object"/>'s firing pose toward
+/// <paramref name="target"/> read ahead as it takes it as its target, if it's a mech (MCMechActor::ReadAimAhead).
+/// </summary>
+void MCReadMechAimAhead(MCGameObject& object, const MCVector3D& target);
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a unit's first frames, by intent): <paramref name="object"/>'s walk and run toward
+/// <paramref name="toward"/> read ahead as it takes a move's path, if it's a mech (MCMechActor::ReadMoveAhead).
+/// </summary>
+void MCReadMechMoveAhead(MCGameObject& object, const MCVector3D& toward);
 
 /// <summary>The frames of a jump in the air.</summary>
 struct MCJumpFrames

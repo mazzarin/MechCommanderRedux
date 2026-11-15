@@ -363,6 +363,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCLogistics::ReadTexturesAhead();
     MCHdArt::WaitForReadAhead();
     MCHdArt::KeepReadAhead();
+    // Port-only (HD art, SPEC-first-use.md: what a mission can make): its effects', wrecks', craters' and footprints'
+    // frames asked as sets once the load's own are in hand, so the load never waits for them.
+    ReadMadeAhead();
 
     HasOutputBlock = file.SeekBlock("Output") == 0;
     file.Close();
@@ -984,6 +987,52 @@ auto MCScenario::ReadPartsAhead() const -> void
     }
 }
 
+auto MCScenario::KeptAppearances() -> std::vector<std::shared_ptr<MCAppearanceType>>
+{
+    std::vector<std::shared_ptr<MCAppearanceType>> kept;
+    std::unordered_set<uint32_t> appearances;
+    const std::span<const std::shared_ptr<MCAppearanceType>> listed = AppearanceTypeList().Types();
+
+    for (const std::shared_ptr<MCObjectType>& type : ObjectTypeManager().Types())
+    {
+        if (type->KeepMe == 0 || !appearances.insert(type->AppearName).second)
+        {
+            continue;
+        }
+
+        if (const auto found = std::ranges::find(listed, type->AppearName, &MCAppearanceType::AppearanceNum);
+            found != listed.end())
+        {
+            kept.push_back(*found);
+        }
+    }
+
+    return kept;
+}
+
+auto MCScenario::ReadMadeAhead() -> void
+{
+    size_t shapes = 0;
+
+    for (const std::shared_ptr<MCAppearanceType>& appearance : KeptAppearances())
+    {
+        shapes += appearance->ReadShapesAhead(MCHdArt::ReadAs::Set);
+    }
+
+    if (MCGameContext::Current().HasCraterManager())
+    {
+        shapes += CraterManager().ReadAhead(MCHdArt::ReadAs::Set);
+    }
+
+    const std::string note = std::format("HD sets of what the mission can make: {} shapes", shapes);
+    MCHdArt::TraceNote(note);
+
+    if (MCFrameLog::Enabled())
+    {
+        MCFrameLog::Note(note);
+    }
+}
+
 auto MCScenario::LoadOriginalPackets() -> void
 {
     const auto started = std::chrono::steady_clock::now();
@@ -1026,22 +1075,10 @@ auto MCScenario::LoadOriginalPackets() -> void
 
     // The kept types' appearances' shapes (the effects', the wrecks'), every packet of their PAKs, kept with them.
     std::vector<MCShapeWanted> wanted;
-    std::unordered_set<uint32_t> appearances;
 
-    for (const std::shared_ptr<MCObjectType>& type : ObjectTypeManager().Types())
+    for (const std::shared_ptr<MCAppearanceType>& appearance : KeptAppearances())
     {
-        if (type->KeepMe == 0 || !appearances.insert(type->AppearName).second)
-        {
-            continue;
-        }
-
-        const std::span<const std::shared_ptr<MCAppearanceType>> listed = AppearanceTypeList().Types();
-
-        if (const auto found = std::ranges::find(listed, type->AppearName, &MCAppearanceType::AppearanceNum);
-            found != listed.end())
-        {
-            std::ranges::move((*found)->ShapesUnloaded(), std::back_inserter(wanted));
-        }
+        std::ranges::move(appearance->ShapesUnloaded(), std::back_inserter(wanted));
     }
 
     const MCShapesLoaded shapes =

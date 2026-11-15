@@ -4300,6 +4300,36 @@ void MCHdArt::ReadShapesAhead(std::span<const ShapeAhead> shapes, ReadAs as)
     AskAhead(asks, KindOf(as), RoomIn(RoomFor(as)));
 }
 
+void MCHdArt::ReadShapeTableAhead(std::span<const uint8_t> table, ReadAs as)
+{
+    if (!Active() || !VfxIsShapeTable(table))
+    {
+        return;
+    }
+
+    const int32_t count = VfxShapeCount(table);
+
+    if (const std::optional<std::filesystem::path> folder = AttachedFolder(table); folder.has_value())
+    {
+        const std::array<PacketAhead, 1> packet{{{*folder, count, false}}};
+        ReadPacketsAhead(packet, as);
+        return;
+    }
+
+    constexpr int32_t HeightBits = 16;
+    constexpr int32_t HeightMask = 0xffff;
+    std::vector<ShapeAhead> shapes;
+    shapes.reserve(static_cast<size_t>(std::max(count, 0)));
+
+    for (int32_t frame = 0; frame < count; ++frame)
+    {
+        const int32_t size = VfxShapeResolution(table, frame);
+        shapes.push_back(ShapeAhead{table, frame, size >> HeightBits, size & HeightMask});
+    }
+
+    ReadShapesAhead(shapes, as);
+}
+
 uint64_t MCHdArt::NewFrameId()
 {
     return ++TheState().LastId;

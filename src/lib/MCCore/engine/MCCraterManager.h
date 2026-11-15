@@ -2,6 +2,7 @@
 
 #include "lib/MCVector3D.h"
 #include "main/MCGameContext.h"
+#include "sprite/MCHdArt.h"
 
 /// <summary>A crater or footprint on the ground.</summary>
 struct MCCraterData
@@ -78,6 +79,12 @@ public:
     /// done at mission load, and again by whoever turns HD art on during one.
     /// </summary>
     void AttachHdArt() const;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: what a mission can make): has HD art's readers read every frame of every crater's
+    /// and footprint's shape (MCHdArt::ReadShapeTableAhead) as <paramref name="as"/>' reads; returns the shapes asked.
+    /// </summary>
+    size_t ReadAhead(MCHdArt::ReadAs as) const;
 
 private:
     /// <summary>The slots.</summary>

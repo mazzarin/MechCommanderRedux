@@ -156,6 +156,15 @@ public:
     /// <summary>Port-only: keeps <paramref name="shape"/>, loaded with others', as packet <paramref name="packet"/>'s.</summary>
     void KeepShape(uint32_t packet, const std::shared_ptr<MCShape>& shape);
 
+    /// <summary>Port-only: the shapes the type holds in its slots now (MakeShapeList's), each packet's once.</summary>
+    std::vector<std::shared_ptr<MCShape>> ShapesHeld() const;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: what a mission can make): has HD art's readers read every frame of the shapes the
+    /// type holds (ShapesHeld; MCHdArt::ReadShapeTableAhead) as <paramref name="as"/>' reads; returns the shapes asked.
+    /// </summary>
+    size_t ReadShapesAhead(MCHdArt::ReadAs as) const;
+
     /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): while one lives, the types' shape lookups (GetShape,
     /// GetGesture: PacketShape) load nothing: each has HD art's readers read the packet it would load whole instead

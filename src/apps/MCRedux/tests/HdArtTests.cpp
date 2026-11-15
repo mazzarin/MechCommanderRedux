@@ -10,6 +10,9 @@
 #include "TestGame.h"
 #include "ai/MCMoveGeometry.h"
 #include "ai/MCMoveSystem.h"
+#include "object/MCObjectTypeManager.h"
+#include "ai/MCMovePath.h"
+#include "ai/MCMovePathManager.h"
 #include "ai/MCScenarioMap.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceType.h"
@@ -549,61 +552,59 @@ namespace
     }
 
     /// <summary>
-    /// Puts <paramref name="pack"/>'s loose mech frames (a PNG pair a frame at <paramref name="scale"/>, as WritePack
-    /// writes them) in archives as a player's pack holds them: <c>mechs/&lt;part PAK&gt;/&lt;mech&gt;.hda</c>, an entry
-    /// <c>&lt;packet&gt;\&lt;frame&gt;.hdf</c> a frame. HD art's readers read ahead only what an archive holds.
+    /// Puts <paramref name="pack"/>'s loose frames (a PNG pair a frame at <paramref name="scale"/>, as WritePack writes
+    /// them) in archives as a player's pack holds them: each folder of frames an entry of its parent's archive,
+    /// <c>&lt;parent&gt;.hda</c> holding <c>&lt;folder&gt;\&lt;frame&gt;.hdf</c> (a mech's packets in its PAK's
+    /// archive, <c>shapes/&lt;hash&gt;</c> in <c>shapes.hda</c>). HD art's readers read ahead only what an archive holds.
     /// </summary>
-    void ArchiveMechFrames(const std::filesystem::path& pack, int32_t scale)
+    void ArchiveFrames(const std::filesystem::path& pack, int32_t scale)
     {
         constexpr std::string_view IndexSuffix = "_idx";
+        std::map<std::filesystem::path, std::vector<MCTestArchive::ArchiveEntry>> archives;
+        std::vector<std::filesystem::path> folders;
 
-        for (const std::filesystem::directory_entry& part : std::filesystem::directory_iterator(pack / "mechs"))
+        for (const std::filesystem::directory_entry& file : std::filesystem::recursive_directory_iterator(pack))
         {
-            std::vector<std::filesystem::path> mechs;
+            const std::string stem = MCFileSystem::ToUtf8(file.path().stem());
 
-            for (const std::filesystem::directory_entry& mech : std::filesystem::directory_iterator(part.path()))
+            if (!file.is_regular_file() || file.path().extension() != ".png" || stem.ends_with(IndexSuffix))
             {
-                if (mech.is_directory())
-                {
-                    mechs.push_back(mech.path());
-                }
+                continue;
             }
 
-            for (const std::filesystem::path& mech : mechs)
+            const std::filesystem::path folder = file.path().parent_path();
+            const std::expected<MCHdArt::Frame, std::string> frame =
+                MCHdArt::FrameFromPngs(file.path(), folder / (stem + std::string(IndexSuffix) + ".png"), scale);
+
+            if (!frame.has_value())
             {
-                std::vector<MCTestArchive::ArchiveEntry> entries;
-
-                for (const std::filesystem::directory_entry& packet : std::filesystem::directory_iterator(mech))
-                {
-                    for (const std::filesystem::directory_entry& file :
-                         std::filesystem::directory_iterator(packet.path()))
-                    {
-                        const std::string stem = MCFileSystem::ToUtf8(file.path().stem());
-
-                        if (file.path().extension() != ".png" || stem.ends_with(IndexSuffix))
-                        {
-                            continue;
-                        }
-
-                        const std::expected<MCHdArt::Frame, std::string> frame = MCHdArt::FrameFromPngs(
-                            file.path(), file.path().parent_path() / (stem + std::string(IndexSuffix) + ".png"), scale);
-
-                        if (!frame.has_value())
-                        {
-                            MCTest::Scope scope(frame.error());
-                            REQUIRE(false);
-                        }
-
-                        entries.push_back(
-                            MCTestArchive::Raw(MCFileSystem::ToUtf8(packet.path().filename()) + "\\" + stem + ".hdf",
-                                               MCHdArt::EncodeHdf(*frame)));
-                    }
-                }
-
-                MCTestArchive::WriteBytes(std::filesystem::path(mech).concat(".hda"),
-                                          MCTestArchive::BuildArchive(entries));
-                std::filesystem::remove_all(mech);
+                MCTest::Scope scope(frame.error());
+                REQUIRE(false);
             }
+
+            archives[folder.parent_path()].push_back(MCTestArchive::Raw(
+                MCFileSystem::ToUtf8(folder.filename()) + "\\" + stem + ".hdf", MCHdArt::EncodeHdf(*frame)));
+
+            if (std::ranges::find(folders, folder) == folders.end())
+            {
+                folders.push_back(folder);
+            }
+        }
+
+        for (const std::filesystem::path& folder : folders)
+        {
+            std::filesystem::remove_all(folder);
+        }
+
+        for (const auto& [parent, entries] : archives)
+        {
+            if (std::filesystem::is_empty(parent))
+            {
+                std::filesystem::remove(parent);
+            }
+
+            MCTestArchive::WriteBytes(std::filesystem::path(parent).concat(".hda"),
+                                      MCTestArchive::BuildArchive(entries));
         }
     }
 
@@ -2255,6 +2256,50 @@ namespace
         MCHdArtOn& operator=(const MCHdArtOn&) = delete;
     };
 
+    /// <summary>Port-only: the HD frames' first uses since it was made (or Again), by kind (MCHdArt::FirstUse).</summary>
+    class FirstUsesSince
+    {
+    public:
+        FirstUsesSince() { Again(); }
+
+        void Again()
+        {
+            for (size_t kind = 0; kind < _Before.size(); ++kind)
+            {
+                _Before[kind] = MCHdArt::FirstUses(static_cast<MCHdArt::FirstUse>(kind));
+            }
+        }
+
+        size_t Added(MCHdArt::FirstUse use) const { return MCHdArt::FirstUses(use) - _Before[std::to_underlying(use)]; }
+
+        /// <summary>
+        /// The frames first used: read on the game's thread (never asked, asked too late, waited on, let go after read
+        /// ahead) or taken as read ahead; every kind but a look the pack has nothing for.
+        /// </summary>
+        size_t Used() const
+        {
+            return Added(MCHdArt::FirstUse::NeverAsked) + Added(MCHdArt::FirstUse::AskedTooLate) +
+                   Added(MCHdArt::FirstUse::WaitedOn) + Added(MCHdArt::FirstUse::LetGo) +
+                   Added(MCHdArt::FirstUse::TakenAhead);
+        }
+
+    private:
+        std::array<size_t, MCHdArt::FirstUseKinds> _Before{};
+    };
+
+    /// <summary>
+    /// Port-only: a frame of <paramref name="scene"/> drawn with HD art's readers held, so that only what was read before
+    /// it is in hand (the frame's own asks, the camera's surroundings', wait); whether it drew HD art.
+    /// </summary>
+    bool DrawnHeld(const HdScene& scene)
+    {
+        const int64_t drawnBefore = scene.Renderer->HdDrawn();
+        MCHdArt::HoldReads(true);
+        MCTestGame::RunFrame(FrameSeconds);
+        MCHdArt::HoldReads(false);
+        return scene.Renderer->HdDrawn() > drawnBefore;
+    }
+
     /// <summary>
     /// A pack with no frames (only palette.rgb), so with HD art on everything is drawn from the original's pixels (lines
     /// and ellipses drawn smooth); under the tests' scratch folder <paramref name="name"/>.
@@ -2369,70 +2414,174 @@ TEST_CASE_ISOLATED("hd art: a mech's first frames asked at the load or as it's p
     }
 
     SingleStepMode = 1;
-    ArchiveMechFrames(scene->Pack, TestPackScale);
+    ArchiveFrames(scene->Pack, TestPackScale);
     const MCHdArtOn hdArt(scene->Pack);
     // The pack set again: nothing asked or read ahead (attaching HD art to the shapes loaded asked their frames).
     MCHdArt::SetPackFolder(scene->Pack);
-    std::array<size_t, MCHdArt::FirstUseKinds> before{};
-
-    // The first uses read on the game's thread since before was taken (never asked, asked too late, waited on), and
-    // those taken as read ahead.
-    const auto since = [&]
-    {
-        for (size_t kind = 0; kind < before.size(); ++kind)
-        {
-            before[kind] = MCHdArt::FirstUses(static_cast<MCHdArt::FirstUse>(kind));
-        }
-    };
-
-    const auto added = [&](MCHdArt::FirstUse use) { return MCHdArt::FirstUses(use) - before[std::to_underlying(use)]; };
-    // The first uses of the mech's frames there are (the rest of the pack has none): read on the game's thread (never
-    // asked, asked too late, waited on, let go after read ahead) or taken as read ahead.
-    const auto firstUsed = [&]
-    {
-        return added(MCHdArt::FirstUse::NeverAsked) + added(MCHdArt::FirstUse::AskedTooLate) +
-               added(MCHdArt::FirstUse::WaitedOn) + added(MCHdArt::FirstUse::LetGo) +
-               added(MCHdArt::FirstUse::TakenAhead);
-    };
-
-    // A frame drawn with the readers held, so that only what was read before it is in hand (the frame's own asks, the
-    // camera's surroundings', wait), and whether it drew HD art.
-    const auto drawn = [&]
-    {
-        const int64_t drawnBefore = scene->Renderer->HdDrawn();
-        MCHdArt::HoldReads(true);
-        MCTestGame::RunFrame(FrameSeconds);
-        MCHdArt::HoldReads(false);
-        return scene->Renderer->HdDrawn() > drawnBefore;
-    };
+    FirstUsesSince uses;
 
     {
         MCTest::Scope scope("asked as the load asks");
-        since();
+        uses.Again();
         // Turned before anything draws it there, so only the load's asks have its frames there in hand.
         MCTestGame::FaceMech(*scene->Player.Mech, 135.0f);
         Scenario()->ReadPartsAhead();
         MCHdArt::WaitForLoadReads();
-        CHECK(drawn());
-        CHECK_EQ(firstUsed(), size_t{0});
+        CHECK(DrawnHeld(*scene));
+        CHECK_EQ(uses.Used(), size_t{0});
     }
 
     {
         MCTest::Scope scope("turned to a facing nothing asked for");
-        since();
+        uses.Again();
         MCTestGame::FaceMech(*scene->Player.Mech, 180.0f);
-        CHECK(drawn());
-        CHECK(firstUsed() > 0);
+        CHECK(DrawnHeld(*scene));
+        CHECK(uses.Used() > 0);
     }
 
     {
         MCTest::Scope scope("turned and asked as a unit placed in play asks");
-        since();
+        uses.Again();
         MCTestGame::FaceMech(*scene->Player.Mech, 45.0f);
         MCReadMechAhead(*scene->Player.Mech, MCHdArt::ReadAs::Soon);
         MCHdArt::WaitForReadAhead();
-        CHECK(drawn());
-        CHECK_EQ(firstUsed(), size_t{0});
+        CHECK(DrawnHeld(*scene));
+        CHECK_EQ(uses.Used(), size_t{0});
+    }
+
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
+    /// <summary>The upper body's combat gestures (MCMechActor's): the gun raised, and held up.</summary>
+    constexpr int32_t CombatChangeGesture = 0x1b;
+    constexpr int32_t CombatGesture = 0x1a;
+    /// <summary>How far from the mech the tests' targets and move goals lie, in world units.</summary>
+    constexpr float IntentDistance = 200.0f;
+    /// <summary>The path manager's updates a move order's path is made within.</summary>
+    constexpr int32_t PathUpdates = 8;
+
+    /// <summary>
+    /// The first point <see cref="IntentDistance"/> from <paramref name="mech"/>, of those round it 5 degrees apart, whose
+    /// facing from the mech's (MCMover::RelFacingTo) lies in [<paramref name="least"/>, <paramref name="most"/>].
+    /// </summary>
+    std::optional<MCVector3D> PointTurned(MCBattleMech& mech, float least, float most)
+    {
+        constexpr int32_t Step = 5;
+        constexpr int32_t Turn = 360;
+        const MCVector3D at = mech.GetPosition();
+
+        for (int32_t degrees = 0; degrees < Turn; degrees += Step)
+        {
+            const double radians = degrees * std::numbers::pi / (Turn / 2);
+            const MCVector3D point(at.X + IntentDistance * static_cast<float>(std::cos(radians)),
+                                   at.Y + IntentDistance * static_cast<float>(std::sin(radians)), at.Z);
+
+            if (const float turn = mech.RelFacingTo(point, -1); turn >= least && turn <= most)
+            {
+                return point;
+            }
+        }
+
+        return std::nullopt;
+    }
+}
+
+/// <summary>
+/// Port-only (HD art, SPEC-first-use.md: a unit's first frames, by intent): a mech taking a target
+/// (MCMechWarrior::SetLastTarget) has its firing pose asked at the facing its torso turns to toward it, and a mech whose
+/// move order's path is made (MCMovePathManager) has its move's first gesture asked at the path's heading
+/// (MCPathHeading), each before it turns: drawn there, its frames are kept as the frame starts and none is first used
+/// (each frame drawn with the readers held). The pack also holds the combat gestures and the move's first gesture from a
+/// stand, archived.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "hd art: a mech's firing pose toward its target and its move toward its path's heading are read before it turns")
+{
+    const std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCBattleMech& mech = *scene->Player.Mech;
+    MCMechActor& actor = *scene->Player.Actor;
+    // Faced so that the facings of its aim and its move, and those either side, mirror none of one another.
+    constexpr float Facing = 60.0f;
+    MCTestGame::FaceMech(mech, Facing);
+    const int32_t moveFirst =
+        MCStopTransition(*scene->Player.Tree, MCStopState::Walk, actor.CurrentStateGesture, 0, MCMechBrakingInForce());
+    REQUIRE(moveFirst >= 0);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+
+    for (const int32_t gesture : {CombatChangeGesture, CombatGesture, moveFirst})
+    {
+        WritePack(scene->Pack, MechSequences(scene->Player.Tree, gesture), colors, TestPackScale, Inverted);
+    }
+
+    ArchiveFrames(scene->Pack, TestPackScale);
+    const MCHdArtOn hdArt(scene->Pack);
+    // The pack set again: nothing asked or read ahead (attaching HD art to the shapes loaded asked their frames).
+    MCHdArt::SetPackFolder(scene->Pack);
+    const std::shared_ptr<MCMechWarrior> pilot = mech.GetPilot();
+    REQUIRE(pilot != nullptr);
+    FirstUsesSince uses;
+
+    {
+        MCTest::Scope scope("a target taken");
+        constexpr float LeastAim = 30.0f;
+        constexpr float MostAim = 50.0f;
+        const std::optional<MCVector3D> point = PointTurned(mech, LeastAim, MostAim);
+        REQUIRE(point.has_value());
+        const std::shared_ptr<MCMover> target = GetMoverFromPartId(PlayerMechPartId + 1);
+        REQUIRE(target != nullptr);
+        MCVector3D place = *point;
+        target->SetPosition(place);
+        pilot->SetCurrentTarget(nullptr);
+        uses.Again();
+        pilot->SetCurrentTarget(target);
+        MCHdArt::WaitForReadAhead();
+        // The torso turned to it as UpdateTorso turns it, the gun up.
+        mech.TorsoRotation = -mech.RelFacingTo(*point, -1);
+        actor.InCombatMode = true;
+        CHECK(DrawnHeld(*scene));
+        CHECK_EQ(uses.Used(), size_t{0});
+    }
+
+    {
+        MCTest::Scope scope("a move's path made");
+        actor.InCombatMode = false;
+        mech.TorsoRotation = 0.0f;
+        pilot->SetCurrentTarget(nullptr);
+        constexpr float LeastTurn = -140.0f;
+        constexpr float MostTurn = -100.0f;
+        const std::optional<MCVector3D> goal = PointTurned(mech, LeastTurn, MostTurn);
+        REQUIRE(goal.has_value());
+        uses.Again();
+        // The pilot's own move order, which asks for its path at once (a tactical order waits for the pilot's update).
+        constexpr int32_t NoSelection = -1;
+        pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player, *goal, NoSelection, 0);
+
+        for (int32_t update = 0; update < PathUpdates; ++update)
+        {
+            PathManager().Update();
+        }
+
+        const std::optional<MCVector3D> heading = MCPathHeading(*pilot->MoveOrders.Path[0]);
+        REQUIRE(heading.has_value());
+        constexpr float LeastPathTurn = 60.0f;
+        CHECK(std::abs(mech.RelFacingTo(*heading, -1)) > LeastPathTurn);
+        MCHdArt::WaitForReadAhead();
+        // Turned to its path's heading, its move begun.
+        MCStaging::FaceMechTo(mech, *heading);
+        actor.CurrentGesture = moveFirst;
+        actor.CurrentFrame = {};
+        CHECK(DrawnHeld(*scene));
+        CHECK_EQ(uses.Used(), size_t{0});
     }
 
     std::filesystem::remove_all(scene->Scratch);
@@ -18638,5 +18787,120 @@ TEST_CASE_ISOLATED("game: a mech's legs turning cast their turn middle's sun sha
     GHdSunShadows = 0;
     GamePaused = false;
     hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only (HD art, SPEC-first-use.md: what a mission can make): after a mission's load, an effect its types can make
+/// (an explosion, its frames found by its table's hash) and a wreck (in the folder its shapes are attached to) are asked
+/// as sets (MCScenario::ReadMadeAhead) and kept, so their first draws first use none.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "hd art: a mission's load reads its effects' and wrecks' frames as sets, so their first draws read none")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+
+    // The first shape the load kept of type typeNum's appearance.
+    const auto heldOf = [](int32_t typeNum) -> std::shared_ptr<MCShape>
+    {
+        const std::span<const std::shared_ptr<MCObjectType>> types = ObjectTypeManager().Types();
+        const auto type = std::ranges::find_if(types, [&](const auto& candidate)
+                                               { return candidate != nullptr && candidate->ObjTypeNum == typeNum; });
+
+        if (type == types.end())
+        {
+            return nullptr;
+        }
+
+        const std::span<const std::shared_ptr<MCAppearanceType>> listed = AppearanceTypeList().Types();
+        const auto appearance = std::ranges::find(listed, (*type)->AppearName, &MCAppearanceType::AppearanceNum);
+
+        if (appearance == listed.end())
+        {
+            return nullptr;
+        }
+
+        const std::vector<std::shared_ptr<MCShape>> held = (*appearance)->ShapesHeld();
+        return held.empty() ? nullptr : held.front();
+    };
+
+    std::shared_ptr<MCShape> effect;
+    std::shared_ptr<MCShape> wreck;
+
+    for (const std::shared_ptr<MCObjectType>& type : ObjectTypeManager().Types())
+    {
+        if (type != nullptr && effect == nullptr && type->ExplosionObject > 0)
+        {
+            effect = heldOf(type->ExplosionObject);
+        }
+
+        if (type != nullptr && wreck == nullptr && type->DestroyedObject > 0)
+        {
+            wreck = heldOf(type->DestroyedObject);
+        }
+    }
+
+    REQUIRE(effect != nullptr);
+    REQUIRE(wreck != nullptr);
+    REQUIRE(!wreck->HdFolder.empty());
+
+    // The pack: the effect's frames by its table's hash, the wreck's in its own folder.
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_made_pack";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    std::vector<Sequence> sequences;
+
+    for (const auto& [shape, byHash] : {std::pair{effect, true}, std::pair{wreck, false}})
+    {
+        std::optional<LooseTable> loose = MakeLooseTable(shape->FrameList(), "test");
+        REQUIRE(loose.has_value());
+
+        if (!byHash)
+        {
+            loose->Frames.Folder = shape->HdFolder;
+        }
+
+        sequences.push_back(std::move(loose->Frames));
+    }
+
+    WritePack(pack, sequences, colors, TestPackScale, Inverted);
+    WritePaletteRgb(pack, colors);
+    ArchiveFrames(pack, TestPackScale);
+    const MCHdArtOn hdArt(pack);
+    // As the load ties a shape it loads with HD art on (MCSpriteManager::TieShape).
+    MCHdArt::AttachFolder(wreck);
+    REQUIRE(MCHdArt::AttachedFolder(wreck->FrameList()).has_value());
+    FirstUsesSince uses;
+    MCScenario::ReadMadeAhead();
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    size_t found = 0;
+
+    for (const auto& [shape, byHash] : {std::pair{effect, true}, std::pair{wreck, false}})
+    {
+        const std::span<const uint8_t> table = shape->FrameList();
+        const int32_t count = VfxShapeCount(table);
+
+        for (int32_t frame = 0; frame < count; ++frame)
+        {
+            const int32_t size = VfxShapeResolution(table, frame);
+            const int32_t width = size >> 16;
+            const int32_t height = size & 0xffff;
+            const std::shared_ptr<const MCHdArt::Frame> hd =
+                byHash ? MCHdArt::FindShape(MCHdArt::ShapeTableHash(table), frame, width, height, 0, count)
+                       : MCHdArt::Find(table, frame, width, height);
+            found += hd != nullptr ? 1 : 0;
+        }
+    }
+
+    CHECK(found > 0);
+    CHECK_EQ(uses.Used(), size_t{0});
     std::filesystem::remove_all(scratch);
 }

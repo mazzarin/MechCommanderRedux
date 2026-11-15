@@ -1,6 +1,9 @@
 #pragma once
 
+#include "lib/MCVector3D.h"
+
 class MCMechWarrior;
+class MCMovePath;
 
 /// <summary>A queued path request of <see cref="MCMovePathManager"/>.</summary>
 /// <remarks>Original: <c>struct _PathQueueRec</c>; the queue links went with the pool.</remarks>
@@ -46,3 +49,10 @@ private:
     /// <summary>The requests, highest priority first. A list, so a pilot's pointer to its request stays valid.</summary>
     std::list<std::shared_ptr<MCPathQueueRec>> _Queue;
 };
+
+/// <summary>
+/// Port-only (HD art, SPEC-first-use.md: a unit's first frames, by intent): the point <paramref name="path"/> heads for
+/// first, a couple of steps past its current one (its first steps may step aside round a corner); none while it has no
+/// steps.
+/// </summary>
+std::optional<MCVector3D> MCPathHeading(const MCMovePath& path);

@@ -103,6 +103,17 @@ namespace
     /// <summary>Port-only: the frame log's part for an archive looked for or opened by the game's thread (ArchiveFor).</summary>
     constexpr std::string_view FrameLogOpen = "hd.open";
     constexpr std::string_view FrameLogReads = "HD frames first used";
+    /// <summary>
+    /// Port-only: the frame log's counts of those first uses by how they found the readers (MCHdArt::FirstUse, in its
+    /// order).
+    /// </summary>
+    constexpr std::array<std::string_view, MCHdArt::FirstUseKinds> FrameLogFirstUses{
+        "HD frames first used, never asked",
+        "HD frames first used, asked too late",
+        "HD frames first used, waited on",
+        "HD frames first used, taken as read ahead",
+        "HD frames first used, let go after read ahead",
+        "HD frames first used, not in the pack"};
     /// <summary>Port-only: the frame log's count of the readers' reads of the archives (MCHdArt::ReaderReads).</summary>
     constexpr std::string_view FrameLogReaderReads = "HD reads by the readers";
 
@@ -444,6 +455,14 @@ namespace
         std::list<FrameKey> Order;
         size_t Bytes = 0;
         /// <summary>
+        /// Port-only (MCHdArt::FirstUse): the frames of the reads waiting, with how many reads each; and every frame made
+        /// a read since the pack was set.
+        /// </summary>
+        std::unordered_map<FrameKey, uint32_t, FrameKeyHash> WaitingKeys;
+        std::unordered_set<FrameKey, FrameKeyHash> MadeReads;
+        /// <summary>Port-only (MCHdArt::FirstUse): the asks a reader is making reads of now (ExpandAsks).</summary>
+        std::vector<std::reference_wrapper<const AskBatch>> Expanding;
+        /// <summary>
         /// Port-only: the pictures read ahead (Follow::Entries), kept apart from Ready (MCHdArt::ReadPicturesAhead
         /// bounds them, not MaxAheadBytes) until the game's thread keeps them (MCHdArt::KeepReadAhead) or a draw
         /// takes one; and those asked for and not read yet.
@@ -513,6 +532,8 @@ namespace
         size_t Read = 0;
         /// <summary>How many of those the reading thread read (ReadAhead).</summary>
         size_t TakenAhead = 0;
+        /// <summary>Port-only: the frames' first uses by how they found the readers (MCHdArt::FirstUse).</summary>
+        std::array<size_t, MCHdArt::FirstUseKinds> FirstUses{};
         /// <summary>Port-only: the readers' reads (ReadAhead::ArchiveReads) the frame log has counted.</summary>
         size_t ReaderReadsLogged = 0;
         /// <summary>Port-only: the archives taken open from the readers (MCHdArt::OpenArchivesAhead).</summary>
@@ -1755,6 +1776,9 @@ namespace
     void AddWaiting(ReadAhead& ahead, AheadKind kind, AheadRead&& read)
     {
         TraceAsked(read, kind);
+        const FrameKey key = KeyOf(read);
+        ++ahead.WaitingKeys[key];
+        ahead.MadeReads.insert(key);
         const uint64_t number = ahead.ReadNumbers++;
         std::multimap<int64_t, uint64_t>& index = ahead.ByOffset[read.From->Archive];
         const auto place = index.emplace(EntryOf(read).Offset, number);
@@ -1780,6 +1804,13 @@ namespace
         WaitingRead waiting = std::move(found->second);
         ahead.Waiting.erase(found);
         ahead.ByOffset.at(waiting.Read.From->Archive).erase(waiting.Place);
+
+        if (const auto keyed = ahead.WaitingKeys.find(KeyOf(waiting.Read));
+            keyed != ahead.WaitingKeys.end() && --keyed->second == 0)
+        {
+            ahead.WaitingKeys.erase(keyed);
+        }
+
         --ahead.WaitingOfKind[std::to_underlying(waiting.Kind)];
         return waiting;
     }
@@ -1804,6 +1835,7 @@ namespace
         ahead.Waiting.clear();
         ahead.WaitingOfKind.fill(0);
         ahead.ByOffset.clear();
+        ahead.WaitingKeys.clear();
     }
 
     /// <summary>
@@ -2300,6 +2332,7 @@ namespace
     /// </summary>
     void ExpandAsks(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, AskBatch&& batch)
     {
+        ahead.Expanding.emplace_back(batch);
         lock.unlock();
 
         struct Found
@@ -2417,6 +2450,7 @@ namespace
             TheState().AskAgain = true;
         }
 
+        std::erase_if(ahead.Expanding, [&](const AskBatch& expanding) { return &expanding == &batch; });
         ahead.LoadAsks -= batch.Kind == AheadKind::Load ? 1 : 0;
         ahead.Changed.notify_all();
     }
@@ -2515,15 +2549,58 @@ namespace
     }
 
     /// <summary>
-    /// The frame <paramref name="key"/> if the reading thread read it ahead (waiting while it reads it), taken from it;
-    /// null when it didn't, and then it never will: the game's thread looks at it now.
+    /// Port-only (MCHdArt::FirstUse): whether frame <paramref name="key"/> is asked for and not read yet: a read of it
+    /// waiting, or in an ask or a follow no reader has made reads of yet (or is making them of now). Call with
+    /// ReadAhead::Lock held.
     /// </summary>
-    std::shared_ptr<MCHdArt::Frame> TakeAhead(const FrameKey& key)
+    bool AskedStill(const ReadAhead& ahead, const FrameKey& key)
+    {
+        if (ahead.WaitingKeys.contains(key))
+        {
+            return true;
+        }
+
+        const uint64_t frame = key.Name & FrameNumberMask;
+        const auto asks = [&](const AskBatch& batch)
+        {
+            return std::ranges::any_of(batch.Asks,
+                                       [&](const AheadAsk& ask)
+                                       {
+                                           return batch.Follows[ask.From]->Key.Folder == key.Folder &&
+                                                  (ask.Name == key.Name || (ask.Steps && ask.Name == frame));
+                                       });
+        };
+
+        if (std::ranges::any_of(ahead.Asks, asks) || std::ranges::any_of(ahead.Expanding, asks))
+        {
+            return true;
+        }
+
+        // A follow reads the frames drawn after its own, or (Itself) its own.
+        return std::ranges::any_of(
+            ahead.Follows,
+            [&](const Follow& follow)
+            {
+                const uint64_t from = follow.Key.Name & FrameNumberMask;
+                return follow.Key.Folder == key.Folder &&
+                       (follow.Itself ? frame == from
+                                      : frame > from && frame < static_cast<uint64_t>(std::max(follow.Frames, 0)));
+            });
+    }
+
+    /// <summary>
+    /// The frame <paramref name="key"/> if the reading thread read it ahead (waiting while it reads it), taken from it;
+    /// null when it didn't, and then it never will: the game's thread looks at it now. <paramref name="use"/> says how
+    /// the readers had it (MCHdArt::FirstUse).
+    /// </summary>
+    std::shared_ptr<MCHdArt::Frame> TakeAhead(const FrameKey& key, MCHdArt::FirstUse& use)
     {
         ReadAhead& ahead = TheState().Ahead;
         std::unique_lock lock(ahead.Lock);
+        const bool reading = ahead.Reading.contains(key);
         ahead.Changed.wait(lock, [&] { return !ahead.Reading.contains(key); });
         ahead.Known.insert(key);
+        use = reading ? MCHdArt::FirstUse::WaitedOn : MCHdArt::FirstUse::TakenAhead;
 
         // Port-only: a picture read ahead, not kept yet (MCHdArt::KeepReadAhead).
         if (const auto picture = ahead.Pictures.find(key); picture != ahead.Pictures.end())
@@ -2537,6 +2614,10 @@ namespace
 
         if (found == ahead.Ready.end())
         {
+            use = reading                         ? MCHdArt::FirstUse::WaitedOn
+                  : AskedStill(ahead, key)        ? MCHdArt::FirstUse::AskedTooLate
+                  : ahead.MadeReads.contains(key) ? MCHdArt::FirstUse::LetGo
+                                                  : MCHdArt::FirstUse::NeverAsked;
             return nullptr;
         }
 
@@ -2566,6 +2647,7 @@ namespace
         ahead.Bytes = 0;
         ahead.Pictures.clear();
         ahead.PicturesAsked.clear();
+        ahead.MadeReads.clear();
 
         // The archives to open; those being opened stay waited on (Opening) until their opens end, dropped then.
         for (const ArchiveOpen& open : ahead.Opens)
@@ -2623,9 +2705,10 @@ namespace
     /// any, as MCHdArt::DecodeHdf takes them), else read now.
     /// </summary>
     std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadOrTake(const FrameKey& key, int32_t width,
-                                                                                 int32_t height, uint64_t id)
+                                                                                 int32_t height, uint64_t id,
+                                                                                 MCHdArt::FirstUse& use)
     {
-        if (std::shared_ptr<MCHdArt::Frame> ahead = TakeAhead(key);
+        if (std::shared_ptr<MCHdArt::Frame> ahead = TakeAhead(key, use);
             ahead != nullptr &&
             ((width == 0 && height == 0) || (ahead->OriginalWidth() == width && ahead->OriginalHeight() == height)))
         {
@@ -2753,11 +2836,21 @@ namespace
             // Port-only: a frame's first use reads it here, as the frame draws, unless read ahead (the frame log's).
             MCFrameLog::Count(FrameLogReads);
             const size_t taken = state.TakenAhead;
+            MCHdArt::FirstUse use = MCHdArt::FirstUse::NeverAsked;
             auto read = [&]
             {
                 const MCFrameLog::Scope part(FrameLogRead);
-                return ReadOrTake(key, width, height, cached.Id);
+                return ReadOrTake(key, width, height, cached.Id, use);
             }();
+
+            // Read, not taken, and the pack hasn't it: a look, nothing to read.
+            if (state.TakenAhead == taken && read.has_value() && *read == nullptr)
+            {
+                use = MCHdArt::FirstUse::Lacked;
+            }
+
+            ++state.FirstUses[std::to_underlying(use)];
+            MCFrameLog::Count(FrameLogFirstUses[std::to_underlying(use)]);
             const std::chrono::nanoseconds spent = std::chrono::steady_clock::now() - started;
             state.ReadTime += spent;
             TraceUse(key,
@@ -3716,6 +3809,8 @@ namespace
         {
             case MCHdArt::ReadAs::Load:
                 return AheadKind::Load;
+            case MCHdArt::ReadAs::Next:
+                return AheadKind::Next;
             case MCHdArt::ReadAs::Soon:
                 return AheadKind::Soon;
             case MCHdArt::ReadAs::Set:
@@ -4240,6 +4335,16 @@ bool MCHdArt::MCAskedPackets::Ask(uint64_t packet)
 size_t MCHdArt::FramesReadAhead()
 {
     return TheState().TakenAhead;
+}
+
+size_t MCHdArt::FirstUses(FirstUse use)
+{
+    return TheState().FirstUses[std::to_underlying(use)];
+}
+
+std::string_view MCHdArt::FirstUseCount(FirstUse use)
+{
+    return FrameLogFirstUses[std::to_underlying(use)];
 }
 
 size_t MCHdArt::NeighboursReadAhead()

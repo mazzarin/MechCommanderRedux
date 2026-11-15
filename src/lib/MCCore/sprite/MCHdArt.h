@@ -309,16 +309,35 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only (SPEC-first-use.md): what reads ahead are for: a load's, which it waits for
-    /// (<see cref="WaitForLoadReads"/>); what the camera's surroundings draw soon (a unit's packets now and next), read
-    /// after the frames drawn next; or a set's, read when nothing else is. Those but a load's within the cache's room for
-    /// the sets.
+    /// (<see cref="WaitForLoadReads"/>); what is drawn next (a unit set down where it may show at once), read with the
+    /// frames drawn after a first draw; what the camera's surroundings draw soon (a unit's packets now and next), read
+    /// after those; or a set's, read when nothing else is. Those but a load's within the cache's room for the sets.
     /// </summary>
     enum class ReadAs : uint8_t
     {
         Load,
+        Next,
         Soon,
         Set,
     };
+
+    /// <summary>
+    /// Port-only (the frame log, SPEC-first-use.md): how an HD frame's first use found the readers, so a frame read on
+    /// the game's thread says why it came late: never asked for; asked for, its read not made or waiting still; waited
+    /// for, a reader reading it; taken as read ahead (in time); read ahead and let go before its draw (for room); or not
+    /// in the pack (nothing to read: a draw of the original's art, an in-between or turn middle the pack hasn't).
+    /// </summary>
+    enum class FirstUse : uint8_t
+    {
+        NeverAsked,
+        AskedTooLate,
+        WaitedOn,
+        TakenAhead,
+        LetGo,
+        Lacked,
+    };
+
+    constexpr size_t FirstUseKinds = 6;
 
     /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): a packet to read ahead whole: the pack's numbered folder
@@ -657,6 +676,15 @@ namespace MCHdArt
 
     /// <summary>Port-only: how many of the frames read the reading thread read ahead.</summary>
     size_t FramesReadAhead();
+
+    /// <summary>
+    /// Port-only: how many frames' first uses found the readers as <paramref name="use"/> says (the frame log counts
+    /// each, as "HD frames first used" counts them all).
+    /// </summary>
+    size_t FirstUses(FirstUse use);
+
+    /// <summary>Port-only: the frame log's count of the first uses that found the readers as <paramref name="use"/> says.</summary>
+    std::string_view FirstUseCount(FirstUse use);
 
     /// <summary>Port-only: how many frames the reading thread has read as a neighbour's in a turn (<see cref="SetNeighbours"/>).</summary>
     size_t NeighboursReadAhead();

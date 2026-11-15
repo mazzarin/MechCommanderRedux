@@ -26,6 +26,7 @@
 #include "object/MCTrainManager.h"
 #include "platform/MCFrameLog.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCMechActor.h"
 #include "terrain/MCTerrain.h"
 
 float ActualTime = 0.0f;
@@ -381,6 +382,8 @@ auto MCScenario::CreateScenarioObject(int32_t partId) -> void
     gameObject->SetPotentialContact(object->ObjectClass == MCObjectClass::Elemental ? 2 : 1);
     GameObjectMap().AddObject(*gameObject);
     gameObject->SetExists(1);
+    // Port-only (HD art, SPEC-first-use.md): its first frames read as it comes into play, not once it nears the view.
+    MCReadMechAhead(*gameObject, MCHdArt::ReadAs::Soon);
 
     if (const auto created = std::ranges::find(CreatedParts, object->PartId, &MCCreatedPart::PartId);
         created != CreatedParts.end())

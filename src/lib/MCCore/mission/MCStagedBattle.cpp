@@ -25,6 +25,7 @@
 #include "object/MCObjectSystem.h"
 #include "object/MCSensorSystem.h"
 #include "object/MCTeam.h"
+#include "sprite/MCMechActor.h"
 #include "sprite/MCWeather.h"
 #include "sprite/MCWeatherPace.h"
 #include "terrain/MCTerrain.h"
@@ -781,6 +782,8 @@ volley 2545:5
                 mech.TorsoRotation = 0.0f;
                 mech.LeftArmRotation = 0.0f;
                 mech.RightArmRotation = 0.0f;
+                // Its first frames at its new facing read ahead of its first draw: at once on a cut, which shows it.
+                MCReadMechAhead(mech, cut ? MCHdArt::ReadAs::Next : MCHdArt::ReadAs::Soon);
             }
 
             Engage(*enemy, mover, NooseMeters, SecondOrders);
@@ -2452,6 +2455,8 @@ struct MCStagedBattle::MCState
                 MCVector3D place = Where(std::min(contactEdge * ContactFrom, sensors));
                 contactMech->SetPosition(place);
                 WalkTo(*contactMech, stand, MCOrderOrigin::Commander);
+                // Its first frames read ahead of its first draw.
+                MCReadMechAhead(*contactMech, MCHdArt::ReadAs::Soon);
                 contactInSight = Where(contactEdge * ContactStop);
                 const MCVector3D front = NearestOfForce(lance, stand).first->GetPosition();
                 watchAt = MCVector3D(front.X + (stand.X - front.X) * WatchShare,

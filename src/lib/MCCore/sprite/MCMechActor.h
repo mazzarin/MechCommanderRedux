@@ -136,6 +136,13 @@ public:
     /// </summary>
     void ReadAhead() override;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: a unit's first frames): <see cref="ReadAhead()"/> with the packets drawn now asked
+    /// as <paramref name="now"/>: at a mission's load as the load's (which it waits for), as a mech is set down where it
+    /// may show at once as the frames drawn next; those a move or combat mode comes to still as sets.
+    /// </summary>
+    void ReadAhead(MCHdArt::ReadAs now);
+
     /// <summary>Port-only (HDTurns): the facing <paramref name="mech"/> is drawn at (eased by update).</summary>
     float DrawnFacing(MCBattleMech& mech) const;
 
@@ -534,6 +541,13 @@ inline constexpr float TurnLagMost = 90.0f;
 /// <paramref name="maxTurn"/> degrees, then brought within <paramref name="lagMost"/> of it; -180 to 180.
 /// </summary>
 float MCEaseFacing(float shown, float facing, float maxTurn, float lagMost);
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a unit's first frames): has HD art's readers read the packets <paramref name="object"/>
+/// draws first, if it's a mech (MCMechActor::ReadAhead), as <paramref name="now"/>: as it's placed (a mission's load,
+/// the script bringing it in, the staged battle setting it down), not once it comes near the view.
+/// </summary>
+void MCReadMechAhead(MCGameObject& object, MCHdArt::ReadAs now);
 
 /// <summary>The frames of a jump in the air.</summary>
 struct MCJumpFrames

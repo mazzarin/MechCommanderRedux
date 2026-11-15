@@ -1781,6 +1781,11 @@ auto MCMechActor::ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPa
 
 auto MCMechActor::ReadAhead() -> void
 {
+    ReadAhead(MCHdArt::ReadAs::Soon);
+}
+
+auto MCMechActor::ReadAhead(MCHdArt::ReadAs now) -> void
+{
     const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
 
     if (mech == nullptr || MechTree == nullptr)
@@ -1861,8 +1866,21 @@ auto MCMechActor::ReadAhead() -> void
         }
     }
 
-    MCHdArt::ReadPacketsAhead(soon, MCHdArt::ReadAs::Soon);
+    MCHdArt::ReadPacketsAhead(soon, now);
     MCHdArt::ReadPacketsAhead(later, MCHdArt::ReadAs::Set);
+}
+
+void MCReadMechAhead(MCGameObject& object, MCHdArt::ReadAs now)
+{
+    if (object.ObjectClass != MCObjectClass::BattleMech)
+    {
+        return;
+    }
+
+    if (const auto actor = std::static_pointer_cast<MCMechActor>(object.GetAppearance()); actor != nullptr)
+    {
+        actor->ReadAhead(now);
+    }
 }
 
 auto MCMechActor::Render(int32_t depthFixup) -> int32_t

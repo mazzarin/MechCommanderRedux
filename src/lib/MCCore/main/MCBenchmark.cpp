@@ -175,13 +175,19 @@ namespace
     }
 
     /// <summary>
-    /// The HD frames first used in a tally, the time their reading took and the readers' reads of the archives
-    /// (sprite/MCHdArt.cpp's names).
+    /// The HD frames first used in a tally, by how they found the readers (MCHdArt::FirstUse), the time their reading
+    /// took and the readers' reads of the archives (sprite/MCHdArt.cpp's names).
     /// </summary>
     std::string HdText(const MCFrameLog::MCTally& tally)
     {
-        return std::format("{} HD frames first used, read in {:.1f} ms, {} reads by the readers",
-                           tally.Count("HD frames first used"), tally.PartMs("hd.read"),
+        const auto uses = [&](MCHdArt::FirstUse use) { return tally.Count(MCHdArt::FirstUseCount(use)); };
+        return std::format("{} HD frames first used ({} never asked, {} asked too late, {} waited on, {} taken as read "
+                           "ahead, {} let go after read ahead, {} not in the pack), read in {:.1f} ms, {} reads by the "
+                           "readers",
+                           tally.Count("HD frames first used"), uses(MCHdArt::FirstUse::NeverAsked),
+                           uses(MCHdArt::FirstUse::AskedTooLate), uses(MCHdArt::FirstUse::WaitedOn),
+                           uses(MCHdArt::FirstUse::TakenAhead), uses(MCHdArt::FirstUse::LetGo),
+                           uses(MCHdArt::FirstUse::Lacked), tally.PartMs("hd.read"),
                            tally.Count("HD reads by the readers"));
     }
 

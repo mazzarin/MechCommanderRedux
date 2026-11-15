@@ -1503,6 +1503,59 @@ TEST_CASE("hd art: an archive the readers open ahead is taken open at the first 
 }
 
 /// <summary>
+/// Port-only (MCHdArt::FirstUse, the frame log's split of "HD frames first used"): a frame's first use says how it found
+/// the readers: never asked for; asked for, the readers held so its read waits still (asked too late, read on the
+/// game's thread); read ahead and not kept yet (taken as read ahead); not in the pack. Each first use is counted once,
+/// under one kind.
+/// </summary>
+TEST_CASE("hd art: a frame's first use says how it found the readers: never asked, asked too late, taken as read ahead")
+{
+    const ScratchFolder scratch("first-uses");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    std::array<size_t, MCHdArt::FirstUseKinds> before{};
+
+    for (size_t kind = 0; kind < before.size(); ++kind)
+    {
+        before[kind] = MCHdArt::FirstUses(static_cast<MCHdArt::FirstUse>(kind));
+    }
+
+    // The first uses of each kind since the test began.
+    const auto added = [&](MCHdArt::FirstUse use) { return MCHdArt::FirstUses(use) - before[std::to_underlying(use)]; };
+    // A frame drawn the first time, without its table's count (so nothing after it is read ahead).
+    const auto draw = [&](int32_t frame)
+    { return MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, 0) != nullptr; };
+
+    CHECK(draw(0));
+    CHECK_EQ(added(MCHdArt::FirstUse::NeverAsked), size_t{1});
+
+    // Asked for, the readers taking none of it: read as drawn, asked too late.
+    MCHdArt::HoldReads(true);
+    MCHdArt::ReadPacketAhead(MCHdArt::ShapeTableFolder(AheadTable), AheadFrames);
+    CHECK(draw(1));
+    CHECK_EQ(added(MCHdArt::FirstUse::AskedTooLate), size_t{1});
+    MCHdArt::HoldReads(false);
+    MCHdArt::WaitForReadAhead();
+
+    // Read ahead, not kept yet: taken from the readers as it's drawn.
+    CHECK(draw(2));
+    CHECK_EQ(added(MCHdArt::FirstUse::TakenAhead), size_t{1});
+    CHECK_EQ(added(MCHdArt::FirstUse::WaitedOn) + added(MCHdArt::FirstUse::LetGo), size_t{0});
+    // A frame the pack hasn't: a look, nothing to read.
+    CHECK(!draw(AheadFrames));
+    CHECK_EQ(added(MCHdArt::FirstUse::Lacked), size_t{1});
+    CHECK_EQ(added(MCHdArt::FirstUse::NeverAsked), size_t{1});
+    CHECK_EQ(added(MCHdArt::FirstUse::AskedTooLate), size_t{1});
+    // Drawn again: no first use.
+    CHECK(draw(2));
+    CHECK_EQ(added(MCHdArt::FirstUse::TakenAhead), size_t{1});
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only (SPEC-first-use.md: the camera's surroundings): a legs packet read ahead with its turn middles
 /// (MCHdArt::PacketAhead::TurnMiddles, read soon) has every frame's steps and turn middles read by the readers, and each
 /// is found at its draw without a read.

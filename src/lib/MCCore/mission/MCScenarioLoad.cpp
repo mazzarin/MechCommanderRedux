@@ -282,6 +282,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         GameMap().ClearMines();
     }
 
+    // Port-only: the tiles the map's mines draw, which the map's vertices don't name, read with the ground.
+    MCTerrainReadMinesAhead();
+
     LoadScript(file);
     LoadWarriors(file);
     LoadParts(file);

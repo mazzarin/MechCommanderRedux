@@ -79,6 +79,21 @@ MCHdArt::GroundAhead MCGroundTileOf(MCTerrainTiles& tiles, int32_t slot);
 /// </summary>
 std::optional<MCHdArt::GroundAhead> MCGroundOverlayOf(MCTerrainTiles& tiles, int32_t slot);
 
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): the tiles <paramref name="terrain"/>'s mines can draw at the start, each
+/// once: each mined cell's laid mine, either side's, by its corners' levels (as MCTerrainBlock::DrawMineTile picks it),
+/// and the crater when the map has a mine. The map's vertices name none of them, so the ground's asks pass them by.
+/// </summary>
+std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain);
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): reads the tiles the map's mines can draw (MCTerrainMineSlots) while the
+/// mission loads, the original's and, while the HD ground is drawn, their HD overlays (by name when the program knows
+/// the tile set), so a minefield's first frame on screen reads none. Call it once the map's mines are set (a match
+/// without mines clears them).
+/// </summary>
+void MCTerrainReadMinesAhead();
+
 /// <summary>Port-only (PLAN.md's first-use item 10): the original ground tiles MCTerrainReadHdTiles rebuilt and read.</summary>
 struct MCGroundRebuilt
 {

@@ -2,6 +2,7 @@
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCGroundNames.h"
 #include "ai/MCMoveSystem.h"
+#include "ai/MCScenarioMap.h"
 #include "camera/MCCamera.h"
 #include "color/MCPalette.h"
 #include "engine/MCByteFlag.h"
@@ -660,6 +661,104 @@ bool MCTerrainAskHdGroundByName(const MCTerrain& terrain)
     return true;
 }
 
+std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain)
+{
+    std::vector<int32_t> slots;
+
+    if (terrain.MapBlocks == nullptr)
+    {
+        return slots;
+    }
+
+    const MCScenarioMap& map = GameMap();
+    const MCMapBlockManager& blocks = *terrain.MapBlocks;
+    const auto level = [&blocks](int32_t row, int32_t col) { return uint32_t{blocks.MapVertexAt(row, col).Elevation}; };
+    bool mined = false;
+
+    for (int32_t row = 0; row < map.Height; ++row)
+    {
+        for (int32_t col = 0; col < map.Width; ++col)
+        {
+            // Either side's, as the one playing it (or god mode) sees them.
+            const MCMineView view = MCTerrainMineView(map.TileAt(row, col).Overlay, true, true);
+            mined = mined || view.InnerSphereMine || view.ClanMine || view.Crater;
+
+            if (!view.InnerSphereMine && !view.ClanMine)
+            {
+                continue;
+            }
+
+            // The cell's corners as a terrain block has them: top-left, top-right, bottom-right, bottom-left.
+            const int32_t slot =
+                MCMineTileNumber(level(row, col), level(row, col + 1), level(row + 1, col + 1), level(row + 1, col));
+
+            if (!std::ranges::contains(slots, slot))
+            {
+                slots.push_back(slot);
+            }
+        }
+    }
+
+    if (mined)
+    {
+        slots.push_back(MCMineCraterTile);
+    }
+
+    return slots;
+}
+
+void MCTerrainReadMinesAhead()
+{
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (terrain == nullptr || terrain->Tiles == nullptr)
+    {
+        return;
+    }
+
+    const std::vector<int32_t> slots = MCTerrainMineSlots(*terrain);
+
+    if (slots.empty())
+    {
+        return;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    const bool hdGround = HdGroundDrawn(*terrain);
+    const MCOptionalRef<const MCKnownGroundNames> known =
+        hdGround ? MCKnownGroundNamesOf(*terrain->Tiles) : std::nullopt;
+
+    // By name, the HD overlays' reads start before the original's.
+    if (known.has_value())
+    {
+        MCHdArt::ReadOverlaysAhead(NamedAhead(*known, slots, &MCGroundSlotNames::Overlay));
+    }
+
+    const MCTileReads read = terrain->Tiles->ReadTiles(slots);
+
+    if (hdGround && !known.has_value())
+    {
+        std::vector<MCHdArt::GroundAhead> overlays;
+
+        for (const int32_t slot : slots)
+        {
+            if (std::optional<MCHdArt::GroundAhead> overlay = MCGroundOverlayOf(*terrain->Tiles, slot))
+            {
+                overlays.push_back(*overlay);
+            }
+        }
+
+        MCHdArt::ReadOverlaysAhead(overlays);
+    }
+
+    if (MCFrameLog::Enabled())
+    {
+        MCFrameLog::Note(
+            std::format("mines' tiles: {}, {} read in {} reads, {:.1f} ms", slots.size(), read.Tiles, read.Reads,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
+    }
+}
+
 void MCTerrainReadHdTilesAhead()
 {
     const std::shared_ptr<MCTerrain> terrain = Terrain();
@@ -730,6 +829,14 @@ namespace
         }
 
         const MCTileReads read = tiles.ReadTiles(unread);
+
+        // A pack that doesn't match the game's tiles costs only the reads, so say so where it would go unseen.
+        if (!unread.empty())
+        {
+            SDL_Log("HD art: %zu of the map's %zu ground tiles weren't rebuilt from the pack (no frame, or not the "
+                    "tile's bytes), so they were read",
+                    unread.size(), unread.size() + rebuilt);
+        }
 
         if (MCFrameLog::Enabled())
         {

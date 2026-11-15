@@ -19,8 +19,6 @@ namespace
 {
     /// <summary>Tile number of the first mine tile (by the corners' relative elevations).</summary>
     constexpr int32_t MineTileBase = 0xed1;
-    /// <summary>Tile number of the exploded-mine crater.</summary>
-    constexpr int32_t MineExplodedTile = 0xf21;
 
     /// <summary>The data of the cached terrain tile <paramref name="tileNum"/> of the main camera's tile set (empty for
     /// none).</summary>
@@ -233,7 +231,7 @@ auto MCTerrainBlock::DrawOverlay(std::span<MCVertex> grid, const MCMapBlockManag
 
     if (mines.Crater)
     {
-        DrawOverlayShape(LookupTile(MineExplodedTile), topLeft, hazePalette);
+        DrawOverlayShape(LookupTile(MCMineCraterTile), topLeft, hazePalette);
     }
 }
 

@@ -1,8 +1,11 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "TestGame.h"
+#include "ai/MCMoveGeometry.h"
 #include "ai/MCMoveSystem.h"
 #include "ai/MCScenarioMap.h"
+#include "camera/MCCamera.h"
+#include "mission/MCScenario.h"
 #include "sprite/MCHdArt.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCGroundNames.h"
@@ -394,4 +397,75 @@ TEST_CASE_ISOLATED("tool: --ground-rebuild-check rebuilds the original's ground 
 
     GHdArt = 0;
     MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): the load reads the tiles a map's mines draw (MCTerrainMineSlots, which the
+/// map's vertices don't name) with the ground, so drawing every mined cell, either side's mines shown, reads no mine
+/// tile the load didn't: the corners' levels picked as the draw picks them. Mission 8, which starts with 39 mined cells.
+/// </summary>
+TEST_CASE_ISOLATED("ground names: the load reads the tiles its mines draw, so drawing every mined cell reads none")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t MinedMission = 8;
+    constexpr float FrameSeconds = 1.0f / 15.0f;
+    REQUIRE(MCTestGame::StartMission(MinedMission));
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    REQUIRE(terrain != nullptr);
+    const std::vector<int32_t> slots = MCTerrainMineSlots(*terrain);
+    REQUIRE(!slots.empty());
+    CHECK(std::ranges::contains(slots, MCMineCraterTile));
+    // The mine tiles a draw has looked at: read, or found missing.
+    const auto touched = [&terrain]
+    {
+        std::vector<int32_t> seen;
+
+        for (int32_t slot = MCMineTileNumber(0, 0, 0, 0); slot <= MCMineCraterTile; ++slot)
+        {
+            const MCOptionalRef<const MCTerrainTile> tile = terrain->Tiles->Slot(slot);
+
+            if (tile.has_value() && (tile->get().Missing || !tile->get().TileData().empty()))
+            {
+                seen.push_back(slot);
+            }
+        }
+
+        return seen;
+    };
+
+    const std::vector<int32_t> loaded = touched();
+
+    for (const int32_t slot : slots)
+    {
+        CHECK(std::ranges::contains(loaded, slot));
+    }
+
+    RevealAll();
+    Scenario()->GodMode = 1;
+    size_t mined = 0;
+
+    for (int32_t row = 0; row < GameMap().Height; ++row)
+    {
+        for (int32_t col = 0; col < GameMap().Width; ++col)
+        {
+            const MCMineView view = MCTerrainMineView(GameMap().TileAt(row, col).Overlay, true, true);
+
+            if (view.InnerSphereMine || view.ClanMine)
+            {
+                ++mined;
+                Eye()->SetPosition(MCVector3D(TileColToWorld(col), TileRowToWorld(row), 0.0f));
+                MCTestGame::RunFrame(FrameSeconds);
+            }
+        }
+    }
+
+    std::cout << std::format("  mission {}: {} mined cells, {} mine tiles read at the load\n", MinedMission, mined,
+                             slots.size());
+    CHECK(mined > 0);
+    CHECK(touched() == loaded);
+    Scenario()->GodMode = 0;
 }

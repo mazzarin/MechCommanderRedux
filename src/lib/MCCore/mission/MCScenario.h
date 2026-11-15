@@ -73,6 +73,14 @@ public:
     /// </summary>
     void CreateScenarioObject(int32_t partId);
 
+    /// <summary>
+    /// Port-only (HD art, SPEC-first-use.md: a unit's first frames): asks every side's mechs' first frames, each part's
+    /// gesture at its facing and the facings either side: those in play as the load's (MCHdArt::WaitForLoadReads waits
+    /// for them), then as sets those the script brings in later (Exists 0). A mech type's packets are asked once, by its
+    /// first mech. The load calls it once the parts are made.
+    /// </summary>
+    void ReadPartsAhead() const;
+
     /// <summary>Takes part <paramref name="partNumber"/>'s object out of play and marks the part destroyed.</summary>
     void DestroyPartObject(int32_t partNumber);
 

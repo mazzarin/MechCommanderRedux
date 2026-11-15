@@ -4,6 +4,7 @@
 #include "MCInternetSpots.h"
 #include "fakes/MCNullAudioDevice.h"
 #include "MCTest.h"
+#include "MCTestArchive.h"
 #include "MCTestShapes.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -543,6 +544,65 @@ namespace
                     WriteFramePngs(folder / std::to_string(frameNum), sequence.Frames[frameNum], colors, scale, paint,
                                    sequence.Blended);
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Puts <paramref name="pack"/>'s loose mech frames (a PNG pair a frame at <paramref name="scale"/>, as WritePack
+    /// writes them) in archives as a player's pack holds them: <c>mechs/&lt;part PAK&gt;/&lt;mech&gt;.hda</c>, an entry
+    /// <c>&lt;packet&gt;\&lt;frame&gt;.hdf</c> a frame. HD art's readers read ahead only what an archive holds.
+    /// </summary>
+    void ArchiveMechFrames(const std::filesystem::path& pack, int32_t scale)
+    {
+        constexpr std::string_view IndexSuffix = "_idx";
+
+        for (const std::filesystem::directory_entry& part : std::filesystem::directory_iterator(pack / "mechs"))
+        {
+            std::vector<std::filesystem::path> mechs;
+
+            for (const std::filesystem::directory_entry& mech : std::filesystem::directory_iterator(part.path()))
+            {
+                if (mech.is_directory())
+                {
+                    mechs.push_back(mech.path());
+                }
+            }
+
+            for (const std::filesystem::path& mech : mechs)
+            {
+                std::vector<MCTestArchive::ArchiveEntry> entries;
+
+                for (const std::filesystem::directory_entry& packet : std::filesystem::directory_iterator(mech))
+                {
+                    for (const std::filesystem::directory_entry& file :
+                         std::filesystem::directory_iterator(packet.path()))
+                    {
+                        const std::string stem = MCFileSystem::ToUtf8(file.path().stem());
+
+                        if (file.path().extension() != ".png" || stem.ends_with(IndexSuffix))
+                        {
+                            continue;
+                        }
+
+                        const std::expected<MCHdArt::Frame, std::string> frame = MCHdArt::FrameFromPngs(
+                            file.path(), file.path().parent_path() / (stem + std::string(IndexSuffix) + ".png"), scale);
+
+                        if (!frame.has_value())
+                        {
+                            MCTest::Scope scope(frame.error());
+                            REQUIRE(false);
+                        }
+
+                        entries.push_back(
+                            MCTestArchive::Raw(MCFileSystem::ToUtf8(packet.path().filename()) + "\\" + stem + ".hdf",
+                                               MCHdArt::EncodeHdf(*frame)));
+                    }
+                }
+
+                MCTestArchive::WriteBytes(std::filesystem::path(mech).concat(".hda"),
+                                          MCTestArchive::BuildArchive(entries));
+                std::filesystem::remove_all(mech);
             }
         }
     }
@@ -2287,6 +2347,94 @@ TEST_CASE_ISOLATED("game: an HD art pack's frames show in a mech's place")
     REQUIRE(changed.Count > 0);
     CHECK(std::abs(changed.X - hd.Width / 2) < hd.Width / 4);
     CHECK(std::abs(changed.Y - hd.Height / 2) < hd.Height / 4);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (HD art, SPEC-first-use.md: a unit's first frames): a mission's load asks every side's mechs' first frames
+/// (MCScenario::ReadPartsAhead: each part's gesture at its facing and the facings either side, as the load's), so they
+/// are kept as the first frame starts and the mech's first draw first uses none: nothing read or taken as it draws.
+/// Turned to a facing nothing asked for, its draw first uses its frames there (each frame drawn with the readers held,
+/// so the frame's own asks wait); turned and asked as a unit placed in play asks (MCReadMechAhead, soon: the
+/// script's reinforcement, the staged battle's mech placed and turned), its draw at the new facing first uses none again.
+/// The pack's mech frames are archived, as a player's are (the readers read no loose files).
+/// </summary>
+TEST_CASE_ISOLATED("hd art: a mech's first frames asked at the load or as it's placed are read before its first draw")
+{
+    const std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    ArchiveMechFrames(scene->Pack, TestPackScale);
+    const MCHdArtOn hdArt(scene->Pack);
+    // The pack set again: nothing asked or read ahead (attaching HD art to the shapes loaded asked their frames).
+    MCHdArt::SetPackFolder(scene->Pack);
+    std::array<size_t, MCHdArt::FirstUseKinds> before{};
+
+    // The first uses read on the game's thread since before was taken (never asked, asked too late, waited on), and
+    // those taken as read ahead.
+    const auto since = [&]
+    {
+        for (size_t kind = 0; kind < before.size(); ++kind)
+        {
+            before[kind] = MCHdArt::FirstUses(static_cast<MCHdArt::FirstUse>(kind));
+        }
+    };
+
+    const auto added = [&](MCHdArt::FirstUse use) { return MCHdArt::FirstUses(use) - before[std::to_underlying(use)]; };
+    // The first uses of the mech's frames there are (the rest of the pack has none): read on the game's thread (never
+    // asked, asked too late, waited on, let go after read ahead) or taken as read ahead.
+    const auto firstUsed = [&]
+    {
+        return added(MCHdArt::FirstUse::NeverAsked) + added(MCHdArt::FirstUse::AskedTooLate) +
+               added(MCHdArt::FirstUse::WaitedOn) + added(MCHdArt::FirstUse::LetGo) +
+               added(MCHdArt::FirstUse::TakenAhead);
+    };
+
+    // A frame drawn with the readers held, so that only what was read before it is in hand (the frame's own asks, the
+    // camera's surroundings', wait), and whether it drew HD art.
+    const auto drawn = [&]
+    {
+        const int64_t drawnBefore = scene->Renderer->HdDrawn();
+        MCHdArt::HoldReads(true);
+        MCTestGame::RunFrame(FrameSeconds);
+        MCHdArt::HoldReads(false);
+        return scene->Renderer->HdDrawn() > drawnBefore;
+    };
+
+    {
+        MCTest::Scope scope("asked as the load asks");
+        since();
+        // Turned before anything draws it there, so only the load's asks have its frames there in hand.
+        MCTestGame::FaceMech(*scene->Player.Mech, 135.0f);
+        Scenario()->ReadPartsAhead();
+        MCHdArt::WaitForLoadReads();
+        CHECK(drawn());
+        CHECK_EQ(firstUsed(), size_t{0});
+    }
+
+    {
+        MCTest::Scope scope("turned to a facing nothing asked for");
+        since();
+        MCTestGame::FaceMech(*scene->Player.Mech, 180.0f);
+        CHECK(drawn());
+        CHECK(firstUsed() > 0);
+    }
+
+    {
+        MCTest::Scope scope("turned and asked as a unit placed in play asks");
+        since();
+        MCTestGame::FaceMech(*scene->Player.Mech, 45.0f);
+        MCReadMechAhead(*scene->Player.Mech, MCHdArt::ReadAs::Soon);
+        MCHdArt::WaitForReadAhead();
+        CHECK(drawn());
+        CHECK_EQ(firstUsed(), size_t{0});
+    }
+
     std::filesystem::remove_all(scene->Scratch);
 }
 

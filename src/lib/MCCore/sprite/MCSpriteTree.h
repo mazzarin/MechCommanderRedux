@@ -184,9 +184,10 @@ public:
     /// <paramref name="part"/> (the tree's numbering) of gesture <paramref name="gesture"/> draws at
     /// <paramref name="rotation"/> degrees, the large art's as GetGesture finds it and MCMechActor::Render draws it, and
     /// with <paramref name="turns"/> those of the facings either side of it, which a turn draws next: each whole, the
-    /// legs' with their turn middles, unless asked for already (the tree's, any mech's of it: MCHdArt::MCAskedPackets).
+    /// legs' with their turn middles, unless asked for already as <paramref name="as"/> or sooner (the tree's, any mech's
+    /// of it: MCHdArt::MCAskedPackets).
     /// </summary>
-    void PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns,
+    void PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns, MCHdArt::ReadAs as,
                       std::vector<MCHdArt::PacketAhead>& packets);
 
     /// <summary>

@@ -698,9 +698,9 @@ namespace
 /// Port-only (SPEC-first-use.md: the camera's surroundings): the packets a mech part has read ahead (MCSpriteTree::
 /// PacketsAhead) are its gesture's at its facing and, with turns, those of the facings a turn comes to (the legs' one
 /// either side, the upper parts' two), each its gesture's frames whole, the legs' with their turn middles; each is asked
-/// for once (the tree's, for any mech of it).
+/// for once a kind (the tree's, for any mech of it), and again only sooner.
 /// </summary>
-TEST_CASE("sprites: a part's packets read ahead are its facing's and those a turn comes to, each asked for once")
+TEST_CASE("sprites: a part's packets read ahead are its facing's and those a turn comes to, each asked for once a kind")
 {
     SpriteFiles files({}, {}, {Fit(MechFit(false))});
     auto tree = std::static_pointer_cast<MCSpriteTree>(AppearanceTypeList().GetAppearance(0x01000000));
@@ -717,7 +717,7 @@ TEST_CASE("sprites: a part's packets read ahead are its facing's and those a tur
     std::vector<uint32_t> expected{legs->Packet};
     std::ranges::copy(MCSpriteTree::NeighbourPackets(*legs, 1), std::back_inserter(expected));
     std::vector<MCHdArt::PacketAhead> packets;
-    tree->PacketsAhead(Stand, 0, 90.0f, true, packets);
+    tree->PacketsAhead(Stand, 0, 90.0f, true, MCHdArt::ReadAs::Soon, packets);
     REQUIRE_EQ(packets.size(), expected.size());
 
     for (size_t at = 0; at < packets.size(); ++at)
@@ -728,20 +728,26 @@ TEST_CASE("sprites: a part's packets read ahead are its facing's and those a tur
         CHECK(packets[at].TurnMiddles);
     }
 
-    // Asked for again, by any mech of the tree: none.
+    // Asked for again, by any mech of the tree, as soon or later: none; sooner (a load's): each again, once.
     packets.clear();
-    tree->PacketsAhead(Stand, 0, 90.0f, true, packets);
+    tree->PacketsAhead(Stand, 0, 90.0f, true, MCHdArt::ReadAs::Soon, packets);
+    tree->PacketsAhead(Stand, 0, 90.0f, true, MCHdArt::ReadAs::Set, packets);
+    CHECK(packets.empty());
+    tree->PacketsAhead(Stand, 0, 90.0f, true, MCHdArt::ReadAs::Load, packets);
+    CHECK_EQ(packets.size(), expected.size());
+    packets.clear();
+    tree->PacketsAhead(Stand, 0, 90.0f, true, MCHdArt::ReadAs::Soon, packets);
     CHECK(packets.empty());
 
     // The torso: its own facing's alone without turns, with no turn middles; with them, two facings either side.
     const std::optional<MCGesturePacket> torso = tree->GesturePacket(Stand, 1, 90.0f);
     REQUIRE(torso.has_value());
-    tree->PacketsAhead(Stand, 1, 90.0f, false, packets);
+    tree->PacketsAhead(Stand, 1, 90.0f, false, MCHdArt::ReadAs::Soon, packets);
     REQUIRE_EQ(packets.size(), 1u);
     CHECK(packets.front().Folder == folderOf(MCMechPart::Torso, torso->Packet));
     CHECK(!packets.front().TurnMiddles);
     packets.clear();
-    tree->PacketsAhead(Stand, 1, 90.0f, true, packets);
+    tree->PacketsAhead(Stand, 1, 90.0f, true, MCHdArt::ReadAs::Soon, packets);
     CHECK_EQ(packets.size(), MCSpriteTree::NeighbourPackets(*torso, 2).size());
 }
 

@@ -404,21 +404,28 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): the packets an asker has had read ahead, each asked for
-    /// once while the readers remember what they read (AheadGeneration), so an appearance can ask for what it draws every
-    /// frame and only a packet it hasn't asked for costs a look in the archive.
+    /// once a kind while the readers remember what they read (AheadGeneration), so an appearance can ask for what it draws
+    /// every frame and only a packet it hasn't asked for, or asks for sooner than it did, costs a look in the archive.
     /// </summary>
     class MCAskedPackets
     {
     public:
         /// <summary>
-        /// Whether <paramref name="packet"/> (a number naming it to the asker) is yet to be asked for since the readers
-        /// last forgot; it is noted as asked.
+        /// Whether <paramref name="packet"/> (a number naming it to the asker) is yet to be asked for as
+        /// <paramref name="as"/> or sooner since the readers last forgot: never asked, or asked only as later reads (a
+        /// set's, for a unit then placed in play), whose reads waiting the new ask moves up; it is noted as asked so.
         /// </summary>
-        bool Ask(uint64_t packet);
+        bool Ask(uint64_t packet, ReadAs as);
 
     private:
-        /// <summary>Each packet asked for: the generation it was asked in, plus one.</summary>
-        std::unordered_map<uint64_t, uint64_t> _Asked;
+        /// <summary>A packet's ask: the generation it was asked in, plus one, and the soonest kind it was asked as.</summary>
+        struct Asked
+        {
+            uint64_t Generation = 0;
+            ReadAs As = ReadAs::Set;
+        };
+
+        std::unordered_map<uint64_t, Asked> _Asked;
     };
 
     /// <summary>

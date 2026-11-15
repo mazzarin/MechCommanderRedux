@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
+#include "MCTestArchive.h"
 #include "MCTest.h"
 #include "MCTestShapes.h"
 #include "TestGame.h"
@@ -15,10 +16,13 @@
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteTree.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCRegisteredBlock.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCUtf8Path.h"
 #include "sound/MCHdAudio.h"
+
+using namespace MCTestArchive;
 
 namespace
 {
@@ -381,64 +385,6 @@ namespace
         } while (at < data.size());
 
         return stream;
-    }
-
-    /// <summary>An archive entry to write: its name, its stored bytes, its unpacked size, and an earlier entry it shares.</summary>
-    struct ArchiveEntry
-    {
-        std::string Name;
-        std::vector<uint8_t> Stored;
-        size_t RealSize = 0;
-        std::optional<size_t> Shares;
-    };
-
-    /// <summary>A FastFile of <paramref name="entries"/> (the HD art pack's archive layout).</summary>
-    std::vector<uint8_t> BuildArchive(const std::vector<ArchiveEntry>& entries)
-    {
-        std::vector<uint8_t> out(sizeof(int32_t) + entries.size() * sizeof(MCFileEntry));
-        const auto count = static_cast<int32_t>(entries.size());
-        std::memcpy(out.data(), &count, sizeof(count));
-        std::vector<int32_t> offsets;
-
-        for (size_t i = 0; i < entries.size(); i++)
-        {
-            const ArchiveEntry& entry = entries[i];
-            int32_t offset = 0;
-
-            if (entry.Shares.has_value())
-            {
-                offset = offsets[*entry.Shares];
-            }
-            else
-            {
-                offset = static_cast<int32_t>(out.size());
-                out.insert(out.end(), entry.Stored.begin(), entry.Stored.end());
-            }
-
-            offsets.push_back(offset);
-            MCFileEntry record{};
-            record.Offset = offset;
-            record.Size = static_cast<int32_t>(entry.Shares.has_value() ? entries[*entry.Shares].Stored.size()
-                                                                        : entry.Stored.size());
-            record.RealSize = static_cast<int32_t>(entry.RealSize);
-            std::ranges::copy(entry.Name, record.Name.begin());
-            std::memcpy(out.data() + sizeof(int32_t) + i * sizeof(MCFileEntry), &record, sizeof(record));
-        }
-
-        return out;
-    }
-
-    void WriteBytes(const std::filesystem::path& path, std::span<const uint8_t> bytes)
-    {
-        std::ofstream(path, std::ios::binary)
-            .write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    }
-
-    /// <summary>A bundle entry of <paramref name="name"/> holding <paramref name="bytes"/>, stored raw.</summary>
-    ArchiveEntry Raw(std::string name, std::vector<uint8_t> bytes)
-    {
-        const size_t size = bytes.size();
-        return {std::move(name), std::move(bytes), size, std::nullopt};
     }
 
     /// <summary>A scratch folder of the test's own under the temp folder, deleted with it.</summary>
@@ -1506,7 +1452,7 @@ TEST_CASE("hd art: an archive the readers open ahead is taken open at the first 
 /// Port-only (MCHdArt::FirstUse, the frame log's split of "HD frames first used"): a frame's first use says how it found
 /// the readers: never asked for; asked for, the readers held so its read waits still (asked too late, read on the
 /// game's thread); read ahead and not kept yet (taken as read ahead); not in the pack. Each first use is counted once,
-/// under one kind.
+/// under one kind, so the frame log's kinds add up to its "HD frames first used".
 /// </summary>
 TEST_CASE("hd art: a frame's first use says how it found the readers: never asked, asked too late, taken as read ahead")
 {
@@ -1515,6 +1461,10 @@ TEST_CASE("hd art: a frame's first use says how it found the readers: never aske
     const int previous = GHdArt;
     GHdArt = 1;
     MCHdArt::SetPackFolder(scratch.Path());
+    // The frame log's counts of the first uses, the whole and each kind.
+    REQUIRE(MCFrameLog::Open(scratch.Path() / "frames.txt"));
+    MCFrameLog::NextFrame();
+    MCFrameLog::StartTally();
     std::array<size_t, MCHdArt::FirstUseKinds> before{};
 
     for (size_t kind = 0; kind < before.size(); ++kind)
@@ -1551,6 +1501,21 @@ TEST_CASE("hd art: a frame's first use says how it found the readers: never aske
     // Drawn again: no first use.
     CHECK(draw(2));
     CHECK_EQ(added(MCHdArt::FirstUse::TakenAhead), size_t{1});
+
+    // The frame log's kinds add up to its "HD frames first used", as counted before the split.
+    MCFrameLog::NextFrame();
+    const MCFrameLog::MCTally tally = MCFrameLog::TakeTally();
+    MCFrameLog::Close();
+    int64_t kinds = 0;
+
+    for (size_t kind = 0; kind < MCHdArt::FirstUseKinds; ++kind)
+    {
+        kinds += tally.Count(MCHdArt::FirstUseCount(static_cast<MCHdArt::FirstUse>(kind)));
+    }
+
+    constexpr int64_t FirstUsesDrawn = 4;
+    CHECK_EQ(tally.Count("HD frames first used"), FirstUsesDrawn);
+    CHECK_EQ(kinds, FirstUsesDrawn);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }
@@ -2298,6 +2263,16 @@ namespace
         std::vector<std::vector<uint8_t>> _Files;
     };
 
+    /// <summary>
+    /// The first uses read on the game's thread so far (MCHdArt::FirstUse: never asked, asked too late, waited on, let go
+    /// after read ahead), not taken as the readers read them.
+    /// </summary>
+    size_t ReadByTheGame()
+    {
+        return MCHdArt::FirstUses(MCHdArt::FirstUse::NeverAsked) + MCHdArt::FirstUses(MCHdArt::FirstUse::AskedTooLate) +
+               MCHdArt::FirstUses(MCHdArt::FirstUse::WaitedOn) + MCHdArt::FirstUses(MCHdArt::FirstUse::LetGo);
+    }
+
     /// <summary>A small frame, of RunArchive::Side.</summary>
     constexpr RunPiece Small{RunArchive::Side, RunArchive::Side, 0};
 } // namespace
@@ -2415,6 +2390,75 @@ TEST_CASE("hd art: the readers' first read takes the less urgent reads near it, 
         archive.CheckFound();
     }
 
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a unit's first frames): a frame asked for as a set and asked again as the load's has
+/// its read waiting moved up to the load's (a unit's frames asked as a set, then the unit placed in play): the load waits
+/// for it, and it is read before the sets asked ahead of it.
+/// </summary>
+TEST_CASE("hd art: a frame asked as a set, then as the load's, is read as the load's, before the sets")
+{
+    // Frames larger than a read takes, so the reader reads them one at a time.
+    constexpr RunPiece Larger{130, 130, 0};
+    constexpr size_t Frames = 6;
+    constexpr size_t Promoted = Frames - 1;
+    const ReaderScope readers({.Readers = 1});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const RunArchive archive("promoted", std::vector<RunPiece>(Frames, Larger));
+    REQUIRE(archive.FileBytes(0) > MCHdArt::ReaderRunBytes);
+    MCHdArt::HoldReads(true);
+
+    for (size_t frame = 0; frame < Frames; ++frame)
+    {
+        archive.Ask(frame, MCHdArt::ReadAs::Set);
+    }
+
+    archive.Ask(Promoted, MCHdArt::ReadAs::Load);
+    MCHdArt::HoldReads(false);
+    MCHdArt::WaitForLoadReads();
+    // The reader held as the load's wait ends: the frame asked last is read already, the sets asked ahead of it not all.
+    MCHdArt::HoldReads(true);
+    const size_t byTheGame = ReadByTheGame();
+    CHECK(archive.Find(Promoted) != nullptr);
+    CHECK_EQ(ReadByTheGame(), byTheGame);
+    MCHdArt::HoldReads(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    archive.CheckFound();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): a frame asked for as drawn next (ReadAs::Next), read, then let go unkept (the frames
+/// read ahead past their budget drop the oldest) may be asked for again: asked soon, it is read again, and its draw reads
+/// none on the game's thread.
+/// </summary>
+TEST_CASE("hd art: a frame asked as drawn next, read and let go, is read again when asked again")
+{
+    // Frame 0, then enough frames read ahead past the budget of those kept for the game's thread (32 MB) to let it go.
+    constexpr RunPiece Larger{130, 130, 0};
+    constexpr size_t PastTheBudget = 34;
+    const ReaderScope readers({.Readers = 1});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const RunArchive archive("next-let-go", std::vector<RunPiece>(PastTheBudget + 1, Larger));
+    archive.Ask(0, MCHdArt::ReadAs::Next);
+    MCHdArt::WaitForReadAhead();
+
+    for (size_t frame = 1; frame < archive.Frames(); ++frame)
+    {
+        archive.Ask(frame, MCHdArt::ReadAs::Next);
+    }
+
+    MCHdArt::WaitForReadAhead();
+    archive.Ask(0, MCHdArt::ReadAs::Soon);
+    MCHdArt::WaitForReadAhead();
+    const size_t byTheGame = ReadByTheGame();
+    CHECK(archive.Find(0) != nullptr);
+    CHECK_EQ(ReadByTheGame(), byTheGame);
     GHdArt = previous;
 }
 

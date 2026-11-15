@@ -630,7 +630,7 @@ auto MCSpriteTree::SetHdNeighbours(const std::shared_ptr<MCShape>& shape, const 
     MCHdArt::SetNeighbours(shape, std::move(folders));
 }
 
-auto MCSpriteTree::PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns,
+auto MCSpriteTree::PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns, MCHdArt::ReadAs as,
                                 std::vector<MCHdArt::PacketAhead>& packets) -> void
 {
     const std::optional<MCGesturePacket> where = GesturePacket(gesture, part, rotation);
@@ -646,7 +646,7 @@ auto MCSpriteTree::PacketsAhead(int32_t gesture, int32_t part, float rotation, b
     std::optional<std::string> partFile;
     const auto add = [&](uint32_t packet)
     {
-        if (!_AskedAhead.Ask(static_cast<uint64_t>(where->FilePart) << PartKeyShift | packet))
+        if (!_AskedAhead.Ask(static_cast<uint64_t>(where->FilePart) << PartKeyShift | packet, as))
         {
             return;
         }

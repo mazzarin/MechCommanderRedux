@@ -88,6 +88,11 @@ namespace
     constexpr uint64_t AskAgainFrames = 30;
     /// <summary>The most reads of the frames drawn next waiting (the oldest left out past it: the game has drawn on).</summary>
     constexpr size_t MaxNextReads = 4096;
+    /// <summary>
+    /// Port-only: the most frames ReadAhead::MadeReads remembers (about 3 MB of keys), past which it starts again: a
+    /// session's worth of missions' reads, kept only to tell a frame let go from one never asked for.
+    /// </summary>
+    constexpr size_t MostMadeReadsKept = size_t{1} << 16;
     /// <summary>The readers' handles kept open for their next reads, for each reader (MCHdArt::SetReaderSettings).</summary>
     constexpr size_t IdleHandlesPerReader = 2;
     /// <summary>
@@ -333,6 +338,11 @@ namespace
         bool Itself = false;
         /// <summary>Port-only: the kind of reads its frames are (Next, unless its Entries are given).</summary>
         AheadKind Kind = AheadKind::Next;
+        /// <summary>
+        /// Port-only: whether it is an ask's (AskAhead), whose frames ReadAhead::PicturesAsked holds until each read is done
+        /// or left out (Unasked), whatever its kind.
+        /// </summary>
+        bool Asked = false;
     };
 
     /// <summary>
@@ -455,10 +465,10 @@ namespace
         std::list<FrameKey> Order;
         size_t Bytes = 0;
         /// <summary>
-        /// Port-only (MCHdArt::FirstUse): the frames of the reads waiting, with how many reads each; and every frame made
-        /// a read since the pack was set.
+        /// Port-only: the frames of the reads waiting, with their reads' numbers (MCHdArt::FirstUse; Promote); and the
+        /// frames made reads since the pack was set (MCHdArt::FirstUse's LetGo), up to MostMadeReadsKept.
         /// </summary>
-        std::unordered_map<FrameKey, uint32_t, FrameKeyHash> WaitingKeys;
+        std::unordered_map<FrameKey, std::vector<uint64_t>, FrameKeyHash> WaitingKeys;
         std::unordered_set<FrameKey, FrameKeyHash> MadeReads;
         /// <summary>Port-only (MCHdArt::FirstUse): the asks a reader is making reads of now (ExpandAsks).</summary>
         std::vector<std::reference_wrapper<const AskBatch>> Expanding;
@@ -1748,13 +1758,13 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: lets a set's or a load's frame (ReadAhead::PicturesAsked) be asked for again once its read is done or
-    /// left out: read, it is found among the Pictures; not read (failed, the game's thread has it, the pack set), it may be
-    /// asked for again.
+    /// Port-only: lets an ask's or a picture's frame (ReadAhead::PicturesAsked) be asked for again once its read is done
+    /// or left out: read, it is found among the Pictures or Ready; not read (failed, the game's thread has it, dropped,
+    /// the pack set), it may be asked for again. A follow's frames drawn next were never held there.
     /// </summary>
     void Unasked(ReadAhead& ahead, const AheadRead& read)
     {
-        if (read.From->Kind != AheadKind::Next)
+        if (read.From->Kind != AheadKind::Next || read.From->Asked)
         {
             ahead.PicturesAsked.erase(KeyOf(read));
         }
@@ -1777,9 +1787,16 @@ namespace
     {
         TraceAsked(read, kind);
         const FrameKey key = KeyOf(read);
-        ++ahead.WaitingKeys[key];
-        ahead.MadeReads.insert(key);
         const uint64_t number = ahead.ReadNumbers++;
+        ahead.WaitingKeys[key].push_back(number);
+
+        // A diagnostic's (the frame log's let go): forgotten whole, not grown without end over a session.
+        if (ahead.MadeReads.size() >= MostMadeReadsKept)
+        {
+            ahead.MadeReads.clear();
+        }
+
+        ahead.MadeReads.insert(key);
         std::multimap<int64_t, uint64_t>& index = ahead.ByOffset[read.From->Archive];
         const auto place = index.emplace(EntryOf(read).Offset, number);
         ahead.Waiting.emplace(number, WaitingRead{std::move(read), kind, place});
@@ -1805,10 +1822,14 @@ namespace
         ahead.Waiting.erase(found);
         ahead.ByOffset.at(waiting.Read.From->Archive).erase(waiting.Place);
 
-        if (const auto keyed = ahead.WaitingKeys.find(KeyOf(waiting.Read));
-            keyed != ahead.WaitingKeys.end() && --keyed->second == 0)
+        if (const auto keyed = ahead.WaitingKeys.find(KeyOf(waiting.Read)); keyed != ahead.WaitingKeys.end())
         {
-            ahead.WaitingKeys.erase(keyed);
+            std::erase(keyed->second, number);
+
+            if (keyed->second.empty())
+            {
+                ahead.WaitingKeys.erase(keyed);
+            }
         }
 
         --ahead.WaitingOfKind[std::to_underlying(waiting.Kind)];
@@ -1821,6 +1842,38 @@ namespace
         if (const auto found = ahead.ByOffset.find(archive); found != ahead.ByOffset.end() && found->second.empty())
         {
             ahead.ByOffset.erase(found);
+        }
+    }
+
+    /// <summary>
+    /// Port-only: moves frame <paramref name="key"/>'s reads waiting as a later kind than <paramref name="kind"/> up to it:
+    /// a frame asked for again sooner (a unit's set, then the unit placed in play). Call with ReadAhead::Lock held.
+    /// </summary>
+    void Promote(ReadAhead& ahead, const FrameKey& key, AheadKind kind)
+    {
+        const auto keyed = ahead.WaitingKeys.find(key);
+
+        if (keyed == ahead.WaitingKeys.end())
+        {
+            return;
+        }
+
+        // A copy: taking and adding the reads changes the key's list.
+        const std::vector<uint64_t> numbers = keyed->second;
+
+        for (const uint64_t number : numbers)
+        {
+            const auto found = ahead.Waiting.find(number);
+
+            if (found == ahead.Waiting.end() || std::to_underlying(found->second.Kind) <= std::to_underlying(kind))
+            {
+                continue;
+            }
+
+            if (std::optional<WaitingRead> waiting = TakeWaiting(ahead, number))
+            {
+                AddWaiting(ahead, kind, std::move(waiting->Read));
+            }
         }
     }
 
@@ -1915,6 +1968,7 @@ namespace
         {
             if (std::optional<WaitingRead> dropped = TakeWaiting(ahead, ahead.Reads[kind].front()))
             {
+                Unasked(ahead, dropped->Read);
                 DropEmptyIndex(ahead, dropped->Read.From->Archive);
             }
 
@@ -2414,8 +2468,15 @@ namespace
                 const FrameKey key{from->Key.Folder, next.Entry.Name};
 
                 if (!named.insert(key).second || ahead.Known.contains(key) || ahead.Ready.contains(key) ||
-                    ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key) || ahead.Reading.contains(key))
+                    ahead.Pictures.contains(key) || ahead.Reading.contains(key))
                 {
+                    continue;
+                }
+
+                // Asked for already: its read waiting moves up to this ask's kind, if sooner.
+                if (ahead.PicturesAsked.contains(key))
+                {
+                    Promote(ahead, key, batch.Kind);
                     continue;
                 }
 
@@ -3769,6 +3830,7 @@ namespace
                     Follow follow{FrameKey{ask.Folder, 0}, 0, archived->Archive, archived->Prefix,
                                   folder.BakedShadows,     {}};
                     follow.Kind = kind;
+                    follow.Asked = true;
                     at->second.From = static_cast<uint32_t>(batch.Follows.size());
                     batch.Follows.push_back(std::make_shared<const Follow>(std::move(follow)));
                 }
@@ -4318,17 +4380,18 @@ uint64_t MCHdArt::AheadGeneration()
     return state.Forgets + state.ReAsks;
 }
 
-bool MCHdArt::MCAskedPackets::Ask(uint64_t packet)
+bool MCHdArt::MCAskedPackets::Ask(uint64_t packet, ReadAs as)
 {
     const uint64_t generation = AheadGeneration() + 1;
-    const auto [asked, added] = _Asked.try_emplace(packet, generation);
+    const auto [asked, added] = _Asked.try_emplace(packet, Asked{generation, as});
 
-    if (!added && asked->second == generation)
+    if (!added && asked->second.Generation == generation &&
+        std::to_underlying(asked->second.As) <= std::to_underlying(as))
     {
         return false;
     }
 
-    asked->second = generation;
+    asked->second = Asked{generation, as};
     return true;
 }
 

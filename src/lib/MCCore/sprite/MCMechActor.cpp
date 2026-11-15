@@ -1803,28 +1803,29 @@ auto MCMechActor::ReadAhead(MCHdArt::ReadAs now) -> void
     // Each part's packets with the legs in gesture legs and the upper parts in upper, as Render takes them: the tree's
     // part (an arm from the other's sprites when mirrored) at its rotation, and with turns the facings either side; a
     // part gone (an arm blown off, a wreck's torso) none.
-    const auto add = [&](int32_t legs, int32_t upper, bool turns, std::vector<MCHdArt::PacketAhead>& packets)
+    const auto add =
+        [&](int32_t legs, int32_t upper, bool turns, MCHdArt::ReadAs as, std::vector<MCHdArt::PacketAhead>& packets)
     {
         if (!isGesture(legs) || !isGesture(upper))
         {
             return;
         }
 
-        MechTree->PacketsAhead(legs, 0, facing, turns, packets);
+        MechTree->PacketsAhead(legs, 0, facing, turns, as, packets);
 
         if (!Wrecked)
         {
-            MechTree->PacketsAhead(upper, 1, facing + mech->TorsoRotation, turns, packets);
+            MechTree->PacketsAhead(upper, 1, facing + mech->TorsoRotation, turns, as, packets);
         }
 
         if (!RightArmGone)
         {
-            MechTree->PacketsAhead(upper, ArmSwapped(legs, upper, 3, rotation2) ? 3 : 2, rotation2, turns, packets);
+            MechTree->PacketsAhead(upper, ArmSwapped(legs, upper, 3, rotation2) ? 3 : 2, rotation2, turns, as, packets);
         }
 
         if (!LeftArmGone)
         {
-            MechTree->PacketsAhead(upper, ArmSwapped(legs, upper, 2, rotation3) ? 2 : 3, rotation3, turns, packets);
+            MechTree->PacketsAhead(upper, ArmSwapped(legs, upper, 2, rotation3) ? 2 : 3, rotation3, turns, as, packets);
         }
     };
 
@@ -1835,11 +1836,11 @@ auto MCMechActor::ReadAhead(MCHdArt::ReadAs now) -> void
     };
 
     // Soon: the gestures drawn now, at their facing and those a turn comes to, and the one a transition plays next.
-    add(CurrentGesture, UpperGesture(), true, soon);
+    add(CurrentGesture, UpperGesture(), true, now, soon);
 
     if (InTransition)
     {
-        add(NextGesture, upperOver(NextGesture), false, soon);
+        add(NextGesture, upperOver(NextGesture), false, now, soon);
     }
 
     // Later, as sets: a move's first gesture from standing, walking or running to either of the others, and the upper
@@ -1851,18 +1852,18 @@ auto MCMechActor::ReadAhead(MCHdArt::ReadAs now) -> void
             if (goal != CurrentStateGesture)
             {
                 const int32_t first = MCStopTransition(*MechTree, goal, CurrentStateGesture, 0, MCMechBrakingInForce());
-                add(first, upperOver(first), false, later);
+                add(first, upperOver(first), false, MCHdArt::ReadAs::Set, later);
             }
         }
     }
 
     if (!CombatModeRaising && !CombatModeLowering)
     {
-        add(CurrentGesture, GestureCombatChange, false, later);
+        add(CurrentGesture, GestureCombatChange, false, MCHdArt::ReadAs::Set, later);
 
         if (!InCombatMode)
         {
-            add(CurrentGesture, GestureCombat, false, later);
+            add(CurrentGesture, GestureCombat, false, MCHdArt::ReadAs::Set, later);
         }
     }
 

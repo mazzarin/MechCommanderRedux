@@ -112,7 +112,8 @@ auto MCAppearanceType::PacketShape(std::weak_ptr<MCShape>& slot, uint32_t packet
 
 auto MCAppearanceType::AskPacketAhead(uint32_t packet) -> void
 {
-    if (!_AskedAhead.Ask(packet))
+    // A set's, as ReadPacketAhead reads it.
+    if (!_AskedAhead.Ask(packet, MCHdArt::ReadAs::Set))
     {
         return;
     }

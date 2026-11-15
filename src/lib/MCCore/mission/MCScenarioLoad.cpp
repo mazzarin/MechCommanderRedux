@@ -958,10 +958,14 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
 
     MCPrepareStops(trees);
 
-    // Port-only (HD art, SPEC-first-use.md: a unit's first frames): every side's mechs' first frames, each part's gesture
-    // at its facing and the facings either side, read under the loading bar as the load's (it waits for them:
-    // MCHdArt::WaitForReadAhead), not as each first comes near the view: those in play first, then as sets those the
-    // script brings in later (Exists 0). A mech type's packets are asked once, by its first mech.
+    // Port-only (HD art, SPEC-first-use.md: a unit's first frames): every side's mechs' first frames read under the
+    // loading bar, not as each first comes near the view.
+    ReadPartsAhead();
+    UpdateDisplay(false, true, 20, true, 90);
+}
+
+auto MCScenario::ReadPartsAhead() const -> void
+{
     for (const bool inPlay : {true, false})
     {
         for (const MCPart& part : Parts)
@@ -974,8 +978,6 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
             }
         }
     }
-
-    UpdateDisplay(false, true, 20, true, 90);
 }
 
 auto MCScenario::LoadCarriers(MCFitIniFile& file) -> void

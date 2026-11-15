@@ -18774,3 +18774,348 @@ TEST_CASE_ISOLATED(
     hdArt.reset();
     std::filesystem::remove_all(scratch);
 }
+
+namespace
+{
+    /// <summary>One pack folder's original frames held against its HD frames (the --sprite-pack-check tool).</summary>
+    struct SpriteCheck
+    {
+        /// <summary>Each outcome's count and its first example.</summary>
+        std::map<std::string, std::pair<size_t, std::string>> Outcomes;
+        size_t Frames = 0;
+        size_t Pixels = 0;
+        size_t Drawn = 0;
+        size_t Spread = 0;
+        size_t WrongIndex = 0;
+        size_t Unmarked = 0;
+        /// <summary>A translucent frame's blended pixels, left out of the check.</summary>
+        size_t Blended = 0;
+        /// <summary>PLAN.md's option D: every frame's drawn pixels, an archive at a time (WriteSpriteStretches).</summary>
+        std::vector<uint8_t> Stretches;
+
+        void Note(const std::string& outcome, const std::string& example)
+        {
+            Outcomes.try_emplace(outcome, size_t{0}, example).first->second.first++;
+        }
+    };
+
+    void PutVarint(std::vector<uint8_t>& out, size_t value)
+    {
+        constexpr size_t More = 0x80;
+
+        for (; value >= More; value >>= 7)
+        {
+            out.push_back(static_cast<uint8_t>((value & (More - 1)) | More));
+        }
+
+        out.push_back(static_cast<uint8_t>(value));
+    }
+
+    /// <summary>
+    /// A frame's drawn pixels as option D would carry them: a row at a time, its stretches' count, then each one's skip
+    /// from the last one's end and its length.
+    /// </summary>
+    void PutStretches(std::vector<uint8_t>& out, const DecodedFrame& frame)
+    {
+        for (int32_t row = 0; row < frame.Height; ++row)
+        {
+            const std::span<const uint8_t> line =
+                std::span<const uint8_t>(frame.Drawn).subspan(static_cast<size_t>(row) * frame.Width, frame.Width);
+            std::vector<std::pair<size_t, size_t>> stretches;
+
+            for (size_t x = 0; x < line.size();)
+            {
+                if (line[x] == 0)
+                {
+                    ++x;
+                    continue;
+                }
+
+                const size_t start = x;
+
+                for (; x < line.size() && line[x] != 0; ++x)
+                {
+                }
+
+                stretches.emplace_back(start, x - start);
+            }
+
+            PutVarint(out, stretches.size());
+            size_t end = 0;
+
+            for (const auto& [start, length] : stretches)
+            {
+                PutVarint(out, start - end);
+                PutVarint(out, length);
+                end = start + length;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every frame of <paramref name="table"/> against the HD frame for it in <paramref name="folder"/>: its size, each
+    /// drawn pixel's index (the index picture's red) and mark (draw.pshader's HasIndexIn), and the pixels marked past the
+    /// drawn ones.
+    /// </summary>
+    void CheckSpriteTable(SpriteCheck& check, std::span<const uint8_t> packet, const std::filesystem::path& folder,
+                          const std::string& where)
+    {
+        // As MCShape finds it: a mech gesture's packet has a 6-byte gesture header in front of its table.
+        constexpr size_t GestureHeaderSize = 6;
+        const std::span<const uint8_t> table =
+            VfxIsShapeTable(packet) || packet.size() < GestureHeaderSize ? packet : packet.subspan(GestureHeaderSize);
+
+        if (!VfxIsShapeTable(table))
+        {
+            std::string start;
+
+            for (const uint8_t byte : table.first(std::min<size_t>(table.size(), 8)))
+            {
+                start += std::format("{:02x}", byte);
+            }
+
+            check.Note("original: a packet that isn't a shape table",
+                       std::format("{} ({} bytes, starting {})", where, table.size(), start));
+            return;
+        }
+
+        const int32_t count = VfxShapeCount(table);
+
+        for (int32_t frame = 0; frame < count; ++frame)
+        {
+            const std::string example = std::format("{} frame {}", where, frame);
+
+            // OB-190: some retail tables count frames they don't hold.
+            if (!MCVfxHasShape(table, frame))
+            {
+                check.Note("original: a frame the table counts but doesn't hold", example);
+                continue;
+            }
+
+            const std::expected<DecodedFrame, std::string> decoded = Decode(table, frame);
+
+            if (!decoded.has_value())
+            {
+                check.Note("original: undecodable", std::format("{} ({})", example, decoded.error()));
+                continue;
+            }
+
+            if (decoded->Width == 0)
+            {
+                check.Note("original: empty", example);
+                continue;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> hd =
+                MCHdArt::FindInFolder(folder, frame, decoded->Width, decoded->Height);
+            const size_t pixels = decoded->Index.size();
+
+            if (hd == nullptr || hd->Indices.size() != pixels * MCHdArt::IndexBytes)
+            {
+                check.Note(decoded->Translucent ? "translucent: no HD frame of its size" : "no HD frame of its size",
+                           example);
+                continue;
+            }
+
+            size_t wrong = 0;
+            size_t unmarked = 0;
+            size_t spread = 0;
+            size_t drawn = 0;
+
+            for (size_t at = 0; at < pixels; ++at)
+            {
+                const bool marked = hd->Indices[at * MCHdArt::IndexBytes + 1] >= MCHdArt::BakedShadow;
+
+                if (decoded->Drawn[at] == 0)
+                {
+                    spread += marked ? 1 : 0;
+                    continue;
+                }
+
+                // A translucent frame's blended pixels (AlphaPal.ini's colours) have no index in its HD frame, which
+                // draws them itself; its index pass draws the opaque ones only (OpaqueOnly).
+                if (decoded->Translucent && SpecialColor[decoded->Index[at]] != 0)
+                {
+                    ++check.Blended;
+                    continue;
+                }
+
+                ++drawn;
+                unmarked += marked ? 0 : 1;
+                wrong += marked && hd->Indices[at * MCHdArt::IndexBytes] != decoded->Index[at] ? 1 : 0;
+            }
+
+            const std::string_view kind = decoded->Translucent ? "translucent: " : "";
+            ++check.Frames;
+            check.Pixels += pixels;
+            check.Drawn += drawn;
+            check.Spread += spread;
+            check.WrongIndex += wrong;
+            check.Unmarked += unmarked;
+
+            if (wrong != 0)
+            {
+                check.Note(std::format("{}a drawn pixel's index differs", kind),
+                           std::format("{}: {} of {}", example, wrong, drawn));
+            }
+
+            if (unmarked != 0)
+            {
+                check.Note(std::format("{}a drawn pixel unmarked", kind),
+                           std::format("{}: {} of {}", example, unmarked, drawn));
+            }
+
+            if (wrong == 0 && unmarked == 0)
+            {
+                check.Note(std::format("{}every drawn pixel's index in its HD frame", kind), example);
+            }
+
+            if (spread != 0)
+            {
+                check.Note("marked past its drawn pixels", example);
+            }
+
+            PutStretches(check.Stretches, *decoded);
+        }
+    }
+}
+
+/// <summary>
+/// Tool: <c>--sprite-pack-check &lt;pack folder&gt;</c> holds every original frame of the mechs' parts and the objects
+/// (each part PAK's and shape PAK's packets the pack has a folder for, opened as MCSpriteManager opens them) against the
+/// pack's HD frame for it (MCHdArt::FindInFolder in MCHdArt::FolderOf's folder): whether the HD frame's index picture
+/// holds every drawn pixel's index (PLAN.md's first-use item 13, option D's premise), how many pixels it marks past the
+/// drawn ones, and what option D would carry (each frame's drawn stretches). Counted by outcome, with an example each.
+/// <c>--sprite-pack-masks &lt;folder&gt;</c> also writes each pack folder's stretches there (each archive's as a 4-byte
+/// length, then its bytes), for their deflated size. Reads the pack and the game, writes nothing else.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --sprite-pack-check holds the original's sprite frames against a pack's HD frames")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("sprite-pack-check");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    GHdArt = 1;
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
+    MCHdArt::SetPackFolder(packFolder);
+    REQUIRE(MCHdArt::Active());
+    const std::optional<std::string_view> masks = MCTest::Option("sprite-pack-masks");
+    constexpr std::array<std::string_view, 2> Kinds = {"mechs", "objects"};
+
+    for (const std::string_view kind : Kinds)
+    {
+        std::vector<std::filesystem::path> parts;
+
+        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(packFolder / kind))
+        {
+            if (entry.is_directory())
+            {
+                parts.push_back(entry.path());
+            }
+        }
+
+        std::ranges::sort(parts);
+
+        for (const std::filesystem::path& part : parts)
+        {
+            const std::string file = part.filename().string();
+            MCPacketFile parent;
+
+            if (parent.Open(GamePath(SpritePath, file, ".pak")) != 0)
+            {
+                std::cout << std::format("{}/{}: the game has no {}.pak\n", kind, file, file);
+                continue;
+            }
+
+            std::vector<uint32_t> numbers;
+
+            for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(part))
+            {
+                const std::string stem = entry.path().stem().string();
+
+                if (entry.path().extension() == ".hda" && !stem.empty() &&
+                    std::ranges::all_of(stem, [](unsigned char c) { return std::isdigit(c) != 0; }))
+                {
+                    numbers.push_back(static_cast<uint32_t>(std::stoul(stem)));
+                }
+            }
+
+            std::ranges::sort(numbers);
+            SpriteCheck check;
+            std::ofstream maskFile;
+
+            if (masks.has_value())
+            {
+                maskFile.open(std::filesystem::path(*masks) / std::format("{}-{}.bin", kind, file), std::ios::binary);
+                REQUIRE(maskFile.good());
+            }
+
+            for (const uint32_t number : numbers)
+            {
+                const std::string where = std::format("{}/{}/{}", kind, file, number);
+                const auto archiveNumber = static_cast<int32_t>(number);
+
+                if (parent.SeekPacket(archiveNumber) != 0 || parent.GetPacketSize() == 0)
+                {
+                    check.Note("archive: no original packet", where);
+                    continue;
+                }
+
+                MCPacketFile inner;
+
+                if (inner.Open(parent, static_cast<uint32_t>(parent.GetPacketSize())) != 0)
+                {
+                    check.Note("archive: its original packet not a packet file", where);
+                    continue;
+                }
+
+                const size_t before = check.Stretches.size();
+
+                for (int32_t packet = 0; packet < inner.GetNumPackets(); ++packet)
+                {
+                    if (inner.SeekPacket(packet) != 0 || inner.GetPacketSize() <= 0)
+                    {
+                        continue;
+                    }
+
+                    std::vector<uint8_t> table(static_cast<size_t>(inner.GetPacketSize()));
+
+                    if (inner.ReadPacket(packet, table) != static_cast<int32_t>(table.size()))
+                    {
+                        check.Note("original: a table unreadable", std::format("{} packet {}", where, packet));
+                        continue;
+                    }
+
+                    const auto packetNumber = static_cast<uint32_t>(packet);
+                    const std::filesystem::path folder =
+                        kind == Kinds[0] ? MCHdArt::FolderOf(MCHdArt::MechShapeKey{file, number, packetNumber})
+                                         : MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{file, number, packetNumber});
+                    CheckSpriteTable(check, table, folder, std::format("{} packet {}", where, packet));
+                }
+
+                if (maskFile.is_open())
+                {
+                    const auto length = static_cast<uint32_t>(check.Stretches.size() - before);
+                    maskFile.write(reinterpret_cast<const char*>(&length), sizeof(length));
+                    maskFile.write(reinterpret_cast<const char*>(check.Stretches.data() + before), length);
+                }
+            }
+
+            std::cout << std::format(
+                "{}/{}: {} archives, {} frames held, {} original pixels, {} drawn, {} marked past "
+                "them, {} blended (translucent frames'); {} drawn pixels' indices differ, {} unmarked; option D's "
+                "stretches {} KB\n",
+                kind, file, numbers.size(), check.Frames, check.Pixels, check.Drawn, check.Spread, check.Blended,
+                check.WrongIndex, check.Unmarked, check.Stretches.size() / 1024);
+
+            for (const auto& [outcome, counted] : check.Outcomes)
+            {
+                std::cout << std::format("  {:8} {} (e.g. {})\n", counted.first, outcome, counted.second);
+            }
+        }
+    }
+}

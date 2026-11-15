@@ -38,10 +38,37 @@ namespace
         return std::format("    {{0x{:016x}, {}, {}, {}}},\n", name.Key, slot, name.Width, name.Height);
     }
 
-    /// <summary>Rows <paramref name="rows"/> as the table's array <paramref name="arrayName"/>.</summary>
-    auto ArrayText(const std::string& arrayName, const std::string& rows) -> std::string
+    /// <summary>Rows <paramref name="rows"/> as the table's array <paramref name="arrayName"/> of <paramref name="type"/>.</summary>
+    auto ArrayText(std::string_view type, const std::string& arrayName, const std::string& rows) -> std::string
     {
-        return std::format("inline constexpr MCGroundNameRow {}[] = {{\n{}}};\n\n", arrayName, rows);
+        return std::format("inline constexpr {} {}[] = {{\n{}}};\n\n", type, arrayName, rows);
+    }
+
+    /// <summary>
+    /// A shape row of the table, for <paramref name="shape"/>, whose tip starts <paramref name="tipAt"/> bytes into its
+    /// set's tips and must fit its row's 8 bits.
+    /// </summary>
+    auto ShapeRowText(const MCGroundTileShape& shape, size_t tipAt) -> std::string
+    {
+        REQUIRE(shape.Tip.size() <= std::numeric_limits<uint8_t>::max());
+        REQUIRE(tipAt <= std::numeric_limits<uint32_t>::max());
+        return std::format("    {{{}, {}, {}, {}, {}}},\n", shape.HotX, shape.HotY, shape.BoxWidth, shape.Tip.size(),
+                           tipAt);
+    }
+
+    /// <summary>Bytes <paramref name="bytes"/> as a table array's rows, sixteen a line.</summary>
+    auto BytesText(std::span<const uint8_t> bytes) -> std::string
+    {
+        constexpr size_t PerLine = 16;
+        std::string text;
+
+        for (size_t i = 0; i < bytes.size(); ++i)
+        {
+            text += std::format("{}0x{:02x},{}", i % PerLine == 0 ? "    " : "", bytes[i],
+                                i % PerLine == PerLine - 1 || i + 1 == bytes.size() ? "\n" : " ");
+        }
+
+        return text;
     }
 
     /// <summary>The names <paramref name="asks"/> ask for, in order: each one's key, or its tile's bytes' key.</summary>
@@ -70,6 +97,61 @@ namespace
 
         return std::move(*tiles);
     }
+
+    /// <summary>A ground tile's header (VFX's tile layout, vfx/MCVfxTile.cpp), before its rows' table.</summary>
+    constexpr size_t TileHeaderBytes = 4;
+
+    /// <summary>Where row <paramref name="row"/> of ground tile <paramref name="tile"/> starts.</summary>
+    auto TileRowAt(std::span<const uint8_t> tile, int32_t row) -> size_t
+    {
+        uint32_t offset = 0;
+        std::memcpy(&offset, tile.data() + TileHeaderBytes + static_cast<size_t>(row) * sizeof(offset), sizeof(offset));
+        return offset;
+    }
+
+    /// <summary>
+    /// Why ground tile <paramref name="packet"/> (named <paramref name="name"/>) wasn't rebuilt from HD frame indices
+    /// <paramref name="indices"/>: its pixels the indices don't hold, or its rows laid out otherwise than the rebuild
+    /// lays them.
+    /// </summary>
+    auto WhyNotRebuilt(std::span<const uint8_t> packet, const MCGroundName& name, std::span<const uint8_t> indices)
+        -> std::string
+    {
+        size_t differ = 0;
+        size_t bareRows = 0;
+        size_t emptyRows = 0;
+
+        for (int32_t row = 0; row < name.Height; ++row)
+        {
+            const size_t start = TileRowAt(packet, row);
+            const size_t end = TileRowAt(packet, row + 1);
+            bareRows += end == start + 1 ? 1 : 0;
+            emptyRows += end == start ? 1 : 0;
+
+            for (int32_t x = 0; x < name.Width; ++x)
+            {
+                const size_t at = (static_cast<size_t>(row) * name.Width + x) * MCHdArt::IndexBytes;
+                const bool drawn =
+                    end > start + 1 && x >= packet[start] && x < packet[start] + static_cast<int32_t>(end - start - 1);
+                const bool hdDrawn = indices[at + 1] != 0;
+                differ += drawn != hdDrawn || (drawn && indices[at] != packet[start + 1 + (x - packet[start])]) ? 1 : 0;
+            }
+        }
+
+        if (differ != 0)
+        {
+            return "its HD frame's indices aren't its pixels";
+        }
+
+        if (bareRows != 0)
+        {
+            return "a row of its first column alone";
+        }
+
+        return std::format("laid out otherwise ({} empty rows, its first row at {} of {})", emptyRows,
+                           TileRowAt(packet, 0),
+                           TileHeaderBytes + (static_cast<size_t>(name.Height) + 2) * sizeof(uint32_t));
+    }
 } // namespace
 
 /// <summary>
@@ -94,6 +176,8 @@ TEST_CASE_ISOLATED("tool: --ground-names-table writes the original's tile sets' 
         const std::unique_ptr<MCTerrainTiles> tiles = OpenTileSet(setName);
         std::string tileRows;
         std::string overlayRows;
+        std::string shapeRows;
+        std::vector<uint8_t> tips;
         size_t named = 0;
 
         for (int32_t slot = 0; slot < tiles->NumTiles(); ++slot)
@@ -103,6 +187,11 @@ TEST_CASE_ISOLATED("tool: --ground-names-table writes the original's tile sets' 
             if (names.Tile.has_value())
             {
                 tileRows += RowText(slot, *names.Tile);
+                // Its shape beside it (MCKnownGroundNames::Shapes), so the tile is rebuilt from its HD frame.
+                const std::optional<MCGroundTileShape> shape = MCWorkOutGroundTileShape(*tiles, slot);
+                REQUIRE(shape.has_value());
+                shapeRows += ShapeRowText(*shape, tips.size());
+                tips.insert(tips.end(), shape->Tip.begin(), shape->Tip.end());
                 ++named;
             }
 
@@ -113,12 +202,15 @@ TEST_CASE_ISOLATED("tool: --ground-names-table writes the original's tile sets' 
             }
         }
 
-        std::cout << std::format("{}: {} slots, {} names, files 0x{:016x}\n", setName, tiles->NumTiles(), named,
-                                 tiles->FilesHash());
-        arrays += std::format("// {}\n", setName) + ArrayText(RowsName(setName, "tiles"), tileRows) +
-                  ArrayText(RowsName(setName, "overlays"), overlayRows);
-        sets += std::format("    {{0x{:016x}, {}, {}, {}}},\n", tiles->FilesHash(), tiles->NumTiles(),
-                            RowsName(setName, "tiles"), RowsName(setName, "overlays"));
+        std::cout << std::format("{}: {} slots, {} names, {} bytes of tips, files 0x{:016x}\n", setName,
+                                 tiles->NumTiles(), named, tips.size(), tiles->FilesHash());
+        arrays += std::format("// {}\n", setName) + ArrayText("MCGroundNameRow", RowsName(setName, "tiles"), tileRows) +
+                  ArrayText("MCGroundNameRow", RowsName(setName, "overlays"), overlayRows) +
+                  ArrayText("MCGroundShapeRow", RowsName(setName, "shapes"), shapeRows) +
+                  ArrayText("uint8_t", RowsName(setName, "tips"), BytesText(tips));
+        sets += std::format("    {{0x{:016x}, {}, {}, {}, {}, {}}},\n", tiles->FilesHash(), tiles->NumTiles(),
+                            RowsName(setName, "tiles"), RowsName(setName, "overlays"), RowsName(setName, "shapes"),
+                            RowsName(setName, "tips"));
     }
 
     std::ofstream file{std::filesystem::path(*out)};
@@ -161,14 +253,23 @@ TEST_CASE_ISOLATED("ground names: the program's table holds the original's tile 
         REQUIRE(known.has_value());
         const MCKnownGroundNames& names = known->get();
         REQUIRE_EQ(names.Slots, tiles->NumTiles());
+        REQUIRE_EQ(names.Shapes.size(), names.Tiles.size());
         size_t wrong = 0;
+        size_t wrongShapes = 0;
 
         for (int32_t slot = 0; slot < tiles->NumTiles(); ++slot)
         {
             wrong += MCWorkOutGroundNames(*tiles, slot) == names.At(slot) ? 0 : 1;
+            const std::optional<MCGroundTileShape> shape = MCWorkOutGroundTileShape(*tiles, slot);
+            const std::optional<MCGroundTileShape> held = names.ShapeAt(slot);
+            wrongShapes +=
+                shape.has_value() == held.has_value() && (!shape.has_value() || MCSameGroundTileShape(*shape, *held))
+                    ? 0
+                    : 1;
         }
 
         CHECK_EQ(wrong, 0);
+        CHECK_EQ(wrongShapes, 0);
     }
 }
 
@@ -210,4 +311,87 @@ TEST_CASE_ISOLATED("ground names: a mission's HD ground asked by name is what it
     CHECK(!byBytes.Tiles.empty());
     CHECK(NamesOf(byName->Tiles) == NamesOf(byBytes.Tiles));
     CHECK(NamesOf(byName->Overlays) == NamesOf(byBytes.Overlays));
+}
+
+/// <summary>
+/// Tool: <c>--ground-rebuild-check &lt;pack folder&gt;</c> rebuilds every ground tile of the original's tile sets from the
+/// pack's HD frame (its indices) and the shape the program's table carries for it (MCRebuildGroundTile, PLAN.md's
+/// first-use item 10), held to the tile's packet byte for byte; those that aren't, counted by why, with an example each.
+/// Reads the pack and the game, writes nothing.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --ground-rebuild-check rebuilds the original's ground tiles from a pack's HD frames")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("ground-rebuild-check");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(std::filesystem::absolute(std::filesystem::path(*pack)));
+    REQUIRE(MCHdArt::Active());
+    constexpr std::string_view Rebuilt = "rebuilt byte for byte";
+
+    for (const std::string_view setName : ShippedTileSets)
+    {
+        MCTest::Scope scope{std::string(setName)};
+        const std::unique_ptr<MCTerrainTiles> tiles = OpenTileSet(setName);
+        const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(*tiles);
+        REQUIRE(known.has_value());
+        std::map<std::string, std::pair<size_t, int32_t>> outcomes;
+        const auto note = [&outcomes](std::string outcome, int32_t slot)
+        { outcomes.try_emplace(std::move(outcome), size_t{0}, slot).first->second.first++; };
+
+        for (const MCGroundNameRow& row : known->get().Tiles)
+        {
+            const int32_t slot = row.Slot;
+            tiles->ReadTiles(std::array{slot});
+            const MCOptionalRef<const MCTerrainTile> cached = tiles->Slot(slot);
+            REQUIRE(cached.has_value());
+            const std::span<const uint8_t> packet = cached->get().TileData();
+            const MCGroundName name{row.Key, row.Width, row.Height};
+            const std::span<const uint8_t> kept = packet.first(TileRowAt(packet, packet[2]));
+            const std::shared_ptr<const MCHdArt::Frame> frame = MCHdArt::FindTerrainTile(kept, name.Width, name.Height);
+
+            if (frame == nullptr)
+            {
+                note("no HD frame", slot);
+                continue;
+            }
+
+            if (frame->Indices.size() != static_cast<size_t>(name.Width) * name.Height * MCHdArt::IndexBytes)
+            {
+                note(std::format("its HD frame's indices {}x{}", frame->OriginalWidth(), frame->OriginalHeight()),
+                     slot);
+                continue;
+            }
+
+            const std::optional<MCGroundTileShape> shape = known->get().ShapeAt(slot);
+            REQUIRE(shape.has_value());
+            const std::optional<std::vector<uint8_t>> rebuilt = MCRebuildGroundTile(frame->Indices, name, *shape);
+
+            if (!rebuilt.has_value())
+            {
+                note(WhyNotRebuilt(packet, name, frame->Indices), slot);
+                continue;
+            }
+
+            note(std::ranges::equal(*rebuilt, packet) ? std::string(Rebuilt) : "its name's, but not its packet", slot);
+        }
+
+        std::cout << std::format("{}: {} ground tiles\n", setName, known->get().Tiles.size());
+
+        for (const auto& [outcome, count] : outcomes)
+        {
+            std::cout << std::format("  {:5} {} (e.g. slot {})\n", count.first, outcome, count.second);
+        }
+
+        const auto rebuilt = outcomes.find(std::string(Rebuilt));
+        CHECK_EQ(rebuilt == outcomes.end() ? size_t{0} : rebuilt->second.first, known->get().Tiles.size());
+    }
+
+    GHdArt = 0;
+    MCHdArt::SetPackFolder({});
 }

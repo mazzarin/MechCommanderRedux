@@ -4020,19 +4020,25 @@ namespace
 namespace
 {
     /// <summary>
-    /// The frame of <paramref name="folder"/> named by its picture's data <paramref name="data"/> (a terrain tile's, an
-    /// overlay's: TerrainTileHash), its bounds <paramref name="width"/> x <paramref name="height"/>; null with HD art off.
+    /// The frame of <paramref name="folder"/> named <paramref name="key"/> (a terrain tile's, an overlay's:
+    /// TerrainTileHash of its data), its bounds <paramref name="width"/> x <paramref name="height"/>; null with HD art off.
     /// </summary>
-    std::shared_ptr<const MCHdArt::Frame> FindHashed(std::string_view folder, std::span<const uint8_t> data,
-                                                     int32_t width, int32_t height)
+    std::shared_ptr<const MCHdArt::Frame> FindKeyed(std::string_view folder, uint64_t key, int32_t width,
+                                                    int32_t height)
     {
         if (!MCHdArt::Active())
         {
             return nullptr;
         }
 
-        return Cache(FrameKey{FolderIndex(MCHdArt::PackFolder() / folder, Naming::Hash), TerrainTileHash(data)}, width,
-                     height);
+        return Cache(FrameKey{FolderIndex(MCHdArt::PackFolder() / folder, Naming::Hash), key}, width, height);
+    }
+
+    /// <summary>As FindKeyed, for the frame named by its picture's data <paramref name="data"/>.</summary>
+    std::shared_ptr<const MCHdArt::Frame> FindHashed(std::string_view folder, std::span<const uint8_t> data,
+                                                     int32_t width, int32_t height)
+    {
+        return MCHdArt::Active() ? FindKeyed(folder, TerrainTileHash(data), width, height) : nullptr;
     }
 }
 
@@ -4042,10 +4048,20 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const u
     return FindHashed(TerrainFolder, tile, width, height);
 }
 
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTileByKey(uint64_t key, int32_t width, int32_t height)
+{
+    return FindKeyed(TerrainFolder, key, width, height);
+}
+
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainRelief(std::span<const uint8_t> tile, int32_t width,
                                                                  int32_t height)
 {
     return FindHashed(ReliefFolder, tile, width, height);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainReliefByKey(uint64_t key, int32_t width, int32_t height)
+{
+    return FindKeyed(ReliefFolder, key, width, height);
 }
 
 void MCHdArt::ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief)

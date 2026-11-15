@@ -58,6 +58,14 @@ std::optional<MCHdGroundAsks> MCTerrainHdGroundByName(const MCTerrain& terrain);
 bool MCTerrainAskHdGroundByName(const MCTerrain& terrain);
 
 /// <summary>
+/// Port-only (PLAN.md's first-use item 10): takes out of <paramref name="slots"/> those whose ground tile
+/// MCTerrainReadHdTiles rebuilds from its HD frame rather than reading it (the map's ground tiles the table holds):
+/// while the HD ground is drawn, for a tile set the program's table holds (as MCTerrainAskHdGroundByName asks), so the
+/// terrain's load reads only the rest.
+/// </summary>
+void MCTerrainLeaveRebuiltTiles(const MCTerrain& terrain, std::vector<int32_t>& slots);
+
+/// <summary>
 /// Port-only (HD art): slot <paramref name="slot"/> of <paramref name="tiles"/> as a ground tile, as the ground mesh
 /// keeps it (up to its last row's end) and the pack names it, with its width and height; its tile empty when the slot
 /// holds no tile the mesh would draw. Reads the tile when it isn't cached.
@@ -71,13 +79,22 @@ MCHdArt::GroundAhead MCGroundTileOf(MCTerrainTiles& tiles, int32_t slot);
 /// </summary>
 std::optional<MCHdArt::GroundAhead> MCGroundOverlayOf(MCTerrainTiles& tiles, int32_t slot);
 
+/// <summary>Port-only (PLAN.md's first-use item 10): the original ground tiles MCTerrainReadHdTiles rebuilt and read.</summary>
+struct MCGroundRebuilt
+{
+    size_t Rebuilt = 0;
+    size_t Read = 0;
+};
+
 /// <summary>
 /// Port-only: has the HD art pack's copies of the map's ground tiles (MCHdArt::FindTerrainTile) in hand while the
 /// mission loads, so the first frame, which uploads the ground, doesn't wait on the pack: those read ahead
-/// (MCTerrainReadHdTilesAhead) waited for and kept, the rest read. Does nothing while HD art is off or the software
-/// renderer draws.
+/// (MCTerrainReadHdTilesAhead) waited for and kept, the rest read. For a tile set the program's table holds (PLAN.md's
+/// first-use item 10), each original tile the terrain's load left out (MCTerrainLeaveRebuiltTiles) is rebuilt from its
+/// HD frame (MCRebuildGroundTile) rather than read; one that isn't (no frame, or not the tile's bytes) is read. Does
+/// nothing while HD art is off or the software renderer draws. How many original tiles it rebuilt and read.
 /// </summary>
-void MCTerrainReadHdTiles();
+MCGroundRebuilt MCTerrainReadHdTiles();
 
 /// <summary>Port: lets go of the ground mesh (the terrain is destroyed).</summary>
 void MCTerrainForgetMesh();

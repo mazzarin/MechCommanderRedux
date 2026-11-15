@@ -297,10 +297,12 @@ auto MCTerrain::Load(std::string_view fileName) -> std::expected<void, std::stri
     // beside the original tiles' below rather than after them.
     MCTerrainAskHdGroundByName(*this);
     // Port: the original's tiles, the .pre's first, then every one the map's vertices name, read now in a few large
-    // reads, not one at a time on the game's thread as the ground is first put up or drawn.
+    // reads, not one at a time on the game's thread as the ground is first put up or drawn. Port-only (PLAN.md's
+    // first-use item 10): not the ground tiles rebuilt from their HD frames instead (MCTerrainReadHdTiles).
     const auto tilesStart = std::chrono::steady_clock::now();
     const std::vector<int32_t> tilesUsed = MapBlocks->TilesUsed();
     tilesAhead.insert(tilesAhead.end(), tilesUsed.begin(), tilesUsed.end());
+    MCTerrainLeaveRebuiltTiles(*this, tilesAhead);
     const MCTileReads tilesRead = Tiles->ReadTiles(tilesAhead);
 
     if (MCFrameLog::Enabled())

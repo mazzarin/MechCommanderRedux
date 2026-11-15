@@ -76,6 +76,14 @@ public:
     MCOptionalRef<const MCTerrainTile> Slot(int32_t tileNum) const;
 
     /// <summary>
+    /// Port-only (PLAN.md's first-use item 10): puts <paramref name="packet"/> in the cache as slot
+    /// <paramref name="slot"/>'s tile, as reading it would (a ground tile rebuilt from its HD frame,
+    /// MCRebuildGroundTile). Whether it did: not for a slot outside the table, cached already or missing, or an empty
+    /// packet.
+    /// </summary>
+    bool Put(int32_t slot, std::span<const uint8_t> packet);
+
+    /// <summary>
     /// The cached tile <paramref name="tileNum"/> of the view's tile set (<paramref name="rotated"/>: the rotated
     /// set), read in when it isn't loaded.
     /// </summary>

@@ -105,8 +105,11 @@
 #include "sprite/MCWeather.h"
 #include "sprite/MCWeatherPace.h"
 #include "terrain/MCGroundMesh.h"
+#include "terrain/MCGroundNames.h"
+#include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
+#include "terrain/MCTerrainTiles.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
@@ -9247,24 +9250,30 @@ namespace
     /// <summary>
     /// Writes the HD copies of the ground mesh's tiles into <paramref name="pack"/>'s terrain folder: each pixel's shown
     /// colour as <paramref name="paint"/> makes it (inverted), at <see cref="TerrainScale"/> (nearest), opaque, with the
-    /// index picture beside it.
+    /// index picture beside it; that of the mesh's tile <paramref name="misnamed"/>, if given, with its first drawn
+    /// pixel's index one more than the tile's (a pack that doesn't match the game's tiles).
     /// </summary>
     size_t WriteTerrainPack(const std::filesystem::path& pack, const MCTerrainMesh& mesh,
                             std::span<const SDL_Color, 256> colors,
-                            const std::function<SDL_Color(SDL_Color)>& paint = Inverted)
+                            const std::function<SDL_Color(SDL_Color)>& paint = Inverted,
+                            std::optional<size_t> misnamed = std::nullopt)
     {
         const std::filesystem::path folder = pack / "terrain";
         std::filesystem::create_directories(folder);
         size_t written = 0;
 
-        for (const std::vector<uint8_t>& tile : mesh.Tiles)
+        for (size_t t = 0; t < mesh.Tiles.size(); ++t)
         {
+            const std::vector<uint8_t>& tile = mesh.Tiles[t];
             const DecodedTile decoded = DecodeTile(tile);
 
             if (decoded.Width == 0)
             {
                 continue;
             }
+
+            const auto firstDrawn = static_cast<size_t>(std::ranges::find(decoded.Drawn, 1) - decoded.Drawn.begin());
+            const std::optional<size_t> wrongAt = misnamed == t ? std::optional(firstDrawn) : std::nullopt;
 
             const int32_t width = decoded.Width * TerrainScale;
             const int32_t height = decoded.Height * TerrainScale;
@@ -9282,7 +9291,7 @@ namespace
                     color[to + 1] = painted.g;
                     color[to + 2] = painted.b;
                     color[to + 3] = HasIndex;
-                    index[to] = decoded.Index[from];
+                    index[to] = static_cast<uint8_t>(decoded.Index[from] + (wrongAt == from ? 1 : 0));
                     index[to + 1] = decoded.Drawn[from] != 0 ? HasIndex : 0;
                     index[to + 3] = HasIndex;
                 }
@@ -9400,6 +9409,80 @@ TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs i
     MCTestGame::RunFrame(FrameSeconds);
     CHECK(scene->Renderer->HdTerrain());
     CHECK_EQ(MCHdArt::FramesRead(), loaded);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): for a tile set the program's table holds, the load's HD ground
+/// (MCTerrainReadHdTiles) puts each of the map's original ground tiles in the cache rebuilt from its HD frame, byte for
+/// byte the tile's packet, rather than reading it, and the terrain's load leaves them out of its reads
+/// (MCTerrainLeaveRebuiltTiles); a tile whose HD frame doesn't hold its pixels is read.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art's ground rebuilds the original's ground tiles from their HD frames, byte for byte")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    // The ground alone, one tile's index picture not the tile's.
+    const std::filesystem::path pack = scene->Scratch / "ground";
+    REQUIRE(WriteTerrainPack(pack, mesh, colors, Inverted, size_t{0}) > 1);
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    REQUIRE(terrain != nullptr);
+    // Mission 1's tile set, whose tiles the load read, opened again with none read.
+    constexpr std::string_view TileSet = "tiles";
+    std::expected<std::unique_ptr<MCTerrainTiles>, std::string> fresh = MCTerrainTiles::Create(TileSet);
+    std::expected<std::unique_ptr<MCTerrainTiles>, std::string> reference = MCTerrainTiles::Create(TileSet);
+    REQUIRE(fresh.has_value());
+    REQUIRE(reference.has_value());
+    const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(**fresh);
+    REQUIRE(known.has_value());
+    REQUIRE_EQ((*fresh)->FilesHash(), terrain->Tiles->FilesHash());
+    terrain->Tiles = std::move(*fresh);
+    const MCHdArtOn hdArt(pack);
+
+    // The terrain's load leaves out the map's ground tiles the table holds, not its overlays or a slot it lacks.
+    std::vector<int32_t> slots = terrain->MapBlocks->TilesUsed();
+    const size_t used = slots.size();
+    MCTerrainLeaveRebuiltTiles(*terrain, slots);
+    CHECK(!slots.empty());
+    CHECK(slots.size() < used);
+    CHECK(std::ranges::none_of(slots, [&](int32_t slot) { return known->get().ShapeAt(slot).has_value(); }));
+
+    const MCGroundRebuilt done = MCTerrainReadHdTiles();
+    CHECK_EQ(done.Read, size_t{1});
+    CHECK(done.Rebuilt + done.Read >= mesh.Tiles.size() - 1);
+    size_t cached = 0;
+    size_t differ = 0;
+
+    for (const MCGroundNameRow& row : known->get().Tiles)
+    {
+        const MCOptionalRef<const MCTerrainTile> tile = terrain->Tiles->Slot(row.Slot);
+        REQUIRE(tile.has_value());
+
+        if (!tile->get().TileData().empty())
+        {
+            ++cached;
+            differ += std::ranges::equal(tile->get().TileData(), (*reference)->Lookup(row.Slot)) ? 0 : 1;
+        }
+    }
+
+    std::cout << std::format("  {} ground tiles rebuilt, {} read; {} cached\n", done.Rebuilt, done.Read, cached);
+    CHECK_EQ(cached, done.Rebuilt + done.Read);
+    CHECK_EQ(differ, size_t{0});
+    // The mission draws on from the rebuilt tiles.
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK(scene->Renderer->HdTerrain());
     std::filesystem::remove_all(scene->Scratch);
 }
 

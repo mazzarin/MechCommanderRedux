@@ -43,8 +43,36 @@ struct MCGroundNameRow
 };
 
 /// <summary>
+/// Port-only (PLAN.md's first-use item 10): what the program carries of an original ground tile besides its HD frame's
+/// indices, so the tile is rebuilt without reading it (MCRebuildGroundTile): its header's hot spot and box width, and
+/// its tip, the row past the height it states (its diamond's bottom point, which the original never draws: kept for its
+/// bytes).
+/// </summary>
+struct MCGroundTileShape
+{
+    uint8_t HotX = 0;
+    uint8_t HotY = 0;
+    uint8_t BoxWidth = 0;
+    std::span<const uint8_t> Tip;
+};
+
+/// <summary>
+/// A ground tile's shape as the program's table holds it, beside its name (MCKnownGroundNames::Shapes): its header's
+/// bytes, and its tip as a stretch of the set's tips (MCKnownGroundNames::Tips).
+/// </summary>
+struct MCGroundShapeRow
+{
+    uint8_t HotX = 0;
+    uint8_t HotY = 0;
+    uint8_t BoxWidth = 0;
+    uint8_t TipLength = 0;
+    uint32_t TipAt = 0;
+};
+
+/// <summary>
 /// A tile set the program knows: its files' hash (MCTerrainTiles::FilesHash), its slots' count, and the names of the
-/// slots that hold a ground tile and of those that hold an overlay, each in slot order.
+/// slots that hold a ground tile and of those that hold an overlay, each in slot order; each ground tile's shape beside
+/// its name (PLAN.md's first-use item 10), and the bytes of their tips.
 /// </summary>
 struct MCKnownGroundNames
 {
@@ -52,9 +80,14 @@ struct MCKnownGroundNames
     int32_t Slots = 0;
     std::span<const MCGroundNameRow> Tiles;
     std::span<const MCGroundNameRow> Overlays;
+    std::span<const MCGroundShapeRow> Shapes;
+    std::span<const uint8_t> Tips;
 
     /// <summary>Slot <paramref name="slot"/>'s names (none for a slot outside the set).</summary>
     MCGroundSlotNames At(int32_t slot) const;
+
+    /// <summary>The shape of the ground tile in slot <paramref name="slot"/> (none for a slot without one).</summary>
+    std::optional<MCGroundTileShape> ShapeAt(int32_t slot) const;
 };
 
 /// <summary>
@@ -64,8 +97,29 @@ struct MCKnownGroundNames
 MCGroundSlotNames MCWorkOutGroundNames(MCTerrainTiles& tiles, int32_t slot);
 
 /// <summary>
+/// Port-only (PLAN.md's first-use item 10): works out the shape of the ground tile in slot <paramref name="slot"/> from
+/// its bytes, as MCWorkOutGroundNames does its names (its tip a view of the cached tile); none where the slot holds no
+/// ground tile.
+/// </summary>
+std::optional<MCGroundTileShape> MCWorkOutGroundTileShape(MCTerrainTiles& tiles, int32_t slot);
+
+/// <summary>Whether shapes <paramref name="a"/> and <paramref name="b"/> are the same, their tips byte for byte.</summary>
+bool MCSameGroundTileShape(const MCGroundTileShape& a, const MCGroundTileShape& b);
+
+/// <summary>
 /// Port-only (PLAN.md's first-use item 6, Part B): the names of <paramref name="tiles"/>' slots from the table the
 /// program carries (terrain/MCGroundNamesKnown.h) when it holds that tile set, by its files as they open, so the HD
 /// ground is asked for before a tile is read. None for a tile set it lacks (a mod's), whose tiles are read and hashed.
 /// </summary>
 MCOptionalRef<const MCKnownGroundNames> MCKnownGroundNamesOf(const MCTerrainTiles& tiles);
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): the original's packet of the ground tile <paramref name="name"/> names,
+/// rebuilt from its HD frame's <paramref name="indices"/> (R8G8 per original pixel, as MCHdArt::Frame keeps them: R its
+/// palette index, G not 0 where drawn) and <paramref name="shape"/>, laid out as the original's tiles are: the header,
+/// the rows' table (each row's start, the tip's, the packet's end), each row one run from its first drawn pixel (an
+/// empty row no bytes), then the tip. None unless the bytes up to its last row's end are those the name hashes
+/// (MCHdArt::TerrainTileKey), so a pack or table that doesn't match the game's tiles leaves them to be read.
+/// </summary>
+std::optional<std::vector<uint8_t>> MCRebuildGroundTile(std::span<const uint8_t> indices, const MCGroundName& name,
+                                                        const MCGroundTileShape& shape);

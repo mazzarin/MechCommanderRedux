@@ -10,6 +10,7 @@
 #include "object/MCElementalType.h"
 #include "object/MCElementalGameSystem.h"
 #include "object/MCForces.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSoftwareRenderer.h"
 #include "sprite/MCHdArt.h"
@@ -615,6 +616,31 @@ std::optional<MCHdGroundAsks> MCTerrainHdGroundByName(const MCTerrain& terrain)
                           NamedAhead(*known, OverlaySlots(*terrain.MapBlocks), &MCGroundSlotNames::Overlay)};
 }
 
+void MCTerrainLeaveRebuiltTiles(const MCTerrain& terrain, std::vector<int32_t>& slots)
+{
+    const MCOptionalRef<const MCKnownGroundNames> known =
+        HdGroundDrawn(terrain) ? MCKnownGroundNamesOf(*terrain.Tiles) : std::nullopt;
+
+    if (!known.has_value())
+    {
+        return;
+    }
+
+    // The map's ground tiles the table holds, as RebuildGroundFromHd goes through them; any other slot (the .pre's
+    // that the map doesn't name, an overlay) is read.
+    std::unordered_set<int32_t> rebuilt;
+
+    for (const int32_t slot : GroundSlots(*terrain.MapBlocks))
+    {
+        if (known->get().ShapeAt(slot).has_value())
+        {
+            rebuilt.insert(slot);
+        }
+    }
+
+    std::erase_if(slots, [&rebuilt](int32_t slot) { return rebuilt.contains(slot); });
+}
+
 bool MCTerrainAskHdGroundByName(const MCTerrain& terrain)
 {
     if (!HdGroundDrawn(terrain))
@@ -650,13 +676,89 @@ void MCTerrainReadHdTilesAhead()
     MCHdArt::ReadOverlaysAhead(asks.Overlays);
 }
 
-void MCTerrainReadHdTiles()
+namespace
 {
+    /// <summary>
+    /// MCTerrainReadHdTiles for a tile set the program knows (<paramref name="known"/>): each of the map's ground tiles'
+    /// HD frames in hand by name, and each original tile not cached rebuilt from its frame, or read where it can't be.
+    /// </summary>
+    MCGroundRebuilt RebuildGroundFromHd(MCTerrain& terrain, const MCKnownGroundNames& known)
+    {
+        MCHdArt::WaitForLoadReads();
+        MCHdArt::KeepReadAhead();
+        const auto start = std::chrono::steady_clock::now();
+        MCTerrainTiles& tiles = *terrain.Tiles;
+        std::vector<int32_t> unread;
+        size_t rebuilt = 0;
+
+        for (const int32_t slot : GroundSlots(*terrain.MapBlocks))
+        {
+            const std::optional<MCGroundName> name = known.At(slot).Tile;
+
+            if (!name.has_value())
+            {
+                continue;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> frame =
+                MCHdArt::FindTerrainTileByKey(name->Key, name->Width, name->Height);
+
+            if (MCSceneLights::ReliefMapsOn())
+            {
+                MCHdArt::FindTerrainReliefByKey(name->Key, name->Width, name->Height);
+            }
+
+            const MCOptionalRef<const MCTerrainTile> cached = tiles.Slot(slot);
+
+            if (!cached.has_value() || cached->get().Missing || !cached->get().TileData().empty())
+            {
+                continue;
+            }
+
+            const std::optional<MCGroundTileShape> shape = known.ShapeAt(slot);
+            const std::optional<std::vector<uint8_t>> packet = frame != nullptr && shape.has_value()
+                                                                   ? MCRebuildGroundTile(frame->Indices, *name, *shape)
+                                                                   : std::nullopt;
+
+            if (packet.has_value() && tiles.Put(slot, *packet))
+            {
+                ++rebuilt;
+                continue;
+            }
+
+            unread.push_back(slot);
+        }
+
+        const MCTileReads read = tiles.ReadTiles(unread);
+
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::Note(std::format(
+                "ground tiles: {} rebuilt from HD, {} read in {} reads, {:.1f} ms", rebuilt, read.Tiles, read.Reads,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
+        }
+
+        return MCGroundRebuilt{rebuilt, read.Tiles};
+    }
+} // namespace
+
+MCGroundRebuilt MCTerrainReadHdTiles()
+{
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (terrain != nullptr && HdGroundDrawn(*terrain))
+    {
+        if (const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(*terrain->Tiles))
+        {
+            return RebuildGroundFromHd(*terrain, known->get());
+        }
+    }
+
     const std::vector<MCHdArt::GroundAhead> tiles = HdGroundTiles();
 
     if (tiles.empty())
     {
-        return;
+        return {};
     }
 
     // Those read ahead (MCTerrainReadHdTilesAhead) are kept; any left, or whose read failed, are read here.
@@ -673,6 +775,8 @@ void MCTerrainReadHdTiles()
             MCHdArt::FindTerrainRelief(tile.Tile, tile.Width, tile.Height);
         }
     }
+
+    return {};
 }
 
 MCTerrainMeshSteps MCTerrainScreenSteps(const MCCamera& camera)

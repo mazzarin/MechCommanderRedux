@@ -528,6 +528,12 @@ namespace MCHdArt
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainTile(std::span<const uint8_t> tile, int32_t width, int32_t height);
 
+    /// <summary>
+    /// Port-only (terrain/MCGroundNames.h): as FindTerrainTile, for the tile whose key (<see cref="TerrainTileKey"/>)
+    /// is <paramref name="key"/>, known without its bytes.
+    /// </summary>
+    std::shared_ptr<const Frame> FindTerrainTileByKey(uint64_t key, int32_t width, int32_t height);
+
     /// <summary>A relief map's byte for flat ground; a byte stands for a rise of (byte - this) / 127 of a pixel.</summary>
     inline constexpr int32_t ReliefFlat = 128;
 
@@ -536,6 +542,9 @@ namespace MCHdArt
     /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainRelief(std::span<const uint8_t> tile, int32_t width, int32_t height);
+
+    /// <summary>Port-only (terrain/MCGroundNames.h): as FindTerrainRelief, by the tile's key, as FindTerrainTileByKey.</summary>
+    std::shared_ptr<const Frame> FindTerrainReliefByKey(uint64_t key, int32_t width, int32_t height);
 
     /// <summary>Port-only: a ground tile whose HD copy to read ahead (<see cref="ReadGroundAhead"/>): FindTerrainTile's.</summary>
     struct GroundAhead

@@ -140,6 +140,25 @@ auto MCTerrainTiles::Slot(int32_t tileNum) const -> MCOptionalRef<const MCTerrai
     return _Tiles[static_cast<size_t>(tileNum)];
 }
 
+auto MCTerrainTiles::Put(int32_t slot, std::span<const uint8_t> packet) -> bool
+{
+    if (slot < 0 || slot >= _NumTiles || packet.empty())
+    {
+        return false;
+    }
+
+    MCTerrainTile& tile = _Tiles[static_cast<size_t>(slot)];
+
+    if (tile.Missing || !tile.TileData().empty())
+    {
+        return false;
+    }
+
+    tile.Data = MCRegisteredBlock(packet.size(), MCDataKind::Shapes);
+    std::ranges::copy(packet, tile.Data.Bytes().begin());
+    return true;
+}
+
 auto MCTerrainTiles::Lookup(int32_t tileNum, bool rotated) -> std::span<const uint8_t>
 {
     if (tileNum < 0)

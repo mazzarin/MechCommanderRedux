@@ -4003,6 +4003,20 @@ std::string MCHdArt::TerrainTileName(std::span<const uint8_t> tile)
     return HashName(TerrainTileHash(tile));
 }
 
+uint64_t MCHdArt::TerrainTileKey(std::span<const uint8_t> tile)
+{
+    return TerrainTileHash(tile);
+}
+
+namespace
+{
+    /// <summary>A ground tile's or overlay's key: the one it carries, else its bytes' hash.</summary>
+    uint64_t GroundKeyOf(const MCHdArt::GroundAhead& tile)
+    {
+        return tile.Key.has_value() ? *tile.Key : TerrainTileHash(tile.Tile);
+    }
+}
+
 namespace
 {
     /// <summary>
@@ -4054,7 +4068,7 @@ void MCHdArt::ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief)
         {
             if (folder == tileFolder || relief)
             {
-                asks.push_back(FrameAsk{folder, TerrainTileHash(tile.Tile), tile.Width, tile.Height});
+                asks.push_back(FrameAsk{folder, GroundKeyOf(tile), tile.Width, tile.Height});
             }
         }
     }
@@ -4075,7 +4089,7 @@ void MCHdArt::ReadOverlaysAhead(std::span<const GroundAhead> overlays)
 
     for (const GroundAhead& overlay : overlays)
     {
-        asks.push_back(FrameAsk{folder, TerrainTileHash(overlay.Tile), overlay.Width, overlay.Height});
+        asks.push_back(FrameAsk{folder, GroundKeyOf(overlay), overlay.Width, overlay.Height});
     }
 
     AskAhead(asks, AheadKind::Load, RoomIn(CacheBudget()));

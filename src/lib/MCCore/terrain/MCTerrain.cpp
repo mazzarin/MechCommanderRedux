@@ -293,6 +293,9 @@ auto MCTerrain::Load(std::string_view fileName) -> std::expected<void, std::stri
 
     MapBlocks = std::move(*blocks);
     MapTopLeft3d100.Z = MapBlocks->GetTopLeftElevation();
+    // Port-only: the HD ground asked for now by the names the program carries for the tile set, so its reads go
+    // beside the original tiles' below rather than after them.
+    MCTerrainAskHdGroundByName(*this);
     // Port: the original's tiles, the .pre's first, then every one the map's vertices name, read now in a few large
     // reads, not one at a time on the game's thread as the ground is first put up or drawn.
     const auto tilesStart = std::chrono::steady_clock::now();

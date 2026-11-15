@@ -197,3 +197,34 @@ auto MCTerrainTiles::ReadTile(int32_t tileNum) -> std::span<const uint8_t>
     tile.Missing = false;
     return tile.TileData();
 }
+
+auto MCTerrainTiles::FilesHash() const -> uint64_t
+{
+    constexpr uint64_t FnvOffset = 0xcbf29ce484222325ull;
+    constexpr uint64_t FnvPrime = 0x100000001b3ull;
+    uint64_t hash = FnvOffset;
+    const auto mix = [&hash](std::span<const uint8_t> bytes)
+    {
+        for (const uint8_t byte : bytes)
+        {
+            hash = (hash ^ byte) * FnvPrime;
+        }
+    };
+
+    for (const std::unique_ptr<MCPacketFile>& file : {std::cref(_Tile90File), std::cref(_TileFile)})
+    {
+        if (file == nullptr || !file->IsOpen())
+        {
+            mix(std::span<const uint8_t>());
+            continue;
+        }
+
+        // The length is cached as the file opens, so this reads nothing.
+        const uint32_t length = file->GetLength();
+        mix(std::span(reinterpret_cast<const uint8_t*>(&length), sizeof(length)));
+        const std::span<const uint32_t> table = file->SeekTable();
+        mix(std::span(reinterpret_cast<const uint8_t*>(table.data()), table.size_bytes()));
+    }
+
+    return hash;
+}

@@ -1,8 +1,11 @@
 #pragma once
 
 #include "lib/MCOptionalRef.h"
+#include "sprite/MCHdArt.h"
 
 class MCCamera;
+class MCTerrain;
+class MCTerrainTiles;
 class MCTerrainWindow;
 struct MCTerrainMesh;
 struct MCTerrainFrame;
@@ -20,10 +23,53 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
 
 /// <summary>
 /// Port-only (SPEC-first-use.md): has HD art's readers read the pack's copies of the map's ground tiles and their relief
-/// maps as soon as the terrain is in (MCHdArt::ReadGroundAhead), several at once while the rest of the mission loads.
-/// Does nothing while HD art is off or the software renderer draws.
+/// maps as soon as the terrain is in (MCHdArt::ReadGroundAhead), several at once while the rest of the mission loads:
+/// by the names the program carries for its tile set when it knows it (MCTerrainAskHdGroundByName), otherwise by the
+/// tiles' own bytes. Does nothing while HD art is off or the software renderer draws.
 /// </summary>
 void MCTerrainReadHdTilesAhead();
+
+/// <summary>Port-only (HD art): a map's HD ground to ask for, each tile and each overlay once, as the vertices first name it.</summary>
+struct MCHdGroundAsks
+{
+    std::vector<MCHdArt::GroundAhead> Tiles;
+    std::vector<MCHdArt::GroundAhead> Overlays;
+};
+
+/// <summary>
+/// Port-only (HD art): <paramref name="terrain"/>'s HD ground by its tiles' own bytes (each read when it isn't cached),
+/// as the ground mesh and the renderer find their frames.
+/// </summary>
+MCHdGroundAsks MCTerrainHdGroundByBytes(MCTerrain& terrain);
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 6, Part B): <paramref name="terrain"/>'s HD ground by the names the program
+/// carries for its tile set (terrain/MCGroundNames.h), reading no tile; none for a tile set the table lacks. The same
+/// asks as MCTerrainHdGroundByBytes, keyed rather than holding the tiles' bytes.
+/// </summary>
+std::optional<MCHdGroundAsks> MCTerrainHdGroundByName(const MCTerrain& terrain);
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 6, Part B): as MCTerrainReadHdTilesAhead, as soon as <paramref name="terrain"/>'s
+/// map blocks are in and before a tile is read, by name (MCTerrainHdGroundByName). Whether it asked: not while HD art
+/// is off, the software renderer draws, or for a tile set the program's table lacks (MCTerrainReadHdTilesAhead then
+/// asks by the tiles' own bytes).
+/// </summary>
+bool MCTerrainAskHdGroundByName(const MCTerrain& terrain);
+
+/// <summary>
+/// Port-only (HD art): slot <paramref name="slot"/> of <paramref name="tiles"/> as a ground tile, as the ground mesh
+/// keeps it (up to its last row's end) and the pack names it, with its width and height; its tile empty when the slot
+/// holds no tile the mesh would draw. Reads the tile when it isn't cached.
+/// </summary>
+MCHdArt::GroundAhead MCGroundTileOf(MCTerrainTiles& tiles, int32_t slot);
+
+/// <summary>
+/// Port-only (HD art): slot <paramref name="slot"/> of <paramref name="tiles"/> as an overlay, as the renderer finds its
+/// HD frame: its fast shape 0 up to its last row's end, and its size; none when it holds none. Reads the tile when it
+/// isn't cached.
+/// </summary>
+std::optional<MCHdArt::GroundAhead> MCGroundOverlayOf(MCTerrainTiles& tiles, int32_t slot);
 
 /// <summary>
 /// Port-only: has the HD art pack's copies of the map's ground tiles (MCHdArt::FindTerrainTile) in hand while the

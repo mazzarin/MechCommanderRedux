@@ -498,6 +498,7 @@
     </ClCompile>
     <ClCompile Include="terrain\MCArtilleryButton.cpp" />
     <ClCompile Include="terrain\MCGroundMesh.cpp" />
+    <ClCompile Include="terrain\MCGroundNames.cpp" />
     <ClCompile Include="terrain\MCMapBlockManager.cpp" />
     <ClCompile Include="terrain\MCTacticalMap.cpp" />
     <ClCompile Include="terrain\MCTacticalMapPages.cpp" />
@@ -991,6 +992,8 @@
     <ClInclude Include="targetver.h" />
     <ClInclude Include="terrain\MCArtilleryButton.h" />
     <ClInclude Include="terrain\MCGroundMesh.h" />
+    <ClInclude Include="terrain\MCGroundNames.h" />
+    <ClInclude Include="terrain\MCGroundNamesKnown.h" />
     <ClInclude Include="terrain\MCMapBlockManager.h" />
     <ClInclude Include="terrain\MCTacticalMap.h" />
     <ClInclude Include="terrain\MCTacticalMapLayout.h" />

@@ -517,6 +517,12 @@ namespace MCHdArt
     std::string TerrainTileName(std::span<const uint8_t> tile);
 
     /// <summary>
+    /// The key the pack keeps terrain tile or overlay <paramref name="tile"/> under (the hash <see cref="TerrainTileName"/>
+    /// writes in hex).
+    /// </summary>
+    uint64_t TerrainTileKey(std::span<const uint8_t> tile);
+
+    /// <summary>
     /// The HD copy of terrain tile <paramref name="tile"/> (its bounds <paramref name="width"/> x
     /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
     /// </summary>
@@ -537,6 +543,11 @@ namespace MCHdArt
         std::span<const uint8_t> Tile;
         int32_t Width = 0;
         int32_t Height = 0;
+        /// <summary>
+        /// Port-only (terrain/MCGroundNames.h): its key (<see cref="TerrainTileKey"/>) when it is known without the
+        /// tile's bytes, which are then empty; otherwise the key is worked out from them.
+        /// </summary>
+        std::optional<uint64_t> Key;
     };
 
     /// <summary>

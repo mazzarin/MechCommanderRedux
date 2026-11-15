@@ -92,6 +92,13 @@ public:
     /// <summary>The tile set isn't the default one ("tiles").</summary>
     bool CustomTileSet() const { return _CustomTileSet; }
 
+    /// <summary>
+    /// Port-only (HD art, terrain/MCGroundNames.h): a 64-bit FNV-1a hash of the tile set's two files as they open: each
+    /// one's seek table and length (none for a file not open). What names the set in the program's table of the HD
+    /// pack's names without reading a tile.
+    /// </summary>
+    uint64_t FilesHash() const;
+
     /// <summary>Added to a vertex's tile index: [0] = 0 for the normal view, [1] = numTiles / 2 for the rotated one.</summary>
     std::array<int32_t, 2> TileSetOffset{};
 

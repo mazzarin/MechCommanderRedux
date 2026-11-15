@@ -1376,6 +1376,9 @@
     <ClCompile Include="terrain\MCGroundMesh.cpp">
       <Filter>terrain</Filter>
     </ClCompile>
+    <ClCompile Include="terrain\MCGroundNames.cpp">
+      <Filter>terrain</Filter>
+    </ClCompile>
     <ClCompile Include="terrain\MCMapBlockManager.cpp">
       <Filter>terrain</Filter>
     </ClCompile>
@@ -2811,6 +2814,12 @@
       <Filter>terrain</Filter>
     </ClInclude>
     <ClInclude Include="terrain\MCGroundMesh.h">
+      <Filter>terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="terrain\MCGroundNames.h">
+      <Filter>terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="terrain\MCGroundNamesKnown.h">
       <Filter>terrain</Filter>
     </ClInclude>
     <ClInclude Include="terrain\MCMapBlockManager.h">

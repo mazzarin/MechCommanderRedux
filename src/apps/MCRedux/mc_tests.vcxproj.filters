@@ -124,6 +124,9 @@
     <ClCompile Include="tests\GpuDrawingTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\GroundNamesTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\GroundVehicleTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

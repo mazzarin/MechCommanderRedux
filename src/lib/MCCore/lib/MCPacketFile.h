@@ -217,6 +217,11 @@ public:
     void SetMostUnpacked(int32_t bytes) { _MostUnpacked = bytes; }
 
     int32_t GetNumPackets() const { return _NumPackets; }
+    /// <summary>
+    /// Port-only: the packets' seek table as the file holds it, read as it opens (each packet's offset, its storage in
+    /// the top bits): what names the file's packets without reading one (terrain/MCGroundNames.h).
+    /// </summary>
+    std::span<const uint32_t> SeekTable() const { return _SeekTable; }
     int32_t GetCurrentPacket() const { return _CurrentPacket; }
     /// <summary>The current packet's unpacked size.</summary>
     int32_t GetPacketSize() const { return _PacketUnpackedSize; }

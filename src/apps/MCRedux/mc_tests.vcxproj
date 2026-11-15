@@ -114,6 +114,7 @@
     <ClCompile Include="tests\GameFolderTests.cpp" />
     <ClCompile Include="tests\GameSessionTests.cpp" />
     <ClCompile Include="tests\GpuDrawingTests.cpp" />
+    <ClCompile Include="tests\GroundNamesTests.cpp" />
     <ClCompile Include="tests\GroundVehicleTests.cpp" />
     <ClCompile Include="tests\GuiControlTests.cpp" />
     <ClCompile Include="tests\GuiDestroyTests.cpp" />

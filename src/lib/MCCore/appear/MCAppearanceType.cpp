@@ -74,6 +74,7 @@ auto MCAppearanceType::MakeShapeList(std::vector<std::weak_ptr<MCShape>>& shapes
     }
 
     shapes.assign(static_cast<size_t>(numShapes), {});
+    _PacketSlots = shapes;
 
     // Port-only (SPEC-first-use.md: a load): the HD archive holding the type's frames opened by HD art's readers now,
     // its directory not read by the game's thread at the type's first draw or ask.
@@ -88,6 +89,37 @@ auto MCAppearanceType::MakeShapeList(std::vector<std::weak_ptr<MCShape>>& shapes
     }
 
     return {};
+}
+
+auto MCAppearanceType::ShapesUnloaded() -> std::vector<MCShapeWanted>
+{
+    std::vector<MCShapeWanted> wanted;
+
+    if (!_PacketSlots.has_value())
+    {
+        return wanted;
+    }
+
+    const std::vector<std::weak_ptr<MCShape>>& slots = _PacketSlots->get();
+
+    for (size_t packet = 0; packet < slots.size(); ++packet)
+    {
+        if (slots[packet].expired())
+        {
+            wanted.push_back(MCShapeWanted{
+                .FileNum = ShapeFileNum(), .Packet = static_cast<uint32_t>(packet), .Owner = weak_from_this()});
+        }
+    }
+
+    return wanted;
+}
+
+auto MCAppearanceType::KeepShape(uint32_t packet, const std::shared_ptr<MCShape>& shape) -> void
+{
+    if (_PacketSlots.has_value() && packet < _PacketSlots->get().size() && shape != nullptr)
+    {
+        _PacketSlots->get()[packet] = shape;
+    }
 }
 
 auto MCAppearanceType::PacketShape(std::weak_ptr<MCShape>& slot, uint32_t packet) -> std::shared_ptr<MCShape>

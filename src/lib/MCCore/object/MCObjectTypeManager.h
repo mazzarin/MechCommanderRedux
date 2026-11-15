@@ -1,10 +1,10 @@
 #pragma once
 
+#include "lib/MCPacketFile.h"
 #include "platform/MCBlockStore.h"
 
 class MCBaseObject;
 class MCObjectType;
-class MCPacketFile;
 
 /// <summary>
 /// Loads and keeps the object types: the types in use (each until its last object goes, unless kept), the object
@@ -48,6 +48,16 @@ public:
     std::shared_ptr<MCObjectType> Load(int32_t objTypeNum, int keepMe);
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: the original's packets at the load): loads what the types loaded can make in play
+    /// (MCObjectType::MadeTypes: wrecks, explosions, shots' effects and lights, fires), and theirs, round by round, each
+    /// round's packets read together (MCPacketFile::HoldPackets), each kept for the mission as a kept type is (its
+    /// appearance with it), so that none is read as it's first made. A type whose packet won't make one is left to fail
+    /// as the original fails, if the mission ever makes it.
+    /// </summary>
+    /// <returns>The packets read together, their reads and their bytes.</returns>
+    MCPacketsHeld LoadMadeTypes();
+
+    /// <summary>
     /// Type data the types load (shapes, hot spot and stage tables): the original's type heap, which freed whatever
     /// a type left when the object system stopped.
     /// </summary>
@@ -58,6 +68,12 @@ public:
     MCBlockStore ObjectData;
 
 private:
+    /// <summary>
+    /// <see cref="Load"/>, which with <paramref name="fatal"/> false gives null for a packet that won't make a type (its
+    /// "ObjectClass" block missing or of no class, its Init failing) rather than stopping the game.
+    /// </summary>
+    std::shared_ptr<MCObjectType> LoadType(int32_t objTypeNum, int keepMe, bool fatal);
+
     /// <summary>The object packet file every type is read from.</summary>
     std::unique_ptr<MCPacketFile> _ObjectFile;
     /// <summary>The types loaded, in the order they were.</summary>

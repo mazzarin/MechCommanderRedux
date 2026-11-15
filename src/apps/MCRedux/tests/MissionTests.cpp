@@ -3,21 +3,26 @@
 #include "TestGame.h"
 #include "ai/MCMoveSystem.h"
 #include "ai/MCTacticalOrder.h"
+#include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
 #include "engine/MCByteFlag.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
+#include "object/MCExplosionType.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechControlData.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
+#include "object/MCObjectSystem.h"
 #include "object/MCObjectType.h"
+#include "object/MCObjectTypeManager.h"
 #include "object/MCMechWarrior.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
+#include "sprite/MCVfxAppearanceType.h"
 #include "sprite/MCShape.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxClip.h"
@@ -462,6 +467,206 @@ TEST_CASE_ISOLATED("game: mission 3's mechs preload full-size part shapes")
 
     std::cout << std::format("  {} mech types, {} preloaded part shapes\n", trees.size(), shapes);
     CHECK(shapes > 0);
+}
+
+namespace
+{
+    /// <summary>Every mech of the mission's parts (those parked too), with its actor.</summary>
+    std::vector<std::pair<std::shared_ptr<MCMover>, std::shared_ptr<MCMechActor>>> MissionMechs()
+    {
+        std::vector<std::pair<std::shared_ptr<MCMover>, std::shared_ptr<MCMechActor>>> mechs;
+
+        for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; partId++)
+        {
+            std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+
+            if (mover != nullptr && mover->ObjectClass == MCObjectClass::BattleMech)
+            {
+                mechs.emplace_back(mover, std::static_pointer_cast<MCMechActor>(mover->Appearance));
+            }
+        }
+
+        return mechs;
+    }
+
+    /// <summary>Whether <paramref name="together"/> is the shape <paramref name="alone"/> is: its table, tied to the same HD frames.</summary>
+    bool SameShape(const std::shared_ptr<MCShape>& together, const std::shared_ptr<MCShape>& alone)
+    {
+        return together != nullptr && alone != nullptr &&
+               std::ranges::equal(together->FrameList(), alone->FrameList()) && together->HdFolder == alone->HdFolder;
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: the original's packets at the load): shapes read together (a mech's packets from its
+/// parts' PAKs, an explosion's from the sprite PAK) are the shapes read one at a time, tied to the same HD frames.
+/// </summary>
+TEST_CASE_ISOLATED("game: the original's shapes read together are those read one at a time")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    MCSpriteManager& sprites = *SpriteManager();
+    const auto mechs = MissionMechs();
+    REQUIRE(!mechs.empty());
+    const MCSpriteTree& tree = *mechs.front().second->MechTree;
+    std::vector<MCShapeWanted> mechWanted;
+
+    for (const MCGesturePacket& where : tree.PreloadPackets())
+    {
+        mechWanted.push_back(MCShapeWanted{tree.FileNumbers[where.FilePart], where.Packet, where.FilePart, {}});
+    }
+
+    const MCShapesLoaded mechShapes = sprites.GetMechShapesData(mechWanted, Turn, true);
+    REQUIRE_EQ(mechShapes.Shapes.size(), mechWanted.size());
+    CHECK(mechShapes.Reads < mechWanted.size() / 4);
+
+    for (size_t i = 0; i < mechWanted.size(); ++i)
+    {
+        const MCShapeWanted& wanted = mechWanted[i];
+        MCTest::Scope scope(std::format("part {}, packet {}", std::to_underlying(wanted.Part), wanted.Packet));
+        CHECK(SameShape(mechShapes.Shapes[i],
+                        sprites.GetMechShapeData(wanted.FileNum, wanted.Packet, wanted.Part, Turn, {}, true)));
+    }
+
+    // An explosion's every packet.
+    const std::span<const std::shared_ptr<MCObjectType>> types = ObjectTypeManager().Types();
+    const auto explosion =
+        std::ranges::find_if(types, [](const std::shared_ptr<MCObjectType>& type)
+                             { return dynamic_cast<const MCExplosionType*>(type.get()) != nullptr; });
+    REQUIRE(explosion != types.end());
+    const std::span<const std::shared_ptr<MCAppearanceType>> listed = AppearanceTypeList().Types();
+    const auto appearance = std::ranges::find(listed, (*explosion)->AppearName, &MCAppearanceType::AppearanceNum);
+    REQUIRE(appearance != listed.end());
+    const auto& vfx = static_cast<const MCVfxAppearanceType&>(**appearance);
+    std::vector<MCShapeWanted> shapeWanted;
+
+    // The appearance's PAK is the sprite PAK's packet its number's low 24 bits name (MCAppearanceType::ShapeFileNum).
+    const uint32_t shapeFile = vfx.AppearanceNum & 0xffffff;
+
+    for (uint32_t packet = 0; packet < vfx.ShapeList.size(); ++packet)
+    {
+        shapeWanted.push_back(MCShapeWanted{.FileNum = shapeFile, .Packet = packet});
+    }
+
+    const MCShapesLoaded shapes = sprites.GetShapesData(shapeWanted, Turn);
+    REQUIRE(!shapeWanted.empty());
+
+    for (size_t i = 0; i < shapeWanted.size(); ++i)
+    {
+        MCTest::Scope scope(std::format("packet {}", shapeWanted[i].Packet));
+        const std::shared_ptr<MCShape> alone = sprites.GetShapeData(shapeFile, shapeWanted[i].Packet, Turn, {});
+        CHECK((shapes.Shapes[i] == nullptr && alone == nullptr) || SameShape(shapes.Shapes[i], alone));
+    }
+
+    std::cout << std::format("  {} mech shapes in {} reads, {} of an explosion's in {}\n", mechWanted.size(),
+                             mechShapes.Reads, shapeWanted.size(), shapes.Reads);
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: the original's packets at the load): a mission's load reads every side's mechs' stand,
+/// walk and run at every stored facing and each mech's packets drawn now (the parked parts' too), so that no mech's
+/// shape is read at its first draw: none is read one at a time by the load or the mission's first frames.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's load reads every side's mechs' shapes, none read at their first draws")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::set<int32_t> sides;
+    std::set<std::shared_ptr<MCSpriteTree>> trees;
+
+    for (const auto& [mover, actor] : MissionMechs())
+    {
+        sides.insert(mover->Alignment);
+        trees.insert(actor->MechTree);
+
+        for (const MCGesturePacket& where : actor->DrawnPackets())
+        {
+            MCTest::Scope scope(std::format("part {}, packet {}", mover->PartId, where.Packet));
+            CHECK(!actor->MechTree->ShapeList[where.ListIndex].expired());
+        }
+    }
+
+    for (const std::shared_ptr<MCSpriteTree>& tree : trees)
+    {
+        CHECK(tree->GesturesPreloaded);
+
+        for (const MCGesturePacket& where : tree->PreloadPackets())
+        {
+            MCTest::Scope scope(std::format("{}, packet {}", tree->Name, where.ListIndex));
+            CHECK(!tree->ShapeList[where.ListIndex].expired());
+        }
+    }
+
+    CHECK(sides.size() >= 2);
+    CHECK_EQ(SpriteManager()->ShapesReadAlone().Mechs, 0u);
+    std::cout << std::format("  {} mech types, {} sides; {} other shapes read alone\n", trees.size(), sides.size(),
+                             SpriteManager()->ShapesReadAlone().Others);
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: the original's packets at the load): a mission's load holds what its types can make in
+/// play, each type's wreck and explosion and theirs, kept for the mission with every shape of their appearances, so
+/// that the explosions' shapes outlast MeasureExplosions and none is read as it's first made.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's load keeps the wrecks and explosions its types can make, with their shapes")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    MCObjectTypeManager& manager = ObjectTypeManager();
+    size_t wrecks = 0;
+    size_t explosions = 0;
+    size_t shapes = 0;
+
+    for (const std::shared_ptr<MCObjectType>& type : manager.Types())
+    {
+        for (const int32_t made : {type->DestroyedObject, type->ExplosionObject})
+        {
+            if (made > 0)
+            {
+                MCTest::Scope scope(std::format("type {} makes {}", type->ObjTypeNum, made));
+                const std::shared_ptr<MCObjectType> found = manager.Find(made);
+                REQUIRE(found != nullptr);
+                CHECK(found->KeepMe != 0);
+                (made == type->DestroyedObject ? wrecks : explosions)++;
+            }
+        }
+
+        if (type->KeepMe == 0)
+        {
+            continue;
+        }
+
+        const std::span<const std::shared_ptr<MCAppearanceType>> listed = AppearanceTypeList().Types();
+        const auto appearance = std::ranges::find(listed, type->AppearName, &MCAppearanceType::AppearanceNum);
+
+        if (appearance != listed.end())
+        {
+            MCTest::Scope scope(std::format("type {}'s appearance {:#x}", type->ObjTypeNum, type->AppearName));
+            const std::vector<MCShapeWanted> unloaded = (*appearance)->ShapesUnloaded();
+            // Only the packets that hold no shape (empty ones) are left.
+            CHECK(std::ranges::all_of(
+                unloaded, [](const MCShapeWanted& wanted)
+                { return SpriteManager()->GetShapeData(wanted.FileNum, wanted.Packet, Turn, {}) == nullptr; }));
+            shapes++;
+        }
+    }
+
+    CHECK(wrecks > 0);
+    CHECK(explosions > 0);
+    std::cout << std::format("  {} wrecks, {} explosions made, {} kept types' shapes in hand\n", wrecks, explosions,
+                             shapes);
 }
 
 /// <summary>

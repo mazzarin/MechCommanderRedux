@@ -13,6 +13,8 @@ class MCGateType : public MCObjectType
 public:
     /// <summary>Makes a <see cref="MCGate"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
+    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
+    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({BlownEffectId}); }
     /// <summary>Reads the "GateData" block, then the common type data.</summary>
     int32_t Init(MCFile& objFile, uint32_t fileSize) override;
     /// <summary>

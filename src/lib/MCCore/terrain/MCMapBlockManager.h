@@ -58,6 +58,12 @@ public:
     float GetTopLeftElevation();
 
     /// <summary>
+    /// Port-only: every terrain tile and overlay tile a vertex of the cache names (not negative), each once, in order:
+    /// the map blocks' and the off-map block's.
+    /// </summary>
+    std::vector<int32_t> TilesUsed() const;
+
+    /// <summary>
     /// Raises the off-map block to one level above the map's base, once the map's base elevation is known (the first
     /// turn).
     /// </summary>

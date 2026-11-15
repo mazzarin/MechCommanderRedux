@@ -9,6 +9,8 @@ class MCExplosionType : public MCObjectType
 public:
     /// <summary>Makes an <see cref="MCExplosion"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
+    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
+    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({LightObjectId}); }
     /// <summary>
     /// Reads DmgLevel, SoundEffectId, ExplosionRadius (default 0), LightObjectId (default -1) and DamageChunkSize
     /// (default 5) from the "ExplosionData" block, then the common type data.

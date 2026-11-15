@@ -209,6 +209,7 @@
     <ClInclude Include="tests\fakes\MCNullAudioDevice.h" />
     <ClInclude Include="tests\fakes\MCScriptedRandom.h" />
     <ClInclude Include="tests\fakes\MCServiceScript.h" />
+    <ClInclude Include="tests\fixtures\MCPakBytes.h" />
     <ClInclude Include="tests\fixtures\MCRegisteredData.h" />
     <ClInclude Include="tests\fixtures\MCRetailData.h" />
     <ClInclude Include="tests\fixtures\MCTerrainGeometryScope.h" />

@@ -311,7 +311,7 @@ auto MCBattleMech::HitInventoryItem(int32_t itemIndex, int setupOnly) -> int
                 SoundSystem()->PlayDigitalSample(0x13, 1, *this, false, false);
             }
 
-            std::shared_ptr<MCGameObject> sparks = CreateObject(0x3f);
+            std::shared_ptr<MCGameObject> sparks = CreateObject(static_cast<int32_t>(MechHitSparksType));
 
             if (sparks != nullptr)
             {

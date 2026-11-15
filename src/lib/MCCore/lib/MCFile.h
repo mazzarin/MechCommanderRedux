@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lib/MCDiskFile.h"
+#include "platform/MCAddressKey.h"
 
 // Result codes of the file layer. The values are the original's (0xBADF00xx, returned as negative longs); the names
 // are the port's, since the original's weren't kept. Open failures from the OS return small positive codes as
@@ -30,6 +31,41 @@ enum class MCFileClass : uint8_t
     Base,
     Ini,
     Packet
+};
+
+/// <summary>
+/// Port-only: one thread's reader of a file's bytes at any offset (<see cref="MCFile::OpenReader"/>): the file on disk
+/// opened again, on a handle of its own whose each read is one call of the system's (reads through one handle on
+/// Windows wait on each other), from where the file's bytes start in it (a child window's in its parent's); or a file
+/// in memory's bytes, borrowed.
+/// </summary>
+/// <remarks>Threads: one at a time. A reader of a file in memory lives no longer than its file stays open.</remarks>
+class MCFileReader
+{
+public:
+    /// <summary>Reads up to <paramref name="buffer"/>'s size at <paramref name="offset"/>.</summary>
+    /// <returns>The number of bytes read (fewer at the file's end).</returns>
+    size_t ReadAt(uint32_t offset, std::span<uint8_t> buffer);
+
+    /// <summary>The file's length in bytes.</summary>
+    uint32_t Length() const { return _Length; }
+
+private:
+    friend class MCFile;
+
+    /// <summary>
+    /// A reader of <paramref name="length"/> bytes of <paramref name="disk"/> from <paramref name="base"/>, or else of
+    /// <paramref name="bytes"/>.
+    /// </summary>
+    MCFileReader(std::optional<MCDiskFile> disk, std::span<const uint8_t> bytes, uint32_t base, uint32_t length);
+
+    /// <summary>The file on disk, opened again for this reader; none for a file in memory.</summary>
+    std::optional<MCDiskFile> _Disk;
+    /// <summary>A file in memory's bytes.</summary>
+    std::span<const uint8_t> _Bytes;
+    /// <summary>Where the file's bytes start on disk, and how many there are.</summary>
+    uint32_t _Base = 0;
+    uint32_t _Length = 0;
 };
 
 /// <summary>
@@ -152,6 +188,29 @@ public:
     /// <summary>Whether this is an open child of another file.</summary>
     bool IsChild() const { return _IsChild && !Orphaned(); }
 
+    /// <summary>
+    /// Port-only: a reader of this file's bytes for one thread, for reads at once on several (each its own): the file on
+    /// disk opened again by the path it was opened at, read directly, refused unless its length is still what it was
+    /// then (a child window reads its part of its parents' file, as ReadRawAt reads it); or this file's bytes, borrowed,
+    /// for a file read whole into memory (a FastFile entry, a test's file, a child read whole).
+    /// </summary>
+    /// <returns>The reader, or none for a file not open to read, or one on disk that can't be opened again.</returns>
+    std::optional<MCFileReader> OpenReader() const;
+
+    /// <summary>
+    /// Port-only: <see cref="OpenReader"/> of the whole file this one's bytes lie in (<see cref="RootKey"/>'s), from its
+    /// start: a child window's parents' file on disk, else this file.
+    /// </summary>
+    std::optional<MCFileReader> OpenRootReader() const;
+
+    /// <summary>
+    /// Port-only: the file this one's bytes lie in, as a key (a child window's parents' file on disk, else this file),
+    /// and where they start in it, so reads of several windows into one file can be planned together. No key for a file
+    /// not open.
+    /// </summary>
+    MCAddressKey RootKey() const;
+    uint32_t RootOffset() const;
+
 protected:
     /// <summary>
     /// What a file's child windows read through while the file is open. A file opened from disk holds its disk file
@@ -164,6 +223,12 @@ protected:
         std::optional<MCDiskFile> Disk;
         /// <summary>The parent's state, for a window.</summary>
         std::weak_ptr<OpenState> Parent;
+        /// <summary>
+        /// Port-only: where the file on disk was opened (<see cref="OpenReader"/> opens it again there), and its length
+        /// then.
+        /// </summary>
+        std::filesystem::path Path;
+        uint32_t Length = 0;
     };
 
     /// <summary>

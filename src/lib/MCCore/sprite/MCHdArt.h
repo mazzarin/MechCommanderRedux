@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCDiskFile.h"
 #include "platform/MCAddressKey.h"
 #include "platform/MCSharpLines.h"
 #include "sprite/MCBc7.h"
@@ -748,8 +749,8 @@ namespace MCHdArt
     /// and the widest gap between two entries one read takes both across (read and thrown away: a read saved costs a slow
     /// disk more than this many bytes do).
     /// </summary>
-    constexpr uint64_t ReaderRunBytes = 1024u * 1024u;
-    constexpr uint64_t ReaderRunGap = 64u * 1024u;
+    constexpr uint64_t ReaderRunBytes = MCDiskFile::RunMostBytes;
+    constexpr uint64_t ReaderRunGap = MCDiskFile::RunGapBytes;
 
     /// <summary>
     /// Port-only: how many reads of the archives the readers have made: one for a run of an archive's entries read

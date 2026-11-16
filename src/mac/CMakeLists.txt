@@ -315,6 +315,8 @@ add_custom_command(TARGET MCRedux POST_BUILD
 # The tests run the Mac's real reports backend too (TelemetryBackendTests.cpp).
 add_executable(mc_tests ${MCTESTS_SOURCES} ${MC_TELEMETRY_BACKEND})
 target_include_directories(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux)
+# xxHash, as every Windows project has it (MechCommander.props): the tests' version 2 archives' table hashes.
+target_include_directories(mc_tests PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
 target_precompile_headers(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
 target_link_libraries(mc_tests PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework IOKit"
                       "-framework Metal")

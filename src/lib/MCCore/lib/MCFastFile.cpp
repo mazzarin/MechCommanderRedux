@@ -388,6 +388,20 @@ std::vector<std::pair<uint16_t, std::span<const uint8_t>>> MCFastFile::Facts(std
 std::expected<std::vector<uint8_t>, std::string> MCFastFile::Unpack(int32_t index,
                                                                     std::span<const uint8_t> stored) const
 {
+    std::expected<std::shared_ptr<const std::vector<uint8_t>>, std::string> stream = StreamOf(index, stored);
+
+    if (!stream.has_value())
+    {
+        return std::unexpected(std::move(stream.error()));
+    }
+
+    const std::span<const uint8_t> bytes = EntryIn(index, **stream);
+    return std::vector<uint8_t>(bytes.begin(), bytes.end());
+}
+
+std::expected<std::shared_ptr<const std::vector<uint8_t>>, std::string> MCFastFile::StreamOf(
+    int32_t index, std::span<const uint8_t> stored) const
+{
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
 
     if (stored.size() != static_cast<size_t>(std::max(entry.Size, 0)))
@@ -399,52 +413,80 @@ std::expected<std::vector<uint8_t>, std::string> MCFastFile::Unpack(int32_t inde
     {
         if (entry.Size == entry.RealSize)
         {
-            return std::vector<uint8_t>(stored.begin(), stored.end());
+            return std::make_shared<const std::vector<uint8_t>>(stored.begin(), stored.end());
         }
 
-        return MCInflate::Inflate(stored, static_cast<size_t>(std::max(entry.RealSize, 0)));
+        std::expected<std::vector<uint8_t>, std::string> inflated =
+            MCInflate::Inflate(stored, static_cast<size_t>(std::max(entry.RealSize, 0)));
+
+        if (!inflated.has_value())
+        {
+            return std::unexpected(std::move(inflated.error()));
+        }
+
+        return std::make_shared<const std::vector<uint8_t>>(std::move(*inflated));
+    }
+
+    if (std::shared_ptr<const std::vector<uint8_t>> kept = KeptStreamOf(index); kept != nullptr)
+    {
+        return kept;
     }
 
     const Placed& placed = _Placed[static_cast<size_t>(index)];
     const Stream& stream = _Streams[placed.Stream];
+    std::expected<std::vector<uint8_t>, std::string> unpacked = UnpackStream(stream.Codec, stored, stream.Unpacked);
+
+    if (!unpacked.has_value())
+    {
+        return std::unexpected(std::format("stream {}: {}", placed.Stream, unpacked.error()));
+    }
+
+    auto bytes = std::make_shared<const std::vector<uint8_t>>(std::move(*unpacked));
     KeptStreams& kept = TheKeptStreams();
-    std::shared_ptr<const std::vector<uint8_t>> bytes;
+    std::scoped_lock lock(kept.Lock);
+    kept.Kept.push_front(KeptStream{_Serial, placed.Stream, bytes});
+    kept.Bytes += bytes->size();
 
+    while (kept.Bytes > KeptStreamsBytes && kept.Kept.size() > 1)
     {
-        std::scoped_lock lock(kept.Lock);
-        const auto found = std::ranges::find_if(kept.Kept, [&](const KeptStream& one)
-                                                { return one.Archive == _Serial && one.Stream == placed.Stream; });
-
-        if (found != kept.Kept.end())
-        {
-            bytes = found->Bytes;
-            kept.Kept.splice(kept.Kept.begin(), kept.Kept, found);
-        }
+        kept.Bytes -= kept.Kept.back().Bytes->size();
+        kept.Kept.pop_back();
     }
 
-    if (bytes == nullptr)
+    return bytes;
+}
+
+std::shared_ptr<const std::vector<uint8_t>> MCFastFile::KeptStreamOf(int32_t index) const
+{
+    if (!_Version2)
     {
-        std::expected<std::vector<uint8_t>, std::string> unpacked = UnpackStream(stream.Codec, stored, stream.Unpacked);
-
-        if (!unpacked.has_value())
-        {
-            return std::unexpected(std::format("stream {}: {}", placed.Stream, unpacked.error()));
-        }
-
-        bytes = std::make_shared<const std::vector<uint8_t>>(std::move(*unpacked));
-        std::scoped_lock lock(kept.Lock);
-        kept.Kept.push_front(KeptStream{_Serial, placed.Stream, bytes});
-        kept.Bytes += bytes->size();
-
-        while (kept.Bytes > KeptStreamsBytes && kept.Kept.size() > 1)
-        {
-            kept.Bytes -= kept.Kept.back().Bytes->size();
-            kept.Kept.pop_back();
-        }
+        return nullptr;
     }
 
-    const auto from = bytes->begin() + static_cast<ptrdiff_t>(placed.At);
-    return std::vector<uint8_t>(from, from + static_cast<ptrdiff_t>(placed.Bytes));
+    const uint32_t stream = _Placed.at(static_cast<size_t>(index)).Stream;
+    KeptStreams& kept = TheKeptStreams();
+    std::scoped_lock lock(kept.Lock);
+    const auto found = std::ranges::find_if(kept.Kept, [&](const KeptStream& one)
+                                            { return one.Archive == _Serial && one.Stream == stream; });
+
+    if (found == kept.Kept.end())
+    {
+        return nullptr;
+    }
+
+    kept.Kept.splice(kept.Kept.begin(), kept.Kept, found);
+    return found->Bytes;
+}
+
+std::span<const uint8_t> MCFastFile::EntryIn(int32_t index, const std::vector<uint8_t>& stream) const
+{
+    if (!_Version2)
+    {
+        return stream;
+    }
+
+    const Placed& placed = _Placed.at(static_cast<size_t>(index));
+    return std::span<const uint8_t>(stream).subspan(placed.At, placed.Bytes);
 }
 
 std::optional<int32_t> MCFastFile::Find(std::string_view gamePath) const

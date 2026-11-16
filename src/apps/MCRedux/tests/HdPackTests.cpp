@@ -21,6 +21,10 @@
 #include "platform/MCUtf8Path.h"
 #include "sound/MCHdAudio.h"
 
+// xxHash, header-only: its functions inline in this file alone (the version 2 archives' table hashes).
+#define XXH_INLINE_ALL
+#include "xxhash.h"
+
 namespace
 {
     constexpr int32_t Channels = 4;
@@ -481,6 +485,83 @@ namespace
             std::memcpy(out.data() + sizeof(int32_t) + i * sizeof(MCFileEntry), &record, sizeof(record));
         }
 
+        return out;
+    }
+
+    /// <summary>A little-endian <paramref name="value"/> written at <paramref name="at"/> of <paramref name="out"/>.</summary>
+    template <typename T> void PutAt(std::vector<uint8_t>& out, size_t at, T value)
+    {
+        std::memcpy(out.data() + at, &value, sizeof(T));
+    }
+
+    /// <summary>
+    /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="entries"/> (their stored bytes as they unpack, no
+    /// sharing), all in one stream stored as it is (codec 0) in their order: each found by its path's key, each folder
+    /// its first name is in by its own, with no facts.
+    /// </summary>
+    std::vector<uint8_t> BuildVersion2Archive(const std::vector<ArchiveEntry>& entries)
+    {
+        constexpr size_t HeaderBytes = 64;
+        constexpr size_t FolderRowBytes = 16;
+        constexpr size_t StreamRowBytes = 24;
+        constexpr size_t EntryRowBytes = 20;
+        constexpr uint16_t Format = 2;
+        std::vector<std::pair<uint64_t, std::array<uint32_t, 3>>> rows;
+        std::set<uint64_t> folders;
+        std::vector<uint8_t> stream;
+
+        for (const ArchiveEntry& entry : entries)
+        {
+            rows.push_back({MCFastFile::PathKey(entry.Name),
+                            {0, static_cast<uint32_t>(stream.size()), static_cast<uint32_t>(entry.Stored.size())}});
+            stream.insert(stream.end(), entry.Stored.begin(), entry.Stored.end());
+
+            if (const size_t cut = entry.Name.find('\\'); cut != std::string::npos)
+            {
+                folders.insert(MCFastFile::PathKey(std::string_view(entry.Name).substr(0, cut)));
+            }
+        }
+
+        std::ranges::sort(rows);
+        std::vector<uint8_t> table(folders.size() * FolderRowBytes + StreamRowBytes + rows.size() * EntryRowBytes);
+        size_t at = 0;
+
+        for (const uint64_t folder : folders)
+        {
+            PutAt(table, at, folder);
+            at += FolderRowBytes;
+        }
+
+        const uint64_t dataAt = HeaderBytes + table.size();
+        PutAt(table, at, dataAt);
+        PutAt(table, at + 8, static_cast<uint32_t>(stream.size()));
+        PutAt(table, at + 12, static_cast<uint32_t>(stream.size()));
+        at += StreamRowBytes;
+
+        for (const auto& [key, place] : rows)
+        {
+            PutAt(table, at, key);
+
+            for (size_t value = 0; value < place.size(); ++value)
+            {
+                PutAt(table, at + 8 + value * sizeof(uint32_t), place[value]);
+            }
+
+            at += EntryRowBytes;
+        }
+
+        std::vector<uint8_t> out(HeaderBytes);
+        std::ranges::copy(std::string_view("MCH2"), out.begin());
+        PutAt(out, 4, Format);
+        PutAt(out, 8, static_cast<uint32_t>(table.size()));
+        PutAt(out, 12, static_cast<uint32_t>(table.size()));
+        PutAt(out, 20, static_cast<uint32_t>(folders.size()));
+        PutAt(out, 24, uint32_t{1});
+        PutAt(out, 28, static_cast<uint32_t>(rows.size()));
+        PutAt(out, 40, dataAt);
+        PutAt(out, 48, static_cast<uint64_t>(XXH3_64bits(table.data(), table.size())));
+        out.insert(out.end(), table.begin(), table.end());
+        out.insert(out.end(), stream.begin(), stream.end());
         return out;
     }
 
@@ -2263,7 +2344,11 @@ namespace
     public:
         static constexpr int32_t Side = 8;
 
-        RunArchive(std::string_view name, std::span<const RunPiece> pieces) : _Scratch(name)
+        /// <summary>
+        /// <paramref name="pieces"/> in an archive of version 1, or (<paramref name="version2"/>) of version 2 in one stream,
+        /// the bytes no frame holds an entry of their own there too.
+        /// </summary>
+        RunArchive(std::string_view name, std::span<const RunPiece> pieces, bool version2 = false) : _Scratch(name)
         {
             constexpr uint8_t TableByte = 0x5e;
             std::vector<ArchiveEntry> entries;
@@ -2287,7 +2372,7 @@ namespace
 
             WriteBytes(_Scratch.Path() /
                            std::filesystem::path(MCHdArt::ShapeTableFolder(0)).parent_path().concat(".hda"),
-                       BuildArchive(entries));
+                       version2 ? BuildVersion2Archive(entries) : BuildArchive(entries));
             MCHdArt::SetPackFolder(_Scratch.Path());
         }
 
@@ -2454,6 +2539,86 @@ TEST_CASE("hd art: the readers' first read takes the less urgent reads near it, 
         archive.CheckFound();
     }
 
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md): a version 2 archive's stream is read once for all its entries waiting, asked for in any
+/// order, however much larger it is than a read of neighbouring entries takes (MCHdArt::ReaderRunBytes): one reader takes
+/// them all, the others none (each holding the run it took until all have taken theirs); and unpacked once. Kept
+/// unpacked after, its other entries asked for later need no read. Each frame is found as drawn ones are, the same frame,
+/// without a read.
+/// </summary>
+TEST_CASE("hd art: the readers read a version 2 stream once for all its entries, however large it is")
+{
+    constexpr size_t Asked = 6;
+    constexpr RunPiece Filler{0, 0, MCHdArt::ReaderRunBytes};
+    const ReaderScope readers({.Readers = 4});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    std::vector<RunPiece> pieces(Asked + 2, Small);
+    pieces.push_back(Filler);
+    const RunArchive archive("runs-stream", pieces, true);
+    const size_t reads = MCHdArt::ReaderReads();
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::HoldReads(true);
+
+    for (const size_t frame : {4, 1, 5, 0, 3, 2})
+    {
+        archive.Ask(frame, MCHdArt::ReadAs::Set);
+    }
+
+    MCHdArt::HoldTakenRuns(true);
+    MCHdArt::HoldReads(false);
+    MCHdArt::WaitForHeldRun();
+    MCHdArt::HoldTakenRuns(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Asked);
+
+    {
+        MCTest::Scope scope("the stream's other frames asked for after, kept unpacked");
+
+        for (size_t frame = Asked; frame < archive.Frames(); ++frame)
+        {
+            archive.Ask(frame, MCHdArt::ReadAs::Set);
+        }
+
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
+    }
+
+    archive.CheckFound();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md): an entry asked for while a reader reads its stream (another reader free to read it) waits
+/// on that read, and is served from it: two entries of one stream asked for one after the other are one read.
+/// </summary>
+TEST_CASE("hd art: an entry asked for while its version 2 stream is read is served by that read")
+{
+    constexpr RunPiece Filler{0, 0, MCHdArt::ReaderRunBytes};
+    const ReaderScope readers({.Readers = 2});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const RunArchive archive("runs-joined", std::vector<RunPiece>{Small, Small, Filler}, true);
+    const size_t reads = MCHdArt::ReaderReads();
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::HoldTakenRuns(true);
+    archive.Ask(0, MCHdArt::ReadAs::Set);
+    MCHdArt::WaitForHeldRun();
+    archive.Ask(1, MCHdArt::ReadAs::Set);
+    MCHdArt::WaitForHeldRun();
+    MCHdArt::HoldTakenRuns(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
+    archive.CheckFound();
     GHdArt = previous;
 }
 

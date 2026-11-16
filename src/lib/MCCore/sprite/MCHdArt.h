@@ -412,7 +412,8 @@ namespace MCHdArt
     /// (replaced; <c>-hdtrace &lt;file&gt;</c>), a line a time, tab-separated, times in microseconds from its start:
     /// each frame begun (<c>F</c>), each read asked of the readers (<c>A</c>: its kind, archive, offset, stored bytes and
     /// entry), each of their reads (<c>R</c>: begun, its bytes in, its frames unpacked, its kind, archive, offset, bytes,
-    /// entries), each archive named once (<c>P</c>), each frame's first use (<c>U</c>: kept as read ahead, taken from the
+    /// entries; <c>K</c>: a run served from streams kept unpacked, no read: begun, its frames unpacked, its kind, archive,
+    /// offset, entries), each archive named once (<c>P</c>), each frame's first use (<c>U</c>: kept as read ahead, taken from the
     /// readers, read by the game's thread or lacked, its folder and name, and the game's thread's microseconds on it),
     /// and notes (<c>N</c>: a benchmark's sections), for replaying the reads against another disk
     /// (tools: the read-ahead replay). False when it can't be written.
@@ -785,17 +786,33 @@ namespace MCHdArt
     void HoldReads(bool hold);
 
     /// <summary>
-    /// Port-only (SPEC-first-use.md): the most bytes one of the readers' reads of an archive's neighbouring entries takes,
-    /// and the widest gap between two entries one read takes both across (read and thrown away: a read saved costs a slow
-    /// disk more than this many bytes do).
+    /// Port-only, for the tests: with <paramref name="hold"/>, each reader that takes a run of reads holds it before
+    /// reading it, its span counted as being read (so the reads asked for meanwhile whose entries lie in it wait on it);
+    /// let go, they read them.
+    /// </summary>
+    void HoldTakenRuns(bool hold);
+
+    /// <summary>
+    /// Port-only, for the tests: waits until a reader holds a run it took (<see cref="HoldTakenRuns"/>) and the others have
+    /// nothing in hand (what was asked for is made reads: waiting, holding a run, or served by one held).
+    /// </summary>
+    void WaitForHeldRun();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): the most bytes one of the readers' reads of an archive's neighbouring entries takes
+    /// (a version 2 archive's stream is read whole, however large, once for all its entries waiting), and the widest gap
+    /// between two entries one read takes both across (read and thrown away: a read saved costs a slow disk more than this
+    /// many bytes do).
     /// </summary>
     constexpr uint64_t ReaderRunBytes = MCDiskFile::RunMostBytes;
     constexpr uint64_t ReaderRunGap = MCDiskFile::RunGapBytes;
 
     /// <summary>
     /// Port-only: how many reads of the archives the readers have made: one for a run of an archive's entries read
-    /// together, the first read waiting and those waiting of any kind, asked for in any order, whose entries lie within
-    /// <see cref="ReaderRunGap"/> of it (at most <see cref="ReaderRunBytes"/> in all).
+    /// together, the first read waiting and those waiting of any kind, asked for in any order, whose entries lie in its
+    /// span (a version 2 stream's) or within <see cref="ReaderRunGap"/> of it (at most <see cref="ReaderRunBytes"/> in
+    /// all), with those asked for while it reads whose entries lie in it; none for a run whose version 2 streams are kept
+    /// unpacked from an earlier read.
     /// </summary>
     size_t ReaderReads();
 

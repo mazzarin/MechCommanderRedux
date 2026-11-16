@@ -105,6 +105,30 @@ public:
     std::expected<std::vector<uint8_t>, std::string> Unpack(int32_t index, std::span<const uint8_t> stored) const;
 
     /// <summary>
+    /// Port-only (version 2): entry <paramref name="index"/>'s stream unpacked from its stored bytes
+    /// <paramref name="stored"/> (<see cref="ReadStored(int32_t)"/>'s), or found kept from an earlier unpacking, and kept
+    /// a while for its neighbours, for a reader cutting several of its entries (<see cref="EntryIn"/>) from one unpacking;
+    /// or what is wrong with them. Unpacked for its entries of a version 1 archive too: its stored bytes as
+    /// <see cref="Unpack"/> gives them.
+    /// </summary>
+    std::expected<std::shared_ptr<const std::vector<uint8_t>>, std::string> StreamOf(
+        int32_t index, std::span<const uint8_t> stored) const;
+
+    /// <summary>
+    /// Port-only (version 2): entry <paramref name="index"/>'s stream unpacked if it is kept from an earlier unpacking
+    /// (<see cref="Unpack"/>, <see cref="StreamOf"/>), so its entry needs no read; none when it isn't, and for an archive of
+    /// version 1.
+    /// </summary>
+    std::shared_ptr<const std::vector<uint8_t>> KeptStreamOf(int32_t index) const;
+
+    /// <summary>
+    /// Port-only: entry <paramref name="index"/>'s bytes in <paramref name="stream"/>, its stream unpacked
+    /// (<see cref="StreamOf"/>'s or <see cref="KeptStreamOf"/>'s): cut from it in a version 2 archive, all of it in one of
+    /// version 1.
+    /// </summary>
+    std::span<const uint8_t> EntryIn(int32_t index, const std::vector<uint8_t>& stream) const;
+
+    /// <summary>
     /// Port-only (version 2): whether the archive has folder <paramref name="path"/> (below the archive, <c>\</c>
     /// between names, case ignored; the empty path its own), found by its key with nothing read.
     /// </summary>

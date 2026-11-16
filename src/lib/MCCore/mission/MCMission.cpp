@@ -484,6 +484,8 @@ auto MCMission::Shutdown() -> void
         MCGameContext::Current().SetScenario(nullptr);
     }
 
+    // Port-only: the mission's held art let go of when its session ends without the mission's end (MCHdArt::StartHold).
+    MCHdArt::LetGoHold();
     RemoveCallback(_MissionCallback);
 
     if (GlobalLog() != nullptr)

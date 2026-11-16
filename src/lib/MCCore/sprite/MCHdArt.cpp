@@ -2480,9 +2480,25 @@ namespace
     };
 
     /// <summary>
+    /// Port-only (TakeHoldRun, QueueHold): the first of <paramref name="file"/>'s streams from <paramref name="from"/>
+    /// on that the hold keeps (HoldsKind); its stream count when none.
+    /// </summary>
+    uint32_t NextHeldStream(const MCFastFile& file, uint32_t from)
+    {
+        const uint32_t count = file.StreamCount();
+
+        while (from < count && !HoldsKind(file.StreamAt(from).Kind))
+        {
+            ++from;
+        }
+
+        return from;
+    }
+
+    /// <summary>
     /// Port-only (HoldRun): takes the hold's next run: the first archive's streams it keeps (HoldsKind) from its next one
     /// on, consecutive, none further than MCHdArt::ReaderRunGap past the one before, while they lie in
-    /// MCHdArt::HoldRunBytes (a larger one alone); an archive with none left leaves the queue. None when none is left.
+    /// MCHdArt::HoldRunBytes (a larger one alone); an archive leaves the queue with its last one. None when none is left.
     /// Call with ReadAhead::Lock held: an archive's table never changes once read.
     /// </summary>
     std::optional<HoldSpan> TakeHoldRun(HoldQueue& holding)
@@ -2492,18 +2508,13 @@ namespace
             const std::shared_ptr<MCHdArchive> archive = holding.Archives.front();
             const MCFastFile& file = *archive->File;
             const uint32_t count = file.StreamCount();
-            uint32_t first = holding.NextStream;
-
-            while (first < count && !HoldsKind(file.StreamAt(first).Kind))
-            {
-                ++first;
-            }
+            const uint32_t first = NextHeldStream(file, holding.NextStream);
+            uint32_t last = first + 1;
 
             if (first < count)
             {
                 const MCFastFile::StreamFacts start = file.StreamAt(first);
                 uint64_t end = start.At + start.Stored;
-                uint32_t last = first + 1;
 
                 for (; last < count; ++last)
                 {
@@ -2517,21 +2528,21 @@ namespace
 
                     end = next.At + next.Stored;
                 }
-
-                holding.NextStream = last;
-
-                if (last < count)
-                {
-                    return HoldSpan{archive, first, last};
-                }
             }
 
-            holding.Archives.pop_front();
-            holding.NextStream = 0;
+            // The archive leaves the queue with its last stream to keep, not at a later take, so the queue empties as
+            // the hold's last run is read (NoteHeld then) whatever streams it doesn't keep lie after.
+            holding.NextStream = first < count ? NextHeldStream(file, last) : count;
+
+            if (holding.NextStream == count)
+            {
+                holding.Archives.pop_front();
+                holding.NextStream = 0;
+            }
 
             if (first < count)
             {
-                return HoldSpan{archive, first, count};
+                return HoldSpan{archive, first, last};
             }
         }
 
@@ -2629,7 +2640,10 @@ namespace
             }
         }
 
-        GiveBack(ahead, lock, std::move(handle), readWhole, generation);
+        // Kept only for the hold's next run of the same archive: the hold reads every archive once, so its handles kept
+        // among the idle would close the readers' (GiveBack's least recently given back), which they read again.
+        const bool again = !holding.Archives.empty() && holding.Archives.front() == run->Archive;
+        GiveBack(ahead, lock, std::move(handle), readWhole && again, generation);
     }
 
     void StartReaders(ReadAhead& ahead);
@@ -2642,7 +2656,8 @@ namespace
     {
         HoldQueue& holding = ahead.Holding;
 
-        if (!holding.On || archive == nullptr || !archive->File->IsVersion2() || !holding.Queued.insert(archive).second)
+        if (!holding.On || archive == nullptr || !archive->File->IsVersion2() ||
+            NextHeldStream(*archive->File, 0) == archive->File->StreamCount() || !holding.Queued.insert(archive).second)
         {
             return;
         }

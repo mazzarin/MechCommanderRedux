@@ -677,6 +677,12 @@ auto ParseCommandLine(std::string_view commandLine) -> void
 
             i++;
         }
+        else if (MCIEquals(word, "-hdguard"))
+        {
+            // Port-only, for test runs (no player passes it): "-hdguard" notes each read of the original's art that a
+            // version 2 HD pack is drawn in place of (MCHdArt::GuardOriginalReads); a benchmark fails on any.
+            MCHdArt::GuardOriginalReads(true);
+        }
         else if (MCIEquals(word, "-benchmark"))
         {
             // Port-only (Redux HD): "-benchmark [weather,time,hd|original]" plays the trailer's canyon battle and a pan

@@ -2,9 +2,34 @@
 #include "terrain/MCTerrainTiles.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
+#include "sprite/MCHdArt.h"
+#include "terrain/MCGroundNames.h"
 
 std::string TilePath = "data\\tiles\\";
 std::string Tile90Path = "data\\tiles\\";
+
+namespace
+{
+    /// <summary>
+    /// Port-only (MCHdArt::GuardOriginalReads, test runs alone): notes slot <paramref name="slot"/>'s packet read from
+    /// <paramref name="tiles"/>' files, as what the HD pack names it there (a ground tile, an overlay) or as a tile it
+    /// doesn't name (a set it lacks, a slot without art of either kind).
+    /// </summary>
+    void NoteTileRead(const MCTerrainTiles& tiles, int32_t slot)
+    {
+        if (!MCHdArt::GuardingOriginalReads())
+        {
+            return;
+        }
+
+        const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(tiles);
+        const MCGroundSlotNames names = known.has_value() ? known->get().At(slot) : MCGroundSlotNames{};
+        const std::string_view kind = names.Overlay.has_value() ? MCOverlayReadFromFile
+                                      : names.Tile.has_value()  ? MCGroundTileReadFromFile
+                                                                : MCUnnamedTileReadFromFile;
+        MCHdArt::NoteOriginalRead(kind, std::format("slot {} of the set 0x{:016x}", slot, tiles.FilesHash()));
+    }
+} // namespace
 
 auto MCTerrainTiles::Create(std::string_view tileFileName)
     -> std::expected<std::unique_ptr<MCTerrainTiles>, std::string>
@@ -107,6 +132,7 @@ auto MCTerrainTiles::ReadTiles(std::span<const int32_t> slots) -> MCTileReads
 
             if (!bytes->empty())
             {
+                NoteTileRead(*this, slot);
                 tile.Data = MCRegisteredBlock(bytes->size(), MCDataKind::Shapes);
                 std::ranges::copy(*bytes, tile.Data.Bytes().begin());
             }
@@ -211,6 +237,7 @@ auto MCTerrainTiles::ReadTile(int32_t tileNum) -> std::span<const uint8_t>
     }
 
     // The original flushed the cache when its heap was full; the port's never is.
+    NoteTileRead(*this, tileNum);
     tile.Data = MCRegisteredBlock(static_cast<size_t>(size), MCDataKind::Shapes);
     file.ReadPacket(tileNum, tile.Data.Bytes());
     tile.Missing = false;

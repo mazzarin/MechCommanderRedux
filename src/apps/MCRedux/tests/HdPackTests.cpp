@@ -2775,7 +2775,8 @@ namespace
 /// table (record 1) and a frame for each frame the table holds with a box, the mech's shape is loaded from the pack in
 /// place of its packet (no rows: MCHdArt::Stripped), its pixels visited from its frames' index pictures as the
 /// original's rows visit them (MCHdArt::VisitShape), and with HD art off it takes its packet again
-/// (MCSpriteManager::RestoreOriginalShapes). A folder lacking one of its frames is loaded from the packet.
+/// (MCSpriteManager::RestoreOriginalShapes). A folder lacking one of its frames is loaded from the packet, which the
+/// guard of test runs notes (MCHdArt::GuardOriginalReads).
 /// </summary>
 TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's shapes, their pixels from the frames")
 {
@@ -2869,14 +2870,24 @@ TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's
         scratch.Path() / std::filesystem::path(folderOf(0)).parent_path().concat(".hda");
     std::filesystem::create_directories(archive.parent_path());
     WriteBytes(archive, BuildVersion2Archive(entries, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
     const int previous = GHdArt;
     GHdArt = 1;
     MCHdArt::SetPackFolder(scratch.Path());
     sprites->DumpAll();
     REQUIRE(MCHdArt::DrawsStrippedTables());
     const size_t fromPack = sprites->ShapeTablesFromPack();
+    // The guard of test runs (-hdguard) on, to note the packet read from its PAK.
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
     const std::shared_ptr<MCShape> stripped = load(0);
     const std::shared_ptr<MCShape> lacking = load(1);
+    const std::optional<std::vector<MCHdArt::GuardedRead>> guarded = MCHdArt::GuardedReads();
+    REQUIRE(guarded.has_value());
+    REQUIRE_EQ(guarded->size(), size_t{1});
+    CHECK_EQ(guarded->front().Count, size_t{1});
+    CHECK_EQ(guarded->front().Examples.front(), MCFileSystem::ToUtf8(std::filesystem::path(folderOf(1))));
+    MCHdArt::GuardOriginalReads(false);
     CHECK(stripped->Stripped);
     CHECK(MCHdArt::Stripped(stripped->FrameList()));
     CHECK(stripped->FrameList().size() < originals[0].size());
@@ -2918,9 +2929,11 @@ TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's
 /// draws apart from those their indices spread to, the terrain's load leaves the map's overlays and its mines' tiles
 /// unread (MCTerrainLeaveRebuiltTiles, MCTerrainReadMinesAhead), and the load's HD ground (MCTerrainReadHdTiles) puts
 /// each in the cache rebuilt from its HD frame, byte for byte the original's packet; one whose frame doesn't hold its
-/// pixels is read. Mission 8, which starts with mined cells, its tile set opened again with none read.
+/// pixels is read, which the guard of test runs notes (MCHdArt::GuardOriginalReads), and no other. Mission 8, which
+/// starts with mined cells, its tile set opened again with none read.
 /// </summary>
-TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays and its mines' tiles, none read")
+TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays and its mines' tiles, none read, "
+                   "the guard noting the one read")
 {
     if (!MCTestGame::Available())
     {
@@ -3020,11 +3033,15 @@ TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays
 
     const ScratchFolder scratch("overlays-rebuilt");
     WriteBytes(scratch.Path() / (std::string(MCHdArt::OverlayFolder) + ".hda"), BuildVersion2Archive(entries));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
     const int previous = GHdArt;
     GHdArt = 1;
     MCHdArt::SetPackFolder(scratch.Path());
     REQUIRE(MCHdArt::MarksOriginalPixels(MCHdArt::OverlayFolder));
     terrain->Tiles = std::move(fresh);
+    // The guard of test runs (-hdguard) on, to note the original's tiles read.
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
 
     // The terrain's load leaves out the map's overlays; the mines' read leaves theirs.
     std::vector<int32_t> used = terrain->MapBlocks->TilesUsed();
@@ -3053,6 +3070,15 @@ TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays
     std::cout << std::format("  mission {}: {} overlays and {} mines' tiles, {} rebuilt from HD\n", MinedMission,
                              mapOverlays, slots.size() - mapOverlays, done.Overlays);
     CHECK_EQ(differ, size_t{0});
+    // The guard noted the misnamed overlay read from the tile file, and no other overlay.
+    const std::optional<std::vector<MCHdArt::GuardedRead>> guarded = MCHdArt::GuardedReads();
+    REQUIRE(guarded.has_value());
+    const auto overlaysRead = std::ranges::find(*guarded, MCOverlayReadFromFile, &MCHdArt::GuardedRead::Kind);
+    REQUIRE(overlaysRead != guarded->end());
+    CHECK_EQ(overlaysRead->Count, size_t{1});
+    CHECK(overlaysRead->Examples.front().starts_with(std::format("slot {} ", slots.front())));
+    MCHdArt::GuardOriginalReads(false);
+    CHECK(!MCHdArt::GuardedReads().has_value());
     // The mission draws on from them.
     MCTestGame::RunFrame(FrameSeconds);
     GHdArt = previous;

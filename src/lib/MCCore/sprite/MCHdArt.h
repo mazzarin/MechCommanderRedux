@@ -482,6 +482,36 @@ namespace MCHdArt
     void TraceNote(std::string_view text);
 
     /// <summary>
+    /// Port-only, for test runs alone (the tests; <c>-hdguard</c>, which no player passes): while on, each read of the
+    /// original's art that a version 2 pack is drawn in place of (a shape table, a ground tile or overlay) is noted by its
+    /// kind, so the run can fail on it (SPEC-pack-v2.md's done: no original art read). Setting it clears what it noted.
+    /// The game reads the art as without the guard: a mod's art, which the pack lacks, still comes from its files.
+    /// </summary>
+    void GuardOriginalReads(bool on);
+
+    /// <summary>Port-only: whether the guard is on (GuardOriginalReads) with a version 2 pack drawn.</summary>
+    bool GuardingOriginalReads();
+
+    /// <summary>
+    /// Port-only: notes a read of the original's art, of <paramref name="kind"/> (which reads are told apart by) and
+    /// <paramref name="what"/> (an example), while the guard is on with a version 2 pack drawn (GuardingOriginalReads).
+    /// </summary>
+    void NoteOriginalRead(std::string_view kind, std::string_view what);
+
+    /// <summary>Port-only: one kind of read the guard noted: how many, and the first few.</summary>
+    struct GuardedRead
+    {
+        std::string Kind;
+        size_t Count = 0;
+        std::vector<std::string> Examples;
+    };
+
+    /// <summary>
+    /// Port-only: the reads the guard noted since it was set on (GuardOriginalReads), by kind; none while it's off.
+    /// </summary>
+    std::optional<std::vector<GuardedRead>> GuardedReads();
+
+    /// <summary>
     /// Port-only: <see cref="ReadPacketsAhead"/> of one packet, without its turn middles, as a set's: folder
     /// <paramref name="folder"/>'s first <paramref name="frames"/> frames (none given: all its archive holds).
     /// </summary>

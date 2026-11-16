@@ -13,7 +13,25 @@ namespace
 MCShape::MCShape(MCRegisteredBlock packet, std::weak_ptr<MCAppearanceType> owner, int32_t lastTurnUsed)
     : LastTurnUsed(lastTurnUsed), Owner(std::move(owner)), _Packet(std::move(packet))
 {
+    CheckTable();
+}
+
+auto MCShape::TakePacket(MCRegisteredBlock packet) -> void
+{
+    _Packet = std::move(packet);
+    _FrameStart.reset();
+    CheckTable();
+}
+
+auto MCShape::CheckTable() -> void
+{
     const std::span<const uint8_t> bytes = _Packet.Bytes();
+
+    // Port-only: a packet too short for a table's version has none (an empty one taken: TakePacket).
+    if (bytes.size() < CountAt)
+    {
+        return;
+    }
 
     // A bare VFX shape table starts with its "1.10" version tag; anything else has a gesture header in front.
     const size_t start = std::memcmp(bytes.data(), "1.10", 4) != 0 ? GestureHeaderSize : 0;

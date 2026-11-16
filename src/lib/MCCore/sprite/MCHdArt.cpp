@@ -7,11 +7,15 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCMemoryRoom.h"
+#include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCThreadPriority.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCInBetween.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCSpriteMath.h"
+#include "sprite/MCPackRecords.h"
+#include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
 
 #include <array>
@@ -253,6 +257,8 @@ namespace
         uint32_t Folder = 0;
         /// <summary>Whether its frames keep their own edges (MCHdArt::KeepsFrameEdges).</summary>
         bool KeepsEdges = false;
+        /// <summary>Port-only: whether the table is a stripped one, without rows (MCShape::Stripped).</summary>
+        bool Stripped = false;
     };
 
     /// <summary>
@@ -3561,7 +3567,7 @@ namespace
     /// (MCHdArt::NumberedFolders: HD art is on, and the pack was made from this game's sprite files).
     /// </summary>
     void AttachTo(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner,
-                  const std::filesystem::path& folder, bool keepsEdges = false)
+                  const std::filesystem::path& folder, bool keepsEdges = false, bool stripped = false)
     {
         if (owner == nullptr || table.empty() || !MCHdArt::NumberedFolders())
         {
@@ -3583,7 +3589,8 @@ namespace
             std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Owner.expired(); });
         }
 
-        state.Sequences[MCAddressKey::OfData(table)] = Sequence{owner, FolderIndex(path, Naming::Number), keepsEdges};
+        state.Sequences[MCAddressKey::OfData(table)] =
+            Sequence{owner, FolderIndex(path, Naming::Number), keepsEdges, stripped};
     }
 
     /// <summary>
@@ -3652,6 +3659,118 @@ auto MCHdArt::ArchiveFacts(const std::filesystem::path& folder, uint16_t type) -
     return std::nullopt;
 }
 
+bool MCHdArt::DrawsStrippedTables()
+{
+    return NumberedFolders() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+}
+
+auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::optional<std::vector<uint8_t>>
+{
+    if (!DrawsStrippedTables())
+    {
+        return std::nullopt;
+    }
+
+    State& state = TheState();
+    const FrameFolder::InArchive& archived =
+        ArchiveOf(state.Folders[FolderIndex(PackFolder() / folder, Naming::Number)]);
+
+    if (archived.Archive == nullptr || !archived.Archive->File->IsVersion2())
+    {
+        return std::nullopt;
+    }
+
+    // The folder in its archive: the start of its frames' names without the separator after it.
+    const std::string_view inArchive =
+        std::string_view(archived.Prefix).substr(0, archived.Prefix.empty() ? 0 : archived.Prefix.size() - 1);
+
+    for (const auto& [type, data] : archived.Archive->File->Facts(inArchive))
+    {
+        if (type != static_cast<uint16_t>(MCPackRecords::Type::ShapeTable))
+        {
+            continue;
+        }
+
+        // A bare table starts with its version, "1.10"; a gesture's has the gesture header in front (MCShape's rule).
+        constexpr std::string_view TableVersion = "1.10";
+        constexpr size_t GestureHeaderBytes = 6;
+        const size_t start = data.size() >= TableVersion.size() &&
+                                     std::memcmp(data.data(), TableVersion.data(), TableVersion.size()) != 0
+                                 ? std::min(GestureHeaderBytes, data.size())
+                                 : 0;
+        const std::span<const uint8_t> table = data.subspan(start);
+
+        // Each frame it holds with a box is drawn from the pack, which must hold it: the table has no rows to draw.
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+
+            if (MCVfxHasShape(table, frame) && bounds.Width > 0.0f && bounds.Height > 0.0f &&
+                !archived.Archive->File->Find(std::format("{}{}{}", archived.Prefix, frame, HdfExtension)))
+            {
+                return std::nullopt;
+            }
+        }
+
+        return std::vector<uint8_t>(data.begin(), data.end());
+    }
+
+    return std::nullopt;
+}
+
+bool MCHdArt::Stripped(std::span<const uint8_t> table)
+{
+    const MCOptionalRef<const Sequence> sequence = AttachedSequence(table);
+    return sequence.has_value() && sequence->get().Stripped;
+}
+
+void MCHdArt::VisitShape(std::span<const uint8_t> table, int32_t frame,
+                         const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel)
+{
+    if (!Stripped(table))
+    {
+        VfxShapeVisit(table, frame, pixel);
+        return;
+    }
+
+    if (!MCVfxHasShape(table, frame))
+    {
+        return;
+    }
+
+    const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+    const auto width = static_cast<int32_t>(bounds.Width);
+    const auto height = static_cast<int32_t>(bounds.Height);
+    const std::shared_ptr<const Frame> hd = Find(table, frame, width, height);
+
+    if (hd == nullptr || !hd->Marked)
+    {
+        return;
+    }
+
+    const auto minX = static_cast<int32_t>(bounds.MinX);
+    const auto minY = static_cast<int32_t>(bounds.MinY);
+
+    for (int32_t y = 0; y < height; ++y)
+    {
+        for (int32_t x = 0; x < width; ++x)
+        {
+            const size_t at =
+                (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * IndexBytes;
+
+            if (at + 1 < hd->Indices.size() && OriginalDrawsMark(hd->Indices[at + 1]))
+            {
+                pixel(minX + x, minY + y, hd->Indices[at]);
+            }
+        }
+    }
+}
+
+void MCHdArt::Detach(std::span<const uint8_t> table)
+{
+    TheState().Sequences.erase(MCAddressKey::OfData(table));
+}
+
 std::filesystem::path MCHdArt::FolderOf(const ObjectShapeKey& key)
 {
     return std::filesystem::path(ObjectFolder) / MCFileSystem::FromUtf8(key.ShapeFile) /
@@ -3672,7 +3791,7 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& 
 {
     if (shape != nullptr)
     {
-        AttachTo(shape->FrameList(), shape, FolderOf(key));
+        AttachTo(shape->FrameList(), shape, FolderOf(key), false, shape->Stripped);
     }
 }
 
@@ -3680,7 +3799,7 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey
 {
     if (shape != nullptr)
     {
-        AttachTo(shape->FrameList(), shape, FolderOf(key));
+        AttachTo(shape->FrameList(), shape, FolderOf(key), false, shape->Stripped);
     }
 }
 
@@ -3748,7 +3867,7 @@ void MCHdArt::AttachFolder(const std::shared_ptr<MCShape>& shape)
 {
     if (shape != nullptr && !shape->HdFolder.empty())
     {
-        AttachTo(shape->FrameList(), shape, shape->HdFolder);
+        AttachTo(shape->FrameList(), shape, shape->HdFolder, false, shape->Stripped);
         NoteNeighbours(*shape);
     }
 }

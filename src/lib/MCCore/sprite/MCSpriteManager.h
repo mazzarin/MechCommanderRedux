@@ -164,6 +164,19 @@ public:
     MCShapesReadAlone ShapesReadAlone() const { return _ReadAlone; }
 
     /// <summary>
+    /// Port-only: the shapes loaded from the HD pack's stripped shape tables so far, in place of the original's packets
+    /// (sprite/MCHdArt.h's StrippedShapeTable).
+    /// </summary>
+    size_t ShapeTablesFromPack() const { return _TablesFromPack; }
+
+    /// <summary>
+    /// Port-only: gives every shape loaded from a stripped table (MCShape::Stripped) its original packet again, for HD
+    /// art turned off, so the original's rows draw it; how many. One whose packet can't be read stays stripped (and is
+    /// drawn as nothing).
+    /// </summary>
+    size_t RestoreOriginalShapes();
+
+    /// <summary>
     /// Port-only: packets <paramref name="first"/> to <paramref name="first"/> + <paramref name="count"/> - 1 of
     /// <paramref name="part"/> of mech <paramref name="mechNum"/> as stored, from the PAK <see cref="GetMechShapeData"/>
     /// reads them from with <paramref name="zoomedOut"/> (MCPacketFile::ReadStoredPackets: none unpacked), for a hash of
@@ -239,6 +252,23 @@ private:
     std::shared_ptr<MCShape> LoadShape(MCPacketFile& file, uint32_t packetNum, uint32_t size, int32_t turnUsed,
                                        std::weak_ptr<MCAppearanceType> owner, bool checkSize);
 
+    /// <summary>
+    /// Port-only: a shape from the HD pack's stripped table for <paramref name="folder"/> (MCHdArt::StrippedShapeTable),
+    /// its original packet read by <paramref name="readOriginal"/> when it's wanted again (RestoreOriginalShapes); null
+    /// when the pack has none for it.
+    /// </summary>
+    std::shared_ptr<MCShape> StrippedShape(const std::filesystem::path& folder, int32_t turnUsed,
+                                           std::weak_ptr<MCAppearanceType> owner,
+                                           std::function<MCRegisteredBlock()> readOriginal);
+
+    /// <summary>Port-only: <see cref="StrippedShape"/> of packet <paramref name="packetNum"/> of an appearance's PAK.</summary>
+    std::shared_ptr<MCShape> StrippedObjectShape(uint32_t appearanceNum, uint32_t packetNum, int32_t turnUsed,
+                                                 std::weak_ptr<MCAppearanceType> owner);
+
+    /// <summary>Port-only: <see cref="StrippedShape"/> of a mech part's packet.</summary>
+    std::shared_ptr<MCShape> StrippedMechShape(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
+                                               std::weak_ptr<MCAppearanceType> owner, bool zoomedOut);
+
     /// <summary>Port-only: a new shape of <paramref name="bytes"/> (a packet's, read already), added to the cache.</summary>
     std::shared_ptr<MCShape> AddShape(std::span<const uint8_t> bytes, int32_t turnUsed,
                                       std::weak_ptr<MCAppearanceType> owner);
@@ -254,9 +284,11 @@ private:
     /// Port-only: the shapes of <paramref name="wanted"/> read together: each packet from the file
     /// <paramref name="fileOf"/> gives (none: <paramref name="alone"/>'s), made into a shape and tied by
     /// <paramref name="tie"/>; one the batch leaves (or of no file) is <paramref name="alone"/>'s, as one at a time. The
-    /// runs <paramref name="stored"/> (each of <paramref name="fileOf"/>'s file) are read as stored with them.
+    /// runs <paramref name="stored"/> (each of <paramref name="fileOf"/>'s file) are read as stored with them. Port-only:
+    /// one <paramref name="fromPack"/> gives (a stripped table's) is read from no file.
     /// </summary>
     MCShapesLoaded LoadTogether(std::span<const MCShapeWanted> wanted, int32_t turnUsed,
+                                const std::function<std::shared_ptr<MCShape>(const MCShapeWanted&)>& fromPack,
                                 const std::function<MCOptionalRef<MCPacketFile>(const MCShapeWanted&)>& fileOf,
                                 const std::function<std::shared_ptr<MCShape>(const MCShapeWanted&)>& alone,
                                 const std::function<void(const std::shared_ptr<MCShape>&, const MCShapeWanted&)>& tie,
@@ -292,7 +324,12 @@ private:
     std::vector<std::shared_ptr<MCShape>> _Shapes;
     /// <summary>Port-only: the shapes read one at a time so far (ShapesReadAlone).</summary>
     MCShapesReadAlone _ReadAlone;
+    /// <summary>Port-only: the shapes loaded from stripped tables so far (ShapeTablesFromPack).</summary>
+    size_t _TablesFromPack = 0;
 };
+
+/// <summary>Port-only: the frame log's count of shapes loaded from the HD pack's stripped tables (MCSpriteManager).</summary>
+inline constexpr std::string_view MCShapeTablesFromPackCount = "shape tables from the HD pack";
 
 /// <summary>The mission's sprite cache (null outside a mission); the caller keeps it as its pin.</summary>
 inline std::shared_ptr<MCSpriteManager> SpriteManager()

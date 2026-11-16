@@ -263,6 +263,35 @@ namespace MCHdArt
     /// pack); none when HD art isn't drawn, or the pack has no such archive, an archive of version 1 or no such record.
     /// </summary>
     std::optional<std::vector<uint8_t>> ArchiveFacts(const std::filesystem::path& folder, uint16_t type);
+
+    /// <summary>
+    /// Port-only (a version 2 pack, SPEC-pack-v2.md's record 1): whether shapes may be loaded from the pack's stripped
+    /// shape tables: HD art drawn from numbered folders, by the GPU alone (the software renderer and mirror mode draw the
+    /// original's rows).
+    /// </summary>
+    bool DrawsStrippedTables();
+
+    /// <summary>
+    /// Port-only (record 1): the stripped shape table standing for the packet whose frames are in
+    /// <paramref name="folder"/> (FolderOf its key), when <see cref="DrawsStrippedTables"/> and the folder's archive, of
+    /// version 2, holds the record and a frame for each frame the table holds with a box; none otherwise (the loader then
+    /// reads the original's packet).
+    /// </summary>
+    std::optional<std::vector<uint8_t>> StrippedShapeTable(const std::filesystem::path& folder);
+
+    /// <summary>Port-only: whether <paramref name="table"/> is an attached stripped shape's (MCShape::Stripped).</summary>
+    bool Stripped(std::span<const uint8_t> table);
+
+    /// <summary>
+    /// Port-only: VfxShapeVisit's pixels of frame <paramref name="frame"/> of <paramref name="table"/>, a stripped
+    /// table's from its HD frame's index picture where the original draws (<see cref="OriginalDrawsMark"/>), the frame
+    /// read if need be; none when the pack has no such frame.
+    /// </summary>
+    void VisitShape(std::span<const uint8_t> table, int32_t frame,
+                    const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel);
+
+    /// <summary>Port-only: forgets <paramref name="table"/>'s attachment (its shape takes another packet).</summary>
+    void Detach(std::span<const uint8_t> table);
     std::filesystem::path FolderOf(const ObjectShapeKey& key);
     std::filesystem::path FolderOf(const CraterShapeKey& key);
 

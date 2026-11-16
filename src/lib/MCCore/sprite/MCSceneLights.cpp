@@ -332,30 +332,30 @@ namespace
         std::array<double, 3> sum{};
         int32_t pixels = 0;
         bool water = false;
-        VfxShapeVisit(shapeTable, frame,
-                      [&](int32_t x, int32_t y, uint8_t color)
-                      {
-                          water = water || IsCycledWater(color);
-                          const std::optional<ShiningPixel>& shone = lights[color];
+        MCHdArt::VisitShape(shapeTable, frame,
+                            [&](int32_t x, int32_t y, uint8_t color)
+                            {
+                                water = water || IsCycledWater(color);
+                                const std::optional<ShiningPixel>& shone = lights[color];
 
-                          if (!shone.has_value())
-                          {
-                              return;
-                          }
+                                if (!shone.has_value())
+                                {
+                                    return;
+                                }
 
-                          const PixelLight& light = shone->Light;
-                          const double w = shone->Weight;
+                                const PixelLight& light = shone->Light;
+                                const double w = shone->Weight;
 
-                          for (size_t i = 0; i < sum.size(); ++i)
-                          {
-                              sum[i] += light.Color[i] * light.Coverage;
-                          }
+                                for (size_t i = 0; i < sum.size(); ++i)
+                                {
+                                    sum[i] += light.Color[i] * light.Coverage;
+                                }
 
-                          sumX += x * w;
-                          sumY += y * w;
-                          weight += w;
-                          ++pixels;
-                      });
+                                sumX += x * w;
+                                sumY += y * w;
+                                weight += w;
+                                ++pixels;
+                            });
 
         if (pixels == 0)
         {
@@ -973,14 +973,14 @@ auto MCSceneLights::FrameColors(std::span<const uint8_t> shapeTable, int32_t fra
     const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
     const ShiningColors lights = ShiningOf(translucent, pixels);
     std::array<int32_t, MCPalette::ColorCount> counts{};
-    VfxShapeVisit(shapeTable, frame,
-                  [&](int32_t, int32_t, uint8_t color)
-                  {
-                      if (lights[color].has_value())
-                      {
-                          ++counts[color];
-                      }
-                  });
+    MCHdArt::VisitShape(shapeTable, frame,
+                        [&](int32_t, int32_t, uint8_t color)
+                        {
+                            if (lights[color].has_value())
+                            {
+                                ++counts[color];
+                            }
+                        });
     std::vector<MCGlowColor> colors;
 
     for (size_t color = 0; color < counts.size(); ++color)
@@ -1005,14 +1005,14 @@ auto MCSceneLights::FrameOutline(std::span<const uint8_t> shapeTable, int32_t fr
     const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
     const ShiningColors lights = ShiningOf(translucent, pixels);
     std::map<std::pair<int32_t, int32_t>, std::array<float, 3>> shining;
-    VfxShapeVisit(shapeTable, frame,
-                  [&](int32_t x, int32_t y, uint8_t color)
-                  {
-                      if (const std::optional<ShiningPixel>& shone = lights[color]; shone.has_value())
-                      {
-                          shining[{x, y}] = shone->Light.Color;
-                      }
-                  });
+    MCHdArt::VisitShape(shapeTable, frame,
+                        [&](int32_t x, int32_t y, uint8_t color)
+                        {
+                            if (const std::optional<ShiningPixel>& shone = lights[color]; shone.has_value())
+                            {
+                                shining[{x, y}] = shone->Light.Color;
+                            }
+                        });
     std::vector<MCGlowPixel> outline;
 
     for (const auto& [at, color] : shining)

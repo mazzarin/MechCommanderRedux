@@ -325,10 +325,10 @@ TEST_CASE("logistics: the unit limit caps a purchase at the room left")
 }
 
 /// <summary>
-/// Port-only (MoreUnits): with MoreUnits a player outside a match may own 100 units, warned from 80: a purchase past
-/// the original's 50 is capped only by the room under 100.
+/// Port-only (MoreUnits): with MoreUnits a player outside a match may own 200 units, warned from 160: a purchase past
+/// the original's 50 is capped only by the room under 200.
 /// </summary>
-TEST_CASE("logistics: with MoreUnits a player outside a match owns up to 100 units, warned from 80")
+TEST_CASE("logistics: with MoreUnits a player outside a match owns up to 200 units, warned from 160")
 {
     if (!MCTestGame::Available())
     {
@@ -337,16 +337,16 @@ TEST_CASE("logistics: with MoreUnits a player outside a match owns up to 100 uni
 
     ShopFixture shop;
     const MCMoreUnitsOn moreUnits;
-    CHECK_EQ(MaxUnits(), 100);
-    CHECK_EQ(UnitWarning(), 80);
+    CHECK_EQ(MaxUnits(), 200);
+    CHECK_EQ(UnitWarning(), 160);
     FillShop(shop, 30);
     CHECK_EQ(NumUnits(), 45);
     CHECK_EQ(MaxPurchase(10), 10);
-    CHECK_EQ(MaxPurchase(-1), 55);
-    FillShop(shop, 80);
-    CHECK_EQ(NumUnits(), 95);
+    CHECK_EQ(MaxPurchase(-1), 155);
+    FillShop(shop, 180);
+    CHECK_EQ(NumUnits(), 195);
     CHECK_EQ(MaxPurchase(10), 5);
-    FillShop(shop, 85);
+    FillShop(shop, 185);
     CHECK_EQ(MaxPurchase(10), 0);
 }
 
@@ -1117,10 +1117,10 @@ namespace
 
 /// <summary>
 /// Port-only (MoreUnits): with MoreUnits a campaign's shop sells past the original's 50 units, a mech at a time dragged
-/// from the store onto the inventory: from 50 a purchase goes through with no word; at 80 it warns how many the player
-/// owns of the 100; at 100 it says the inventory is at its maximum, and there it sells no more.
+/// from the store onto the inventory: from 50 a purchase goes through with no word; at 160 it warns how many the player
+/// owns of the 200; at 200 it says the inventory is at its maximum, and there it sells no more.
 /// </summary>
-TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 100, warning from 80")
+TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 200, warning from 160")
 {
     if (!MCTestGame::Available())
     {
@@ -1148,27 +1148,27 @@ TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 100,
     CHECK_EQ(NumUnits(), 51);
     CHECK(!message.ShowWindow);
 
-    // From 80: bought, with the warning of the 100.
-    MCTestGame::OwnUnits(79);
+    // From 160: bought, with the warning of the 200.
+    MCTestGame::OwnUnits(159);
     BuyFirst();
     Accept();
-    CHECK_EQ(NumUnits(), 80);
+    CHECK_EQ(NumUnits(), 160);
     REQUIRE(message.ShowWindow);
-    CHECK_EQ(message.Text, MCFormatPrintf(LoadGameString(0x372, 0xfe), 80, 100));
+    CHECK_EQ(message.Text, MCFormatPrintf(LoadGameString(0x372, 0xfe), 160, 200));
     CloseMessage();
 
-    // The 100th: bought, the inventory at its maximum.
-    MCTestGame::OwnUnits(99);
+    // The 200th: bought, the inventory at its maximum.
+    MCTestGame::OwnUnits(199);
     BuyFirst();
     Accept();
-    CHECK_EQ(NumUnits(), 100);
+    CHECK_EQ(NumUnits(), 200);
     REQUIRE(message.ShowWindow);
     CHECK_EQ(message.Text, LoadGameString(0x374, 0xfe));
     CloseMessage();
 
-    // At 100: none sold, the same word.
+    // At 200: none sold, the same word.
     BuyFirst();
-    CHECK_EQ(NumUnits(), 100);
+    CHECK_EQ(NumUnits(), 200);
     REQUIRE(message.ShowWindow);
     CHECK_EQ(message.Text, LoadGameString(0x374, 0xfe));
     CloseMessage();

@@ -7,10 +7,10 @@ inline constexpr int32_t OriginalMaxUnits = 50;
 inline constexpr int32_t OriginalUnitWarning = 40;
 
 /// <summary>Port-only (MoreUnits): the most mechs and vehicles a player outside a match may own.</summary>
-inline constexpr int32_t RaisedMaxUnits = 100;
+inline constexpr int32_t RaisedMaxUnits = 200;
 
 /// <summary>Port-only (MoreUnits): from this many units on, a purchase outside a match warns that the limit is near.</summary>
-inline constexpr int32_t RaisedUnitWarning = 80;
+inline constexpr int32_t RaisedUnitWarning = 160;
 
 /// <summary>
 /// Port-only: PREFS "MoreUnits" (gameplay): 1 lets the player own <see cref="RaisedMaxUnits"/> mechs and vehicles

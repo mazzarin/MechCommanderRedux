@@ -1227,8 +1227,8 @@ namespace
 
 /// <summary>
 /// Port-only (MoreUnits): with MoreUnits a save holding more than the original's 50 units loads whole, the shop has
-/// room for more, and LAUNCH starts the mission; past 100 (a mission's salvage can take it there) LAUNCH asks to sell
-/// down to 100 first.
+/// room for more, and LAUNCH starts the mission; past 200 (a mission's salvage can take it there) LAUNCH asks to sell
+/// down to 200 first.
 /// </summary>
 TEST_CASE_ISOLATED("game: with MoreUnits a save holding more than 50 units is bought into and launched")
 {
@@ -1241,15 +1241,15 @@ TEST_CASE_ISOLATED("game: with MoreUnits a save holding more than 50 units is bo
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     GMoreUnits = 1;
-    LoadCampaignOwning(Save, 101);
+    LoadCampaignOwning(Save, 201);
     RemoveSave(Save);
-    CHECK_EQ(NumUnits(), 101);
+    CHECK_EQ(NumUnits(), 201);
     DeployFirstMech();
-    LaunchRefused(101, 100);
+    LaunchRefused(201, 200);
 
-    // Sold down to 60: room in the shop for 40 more, and the mission starts.
+    // Sold down to 60: room in the shop for 140 more, and the mission starts.
     SellDownTo(60);
-    CHECK_EQ(MaxPurchase(-1), 40);
+    CHECK_EQ(MaxPurchase(-1), 140);
     CHECK(!CheckMaxUnits());
     CHECK(Launch());
 }

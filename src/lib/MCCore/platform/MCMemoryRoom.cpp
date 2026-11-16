@@ -18,12 +18,31 @@ namespace
         return *state;
     }
 
+    /// <summary>The machine's memory as SDL reports it (in MiB), in bytes; 0 when it can't say.</summary>
+    uint64_t SystemMemoryBytes()
+    {
+        constexpr int BytesPerMibShift = 20;
+        const int mib = SDL_GetSystemRAM();
+        return mib > 0 ? static_cast<uint64_t>(mib) << BytesPerMibShift : 0;
+    }
+
     std::shared_ptr<MCMemoryRoom::MCSystem> TheSystem()
     {
         MCRoomState& state = TheState();
         std::scoped_lock lock(state.Lock);
         return state.System;
     }
+}
+
+uint64_t MCMemoryRoom::MCSystem::TotalBytes()
+{
+    return SystemMemoryBytes();
+}
+
+uint64_t MCMemoryRoom::TotalBytes()
+{
+    const std::shared_ptr<MCSystem> system = TheSystem();
+    return system != nullptr ? system->TotalBytes() : SystemMemoryBytes();
 }
 
 void MCMemoryRoom::SetSystem(std::shared_ptr<MCSystem> system)

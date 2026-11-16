@@ -850,6 +850,8 @@ auto MCMission::StartScenario(std::string_view name) -> void
 {
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
+    // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold).
+    MCHdArt::LetGoHold();
     // Port (personal): the reports measure the load, then the play (main/MCTelemetry.h).
     MCTelemetry::PlayLoading(scenarioName, MultiPlayer() != nullptr);
 
@@ -932,6 +934,8 @@ auto MCMission::StartInterface() -> void
     MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs::Load);
     MCHdArt::WaitForLoadReads();
     MCHdArt::KeepReadAhead();
+    // Port-only (SPEC-pack-v2.md's Memory): on a machine with the memory, the mission's art held from here.
+    MCHdArt::StartHold();
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void
@@ -1033,6 +1037,9 @@ auto MCMission::EndScenario() -> void
         Scenario()->Unload();
         MCGameContext::Current().SetScenario(nullptr);
     }
+
+    // Port-only: the mission's held art let go of (MCHdArt::StartHold).
+    MCHdArt::LetGoHold();
 
     if (ScenarioResult > 3)
     {

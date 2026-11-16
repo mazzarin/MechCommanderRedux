@@ -143,6 +143,51 @@ public:
     /// <summary>Port-only: the key a version 2 archive finds <paramref name="path"/> by (XXH3-64 of it lower-cased).</summary>
     static uint64_t PathKey(std::string_view path);
 
+    /// <summary>Port-only (version 2): what a stream holds (SPEC-pack-v2.md's streams).</summary>
+    enum class StreamKind : uint8_t
+    {
+        /// <summary>A packet's frames with their in-betweens and turn middles.</summary>
+        Packet = 0,
+        /// <summary>Every packet's first frames, together.</summary>
+        Heads = 1,
+        Tiles = 2,
+        Pictures = 3,
+    };
+
+    /// <summary>Port-only (version 2): a stream's place in the file, its stored bytes and its kind.</summary>
+    struct StreamFacts
+    {
+        uint64_t At = 0;
+        uint32_t Stored = 0;
+        StreamKind Kind = StreamKind::Packet;
+    };
+
+    /// <summary>Port-only: the archive's streams (none in an archive of version 1), in the data's order.</summary>
+    uint32_t StreamCount() const { return static_cast<uint32_t>(_Streams.size()); }
+
+    /// <summary>Port-only (version 2): stream <paramref name="stream"/>'s place, stored bytes and kind.</summary>
+    StreamFacts StreamAt(uint32_t stream) const;
+
+    /// <summary>
+    /// Port-only (version 2; the hold, SPEC-pack-v2.md's Memory): keeps stream <paramref name="stream"/>'s stored bytes
+    /// <paramref name="stored"/>, as they lie in the archive, in memory, where <see cref="ReadStored(int32_t)"/> and HD
+    /// art's readers take them in place of the disk, until <see cref="LetGoHeld"/>. False, keeping nothing, when they
+    /// aren't its stored size.
+    /// </summary>
+    bool HoldStream(uint32_t stream, std::vector<uint8_t>&& stored) const;
+
+    /// <summary>
+    /// Port-only (version 2): entry <paramref name="index"/>'s stream's stored bytes when they are held
+    /// (<see cref="HoldStream"/>); none when they aren't, and for an archive of version 1.
+    /// </summary>
+    std::shared_ptr<const std::vector<uint8_t>> HeldStreamOf(int32_t index) const;
+
+    /// <summary>Port-only: lets go of every stream held (<see cref="HoldStream"/>), every archive's.</summary>
+    static void LetGoHeld();
+
+    /// <summary>Port-only: the stored bytes of the streams held now, every archive's.</summary>
+    static size_t HeldBytes();
+
     /// <summary>Lets only <see cref="Create"/> construct an archive.</summary>
     class Key
     {
@@ -171,13 +216,14 @@ private:
     /// <summary>Port-only: reads a version 2 archive's header and table (<see cref="IsVersion2"/>) into this one.</summary>
     std::expected<void, std::string> ReadVersion2(std::string_view fileName);
 
-    /// <summary>Port-only (version 2): a stream's place, sizes and codec.</summary>
+    /// <summary>Port-only (version 2): a stream's place, sizes, codec and kind.</summary>
     struct Stream
     {
         uint64_t At = 0;
         uint32_t Stored = 0;
         uint32_t Unpacked = 0;
         uint8_t Codec = 0;
+        StreamKind Kind = StreamKind::Packet;
     };
 
     /// <summary>Port-only (version 2): an entry's stream, and where it lies in the stream unpacked.</summary>
@@ -189,7 +235,9 @@ private:
     };
 
     bool _Version2 = false;
-    /// <summary>Port-only (version 2): this archive's own number, keying its unpacked streams kept a while.</summary>
+    /// <summary>
+    /// Port-only (version 2): this archive's own number, keying its unpacked streams kept a while and its streams held.
+    /// </summary>
     uint64_t _Serial = 0;
     std::vector<Stream> _Streams;
     /// <summary>Port-only (version 2): the entries' keys, sorted, and each one's place (by the same index).</summary>

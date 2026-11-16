@@ -422,8 +422,10 @@ namespace MCHdArt
     /// (replaced; <c>-hdtrace &lt;file&gt;</c>), a line a time, tab-separated, times in microseconds from its start:
     /// each frame begun (<c>F</c>), each read asked of the readers (<c>A</c>: its kind, archive, offset, stored bytes and
     /// entry), each of their reads (<c>R</c>: begun, its bytes in, its frames unpacked, its kind, archive, offset, bytes,
-    /// entries; <c>K</c>: a run served from streams kept unpacked, no read: begun, its frames unpacked, its kind, archive,
-    /// offset, entries), each archive named once (<c>P</c>), each frame's first use (<c>U</c>: kept as read ahead, taken from the
+    /// entries; <c>K</c>: a run served from memory, its streams kept unpacked or held as stored, no read: begun, its
+    /// frames unpacked, its kind, archive, offset, entries), each of the hold's reads (<c>H</c>: begun, its bytes in,
+    /// archive, offset, bytes, streams held; <see cref="StartHold"/>), each archive named once (<c>P</c>), each frame's
+    /// first use (<c>U</c>: kept as read ahead, taken from the
     /// readers, read by the game's thread or lacked, its folder and name, and the game's thread's microseconds on it),
     /// and notes (<c>N</c>: a benchmark's sections), for replaying the reads against another disk
     /// (tools: the read-ahead replay). False when it can't be written.
@@ -765,13 +767,16 @@ namespace MCHdArt
     /// frames unpacked on it), at most how many reads of the sets read ahead (a screen's pictures) may be in flight at
     /// once (0: as many as there are readers), and whether they run a step below the game's thread or level with it
     /// (platform/MCThreadPriority.h). The game's command line sets them (<c>-hdreaders</c>, <c>-hdsetreads</c>,
-    /// <c>-hdreaderpriority level|below</c>); the defaults are to be measured on the M4 Pro and the A10.
+    /// <c>-hdreaderpriority level|below</c>); the defaults are to be measured on the M4 Pro and the A10. Port-only: for
+    /// the tests and benchmarks, whether a mission's art is held (<see cref="StartHold"/>) whatever the machine's
+    /// memory (<c>-hdhold on|off</c>; none: the memory decides). No player sets it.
     /// </summary>
     struct ReaderSettings
     {
         size_t Readers = 4;
         size_t SetReads = 0;
         bool Below = true;
+        std::optional<bool> Hold;
 
         bool operator==(const ReaderSettings&) const = default;
     };
@@ -825,6 +830,50 @@ namespace MCHdArt
     /// unpacked from an earlier read.
     /// </summary>
     size_t ReaderReads();
+
+    /// <summary>
+    /// Port-only (SPEC-pack-v2.md's Memory): the least memory the system reports on a machine whose missions' art is
+    /// held (<see cref="StartHold"/>): 16 GB's tier, as a 16 GB machine may report somewhat under 16,384 MiB.
+    /// </summary>
+    constexpr uint64_t HoldLeastMemory = uint64_t{15000} << 20;
+
+    /// <summary>
+    /// Port-only: the most bytes one of the hold's reads takes (a run of an archive's consecutive streams; a stream larger
+    /// than it alone), so a read asked for while the hold reads waits for at most this much more of the disk.
+    /// </summary>
+    constexpr uint64_t HoldRunBytes = uint64_t{4} << 20;
+
+    /// <summary>
+    /// Port-only: whether a mission's art would be held (<see cref="StartHold"/>): <see cref="ReaderSettings::Hold"/>
+    /// when set, else the machine has at least <see cref="HoldLeastMemory"/> (MCMemoryRoom::TotalBytes).
+    /// </summary>
+    bool HoldWanted();
+
+    /// <summary>
+    /// Port-only (SPEC-pack-v2.md's Memory: the hold): a mission's load is done; when HD art is drawn and the hold is
+    /// wanted (<see cref="HoldWanted"/>), the readers read every version 2 archive open, and each opened later in the
+    /// mission, below everything else they read (when nothing else waits, one run of at most <see cref="HoldRunBytes"/>
+    /// at a time), and keep its packets' and heads' streams as stored (MCFastFile::HoldStream), not unpacked, so no read
+    /// in play goes to the disk: a frame nobody read ahead is unpacked from them. Let go of (<see cref="LetGoHold"/>) at
+    /// the mission's end, all at once when memory goes short (<see cref="NextFrame"/>, holding no more that mission), and
+    /// when the pack is set.
+    /// </summary>
+    void StartHold();
+
+    /// <summary>Port-only: lets go of the hold (<see cref="StartHold"/>) and holds no more: a mission's end.</summary>
+    void LetGoHold();
+
+    /// <summary>Port-only: the stored bytes the hold keeps now (<see cref="StartHold"/>).</summary>
+    size_t HeldBytes();
+
+    /// <summary>Port-only: how many reads the hold has made (<see cref="StartHold"/>), for the tests.</summary>
+    size_t HeldReads();
+
+    /// <summary>
+    /// Port-only, for the tests: waits until the hold (<see cref="StartHold"/>) has read every archive it was handed, or
+    /// was let go of.
+    /// </summary>
+    void WaitForHold();
 
     /// <summary>
     /// How many of the pack's archives are open (each opened once, the first time it is needed, or by the readers when

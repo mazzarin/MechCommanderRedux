@@ -310,14 +310,25 @@ namespace
     /// <summary>
     /// Port-only (SPEC-first-use.md): sets the HD art readers' setting <paramref name="word"/> names to
     /// <paramref name="value"/>: <c>-hdreaders n</c> (1 to 32), <c>-hdsetreads n</c> (the sets' reads at once; 0 as many
-    /// as there are readers) or <c>-hdreaderpriority level|below</c> (with the game's thread or a step below it). A value
-    /// it can't take is logged and left out.
+    /// as there are readers) or <c>-hdreaderpriority level|below</c> (with the game's thread or a step below it); or,
+    /// for the tests and benchmarks, <c>-hdhold on|off</c> (a mission's art held whatever the machine's memory:
+    /// MCHdArt::StartHold). A value it can't take is logged and left out.
     /// </summary>
     void SetReaderSetting(std::string_view word, std::string_view value)
     {
         MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
 
-        if (MCIEquals(word, "-hdreaderpriority"))
+        if (MCIEquals(word, "-hdhold"))
+        {
+            if (!MCIEquals(value, "on") && !MCIEquals(value, "off"))
+            {
+                SDL_Log("-hdhold: \"%.*s\" isn't on or off", static_cast<int>(value.size()), value.data());
+                return;
+            }
+
+            settings.Hold = MCIEquals(value, "on");
+        }
+        else if (MCIEquals(word, "-hdreaderpriority"))
         {
             if (!MCIEquals(value, "level") && !MCIEquals(value, "below"))
             {
@@ -686,7 +697,7 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             MCBenchmark::Arm(variantGiven ? std::string_view(words[++i]) : std::string_view());
         }
         else if (MCIEquals(word, "-hdreaders") || MCIEquals(word, "-hdsetreads") ||
-                 MCIEquals(word, "-hdreaderpriority"))
+                 MCIEquals(word, "-hdreaderpriority") || MCIEquals(word, "-hdhold"))
         {
             // Port-only: how HD art's readers read ahead (SetReaderSetting), each default to be measured.
             if (hasArgument)

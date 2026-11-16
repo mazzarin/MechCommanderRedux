@@ -296,7 +296,8 @@ namespace
     /// Port-only (SPEC-first-use.md): the kinds of reads, in the order the readers take them: what a load waits for, then
     /// the frames drawn next (a first draw's followers and its neighbours'), then what the camera's surroundings draw
     /// soon (a unit's packets now and next: MCHdArt::ReadAs::Soon), then the sets read ahead (a screen's pictures, the
-    /// objects near the view), which go as far as MCHdArt::ReaderSettings::SetReads lets them.
+    /// objects near the view), which go as far as MCHdArt::ReaderSettings::SetReads lets them; then, when nothing else
+    /// waits, the hold's (MCHdArt::StartHold), HoldReadsAtOnce at a time.
     /// </summary>
     enum class AheadKind : uint8_t
     {
@@ -304,9 +305,18 @@ namespace
         Next,
         Soon,
         Set,
+        Hold,
     };
 
-    constexpr size_t AheadKinds = 4;
+    constexpr size_t AheadKinds = 5;
+
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold): how many of the hold's reads may be in flight at once: one, so the other readers
+    /// are free for what's asked meanwhile, and a disk serves the hold one run at a time.
+    /// </summary>
+    constexpr size_t HoldReadsAtOnce = 1;
+    /// <summary>Port-only: the bytes in a MB, as the frame log's notes of the hold count them.</summary>
+    constexpr double BytesPerMb = 1024.0 * 1024.0;
 
     struct Follow
     {
@@ -421,6 +431,22 @@ namespace
     };
 
     /// <summary>
+    /// Port-only (MCHdArt::StartHold, SPEC-pack-v2.md's Memory): the hold: whether it holds now (a mission's, until let
+    /// go), the archives it reads in turn (each version 2 archive once while it holds: Queued), the first one's next stream
+    /// to look at, its generation (a run read across a let-go keeps nothing), how many reads it made, and when it began.
+    /// </summary>
+    struct HoldQueue
+    {
+        bool On = false;
+        std::deque<std::shared_ptr<MCHdArchive>> Archives;
+        std::unordered_set<std::shared_ptr<MCHdArchive>> Queued;
+        uint32_t NextStream = 0;
+        uint64_t Generation = 0;
+        size_t Reads = 0;
+        std::chrono::steady_clock::time_point Began;
+    };
+
+    /// <summary>
     /// Port-only (HD art): what the game's thread and the readers share, under Lock. The game's thread hands them each
     /// numbered frame it draws the first time (Follows) and the sets to read ahead (Reads), and takes what they read when
     /// a frame is first drawn; the readers read the frames drawn after each follow, and the sets, those the game's thread
@@ -514,6 +540,8 @@ namespace
         /// </summary>
         std::deque<AskBatch> Asks;
         size_t LoadAsks = 0;
+        /// <summary>Port-only: the hold (MCHdArt::StartHold).</summary>
+        HoldQueue Holding;
         /// <summary>The readers, started with the first follow or set; last, so they stop before the rest goes.</summary>
         std::vector<std::jthread> Readers;
     };
@@ -969,6 +997,8 @@ namespace
         return std::move(opened.mapped());
     }
 
+    void QueueHold(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive);
+
     /// <summary>
     /// The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once (by the readers when asked
     /// ahead: TakeOpened); null when none. Never with ReadAhead::Lock held.
@@ -1009,6 +1039,15 @@ namespace
         }
 
         found->second = std::move(*archive);
+
+        // Port-only: one opened while a mission's art is held is held too (MCHdArt::StartHold).
+        if (found->second != nullptr && found->second->File->IsVersion2())
+        {
+            ReadAhead& ahead = TheState().Ahead;
+            std::scoped_lock lock(ahead.Lock);
+            QueueHold(ahead, found->second);
+        }
+
         return found->second;
     }
 
@@ -1135,6 +1174,12 @@ namespace
         if (const std::shared_ptr<const std::vector<uint8_t>> kept = archive.File->KeptStreamOf(index); kept != nullptr)
         {
             return MCHdArt::DecodeHdf(archive.File->EntryIn(index, *kept), width, height);
+        }
+
+        // Port-only: nor one whose stream is held as stored (MCHdArt::StartHold): it's unpacked from memory.
+        if (const std::shared_ptr<const std::vector<uint8_t>> held = archive.File->HeldStreamOf(index); held != nullptr)
+        {
+            return DecodeEntry(*archive.File, index, *held, name, width, height);
         }
 
         std::vector<uint8_t> stored;
@@ -1724,7 +1769,7 @@ namespace
     /// <summary>The name the trace gives reads of <paramref name="kind"/>.</summary>
     std::string_view TraceKind(AheadKind kind)
     {
-        constexpr std::array<std::string_view, AheadKinds> names{"load", "next", "soon", "set"};
+        constexpr std::array<std::string_view, AheadKinds> names{"load", "next", "soon", "set", "hold"};
         return names[std::to_underlying(kind)];
     }
 
@@ -1775,6 +1820,25 @@ namespace
 
         trace.Out << std::format("R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", begun, *read, TraceNow(trace), kind, archive,
                                  start, end - start, run.size() + joined);
+    }
+
+    /// <summary>
+    /// Port-only: traces one of the hold's reads (HoldRun) of <paramref name="archive"/>, begun <paramref name="begun"/>
+    /// (TraceNow's), its bytes in by <paramref name="read"/>: <c>H begun read archive offset bytes streams</c>, the
+    /// streams those it holds.
+    /// </summary>
+    void TraceHold(const MCHdArchive& archive, int64_t begun, int64_t read, uint64_t offset, uint64_t bytes,
+                   size_t streams)
+    {
+        if (!Tracing())
+        {
+            return;
+        }
+
+        Trace& trace = TheTrace();
+        std::scoped_lock lock(trace.Lock);
+        trace.Out << std::format("H\t{}\t{}\t{}\t{}\t{}\t{}\n", begun, read, TraceArchive(trace, archive), offset,
+                                 bytes, streams);
     }
 
     /// <summary>TraceNow's time, when tracing (0 when not).</summary>
@@ -1940,10 +2004,17 @@ namespace
         return ahead.Settings.SetReads == 0 ? ahead.Settings.Readers : ahead.Settings.SetReads;
     }
 
+    /// <summary>Port-only: whether the hold (MCHdArt::StartHold) holds and has archives still to read.</summary>
+    bool HoldPending(const ReadAhead& ahead)
+    {
+        return ahead.Holding.On && !ahead.Holding.Archives.empty();
+    }
+
     /// <summary>
     /// The kind of read a reader takes next (SPEC-first-use.md: what a load waits for, the frames drawn next with the
     /// follows still to make reads of, what the camera's surroundings draw soon, then the sets, as many at once as
-    /// SetReadsAllowed); none while there is none it may take.
+    /// SetReadsAllowed; port-only, then the hold's, when nothing else waits, HoldReadsAtOnce at a time); none while there
+    /// is none it may take.
     /// </summary>
     std::optional<AheadKind> NextKind(const ReadAhead& ahead)
     {
@@ -1972,6 +2043,12 @@ namespace
         if (waiting(AheadKind::Set) && ahead.InFlight[std::to_underlying(AheadKind::Set)] < SetReadsAllowed(ahead))
         {
             return AheadKind::Set;
+        }
+
+        if (!waiting(AheadKind::Set) && HoldPending(ahead) &&
+            ahead.InFlight[std::to_underlying(AheadKind::Hold)] < HoldReadsAtOnce)
+        {
+            return AheadKind::Hold;
         }
 
         return std::nullopt;
@@ -2137,13 +2214,31 @@ namespace
     }
 
     /// <summary>
+    /// Port-only, for the tests (MCHdArt::HoldTakenRuns): holds the run a reader took until they're let go. Call with
+    /// ReadAhead::Lock held (<paramref name="lock"/>), which the wait lets go of.
+    /// </summary>
+    void WaitWhileRunsHeld(ReadAhead& ahead, std::unique_lock<std::mutex>& lock)
+    {
+        if (!ahead.RunsHeld)
+        {
+            return;
+        }
+
+        ++ahead.RunsHolding;
+        ahead.Changed.notify_all();
+        ahead.Changed.wait(lock, [&ahead] { return !ahead.RunsHeld; });
+        --ahead.RunsHolding;
+    }
+
+    /// <summary>
     /// Reads <paramref name="run"/> (TakeRun's) through a handle of a reader's own, in one read of the archive, without
     /// ReadAhead::Lock (<paramref name="lock"/>), and keeps the frames read for the game's thread (Ready for the frames
     /// drawn next; Pictures for the sets and what a load waits for, bounded where they're asked for) unless the pack was
     /// set meanwhile. A version 2 archive's stream is unpacked once for all the run's entries in it, and one kept unpacked
-    /// from an earlier read is read again only when another of the run's streams isn't (none read: no read at all). The
-    /// reads asked for while the span is read whose entries lie in it (JoinRead) are served from the same bytes. A frame
-    /// whose read fails is left to the game's thread, which reads it again and logs why.
+    /// from an earlier read, or held as stored (MCHdArt::StartHold) and unpacked from memory, is read again only when
+    /// another of the run's streams is neither (none read: no read at all). The reads asked for while the span is read
+    /// whose entries lie in it (JoinRead) are served from the same bytes. A frame whose read fails is left to the game's
+    /// thread, which reads it again and logs why.
     /// </summary>
     void ReadRun(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, const std::vector<AheadRead>& run)
     {
@@ -2169,7 +2264,7 @@ namespace
                 if (std::ranges::find(streams, at, &decltype(streams)::value_type::first) == streams.end())
                 {
                     std::shared_ptr<const std::vector<uint8_t>> kept = file.KeptStreamOf(read.Entry.Index);
-                    toRead = toRead || kept == nullptr;
+                    toRead = toRead || (kept == nullptr && file.HeldStreamOf(read.Entry.Index) == nullptr);
                     streams.emplace_back(at, std::move(kept));
                 }
             }
@@ -2183,15 +2278,7 @@ namespace
             span = ahead.SpansRead.insert(ahead.SpansRead.end(), SpanRead{archive.get(), start, end, generation, {}});
         }
 
-        // Port-only, for the tests (MCHdArt::HoldTakenRuns).
-        if (ahead.RunsHeld)
-        {
-            ++ahead.RunsHolding;
-            ahead.Changed.notify_all();
-            ahead.Changed.wait(lock, [&ahead] { return !ahead.RunsHeld; });
-            --ahead.RunsHolding;
-        }
-
+        WaitWhileRunsHeld(ahead, lock);
         std::optional<ReaderHandle> handle;
 
         if (toRead)
@@ -2244,8 +2331,9 @@ namespace
             }
         };
 
-        // An entry in the span as a frame: cut from its stream, unpacked once (version 2), or from its own bytes; null
-        // when it doesn't decode (the game's thread reads it again and logs why). Without ReadAhead::Lock.
+        // An entry in the span as a frame: cut from its stream, unpacked once (version 2) from the bytes read or, held
+        // (MCHdArt::StartHold), from memory, or from its own bytes; null when it doesn't decode (the game's thread reads it
+        // again and logs why). Without ReadAhead::Lock.
         const auto decode = [&](const AheadRead& read) -> std::shared_ptr<MCHdArt::Frame>
         {
             const AheadEntry& asked = read.Entry;
@@ -2255,13 +2343,24 @@ namespace
 
             if (stream == nullptr)
             {
-                if (bytes.size() != end - start)
+                const std::shared_ptr<const std::vector<uint8_t>> held = file.HeldStreamOf(asked.Index);
+                std::span<const uint8_t> stored;
+
+                if (held != nullptr)
+                {
+                    stored = *held;
+                }
+                else if (bytes.size() == end - start)
+                {
+                    const auto from = bytes.begin() + (static_cast<ptrdiff_t>(entry.Offset) - start);
+                    stored = std::span<const uint8_t>(from, from + entry.Size);
+                }
+                else
                 {
                     return nullptr;
                 }
 
-                const auto from = bytes.begin() + (static_cast<ptrdiff_t>(entry.Offset) - start);
-                auto unpacked = file.StreamOf(asked.Index, std::span<const uint8_t>(from, from + entry.Size));
+                auto unpacked = file.StreamOf(asked.Index, stored);
 
                 if (!unpacked.has_value())
                 {
@@ -2366,6 +2465,209 @@ namespace
         }
     }
 
+    /// <summary>Port-only (MCHdArt::StartHold): whether the hold keeps a stream of <paramref name="kind"/>.</summary>
+    bool HoldsKind(MCFastFile::StreamKind kind)
+    {
+        return kind == MCFastFile::StreamKind::Packet || kind == MCFastFile::StreamKind::Heads;
+    }
+
+    /// <summary>Port-only (HoldRun): a run of an archive's streams for the hold to read: the first, and one past the last.</summary>
+    struct HoldSpan
+    {
+        std::shared_ptr<MCHdArchive> Archive;
+        uint32_t First = 0;
+        uint32_t End = 0;
+    };
+
+    /// <summary>
+    /// Port-only (HoldRun): takes the hold's next run: the first archive's streams it keeps (HoldsKind) from its next one
+    /// on, consecutive, none further than MCHdArt::ReaderRunGap past the one before, while they lie in
+    /// MCHdArt::HoldRunBytes (a larger one alone); an archive with none left leaves the queue. None when none is left.
+    /// Call with ReadAhead::Lock held: an archive's table never changes once read.
+    /// </summary>
+    std::optional<HoldSpan> TakeHoldRun(HoldQueue& holding)
+    {
+        while (!holding.Archives.empty())
+        {
+            const std::shared_ptr<MCHdArchive> archive = holding.Archives.front();
+            const MCFastFile& file = *archive->File;
+            const uint32_t count = file.StreamCount();
+            uint32_t first = holding.NextStream;
+
+            while (first < count && !HoldsKind(file.StreamAt(first).Kind))
+            {
+                ++first;
+            }
+
+            if (first < count)
+            {
+                const MCFastFile::StreamFacts start = file.StreamAt(first);
+                uint64_t end = start.At + start.Stored;
+                uint32_t last = first + 1;
+
+                for (; last < count; ++last)
+                {
+                    const MCFastFile::StreamFacts next = file.StreamAt(last);
+
+                    if (!HoldsKind(next.Kind) || next.At < end || next.At - end > MCHdArt::ReaderRunGap ||
+                        next.At + next.Stored - start.At > MCHdArt::HoldRunBytes)
+                    {
+                        break;
+                    }
+
+                    end = next.At + next.Stored;
+                }
+
+                holding.NextStream = last;
+
+                if (last < count)
+                {
+                    return HoldSpan{archive, first, last};
+                }
+            }
+
+            holding.Archives.pop_front();
+            holding.NextStream = 0;
+
+            if (first < count)
+            {
+                return HoldSpan{archive, first, count};
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold): notes in the frame log what the hold keeps once it has read all it was handed:
+    /// its bytes, its archives and the time since it began. Call with ReadAhead::Lock held.
+    /// </summary>
+    void NoteHeld(const HoldQueue& holding)
+    {
+        if (!MCFrameLog::Enabled())
+        {
+            return;
+        }
+
+        MCFrameLog::Note(
+            std::format("HD hold: {:.1f} MB held of {} archives, {:.2f} s after the load",
+                        static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb, holding.Queued.size(),
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - holding.Began).count()));
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold): reads the hold's next run (TakeHoldRun) through a handle of a reader's own, in one
+    /// read, without ReadAhead::Lock (<paramref name="lock"/>), and keeps each of its streams' stored bytes
+    /// (MCFastFile::HoldStream), none unpacked, unless the hold was let go of or the pack set meanwhile. A read that fails
+    /// is logged and its streams left to be read as they're drawn.
+    /// </summary>
+    void HoldRun(ReadAhead& ahead, std::unique_lock<std::mutex>& lock)
+    {
+        HoldQueue& holding = ahead.Holding;
+        const std::optional<HoldSpan> run = TakeHoldRun(holding);
+
+        if (!run.has_value())
+        {
+            return;
+        }
+
+        WaitWhileRunsHeld(ahead, lock);
+        const uint64_t generation = ahead.Generation;
+        const uint64_t holdGeneration = holding.Generation;
+        std::optional<ReaderHandle> handle = BorrowHandle(ahead, lock, run->Archive);
+        // Borrowing may have let go of the lock: the hold may have been let go of, or the pack set, meanwhile.
+        const bool current =
+            handle.has_value() && ahead.Generation == generation && holding.Generation == holdGeneration;
+        lock.unlock();
+        const MCFastFile& file = *run->Archive->File;
+        const uint64_t start = file.StreamAt(run->First).At;
+        const MCFastFile::StreamFacts last = file.StreamAt(run->End - 1);
+        const uint64_t end = last.At + last.Stored;
+        const int64_t begun = TraceTime();
+        std::vector<uint8_t> bytes;
+        bool readWhole = false;
+
+        if (current)
+        {
+            bytes.resize(end - start);
+            readWhole = handle->File.ReadAt(static_cast<uint32_t>(start), bytes) == bytes.size();
+        }
+
+        const int64_t readBy = TraceTime();
+        // Each stream's stored bytes cut from the run's, before the lock.
+        std::vector<std::pair<uint32_t, std::vector<uint8_t>>> streams;
+
+        for (uint32_t stream = run->First; readWhole && stream < run->End; ++stream)
+        {
+            const MCFastFile::StreamFacts facts = file.StreamAt(stream);
+            const auto from = bytes.begin() + static_cast<ptrdiff_t>(facts.At - start);
+            streams.emplace_back(stream, std::vector<uint8_t>(from, from + facts.Stored));
+        }
+
+        if (current && !readWhole)
+        {
+            SDL_Log("HD art: the hold's read of %s, %llu bytes at %llu, came short; its streams are read as drawn",
+                    MCFileSystem::ToUtf8(run->Archive->Path).c_str(), static_cast<unsigned long long>(end - start),
+                    static_cast<unsigned long long>(start));
+        }
+
+        lock.lock();
+
+        if (readWhole && ahead.Generation == generation && holding.On && holding.Generation == holdGeneration)
+        {
+            for (auto& [stream, stored] : streams)
+            {
+                file.HoldStream(stream, std::move(stored));
+            }
+
+            ++holding.Reads;
+            TraceHold(*run->Archive, begun, readBy, start, end - start, streams.size());
+
+            if (holding.Archives.empty())
+            {
+                NoteHeld(holding);
+            }
+        }
+
+        GiveBack(ahead, lock, std::move(handle), readWhole, generation);
+    }
+
+    void StartReaders(ReadAhead& ahead);
+
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold): has the hold read <paramref name="archive"/>, while it holds, once: a version 2
+    /// one (none of version 1, which the hold doesn't keep). Call with ReadAhead::Lock held.
+    /// </summary>
+    void QueueHold(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive)
+    {
+        HoldQueue& holding = ahead.Holding;
+
+        if (!holding.On || archive == nullptr || !archive->File->IsVersion2() || !holding.Queued.insert(archive).second)
+        {
+            return;
+        }
+
+        holding.Archives.push_back(archive);
+        StartReaders(ahead);
+        ahead.Changed.notify_all();
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::LetGoHold): the hold holds no more until it's started again, its archives to read forgotten and
+    /// a run being read keeping nothing; the caller lets go of what it keeps (MCFastFile::LetGoHeld) once none can be
+    /// added. Call with ReadAhead::Lock held.
+    /// </summary>
+    void StopHolding(ReadAhead& ahead)
+    {
+        HoldQueue& holding = ahead.Holding;
+        holding.On = false;
+        holding.Archives.clear();
+        holding.Queued.clear();
+        holding.NextStream = 0;
+        ++holding.Generation;
+        ahead.Changed.notify_all();
+    }
+
     /// <summary>
     /// Port-only (MCHdArt::OpenArchivesAhead): opens <paramref name="open"/>'s archive, without ReadAhead::Lock
     /// (<paramref name="lock"/>): looks in its folders in turn until one has an archive (or one can't be read), and hands
@@ -2403,6 +2705,12 @@ namespace
         {
             for (auto& [folder, archive] : opened)
             {
+                // Port-only: one opened while a mission's art is held is held too (MCHdArt::StartHold).
+                if (archive.has_value())
+                {
+                    QueueHold(ahead, *archive);
+                }
+
                 ahead.Opened.insert_or_assign(folder, std::move(archive));
             }
         }
@@ -2452,6 +2760,12 @@ namespace
                 Follow follow = std::move(ahead.Follows.front());
                 ahead.Follows.pop_front();
                 MakeReads(ahead, std::move(follow));
+            }
+            else if (*kind == AheadKind::Hold)
+            {
+                ++ahead.InFlight[std::to_underlying(AheadKind::Hold)];
+                HoldRun(ahead, lock);
+                --ahead.InFlight[std::to_underlying(AheadKind::Hold)];
             }
             else if (std::vector<AheadRead> run = TakeRun(ahead, *kind); !run.empty())
             {
@@ -2827,6 +3141,9 @@ namespace
         }
 
         ahead.Asks.clear();
+        // Port-only: the hold's archives are the old pack's (MCHdArt::StartHold); held under the lock, so none is added.
+        StopHolding(ahead);
+        MCFastFile::LetGoHeld();
         ++ahead.Generation;
         ++TheState().Forgets;
         ahead.Changed.notify_all();
@@ -4585,7 +4902,8 @@ void MCHdArt::SetReaderSettings(const ReaderSettings& settings)
     stopping.clear();
     std::scoped_lock lock(ahead.Lock);
 
-    if (!ahead.Follows.empty() || !ahead.Opens.empty() || !ahead.Asks.empty() || !ahead.Waiting.empty())
+    if (!ahead.Follows.empty() || !ahead.Opens.empty() || !ahead.Asks.empty() || !ahead.Waiting.empty() ||
+        HoldPending(ahead))
     {
         StartReaders(ahead);
         ahead.Changed.notify_all();
@@ -4655,6 +4973,98 @@ size_t MCHdArt::ReaderReads()
     return ahead.ArchiveReads;
 }
 
+bool MCHdArt::HoldWanted()
+{
+    const std::optional<bool> set = GetReaderSettings().Hold;
+    return set.has_value() ? *set : MCMemoryRoom::TotalBytes() >= HoldLeastMemory;
+}
+
+void MCHdArt::StartHold()
+{
+    if (!Active() || !HoldWanted())
+    {
+        return;
+    }
+
+    State& state = TheState();
+    std::vector<std::shared_ptr<MCHdArchive>> open;
+
+    for (const auto& [folder, archive] : state.Archives)
+    {
+        if (archive != nullptr)
+        {
+            open.push_back(archive);
+        }
+    }
+
+    ReadAhead& ahead = state.Ahead;
+    std::scoped_lock lock(ahead.Lock);
+
+    // Those the readers opened for the mission's types and the game's thread hasn't taken yet too.
+    for (const auto& [folder, opened] : ahead.Opened)
+    {
+        if (opened.has_value() && *opened != nullptr)
+        {
+            open.push_back(*opened);
+        }
+    }
+
+    // In the pack's order, so a trace's reads are the same run to run.
+    std::ranges::sort(open, [](const auto& a, const auto& b) { return a->Path < b->Path; });
+    ahead.Holding.On = true;
+    ahead.Holding.Began = std::chrono::steady_clock::now();
+
+    for (const std::shared_ptr<MCHdArchive>& archive : open)
+    {
+        QueueHold(ahead, archive);
+    }
+}
+
+void MCHdArt::LetGoHold()
+{
+    ReadAhead& ahead = TheState().Ahead;
+
+    {
+        std::scoped_lock lock(ahead.Lock);
+
+        if (!ahead.Holding.On && ahead.Holding.Queued.empty() && MCFastFile::HeldBytes() == 0)
+        {
+            return;
+        }
+
+        StopHolding(ahead);
+    }
+
+    // Let go of without the lock (a couple of GB at most): nothing is held once the hold stopped under it.
+    const size_t held = MCFastFile::HeldBytes();
+    MCFastFile::LetGoHeld();
+
+    if (held > 0 && MCFrameLog::Enabled())
+    {
+        MCFrameLog::Note(std::format("HD hold: let go of {:.1f} MB", static_cast<double>(held) / BytesPerMb));
+    }
+}
+
+size_t MCHdArt::HeldBytes()
+{
+    return MCFastFile::HeldBytes();
+}
+
+size_t MCHdArt::HeldReads()
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    return ahead.Holding.Reads;
+}
+
+void MCHdArt::WaitForHold()
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::unique_lock lock(ahead.Lock);
+    ahead.Changed.wait(lock, [&ahead]
+                       { return !HoldPending(ahead) && ahead.InFlight[std::to_underlying(AheadKind::Hold)] == 0; });
+}
+
 void MCHdArt::DropGround()
 {
     State& state = TheState();
@@ -4714,6 +5124,9 @@ void MCHdArt::NextFrame(bool memoryShort)
     {
         return;
     }
+
+    // Port-only (SPEC-pack-v2.md's Memory): the hold let go of whole, holding no more this mission.
+    LetGoHold();
 
     // The least recently used first, until TrimmedBytesPerFrame have gone or the next was asked for in the last frame
     // (it and those after it are drawn, and would only be read again). A frame something else still holds (a texture's

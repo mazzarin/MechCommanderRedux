@@ -235,8 +235,9 @@ TEST_CASE("hd art: a frame file reads back as written, and a wrong one is refuse
 
     // A version 2 frame (SPEC-pack-v2.md's "A frame") reads back marked, and the game's rule leaves its marks alone.
     frame.Blended = false;
-    constexpr std::array<uint8_t, 5> Greens = {MCHdArt::HasIndex, MCHdArt::BakedShadow, MCHdArt::Spread,
-                                               MCHdArt::SpreadShadow, MCHdArt::DrawnBlended};
+    constexpr std::array<uint8_t, 6> Greens = {MCHdArt::HasIndex,     MCHdArt::BakedShadow,
+                                               MCHdArt::Spread,       MCHdArt::SpreadShadow,
+                                               MCHdArt::DrawnBlended, MCHdArt::DrawnBlendedShadow};
 
     for (size_t i = 0; i < frame.Indices.size(); i += MCHdArt::IndexBytes)
     {
@@ -257,6 +258,8 @@ TEST_CASE("hd art: a frame file reads back as written, and a wrong one is refuse
     CHECK(!MCHdArt::InShadowMark(MCHdArt::HasIndex));
     CHECK(!MCHdArt::InShadowMark(MCHdArt::Spread));
     CHECK(!MCHdArt::InShadowMark(MCHdArt::DrawnBlended));
+    CHECK(MCHdArt::InShadowMark(MCHdArt::DrawnBlendedShadow));
+    CHECK(!MCHdArt::HasIndexMark(MCHdArt::DrawnBlendedShadow - 1));
 
     CHECK(MCHdArt::DecodeHdf(file, 0, 0).has_value());
     CHECK(!MCHdArt::DecodeHdf(file, Width + 1, Height).has_value());

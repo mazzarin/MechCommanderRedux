@@ -145,19 +145,20 @@ namespace MCHdArt
     /// <summary>
     /// Port-only (a version 2 frame's green, <see cref="Frame::Marked"/>): a pixel the original doesn't draw, its index
     /// spread from the nearest drawn one (the HD edge reaches past the original's), outside a baked shadow or in one; a
-    /// pixel the original draws and blends (a translucent shape's, through AlphaPal.ini). A version 1 frame has only
-    /// HasIndex, BakedShadow and 0.
+    /// pixel the original draws and blends (a translucent shape's, through AlphaPal.ini), outside a baked shadow or in
+    /// one. A version 1 frame has only HasIndex, BakedShadow and 0.
     /// </summary>
     inline constexpr uint8_t Spread = 253;
     inline constexpr uint8_t SpreadShadow = 252;
     inline constexpr uint8_t DrawnBlended = 251;
+    inline constexpr uint8_t DrawnBlendedShadow = 250;
 
     /// <summary>
     /// Whether an index picture's <paramref name="green"/> gives its pixel an index (draw.pshader's HasIndexIn).
     /// </summary>
     constexpr bool HasIndexMark(uint8_t green)
     {
-        return green >= DrawnBlended;
+        return green >= DrawnBlendedShadow;
     }
 
     /// <summary>
@@ -166,7 +167,7 @@ namespace MCHdArt
     /// </summary>
     constexpr bool InShadowMark(uint8_t green)
     {
-        return green == BakedShadow || green == SpreadShadow;
+        return green == BakedShadow || green == SpreadShadow || green == DrawnBlendedShadow;
     }
 
     /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>

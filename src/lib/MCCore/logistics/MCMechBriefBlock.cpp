@@ -642,6 +642,13 @@ auto MCMechBriefBlock::OnBeginDrag(MCLogPort& surface) -> void
 auto MCMechBriefBlock::PaintBlock(const MCPane& target, int32_t xPos, int32_t yPos, bool framed) -> void
 {
     const std::shared_ptr<MCLogVehicle> vehicle = Vehicle();
+
+    // A block whose unit is gone draws nothing (the briefing screen replaces it when it next shows its slots).
+    if (Mech() == nullptr && vehicle == nullptr)
+    {
+        return;
+    }
+
     // Drawn in place: the original put the block together in a picture of its art and copied it keyed on 0xff.
     const std::shared_ptr<MCLogPort> art = LogScreenArt(Mech() == nullptr ? "lscupv00.tga" : "lscupm00.tga");
     MCLogBlockPort port(target, xPos, yPos, art != nullptr ? art->Width() : 1, art != nullptr ? art->Height() : 1,

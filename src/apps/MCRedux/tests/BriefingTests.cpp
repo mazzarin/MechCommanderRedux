@@ -453,6 +453,44 @@ TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the dr
 }
 
 /// <summary>
+/// A unit in a drop slot taken out of the force on another screen, then sold, is gone when the briefing screen shows
+/// again: its slot shows empty (release 8 kept the slot's block of the unit that no longer was, and drew it).
+/// </summary>
+TEST_CASE_ISOLATED("game: a deployed unit sold on another screen leaves its drop slot empty")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    NewCampaign();
+    Settle();
+    std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    MCBriefingScreen& briefing = *logistics->BriefingScreen;
+    DeployFirstMech();
+    REQUIRE(briefing.SlotBlocks[0].Lock() != nullptr);
+    std::weak_ptr<MCLogMech> sold = briefing.SlotBlocks[0].Lock()->Mech();
+    REQUIRE(!sold.expired());
+
+    // On the repair screen: the mech leaves the force (off its drop slot) and is sold (gone).
+    logistics->SetUpRepairScreen(false);
+    Settle();
+    logistics->UndeployMech(*sold.lock());
+    REQUIRE_EQ(logistics->ForceMechList->RemoveMech(*sold.lock()), 0);
+    logistics->ReorderMechs();
+    logistics->RepairScreen->ShowForce(false);
+    REQUIRE(sold.expired());
+
+    // Back to the briefing screen: drawn with the slot empty.
+    logistics->SetUpBriefingScreen(false);
+    Settle();
+    CHECK(logistics->CurrentScreen().get() == &briefing);
+    CHECK(briefing.SlotBlocks[0] == nullptr);
+}
+
+/// <summary>
 /// The launch button starts the mission once its click is handled: logistics and its screens are gone, and the
 /// loading frames never draw the briefing screen whose click asked for it.
 /// </summary>

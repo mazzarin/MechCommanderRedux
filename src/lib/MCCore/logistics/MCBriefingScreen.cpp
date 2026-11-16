@@ -298,7 +298,9 @@ auto MCBriefingScreen::ShowSlots() -> void
         const std::shared_ptr<MCLogPart> unit = SlotUnit(i);
         const std::shared_ptr<MCMechBriefBlock> block = SlotBlocks[i].Lock();
 
-        if (block != nullptr && block->Part() == unit)
+        // Port fix: a block whose unit is gone (taken out of the force, then sold, on another screen) is replaced too;
+        // compared as is, the empty slot matched it, and the block was drawn without a unit.
+        if (block != nullptr && unit != nullptr && block->Part() == unit)
         {
             continue;
         }

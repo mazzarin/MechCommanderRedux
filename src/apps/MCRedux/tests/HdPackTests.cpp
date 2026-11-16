@@ -494,36 +494,53 @@ namespace
         std::memcpy(out.data() + at, &value, sizeof(T));
     }
 
+    /// <summary>A version 2 archive's stream to write (BuildVersion2Streams): its entries, and its kind.</summary>
+    struct Version2Stream
+    {
+        std::vector<ArchiveEntry> Entries;
+        MCFastFile::StreamKind Kind = MCFastFile::StreamKind::Packet;
+    };
+
     /// <summary>
-    /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="entries"/> (their stored bytes as they unpack, no
-    /// sharing), all in one stream stored as it is (codec 0) in their order: each found by its path's key, each folder
-    /// its first name is in by its own, with no facts.
+    /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="streams"/>, each stored as it is (codec 0), in their
+    /// order, and its entries (their stored bytes as they unpack, no sharing) in theirs: each found by its path's key,
+    /// each folder its first name is in by its own, with no facts.
     /// </summary>
-    std::vector<uint8_t> BuildVersion2Archive(const std::vector<ArchiveEntry>& entries)
+    std::vector<uint8_t> BuildVersion2Streams(const std::vector<Version2Stream>& streams)
     {
         constexpr size_t HeaderBytes = 64;
         constexpr size_t FolderRowBytes = 16;
         constexpr size_t StreamRowBytes = 24;
+        constexpr size_t StreamKindAt = 17;
         constexpr size_t EntryRowBytes = 20;
         constexpr uint16_t Format = 2;
         std::vector<std::pair<uint64_t, std::array<uint32_t, 3>>> rows;
         std::set<uint64_t> folders;
-        std::vector<uint8_t> stream;
+        std::vector<uint8_t> data;
+        // Each stream's start in the data.
+        std::vector<size_t> starts;
 
-        for (const ArchiveEntry& entry : entries)
+        for (uint32_t number = 0; number < streams.size(); ++number)
         {
-            rows.push_back({MCFastFile::PathKey(entry.Name),
-                            {0, static_cast<uint32_t>(stream.size()), static_cast<uint32_t>(entry.Stored.size())}});
-            stream.insert(stream.end(), entry.Stored.begin(), entry.Stored.end());
+            starts.push_back(data.size());
 
-            if (const size_t cut = entry.Name.find('\\'); cut != std::string::npos)
+            for (const ArchiveEntry& entry : streams[number].Entries)
             {
-                folders.insert(MCFastFile::PathKey(std::string_view(entry.Name).substr(0, cut)));
+                rows.push_back({MCFastFile::PathKey(entry.Name),
+                                {number, static_cast<uint32_t>(data.size() - starts.back()),
+                                 static_cast<uint32_t>(entry.Stored.size())}});
+                data.insert(data.end(), entry.Stored.begin(), entry.Stored.end());
+
+                if (const size_t cut = entry.Name.find('\\'); cut != std::string::npos)
+                {
+                    folders.insert(MCFastFile::PathKey(std::string_view(entry.Name).substr(0, cut)));
+                }
             }
         }
 
         std::ranges::sort(rows);
-        std::vector<uint8_t> table(folders.size() * FolderRowBytes + StreamRowBytes + rows.size() * EntryRowBytes);
+        std::vector<uint8_t> table(folders.size() * FolderRowBytes + streams.size() * StreamRowBytes +
+                                   rows.size() * EntryRowBytes);
         size_t at = 0;
 
         for (const uint64_t folder : folders)
@@ -533,10 +550,17 @@ namespace
         }
 
         const uint64_t dataAt = HeaderBytes + table.size();
-        PutAt(table, at, dataAt);
-        PutAt(table, at + 8, static_cast<uint32_t>(stream.size()));
-        PutAt(table, at + 12, static_cast<uint32_t>(stream.size()));
-        at += StreamRowBytes;
+
+        for (size_t number = 0; number < streams.size(); ++number)
+        {
+            const size_t end = number + 1 < streams.size() ? starts[number + 1] : data.size();
+            const auto bytes = static_cast<uint32_t>(end - starts[number]);
+            PutAt(table, at, dataAt + starts[number]);
+            PutAt(table, at + 8, bytes);
+            PutAt(table, at + 12, bytes);
+            PutAt(table, at + StreamKindAt, std::to_underlying(streams[number].Kind));
+            at += StreamRowBytes;
+        }
 
         for (const auto& [key, place] : rows)
         {
@@ -556,13 +580,22 @@ namespace
         PutAt(out, 8, static_cast<uint32_t>(table.size()));
         PutAt(out, 12, static_cast<uint32_t>(table.size()));
         PutAt(out, 20, static_cast<uint32_t>(folders.size()));
-        PutAt(out, 24, uint32_t{1});
+        PutAt(out, 24, static_cast<uint32_t>(streams.size()));
         PutAt(out, 28, static_cast<uint32_t>(rows.size()));
         PutAt(out, 40, dataAt);
         PutAt(out, 48, static_cast<uint64_t>(XXH3_64bits(table.data(), table.size())));
         out.insert(out.end(), table.begin(), table.end());
-        out.insert(out.end(), stream.begin(), stream.end());
+        out.insert(out.end(), data.begin(), data.end());
         return out;
+    }
+
+    /// <summary>
+    /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="entries"/> (their stored bytes as they unpack, no
+    /// sharing), all in one packet's stream stored as it is (codec 0) in their order (BuildVersion2Streams).
+    /// </summary>
+    std::vector<uint8_t> BuildVersion2Archive(const std::vector<ArchiveEntry>& entries)
+    {
+        return BuildVersion2Streams({Version2Stream{entries, MCFastFile::StreamKind::Packet}});
     }
 
     void WriteBytes(const std::filesystem::path& path, std::span<const uint8_t> bytes)
@@ -2619,6 +2652,365 @@ TEST_CASE("hd art: an entry asked for while its version 2 stream is read is serv
     CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
     archive.CheckFound();
+    GHdArt = previous;
+}
+
+namespace
+{
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold): a stream of a HoldPack's archives: its kind, and the bytes no frame holds after its
+    /// frame (an entry of their own) to make it larger.
+    /// </summary>
+    struct HoldPiece
+    {
+        MCFastFile::StreamKind Kind = MCFastFile::StreamKind::Packet;
+        size_t FillerBytes = 0;
+    };
+
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold): a pack of two version 2 archives of the same streams (HoldPiece's, each a shape
+    /// table's frame 0 of RunArchive::Side and its filler): the shapes' (shapes.hda), whose frames FindShape draws, and
+    /// another (MoreFolder's), opened apart.
+    /// </summary>
+    class HoldPack
+    {
+    public:
+        static constexpr std::string_view MoreFolder = "more";
+
+        HoldPack(std::string_view name, std::span<const HoldPiece> pieces) : _Scratch(name)
+        {
+            constexpr uint8_t TableByte = 0x6b;
+            std::vector<Version2Stream> streams;
+
+            for (const HoldPiece& piece : pieces)
+            {
+                const auto number = static_cast<uint8_t>(_Tables.size());
+                _Tables.push_back({number, TableByte});
+                _Files.push_back(FrameFile(RunArchive::Side, RunArchive::Side, number + 1));
+                const std::filesystem::path folder = MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(_Tables.back()));
+                Version2Stream& stream = streams.emplace_back(Version2Stream{{}, piece.Kind});
+                stream.Entries.push_back(Raw(MCFileSystem::ToUtf8(folder.filename()) + "\\0.hdf", _Files.back()));
+
+                if (piece.FillerBytes > 0)
+                {
+                    stream.Entries.push_back(
+                        Raw(std::format("filler{}.bin", number), std::vector<uint8_t>(piece.FillerBytes)));
+                }
+
+                _Kinds.push_back(piece.Kind);
+                _Stored.push_back(_Files.back().size() + piece.FillerBytes);
+            }
+
+            const std::vector<uint8_t> archive = BuildVersion2Streams(streams);
+            _Shapes = _Scratch.Path() / std::filesystem::path(ShapesFolder()).concat(".hda");
+            WriteBytes(_Shapes, archive);
+            WriteBytes(_Scratch.Path() / std::filesystem::path(MoreFolder).concat(".hda"), archive);
+            MCHdArt::SetPackFolder(_Scratch.Path());
+        }
+
+        ~HoldPack() { MCHdArt::SetPackFolder({}); }
+        HoldPack(const HoldPack&) = delete;
+        HoldPack& operator=(const HoldPack&) = delete;
+
+        /// <summary>The pack's folder of shapes' frames, which shapes.hda stands for.</summary>
+        static std::filesystem::path ShapesFolder() { return MCHdArt::ShapeTableFolder(0).parent_path(); }
+
+        /// <summary>Opens the shapes' archive (or the other), as a mission's load does, reading none of its streams.</summary>
+        void Open(bool more = false) const
+        {
+            MCHdArt::ArchiveFacts(more ? std::filesystem::path(MoreFolder) : ShapesFolder(), 0);
+        }
+
+        /// <summary>Whether the hold keeps stream <paramref name="stream"/>: a packet's or the heads'.</summary>
+        bool Held(size_t stream) const
+        {
+            return _Kinds[stream] == MCFastFile::StreamKind::Packet || _Kinds[stream] == MCFastFile::StreamKind::Heads;
+        }
+
+        /// <summary>The stored bytes the hold keeps of one of the archives: its packets' and heads' streams'.</summary>
+        size_t HeldBytes() const
+        {
+            size_t bytes = 0;
+
+            for (size_t stream = 0; stream < _Stored.size(); ++stream)
+            {
+                bytes += Held(stream) ? _Stored[stream] : 0;
+            }
+
+            return bytes;
+        }
+
+        /// <summary>Has the readers read stream <paramref name="stream"/>'s frame as <paramref name="as"/>.</summary>
+        void Ask(size_t stream, MCHdArt::ReadAs as) const
+        {
+            const MCHdArt::ShapeAhead shape{_Tables[stream], 0, RunArchive::Side, RunArchive::Side};
+            MCHdArt::ReadShapesAhead(std::span(&shape, 1), as);
+        }
+
+        /// <summary>
+        /// Checks each stream's frame is drawn, as its own file decodes, where the hold keeps it (or the readers read it
+        /// ahead), and none where it doesn't: its file cut (CutShapes), they can't be read.
+        /// </summary>
+        void CheckDrawnFromTheHold() const
+        {
+            for (size_t stream = 0; stream < _Tables.size(); ++stream)
+            {
+                MCTest::Scope scope(std::format("stream {}", stream));
+                const std::shared_ptr<const MCHdArt::Frame> found =
+                    MCHdArt::FindShape(MCHdArt::ShapeTableHash(_Tables[stream]), 0, RunArchive::Side, RunArchive::Side);
+
+                if (!Held(stream))
+                {
+                    CHECK(found == nullptr);
+                    continue;
+                }
+
+                REQUIRE(found != nullptr);
+                const auto decoded = MCHdArt::DecodeHdf(_Files[stream], RunArchive::Side, RunArchive::Side);
+                REQUIRE(decoded.has_value());
+                CHECK(SameFrame(*found, *decoded));
+            }
+        }
+
+        /// <summary>Cuts the shapes' archive's file to nothing (open, it stays open), so no stream of it can be read.</summary>
+        void CutShapes() const { std::filesystem::resize_file(_Shapes, 0); }
+
+        const std::filesystem::path& Folder() const { return _Scratch.Path(); }
+
+    private:
+        ScratchFolder _Scratch;
+        std::filesystem::path _Shapes;
+        std::vector<std::vector<uint8_t>> _Tables;
+        std::vector<std::vector<uint8_t>> _Files;
+        std::vector<MCFastFile::StreamKind> _Kinds;
+        std::vector<size_t> _Stored;
+    };
+
+    /// <summary>The hold started (MCHdArt::StartHold) and done reading.</summary>
+    void HoldAndWait()
+    {
+        MCHdArt::StartHold();
+        MCHdArt::WaitForHold();
+    }
+
+    using StreamKind = MCFastFile::StreamKind;
+} // namespace
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md's Memory: the hold): once a mission's load is done (MCHdArt::StartHold), the readers read
+/// every version 2 archive open, and one opened later, and keep its packets' and heads' streams as stored, the tiles' and
+/// pictures' not: two reads here, the tiles and pictures between the streams cutting the archive's run. Its file cut to
+/// nothing after, the frames of the streams held are drawn as they were made, and one the readers read ahead is read from
+/// memory (no read of theirs); those of the streams not held can't be read.
+/// </summary>
+TEST_CASE("hd art: the hold keeps a mission's packet and heads streams as stored, and their frames need no read")
+{
+    constexpr size_t AheadStream = 1;
+    constexpr size_t HoldRuns = 2;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet},   {StreamKind::Packet, 1000},
+                                        {StreamKind::Tiles}, {StreamKind::Pictures}, {StreamKind::Packet}};
+
+    for (const bool openedLater : {false, true})
+    {
+        MCTest::Scope scope(openedLater ? "an archive opened after the load" : "an archive open as the load ends");
+        const HoldPack pack("hold", pieces);
+        const size_t holdReads = MCHdArt::HeldReads();
+        const size_t reads = MCHdArt::ReaderReads();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+
+        if (!openedLater)
+        {
+            pack.Open();
+        }
+
+        MCHdArt::StartHold();
+
+        if (openedLater)
+        {
+            pack.Open();
+        }
+
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+        CHECK_EQ(MCHdArt::HeldReads(), holdReads + HoldRuns);
+        pack.CutShapes();
+        pack.Ask(AheadStream, MCHdArt::ReadAs::Set);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 1);
+        CHECK_EQ(MCHdArt::ReaderReads(), reads);
+        pack.CheckDrawnFromTheHold();
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md's Memory): the machine's memory decides the hold (MCHdArt::HoldWanted): off below 16 GB's
+/// tier as the system reports it (MCHdArt::HoldLeastMemory), on from it; the command line's <c>-hdhold on|off</c> (the
+/// tests' and benchmarks') overrides it, and a value it can't take leaves it as it was.
+/// </summary>
+TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 GB and with -hdhold on")
+{
+    constexpr uint64_t EightGb = uint64_t{8} << 30;
+    constexpr uint64_t ThirtyTwoGb = uint64_t{32} << 30;
+    constexpr uint64_t Mib = uint64_t{1} << 20;
+    const ReaderScope readers({.Readers = 1});
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    const MCFakeMemoryScope memory(system);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Packet}};
+    const HoldPack pack("hold-memory", pieces);
+    pack.Open();
+
+    struct Case
+    {
+        std::string_view Name;
+        uint64_t Total = 0;
+        std::string_view Line;
+        bool Held = false;
+    };
+
+    for (const Case& test : {Case{"8 GB", EightGb, {}, false},
+                             Case{"a MB short of 16 GB's tier", MCHdArt::HoldLeastMemory - Mib, {}, false},
+                             Case{"16 GB's tier", MCHdArt::HoldLeastMemory, {}, true},
+                             Case{"32 GB with -hdhold off", ThirtyTwoGb, "-hdhold off", false},
+                             Case{"8 GB with -hdhold on", EightGb, "-hdhold ON", true}})
+    {
+        MCTest::Scope scope{std::string(test.Name)};
+        system->Total = test.Total;
+        MCHdArt::SetReaderSettings({.Readers = 1});
+
+        if (!test.Line.empty())
+        {
+            ParseCommandLine(test.Line);
+        }
+
+        CHECK_EQ(MCHdArt::HoldWanted(), test.Held);
+        HoldAndWait();
+        CHECK_EQ(MCHdArt::HeldBytes(), test.Held ? pack.HeldBytes() : 0);
+        MCHdArt::LetGoHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    }
+
+    ParseCommandLine("-hdhold off -hdhold maybe");
+    CHECK(MCHdArt::GetReaderSettings().Hold == std::optional<bool>(false));
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md's Memory): the hold is let go of whole when memory goes short (MCHdArt::NextFrame), and
+/// holds nothing more that mission (an archive opened after isn't held) until the next mission's starts it again; at a
+/// mission's end (MCHdArt::LetGoHold, MCMission::EndScenario's); and when the pack is set.
+/// </summary>
+TEST_CASE("hd art: the hold is let go of when memory goes short, at a mission's end and when the pack is set")
+{
+    constexpr size_t Archives = 2;
+    const ReaderScope readers({.Readers = 1, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("hold-let-go", pieces);
+    pack.Open();
+    HoldAndWait();
+    REQUIRE_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+
+    {
+        MCTest::Scope scope("memory short");
+        MCHdArt::NextFrame(false);
+        CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+        MCHdArt::NextFrame(true);
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        pack.Open(true);
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        HoldAndWait();
+        CHECK_EQ(MCHdArt::HeldBytes(), Archives * pack.HeldBytes());
+    }
+
+    {
+        MCTest::Scope scope("a mission's end");
+        MCHdArt::LetGoHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        HoldAndWait();
+        CHECK_EQ(MCHdArt::HeldBytes(), Archives * pack.HeldBytes());
+    }
+
+    {
+        MCTest::Scope scope("the pack set");
+        MCHdArt::SetPackFolder(pack.Folder());
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md's Memory): the hold reads below everything else, a run of at most MCHdArt::HoldRunBytes at
+/// a time: a load's read asked for while the one reader reads the hold's first run (each run here a stream as large) is
+/// read as that run ends, before the hold's next two (the HD trace's H lines and the load's R line, in order).
+/// </summary>
+TEST_CASE("hd art: a read asked for while the hold reads waits for one of the hold's runs at most")
+{
+    constexpr size_t AskedStream = 3;
+    constexpr size_t HoldRuns = 3;
+    // The kind's place in a reader's read's trace line (R begun read unpacked kind ...).
+    constexpr size_t ReadKindField = 4;
+    const ReaderScope readers({.Readers = 1, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Packet, MCHdArt::HoldRunBytes},
+                                        {StreamKind::Packet, MCHdArt::HoldRunBytes},
+                                        {StreamKind::Packet, MCHdArt::HoldRunBytes},
+                                        {StreamKind::Tiles}};
+    const HoldPack pack("hold-urgent", pieces);
+    const ScratchFolder traces("hold-urgent-trace");
+    const std::filesystem::path trace = traces.Path() / "trace.tsv";
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    REQUIRE(MCHdArt::OpenTrace(trace));
+    pack.Open();
+    MCHdArt::HoldTakenRuns(true);
+    MCHdArt::StartHold();
+    MCHdArt::WaitForHeldRun();
+    pack.Ask(AskedStream, MCHdArt::ReadAs::Load);
+    MCHdArt::HoldTakenRuns(false);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::WaitForHold();
+    MCHdArt::CloseTrace();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 1);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+
+    size_t holds = 0;
+    std::optional<size_t> holdsBeforeLoad;
+    std::ifstream in(trace);
+
+    for (std::string line; std::getline(in, line);)
+    {
+        std::vector<std::string> fields;
+
+        for (const auto part : std::views::split(line, '\t'))
+        {
+            fields.emplace_back(part.begin(), part.end());
+        }
+
+        if (fields.front() == "H")
+        {
+            ++holds;
+        }
+        else if (fields.front() == "R" && fields.size() > ReadKindField && fields[ReadKindField] == "load")
+        {
+            holdsBeforeLoad = holdsBeforeLoad.value_or(holds);
+        }
+    }
+
+    CHECK_EQ(holds, HoldRuns);
+    REQUIRE(holdsBeforeLoad.has_value());
+    CHECK_EQ(*holdsBeforeLoad, 1u);
     GHdArt = previous;
 }
 

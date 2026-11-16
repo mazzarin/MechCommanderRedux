@@ -2921,7 +2921,7 @@ bool MCVulkanRenderer::KeyedThroughout(const MCHdArt::Frame& frame, const Quad& 
 
             // As the draw shader's HdTexel leaves the key out: a pixel with an index (shaders/draw.pshader's
             // HasIndexIn) of the key.
-            if (frame.Indices[at + 1] < MCHdArt::BakedShadow || frame.Indices[at] != key)
+            if (!MCHdArt::HasIndexMark(frame.Indices[at + 1]) || frame.Indices[at] != key)
             {
                 return false;
             }

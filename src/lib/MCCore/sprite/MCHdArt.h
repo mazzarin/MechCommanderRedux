@@ -113,6 +113,11 @@ namespace MCHdArt
         /// </summary>
         bool PaintedShadow = false;
         /// <summary>
+        /// Port-only (a version 2 pack's frame, SPEC-pack-v2.md's "A frame"): its index picture's green says what each
+        /// pixel is (drawn, spread, in a baked shadow, blended: <see cref="HasIndexMark"/>), so it isn't marked again.
+        /// </summary>
+        bool Marked = false;
+        /// <summary>
         /// Port-only (HD movies): a <see cref="ColorFormat::Yuv420"/> frame's colour space (its matrix and range), and
         /// the movie it is a frame of: a number of the movie's own, which every frame of it has (the GPU keeps one set
         /// of textures for a movie, each frame put in place of the one before); 0 for any other frame.
@@ -137,6 +142,33 @@ namespace MCHdArt
     /// otherwise it is as HasIndex's.
     /// </summary>
     inline constexpr uint8_t BakedShadow = 254;
+    /// <summary>
+    /// Port-only (a version 2 frame's green, <see cref="Frame::Marked"/>): a pixel the original doesn't draw, its index
+    /// spread from the nearest drawn one (the HD edge reaches past the original's), outside a baked shadow or in one; a
+    /// pixel the original draws and blends (a translucent shape's, through AlphaPal.ini). A version 1 frame has only
+    /// HasIndex, BakedShadow and 0.
+    /// </summary>
+    inline constexpr uint8_t Spread = 253;
+    inline constexpr uint8_t SpreadShadow = 252;
+    inline constexpr uint8_t DrawnBlended = 251;
+
+    /// <summary>
+    /// Whether an index picture's <paramref name="green"/> gives its pixel an index (draw.pshader's HasIndexIn).
+    /// </summary>
+    constexpr bool HasIndexMark(uint8_t green)
+    {
+        return green >= DrawnBlended;
+    }
+
+    /// <summary>
+    /// Whether an index picture's <paramref name="green"/> puts its pixel in a baked shadow (draw.pshader's
+    /// InShadowIn).
+    /// </summary>
+    constexpr bool InShadowMark(uint8_t green)
+    {
+        return green == BakedShadow || green == SpreadShadow;
+    }
+
     /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>
     inline constexpr uint8_t BakedShadowIndex = 0x10;
     /// <summary>An index picture's blue in a frame that holds its blended pixels (<see cref="Frame::Blended"/>).</summary>
@@ -172,7 +204,8 @@ namespace MCHdArt
     /// original's object art (trees, buildings, rocks, turrets) casts its shadow down and right in solid
     /// <see cref="BakedShadowIndex"/>; the same black also draws detail inside an object (a tank's hull). Its shadow is
     /// that black outside the rest of the art's outline (closed over one-pixel gaps, holes filled), in groups that touch
-    /// at least as many empty pixels as drawn ones. A frame that holds its blended pixels (an effect's) has none.
+    /// at least as many empty pixels as drawn ones. A frame that holds its blended pixels (an effect's) has none; a
+    /// version 2 frame (<see cref="Frame::Marked"/>) is marked already.
     /// </summary>
     void MarkBakedShadows(Frame& frame);
 

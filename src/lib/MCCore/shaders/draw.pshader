@@ -924,14 +924,24 @@ Output SmoothBlendedPixel(Input input, int2 target)
     return Blended(blend * share);
 }
 
-// An HD frame's index picture's green (MCHdArt.h) is 255 for a pixel with an index, and this for one that is also
-// part of an object's baked shadow (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's).
+// An HD frame's index picture's green (MCHdArt.h): 255 for a pixel with an index, 254 for one that is also part of an
+// object's baked shadow (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's); in a version 2 frame also 253 and
+// 252 spread past the original's pixels (outside a shadow and in one), 251 drawn and blended.
 static const uint BakedShadow = 254u;
+static const uint SpreadShadow = 252u;
+static const uint DrawnBlended = 251u;
 
-// Whether an HD frame's index picture's texel has an index.
+// Whether an HD frame's index picture's texel has an index (MCHdArt::HasIndexMark).
 bool HasIndexIn(float4 entry)
 {
-    return Byte(entry.g) >= BakedShadow;
+    return Byte(entry.g) >= DrawnBlended;
+}
+
+// Whether an HD frame's index picture's texel is in a baked shadow (MCHdArt::InShadowMark).
+bool InShadowIn(float4 entry)
+{
+    const uint green = Byte(entry.g);
+    return green == BakedShadow || green == SpreadShadow;
 }
 
 // An HD art frame's colour at a texel, transparent outside its size, and where a keyed copy (port-only: an HD picture
@@ -987,7 +997,7 @@ float2 BakedShadowWeights(int2 original, float2 shape)
 
             const float weight = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
             drawn += weight;
-            shadow += Byte(entry.g) == BakedShadow ? weight : 0.0;
+            shadow += InShadowIn(entry) ? weight : 0.0;
         }
     }
 

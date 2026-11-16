@@ -231,6 +231,33 @@ TEST_CASE("hd art: a frame file reads back as written, and a wrong one is refuse
     CHECK(blended->Blended);
     CHECK(blended->Indices == frame.Indices);
 
+    CHECK(!read->Marked);
+
+    // A version 2 frame (SPEC-pack-v2.md's "A frame") reads back marked, and the game's rule leaves its marks alone.
+    frame.Blended = false;
+    constexpr std::array<uint8_t, 5> Greens = {MCHdArt::HasIndex, MCHdArt::BakedShadow, MCHdArt::Spread,
+                                               MCHdArt::SpreadShadow, MCHdArt::DrawnBlended};
+
+    for (size_t i = 0; i < frame.Indices.size(); i += MCHdArt::IndexBytes)
+    {
+        frame.Indices[i] = MCHdArt::BakedShadowIndex;
+        frame.Indices[i + 1] = Greens[(i / MCHdArt::IndexBytes) % Greens.size()];
+    }
+
+    frame.Marked = true;
+    auto marked = MCHdArt::DecodeHdf(MCHdArt::EncodeHdf(frame), Width, Height);
+    REQUIRE(marked.has_value());
+    CHECK(marked->Marked);
+    MCHdArt::MarkBakedShadows(*marked);
+    CHECK(marked->Indices == frame.Indices);
+    CHECK(std::ranges::all_of(Greens, [](uint8_t green) { return MCHdArt::HasIndexMark(green); }));
+    CHECK(!MCHdArt::HasIndexMark(0));
+    CHECK(MCHdArt::InShadowMark(MCHdArt::BakedShadow));
+    CHECK(MCHdArt::InShadowMark(MCHdArt::SpreadShadow));
+    CHECK(!MCHdArt::InShadowMark(MCHdArt::HasIndex));
+    CHECK(!MCHdArt::InShadowMark(MCHdArt::Spread));
+    CHECK(!MCHdArt::InShadowMark(MCHdArt::DrawnBlended));
+
     CHECK(MCHdArt::DecodeHdf(file, 0, 0).has_value());
     CHECK(!MCHdArt::DecodeHdf(file, Width + 1, Height).has_value());
     CHECK(!MCHdArt::DecodeHdf(std::span(file).first(file.size() - 1), Width, Height).has_value());
@@ -2822,4 +2849,272 @@ TEST_CASE_ISOLATED("tool: --hd-measure-lz packs frame files with the game's LZ")
                              static_cast<double>(raw) / 1e6, static_cast<double>(packed) / 1e6,
                              100.0 * static_cast<double>(packed) / static_cast<double>(std::max<uint64_t>(raw, 1)),
                              std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+}
+
+namespace
+{
+    /// <summary>What --pack-compare found in one archive (or all of them).</summary>
+    struct PackComparison
+    {
+        size_t Entries = 0;
+        size_t Matched = 0;
+        size_t Extra = 0;
+        size_t SameBytes = 0;
+        size_t Frames = 0;
+        size_t Failed = 0;
+        size_t ColoursDiffer = 0;
+        size_t IndexChanged = 0;
+        size_t IndexPixels = 0;
+        size_t ShadowFrames = 0;
+        size_t ShadowDiffers = 0;
+        size_t OtherDiffer = 0;
+        std::map<std::string, size_t> Missing;
+
+        auto Add(const PackComparison& other) -> void
+        {
+            Entries += other.Entries;
+            Matched += other.Matched;
+            Extra += other.Extra;
+            SameBytes += other.SameBytes;
+            Frames += other.Frames;
+            Failed += other.Failed;
+            ColoursDiffer += other.ColoursDiffer;
+            IndexChanged += other.IndexChanged;
+            IndexPixels += other.IndexPixels;
+            ShadowFrames += other.ShadowFrames;
+            ShadowDiffers += other.ShadowDiffers;
+            OtherDiffer += other.OtherDiffer;
+
+            for (const auto& [kind, count] : other.Missing)
+            {
+                Missing[kind] += count;
+            }
+        }
+
+        [[nodiscard]] auto Text() const -> std::string
+        {
+            std::string missing;
+
+            for (const auto& [kind, count] : Missing)
+            {
+                missing += std::format(" {}={}", kind, count);
+            }
+
+            return std::format("{} entries, {} found ({} the same bytes), {} only in version 2; {} frames compared, {} "
+                               "unreadable, {} with other colours, {} with other indices ({} pixels), {} with shadow "
+                               "marks ({} pixels off the game's rule), {} other files differing; missing:{}",
+                               Entries, Matched, SameBytes, Extra, Frames, Failed, ColoursDiffer, IndexChanged,
+                               IndexPixels, ShadowFrames, ShadowDiffers, OtherDiffer,
+                               missing.empty() ? " none" : missing);
+        }
+    };
+
+    /// <summary>
+    /// A version 1 frame and the version 2 one made from it, held to SPEC-pack-v2.md's rule: the same size, scale,
+    /// format and colours; each pixel with an index in one has one in the other, at the same index (only a translucent
+    /// frame's and an icon's may change); the shadow marks those the game's own rule marks.
+    /// </summary>
+    auto CompareFrames(const MCHdArt::Frame& today, const MCHdArt::Frame& marked, PackComparison& found) -> void
+    {
+        ++found.Frames;
+
+        if (today.Width != marked.Width || today.Height != marked.Height || today.Scale != marked.Scale ||
+            today.Format != marked.Format || today.Blended != marked.Blended || today.Colors != marked.Colors ||
+            today.Indices.size() != marked.Indices.size() || !marked.Marked || today.Marked)
+        {
+            ++found.ColoursDiffer;
+            return;
+        }
+
+        // The shadow's reference: the pack's own marks where today's frame has them (a forest's, which the game
+        // doesn't mark), else the game's rule.
+        MCHdArt::Frame ruled = today;
+        bool painted = false;
+
+        for (size_t at = 1; at < today.Indices.size() && !painted; at += MCHdArt::IndexBytes)
+        {
+            painted = today.Indices[at] == MCHdArt::BakedShadow;
+        }
+
+        if (!painted)
+        {
+            MCHdArt::MarkBakedShadows(ruled);
+        }
+
+        size_t changed = 0;
+        size_t shadow = 0;
+        size_t shadowOff = 0;
+
+        for (size_t at = 0; at < marked.Indices.size(); at += MCHdArt::IndexBytes)
+        {
+            const bool had = today.Indices[at + 1] != 0;
+            const bool has = MCHdArt::HasIndexMark(marked.Indices[at + 1]);
+
+            if (had != has || (has && today.Indices[at] != marked.Indices[at]))
+            {
+                ++changed;
+            }
+
+            const bool inShadow = MCHdArt::InShadowMark(marked.Indices[at + 1]);
+            shadow += inShadow ? 1 : 0;
+            shadowOff += inShadow != MCHdArt::InShadowMark(ruled.Indices[at + 1]) ? 1 : 0;
+        }
+
+        found.IndexChanged += changed != 0 ? 1 : 0;
+        found.IndexPixels += changed;
+        found.ShadowFrames += shadow != 0 ? 1 : 0;
+        found.ShadowDiffers += shadow != 0 ? shadowOff : 0;
+    }
+
+    /// <summary>
+    /// Every entry of today's archive <paramref name="todayPath"/> held to the version 2 one made from it.
+    /// </summary>
+    auto ComparePackArchive(const std::filesystem::path& todayPath, const std::filesystem::path& markedPath)
+        -> PackComparison
+    {
+        PackComparison found;
+        auto today = MCFastFile::Create(MCFileSystem::ToUtf8(todayPath));
+        auto marked = MCFastFile::Create(MCFileSystem::ToUtf8(markedPath));
+        REQUIRE(today.has_value());
+        REQUIRE(marked.has_value());
+        CHECK(!(*today)->IsVersion2());
+        REQUIRE((*marked)->IsVersion2());
+
+        // Read in the version 2 archive's order, so each stream is read and unpacked once.
+        std::vector<std::pair<int32_t, int32_t>> pairs;
+        const std::span<const MCFileEntry> entries = (*today)->GetEntries();
+        found.Entries = entries.size();
+
+        for (int32_t i = 0; i < static_cast<int32_t>(entries.size()); ++i)
+        {
+            const std::string_view name = entries[static_cast<size_t>(i)].GetName();
+            const std::optional<int32_t> j = (*marked)->Find(name);
+
+            if (!j.has_value())
+            {
+                const size_t dot = name.rfind('.');
+                ++found.Missing[dot == std::string_view::npos ? std::string("(none)") : std::string(name.substr(dot))];
+                continue;
+            }
+
+            pairs.emplace_back(*j, i);
+        }
+
+        found.Matched = pairs.size();
+        found.Extra = static_cast<size_t>((*marked)->GetNumFiles()) - pairs.size();
+        const std::span<const MCFileEntry> streams = (*marked)->GetEntries();
+        std::ranges::sort(
+            pairs, [&](const auto& a, const auto& b)
+            { return streams[static_cast<size_t>(a.first)].Offset < streams[static_cast<size_t>(b.first)].Offset; });
+        int32_t storedAt = -1;
+        std::vector<uint8_t> stored;
+
+        for (const auto& [j, i] : pairs)
+        {
+            if (streams[static_cast<size_t>(j)].Offset != storedAt)
+            {
+                storedAt = streams[static_cast<size_t>(j)].Offset;
+                stored = (*marked)->ReadStored(j);
+            }
+
+            const std::string_view name = entries[static_cast<size_t>(i)].GetName();
+            MCTest::Scope scope(std::string(name));
+            const auto before = (*today)->Unpack(i, (*today)->ReadStored(i));
+            const auto after = (*marked)->Unpack(j, stored);
+
+            if (!before.has_value() || !after.has_value())
+            {
+                ++found.Failed;
+                continue;
+            }
+
+            if (*before == *after)
+            {
+                ++found.SameBytes;
+                continue;
+            }
+
+            if (!name.ends_with(".hdf"))
+            {
+                ++found.OtherDiffer;
+                continue;
+            }
+
+            const auto beforeFrame = MCHdArt::DecodeHdf(*before, 0, 0);
+            const auto afterFrame = MCHdArt::DecodeHdf(*after, 0, 0);
+
+            if (!beforeFrame.has_value() || !afterFrame.has_value())
+            {
+                ++found.Failed;
+                continue;
+            }
+
+            CompareFrames(*beforeFrame, *afterFrame, found);
+        }
+
+        return found;
+    }
+} // namespace
+
+/// <summary>
+/// Tool: <c>--pack-compare &lt;a version 2 pack&gt; --pack-compare-with &lt;the pack it was made from&gt;</c> holds
+/// every version 2 archive (<c>.hda</c>) to the version 1 archive at its path in the other: the same entries found by
+/// their paths, the same bytes unpacked but the frames' version and marks (SPEC-pack-v2.md's "A frame"), printing what
+/// differs an archive.
+/// </summary>
+TEST_CASE("tool: --pack-compare holds a version 2 pack to the pack it was made from")
+{
+    const std::optional<std::string_view> v2 = MCTest::Option("pack-compare");
+    const std::optional<std::string_view> v1 = MCTest::Option("pack-compare-with");
+
+    if (!v2.has_value() || !v1.has_value())
+    {
+        return;
+    }
+
+    const std::filesystem::path markedRoot = MCFileSystem::FromUtf8(*v2);
+    const std::filesystem::path todayRoot = MCFileSystem::FromUtf8(*v1);
+    PackComparison all;
+    size_t archives = 0;
+    const auto started = std::chrono::steady_clock::now();
+
+    for (const auto& item : std::filesystem::recursive_directory_iterator(markedRoot))
+    {
+        if (!item.is_regular_file() || item.path().extension() != ".hda")
+        {
+            continue;
+        }
+
+        const std::filesystem::path relative = item.path().lexically_relative(markedRoot);
+        const std::filesystem::path todayPath = todayRoot / relative;
+        MCTest::Scope scope(relative.generic_string());
+
+        if (!std::filesystem::exists(todayPath))
+        {
+            std::cout << std::format("{}: not in {}\n", relative.generic_string(), *v1);
+            continue;
+        }
+
+        auto marked = MCFastFile::Create(MCFileSystem::ToUtf8(item.path()));
+
+        if (!marked.has_value() || !(*marked)->IsVersion2())
+        {
+            std::cout << std::format("{}: {}\n", relative.generic_string(),
+                                     marked.has_value() ? "not version 2" : marked.error());
+            continue;
+        }
+
+        const PackComparison found = ComparePackArchive(todayPath, item.path());
+        std::cout << std::format("{}: {}\n", relative.generic_string(), found.Text());
+        all.Add(found);
+        ++archives;
+    }
+
+    std::cout << std::format("{} archives, {:.1f} s: {}\n", archives,
+                             std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(),
+                             all.Text());
+    CHECK(archives > 0);
+    CHECK(all.Failed == 0);
+    CHECK(all.ColoursDiffer == 0);
+    CHECK(all.OtherDiffer == 0);
 }

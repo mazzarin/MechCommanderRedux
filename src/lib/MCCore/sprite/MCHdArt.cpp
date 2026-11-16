@@ -170,6 +170,10 @@ namespace
     constexpr int32_t MostArchivedFrames = 1024;
     constexpr std::array<uint8_t, 4> HdfMagic = {'M', 'C', 'H', 'D'};
     constexpr uint32_t HdfVersion = 1;
+    /// <summary>
+    /// A version 2 pack's frame (MCHdArt::Frame::Marked): the same layout, its green saying what each pixel is.
+    /// </summary>
+    constexpr uint32_t HdfMarkedVersion = 2;
     constexpr uint32_t HdfBc7 = 1;
     /// <summary>The colour format of a frame holding its blended pixels (MCHdArt::Frame::Blended).</summary>
     constexpr uint32_t HdfBc7Blended = 2;
@@ -1275,13 +1279,17 @@ namespace
 
         if (bakedShadows)
         {
-            MCHdArt::MarkBakedShadows(*made);
+            // A version 2 frame's shadow is marked in the pack, by the same rule.
+            if (!made->Marked)
+            {
+                MCHdArt::MarkBakedShadows(*made);
+            }
         }
         else
         {
             for (size_t at = 1; at < made->Indices.size() && !made->PaintedShadow; at += MCHdArt::IndexBytes)
             {
-                made->PaintedShadow = made->Indices[at] == MCHdArt::BakedShadow;
+                made->PaintedShadow = MCHdArt::InShadowMark(made->Indices[at]);
             }
         }
 
@@ -2806,7 +2814,7 @@ std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame, const MCBc7::MCBc7Op
                                             ? frame.Colors
                                             : MCBc7::Encode(frame.Colors, frame.Width, frame.Height, options);
     std::vector<uint8_t> bytes(HdfMagic.begin(), HdfMagic.end());
-    WriteLittle(bytes, HdfVersion, 2);
+    WriteLittle(bytes, frame.Marked ? HdfMarkedVersion : HdfVersion, 2);
     WriteLittle(bytes, frame.Format == ColorFormat::Bc5 ? HdfBc5 : (frame.Blended ? HdfBc7Blended : HdfBc7), 1);
     WriteLittle(bytes, static_cast<uint32_t>(frame.Scale), 1);
     WriteLittle(bytes, static_cast<uint32_t>(frame.OriginalWidth()), 2);
@@ -2821,14 +2829,15 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
     -> std::expected<Frame, std::string>
 {
     if (bytes.size() < HdfHeaderBytes || !std::equal(HdfMagic.begin(), HdfMagic.end(), bytes.begin()) ||
-        ReadLittle(bytes, 4, 2) != HdfVersion ||
+        (ReadLittle(bytes, 4, 2) != HdfVersion && ReadLittle(bytes, 4, 2) != HdfMarkedVersion) ||
         (ReadLittle(bytes, 6, 1) != HdfBc7 && ReadLittle(bytes, 6, 1) != HdfBc7Blended &&
          ReadLittle(bytes, 6, 1) != HdfBc5))
     {
-        return std::unexpected(std::string("not a version 1 BC7 or BC5 HD frame"));
+        return std::unexpected(std::string("not a version 1 or 2 BC7 or BC5 HD frame"));
     }
 
     Frame frame;
+    frame.Marked = ReadLittle(bytes, 4, 2) == HdfMarkedVersion;
     frame.Blended = ReadLittle(bytes, 6, 1) == HdfBc7Blended;
     frame.Scale = static_cast<int32_t>(ReadLittle(bytes, 7, 1));
     const auto originalWidth = static_cast<int32_t>(ReadLittle(bytes, 8, 2));
@@ -2868,7 +2877,7 @@ void MCHdArt::MarkBakedShadows(Frame& frame)
     const int32_t width = frame.OriginalWidth();
     const int32_t height = frame.OriginalHeight();
 
-    if (frame.Blended || width <= 0 || height <= 0 ||
+    if (frame.Blended || frame.Marked || width <= 0 || height <= 0 ||
         frame.Indices.size() != static_cast<size_t>(width) * height * IndexBytes)
     {
         return;

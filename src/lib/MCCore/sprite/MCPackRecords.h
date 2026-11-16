@@ -1,8 +1,10 @@
 #pragma once
 
 // Port-only (HD art, SPEC-pack-v2.md's "The facts"): the facts records of a version 2 HD pack that the game's own tool
-// writes (mc_tests --pack-records) and its reader reads, so their layout is the game's alone. Each record's data,
-// little-endian, starts with its layout's version and its count of sets or rows (u16 each):
+// writes (mc_tests --pack-records) and its reader reads, so their layout is the game's alone. Record 1, the shape table
+// (a sprite packet's own folder), is the original's packet without its frames' rows (ShapeTable), the game's own
+// layout. Each other record's data, little-endian, starts with its layout's version and its count of sets or rows (u16
+// each):
 // - 2, the ground table (terrain.hda's own folder): for each tile set its files' hash (u64), slots (i32), ground tiles
 //   (u32) and tips' bytes (u32); then a row a tile (its name's key u64, slot, width and height u16; its shape's hot
 //   spot, box width and tip's length u8; 2 bytes of 0; where its tip starts in the set's tips u32); then the tips.
@@ -40,6 +42,15 @@ namespace MCPackRecords
 
     /// <summary>Record 3's data for <paramref name="sets"/>: their overlays' names and hot spots.</summary>
     [[nodiscard]] std::vector<uint8_t> OverlaySpots(std::span<const MCKnownGroundNames> sets);
+
+    /// <summary>
+    /// Record 1's data for <paramref name="packet"/>, a sprite packet (a VFX shape table, or a gesture header and one):
+    /// the packet without its frames' rows. It keeps the gesture header, the table's version and count, its directory and
+    /// the header of each frame it holds (MCVfxHasShape), with a translucent frame's 03 00 (MCAgShapeIsAlpha); the
+    /// directory points at the kept headers, and a frame the table doesn't hold at the table's end. An error for a
+    /// packet with no table, or a directory past its end.
+    /// </summary>
+    [[nodiscard]] std::expected<std::vector<uint8_t>, std::string> ShapeTable(std::span<const uint8_t> packet);
 
     /// <summary>Record 4's data for <paramref name="keys"/>.</summary>
     [[nodiscard]] std::vector<uint8_t> StopsKey(std::span<const MCStopsKey> keys);

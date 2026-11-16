@@ -10,16 +10,22 @@
 #include "lib/MCInflate.h"
 #include "lib/MCLz.h"
 #include "lib/MCZstd.h"
+#include "main/MCMissionGlobals.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
+#include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCSpriteManager.h"
+#include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteTree.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCRegisteredBlock.h"
+#include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCUtf8Path.h"
 #include "sound/MCHdAudio.h"
+#include "vfx/MCAgShape.h"
 
 // xxHash, header-only: its functions inline in this file alone (the version 2 archives' table hashes).
 #define XXH_INLINE_ALL
@@ -494,12 +500,24 @@ namespace
         std::memcpy(out.data() + at, &value, sizeof(T));
     }
 
+    /// <summary>A facts record (SPEC-pack-v2.md's "The facts"): its type, 2 bytes of 0, its data's size and its data.</summary>
+    std::vector<uint8_t> FactsRecord(MCPackRecords::Type type, std::span<const uint8_t> data)
+    {
+        constexpr size_t HeadBytes = 8;
+        std::vector<uint8_t> record(HeadBytes);
+        PutAt(record, 0, static_cast<uint16_t>(type));
+        PutAt(record, 4, static_cast<uint32_t>(data.size()));
+        record.insert(record.end(), data.begin(), data.end());
+        return record;
+    }
+
     /// <summary>
     /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="entries"/> (their stored bytes as they unpack, no
     /// sharing), all in one stream stored as it is (codec 0) in their order: each found by its path's key, each folder
-    /// its first name is in by its own, with no facts.
+    /// its first name is in by its own, with the facts <paramref name="facts"/> gives a folder (its records, FactsRecord's).
     /// </summary>
-    std::vector<uint8_t> BuildVersion2Archive(const std::vector<ArchiveEntry>& entries)
+    std::vector<uint8_t> BuildVersion2Archive(const std::vector<ArchiveEntry>& entries,
+                                              const std::map<std::string, std::vector<uint8_t>>& facts = {})
     {
         constexpr size_t HeaderBytes = 64;
         constexpr size_t FolderRowBytes = 16;
@@ -522,15 +540,36 @@ namespace
             }
         }
 
+        std::map<uint64_t, std::span<const uint8_t>> factsOf;
+        size_t factsBytes = 0;
+
+        for (const auto& [folder, records] : facts)
+        {
+            folders.insert(MCFastFile::PathKey(folder));
+            factsOf[MCFastFile::PathKey(folder)] = records;
+            factsBytes += records.size();
+        }
+
         std::ranges::sort(rows);
         std::vector<uint8_t> table(folders.size() * FolderRowBytes + StreamRowBytes + rows.size() * EntryRowBytes);
         size_t at = 0;
+        std::vector<uint8_t> allFacts;
 
         for (const uint64_t folder : folders)
         {
             PutAt(table, at, folder);
+
+            if (const auto found = factsOf.find(folder); found != factsOf.end())
+            {
+                PutAt(table, at + 8, static_cast<uint32_t>(allFacts.size()));
+                PutAt(table, at + 12, static_cast<uint32_t>(found->second.size()));
+                allFacts.insert(allFacts.end(), found->second.begin(), found->second.end());
+            }
+
             at += FolderRowBytes;
         }
+
+        table.insert(table.end(), allFacts.begin(), allFacts.end());
 
         const uint64_t dataAt = HeaderBytes + table.size();
         PutAt(table, at, dataAt);
@@ -558,6 +597,7 @@ namespace
         PutAt(out, 20, static_cast<uint32_t>(folders.size()));
         PutAt(out, 24, uint32_t{1});
         PutAt(out, 28, static_cast<uint32_t>(rows.size()));
+        PutAt(out, 32, static_cast<uint32_t>(factsBytes));
         PutAt(out, 40, dataAt);
         PutAt(out, 48, static_cast<uint64_t>(XXH3_64bits(table.data(), table.size())));
         out.insert(out.end(), table.begin(), table.end());
@@ -2620,6 +2660,247 @@ TEST_CASE("hd art: an entry asked for while its version 2 stream is read is serv
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
     archive.CheckFound();
     GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only: a sprite packet stripped for a version 2 pack's record 1 (MCPackRecords::ShapeTable) keeps its gesture
+/// header, its frames' count, their headers and translucency and their directory's second words, and a frame it lists but
+/// doesn't hold, without the rows: the table ends after its last frame's header. A packet with no table, or one whose
+/// directory runs past it, is refused.
+/// </summary>
+TEST_CASE("hd art: a shape table stripped for a version 2 pack keeps its frames' headers, not their rows")
+{
+    constexpr std::array<uint8_t, 6> GestureHeader = {1, 2, 3, 4, 5, 6};
+    constexpr size_t HeaderBytes = sizeof(MCVfxShapeHeader);
+    constexpr size_t TranslucentBytes = 2;
+    constexpr int32_t NotHeld = 1;
+    constexpr int32_t Translucent = 2;
+    constexpr uint32_t SecondWord = 0x1234;
+    constexpr size_t SecondWordAt = 12;
+    // A run of 3 of colour 7, then the row's end; the translucent frame's starts 03 00 (a lone pixel of colour 0).
+    constexpr std::array<uint8_t, 3> OpaqueRows = {6, 7, 0};
+    constexpr std::array<uint8_t, 5> TranslucentRows = {3, 0, 4, 9, 0};
+    const std::array<MCTestShapes::TableFrame, 3> frames = {MCTestShapes::TableFrame{0, 0, 3, 1, OpaqueRows},
+                                                            MCTestShapes::TableFrame{1, 0, 3, 1, OpaqueRows},
+                                                            MCTestShapes::TableFrame{-1, -2, 3, 1, TranslucentRows}};
+    std::vector<uint8_t> table = MCTestShapes::FramesTable(frames);
+    // Frame 1 listed but not held (its directory entry at the table's end, as OB-190's are).
+    PutAt(table, static_cast<size_t>(8 + 8 * NotHeld), static_cast<uint32_t>(table.size()));
+    PutAt(table, SecondWordAt, SecondWord);
+    std::vector<uint8_t> packet(GestureHeader.begin(), GestureHeader.end());
+    packet.insert(packet.end(), table.begin(), table.end());
+
+    for (const bool gesture : {true, false})
+    {
+        MCTest::Scope scope(gesture ? "a gesture's packet" : "a bare table");
+        const std::expected<std::vector<uint8_t>, std::string> stripped =
+            MCPackRecords::ShapeTable(gesture ? std::span<const uint8_t>(packet) : std::span<const uint8_t>(table));
+        REQUIRE(stripped.has_value());
+        const size_t start = gesture ? GestureHeader.size() : 0;
+        CHECK(std::ranges::equal(std::span(*stripped).first(start), std::span(GestureHeader).first(start)));
+        const std::span<const uint8_t> kept = std::span(*stripped).subspan(start);
+        CHECK_EQ(kept.size(), 8 + 8 * frames.size() + 2 * HeaderBytes + TranslucentBytes);
+        CHECK_EQ(VfxShapeCount(kept), VfxShapeCount(table));
+        CHECK_EQ(MCVfxRead32(kept, SecondWordAt), static_cast<int32_t>(SecondWord));
+
+        for (int32_t frame = 0; frame < static_cast<int32_t>(frames.size()); ++frame)
+        {
+            MCTest::Scope frameScope(std::format("frame {}", frame));
+            REQUIRE_EQ(MCVfxHasShape(kept, frame), frame != NotHeld);
+            CHECK_EQ(MCAgShapeIsAlpha(kept, frame), frame == Translucent);
+
+            if (frame != NotHeld)
+            {
+                CHECK(std::ranges::equal(MCVfxShape(kept, frame).first(HeaderBytes),
+                                         MCVfxShape(std::span<const uint8_t>(table), frame).first(HeaderBytes)));
+            }
+        }
+    }
+
+    CHECK(!MCPackRecords::ShapeTable(GestureHeader).has_value());
+    std::vector<uint8_t> overlong = table;
+    PutAt(overlong, 4, static_cast<int32_t>(table.size()));
+    CHECK(!MCPackRecords::ShapeTable(overlong).has_value());
+}
+
+namespace
+{
+    /// <summary>
+    /// A version 2 frame of <paramref name="frame"/> of <paramref name="table"/> at <paramref name="scale"/> times its
+    /// size: the tests' colours, and its index picture the pixels the original's rows draw (MCHdArt::HasIndex).
+    /// </summary>
+    std::vector<uint8_t> MarkedFrameFile(std::span<const uint8_t> table, int32_t frame, int32_t scale)
+    {
+        const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+        const auto width = static_cast<int32_t>(bounds.Width);
+        const auto height = static_cast<int32_t>(bounds.Height);
+        MCHdArt::Frame hd;
+        hd.Width = width * scale;
+        hd.Height = height * scale;
+        hd.Scale = scale;
+        hd.Colors = SpriteLike(hd.Width, hd.Height);
+        hd.Indices.assign(static_cast<size_t>(width) * height * MCHdArt::IndexBytes, 0);
+        hd.Marked = true;
+        VfxShapeVisit(table, frame,
+                      [&](int32_t x, int32_t y, uint8_t color)
+                      {
+                          const int32_t column = x - static_cast<int32_t>(bounds.MinX);
+                          const int32_t row = y - static_cast<int32_t>(bounds.MinY);
+                          REQUIRE((column >= 0 && column < width && row >= 0 && row < height));
+                          const size_t at = (static_cast<size_t>(row) * width + column) * MCHdArt::IndexBytes;
+                          hd.Indices[at] = color;
+                          hd.Indices[at + 1] = MCHdArt::HasIndex;
+                      });
+        return MCHdArt::EncodeHdf(hd);
+    }
+
+    /// <summary>The pixels <paramref name="visit"/> visits of a frame, in order of their place.</summary>
+    std::vector<std::tuple<int32_t, int32_t, uint8_t>> Visited(
+        const std::function<void(const std::function<void(int32_t, int32_t, uint8_t)>&)>& visit)
+    {
+        std::vector<std::tuple<int32_t, int32_t, uint8_t>> pixels;
+        visit([&pixels](int32_t x, int32_t y, uint8_t color) { pixels.emplace_back(y, x, color); });
+        std::ranges::sort(pixels);
+        return pixels;
+    }
+}
+
+/// <summary>
+/// Port-only: with HD art drawing on the GPU alone and a version 2 pack whose mech folder holds its packet's stripped
+/// table (record 1) and a frame for each frame the table holds with a box, the mech's shape is loaded from the pack in
+/// place of its packet (no rows: MCHdArt::Stripped), its pixels visited from its frames' index pictures as the
+/// original's rows visit them (MCHdArt::VisitShape), and with HD art off it takes its packet again
+/// (MCSpriteManager::RestoreOriginalShapes). A folder lacking one of its frames is loaded from the packet.
+/// </summary>
+TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's shapes, their pixels from the frames")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    constexpr int32_t Scale = 2;
+    const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree("madcat");
+    REQUIRE(tree != nullptr);
+    const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+    REQUIRE(sprites != nullptr);
+
+    // Two packets of one part's PAK, so one archive holds both: the first whole, the second lacking a frame.
+    const std::vector<MCGesturePacket> preloaded = tree->PreloadPackets();
+    REQUIRE(!preloaded.empty());
+    std::vector<MCGesturePacket> packets = {preloaded.front()};
+
+    for (const MCGesturePacket& packet : preloaded)
+    {
+        if (packet.FilePart == packets.front().FilePart && packet.Packet != packets.front().Packet)
+        {
+            packets.push_back(packet);
+            break;
+        }
+    }
+
+    REQUIRE_EQ(packets.size(), 2);
+    const MCMechPart part = packets.front().FilePart;
+    const uint32_t mechNum = tree->FileNumbers[part];
+    const auto load = [&](size_t which)
+    {
+        const std::shared_ptr<MCShape> shape =
+            sprites->GetMechShapeData(mechNum, packets[which].Packet, part, Turn, tree, true);
+        REQUIRE(shape != nullptr);
+        return shape;
+    };
+
+    const auto folderOf = [&](size_t which)
+    {
+        return MCHdArt::FolderOf(
+            MCHdArt::MechShapeKey{sprites->PartFileName(part, true), mechNum, packets[which].Packet});
+    };
+
+    std::vector<std::vector<uint8_t>> originals;
+    std::vector<ArchiveEntry> entries;
+    std::map<std::string, std::vector<uint8_t>> facts;
+
+    for (size_t which = 0; which < packets.size(); ++which)
+    {
+        const std::span<const uint8_t> table = load(which)->FrameList();
+        originals.emplace_back(table.begin(), table.end());
+        const std::string folder = std::to_string(packets[which].Packet);
+        std::vector<int32_t> boxed;
+
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+
+            if (MCVfxHasShape(table, frame) && bounds.Width > 0.0f && bounds.Height > 0.0f)
+            {
+                boxed.push_back(frame);
+            }
+        }
+
+        REQUIRE(!boxed.empty());
+
+        // The second packet's folder lacks its last frame.
+        for (const int32_t frame : which == 0 ? boxed : std::vector(boxed.begin(), boxed.end() - 1))
+        {
+            entries.push_back(Raw(std::format("{}\\{}.hdf", folder, frame), MarkedFrameFile(table, frame, Scale)));
+        }
+
+        const std::expected<std::vector<uint8_t>, std::string> stripped = MCPackRecords::ShapeTable(table);
+        REQUIRE(stripped.has_value());
+        facts[folder] = FactsRecord(MCPackRecords::Type::ShapeTable, *stripped);
+    }
+
+    const ScratchFolder scratch("stripped-tables");
+    const std::filesystem::path archive =
+        scratch.Path() / std::filesystem::path(folderOf(0)).parent_path().concat(".hda");
+    std::filesystem::create_directories(archive.parent_path());
+    WriteBytes(archive, BuildVersion2Archive(entries, facts));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    sprites->DumpAll();
+    REQUIRE(MCHdArt::DrawsStrippedTables());
+    const size_t fromPack = sprites->ShapeTablesFromPack();
+    const std::shared_ptr<MCShape> stripped = load(0);
+    const std::shared_ptr<MCShape> lacking = load(1);
+    CHECK(stripped->Stripped);
+    CHECK(MCHdArt::Stripped(stripped->FrameList()));
+    CHECK(stripped->FrameList().size() < originals[0].size());
+    CHECK(!lacking->Stripped);
+    CHECK(std::ranges::equal(lacking->FrameList(), originals[1]));
+    CHECK_EQ(sprites->ShapeTablesFromPack(), fromPack + 1);
+    const std::span<const uint8_t> original = originals[0];
+    REQUIRE_EQ(VfxShapeCount(stripped->FrameList()), VfxShapeCount(original));
+    size_t visited = 0;
+
+    for (int32_t frame = 0; frame < VfxShapeCount(original); ++frame)
+    {
+        MCTest::Scope scope(std::format("frame {}", frame));
+        CHECK_EQ(MCVfxHasShape(stripped->FrameList(), frame), MCVfxHasShape(original, frame));
+        using Pixel = std::function<void(int32_t, int32_t, uint8_t)>;
+        const auto fromRows = Visited([&](const Pixel& pixel) { VfxShapeVisit(original, frame, pixel); });
+        const auto fromFrame =
+            Visited([&](const Pixel& pixel) { MCHdArt::VisitShape(stripped->FrameList(), frame, pixel); });
+        CHECK(fromFrame == fromRows);
+        visited += fromRows.size();
+    }
+
+    CHECK(visited > 0);
+    CHECK_EQ(sprites->RestoreOriginalShapes(), 1);
+    CHECK(!stripped->Stripped);
+    CHECK(!MCHdArt::Stripped(stripped->FrameList()));
+    CHECK(std::ranges::equal(stripped->FrameList(), originals[0]));
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
 }
 
 /// <summary>

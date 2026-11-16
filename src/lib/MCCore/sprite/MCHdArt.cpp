@@ -3664,11 +3664,17 @@ bool MCHdArt::DrawsStrippedTables()
     return NumberedFolders() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
 }
 
-auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::optional<std::vector<uint8_t>>
+auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder)
+    -> std::expected<std::vector<uint8_t>, std::string_view>
 {
+    constexpr std::string_view NotDrawn = "HD art doesn't draw stripped tables now";
+    constexpr std::string_view NotVersion2 = "its folder isn't in a version 2 archive";
+    constexpr std::string_view NoRecord = "its folder has no shape table record";
+    constexpr std::string_view LacksFrame = "its archive lacks a frame the table holds with a box";
+
     if (!DrawsStrippedTables())
     {
-        return std::nullopt;
+        return std::unexpected(NotDrawn);
     }
 
     State& state = TheState();
@@ -3677,7 +3683,7 @@ auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::op
 
     if (archived.Archive == nullptr || !archived.Archive->File->IsVersion2())
     {
-        return std::nullopt;
+        return std::unexpected(NotVersion2);
     }
 
     // The folder in its archive: the start of its frames' names without the separator after it.
@@ -3691,14 +3697,7 @@ auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::op
             continue;
         }
 
-        // A bare table starts with its version, "1.10"; a gesture's has the gesture header in front (MCShape's rule).
-        constexpr std::string_view TableVersion = "1.10";
-        constexpr size_t GestureHeaderBytes = 6;
-        const size_t start = data.size() >= TableVersion.size() &&
-                                     std::memcmp(data.data(), TableVersion.data(), TableVersion.size()) != 0
-                                 ? std::min(GestureHeaderBytes, data.size())
-                                 : 0;
-        const std::span<const uint8_t> table = data.subspan(start);
+        const std::span<const uint8_t> table = data.subspan(std::min(MCShape::TableStart(data), data.size()));
 
         // Each frame it holds with a box is drawn from the pack, which must hold it: the table has no rows to draw.
         for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
@@ -3708,14 +3707,14 @@ auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::op
             if (MCVfxHasShape(table, frame) && bounds.Width > 0.0f && bounds.Height > 0.0f &&
                 !archived.Archive->File->Find(std::format("{}{}{}", archived.Prefix, frame, HdfExtension)))
             {
-                return std::nullopt;
+                return std::unexpected(LacksFrame);
             }
         }
 
         return std::vector<uint8_t>(data.begin(), data.end());
     }
 
-    return std::nullopt;
+    return std::unexpected(NoRecord);
 }
 
 bool MCHdArt::Stripped(std::span<const uint8_t> table)

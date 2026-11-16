@@ -89,6 +89,7 @@
 #include "sprite/MCElementalTree.h"
 #include "sprite/MCGVAppearanceType.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCPackRecords.h"
 #include "sprite/MCHdMovie.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCMechStops.h"
@@ -19129,6 +19130,35 @@ namespace
             PutStretches(check.Stretches, *decoded);
         }
     }
+
+    /// <summary>
+    /// Whether the pack's record 1 for <paramref name="folder"/> stands for <paramref name="packet"/>, the original's: the
+    /// game takes it (MCHdArt::StrippedShapeTable) and it is the packet stripped as the game strips one
+    /// (MCPackRecords::ShapeTable); else why not.
+    /// </summary>
+    void CheckStrippedTable(SpriteCheck& check, std::span<const uint8_t> packet, const std::filesystem::path& folder,
+                            const std::string& where)
+    {
+        const std::expected<std::vector<uint8_t>, std::string_view> taken = MCHdArt::StrippedShapeTable(folder);
+
+        if (!taken.has_value())
+        {
+            check.Note(std::format("record 1: {}", taken.error()), where);
+            return;
+        }
+
+        const std::expected<std::vector<uint8_t>, std::string> stripped = MCPackRecords::ShapeTable(packet);
+
+        if (!stripped.has_value())
+        {
+            check.Note("record 1: the original's packet won't strip", std::format("{}: {}", where, stripped.error()));
+            return;
+        }
+
+        check.Note(*taken == *stripped ? "record 1: the original's packet stripped, every boxed frame held"
+                                       : "record 1: not the original's packet stripped",
+                   where);
+    }
 }
 
 /// <summary>
@@ -19136,7 +19166,9 @@ namespace
 /// (each part PAK's and shape PAK's packets the pack has a folder for, opened as MCSpriteManager opens them) against the
 /// pack's HD frame for it (MCHdArt::FindInFolder in MCHdArt::FolderOf's folder): whether the HD frame's index picture
 /// holds every drawn pixel's index (PLAN.md's first-use item 13, option D's premise), how many pixels it marks past the
-/// drawn ones, and what option D would carry (each frame's drawn stretches). Counted by outcome, with an example each.
+/// drawn ones, what option D would carry (each frame's drawn stretches), and whether the folder's stripped shape table
+/// (record 1) is the one the game takes in place of the packet (CheckStrippedTable). Counted by outcome, with an example
+/// each.
 /// <c>--sprite-pack-masks &lt;folder&gt;</c> also writes each pack folder's stretches there (each archive's as a 4-byte
 /// length, then its bytes), for their deflated size. Reads the pack and the game, writes nothing else.
 /// </summary>
@@ -19246,6 +19278,7 @@ TEST_CASE_ISOLATED("tool: --sprite-pack-check holds the original's sprite frames
                         kind == Kinds[0] ? MCHdArt::FolderOf(MCHdArt::MechShapeKey{file, number, packetNumber})
                                          : MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{file, number, packetNumber});
                     CheckSpriteTable(check, table, folder, std::format("{} packet {}", where, packet));
+                    CheckStrippedTable(check, table, folder, std::format("{} packet {}", where, packet));
                 }
 
                 if (maskFile.is_open())

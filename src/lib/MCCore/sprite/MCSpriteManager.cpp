@@ -269,7 +269,7 @@ auto MCSpriteManager::StrippedShape(const std::filesystem::path& folder, int32_t
                                     std::weak_ptr<MCAppearanceType> owner,
                                     std::function<MCRegisteredBlock()> readOriginal) -> std::shared_ptr<MCShape>
 {
-    const std::optional<std::vector<uint8_t>> table = MCHdArt::StrippedShapeTable(folder);
+    const std::expected<std::vector<uint8_t>, std::string_view> table = MCHdArt::StrippedShapeTable(folder);
 
     if (!table.has_value())
     {

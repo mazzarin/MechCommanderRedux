@@ -32,6 +32,12 @@ public:
     /// </summary>
     std::span<const uint8_t> FrameList() const;
 
+    /// <summary>
+    /// Where <paramref name="packet"/>'s VFX shape table starts: at 0 for a bare table (its "1.10" version first), else
+    /// after the gesture header.
+    /// </summary>
+    static size_t TableStart(std::span<const uint8_t> packet);
+
     /// <summary>Whether the table holds a frame to draw (a table listing only frames it doesn't hold has none).</summary>
     bool HasArt() const;
 

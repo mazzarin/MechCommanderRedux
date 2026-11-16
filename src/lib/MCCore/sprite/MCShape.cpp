@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCShape.h"
 #include "vfx/MCVfxClip.h"
+#include "vfx/MCVfxFunctions.h"
 
 namespace
 {
@@ -33,8 +34,7 @@ auto MCShape::CheckTable() -> void
         return;
     }
 
-    // A bare VFX shape table starts with its "1.10" version tag; anything else has a gesture header in front.
-    const size_t start = std::memcmp(bytes.data(), "1.10", 4) != 0 ? GestureHeaderSize : 0;
+    const size_t start = TableStart(bytes);
     _FrameStart = start;
     const int32_t numFrames = VfxShapeCount(bytes.subspan(start));
 
@@ -69,6 +69,12 @@ auto MCShape::CheckTable() -> void
     {
         std::memcpy(table.subspan(CountAt, sizeof(held)).data(), &held, sizeof(held));
     }
+}
+
+auto MCShape::TableStart(std::span<const uint8_t> packet) -> size_t
+{
+    // A bare VFX shape table starts with its "1.10" version tag; anything else has a gesture header in front.
+    return VfxIsShapeTable(packet) ? 0 : GestureHeaderSize;
 }
 
 auto MCShape::HasArt() const -> bool

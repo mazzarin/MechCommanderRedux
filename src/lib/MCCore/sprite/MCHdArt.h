@@ -274,10 +274,10 @@ namespace MCHdArt
     /// <summary>
     /// Port-only (record 1): the stripped shape table standing for the packet whose frames are in
     /// <paramref name="folder"/> (FolderOf its key), when <see cref="DrawsStrippedTables"/> and the folder's archive, of
-    /// version 2, holds the record and a frame for each frame the table holds with a box; none otherwise (the loader then
-    /// reads the original's packet).
+    /// version 2, holds the record and a frame for each frame the table holds with a box; otherwise why not, in a few
+    /// words the same each time (the loader then reads the original's packet; --sprite-pack-check counts them).
     /// </summary>
-    std::optional<std::vector<uint8_t>> StrippedShapeTable(const std::filesystem::path& folder);
+    std::expected<std::vector<uint8_t>, std::string_view> StrippedShapeTable(const std::filesystem::path& folder);
 
     /// <summary>Port-only: whether <paramref name="table"/> is an attached stripped shape's (MCShape::Stripped).</summary>
     bool Stripped(std::span<const uint8_t> table);

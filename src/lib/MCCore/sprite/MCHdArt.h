@@ -239,6 +239,19 @@ namespace MCHdArt
 
     /// <summary>The folder in a pack that holds the frames of the shape loaded from <paramref name="key"/>.</summary>
     std::filesystem::path FolderOf(const MechShapeKey& key);
+
+    /// <summary>
+    /// The folder in a pack that holds mech <paramref name="mechNum"/>'s frames of part PAK <paramref name="partFile"/>
+    /// ("legs90"), its archive's (<c>mechs/legs90/12</c>).
+    /// </summary>
+    std::filesystem::path MechArchiveFolder(std::string_view partFile, uint32_t mechNum);
+
+    /// <summary>
+    /// Port-only (a version 2 pack, SPEC-pack-v2.md's "The facts"): the data of the facts record of type
+    /// <paramref name="type"/> in the own folder of the archive standing for <paramref name="folder"/> (below the
+    /// pack); none when HD art isn't drawn, or the pack has no such archive, an archive of version 1 or no such record.
+    /// </summary>
+    std::optional<std::vector<uint8_t>> ArchiveFacts(const std::filesystem::path& folder, uint16_t type);
     std::filesystem::path FolderOf(const ObjectShapeKey& key);
     std::filesystem::path FolderOf(const CraterShapeKey& key);
 

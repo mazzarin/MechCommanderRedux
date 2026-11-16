@@ -1016,7 +1016,9 @@ auto MCScenario::LoadOriginalPackets() -> void
         std::ranges::transform(actor->DrawnPackets(), std::back_inserter(mechPackets),
                                [&](const MCGesturePacket& where) { return MCSpriteTree::MCTreePacket{tree, where}; });
 
-        if (!tree->StopsPrepared && std::ranges::find(stopsTrees, tree) == stopsTrees.end())
+        // Port-only (MechBraking): a version 2 HD pack's stops keys give a tree's stops with none of its art read.
+        if (!tree->StopsPrepared && std::ranges::find(stopsTrees, tree) == stopsTrees.end() &&
+            !MCPrepareStopsFromPack(*tree))
         {
             MCMechParts<std::optional<size_t>>& at = stopsArtAt.emplace_back();
             const MCMechParts<std::optional<MCStoredWanted>> art = MCStopsArtPackets(*tree);

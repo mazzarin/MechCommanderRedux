@@ -3,7 +3,9 @@
 #include "lib/MCWorkers.h"
 #include "network/MCMultiPlayer.h"
 #include "platform/MCFrameLog.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCMechStopsKnown.h"
+#include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
@@ -990,6 +992,37 @@ auto MCPrepareStopsByKey(MCSpriteTree& tree, std::span<const MCStopsKey> keys) -
     }
 
     return false;
+}
+
+auto MCPrepareStopsFromPack(MCSpriteTree& tree) -> bool
+{
+    // The stops key always sits with the zoomed-in legs, whichever the tree draws (mc_tests --pack-records).
+    constexpr std::string_view KeysPart = "legs90";
+    const uint32_t legs = tree.FileNumbers[MCMechPart::Legs];
+
+    if (tree.StopsPrepared || legs == NoFileNumber)
+    {
+        return tree.StopsPrepared;
+    }
+
+    const std::optional<std::vector<uint8_t>> record = MCHdArt::ArchiveFacts(
+        MCHdArt::MechArchiveFolder(KeysPart, legs), static_cast<uint16_t>(MCPackRecords::Type::StopsKey));
+
+    if (!record.has_value())
+    {
+        return false;
+    }
+
+    const std::expected<std::vector<MCStopsKey>, std::string> keys = MCPackRecords::ReadStopsKey(*record);
+
+    // Once a tree: its art's way prepares it then.
+    if (!keys.has_value())
+    {
+        SDL_Log("MechBraking: %s's stops keys in the HD pack: %s", tree.Name.c_str(), keys.error().c_str());
+        return false;
+    }
+
+    return MCPrepareStopsByKey(tree, *keys);
 }
 
 auto MCPrepareStops(MCSpriteTree& tree) -> void

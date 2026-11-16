@@ -346,6 +346,14 @@ struct MCStopsKey
 [[nodiscard]] bool MCPrepareStopsByKey(MCSpriteTree& tree, std::span<const MCStopsKey> keys);
 
 /// <summary>
+/// Port-only (MechBraking): <see cref="MCPrepareStopsByKey"/> by the stops keys a version 2 HD pack holds in the
+/// archive of <paramref name="tree"/>'s legs (SPEC-pack-v2.md's record 4, in <c>mechs/legs90/&lt;n&gt;.hda</c>),
+/// reading none of its art; false, with nothing prepared, when the pack has none for it (HD art off, a version 1 pack)
+/// or they can't be read (logged).
+/// </summary>
+[[nodiscard]] bool MCPrepareStopsFromPack(MCSpriteTree& tree);
+
+/// <summary>
 /// Port-only (MechBraking): <paramref name="tree"/>'s stops from the table, by its art's hash
 /// (<see cref="MCStopsArtHash"/>), once a tree. For art the table hasn't (a mod's, never the game's: a test holds every
 /// tree of the game's data to the table) they are worked out (<see cref="MCMakeStopsFast"/>), logged.

@@ -50,8 +50,11 @@ namespace
     constexpr std::string_view PackBlock = "HDArtPack";
     constexpr std::string_view PackFormatKey = "Format";
     constexpr std::string_view PackSpritesKey = "Sprites";
-    /// <summary>The pack format this code reads: a pack of a later one is left out whole.</summary>
-    constexpr int32_t PackFormat = 1;
+    /// <summary>
+    /// The latest pack format this code reads (2: SPEC-pack-v2.md's, its archives' tables found by keys; 1 today's): a
+    /// pack of a later one is left out whole.
+    /// </summary>
+    constexpr int32_t PackFormat = 2;
     /// <summary>How the sprite files are written in pack.cfg: <c>name=size</c>, separated by <c>;</c>.</summary>
     constexpr char SpriteFileSeparator = ';';
     constexpr char SpriteSizeSeparator = '=';
@@ -3398,8 +3401,37 @@ namespace
 
 std::filesystem::path MCHdArt::FolderOf(const MechShapeKey& key)
 {
-    return std::filesystem::path(MechFolder) / MCFileSystem::FromUtf8(key.PartFile) / std::to_string(key.MechNum) /
-           std::to_string(key.Packet);
+    return MechArchiveFolder(key.PartFile, key.MechNum) / std::to_string(key.Packet);
+}
+
+std::filesystem::path MCHdArt::MechArchiveFolder(std::string_view partFile, uint32_t mechNum)
+{
+    return std::filesystem::path(MechFolder) / MCFileSystem::FromUtf8(partFile) / std::to_string(mechNum);
+}
+
+auto MCHdArt::ArchiveFacts(const std::filesystem::path& folder, uint16_t type) -> std::optional<std::vector<uint8_t>>
+{
+    if (!Active())
+    {
+        return std::nullopt;
+    }
+
+    const std::shared_ptr<MCHdArchive> archive = ArchiveFor(PackFolder() / folder);
+
+    if (archive == nullptr || !archive->File->IsVersion2())
+    {
+        return std::nullopt;
+    }
+
+    for (const auto& [recordType, data] : archive->File->Facts({}))
+    {
+        if (recordType == type)
+        {
+            return std::vector<uint8_t>(data.begin(), data.end());
+        }
+    }
+
+    return std::nullopt;
 }
 
 std::filesystem::path MCHdArt::FolderOf(const ObjectShapeKey& key)

@@ -2,6 +2,8 @@
 #include "MCTest.h"
 #include "TestGame.h"
 #include "object/MCBattleMech.h"
+#include "platform/MCUtf8Path.h"
+#include "sprite/MCHdArt.h"
 #include "mission/MCScenario.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCMechStops.h"
@@ -463,4 +465,56 @@ TEST_CASE_ISOLATED("game: mission 16's load hashes its mechs' stops from its bat
     {
         CheckStopsFromTheBatch(16);
     }
+}
+
+/// <summary>
+/// Tool: <c>--pack-stops &lt;a version 2 pack&gt;</c> prepares every mech tree's stops as a mission's load does with
+/// that pack drawn: from the stops keys in its legs' archive (SPEC-pack-v2.md's record 4), none of its art read, the
+/// stops the table's for its art; printing the trees whose legs' archive holds none.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --pack-stops finds every mech tree's stops by a version 2 pack's stops keys")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("pack-stops");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The pack set once the mission is up (its start takes the original's look).
+    REQUIRE(MCTestGame::StartMission(1));
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(MCFileSystem::FromUtf8(*pack));
+    REQUIRE(MCHdArt::Active());
+    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+    REQUIRE(spriteManager != nullptr);
+    size_t found = 0;
+    size_t none = 0;
+
+    for (const std::shared_ptr<MCSpriteTree>& tree : MCTestGame::EveryMechTree())
+    {
+        REQUIRE(tree != nullptr);
+        MCTest::Scope scope(tree->Name);
+        const uint64_t hash = MCStopsArtHash(*tree);
+        ForgetStops(*tree);
+        const size_t storedBefore = spriteManager->ShapesReadAlone().MechsStored;
+
+        if (!MCPrepareStopsFromPack(*tree))
+        {
+            ++none;
+            std::cout << std::format("{}: no stops keys for its legs (mech {})\n", tree->Name,
+                                     tree->FileNumbers[MCMechPart::Legs]);
+            continue;
+        }
+
+        ++found;
+        CHECK(tree->StopsPrepared);
+        CHECK_EQ(tree->StopsLookedUpBy, hash);
+        CHECK_EQ(spriteManager->ShapesReadAlone().MechsStored, storedBefore);
+    }
+
+    std::cout << std::format("{} trees' stops by the pack's keys, {} without\n", found, none);
+    CHECK(found > 0);
+    MCHdArt::SetPackFolder({});
+    GHdArt = 0;
 }

@@ -2612,7 +2612,7 @@ TEST_CASE_ISOLATED(
         MCFitIniFile file;
         REQUIRE_EQ(file.Create((pack / "pack.cfg").string()), 0);
         file.WriteBlock("HDArtPack");
-        file.WriteIdLong("Format", 2);
+        file.WriteIdLong("Format", 3);
         file.Close();
     }
 
@@ -3105,7 +3105,15 @@ TEST_CASE("tool: --pack-compare holds a version 2 pack to the pack it was made f
         }
 
         const PackComparison found = ComparePackArchive(todayPath, item.path());
-        std::cout << std::format("{}: {}\n", relative.generic_string(), found.Text());
+        std::string own;
+
+        for (const auto& [type, data] : (*marked)->Facts({}))
+        {
+            own += std::format(" {} ({} bytes)", type, data.size());
+        }
+
+        std::cout << std::format("{}: {}; its own folder's facts:{}\n", relative.generic_string(), found.Text(),
+                                 own.empty() ? " none" : own);
         all.Add(found);
         ++archives;
     }

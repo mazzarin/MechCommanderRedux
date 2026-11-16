@@ -265,6 +265,14 @@ namespace MCHdArt
     std::optional<std::vector<uint8_t>> ArchiveFacts(const std::filesystem::path& folder, uint16_t type);
 
     /// <summary>
+    /// Port-only (a version 2 pack, SPEC-pack-v2.md's "A frame"): whether the archive standing for
+    /// <paramref name="folder"/> (below the pack) is of version 2, so its frames' green says which pixels the original
+    /// draws (<see cref="OriginalDrawsMark"/>) apart from those its indices spread to; false when HD art isn't drawn or
+    /// the pack has no such archive.
+    /// </summary>
+    bool MarksOriginalPixels(const std::filesystem::path& folder);
+
+    /// <summary>
     /// Port-only (a version 2 pack, SPEC-pack-v2.md's record 1): whether shapes may be loaded from the pack's stripped
     /// shape tables: HD art drawn from numbered folders, by the GPU alone (the software renderer and mirror mode draw the
     /// original's rows).
@@ -683,6 +691,12 @@ namespace MCHdArt
     /// is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindOverlay(std::span<const uint8_t> shape, int32_t width, int32_t height);
+
+    /// <summary>
+    /// Port-only (terrain/MCGroundNames.h): as FindOverlay, for the overlay whose key (<see cref="TerrainTileKey"/>) is
+    /// <paramref name="key"/>, known without its bytes.
+    /// </summary>
+    std::shared_ptr<const Frame> FindOverlayByKey(uint64_t key, int32_t width, int32_t height);
 
     /// <summary>
     /// The name the pack keeps a shape table loaded outside the sprite, crater and icon files under (a tree's shadow, a

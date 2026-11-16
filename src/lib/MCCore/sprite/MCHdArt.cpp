@@ -3659,6 +3659,17 @@ auto MCHdArt::ArchiveFacts(const std::filesystem::path& folder, uint16_t type) -
     return std::nullopt;
 }
 
+bool MCHdArt::MarksOriginalPixels(const std::filesystem::path& folder)
+{
+    if (!Active())
+    {
+        return false;
+    }
+
+    const std::shared_ptr<MCHdArchive> archive = ArchiveFor(PackFolder() / folder);
+    return archive != nullptr && archive->File->IsVersion2();
+}
+
 bool MCHdArt::DrawsStrippedTables()
 {
     return NumberedFolders() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
@@ -4512,6 +4523,11 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8
                                                            int32_t height)
 {
     return FindHashed(OverlayFolder, shape, width, height);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlayByKey(uint64_t key, int32_t width, int32_t height)
+{
+    return FindKeyed(OverlayFolder, key, width, height);
 }
 
 uint64_t MCHdArt::ShapeTableHash(std::span<const uint8_t> table)

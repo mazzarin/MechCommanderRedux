@@ -99,16 +99,21 @@ std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain, MCMinesAhead c
 /// Port-only (PLAN.md's first-use item 10): reads the tiles the map's mines can draw (MCTerrainMineSlots of
 /// <paramref name="cells"/>) while the mission loads, the original's and, while the HD ground is drawn, their HD
 /// overlays (by name when the program knows the tile set), so a minefield's first frame on screen reads none, nor a
-/// mine a mine layer lays with EveryCell. Call it once the map's mines are set (a match without mines clears them); a
-/// tile read already isn't read again.
+/// mine a mine layer lays with EveryCell. With a version 2 pack, those the program's table names aren't read but left
+/// for MCTerrainReadHdTiles to rebuild from their HD frames. Call it once the map's mines are set (a match without
+/// mines clears them), before MCTerrainReadHdTiles; a tile read already isn't read again.
 /// </summary>
 void MCTerrainReadMinesAhead(MCMinesAhead cells = MCMinesAhead::Mined);
 
-/// <summary>Port-only (PLAN.md's first-use item 10): the original ground tiles MCTerrainReadHdTiles rebuilt and read.</summary>
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): the original ground tiles MCTerrainReadHdTiles rebuilt, the tiles and
+/// overlays it read, and the overlays (the map's and its mines') it rebuilt.
+/// </summary>
 struct MCGroundRebuilt
 {
     size_t Rebuilt = 0;
     size_t Read = 0;
+    size_t Overlays = 0;
 };
 
 /// <summary>
@@ -116,8 +121,10 @@ struct MCGroundRebuilt
 /// mission loads, so the first frame, which uploads the ground, doesn't wait on the pack: those read ahead
 /// (MCTerrainReadHdTilesAhead) waited for and kept, the rest read. For a tile set the program's table holds (PLAN.md's
 /// first-use item 10), each original tile the terrain's load left out (MCTerrainLeaveRebuiltTiles) is rebuilt from its
-/// HD frame (MCRebuildGroundTile) rather than read; one that isn't (no frame, or not the tile's bytes) is read. Does
-/// nothing while HD art is off or the software renderer draws. How many original tiles it rebuilt and read.
+/// HD frame (MCRebuildGroundTile) rather than read; one that isn't (no frame, or not the tile's bytes) is read. With a
+/// version 2 pack the map's overlays and its mines' tiles (MCTerrainReadMinesAhead's) are rebuilt the same way
+/// (MCRebuildGroundOverlay). Does nothing while HD art is off or the software renderer draws. How many original tiles
+/// and overlays it rebuilt and read.
 /// </summary>
 MCGroundRebuilt MCTerrainReadHdTiles();
 

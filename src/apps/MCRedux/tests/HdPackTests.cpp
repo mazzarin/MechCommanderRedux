@@ -25,6 +25,11 @@
 #include "platform/MCSdlHandle.h"
 #include "platform/MCUtf8Path.h"
 #include "sound/MCHdAudio.h"
+#include "terrain/MCGroundMesh.h"
+#include "terrain/MCGroundNames.h"
+#include "terrain/MCMapBlockManager.h"
+#include "terrain/MCTerrain.h"
+#include "terrain/MCTerrainTiles.h"
 #include "vfx/MCAgShape.h"
 
 // xxHash, header-only: its functions inline in this file alone (the version 2 archives' table hashes).
@@ -2908,6 +2913,152 @@ TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's
 /// <c>-hdsetreads</c>, <c>-hdreaderpriority</c>), the readers held to 1 to MCHdArt::MostReaders; a value a switch can't
 /// take leaves its setting as it was.
 /// </summary>
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): with a version 2 pack, whose overlays' frames mark the pixels the original
+/// draws apart from those their indices spread to, the terrain's load leaves the map's overlays and its mines' tiles
+/// unread (MCTerrainLeaveRebuiltTiles, MCTerrainReadMinesAhead), and the load's HD ground (MCTerrainReadHdTiles) puts
+/// each in the cache rebuilt from its HD frame, byte for byte the original's packet; one whose frame doesn't hold its
+/// pixels is read. Mission 8, which starts with mined cells, its tile set opened again with none read.
+/// </summary>
+TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays and its mines' tiles, none read")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t MinedMission = 8;
+    constexpr int32_t Scale = 2;
+    constexpr float FrameSeconds = 1.0f / 15.0f;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(MinedMission));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    REQUIRE(terrain != nullptr);
+    // The mission's tile set opened again twice: one with none read, one to hold the rebuilt ones to.
+    const auto open = [&terrain]() -> std::unique_ptr<MCTerrainTiles>
+    {
+        for (const std::string_view set : {"tiles", "gtiles"})
+        {
+            std::expected<std::unique_ptr<MCTerrainTiles>, std::string> tiles = MCTerrainTiles::Create(set);
+
+            if (tiles.has_value() && (*tiles)->FilesHash() == terrain->Tiles->FilesHash())
+            {
+                return std::move(*tiles);
+            }
+        }
+
+        return nullptr;
+    };
+
+    std::unique_ptr<MCTerrainTiles> fresh = open();
+    const std::unique_ptr<MCTerrainTiles> reference = open();
+    REQUIRE(fresh != nullptr);
+    REQUIRE(reference != nullptr);
+    const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(*fresh);
+    REQUIRE(known.has_value());
+    const auto isOverlay = [&known](int32_t slot) { return known->get().At(slot).Overlay.has_value(); };
+
+    // The map's overlays, then its mines' tiles.
+    std::vector<int32_t> slots;
+    std::ranges::copy_if(terrain->MapBlocks->TilesUsed(), std::back_inserter(slots), isOverlay);
+    const size_t mapOverlays = slots.size();
+    const std::vector<int32_t> mines = MCTerrainMineSlots(*terrain);
+
+    for (const int32_t slot : mines)
+    {
+        if (isOverlay(slot) && !std::ranges::contains(slots, slot))
+        {
+            slots.push_back(slot);
+        }
+    }
+
+    REQUIRE(mapOverlays > 0);
+    REQUIRE(slots.size() > mapOverlays);
+
+    // Their HD frames at version 2: the original's index where it draws, spread everywhere else; the first overlay's
+    // first drawn pixel one index off, a pack that doesn't match the game's.
+    std::vector<ArchiveEntry> entries;
+
+    for (const int32_t slot : slots)
+    {
+        const MCGroundName name = *known->get().At(slot).Overlay;
+        const std::optional<MCHdArt::GroundAhead> shape = MCGroundOverlayOf(*reference, slot);
+        REQUIRE(shape.has_value());
+        std::vector<uint8_t> indices = MCGroundOverlayIndices(reference->Lookup(slot), name);
+        REQUIRE(!indices.empty());
+        bool misnamed = slot == slots.front();
+
+        for (size_t at = 0; at < indices.size(); at += MCHdArt::IndexBytes)
+        {
+            if (indices[at + 1] == 0)
+            {
+                indices[at + 1] = MCHdArt::Spread;
+            }
+            else if (misnamed)
+            {
+                ++indices[at];
+                misnamed = false;
+            }
+        }
+
+        MCHdArt::Frame hd;
+        hd.Width = name.Width * Scale;
+        hd.Height = name.Height * Scale;
+        hd.Scale = Scale;
+        hd.Colors = SpriteLike(hd.Width, hd.Height);
+        hd.Indices = std::move(indices);
+        hd.Marked = true;
+        entries.push_back(Raw(MCHdArt::TerrainTileName(shape->Tile) + ".hdf", MCHdArt::EncodeHdf(hd)));
+    }
+
+    const ScratchFolder scratch("overlays-rebuilt");
+    WriteBytes(scratch.Path() / (std::string(MCHdArt::OverlayFolder) + ".hda"), BuildVersion2Archive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    REQUIRE(MCHdArt::MarksOriginalPixels(MCHdArt::OverlayFolder));
+    terrain->Tiles = std::move(fresh);
+
+    // The terrain's load leaves out the map's overlays; the mines' read leaves theirs.
+    std::vector<int32_t> used = terrain->MapBlocks->TilesUsed();
+    MCTerrainLeaveRebuiltTiles(*terrain, used);
+    CHECK(std::ranges::none_of(used, isOverlay));
+    MCTerrainReadMinesAhead();
+    const auto cached = [&terrain](int32_t slot)
+    {
+        const MCOptionalRef<const MCTerrainTile> tile = terrain->Tiles->Slot(slot);
+        return tile.has_value() && !tile->get().TileData().empty();
+    };
+
+    CHECK(std::ranges::none_of(slots, cached));
+
+    // The load's HD ground rebuilds all but the misnamed one, which it reads.
+    const MCGroundRebuilt done = MCTerrainReadHdTiles();
+    CHECK_EQ(done.Overlays, slots.size() - 1);
+    size_t differ = 0;
+
+    for (const int32_t slot : slots)
+    {
+        REQUIRE(cached(slot));
+        differ += std::ranges::equal(terrain->Tiles->Slot(slot)->get().TileData(), reference->Lookup(slot)) ? 0 : 1;
+    }
+
+    std::cout << std::format("  mission {}: {} overlays and {} mines' tiles, {} rebuilt from HD\n", MinedMission,
+                             mapOverlays, slots.size() - mapOverlays, done.Overlays);
+    CHECK_EQ(differ, size_t{0});
+    // The mission draws on from them.
+    MCTestGame::RunFrame(FrameSeconds);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
 TEST_CASE("hd art: the command line sets the readers, the sets' reads at once and the readers' priority")
 {
     constexpr size_t Readers = 8;

@@ -3723,6 +3723,19 @@ bool MCHdArt::Stripped(std::span<const uint8_t> table)
     return sequence.has_value() && sequence->get().Stripped;
 }
 
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::StrippedFrame(std::span<const uint8_t> table, int32_t frame)
+{
+    if (!Stripped(table) || !MCVfxHasShape(table, frame))
+    {
+        return nullptr;
+    }
+
+    const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+    std::shared_ptr<const Frame> hd =
+        Find(table, frame, static_cast<int32_t>(bounds.Width), static_cast<int32_t>(bounds.Height));
+    return hd != nullptr && hd->Marked ? hd : nullptr;
+}
+
 void MCHdArt::VisitShape(std::span<const uint8_t> table, int32_t frame,
                          const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel)
 {
@@ -3732,7 +3745,9 @@ void MCHdArt::VisitShape(std::span<const uint8_t> table, int32_t frame,
         return;
     }
 
-    if (!MCVfxHasShape(table, frame))
+    const std::shared_ptr<const Frame> hd = StrippedFrame(table, frame);
+
+    if (hd == nullptr)
     {
         return;
     }
@@ -3740,13 +3755,6 @@ void MCHdArt::VisitShape(std::span<const uint8_t> table, int32_t frame,
     const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
     const auto width = static_cast<int32_t>(bounds.Width);
     const auto height = static_cast<int32_t>(bounds.Height);
-    const std::shared_ptr<const Frame> hd = Find(table, frame, width, height);
-
-    if (hd == nullptr || !hd->Marked)
-    {
-        return;
-    }
-
     const auto minX = static_cast<int32_t>(bounds.MinX);
     const auto minY = static_cast<int32_t>(bounds.MinY);
 

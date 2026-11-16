@@ -446,8 +446,28 @@ namespace
             return MeasurePixels(shapeTable, frame, shining).Measure;
         }
 
-        const size_t key =
-            Combined(BytesHash(std::as_bytes(FrameBytes(shapeTable, frame))), static_cast<size_t>(shining));
+        // A stripped table's frame (MCHdArt::Stripped) by its HD frame's Id: its bytes are its header alone, alike in
+        // frames of the same bounds, so effects of one size took each other's glows. Without its HD frame it measures
+        // nothing (MCHdArt::VisitShape), so nothing is kept.
+        size_t frameKey = 0;
+
+        if (MCHdArt::Stripped(shapeTable))
+        {
+            const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::StrippedFrame(shapeTable, frame);
+
+            if (hd == nullptr)
+            {
+                return MeasurePixels(shapeTable, frame, shining).Measure;
+            }
+
+            frameKey = BytesHash(std::as_bytes(std::span(&hd->Id, 1)));
+        }
+        else
+        {
+            frameKey = BytesHash(std::as_bytes(FrameBytes(shapeTable, frame)));
+        }
+
+        const size_t key = Combined(frameKey, static_cast<size_t>(shining));
 
         if (const auto kept = state.Glows.find(key); kept != state.Glows.end())
         {

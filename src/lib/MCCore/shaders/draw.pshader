@@ -938,6 +938,16 @@ bool HasIndexIn(float4 entry)
     return Byte(entry.g) >= DrawnBlendedShadow;
 }
 
+// Whether an HD frame's index picture's texel has an index its colour is recoloured by. In a frame holding its blended
+// pixels (HdLight: an effect's, smoke, a PPC's bolt) only 255 and 254 do, as a version 1 frame's: a version 2 frame's
+// drawn and blended pixel (251, 250) keeps the original's index for the readers (MCHdArt::OriginalDrawsMark), an index
+// into the blend's table (AlphaPal.ini) and not a colour, and its spread (253, 252) is from those; recoloured by them,
+// the effect took their colours, dark and in the original's dither.
+bool RecolouringIndexIn(float4 entry, uint flags)
+{
+    return (flags & HdLight) != 0 ? Byte(entry.g) >= BakedShadow : HasIndexIn(entry);
+}
+
 // Whether an HD frame's index picture's texel is in a baked shadow (MCHdArt::InShadowMark).
 bool InShadowIn(float4 entry)
 {
@@ -1203,7 +1213,7 @@ float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original,
 
             const float4 entry = SourceAt(texel);
 
-            if (!HasIndexIn(entry))
+            if (!RecolouringIndexIn(entry, input.op.x))
             {
                 continue;
             }
@@ -1302,11 +1312,13 @@ Output HdPixelAt(Input input, float2 shape)
     // brightness.
     const float4 entry = SourceAt(texel);
 
-    if (HasIndexIn(entry) && (input.op.x & HdAsMade) == 0)
+    const bool recolours = RecolouringIndexIn(entry, input.op.x);
+
+    if (recolours && (input.op.x & HdAsMade) == 0)
     {
         color.rgb = RecolouredBetween(input, color, shape, original, texel);
     }
-    else if (!HasIndexIn(entry) && (input.op.x & TableBefore) != 0)
+    else if (!recolours && (input.op.x & TableBefore) != 0)
     {
         // A pixel without an index (an effect's blended one: smoke, dust) drawn through a table (the haze): the
         // table's change of colour, as near as one line a channel follows it.

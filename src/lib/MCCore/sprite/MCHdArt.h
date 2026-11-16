@@ -290,6 +290,14 @@ namespace MCHdArt
     void VisitShape(std::span<const uint8_t> table, int32_t frame,
                     const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel);
 
+    /// <summary>
+    /// Port-only: the HD frame that stands for frame <paramref name="frame"/> of a stripped table
+    /// <paramref name="table"/> (<see cref="Stripped"/>), read if need be; none for a table that isn't stripped, a frame
+    /// it doesn't hold, or one the pack lacks. Its Id names the frame where its bytes can't: a stripped frame's bytes
+    /// are its header alone, alike in frames of the same bounds.
+    /// </summary>
+    std::shared_ptr<const Frame> StrippedFrame(std::span<const uint8_t> table, int32_t frame);
+
     /// <summary>Port-only: forgets <paramref name="table"/>'s attachment (its shape takes another packet).</summary>
     void Detach(std::span<const uint8_t> table);
     std::filesystem::path FolderOf(const ObjectShapeKey& key);

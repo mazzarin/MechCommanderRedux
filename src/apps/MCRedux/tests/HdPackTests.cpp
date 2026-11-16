@@ -3039,7 +3039,7 @@ namespace
             }
 
             const std::string_view name = entries[static_cast<size_t>(i)].GetName();
-            MCTest::Scope scope(std::string(name));
+            MCTest::Scope scope{std::string(name)};
             const auto before = (*today)->Unpack(i, (*today)->ReadStored(i));
             const auto after = (*marked)->Unpack(j, stored);
 

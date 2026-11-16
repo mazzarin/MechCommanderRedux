@@ -30,10 +30,8 @@ namespace
     constexpr std::string_view ObjectFolder = "objects";
     constexpr std::string_view CraterFolder = "craters";
     constexpr std::string_view IconFolder = "icons";
-    constexpr std::string_view TerrainFolder = "terrain";
     /// <summary>The ground tiles' relief maps (MCHdArt::FindTerrainRelief).</summary>
     constexpr std::string_view ReliefFolder = "relief";
-    constexpr std::string_view OverlayFolder = "overlays";
     /// <summary>The pack's folder of shape tables loaded outside the sprite, crater and icon files, each named by its hash.</summary>
     constexpr std::string_view ShapeFolder = "shapes";
     /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>

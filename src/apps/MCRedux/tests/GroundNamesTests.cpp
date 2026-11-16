@@ -9,6 +9,7 @@
 #include "object/MCGroundVehicle.h"
 #include "object/MCObjectQueue.h"
 #include "object/MCObjectSystem.h"
+#include "platform/MCUtf8Path.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCMechStops.h"
 #include "sprite/MCPackRecords.h"
@@ -350,6 +351,53 @@ TEST_CASE_ISOLATED("ground names: the pack's ground table and overlay spots hold
     std::vector<uint8_t> otherVersion = ground;
     otherVersion[0] = static_cast<uint8_t>(MCPackRecords::Version + 1);
     CHECK(!MCPackRecords::ReadGround(otherVersion, spots).has_value());
+}
+
+/// <summary>
+/// Tool: <c>--pack-ground &lt;a version 2 pack&gt;</c> holds the tile sets the pack's records 2 and 3 give the game
+/// (MCGroundNamesInUse, in place of the program's table) to the program's table: every set it carries, the same, and no
+/// other; and each shipped tile set found by its files there.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --pack-ground finds every tile set the program's table holds in a version 2 pack's records")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("pack-ground");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The pack set once the mission is up (its start takes the original's look).
+    REQUIRE(MCTestGame::StartMission(1));
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(MCFileSystem::FromUtf8(*pack));
+    REQUIRE(MCHdArt::Active());
+    const std::span<const MCKnownGroundNames> program = MCGroundNamesKnown();
+    const std::span<const MCKnownGroundNames> inUse = MCGroundNamesInUse();
+    REQUIRE(inUse.data() != program.data());
+    CHECK_EQ(inUse.size(), program.size());
+
+    for (const MCKnownGroundNames& known : program)
+    {
+        MCTest::Scope scope(std::format("{:016x}", known.FilesHash));
+        const auto found = std::ranges::find(inUse, known.FilesHash, &MCKnownGroundNames::FilesHash);
+        REQUIRE(found != inUse.end());
+        CHECK(SameSet(*found, known));
+    }
+
+    for (const std::string_view setName : ShippedTileSets)
+    {
+        MCTest::Scope scope(setName);
+        const std::unique_ptr<MCTerrainTiles> tiles = OpenTileSet(setName);
+        const MCOptionalRef<const MCKnownGroundNames> found = MCKnownGroundNamesOf(*tiles);
+        REQUIRE(found.has_value());
+        CHECK(std::ranges::any_of(inUse, [&](const MCKnownGroundNames& set) { return &set == &found->get(); }));
+    }
+
+    std::cout << std::format("{} tile sets from the pack's records, each the program's\n", inUse.size());
+    MCHdArt::SetPackFolder({});
+    GHdArt = 0;
+    CHECK_EQ(MCGroundNamesInUse().data(), program.data());
 }
 
 /// <summary>

@@ -169,6 +169,13 @@ bool MCSameGroundTileShape(const MCGroundTileShape& a, const MCGroundTileShape& 
 MCOptionalRef<const MCKnownGroundNames> MCKnownGroundNamesOf(const MCTerrainTiles& tiles);
 
 /// <summary>
+/// Port-only (the version 2 HD pack's records 2 and 3): the tile sets <see cref="MCKnownGroundNamesOf"/> looks in: the
+/// pack's records when its terrain.hda or overlays.hda holds one, else the program's table; valid until the pack or HD
+/// art's state changes.
+/// </summary>
+std::span<const MCKnownGroundNames> MCGroundNamesInUse();
+
+/// <summary>
 /// Port-only (PLAN.md's first-use item 10): the original's packet of the ground tile <paramref name="name"/> names,
 /// rebuilt from its HD frame's <paramref name="indices"/> (R8G8 per original pixel, as MCHdArt::Frame keeps them: R its
 /// palette index, G not 0 where drawn) and <paramref name="shape"/>, laid out as the original's tiles are: the header,

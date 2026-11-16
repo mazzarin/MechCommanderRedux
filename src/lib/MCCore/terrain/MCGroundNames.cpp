@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "terrain/MCGroundNames.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCPackRecords.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCGroundNamesKnown.h"
 #include "terrain/MCTerrainTiles.h"
@@ -284,11 +285,83 @@ std::optional<MCGroundOverlaySpot> MCKnownGroundNames::SpotAt(int32_t slot) cons
     return Spots[*at];
 }
 
+namespace
+{
+    /// <summary>
+    /// The tile sets a version 2 pack's records 2 and 3 hold (MCPackRecords::ReadGround), read once for each pack and
+    /// HD art's state; their views stay good until the pack or that state changes.
+    /// </summary>
+    struct PackGround
+    {
+        std::mutex Lock;
+        bool Read = false;
+        uint64_t PackVersion = 0;
+        bool Active = false;
+        std::optional<std::vector<MCGroundSet>> Sets;
+        std::vector<MCKnownGroundNames> Views;
+    };
+
+    PackGround& ThePackGround()
+    {
+        static PackGround ground;
+        return ground;
+    }
+
+    /// <summary>
+    /// The tile sets the pack's records give, in place of the program's table: none when neither terrain.hda nor
+    /// overlays.hda holds its record (a version 1 pack, HD art not drawn) or the records can't be read (logged).
+    /// </summary>
+    std::optional<std::span<const MCKnownGroundNames>> PackGroundSets()
+    {
+        PackGround& ground = ThePackGround();
+        std::scoped_lock lock(ground.Lock);
+        const uint64_t version = MCHdArt::PackVersion();
+        const bool active = MCHdArt::Active();
+
+        if (!ground.Read || ground.PackVersion != version || ground.Active != active)
+        {
+            ground.Read = true;
+            ground.PackVersion = version;
+            ground.Active = active;
+            ground.Sets.reset();
+            ground.Views.clear();
+            const std::optional<std::vector<uint8_t>> tiles =
+                MCHdArt::ArchiveFacts(MCHdArt::TerrainFolder, static_cast<uint16_t>(MCPackRecords::Type::GroundTable));
+            const std::optional<std::vector<uint8_t>> spots =
+                MCHdArt::ArchiveFacts(MCHdArt::OverlayFolder, static_cast<uint16_t>(MCPackRecords::Type::OverlaySpots));
+
+            if (tiles.has_value() || spots.has_value())
+            {
+                std::expected<std::vector<MCGroundSet>, std::string> read = MCPackRecords::ReadGround(
+                    tiles.value_or(std::vector<uint8_t>{}), spots.value_or(std::vector<uint8_t>{}));
+
+                if (read.has_value())
+                {
+                    ground.Sets = std::move(*read);
+                    std::ranges::transform(*ground.Sets, std::back_inserter(ground.Views), &MCGroundSet::View);
+                }
+                else
+                {
+                    SDL_Log("HdArt: the HD pack's ground records: %s", read.error().c_str());
+                }
+            }
+        }
+
+        return ground.Sets.has_value() ? std::optional(std::span<const MCKnownGroundNames>(ground.Views))
+                                       : std::nullopt;
+    }
+} // namespace
+
+std::span<const MCKnownGroundNames> MCGroundNamesInUse()
+{
+    return PackGroundSets().value_or(MCGroundNamesKnown());
+}
+
 MCOptionalRef<const MCKnownGroundNames> MCKnownGroundNamesOf(const MCTerrainTiles& tiles)
 {
     const uint64_t hash = tiles.FilesHash();
 
-    for (const MCKnownGroundNames& known : MCGroundNamesKnown())
+    for (const MCKnownGroundNames& known : MCGroundNamesInUse())
     {
         if (known.FilesHash == hash && known.Slots == tiles.NumTiles())
         {

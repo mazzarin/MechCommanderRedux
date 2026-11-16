@@ -292,6 +292,13 @@ namespace MCHdArt
     inline constexpr std::string_view DefaultFolder = "HD";
 
     /// <summary>
+    /// The pack's folders of the ground tiles' and the overlays' frames (terrain.hda, overlays.hda; a version 2 pack's
+    /// records 2 and 3 in their own folders).
+    /// </summary>
+    inline constexpr std::string_view TerrainFolder = "terrain";
+    inline constexpr std::string_view OverlayFolder = "overlays";
+
+    /// <summary>
     /// The pack's folder: the one set, else the user folder's <c>HD</c> when there is one, else the game folder's (a
     /// pack unzipped into the game's folder, as mods are).
     /// </summary>

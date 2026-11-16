@@ -3027,8 +3027,7 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
                : nullptr;
 }
 
-auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum, const MCHdArt::Frame& hd)
-    -> std::optional<HdInBetweenFrame>
+auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum) -> std::optional<HdInBetweenFrame>
 {
     const std::optional<MCInBetween>& inBetween = MCRenderer::DrawingInBetween();
     const int32_t count = VfxShapeCount(table);
@@ -3056,8 +3055,9 @@ auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shape
                                       bounds->FrameX, bounds->FrameY, bounds->Width, bounds->Height});
     }
 
-    // An effect's in-between: its frame holds its blended pixels.
-    if (!hd.Blended)
+    // An effect's in-between, or a plain frame's (a tree's, a building's), where the pack holds it; none for a state of
+    // one frame that loops, whose next is itself.
+    if (inBetween->Next == shapeNum)
     {
         return std::nullopt;
     }
@@ -3290,14 +3290,14 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, BlitPixels::Blended);
         }
 
-        // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
+        // A frame part of the way to its next (an effect's, a tree's, a building's, or a mech's legs turning) shows the pack's in-between
         // instead, over the two frames' bounds, when the transform draws its whole frame at full size (no clipping to
         // follow): mirrored, the in-between's last column comes first.
         const auto& [at, from] = *place;
         const bool whole = command.Blit.FullSize && command.Blit.Columns == width && command.Blit.Rows == height &&
                            from[1] == 0 && from[3] == 1 && (from[2] == 1 ? from[0] == 0 : from[0] == width - 1);
         const std::optional<HdInBetweenFrame> inBetween =
-            whole ? HdInBetween(command.ShapeTable, command.ShapeNum, *hd) : std::nullopt;
+            whole ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
         bool drawn = false;
 
         if (inBetween.has_value())
@@ -3975,10 +3975,10 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                 Add(surface, SourceKind::Atlas, place->Page, at, from, indexOp, 0, before, after);
             }
 
-            // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
+            // A frame part of the way to its next (an effect's, a tree's, a building's, or a mech's legs turning) shows the pack's in-between
             // there instead (over the two frames' bounds, clipped as the command's rows and columns; widened as the
             // frame for smooth edges), over the frame's own indices.
-            const std::optional<HdInBetweenFrame> inBetween = HdInBetween(command.ShapeTable, command.ShapeNum, *hd);
+            const std::optional<HdInBetweenFrame> inBetween = HdInBetween(command.ShapeTable, command.ShapeNum);
             bool drawn = false;
 
             if (inBetween.has_value())
@@ -4466,9 +4466,10 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
 
     const auto foot = static_cast<float>(top - yMin);
 
-    // A mech's legs drawn as their turn middle (HDTurns) cast the middle, where the draw places it (as Shape and
-    // ShapeBlit do: mirrored, the middle's last column comes first).
-    if (const std::optional<HdInBetweenFrame> inBetween = HdInBetween(table, shapeNum, *frame); inBetween.has_value())
+    // A frame drawn as its in-between (a tree's, a building's, an effect's) or a mech's legs drawn as their turn middle
+    // (HDTurns) cast what's drawn, where the draw places it (as Shape and ShapeBlit do: mirrored, its last column comes
+    // first).
+    if (const std::optional<HdInBetweenFrame> inBetween = HdInBetween(table, shapeNum); inBetween.has_value())
     {
         left = mirrored ? left + width - inBetween->Width + inBetween->FrameX : left - inBetween->FrameX;
         top -= inBetween->FrameY;

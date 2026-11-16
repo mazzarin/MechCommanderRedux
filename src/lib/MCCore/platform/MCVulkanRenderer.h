@@ -1120,12 +1120,12 @@ private:
 
     /// <summary>
     /// Port-only: the HD art pack's in-between a draw of frame <paramref name="shapeNum"/> of <paramref name="table"/>
-    /// (its HD frame <paramref name="hd"/>) shows instead of the frame (<see cref="MCRenderer::DrawingInBetween"/>): an
-    /// effect's, whose frame holds its blended pixels, or (HDTurns) a mech's legs' turn middle, where the draw says it
-    /// lies. None when the draw isn't of the in-between's frame or the pack hasn't the in-between.
+    /// shows instead of the frame (<see cref="MCRenderer::DrawingInBetween"/>): an effect's or a plain frame's (a
+    /// tree's, a building's; a version 2 pack holds them), over the two frames' bounds, or (HDTurns) a mech's legs' turn
+    /// middle, where the draw says it lies. None when the draw isn't of the in-between's frame, its next frame is itself
+    /// (a state of one frame that loops) or the pack hasn't the in-between.
     /// </summary>
-    std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum,
-                                                const MCHdArt::Frame& hd);
+    std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
     /// <summary>

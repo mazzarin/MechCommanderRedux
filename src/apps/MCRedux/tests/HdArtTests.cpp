@@ -3141,25 +3141,55 @@ namespace
     /// <summary>The appearance number the effect tests' pack keeps their frame under (none of the game's).</summary>
     constexpr uint32_t TestEffectAppearance = 0xfffff;
 
+    /// <summary>The free colours (10..245) and an opaque colour's least channel, as the tests pick them.</summary>
+    constexpr int32_t FirstFreeColor = 10;
+    constexpr int32_t EndFreeColor = 246;
+    constexpr uint8_t FullChannel = 40;
+
     /// <summary>
     /// An opaque colour (one of the free colours, 10..245) with every channel at 40 or more: an HD colour is corrected
     /// channel by channel by its index's colour.
     /// </summary>
     uint8_t FullColorIndex(std::span<const SDL_Color, 256> colors)
     {
-        constexpr int32_t FirstFree = 10;
-        constexpr int32_t EndFree = 246;
-        constexpr uint8_t Channel = 40;
-        const auto free = std::views::iota(FirstFree, EndFree);
+        const auto free = std::views::iota(FirstFreeColor, EndFreeColor);
         const auto full = std::ranges::find_if(free,
                                                [&](int32_t i)
                                                {
                                                    const SDL_Color& c = colors[static_cast<size_t>(i)];
-                                                   return SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= Channel &&
-                                                          c.g >= Channel && c.b >= Channel;
+                                                   return SpecialColor[static_cast<size_t>(i)] == 0 &&
+                                                          c.r >= FullChannel && c.g >= FullChannel &&
+                                                          c.b >= FullChannel;
                                                });
         REQUIRE(full != free.end());
         return static_cast<uint8_t>(*full);
+    }
+
+    /// <summary>
+    /// <paramref name="count"/> opaque colours (free ones, each channel at 40 or more, as FullColorIndex's), each unlike
+    /// the others (a channel 32 or more apart).
+    /// </summary>
+    std::vector<uint8_t> UnlikeColorIndices(std::span<const SDL_Color, 256> colors, size_t count)
+    {
+        constexpr int32_t Unlike = 32;
+        const auto apart = [](SDL_Color a, SDL_Color b)
+        { return std::abs(a.r - b.r) >= Unlike || std::abs(a.g - b.g) >= Unlike || std::abs(a.b - b.b) >= Unlike; };
+        std::vector<uint8_t> indices;
+
+        for (int32_t i = FirstFreeColor; i < EndFreeColor && indices.size() < count; ++i)
+        {
+            const SDL_Color& c = colors[static_cast<size_t>(i)];
+
+            if (SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= FullChannel && c.g >= FullChannel &&
+                c.b >= FullChannel &&
+                std::ranges::all_of(indices, [&](uint8_t chosen) { return apart(c, colors[chosen]); }))
+            {
+                indices.push_back(static_cast<uint8_t>(i));
+            }
+        }
+
+        REQUIRE_EQ(indices.size(), count);
+        return indices;
     }
 
     /// <summary>
@@ -3485,30 +3515,11 @@ TEST_CASE_ISOLATED("game: the GPU draws HD art frames apart in as many batches a
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
 
-    // Frames of one colour each, every colour unlike the others' (each channel 40 or more, as FullColorIndex's).
+    // Frames of one colour each, every colour unlike the others'.
     constexpr size_t Frames = 8;
     constexpr int32_t Width = 24;
     constexpr int32_t Height = 16;
-    constexpr int32_t FirstFree = 10;
-    constexpr int32_t EndFree = 246;
-    constexpr uint8_t Channel = 40;
-    constexpr int32_t Unlike = 32;
-    const auto apart = [](SDL_Color a, SDL_Color b)
-    { return std::abs(a.r - b.r) >= Unlike || std::abs(a.g - b.g) >= Unlike || std::abs(a.b - b.b) >= Unlike; };
-    std::vector<uint8_t> indices;
-
-    for (int32_t i = FirstFree; i < EndFree && indices.size() < Frames; ++i)
-    {
-        const SDL_Color& c = colors[static_cast<size_t>(i)];
-
-        if (SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= Channel && c.g >= Channel && c.b >= Channel &&
-            std::ranges::all_of(indices, [&](uint8_t chosen) { return apart(c, colors[chosen]); }))
-        {
-            indices.push_back(static_cast<uint8_t>(i));
-        }
-    }
-
-    REQUIRE_EQ(indices.size(), Frames);
+    const std::vector<uint8_t> indices = UnlikeColorIndices(colors, Frames);
     constexpr uint8_t RowPixels = 2 * Width + 1;
     constexpr uint8_t RowEnd = 0;
     std::vector<std::vector<uint8_t>> rows(Frames);
@@ -7128,147 +7139,201 @@ TEST_CASE_ISOLATED(
     CHECK(smallShook == 0.0f);
 }
 
-/// <summary>
-/// An effect's frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over
-/// the two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
-/// lies two columns right of its first shows its frame alone, then within the scope the in-between's columns where the
-/// two frames' are, drawn as it is and mirrored about the hot spot (as the frame is).
-/// </summary>
-TEST_CASE_ISOLATED("game: an effect's frame part of the way to its next shows the pack's in-between")
+namespace
 {
-    if (!MCTestGame::Available())
+    /// <summary>
+    /// A frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over the
+    /// two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
+    /// lies two columns right of its first shows its frame alone, then within the scope the in-between's columns where
+    /// the two frames' are, drawn as it is and mirrored about the hot spot (as the frame is); a frame whose next is
+    /// itself shows the frame alone. An effect's frames hold their blended pixels; a <paramref name="plain"/> one's (a
+    /// tree's, a building's) don't.
+    /// </summary>
+    void CheckInBetweenShown(bool plain)
     {
-        return;
-    }
-
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartMission(1));
-    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
-
-    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
-    {
-        std::cout << "  (skipped: no GPU renderer on this machine)\n";
-        return;
-    }
-
-    std::array<SDL_Color, 256> colors{};
-    MCInput::Display()->GetShownColors(colors);
-    const uint8_t opaque = FullColorIndex(colors);
-
-    // Two frames of 4 x 4 opaque pixels, the second 2 columns right of the first: 6 columns together.
-    constexpr int32_t Side = 4;
-    constexpr int32_t Shift = 2;
-    constexpr int32_t Together = Side + Shift;
-    constexpr uint8_t FourPixels = 9;
-    constexpr uint8_t RowEnd = 0;
-    std::vector<uint8_t> rows;
-
-    for (int32_t row = 0; row < Side; ++row)
-    {
-        rows.insert(rows.end(), {FourPixels, opaque, opaque, opaque, opaque, RowEnd});
-    }
-
-    const std::vector<uint8_t> table =
-        FramesTable(std::array{TableFrame{0, 0, Side, Side, rows}, TableFrame{Shift, 0, Side, Side, rows}});
-    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
-    std::ranges::copy(table, block.Bytes().begin());
-    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
-    REQUIRE(VfxShapeCount(shape->FrameList()) == 2);
-
-    // The frames red and green; the in-between of the first toward the second blue in its first 3 columns, yellow in
-    // the rest, so a mirrored one shows which way it lies.
-    constexpr int32_t Scale = 2;
-    constexpr int32_t FirstYellow = 3;
-    constexpr SDL_Color Red = {200, 0, 0, 255};
-    constexpr SDL_Color Green = {0, 200, 0, 255};
-    constexpr SDL_Color Blue = {0, 0, 200, 255};
-    constexpr SDL_Color Yellow = {200, 200, 0, 255};
-    const auto none = [](int32_t) { return std::optional<uint8_t>(); };
-    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_in_between";
-    std::filesystem::remove_all(scratch);
-    const std::filesystem::path pack = scratch / "pack";
-    const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
-    const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
-    std::filesystem::create_directories(folder);
-    WriteBlendedFrame(folder / "0", Side, Side, Scale, [&](int32_t) { return Red; }, none);
-    WriteBlendedFrame(folder / "1", Side, Side, Scale, [&](int32_t) { return Green; }, none);
-    WriteBlendedFrame(
-        folder / "0_1", Together, Side, Scale, [&](int32_t column) { return column < FirstYellow ? Blue : Yellow; },
-        none);
-    WritePaletteRgb(pack, colors);
-
-    const std::shared_ptr<MCDisplay> display = MCInput::Display();
-    MCPane& pane = ScreenPort()->Frame();
-    const int32_t x = (pane.X1 - pane.X0) / 2;
-    const int32_t y = (pane.Y1 - pane.Y0) / 2;
-    const int32_t width = display->Width();
-    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
-    MCHdArt::Attach(shape, key);
-
-    // The screen's pixels after drawing frame 0 with its hot spot at (x, y), as it is or mirrored, in the scope of an
-    // in-between (none: none), and before.
-    const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
-    {
-        MCTestGame::RunFrame(FrameSeconds);
-        auto before = display->ReadFrame();
-        REQUIRE(before.has_value());
+        if (!MCTestGame::Available())
         {
-            const MCRenderer::InBetweenScope scope(inBetween);
-
-            if (mirrored)
-            {
-                AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
-            }
-            else
-            {
-                AGShapeDraw(pane, shape->FrameList(), 0, x, y);
-            }
+            return;
         }
 
-        auto after = display->ReadFrame();
-        REQUIRE(after.has_value());
-        return std::pair{std::move(*before), std::move(*after)};
-    };
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartMission(1));
+        const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
 
-    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
-    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
-    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
-    const auto same = [&](SDL_Color actual, SDL_Color expected)
-    { return near(actual.r, expected.r) && near(actual.g, expected.g) && near(actual.b, expected.b); };
-
-    // The hot spot's columns each way the two frames reach: a column of the first frame shows red alone, of the
-    // in-between blue or yellow (as it is, column c of the bounds at x + c; mirrored, at x - c).
-    for (const bool mirrored : {false, true})
-    {
-        for (const bool between : {false, true})
+        if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
         {
-            const auto [before, after] = drawn(mirrored, between ? std::optional(MCInBetween{0, 1, 1}) : std::nullopt);
+            std::cout << "  (skipped: no GPU renderer on this machine)\n";
+            return;
+        }
+
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        // A plain frame's colours are its indices' (WriteObjectFrame): frame 0's, frame 1's, the in-between's first
+        // columns' and the rest's, each unlike the others; an effect's frames are drawn at one index.
+        constexpr size_t Indices = 4;
+        const std::vector<uint8_t> unlike = UnlikeColorIndices(colors, Indices);
+        const uint8_t opaque = FullColorIndex(colors);
+        const auto indexOf = [&](size_t which) { return plain ? unlike[which] : opaque; };
+
+        // Two frames of 4 x 4 opaque pixels, the second 2 columns right of the first: 6 columns together.
+        constexpr int32_t Side = 4;
+        constexpr int32_t Shift = 2;
+        constexpr int32_t Together = Side + Shift;
+        constexpr uint8_t FourPixels = 9;
+        constexpr uint8_t RowEnd = 0;
+        std::array<std::vector<uint8_t>, 2> rows;
+
+        for (size_t frame = 0; frame < rows.size(); ++frame)
+        {
+            const uint8_t at = indexOf(frame);
 
             for (int32_t row = 0; row < Side; ++row)
             {
-                for (int32_t column = 0; column < Together; ++column)
-                {
-                    const int32_t shown = mirrored ? -column : column;
-                    const SDL_Color pixel = at(after, shown, row);
-                    MCTest::Scope scope(std::format("{}{}, column {}, row {}: {} {} {}",
-                                                    mirrored ? "mirrored" : "as is", between ? ", in-between" : "",
-                                                    column, row, pixel.r, pixel.g, pixel.b));
+                rows[frame].insert(rows[frame].end(), {FourPixels, at, at, at, at, RowEnd});
+            }
+        }
 
-                    if (between)
+        const std::vector<uint8_t> table =
+            FramesTable(std::array{TableFrame{0, 0, Side, Side, rows[0]}, TableFrame{Shift, 0, Side, Side, rows[1]}});
+        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+        std::ranges::copy(table, block.Bytes().begin());
+        const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+        REQUIRE(VfxShapeCount(shape->FrameList()) == 2);
+
+        // The frames red and green; the in-between of the first toward the second blue in its first 3 columns, yellow in
+        // the rest, so a mirrored one shows which way it lies (a plain frame's: its indices' colours).
+        constexpr int32_t Scale = 2;
+        constexpr int32_t FirstYellow = 3;
+        const SDL_Color Red = plain ? colors[unlike[0]] : SDL_Color{200, 0, 0, 255};
+        const SDL_Color Green = plain ? colors[unlike[1]] : SDL_Color{0, 200, 0, 255};
+        const SDL_Color Blue = plain ? colors[unlike[2]] : SDL_Color{0, 0, 200, 255};
+        const SDL_Color Yellow = plain ? colors[unlike[3]] : SDL_Color{200, 200, 0, 255};
+        const auto none = [](int32_t) { return std::optional<uint8_t>(); };
+        const std::filesystem::path scratch = std::filesystem::temp_directory_path() /
+                                              (plain ? "mc_tests_hd_plain_in_between" : "mc_tests_hd_in_between");
+        std::filesystem::remove_all(scratch);
+        const std::filesystem::path pack = scratch / "pack";
+        const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
+        const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
+        std::filesystem::create_directories(folder);
+
+        if (plain)
+        {
+            const auto all = [](uint8_t index) { return [index](int32_t, int32_t) { return std::optional(index); }; };
+            WriteObjectFrame(folder / "0", Side, Side, Scale, colors, all(unlike[0]));
+            WriteObjectFrame(folder / "1", Side, Side, Scale, colors, all(unlike[1]));
+            WriteObjectFrame(folder / "0_1", Together, Side, Scale, colors, [&](int32_t column, int32_t)
+                             { return std::optional(column < FirstYellow ? unlike[2] : unlike[3]); });
+        }
+        else
+        {
+            WriteBlendedFrame(folder / "0", Side, Side, Scale, [&](int32_t) { return Red; }, none);
+            WriteBlendedFrame(folder / "1", Side, Side, Scale, [&](int32_t) { return Green; }, none);
+            WriteBlendedFrame(
+                folder / "0_1", Together, Side, Scale,
+                [&](int32_t column) { return column < FirstYellow ? Blue : Yellow; }, none);
+        }
+
+        WritePaletteRgb(pack, colors);
+
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        MCPane& pane = ScreenPort()->Frame();
+        const int32_t x = (pane.X1 - pane.X0) / 2;
+        const int32_t y = (pane.Y1 - pane.Y0) / 2;
+        const int32_t width = display->Width();
+        std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+        MCHdArt::Attach(shape, key);
+
+        // The screen's pixels after drawing frame 0 with its hot spot at (x, y), as it is or mirrored, in the scope of an
+        // in-between (none: none), and before.
+        const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            auto before = display->ReadFrame();
+            REQUIRE(before.has_value());
+            {
+                const MCRenderer::InBetweenScope scope(inBetween);
+
+                if (mirrored)
+                {
+                    AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
+                }
+                else
+                {
+                    AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+                }
+            }
+
+            auto after = display->ReadFrame();
+            REQUIRE(after.has_value());
+            return std::pair{std::move(*before), std::move(*after)};
+        };
+
+        const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+        { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+        const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
+        const auto same = [&](SDL_Color actual, SDL_Color expected)
+        { return near(actual.r, expected.r) && near(actual.g, expected.g) && near(actual.b, expected.b); };
+
+        // The hot spot's columns each way the two frames reach: a column of the first frame shows red alone, of the
+        // in-between blue or yellow (as it is, column c of the bounds at x + c; mirrored, at x - c). A frame whose next is
+        // itself (a state of one frame that loops) shows the frame alone, though the pack holds its in-between toward 1.
+        const std::array<std::optional<MCInBetween>, 3> draws = {std::nullopt, MCInBetween{0, 1, 1},
+                                                                 MCInBetween{0, 0, 1}};
+
+        for (const bool mirrored : {false, true})
+        {
+            for (const std::optional<MCInBetween>& draw : draws)
+            {
+                const bool between = draw.has_value() && draw->Next != draw->Frame;
+                const auto [before, after] = drawn(mirrored, draw);
+
+                for (int32_t row = 0; row < Side; ++row)
+                {
+                    for (int32_t column = 0; column < Together; ++column)
                     {
-                        CHECK(same(pixel, column < FirstYellow ? Blue : Yellow));
-                    }
-                    else
-                    {
-                        CHECK(same(pixel, column < Side ? Red : at(before, shown, row)));
+                        const int32_t shown = mirrored ? -column : column;
+                        const SDL_Color pixel = at(after, shown, row);
+                        MCTest::Scope scope(std::format("{}{}, column {}, row {}: {} {} {}",
+                                                        mirrored ? "mirrored" : "as is",
+                                                        !draw.has_value() ? ""
+                                                        : between         ? ", in-between"
+                                                                          : ", next itself",
+                                                        column, row, pixel.r, pixel.g, pixel.b));
+
+                        if (between)
+                        {
+                            CHECK(same(pixel, column < FirstYellow ? Blue : Yellow));
+                        }
+                        else
+                        {
+                            CHECK(same(pixel, column < Side ? Red : at(before, shown, row)));
+                        }
                     }
                 }
             }
         }
-    }
 
-    hdArt.reset();
-    std::filesystem::remove_all(scratch);
+        hdArt.reset();
+        std::filesystem::remove_all(scratch);
+    }
+} // namespace
+
+/// <summary>
+/// An effect's frame part of the way to its next shows the pack's in-between (CheckInBetweenShown).
+/// </summary>
+TEST_CASE_ISOLATED("game: an effect's frame part of the way to its next shows the pack's in-between")
+{
+    CheckInBetweenShown(false);
+}
+
+/// <summary>
+/// A plain frame (a tree's, a building's: a version 2 pack holds their in-betweens) part of the way to its next shows the
+/// pack's in-between, as an effect's does (CheckInBetweenShown).
+/// </summary>
+TEST_CASE_ISOLATED("game: a plain frame part of the way to its next shows the pack's in-between")
+{
+    CheckInBetweenShown(true);
 }
 
 /// <summary>

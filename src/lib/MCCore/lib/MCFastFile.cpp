@@ -50,8 +50,13 @@ namespace
     /// </summary>
     constexpr uint32_t MostUnpackedBytes = 256u << 20;
 
-    /// <summary>Port-only: the unpacked streams kept for their neighbours' reads, across every archive.</summary>
-    constexpr size_t KeptStreamsBytes = 64u << 20;
+    /// <summary>
+    /// Port-only: the unpacked streams kept for their neighbours' reads, across every archive: room for the largest a
+    /// stream may be beside others, since a stream that doesn't fit is unpacked again for each of its entries asked later
+    /// (an animation's frames are asked a few at a time) and pushes every other stream out as it's kept. full1's largest
+    /// is 87.8 MB unpacked (objects/shapes/47), thirteen past 32 MB.
+    /// </summary>
+    constexpr size_t KeptStreamsBytes = MostUnpackedBytes;
 
     /// <summary>A little-endian value at <paramref name="at"/> of <paramref name="bytes"/>, which must hold it.</summary>
     template <typename T> T ValueAt(std::span<const uint8_t> bytes, size_t at)

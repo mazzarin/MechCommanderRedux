@@ -2298,6 +2298,86 @@ TEST_CASE_ISOLATED("game: an HD art pack's frames show in a mech's place")
 /// HD art changes only the colours shown: in mirror mode, with the mech drawn from the pack, the GPU's palette indices
 /// (what the hashes, the fog test and the comparison read) are still the software renderer's, frame after frame.
 /// </summary>
+namespace
+{
+    /// <summary>
+    /// Ten frames of <paramref name="scene"/> in mirror mode with HD art on: the shapes drawn from the pack, and the
+    /// GPU's palette indices the software renderer's every frame.
+    /// </summary>
+    void CheckIndicesKept(const HdScene& scene)
+    {
+        constexpr int32_t Frames = 10;
+        std::optional<MCHdArtOn> hdArt(std::in_place, scene.Pack);
+        scene.Renderer->ResetMirror();
+        const int64_t drawnBefore = scene.Renderer->HdDrawn();
+
+        for (int32_t frame = 0; frame < Frames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        hdArt.reset();
+        const MCVulkanRenderer::MirrorTally& tally = scene.Renderer->Mirror();
+        CHECK(scene.Renderer->HdDrawn() > drawnBefore);
+        CHECK_EQ(tally.Frames, Frames);
+        CHECK_EQ(tally.DifferentFrames, 0);
+
+        if (tally.DifferentFrames != 0)
+        {
+            std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="pack"/>'s frames (PNG pairs, WritePack's) as a version 2 pack's (SPEC-pack-v2.md's "A frame"):
+    /// <c>.hdf</c> files whose index pictures say what each pixel is, every pixel the original doesn't draw spread
+    /// (MCHdArt::Spread) at <paramref name="spreadIndex"/>, an index the original draws nowhere there. How many.
+    /// </summary>
+    size_t MarkPackVersion2(const std::filesystem::path& pack, uint8_t spreadIndex)
+    {
+        constexpr std::string_view IndexSuffix = "_idx.png";
+        std::vector<std::filesystem::path> stems;
+
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(pack))
+        {
+            const std::string name = entry.path().filename().string();
+
+            if (name.ends_with(IndexSuffix))
+            {
+                stems.push_back(entry.path().parent_path() / name.substr(0, name.size() - IndexSuffix.size()));
+            }
+        }
+
+        for (const std::filesystem::path& stem : stems)
+        {
+            const std::filesystem::path color = std::filesystem::path(stem).concat(".png");
+            const std::filesystem::path index = std::filesystem::path(stem).concat(IndexSuffix);
+            std::expected<MCHdArt::Frame, std::string> frame = MCHdArt::FrameFromPngs(color, index, TestPackScale);
+            REQUIRE(frame.has_value());
+            frame->Marked = true;
+
+            for (size_t at = 0; at < frame->Indices.size(); at += MCHdArt::IndexBytes)
+            {
+                if (frame->Indices[at + 1] != MCHdArt::HasIndex)
+                {
+                    frame->Indices[at] = spreadIndex;
+                    frame->Indices[at + 1] = MCHdArt::Spread;
+                }
+            }
+
+            const std::vector<uint8_t> hdf = MCHdArt::EncodeHdf(*frame);
+            std::ofstream out(std::filesystem::path(stem).concat(".hdf"), std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(hdf.data()), static_cast<std::streamsize>(hdf.size()));
+            REQUIRE(out.good());
+            out.close();
+            std::filesystem::remove(color);
+            std::filesystem::remove(index);
+        }
+
+        return stems.size();
+    }
+}
+
 TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
 {
     const std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
@@ -2307,27 +2387,33 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
         return;
     }
 
-    constexpr int32_t Frames = 10;
-    std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
-    scene->Renderer->ResetMirror();
-    const int64_t drawnBefore = scene->Renderer->HdDrawn();
+    CheckIndicesKept(*scene);
+    std::filesystem::remove_all(scene->Scratch);
+}
 
-    for (int32_t frame = 0; frame < Frames; ++frame)
+/// <summary>
+/// Port-only: a version 2 pack's frame stands for the original's rows (SPEC-pack-v2.md's record 1, which leaves them
+/// out): the shape's index pass is drawn from the frame's index picture where its green says the original draws, and
+/// nowhere it says spread (the HD edge past the original's pixels), so in mirror mode the GPU's palette indices are
+/// still the software renderer's. A pixel spread at an index the mech never draws would differ (taken as drawn, the
+/// first frame differs).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art from a version 2 pack keeps the original's palette indices from its frames' marks")
+{
+    const std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
     {
-        MCTestGame::RunFrame(FrameSeconds);
+        return;
     }
 
-    hdArt.reset();
-    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
-    CHECK(scene->Renderer->HdDrawn() > drawnBefore);
-    CHECK_EQ(tally.Frames, Frames);
-    CHECK_EQ(tally.DifferentFrames, 0);
+    // Index 0xd8 is the water's colour cycle, which no mech draws.
+    constexpr uint8_t NeverDrawn = 0xd8;
+    REQUIRE(MarkPackVersion2(scene->Pack, NeverDrawn) > 0);
+    const int64_t madeBefore = scene->Renderer->HdIndexImagesMade();
 
-    if (tally.DifferentFrames != 0)
-    {
-        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
-    }
-
+    CheckIndicesKept(*scene);
+    CHECK(scene->Renderer->HdIndexImagesMade() > madeBefore);
     std::filesystem::remove_all(scene->Scratch);
 }
 

@@ -170,6 +170,16 @@ namespace MCHdArt
         return green == BakedShadow || green == SpreadShadow || green == DrawnBlendedShadow;
     }
 
+    /// <summary>
+    /// Whether a version 2 frame's (<see cref="Frame::Marked"/>) index picture's <paramref name="green"/> is a pixel the
+    /// original draws, its red the original's index: drawn, drawn and blended, in a baked shadow or not. A version 1
+    /// frame's green doesn't say.
+    /// </summary>
+    constexpr bool OriginalDrawsMark(uint8_t green)
+    {
+        return green == HasIndex || green == BakedShadow || green == DrawnBlended || green == DrawnBlendedShadow;
+    }
+
     /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>
     inline constexpr uint8_t BakedShadowIndex = 0x10;
     /// <summary>An index picture's blue in a frame that holds its blended pixels (<see cref="Frame::Blended"/>).</summary>

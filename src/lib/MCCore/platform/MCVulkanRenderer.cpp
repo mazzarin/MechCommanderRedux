@@ -573,6 +573,50 @@ namespace
         }
     }
 
+    /// <summary>
+    /// Port-only: the original's index at pixel <paramref name="at"/> of a version 2 HD frame (its index picture's
+    /// red where its green says the original draws there: MCHdArt::OriginalDrawsMark), or none where it doesn't.
+    /// </summary>
+    std::optional<uint8_t> OriginalIndexAt(const MCHdArt::Frame& frame, size_t at)
+    {
+        const size_t texel = at * MCHdArt::IndexBytes;
+
+        if (texel + 1 >= frame.Indices.size() || !MCHdArt::OriginalDrawsMark(frame.Indices[texel + 1]))
+        {
+            return std::nullopt;
+        }
+
+        return frame.Indices[texel];
+    }
+
+    /// <summary>
+    /// Port-only: a version 2 HD frame's index picture as MCShapeRows::Decode decodes the original's rows into
+    /// <paramref name="out"/> (the frame's original size): each pixel the original draws its index, drawn; nothing
+    /// elsewhere.
+    /// </summary>
+    void DecodeHdIndices(const MCHdArt::Frame& frame, std::span<uint8_t> out)
+    {
+        for (size_t at = 0; at * DecodedBytes < out.size(); ++at)
+        {
+            const std::optional<uint8_t> index = OriginalIndexAt(frame, at);
+            out[at * DecodedBytes] = index.value_or(0);
+            out[at * DecodedBytes + 1] = index.has_value() ? MCShapeRows::Drawn : MCShapeRows::Empty;
+        }
+    }
+
+    /// <summary>
+    /// Port-only: FillShape's picture of a version 2 HD frame in <paramref name="out"/> (the frame's original size):
+    /// each pixel the original draws its index (through <paramref name="xlat"/> when there is one), colour 0 elsewhere.
+    /// </summary>
+    void FillHdIndices(const MCHdArt::Frame& frame, const std::optional<MCColorTable>& xlat, std::span<uint8_t> out)
+    {
+        for (size_t at = 0; at < out.size(); ++at)
+        {
+            const std::optional<uint8_t> index = OriginalIndexAt(frame, at);
+            out[at] = !index.has_value() ? 0 : xlat.has_value() ? (*xlat)[*index] : *index;
+        }
+    }
+
     // Fast shapes (fastshp.cpp's format): rows of packets covering width + 1 pixels; c < 0x80 is a run of c pixels of
     // the next byte, c >= 0x80 is c - 0x80 literal bytes.
 
@@ -1369,6 +1413,7 @@ void MCVulkanRenderer::BeginRecording()
 
         _Pages.clear();
         _DataImages.clear();
+        _HdIndexImages.clear();
     }
 
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
@@ -2266,6 +2311,38 @@ auto MCVulkanRenderer::AtlasForData(std::span<const uint8_t> data, uint64_t seed
                                image.Colors = DrawnColors(out);
                            });
     return found;
+}
+
+auto MCVulkanRenderer::HdIndexImage(const MCHdArt::Frame& frame, uint64_t seed) -> DataImage&
+{
+    BeginRecording();
+    const auto [found, fresh] = _HdIndexImages.try_emplace({frame.Id, seed});
+
+    if (fresh)
+    {
+        found->second.Measured = Extent{frame.Indices.size(), frame.OriginalWidth(), frame.OriginalHeight()};
+        ++_HdIndexImagesMade;
+    }
+
+    return found->second;
+}
+
+auto MCVulkanRenderer::AtlasForHdIndices(const MCHdArt::Frame& frame, uint64_t seed) -> DataImage&
+{
+    DataImage& image = HdIndexImage(frame, seed);
+    const Extent& extent = image.Measured;
+
+    if (!image.Place && extent.Width > 0 && extent.Height > 0)
+    {
+        image.Place = AtlasFor(extent.Width, extent.Height,
+                               [&](std::span<uint8_t> out)
+                               {
+                                   DecodeHdIndices(frame, out);
+                                   image.Colors = DrawnColors(out);
+                               });
+    }
+
+    return image;
 }
 
 void MCVulkanRenderer::OnDataChanged(MCAddressKey first, size_t size)
@@ -3218,6 +3295,32 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
     const int32_t height = command.Height;
     constexpr std::string_view ReadsOutside = "ShapeBlit reading outside the shape's picture";
 
+    // The picture of a shape's image (by its number) through the table (by its slot's number), filled by fill.
+    const auto pictureOf = [&](DataImage& image,
+                               const std::function<void(std::span<uint8_t>)>& fill) -> std::optional<uint32_t>
+    {
+        if (image.PictureId == 0)
+        {
+            image.PictureId = ++_LastPictureId;
+        }
+
+        uint64_t key = image.PictureId;
+
+        if (command.Table.has_value())
+        {
+            const std::optional<TableSlot> slot = TableSlotOf(*command.Table);
+
+            if (!slot.has_value())
+            {
+                return std::nullopt;
+            }
+
+            key = key << 32 | slot->Id;
+        }
+
+        return PictureForKey(key, static_cast<uint32_t>(width), static_cast<uint32_t>(height), fill);
+    };
+
     // The shape as a picture of indices (FillShape), its colour or blended pixels' blit's source.
     const auto picture = [&]() -> std::optional<uint32_t>
     {
@@ -3236,37 +3339,15 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             return std::nullopt;
         }
 
-        DataImage& image = found->get();
-
-        if (image.PictureId == 0)
-        {
-            image.PictureId = ++_LastPictureId;
-        }
-
-        // The picture of the shape (by its number) through the table (by its slot's number).
-        uint64_t key = image.PictureId;
-
-        if (command.Table.has_value())
-        {
-            const std::optional<TableSlot> slot = TableSlotOf(*command.Table);
-
-            if (!slot.has_value())
-            {
-                return std::nullopt;
-            }
-
-            key = key << 32 | slot->Id;
-        }
-
-        return PictureForKey(key, static_cast<uint32_t>(width), static_cast<uint32_t>(height),
-                             [&](std::span<uint8_t> out) { FillShape(data, height, width, command.Table, out); });
+        return pictureOf(found->get(),
+                         [&](std::span<uint8_t> out) { FillShape(data, height, width, command.Table, out); });
     };
 
     // The shape's opaque pixels' indices, as the original's transform writes them (its colours' blit, blended, leaves
     // the indices): the composite tells what stands on the ground by them (the water, the relief's light, the rain's
     // wet look).
-    const auto indices = [&]
-    { BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, false, BlitPixels::OpaqueIndices); };
+    const auto indices = [&](const std::function<std::optional<uint32_t>()>& source)
+    { BlitPicture(target, command.Blit, width, height, ReadsOutside, source, false, BlitPixels::OpaqueIndices); };
 
     // Port-only: the HD art pack's frame instead, where it has one, its edges smooth unless it holds its blended pixels
     // (an effect's). A translucent shape's blended pixels that its frame leaves out are blended first, with smooth
@@ -3274,6 +3355,17 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
     if (const std::shared_ptr<const MCHdArt::Frame> hd = HdShape(command.ShapeTable, command.ShapeNum, width, height);
         hd != nullptr && HdPictureOf(*hd).has_value())
     {
+        // A version 2 frame's index picture stands for the original's rows, which a pack's shape table may leave out
+        // (SPEC-pack-v2.md's record 1): its indices where the original draws.
+        const std::function<std::optional<uint32_t>()> shape =
+            hd->Marked
+                ? std::function<std::optional<uint32_t>()>(
+                      [&]
+                      {
+                          return pictureOf(HdIndexImage(*hd, Seed(ImageKind::ShapeFill, width, height)),
+                                           [&](std::span<uint8_t> out) { FillHdIndices(*hd, command.Table, out); });
+                      })
+                : std::function<std::optional<uint32_t>()>(picture);
         const std::optional<std::pair<Quad, Quad>> place = BlitPlace(command.Blit, width, height, ReadsOutside);
 
         if (!place)
@@ -3287,7 +3379,7 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
 
         if (blendsOwn && smooth)
         {
-            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, BlitPixels::Blended);
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, true, BlitPixels::Blended);
         }
 
         // A frame part of the way to its next (an effect's, a tree's, a building's, or a mech's legs turning) shows the pack's in-between
@@ -3321,15 +3413,15 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
         if (blendsOwn && !smooth)
         {
-            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, false, BlitPixels::Blended);
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, false, BlitPixels::Blended);
         }
 
-        indices();
+        indices(shape);
         return;
     }
 
     BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, MCHdArt::SmoothEdges(command.ShapeTable));
-    indices();
+    indices(picture);
 }
 
 auto MCVulkanRenderer::HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table) -> HdEdges
@@ -3811,20 +3903,41 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     const std::span<const uint8_t> header =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum));
     const std::span<const uint8_t> data = header.subspan(0x18);
+    const int32_t headerRows = MCRead32(header, 0x14) - MCRead32(header, 0x0c) + 1;
+    const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
+    const bool translucent = command.Op == MCShapeOp::Alpha || command.Op == MCShapeOp::XlatAlpha;
+    // Port-only: whether the HD art pack's frame may show the shape (below), and whether it may be line art on a sharp
+    // screen, redrawn from the original's rows (below).
+    const bool hdOp = command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat || translucent;
+    const bool mayLineArt = (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) &&
+                            SharpScreenSurface(surface) && MCHdArt::LineArt(command.ShapeTable, command.ShapeNum);
+    const auto shownHd = [&]() -> std::shared_ptr<const MCHdArt::Frame>
+    {
+        std::shared_ptr<const MCHdArt::Frame> frame =
+            HdShape(command.ShapeTable, command.ShapeNum, boundsWidth, headerRows);
+        return frame != nullptr && HdPictureOf(*frame).has_value() ? frame : nullptr;
+    };
+
+    std::shared_ptr<const MCHdArt::Frame> hd = hdOp && !mayLineArt ? shownHd() : nullptr;
+    // Port-only: a version 2 HD frame's index picture stands for the original's rows, which a pack's shape table may
+    // leave out (SPEC-pack-v2.md's record 1): its indices where the original draws, its own size.
+    const bool fromHd = hd != nullptr && hd->Marked;
 
     // The whole shape when its header covers the rows drawn (so a shape scrolling past an edge keeps one atlas place).
-    const int32_t headerRows = MCRead32(header, 0x14) - MCRead32(header, 0x0c) + 1;
-    const int32_t rows = std::max(command.SkipRows + command.Rows, headerRows);
-    const MCOptionalRef<DataImage> found = AtlasForData(
-        data, Seed(ImageKind::Shape, 0, rows), "a shape",
-        [&]
-        {
-            Extent extent;
-            extent.Height = rows;
-            extent.Size = MCShapeRows::Extent(data, rows, extent.Width);
-            return extent;
-        },
-        [&](std::span<uint8_t> out, const Extent& extent) { MCShapeRows::Decode(data, rows, extent.Width, out); });
+    const int32_t rows = fromHd ? hd->OriginalHeight() : std::max(command.SkipRows + command.Rows, headerRows);
+    const MCOptionalRef<DataImage> found =
+        fromHd ? MCOptionalRef<DataImage>(AtlasForHdIndices(*hd, Seed(ImageKind::Shape, 0, rows)))
+               : AtlasForData(
+                     data, Seed(ImageKind::Shape, 0, rows), "a shape",
+                     [&]
+                     {
+                         Extent extent;
+                         extent.Height = rows;
+                         extent.Size = MCShapeRows::Extent(data, rows, extent.Width);
+                         return extent;
+                     },
+                     [&](std::span<uint8_t> out, const Extent& extent)
+                     { MCShapeRows::Decode(data, rows, extent.Width, out); });
 
     if (!found.has_value() || found->get().Measured.Width == 0)
     {
@@ -3841,8 +3954,9 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
         return;
     }
 
+    // The rows drawn, within the image's (a version 2 frame's may be fewer than a malformed header's rows drawn).
     const Quad at = {std::max(command.Left, command.Lo), command.Top, std::min(command.Left + width - 1, command.Hi),
-                     command.Top + command.Rows - 1};
+                     std::min(command.Top + command.Rows, command.Top - command.SkipRows + rows) - 1};
     const Quad from = {place->X + at[0] - command.Left, place->Y + command.SkipRows, 1, 1};
 
     if (at[2] < at[0])
@@ -3858,8 +3972,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     // place of any pack's copy; the original's draw keeps the indices.
     bool lineArt = false;
 
-    if ((command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) && SharpScreenSurface(surface) &&
-        MCHdArt::LineArt(command.ShapeTable, command.ShapeNum))
+    if (mayLineArt)
     {
         const std::vector<uint8_t> art = MCSharpPictures::LineArt(data, width, rows);
 
@@ -3936,20 +4049,20 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
         }
     };
 
-    const bool translucent = command.Op == MCShapeOp::Alpha || command.Op == MCShapeOp::XlatAlpha;
-
     // Port-only: a shape the HD art pack has a frame of keeps the original's indices (a translucent one's opaque
     // pixels') and is shown from the pack (its bounds: the header's), its edges smooth unless the frame holds its
     // blended pixels (an effect's; drawn through a table, XlatAlpha's haze, they take the table's change of colour:
     // draw.pshader's TableShift). A translucent shape's blended pixels that its frame leaves out (a shadow, glass) are
-    // drawn first, with smooth edges, so the frame's edge lies over them.
-    if (!lineArt && (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat || translucent))
+    // drawn first, with smooth edges, so the frame's edge lies over them. Line art the sharp lines didn't draw looks
+    // for its frame now.
+    if (!lineArt && hdOp)
     {
-        const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
+        if (mayLineArt)
+        {
+            hd = shownHd();
+        }
 
-        if (const std::shared_ptr<const MCHdArt::Frame> hd =
-                HdShape(command.ShapeTable, command.ShapeNum, boundsWidth, headerRows);
-            hd != nullptr && HdPictureOf(*hd).has_value())
+        if (hd != nullptr)
         {
             // The frame covers the bounds, which may be wider than the shape's widest row.
             const Quad hdAt = {at[0], at[1], std::min(command.Left + boundsWidth - 1, command.Hi), at[3]};

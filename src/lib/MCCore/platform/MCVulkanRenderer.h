@@ -395,6 +395,12 @@ public:
     int64_t HdDrawn() const { return _HdDrawn; }
 
     /// <summary>
+    /// Port-only: the shapes' images made from version 2 HD frames' index pictures so far, standing for the
+    /// original's rows (<see cref="HdIndexImage"/>).
+    /// </summary>
+    int64_t HdIndexImagesMade() const { return _HdIndexImagesMade; }
+
+    /// <summary>
     /// Port-only (HD movies), for the tests: the colours the GPU made of movie frame <paramref name="frame"/>
     /// (<see cref="MCHdArt::ColorFormat::Yuv420"/>; RGBA8 rows, its size), read back, waiting for the GPU. The frame
     /// must have been drawn, and its frame run, and be its movie's latest.
@@ -1255,6 +1261,17 @@ private:
     MCOptionalRef<DataImage> AtlasForData(std::span<const uint8_t> data, uint64_t seed, std::string_view what,
                                           const std::function<Extent()>& measure,
                                           const std::function<void(std::span<uint8_t>, const Extent&)>& decode);
+    /// <summary>
+    /// Port-only: the image of a shape drawn from a version 2 HD frame (<see cref="MCHdArt::Frame::Marked"/>, with
+    /// <paramref name="seed"/>), its index picture standing for the original's rows, which a pack's shape table may
+    /// leave out (SPEC-pack-v2.md's record 1): the frame's original size, found by the frame's number.
+    /// </summary>
+    DataImage& HdIndexImage(const MCHdArt::Frame& frame, uint64_t seed);
+    /// <summary>
+    /// <see cref="HdIndexImage"/>, in the atlas as the original's rows decode (MCShapeRows::Decode): each pixel the
+    /// original draws (MCHdArt::OriginalDrawsMark) its index, drawn; nothing elsewhere.
+    /// </summary>
+    DataImage& AtlasForHdIndices(const MCHdArt::Frame& frame, uint64_t seed);
     /// <summary>The frame's picture index of <paramref name="window"/>'s pixels (uploaded when new).</summary>
     std::optional<uint32_t> PictureFor(const MCWindow& window);
     /// <summary>
@@ -1551,6 +1568,11 @@ private:
     /// <summary>The images made from registered data, by the address they're read from and their seed.</summary>
     std::map<std::pair<MCAddressKey, uint64_t>, DataImage> _DataImages;
     /// <summary>
+    /// Port-only: the images made from version 2 HD frames' index pictures (<see cref="HdIndexImage"/>), by the frame's
+    /// number and their seed; let go with the atlas.
+    /// </summary>
+    std::map<std::pair<uint64_t, uint64_t>, DataImage> _HdIndexImages;
+    /// <summary>
     /// Port-only: the hashes of the shape tables nothing attached (<see cref="HdShape"/>), by the table's address, until
     /// its bytes change; none for a table outside the registered blocks.
     /// </summary>
@@ -1655,6 +1677,7 @@ private:
     /// <summary>Port-only: how each font's two-tone glyphs are layered, by the font's address, until its bytes change.</summary>
     std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
+    int64_t _HdIndexImagesMade = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
     std::optional<AuditedDraw> _Audited;
 

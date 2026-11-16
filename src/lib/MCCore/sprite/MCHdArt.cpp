@@ -3682,8 +3682,7 @@ bool MCHdArt::DrawsStrippedTables()
     return NumberedFolders() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
 }
 
-auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder)
-    -> std::expected<std::vector<uint8_t>, std::string_view>
+auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::expected<PackShapeTable, std::string_view>
 {
     constexpr std::string_view NotDrawn = "HD art doesn't draw stripped tables now";
     constexpr std::string_view NotVersion2 = "its folder isn't in a version 2 archive";
@@ -3724,6 +3723,14 @@ auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder)
 
         const std::span<const uint8_t> table = data.subspan(std::min(MCShape::TableStart(data), data.size()));
 
+        // The original's packet whole (stripping it would take its rows): its frames drawn from its rows where the
+        // pack lacks them, as without a pack.
+        if (const std::expected<std::vector<uint8_t>, std::string> rowless = MCPackRecords::ShapeTable(data);
+            rowless.has_value() && rowless->size() < data.size())
+        {
+            return PackShapeTable{.Bytes = std::vector<uint8_t>(data.begin(), data.end()), .Stripped = false};
+        }
+
         // Each frame it holds with a box is drawn from the pack, which must hold it: the table has no rows to draw.
         for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
         {
@@ -3736,7 +3743,7 @@ auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder)
             }
         }
 
-        return std::vector<uint8_t>(data.begin(), data.end());
+        return PackShapeTable{.Bytes = std::vector<uint8_t>(data.begin(), data.end())};
     }
 
     return refuse(NoRecord);
@@ -4564,6 +4571,9 @@ namespace
         if (fresh)
         {
             folder->second = FolderIndex(MCHdArt::PackFolder() / MCHdArt::ShapeTableFolder(hash), Naming::Number);
+            // Each table named by its bytes was read from the original's files to be named (the guard's).
+            MCHdArt::NoteOriginalRead("a shape table read from the original's files, found by its bytes' hash",
+                                      HashName(hash));
         }
 
         return folder->second;

@@ -2776,7 +2776,8 @@ namespace
 /// place of its packet (no rows: MCHdArt::Stripped), its pixels visited from its frames' index pictures as the
 /// original's rows visit them (MCHdArt::VisitShape), and with HD art off it takes its packet again
 /// (MCSpriteManager::RestoreOriginalShapes). A folder lacking one of its frames is loaded from the packet, which the
-/// guard of test runs notes (MCHdArt::GuardOriginalReads).
+/// guard of test runs notes (MCHdArt::GuardOriginalReads); given the packet whole as its record (the builder's for a
+/// folder the pack lacks frames of), from the pack with its rows, nothing read.
 /// </summary>
 TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's shapes, their pixels from the frames")
 {
@@ -2915,6 +2916,24 @@ TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's
     CHECK(!stripped->Stripped);
     CHECK(!MCHdArt::Stripped(stripped->FrameList()));
     CHECK(std::ranges::equal(stripped->FrameList(), originals[0]));
+
+    // The folder lacking a frame given its packet whole as its record (the builder's): loaded from the pack with its
+    // rows, nothing read of the original's.
+    facts[std::to_string(packets[1].Packet)] = FactsRecord(MCPackRecords::Type::ShapeTable, originals[1]);
+    WriteBytes(archive, BuildVersion2Archive(entries, facts));
+    MCHdArt::SetPackFolder({});
+    MCHdArt::SetPackFolder(scratch.Path());
+    sprites->DumpAll();
+    MCHdArt::GuardOriginalReads(true);
+    const size_t beforeWhole = sprites->ShapeTablesFromPack();
+    const std::shared_ptr<MCShape> whole = load(1);
+    CHECK(!whole->Stripped);
+    CHECK(std::ranges::equal(whole->FrameList(), originals[1]));
+    CHECK_EQ(sprites->ShapeTablesFromPack(), beforeWhole + 1);
+    const std::optional<std::vector<MCHdArt::GuardedRead>> wholeReads = MCHdArt::GuardedReads();
+    REQUIRE(wholeReads.has_value());
+    CHECK(wholeReads->empty());
+    MCHdArt::GuardOriginalReads(false);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }

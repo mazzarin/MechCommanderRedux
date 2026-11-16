@@ -91,6 +91,7 @@ namespace
             MCRegisteredBlock& shadow =
                 shadows.emplace_back(static_cast<size_t>(pak.GetPacketSize()), MCDataKind::Shapes);
             pak.ReadPacket(i, shadow.Bytes());
+            MCHdArt::NoteOriginalRead("a mech shadow's packet read from its PAK", std::format("packet {}", i));
         }
 
         return shadows;
@@ -269,16 +270,22 @@ auto MCSpriteManager::StrippedShape(const std::filesystem::path& folder, int32_t
                                     std::weak_ptr<MCAppearanceType> owner,
                                     std::function<MCRegisteredBlock()> readOriginal) -> std::shared_ptr<MCShape>
 {
-    const std::expected<std::vector<uint8_t>, std::string_view> table = MCHdArt::StrippedShapeTable(folder);
+    const std::expected<MCHdArt::PackShapeTable, std::string_view> table = MCHdArt::StrippedShapeTable(folder);
 
     if (!table.has_value())
     {
         return nullptr;
     }
 
-    std::shared_ptr<MCShape> shape = AddShape(*table, turnUsed, std::move(owner));
-    shape->Stripped = true;
-    shape->ReadOriginal = std::move(readOriginal);
+    // A record holding the original's packet whole is a shape as its PAK's would be, with nothing to read again.
+    std::shared_ptr<MCShape> shape = AddShape(table->Bytes, turnUsed, std::move(owner));
+    shape->Stripped = table->Stripped;
+
+    if (table->Stripped)
+    {
+        shape->ReadOriginal = std::move(readOriginal);
+    }
+
     ++_TablesFromPack;
     MCFrameLog::Count(MCShapeTablesFromPackCount);
     return shape;

@@ -19134,12 +19134,12 @@ namespace
     /// <summary>
     /// Whether the pack's record 1 for <paramref name="folder"/> stands for <paramref name="packet"/>, the original's: the
     /// game takes it (MCHdArt::StrippedShapeTable) and it is the packet stripped as the game strips one
-    /// (MCPackRecords::ShapeTable); else why not.
+    /// (MCPackRecords::ShapeTable), or the packet whole; else why not.
     /// </summary>
     void CheckStrippedTable(SpriteCheck& check, std::span<const uint8_t> packet, const std::filesystem::path& folder,
                             const std::string& where)
     {
-        const std::expected<std::vector<uint8_t>, std::string_view> taken = MCHdArt::StrippedShapeTable(folder);
+        const std::expected<MCHdArt::PackShapeTable, std::string_view> taken = MCHdArt::StrippedShapeTable(folder);
 
         if (!taken.has_value())
         {
@@ -19155,8 +19155,16 @@ namespace
             return;
         }
 
-        check.Note(*taken == *stripped ? "record 1: the original's packet stripped, every boxed frame held"
-                                       : "record 1: not the original's packet stripped",
+        if (!taken->Stripped)
+        {
+            check.Note(std::ranges::equal(taken->Bytes, packet) ? "record 1: the original's packet whole"
+                                                                : "record 1: not the original's packet whole",
+                       where);
+            return;
+        }
+
+        check.Note(taken->Bytes == *stripped ? "record 1: the original's packet stripped, every boxed frame held"
+                                             : "record 1: not the original's packet stripped",
                    where);
     }
 }

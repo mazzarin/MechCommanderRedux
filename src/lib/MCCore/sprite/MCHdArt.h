@@ -279,13 +279,25 @@ namespace MCHdArt
     /// </summary>
     bool DrawsStrippedTables();
 
+    /// <summary>Port-only: a shape table from a version 2 pack's record 1 (StrippedShapeTable).</summary>
+    struct PackShapeTable
+    {
+        std::vector<uint8_t> Bytes;
+        /// <summary>
+        /// Its frames' rows stripped (each frame it holds with a box drawn from the pack); else the original's packet
+        /// whole, rows and all, which the builder stores where the pack lacks some of its frames at their size.
+        /// </summary>
+        bool Stripped = true;
+    };
+
     /// <summary>
-    /// Port-only (record 1): the stripped shape table standing for the packet whose frames are in
-    /// <paramref name="folder"/> (FolderOf its key), when <see cref="DrawsStrippedTables"/> and the folder's archive, of
-    /// version 2, holds the record and a frame for each frame the table holds with a box; otherwise why not, in a few
-    /// words the same each time (the loader then reads the original's packet; --sprite-pack-check counts them).
+    /// Port-only (record 1): the shape table standing for the packet whose frames are in <paramref name="folder"/>
+    /// (FolderOf its key), when <see cref="DrawsStrippedTables"/> and the folder's archive, of version 2, holds the
+    /// record: stripped, when the archive holds a frame for each frame the table holds with a box; or the original's
+    /// packet whole (drawn from its rows as without a pack). Otherwise why not, in a few words the same each time (the
+    /// loader then reads the original's packet, which the guard notes; --sprite-pack-check counts them).
     /// </summary>
-    std::expected<std::vector<uint8_t>, std::string_view> StrippedShapeTable(const std::filesystem::path& folder);
+    std::expected<PackShapeTable, std::string_view> StrippedShapeTable(const std::filesystem::path& folder);
 
     /// <summary>Port-only: whether <paramref name="table"/> is an attached stripped shape's (MCShape::Stripped).</summary>
     bool Stripped(std::span<const uint8_t> table);

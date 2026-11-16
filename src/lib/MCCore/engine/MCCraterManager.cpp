@@ -93,6 +93,8 @@ auto MCCraterManager::Create(int32_t numCraters, std::string_view craterFileName
             std::vector<uint8_t>& shape = shapes[static_cast<size_t>(i)];
             shape.resize(static_cast<size_t>(packetFile.GetPacketSize()));
             packetFile.ReadPacket(i, shape);
+            MCHdArt::NoteOriginalRead("a crater's or footprint's packet read from its PAK",
+                                      std::format("{} packet {}", craterFileName, i));
         }
     }
 

@@ -2869,6 +2869,8 @@ namespace
         size_t ShadowDiffers = 0;
         size_t OtherDiffer = 0;
         std::map<std::string, size_t> Missing;
+        /// <summary>The shadow's pixels off the game's rule, by which way and the version 2 green.</summary>
+        std::map<std::string, size_t> ShadowOffBy;
 
         auto Add(const PackComparison& other) -> void
         {
@@ -2889,6 +2891,11 @@ namespace
             {
                 Missing[kind] += count;
             }
+
+            for (const auto& [kind, count] : other.ShadowOffBy)
+            {
+                ShadowOffBy[kind] += count;
+            }
         }
 
         [[nodiscard]] auto Text() const -> std::string
@@ -2898,6 +2905,11 @@ namespace
             for (const auto& [kind, count] : Missing)
             {
                 missing += std::format(" {}={}", kind, count);
+            }
+
+            for (const auto& [kind, count] : ShadowOffBy)
+            {
+                missing += std::format(" (shadow {}: {})", kind, count);
             }
 
             return std::format("{} entries, {} found ({} the same bytes), {} only in version 2; {} frames compared, {} "
@@ -2956,8 +2968,14 @@ namespace
             }
 
             const bool inShadow = MCHdArt::InShadowMark(marked.Indices[at + 1]);
+            const bool ruledShadow = MCHdArt::InShadowMark(ruled.Indices[at + 1]);
             shadow += inShadow ? 1 : 0;
-            shadowOff += inShadow != MCHdArt::InShadowMark(ruled.Indices[at + 1]) ? 1 : 0;
+            shadowOff += inShadow != ruledShadow ? 1 : 0;
+
+            if (inShadow != ruledShadow)
+            {
+                ++found.ShadowOffBy[std::format("{}{}", inShadow ? "added " : "dropped ", marked.Indices[at + 1])];
+            }
         }
 
         found.IndexChanged += changed != 0 ? 1 : 0;

@@ -399,6 +399,11 @@ public:
     /// original's rows (<see cref="HdIndexImage"/>).
     /// </summary>
     int64_t HdIndexImagesMade() const { return _HdIndexImagesMade; }
+    /// <summary>
+    /// Port-only: how many times a stripped shape table's rows were asked for (a version 2 pack's, drawn without its HD
+    /// frame: RowsGone), each drawn as nothing.
+    /// </summary>
+    int64_t StrippedRowsAsked() const { return _StrippedRowsAsked; }
 
     /// <summary>
     /// Port-only (HD movies), for the tests: the colours the GPU made of movie frame <paramref name="frame"/>
@@ -1272,6 +1277,12 @@ private:
     /// original draws (MCHdArt::OriginalDrawsMark) its index, drawn; nothing elsewhere.
     /// </summary>
     DataImage& AtlasForHdIndices(const MCHdArt::Frame& frame, uint64_t seed);
+
+    /// <summary>
+    /// Port-only: whether <paramref name="table"/> is a stripped shape table (sprite/MCHdArt.h's Stripped), with no rows
+    /// to make frame <paramref name="shapeNum"/>'s image from: counted (StrippedRowsAsked), logged the first time.
+    /// </summary>
+    bool RowsGone(std::span<const uint8_t> table, int32_t shapeNum);
     /// <summary>The frame's picture index of <paramref name="window"/>'s pixels (uploaded when new).</summary>
     std::optional<uint32_t> PictureFor(const MCWindow& window);
     /// <summary>
@@ -1678,6 +1689,7 @@ private:
     std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
     int64_t _HdIndexImagesMade = 0;
+    int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
     std::optional<AuditedDraw> _Audited;
 

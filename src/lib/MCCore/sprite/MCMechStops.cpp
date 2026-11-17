@@ -228,7 +228,7 @@ namespace
 
             for (int32_t frame = 0; drawn && !draws && frame < frames; ++frame)
             {
-                VfxShapeVisit(shape->FrameList(), frame, [&](int32_t, int32_t, uint8_t) { draws = true; });
+                MCHdArt::VisitShape(shape->FrameList(), frame, [&](int32_t, int32_t, uint8_t) { draws = true; });
             }
 
             drawn = drawn && draws;
@@ -335,8 +335,8 @@ namespace
 
         for (uint32_t frame = 0; frame < frames; ++frame)
         {
-            VfxShapeVisit(shape.FrameList(), static_cast<int32_t>(frame),
-                          [&](int32_t x, int32_t y, uint8_t) { pixels[frame].emplace_back(x, y); });
+            MCHdArt::VisitShape(shape.FrameList(), static_cast<int32_t>(frame),
+                                [&](int32_t x, int32_t y, uint8_t) { pixels[frame].emplace_back(x, y); });
         }
 
         return pixels;

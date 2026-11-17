@@ -276,6 +276,55 @@ namespace
                            settings.Below ? "below" : "level");
     }
 
+    /// <summary>
+    /// Port-only (<c>-hdguard</c>, MCHdArt::GuardOriginalReads): says each kind of original art read the guard noted in
+    /// the log, the frame log and benchmarks.txt, or that it couldn't guard (no version 2 pack drawn, as when the app
+    /// didn't find its pack). Whether the run passes: the guard off, or on with a version 2 pack drawn and no read noted
+    /// (a run that drew no version 2 pack fails: it guarded nothing).
+    /// </summary>
+    bool ReportGuardedReads()
+    {
+        const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
+
+        if (!reads.has_value())
+        {
+            return true;
+        }
+
+        std::vector<std::string> lines;
+        size_t total = 0;
+        const bool guarding = MCHdArt::GuardingOriginalReads();
+
+        if (!guarding)
+        {
+            lines.emplace_back("HD guard: no version 2 HD pack drawn, nothing guarded: the run fails");
+        }
+
+        for (const MCHdArt::GuardedRead& read : *reads)
+        {
+            std::string examples;
+
+            for (const std::string& example : read.Examples)
+            {
+                examples += (examples.empty() ? "" : "; ") + example;
+            }
+
+            lines.push_back(std::format("HD guard: {} x {} (e.g. {})", read.Count, read.Kind, examples));
+            total += read.Count;
+        }
+
+        lines.push_back(std::format("HD guard: {} reads of the original's art in all", total));
+
+        for (const std::string& line : lines)
+        {
+            SDL_Log("%s", line.c_str());
+            MCFrameLog::Line(line);
+            AddSummary(line);
+        }
+
+        return guarding && total == 0;
+    }
+
     [[noreturn]] void Finish(MCRun& run)
     {
         const MCFrameLog::MCTally pan = MCFrameLog::TakeTally();
@@ -293,11 +342,13 @@ namespace
         run.Phase = MCPhase::Done;
         MCInput::HoldInput(false);
         MCFrameLog::Line(line);
-        MCFrameLog::Close();
-        MCHdArt::CloseTrace();
         AddSummary(line);
         SDL_Log("%s", line.c_str());
-        KillTheGame(0);
+        // A run under -hdguard fails on any original art read that the HD pack is drawn in place of, or with none drawn.
+        const bool passed = ReportGuardedReads();
+        MCFrameLog::Close();
+        MCHdArt::CloseTrace();
+        KillTheGame(passed ? 0 : 1);
     }
 
     /// <summary>The benchmark's frame, before the scenario's logic runs (its callback was added first).</summary>

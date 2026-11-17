@@ -10,6 +10,7 @@
 #include "lib/MCWorkers.h"
 #include "main/MCMissionGlobals.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCPaletteNight.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCWeatherPace.h"
@@ -1120,8 +1121,8 @@ namespace
         }
 
         std::vector<std::pair<int16_t, int16_t>> pixels;
-        VfxShapeVisit(table, frame, [&](int32_t x, int32_t y, uint8_t)
-                      { pixels.emplace_back(static_cast<int16_t>(reverse ? -x : x), static_cast<int16_t>(y)); });
+        MCHdArt::VisitShape(table, frame, [&](int32_t x, int32_t y, uint8_t)
+                            { pixels.emplace_back(static_cast<int16_t>(reverse ? -x : x), static_cast<int16_t>(y)); });
 
         if (pixels.empty())
         {
@@ -1176,8 +1177,8 @@ namespace
 
         // The pixels' middles.
         std::vector<std::pair<float, float>> pixels;
-        VfxShapeVisit(table, frame, [&](int32_t x, int32_t y, uint8_t)
-                      { pixels.emplace_back(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f); });
+        MCHdArt::VisitShape(table, frame, [&](int32_t x, int32_t y, uint8_t)
+                            { pixels.emplace_back(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f); });
 
         if (pixels.empty())
         {

@@ -1,5 +1,8 @@
 #include "stdafx.h"
 #include "sprite/MCPackRecords.h"
+#include "sprite/MCShape.h"
+#include "vfx/MCAgShape.h"
+#include "vfx/MCVfxFunctions.h"
 
 namespace
 {
@@ -186,6 +189,64 @@ auto MCPackRecords::OverlaySpots(std::span<const MCKnownGroundNames> sets) -> st
         }
     }
 
+    return out;
+}
+
+auto MCPackRecords::ShapeTable(std::span<const uint8_t> packet) -> std::expected<std::vector<uint8_t>, std::string>
+{
+    constexpr size_t CountAt = 4;
+    constexpr size_t DirectoryAt = 8;
+    constexpr size_t EntryBytes = 8;
+    constexpr size_t OffsetBytes = 4;
+    constexpr std::array<uint8_t, 2> TranslucentMark = {3, 0};
+    const size_t start = MCShape::TableStart(packet);
+
+    if (packet.size() < start + DirectoryAt || !VfxIsShapeTable(packet.subspan(start)))
+    {
+        return std::unexpected(std::format("a packet of {} bytes holds no shape table", packet.size()));
+    }
+
+    const std::span<const uint8_t> table = packet.subspan(start);
+    const int32_t count = MCVfxRead32(table, CountAt);
+
+    if (count < 0 || DirectoryAt + static_cast<uint64_t>(count) * EntryBytes > table.size())
+    {
+        return std::unexpected(std::format("a shape table of {} bytes lists {} frames", table.size(), count));
+    }
+
+    const size_t directoryEnd = DirectoryAt + static_cast<size_t>(count) * EntryBytes;
+    std::vector<std::optional<size_t>> offsets(static_cast<size_t>(count));
+    std::vector<uint8_t> headers;
+
+    for (int32_t frame = 0; frame < count; ++frame)
+    {
+        if (!MCVfxHasShape(table, frame))
+        {
+            continue;
+        }
+
+        offsets[static_cast<size_t>(frame)] = directoryEnd + headers.size();
+        const std::span<const uint8_t> header = MCVfxShape(table, frame).first(sizeof(MCVfxShapeHeader));
+        headers.insert(headers.end(), header.begin(), header.end());
+
+        if (MCAgShapeIsAlpha(table, frame))
+        {
+            headers.insert(headers.end(), TranslucentMark.begin(), TranslucentMark.end());
+        }
+    }
+
+    std::vector<uint8_t> out(packet.begin(), packet.begin() + static_cast<ptrdiff_t>(start + DirectoryAt));
+    const size_t tableEnd = directoryEnd + headers.size();
+
+    for (int32_t frame = 0; frame < count; ++frame)
+    {
+        const size_t entry = DirectoryAt + static_cast<size_t>(frame) * EntryBytes;
+        Put(out, static_cast<uint32_t>(offsets[static_cast<size_t>(frame)].value_or(tableEnd)));
+        const std::span<const uint8_t> rest = table.subspan(entry + OffsetBytes, EntryBytes - OffsetBytes);
+        out.insert(out.end(), rest.begin(), rest.end());
+    }
+
+    out.insert(out.end(), headers.begin(), headers.end());
     return out;
 }
 

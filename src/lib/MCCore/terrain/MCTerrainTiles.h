@@ -40,6 +40,14 @@ struct MCTileReads
 /// file, the rest from the normal one. A <c>.pre</c> file in the terrain folder lists (as int32 indices) the tiles to
 /// preload.
 /// </remarks>
+/// <summary>
+/// Port-only (MCHdArt::GuardOriginalReads, test runs alone): the kinds of tile read from a set's files the guard notes:
+/// what the HD pack names the slot there (an overlay, a ground tile) or neither.
+/// </summary>
+inline constexpr std::string_view MCOverlayReadFromFile = "an overlay read from its tile file";
+inline constexpr std::string_view MCGroundTileReadFromFile = "a ground tile read from its tile file";
+inline constexpr std::string_view MCUnnamedTileReadFromFile = "a tile the HD pack doesn't name read from its file";
+
 class MCTerrainTiles
 {
 public:

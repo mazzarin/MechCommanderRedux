@@ -263,6 +263,63 @@ namespace MCHdArt
     /// pack); none when HD art isn't drawn, or the pack has no such archive, an archive of version 1 or no such record.
     /// </summary>
     std::optional<std::vector<uint8_t>> ArchiveFacts(const std::filesystem::path& folder, uint16_t type);
+
+    /// <summary>
+    /// Port-only (a version 2 pack, SPEC-pack-v2.md's "A frame"): whether the archive standing for
+    /// <paramref name="folder"/> (below the pack) is of version 2, so its frames' green says which pixels the original
+    /// draws (<see cref="OriginalDrawsMark"/>) apart from those its indices spread to; false when HD art isn't drawn or
+    /// the pack has no such archive.
+    /// </summary>
+    bool MarksOriginalPixels(const std::filesystem::path& folder);
+
+    /// <summary>
+    /// Port-only (a version 2 pack, SPEC-pack-v2.md's record 1): whether shapes may be loaded from the pack's stripped
+    /// shape tables: HD art drawn from numbered folders, by the GPU alone (the software renderer and mirror mode draw the
+    /// original's rows).
+    /// </summary>
+    bool DrawsStrippedTables();
+
+    /// <summary>Port-only: a shape table from a version 2 pack's record 1 (StrippedShapeTable).</summary>
+    struct PackShapeTable
+    {
+        std::vector<uint8_t> Bytes;
+        /// <summary>
+        /// Its frames' rows stripped (each frame it holds with a box drawn from the pack); else the original's packet
+        /// whole, rows and all, which the builder stores where the pack lacks some of its frames at their size.
+        /// </summary>
+        bool Stripped = true;
+    };
+
+    /// <summary>
+    /// Port-only (record 1): the shape table standing for the packet whose frames are in <paramref name="folder"/>
+    /// (FolderOf its key), when <see cref="DrawsStrippedTables"/> and the folder's archive, of version 2, holds the
+    /// record: stripped, when the archive holds a frame for each frame the table holds with a box; or the original's
+    /// packet whole (drawn from its rows as without a pack). Otherwise why not, in a few words the same each time (the
+    /// loader then reads the original's packet, which the guard notes; --sprite-pack-check counts them).
+    /// </summary>
+    std::expected<PackShapeTable, std::string_view> StrippedShapeTable(const std::filesystem::path& folder);
+
+    /// <summary>Port-only: whether <paramref name="table"/> is an attached stripped shape's (MCShape::Stripped).</summary>
+    bool Stripped(std::span<const uint8_t> table);
+
+    /// <summary>
+    /// Port-only: VfxShapeVisit's pixels of frame <paramref name="frame"/> of <paramref name="table"/>, a stripped
+    /// table's from its HD frame's index picture where the original draws (<see cref="OriginalDrawsMark"/>), the frame
+    /// read if need be; none when the pack has no such frame.
+    /// </summary>
+    void VisitShape(std::span<const uint8_t> table, int32_t frame,
+                    const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel);
+
+    /// <summary>
+    /// Port-only: the HD frame that stands for frame <paramref name="frame"/> of a stripped table
+    /// <paramref name="table"/> (<see cref="Stripped"/>), read if need be; none for a table that isn't stripped, a frame
+    /// it doesn't hold, or one the pack lacks. Its Id names the frame where its bytes can't: a stripped frame's bytes
+    /// are its header alone, alike in frames of the same bounds.
+    /// </summary>
+    std::shared_ptr<const Frame> StrippedFrame(std::span<const uint8_t> table, int32_t frame);
+
+    /// <summary>Port-only: forgets <paramref name="table"/>'s attachment (its shape takes another packet).</summary>
+    void Detach(std::span<const uint8_t> table);
     std::filesystem::path FolderOf(const ObjectShapeKey& key);
     std::filesystem::path FolderOf(const CraterShapeKey& key);
 
@@ -437,6 +494,36 @@ namespace MCHdArt
 
     /// <summary>Port-only: adds a note to the HD trace, if one is open (OpenTrace): <c>N time text</c>.</summary>
     void TraceNote(std::string_view text);
+
+    /// <summary>
+    /// Port-only, for test runs alone (the tests; <c>-hdguard</c>, which no player passes): while on, each read of the
+    /// original's art that a version 2 pack is drawn in place of (a shape table, a ground tile or overlay) is noted by its
+    /// kind, so the run can fail on it (SPEC-pack-v2.md's done: no original art read). Setting it clears what it noted.
+    /// The game reads the art as without the guard: a mod's art, which the pack lacks, still comes from its files.
+    /// </summary>
+    void GuardOriginalReads(bool on);
+
+    /// <summary>Port-only: whether the guard is on (GuardOriginalReads) with a version 2 pack drawn.</summary>
+    bool GuardingOriginalReads();
+
+    /// <summary>
+    /// Port-only: notes a read of the original's art, of <paramref name="kind"/> (which reads are told apart by) and
+    /// <paramref name="what"/> (an example), while the guard is on with a version 2 pack drawn (GuardingOriginalReads).
+    /// </summary>
+    void NoteOriginalRead(std::string_view kind, std::string_view what);
+
+    /// <summary>Port-only: one kind of read the guard noted: how many, and the first few.</summary>
+    struct GuardedRead
+    {
+        std::string Kind;
+        size_t Count = 0;
+        std::vector<std::string> Examples;
+    };
+
+    /// <summary>
+    /// Port-only: the reads the guard noted since it was set on (GuardOriginalReads), by kind; none while it's off.
+    /// </summary>
+    std::optional<std::vector<GuardedRead>> GuardedReads();
 
     /// <summary>
     /// Port-only: <see cref="ReadPacketsAhead"/> of one packet, without its turn middles, as a set's: folder
@@ -648,6 +735,12 @@ namespace MCHdArt
     /// is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindOverlay(std::span<const uint8_t> shape, int32_t width, int32_t height);
+
+    /// <summary>
+    /// Port-only (terrain/MCGroundNames.h): as FindOverlay, for the overlay whose key (<see cref="TerrainTileKey"/>) is
+    /// <paramref name="key"/>, known without its bytes.
+    /// </summary>
+    std::shared_ptr<const Frame> FindOverlayByKey(uint64_t key, int32_t width, int32_t height);
 
     /// <summary>
     /// The name the pack keeps a shape table loaded outside the sprite, crater and icon files under (a tree's shadow, a

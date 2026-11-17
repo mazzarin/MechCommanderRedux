@@ -2313,6 +2313,22 @@ auto MCVulkanRenderer::AtlasForData(std::span<const uint8_t> data, uint64_t seed
     return found;
 }
 
+auto MCVulkanRenderer::RowsGone(std::span<const uint8_t> table, int32_t shapeNum) -> bool
+{
+    if (!MCHdArt::Stripped(table))
+    {
+        return false;
+    }
+
+    if (_StrippedRowsAsked++ == 0)
+    {
+        SDL_Log("MCVulkanRenderer: frame %d of a stripped shape table drawn without its HD frame, as nothing",
+                static_cast<int>(shapeNum));
+    }
+
+    return true;
+}
+
 auto MCVulkanRenderer::HdIndexImage(const MCHdArt::Frame& frame, uint64_t seed) -> DataImage&
 {
     BeginRecording();
@@ -3328,13 +3344,19 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             ImageOf(data, Seed(ImageKind::ShapeFill, width, height), "a transformed shape",
                     [&]
                     {
+                        // Port-only: a stripped table's frame without its HD frame has nothing to draw it from.
+                        if (RowsGone(command.ShapeTable, command.ShapeNum))
+                        {
+                            return Extent{};
+                        }
+
                         Extent extent{0, width, height};
                         int32_t widest = 0;
                         extent.Size = MCShapeRows::Extent(data, height, widest);
                         return extent;
                     });
 
-        if (!found.has_value())
+        if (!found.has_value() || found->get().Measured.Width == 0)
         {
             return std::nullopt;
         }
@@ -3932,6 +3954,13 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                      [&]
                      {
                          Extent extent;
+
+                         // Port-only: a stripped table's frame without its HD frame has nothing to draw it from.
+                         if (RowsGone(command.ShapeTable, command.ShapeNum))
+                         {
+                             return extent;
+                         }
+
                          extent.Height = rows;
                          extent.Size = MCShapeRows::Extent(data, rows, extent.Width);
                          return extent;

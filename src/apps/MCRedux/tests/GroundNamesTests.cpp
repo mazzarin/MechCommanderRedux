@@ -145,63 +145,6 @@ namespace
                            TileHeaderBytes + (static_cast<size_t>(name.Height) + 2) * sizeof(uint32_t));
     }
 
-    /// <summary>An overlay packet's shape 0 (after its one-shape table) and its row table's place in the shape.</summary>
-    constexpr size_t OverlayShapeAt = 16;
-    constexpr size_t OverlayRowTableAt = 12;
-    /// <summary>A row's code from this up is that many literals less it; below it a run of the byte after it.</summary>
-    constexpr uint8_t OverlayLiterals = 0x80;
-    constexpr uint8_t OverlaySeeThrough = 0xff;
-
-    /// <summary>
-    /// The index picture overlay <paramref name="packet"/>'s own pixels make (R8G8, as MCHdArt::Frame::Indices: its
-    /// frame a column wider than its rows, each drawn pixel's green HasIndex): what the original draws, which an HD
-    /// frame's indices spread past. Empty where a row's codes run past the packet.
-    /// </summary>
-    auto OverlayOwnIndices(std::span<const uint8_t> packet, const MCGroundName& name) -> std::vector<uint8_t>
-    {
-        const std::span<const uint8_t> shape = packet.subspan(OverlayShapeAt);
-        std::vector<uint8_t> indices(static_cast<size_t>(name.Width) * name.Height * MCHdArt::IndexBytes);
-
-        for (int32_t row = 0; row < name.Height; ++row)
-        {
-            uint16_t at = 0;
-            std::memcpy(&at, shape.data() + OverlayRowTableAt + static_cast<size_t>(row) * sizeof(at), sizeof(at));
-            const size_t line = static_cast<size_t>(row) * name.Width;
-
-            for (int32_t x = 0; x < name.Width - 1;)
-            {
-                if (at + size_t{1} >= shape.size())
-                {
-                    return {};
-                }
-
-                const uint8_t code = shape[at++];
-                const bool literals = code >= OverlayLiterals;
-                const int32_t count = literals ? code - OverlayLiterals : code;
-
-                for (int32_t n = 0; n < count; ++n, ++x)
-                {
-                    const uint8_t index = literals ? shape[at++] : shape[at];
-
-                    if (at > shape.size() || x >= name.Width - 1)
-                    {
-                        return {};
-                    }
-
-                    if (literals || index != OverlaySeeThrough)
-                    {
-                        indices[(line + x) * MCHdArt::IndexBytes] = index;
-                        indices[(line + x) * MCHdArt::IndexBytes + 1] = MCHdArt::HasIndex;
-                    }
-                }
-
-                at += literals ? 0 : 1;
-            }
-        }
-
-        return indices;
-    }
-
     /// <summary>
     /// The mine tiles (a laid mine's, the crater, to <paramref name="last"/>: a cell whose corner stands more than two
     /// levels over its lowest picks a slot past the crater) a draw or a read has looked at: read, or found missing.
@@ -237,12 +180,12 @@ namespace
         {
             const bool drawn = own[at + 1] != 0;
 
-            if (drawn && (hd[at + 1] == 0 || hd[at] != own[at]))
+            if (drawn && (!MCHdArt::OriginalDrawsMark(hd[at + 1]) || hd[at] != own[at]))
             {
                 return "an overlay whose HD frame's indices differ where the original draws";
             }
 
-            spread += !drawn && hd[at + 1] != 0 ? 1 : 0;
+            spread += !drawn && MCHdArt::OriginalDrawsMark(hd[at + 1]) ? 1 : 0;
         }
 
         return spread == 0 ? "an overlay not rebuilt, its HD frame's indices the original's"
@@ -642,7 +585,8 @@ TEST_CASE_ISOLATED("ground names: a mission's HD ground asked by name is what it
 /// pack's HD frame (its indices) and the shape the program's table carries for it (MCRebuildGroundTile, PLAN.md's
 /// first-use item 10), held to the tile's packet byte for byte; those that aren't, counted by why, with an example each.
 /// Every overlay too (MCRebuildGroundOverlay, with its hot spot from the table): from its own pixels, which must come
-/// back byte for byte (the encoding is the original's), and from its HD frame, counted by why not.
+/// back byte for byte (the encoding is the original's), and from its HD frame, counted by why not, and held to come
+/// back byte for byte from a version 2 pack's.
 /// Reads the pack and the game, writes nothing.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --ground-rebuild-check rebuilds the original's ground tiles from a pack's HD frames")
@@ -720,7 +664,7 @@ TEST_CASE_ISOLATED("tool: --ground-rebuild-check rebuilds the original's ground 
                 MCHdArt::FindOverlay(overlay->Tile, name.Width, name.Height);
             const std::optional<MCGroundOverlaySpot> spot = known->get().SpotAt(slot);
             REQUIRE(spot.has_value());
-            const std::vector<uint8_t> own = OverlayOwnIndices(packet, name);
+            const std::vector<uint8_t> own = MCGroundOverlayIndices(packet, name);
             const std::optional<std::vector<uint8_t>> fromOwn = MCRebuildGroundOverlay(own, name, *spot);
             note(fromOwn.has_value() && std::ranges::equal(*fromOwn, packet)
                      ? std::string(RebuiltOwn)
@@ -755,9 +699,14 @@ TEST_CASE_ISOLATED("tool: --ground-rebuild-check rebuilds the original's ground 
         };
 
         CHECK_EQ(countOf(Rebuilt), known->get().Tiles.size());
-        // From the HD frames only once the pack marks the pixels the original draws apart from those its indices
-        // spread to (PLAN.md's item 10): counted above, not held.
         CHECK_EQ(countOf(RebuiltOwn), known->get().Overlays.size());
+
+        // From the HD frames once the pack marks the pixels the original draws apart from those its indices spread to
+        // (a version 2 pack's overlays, PLAN.md's item 10); a version 1 pack's are counted above, not held.
+        if (MCHdArt::MarksOriginalPixels(MCHdArt::OverlayFolder))
+        {
+            CHECK_EQ(countOf(RebuiltOverlay), known->get().Overlays.size());
+        }
     }
 
     GHdArt = 0;

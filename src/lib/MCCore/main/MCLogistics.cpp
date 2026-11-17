@@ -674,7 +674,9 @@ auto MCLogistics::AttachHdArt() -> void
         {
             if (!icons[i].Empty())
             {
-                MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, MCHdArt::IconShapeKey{std::format("{}{:02}", prefix, i)});
+                const MCHdArt::IconShapeKey key{std::format("{}{:02}", prefix, i)};
+                MCHdArt::NoteOriginalRead("an icon read from its shape file", key.File);
+                MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, key);
             }
 
             if (repairs[i].Empty())

@@ -32,6 +32,12 @@ public:
     /// </summary>
     std::span<const uint8_t> FrameList() const;
 
+    /// <summary>
+    /// Where <paramref name="packet"/>'s VFX shape table starts: at 0 for a bare table (its "1.10" version first), else
+    /// after the gesture header.
+    /// </summary>
+    static size_t TableStart(std::span<const uint8_t> packet);
+
     /// <summary>Whether the table holds a frame to draw (a table listing only frames it doesn't hold has none).</summary>
     bool HasArt() const;
 
@@ -49,8 +55,26 @@ public:
     /// facings beside its own, nearest first: sprite/MCHdArt.h's SetNeighbours), kept with HdFolder.
     /// </summary>
     std::vector<std::filesystem::path> HdNeighbours;
+    /// <summary>
+    /// Port-only: whether the packet is a version 2 HD pack's stripped shape table (SPEC-pack-v2.md's record 1: the
+    /// original's table with its headers and no rows), loaded in place of the original's while HD art draws on the GPU
+    /// alone (sprite/MCHdArt.h's StrippedShapeTable). <see cref="ReadOriginal"/> reads the original's packet again
+    /// (MCSpriteManager::RestoreOriginalShapes).
+    /// </summary>
+    bool Stripped = false;
+    /// <summary>Port-only: reads a stripped shape's original packet (an empty block when it can't).</summary>
+    std::function<MCRegisteredBlock()> ReadOriginal;
+
+    /// <summary>
+    /// Port-only: takes <paramref name="packet"/> in place of the shape's own, checking its table as the constructor
+    /// does.
+    /// </summary>
+    void TakePacket(MCRegisteredBlock packet);
 
 private:
+    /// <summary>Checks the packet's shape table (the constructor's checks), setting <see cref="_FrameStart"/>.</summary>
+    void CheckTable();
+
     /// <summary>The packet.</summary>
     MCRegisteredBlock _Packet;
     /// <summary>Where the shape table starts in the packet; none when it is bad.</summary>

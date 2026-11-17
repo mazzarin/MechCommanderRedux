@@ -146,6 +146,63 @@ namespace
     }
 } // namespace
 
+std::vector<uint8_t> MCGroundOverlayIndices(std::span<const uint8_t> packet, const MCGroundName& name)
+{
+    // The rows hold a column fewer than the frame.
+    const int32_t width = name.Width - 1;
+    const size_t rowTableEnd =
+        OverlayTableBytes + OverlayRowsAt + static_cast<size_t>(std::max(name.Height, 0)) * OverlayOffsetBytes;
+
+    if (width <= 0 || name.Height <= 0 || packet.size() < rowTableEnd)
+    {
+        return {};
+    }
+
+    const std::span<const uint8_t> shape = packet.subspan(OverlayTableBytes);
+    std::vector<uint8_t> indices(static_cast<size_t>(name.Width) * name.Height * MCHdArt::IndexBytes);
+
+    for (int32_t row = 0; row < name.Height; ++row)
+    {
+        uint16_t offset = 0;
+        std::memcpy(&offset, shape.data() + OverlayRowsAt + static_cast<size_t>(row) * OverlayOffsetBytes,
+                    sizeof(offset));
+        size_t at = offset;
+        const size_t line = static_cast<size_t>(row) * name.Width;
+
+        for (int32_t x = 0; x < width;)
+        {
+            if (at + 1 >= shape.size())
+            {
+                return {};
+            }
+
+            const uint8_t code = shape[at++];
+            const bool literals = code >= OverlayLiterals;
+            const int32_t count = literals ? code - OverlayLiterals : code;
+
+            if (x + count > width || (literals && at + count > shape.size()))
+            {
+                return {};
+            }
+
+            for (int32_t n = 0; n < count; ++n, ++x)
+            {
+                const uint8_t index = literals ? shape[at++] : shape[at];
+
+                if (literals || index != OverlaySeeThrough)
+                {
+                    indices[(line + x) * MCHdArt::IndexBytes] = index;
+                    indices[(line + x) * MCHdArt::IndexBytes + 1] = MCHdArt::HasIndex;
+                }
+            }
+
+            at += literals ? 0 : 1;
+        }
+    }
+
+    return indices;
+}
+
 std::optional<MCGroundOverlaySpot> MCWorkOutGroundOverlaySpot(MCTerrainTiles& tiles, int32_t slot)
 {
     if (!MCGroundOverlayOf(tiles, slot).has_value())
@@ -209,8 +266,8 @@ std::optional<std::vector<uint8_t>> MCRebuildGroundOverlay(std::span<const uint8
 
         const size_t line = static_cast<size_t>(row) * frameWidth * MCHdArt::IndexBytes;
         PutOverlayRow(
-            packet, width,
-            [&](int32_t x) { return indices[line + static_cast<size_t>(x) * MCHdArt::IndexBytes + 1] != 0; },
+            packet, width, [&](int32_t x)
+            { return MCHdArt::OriginalDrawsMark(indices[line + static_cast<size_t>(x) * MCHdArt::IndexBytes + 1]); },
             [&](int32_t x) { return indices[line + static_cast<size_t>(x) * MCHdArt::IndexBytes]; });
     }
 
@@ -402,7 +459,8 @@ std::optional<std::vector<uint8_t>> MCRebuildGroundTile(std::span<const uint8_t>
         putOffset(row, packet.size());
         const std::span<const uint8_t> line =
             indices.subspan(static_cast<size_t>(row) * width * MCHdArt::IndexBytes, width * MCHdArt::IndexBytes);
-        const auto drawn = [&line](int32_t x) { return line[static_cast<size_t>(x) * MCHdArt::IndexBytes + 1] != 0; };
+        const auto drawn = [&line](int32_t x)
+        { return MCHdArt::OriginalDrawsMark(line[static_cast<size_t>(x) * MCHdArt::IndexBytes + 1]); };
         int32_t first = 0;
 
         while (first < width && !drawn(first))

@@ -178,7 +178,8 @@ std::span<const MCKnownGroundNames> MCGroundNamesInUse();
 /// <summary>
 /// Port-only (PLAN.md's first-use item 10): the original's packet of the ground tile <paramref name="name"/> names,
 /// rebuilt from its HD frame's <paramref name="indices"/> (R8G8 per original pixel, as MCHdArt::Frame keeps them: R its
-/// palette index, G not 0 where drawn) and <paramref name="shape"/>, laid out as the original's tiles are: the header,
+/// palette index, G where the original draws MCHdArt::OriginalDrawsMark's) and <paramref name="shape"/>, laid out as
+/// the original's tiles are: the header,
 /// the rows' table (each row's start, the tip's, the packet's end), each row one run from its first drawn pixel (an
 /// empty row no bytes), then the tip. None unless the bytes up to its last row's end are those the name hashes
 /// (MCHdArt::TerrainTileKey), so a pack or table that doesn't match the game's tiles leaves them to be read.
@@ -192,10 +193,20 @@ std::optional<std::vector<uint8_t>> MCRebuildGroundTile(std::span<const uint8_t>
 /// laid out as the original's overlays are: a shape table of one fast shape, its header, its rows' table (each row's
 /// start, the rows' end, the shape's end), each row's see-through pixels as runs and every stretch of drawn ones as
 /// literals (at most 127 each, the frame's last column left out, as the original's rows leave it), then a blank row.
-/// The indices must mark drawn only the pixels the original draws: the shipped pack's overlay frames spread their
-/// indices a few pixels past them, marked the same, so they aren't rebuilt from it (PLAN.md's item 10). None unless the
-/// bytes the name hashes (FastShapeSize's, as MCGroundOverlayOf takes them) are the name's, so a pack or table that
-/// doesn't match the game's overlays leaves them to be read.
+/// Its frame must be a version 2 pack's (MCHdArt::MarksOriginalPixels), which marks the pixels its indices spread to
+/// apart: a version 1 pack's overlay frames spread their indices a few pixels past the original's, marked as drawn, so
+/// they aren't rebuilt (PLAN.md's item 10). None unless the bytes the name hashes (FastShapeSize's, as
+/// MCGroundOverlayOf takes them) are the name's, so a pack or table that doesn't match the game's overlays leaves them
+/// to be read.
 /// </summary>
 std::optional<std::vector<uint8_t>> MCRebuildGroundOverlay(std::span<const uint8_t> indices, const MCGroundName& name,
                                                            MCGroundOverlaySpot spot);
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): the index picture overlay <paramref name="packet"/>'s own pixels make (R8G8,
+/// as MCHdArt::Frame::Indices: its frame, <paramref name="name"/>'s size, a column wider than its rows, each drawn
+/// pixel's green HasIndex), what MCRebuildGroundOverlay rebuilds it from: what the original draws, which an HD frame's
+/// indices spread past. Empty for a packet too short for its rows' table, or where a row's codes run past the packet or
+/// its width.
+/// </summary>
+std::vector<uint8_t> MCGroundOverlayIndices(std::span<const uint8_t> packet, const MCGroundName& name);

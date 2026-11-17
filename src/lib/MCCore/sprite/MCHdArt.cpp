@@ -7,11 +7,15 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCMemoryRoom.h"
+#include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCThreadPriority.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCInBetween.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCSpriteMath.h"
+#include "sprite/MCPackRecords.h"
+#include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
 
 #include <array>
@@ -253,6 +257,8 @@ namespace
         uint32_t Folder = 0;
         /// <summary>Whether its frames keep their own edges (MCHdArt::KeepsFrameEdges).</summary>
         bool KeepsEdges = false;
+        /// <summary>Port-only: whether the table is a stripped one, without rows (MCShape::Stripped).</summary>
+        bool Stripped = false;
     };
 
     /// <summary>
@@ -599,9 +605,13 @@ namespace
         uint64_t Version = 1;
         /// <summary>The folder found for the pack when none is set (the user folder's HD, else the game folder's).</summary>
         std::optional<std::filesystem::path> FoundFolder;
-        /// <summary>The pack's pack.cfg, once read: whether its format is one this code reads, and its sprite files.</summary>
+        /// <summary>
+        /// The pack's pack.cfg, once read: whether its format is one this code reads, the format (1 without the file),
+        /// and its sprite files.
+        /// </summary>
         bool PackFileLooked = false;
         bool PackFormatReadable = true;
+        int32_t PackFormatRead = 1;
         std::optional<std::string> PackSprites;
         /// <summary>This game's sprite files (MCHdArt::SetSpriteFiles; empty: not known yet).</summary>
         std::string SpriteFiles;
@@ -3620,6 +3630,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.FolderExists.reset();
     state.PackFileLooked = false;
     state.PackFormatReadable = true;
+    state.PackFormatRead = 1;
     state.PackSprites.reset();
     state.SpritesMatch.reset();
     state.Listed.reset();
@@ -3778,6 +3789,8 @@ namespace
             return;
         }
 
+        state.PackFormatRead = *format;
+
         if (MCFitResult<std::string> sprites = file.Read<std::string>(PackSpritesKey); sprites.has_value())
         {
             state.PackSprites = std::move(*sprites);
@@ -3893,7 +3906,7 @@ namespace
     /// (MCHdArt::NumberedFolders: HD art is on, and the pack was made from this game's sprite files).
     /// </summary>
     void AttachTo(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner,
-                  const std::filesystem::path& folder, bool keepsEdges = false)
+                  const std::filesystem::path& folder, bool keepsEdges = false, bool stripped = false)
     {
         if (owner == nullptr || table.empty() || !MCHdArt::NumberedFolders())
         {
@@ -3915,7 +3928,8 @@ namespace
             std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Owner.expired(); });
         }
 
-        state.Sequences[MCAddressKey::OfData(table)] = Sequence{owner, FolderIndex(path, Naming::Number), keepsEdges};
+        state.Sequences[MCAddressKey::OfData(table)] =
+            Sequence{owner, FolderIndex(path, Naming::Number), keepsEdges, stripped};
     }
 
     /// <summary>
@@ -3984,6 +3998,150 @@ auto MCHdArt::ArchiveFacts(const std::filesystem::path& folder, uint16_t type) -
     return std::nullopt;
 }
 
+bool MCHdArt::MarksOriginalPixels(const std::filesystem::path& folder)
+{
+    if (!Active())
+    {
+        return false;
+    }
+
+    const std::shared_ptr<MCHdArchive> archive = ArchiveFor(PackFolder() / folder);
+    return archive != nullptr && archive->File->IsVersion2();
+}
+
+bool MCHdArt::DrawsStrippedTables()
+{
+    return NumberedFolders() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+}
+
+auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::expected<PackShapeTable, std::string_view>
+{
+    constexpr std::string_view NotDrawn = "HD art doesn't draw stripped tables now";
+    constexpr std::string_view NotVersion2 = "its folder isn't in a version 2 archive";
+    constexpr std::string_view NoRecord = "its folder has no shape table record";
+    constexpr std::string_view LacksFrame = "its archive lacks a frame the table holds with a box";
+
+    // Each refusal reads the packet from its PAK (the guard's, with why).
+    const auto refuse = [&folder](std::string_view why)
+    {
+        NoteOriginalRead(std::format("a shape table read from its PAK: {}", why), MCFileSystem::ToUtf8(folder));
+        return std::unexpected(why);
+    };
+
+    if (!DrawsStrippedTables())
+    {
+        return refuse(NotDrawn);
+    }
+
+    State& state = TheState();
+    const FrameFolder::InArchive& archived =
+        ArchiveOf(state.Folders[FolderIndex(PackFolder() / folder, Naming::Number)]);
+
+    if (archived.Archive == nullptr || !archived.Archive->File->IsVersion2())
+    {
+        return refuse(NotVersion2);
+    }
+
+    // The folder in its archive: the start of its frames' names without the separator after it.
+    const std::string_view inArchive =
+        std::string_view(archived.Prefix).substr(0, archived.Prefix.empty() ? 0 : archived.Prefix.size() - 1);
+
+    for (const auto& [type, data] : archived.Archive->File->Facts(inArchive))
+    {
+        if (type != static_cast<uint16_t>(MCPackRecords::Type::ShapeTable))
+        {
+            continue;
+        }
+
+        const std::span<const uint8_t> table = data.subspan(std::min(MCShape::TableStart(data), data.size()));
+
+        // The original's packet whole (stripping it would take its rows): its frames drawn from its rows where the
+        // pack lacks them, as without a pack.
+        if (const std::expected<std::vector<uint8_t>, std::string> rowless = MCPackRecords::ShapeTable(data);
+            rowless.has_value() && rowless->size() < data.size())
+        {
+            return PackShapeTable{.Bytes = std::vector<uint8_t>(data.begin(), data.end()), .Stripped = false};
+        }
+
+        // Each frame it holds with a box is drawn from the pack, which must hold it: the table has no rows to draw.
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+
+            if (MCVfxHasShape(table, frame) && bounds.Width > 0.0f && bounds.Height > 0.0f &&
+                !archived.Archive->File->Find(std::format("{}{}{}", archived.Prefix, frame, HdfExtension)))
+            {
+                return refuse(LacksFrame);
+            }
+        }
+
+        return PackShapeTable{.Bytes = std::vector<uint8_t>(data.begin(), data.end())};
+    }
+
+    return refuse(NoRecord);
+}
+
+bool MCHdArt::Stripped(std::span<const uint8_t> table)
+{
+    const MCOptionalRef<const Sequence> sequence = AttachedSequence(table);
+    return sequence.has_value() && sequence->get().Stripped;
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::StrippedFrame(std::span<const uint8_t> table, int32_t frame)
+{
+    if (!Stripped(table) || !MCVfxHasShape(table, frame))
+    {
+        return nullptr;
+    }
+
+    const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+    std::shared_ptr<const Frame> hd =
+        Find(table, frame, static_cast<int32_t>(bounds.Width), static_cast<int32_t>(bounds.Height));
+    return hd != nullptr && hd->Marked ? hd : nullptr;
+}
+
+void MCHdArt::VisitShape(std::span<const uint8_t> table, int32_t frame,
+                         const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel)
+{
+    if (!Stripped(table))
+    {
+        VfxShapeVisit(table, frame, pixel);
+        return;
+    }
+
+    const std::shared_ptr<const Frame> hd = StrippedFrame(table, frame);
+
+    if (hd == nullptr)
+    {
+        return;
+    }
+
+    const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+    const auto width = static_cast<int32_t>(bounds.Width);
+    const auto height = static_cast<int32_t>(bounds.Height);
+    const auto minX = static_cast<int32_t>(bounds.MinX);
+    const auto minY = static_cast<int32_t>(bounds.MinY);
+
+    for (int32_t y = 0; y < height; ++y)
+    {
+        for (int32_t x = 0; x < width; ++x)
+        {
+            const size_t at =
+                (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * IndexBytes;
+
+            if (at + 1 < hd->Indices.size() && OriginalDrawsMark(hd->Indices[at + 1]))
+            {
+                pixel(minX + x, minY + y, hd->Indices[at]);
+            }
+        }
+    }
+}
+
+void MCHdArt::Detach(std::span<const uint8_t> table)
+{
+    TheState().Sequences.erase(MCAddressKey::OfData(table));
+}
+
 std::filesystem::path MCHdArt::FolderOf(const ObjectShapeKey& key)
 {
     return std::filesystem::path(ObjectFolder) / MCFileSystem::FromUtf8(key.ShapeFile) /
@@ -4004,7 +4162,7 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& 
 {
     if (shape != nullptr)
     {
-        AttachTo(shape->FrameList(), shape, FolderOf(key));
+        AttachTo(shape->FrameList(), shape, FolderOf(key), false, shape->Stripped);
     }
 }
 
@@ -4012,7 +4170,7 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey
 {
     if (shape != nullptr)
     {
-        AttachTo(shape->FrameList(), shape, FolderOf(key));
+        AttachTo(shape->FrameList(), shape, FolderOf(key), false, shape->Stripped);
     }
 }
 
@@ -4080,7 +4238,7 @@ void MCHdArt::AttachFolder(const std::shared_ptr<MCShape>& shape)
 {
     if (shape != nullptr && !shape->HdFolder.empty())
     {
-        AttachTo(shape->FrameList(), shape, shape->HdFolder);
+        AttachTo(shape->FrameList(), shape, shape->HdFolder, false, shape->Stripped);
         NoteNeighbours(*shape);
     }
 }
@@ -4720,6 +4878,11 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8
     return FindHashed(OverlayFolder, shape, width, height);
 }
 
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlayByKey(uint64_t key, int32_t width, int32_t height)
+{
+    return FindKeyed(OverlayFolder, key, width, height);
+}
+
 uint64_t MCHdArt::ShapeTableHash(std::span<const uint8_t> table)
 {
     return TerrainTileHash(table);
@@ -4740,6 +4903,9 @@ namespace
         if (fresh)
         {
             folder->second = FolderIndex(MCHdArt::PackFolder() / MCHdArt::ShapeTableFolder(hash), Naming::Number);
+            // Each table named by its bytes was read from the original's files to be named (the guard's).
+            MCHdArt::NoteOriginalRead("a shape table read from the original's files, found by its bytes' hash",
+                                      HashName(hash));
         }
 
         return folder->second;
@@ -4843,6 +5009,81 @@ void MCHdArt::TraceNote(std::string_view text)
         std::scoped_lock lock(trace.Lock);
         trace.Out << std::format("N\t{}\t{}\n", TraceNow(trace), text);
     }
+}
+
+namespace
+{
+    /// <summary>
+    /// Port-only (MCHdArt::GuardOriginalReads): the reads of the original's art noted while the guard is on, by kind,
+    /// each with its first few; whether it's on (tested without the lock).
+    /// </summary>
+    struct Guard
+    {
+        std::mutex Lock;
+        std::atomic<bool> On = false;
+        std::map<std::string, MCHdArt::GuardedRead, std::less<>> Reads;
+    };
+
+    Guard& TheGuard()
+    {
+        static Guard guard;
+        return guard;
+    }
+
+    /// <summary>The examples kept of each kind of read the guard notes.</summary>
+    constexpr size_t GuardExamples = 4;
+} // namespace
+
+void MCHdArt::GuardOriginalReads(bool on)
+{
+    Guard& guard = TheGuard();
+    std::scoped_lock lock(guard.Lock);
+    guard.Reads.clear();
+    guard.On = on;
+}
+
+bool MCHdArt::GuardingOriginalReads()
+{
+    return TheGuard().On.load(std::memory_order_relaxed) && Active() && TheState().PackFormatRead >= PackFormat;
+}
+
+void MCHdArt::NoteOriginalRead(std::string_view kind, std::string_view what)
+{
+    if (!GuardingOriginalReads())
+    {
+        return;
+    }
+
+    Guard& guard = TheGuard();
+    std::scoped_lock lock(guard.Lock);
+    auto found = guard.Reads.find(kind);
+
+    if (found == guard.Reads.end())
+    {
+        found = guard.Reads.emplace(std::string(kind), GuardedRead{.Kind = std::string(kind)}).first;
+    }
+
+    if (found->second.Examples.size() < GuardExamples)
+    {
+        found->second.Examples.emplace_back(what);
+    }
+
+    found->second.Count++;
+}
+
+auto MCHdArt::GuardedReads() -> std::optional<std::vector<GuardedRead>>
+{
+    Guard& guard = TheGuard();
+    std::scoped_lock lock(guard.Lock);
+
+    if (!guard.On)
+    {
+        return std::nullopt;
+    }
+
+    std::vector<GuardedRead> reads;
+    std::ranges::transform(guard.Reads, std::back_inserter(reads), [](const auto& entry) { return entry.second; });
+    return reads;
 }
 
 size_t MCHdArt::ArchivesOpenedAhead()

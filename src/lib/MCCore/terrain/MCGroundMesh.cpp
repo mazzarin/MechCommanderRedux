@@ -516,6 +516,38 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (PLAN.md's first-use item 10): whether the overlays the program's table names are rebuilt from their HD
+    /// frames rather than read: the HD ground drawn, and the pack's overlays of version 2, whose frames mark the pixels
+    /// the original draws apart from those their indices spread to (MCRebuildGroundOverlay).
+    /// </summary>
+    bool HdOverlaysRebuilt(const MCTerrain& terrain)
+    {
+        return HdGroundDrawn(terrain) && MCHdArt::MarksOriginalPixels(MCHdArt::OverlayFolder);
+    }
+
+    /// <summary>Whether <paramref name="known"/> names slot <paramref name="slot"/>'s overlay and carries its hot spot.</summary>
+    bool OverlayKnown(const MCKnownGroundNames& known, int32_t slot)
+    {
+        return known.At(slot).Overlay.has_value() && known.SpotAt(slot).has_value();
+    }
+
+    /// <summary>
+    /// The mines' tiles MCTerrainReadMinesAhead left unread for MCTerrainReadHdTiles to rebuild from their HD frames, and
+    /// the terrain whose they are; the load's, on the game's thread.
+    /// </summary>
+    struct MinesLeft
+    {
+        std::weak_ptr<const MCTerrain> Of;
+        std::vector<int32_t> Slots;
+    };
+
+    MinesLeft& MinesLeftToRebuild()
+    {
+        static MinesLeft left;
+        return left;
+    }
+
+    /// <summary>
     /// The map's ground tiles, each once, as the ground mesh draws them (MCTerrainReadHdTiles): none while HD art is off
     /// or the software renderer draws.
     /// </summary>
@@ -627,8 +659,8 @@ void MCTerrainLeaveRebuiltTiles(const MCTerrain& terrain, std::vector<int32_t>& 
         return;
     }
 
-    // The map's ground tiles the table holds, as RebuildGroundFromHd goes through them; any other slot (the .pre's
-    // that the map doesn't name, an overlay) is read.
+    // The map's ground tiles the table holds, and its overlays with a version 2 pack, as RebuildGroundFromHd goes
+    // through them; any other slot (the .pre's that the map doesn't name, an overlay of a version 1 pack) is read.
     std::unordered_set<int32_t> rebuilt;
 
     for (const int32_t slot : GroundSlots(*terrain.MapBlocks))
@@ -636,6 +668,17 @@ void MCTerrainLeaveRebuiltTiles(const MCTerrain& terrain, std::vector<int32_t>& 
         if (known->get().ShapeAt(slot).has_value())
         {
             rebuilt.insert(slot);
+        }
+    }
+
+    if (HdOverlaysRebuilt(terrain))
+    {
+        for (const int32_t slot : OverlaySlots(*terrain.MapBlocks))
+        {
+            if (OverlayKnown(*known, slot))
+            {
+                rebuilt.insert(slot);
+            }
         }
     }
 
@@ -734,7 +777,42 @@ void MCTerrainReadMinesAhead(MCMinesAhead cells)
         MCHdArt::ReadOverlaysAhead(NamedAhead(*known, slots, &MCGroundSlotNames::Overlay));
     }
 
-    const MCTileReads read = terrain->Tiles->ReadTiles(slots);
+    // With a version 2 pack, those the table names are rebuilt from their HD frames with the ground
+    // (MCTerrainReadHdTiles) rather than read.
+    std::vector<int32_t> toRead;
+    size_t left = 0;
+
+    if (known.has_value() && HdOverlaysRebuilt(*terrain))
+    {
+        MinesLeft& mines = MinesLeftToRebuild();
+
+        if (mines.Of.lock() != terrain)
+        {
+            mines = MinesLeft{terrain, {}};
+        }
+
+        for (const int32_t slot : slots)
+        {
+            if (!OverlayKnown(*known, slot))
+            {
+                toRead.push_back(slot);
+                continue;
+            }
+
+            ++left;
+
+            if (!std::ranges::contains(mines.Slots, slot))
+            {
+                mines.Slots.push_back(slot);
+            }
+        }
+    }
+    else
+    {
+        toRead = slots;
+    }
+
+    const MCTileReads read = terrain->Tiles->ReadTiles(toRead);
 
     if (hdGround && !known.has_value())
     {
@@ -754,8 +832,8 @@ void MCTerrainReadMinesAhead(MCMinesAhead cells)
     if (MCFrameLog::Enabled())
     {
         MCFrameLog::Note(std::format(
-            "mines' tiles ({}): {}, {} read in {} reads, {:.1f} ms",
-            cells == MCMinesAhead::EveryCell ? "every cell's" : "the mined cells'", slots.size(), read.Tiles,
+            "mines' tiles ({}): {}, {} left to rebuild from HD, {} read in {} reads, {:.1f} ms",
+            cells == MCMinesAhead::EveryCell ? "every cell's" : "the mined cells'", slots.size(), left, read.Tiles,
             read.Reads, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
     }
 }
@@ -778,6 +856,66 @@ void MCTerrainReadHdTilesAhead()
 
 namespace
 {
+    /// <summary>
+    /// Port-only (PLAN.md's first-use item 10): with a version 2 pack (HdOverlaysRebuilt), each overlay of the map and of
+    /// its mines (those MCTerrainReadMinesAhead left) that the terrain's load left out, rebuilt from its HD frame
+    /// (MCRebuildGroundOverlay) and put in the cache; one that isn't (no frame, or not the overlay's bytes) is added to
+    /// <paramref name="unread"/>. How many it rebuilt.
+    /// </summary>
+    size_t RebuildOverlaysFromHd(MCTerrain& terrain, const MCKnownGroundNames& known, std::vector<int32_t>& unread)
+    {
+        MinesLeft& mines = MinesLeftToRebuild();
+        std::vector<int32_t> slots = OverlaySlots(*terrain.MapBlocks);
+
+        if (mines.Of.lock().get() == &terrain)
+        {
+            for (const int32_t slot : mines.Slots)
+            {
+                if (!std::ranges::contains(slots, slot))
+                {
+                    slots.push_back(slot);
+                }
+            }
+        }
+
+        mines = MinesLeft{};
+
+        if (!HdOverlaysRebuilt(terrain))
+        {
+            return 0;
+        }
+
+        MCTerrainTiles& tiles = *terrain.Tiles;
+        size_t rebuilt = 0;
+
+        for (const int32_t slot : slots)
+        {
+            const MCOptionalRef<const MCTerrainTile> cached = tiles.Slot(slot);
+
+            if (!OverlayKnown(known, slot) || !cached.has_value() || cached->get().Missing ||
+                !cached->get().TileData().empty())
+            {
+                continue;
+            }
+
+            const MCGroundName name = *known.At(slot).Overlay;
+            const std::shared_ptr<const MCHdArt::Frame> frame =
+                MCHdArt::FindOverlayByKey(name.Key, name.Width, name.Height);
+            const std::optional<std::vector<uint8_t>> packet =
+                frame != nullptr ? MCRebuildGroundOverlay(frame->Indices, name, *known.SpotAt(slot)) : std::nullopt;
+
+            if (packet.has_value() && tiles.Put(slot, *packet))
+            {
+                ++rebuilt;
+                continue;
+            }
+
+            unread.push_back(slot);
+        }
+
+        return rebuilt;
+    }
+
     /// <summary>
     /// MCTerrainReadHdTiles for a tile set the program knows (<paramref name="known"/>): each of the map's ground tiles'
     /// HD frames in hand by name, and each original tile not cached rebuilt from its frame, or read where it can't be.
@@ -829,24 +967,27 @@ namespace
             unread.push_back(slot);
         }
 
+        const size_t overlays = RebuildOverlaysFromHd(terrain, known, unread);
         const MCTileReads read = tiles.ReadTiles(unread);
 
         // A pack that doesn't match the game's tiles costs only the reads, so say so where it would go unseen.
         if (!unread.empty())
         {
-            SDL_Log("HD art: %zu of the map's %zu ground tiles weren't rebuilt from the pack (no frame, or not the "
-                    "tile's bytes), so they were read",
-                    unread.size(), unread.size() + rebuilt);
+            SDL_Log(
+                "HD art: %zu of the map's %zu ground tiles and overlays weren't rebuilt from the pack (no frame, or "
+                "not the tile's bytes), so they were read",
+                unread.size(), unread.size() + rebuilt + overlays);
         }
 
         if (MCFrameLog::Enabled())
         {
             MCFrameLog::Note(std::format(
-                "ground tiles: {} rebuilt from HD, {} read in {} reads, {:.1f} ms", rebuilt, read.Tiles, read.Reads,
+                "ground tiles: {} rebuilt from HD, {} overlays rebuilt from HD, {} read in {} reads, {:.1f} ms",
+                rebuilt, overlays, read.Tiles, read.Reads,
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
         }
 
-        return MCGroundRebuilt{rebuilt, read.Tiles};
+        return MCGroundRebuilt{rebuilt, read.Tiles, overlays};
     }
 } // namespace
 

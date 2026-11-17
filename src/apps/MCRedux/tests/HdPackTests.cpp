@@ -413,6 +413,69 @@ namespace
     constexpr uint64_t ZstdHash = 0xfaa3c4740cbbd29bull;
     constexpr std::string_view ZstdEnd = "the Raven runs.\n";
 
+    /// <summary>
+    /// Zstandard dictionaries made by zstd's ZDICT_finalizeDictionary (1.5.7) from lines of mechs' moves, the same
+    /// content with ID 1 and with ID 2, and DictionaryText packed against the first (level 19, with its checksum: 36
+    /// bytes, 79 without the dictionary).
+    /// </summary>
+    constexpr std::array<uint8_t, 436> DictionaryOne = {
+        0x37, 0xa4, 0x30, 0xec, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x10, 0xf8, 0xec, 0x06, 0xff, 0x5f, 0x2f, 0xf7, 0x88,
+        0x48, 0x19, 0x43, 0x40, 0x40, 0x40, 0x20, 0x10, 0x6c, 0xd4, 0x6c, 0x84, 0x88, 0x88, 0xc8, 0x03, 0x54, 0xa0,
+        0x40, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0xc1, 0xf3, 0x52, 0x4a, 0x29, 0xa5, 0xaa, 0xaa, 0x07, 0x64, 0xc0, 0x80, 0x56, 0x83, 0xc1, 0x60,
+        0x30, 0x18, 0x0c, 0x06, 0x83, 0xc1, 0x30, 0x0c, 0xc3, 0x30, 0x0c, 0xc3, 0x30, 0x0c, 0xc3, 0x18, 0x63, 0x8c,
+        0x31, 0x66, 0x76, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x54, 0x68, 0x65,
+        0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x6c, 0x6b, 0x73, 0x20, 0x61, 0x74, 0x20, 0x64, 0x61,
+        0x77, 0x6e, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64,
+        0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x72, 0x69, 0x64, 0x67, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d,
+        0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x65, 0x61, 0x73,
+        0x74, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x6c, 0x6b, 0x73,
+        0x20, 0x61, 0x74, 0x20, 0x64, 0x75, 0x73, 0x6b, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61,
+        0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x70, 0x61, 0x73, 0x73, 0x3b, 0x20,
+        0x74, 0x68, 0x65, 0x20, 0x4d, 0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65,
+        0x73, 0x20, 0x77, 0x65, 0x73, 0x74, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20,
+        0x72, 0x75, 0x6e, 0x73, 0x20, 0x61, 0x74, 0x20, 0x6e, 0x6f, 0x6f, 0x6e, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20,
+        0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x67, 0x61,
+        0x74, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d, 0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69,
+        0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x6e, 0x6f, 0x72, 0x74, 0x68, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52,
+        0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x69, 0x74, 0x73, 0x20, 0x61, 0x74, 0x20, 0x6e, 0x69, 0x67, 0x68,
+        0x74, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73,
+        0x20, 0x74, 0x68, 0x65, 0x20, 0x62, 0x72, 0x69, 0x64, 0x67, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d,
+        0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x73, 0x6f, 0x75,
+        0x74, 0x68, 0x2e, 0x0a};
+    constexpr std::array<uint8_t, 436> DictionaryTwo = {
+        0x37, 0xa4, 0x30, 0xec, 0x02, 0x00, 0x00, 0x00, 0x0b, 0x10, 0xf8, 0xec, 0x06, 0xff, 0x5f, 0x2f, 0xf7, 0x88,
+        0x48, 0x19, 0x43, 0x40, 0x40, 0x40, 0x20, 0x10, 0x6c, 0xd4, 0x6c, 0x84, 0x88, 0x88, 0xc8, 0x03, 0x54, 0xa0,
+        0x40, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0xc1, 0xf3, 0x52, 0x4a, 0x29, 0xa5, 0xaa, 0xaa, 0x07, 0x64, 0xc0, 0x80, 0x56, 0x83, 0xc1, 0x60,
+        0x30, 0x18, 0x0c, 0x06, 0x83, 0xc1, 0x30, 0x0c, 0xc3, 0x30, 0x0c, 0xc3, 0x30, 0x0c, 0xc3, 0x18, 0x63, 0x8c,
+        0x31, 0x66, 0x76, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x54, 0x68, 0x65,
+        0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x6c, 0x6b, 0x73, 0x20, 0x61, 0x74, 0x20, 0x64, 0x61,
+        0x77, 0x6e, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64,
+        0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x72, 0x69, 0x64, 0x67, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d,
+        0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x65, 0x61, 0x73,
+        0x74, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x6c, 0x6b, 0x73,
+        0x20, 0x61, 0x74, 0x20, 0x64, 0x75, 0x73, 0x6b, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61,
+        0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x70, 0x61, 0x73, 0x73, 0x3b, 0x20,
+        0x74, 0x68, 0x65, 0x20, 0x4d, 0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65,
+        0x73, 0x20, 0x77, 0x65, 0x73, 0x74, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20,
+        0x72, 0x75, 0x6e, 0x73, 0x20, 0x61, 0x74, 0x20, 0x6e, 0x6f, 0x6f, 0x6e, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20,
+        0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x67, 0x61,
+        0x74, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d, 0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69,
+        0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x6e, 0x6f, 0x72, 0x74, 0x68, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52,
+        0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x69, 0x74, 0x73, 0x20, 0x61, 0x74, 0x20, 0x6e, 0x69, 0x67, 0x68,
+        0x74, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73,
+        0x20, 0x74, 0x68, 0x65, 0x20, 0x62, 0x72, 0x69, 0x64, 0x67, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d,
+        0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x73, 0x6f, 0x75,
+        0x74, 0x68, 0x2e, 0x0a};
+    constexpr std::array<uint8_t, 36> DictionaryFrame = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x25, 0x01, 0x5e, 0xb5, 0x00, 0x00, 0x30, 0x54, 0x68, 0x20, 0x54, 0x2e, 0x0a, 0x05,
+        0xf0, 0x1e, 0x82, 0x88, 0x1b, 0x46, 0xb1, 0x86, 0xb6, 0x16, 0x32, 0x7a, 0x14, 0x06, 0xb6, 0x9f, 0x5a, 0xba};
+    constexpr std::string_view DictionaryText =
+        "The Raven runs at dusk; the Atlas holds the ridge; the Mad Cat circles north. The Raven runs.\n";
+
     uint64_t Fnv(std::span<const uint8_t> bytes)
     {
         uint64_t hash = 0xcbf29ce484222325ull;
@@ -516,18 +579,24 @@ namespace
         return record;
     }
 
-    /// <summary>A version 2 archive's stream to write (BuildVersion2Streams): its entries, and its kind.</summary>
+    /// <summary>
+    /// A version 2 archive's stream to write (BuildVersion2Streams): its entries, its kind, and what it stores in place
+    /// of its entries' bytes, packed by Codec against Dictionary (empty: their bytes, stored as they are).
+    /// </summary>
     struct Version2Stream
     {
         std::vector<ArchiveEntry> Entries;
         MCFastFile::StreamKind Kind = MCFastFile::StreamKind::Packet;
+        std::vector<uint8_t> Packed;
+        uint8_t Codec = 0;
+        uint16_t Dictionary = 0;
     };
 
     /// <summary>
-    /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="streams"/>, each stored as it is (codec 0), in their
-    /// order, and its entries (their stored bytes as they unpack, no sharing) in theirs: each found by its path's key,
-    /// each folder its first name is in by its own, with the facts <paramref name="facts"/> gives a folder (its
-    /// records, FactsRecord's).
+    /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="streams"/>, each stored as it is (codec 0) or as
+    /// packed (Version2Stream::Packed), in their order, and its entries (their stored bytes as they unpack, no sharing)
+    /// in theirs: each found by its path's key, each folder its first name is in by its own, with the facts
+    /// <paramref name="facts"/> gives a folder (its records, FactsRecord's).
     /// </summary>
     std::vector<uint8_t> BuildVersion2Streams(const std::vector<Version2Stream>& streams,
                                               const std::map<std::string, std::vector<uint8_t>>& facts = {})
@@ -535,31 +604,43 @@ namespace
         constexpr size_t HeaderBytes = 64;
         constexpr size_t FolderRowBytes = 16;
         constexpr size_t StreamRowBytes = 24;
+        constexpr size_t StreamCodecAt = 16;
         constexpr size_t StreamKindAt = 17;
+        constexpr size_t StreamDictionaryAt = 18;
         constexpr size_t EntryRowBytes = 20;
         constexpr uint16_t Format = 2;
         std::vector<std::pair<uint64_t, std::array<uint32_t, 3>>> rows;
         std::set<uint64_t> folders;
         std::vector<uint8_t> data;
-        // Each stream's start in the data.
+        // Each stream's start in the data, and its bytes unpacked.
         std::vector<size_t> starts;
+        std::vector<uint32_t> unpacked;
 
         for (uint32_t number = 0; number < streams.size(); ++number)
         {
+            const Version2Stream& stream = streams[number];
             starts.push_back(data.size());
+            uint32_t at = 0;
 
-            for (const ArchiveEntry& entry : streams[number].Entries)
+            for (const ArchiveEntry& entry : stream.Entries)
             {
-                rows.push_back({MCFastFile::PathKey(entry.Name),
-                                {number, static_cast<uint32_t>(data.size() - starts.back()),
-                                 static_cast<uint32_t>(entry.Stored.size())}});
-                data.insert(data.end(), entry.Stored.begin(), entry.Stored.end());
+                rows.push_back(
+                    {MCFastFile::PathKey(entry.Name), {number, at, static_cast<uint32_t>(entry.Stored.size())}});
+                at += static_cast<uint32_t>(entry.Stored.size());
+
+                if (stream.Packed.empty())
+                {
+                    data.insert(data.end(), entry.Stored.begin(), entry.Stored.end());
+                }
 
                 if (const size_t cut = entry.Name.find('\\'); cut != std::string::npos)
                 {
                     folders.insert(MCFastFile::PathKey(std::string_view(entry.Name).substr(0, cut)));
                 }
             }
+
+            data.insert(data.end(), stream.Packed.begin(), stream.Packed.end());
+            unpacked.push_back(at);
         }
 
         std::map<uint64_t, std::span<const uint8_t>> factsOf;
@@ -602,8 +683,10 @@ namespace
             const auto bytes = static_cast<uint32_t>(end - starts[number]);
             PutAt(table, at, dataAt + starts[number]);
             PutAt(table, at + 8, bytes);
-            PutAt(table, at + 12, bytes);
+            PutAt(table, at + 12, unpacked[number]);
+            PutAt(table, at + StreamCodecAt, streams[number].Codec);
             PutAt(table, at + StreamKindAt, std::to_underlying(streams[number].Kind));
+            PutAt(table, at + StreamDictionaryAt, streams[number].Dictionary);
             at += StreamRowBytes;
         }
 
@@ -643,7 +726,101 @@ namespace
     std::vector<uint8_t> BuildVersion2Archive(const std::vector<ArchiveEntry>& entries,
                                               const std::map<std::string, std::vector<uint8_t>>& facts = {})
     {
-        return BuildVersion2Streams({Version2Stream{entries, MCFastFile::StreamKind::Packet}}, facts);
+        return BuildVersion2Streams({Version2Stream{.Entries = entries}}, facts);
+    }
+
+    /// <summary>A version 2 stream's codec: Zstandard (SPEC-pack-v2.md's streams).</summary>
+    constexpr uint8_t ZstdCodec = 2;
+
+    /// <summary>
+    /// A pack's <c>dicts.hdd</c> holding <paramref name="dictionaries"/> by number, in their order, its head giving
+    /// <paramref name="count"/> of them (none: how many there are).
+    /// </summary>
+    std::vector<uint8_t> DictionariesFile(
+        const std::vector<std::pair<uint16_t, std::span<const uint8_t>>>& dictionaries,
+        std::optional<uint16_t> count = std::nullopt)
+    {
+        constexpr uint16_t Format = 2;
+        constexpr size_t HeadBytes = 8;
+        constexpr size_t DictionaryHeadBytes = 6;
+        std::vector<uint8_t> file(HeadBytes);
+        std::ranges::copy(std::string_view("MCD2"), file.begin());
+        PutAt(file, 4, Format);
+        PutAt(file, 6, count.value_or(static_cast<uint16_t>(dictionaries.size())));
+
+        for (const auto& [number, bytes] : dictionaries)
+        {
+            const size_t at = file.size();
+            file.resize(at + DictionaryHeadBytes);
+            PutAt(file, at, number);
+            PutAt(file, at + 2, static_cast<uint32_t>(bytes.size()));
+            file.insert(file.end(), bytes.begin(), bytes.end());
+        }
+
+        return file;
+    }
+
+    /// <summary>
+    /// A Zstandard frame of <paramref name="content"/> in raw blocks that names dictionary <paramref name="id"/> in its
+    /// header, as one packed against it does, with its checksum: the decoder checks both, and the content needs no
+    /// dictionary to come out (the game has no Zstandard packer to make a real one).
+    /// </summary>
+    std::vector<uint8_t> RawZstdFrame(std::span<const uint8_t> content, uint8_t id)
+    {
+        // The descriptor: a 4-byte content size (bits 6-7: 2), one segment (bit 5), a checksum (bit 2) and a 1-byte
+        // dictionary ID (bits 0-1: 1). Each block's 3-byte head: whether it's the last (bit 0), its type (bits 1-2: 0,
+        // raw) and its size (from bit 3), at most 128 KB.
+        constexpr std::array<uint8_t, 4> Magic = {0x28, 0xb5, 0x2f, 0xfd};
+        constexpr uint8_t Descriptor = 0xa5;
+        constexpr size_t MostBlockBytes = 128 * 1024;
+        constexpr size_t BlockHeadBytes = 3;
+        constexpr uint32_t LastBlock = 1;
+        constexpr int BlockSizeShift = 3;
+        std::vector<uint8_t> frame(Magic.begin(), Magic.end());
+        frame.push_back(Descriptor);
+        frame.push_back(id);
+        frame.resize(frame.size() + sizeof(uint32_t));
+        PutAt(frame, frame.size() - sizeof(uint32_t), static_cast<uint32_t>(content.size()));
+        size_t at = 0;
+
+        do
+        {
+            const size_t bytes = std::min(MostBlockBytes, content.size() - at);
+            const uint32_t head =
+                static_cast<uint32_t>(bytes) << BlockSizeShift | (at + bytes == content.size() ? LastBlock : 0);
+            const std::array<uint8_t, 4> headBytes = std::bit_cast<std::array<uint8_t, 4>>(head);
+            frame.insert(frame.end(), headBytes.begin(), headBytes.begin() + BlockHeadBytes);
+            frame.insert(frame.end(), content.begin() + static_cast<ptrdiff_t>(at),
+                         content.begin() + static_cast<ptrdiff_t>(at + bytes));
+            at += bytes;
+        } while (at < content.size());
+
+        // The checksum: XXH64's low 32 bits.
+        frame.resize(frame.size() + sizeof(uint32_t));
+        PutAt(frame, frame.size() - sizeof(uint32_t), static_cast<uint32_t>(XXH64(content.data(), content.size(), 0)));
+        return frame;
+    }
+
+    /// <summary>
+    /// A version 2 archive of <paramref name="entries"/> (their bytes as they unpack) in one stream of
+    /// <paramref name="kind"/>, packed as a Zstandard frame naming dictionary <paramref name="id"/> (RawZstdFrame), and
+    /// whose row names dictionary <paramref name="number"/> of the pack's.
+    /// </summary>
+    std::vector<uint8_t> BuildDictionaryArchive(const std::vector<ArchiveEntry>& entries, MCFastFile::StreamKind kind,
+                                                uint16_t number, uint8_t id)
+    {
+        std::vector<uint8_t> content;
+
+        for (const ArchiveEntry& entry : entries)
+        {
+            content.insert(content.end(), entry.Stored.begin(), entry.Stored.end());
+        }
+
+        return BuildVersion2Streams({Version2Stream{.Entries = entries,
+                                                    .Kind = kind,
+                                                    .Packed = RawZstdFrame(content, id),
+                                                    .Codec = ZstdCodec,
+                                                    .Dictionary = number}});
     }
 
     void WriteBytes(const std::filesystem::path& path, std::span<const uint8_t> bytes)
@@ -746,6 +923,200 @@ TEST_CASE("hd art: Zstandard streams unpack, and damaged ones are refused")
     std::vector<uint8_t> unchecked(ZstdSmallStream.begin(), ZstdSmallStream.end() - 4);
     unchecked[4] &= static_cast<uint8_t>(~0x04);
     CHECK(!MCZstd::Unpack(unchecked, smallText.size()).has_value());
+}
+
+/// <summary>
+/// Zstandard dictionaries (SPEC-pack-v2.md's dicts.hdd): a frame packed against one unpacks against it alone, not against
+/// its twin of another ID nor without one, and a frame packed without one isn't unpacked against one. Bytes that aren't a
+/// trained dictionary (text, an ID of 0, the head without its tables) are refused.
+/// </summary>
+TEST_CASE("hd art: a Zstandard stream packed against a dictionary unpacks against it alone")
+{
+    const auto one = MCZstd::Dictionary::Make(DictionaryOne);
+    const auto two = MCZstd::Dictionary::Make(DictionaryTwo);
+    REQUIRE(one.has_value());
+    REQUIRE(two.has_value());
+    CHECK_EQ((*one)->Id(), 1u);
+    CHECK_EQ((*two)->Id(), 2u);
+
+    const auto unpacked = MCZstd::Unpack(DictionaryFrame, DictionaryText.size(), std::cref(**one));
+    REQUIRE(unpacked.has_value());
+    CHECK(std::ranges::equal(*unpacked, AsBytes(DictionaryText)));
+    CHECK(!MCZstd::Unpack(DictionaryFrame, DictionaryText.size(), std::cref(**two)).has_value());
+    CHECK(!MCZstd::Unpack(DictionaryFrame, DictionaryText.size()).has_value());
+
+    const std::string_view smallText = "MechCommander Gold: the Atlas falls.";
+    CHECK(!MCZstd::Unpack(ZstdSmallStream, smallText.size(), std::cref(**one)).has_value());
+
+    // A frame of raw blocks naming dictionary 1 unpacks against it (the archives' tests' frames).
+    const std::vector<uint8_t> raw = RawZstdFrame(AsBytes(DictionaryText), 1);
+    const auto rawUnpacked = MCZstd::Unpack(raw, DictionaryText.size(), std::cref(**one));
+    REQUIRE(rawUnpacked.has_value());
+    CHECK(std::ranges::equal(*rawUnpacked, AsBytes(DictionaryText)));
+    CHECK(!MCZstd::Unpack(raw, DictionaryText.size(), std::cref(**two)).has_value());
+
+    constexpr size_t IdAt = 4;
+    constexpr size_t HeadBytes = 8;
+    std::vector<uint8_t> noId(DictionaryOne.begin(), DictionaryOne.end());
+    PutAt(noId, IdAt, uint32_t{0});
+    CHECK(!MCZstd::Dictionary::Make(AsBytes(DictionaryText)).has_value());
+    CHECK(!MCZstd::Dictionary::Make(noId).has_value());
+    CHECK(!MCZstd::Dictionary::Make(std::span(DictionaryOne).first(HeadBytes)).has_value());
+}
+
+/// <summary>
+/// A pack's dicts.hdd (SPEC-pack-v2.md) is read by number, an empty one too; one of another kind or format, a number 0
+/// or given twice, a count other than the head's, a dictionary of no bytes, cut short or that isn't one, a head cut
+/// short and bytes past the last are refused whole.
+/// </summary>
+TEST_CASE("hd art: a pack's dicts.hdd is read by number, and a damaged one is refused whole")
+{
+    const std::vector<uint8_t> good = DictionariesFile({{1, DictionaryOne}, {2, DictionaryTwo}});
+    const auto read = MCZstd::Dictionaries::Read(good);
+    REQUIRE(read.has_value());
+    CHECK_EQ((*read)->Count(), 2u);
+    REQUIRE((*read)->Find(1).has_value());
+    REQUIRE((*read)->Find(2).has_value());
+    CHECK_EQ((*read)->Find(1)->get().Id(), 1u);
+    CHECK_EQ((*read)->Find(2)->get().Id(), 2u);
+    CHECK(!(*read)->Find(0).has_value());
+    CHECK(!(*read)->Find(3).has_value());
+
+    const auto empty = MCZstd::Dictionaries::Read(DictionariesFile({}));
+    REQUIRE(empty.has_value());
+    CHECK_EQ((*empty)->Count(), 0u);
+
+    constexpr size_t FormatAt = 4;
+    std::vector<uint8_t> magic = good;
+    magic[3] = '3';
+    std::vector<uint8_t> format = good;
+    PutAt(format, FormatAt, uint16_t{3});
+    std::vector<uint8_t> trailing = good;
+    trailing.insert(trailing.end(), {0, 0, 0});
+    const std::vector<uint8_t> noBytes = DictionariesFile({{1, {}}});
+    const std::vector<uint8_t> numberZero = DictionariesFile({{0, DictionaryOne}});
+    const std::vector<uint8_t> twice = DictionariesFile({{1, DictionaryOne}, {1, DictionaryTwo}});
+    const std::vector<uint8_t> miscounted = DictionariesFile({{1, DictionaryOne}}, uint16_t{2});
+    const std::vector<uint8_t> text = DictionariesFile({{1, AsBytes(DictionaryText)}});
+    const std::vector<std::pair<std::string_view, std::span<const uint8_t>>> bad = {
+        {"another kind", magic},
+        {"a later format", format},
+        {"bytes past the last", trailing},
+        {"no bytes", noBytes},
+        {"number 0", numberZero},
+        {"a number twice", twice},
+        {"another count", miscounted},
+        {"not a dictionary", text},
+        {"cut inside a dictionary", std::span(good).first(good.size() - 1)},
+        {"cut inside the head", std::span(good).first(5)},
+    };
+
+    for (const auto& [what, file] : bad)
+    {
+        MCTest::Scope scope{std::string(what)};
+        CHECK(!MCZstd::Dictionaries::Read(file).has_value());
+    }
+}
+
+/// <summary>
+/// A version 2 archive's stream packed against a dictionary (its row's number) opens with the pack's dictionaries and
+/// its entries unpack against it; without them, or with a set lacking its number, the archive is refused whole, as one
+/// naming a dictionary for a codec that takes none. With another dictionary under its number, it opens and the stream's
+/// unpack is refused.
+/// </summary>
+TEST_CASE("hd art: a version 2 stream packed against a dictionary opens with the pack's dictionaries alone")
+{
+    const ScratchFolder scratch("dictionary-stream");
+    const std::span<const uint8_t> text = AsBytes(DictionaryText);
+    const size_t half = text.size() / 2;
+    const std::vector<ArchiveEntry> entries = {
+        Raw("a\\0.hdf", {text.begin(), text.begin() + static_cast<ptrdiff_t>(half)}),
+        Raw("a\\1.hdf", {text.begin() + static_cast<ptrdiff_t>(half), text.end()})};
+    const std::filesystem::path path = scratch.Path() / "a.hda";
+    const std::string name = MCFileSystem::ToUtf8(path);
+    WriteBytes(path, BuildVersion2Streams({Version2Stream{.Entries = entries,
+                                                          .Packed = {DictionaryFrame.begin(), DictionaryFrame.end()},
+                                                          .Codec = ZstdCodec,
+                                                          .Dictionary = 1}}));
+
+    const auto dictionaries = MCZstd::Dictionaries::Read(DictionariesFile({{1, DictionaryOne}}));
+    REQUIRE(dictionaries.has_value());
+    const auto archive = MCFastFile::Create(name, *dictionaries);
+    REQUIRE(archive.has_value());
+
+    for (const ArchiveEntry& entry : entries)
+    {
+        MCTest::Scope scope(entry.Name);
+        const std::optional<int32_t> index = (*archive)->Find(entry.Name);
+        REQUIRE(index.has_value());
+        const auto bytes = (*archive)->Unpack(*index, (*archive)->ReadStored(*index));
+        REQUIRE(bytes.has_value());
+        CHECK(*bytes == entry.Stored);
+    }
+
+    const auto none = MCFastFile::Create(name);
+    REQUIRE(!none.has_value());
+    CHECK(none.error().find("dicts.hdd lacks") != std::string::npos);
+    const auto otherNumber = MCZstd::Dictionaries::Read(DictionariesFile({{2, DictionaryOne}}));
+    REQUIRE(otherNumber.has_value());
+    CHECK(!MCFastFile::Create(name, *otherNumber).has_value());
+
+    const auto twin = MCZstd::Dictionaries::Read(DictionariesFile({{1, DictionaryTwo}}));
+    REQUIRE(twin.has_value());
+    const auto wrong = MCFastFile::Create(name, *twin);
+    REQUIRE(wrong.has_value());
+    const std::optional<int32_t> first = (*wrong)->Find(entries[0].Name);
+    REQUIRE(first.has_value());
+    CHECK(!(*wrong)->Unpack(*first, (*wrong)->ReadStored(*first)).has_value());
+
+    constexpr uint8_t DeflateCodec = 1;
+    WriteBytes(path, BuildVersion2Streams({Version2Stream{.Entries = entries,
+                                                          .Packed = {DictionaryFrame.begin(), DictionaryFrame.end()},
+                                                          .Codec = DeflateCodec,
+                                                          .Dictionary = 1}}));
+    CHECK(!MCFastFile::Create(name, *dictionaries).has_value());
+}
+
+/// <summary>
+/// The pack's dicts.hdd is read with it: a version 2 ground tile packed against its dictionary 1 is drawn; with no
+/// dicts.hdd, a damaged one, or another dictionary under that number, it falls back to the original (no HD frame).
+/// </summary>
+TEST_CASE("hd art: a pack's tiles packed against its dictionary are drawn, and fall back without its dicts.hdd")
+{
+    const ScratchFolder scratch("dictionary-pack");
+    const std::vector<uint8_t> tile = {1, 2, 3};
+    const std::vector<uint8_t> file = TileFrameFile();
+    WriteBytes(scratch.Path() / "terrain.hda",
+               BuildDictionaryArchive({Raw(MCHdArt::TerrainTileName(tile) + ".hdf", file)},
+                                      MCFastFile::StreamKind::Tiles, 1, 1));
+    const std::filesystem::path dictionaries = scratch.Path() / "dicts.hdd";
+    std::vector<uint8_t> damaged = DictionariesFile({{1, DictionaryOne}});
+    damaged[0] = 'X';
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    const auto drawn = [&]
+    {
+        MCHdArt::SetPackFolder(scratch.Path());
+        return MCHdArt::FindTerrainTile(tile, TileWidth, TileHeight);
+    };
+
+    CHECK(drawn() == nullptr);
+    WriteBytes(dictionaries, DictionariesFile({{1, DictionaryOne}}));
+    const std::shared_ptr<const MCHdArt::Frame> found = drawn();
+    REQUIRE(found != nullptr);
+    const auto decoded = MCHdArt::DecodeHdf(file, TileWidth, TileHeight);
+    REQUIRE(decoded.has_value());
+    CHECK_EQ(found->Width, decoded->Width);
+    CHECK(found->Colors == decoded->Colors);
+    CHECK(found->Indices == decoded->Indices);
+
+    WriteBytes(dictionaries, DictionariesFile({{1, DictionaryTwo}}));
+    CHECK(drawn() == nullptr);
+    WriteBytes(dictionaries, damaged);
+    CHECK(drawn() == nullptr);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
 }
 
 /// <summary>
@@ -1751,6 +2122,42 @@ TEST_CASE("hd art: an archive the readers open ahead is taken open at the first 
     MCHdArt::OpenArchivesAhead(folder);
     MCHdArt::SetPackFolder(scratch.Path());
     CHECK(FindAhead({0, 0}) != nullptr);
+    CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// An archive the readers open ahead unpacks against the pack's dictionaries, as the game's thread read them: its frames
+/// packed against dictionary 1 are drawn from it.
+/// </summary>
+TEST_CASE("hd art: an archive the readers open ahead unpacks against the pack's dictionaries")
+{
+    const ScratchFolder scratch("archive-ahead-dictionary");
+    std::vector<ArchiveEntry> entries;
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
+    }
+
+    const std::filesystem::path table = scratch.Path() / MCHdArt::ShapeTableFolder(AheadTable);
+    std::filesystem::create_directories(table.parent_path());
+    WriteBytes(std::filesystem::path(table).concat(".hda"),
+               BuildDictionaryArchive(entries, MCFastFile::StreamKind::Packet, 1, 1));
+    WriteBytes(scratch.Path() / "dicts.hdd", DictionariesFile({{1, DictionaryOne}}));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::array<std::filesystem::path, 1> folder{MCHdArt::ShapeTableFolder(AheadTable)};
+
+    const size_t opened = MCHdArt::ArchivesOpenedAhead();
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::WaitForLoadReads();
+    const std::shared_ptr<const MCHdArt::Frame> found = FindAhead({0, 0});
+    REQUIRE(found != nullptr);
+    CHECK(SameFrame(*found, AheadFrame({0, 0}, 0)));
+    // Taken open from the readers, not opened again here.
     CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});

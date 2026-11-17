@@ -35,6 +35,8 @@ namespace
     constexpr size_t StreamRowBytes = 24;
     /// <summary>Port-only: where a stream's row holds its kind (MCFastFile::StreamKind).</summary>
     constexpr size_t StreamRowKindAt = 17;
+    /// <summary>Port-only: where a stream's row holds the number of the dictionary it was packed against (0: none).</summary>
+    constexpr size_t StreamRowDictionaryAt = 18;
     constexpr size_t EntryRowBytes = 20;
     constexpr size_t RecordHeadBytes = 8;
 
@@ -68,9 +70,13 @@ namespace
         return value;
     }
 
-    /// <summary>Port-only: <paramref name="stored"/> unpacked by <paramref name="codec"/> to <paramref name="size"/> bytes.</summary>
-    std::expected<std::vector<uint8_t>, std::string> UnpackStream(uint8_t codec, std::span<const uint8_t> stored,
-                                                                  size_t size)
+    /// <summary>
+    /// Port-only: <paramref name="stored"/> unpacked by <paramref name="codec"/> to <paramref name="size"/> bytes,
+    /// against <paramref name="dictionary"/> (Zstandard's alone; the table's checks keep it from any other codec).
+    /// </summary>
+    std::expected<std::vector<uint8_t>, std::string> UnpackStream(
+        uint8_t codec, std::span<const uint8_t> stored, size_t size,
+        MCOptionalRef<const MCZstd::Dictionary> dictionary = std::nullopt)
     {
         switch (static_cast<Codec>(codec))
         {
@@ -86,7 +92,7 @@ namespace
             case Codec::Deflate:
                 return MCInflate::Inflate(stored, size);
             case Codec::Zstd:
-                return MCZstd::Unpack(stored, size);
+                return MCZstd::Unpack(stored, size, dictionary);
         }
 
         return std::unexpected(std::format("codec {} isn't one this build reads", codec));
@@ -161,9 +167,11 @@ namespace
     }
 }
 
-std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::string_view fileName)
+std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(
+    std::string_view fileName, std::shared_ptr<const MCZstd::Dictionaries> dictionaries)
 {
     auto fastFile = std::make_unique<MCFastFile>(Key());
+    fastFile->_Dictionaries = std::move(dictionaries);
     fastFile->_Path = MCFileSystem::Resolve(fileName);
     fastFile->_Handle = MCDiskFile::Open(fastFile->_Path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
 
@@ -323,13 +331,29 @@ std::expected<void, std::string> MCFastFile::ReadVersion2(std::string_view fileN
                             .Stored = ValueAt<uint32_t>(table, at + 8),
                             .Unpacked = ValueAt<uint32_t>(table, at + 12),
                             .Codec = ValueAt<uint8_t>(table, at + 16),
-                            .Kind = static_cast<StreamKind>(ValueAt<uint8_t>(table, at + StreamRowKindAt))};
+                            .Kind = static_cast<StreamKind>(ValueAt<uint8_t>(table, at + StreamRowKindAt)),
+                            .Dictionary = ValueAt<uint16_t>(table, at + StreamRowDictionaryAt)};
 
         // Within the file, and within the entries' 32-bit offsets (MCFileEntry), as a version 1 archive is.
         if (stream.At < dataAt || stream.At + stream.Stored > length || stream.Unpacked > MostUnpackedBytes ||
             stream.At + stream.Stored > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()))
         {
             return std::unexpected(std::format("{}: stream {} lies outside the data", fileName, i));
+        }
+
+        // A dictionary is Zstandard's alone, and must be one the pack's dicts.hdd holds: without it the stream can't
+        // be unpacked, so the archive is refused whole here rather than an entry at a time later.
+        if (stream.Dictionary != 0 && static_cast<Codec>(stream.Codec) != Codec::Zstd)
+        {
+            return std::unexpected(std::format("{}: stream {} names dictionary {} with codec {}, which takes none",
+                                               fileName, i, stream.Dictionary, stream.Codec));
+        }
+
+        if (stream.Dictionary != 0 && (_Dictionaries == nullptr || !_Dictionaries->Find(stream.Dictionary)))
+        {
+            return std::unexpected(
+                std::format("{}: stream {} is packed against dictionary {}, which the pack's dicts.hdd lacks", fileName,
+                            i, stream.Dictionary));
         }
 
         _Streams.push_back(stream);
@@ -469,7 +493,11 @@ std::expected<std::shared_ptr<const std::vector<uint8_t>>, std::string> MCFastFi
 
     const Placed& placed = _Placed[static_cast<size_t>(index)];
     const Stream& stream = _Streams[placed.Stream];
-    std::expected<std::vector<uint8_t>, std::string> unpacked = UnpackStream(stream.Codec, stored, stream.Unpacked);
+    // The table's read checked the dictionary is there.
+    const MCOptionalRef<const MCZstd::Dictionary> dictionary =
+        stream.Dictionary != 0 ? _Dictionaries->Find(stream.Dictionary) : std::nullopt;
+    std::expected<std::vector<uint8_t>, std::string> unpacked =
+        UnpackStream(stream.Codec, stored, stream.Unpacked, dictionary);
 
     if (!unpacked.has_value())
     {

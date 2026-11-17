@@ -4,6 +4,7 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
 #include "lib/MCOptionalRef.h"
+#include "lib/MCZstd.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCMemoryRoom.h"
@@ -57,6 +58,12 @@ namespace
     /// pack of a later one is left out whole.
     /// </summary>
     constexpr int32_t PackFormat = 2;
+    /// <summary>
+    /// The pack's zstd dictionaries, at its root (SPEC-pack-v2.md's <c>dicts.hdd</c>, about 1 MB), and the longest one
+    /// read (a longer file is another's).
+    /// </summary>
+    constexpr std::string_view DictionariesFile = "dicts.hdd";
+    constexpr uintmax_t MostDictionariesFileBytes = 64u << 20;
     /// <summary>How the sprite files are written in pack.cfg: <c>name=size</c>, separated by <c>;</c>.</summary>
     constexpr char SpriteFileSeparator = ';';
     constexpr char SpriteSizeSeparator = '=';
@@ -402,6 +409,8 @@ namespace
     {
         std::vector<std::filesystem::path> Folders;
         uint64_t Generation = 0;
+        /// <summary>The pack's dictionaries, as the game's thread read them (PackDictionaries).</summary>
+        std::shared_ptr<const MCZstd::Dictionaries> Dictionaries;
     };
 
     /// <summary>
@@ -613,6 +622,9 @@ namespace
         bool PackFormatReadable = true;
         int32_t PackFormatRead = 1;
         std::optional<std::string> PackSprites;
+        /// <summary>The pack's dicts.hdd, once read (DictionariesLooked; null: none, or it can't be read).</summary>
+        bool DictionariesLooked = false;
+        std::shared_ptr<const MCZstd::Dictionaries> Dictionaries;
         /// <summary>This game's sprite files (MCHdArt::SetSpriteFiles; empty: not known yet).</summary>
         std::string SpriteFiles;
         /// <summary>
@@ -930,11 +942,71 @@ namespace
     }
 
     /// <summary>
-    /// The archive standing for <paramref name="folder"/> (its <c>.hda</c>) opened, its directory read: null when there's
-    /// none, what's wrong when it can't be read. Touches nothing shared, so a reader opens archives ahead with it
+    /// The pack's dictionaries (its dicts.hdd), read the first time the game's thread asks after the pack is set and
+    /// held while it's in use: null when it has none, or they can't be read (logged once), so that its archives packed
+    /// against one are refused and their art drawn from the original.
+    /// </summary>
+    std::shared_ptr<const MCZstd::Dictionaries> PackDictionaries()
+    {
+        State& state = TheState();
+
+        if (state.DictionariesLooked)
+        {
+            return state.Dictionaries;
+        }
+
+        state.DictionariesLooked = true;
+        const std::filesystem::path path = MCHdArt::PackFolder() / DictionariesFile;
+        std::error_code error;
+
+        if (!std::filesystem::is_regular_file(path, error))
+        {
+            return nullptr;
+        }
+
+        const uintmax_t length = std::filesystem::file_size(path, error);
+
+        if (error || length > MostDictionariesFileBytes)
+        {
+            LogOnce(path,
+                    std::format("{} can't be sized, or is over {} bytes ({}): the archives packed against it are "
+                                "left out",
+                                DictionariesFile, MostDictionariesFileBytes, error ? error.message() : "too long"));
+            return nullptr;
+        }
+
+        std::vector<uint8_t> bytes(static_cast<size_t>(length));
+        std::ifstream in(path, std::ios::binary);
+
+        if (!in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
+        {
+            LogOnce(path,
+                    std::format("{} couldn't be read: the archives packed against it are left out", DictionariesFile));
+            return nullptr;
+        }
+
+        std::expected<std::shared_ptr<const MCZstd::Dictionaries>, std::string> read =
+            MCZstd::Dictionaries::Read(bytes);
+
+        if (!read)
+        {
+            LogOnce(path,
+                    std::format("{}: {}; the archives packed against it are left out", DictionariesFile, read.error()));
+            return nullptr;
+        }
+
+        state.Dictionaries = std::move(*read);
+        return state.Dictionaries;
+    }
+
+    /// <summary>
+    /// The archive standing for <paramref name="folder"/> (its <c>.hda</c>) opened, its directory read, its streams
+    /// unpacking against <paramref name="dictionaries"/> (PackDictionaries, which the game's thread reads): null when
+    /// there's none, what's wrong when it can't be read. Touches nothing shared, so a reader opens archives ahead with it
     /// (MCHdArt::OpenArchivesAhead).
     /// </summary>
-    std::expected<std::shared_ptr<MCHdArchive>, std::string> OpenArchive(const std::filesystem::path& folder)
+    std::expected<std::shared_ptr<MCHdArchive>, std::string> OpenArchive(
+        const std::filesystem::path& folder, std::shared_ptr<const MCZstd::Dictionaries> dictionaries)
     {
         const std::filesystem::path path = std::filesystem::path(folder).concat(ArchiveExtension);
         std::error_code error;
@@ -944,7 +1016,7 @@ namespace
             return nullptr;
         }
 
-        auto file = MCFastFile::Create(MCFileSystem::ToUtf8(path));
+        auto file = MCFastFile::Create(MCFileSystem::ToUtf8(path), std::move(dictionaries));
 
         if (!file)
         {
@@ -1028,7 +1100,7 @@ namespace
         std::optional<std::expected<std::shared_ptr<MCHdArchive>, std::string>> opened = TakeOpened(folder);
         std::expected<std::shared_ptr<MCHdArchive>, std::string> archive =
             opened.has_value()  ? std::move(*opened)
-            : IsArchive(folder) ? OpenArchive(folder)
+            : IsArchive(folder) ? OpenArchive(folder, PackDictionaries())
                                 : std::expected<std::shared_ptr<MCHdArchive>, std::string>(nullptr);
 
         if (!archive)
@@ -2705,7 +2777,7 @@ namespace
 
         for (const std::filesystem::path& folder : open.Folders)
         {
-            std::expected<std::shared_ptr<MCHdArchive>, std::string> archive = OpenArchive(folder);
+            std::expected<std::shared_ptr<MCHdArchive>, std::string> archive = OpenArchive(folder, open.Dictionaries);
             const bool ends = !archive.has_value() || *archive != nullptr;
 
             // Its file among those kept open from now (MaxOpenArchiveFiles), not only once the game takes it: a
@@ -3632,6 +3704,8 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.PackFormatReadable = true;
     state.PackFormatRead = 1;
     state.PackSprites.reset();
+    state.DictionariesLooked = false;
+    state.Dictionaries.reset();
     state.SpritesMatch.reset();
     state.Listed.reset();
     state.Sequences.clear();
@@ -4190,6 +4264,8 @@ void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
 
     State& state = TheState();
     const std::filesystem::path pack = PackFolder();
+    // Read before the readers' lock: the first time, it reads the file.
+    const std::shared_ptr<const MCZstd::Dictionaries> dictionaries = PackDictionaries();
     ReadAhead& ahead = state.Ahead;
     std::scoped_lock lock(ahead.Lock);
     bool asked = false;
@@ -4197,7 +4273,7 @@ void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
     for (const std::filesystem::path& folder : folders)
     {
         // The folders ArchiveOf looks in, nearest first, up to one whose archive is found or asked for already.
-        ArchiveOpen open{{}, ahead.Generation};
+        ArchiveOpen open{{}, ahead.Generation, dictionaries};
 
         for (std::filesystem::path at = pack / folder; at.has_relative_path() && at != pack; at = at.parent_path())
         {

@@ -28,6 +28,11 @@ struct MCFileEntry
 #pragma pack(pop)
 static_assert(sizeof(MCFileEntry) == 0x106);
 
+namespace MCZstd
+{
+    class Dictionaries;
+}
+
 /// <summary>
 /// A FastFile (<c>.FST</c>): an archive of game files, each stored raw or LZ-packed, that <c>MCFile::Open</c> falls
 /// back to when a path isn't found on disk. The game opens every <c>*.fst</c> beside SYSTEM.CFG at startup
@@ -40,9 +45,14 @@ static_assert(sizeof(MCFileEntry) == 0x106);
 class MCFastFile
 {
 public:
-    /// <summary>Opens the archive at <paramref name="fileName"/> and reads its directory.</summary>
+    /// <summary>
+    /// Opens the archive at <paramref name="fileName"/> and reads its directory. A version 2 archive's streams packed
+    /// against a dictionary unpack against <paramref name="dictionaries"/> (its pack's <c>dicts.hdd</c>); one naming a
+    /// dictionary they lack, or naming one when none are given, refuses the archive.
+    /// </summary>
     /// <returns>The archive, or why it couldn't be opened.</returns>
-    static std::expected<std::unique_ptr<MCFastFile>, std::string> Create(std::string_view fileName);
+    static std::expected<std::unique_ptr<MCFastFile>, std::string> Create(
+        std::string_view fileName, std::shared_ptr<const MCZstd::Dictionaries> dictionaries = nullptr);
 
     MCFastFile(const MCFastFile&) = delete;
     MCFastFile& operator=(const MCFastFile&) = delete;
@@ -216,7 +226,10 @@ private:
     /// <summary>Port-only: reads a version 2 archive's header and table (<see cref="IsVersion2"/>) into this one.</summary>
     std::expected<void, std::string> ReadVersion2(std::string_view fileName);
 
-    /// <summary>Port-only (version 2): a stream's place, sizes, codec and kind.</summary>
+    /// <summary>
+    /// Port-only (version 2): a stream's place, sizes, codec and kind, and the dictionary it was packed against (its
+    /// number in <see cref="_Dictionaries"/>; 0: none).
+    /// </summary>
     struct Stream
     {
         uint64_t At = 0;
@@ -224,7 +237,11 @@ private:
         uint32_t Unpacked = 0;
         uint8_t Codec = 0;
         StreamKind Kind = StreamKind::Packet;
+        uint16_t Dictionary = 0;
     };
+
+    /// <summary>Port-only (version 2): the pack's dictionaries its streams name, as <see cref="Create"/> was given.</summary>
+    std::shared_ptr<const MCZstd::Dictionaries> _Dictionaries;
 
     /// <summary>Port-only (version 2): an entry's stream, and where it lies in the stream unpacked.</summary>
     struct Placed

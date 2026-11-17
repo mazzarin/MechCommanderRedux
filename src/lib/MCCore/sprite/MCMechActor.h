@@ -68,6 +68,14 @@ std::optional<MCLegsStep> MCLegsStepOf(int32_t frame, int32_t frames, int32_t dr
                                        bool loops);
 
 /// <summary>
+/// Port-only (HD art): the HD art pack's in-between of a mech part's frame on its way to the next (<paramref name="step"/>:
+/// from frame From of <paramref name="table"/> toward frame To, as the legs step), drawn over both frames' boxes round
+/// the hot spot, as the legs' is (<c>&lt;frame&gt;_&lt;step&gt;</c>, MCHdArt.h), with where it lies round frame From;
+/// none where the pack lacks it at that size, or either frame is not the table's.
+/// </summary>
+std::optional<MCInBetween> MCPartInBetween(std::span<const uint8_t> table, const MCLegsStep& step);
+
+/// <summary>
 /// Port-only (HDStops): a stride drawn on while its mech stands with its move held up: each part's frame as last drawn,
 /// moved on by the ground the mech covers, so that the mech stops mid-stride and picks its stride up where it stopped;
 /// then drawn after the mech's own gestures until in step with them, or settled to standing in place.
@@ -310,6 +318,15 @@ public:
     /// on stays put while the mech moves between frames. Each with where it lies round its frame.
     /// </summary>
     MCLegsDrawn LegsInBetween(int32_t gesture, int32_t frame, float facing, const MCShape& legs, bool asPlayed);
+
+    /// <summary>
+    /// Port-only (HD art): the HD art pack's in-between to draw the torso or an arm (shape <paramref name="part"/>, at
+    /// frame <paramref name="frame"/>) as, drawn as it plays (<paramref name="asPlayed"/>): the way toward its next frame
+    /// at the legs' step (<see cref="LegsStepNow"/>), so it moves as smoothly as the legs (MCPartInBetween); none while
+    /// the upper body plays the gun change or holds its guns up, while the legs are on no way to a next frame of their
+    /// gesture, or where the pack lacks it.
+    /// </summary>
+    std::optional<MCInBetween> UpperInBetween(const MCShape& part, int32_t frame, bool asPlayed) const;
 
     /// <summary>
     /// Port-only (HD art): playing <paramref name="frames"/> frames, at frame <paramref name="frame"/>, the step of the

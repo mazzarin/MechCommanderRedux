@@ -958,9 +958,10 @@ MCFileCheck MCMultiPlayer::CheckFileReport(uint32_t playerId, uint32_t value) co
         return MCFileCheck::Missing;
     }
 
-    // A build without the hash sends the original's "checksum" (the file's first four bytes): the file is there.
+    // A build without the hash sends the original's "checksum" (the file's first four bytes): the file is there. One
+    // with the hash at version 1 alone (Redux HD's releases 2-8) hashes other files: unchecked too.
     if (const auto said = PlayerRules.find(playerId);
-        said == PlayerRules.end() || (said->second & MCMatchRule::DataHash) == 0)
+        said == PlayerRules.end() || (said->second & MCMatchRule::DataHashV2) == 0)
     {
         return MCFileCheck::Unchecked;
     }

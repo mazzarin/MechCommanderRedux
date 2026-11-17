@@ -32,8 +32,14 @@ namespace
 
 std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::string_view fileName)
 {
+    return CreateAt(MCFileSystem::Resolve(fileName), fileName);
+}
+
+std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::CreateAt(const std::filesystem::path& path,
+                                                                             std::string_view fileName)
+{
     auto fastFile = std::make_unique<MCFastFile>(Key());
-    fastFile->_Path = MCFileSystem::Resolve(fileName);
+    fastFile->_Path = path;
     fastFile->_Handle = MCDiskFile::Open(fastFile->_Path, MCDiskFileMode::Read);
 
     if (!fastFile->_Handle.has_value())

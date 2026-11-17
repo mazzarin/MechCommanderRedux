@@ -44,6 +44,14 @@ public:
     /// <returns>The archive, or why it couldn't be opened.</returns>
     static std::expected<std::unique_ptr<MCFastFile>, std::string> Create(std::string_view fileName);
 
+    /// <summary>
+    /// Opens the archive at the file system's <paramref name="path"/> (not a game path: a network share's too), named
+    /// <paramref name="fileName"/> in what's said of it, and reads its directory.
+    /// </summary>
+    /// <returns>The archive, or why it couldn't be opened.</returns>
+    static std::expected<std::unique_ptr<MCFastFile>, std::string> CreateAt(const std::filesystem::path& path,
+                                                                            std::string_view fileName);
+
     MCFastFile(const MCFastFile&) = delete;
     MCFastFile& operator=(const MCFastFile&) = delete;
 

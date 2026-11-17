@@ -4,18 +4,27 @@
 
 std::expected<void, std::string> MCFastFileSet::Open(std::string_view fileName)
 {
-    auto fastFile = MCFastFile::Create(fileName);
+    return Add(MCFastFile::Create(fileName), fileName.substr(fileName.find_last_of("\\/") + 1));
+}
 
+std::expected<void, std::string> MCFastFileSet::OpenAt(const std::filesystem::path& path)
+{
+    const std::string name = MCFileSystem::ToUtf8(path.filename());
+    return Add(MCFastFile::CreateAt(path, name), name);
+}
+
+std::expected<void, std::string> MCFastFileSet::Add(std::expected<std::unique_ptr<MCFastFile>, std::string> fastFile,
+                                                    std::string_view name)
+{
     if (!fastFile.has_value())
     {
         return std::unexpected(std::move(fastFile.error()));
     }
 
     // Port: in name order, so which archive's copy of a name is read doesn't hang on the folder listing.
-    std::string name(fileName.substr(fileName.find_last_of("\\/") + 1));
     const auto at = std::ranges::upper_bound(_Names, name, MCFileSystem::NameLess);
     _Files.insert(_Files.begin() + (at - _Names.begin()), std::move(*fastFile));
-    _Names.insert(at, std::move(name));
+    _Names.emplace(at, name);
     return {};
 }
 

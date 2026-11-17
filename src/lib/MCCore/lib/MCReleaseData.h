@@ -11,9 +11,10 @@
 /// Port-only (Redux HD): the release's own copy of a match's data (update/MCReleaseCopy.h), as the game reads it. While
 /// a match is played (<see cref="SetPlaying"/>: MCGameContext::SetMultiPlayer), a file the copy holds is read only from
 /// it (MCFile::Open, MCFilesAhead): the game folder's copy, its other archives, the user folder's and a launcher's are
-/// passed over for that name, so a mod never changes a match. What the copy doesn't hold reads as ever: the art, sound
-/// and movies, and what a mod or a launcher adds (a map, its terrain, a received mission). Single player, and a game
-/// folder without a copy (a developer's data, the tests'), read as ever.
+/// passed over for that name, so a mod never changes a match: the interface's art in ART.FST is the copy's too. What the
+/// copy doesn't hold reads as ever: the sprites' and tiles' art, sound and movies, the HD pack, and what a mod or a
+/// launcher adds (a map, its terrain, a received mission). Single player, a game folder without a copy (a developer's
+/// data, the tests'), and one whose copy was filled for another release, read as ever.
 /// </summary>
 namespace MCReleaseData
 {

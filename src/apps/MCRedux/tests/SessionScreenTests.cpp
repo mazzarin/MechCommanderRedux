@@ -556,7 +556,7 @@ namespace
 
 /// <summary>
 /// Port: the host checks every player's mission and gameplay data against its own (network/MCGameDataHash.h; a build
-/// with MCMatchRule::DataHash sends the hash in its file report). A guest with the same data gets the mission as
+/// with MCMatchRule::DataHashV2 sends the hash in its file report). A guest with the same data gets the mission as
 /// before; one whose data differ (here its own gamesys.fit) is named and the mission is called off, as for a player
 /// without the file; one whose build sends no hash (an older one: the original's first four bytes) is named, and plays.
 /// </summary>
@@ -622,7 +622,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     CHECK_EQ(guest.MissionsLoaded(), 1);
 
     // An older build (no hash, the original's first four bytes): named, and the mission loads on the host's OK.
-    guest.SendRules(hostId, MCMatchRule::Supported & ~MCMatchRule::DataHash);
+    guest.SendRules(hostId, MCMatchRule::Supported & ~MCMatchRule::DataHashV2);
     guest.AnswerFiles(FirstFourBytes(missionFile));
     Settle();
     screen.LoadMission(Mission);

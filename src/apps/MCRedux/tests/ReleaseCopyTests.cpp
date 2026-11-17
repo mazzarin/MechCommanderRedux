@@ -128,6 +128,18 @@ namespace
         return record;
     }
 
+    /// <summary>
+    /// The release installed in <paramref name="folder"/> as a start leaves it: its record written
+    /// (<c>installed.json</c>, every file there as it is now) and the copy filled.
+    /// </summary>
+    MCInstalled::MCRecord InstallRelease(const std::filesystem::path& folder)
+    {
+        const MCInstalled::MCRecord record = RecordOf(folder);
+        Write(folder / MCFileSystem::FromUtf8(MCInstalled::RecordPath), MCInstalled::Text(record));
+        REQUIRE(MCReleaseCopy::Sync(*MakeDisk(), folder, record).has_value());
+        return record;
+    }
+
     std::filesystem::path InCopy(const std::filesystem::path& game, std::string_view path)
     {
         return MCReleaseCopy::FolderIn(game) / MCFileSystem::FromUtf8(path);
@@ -226,6 +238,25 @@ TEST_CASE("release copy: a start fills it from the game folder's release files, 
     CHECK_EQ(again->Filled, 0u);
     CHECK_EQ(again->Hashed, 0u);
 
+    // A copy's file whose time alone changed (a restore, an install copied): hashed once, recorded as it is now, so the
+    // next start neither hashes it again nor takes it as changed.
+    const std::filesystem::path art = InCopy(game.Path(), "ART.FST");
+    std::filesystem::last_write_time(art, std::filesystem::last_write_time(art) - std::chrono::hours(1));
+    const auto touched = MCReleaseCopy::Sync(*disk, game.Path(), record);
+    REQUIRE(touched.has_value());
+    CHECK_EQ(touched->Filled, 0u);
+    CHECK_EQ(touched->Hashed, 1u);
+    const auto settled = MCReleaseCopy::Sync(*disk, game.Path(), record);
+    REQUIRE(settled.has_value());
+    CHECK_EQ(settled->Hashed, 0u);
+    {
+        Write(game.Path() / MCFileSystem::FromUtf8(MCInstalled::RecordPath), MCInstalled::Text(record));
+        const MCScratchFolder user(Group, "fill-user");
+        const MCGameFiles files(game.Path(), user.Path());
+        CHECK(MCReleaseData::Has());
+        CHECK(MCReleaseData::Whole());
+    }
+
     // A mod written over a stock archive since: the copy keeps the release's.
     WriteArchive(game.Path() / "MISSION.FST", {{GameSystem, "FITini\n; the mod's game system\nFITend\n"}});
     const auto modded = MCReleaseCopy::Sync(*disk, game.Path(), record);
@@ -268,7 +299,7 @@ TEST_CASE(
     const MCScratchFolder game(Group, "reads");
     const MCScratchFolder user(Group, "reads-user");
     WriteRelease(game.Path());
-    REQUIRE(MCReleaseCopy::Sync(*MakeDisk(), game.Path(), RecordOf(game.Path())).has_value());
+    InstallRelease(game.Path());
 
     // The mods: an archive named before the stock ones, a stock archive written over, a loose file in the user
     // folder; and what they add: a pilot and a map.
@@ -332,13 +363,13 @@ TEST_CASE("release copy: a match's data hash is the release's whatever mods the 
     const MCScratchFolder clean(Group, "hash-clean");
     const MCScratchFolder cleanUser(Group, "hash-clean-user");
     WriteRelease(clean.Path());
-    REQUIRE(MCReleaseCopy::Sync(*MakeDisk(), clean.Path(), RecordOf(clean.Path())).has_value());
+    InstallRelease(clean.Path());
     const auto [cleanHash, cleanFiles] = matchHash(clean.Path(), cleanUser.Path());
 
     const MCScratchFolder modded(Group, "hash-modded");
     const MCScratchFolder moddedUser(Group, "hash-modded-user");
     WriteRelease(modded.Path());
-    REQUIRE(MCReleaseCopy::Sync(*MakeDisk(), modded.Path(), RecordOf(modded.Path())).has_value());
+    InstallRelease(modded.Path());
     WriteArchive(modded.Path() / "AA_MOD.FST", {{GameSystem, "FITini\n; the mod's game system\nFITend\n"},
                                                 {"data\\missions\\warriors\\newpilot.fit", "the mod's new pilot"}});
     WriteArchive(modded.Path() / "MISSION.FST", {{Pilot, "FITini\n; the mod's pilot\nFITend\n"}});
@@ -373,7 +404,7 @@ TEST_CASE("release copy: the component list kept across missions is read again w
         std::filesystem::copy_file(stock / archive, game.Path() / archive);
     }
 
-    REQUIRE(MCReleaseCopy::Sync(*MakeDisk(), game.Path(), RecordOf(game.Path())).has_value());
+    InstallRelease(game.Path());
     const MCGameFiles files(game.Path(), user.Path());
     const std::optional<std::string> release = GameFile(Components);
     REQUIRE(release.has_value());
@@ -419,7 +450,7 @@ TEST_CASE("release copy: in a match a fan map's own files, which the copy doesn'
     const MCScratchFolder game(Group, "fan-map");
     const MCScratchFolder user(Group, "fan-map-user");
     WriteRelease(game.Path());
-    REQUIRE(MCReleaseCopy::Sync(*MakeDisk(), game.Path(), RecordOf(game.Path())).has_value());
+    InstallRelease(game.Path());
     WriteMission(game.Path() / "data" / "savegame" / "FANMAP.MPK", "fanmap");
     Write(game.Path() / "data" / "missions" / "fanmap.fit",
           "FITini\n[TerrainSystem]\nst TerrainFileName = \"fanmap\"\nFITend\n");
@@ -436,4 +467,39 @@ TEST_CASE("release copy: in a match a fan map's own files, which the copy doesn'
     CHECK(std::ranges::find(mapFiles, std::string("data\\terrain\\fanmap.dat")) != mapFiles.end());
     Write(game.Path() / "data" / "terrain" / "fanmap.dat", "another version's cells");
     CHECK(matchHash().first != hash);
+}
+
+TEST_CASE(
+    "release copy: a copy filled for another release than the one installed isn't read: a match reads the game folder")
+{
+    const MCScratchFolder game(Group, "other-release");
+    const MCScratchFolder user(Group, "other-release-user");
+    WriteRelease(game.Path());
+    MCInstalled::MCRecord record = InstallRelease(game.Path());
+    WriteArchive(game.Path() / "AA_MOD.FST", {{GameSystem, "FITini\n; the mod's game system\nFITend\n"}});
+
+    {
+        const MCGameFiles files(game.Path(), user.Path());
+        REQUIRE(MCReleaseData::Has());
+        MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
+        CHECK(Says(GameFile(GameSystem), "the release's game system"));
+    }
+
+    // An update's release in place, its fill not finished: the copy still names the one before.
+    record.Release += 1;
+    Write(game.Path() / MCFileSystem::FromUtf8(MCInstalled::RecordPath), MCInstalled::Text(record));
+    {
+        const MCGameFiles files(game.Path(), user.Path());
+        CHECK(!MCReleaseData::Has());
+        MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
+        CHECK(!MCReleaseData::Playing());
+        CHECK(Says(GameFile(GameSystem), "the mod's game system"));
+    }
+
+    // The next start fills it for the release installed.
+    REQUIRE(MCReleaseCopy::Sync(*MakeDisk(), game.Path(), record).has_value());
+    {
+        const MCGameFiles files(game.Path(), user.Path());
+        CHECK(MCReleaseData::Has());
+    }
 }

@@ -29,6 +29,11 @@ namespace MCReleaseCopy
     /// <summary>The copy's folder, and its record, in the game folder.</summary>
     constexpr std::string_view Folder = "Redux/Release";
     constexpr std::string_view RecordName = "release.json";
+    /// <summary>
+    /// The lock a start holds exclusive while it fills the copy (update/MCUpdateLock.h), so two copies of the game
+    /// starting together don't fill it at once: the one that can't take it leaves the filling to the other.
+    /// </summary>
+    constexpr std::string_view FillLock = MCContentList::InUpdateFolder<"copy.lock">;
 
     /// <summary>
     /// Whether the listed file <paramref name="listedPath"/> (as the content list spells it, from the game folder) is

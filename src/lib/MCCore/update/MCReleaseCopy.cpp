@@ -209,9 +209,12 @@ std::expected<MCReleaseCopy::MCSynced, std::string> MCReleaseCopy::Sync(MCUpdate
 
             if (*same)
             {
-                MCHeld held = kept->second;
-                held.Path = listed.Path;
-                now.Files.insert_or_assign(folded, std::move(held));
+                // As it is now: hashed because its size or time changed (a restore, a copied install), it's recorded
+                // again so the start that opens it takes it as filled.
+                const MCUpdateDisk::MCStat stat = disk.Stat(place);
+                now.Files.insert_or_assign(
+                    folded,
+                    MCHeld{.Path = listed.Path, .Sha256 = listed.Sha256, .Size = stat.Size, .Written = stat.Written});
                 continue;
             }
         }

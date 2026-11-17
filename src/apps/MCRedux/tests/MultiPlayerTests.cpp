@@ -1773,8 +1773,9 @@ TEST_CASE("network: the game data's hash changes with a gameplay file's loose ov
 
 /// <summary>
 /// Port: the host checks a player's file report against its own hash of the mission it asked about: from a build that
-/// says it hashes its data (MCMatchRule::DataHash), the same hash has the same data, another differs; from a build that
-/// doesn't (an older one, or one that said nothing), any report but 0 has the file, unchecked; 0 is no file from any.
+/// says it hashes its data (MCMatchRule::DataHashV2), the same hash has the same data, another differs; from a build that
+/// doesn't (an older one, or one that said nothing), any report but 0 has the file, unchecked; 0 is no file from any. A
+/// build hashing at version 1 alone (Redux HD's releases 2-8: other files) is unchecked too, never "differs".
 /// </summary>
 TEST_CASE("network: the host checks a file report's hash only from a build that hashes its data")
 {
@@ -1789,17 +1790,21 @@ TEST_CASE("network: the host checks a file report's hash only from a build that 
     };
 
     game.PlayerRules[9] = MCMatchRule::Supported;
-    game.PlayerRules[8] = MCMatchRule::Supported & ~MCMatchRule::DataHash;
+    game.PlayerRules[8] = MCMatchRule::Supported & ~MCMatchRule::DataHashV2;
+    game.PlayerRules[6] = (MCMatchRule::Supported & ~MCMatchRule::DataHashV2) | MCMatchRule::DataHash;
     CHECK(game.CheckFileReport(9, 0x12345678) == MCFileCheck::Same);
     CHECK(game.CheckFileReport(9, 0x12345679) == MCFileCheck::Differs);
     CHECK(game.CheckFileReport(9, 0) == MCFileCheck::Missing);
     CHECK(game.CheckFileReport(8, 0x12345679) == MCFileCheck::Unchecked);
     CHECK(game.CheckFileReport(8, 0) == MCFileCheck::Missing);
     CHECK(game.CheckFileReport(7, 0x12345678) == MCFileCheck::Unchecked);
+    CHECK(game.CheckFileReport(6, 0x12345679) == MCFileCheck::Unchecked);
+    CHECK(game.CheckFileReport(6, 0) == MCFileCheck::Missing);
+    CHECK((MCMatchRule::Supported & MCMatchRule::DataHash) == 0u);
 
     // A player's rules message says it.
     game.PlayerRules.clear();
-    Deliver(7, rulesMessage(MCMatchRule::DataHash));
+    Deliver(7, rulesMessage(MCMatchRule::DataHashV2));
     CHECK(game.CheckFileReport(7, 0x12345678) == MCFileCheck::Same);
 }
 

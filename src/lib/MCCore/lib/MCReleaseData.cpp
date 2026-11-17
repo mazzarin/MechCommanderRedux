@@ -70,6 +70,17 @@ void MCReleaseData::Open(const std::filesystem::path& gameFolder)
         return;
     }
 
+    // Filled for another release (an update's fill that couldn't finish): a match reads the game folder until a start
+    // fills it for the one installed.
+    if (const auto installed = MCInstalled::Read(*disk, gameFolder);
+        !installed || installed->Release != (*record)->Release)
+    {
+        SDL_Log("Release copy: filled for release %llu, not the one installed (%s): a match reads the game folder",
+                static_cast<unsigned long long>((*record)->Release),
+                installed ? std::to_string(installed->Release).c_str() : installed.error().c_str());
+        return;
+    }
+
     const std::filesystem::path folder = MCReleaseCopy::FolderIn(gameFolder);
     state.Lacking = (*record)->Lacking;
 
@@ -88,7 +99,7 @@ void MCReleaseData::Open(const std::filesystem::path& gameFolder)
 
         if (held.Path.find('/') == std::string::npos && Key(held.Path).ends_with(ArchiveKind))
         {
-            if (const auto opened = state.Archives.Open(MCFileSystem::ToUtf8(path)); !opened)
+            if (const auto opened = state.Archives.OpenAt(path); !opened)
             {
                 SDL_Log("Release copy: %s left out: %s", held.Path.c_str(), opened.error().c_str());
                 state.Lacking.push_back(held.Path);

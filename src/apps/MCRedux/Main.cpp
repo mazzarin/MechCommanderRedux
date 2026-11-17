@@ -745,8 +745,14 @@ int main(int argc, char** argv)
         }
 
         // The release's own copy of a match's data, filled from the game folder (update/MCReleaseCopy.h), from the
-        // record as the content's step left it.
-        if (const auto now = MCInstalled::Read(*MakeDisk(), options->DataFolder); !now)
+        // record as the content's step left it: by one copy of the game at a time, the others leaving it to that one.
+        const std::unique_ptr<MCUpdateLock> fillLock = MCUpdateLock::Open(options->DataFolder, MCReleaseCopy::FillLock);
+
+        if (fillLock == nullptr || !fillLock->TryExclusive())
+        {
+            SDL_Log("Release copy: another copy of the game is filling it");
+        }
+        else if (const auto now = MCInstalled::Read(*MakeDisk(), options->DataFolder); !now)
         {
             SDL_Log("Release copy: %s", now.error().c_str());
         }

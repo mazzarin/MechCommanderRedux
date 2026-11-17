@@ -11,6 +11,10 @@
 #include "platform/MCVulkanShaders.h"
 #include "sprite/MCHdArt.h"
 
+#include <chrono>
+#include <format>
+#include <string>
+
 // Port-only (SPEC-memory.md's "The ledger"): every byte the game holds counted under a named holder, with its side and
 // its payload, allocations and retired bytes (platform/MCMemoryLedger.h); the GPU's objects counted from their making to
 // their release (platform/MCGpuCounted.h); the frame log's line; and the game planned as another machine (-hdmemory,
@@ -123,6 +127,21 @@ TEST_CASE("memory ledger: the line names each holder with bytes, each side's sum
     CHECK(card.contains(" of 3686 (90% of 4096)"));
     CHECK(card.contains("; system: 1800, unnamed "));
     CHECK(card.contains(", gpu local 900, non-local 0, unnamed "));
+
+    // Windows' private bytes holding the GPU's mapped pages: shown, and not counted as the CPU's.
+    constexpr int64_t MappedMb = 800;
+    const std::string mapped = MCMemoryLedger::Line({.MachineBytes = 8 * GB, .Shared = false, .CardBytes = 4 * GB},
+                                                    {.Footprint = static_cast<uint64_t>(1800 * MB),
+                                                     .GpuLocal = static_cast<uint64_t>(900 * MB),
+                                                     .GpuMapped = static_cast<uint64_t>(MappedMb * MB)});
+    CHECK(mapped.contains(std::format("; system: 1800 ({} the gpu's, mapped), unnamed ", MappedMb)));
+    const auto unnamedOf = [](const std::string& line)
+    {
+        const size_t at = line.find(", unnamed ") + std::string_view(", unnamed ").size();
+        return std::stoll(line.substr(at));
+    };
+
+    CHECK_EQ(unnamedOf(card) - unnamedOf(mapped), MappedMb);
 
     CHECK_EQ(MCMemoryLedger::Ceiling({.MachineBytes = 8 * GB}), 4 * GB);
     CHECK_EQ(MCMemoryLedger::CardCeiling(10 * GB), 9 * GB);
@@ -288,10 +307,15 @@ TEST_CASE_ISOLATED("memory ledger: a GPU object counts from its making to its re
     CHECK(Since(MCHolder::GpuHdPictures, picturesBefore) == MCFigures{});
 
     const std::shared_ptr<MCMemoryRoom::MCSystem> system = MCMakeMemorySystem();
+    const auto asked = std::chrono::steady_clock::now();
     const std::optional<MCMemoryLedger::MCProcessFigures> process = system->Process();
+    const std::chrono::duration<double, std::milli> took = std::chrono::steady_clock::now() - asked;
     REQUIRE(process.has_value());
-    std::cout << std::format("  the system's figure for the tests: {} MB\n", process->Footprint / uint64_t(MB));
+    std::cout << std::format(
+        "  the system's figure for the tests: {} MB, {} MB of it the GPU's mapped, read in {:.2f} ms\n",
+        process->Footprint / uint64_t(MB), process->GpuMapped / uint64_t(MB), took.count());
     CHECK(process->Footprint > 0);
+    CHECK(process->GpuMapped <= process->Footprint);
     device.reset();
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }

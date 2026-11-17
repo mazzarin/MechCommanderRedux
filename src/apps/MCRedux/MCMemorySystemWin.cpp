@@ -264,6 +264,7 @@ namespace
                                      sizeof(counters)))
             {
                 figures.Footprint = counters.PrivateUsage;
+                figures.GpuMapped = MappedGpuBytes();
             }
             else
             {
@@ -288,6 +289,38 @@ namespace
         }
 
     private:
+        /// <summary>
+        /// The game's committed private pages that are write-combined: the GPU driver's memory mapped for the CPU, which
+        /// private bytes count and DXGI's figures count again (on the A10, 17 Nov: the card's local and non-local use
+        /// less 88 MB, all through a run). A walk of the game's own address space, a VirtualQuery a region.
+        /// </summary>
+        static uint64_t MappedGpuBytes()
+        {
+            uint64_t bytes = 0;
+            uintptr_t address = 0;
+            MEMORY_BASIC_INFORMATION region{};
+
+            while (VirtualQuery(reinterpret_cast<LPCVOID>(address), &region, sizeof(region)) == sizeof(region))
+            {
+                if (region.State == MEM_COMMIT && region.Type == MEM_PRIVATE &&
+                    (region.Protect & PAGE_WRITECOMBINE) != 0)
+                {
+                    bytes += region.RegionSize;
+                }
+
+                const uintptr_t next = reinterpret_cast<uintptr_t>(region.BaseAddress) + region.RegionSize;
+
+                if (next <= address)
+                {
+                    break;
+                }
+
+                address = next;
+            }
+
+            return bytes;
+        }
+
         /// <summary>The adapter found (null: none yet, or none), held while it's asked.</summary>
         ComPtr<IDXGIAdapter3> Adapter()
         {

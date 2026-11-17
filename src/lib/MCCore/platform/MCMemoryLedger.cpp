@@ -217,14 +217,22 @@ std::string MCMemoryLedger::Line(const MCRoom& room, const MCProcessFigures& pro
     }
 
     // What the system counts that no holder names (the game's baseline, frameworks, drivers, the allocator's rounding):
-    // on macOS the footprint takes in the GPU's memory too; on Windows the GPU's is DXGI's apart from private bytes.
+    // on macOS the footprint takes in the GPU's memory too; on Windows the GPU's is DXGI's apart from private bytes,
+    // which hold the driver's mappings of it as well (GpuMapped), taken out.
     const bool gpuApart = process.GpuLocal != 0 || process.GpuNonLocal != 0;
 
     if (process.Footprint != 0)
     {
         const int64_t named = Holding(cpu) + (gpuApart ? 0 : Holding(gpu));
-        line += std::format("; system: {:.0f}, unnamed {:.0f}", Mb(process.Footprint),
-                            SignedMb(static_cast<int64_t>(process.Footprint) - named));
+        const int64_t own = static_cast<int64_t>(process.Footprint) - static_cast<int64_t>(process.GpuMapped);
+        line += std::format("; system: {:.0f}", Mb(process.Footprint));
+
+        if (process.GpuMapped != 0)
+        {
+            line += std::format(" ({:.0f} the gpu's, mapped)", Mb(process.GpuMapped));
+        }
+
+        line += std::format(", unnamed {:.0f}", SignedMb(own - named));
     }
 
     if (gpuApart)

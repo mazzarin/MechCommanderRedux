@@ -126,12 +126,17 @@ namespace MCMemoryLedger
     {
         /// <summary>
         /// The system's figure for the game's own memory: on macOS its physical footprint (which takes in Metal's memory:
-        /// never add the GPU's allocations to it); on Windows its private bytes.
+        /// never add the GPU's allocations to it); on Windows its private bytes (the GPU's mapped pages among them).
         /// </summary>
         uint64_t Footprint = 0;
         /// <summary>Windows: what the game uses on the GPU's own memory and in the machine's (DXGI's local and non-local).</summary>
         uint64_t GpuLocal = 0;
         uint64_t GpuNonLocal = 0;
+        /// <summary>
+        /// Windows: what of the private bytes is the GPU's memory mapped for the CPU (its driver's write-combined pages),
+        /// which DXGI's figures count already: taken out before the CPU's side is set against them.
+        /// </summary>
+        uint64_t GpuMapped = 0;
     };
 
     /// <summary>The plan's room as the frame log shows it (SPEC-memory.md's "The ceiling").</summary>

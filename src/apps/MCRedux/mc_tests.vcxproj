@@ -70,6 +70,7 @@
     </ClCompile>
     <ClCompile Include="MCMemorySystemWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\lib\SDL-release-3.4.12\src\video\khronos;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="MCTelemetryWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>

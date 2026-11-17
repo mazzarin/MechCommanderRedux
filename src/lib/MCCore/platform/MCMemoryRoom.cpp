@@ -4,12 +4,18 @@
 
 namespace
 {
-    /// <summary>The system asked (none: nothing reported), and the generation of AskAgain readers compare.</summary>
+    /// <summary>
+    /// The system asked (none: nothing reported), and the generation of AskAgain readers compare; the machine and card
+    /// planned as (-hdmemory, -hdcard; none: the machine's own); the card a reader last read, for the ledger's line.
+    /// </summary>
     struct MCRoomState
     {
         std::mutex Lock;
         std::shared_ptr<MCMemoryRoom::MCSystem> System;
         std::atomic<uint64_t> Asked = 0;
+        std::optional<uint64_t> MachineBytes;
+        std::optional<uint64_t> CardBytes;
+        std::optional<MCMemoryRoom::MCCard> LastCard;
     };
 
     MCRoomState& TheState()
@@ -41,8 +47,60 @@ uint64_t MCMemoryRoom::MCSystem::TotalBytes()
 
 uint64_t MCMemoryRoom::TotalBytes()
 {
+    MCRoomState& state = TheState();
+
+    if (std::scoped_lock lock(state.Lock); state.MachineBytes.has_value())
+    {
+        return *state.MachineBytes;
+    }
+
     const std::shared_ptr<MCSystem> system = TheSystem();
     return system != nullptr ? system->TotalBytes() : SystemMemoryBytes();
+}
+
+void MCMemoryRoom::SetMachineBytes(std::optional<uint64_t> bytes)
+{
+    MCRoomState& state = TheState();
+
+    {
+        std::scoped_lock lock(state.Lock);
+        state.MachineBytes = bytes;
+    }
+
+    AskAgain();
+}
+
+void MCMemoryRoom::SetCardBytes(std::optional<uint64_t> bytes)
+{
+    MCRoomState& state = TheState();
+
+    {
+        std::scoped_lock lock(state.Lock);
+        state.CardBytes = bytes;
+        state.LastCard.reset();
+    }
+
+    AskAgain();
+}
+
+std::string MCMemoryRoom::LedgerLine()
+{
+    MCRoomState& state = TheState();
+    std::optional<MCCard> card;
+
+    {
+        std::scoped_lock lock(state.Lock);
+        card = state.LastCard;
+    }
+
+    const bool shared = !card.has_value() || card->SharesMemory;
+    const MCMemoryLedger::MCRoom room{.MachineBytes = TotalBytes(),
+                                      .Shared = shared,
+                                      .CardBytes = shared ? std::nullopt : std::optional<uint64_t>(card->Budget)};
+    const std::shared_ptr<MCSystem> system = TheSystem();
+    const std::optional<MCMemoryLedger::MCProcessFigures> process =
+        system != nullptr ? system->Process() : std::nullopt;
+    return MCMemoryLedger::Line(room, process.value_or(MCMemoryLedger::MCProcessFigures{}));
 }
 
 void MCMemoryRoom::SetSystem(std::shared_ptr<MCSystem> system)
@@ -85,6 +143,16 @@ MCMemoryRoom::MCFrameRoom MCMemoryRoom::MCReader::Frame(uint64_t held)
         _Asked = asked;
         _NextRead = now + CardReadInterval;
         _Card = system != nullptr ? system->Card(_DeviceName) : std::nullopt;
+        MCRoomState& state = TheState();
+        std::scoped_lock lock(state.Lock);
+
+        // -hdcard: a card of the game's own, holding what the system says the game holds on the GPU.
+        if (state.CardBytes.has_value())
+        {
+            _Card = MCCard{.Budget = *state.CardBytes, .Used = _Card.has_value() ? _Card->Used : held};
+        }
+
+        state.LastCard = _Card;
         _Room = _Card.has_value() ? CardRoom(*_Card, held) : MostHdBytes;
         _CardShort = _Card.has_value() && _Card->Used > _Card->Budget;
     }

@@ -149,6 +149,7 @@
     <ClCompile Include="tests\MechHandoverTests.cpp" />
     <ClCompile Include="tests\MechStopsTests.cpp" />
     <ClCompile Include="tests\MechTests.cpp" />
+    <ClCompile Include="tests\MemoryLedgerTests.cpp" />
     <ClCompile Include="tests\MemoryRoomTests.cpp" />
     <ClCompile Include="tests\MissionTests.cpp" />
     <ClCompile Include="tests\MoverTests.cpp" />

@@ -22,6 +22,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
+#include "platform/MCMemoryRoom.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCWin32Defs.h"
@@ -355,6 +356,43 @@ namespace
         }
 
         MCHdArt::SetReaderSettings(settings);
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Done when"): the game plans as another machine: <c>-hdmemory &lt;GB&gt;</c>, one with
+    /// that much memory (MCMemoryRoom::SetMachineBytes); <c>-hdcard &lt;GB&gt;</c>, drawing on a card of its own whose
+    /// driver gives it that much (MCMemoryRoom::SetCardBytes). Whole GB, 1 to MostPlannedGb; a value it can't take is
+    /// logged and left out.
+    /// </summary>
+    void SetPlannedMemory(std::string_view word, std::string_view value)
+    {
+        constexpr uint64_t MostPlannedGb = 1024;
+        constexpr int BytesPerGbShift = 30;
+        uint64_t gb = 0;
+        const char* const end = value.data() + value.size();
+
+        if (const auto [at, error] = std::from_chars(value.data(), end, gb);
+            error != std::errc() || at != end || gb == 0 || gb > MostPlannedGb)
+        {
+            SDL_Log("%.*s: \"%.*s\" isn't a whole number of GB from 1 to %llu", static_cast<int>(word.size()),
+                    word.data(), static_cast<int>(value.size()), value.data(),
+                    static_cast<unsigned long long>(MostPlannedGb));
+            return;
+        }
+
+        const uint64_t bytes = gb << BytesPerGbShift;
+
+        if (MCIEquals(word, "-hdmemory"))
+        {
+            MCMemoryRoom::SetMachineBytes(bytes);
+        }
+        else
+        {
+            MCMemoryRoom::SetCardBytes(bytes);
+        }
+
+        SDL_Log("%.*s: planned as %llu GB", static_cast<int>(word.size()), word.data(),
+                static_cast<unsigned long long>(gb));
     }
 }
 
@@ -701,6 +739,16 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             // a switch.
             const bool variantGiven = hasArgument && !words[i + 1].empty() && words[i + 1][0] != '-';
             MCBenchmark::Arm(variantGiven ? std::string_view(words[++i]) : std::string_view());
+        }
+        else if (MCIEquals(word, "-hdmemory") || MCIEquals(word, "-hdcard"))
+        {
+            // Port-only: the memory planned as another machine's (SetPlannedMemory).
+            if (hasArgument)
+            {
+                SetPlannedMemory(word, words[i + 1]);
+            }
+
+            i++;
         }
         else if (MCIEquals(word, "-hdreaders") || MCIEquals(word, "-hdsetreads") ||
                  MCIEquals(word, "-hdreaderpriority") || MCIEquals(word, "-hdhold"))

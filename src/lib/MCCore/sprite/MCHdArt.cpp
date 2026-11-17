@@ -523,6 +523,10 @@ namespace
         /// </summary>
         std::unordered_map<FrameKey, std::shared_ptr<MCHdArt::Frame>, FrameKeyHash> Pictures;
         std::unordered_set<FrameKey, FrameKeyHash> PicturesAsked;
+        /// <summary>Port-only: the bytes of Pictures' frames.</summary>
+        size_t PictureBytes = 0;
+        /// <summary>Port-only: Ready's and Pictures' bytes in the ledger, set each frame (MCHdArt::NextFrame).</summary>
+        MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdReadAhead};
         /// <summary>Counts the times what was found was forgotten (the pack set): a read begun before is dropped.</summary>
         uint64_t Generation = 0;
         /// <summary>How many readers work on a follow or a read now.</summary>
@@ -581,6 +585,8 @@ namespace
         std::list<FrameKey> Order;
         uint64_t LastId = 0;
         size_t Bytes = 0;
+        /// <summary>Port-only: Bytes in the ledger, set each frame (MCHdArt::NextFrame).</summary>
+        MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdFrames};
         /// <summary>The budget set (0: none, MCMemoryRoom::MostHdBytes).</summary>
         size_t Budget = 0;
         /// <summary>Port-only: the frames begun (MCHdArt::NextFrame).</summary>
@@ -2397,7 +2403,12 @@ namespace
                 }
                 else
                 {
-                    ahead.Pictures.emplace(key, std::move(frame));
+                    const size_t bytes = frame->Bytes();
+
+                    if (ahead.Pictures.emplace(key, std::move(frame)).second)
+                    {
+                        ahead.PictureBytes += bytes;
+                    }
                 }
             }
 
@@ -3182,6 +3193,7 @@ namespace
         {
             std::shared_ptr<MCHdArt::Frame> frame = std::move(picture->second);
             ahead.Pictures.erase(picture);
+            ahead.PictureBytes -= frame->Bytes();
             return frame;
         }
 
@@ -3217,6 +3229,7 @@ namespace
         ahead.Order.clear();
         ahead.Bytes = 0;
         ahead.Pictures.clear();
+        ahead.PictureBytes = 0;
         ahead.PicturesAsked.clear();
 
         // The archives to open; those being opened stay waited on (Opening) until their opens end, dropped then.
@@ -4669,6 +4682,7 @@ void MCHdArt::KeepReadAhead()
         }
 
         ahead.Pictures.clear();
+        ahead.PictureBytes = 0;
         ahead.Ready.clear();
         ahead.Order.clear();
         ahead.Bytes = 0;
@@ -5436,6 +5450,15 @@ void MCHdArt::NextFrame(bool memoryShort)
 {
     State& state = TheState();
     ++state.Frame;
+
+    // Port-only (SPEC-memory.md's ledger): the frames kept and read ahead, as the frame starts.
+    state.Ledger.SetBytes(state.Bytes);
+
+    {
+        ReadAhead& ahead = state.Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        ahead.Ledger.SetBytes(ahead.Bytes + ahead.PictureBytes);
+    }
 
     // Port-only: what was asked for ahead and dropped since, or left out for want of room, asked for again, at most
     // every AskAgainFrames (MCHdArt::MCAskedPackets asks again in a new generation).

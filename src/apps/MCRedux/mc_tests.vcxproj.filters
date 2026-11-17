@@ -217,6 +217,9 @@
     <ClCompile Include="tests\MechTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\MemoryLedgerTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\MemoryRoomTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

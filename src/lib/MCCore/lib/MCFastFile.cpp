@@ -112,6 +112,8 @@ namespace
         std::mutex Lock;
         std::list<KeptStream> Kept;
         size_t Bytes = 0;
+        /// <summary>Bytes, in the ledger.</summary>
+        MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdKeptStreams};
     };
 
     KeptStreams& TheKeptStreams()
@@ -128,6 +130,8 @@ namespace
         std::mutex Lock;
         std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> Held;
         size_t Bytes = 0;
+        /// <summary>Bytes, in the ledger.</summary>
+        MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdHold};
     };
 
     HeldStreams& TheHeldStreams()
@@ -195,6 +199,7 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(
             return std::unexpected(std::move(read.error()));
         }
 
+        fastFile->CountTables();
         return fastFile;
     }
 
@@ -237,6 +242,7 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(
         fastFile->_Index.try_emplace(IndexKey(entry.GetName()), static_cast<int32_t>(i));
     }
 
+    fastFile->CountTables();
     return fastFile;
 }
 
@@ -516,6 +522,7 @@ std::expected<std::shared_ptr<const std::vector<uint8_t>>, std::string> MCFastFi
         kept.Kept.pop_back();
     }
 
+    kept.Ledger.SetBytes(kept.Bytes);
     return bytes;
 }
 
@@ -561,6 +568,7 @@ bool MCFastFile::HoldStream(uint32_t stream, std::vector<uint8_t>&& stored) cons
     if (held.Held.try_emplace(HeldKey(_Serial, stream), bytes).second)
     {
         held.Bytes += bytes->size();
+        held.Ledger.SetBytes(held.Bytes);
     }
 
     return true;
@@ -590,6 +598,7 @@ void MCFastFile::LetGoHeld()
         std::scoped_lock lock(held.Lock);
         going.swap(held.Held);
         held.Bytes = 0;
+        held.Ledger.SetBytes(0);
     }
 }
 
@@ -598,6 +607,45 @@ size_t MCFastFile::HeldBytes()
     HeldStreams& held = TheHeldStreams();
     std::scoped_lock lock(held.Lock);
     return held.Bytes;
+}
+
+void MCFastFile::CountTables()
+{
+    const auto bytesOf = [](const auto& vector)
+    {
+        using Value = typename std::remove_cvref_t<decltype(vector)>::value_type;
+        return std::pair{vector.size() * sizeof(Value), vector.capacity() * sizeof(Value)};
+    };
+
+    size_t payload = 0;
+    size_t allocated = 0;
+    const auto add = [&](std::pair<size_t, size_t> bytes)
+    {
+        payload += bytes.first;
+        allocated += bytes.second;
+    };
+
+    add(bytesOf(_Entries));
+    add(bytesOf(_Streams));
+    add(bytesOf(_EntryKeys));
+    add(bytesOf(_Placed));
+    add(bytesOf(_FolderKeys));
+    add(bytesOf(_FolderFacts));
+    add(bytesOf(_Facts));
+
+    // The index by name (version 1's): a node a name (its key, its number, the link and the hash) and the buckets; a
+    // name longer than the string's own room is allocated apart. The allocator's rounding isn't known.
+    constexpr size_t NodeBytes = sizeof(std::pair<const std::string, int32_t>) + sizeof(void*) + sizeof(size_t);
+    const size_t inlineRoom = std::string().capacity();
+    size_t index = _Index.size() * NodeBytes + _Index.bucket_count() * sizeof(void*);
+
+    for (const auto& [name, entry] : _Index)
+    {
+        index += name.capacity() > inlineRoom ? name.capacity() + 1 : 0;
+    }
+
+    _Ledger.Set(
+        {.Payload = static_cast<int64_t>(payload + index), .Allocated = static_cast<int64_t>(allocated + index)});
 }
 
 std::span<const uint8_t> MCFastFile::EntryIn(int32_t index, const std::vector<uint8_t>& stream) const

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/MCGpuCounted.h"
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCSdlHandle.h"
@@ -1296,8 +1297,13 @@ private:
     /// <summary>Notes a command the GPU can't draw yet.</summary>
     void NotSupported(std::string_view command);
 
-    std::expected<void, std::string> EnsureTexture(Texture& texture, SDL_GPUTextureFormat format,
-                                                   SDL_GPUTextureUsageFlags usage, uint32_t width, uint32_t height);
+    /// <summary>
+    /// Makes <paramref name="texture"/> a texture of the format, use and size given, counted in the ledger under
+    /// <paramref name="holder"/> (MCGpuCounted), unless it is one of that size already.
+    /// </summary>
+    std::expected<void, std::string> EnsureTexture(Texture& texture, MCMemoryLedger::MCHolder holder,
+                                                   SDL_GPUTextureFormat format, SDL_GPUTextureUsageFlags usage,
+                                                   uint32_t width, uint32_t height);
     static void Release(Texture& texture);
     /// <summary>Takes the copy of a surface's <paramref name="rect"/> (window pixels; between render passes).</summary>
     static void TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface, const MCRect& rect);
@@ -1562,7 +1568,7 @@ private:
     /// </summary>
     std::shared_ptr<SDL_GPUTransferBuffer> _Transfer;
     uint32_t _TransferSize = 0;
-    MCGpuHandle<SDL_GPUBuffer> _DrawBuffer;
+    MCCountedGpuHandle<SDL_GPUBuffer> _DrawBuffer;
     uint32_t _DrawBufferSize = 0;
 
     /// <summary>The atlas: pages of value + state (R8G8), filled in shelves.</summary>
@@ -1623,6 +1629,8 @@ private:
     /// </summary>
     std::unordered_map<uint64_t, Picture> _HdPictures;
     size_t _HdPictureBytes = 0;
+    /// <summary>Port-only: _HdPictureBytes as the ledger's HD pictures' payload, set each frame (their pages are allocated).</summary>
+    MCMemoryLedger::MCShare _HdPicturePayload{MCMemoryLedger::MCHolder::GpuHdPictures};
     /// <summary>Port-only: the HD pictures' frames' numbers, the least recently drawn first.</summary>
     std::list<uint64_t> _HdOrder;
     /// <summary>

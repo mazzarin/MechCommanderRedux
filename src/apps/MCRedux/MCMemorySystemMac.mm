@@ -5,6 +5,7 @@
 #import <Metal/Metal.h>
 #include <SDL3/SDL_log.h>
 #include <dispatch/dispatch.h>
+#include <mach/mach.h>
 
 #include <atomic>
 #include <string>
@@ -81,6 +82,31 @@ namespace
             }
         }
 
+        /// <summary>
+        /// The game's physical footprint, as Activity Monitor's Memory shows it: it takes in Metal's memory, its
+        /// compressed pages and the kernel's charges for it, so the GPU's allocations are never added to it.
+        /// </summary>
+        std::optional<MCMemoryLedger::MCProcessFigures> Process() override
+        {
+            task_vm_info_data_t info{};
+            mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+            const kern_return_t read =
+                task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count);
+
+            if (read != KERN_SUCCESS || count < TASK_VM_INFO_REV1_COUNT)
+            {
+                if (!_ProcessLogged)
+                {
+                    _ProcessLogged = true;
+                    SDL_Log("HD caches: the game's footprint can't be read (%d)", read);
+                }
+
+                return std::nullopt;
+            }
+
+            return MCMemoryLedger::MCProcessFigures{.Footprint = info.phys_footprint};
+        }
+
     private:
         /// <summary>
         /// The device SDL's Metal driver draws with: the system's default, which it takes (it asks for no low-power
@@ -116,6 +142,7 @@ namespace
         bool _Looked = false;
         std::string _DeviceName;
         id<MTLDevice> _Device = nil;
+        bool _ProcessLogged = false;
     };
 }
 

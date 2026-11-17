@@ -200,6 +200,8 @@ TEST_CASE("frame log: a line a second gives a slowdown that lasts with each part
         text.contains("-- 1.0 s: 50 frames, median 20.00 ms, p99 20.00, max 20.00; 50 over 1.5 refreshes at 240 Hz\n"));
     CHECK(text.contains("   a frame: logic 15.00\n"));
     CHECK(text.contains("   counts: HD frames read 100\n"));
+    // Port-only (SPEC-memory.md's ledger): the memory's line with each second's.
+    CHECK(text.contains("   memory (MB, payload/allocated/retired): cpu: "));
     // A frame with a note is written whatever its time, with its parts and counts.
     CHECK(
         text.contains("frame 11 20.00 ms (usual 20.00)\n    logic                     15.00\n    + HD frames read: 2\n"

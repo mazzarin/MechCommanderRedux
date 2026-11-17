@@ -192,7 +192,7 @@ private:
     /// <summary>An R8 or RGBA texture, grown as needed (only its top-left Width x Height is in use).</summary>
     struct Texture
     {
-        MCGpuHandle<SDL_GPUTexture> Handle;
+        MCCountedGpuHandle<SDL_GPUTexture> Handle;
         /// <summary>The allocated size.</summary>
         uint32_t Width = 0;
         uint32_t Height = 0;
@@ -247,7 +247,8 @@ private:
     /// <paramref name="buffer"/> (<paramref name="bufferSize"/> bytes; made or grown as needed).
     /// </summary>
     std::expected<void, std::string> UploadParts(SDL_GPUCommandBuffer& commands, std::span<UploadPart> parts,
-                                                 MCGpuHandle<SDL_GPUTransferBuffer>& buffer, uint32_t& bufferSize);
+                                                 MCCountedGpuHandle<SDL_GPUTransferBuffer>& buffer,
+                                                 uint32_t& bufferSize);
     /// <summary>
     /// Composites the frame planned into the frame texture, from the uploaded textures or the GPU's surfaces.
     /// </summary>
@@ -357,9 +358,9 @@ private:
     /// <summary>Port-only (HD weather's snow): the underlays' specks' lattices, in the same order.</summary>
     std::vector<MCSpeckLattice> _Specks;
     /// <summary>The upload buffer, and its size; the light tiles' (uploaded after the frame's textures), and its.</summary>
-    MCGpuHandle<SDL_GPUTransferBuffer> _Upload;
+    MCCountedGpuHandle<SDL_GPUTransferBuffer> _Upload;
     uint32_t _UploadSize = 0;
-    MCGpuHandle<SDL_GPUTransferBuffer> _LightTileUpload;
+    MCCountedGpuHandle<SDL_GPUTransferBuffer> _LightTileUpload;
     uint32_t _LightTileUploadSize = 0;
     /// <summary>The renderer of the frame surfaces (the renderers refer to it while it is set as the hardware one).</summary>
     std::shared_ptr<MCVulkanRenderer> _Renderer;

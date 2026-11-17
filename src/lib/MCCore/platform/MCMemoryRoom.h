@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform/MCMemoryLedger.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -63,10 +65,39 @@ namespace MCMemoryRoom
         /// somewhat less); 0 when it can't say.
         /// </summary>
         virtual uint64_t TotalBytes();
+
+        /// <summary>
+        /// What the system says the game holds (MCMemoryLedger::MCProcessFigures), for the ledger's line beside its own
+        /// count; none when it can't say. Asked once a second on the game's thread, while a frame log is open.
+        /// </summary>
+        virtual std::optional<MCMemoryLedger::MCProcessFigures> Process() { return std::nullopt; }
     };
 
-    /// <summary>The machine's memory as the system set says (MCSystem::TotalBytes), or SDL with none set.</summary>
+    /// <summary>
+    /// The machine's memory: <see cref="SetMachineBytes"/>'s when set (<c>-hdmemory</c>), else as the system set says
+    /// (MCSystem::TotalBytes), or SDL with none set.
+    /// </summary>
     uint64_t TotalBytes();
+
+    /// <summary>
+    /// Port-only (<c>-hdmemory &lt;GB&gt;</c>, SPEC-memory.md's "Done when"): the game plans as a machine with
+    /// <paramref name="bytes"/> of memory (none: the machine's own). This checks the plan's logic on a bigger machine,
+    /// not the system's stalls on a small one.
+    /// </summary>
+    void SetMachineBytes(std::optional<uint64_t> bytes);
+
+    /// <summary>
+    /// Port-only (<c>-hdcard &lt;GB&gt;</c>): the game plans as though it draws on a card of its own whose driver gives it
+    /// <paramref name="bytes"/> (none: the card the system says), the GPU's use there as the system says it (or the HD
+    /// pictures' alone where it can't).
+    /// </summary>
+    void SetCardBytes(std::optional<uint64_t> bytes);
+
+    /// <summary>
+    /// The ledger's line for the frame log (MCMemoryLedger::Line): the machine's memory, the card the renderer last read
+    /// (MCReader::Frame) and the system's figures for the game. On the game's thread.
+    /// </summary>
+    std::string LedgerLine();
 
     /// <summary>
     /// Sets the system asked (none: nothing is short and each side keeps up to MostHdBytes); every reader asks the card

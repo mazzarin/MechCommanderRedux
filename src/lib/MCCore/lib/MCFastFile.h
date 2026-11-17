@@ -2,6 +2,7 @@
 
 #include "lib/MCDiskFile.h"
 #include "lib/MCOptionalRef.h"
+#include "platform/MCMemoryLedger.h"
 
 /// <summary>
 /// One entry of a FastFile's directory, as stored in the file: where the data is, its stored and unpacked sizes and
@@ -264,4 +265,8 @@ private:
     std::vector<uint64_t> _FolderKeys;
     std::vector<std::pair<uint32_t, uint32_t>> _FolderFacts;
     std::vector<uint8_t> _Facts;
+
+    /// <summary>Port-only (SPEC-memory.md's ledger): counts the tables above as read, until the archive goes.</summary>
+    void CountTables();
+    MCMemoryLedger::MCShare _Ledger{MCMemoryLedger::MCHolder::ArchiveTables};
 };

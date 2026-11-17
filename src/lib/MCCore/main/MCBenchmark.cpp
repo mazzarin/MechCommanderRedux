@@ -278,24 +278,26 @@ namespace
 
     /// <summary>
     /// Port-only (<c>-hdguard</c>, MCHdArt::GuardOriginalReads): says each kind of original art read the guard noted in
-    /// the log, the frame log and benchmarks.txt, or that it couldn't guard (no version 2 pack drawn); the reads in all,
-    /// none without the guard.
+    /// the log, the frame log and benchmarks.txt, or that it couldn't guard (no version 2 pack drawn, as when the app
+    /// didn't find its pack). Whether the run passes: the guard off, or on with a version 2 pack drawn and no read noted
+    /// (a run that drew no version 2 pack fails: it guarded nothing).
     /// </summary>
-    size_t ReportGuardedReads()
+    bool ReportGuardedReads()
     {
         const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
 
         if (!reads.has_value())
         {
-            return 0;
+            return true;
         }
 
         std::vector<std::string> lines;
         size_t total = 0;
+        const bool guarding = MCHdArt::GuardingOriginalReads();
 
-        if (!MCHdArt::GuardingOriginalReads())
+        if (!guarding)
         {
-            lines.emplace_back("HD guard: no version 2 HD pack drawn, nothing guarded");
+            lines.emplace_back("HD guard: no version 2 HD pack drawn, nothing guarded: the run fails");
         }
 
         for (const MCHdArt::GuardedRead& read : *reads)
@@ -320,7 +322,7 @@ namespace
             AddSummary(line);
         }
 
-        return total;
+        return guarding && total == 0;
     }
 
     [[noreturn]] void Finish(MCRun& run)
@@ -342,11 +344,11 @@ namespace
         MCFrameLog::Line(line);
         AddSummary(line);
         SDL_Log("%s", line.c_str());
-        // A run under -hdguard fails on any original art read that the HD pack is drawn in place of.
-        const size_t guarded = ReportGuardedReads();
+        // A run under -hdguard fails on any original art read that the HD pack is drawn in place of, or with none drawn.
+        const bool passed = ReportGuardedReads();
         MCFrameLog::Close();
         MCHdArt::CloseTrace();
-        KillTheGame(guarded == 0 ? 0 : 1);
+        KillTheGame(passed ? 0 : 1);
     }
 
     /// <summary>The benchmark's frame, before the scenario's logic runs (its callback was added first).</summary>

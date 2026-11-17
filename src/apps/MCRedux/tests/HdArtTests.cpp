@@ -8267,6 +8267,87 @@ namespace
         std::cout << std::format("  {}: {} HD frames read so far ({:.2f} ms each), {} MB kept\n", name, read,
                                  read > 0 ? readTime / static_cast<double>(read) : 0.0, MCHdArt::CachedBytes() >> 20);
     }
+
+    /// <summary>
+    /// The frames a mech's drawn facing takes to reach a new facing: with HDTurns it eases there at TurnEaseRate, never
+    /// more than TurnLagMost behind (7.5 frames at most), and is drawn there a frame later. Without HDTurns it is there
+    /// at once.
+    /// </summary>
+    constexpr int32_t TurnSettleFrames = static_cast<int32_t>(TurnLagMost / (TurnEaseRate * FrameSeconds)) + 2;
+
+    /// <summary>
+    /// The most frames a picture tool's mech is given to stand still after it is given a tree (it plays its power-up,
+    /// gesture 1, backwards first: 13 frames for the Masakari), and how many frames in a row it must stay the same.
+    /// </summary>
+    constexpr int32_t StillWaitFrames = 150;
+    constexpr int32_t StillFrames = 3;
+
+    /// <summary>
+    /// Runs frames until <paramref name="actor"/>'s gesture and parts' frames have stayed the same for StillFrames
+    /// frames, and says how long that took (or that it never did, as a mech whose standing gesture loops).
+    /// </summary>
+    void WaitStill(const MCMechActor& actor)
+    {
+        const auto pose = [&] { return std::pair(actor.CurrentGesture, actor.CurrentFrame); };
+        auto last = pose();
+        int32_t same = 0;
+        int32_t frame = 0;
+
+        for (; frame < StillWaitFrames && same < StillFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            const auto now = pose();
+            same = now == last ? same + 1 : 0;
+            last = now;
+        }
+
+        std::cout << (same >= StillFrames
+                          ? std::format("  the mech stands still in gesture {} after {} frames\n", last.first, frame)
+                          : std::format("  the mech still moves after {} frames (gesture {})\n", frame, last.first));
+    }
+
+    /// <summary>Faces <paramref name="mech"/> <paramref name="facing"/> degrees and runs frames until it is drawn so.</summary>
+    void FaceSettled(MCBattleMech& mech, float facing)
+    {
+        MCTestGame::FaceMech(mech, facing);
+
+        for (int32_t frame = 0; frame < TurnSettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    }
+
+    /// <summary>
+    /// Option <paramref name="name"/>'s numbers, <paramref name="count"/> of them separated by colons (as "-180:180:2.5"),
+    /// or nothing when the option isn't given; a malformed one fails the test.
+    /// </summary>
+    std::optional<std::vector<float>> NumbersOption(std::string_view name, size_t count)
+    {
+        const std::optional<std::string_view> given = MCTest::Option(name);
+
+        if (!given.has_value())
+        {
+            return std::nullopt;
+        }
+
+        MCTest::Scope scope(std::format("--{} {}", name, *given));
+        std::vector<float> numbers;
+
+        for (const auto part : std::views::split(*given, ':'))
+        {
+            const std::string text(std::string_view(part.begin(), part.end()));
+            char* end = nullptr;
+            // strtof: libc++ has floating-point from_chars only from macOS 26.
+            numbers.push_back(std::strtof(text.c_str(), &end));
+            REQUIRE((!text.empty() && end == text.c_str() + text.size()));
+            // A number a sweep counts or a scheme casts to a whole number: no infinity or NaN, and within int32_t.
+            constexpr float WholeMost = 1e9f;
+            REQUIRE((std::isfinite(numbers.back()) && std::fabs(numbers.back()) < WholeMost));
+        }
+
+        REQUIRE_EQ(numbers.size(), count);
+        return numbers;
+    }
 }
 
 /// <summary>
@@ -8275,6 +8356,13 @@ namespace
 /// (<c>&lt;name&gt;_hd.png</c>), or with <c>--hd-original 1</c> without it (<c>&lt;name&gt;_original.png</c>). A run plays
 /// out the same every time, so the two runs' pictures differ only in how the mech is drawn. The window is
 /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall.
+/// <c>--zoom &lt;lines&gt;</c> shows the world that many lines tall (the game's own zoom otherwise; the zoomed shot is
+/// always 300), and <c>--paint &lt;n&gt;</c> paints the mech in scheme n (the actors' fade tables; its own otherwise).
+/// <c>--facings &lt;from&gt;:&lt;to&gt;:&lt;step&gt;</c> makes the run a sweep instead: the mech standing at each facing
+/// (<c>facing_&lt;degrees&gt;</c>), and with <c>--paints &lt;first&gt;:&lt;last&gt;</c> first in each of those schemes
+/// at the first facing (<c>paint_&lt;n&gt;</c>), to find the angle and scheme of a mech in a player's screenshot.
+/// The shots wait for the mech to stand still (it powers up first) and, at each facing, for the drawn mech to have
+/// turned to it (HDTurns eases its turns).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
 {
@@ -8293,11 +8381,63 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
     std::filesystem::create_directories(folder);
     const auto shoot = [&](const std::string& name) { Shoot(folder, name, original); };
 
+    if (const std::optional<std::vector<float>> zoom = NumbersOption("zoom", 1); zoom.has_value())
+    {
+        REQUIRE(zoom->front() > 0.0f);
+        MCFixedZoomHeight = zoom->front();
+    }
+
+    if (const std::optional<std::vector<float>> paint = NumbersOption("paint", 1); paint.has_value())
+    {
+        player.Actor->FadeTableIndex = static_cast<int32_t>(paint->front());
+    }
+
+    WaitStill(*player.Actor);
+
+    // A sweep: the schemes --paints asks for at the first facing, then the mech standing at each facing.
+    if (const std::optional<std::vector<float>> facings = NumbersOption("facings", 3); facings.has_value())
+    {
+        const float from = (*facings)[0];
+        const float to = (*facings)[1];
+        const float step = (*facings)[2];
+        REQUIRE((step > 0.0f && to >= from));
+        FaceSettled(*player.Mech, from);
+
+        if (const std::optional<std::vector<float>> paints = NumbersOption("paints", 2); paints.has_value())
+        {
+            const int32_t own = player.Actor->FadeTableIndex;
+            const auto first = static_cast<int32_t>((*paints)[0]);
+            const auto last = static_cast<int32_t>((*paints)[1]);
+            REQUIRE(first <= last);
+
+            for (int32_t scheme = first; scheme <= last; ++scheme)
+            {
+                player.Actor->FadeTableIndex = scheme;
+                MCTestGame::RunFrame(FrameSeconds);
+                shoot(std::format("paint_{:03}", scheme));
+            }
+
+            player.Actor->FadeTableIndex = own;
+        }
+
+        // Each facing counted from the first, so a long sweep doesn't drift; `to` is shot when it falls on a step (a
+        // little past, for the float rounding).
+        constexpr float StepSlack = 1e-3f;
+        const auto steps = static_cast<int32_t>(std::floor((to - from) / step + StepSlack));
+
+        for (int32_t i = 0; i <= steps; ++i)
+        {
+            const float facing = from + step * static_cast<float>(i);
+            FaceSettled(*player.Mech, facing);
+            shoot(std::format("facing_{:+08.3f}", facing));
+        }
+
+        return;
+    }
+
     for (const float facing : {0.0f, 45.0f, 90.0f, 135.0f, 180.0f, -45.0f, -90.0f, -135.0f})
     {
-        MCTestGame::FaceMech(*player.Mech, facing);
-        MCTestGame::RunFrame(FrameSeconds);
-        MCTestGame::RunFrame(FrameSeconds);
+        FaceSettled(*player.Mech, facing);
         shoot(std::format("stand_{:+04.0f}", facing));
     }
 

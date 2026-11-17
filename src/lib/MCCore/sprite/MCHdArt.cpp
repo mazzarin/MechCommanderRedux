@@ -5,6 +5,7 @@
 #include "lib/MCInflate.h"
 #include "lib/MCOptionalRef.h"
 #include "lib/MCZstd.h"
+#include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCMemoryRoom.h"
@@ -266,6 +267,15 @@ namespace
         bool KeepsEdges = false;
         /// <summary>Port-only: whether the table is a stripped one, without rows (MCShape::Stripped).</summary>
         bool Stripped = false;
+    };
+
+    /// <summary>
+    /// Port-only (the ledger): a frame the cache let go of while something else held it, and its figures then.
+    /// </summary>
+    struct LetGoFrame
+    {
+        std::weak_ptr<const MCHdArt::Frame> Frame;
+        MCMemoryLedger::MCFigures Figures;
     };
 
     /// <summary>
@@ -585,8 +595,16 @@ namespace
         std::list<FrameKey> Order;
         uint64_t LastId = 0;
         size_t Bytes = 0;
-        /// <summary>Port-only: Bytes in the ledger, set each frame (MCHdArt::NextFrame).</summary>
+        /// <summary>Port-only (the ledger): what Bytes' frames take, as the allocator rounds their blocks up.</summary>
+        size_t AllocatedBytes = 0;
+        /// <summary>Port-only: Bytes and AllocatedBytes in the ledger, set each frame (MCHdArt::NextFrame).</summary>
         MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdFrames};
+        /// <summary>
+        /// Port-only (the ledger): the frames the cache let go of while something else held them (a texture's picture,
+        /// a draw's), until they go, and their bytes in the ledger, set each frame (MCHdArt::NextFrame).
+        /// </summary>
+        std::vector<LetGoFrame> LetGo;
+        MCMemoryLedger::MCShare LetGoLedger{MCMemoryLedger::MCHolder::HdFramesLetGo};
         /// <summary>The budget set (0: none, MCMemoryRoom::MostHdBytes).</summary>
         size_t Budget = 0;
         /// <summary>Port-only: the frames begun (MCHdArt::NextFrame).</summary>
@@ -1549,6 +1567,25 @@ namespace
         return Finished(std::move(*read), folder.BakedShadows, id);
     }
 
+    /// <summary>A frame's figures in the ledger: the bytes it keeps, and what they take.</summary>
+    MCMemoryLedger::MCFigures FiguresOf(const MCHdArt::Frame& frame)
+    {
+        return {.Payload = static_cast<int64_t>(frame.Bytes()),
+                .Allocated = static_cast<int64_t>(frame.AllocatedBytes())};
+    }
+
+    /// <summary>
+    /// Port-only (the ledger): counts <paramref name="frame"/>, which the cache is letting go of, among the frames let go
+    /// while something else holds it (its memory stays until that lets go too).
+    /// </summary>
+    void CountLetGo(State& state, const std::shared_ptr<const MCHdArt::Frame>& frame)
+    {
+        if (frame != nullptr && frame.use_count() > 1)
+        {
+            state.LetGo.push_back({.Frame = frame, .Figures = FiguresOf(*frame)});
+        }
+    }
+
     /// <summary>
     /// Drops the kept frame <paramref name="key"/> (<paramref name="cached"/>); its entry stays, to be read again (or read
     /// ahead again) with its Id.
@@ -1557,6 +1594,8 @@ namespace
     {
         state.Order.erase(cached.InOrder);
         state.Bytes -= cached.Frame->Bytes();
+        state.AllocatedBytes -= cached.Frame->AllocatedBytes();
+        CountLetGo(state, cached.Frame);
         cached.Frame.reset();
         cached.Looked = false;
 
@@ -3443,6 +3482,7 @@ namespace
                 cached.Frame = std::move(*read);
                 cached.InOrder = state.Order.insert(state.Order.end(), key);
                 state.Bytes += cached.Frame->Bytes();
+                state.AllocatedBytes += cached.Frame->AllocatedBytes();
                 ++state.Read;
                 std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
                 FollowAhead(key, frames);
@@ -3722,12 +3762,19 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.SpritesMatch.reset();
     state.Listed.reset();
     state.Sequences.clear();
+
+    for (const auto& kept : state.Frames)
+    {
+        CountLetGo(state, kept.second.Frame);
+    }
+
     state.Frames.clear();
     state.Order.clear();
     state.Folders.clear();
     state.FolderIndices.clear();
     state.ShapeTableFolders.clear();
     state.Bytes = 0;
+    state.AllocatedBytes = 0;
     state.Logged.clear();
     state.MadeWith.reset();
     state.PaletteLooked = false;
@@ -4711,6 +4758,7 @@ void MCHdArt::KeepReadAhead()
         cached.Frame = std::move(frame);
         cached.InOrder = state.Order.insert(state.Order.end(), key);
         state.Bytes += cached.Frame->Bytes();
+        state.AllocatedBytes += cached.Frame->AllocatedBytes();
         ++state.Read;
         ++state.TakenAhead;
     }
@@ -5440,6 +5488,11 @@ size_t MCHdArt::CacheBudget()
     return set != 0 ? set : static_cast<size_t>(MCMemoryRoom::MostHdBytes);
 }
 
+size_t MCHdArt::Frame::AllocatedBytes() const
+{
+    return MCAllocatedBytes(Colors.data()) + MCAllocatedBytes(Indices.data());
+}
+
 void MCHdArt::SetCacheBudget(size_t bytes)
 {
     TheState().Budget = bytes;
@@ -5451,8 +5504,24 @@ void MCHdArt::NextFrame(bool memoryShort)
     State& state = TheState();
     ++state.Frame;
 
-    // Port-only (SPEC-memory.md's ledger): the frames kept and read ahead, as the frame starts.
-    state.Ledger.SetBytes(state.Bytes);
+    // Port-only (SPEC-memory.md's ledger): the frames kept, those let go that live on, and those read ahead, as the
+    // frame starts.
+    state.Ledger.Set(
+        {.Payload = static_cast<int64_t>(state.Bytes), .Allocated = static_cast<int64_t>(state.AllocatedBytes)});
+    MCMemoryLedger::MCFigures letGo;
+    std::erase_if(state.LetGo,
+                  [&letGo](const LetGoFrame& frame)
+                  {
+                      if (frame.Frame.expired())
+                      {
+                          return true;
+                      }
+
+                      letGo.Payload += frame.Figures.Payload;
+                      letGo.Allocated += frame.Figures.Allocated;
+                      return false;
+                  });
+    state.LetGoLedger.Set(letGo);
 
     {
         ReadAhead& ahead = state.Ahead;

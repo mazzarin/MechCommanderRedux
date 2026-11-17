@@ -31,6 +31,8 @@ namespace MCMemoryLedger
     {
         /// <summary>MCHdArt's frames kept in memory (BC7 colours and R8G8 indices, unpacked).</summary>
         HdFrames,
+        /// <summary>MCHdArt's frames its cache let go of that something else still holds (a texture's picture, a draw's).</summary>
+        HdFramesLetGo,
         /// <summary>MCHdArt's frames and pictures read ahead, waiting to be taken.</summary>
         HdReadAhead,
         /// <summary>The HD pack's streams held as stored (MCFastFile::HoldStream).</summary>
@@ -137,6 +139,11 @@ namespace MCMemoryLedger
         /// which DXGI's figures count already: taken out before the CPU's side is set against them.
         /// </summary>
         uint64_t GpuMapped = 0;
+        /// <summary>
+        /// What of the system's figure is the heap every CPU holder allocates from: on macOS its regions' pages (dirty
+        /// or compressed, the footprint's), on Windows what mimalloc has committed (private bytes all).
+        /// </summary>
+        uint64_t Heap = 0;
     };
 
     /// <summary>The plan's room as the frame log shows it (SPEC-memory.md's "The ceiling").</summary>
@@ -158,7 +165,7 @@ namespace MCMemoryLedger
 
     /// <summary>
     /// The ledger's line for the frame log: each holder with any bytes (payload, allocated, retired, in MB), each side's
-    /// sum, the room against the ceilings, and the system's figures.
+    /// sum, the room against the ceilings, and the system's figures, the heap's among them.
     /// </summary>
     std::string Line(const MCRoom& room, const MCProcessFigures& process);
 }

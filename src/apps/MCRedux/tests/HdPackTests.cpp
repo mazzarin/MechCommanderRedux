@@ -20,6 +20,7 @@
 #include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteTree.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCMemoryLedger.h"
 #include "platform/MCRegisteredBlock.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
@@ -1240,10 +1241,12 @@ TEST_CASE("hd art: a pack in a folder named outside the ANSI code page is read")
 
 /// <summary>
 /// A frame dropped to keep within the budget is read again when next drawn, with the Id it had (the GPU's copy of it
-/// stays good), while another frame has another.
+/// stays good), while another frame has another. The ledger counts a frame dropped while something else holds it as let
+/// go, until that lets go of it too.
 /// </summary>
-TEST_CASE("hd art: a frame read again keeps its Id")
+TEST_CASE("hd art: a frame read again keeps its Id, and one dropped while held counts as let go until it goes")
 {
+    using MCMemoryLedger::MCHolder;
     constexpr int32_t Width = 8;
     constexpr int32_t Height = 4;
     MCHdArt::Frame frame;
@@ -1265,25 +1268,45 @@ TEST_CASE("hd art: a frame read again keeps its Id")
     const int previous = GHdArt;
     GHdArt = 1;
     MCHdArt::SetPackFolder(pack);
+    MCHdArt::NextFrame(false);
+    const int64_t letGoBefore = MCMemoryLedger::Of(MCHolder::HdFramesLetGo).Payload;
 
     // Room for one frame: each one read drops the other.
     MCHdArt::SetCacheBudget(1);
-    const std::shared_ptr<const MCHdArt::Frame> first = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    std::shared_ptr<const MCHdArt::Frame> first = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
     REQUIRE(first != nullptr);
     const uint64_t firstId = first->Id;
-    const std::shared_ptr<const MCHdArt::Frame> second = MCHdArt::FindTerrainTile(tiles[1], Width, Height);
+    std::shared_ptr<const MCHdArt::Frame> second = MCHdArt::FindTerrainTile(tiles[1], Width, Height);
     REQUIRE(second != nullptr);
     CHECK(second->Id != firstId);
     const size_t read = MCHdArt::FramesRead();
-    const std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
     REQUIRE(again != nullptr);
     CHECK_EQ(MCHdArt::FramesRead(), read + 1);
     CHECK(again != first);
     CHECK_EQ(again->Id, firstId);
 
+    // As the next frame starts, the ledger: the frame kept, its blocks as the allocator rounds them up; the two dropped
+    // while this test held them, let go.
+    MCHdArt::NextFrame(false);
+    const MCMemoryLedger::MCFigures kept = MCMemoryLedger::Of(MCHolder::HdFrames);
+    CHECK_EQ(kept.Payload, static_cast<int64_t>(MCHdArt::CachedBytes()));
+    CHECK(kept.Allocated >= kept.Payload);
+    const MCMemoryLedger::MCFigures letGo = MCMemoryLedger::Of(MCHolder::HdFramesLetGo);
+    CHECK_EQ(letGo.Payload - letGoBefore, static_cast<int64_t>(first->Bytes() + second->Bytes()));
+    CHECK(letGo.Allocated >= letGo.Payload);
+
+    // Let go of here too: gone from the ledger.
+    first.reset();
+    second.reset();
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdFramesLetGo).Payload, letGoBefore);
+
     MCHdArt::SetCacheBudget(0);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
+    again.reset();
+    MCHdArt::NextFrame(false);
     std::filesystem::remove_all(pack);
 }
 

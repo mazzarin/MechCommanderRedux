@@ -3,7 +3,9 @@
 
 #ifdef _WIN32
 
+#include "MCMemoryWalk.h"
 #include "MCWinHttp.h"
+#include "platform/MCAllocator.h"
 
 #include <SDL3/SDL_log.h>
 #include <dxgi1_4.h>
@@ -17,16 +19,11 @@
 #pragma comment(lib, "dxgi.lib")
 
 #include <array>
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <cstring>
 #include <format>
 #include <memory>
 #include <mutex>
-#include <stop_token>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace
@@ -212,41 +209,6 @@ namespace
     }
 
     /// <summary>
-    /// The GPU's mapped pages (MappedGpuBytes), walked once a second on a thread of their own from the first time
-    /// they're asked (a frame log's first line): a walk took 1.55 ms on the A10 (17 Nov), too long for the game's thread.
-    /// </summary>
-    class MCMappedGpuPages
-    {
-    public:
-        /// <summary>The last walk's bytes (0 until the first is done), the walks started if they weren't.</summary>
-        uint64_t Last()
-        {
-            std::call_once(_Started, [this] { _Walker = std::jthread([this](std::stop_token stop) { Walk(stop); }); });
-            return _Bytes.load(std::memory_order_relaxed);
-        }
-
-    private:
-        static constexpr std::chrono::seconds WalkEvery{1};
-
-        void Walk(const std::stop_token& stop)
-        {
-            while (!stop.stop_requested())
-            {
-                _Bytes.store(MappedGpuBytes(), std::memory_order_relaxed);
-                std::unique_lock held(_Lock);
-                _Wake.wait_for(held, stop, WalkEvery, [] { return false; });
-            }
-        }
-
-        std::atomic<uint64_t> _Bytes = 0;
-        std::once_flag _Started;
-        std::mutex _Lock;
-        std::condition_variable_any _Wake;
-        /// <summary>Last: stopped and joined before the rest it reads goes.</summary>
-        std::jthread _Walker;
-    };
-
-    /// <summary>
     /// Windows' answers: short from the system's low-memory notification (by default set while less than about 32 MB a
     /// 4 GB of memory is available, 64 MB at most) until its high-memory one (three times as much), so a frame's trim
     /// doesn't end it only for the next frame read to start it again. The available memory itself isn't counted: it
@@ -336,6 +298,7 @@ namespace
             {
                 figures.Footprint = counters.PrivateUsage;
                 figures.GpuMapped = _MappedPages.Last();
+                figures.Heap = MCHeapCommittedBytes();
             }
             else
             {
@@ -527,8 +490,11 @@ namespace
         bool _QueryLogged = false;
         bool _NotificationLogged = false;
         bool _ProcessLogged = false;
-        /// <summary>Last: its walks stopped before the rest goes.</summary>
-        MCMappedGpuPages _MappedPages;
+        /// <summary>
+        /// The GPU's mapped pages (MappedGpuBytes), walked on a thread of their own. Last: its walks stopped before the
+        /// rest goes.
+        /// </summary>
+        MCMemoryWalk _MappedPages{MappedGpuBytes};
     };
 }
 

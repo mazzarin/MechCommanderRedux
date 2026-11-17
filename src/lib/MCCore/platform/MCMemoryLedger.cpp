@@ -15,6 +15,7 @@ namespace
 
     constexpr std::array<MCHolderFacts, MCMemoryLedger::HolderCount> Holders{{
         {"hd frames", MCSide::Cpu},
+        {"hd frames let go", MCSide::Cpu},
         {"hd read-ahead", MCSide::Cpu},
         {"hd hold", MCSide::Cpu},
         {"hd kept streams", MCSide::Cpu},
@@ -240,6 +241,14 @@ std::string MCMemoryLedger::Line(const MCRoom& room, const MCProcessFigures& pro
         line += std::format(", gpu local {:.0f}, non-local {:.0f}, unnamed {:.0f}", Mb(process.GpuLocal),
                             Mb(process.GpuNonLocal),
                             SignedMb(static_cast<int64_t>(process.GpuLocal + process.GpuNonLocal) - Holding(gpu)));
+    }
+
+    // The heap every CPU holder allocates from: what it holds beyond them is its rounding of their blocks, its pages'
+    // free blocks, and what no holder names (the rest of the CPU's unnamed is outside it: frameworks, the system's).
+    if (process.Heap != 0)
+    {
+        line += std::format("; heap: {:.0f}, unnamed {:.0f}", Mb(process.Heap),
+                            SignedMb(static_cast<int64_t>(process.Heap) - Holding(cpu)));
     }
 
     return line;

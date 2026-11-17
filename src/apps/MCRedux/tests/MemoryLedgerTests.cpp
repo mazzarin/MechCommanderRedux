@@ -96,6 +96,7 @@ TEST_CASE("memory ledger: a share counts its figures while it lives, replaced by
 
     // Each holder named, on its side.
     CHECK_EQ(MCMemoryLedger::NameOf(MCHolder::HdFrames), "hd frames");
+    CHECK_EQ(MCMemoryLedger::NameOf(MCHolder::HdFramesLetGo), "hd frames let go");
     CHECK(MCMemoryLedger::SideOf(MCHolder::ArchiveTables) == MCMemoryLedger::MCSide::Cpu);
     CHECK(MCMemoryLedger::SideOf(MCHolder::GpuTargets) == MCMemoryLedger::MCSide::Gpu);
     CHECK(MCMemoryLedger::PayloadApart(MCHolder::GpuHdPictures));
@@ -119,6 +120,7 @@ TEST_CASE("memory ledger: the line names each holder with bytes, each side's sum
     CHECK(shared.contains(" of 8192 (half of 16384, shared)"));
     CHECK(shared.contains("; system: 2500, unnamed "));
     CHECK(!shared.contains("gpu local"));
+    CHECK(!shared.contains("; heap: "));
 
     // A card of its own: the CPU's side against half the machine, the card's against 90% of its room.
     const std::string card = MCMemoryLedger::Line(
@@ -143,6 +145,27 @@ TEST_CASE("memory ledger: the line names each holder with bytes, each side's sum
     };
 
     CHECK_EQ(unnamedOf(card) - unnamedOf(mapped), MappedMb);
+
+    // The heap's share of the system's figure: what it holds beyond the CPU's holders is its own unnamed.
+    constexpr int64_t HeapMb = 1000;
+    constexpr int64_t MoreHeapMb = 100;
+    const auto heapLine = [](int64_t heapMb)
+    {
+        return MCMemoryLedger::Line(
+            {.MachineBytes = 16 * GB, .Shared = true},
+            {.Footprint = static_cast<uint64_t>(2500 * MB), .Heap = static_cast<uint64_t>(heapMb * MB)});
+    };
+
+    const auto heapUnnamedOf = [](const std::string& line)
+    {
+        const size_t unnamed = line.find(", unnamed ", line.find("; heap: ")) + std::string_view(", unnamed ").size();
+        return std::stoll(line.substr(unnamed));
+    };
+
+    const std::string heap = heapLine(HeapMb);
+    CHECK(heap.contains(std::format("; heap: {}, unnamed ", HeapMb)));
+    CHECK(heap.contains("; system: 2500, unnamed "));
+    CHECK_EQ(heapUnnamedOf(heapLine(HeapMb + MoreHeapMb)) - heapUnnamedOf(heap), MoreHeapMb);
 
     CHECK_EQ(MCMemoryLedger::Ceiling({.MachineBytes = 8 * GB}), 4 * GB);
     CHECK_EQ(MCMemoryLedger::CardCeiling(10 * GB), 9 * GB);
@@ -313,23 +336,32 @@ TEST_CASE_ISOLATED("memory ledger: a GPU object counts from its making to its re
     const std::chrono::duration<double, std::milli> took = std::chrono::steady_clock::now() - asked;
     REQUIRE(process.has_value());
 
-#if defined(_WIN32)
-    // The GPU's mapped pages come from their own thread's walk, a second apart: the first within a few readings.
+    // The walked figures come from their own thread's walk, a second apart: the first within a few readings (Windows:
+    // the GPU's mapped pages; macOS: the heap's regions, which Windows counts as mimalloc commits).
     constexpr auto WalkWait = std::chrono::milliseconds(50);
     constexpr int WalkWaits = 60;
+#if defined(_WIN32)
+    const auto walked = [](const MCMemoryLedger::MCProcessFigures& figures) { return figures.GpuMapped != 0; };
+#else
+    const auto walked = [](const MCMemoryLedger::MCProcessFigures& figures) { return figures.Heap != 0; };
+#endif
 
-    for (int wait = 0; wait < WalkWaits && process->GpuMapped == 0; wait++)
+    for (int wait = 0; wait < WalkWaits && !walked(*process); wait++)
     {
         std::this_thread::sleep_for(WalkWait);
         process = system->Process();
     }
-#endif
 
-    std::cout << std::format(
-        "  the system's figure for the tests: {} MB, {} MB of it the GPU's mapped; the first read in {:.3f} ms\n",
-        process->Footprint / uint64_t(MB), process->GpuMapped / uint64_t(MB), took.count());
+    const std::chrono::duration<double, std::milli> walkedIn = std::chrono::steady_clock::now() - asked;
+
+    std::cout << std::format("  the system's figure for the tests: {} MB, {} MB of it the GPU's mapped, {} MB the "
+                             "heap's; the first read in {:.3f} ms, the first walk within {:.0f} ms\n",
+                             process->Footprint / uint64_t(MB), process->GpuMapped / uint64_t(MB),
+                             process->Heap / uint64_t(MB), took.count(), walkedIn.count());
     CHECK(process->Footprint > 0);
     CHECK(process->GpuMapped <= process->Footprint);
+    CHECK(process->Heap > 0);
+    CHECK(process->Heap <= process->Footprint);
     device.reset();
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }

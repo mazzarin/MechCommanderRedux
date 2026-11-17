@@ -253,6 +253,9 @@
     <ClCompile Include="tests\PurchaseTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\ReleaseCopyTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\RoomEndTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

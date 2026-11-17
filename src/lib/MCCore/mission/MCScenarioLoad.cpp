@@ -457,13 +457,7 @@ auto MCScenario::LoadGameSystem() -> std::pair<int32_t, float>
 
     UpdateDisplay(false, true, 30, true, 2);
 
-    if (MasterComponentList.empty())
-    {
-        std::string componentName = GamePath(ObjectPath, "compbas", ".csv");
-        const int32_t loaded =
-            InitMasterComponentListExcel(componentName.data(), 0xff, MaxVisualRange / MaxWeaponRange, BaseSensorRange);
-        Assert(loaded == 0, static_cast<uint32_t>(loaded), " Could not load compBas.csv ");
-    }
+    LoadComponentListIfSwitched();
 
     AlwaysRevealed = RequireFit<uint8_t>(file, "AlwaysRevealed", " Could not find AlwaysRevealed in GameSys ");
     GodMode = OptionalFit<uint8_t>(file, "GodMode", 0);

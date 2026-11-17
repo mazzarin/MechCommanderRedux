@@ -344,6 +344,9 @@ auto MCLogistics::LoadCampaign(std::string_view saveName, std::string_view exten
 auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce,
                                MCTelemetry::MCRefusedLoad& read) -> int32_t
 {
+    // Port-only (Redux HD): what's kept across missions, from the files this game reads now (a match or not).
+    LoadComponentListIfSwitched();
+    ReadKeptTablesIfSwitched();
     using MCTelemetry::MCLoadRefusal;
     MCPacketFile packetFile;
     MCFitIniFile file;

@@ -165,6 +165,7 @@
     <ClCompile Include="lib\MCLzDecompress.cpp" />
     <ClCompile Include="lib\MCPacketFile.cpp" />
     <ClCompile Include="lib\MCPriorityQueue.cpp" />
+    <ClCompile Include="lib\MCReleaseData.cpp" />
     <ClCompile Include="lib\MCSha256.cpp" />
     <ClCompile Include="lib\MCThreadKeeper.cpp" />
     <ClCompile Include="lib\MCWorkers.cpp" />
@@ -514,6 +515,7 @@
     <ClCompile Include="update\MCHttpSource.cpp" />
     <ClCompile Include="update\MCInstalled.cpp" />
     <ClCompile Include="update\MCProgramSwap.cpp" />
+    <ClCompile Include="update\MCReleaseCopy.cpp" />
     <ClCompile Include="update\MCReleaseFile.cpp" />
     <ClCompile Include="update\MCSetupBackend.cpp" />
     <ClCompile Include="update\MCSignedFile.cpp" />
@@ -669,6 +671,7 @@
     <ClInclude Include="lib\MCPacketFile.h" />
     <ClInclude Include="lib\MCPriorityQueue.h" />
     <ClInclude Include="lib\MCRandomId.h" />
+    <ClInclude Include="lib\MCReleaseData.h" />
     <ClInclude Include="lib\MCRetryDelay.h" />
     <ClInclude Include="lib\MCSha256.h" />
     <ClInclude Include="lib\MCThreadKeeper.h" />
@@ -1009,6 +1012,7 @@
     <ClInclude Include="update\MCInstalled.h" />
     <ClInclude Include="update\MCInstalledJson.h" />
     <ClInclude Include="update\MCProgramSwap.h" />
+    <ClInclude Include="update\MCReleaseCopy.h" />
     <ClInclude Include="update\MCReleaseFile.h" />
     <ClInclude Include="update\MCSetupBackend.h" />
     <ClInclude Include="update\MCSignedFile.h" />

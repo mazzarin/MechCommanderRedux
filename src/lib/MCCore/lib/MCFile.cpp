@@ -3,6 +3,7 @@
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFilesAhead.h"
 #include "lib/MCPacketFile.h"
+#include "lib/MCReleaseData.h"
 #include "main/MCGameContext.h"
 #include "platform/MCFileSystem.h"
 
@@ -102,18 +103,35 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
     std::optional<std::vector<uint8_t>> put =
         mode == MCFileMode::Read ? MCFileSystem::PutImageAt(_FileName) : std::nullopt;
 
+    // Port-only (Redux HD): in a match, a file the release's own copy holds is read only from it (lib/MCReleaseData.h).
+    const MCReleaseData::MCHeld held =
+        mode == MCFileMode::Read && !put.has_value() ? MCReleaseData::Find(_FileName) : MCReleaseData::MCHeld{};
+
     // Port: files opened to write live in the user folder.
     std::optional<MCDiskFile> disk =
-        put.has_value() ? std::nullopt
-                        : MCDiskFile::Open(mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName)
-                                                                    : MCFileSystem::ResolveWrite(_FileName),
-                                           mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read);
+        put.has_value() || held.InArchive
+            ? std::nullopt
+            : MCDiskFile::Open(held.Loose.has_value()     ? *held.Loose
+                               : mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName)
+                                                          : MCFileSystem::ResolveWrite(_FileName),
+                               mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read);
     _State.reset();
 
     if (!disk.has_value())
     {
         if (mode == MCFileMode::Create)
         {
+            return FILE_NOT_FOUND;
+        }
+
+        if (held)
+        {
+            if (auto entry = held.InArchive ? MCReleaseData::ReadArchived(_FileName) : std::nullopt; entry.has_value())
+            {
+                return inRam(std::move(*entry));
+            }
+
+            _FileName.clear();
             return FILE_NOT_FOUND;
         }
 

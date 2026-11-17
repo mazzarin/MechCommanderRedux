@@ -161,6 +161,7 @@
     <ClCompile Include="tests\PresenterTests.cpp" />
     <ClCompile Include="tests\ProgramSwapTests.cpp" />
     <ClCompile Include="tests\PurchaseTests.cpp" />
+    <ClCompile Include="tests\ReleaseCopyTests.cpp" />
     <ClCompile Include="tests\RoomEndTests.cpp" />
     <ClCompile Include="tests\ScenarioTests.cpp" />
     <ClCompile Include="tests\ScreenInput.cpp" />

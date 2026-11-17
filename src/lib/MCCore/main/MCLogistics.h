@@ -247,6 +247,21 @@ public:
     /// <summary>Changes what can be bought by an old-style purchase file (counts added to the shop's).</summary>
     void SetUpOldPurchasing(std::string_view purchaseFile) const;
 
+    /// <summary>Reads the inventory's sort orders (ART's <c>logart\\comp.rsp</c>, <c>objsort.rsp</c>).</summary>
+    void ReadSortTables();
+
+    /// <summary>
+    /// Reads <c>gamesys.fit</c>'s pilots' values (their skills' bounds, weights and ranks) and the players' colours.
+    /// </summary>
+    void ReadGameSystemValues();
+
+    /// <summary>
+    /// Port-only (Redux HD): reads the sort orders and the game system's values again when what's read has changed
+    /// since (a match begun or ended: lib/MCReleaseData.h), so a match plays the release's and single player the game
+    /// folder's.
+    /// </summary>
+    void ReadKeptTablesIfSwitched();
+
     /// <summary>Switches to the purchase screen (with the slide when <paramref name="animate"/>).</summary>
     int32_t SetUpPurchaseScreen(bool animate);
 
@@ -506,6 +521,8 @@ public:
     int32_t CurrentMission = 0;
     /// <summary>The campaign's purchase file (the save's "purchaseFile"; written to starting fits as PurchaseFile).</summary>
     std::string PurchaseFile;
+    /// <summary>The count of MCReleaseData::Switches the sort orders and game system's values were read at.</summary>
+    uint32_t KeptTablesSwitches = 0;
     /// <summary>Every pilot the player has.</summary>
     std::unique_ptr<MCLogWarriorList> WarriorList;
     /// <summary>The pilots assigned to mechs.</summary>

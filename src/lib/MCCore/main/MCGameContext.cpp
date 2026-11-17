@@ -22,6 +22,8 @@
 #include "gui/MCGuiSystem.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFastFileSet.h"
+#include "lib/MCFilesAhead.h"
+#include "lib/MCReleaseData.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrain.h"
 #include "platform/MCNetSwitch.h"
@@ -396,6 +398,15 @@ std::shared_ptr<MCMultiPlayer> MCGameContext::MultiPlayer() const
 
 std::shared_ptr<MCMultiPlayer> MCGameContext::SetMultiPlayer(std::shared_ptr<MCMultiPlayer> multiPlayer)
 {
+    // Port-only (Redux HD): a match plays the release's own copy of the data (lib/MCReleaseData.h). What was read ahead
+    // and the data's hash were taken from the other files; what's kept across missions is read again at its next use
+    // (MCReleaseData::Switches).
+    if (MCReleaseData::SetPlaying(multiPlayer != nullptr))
+    {
+        MCFilesAhead::Forget();
+        _SharedDataHash.reset();
+    }
+
     return std::exchange(_MultiPlayer, std::move(multiPlayer));
 }
 

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "mission/MCMission.h"
+#include "lib/MCReleaseData.h"
 #include "ai/MCMoveGeometry.h"
 #include "lib/MCFatal.h"
 #include "linkup/MCSessionManager.h"
@@ -279,6 +280,45 @@ auto MCMission::ReadLists(MCFitIniFile& file, bool campaign, bool readInDemo) ->
     return ReadNameList(file, "Scenario", numScenarios, Scenarios);
 }
 
+namespace
+{
+    /// <summary>The count of MCReleaseData::Switches the component list was read at.</summary>
+    uint32_t ComponentListSwitches = 0;
+}
+
+auto LoadComponentListIfSwitched() -> void
+{
+    // Port-only (Redux HD): read again when what's read has changed since (a match begun or ended), so a match plays
+    // the release's weapons and single player the game folder's.
+    if (!MasterComponentList.empty() && ComponentListSwitches == MCReleaseData::Switches())
+    {
+        return;
+    }
+
+    ComponentListSwitches = MCReleaseData::Switches();
+    // MCX.EXE allocates this FIT (Fatal " Game System File " when out of memory) and never frees it.
+    MCFitIniFile gameSystemFile;
+    uint32_t readResult = static_cast<uint32_t>(gameSystemFile.Open(GamePath(MissionPath, "gamesys", ".fit")));
+    Assert(readResult == 0, readResult, " Could not open GameSys.Fit file ");
+    readResult = static_cast<uint32_t>(gameSystemFile.SeekBlock("General"));
+    Assert(readResult == 0, readResult, " Could not find General Block in GameSys ");
+    float maxVisualRange = 0.0f;
+    float maxWeaponRange = 0.0f;
+    float baseSensorRange = 0.0f;
+    readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "MaxVisualRange", maxVisualRange));
+    Assert(readResult == 0, readResult, " Could not find MaxVisualRange in GameSys ");
+    readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "MaxWeaponRange", maxWeaponRange));
+    Assert(readResult == 0, readResult, " Could not find MaxWeaponRange in GameSys ");
+    readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "BaseSensorRange", baseSensorRange));
+    Assert(readResult == 0, readResult, " Could not find BaseSensorRange in GameSys ");
+    gameSystemFile.Close();
+
+    std::string componentName = GamePath(ObjectPath, "compbas", ".csv");
+    const int32_t loadResult =
+        InitMasterComponentListExcel(componentName.data(), 0xff, maxVisualRange / maxWeaponRange, baseSensorRange);
+    Assert(loadResult == 0, static_cast<uint32_t>(loadResult), " Could not load compBas.csv ");
+}
+
 auto MCMission::Load(std::string_view missionName) -> int32_t
 {
     if (GlobalGameSegment != 0)
@@ -352,30 +392,7 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
     }
 
     // The component list, which logistics needs before any scenario has loaded it.
-    if (MasterComponentList.empty())
-    {
-        // MCX.EXE allocates this FIT (Fatal " Game System File " when out of memory) and never frees it.
-        MCFitIniFile gameSystemFile;
-        uint32_t readResult = static_cast<uint32_t>(gameSystemFile.Open(GamePath(MissionPath, "gamesys", ".fit")));
-        Assert(readResult == 0, readResult, " Could not open GameSys.Fit file ");
-        readResult = static_cast<uint32_t>(gameSystemFile.SeekBlock("General"));
-        Assert(readResult == 0, readResult, " Could not find General Block in GameSys ");
-        float maxVisualRange = 0.0f;
-        float maxWeaponRange = 0.0f;
-        float baseSensorRange = 0.0f;
-        readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "MaxVisualRange", maxVisualRange));
-        Assert(readResult == 0, readResult, " Could not find MaxVisualRange in GameSys ");
-        readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "MaxWeaponRange", maxWeaponRange));
-        Assert(readResult == 0, readResult, " Could not find MaxWeaponRange in GameSys ");
-        readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "BaseSensorRange", baseSensorRange));
-        Assert(readResult == 0, readResult, " Could not find BaseSensorRange in GameSys ");
-        gameSystemFile.Close();
-
-        std::string componentName = GamePath(ObjectPath, "compbas", ".csv");
-        const int32_t loadResult =
-            InitMasterComponentListExcel(componentName.data(), 0xff, maxVisualRange / maxWeaponRange, baseSensorRange);
-        Assert(loadResult == 0, static_cast<uint32_t>(loadResult), " Could not load compBas.csv ");
-    }
+    LoadComponentListIfSwitched();
 
     // Logistics.
     Logistics = std::make_shared<MCLogistics>();

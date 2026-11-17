@@ -1701,7 +1701,8 @@ namespace
 
 /// <summary>
 /// Port: a game's file report carries the hash of the mission's and every match's gameplay data as the game finds
-/// them (network/MCGameDataHash.h): the mission's file, purchase list, scenario, script and what it includes, its map
+/// them (network/MCGameDataHash.h): the mission's file, purchase list, the shop's lists, scenario, script and what it
+/// includes, its map
 /// but its pictures; the objects', pilots' and profiles' folders, the game system, the ABL libraries and what they
 /// include, the mechs' shape data. A loose file of the player's own over a gameplay file changes it; one over the art,
 /// a map's picture, another mission's script, a mech's pictures or a backup doesn't. Without the mission file it is 0,
@@ -1717,7 +1718,8 @@ TEST_CASE("network: the game data's hash changes with a gameplay file's loose ov
         scope.Context().SetFastFiles(std::make_unique<MCFastFileSet>());
         AddDataGame(files);
         const std::vector<std::string> mission = MCMissionDataFiles(DataMission);
-        CHECK((mission == std::vector<std::string>{"data\\missions\\mp0703.abl", "data\\missions\\mp0703.fit",
+        CHECK((mission == std::vector<std::string>{"data\\missions\\clanpur.fit", "data\\missions\\ispur.fit",
+                                                   "data\\missions\\mp0703.abl", "data\\missions\\mp0703.fit",
                                                    "data\\missions\\MP7_3VAR.ABI", "data\\missions\\purchase.fit",
                                                    std::string(DataMission), "data\\terrain\\mp0703.dat",
                                                    "data\\terrain\\mp0703.elv"}));
@@ -1741,7 +1743,8 @@ TEST_CASE("network: the game data's hash changes with a gameplay file's loose ov
     for (const std::string_view gameplay :
          {"data\\missions\\gamesys.fit", "data\\objects\\compbas.csv", "data\\missions\\warriors\\UnitConst.abi",
           "data\\missions\\OConst.abi", "data\\missions\\MP7_3VAR.ABI", "data\\missions\\mp0703.fit",
-          "data\\terrain\\mp0703.elv", "data\\missions\\purchase.fit", "data\\sprites\\cm.hsp"})
+          "data\\terrain\\mp0703.elv", "data\\missions\\purchase.fit", "data\\missions\\ispur.fit",
+          "data\\missions\\clanpur.fit", "data\\sprites\\cm.hsp"})
     {
         MCTest::Scope scope(gameplay);
         CHECK(DataGameHash({{gameplay, "the player's own"}}) != original);

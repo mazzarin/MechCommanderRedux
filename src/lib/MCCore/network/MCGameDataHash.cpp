@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "network/MCGameDataHash.h"
+#include "lib/MCReleaseData.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
@@ -29,6 +30,8 @@ namespace
     constexpr std::array<std::string_view, 3> ScriptKinds = {".ABL", ".ABX", ".ABI"};
     /// <summary>The game system (MCScenario::LoadGameSystem), under MissionPath.</summary>
     constexpr std::string_view GameSystemFile = "gamesys";
+    /// <summary>The multiplayer shop's lists: the Inner Sphere's and the Clans'.</summary>
+    constexpr std::array<std::string_view, 2> ShopFiles = {"ispur", "clanpur"};
     /// <summary>The extension of the scenarios and purchase lists, under MissionPath.</summary>
     constexpr std::string_view FitExtension = ".fit";
     /// <summary>The extension of a scenario's script, under MissionPath.</summary>
@@ -74,11 +77,36 @@ namespace
     }
 
     /// <summary>
+    /// Whose files a folder's listing finds: every match's (the release's own copy's alone in a match, as the match
+    /// reads them there), or a mission's own (its map's, which the copy doesn't hold: as the game finds them).
+    /// </summary>
+    enum class MCListed : uint8_t
+    {
+        Shared,
+        Mission,
+    };
+
+    /// <summary>The paths of <paramref name="files"/>, in their keys' order.</summary>
+    std::vector<std::string> PathsOf(std::map<std::string, std::string>&& files)
+    {
+        std::vector<std::string> paths;
+        paths.reserve(files.size());
+
+        for (auto& [key, path] : files)
+        {
+            paths.push_back(std::move(path));
+        }
+
+        return paths;
+    }
+
+    /// <summary>
     /// The files in game folder <paramref name="folder"/> (ending in <c>\</c>) whose names (upper case, no folder)
     /// <paramref name="wanted"/> takes, as the game finds them: the loose ones (the user folder's and the install's)
     /// and every open archive's. By key, each once.
     /// </summary>
-    std::vector<std::string> FolderFiles(std::string_view folder, const std::function<bool(std::string_view)>& wanted)
+    std::vector<std::string> FolderFiles(std::string_view folder, const std::function<bool(std::string_view)>& wanted,
+                                         MCListed listed = MCListed::Shared)
     {
         const std::string folderKey = Key(folder);
         std::map<std::string, std::string> files;
@@ -90,6 +118,18 @@ namespace
                 files.try_emplace(folderKey + nameKey, GamePath(folder, name, ""));
             }
         };
+
+        // Port-only (Redux HD): a match plays the release's own copy (lib/MCReleaseData.h), whatever the game folder
+        // holds beside it.
+        if (listed == MCListed::Shared && MCReleaseData::Playing())
+        {
+            for (const std::string& name : MCReleaseData::NamesIn(folder))
+            {
+                add(name);
+            }
+
+            return PathsOf(std::move(files));
+        }
 
         for (const std::string& name : MCFileSystem::FindFiles(GamePath(folder, "*", "")))
         {
@@ -109,15 +149,7 @@ namespace
             }
         }
 
-        std::vector<std::string> paths;
-        paths.reserve(files.size());
-
-        for (auto& [key, path] : files)
-        {
-            paths.push_back(std::move(path));
-        }
-
-        return paths;
+        return PathsOf(std::move(files));
     }
 
     /// <summary>The files in game folder <paramref name="folder"/> of <paramref name="kinds"/>.</summary>
@@ -359,8 +391,9 @@ namespace
     std::vector<std::string> MapFiles(std::string_view map)
     {
         const std::string prefix = Key(map) + '.';
-        return FolderFiles(TerrainPath, [&prefix](std::string_view name)
-                           { return name.starts_with(prefix) && !OfKind(name, PictureKinds); });
+        return FolderFiles(
+            TerrainPath, [&prefix](std::string_view name)
+            { return name.starts_with(prefix) && !OfKind(name, PictureKinds); }, MCListed::Mission);
     }
 
     /// <summary>
@@ -384,6 +417,13 @@ namespace
         if (mission.SeekBlock("General") == 0)
         {
             files.Add(GamePath(MissionPath, MPPurchaseFileName(mission), FitExtension));
+
+            // The shop's lists, by the team's tech base (MCLogistics' multiplayer setup): the file above gives only the
+            // pilots' prices.
+            for (const std::string_view shop : ShopFiles)
+            {
+                files.Add(GamePath(MissionPath, shop, FitExtension));
+            }
         }
 
         if (mission.SeekBlock("Multiplayer") != 0)

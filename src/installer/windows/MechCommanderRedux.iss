@@ -235,6 +235,9 @@ Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Description: "{cm:PlayGame}";
 Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Flags: nowait; Check: StartAfterUpdate
 
 [UninstallDelete]
+; The release's own copy of a match's data, which the game made (MCReleaseCopy), and its folder once empty.
+Type: filesandordirs; Name: "{app}\Redux\Release"
+Type: dirifempty; Name: "{app}\Redux"
 ; The folder, once nothing's left in it: Setup may have made it itself, to let the player change it.
 Type: dirifempty; Name: "{app}"
 

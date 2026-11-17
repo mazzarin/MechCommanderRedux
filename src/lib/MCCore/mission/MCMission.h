@@ -199,6 +199,12 @@ void PlayScenario();
 /// <summary>The mission callback: runs the mission one frame (and keeps <c>FrameLength</c> between scenarios).</summary>
 void RunMission();
 
+/// <summary>
+/// Reads the component list (<c>compbas.csv</c>, its ranges scaled by <c>gamesys.fit</c>'s) when it hasn't been, or
+/// when what's read has changed since (a match begun or ended: lib/MCReleaseData.h).
+/// </summary>
+void LoadComponentListIfSwitched();
+
 /// <summary>The game segment a demo/segment build starts at; 0 for the normal campaign.</summary>
 extern int32_t GlobalGameSegment;
 /// <summary>The lowest skill a pilot has (gamesys <c>SkillMin</c>).</summary>

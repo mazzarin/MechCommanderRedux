@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "main/MCLogistics.h"
+#include "lib/MCReleaseData.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScrollPane.h"
@@ -198,6 +199,81 @@ namespace
         field->Font = MedWhiteFont;
         field->SetBackColor(0x10);
         return field;
+    }
+}
+
+auto MCLogistics::ReadSortTables() -> void
+{
+    char line[256];
+    MCFile file;
+    int32_t result = file.Open(ArtPath + "logart\\comp.rsp");
+    Assert(result == 0, 0, " could not open componant name file ");
+    // The table has one entry more than the file has lines; every entry is read from a line (the last from the end
+    // of the file).
+    int32_t numRangeSorted = 1;
+
+    while (true)
+    {
+        file.ReadLine(line, 0x28);
+
+        if (file.Eof())
+        {
+            break;
+        }
+
+        ++numRangeSorted;
+    }
+
+    RangeSortList.assign(static_cast<size_t>(numRangeSorted), 0);
+    file.Seek(0, 0);
+
+    for (uint32_t& entry : RangeSortList)
+    {
+        file.ReadLine(line, 0x28);
+        entry = static_cast<uint32_t>(std::atol(line));
+    }
+
+    file.Close();
+    result = file.Open(GamePath(ObjectPath, "objsort.rsp"));
+    Assert(result == 0, 0, " could not open object sort file ");
+
+    for (int32_t& sortOrder : ComponentSort)
+    {
+        file.ReadLine(line, 0xfe);
+        sortOrder = static_cast<int32_t>(std::atol(line));
+    }
+
+    file.Close();
+}
+
+auto MCLogistics::ReadGameSystemValues() -> void
+{
+    MCFitIniFile gameSystemFile;
+    int32_t result = gameSystemFile.Open(GamePath(MissionPath, "gamesys.fit"));
+    Assert(result == 0, static_cast<uint32_t>(result), " Couldn't open gamesys.fit");
+    result = gameSystemFile.SeekBlock("Warrior");
+    Assert(result == 0, static_cast<uint32_t>(result), " Couldn't find Warrior block ");
+    MaxPilotSkill = ReadRequired<float>(gameSystemFile, "SkillMax",
+                                        " Couldn't find SkillMax variable in Warrior block of gamesys.fit ");
+    MinPilotSkill = ReadRequired<float>(gameSystemFile, "SkillMin",
+                                        " Couldn't find SkillMin variable in Warrior block of gamesys.fit ");
+    static_cast<void>(gameSystemFile.ReadArray("SkillWeightings", std::span<float>(SkillWeightings)));
+    Assert(gameSystemFile.ReadArray("WarriorRankScale", std::span<float>(WarriorRankScale)).has_value(), 0,
+           " Couldn't find WarriorRankScale variable in Warrior block of gamesys.fit ");
+    result = gameSystemFile.SeekBlock("MultiPlayerColors");
+    Assert(result == 0, static_cast<uint32_t>(result), " Could not find Multiplayer Colors block ");
+    Assert(gameSystemFile.ReadArray("mPlayerColors", std::span<int32_t>(MultiPlayerColors)).has_value(), 0,
+           " Could not find multiplayer colors data ");
+}
+
+auto MCLogistics::ReadKeptTablesIfSwitched() -> void
+{
+    // Port-only (Redux HD): read again from the files a match plays, or single player's, since what's read changed.
+    if (KeptTablesSwitches != MCReleaseData::Switches())
+    {
+        KeptTablesSwitches = MCReleaseData::Switches();
+        ReadSortTables();
+        ReadGameSystemValues();
     }
 }
 
@@ -411,46 +487,9 @@ auto MCLogistics::Start() -> void
     // Port fix (OB-094): the original allocated a File here, and a FitIniFile after the sort tables, and never used or
     // freed either.
 
-    char line[256];
+    KeptTablesSwitches = MCReleaseData::Switches();
+    ReadSortTables();
     MCFile file;
-    int32_t result = file.Open(ArtPath + "logart\\comp.rsp");
-    Assert(result == 0, 0, " could not open componant name file ");
-    // The table has one entry more than the file has lines; every entry is read from a line (the last from the end
-    // of the file).
-    int32_t numRangeSorted = 1;
-
-    while (true)
-    {
-        file.ReadLine(line, 0x28);
-
-        if (file.Eof())
-        {
-            break;
-        }
-
-        ++numRangeSorted;
-    }
-
-    RangeSortList.assign(static_cast<size_t>(numRangeSorted), 0);
-    file.Seek(0, 0);
-
-    for (uint32_t& entry : RangeSortList)
-    {
-        file.ReadLine(line, 0x28);
-        entry = static_cast<uint32_t>(std::atol(line));
-    }
-
-    file.Close();
-    result = file.Open(GamePath(ObjectPath, "objsort.rsp"));
-    Assert(result == 0, 0, " could not open object sort file ");
-
-    for (int32_t& sortOrder : ComponentSort)
-    {
-        file.ReadLine(line, 0xfe);
-        sortOrder = static_cast<int32_t>(std::atol(line));
-    }
-
-    file.Close();
     InvBlockPort = NewArtPort("logart\\invblock.tga");
 
     // The ticker, and a line for it on each screen that shows it; it starts on the screen shown now.
@@ -597,24 +636,7 @@ auto MCLogistics::Start() -> void
         }
     }
 
-    {
-        MCFitIniFile gameSystemFile;
-        result = gameSystemFile.Open(GamePath(MissionPath, "gamesys.fit"));
-        Assert(result == 0, static_cast<uint32_t>(result), " Couldn't open gamesys.fit");
-        result = gameSystemFile.SeekBlock("Warrior");
-        Assert(result == 0, static_cast<uint32_t>(result), " Couldn't find Warrior block ");
-        MaxPilotSkill = ReadRequired<float>(gameSystemFile, "SkillMax",
-                                            " Couldn't find SkillMax variable in Warrior block of gamesys.fit ");
-        MinPilotSkill = ReadRequired<float>(gameSystemFile, "SkillMin",
-                                            " Couldn't find SkillMin variable in Warrior block of gamesys.fit ");
-        static_cast<void>(gameSystemFile.ReadArray("SkillWeightings", std::span<float>(SkillWeightings)));
-        Assert(gameSystemFile.ReadArray("WarriorRankScale", std::span<float>(WarriorRankScale)).has_value(), 0,
-               " Couldn't find WarriorRankScale variable in Warrior block of gamesys.fit ");
-        result = gameSystemFile.SeekBlock("MultiPlayerColors");
-        Assert(result == 0, static_cast<uint32_t>(result), " Could not find Multiplayer Colors block ");
-        Assert(gameSystemFile.ReadArray("mPlayerColors", std::span<int32_t>(MultiPlayerColors)).has_value(), 0,
-               " Could not find multiplayer colors data ");
-    }
+    ReadGameSystemValues();
 
     ReadyRoomTicks = 0;
 

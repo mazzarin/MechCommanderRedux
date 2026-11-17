@@ -31,6 +31,7 @@
 #include "update/MCContentUpdater.h"
 #include "update/MCHttpSource.h"
 #include "update/MCInstalled.h"
+#include "update/MCReleaseCopy.h"
 #include "update/MCSignedFile.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
@@ -741,6 +742,22 @@ int main(int argc, char** argv)
                 SDL_Quit();
                 return got == MCContentAtStart::MCOutcome::Quit ? 0 : 1;
             }
+        }
+
+        // The release's own copy of a match's data, filled from the game folder (update/MCReleaseCopy.h), from the
+        // record as the content's step left it.
+        if (const auto now = MCInstalled::Read(*MakeDisk(), options->DataFolder); !now)
+        {
+            SDL_Log("Release copy: %s", now.error().c_str());
+        }
+        else if (const auto synced = MCReleaseCopy::Sync(*MakeDisk(), options->DataFolder, *now); !synced)
+        {
+            SDL_Log("Release copy: %s: a match reads the game folder", synced.error().c_str());
+        }
+        else if (synced->Held != 0)
+        {
+            SDL_Log("Release copy: %zu files, %zu filled, %zu hashed, %zu lacking", synced->Held, synced->Filled,
+                    synced->Hashed, synced->Lacking.size());
         }
     }
 

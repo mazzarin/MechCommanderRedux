@@ -8,6 +8,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiTextObject.h"
 #include "lib/MCFastFileSet.h"
+#include "lib/MCReleaseData.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
 #include "linkup/MCSessionManager.h"
@@ -148,6 +149,7 @@ MCGameSession::~MCGameSession()
     }
 
     MCGameContext::Current().FastFiles().Clear();
+    MCReleaseData::Close();
     MCGameContext::Current().DescriptionTexts().reset();
     MCGameContext::Current().SetSoundSystem(nullptr);
 

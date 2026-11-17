@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCSessionScreen.h"
+#include "lib/MCReleaseData.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
@@ -127,6 +128,12 @@ namespace
 
     /// <summary>Port: names the players whose game data differ from the host's (as good as without the mission).</summary>
     constexpr std::string_view DiffersText = "These players' game data differs from yours: {}";
+    /// <summary>
+    /// Port-only (Redux HD): names the files this game's copy of the release's data lacks (lib/MCReleaseData.h): the
+    /// game folder's were changed, so its data may be what differs.
+    /// </summary>
+    constexpr std::string_view LackingText = "Your copy of {} isn't the release's.";
+    constexpr std::string_view LackingSeparator = ", ";
     /// <summary>Port: names the players whose builds can't check their game data (older ones), who play.</summary>
     constexpr std::string_view UncheckedText = "Can't check these players' game data: {}. Tell them to upgrade.";
 
@@ -1525,6 +1532,23 @@ auto MCSessionScreen::FilesAnswered() -> void
     if (!differing.empty())
     {
         text += (text.empty() ? "" : "\n") + std::format(DiffersText, differing);
+
+        if (!MCReleaseData::Whole())
+        {
+            std::string lacking;
+
+            for (const std::string& file : MCReleaseData::Lacking())
+            {
+                if (!lacking.empty())
+                {
+                    lacking += LackingSeparator;
+                }
+
+                lacking += file;
+            }
+
+            text += "\n" + std::format(LackingText, lacking);
+        }
     }
 
     ShowDialog(text, MPCancel, "bh_okay.tga", "bg_okay.tga", nullptr);

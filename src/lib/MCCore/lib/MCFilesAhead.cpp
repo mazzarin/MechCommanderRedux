@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "lib/MCFilesAhead.h"
+#include "lib/MCReleaseData.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCLz.h"
 #include "lib/MCWorkers.h"
@@ -88,7 +89,8 @@ namespace
                                                      std::vector<std::optional<MCDiskFile>>& handles,
                                                      std::atomic<size_t>& room)
     {
-        if (MCFileSystem::PutsImage(gamePath) ||
+        // A file a match reads from the release's own copy (lib/MCReleaseData.h): MCFile::Open reads it there.
+        if (MCFileSystem::PutsImage(gamePath) || MCReleaseData::Find(gamePath) ||
             MCDiskFile::Open(MCFileSystem::Resolve(gamePath), MCDiskFileMode::Read).has_value() ||
             MCFileSystem::FindImage(gamePath).has_value())
         {

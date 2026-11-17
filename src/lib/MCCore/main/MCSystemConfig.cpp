@@ -6,6 +6,7 @@
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
 #include "lib/MCFastFileSet.h"
+#include "lib/MCReleaseData.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPreferencesMenu.h"
@@ -276,6 +277,9 @@ void OpenGameFastFiles()
             SDL_Log("FastFile %s left out: %s", name.c_str(), opened.error().c_str());
         }
     }
+
+    // Port-only (Redux HD): the release's own copy of a match's data, when the game folder has one.
+    MCReleaseData::Open(MCFileSystem::GameRoot());
 }
 
 void SystemInit()

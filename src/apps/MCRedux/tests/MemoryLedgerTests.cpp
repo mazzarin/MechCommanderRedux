@@ -14,6 +14,7 @@
 #include <chrono>
 #include <format>
 #include <string>
+#include <thread>
 
 // Port-only (SPEC-memory.md's "The ledger"): every byte the game holds counted under a named holder, with its side and
 // its payload, allocations and retired bytes (platform/MCMemoryLedger.h); the GPU's objects counted from their making to
@@ -308,11 +309,24 @@ TEST_CASE_ISOLATED("memory ledger: a GPU object counts from its making to its re
 
     const std::shared_ptr<MCMemoryRoom::MCSystem> system = MCMakeMemorySystem();
     const auto asked = std::chrono::steady_clock::now();
-    const std::optional<MCMemoryLedger::MCProcessFigures> process = system->Process();
+    std::optional<MCMemoryLedger::MCProcessFigures> process = system->Process();
     const std::chrono::duration<double, std::milli> took = std::chrono::steady_clock::now() - asked;
     REQUIRE(process.has_value());
+
+#if defined(_WIN32)
+    // The GPU's mapped pages come from their own thread's walk, a second apart: the first within a few readings.
+    constexpr auto WalkWait = std::chrono::milliseconds(50);
+    constexpr int WalkWaits = 60;
+
+    for (int wait = 0; wait < WalkWaits && process->GpuMapped == 0; wait++)
+    {
+        std::this_thread::sleep_for(WalkWait);
+        process = system->Process();
+    }
+#endif
+
     std::cout << std::format(
-        "  the system's figure for the tests: {} MB, {} MB of it the GPU's mapped, read in {:.2f} ms\n",
+        "  the system's figure for the tests: {} MB, {} MB of it the GPU's mapped; the first read in {:.3f} ms\n",
         process->Footprint / uint64_t(MB), process->GpuMapped / uint64_t(MB), took.count());
     CHECK(process->Footprint > 0);
     CHECK(process->GpuMapped <= process->Footprint);

@@ -17,11 +17,16 @@
 #pragma comment(lib, "dxgi.lib")
 
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <format>
 #include <memory>
 #include <mutex>
+#include <stop_token>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -176,6 +181,72 @@ namespace
     }
 
     /// <summary>
+    /// The game's committed private pages that are write-combined: the GPU driver's memory mapped for the CPU, which
+    /// private bytes count and DXGI's figures count again (on the A10, 17 Nov: the card's local and non-local use less
+    /// 88 MB, all through a run). A walk of the game's own address space, a VirtualQuery a region.
+    /// </summary>
+    uint64_t MappedGpuBytes()
+    {
+        uint64_t bytes = 0;
+        uintptr_t address = 0;
+        MEMORY_BASIC_INFORMATION region{};
+
+        while (VirtualQuery(reinterpret_cast<LPCVOID>(address), &region, sizeof(region)) == sizeof(region))
+        {
+            if (region.State == MEM_COMMIT && region.Type == MEM_PRIVATE && (region.Protect & PAGE_WRITECOMBINE) != 0)
+            {
+                bytes += region.RegionSize;
+            }
+
+            const uintptr_t next = reinterpret_cast<uintptr_t>(region.BaseAddress) + region.RegionSize;
+
+            if (next <= address)
+            {
+                break;
+            }
+
+            address = next;
+        }
+
+        return bytes;
+    }
+
+    /// <summary>
+    /// The GPU's mapped pages (MappedGpuBytes), walked once a second on a thread of their own from the first time
+    /// they're asked (a frame log's first line): a walk took 1.55 ms on the A10 (17 Nov), too long for the game's thread.
+    /// </summary>
+    class MCMappedGpuPages
+    {
+    public:
+        /// <summary>The last walk's bytes (0 until the first is done), the walks started if they weren't.</summary>
+        uint64_t Last()
+        {
+            std::call_once(_Started, [this] { _Walker = std::jthread([this](std::stop_token stop) { Walk(stop); }); });
+            return _Bytes.load(std::memory_order_relaxed);
+        }
+
+    private:
+        static constexpr std::chrono::seconds WalkEvery{1};
+
+        void Walk(const std::stop_token& stop)
+        {
+            while (!stop.stop_requested())
+            {
+                _Bytes.store(MappedGpuBytes(), std::memory_order_relaxed);
+                std::unique_lock held(_Lock);
+                _Wake.wait_for(held, stop, WalkEvery, [] { return false; });
+            }
+        }
+
+        std::atomic<uint64_t> _Bytes = 0;
+        std::once_flag _Started;
+        std::mutex _Lock;
+        std::condition_variable_any _Wake;
+        /// <summary>Last: stopped and joined before the rest it reads goes.</summary>
+        std::jthread _Walker;
+    };
+
+    /// <summary>
     /// Windows' answers: short from the system's low-memory notification (by default set while less than about 32 MB a
     /// 4 GB of memory is available, 64 MB at most) until its high-memory one (three times as much), so a frame's trim
     /// doesn't end it only for the next frame read to start it again. The available memory itself isn't counted: it
@@ -264,7 +335,7 @@ namespace
                                      sizeof(counters)))
             {
                 figures.Footprint = counters.PrivateUsage;
-                figures.GpuMapped = MappedGpuBytes();
+                figures.GpuMapped = _MappedPages.Last();
             }
             else
             {
@@ -289,38 +360,6 @@ namespace
         }
 
     private:
-        /// <summary>
-        /// The game's committed private pages that are write-combined: the GPU driver's memory mapped for the CPU, which
-        /// private bytes count and DXGI's figures count again (on the A10, 17 Nov: the card's local and non-local use
-        /// less 88 MB, all through a run). A walk of the game's own address space, a VirtualQuery a region.
-        /// </summary>
-        static uint64_t MappedGpuBytes()
-        {
-            uint64_t bytes = 0;
-            uintptr_t address = 0;
-            MEMORY_BASIC_INFORMATION region{};
-
-            while (VirtualQuery(reinterpret_cast<LPCVOID>(address), &region, sizeof(region)) == sizeof(region))
-            {
-                if (region.State == MEM_COMMIT && region.Type == MEM_PRIVATE &&
-                    (region.Protect & PAGE_WRITECOMBINE) != 0)
-                {
-                    bytes += region.RegionSize;
-                }
-
-                const uintptr_t next = reinterpret_cast<uintptr_t>(region.BaseAddress) + region.RegionSize;
-
-                if (next <= address)
-                {
-                    break;
-                }
-
-                address = next;
-            }
-
-            return bytes;
-        }
-
         /// <summary>The adapter found (null: none yet, or none), held while it's asked.</summary>
         ComPtr<IDXGIAdapter3> Adapter()
         {
@@ -488,6 +527,8 @@ namespace
         bool _QueryLogged = false;
         bool _NotificationLogged = false;
         bool _ProcessLogged = false;
+        /// <summary>Last: its walks stopped before the rest goes.</summary>
+        MCMappedGpuPages _MappedPages;
     };
 }
 

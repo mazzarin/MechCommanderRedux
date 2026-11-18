@@ -1276,7 +1276,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(picture.Texture);
     }
 
-    for (std::vector<SharedPage>* pages : {&_HdPages, &_SharpPages})
+    for (std::vector<SharedPage>* pages : {&_HdPages, &_SharpPages, &_SparePages})
     {
         for (SharedPage& page : *pages)
         {
@@ -1439,6 +1439,7 @@ void MCVulkanRenderer::BeginRecording()
     MCHdArt::KeepIndices(MCWeather::Shown() != MCWeatherKind::Clear);
     MCHdArt::NextFrame(room.MemoryShort);
     TrimHdPictures(static_cast<size_t>(room.PictureBytes));
+    KeepSparePages();
     _HdPicturePayload.Set({.Payload = static_cast<int64_t>(_HdPictureBytes)});
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
@@ -2788,27 +2789,27 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         }
     }
 
-    // A new page, in an emptied one's slot when there is one.
-    SharedPage page;
-    page.Layout = layout;
-    auto made = EnsureTexture(page.Texture, (hd ? MCHolder::GpuHdPictures : MCHolder::GpuPictures), layout.Format,
-                              SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
+    // A new page (the one made ahead, when there is one: KeepSparePages), in an emptied one's slot when there is one.
+    std::optional<SharedPage> made;
 
-    if (made && hd)
+    if (const auto spare =
+            std::ranges::find_if(_SparePages, [&](const SharedPage& one) { return one.Layout == layout; });
+        kind == PageKind::Hd && spare != _SparePages.end())
     {
-        made = EnsureTexture(page.HdColors, MCHolder::GpuHdPictures, layout.HdFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                             layout.HdSide, layout.HdSide);
+        made = std::move(*spare);
+        _SparePages.erase(spare);
+    }
+    else
+    {
+        made = MakePage(layout);
     }
 
-    if (!made)
+    if (!made.has_value())
     {
-        SDL_Log("MCVulkanRenderer: a shared page %ux%u: %s", layout.Side, layout.Side, made.error().c_str());
         return false;
     }
 
-    page.Places.reset(sma_atlas_create(static_cast<int>(layout.Side), static_cast<int>(layout.Side)));
-    const auto hdBlocks = static_cast<int>(layout.HdSide / layout.HdBlock);
-    page.HdPlaces.reset(hd ? sma_atlas_create(hdBlocks, hdBlocks) : nullptr);
+    SharedPage& page = *made;
     const auto empty = std::ranges::find_if(pages, [](const SharedPage& one) { return one.Places == nullptr; });
     const auto at = static_cast<uint32_t>(std::distance(pages.begin(), empty));
 
@@ -2823,6 +2824,62 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
 
     open->Page = at;
     return placeIn(at);
+}
+
+auto MCVulkanRenderer::MakePage(const SharedLayout& layout) -> std::optional<SharedPage>
+{
+    const bool hd = layout.HdFormat != SDL_GPU_TEXTUREFORMAT_INVALID;
+    SharedPage page;
+    page.Layout = layout;
+    auto made = EnsureTexture(page.Texture, (hd ? MCHolder::GpuHdPictures : MCHolder::GpuPictures), layout.Format,
+                              SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
+
+    if (made && hd)
+    {
+        made = EnsureTexture(page.HdColors, MCHolder::GpuHdPictures, layout.HdFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                             layout.HdSide, layout.HdSide);
+    }
+
+    if (!made)
+    {
+        SDL_Log("MCVulkanRenderer: a shared page %ux%u: %s", layout.Side, layout.Side, made.error().c_str());
+        return std::nullopt;
+    }
+
+    page.Places.reset(sma_atlas_create(static_cast<int>(layout.Side), static_cast<int>(layout.Side)));
+    const auto hdBlocks = static_cast<int>(layout.HdSide / layout.HdBlock);
+    page.HdPlaces.reset(hd ? sma_atlas_create(hdBlocks, hdBlocks) : nullptr);
+    return page;
+}
+
+void MCVulkanRenderer::KeepSparePages()
+{
+    for (const OpenPage& open : _OpenPages)
+    {
+        if (open.Kind != PageKind::Hd)
+        {
+            continue;
+        }
+
+        const auto ofLayout = [&](const SharedPage& page) { return page.Layout == open.Layout; };
+        const bool inUse = std::ranges::any_of(_HdPages, [&](const SharedPage& page)
+                                               { return page.Places != nullptr && ofLayout(page); });
+        const auto spare = std::ranges::find_if(_SparePages, ofLayout);
+
+        if (!inUse && spare != _SparePages.end())
+        {
+            Release(spare->Texture);
+            Release(spare->HdColors);
+            _SparePages.erase(spare);
+        }
+        else if (inUse && spare == _SparePages.end())
+        {
+            if (std::optional<SharedPage> made = MakePage(open.Layout); made.has_value())
+            {
+                _SparePages.push_back(std::move(*made));
+            }
+        }
+    }
 }
 
 void MCVulkanRenderer::FreeShared(Picture& picture)

@@ -1865,11 +1865,26 @@ private:
     std::vector<SharedPage> _SharpPages;
     std::vector<RetiredPlace> _RetiredPlaces;
     std::vector<OpenPage> _OpenPages;
+    /// <summary>Port-only (SPEC-memory.md's pages): the HD pages made ahead (KeepSparePages), at most one a layout.</summary>
+    std::vector<SharedPage> _SparePages;
+    /// <summary>Port-only (SPEC-memory.md's pages): the frame from which a spare page is tried again.</summary>
+    uint64_t _SpareRetryFrame = 0;
     /// <summary>Port-only: the shared pages of kind <paramref name="kind"/>.</summary>
     std::vector<SharedPage>& PagesOf(PageKind kind);
     /// <summary>
+    /// Port-only: a page of <paramref name="layout"/>, empty (its textures, counted under HD pictures when it's for HD
+    /// art frames, and its places); none when its textures couldn't be made (logged).
+    /// </summary>
+    std::optional<SharedPage> MakePage(const SharedLayout& layout);
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): as each frame's recording starts, a page made ahead for each layout of HD art
+    /// frames' pages in use, which PlaceShared takes before it makes one, so no page is made while a frame draws (but
+    /// for a frame needing several); let go once the layout's pages are.
+    /// </summary>
+    void KeepSparePages();
+    /// <summary>
     /// Port-only: puts <paramref name="picture"/> in a page of kind <paramref name="kind"/> (<paramref name="layout"/>'s;
-    /// one made when none has room): <paramref name="width"/> x <paramref name="height"/> of its texture's pixels, and an
+    /// one made when none has room, or the spare one: KeepSparePages): <paramref name="width"/> x <paramref name="height"/> of its texture's pixels, and an
     /// HD art frame's colours <paramref name="hdWidth"/> x <paramref name="hdHeight"/> (0 x 0: none); its page's textures
     /// become its own. False, leaving it as it was, for a picture over half a page or when no page could be made.
     /// </summary>

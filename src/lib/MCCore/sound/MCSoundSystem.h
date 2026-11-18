@@ -176,7 +176,8 @@ public:
     /// <summary>
     /// Per frame: fades out stopped channels, plays the next radio fragment or message, cross-fades and picks the
     /// music from ABL requests and the combat state. Port-only: the rain bed and the thunder, as the weather shown is
-    /// heard while a scenario runs (MCWeather::HeardLook).
+    /// heard while a scenario runs (MCWeather::HeardLook); with HD audio on (GHdAudio), the radio's and Betty's voices
+    /// kept over the rest of the sound (MCAudio::SetVoicePriority).
     /// </summary>
     void Update();
     /// <summary>
@@ -390,6 +391,8 @@ private:
     std::array<std::weak_ptr<MCSoundResource>, NUM_SOUND_CHANNELS> _ChannelResource{};
     /// <summary>Set once the constructor has run; cleared by the destructor's purge (as SoundOn).</summary>
     bool _SoundOn = false;
+    /// <summary>Whether the mixer keeps the voices over the rest, as last set (MCAudio::SetVoicePriority).</summary>
+    bool _VoicePriority = false;
     /// <summary>The sound bites' waves (&lt;name&gt;.pak).</summary>
     std::unique_ptr<MCPacketFile> _SoundDataFile;
     /// <summary>Betty's samples (betty.pak).</summary>

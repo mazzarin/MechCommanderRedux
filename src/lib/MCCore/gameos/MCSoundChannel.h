@@ -112,6 +112,8 @@ public:
     std::weak_ptr<MCSoundResource> Resource;
     /// <summary>Whether it loops.</summary>
     bool Looping = false;
+    /// <summary>Whether its sounds are voices (<see cref="MCSoundBuffer::SetVoice"/>), from its next buffer on.</summary>
+    bool Voice = false;
     /// <summary>Set while a stream plays (the timer thread clears it at the stream's end).</summary>
     std::atomic<bool> Streaming = false;
 

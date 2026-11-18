@@ -103,6 +103,9 @@
     <ClCompile Include="tests\fakes\MCScriptedRandom.cpp">
       <Filter>tests\fakes</Filter>
     </ClCompile>
+    <ClCompile Include="tests\FirstUseTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\fixtures\MCRetailData.cpp">
       <Filter>tests\fixtures</Filter>
     </ClCompile>

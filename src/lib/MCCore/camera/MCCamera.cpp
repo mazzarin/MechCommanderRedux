@@ -99,6 +99,21 @@ namespace
         return shape;
     }
 
+    /// <summary>The pause shape's and the asked shape's files (in the art path) and their errors.</summary>
+    constexpr std::string_view PauseShapeName = "pause";
+    constexpr std::string_view PauseShapeMissing = " Could not find Pause Shape ";
+    constexpr std::string_view AskedShapeName = "asked";
+    constexpr std::string_view AskedShapeMissing = " Could not find Asked Shape ";
+
+    /// <summary>Loads <paramref name="name"/> into <paramref name="shape"/> unless it holds it already.</summary>
+    void EnsureShape(MCRegisteredBlock& shape, std::string_view name, std::string_view errorMessage)
+    {
+        if (shape.Empty())
+        {
+            shape = LoadShape(name, errorMessage);
+        }
+    }
+
     /// <summary>Darkens the whole screen for the pause and asked overlays.</summary>
     void DarkenScreen()
     {
@@ -155,6 +170,12 @@ auto MCCamera::SetViewSize(float width, float height) -> void
     CosAngle = static_cast<float>(std::cos(angle));
     HalfWidth = ViewWidth * 0.5f;
     HalfHeight = ViewHeight * 0.5f;
+}
+
+void LoadOverlayShapes()
+{
+    EnsureShape(PauseShape(), PauseShapeName, PauseShapeMissing);
+    EnsureShape(AskedShape(), AskedShapeName, AskedShapeMissing);
 }
 
 auto MCCamera::Load(MCFitIniFile& cameraFile, bool objectCamera, int32_t cameraId, MCCameraList& list)
@@ -795,10 +816,7 @@ auto MCCamera::Render() -> void
     {
         DarkenScreen();
 
-        if (PauseShape().Empty())
-        {
-            PauseShape() = LoadShape("pause", " Could not find Pause Shape ");
-        }
+        EnsureShape(PauseShape(), PauseShapeName, PauseShapeMissing);
 
         AGShapeDraw(overlayPane, PauseShape().Bytes(), 0, static_cast<int32_t>(overlayHalfWidth), 60);
     }
@@ -807,10 +825,7 @@ auto MCCamera::Render() -> void
     {
         DarkenScreen();
 
-        if (AskedShape().Empty())
-        {
-            AskedShape() = LoadShape("asked", " Could not find Asked Shape ");
-        }
+        EnsureShape(AskedShape(), AskedShapeName, AskedShapeMissing);
 
         AGShapeDraw(overlayPane, AskedShape().Bytes(), 0, static_cast<int32_t>(overlayHalfWidth),
                     static_cast<int32_t>(overlayHalfHeight));

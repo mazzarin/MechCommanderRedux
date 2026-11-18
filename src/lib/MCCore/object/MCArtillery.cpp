@@ -39,8 +39,6 @@ namespace
     constexpr uint32_t SampleIncomingMultiplayer = 0x3f;
     /// <summary>Incoming-shell sample of the other strikes, from 2 seconds out.</summary>
     constexpr uint32_t SampleIncoming = 0x3e;
-    /// <summary>Object type of the camera drone a sensor probe launches.</summary>
-    constexpr int32_t CameraDroneType = 0x205;
     /// <summary>The large strikes' places in ArtilleryTypeTable (CallArtillery's strike types 1 and 5).</summary>
     constexpr size_t LargeStrike = 1;
     constexpr size_t LargeStrikeMultiplayer = 5;

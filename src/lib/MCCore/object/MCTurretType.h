@@ -15,8 +15,11 @@ class MCTurretType : public MCObjectType
 public:
     /// <summary>Makes a <see cref="MCTurret"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
-    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
-    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({BlownEffectId}); }
+    /// <summary>
+    /// Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own: its blown effect and its weapon's effect
+    /// (MCTurret's CreateWeaponFX), which a unit's weapons load as the unit is made and a turret's never did.
+    /// </summary>
+    std::vector<int32_t> MadeTypes() const override;
     /// <summary>Reads the "TurretData" block (with defaults for the optional keys), then the common type data.</summary>
     int32_t Init(MCFile& objFile, uint32_t fileSize) override;
     /// <summary>

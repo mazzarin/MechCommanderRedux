@@ -758,22 +758,7 @@ auto MCGroundVehicle::CreateVehiclePilot() -> void
     }
 
     marine->SetAwake(1);
-    std::string profileName;
-    profileName = GamePath(ProfilePath, MarineProfileName, ".fit");
-    MCFitIniFile profileFile;
-    const int32_t result = profileFile.Open(profileName);
-
-    if (result != 0)
-    {
-        Fatal(result, " Unable to open Vehicle Marine Profile ");
-    }
-
-    if (marine->LoadProfile(profileFile) != 0)
-    {
-        Fatal(-1, " Bad Vehicle Marine Profile File ");
-    }
-
-    profileFile.Close();
+    LoadMarineProfile(*marine);
 
     // The vehicle's pilot bails out as the marine.
     std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();

@@ -145,4 +145,6 @@ private:
     bool _Whole = false;
     /// <summary>The reads asked of the system (SystemReads).</summary>
     mutable std::atomic<size_t> _SystemReads{0};
+    /// <summary>Port-only (lib/MCFirstUse.h): the file's path, naming its reads the game's thread makes in play.</summary>
+    std::filesystem::path _Path;
 };

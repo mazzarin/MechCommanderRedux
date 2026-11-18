@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "lib/MCLz.h"
+#include "lib/MCFirstUse.h"
 
 namespace
 {
@@ -19,6 +20,9 @@ namespace
 
 int32_t LZDecomp(std::span<uint8_t> dest, std::span<const uint8_t> packed)
 {
+    // Port-only (lib/MCFirstUse.h): packed bytes the game's thread unpacks in play.
+    const MCFirstUseScope use(MCFirstUseKind::Unpack, [] { return "the original's LZ"; }, dest.size());
+
     // The original reads each code as an unaligned 32-bit load, so it stops 3 bytes before the end of the source.
     if (packed.size() < 3)
     {

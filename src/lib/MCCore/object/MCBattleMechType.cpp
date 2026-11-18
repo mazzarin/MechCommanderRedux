@@ -398,7 +398,7 @@ auto MCBattleMechType::HandleCollision(MCGameObject& collidee, MCGameObject& col
                                   otherHitLocation, otherEntryAngle);
                     collider.HandleWeaponHit(shotInfo, MultiPlayer() != nullptr);
                     MCVector3D position = collider.GetPosition();
-                    ::CreateExplosion(0x290, position, 0.0f, 0.0f);
+                    ::CreateExplosion(static_cast<int32_t>(MechLandingExplosionType), position, 0.0f, 0.0f);
                 }
             }
             else

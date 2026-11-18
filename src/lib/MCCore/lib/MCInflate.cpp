@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "lib/MCInflate.h"
+#include "lib/MCFirstUse.h"
 
 // libdeflate (src/lib/libdeflate-1.26, MIT): its decompressor alone.
 #include "libdeflate.h"
@@ -23,6 +24,9 @@ namespace
 auto MCInflate::Inflate(std::span<const uint8_t> deflated, size_t size)
     -> std::expected<std::vector<uint8_t>, std::string>
 {
+    // Port-only (lib/MCFirstUse.h): packed bytes the game's thread unpacks in play.
+    const MCFirstUseScope use(MCFirstUseKind::Unpack, [] { return "deflate"; }, size);
+
     libdeflate_decompressor* decompressor = Decompressor();
 
     if (decompressor == nullptr)

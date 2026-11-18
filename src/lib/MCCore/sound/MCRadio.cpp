@@ -140,6 +140,10 @@ std::expected<std::unique_ptr<MCRadio>, int32_t> MCRadio::Create(MCSoundSystem& 
         return std::unexpected(result);
     }
 
+    // Port-only (the workspace's SPEC-first-use.md): the pilot's lines held as the radio is made (at the load, about
+    // 0.6 MB a pilot), so a message queued in play reads nothing from the disk.
+    radio->RadioFile->HoldAllPackets();
+
     radio->MovieName = movieName;
 
     // Faithful: a noise file that fails to open stays, unopened, for the radios after.
@@ -151,6 +155,9 @@ std::expected<std::unique_ptr<MCRadio>, int32_t> MCRadio::Create(MCSoundSystem& 
         {
             return std::unexpected(result);
         }
+
+        // Port-only: and the radio's noise, as the pilots' lines.
+        sound.NoiseFile->HoldAllPackets();
     }
 
     if (!sound.RadioMessageInfoLoaded)

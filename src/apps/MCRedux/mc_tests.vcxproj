@@ -108,6 +108,7 @@
     <ClCompile Include="tests\fakes\MCMemoryFileSource.cpp" />
     <ClCompile Include="tests\fakes\MCNullAudioDevice.cpp" />
     <ClCompile Include="tests\fakes\MCScriptedRandom.cpp" />
+    <ClCompile Include="tests\FirstUseTests.cpp" />
     <ClCompile Include="tests\fixtures\MCRetailData.cpp" />
     <ClCompile Include="tests\fixtures\MCTerrainGeometryScope.cpp" />
     <ClCompile Include="tests\fixtures\MCTinyMap.cpp" />

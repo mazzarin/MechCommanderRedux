@@ -350,6 +350,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     // Port-only: the original's packets the mission's first uses would read, read here together; then the explosions'
     // looks (HD particles) measured here, under the loading bar, rather than as each shows.
     LoadOriginalPackets();
+    MarineProfile = ReadMarineProfile();
+    LoadOverlayShapes();
     MCParticles::MeasureExplosions();
     MissionStartTime = 0;
     RunningTime = 0.0f;

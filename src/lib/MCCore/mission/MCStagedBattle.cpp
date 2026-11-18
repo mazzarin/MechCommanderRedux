@@ -3541,6 +3541,11 @@ std::shared_ptr<MCMover> MCStaging::NearestEnemy()
     return nearest;
 }
 
+void MCStaging::Attack(MCMover& mover, const std::shared_ptr<MCMover>& target)
+{
+    OrderAttack(mover, target);
+}
+
 void MCStaging::SendLanceAt(const std::shared_ptr<MCMover>& target)
 {
     constexpr int32_t LanceSize = 3;

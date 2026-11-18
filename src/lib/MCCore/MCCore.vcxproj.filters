@@ -414,6 +414,9 @@
     <ClCompile Include="lib\MCFilePatch.cpp">
       <Filter>lib</Filter>
     </ClCompile>
+    <ClCompile Include="lib\MCFirstUse.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
     <ClCompile Include="lib\MCFitIniFile.cpp">
       <Filter>lib</Filter>
     </ClCompile>
@@ -1844,6 +1847,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCFilePatch.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCFirstUse.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCFitIniFile.h">

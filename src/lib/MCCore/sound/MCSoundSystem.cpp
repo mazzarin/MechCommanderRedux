@@ -584,6 +584,9 @@ void MCSoundSystem::PlayStaticNoise()
         {
             return;
         }
+
+        // Port-only (the workspace's SPEC-first-use.md): held whole, as the radios' (MCRadio::Create).
+        NoiseFile->HoldAllPackets();
     }
 
     NoiseFile->SeekPacket(2);

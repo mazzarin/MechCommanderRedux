@@ -214,6 +214,11 @@ MCRegisteredBlock& PauseShape();
 /// <remarks>The name is the port's (the binary kept no symbol for it).</remarks>
 MCRegisteredBlock& AskedShape();
 /// <summary>
+/// Port-only (the first-use rule): loads the pause and asked shapes, those not loaded, with the mission rather than at
+/// the first pause or question.
+/// </summary>
+void LoadOverlayShapes();
+/// <summary>
 /// The pane everything is drawn into: the rendering camera's world surface, else the screen's frame. Shared with its
 /// owner (the view, the screen port), whose resizes it follows.
 /// </summary>

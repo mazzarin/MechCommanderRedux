@@ -52,6 +52,18 @@ auto MCTurretType::CreateInstance() -> std::shared_ptr<MCBaseObject>
     return newTurret;
 }
 
+auto MCTurretType::MadeTypes() const -> std::vector<int32_t>
+{
+    // The weapon is read with the type (WeaponType -1 before), its effect as MCTurret's CreateWeaponFX makes it.
+    if (WeaponType < 0 || static_cast<size_t>(WeaponType) >= MasterComponentList.size())
+    {
+        return MadeTypesAnd({BlownEffectId});
+    }
+
+    return MadeTypesAnd(
+        {BlownEffectId, WeaponFXTable[static_cast<uint8_t>(MasterComponentList[WeaponType].WeaponEffect)]});
+}
+
 auto MCTurretType::Init(MCFile& objFile, uint32_t fileSize) -> int32_t
 {
     MCFitIniFile turretFile;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "object/MCBuildingMarines.h"
 #include "object/MCObjectType.h"
 #include "platform/MCRegisteredBlock.h"
 
@@ -14,8 +15,16 @@ class MCTreeBuildingType : public MCObjectType
 public:
     /// <summary>Makes a <see cref="MCTreeBuilding"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
-    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
-    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({BlownEffectId}); }
+    /// <summary>
+    /// Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own: its blown effect and, with marines, the
+    /// marine it lets out (DefaultPilotId).
+    /// </summary>
+    std::vector<int32_t> MadeTypes() const override
+    {
+        return NumMarines > 0 ? MadeTypesAnd({BlownEffectId, static_cast<uint32_t>(DefaultPilotId)})
+                              : MadeTypesAnd({BlownEffectId});
+    }
+
     /// <summary>
     /// Reads the "TreeData" block (loading the NormalShadow and DestroyedShadow shapes), then the common type data.
     /// </summary>

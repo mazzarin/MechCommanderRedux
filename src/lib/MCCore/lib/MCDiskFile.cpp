@@ -2,6 +2,7 @@
 // stand-ins.
 
 #include "lib/MCDiskFile.h"
+#include "lib/MCFirstUse.h"
 
 #include <algorithm>
 #include <cstring>
@@ -37,8 +38,17 @@ std::optional<MCDiskFile> MCDiskFile::Open(const std::filesystem::path& path, MC
                                            MCDiskFileReads reads)
 {
     const bool create = mode == MCDiskFileMode::Create;
+    // Port-only (lib/MCFirstUse.h): a file the game's thread opens to read in play (not one it writes: a save, a log).
+    std::optional<MCFirstUseScope> use;
+
+    if (!create)
+    {
+        use.emplace(MCFirstUseKind::Open, [&path] { return MCFirstUses::FileName(path); }, 0);
+    }
+
     MCDiskFile file;
     file._Reads = reads;
+    file._Path = path;
 #ifdef _WIN32
     // The path as the system spells it (UTF-16), so any name opens; shared as MSVC's streams are (_SH_DENYNO).
     const HANDLE handle = CreateFileW(path.c_str(), create ? GENERIC_READ | GENERIC_WRITE : GENERIC_READ,
@@ -95,6 +105,7 @@ MCDiskFile& MCDiskFile::operator=(MCDiskFile&& other) noexcept
         _ReadEnd = std::exchange(other._ReadEnd, 0);
         _Whole = std::exchange(other._Whole, false);
         _SystemReads.store(other._SystemReads.exchange(0, std::memory_order_relaxed), std::memory_order_relaxed);
+        _Path = std::move(other._Path);
     }
 
     return *this;
@@ -125,6 +136,9 @@ void MCDiskFile::Close()
 
 size_t MCDiskFile::ReadDirect(uint32_t offset, std::span<uint8_t> buffer) const
 {
+    // Port-only (lib/MCFirstUse.h): a read of the disk the game's thread makes in play.
+    const MCFirstUseScope use(MCFirstUseKind::Read, [this] { return MCFirstUses::FileName(_Path); }, buffer.size());
+
     size_t done = 0;
 
     // One call for a whole read (more only past MostInOneCall): the system returns fewer bytes only at the file's end.

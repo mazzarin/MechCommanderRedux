@@ -1743,7 +1743,7 @@ auto MCBattleMech::HandleEjection() -> int
     EjectOrderGiven = 1;
     DestroyBodyLocation(MechHead);
     // The ejection seat's beam, from the cockpit hot spot up and away.
-    std::shared_ptr<MCGameObject> beam = CreateObject(0x1e4);
+    std::shared_ptr<MCGameObject> beam = CreateObject(static_cast<int32_t>(MechEjectionBeamType));
 
     if (beam != nullptr)
     {

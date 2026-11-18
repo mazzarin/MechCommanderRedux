@@ -142,6 +142,11 @@ public:
     MCAblSymbolId ScenarioBrainHandleMessage = MCAblSymbolId::None;
     /// <summary>The palette before the scenario's (the interface's), shown again by <see cref="Unload"/>.</summary>
     std::unique_ptr<MCPalette> OldPalette;
+    /// <summary>
+    /// Port-only (the first-use rule): the marine profile, read at the load for the marines made in play
+    /// (ReadMarineProfile); null when it couldn't be opened.
+    /// </summary>
+    std::unique_ptr<MCFitIniFile> MarineProfile;
     /// <summary><c>CaptureChance</c> (0-4; 2 when missing or out of range).</summary>
     uint8_t CaptureChance = 2;
     /// <summary><c>scenarioTuneNum</c>: the music track started after the start-up turns.</summary>

@@ -2,6 +2,7 @@
 #include "object/MCObjectTypeManager.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "lib/MCFatal.h"
+#include "lib/MCFirstUse.h"
 #include "lib/MCFitIniFile.h"
 #include "main/MCGamePaths.h"
 #include "lib/MCPacketFile.h"
@@ -235,6 +236,10 @@ auto MCObjectTypeManager::LoadType(int32_t objTypeNum, int keepMe, bool fatal) -
         return nullptr;
     }
 
+    // Port-only (lib/MCFirstUse.h): the type the reads below (its packet, its files, its appearance) are for.
+    const auto name = [objTypeNum] { return std::format("object type {:#x}", objTypeNum); };
+    const MCFirstUseContext context(name);
+
     // Port-only: a packet read here as the type is first needed (the frame log's), not with the load's (LoadMadeTypes).
     if (!_ObjectFile->Holds(objTypeNum))
     {
@@ -318,8 +323,11 @@ auto MCObjectTypeManager::LoadMadeTypes() -> MCPacketsHeld
         AppearanceTypeList().GetAppearance(type.AppearName);
     };
 
-    // What the game makes by its own numbers, no type's: a mine's blast (a mine laid, on the map or the staged battle's).
-    const std::array<int32_t, 1> gameMade{MineExplosion};
+    // What the game makes by its own numbers, no type's: a mine's blast (a mine laid, on the map or the staged battle's),
+    // each kind of strike a commander may call (its counts the mission's, a script's or the enemy's; the multiplayer
+    // kinds too) and the camera drone a probe launches.
+    std::vector<int32_t> gameMade{MineExplosion, CameraDroneType};
+    gameMade.insert(gameMade.end(), ArtilleryTypeTable.begin(), ArtilleryTypeTable.end());
 
     for (;;)
     {

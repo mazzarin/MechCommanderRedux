@@ -2,6 +2,7 @@
 #include "mission/MCMission.h"
 #include "ai/MCMoveGeometry.h"
 #include "lib/MCFatal.h"
+#include "lib/MCFirstUse.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCInventoryBlock.h"
 #include "logistics/MCMechInventoryBlock.h"
@@ -928,6 +929,8 @@ auto MCMission::StartScenario(std::string_view name) -> void
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     MCTelemetry::PlayStarted(game != nullptr ? game->NumPlayers() : 1, game != nullptr && game->IsServer);
     MCFrameLog::Note("mission started");
+    // Port-only (lib/MCFirstUse.h): from here the game's thread reads and unpacks nothing for the first time.
+    MCFirstUses::PlayStarted();
 }
 
 auto MCMission::StartInterface() -> void
@@ -948,6 +951,7 @@ auto MCMission::RequestScenario(std::string_view scenarioName) -> void
 auto MCMission::StopScenarioCallbacks() -> void
 {
     MCTelemetry::PlayEnded();
+    MCFirstUses::PlayEnded();
     RemoveCallback(_InterfaceUpdateCallback);
     TacticalInterface()->HideTags();
     RemoveCallback(ScenarioCallback);
@@ -1010,6 +1014,7 @@ auto MCMission::EndScenario() -> void
 {
     // The play's end, if the results screen didn't mark it (twice is harmless).
     MCTelemetry::PlayEnded();
+    MCFirstUses::PlayEnded();
     TotalScenarioTime = ScenarioTime;
 
     if (GlobalGameSegment == 0 && MultiPlayer() == nullptr)

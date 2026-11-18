@@ -7,6 +7,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCHardwareCursor.h"
 #include "lib/MCDice.h"
+#include "lib/MCFirstUse.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
@@ -322,6 +323,8 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     MCRenderer::ResetOpTables();
     // Port-only: the HD pictures read ahead kept, before the frame's draws look for them.
     MCHdArt::KeepReadAhead();
+    // Port-only (lib/MCFirstUse.h): the frame its first uses in play are noted in.
+    MCFirstUses::NextFrame();
 
     if (gui.SmackerWindow == nullptr)
     {

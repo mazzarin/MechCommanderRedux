@@ -640,6 +640,11 @@ namespace
         /// notes neither. Kept across packs: the bytes stay the loaders' whichever pack is drawn.
         /// </summary>
         std::unordered_set<uint64_t> LoadedShapeHashes;
+        /// <summary>
+        /// Port-only (SPEC-first-use.md: a mission's effects at its load): the hashes NoteShapeLoaded took since the last
+        /// MCHdArt::ReadLoadedShapesAhead, in the order read, for it to read their frames ahead.
+        /// </summary>
+        std::vector<uint64_t> ShapeHashesToRead;
         std::unordered_map<FrameKey, Cached, FrameKeyHash> Frames;
         /// <summary>The keys of the frames held (those in Frames with one), least recently used first.</summary>
         std::list<FrameKey> Order;
@@ -4625,8 +4630,39 @@ void MCHdArt::NoteShapeLoaded(std::span<const uint8_t> bytes)
     // The renderer names a table by its bytes from where its draws point to the end of its block: the file's start,
     // or its table's past a shape file's version header.
     State& state = TheState();
-    state.LoadedShapeHashes.insert(ShapeTableHash(bytes));
-    state.LoadedShapeHashes.insert(ShapeTableHash(bytes.subspan(std::min(MCShape::TableStart(bytes), bytes.size()))));
+
+    for (const uint64_t hash :
+         {ShapeTableHash(bytes), ShapeTableHash(bytes.subspan(std::min(MCShape::TableStart(bytes), bytes.size())))})
+    {
+        state.LoadedShapeHashes.insert(hash);
+        state.ShapeHashesToRead.push_back(hash);
+    }
+}
+
+void MCHdArt::ReadLoadedShapesAhead()
+{
+    State& state = TheState();
+    std::vector<uint64_t> hashes = std::exchange(state.ShapeHashesToRead, {});
+
+    if (!Active())
+    {
+        return;
+    }
+
+    // A table read twice (a type's, again for the next mission) is asked once; a hash the pack has no folder for (the
+    // other of each table's two) asks nothing.
+    std::unordered_set<uint64_t> asked;
+    std::vector<PacketAhead> tables;
+
+    for (const uint64_t hash : hashes)
+    {
+        if (asked.insert(hash).second)
+        {
+            tables.push_back(PacketAhead{ShapeTableFolder(hash), std::nullopt, false});
+        }
+    }
+
+    ReadPacketsAhead(tables, ReadAs::Load);
 }
 
 bool MCHdArt::Stripped(std::span<const uint8_t> table)

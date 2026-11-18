@@ -327,6 +327,14 @@ namespace MCHdArt
     /// </summary>
     void NoteShapeLoaded(std::span<const uint8_t> bytes);
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: a mission's effects at its load): has the readers read every frame of each shape
+    /// table read since the last call (<see cref="NoteShapeLoaded"/>: a laser's, smoke's, an explosion's, drawn by their
+    /// bytes' hash), as a load's reads, so an effect's first frame at a new facing is taken, not unpacked on the game's
+    /// thread. <see cref="WaitForReadAhead"/> waits for them and <see cref="KeepReadAhead"/> keeps them.
+    /// </summary>
+    void ReadLoadedShapesAhead();
+
     /// <summary>Port-only: whether <paramref name="table"/> is an attached stripped shape's (MCShape::Stripped).</summary>
     bool Stripped(std::span<const uint8_t> table);
 

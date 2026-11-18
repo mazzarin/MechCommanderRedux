@@ -1118,7 +1118,7 @@ TEST_CASE("hd art: a pack's tiles packed against its dictionary are drawn, and f
     const auto decoded = MCHdArt::DecodeHdf(file, TileWidth, TileHeight);
     REQUIRE(decoded.has_value());
     CHECK_EQ(found->Width, decoded->Width);
-    CHECK(found->Colors == decoded->Colors);
+    CHECK(std::ranges::equal(MCHdArt::ColorsOf(*found), decoded->Colors));
     CHECK(found->Indices == decoded->Indices);
 
     WriteBytes(dictionaries, DictionariesFile({{1, DictionaryTwo}}));
@@ -1295,12 +1295,14 @@ TEST_CASE("hd art: a frame read again keeps its Id, and one dropped while held c
     CHECK(again != first);
     CHECK_EQ(again->Id, firstId);
 
-    // As the next frame starts, the ledger: the frame kept, its blocks as the allocator rounds them up; the two dropped
-    // while this test held them, let go.
+    // As the next frame starts, the ledger: the frame kept (its record and its colours apart), its blocks as the
+    // allocator rounds them up; the two records dropped while this test held them, let go.
     MCHdArt::NextFrame(false);
     const MCMemoryLedger::MCFigures kept = MCMemoryLedger::Of(MCHolder::HdFrames);
-    CHECK_EQ(kept.Payload, static_cast<int64_t>(MCHdArt::CachedBytes()));
+    const MCMemoryLedger::MCFigures colors = MCMemoryLedger::Of(MCHolder::HdColors);
+    CHECK_EQ(kept.Payload + colors.Payload, static_cast<int64_t>(MCHdArt::CachedBytes()));
     CHECK(kept.Allocated >= kept.Payload);
+    CHECK(colors.Allocated >= colors.Payload);
     const MCMemoryLedger::MCFigures letGo = MCMemoryLedger::Of(MCHolder::HdFramesLetGo);
     CHECK_EQ(letGo.Payload - letGoBefore, static_cast<int64_t>(first->Bytes() + second->Bytes()));
     CHECK(letGo.Allocated >= letGo.Payload);
@@ -1315,6 +1317,90 @@ TEST_CASE("hd art: a frame read again keeps its Id, and one dropped while held c
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
     again.reset();
+    MCHdArt::NextFrame(false);
+    std::filesystem::remove_all(pack);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's frame record and its one copy of a frame's colours): a frame the cache hands out is its
+/// record, its colours kept apart until the GPU has its picture (MCHdArt::ColorsUploaded); then the cache lets go of
+/// them, and keeps the record however little room it has, or however short the system is, until the GPU lets go of
+/// the picture, so a draw of it reads nothing. Asked for again, its colours are read again, the same, its record kept.
+/// </summary>
+TEST_CASE("hd art: a frame's colours go once the GPU has its picture, and its record stays while the picture does")
+{
+    using MCMemoryLedger::MCHolder;
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    MCHdArt::Frame frame;
+    frame.Width = Width;
+    frame.Height = Height;
+    frame.Scale = 1;
+    frame.Colors = SpriteLike(frame.Width, frame.Height);
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, MCHdArt::HasIndex);
+    const std::vector<uint8_t> file = MCHdArt::EncodeHdf(frame);
+    const auto stored = MCHdArt::DecodeHdf(file, Width, Height);
+    REQUIRE(stored.has_value());
+    const std::array<std::vector<uint8_t>, 2> tiles = {std::vector<uint8_t>{5, 6}, std::vector<uint8_t>{7, 8}};
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_frame_record_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack);
+    const std::vector<uint8_t> archive =
+        BuildArchive({{MCHdArt::TerrainTileName(tiles[0]) + ".hdf", file, file.size(), std::nullopt},
+                      {MCHdArt::TerrainTileName(tiles[1]) + ".hdf", file, file.size(), std::nullopt}});
+    std::ofstream(pack / "terrain.hda", std::ios::binary)
+        .write(reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size()));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+    MCHdArt::NextFrame(false);
+
+    // The record holds no colours: the cache keeps them apart, as stored, and counts them apart.
+    const std::shared_ptr<const MCHdArt::Frame> first = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(first != nullptr);
+    CHECK(first->Colors.empty());
+    CHECK(std::ranges::equal(MCHdArt::ColorsOf(*first), stored->Colors));
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdColors).Payload, static_cast<int64_t>(stored->Colors.size()));
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdFrames).Payload, static_cast<int64_t>(first->Bytes()));
+
+    // The GPU takes them: the cache lets go of them.
+    MCHdArt::ColorsUploaded(*first);
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdColors).Payload, 0);
+    CHECK_EQ(MCHdArt::CachedBytes(), first->Bytes());
+
+    // Room for one frame, then the system short: the cache lets go of all it can, but not the record of the frame on
+    // the GPU, whose draws read nothing.
+    MCHdArt::SetCacheBudget(1);
+    REQUIRE(MCHdArt::FindTerrainTile(tiles[1], Width, Height) != nullptr);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(true);
+    const size_t read = MCHdArt::FramesRead();
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height) == first);
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+
+    // Its colours asked for again (the GPU let go of its picture, or never kept it): read again, the same.
+    const size_t readAgain = MCHdArt::ColorsReadAgain();
+    CHECK(std::ranges::equal(MCHdArt::ColorsOf(*first), stored->Colors));
+    CHECK_EQ(MCHdArt::ColorsReadAgain(), readAgain + 1);
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height) == first);
+
+    // Once the GPU lets go of the picture, so may the cache: the next draw reads the frame again, numbered as before.
+    MCHdArt::PictureDropped(first->Id);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(true);
+    const std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(again != nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+    CHECK(again != first);
+    CHECK_EQ(again->Id, first->Id);
+
+    MCHdArt::SetCacheBudget(0);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
     MCHdArt::NextFrame(false);
     std::filesystem::remove_all(pack);
 }
@@ -1398,12 +1484,16 @@ TEST_CASE(
     CHECK_EQ(MCHdArt::CachedBytes(), Frames * frameBytes);
     CHECK_EQ(frameDrawn(), Frames * frameBytes);
 
-    // Short: the held frames leave the cache, freeing nothing, and 16 only it held go besides them; then 16 a frame, then
-    // only those drawn, however long it lasts.
+    // Short: the held frames leave the cache, freeing their colours (the cache's own: their records live on with their
+    // holders), and as many only it held go besides them as make 64 MB with those; then 16 a frame, then only those
+    // drawn, however long it lasts.
+    const size_t heldFreed = Held * frame.Colors.size();
+    REQUIRE(heldFreed < MCMemoryRoom::TrimmedBytesPerFrame);
+    const size_t goneBesides = (MCMemoryRoom::TrimmedBytesPerFrame - heldFreed + frameBytes - 1) / frameBytes;
     system->IsShort = true;
-    CHECK_EQ(frameDrawn(), (Frames - Held - GoneAFrame) * frameBytes);
+    CHECK_EQ(frameDrawn(), (Frames - Held - goneBesides) * frameBytes);
     held.clear();
-    CHECK_EQ(frameDrawn(), (Frames - Held - 2 * GoneAFrame) * frameBytes);
+    CHECK_EQ(frameDrawn(), (Frames - Held - goneBesides - GoneAFrame) * frameBytes);
     CHECK_EQ(frameDrawn(), Drawn * frameBytes);
     CHECK_EQ(frameDrawn(), Drawn * frameBytes);
     const size_t read = MCHdArt::FramesRead();
@@ -1610,9 +1700,11 @@ TEST_CASE("hd art: the ground's kept frames go once it's up, and come back with 
     const uint64_t groundId = ground->Id;
     REQUIRE(MCHdArt::FindOverlay(overlay, Width, Height) != nullptr);
     const size_t both = MCHdArt::CachedBytes();
+    // The ground's record and its colours, which the cache keeps apart.
+    const size_t groundBytes = ground->Bytes() + MCHdArt::ColorsOf(*ground).size();
 
     MCHdArt::DropGround();
-    CHECK_EQ(MCHdArt::CachedBytes(), both - ground->Bytes());
+    CHECK_EQ(MCHdArt::CachedBytes(), both - groundBytes);
     const size_t read = MCHdArt::FramesRead();
     REQUIRE(MCHdArt::FindOverlay(overlay, Width, Height) != nullptr);
     CHECK_EQ(MCHdArt::FramesRead(), read);
@@ -1897,12 +1989,17 @@ namespace
         return MCHdArt::FindShape(AheadTable, key.first, AheadWidth, AheadHeight, key.second, AheadFrames);
     }
 
-    /// <summary>Whether two frames are the same but for their Ids.</summary>
+    /// <summary>
+    /// Whether two frames are the same but for their Ids: their colours their own or, a frame the cache holds, the
+    /// cache's (MCHdArt::ColorsOf).
+    /// </summary>
     bool SameFrame(const MCHdArt::Frame& a, const MCHdArt::Frame& b)
     {
+        const std::span<const uint8_t> aColors = MCHdArt::ColorsOf(a);
+        const std::vector<uint8_t> colors(aColors.begin(), aColors.end());
         return a.Width == b.Width && a.Height == b.Height && a.Scale == b.Scale && a.Format == b.Format &&
-               a.Blended == b.Blended && a.PaintedShadow == b.PaintedShadow && a.Colors == b.Colors &&
-               a.Indices == b.Indices;
+               a.Blended == b.Blended && a.PaintedShadow == b.PaintedShadow &&
+               std::ranges::equal(colors, MCHdArt::ColorsOf(b)) && a.Indices == b.Indices;
     }
 
     /// <summary>The HD art's readers read as <c>settings</c> says while this lives, as they read before once it ends.</summary>
@@ -2009,6 +2106,10 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     CHECK(again != second);
     CHECK_EQ(again->Id, id);
     MCHdArt::SetCacheBudget(0);
+    // As read, with its colours (the cache's, which it lets go of as the pack is set again).
+    MCHdArt::Frame againWhole = *again;
+    const std::span<const uint8_t> againColors = MCHdArt::ColorsOf(*again);
+    againWhole.Colors.assign(againColors.begin(), againColors.end());
 
     // Drawn first, with the pack set again, frame 1 is read as drawn: the frame read ahead. Setting the pack closed
     // both handles, and the reader still opened its own once.
@@ -2018,7 +2119,7 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     const size_t fresh = MCHdArt::FramesReadAhead();
     const std::shared_ptr<const MCHdArt::Frame> first = drawn({1, 0});
     CHECK_EQ(MCHdArt::FramesReadAhead(), fresh);
-    CHECK(SameFrame(*first, *again));
+    CHECK(SameFrame(*first, againWhole));
 
     GHdArt = previous;
     MCHdArt::SetPackFolder({});

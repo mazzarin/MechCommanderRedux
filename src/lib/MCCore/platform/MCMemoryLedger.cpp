@@ -15,6 +15,7 @@ namespace
 
     constexpr std::array<MCHolderFacts, MCMemoryLedger::HolderCount> Holders{{
         {"hd frames", MCSide::Cpu},
+        {"hd colours", MCSide::Cpu},
         {"hd frames let go", MCSide::Cpu},
         {"hd read-ahead", MCSide::Cpu},
         {"hd hold", MCSide::Cpu},

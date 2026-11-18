@@ -29,8 +29,13 @@ namespace MCMemoryLedger
     /// <summary>The holders, by what they hold (NameOf names each in the frame log).</summary>
     enum class MCHolder : uint8_t
     {
-        /// <summary>MCHdArt's frames kept in memory (BC7 colours and R8G8 indices, unpacked).</summary>
+        /// <summary>MCHdArt's frames' records kept in memory (each frame's size and flags, and its R8G8 indices).</summary>
         HdFrames,
+        /// <summary>
+        /// MCHdArt's frames' colours, unpacked (BC7), held until the GPU has their pictures (SPEC-memory.md's one copy of
+        /// a frame's colours).
+        /// </summary>
+        HdColors,
         /// <summary>MCHdArt's frames its cache let go of that something else still holds (a texture's picture, a draw's).</summary>
         HdFramesLetGo,
         /// <summary>MCHdArt's frames and pictures read ahead, waiting to be taken.</summary>

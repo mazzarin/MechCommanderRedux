@@ -1595,6 +1595,7 @@ void MCVulkanRenderer::TrimHdPictures(size_t budget)
 
 void MCVulkanRenderer::DropHdPicture(std::unordered_map<uint64_t, Picture>::iterator it)
 {
+    MCHdArt::PictureDropped(it->first);
     _HdOrder.erase(it->second.InOrder);
     DropPicture(_HdPictures, it, _HdPictureBytes, HdRgbaBytes);
 }
@@ -3495,9 +3496,17 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         const bool bc7 = frame.Format == MCHdArt::ColorFormat::Bc7;
         uint32_t colorWidth = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Width)) : width;
         uint32_t colorHeight = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Height)) : height;
+        // Port-only (SPEC-memory.md's one copy of a frame's colours): the cache's, which go once they're here.
+        const std::span<const uint8_t> source = MCHdArt::ColorsOf(frame);
+
+        if (source.empty())
+        {
+            _HdRefused.insert(frame.Id);
+            return std::nullopt;
+        }
 
         if (frame.Indices.size() != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes ||
-            frame.Colors.size() != static_cast<size_t>(colorWidth) * colorHeight * (bc7 ? HdBc7Bytes : HdRgbaBytes))
+            source.size() != static_cast<size_t>(colorWidth) * colorHeight * (bc7 ? HdBc7Bytes : HdRgbaBytes))
         {
             NotSupported("an HD art frame whose pixels don't match its size");
             return std::nullopt;
@@ -3512,11 +3521,11 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         // A GPU without BC7 gets the colours decoded here.
         const bool sendBc7 = bc7 && *_Bc7;
         std::vector<uint8_t> decoded;
-        std::span<const uint8_t> colors = frame.Colors;
+        std::span<const uint8_t> colors = source;
 
         if (bc7 && !sendBc7)
         {
-            decoded = MCBc7::Decode(frame.Colors, frame.Width, frame.Height);
+            decoded = MCBc7::Decode(source, frame.Width, frame.Height);
             colors = decoded;
             colorWidth = width;
             colorHeight = height;
@@ -3559,6 +3568,7 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
                                               sendBc7 ? HdBc7Bytes : HdRgbaBytes)
                                       .begin());
         picture.Bytes = frame.Indices.size() + colors.size();
+        MCHdArt::ColorsUploaded(frame);
         found = _HdPictures.emplace(frame.Id, picture).first;
         found->second.InOrder = _HdOrder.insert(_HdOrder.end(), frame.Id);
         _HdPictureBytes += picture.Bytes;
@@ -6336,11 +6346,12 @@ std::expected<void, std::string> MCVulkanRenderer::UploadHdTile(ChunkedUpload& u
     const auto width = static_cast<uint32_t>(MCBc7::Padded(frame.Width));
     const auto height = static_cast<uint32_t>(MCBc7::Padded(frame.Height));
     std::vector<uint8_t> encoded;
-    std::span<const uint8_t> blocks = frame.Colors;
+    // Port-only: the cache's colours (the ground's frames go whole once its tiles are up: MCHdArt::DropGround).
+    std::span<const uint8_t> blocks = MCHdArt::ColorsOf(frame);
 
     if (frame.Format == MCHdArt::ColorFormat::Rgba8)
     {
-        encoded = MCBc7::Encode(frame.Colors, frame.Width, frame.Height);
+        encoded = MCBc7::Encode(blocks, frame.Width, frame.Height);
         blocks = encoded;
     }
 

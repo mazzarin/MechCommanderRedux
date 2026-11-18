@@ -295,6 +295,16 @@ namespace
         /// </summary>
         bool Undrawn = false;
         uint64_t LastFrame = 0;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's one copy of a frame's colours): its colours, which Frame (its record) leaves out,
+        /// held until the GPU has its picture (MCHdArt::ColorsUploaded); empty after, until they're read again.
+        /// </summary>
+        std::vector<uint8_t> Colors;
+        /// <summary>
+        /// Port-only: the GPU holds its picture (from MCHdArt::ColorsUploaded to MCHdArt::PictureDropped), so its record
+        /// is never let go of: a draw of it reads nothing.
+        /// </summary>
+        bool OnGpu = false;
     };
 
     /// <summary>
@@ -603,8 +613,19 @@ namespace
         size_t Bytes = 0;
         /// <summary>Port-only (the ledger): what Bytes' frames take, as the allocator rounds their blocks up.</summary>
         size_t AllocatedBytes = 0;
-        /// <summary>Port-only: Bytes and AllocatedBytes in the ledger, set each frame (MCHdArt::NextFrame).</summary>
+        /// <summary>Port-only: how much of Bytes and AllocatedBytes is the frames' colours (Cached::Colors).</summary>
+        size_t ColorBytes = 0;
+        size_t ColorAllocatedBytes = 0;
+        /// <summary>
+        /// Port-only: Bytes and AllocatedBytes in the ledger, set each frame (MCHdArt::NextFrame): the records' and the
+        /// colours' apart.
+        /// </summary>
         MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdFrames};
+        MCMemoryLedger::MCShare ColorsLedger{MCMemoryLedger::MCHolder::HdColors};
+        /// <summary>Port-only: the key of each frame numbered (Cached::Id), for MCHdArt::ColorsOf and the rest.</summary>
+        std::unordered_map<uint64_t, FrameKey> ById;
+        /// <summary>Port-only (MCHdArt::ColorsReadAgain): the times a frame was read again for its colours.</summary>
+        size_t ColorsReadAgain = 0;
         /// <summary>
         /// Port-only (the ledger): the frames the cache let go of while something else held them (a texture's picture,
         /// a draw's), until they go, and their bytes in the ledger, set each frame (MCHdArt::NextFrame).
@@ -1492,8 +1513,8 @@ namespace
     /// <paramref name="id"/>: its <c>.hdf</c> file, else its PNG pair, else its entry in an archive; none when the pack
     /// has no such frame, or what is wrong with the one it has.
     /// </summary>
-    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const FrameKey& key, int32_t width,
-                                                                                int32_t height, uint64_t id)
+    std::expected<std::shared_ptr<MCHdArt::Frame>, std::string> ReadFrame(const FrameKey& key, int32_t width,
+                                                                          int32_t height, uint64_t id)
     {
         FrameFolder& folder = TheState().Folders.at(key.Folder);
         std::error_code error;
@@ -1596,14 +1617,64 @@ namespace
     /// Drops the kept frame <paramref name="key"/> (<paramref name="cached"/>); its entry stays, to be read again (or read
     /// ahead again) with its Id.
     /// </summary>
+    /// <summary>Port-only: <paramref name="cached"/>'s colours let go of, out of the cache's bytes.</summary>
+    void LetGoColors(State& state, Cached& cached)
+    {
+        const size_t allocated = MCAllocatedBytes(cached.Colors.data());
+        state.Bytes -= cached.Colors.size();
+        state.ColorBytes -= cached.Colors.size();
+        state.AllocatedBytes -= allocated;
+        state.ColorAllocatedBytes -= allocated;
+        std::vector<uint8_t>().swap(cached.Colors);
+    }
+
+    /// <summary>Port-only: <paramref name="colors"/> held as <paramref name="cached"/>'s, in the cache's bytes.</summary>
+    void HoldColors(State& state, Cached& cached, std::vector<uint8_t>&& colors)
+    {
+        LetGoColors(state, cached);
+        cached.Colors = std::move(colors);
+        const size_t allocated = MCAllocatedBytes(cached.Colors.data());
+        state.Bytes += cached.Colors.size();
+        state.ColorBytes += cached.Colors.size();
+        state.AllocatedBytes += allocated;
+        state.ColorAllocatedBytes += allocated;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's frame record): <paramref name="frame"/>, just read, kept as <paramref name="key"/>'s,
+    /// the most recently used: its record (the frame without its colours), and its colours beside it.
+    /// </summary>
+    void KeepRead(State& state, const FrameKey& key, Cached& cached, std::shared_ptr<MCHdArt::Frame> frame)
+    {
+        std::vector<uint8_t> colors = std::move(frame->Colors);
+        frame->Colors = {};
+        cached.Frame = std::move(frame);
+        cached.InOrder = state.Order.insert(state.Order.end(), key);
+        state.Bytes += cached.Frame->Bytes();
+        state.AllocatedBytes += cached.Frame->AllocatedBytes();
+        HoldColors(state, cached, std::move(colors));
+    }
+
+    /// <summary>Port-only: numbers <paramref name="cached"/>, <paramref name="key"/>'s, the first time it's read.</summary>
+    void Number(State& state, const FrameKey& key, Cached& cached)
+    {
+        if (cached.Id == 0)
+        {
+            cached.Id = MCHdArt::NewFrameId();
+            state.ById.emplace(cached.Id, key);
+        }
+    }
+
     void Drop(State& state, const FrameKey& key, Cached& cached)
     {
         state.Order.erase(cached.InOrder);
         state.Bytes -= cached.Frame->Bytes();
         state.AllocatedBytes -= cached.Frame->AllocatedBytes();
+        LetGoColors(state, cached);
         CountLetGo(state, cached.Frame);
         cached.Frame.reset();
         cached.Looked = false;
+        cached.OnGpu = false;
 
         // Port-only: a unit's packet near the view may hold it (MCHdArt::MCAskedPackets).
         if (state.Folders.at(key.Folder).Names == Naming::Number)
@@ -1616,23 +1687,34 @@ namespace
     }
 
     /// <summary>
-    /// Drops the least recently used frames, but never the one used last (the frame just read), until the kept ones fit
-    /// the budget.
+    /// Drops the least recently used frames, but never the one used last (the frame just read) nor one whose picture the
+    /// GPU holds, until the kept ones fit the budget.
     /// </summary>
     void Trim()
     {
         State& state = TheState();
         const size_t budget = MCHdArt::CacheBudget();
+        auto next = state.Order.begin();
 
-        while (state.Bytes > budget && state.Order.size() > 1)
+        // Port-only: past a frame whose picture the GPU holds (its record stays while the picture does), letting go of
+        // any colours read again for it (MCHdArt::ColorsOf), which the GPU has.
+        while (state.Bytes > budget && next != state.Order.end() && std::next(next) != state.Order.end())
         {
-            if (const auto oldest = state.Frames.find(state.Order.front()); oldest != state.Frames.end())
+            const auto oldest = state.Frames.find(*next);
+
+            if (oldest == state.Frames.end())
             {
-                Drop(state, oldest->first, oldest->second);
+                next = state.Order.erase(next);
+            }
+            else if (oldest->second.OnGpu)
+            {
+                LetGoColors(state, oldest->second);
+                ++next;
             }
             else
             {
-                state.Order.pop_front();
+                ++next;
+                Drop(state, oldest->first, oldest->second);
             }
         }
     }
@@ -3335,8 +3417,8 @@ namespace
     /// it read it ahead and it fits the shape of <paramref name="width"/> x <paramref name="height"/> asked for (0 x 0:
     /// any, as MCHdArt::DecodeHdf takes them), else read now.
     /// </summary>
-    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadOrTake(const FrameKey& key, int32_t width,
-                                                                                 int32_t height, uint64_t id)
+    std::expected<std::shared_ptr<MCHdArt::Frame>, std::string> ReadOrTake(const FrameKey& key, int32_t width,
+                                                                           int32_t height, uint64_t id)
     {
         if (std::shared_ptr<MCHdArt::Frame> ahead = TakeAhead(key);
             ahead != nullptr &&
@@ -3456,12 +3538,7 @@ namespace
         else if (!cached.Looked)
         {
             cached.Looked = true;
-
-            if (cached.Id == 0)
-            {
-                cached.Id = MCHdArt::NewFrameId();
-            }
-
+            Number(state, key, cached);
             const auto started = std::chrono::steady_clock::now();
             // Port-only: a frame's first use reads it here, as the frame draws, unless read ahead (the frame log's).
             MCFrameLog::Count(FrameLogReads);
@@ -3485,10 +3562,7 @@ namespace
             }
             else if (*read != nullptr)
             {
-                cached.Frame = std::move(*read);
-                cached.InOrder = state.Order.insert(state.Order.end(), key);
-                state.Bytes += cached.Frame->Bytes();
-                state.AllocatedBytes += cached.Frame->AllocatedBytes();
+                KeepRead(state, key, cached, std::move(*read));
                 ++state.Read;
                 std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
                 FollowAhead(key, frames);
@@ -3499,6 +3573,35 @@ namespace
         }
 
         return cached.Frame;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's one copy of a frame's colours): <paramref name="cached"/>'s colours read again, its
+    /// record kept: the GPU let go of its picture, or never took it, since its colours went. As a first draw reads a
+    /// frame, on this thread, and counted with the frame log's reads.
+    /// </summary>
+    void ReadColorsAgain(State& state, const FrameKey& key, Cached& cached)
+    {
+        const auto started = std::chrono::steady_clock::now();
+        MCFrameLog::Count(FrameLogReads);
+        auto read = [&]
+        {
+            const MCFrameLog::Scope part(FrameLogRead);
+            return ReadOrTake(key, cached.Frame->OriginalWidth(), cached.Frame->OriginalHeight(), cached.Id);
+        }();
+        const std::chrono::nanoseconds spent = std::chrono::steady_clock::now() - started;
+        state.ReadTime += spent;
+        TraceUse(key, "colours", std::chrono::duration_cast<std::chrono::microseconds>(spent).count());
+
+        if (!read)
+        {
+            LogOnce(state.Folders.at(key.Folder).Path, read.error());
+        }
+        else if (*read != nullptr)
+        {
+            HoldColors(state, cached, std::move((*read)->Colors));
+            ++state.ColorsReadAgain;
+        }
     }
 }
 
@@ -3781,6 +3884,9 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.ShapeTableFolders.clear();
     state.Bytes = 0;
     state.AllocatedBytes = 0;
+    state.ColorBytes = 0;
+    state.ColorAllocatedBytes = 0;
+    state.ById.clear();
     state.Logged.clear();
     state.MadeWith.reset();
     state.PaletteLooked = false;
@@ -4821,17 +4927,9 @@ void MCHdArt::KeepReadAhead()
         cached.Looked = true;
         cached.Undrawn = true;
         cached.LastFrame = state.Frame;
-
-        if (cached.Id == 0)
-        {
-            cached.Id = NewFrameId();
-        }
-
+        Number(state, key, cached);
         frame->Id = cached.Id;
-        cached.Frame = std::move(frame);
-        cached.InOrder = state.Order.insert(state.Order.end(), key);
-        state.Bytes += cached.Frame->Bytes();
-        state.AllocatedBytes += cached.Frame->AllocatedBytes();
+        KeepRead(state, key, cached, std::move(frame));
         ++state.Read;
         ++state.TakenAhead;
     }
@@ -5583,8 +5681,10 @@ void MCHdArt::NextFrame(bool memoryShort)
 
     // Port-only (SPEC-memory.md's ledger): the frames kept, those let go that live on, and those read ahead, as the
     // frame starts.
-    state.Ledger.Set(
-        {.Payload = static_cast<int64_t>(state.Bytes), .Allocated = static_cast<int64_t>(state.AllocatedBytes)});
+    state.Ledger.Set({.Payload = static_cast<int64_t>(state.Bytes - state.ColorBytes),
+                      .Allocated = static_cast<int64_t>(state.AllocatedBytes - state.ColorAllocatedBytes)});
+    state.ColorsLedger.Set({.Payload = static_cast<int64_t>(state.ColorBytes),
+                            .Allocated = static_cast<int64_t>(state.ColorAllocatedBytes)});
     MCMemoryLedger::MCFigures letGo;
     std::erase_if(state.LetGo,
                   [&letGo](const LetGoFrame& frame)
@@ -5634,14 +5734,15 @@ void MCHdArt::NextFrame(bool memoryShort)
     // picture, asked for once) leaves the cache too, so its memory goes once that lets go of it, but it frees nothing
     // now: it isn't counted, or the frames only the cache holds would wait for later frames.
     size_t freed = 0;
+    auto next = state.Order.begin();
 
-    while (!state.Order.empty() && freed < MCMemoryRoom::TrimmedBytesPerFrame)
+    while (next != state.Order.end() && freed < MCMemoryRoom::TrimmedBytesPerFrame)
     {
-        const auto oldest = state.Frames.find(state.Order.front());
+        const auto oldest = state.Frames.find(*next);
 
         if (oldest == state.Frames.end())
         {
-            state.Order.pop_front();
+            next = state.Order.erase(next);
             continue;
         }
 
@@ -5650,7 +5751,20 @@ void MCHdArt::NextFrame(bool memoryShort)
             break;
         }
 
-        // The cache's own reference alone: its bytes go with it.
+        // Port-only: a frame whose picture the GPU holds keeps its record (MCHdArt::ColorsUploaded), and lets go of any
+        // colours read again for it.
+        ++next;
+
+        if (oldest->second.OnGpu)
+        {
+            freed += oldest->second.Colors.size();
+            LetGoColors(state, oldest->second);
+            continue;
+        }
+
+        // The colours are the cache's alone; the record's bytes go with it when the cache's reference is its only one.
+        freed += oldest->second.Colors.size();
+
         if (oldest->second.Frame.use_count() == 1)
         {
             freed += oldest->second.Frame->Bytes();
@@ -5700,4 +5814,69 @@ std::chrono::nanoseconds MCHdArt::ReadTime()
 size_t MCHdArt::CachedBytes()
 {
     return TheState().Bytes;
+}
+
+std::span<const uint8_t> MCHdArt::ColorsOf(const Frame& frame)
+{
+    State& state = TheState();
+    const auto numbered = frame.Colors.empty() ? state.ById.find(frame.Id) : state.ById.end();
+
+    if (numbered == state.ById.end())
+    {
+        return frame.Colors;
+    }
+
+    const FrameKey key = numbered->second;
+    Cached& cached = state.Frames.at(key);
+
+    // Let go of whole since (and the GPU's picture with it): read again, as a first draw reads it.
+    if (cached.Frame == nullptr)
+    {
+        Cache(key, frame.OriginalWidth(), frame.OriginalHeight());
+    }
+    else if (cached.Colors.empty())
+    {
+        // The most recently used, so the trim after keeps it.
+        state.Order.splice(state.Order.end(), state.Order, cached.InOrder);
+        ReadColorsAgain(state, key, cached);
+        Trim();
+    }
+
+    return cached.Colors;
+}
+
+void MCHdArt::ColorsUploaded(const Frame& frame)
+{
+    State& state = TheState();
+    const auto numbered = frame.Colors.empty() ? state.ById.find(frame.Id) : state.ById.end();
+
+    if (numbered == state.ById.end())
+    {
+        return;
+    }
+
+    if (const auto found = state.Frames.find(numbered->second);
+        found != state.Frames.end() && found->second.Frame != nullptr)
+    {
+        found->second.OnGpu = true;
+        LetGoColors(state, found->second);
+    }
+}
+
+void MCHdArt::PictureDropped(uint64_t id)
+{
+    State& state = TheState();
+
+    if (const auto numbered = state.ById.find(id); numbered != state.ById.end())
+    {
+        if (const auto found = state.Frames.find(numbered->second); found != state.Frames.end())
+        {
+            found->second.OnGpu = false;
+        }
+    }
+}
+
+size_t MCHdArt::ColorsReadAgain()
+{
+    return TheState().ColorsReadAgain;
 }

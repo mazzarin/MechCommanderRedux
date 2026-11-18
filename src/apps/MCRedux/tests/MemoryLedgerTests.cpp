@@ -96,6 +96,7 @@ TEST_CASE("memory ledger: a share counts its figures while it lives, replaced by
 
     // Each holder named, on its side.
     CHECK_EQ(MCMemoryLedger::NameOf(MCHolder::HdFrames), "hd frames");
+    CHECK_EQ(MCMemoryLedger::NameOf(MCHolder::HdColors), "hd colours");
     CHECK_EQ(MCMemoryLedger::NameOf(MCHolder::HdFramesLetGo), "hd frames let go");
     CHECK(MCMemoryLedger::SideOf(MCHolder::ArchiveTables) == MCMemoryLedger::MCSide::Cpu);
     CHECK(MCMemoryLedger::SideOf(MCHolder::GpuTargets) == MCMemoryLedger::MCSide::Gpu);

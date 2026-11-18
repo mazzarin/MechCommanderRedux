@@ -95,7 +95,11 @@ namespace MCHdArt
         /// <summary>HD pixels per original pixel.</summary>
         int32_t Scale = 1;
         ColorFormat Format = ColorFormat::Rgba8;
-        /// <summary>The premultiplied colours, as <see cref="Format"/> says.</summary>
+        /// <summary>
+        /// The premultiplied colours, as <see cref="Format"/> says. Port-only (SPEC-memory.md's frame record): none in a
+        /// frame the cache holds (Find and the rest hand out its record): the cache keeps them apart until the GPU has the
+        /// frame's picture (<see cref="ColorsOf"/>, <see cref="ColorsUploaded"/>).
+        /// </summary>
         std::vector<uint8_t> Colors;
         /// <summary>
         /// Per original pixel (<c>Width / Scale</c> x <c>Height / Scale</c>), R8G8: its palette index, and whether it
@@ -602,6 +606,26 @@ namespace MCHdArt
     /// </summary>
     std::shared_ptr<const Frame> Find(std::span<const uint8_t> table, int32_t frame, int32_t width, int32_t height,
                                       int32_t step = 0);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's one copy of a frame's colours): <paramref name="frame"/>'s colours: its own when it
+    /// holds them (a movie's, a tool's), else the cache's, read again when the cache let go of them (as a first draw reads
+    /// a frame, on this thread). Empty when the pack no longer gives them. Valid until the cache next changes.
+    /// </summary>
+    std::span<const uint8_t> ColorsOf(const Frame& frame);
+
+    /// <summary>
+    /// Port-only: the GPU holds <paramref name="frame"/>'s picture now. The cache lets go of its colours and keeps its
+    /// record, never letting go of it while the picture lives (<see cref="PictureDropped"/>), so a draw of it reads
+    /// nothing.
+    /// </summary>
+    void ColorsUploaded(const Frame& frame);
+
+    /// <summary>Port-only: the GPU let go of the picture of the frame numbered <paramref name="id"/>.</summary>
+    void PictureDropped(uint64_t id);
+
+    /// <summary>Port-only (the tests): how many times the cache read a frame again for its colours (ColorsOf).</summary>
+    size_t ColorsReadAgain();
 
     /// <summary>
     /// Whether the frames of the shape table starting at <paramref name="table"/> are drawn with their own alpha's edges

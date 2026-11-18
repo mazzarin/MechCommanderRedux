@@ -81,6 +81,7 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
+#include "platform/MCMemoryLedger.h"
 #include "platform/MCRegisteredBlock.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
@@ -3844,12 +3845,15 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
         return renderer->HdPictureBytes();
     };
 
-    // The bytes a picture takes, and what the frames kept in memory take with every one read.
+    // The bytes a picture takes, and what the frames kept in memory take with every one read: their records alone, the
+    // colours gone once on the GPU (SPEC-memory.md's one copy of a frame's colours).
     const size_t one = drawn(1);
     REQUIRE(one > 0);
     CHECK_EQ(drawn(Frames), Frames * one);
+    const size_t record = frame.Indices.size();
     const size_t kept = MCHdArt::CachedBytes();
-    REQUIRE_EQ(kept, Frames * frame.Bytes());
+    REQUIRE_EQ(kept, Frames * record);
+    CHECK_EQ(MCMemoryLedger::Of(MCMemoryLedger::MCHolder::HdColors).Payload, 0);
 
     // Frames drawing the first `count` while the pictures go, down to `least` at most (a frame after one that drew
     // them all lets go of none): the first that lets go of any lets go of 64 MB, or all down to `least` when that's
@@ -3914,7 +3918,7 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
         drawn(Drawn);
     }
 
-    CHECK_EQ(MCHdArt::CachedBytes(), kept - (Frames - Drawn) * frame.Bytes());
+    CHECK_EQ(MCHdArt::CachedBytes(), kept - (Frames - Drawn) * record);
 
     // No longer short: both keep every frame drawn again.
     system->IsShort = false;
@@ -16926,6 +16930,10 @@ TEST_CASE_ISOLATED(
             REQUIRE(hd != nullptr);
             REQUIRE(hd->Scale == TestPackScale);
             REQUIRE(hd->Format == MCHdArt::ColorFormat::Rgba8);
+            // The cache's colours (drawn, so read again: the GPU took them).
+            const std::span<const uint8_t> hdColors = MCHdArt::ColorsOf(*hd);
+            const std::vector<uint8_t> hdPixels(hdColors.begin(), hdColors.end());
+            REQUIRE_EQ(hdPixels.size(), static_cast<size_t>(hd->Width) * hd->Height * BytesPerPixel);
             int32_t wrongPixels = 0;
 
             for (int32_t y = 0; y < hd->Height; ++y)
@@ -16935,7 +16943,7 @@ TEST_CASE_ISOLATED(
                     const uint8_t index = picture->Pixels()[static_cast<size_t>(y / TestPackScale) * picture->Width() +
                                                             static_cast<size_t>(x / TestPackScale)];
                     const SDL_Color expected = Inverted(colors[index]);
-                    const uint8_t* pixel = &hd->Colors[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
+                    const uint8_t* pixel = &hdPixels[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
                     wrongPixels += pixel[0] == expected.r && pixel[1] == expected.g && pixel[2] == expected.b ? 0 : 1;
                 }
             }

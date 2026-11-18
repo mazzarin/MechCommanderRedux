@@ -20,7 +20,7 @@ struct MCYuvFactors
 
 /// <summary>
 /// Port-only: a movie's HD frames from the HD art pack (<see cref="MCHdArt::FindMovie"/>): AV1 in an IVF file, a frame
-/// for each of the Smacker movie's, decoded in order by dav1d (src/lib/dav1d-1.5.4) on a thread of its own, a few
+/// for each of the Smacker movie's, decoded in order by dav1d (src/lib/dav1d-1.5.5) on a thread of its own, a few
 /// frames ahead of the one shown. The original keeps playing for its sound, timing and palette; each of its frames is
 /// shown from the next HD one, as made: its Y, U and V planes, which the GPU turns into colours
 /// (<see cref="MCHdArt::ColorFormat::Yuv420"/>).

@@ -565,7 +565,7 @@ MechCommander Redux's own releases come from the **Release** workflow (Actions â
 | `src/lib/sqlite-3.50.4/`      | SQLite, for the editor's mission database                          |
 | `src/lib/miniz-3.0.2/`        | miniz, for unpacking the editor's files from the CD (and Redux HD's update zips) |
 | `src/lib/mimalloc-3.3.1/`     | mimalloc, the memory allocator                                     |
-| `src/lib/dav1d-1.5.4/`, `libdeflate-1.26/`, `bc7enc_rdo/`, `dr_flac/`, `xxHash-0.8.4/` | Redux HD: the HD pack's movies, archives, textures and sound |
+| `src/lib/dav1d-1.5.5/`, `libdeflate-1.26/`, `bc7enc_rdo/`, `dr_flac/`, `xxHash-0.8.4/` | Redux HD: the HD pack's movies, archives, textures and sound |
 | `src/lib/Sparkle-2.10.1/`     | Redux HD: the Mac app's updater                                    |
 | `src/lib/libsodium-1.0.22/`, `nlohmann-json-3.12.0/`, `HDiffPatch-5.1.3/` | Redux HD: the content updates' signatures, files and patches |
 | `src/mac/`                    | The macOS build (CMake) and its shader translator                  |

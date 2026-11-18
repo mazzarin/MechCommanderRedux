@@ -193,6 +193,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     ScenarioObjectList = std::make_unique<MCObjectQueue>();
     CreatedParts.clear();
 
+    // Port-only (SPEC-memory.md's "Under the loading bar"): the mission's art held from the load's start, read beside the
+    // ground and the rest as the load opens its archives; the bar's last stretch is its bytes (MCHdArt::LoadBarPercent).
+    MCHdArt::StartLoadFill();
     UpdateDisplay(false, true, 100, true, 0);
     // Port-only (HD audio): the pack's sounds that play the moment they are asked for are decoded on a thread of their
     // own from here to the end of the loading, rather than as each first plays.
@@ -388,6 +391,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCLogistics::ReadTexturesAhead();
     MCHdArt::WaitForReadAhead();
     MCHdArt::KeepReadAhead();
+    // Port-only (SPEC-memory.md): the bar ends once the mission's art is in memory, so play reads nothing from the disk.
+    MCHdArt::FinishLoadFill([] { UpdateDisplay(false, true, 30, true, 100); });
 
     HasOutputBlock = file.SeekBlock("Output") == 0;
     file.Close();

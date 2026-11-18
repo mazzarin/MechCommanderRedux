@@ -42,9 +42,9 @@ namespace
 
         auto hd = std::make_shared<MCCursorHd>();
         hd->Scale = frame->Scale;
-        hd->Rgba = frame->Format == MCHdArt::ColorFormat::Bc7
-                       ? MCBc7::Decode(frame->Colors, frame->Width, frame->Height)
-                       : frame->Colors;
+        const std::span<const uint8_t> colors = MCHdArt::ColorsOf(*frame);
+        hd->Rgba = frame->Format == MCHdArt::ColorFormat::Bc7 ? MCBc7::Decode(colors, frame->Width, frame->Height)
+                                                              : std::vector<uint8_t>(colors.begin(), colors.end());
 
         if (const std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>>& made = MCHdArt::MadeWith(); made)
         {

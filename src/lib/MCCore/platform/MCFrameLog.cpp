@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCMemoryRoom.h"
 
 namespace
 {
@@ -308,6 +309,7 @@ namespace
             log.File << "\n";
         }
 
+        log.File << MCMemoryRoom::LedgerLine() << "\n";
         second = MCSecond{.Start = end};
     }
 }
@@ -328,14 +330,18 @@ namespace MCFrameLog
         {
             log.Opened = now();
             log.Second = MCSecond{.Start = log.Opened};
-            log.File << "MCRedux frame log: frames much slower than the usual one or late by a refresh of the screen\n"
-                        "(SLOW), frames with notes (*), and a line a second (--): the game's loop's frames, then the\n"
-                        "frames as the screen showed them (shown: each as it was handed over, with vsync no sooner\n"
-                        "than a refresh after the last, as the queue of frames for the screen shows them).\n"
-                        "Times in ms. A part is listed when it ends, so after the parts inside it; render.* parts are\n"
-                        "the render thread's, counted in the frame running as they end. + lines count what the frame\n"
-                        "did. The GPU's own time isn't measured: present.acquire and present.wait wait for it and for\n"
-                        "the screen.\n";
+            log.File
+                << "MCRedux frame log: frames much slower than the usual one or late by a refresh of the screen\n"
+                   "(SLOW), frames with notes (*), and a line a second (--): the game's loop's frames, then the\n"
+                   "frames as the screen showed them (shown: each as it was handed over, with vsync no sooner\n"
+                   "than a refresh after the last, as the queue of frames for the screen shows them).\n"
+                   "Times in ms. A part is listed when it ends, so after the parts inside it; render.* parts are\n"
+                   "the render thread's, counted in the frame running as they end. + lines count what the frame\n"
+                   "did. The GPU's own time isn't measured: present.acquire and present.wait wait for it and for\n"
+                   "the screen. memory: each holder's bytes (payload/allocated/retired, MB), each side's sum, what\n"
+                   "the game holds against half the machine's memory (and a card's against 90% of its room), and\n"
+                   "the system's figure: macOS's physical footprint (Metal's memory in it), Windows' private bytes\n"
+                   "and DXGI's local and non-local use, each with what no holder names (unnamed).\n";
             log.File.flush();
         }
 

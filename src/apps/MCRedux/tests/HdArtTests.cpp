@@ -82,6 +82,7 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
+#include "platform/MCMemoryLedger.h"
 #include "platform/MCRegisteredBlock.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
@@ -3845,12 +3846,15 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
         return renderer->HdPictureBytes();
     };
 
-    // The bytes a picture takes, and what the frames kept in memory take with every one read.
+    // The bytes a picture takes, and what the frames kept in memory take with every one read: their records alone, the
+    // colours gone once on the GPU (SPEC-memory.md's one copy of a frame's colours).
     const size_t one = drawn(1);
     REQUIRE(one > 0);
     CHECK_EQ(drawn(Frames), Frames * one);
+    const size_t record = frame.Indices.size();
     const size_t kept = MCHdArt::CachedBytes();
-    REQUIRE_EQ(kept, Frames * frame.Bytes());
+    REQUIRE_EQ(kept, Frames * record);
+    CHECK_EQ(MCMemoryLedger::Of(MCMemoryLedger::MCHolder::HdColors).Payload, 0);
 
     // Frames drawing the first `count` while the pictures go, down to `least` at most (a frame after one that drew
     // them all lets go of none): the first that lets go of any lets go of 64 MB, or all down to `least` when that's
@@ -3883,9 +3887,12 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
     CHECK_EQ(renderer->HdPictureCount(), Frames);
     CHECK_EQ(renderer->HdPictureBytes(), Frames * one);
 
-    // Another program takes most of the card: down to its room, oldest first; those drawn stay.
+    // Another program takes most of the card: down to its room, oldest first; those drawn stay. A card of its own's room
+    // is 90% of what its driver gives (MCMemoryLedger::CardCeiling), so the budget is the rest and the room over 90%.
     const uint64_t room = 40 * one + one / 2;
-    system->Budget = system->Rest + room;
+    constexpr uint64_t CardPercent = 90;
+    constexpr uint64_t Hundred = 100;
+    system->Budget = ((system->Rest + room) * Hundred + CardPercent - 1) / CardPercent;
     MCMemoryRoom::AskAgain();
     const size_t trimmed = settled(Drawn, room);
     CHECK(trimmed <= room);
@@ -3915,7 +3922,7 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
         drawn(Drawn);
     }
 
-    CHECK_EQ(MCHdArt::CachedBytes(), kept - (Frames - Drawn) * frame.Bytes());
+    CHECK_EQ(MCHdArt::CachedBytes(), kept - (Frames - Drawn) * record);
 
     // No longer short: both keep every frame drawn again.
     system->IsShort = false;
@@ -15413,9 +15420,10 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
 }
 
 /// <summary>
-/// Port-only: once the GPU holds a picture's HD copy, the texture keeps the frame without its colours, so the pack's
-/// cache alone holds them and its trim frees them, the picture still drawn from the GPU's copy; once the GPU lets the
-/// picture go, the frame is read again (the same Id) and the picture drawn from the pack as before.
+/// Port-only (SPEC-memory.md's one copy of a frame's colours): the texture keeps the picture's record, without its
+/// colours; once the GPU holds the picture the pack's cache lets them go, and the picture is drawn from the GPU's copy
+/// with nothing read even with the cache held to a byte; once the GPU lets the picture go, its colours are read again
+/// (the same Id) and the picture drawn from the pack as before.
 /// </summary>
 TEST_CASE_ISOLATED(
     "game: an HD picture's colours are the cache's alone once on the GPU, and read again when it lets go")
@@ -15463,33 +15471,31 @@ TEST_CASE_ISOLATED(
         return renderer->HdDrawn() - before;
     };
 
-    // Up with its first copy; the next lets the texture's colours go.
+    // The reads of a frame's colours: a frame read, or its colours read again.
+    const auto reads = [] { return MCHdArt::FramesRead() + MCHdArt::ColorsReadAgain(); };
+
+    // Up with its first copy; the record the texture draws by has no colours.
     CHECK_EQ(copy(), 1);
     CHECK_EQ(copy(), 1);
     std::shared_ptr<const MCHdArt::Frame> found = find(*copied);
     REQUIRE(found != nullptr);
     const uint64_t id = found->Id;
-    // The cache's, and this one.
-    CHECK_EQ(found.use_count(), 2);
-    const std::weak_ptr<const MCHdArt::Frame> cached = found;
+    CHECK(found->Colors.empty());
     found.reset();
 
-    // The other read, then the cache held to a byte: the copied picture's frame goes, nothing else holding it.
+    // The other read, then the cache held to a byte: drawn from the GPU's copy, nothing read.
     REQUIRE(find(*other) != nullptr);
     MCHdArt::SetCacheBudget(1);
-    CHECK(cached.expired());
-
-    // Drawn from the GPU's copy, nothing read.
-    size_t read = MCHdArt::FramesRead();
+    size_t read = reads();
     CHECK_EQ(copy(), 1);
-    CHECK_EQ(MCHdArt::FramesRead(), read);
+    CHECK_EQ(reads(), read);
 
-    // The GPU lets it go: read again as it's copied, with its Id, and drawn from the pack.
+    // The GPU lets it go: its colours read again as it's copied, with its Id, and drawn from the pack.
     MCTestGame::RunFrame(FrameSeconds);
     renderer->ForgetHdPictureForTests(id);
-    read = MCHdArt::FramesRead();
+    read = reads();
     CHECK_EQ(copy(), 1);
-    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+    CHECK_EQ(reads(), read + 1);
     found = find(*copied);
     REQUIRE(found != nullptr);
     CHECK_EQ(found->Id, id);
@@ -17231,6 +17237,10 @@ TEST_CASE_ISOLATED(
             REQUIRE(hd != nullptr);
             REQUIRE(hd->Scale == TestPackScale);
             REQUIRE(hd->Format == MCHdArt::ColorFormat::Rgba8);
+            // The cache's colours (drawn, so read again: the GPU took them).
+            const std::span<const uint8_t> hdColors = MCHdArt::ColorsOf(*hd);
+            const std::vector<uint8_t> hdPixels(hdColors.begin(), hdColors.end());
+            REQUIRE_EQ(hdPixels.size(), static_cast<size_t>(hd->Width) * hd->Height * BytesPerPixel);
             int32_t wrongPixels = 0;
 
             for (int32_t y = 0; y < hd->Height; ++y)
@@ -17240,7 +17250,7 @@ TEST_CASE_ISOLATED(
                     const uint8_t index = picture->Pixels()[static_cast<size_t>(y / TestPackScale) * picture->Width() +
                                                             static_cast<size_t>(x / TestPackScale)];
                     const SDL_Color expected = Inverted(colors[index]);
-                    const uint8_t* pixel = &hd->Colors[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
+                    const uint8_t* pixel = &hdPixels[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
                     wrongPixels += pixel[0] == expected.r && pixel[1] == expected.g && pixel[2] == expected.b ? 0 : 1;
                 }
             }

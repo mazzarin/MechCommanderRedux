@@ -2,6 +2,7 @@
 #include "sound/MCHdAudio.h"
 #include "lib/MCFitIniFile.h"
 #include "platform/MCFlac.h"
+#include "platform/MCMemoryLedger.h"
 #include "platform/MCUtf8Path.h"
 #include "sprite/MCHdArt.h"
 #include <condition_variable>
@@ -91,6 +92,9 @@ namespace
         std::list<uint64_t> Order;
         /// <summary>The bytes of the replacements in Order (the kept ones aren't counted against the budget).</summary>
         size_t Bytes = 0;
+        /// <summary>Port-only: every replacement's bytes, the kept ones too, in the ledger.</summary>
+        size_t AllBytes = 0;
+        MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdSounds};
         /// <summary>Port: whether each music track's last frame decodes (MCHdAudio::MusicEndPlays).</summary>
         std::map<MCMusicFile, bool> MusicEnds;
         /// <summary>The waves being decoded, by either thread: a play of one waits for it.</summary>
@@ -139,6 +143,8 @@ namespace
                 state.Samples.clear();
                 state.Order.clear();
                 state.Bytes = 0;
+                state.AllBytes = 0;
+                state.Ledger.SetBytes(0);
                 state.Decoding.clear();
                 state.MusicEnds.clear();
                 state.Jobs.clear();
@@ -251,7 +257,15 @@ namespace
     /// </summary>
     void Remember(State& state, uint64_t key, std::shared_ptr<const MCHdAudio::Decoded> decoded, bool keep)
     {
+        const auto bytesOf = [](const MCRemembered& one) { return one.Decoded ? one.Decoded->Pcm.size() : 0; };
         MCRemembered remembered{.Decoded = std::move(decoded)};
+
+        if (const auto replaced = state.Samples.find(key); replaced != state.Samples.end())
+        {
+            state.AllBytes -= bytesOf(replaced->second);
+        }
+
+        state.AllBytes += bytesOf(remembered);
 
         if (!keep)
         {
@@ -265,10 +279,13 @@ namespace
         while (state.Bytes > SampleCacheBudget && state.Order.size() > 1)
         {
             const auto oldest = state.Samples.find(state.Order.back());
-            state.Bytes -= oldest->second.Decoded ? oldest->second.Decoded->Pcm.size() : 0;
+            state.Bytes -= bytesOf(oldest->second);
+            state.AllBytes -= bytesOf(oldest->second);
             state.Samples.erase(oldest);
             state.Order.pop_back();
         }
+
+        state.Ledger.SetBytes(state.AllBytes);
     }
 
     /// <summary>Keeps a remembered replacement beyond the budget from now on. Call with the state's lock held.</summary>

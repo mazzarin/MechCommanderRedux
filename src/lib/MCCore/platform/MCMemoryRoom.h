@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform/MCMemoryLedger.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -10,18 +12,18 @@
 #include <string_view>
 
 // Port-only (HD art): the room the HD art frames may take, in memory (MCHdArt's frames kept) and on the GPU (the
-// renderer's HD pictures), by what the machine says it can spare. Each side keeps up to MostHdBytes; below that there's
-// no share of the memory or of the card, only what the system reports. On the card: the room the system gives the game
-// there, less what the game holds there, plus what the HD pictures hold, asked again every CardReadInterval. In memory:
+// renderer's HD pictures), by what the machine says it can spare. On the card: the room the system gives the game there
+// (90% of it on a card of its own), less what the game holds there, plus what the HD pictures hold, asked again every
+// CardReadInterval; on shared memory the plan's share keeps them too (MCHdArt::NextFrame). In memory:
 // the frames grow while the system isn't short of memory, and while it is they're let go of, TrimmedBytesPerFrame a
 // frame, until it stops saying so. A card that shares the machine's memory (Apple silicon, integrated graphics) follows
 // both: the memory short trims the pictures too, and the card's room falling below what they hold trims the frames.
 // Both are what may be kept, never memory set aside. The platform's answers come from an MCSystem the app sets
-// (MCMemorySystemMac.mm, MCMemorySystemWin.cpp); with none, nothing is short and each side keeps up to MostHdBytes.
+// (MCMemorySystemMac.mm, MCMemorySystemWin.cpp); with none, nothing is short and the pictures keep up to MostHdBytes.
 
 namespace MCMemoryRoom
 {
-    /// <summary>The most bytes of HD frames each side keeps, in memory and on the GPU.</summary>
+    /// <summary>The most bytes of HD pictures the GPU keeps when the system can't say what the card gives.</summary>
     inline constexpr uint64_t MostHdBytes = uint64_t{4} << 30;
 
     /// <summary>
@@ -63,13 +65,42 @@ namespace MCMemoryRoom
         /// somewhat less); 0 when it can't say.
         /// </summary>
         virtual uint64_t TotalBytes();
+
+        /// <summary>
+        /// What the system says the game holds (MCMemoryLedger::MCProcessFigures), for the ledger's line beside its own
+        /// count; none when it can't say. Asked once a second on the game's thread, while a frame log is open.
+        /// </summary>
+        virtual std::optional<MCMemoryLedger::MCProcessFigures> Process() { return std::nullopt; }
     };
 
-    /// <summary>The machine's memory as the system set says (MCSystem::TotalBytes), or SDL with none set.</summary>
+    /// <summary>
+    /// The machine's memory: <see cref="SetMachineBytes"/>'s when set (<c>-hdmemory</c>), else as the system set says
+    /// (MCSystem::TotalBytes), or SDL with none set.
+    /// </summary>
     uint64_t TotalBytes();
 
     /// <summary>
-    /// Sets the system asked (none: nothing is short and each side keeps up to MostHdBytes); every reader asks the card
+    /// Port-only (<c>-hdmemory &lt;GB&gt;</c>, SPEC-memory.md's "Done when"): the game plans as a machine with
+    /// <paramref name="bytes"/> of memory (none: the machine's own). This checks the plan's logic on a bigger machine,
+    /// not the system's stalls on a small one.
+    /// </summary>
+    void SetMachineBytes(std::optional<uint64_t> bytes);
+
+    /// <summary>
+    /// Port-only (<c>-hdcard &lt;GB&gt;</c>): the game plans as though it draws on a card of its own whose driver gives it
+    /// <paramref name="bytes"/> (none: the card the system says), the GPU's use there as the system says it (or the HD
+    /// pictures' alone where it can't).
+    /// </summary>
+    void SetCardBytes(std::optional<uint64_t> bytes);
+
+    /// <summary>
+    /// The ledger's line for the frame log (MCMemoryLedger::Line): the machine's memory, the card the renderer last read
+    /// (MCReader::Frame) and the system's figures for the game. On the game's thread.
+    /// </summary>
+    std::string LedgerLine();
+
+    /// <summary>
+    /// Sets the system asked (none: nothing is short and the pictures keep up to MostHdBytes); every reader asks the card
     /// again at its next frame.
     /// </summary>
     void SetSystem(std::shared_ptr<MCSystem> system);
@@ -79,10 +110,46 @@ namespace MCMemoryRoom
 
     /// <summary>
     /// The room the HD pictures may take on a card of which the game holds <paramref name="card"/>'s Used, the pictures
-    /// <paramref name="held"/> of it: what the card gives the game less what the rest of the game holds, at most
-    /// MostHdBytes (0 when the rest takes it all).
+    /// <paramref name="held"/> of it: what the card gives the game (port-only: 90% of it on a card of its own,
+    /// MCMemoryLedger::CardCeiling) less what the rest of the game holds (0 when the rest takes it all).
     /// </summary>
     uint64_t CardRoom(const MCCard& card, uint64_t held);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's plan, "The art's room"): the game itself, which no holder of the ledger names (its
+    /// code, the original's data it reads, the frameworks): 374 MB on this Mac with HD off (HISTORY.md, 17 Nov), taken
+    /// up to the spec's 0.5 GB (est.).
+    /// </summary>
+    inline constexpr uint64_t GameItselfBytes = uint64_t{512} << 20;
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's fill, "the working set, always"): the room the plan keeps for the pictures drawn and
+    /// read ahead before it holds the mission packed: the canyon's HD pictures took 0.94 GB of the GPU at its end at 3x
+    /// (HISTORY.md, 17 Nov), the most a mission draws (est.).
+    /// </summary>
+    inline constexpr uint64_t WorkingSetBytes = uint64_t{1} << 30;
+
+    /// <summary>Port-only (SPEC-memory.md's plan): the room for the HD art, and the side it's in.</summary>
+    struct MCArtRoom
+    {
+        /// <summary>
+        /// The ceiling (half the machine's memory) less the fixed parts: the game itself (GameItselfBytes) and every
+        /// holder of the ledger that isn't the HD art's (the screen's targets, the ground, the GPU's other holders, the
+        /// transfers, the tables, the sounds), as allocated now; 0 when they take it all.
+        /// </summary>
+        uint64_t Bytes = 0;
+        /// <summary>
+        /// Whether the GPU's bytes come out of the same room (shared memory: every Mac, integrated graphics); else the
+        /// room is the machine's memory alone and the pictures keep to the card's (CardRoom).
+        /// </summary>
+        bool Shared = true;
+    };
+
+    /// <summary>Port-only (SPEC-memory.md's plan): the HD art's room now (any thread).</summary>
+    MCArtRoom ArtRoom();
+
+    /// <summary>Port-only: whether the GPU's bytes are the machine's memory, as the card was last read (unread: shared).</summary>
+    bool SharesMemory();
 
     /// <summary>What a frame's trims follow (<see cref="MCReader::Frame"/>).</summary>
     struct MCFrameRoom

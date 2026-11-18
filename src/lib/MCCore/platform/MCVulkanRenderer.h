@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/MCGpuCounted.h"
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCSdlHandle.h"
@@ -1309,8 +1310,13 @@ private:
     /// <summary>Notes a command the GPU can't draw yet.</summary>
     void NotSupported(std::string_view command);
 
-    std::expected<void, std::string> EnsureTexture(Texture& texture, SDL_GPUTextureFormat format,
-                                                   SDL_GPUTextureUsageFlags usage, uint32_t width, uint32_t height);
+    /// <summary>
+    /// Makes <paramref name="texture"/> a texture of the format, use and size given, counted in the ledger under
+    /// <paramref name="holder"/> (MCGpuCounted), unless it is one of that size already.
+    /// </summary>
+    std::expected<void, std::string> EnsureTexture(Texture& texture, MCMemoryLedger::MCHolder holder,
+                                                   SDL_GPUTextureFormat format, SDL_GPUTextureUsageFlags usage,
+                                                   uint32_t width, uint32_t height);
     static void Release(Texture& texture);
     /// <summary>Takes the copy of a surface's <paramref name="rect"/> (window pixels; between render passes).</summary>
     static void TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface, const MCRect& rect);
@@ -1575,7 +1581,7 @@ private:
     /// </summary>
     std::shared_ptr<SDL_GPUTransferBuffer> _Transfer;
     uint32_t _TransferSize = 0;
-    MCGpuHandle<SDL_GPUBuffer> _DrawBuffer;
+    MCCountedGpuHandle<SDL_GPUBuffer> _DrawBuffer;
     uint32_t _DrawBufferSize = 0;
 
     /// <summary>The atlas: pages of value + state (R8G8), filled in shelves.</summary>
@@ -1636,6 +1642,8 @@ private:
     /// </summary>
     std::unordered_map<uint64_t, Picture> _HdPictures;
     size_t _HdPictureBytes = 0;
+    /// <summary>Port-only: _HdPictureBytes as the ledger's HD pictures' payload, set each frame (their pages are allocated).</summary>
+    MCMemoryLedger::MCShare _HdPicturePayload{MCMemoryLedger::MCHolder::GpuHdPictures};
     /// <summary>Port-only: the HD pictures' frames' numbers, the least recently drawn first.</summary>
     std::list<uint64_t> _HdOrder;
     /// <summary>
@@ -1858,14 +1866,13 @@ private:
         std::vector<uint8_t> Stream;
         /// <summary>
         /// Port-only: the HD art pack's copy of the pixels as last uploaded (<see cref="MCHdArt::FindPicture"/>), and
-        /// whether it was looked for since, in the pack then set (<see cref="MCHdArt::PackVersion"/>). Once the GPU
-        /// holds the picture (HdOnGpu), the copy without its colours (<see cref="MCHdArt::Frame::WithoutColors"/>), so
-        /// the pack's cache alone holds them; the GPU having let it go, it is found again (the same Id).
+        /// whether it was looked for since, in the pack then set (<see cref="MCHdArt::PackVersion"/>). It is the frame's
+        /// record, without its colours: the pack's cache alone holds them, letting them go once the GPU holds the
+        /// picture and reading them again if the GPU lets it go (<see cref="MCHdArt::ColorsOf"/>).
         /// </summary>
         std::shared_ptr<const MCHdArt::Frame> Hd;
         bool HdLooked = false;
         uint64_t HdPack = 0;
-        bool HdOnGpu = false;
         /// <summary>
         /// Port-only: a frame shown over the pixels from (ShownHdX, ShownHdY) on (MCRenderer::ShowHdPicture: a movie's
         /// HD frame), or null.

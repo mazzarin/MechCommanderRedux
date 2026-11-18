@@ -1157,7 +1157,7 @@ std::expected<void, std::string> MCVulkanPresenter::Ensure(Texture& texture, SDL
     info.height = height;
     info.layer_count_or_depth = 1;
     info.num_levels = levels;
-    texture.Handle = MCGpuHandle<SDL_GPUTexture>(SDL_CreateGPUTexture(_Device.get(), &info), MCGpuRelease{_Device});
+    texture.Handle = MCGpuCounted::MakeTexture(_Device, info, MCMemoryLedger::MCHolder::GpuTargets);
 
     if (texture.Handle == nullptr)
     {
@@ -1401,7 +1401,7 @@ std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer&
 
 std::expected<void, std::string> MCVulkanPresenter::UploadParts(SDL_GPUCommandBuffer& commands,
                                                                 std::span<UploadPart> parts,
-                                                                MCGpuHandle<SDL_GPUTransferBuffer>& buffer,
+                                                                MCCountedGpuHandle<SDL_GPUTransferBuffer>& buffer,
                                                                 uint32_t& bufferSize)
 {
     if (parts.empty())
@@ -1423,8 +1423,7 @@ std::expected<void, std::string> MCVulkanPresenter::UploadParts(SDL_GPUCommandBu
         SDL_GPUTransferBufferCreateInfo info{};
         info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
         info.size = total + total / 4;
-        buffer = MCGpuHandle<SDL_GPUTransferBuffer>(SDL_CreateGPUTransferBuffer(_Device.get(), &info),
-                                                    MCGpuRelease{_Device});
+        buffer = MCGpuCounted::MakeTransferBuffer(_Device, info, MCMemoryLedger::MCHolder::GpuTransfers);
         bufferSize = buffer != nullptr ? info.size : 0;
 
         if (buffer == nullptr)

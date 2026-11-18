@@ -1207,6 +1207,9 @@
     <ClCompile Include="platform\MCFrameLog.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCGpuCounted.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCIceLink.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -1214,6 +1217,9 @@
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCInput.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCMemoryLedger.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCMemoryRoom.cpp">
@@ -2646,6 +2652,9 @@
     <ClInclude Include="platform\MCFrameLog.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCGpuCounted.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCIceLink.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2653,6 +2662,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCInput.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCMemoryLedger.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCMemoryRoom.h">

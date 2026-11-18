@@ -5,6 +5,7 @@
 #include "lib/MCInflate.h"
 #include "lib/MCOptionalRef.h"
 #include "lib/MCZstd.h"
+#include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCMemoryRoom.h"
@@ -141,6 +142,11 @@ namespace
         /// middle's; found as it opens.
         /// </summary>
         std::unordered_map<std::string, int32_t> FrameCounts;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's fill): the stored bytes the hold keeps of it (HoldsArchive; 0: none), counted as it
+        /// opens, since every ask hands the hold its archives again (QueueHold).
+        /// </summary>
+        uint64_t HoldBytes = 0;
     };
 
     std::string Upper(std::string_view text)
@@ -241,6 +247,11 @@ namespace
         {
             std::shared_ptr<MCHdArchive> Archive;
             std::string Prefix;
+            /// <summary>
+            /// Port-only (ArchivedFrames): its numbered frames, counted once: a version 2 archive's by their keys, a
+            /// thousand looks, which each ask again would repeat.
+            /// </summary>
+            std::optional<int32_t> Frames = std::nullopt;
         };
 
         /// <summary>The archive its frames are in (found once: ArchiveOf; none there: null).</summary>
@@ -282,6 +293,15 @@ namespace
     };
 
     /// <summary>
+    /// Port-only (the ledger): a frame the cache let go of while something else held it, and its figures then.
+    /// </summary>
+    struct LetGoFrame
+    {
+        std::weak_ptr<const MCHdArt::Frame> Frame;
+        MCMemoryLedger::MCFigures Figures;
+    };
+
+    /// <summary>
     /// A frame read (null: the pack has none, it is unusable, or it was dropped), its place in State::Order, and its Id,
     /// kept when it is dropped so that it is read again with the same one (the GPU's copy stays good for it). Port-only:
     /// the frame (State::Frame) it was last asked for in, which MCHdArt::NextFrame never lets it go in or after.
@@ -298,6 +318,16 @@ namespace
         /// </summary>
         bool Undrawn = false;
         uint64_t LastFrame = 0;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's one copy of a frame's colours): its colours, which Frame (its record) leaves out,
+        /// held until the GPU has its picture (MCHdArt::ColorsUploaded); empty after, until they're read again.
+        /// </summary>
+        std::vector<uint8_t> Colors;
+        /// <summary>
+        /// Port-only: the GPU holds its picture (from MCHdArt::ColorsUploaded to MCHdArt::PictureDropped), so its record
+        /// is never let go of: a draw of it reads nothing.
+        /// </summary>
+        bool OnGpu = false;
     };
 
     /// <summary>
@@ -460,8 +490,9 @@ namespace
 
     /// <summary>
     /// Port-only (MCHdArt::StartHold, SPEC-pack-v2.md's Memory): the hold: whether it holds now (a mission's, until let
-    /// go), the archives it reads in turn (each version 2 archive once while it holds: Queued), the first one's next stream
-    /// to look at, its generation (a run read across a let-go keeps nothing), how many reads it made, and when it began.
+    /// go), the archives it reads in turn (each it keeps any of once while it holds, MCHdArchive::HoldBytes: Queued), the
+    /// first one's next piece to look at, its generation (a run read across a let-go keeps nothing), how many reads it
+    /// made, and when it began.
     /// </summary>
     struct HoldQueue
     {
@@ -472,6 +503,29 @@ namespace
         uint64_t Generation = 0;
         size_t Reads = 0;
         std::chrono::steady_clock::time_point Began;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's fill): the bytes of the pieces it keeps of the archives queued, and those read, for
+        /// the loading bar (MCHdArt::FillShare).
+        /// </summary>
+        uint64_t QueuedBytes = 0;
+        uint64_t ReadBytes = 0;
+        /// <summary>Port-only: the bytes of the hold's runs being read now (HoldRun), which the room counts as held.</summary>
+        uint64_t InFlightBytes = 0;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's fill, as much as fits): the hold has met its room (MCHdArt::HoldRoom): it reads and
+        /// queues no more this mission.
+        /// </summary>
+        bool Full = false;
+        /// <summary>
+        /// Port-only: a mission's load fills (MCHdArt::StartLoadFill to MCHdArt::FinishLoadFill): the hold's reads go
+        /// several at once, as the readers are free, rather than HoldReadsAtOnce.
+        /// </summary>
+        bool Loading = false;
+        /// <summary>
+        /// Port-only (MCHdArt::LoadBarPercent): the most of the loading bar shown since the load began: the fill's share
+        /// falls as the load hands the hold more archives, and the bar never goes back.
+        /// </summary>
+        int32_t BarShown = 0;
     };
 
     /// <summary>
@@ -536,6 +590,10 @@ namespace
         /// </summary>
         std::unordered_map<FrameKey, std::shared_ptr<MCHdArt::Frame>, FrameKeyHash> Pictures;
         std::unordered_set<FrameKey, FrameKeyHash> PicturesAsked;
+        /// <summary>Port-only: the bytes of Pictures' frames.</summary>
+        size_t PictureBytes = 0;
+        /// <summary>Port-only: Ready's and Pictures' bytes in the ledger, set each frame (MCHdArt::NextFrame).</summary>
+        MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdReadAhead};
         /// <summary>Counts the times what was found was forgotten (the pack set): a read begun before is dropped.</summary>
         uint64_t Generation = 0;
         /// <summary>How many readers work on a follow or a read now.</summary>
@@ -602,7 +660,28 @@ namespace
         std::list<FrameKey> Order;
         uint64_t LastId = 0;
         size_t Bytes = 0;
-        /// <summary>The budget set (0: none, MCMemoryRoom::MostHdBytes).</summary>
+        /// <summary>Port-only (the ledger): what Bytes' frames take, as the allocator rounds their blocks up.</summary>
+        size_t AllocatedBytes = 0;
+        /// <summary>Port-only: how much of Bytes and AllocatedBytes is the frames' colours (Cached::Colors).</summary>
+        size_t ColorBytes = 0;
+        size_t ColorAllocatedBytes = 0;
+        /// <summary>
+        /// Port-only: Bytes and AllocatedBytes in the ledger, set each frame (MCHdArt::NextFrame): the records' and the
+        /// colours' apart.
+        /// </summary>
+        MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdFrames};
+        MCMemoryLedger::MCShare ColorsLedger{MCMemoryLedger::MCHolder::HdColors};
+        /// <summary>Port-only: the key of each frame numbered (Cached::Id), for MCHdArt::ColorsOf and the rest.</summary>
+        std::unordered_map<uint64_t, FrameKey> ById;
+        /// <summary>Port-only (MCHdArt::ColorsReadAgain): the times a frame was read again for its colours.</summary>
+        size_t ColorsReadAgain = 0;
+        /// <summary>
+        /// Port-only (the ledger): the frames the cache let go of while something else held them (a texture's picture,
+        /// a draw's), until they go, and their bytes in the ledger, set each frame (MCHdArt::NextFrame).
+        /// </summary>
+        std::vector<LetGoFrame> LetGo;
+        MCMemoryLedger::MCShare LetGoLedger{MCMemoryLedger::MCHolder::HdFramesLetGo};
+        /// <summary>The budget set (0: none, the plan's share: MCHdArt::CacheBudget).</summary>
         size_t Budget = 0;
         /// <summary>Port-only: the frames begun (MCHdArt::NextFrame).</summary>
         uint64_t Frame = 0;
@@ -1077,6 +1156,18 @@ namespace
             }
         }
 
+        // Port-only (QueueHold): a version 2 archive's packets' or heads' streams; a version 1 archive's entries when
+        // they're numbered frames (a mech part's or an object's), not the ground's, the pictures' or the shapes' named by
+        // their hashes.
+        if (const MCFastFile& opened = *archive->File; opened.IsVersion2() || !archive->FrameCounts.empty())
+        {
+            for (uint32_t piece = 0; piece < opened.HoldPieceCount(); ++piece)
+            {
+                const MCFastFile::HoldPiece facts = opened.HoldPieceAt(piece);
+                archive->HoldBytes += facts.Kept ? facts.Stored : 0;
+            }
+        }
+
         return archive;
     }
 
@@ -1144,7 +1235,7 @@ namespace
         found->second = std::move(*archive);
 
         // Port-only: one opened while a mission's art is held is held too (MCHdArt::StartHold).
-        if (found->second != nullptr && found->second->File->IsVersion2())
+        if (found->second != nullptr)
         {
             ReadAhead& ahead = TheState().Ahead;
             std::scoped_lock lock(ahead.Lock);
@@ -1193,15 +1284,22 @@ namespace
     /// <summary>
     /// The frames <paramref name="folder"/>'s archive holds: one past the highest numbered frame (not an in-between or
     /// turn middle) among its entries (a packet may skip a number: an empty frame of the original's), as the archive
-    /// found them when it opened (MCHdArchive::FrameCounts). 0 outside an archive.
+    /// found them when it opened (MCHdArchive::FrameCounts), counted once a folder (FrameFolder::InArchive::Frames). 0
+    /// outside an archive.
     /// </summary>
     int32_t ArchivedFrames(FrameFolder& folder)
     {
-        const FrameFolder::InArchive& archived = ArchiveOf(folder);
+        ArchiveOf(folder);
+        FrameFolder::InArchive& archived = *folder.Archived;
 
         if (archived.Archive == nullptr)
         {
             return 0;
+        }
+
+        if (archived.Frames.has_value())
+        {
+            return *archived.Frames;
         }
 
         // A version 2 archive keeps no names: its numbered frames are found by their keys.
@@ -1217,11 +1315,13 @@ namespace
                 }
             }
 
+            archived.Frames = count;
             return count;
         }
 
         const auto found = archived.Archive->FrameCounts.find(Upper(archived.Prefix));
-        return found == archived.Archive->FrameCounts.end() ? 0 : found->second;
+        archived.Frames = found == archived.Archive->FrameCounts.end() ? 0 : found->second;
+        return *archived.Frames;
     }
 
     /// <summary>Whether <paramref name="entry"/> unpacks to no more than a frame file may be (MaxHdfBytes).</summary>
@@ -1240,7 +1340,7 @@ namespace
                                                            std::span<const uint8_t> stored, std::string_view name,
                                                            int32_t width, int32_t height)
     {
-        if (!FitsFrameFile(file.GetEntries()[static_cast<size_t>(index)]))
+        if (!FitsFrameFile(file.EntryAt(index)))
         {
             return std::unexpected(std::format("{} is too large", name));
         }
@@ -1265,7 +1365,7 @@ namespace
                                                          std::string_view name, int32_t width, int32_t height,
                                                          MCOptionalRef<MCDiskFile> own = std::nullopt)
     {
-        const MCFileEntry& entry = archive.File->GetEntries()[static_cast<size_t>(index)];
+        const MCFileEntry& entry = archive.File->EntryAt(index);
 
         // Checked before the read, so a malformed pack can't make the game read a huge entry.
         if (!FitsFrameFile(entry))
@@ -1279,10 +1379,10 @@ namespace
             return MCHdArt::DecodeHdf(archive.File->EntryIn(index, *kept), width, height);
         }
 
-        // Port-only: nor one whose stream is held as stored (MCHdArt::StartHold): it's unpacked from memory.
-        if (const std::shared_ptr<const std::vector<uint8_t>> held = archive.File->HeldStreamOf(index); held != nullptr)
+        // Port-only: nor one whose stored bytes are held (MCHdArt::StartHold): it's unpacked from memory.
+        if (const std::optional<MCFastFile::Held> held = archive.File->HeldOf(index); held.has_value())
         {
-            return DecodeEntry(*archive.File, index, *held, name, width, height);
+            return DecodeEntry(*archive.File, index, held->Stored, name, width, height);
         }
 
         std::vector<uint8_t> stored;
@@ -1555,8 +1655,8 @@ namespace
     /// <paramref name="id"/>: its <c>.hdf</c> file, else its PNG pair, else its entry in an archive; none when the pack
     /// has no such frame, or what is wrong with the one it has.
     /// </summary>
-    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const FrameKey& key, int32_t width,
-                                                                                int32_t height, uint64_t id)
+    std::expected<std::shared_ptr<MCHdArt::Frame>, std::string> ReadFrame(const FrameKey& key, int32_t width,
+                                                                          int32_t height, uint64_t id)
     {
         FrameFolder& folder = TheState().Folders.at(key.Folder);
         std::error_code error;
@@ -1636,16 +1736,87 @@ namespace
         return Finished(std::move(*read), folder.BakedShadows, id);
     }
 
+    /// <summary>A frame's figures in the ledger: the bytes it keeps, and what they take.</summary>
+    MCMemoryLedger::MCFigures FiguresOf(const MCHdArt::Frame& frame)
+    {
+        return {.Payload = static_cast<int64_t>(frame.Bytes()),
+                .Allocated = static_cast<int64_t>(frame.AllocatedBytes())};
+    }
+
+    /// <summary>
+    /// Port-only (the ledger): counts <paramref name="frame"/>, which the cache is letting go of, among the frames let go
+    /// while something else holds it (its memory stays until that lets go too).
+    /// </summary>
+    void CountLetGo(State& state, const std::shared_ptr<const MCHdArt::Frame>& frame)
+    {
+        if (frame != nullptr && frame.use_count() > 1)
+        {
+            state.LetGo.push_back({.Frame = frame, .Figures = FiguresOf(*frame)});
+        }
+    }
+
     /// <summary>
     /// Drops the kept frame <paramref name="key"/> (<paramref name="cached"/>); its entry stays, to be read again (or read
     /// ahead again) with its Id.
     /// </summary>
+    /// <summary>Port-only: <paramref name="cached"/>'s colours let go of, out of the cache's bytes.</summary>
+    void LetGoColors(State& state, Cached& cached)
+    {
+        const size_t allocated = MCAllocatedBytes(cached.Colors.data());
+        state.Bytes -= cached.Colors.size();
+        state.ColorBytes -= cached.Colors.size();
+        state.AllocatedBytes -= allocated;
+        state.ColorAllocatedBytes -= allocated;
+        std::vector<uint8_t>().swap(cached.Colors);
+    }
+
+    /// <summary>Port-only: <paramref name="colors"/> held as <paramref name="cached"/>'s, in the cache's bytes.</summary>
+    void HoldColors(State& state, Cached& cached, std::vector<uint8_t>&& colors)
+    {
+        LetGoColors(state, cached);
+        cached.Colors = std::move(colors);
+        const size_t allocated = MCAllocatedBytes(cached.Colors.data());
+        state.Bytes += cached.Colors.size();
+        state.ColorBytes += cached.Colors.size();
+        state.AllocatedBytes += allocated;
+        state.ColorAllocatedBytes += allocated;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's frame record): <paramref name="frame"/>, just read, kept as <paramref name="key"/>'s,
+    /// the most recently used: its record (the frame without its colours), and its colours beside it.
+    /// </summary>
+    void KeepRead(State& state, const FrameKey& key, Cached& cached, std::shared_ptr<MCHdArt::Frame> frame)
+    {
+        std::vector<uint8_t> colors = std::move(frame->Colors);
+        frame->Colors = {};
+        cached.Frame = std::move(frame);
+        cached.InOrder = state.Order.insert(state.Order.end(), key);
+        state.Bytes += cached.Frame->Bytes();
+        state.AllocatedBytes += cached.Frame->AllocatedBytes();
+        HoldColors(state, cached, std::move(colors));
+    }
+
+    /// <summary>Port-only: numbers <paramref name="cached"/>, <paramref name="key"/>'s, the first time it's read.</summary>
+    void Number(State& state, const FrameKey& key, Cached& cached)
+    {
+        if (cached.Id == 0)
+        {
+            cached.Id = MCHdArt::NewFrameId();
+            state.ById.emplace(cached.Id, key);
+        }
+    }
+
     void Drop(State& state, const FrameKey& key, Cached& cached)
     {
         state.Order.erase(cached.InOrder);
         state.Bytes -= cached.Frame->Bytes();
+        state.AllocatedBytes -= cached.Frame->AllocatedBytes();
+        LetGoColors(state, cached);
+        CountLetGo(state, cached.Frame);
         cached.Frame.reset();
         cached.Looked = false;
+        cached.OnGpu = false;
 
         // Port-only: a unit's packet near the view may hold it (MCHdArt::MCAskedPackets).
         if (state.Folders.at(key.Folder).Names == Naming::Number)
@@ -1658,23 +1829,37 @@ namespace
     }
 
     /// <summary>
-    /// Drops the least recently used frames, but never the one used last (the frame just read), until the kept ones fit
-    /// the budget.
+    /// Drops the least recently used frames, but never the one used last (the frame just read) nor one whose picture the
+    /// GPU holds, until the kept ones fit the budget set (MCHdArt::SetCacheBudget). Port-only (SPEC-memory.md's plan):
+    /// with none set, until they fit the art's room whole (MCMemoryRoom::ArtRoom), a bound for a frame's reads; the
+    /// frames' share of that room is kept to frame by frame (MCHdArt::NextFrame), MCMemoryRoom::TrimmedBytesPerFrame at
+    /// a time and never a frame being drawn, so no read drops a pile at once.
     /// </summary>
     void Trim()
     {
         State& state = TheState();
-        const size_t budget = MCHdArt::CacheBudget();
+        const size_t budget = state.Budget != 0 ? state.Budget : static_cast<size_t>(MCMemoryRoom::ArtRoom().Bytes);
+        auto next = state.Order.begin();
 
-        while (state.Bytes > budget && state.Order.size() > 1)
+        // Port-only: past a frame whose picture the GPU holds (its record stays while the picture does), letting go of
+        // any colours read again for it (MCHdArt::ColorsOf), which the GPU has.
+        while (state.Bytes > budget && next != state.Order.end() && std::next(next) != state.Order.end())
         {
-            if (const auto oldest = state.Frames.find(state.Order.front()); oldest != state.Frames.end())
+            const auto oldest = state.Frames.find(*next);
+
+            if (oldest == state.Frames.end())
             {
-                Drop(state, oldest->first, oldest->second);
+                next = state.Order.erase(next);
+            }
+            else if (oldest->second.OnGpu)
+            {
+                LetGoColors(state, oldest->second);
+                ++next;
             }
             else
             {
-                state.Order.pop_front();
+                ++next;
+                Drop(state, oldest->first, oldest->second);
             }
         }
     }
@@ -1866,9 +2051,9 @@ namespace
     }
 
     /// <summary>The entry <paramref name="read"/> reads, in its archive's directory.</summary>
-    const MCFileEntry& EntryOf(const AheadRead& read)
+    MCFileEntry EntryOf(const AheadRead& read)
     {
-        return read.From->Archive->File->GetEntries()[static_cast<size_t>(read.Entry.Index)];
+        return read.From->Archive->File->EntryAt(read.Entry.Index);
     }
 
     /// <summary>The bytes of its archive <paramref name="run"/>'s entries lie in, from its first to its last.</summary>
@@ -1961,7 +2146,7 @@ namespace
 
         Trace& trace = TheTrace();
         std::scoped_lock lock(trace.Lock);
-        const MCFileEntry& entry = read.From->Archive->File->GetEntries()[static_cast<size_t>(read.Entry.Index)];
+        const MCFileEntry& entry = read.From->Archive->File->EntryAt(read.Entry.Index);
         trace.Out << std::format("A\t{}\t{}\t{}\t{}\t{}\t{}\n", TraceNow(trace), TraceKind(kind),
                                  TraceArchive(trace, *read.From->Archive), entry.Offset, entry.Size, read.Entry.Entry);
     }
@@ -2220,8 +2405,11 @@ namespace
             return AheadKind::Set;
         }
 
+        // Port-only (SPEC-memory.md's fill): under the loading bar, as many as there are readers.
+        const size_t holdReads = ahead.Holding.Loading ? ahead.Settings.Readers : HoldReadsAtOnce;
+
         if (!waiting(AheadKind::Set) && HoldPending(ahead) &&
-            ahead.InFlight[std::to_underlying(AheadKind::Hold)] < HoldReadsAtOnce)
+            ahead.InFlight[std::to_underlying(AheadKind::Hold)] < holdReads)
         {
             return AheadKind::Hold;
         }
@@ -2439,10 +2627,17 @@ namespace
                 if (std::ranges::find(streams, at, &decltype(streams)::value_type::first) == streams.end())
                 {
                     std::shared_ptr<const std::vector<uint8_t>> kept = file.KeptStreamOf(read.Entry.Index);
-                    toRead = toRead || (kept == nullptr && file.HeldStreamOf(read.Entry.Index) == nullptr);
+                    toRead = toRead || (kept == nullptr && !file.HeldOf(read.Entry.Index).has_value());
                     streams.emplace_back(at, std::move(kept));
                 }
             }
+        }
+
+        // Port-only: a version 1 run whose entries are all held (MCHdArt::StartHold) needs no read either.
+        else if (!alone)
+        {
+            toRead = !std::ranges::all_of(run, [&file](const AheadRead& read)
+                                          { return file.HeldOf(read.Entry.Index).has_value(); });
         }
 
         // The span read, for the reads asked for meanwhile to join (JoinRead) until its last is served.
@@ -2490,7 +2685,12 @@ namespace
                 }
                 else
                 {
-                    ahead.Pictures.emplace(key, std::move(frame));
+                    const size_t bytes = frame->Bytes();
+
+                    if (ahead.Pictures.emplace(key, std::move(frame)).second)
+                    {
+                        ahead.PictureBytes += bytes;
+                    }
                 }
             }
 
@@ -2518,12 +2718,12 @@ namespace
 
             if (stream == nullptr)
             {
-                const std::shared_ptr<const std::vector<uint8_t>> held = file.HeldStreamOf(asked.Index);
+                const std::optional<MCFastFile::Held> held = file.HeldOf(asked.Index);
                 std::span<const uint8_t> stored;
 
-                if (held != nullptr)
+                if (held.has_value())
                 {
-                    stored = *held;
+                    stored = held->Stored;
                 }
                 else if (bytes.size() == end - start)
                 {
@@ -2640,29 +2840,28 @@ namespace
         }
     }
 
-    /// <summary>Port-only (MCHdArt::StartHold): whether the hold keeps a stream of <paramref name="kind"/>.</summary>
-    bool HoldsKind(MCFastFile::StreamKind kind)
-    {
-        return kind == MCFastFile::StreamKind::Packet || kind == MCFastFile::StreamKind::Heads;
-    }
-
-    /// <summary>Port-only (HoldRun): a run of an archive's streams for the hold to read: the first, and one past the last.</summary>
+    /// <summary>
+    /// Port-only (HoldRun): a run of an archive's pieces (MCFastFile::HoldPiece) for the hold to read: the first, one past
+    /// the last, and the bytes they span.
+    /// </summary>
     struct HoldSpan
     {
         std::shared_ptr<MCHdArchive> Archive;
         uint32_t First = 0;
         uint32_t End = 0;
+        uint64_t Start = 0;
+        uint64_t Stop = 0;
     };
 
     /// <summary>
-    /// Port-only (TakeHoldRun, QueueHold): the first of <paramref name="file"/>'s streams from <paramref name="from"/>
-    /// on that the hold keeps (HoldsKind); its stream count when none.
+    /// Port-only (TakeHoldRun, QueueHold): the first of <paramref name="file"/>'s pieces from <paramref name="from"/> on
+    /// that the hold keeps (MCFastFile::HoldPiece::Kept); its piece count when none.
     /// </summary>
-    uint32_t NextHeldStream(const MCFastFile& file, uint32_t from)
+    uint32_t NextHeldPiece(const MCFastFile& file, uint32_t from)
     {
-        const uint32_t count = file.StreamCount();
+        const uint32_t count = file.HoldPieceCount();
 
-        while (from < count && !HoldsKind(file.StreamAt(from).Kind))
+        while (from < count && !file.HoldPieceAt(from).Kept)
         {
             ++from;
         }
@@ -2670,11 +2869,18 @@ namespace
         return from;
     }
 
+    /// <summary>Port-only (QueueHold): whether the hold keeps any of <paramref name="archive"/> (MCHdArchive::HoldBytes).</summary>
+    bool HoldsArchive(const MCHdArchive& archive)
+    {
+        return archive.HoldBytes > 0;
+    }
+
     /// <summary>
-    /// Port-only (HoldRun): takes the hold's next run: the first archive's streams it keeps (HoldsKind) from its next one
-    /// on, consecutive, none further than MCHdArt::ReaderRunGap past the one before, while they lie in
-    /// MCHdArt::HoldRunBytes (a larger one alone); an archive leaves the queue with its last one. None when none is left.
-    /// Call with ReadAhead::Lock held: an archive's table never changes once read.
+    /// Port-only (HoldRun): takes the hold's next run: the first archive's pieces it keeps from its next one on, in the
+    /// order they lie, none further than MCHdArt::ReaderRunGap past the bytes before, while they lie in
+    /// MCHdArt::HoldRunBytes (a larger one alone; a version 1 entry stored once for two names within the run); an archive
+    /// leaves the queue with its last one. None when none is left. Call with ReadAhead::Lock held: an archive's table
+    /// never changes once read.
     /// </summary>
     std::optional<HoldSpan> TakeHoldRun(HoldQueue& holding)
     {
@@ -2682,32 +2888,37 @@ namespace
         {
             const std::shared_ptr<MCHdArchive> archive = holding.Archives.front();
             const MCFastFile& file = *archive->File;
-            const uint32_t count = file.StreamCount();
-            const uint32_t first = NextHeldStream(file, holding.NextStream);
+            const uint32_t count = file.HoldPieceCount();
+            const uint32_t first = NextHeldPiece(file, holding.NextStream);
             uint32_t last = first + 1;
+            uint64_t start = 0;
+            uint64_t end = 0;
 
             if (first < count)
             {
-                const MCFastFile::StreamFacts start = file.StreamAt(first);
-                uint64_t end = start.At + start.Stored;
+                const MCFastFile::HoldPiece head = file.HoldPieceAt(first);
+                start = head.At;
+                end = head.At + head.Stored;
 
                 for (; last < count; ++last)
                 {
-                    const MCFastFile::StreamFacts next = file.StreamAt(last);
+                    const MCFastFile::HoldPiece next = file.HoldPieceAt(last);
+                    const uint64_t nextEnd = next.At + next.Stored;
 
-                    if (!HoldsKind(next.Kind) || next.At < end || next.At - end > MCHdArt::ReaderRunGap ||
-                        next.At + next.Stored - start.At > MCHdArt::HoldRunBytes)
+                    // In the order they lie, so none starts before the run.
+                    if (!next.Kept || next.At > end + MCHdArt::ReaderRunGap ||
+                        std::max(end, nextEnd) - start > MCHdArt::HoldRunBytes)
                     {
                         break;
                     }
 
-                    end = next.At + next.Stored;
+                    end = std::max(end, nextEnd);
                 }
             }
 
-            // The archive leaves the queue with its last stream to keep, not at a later take, so the queue empties as
-            // the hold's last run is read (NoteHeld then) whatever streams it doesn't keep lie after.
-            holding.NextStream = first < count ? NextHeldStream(file, last) : count;
+            // The archive leaves the queue with its last piece to keep, not at a later take, so the queue empties as
+            // the hold's last run is read (NoteHeld then) whatever pieces it doesn't keep lie after.
+            holding.NextStream = first < count ? NextHeldPiece(file, last) : count;
 
             if (holding.NextStream == count)
             {
@@ -2717,11 +2928,134 @@ namespace
 
             if (first < count)
             {
-                return HoldSpan{archive, first, last};
+                return HoldSpan{archive, first, last, start, end};
             }
         }
 
         return std::nullopt;
+    }
+
+    /// <summary>Port-only (MCHdArt::StartHold): the stored bytes of the pieces the hold keeps from first to end.</summary>
+    uint64_t KeptBytes(const MCFastFile& file, uint32_t first, uint32_t end)
+    {
+        uint64_t bytes = 0;
+
+        for (uint32_t piece = first; piece < end; ++piece)
+        {
+            const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
+            bytes += facts.Kept ? facts.Stored : 0;
+        }
+
+        return bytes;
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::LoadFillShare): what the hold has read of the bytes it was handed (HoldRun counts a run's
+    /// pieces read or not, so it reaches them): none while a load has handed it nothing yet, all once it met its room or
+    /// was let go of (it reads no more), or outside a load when it was handed none. Call with ReadAhead::Lock held.
+    /// </summary>
+    double FillShareOf(const HoldQueue& holding)
+    {
+        if (holding.Full || !holding.On)
+        {
+            return 1.0;
+        }
+
+        if (holding.QueuedBytes == 0)
+        {
+            return holding.Loading ? 0.0 : 1.0;
+        }
+
+        return std::min(1.0, static_cast<double>(holding.ReadBytes) / static_cast<double>(holding.QueuedBytes));
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's plan): the colours the frames kept may always hold past their records: those read
+    /// ahead for the next few draws.
+    /// </summary>
+    constexpr uint64_t ColourFloorBytes = uint64_t{64} << 20;
+
+    /// <summary><paramref name="from"/> less <paramref name="take"/>, 0 when it takes it all.</summary>
+    constexpr uint64_t Less(uint64_t from, uint64_t take)
+    {
+        return from > take ? from - take : 0;
+    }
+
+    /// <summary>A ledger holder's bytes as allocated (and retired, not yet freed).</summary>
+    uint64_t AllocatedOf(MCMemoryLedger::MCHolder holder)
+    {
+        const MCMemoryLedger::MCFigures figures = MCMemoryLedger::Of(holder);
+        return static_cast<uint64_t>(std::max<int64_t>(figures.Allocated + figures.Retired, 0));
+    }
+
+    /// <summary>Port-only (SPEC-memory.md's plan): the art's room and its parts now, as the ledger counts them.</summary>
+    struct ArtParts
+    {
+        MCMemoryRoom::MCArtRoom Room;
+        /// <summary>The hold's stored bytes (MCFastFile::HeldBytes).</summary>
+        uint64_t Held = 0;
+        /// <summary>What none of the shares takes back: the kept unpacked streams, what's read ahead, frames let go that live on.</summary>
+        uint64_t Rest = 0;
+        /// <summary>The kept unpacked streams, of Rest (MCFastFile::KeepStreamsUpTo).</summary>
+        uint64_t Kept = 0;
+        /// <summary>The frames' records (never let go of while the GPU holds their pictures) and ColourFloorBytes.</summary>
+        uint64_t Floor = 0;
+        /// <summary>The GPU's HD pictures when they're in the same room (shared memory), else 0.</summary>
+        uint64_t Pictures = 0;
+    };
+
+    ArtParts ArtPartsNow()
+    {
+        using MCMemoryLedger::MCHolder;
+        ArtParts parts{.Room = MCMemoryRoom::ArtRoom(), .Held = MCFastFile::HeldBytes()};
+        parts.Kept = AllocatedOf(MCHolder::HdKeptStreams);
+        parts.Rest = parts.Kept + AllocatedOf(MCHolder::HdReadAhead) + AllocatedOf(MCHolder::HdFramesLetGo);
+        parts.Floor = AllocatedOf(MCHolder::HdFrames) + ColourFloorBytes;
+        parts.Pictures = parts.Room.Shared ? AllocatedOf(MCHolder::GpuHdPictures) : 0;
+        return parts;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Filled in this order"): the hold's share of the room: what the rest and the floor
+    /// leave, less the pictures' working set (MCMemoryRoom::WorkingSetBytes) on shared memory, of which
+    /// <paramref name="pictures"/> is counted (the hold reads into all of it, and gives back for what's drawn).
+    /// </summary>
+    uint64_t HoldShareOf(const ArtParts& parts, uint64_t pictures)
+    {
+        const uint64_t workingSet = parts.Room.Shared ? std::min(pictures, MCMemoryRoom::WorkingSetBytes) : 0;
+        return Less(parts.Room.Bytes, parts.Rest + parts.Floor + workingSet);
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::HoldRoom): the most bytes the hold may keep, by the readers' <paramref name="settings"/>: none
+    /// (no limit) when <c>-hdhold on</c> forces it, else its share with the whole working set kept for the pictures.
+    /// </summary>
+    std::optional<uint64_t> HoldRoomOf(const MCHdArt::ReaderSettings& settings)
+    {
+        if (settings.Hold.value_or(false))
+        {
+            return std::nullopt;
+        }
+
+        return HoldShareOf(ArtPartsNow(), MCMemoryRoom::WorkingSetBytes);
+    }
+
+    /// <summary>
+    /// Port-only (HoldRun): the hold has met its room (<paramref name="room"/> bytes): it reads and queues no more this
+    /// mission, what it holds kept, and says so in the frame log. Call with ReadAhead::Lock held.
+    /// </summary>
+    void FillHold(HoldQueue& holding, uint64_t room)
+    {
+        holding.Full = true;
+        holding.Archives.clear();
+        holding.NextStream = 0;
+
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::Note(std::format("HD hold: full at {:.1f} MB, its room {:.1f} MB; the rest read as drawn",
+                                         static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb,
+                                         static_cast<double>(room) / BytesPerMb));
+        }
     }
 
     /// <summary>
@@ -2736,7 +3070,7 @@ namespace
         }
 
         MCFrameLog::Note(
-            std::format("HD hold: {:.1f} MB held of {} archives, {:.2f} s after the load",
+            std::format("HD hold: {:.1f} MB held of {} archives, {:.2f} s after it began",
                         static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb, holding.Queued.size(),
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - holding.Began).count()));
     }
@@ -2757,18 +3091,29 @@ namespace
             return;
         }
 
-        WaitWhileRunsHeld(ahead, lock);
+        // Port-only (SPEC-memory.md's fill, as much as fits): a run past the room ends the hold's reads this mission.
+        const uint64_t runBytes = run->Stop - run->Start;
+
+        if (const std::optional<uint64_t> room = HoldRoomOf(ahead.Settings);
+            room.has_value() && MCFastFile::HeldBytes() + holding.InFlightBytes + runBytes > *room)
+        {
+            FillHold(holding, *room);
+            return;
+        }
+
+        holding.InFlightBytes += runBytes;
+        // The run belongs to the generations it was taken in: after a let-go, memory short's stop or a pack set, none kept.
         const uint64_t generation = ahead.Generation;
         const uint64_t holdGeneration = holding.Generation;
+        WaitWhileRunsHeld(ahead, lock);
         std::optional<ReaderHandle> handle = BorrowHandle(ahead, lock, run->Archive);
         // Borrowing may have let go of the lock: the hold may have been let go of, or the pack set, meanwhile.
         const bool current =
             handle.has_value() && ahead.Generation == generation && holding.Generation == holdGeneration;
         lock.unlock();
         const MCFastFile& file = *run->Archive->File;
-        const uint64_t start = file.StreamAt(run->First).At;
-        const MCFastFile::StreamFacts last = file.StreamAt(run->End - 1);
-        const uint64_t end = last.At + last.Stored;
+        const uint64_t start = run->Start;
+        const uint64_t end = run->Stop;
         const int64_t begun = TraceTime();
         std::vector<uint8_t> bytes;
         bool readWhole = false;
@@ -2780,15 +3125,6 @@ namespace
         }
 
         const int64_t readBy = TraceTime();
-        // Each stream's stored bytes cut from the run's, before the lock.
-        std::vector<std::pair<uint32_t, std::vector<uint8_t>>> streams;
-
-        for (uint32_t stream = run->First; readWhole && stream < run->End; ++stream)
-        {
-            const MCFastFile::StreamFacts facts = file.StreamAt(stream);
-            const auto from = bytes.begin() + static_cast<ptrdiff_t>(facts.At - start);
-            streams.emplace_back(stream, std::vector<uint8_t>(from, from + facts.Stored));
-        }
 
         if (current && !readWhole)
         {
@@ -2798,16 +3134,20 @@ namespace
         }
 
         lock.lock();
+        holding.InFlightBytes -= runBytes;
+
+        // The bar's share (MCHdArt::LoadFillShare) counts the run's pieces as read, held or not, so it ends.
+        if (holding.Generation == holdGeneration)
+        {
+            holding.ReadBytes += KeptBytes(file, run->First, run->End);
+        }
 
         if (readWhole && ahead.Generation == generation && holding.On && holding.Generation == holdGeneration)
         {
-            for (auto& [stream, stored] : streams)
-            {
-                file.HoldStream(stream, std::move(stored));
-            }
-
+            // Kept under the lock, so a let-go (StopHolding, then MCFastFile::LetGoHeld) can't miss them.
+            file.HoldPieces(run->First, run->End, start, std::move(bytes));
             ++holding.Reads;
-            TraceHold(*run->Archive, begun, readBy, start, end - start, streams.size());
+            TraceHold(*run->Archive, begun, readBy, start, end - start, run->End - run->First);
 
             if (holding.Archives.empty())
             {
@@ -2824,22 +3164,46 @@ namespace
     void StartReaders(ReadAhead& ahead);
 
     /// <summary>
-    /// Port-only (MCHdArt::StartHold): has the hold read <paramref name="archive"/>, while it holds, once: a version 2
-    /// one (none of version 1, which the hold doesn't keep). Call with ReadAhead::Lock held.
+    /// Port-only (MCHdArt::StartHold): has the hold read <paramref name="archive"/>, while it holds, once, if it keeps
+    /// any of it (HoldsArchive). Call with ReadAhead::Lock held.
     /// </summary>
     void QueueHold(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive)
     {
         HoldQueue& holding = ahead.Holding;
 
-        if (!holding.On || archive == nullptr || !archive->File->IsVersion2() ||
-            NextHeldStream(*archive->File, 0) == archive->File->StreamCount() || !holding.Queued.insert(archive).second)
+        if (!holding.On || holding.Full || archive == nullptr || !HoldsArchive(*archive) ||
+            !holding.Queued.insert(archive).second)
         {
             return;
         }
 
+        // Port-only (SPEC-memory.md's fill): its bytes counted to read, for the loading bar (MCHdArt::LoadFillShare).
+        holding.QueuedBytes += archive->HoldBytes;
         holding.Archives.push_back(archive);
         StartReaders(ahead);
         ahead.Changed.notify_all();
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold, MCHdArt::StartLoadFill): the hold begins a mission's when it's off, or when it met
+    /// its room or gave some back (Full): what it was handed is handed again (an archive given back is read again), what
+    /// it holds kept. One on and not full holds what it holds and takes what's handed next. Call with ReadAhead::Lock held.
+    /// </summary>
+    void BeginHolding(HoldQueue& holding)
+    {
+        if (holding.On && !holding.Full)
+        {
+            return;
+        }
+
+        holding.On = true;
+        holding.Full = false;
+        holding.Archives.clear();
+        holding.Queued.clear();
+        holding.NextStream = 0;
+        holding.QueuedBytes = 0;
+        holding.ReadBytes = 0;
+        holding.Began = std::chrono::steady_clock::now();
     }
 
     /// <summary>
@@ -2854,6 +3218,10 @@ namespace
         holding.Archives.clear();
         holding.Queued.clear();
         holding.NextStream = 0;
+        holding.QueuedBytes = 0;
+        holding.ReadBytes = 0;
+        holding.Loading = false;
+        holding.Full = false;
         ++holding.Generation;
         ahead.Changed.notify_all();
     }
@@ -3006,7 +3374,7 @@ namespace
     void QueueReads(ReadAhead& ahead, AheadKind kind, std::vector<AheadRead>&& reads)
     {
         const auto offset = [](const AheadRead& read)
-        { return read.From->Archive->File->GetEntries()[static_cast<size_t>(read.Entry.Index)].Offset; };
+        { return read.From->Archive->File->EntryAt(read.Entry.Index).Offset; };
         std::ranges::stable_sort(reads,
                                  [&offset](const AheadRead& a, const AheadRead& b)
                                  {
@@ -3077,8 +3445,7 @@ namespace
                 return false;
             }
 
-            const auto bytes =
-                static_cast<size_t>(std::max<int64_t>(from.Archive->File->GetEntries()[*index].RealSize, 0));
+            const auto bytes = static_cast<size_t>(std::max<int64_t>(from.Archive->File->EntryAt(*index).RealSize, 0));
             found.push_back(Found{ask.From, AheadEntry{name, *index, std::move(entry), ask.Width, ask.Height}, bytes});
             return true;
         };
@@ -3297,6 +3664,7 @@ namespace
         {
             std::shared_ptr<MCHdArt::Frame> frame = std::move(picture->second);
             ahead.Pictures.erase(picture);
+            ahead.PictureBytes -= frame->Bytes();
             return frame;
         }
 
@@ -3332,6 +3700,7 @@ namespace
         ahead.Order.clear();
         ahead.Bytes = 0;
         ahead.Pictures.clear();
+        ahead.PictureBytes = 0;
         ahead.PicturesAsked.clear();
 
         // The archives to open; those being opened stay waited on (Opening) until their opens end, dropped then.
@@ -3392,8 +3761,8 @@ namespace
     /// it read it ahead and it fits the shape of <paramref name="width"/> x <paramref name="height"/> asked for (0 x 0:
     /// any, as MCHdArt::DecodeHdf takes them), else read now.
     /// </summary>
-    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadOrTake(const FrameKey& key, int32_t width,
-                                                                                 int32_t height, uint64_t id)
+    std::expected<std::shared_ptr<MCHdArt::Frame>, std::string> ReadOrTake(const FrameKey& key, int32_t width,
+                                                                           int32_t height, uint64_t id)
     {
         if (std::shared_ptr<MCHdArt::Frame> ahead = TakeAhead(key);
             ahead != nullptr &&
@@ -3513,12 +3882,7 @@ namespace
         else if (!cached.Looked)
         {
             cached.Looked = true;
-
-            if (cached.Id == 0)
-            {
-                cached.Id = MCHdArt::NewFrameId();
-            }
-
+            Number(state, key, cached);
             const auto started = std::chrono::steady_clock::now();
             // Port-only: a frame's first use reads it here, as the frame draws, unless read ahead (the frame log's).
             MCFrameLog::Count(FrameLogReads);
@@ -3542,9 +3906,7 @@ namespace
             }
             else if (*read != nullptr)
             {
-                cached.Frame = std::move(*read);
-                cached.InOrder = state.Order.insert(state.Order.end(), key);
-                state.Bytes += cached.Frame->Bytes();
+                KeepRead(state, key, cached, std::move(*read));
                 ++state.Read;
                 std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
                 FollowAhead(key, frames);
@@ -3555,6 +3917,35 @@ namespace
         }
 
         return cached.Frame;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's one copy of a frame's colours): <paramref name="cached"/>'s colours read again, its
+    /// record kept: the GPU let go of its picture, or never took it, since its colours went. As a first draw reads a
+    /// frame, on this thread, and counted with the frame log's reads.
+    /// </summary>
+    void ReadColorsAgain(State& state, const FrameKey& key, Cached& cached)
+    {
+        const auto started = std::chrono::steady_clock::now();
+        MCFrameLog::Count(FrameLogReads);
+        auto read = [&]
+        {
+            const MCFrameLog::Scope part(FrameLogRead);
+            return ReadOrTake(key, cached.Frame->OriginalWidth(), cached.Frame->OriginalHeight(), cached.Id);
+        }();
+        const std::chrono::nanoseconds spent = std::chrono::steady_clock::now() - started;
+        state.ReadTime += spent;
+        TraceUse(key, "colours", std::chrono::duration_cast<std::chrono::microseconds>(spent).count());
+
+        if (!read)
+        {
+            LogOnce(state.Folders.at(key.Folder).Path, read.error());
+        }
+        else if (*read != nullptr)
+        {
+            HoldColors(state, cached, std::move((*read)->Colors));
+            ++state.ColorsReadAgain;
+        }
     }
 }
 
@@ -3825,12 +4216,22 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.SpritesMatch.reset();
     state.Listed.reset();
     state.Sequences.clear();
+
+    for (const auto& kept : state.Frames)
+    {
+        CountLetGo(state, kept.second.Frame);
+    }
+
     state.Frames.clear();
     state.Order.clear();
     state.Folders.clear();
     state.FolderIndices.clear();
     state.ShapeTableFolders.clear();
     state.Bytes = 0;
+    state.AllocatedBytes = 0;
+    state.ColorBytes = 0;
+    state.ColorAllocatedBytes = 0;
+    state.ById.clear();
     state.Logged.clear();
     state.MadeWith.reset();
     state.PaletteLooked = false;
@@ -4484,13 +4885,26 @@ void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
             {
                 if (known->second != nullptr)
                 {
+                    // Port-only (MCHdArt::StartLoadFill): one open from before is this mission's too, and held with it.
+                    QueueHold(ahead, known->second);
                     break;
                 }
 
                 continue;
             }
 
-            if (ahead.Opening.contains(at) || ahead.Opened.contains(at))
+            // Port-only: one opened for the game's thread to take is held too; one being opened is as it opens.
+            if (const auto opened = ahead.Opened.find(at); opened != ahead.Opened.end())
+            {
+                if (opened->second.has_value())
+                {
+                    QueueHold(ahead, *opened->second);
+                }
+
+                break;
+            }
+
+            if (ahead.Opening.contains(at))
             {
                 break;
             }
@@ -4632,21 +5046,6 @@ uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, in
     }
 
     return hash;
-}
-
-MCHdArt::Frame MCHdArt::Frame::WithoutColors() const
-{
-    return Frame{.Id = Id,
-                 .Width = Width,
-                 .Height = Height,
-                 .Scale = Scale,
-                 .Format = Format,
-                 .Colors = {},
-                 .Indices = Indices,
-                 .Blended = Blended,
-                 .PaintedShadow = PaintedShadow,
-                 .Colorspace = Colorspace,
-                 .Movie = Movie};
 }
 
 std::string MCHdArt::PictureName(uint64_t hash)
@@ -4832,7 +5231,7 @@ void MCHdArt::ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as)
     for (const PacketAhead& packet : packets)
     {
         const uint32_t index = FolderIndex(PackFolder() / packet.Folder, Naming::Number);
-        const int32_t count = packet.Frames.value_or(ArchivedFrames(TheState().Folders.at(index)));
+        const int32_t count = packet.Frames.has_value() ? *packet.Frames : ArchivedFrames(TheState().Folders.at(index));
 
         for (int32_t frame = 0; frame < count; ++frame)
         {
@@ -4953,6 +5352,7 @@ void MCHdArt::KeepReadAhead()
         }
 
         ahead.Pictures.clear();
+        ahead.PictureBytes = 0;
         ahead.Ready.clear();
         ahead.Order.clear();
         ahead.Bytes = 0;
@@ -4971,16 +5371,9 @@ void MCHdArt::KeepReadAhead()
         cached.Looked = true;
         cached.Undrawn = true;
         cached.LastFrame = state.Frame;
-
-        if (cached.Id == 0)
-        {
-            cached.Id = NewFrameId();
-        }
-
+        Number(state, key, cached);
         frame->Id = cached.Id;
-        cached.Frame = std::move(frame);
-        cached.InOrder = state.Order.insert(state.Order.end(), key);
-        state.Bytes += cached.Frame->Bytes();
+        KeepRead(state, key, cached, std::move(frame));
         ++state.Read;
         ++state.TakenAhead;
     }
@@ -5594,8 +5987,12 @@ size_t MCHdArt::ReaderReads()
 
 bool MCHdArt::HoldWanted()
 {
-    const std::optional<bool> set = GetReaderSettings().Hold;
-    return set.has_value() ? *set : MCMemoryRoom::TotalBytes() >= HoldLeastMemory;
+    return GetReaderSettings().Hold.value_or(true);
+}
+
+std::optional<uint64_t> MCHdArt::HoldRoom()
+{
+    return HoldRoomOf(GetReaderSettings());
 }
 
 void MCHdArt::StartHold()
@@ -5630,13 +6027,89 @@ void MCHdArt::StartHold()
 
     // In the pack's order, so a trace's reads are the same run to run.
     std::ranges::sort(open, [](const auto& a, const auto& b) { return a->Path < b->Path; });
-    ahead.Holding.On = true;
-    ahead.Holding.Began = std::chrono::steady_clock::now();
+    BeginHolding(ahead.Holding);
 
     for (const std::shared_ptr<MCHdArchive>& archive : open)
     {
         QueueHold(ahead, archive);
     }
+}
+
+void MCHdArt::StartLoadFill()
+{
+    if (!Active() || !HoldWanted())
+    {
+        return;
+    }
+
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    HoldQueue& holding = ahead.Holding;
+
+    // A hold already on (a load begun without the last mission's let go) holds what it holds and takes this load's too.
+    BeginHolding(holding);
+    holding.Loading = true;
+    holding.BarShown = 0;
+    ahead.Changed.notify_all();
+}
+
+void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::unique_lock lock(ahead.Lock);
+    const auto done = [&ahead]
+    { return !HoldPending(ahead) && ahead.InFlight[std::to_underlying(AheadKind::Hold)] == 0; };
+
+    while (ahead.Holding.Loading && !ahead.Changed.wait_for(lock, LoadFillShowEvery, done))
+    {
+        lock.unlock();
+        shown();
+        lock.lock();
+    }
+
+    if (ahead.Holding.Loading && MCFrameLog::Enabled())
+    {
+        MCFrameLog::Note(
+            std::format("HD fill: the load's end, {:.1f} MB held of {:.1f} MB handed, {:.2f} s after the load began",
+                        static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb,
+                        static_cast<double>(ahead.Holding.QueuedBytes) / BytesPerMb,
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - ahead.Holding.Began).count()));
+    }
+
+    const bool filled = ahead.Holding.Loading;
+    ahead.Holding.Loading = false;
+    lock.unlock();
+
+    // The bar shown whole once the fill is done: its last showing while it waited fell short of it.
+    if (filled)
+    {
+        shown();
+    }
+}
+
+double MCHdArt::LoadFillShare()
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    return FillShareOf(ahead.Holding);
+}
+
+int32_t MCHdArt::LoadBarPercent(int32_t progress)
+{
+    constexpr int32_t Whole = 100;
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    HoldQueue& holding = ahead.Holding;
+
+    if (!holding.Loading)
+    {
+        return progress;
+    }
+
+    const int32_t steps = std::clamp(progress, 0, Whole) * (Whole - LoadFillBarPercent) / Whole;
+    const int32_t percent = steps + static_cast<int32_t>(FillShareOf(holding) * LoadFillBarPercent);
+    holding.BarShown = std::max(holding.BarShown, percent);
+    return holding.BarShown;
 }
 
 void MCHdArt::LetGoHold()
@@ -5707,10 +6180,192 @@ void MCHdArt::DropGround()
     }
 }
 
+namespace
+{
+    /// <summary>Port-only (SPEC-memory.md's plan): the art's room shared out for a frame (PlanArt).</summary>
+    struct ArtPlan
+    {
+        /// <summary>
+        /// The frames kept in memory (records and colours): what the room leaves past the rest, never below their records
+        /// and ColourFloorBytes (the records of frames on the GPU are never let go of).
+        /// </summary>
+        size_t FrameBytes = 0;
+        /// <summary>
+        /// On shared memory, the GPU's HD pictures: what the room leaves past the rest, the hold and the frames at their
+        /// floor, never below the working set (MCMemoryRoom::WorkingSetBytes; the hold gives way to it instead); none on
+        /// a card of its own, whose room the renderer reads (MCMemoryRoom::CardRoom).
+        /// </summary>
+        std::optional<uint64_t> PictureBytes;
+        /// <summary>
+        /// What the hold holds past its share (HoldShareOf, the pictures drawn counted), given back the least recently
+        /// used first; 0 when -hdhold on forces it.
+        /// </summary>
+        uint64_t HoldOver = 0;
+        /// <summary>
+        /// The most of the unpacked streams kept (MCFastFile::KeepStreamsUpTo): what the room leaves past the rest less
+        /// them, the hold, the pictures and the frames at their floor, from KeptStreamsLeast to KeptStreamsMost.
+        /// </summary>
+        size_t KeptStreams = MCFastFile::KeptStreamsLeast;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Filled in this order"): the art's room (MCMemoryRoom::ArtRoom) shared out now, by
+    /// what the ledger counts: the working set first (the pictures drawn, the frames' records and a floor of colours),
+    /// then the hold, then the pictures past the working set, then the frames' colours read ahead. Taken back in the
+    /// reverse: the colours read ahead first (FrameBytes), then the pictures past the working set (PictureBytes), then
+    /// the hold (HoldOver). The unpacked streams kept take what's left past all but the colours, within their bounds
+    /// (KeptStreams).
+    /// </summary>
+    ArtPlan PlanArt(const MCHdArt::ReaderSettings& settings)
+    {
+        const ArtParts parts = ArtPartsNow();
+        const uint64_t room = parts.Room.Bytes;
+        ArtPlan plan;
+        plan.FrameBytes =
+            static_cast<size_t>(std::max(Less(room, parts.Rest + parts.Held + parts.Pictures), parts.Floor));
+
+        if (parts.Room.Shared)
+        {
+            plan.PictureBytes = std::max(Less(room, parts.Rest + parts.Held + parts.Floor),
+                                         std::min(Less(room, parts.Rest + parts.Floor), MCMemoryRoom::WorkingSetBytes));
+        }
+
+        if (!settings.Hold.value_or(false))
+        {
+            plan.HoldOver = Less(parts.Held, HoldShareOf(parts, parts.Pictures));
+        }
+
+        const uint64_t spare = Less(room, Less(parts.Rest, parts.Kept) + parts.Held + parts.Pictures + parts.Floor);
+        plan.KeptStreams =
+            static_cast<size_t>(std::clamp<uint64_t>(spare, MCFastFile::KeptStreamsLeast, MCFastFile::KeptStreamsMost));
+        return plan;
+    }
+
+    /// <summary>
+    /// Port-only: lets go of the frames kept, the least recently used first, until <paramref name="budget"/> fits them or
+    /// MCMemoryRoom::TrimmedBytesPerFrame have gone or the next was asked for in the last frame (it and those after it
+    /// are drawn, and would only be read again). A frame something else still holds (a texture's picture, asked for once)
+    /// leaves the cache too, so its memory goes once that lets go of it, but it frees nothing now: it isn't counted, or
+    /// the frames only the cache holds would wait for later frames. A frame whose picture the GPU holds keeps its record
+    /// (MCHdArt::ColorsUploaded), and lets go of any colours read again for it.
+    /// </summary>
+    /// <returns>The bytes freed.</returns>
+    size_t TrimFrames(State& state, size_t budget)
+    {
+        size_t freed = 0;
+        auto next = state.Order.begin();
+
+        while (next != state.Order.end() && freed < MCMemoryRoom::TrimmedBytesPerFrame && state.Bytes > budget)
+        {
+            const auto oldest = state.Frames.find(*next);
+
+            if (oldest == state.Frames.end())
+            {
+                next = state.Order.erase(next);
+                continue;
+            }
+
+            if (oldest->second.LastFrame + 1 >= state.Frame)
+            {
+                break;
+            }
+
+            ++next;
+
+            if (oldest->second.OnGpu)
+            {
+                freed += oldest->second.Colors.size();
+                LetGoColors(state, oldest->second);
+                continue;
+            }
+
+            // The colours are the cache's alone; the record's bytes go with it when the cache's reference is its only one.
+            freed += oldest->second.Colors.size();
+
+            if (oldest->second.Frame.use_count() == 1)
+            {
+                freed += oldest->second.Frame->Bytes();
+            }
+
+            Drop(state, oldest->first, oldest->second);
+        }
+
+        return freed;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's give-back): the hold lets go of up to <paramref name="bytes"/>, its runs asked for
+    /// least recently first, and reads no more this mission (its room is short), saying so in the frame log.
+    /// </summary>
+    void GiveBackHold(size_t bytes)
+    {
+        const size_t freed = MCFastFile::GiveBackHeld(bytes);
+
+        if (freed == 0)
+        {
+            return;
+        }
+
+        {
+            ReadAhead& ahead = TheState().Ahead;
+            std::scoped_lock lock(ahead.Lock);
+            ahead.Holding.Full = true;
+            ahead.Holding.Archives.clear();
+        }
+
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::Note(std::format("HD hold: gave back {:.1f} MB, {:.1f} MB held",
+                                         static_cast<double>(freed) / BytesPerMb,
+                                         static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb));
+        }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "When the system says memory is short", its first step): the hold's fill stops before
+    /// anything is given back: it reads and queues no more this mission, and a run being read keeps nothing (its
+    /// generation moved on).
+    /// </summary>
+    void StopFilling()
+    {
+        ReadAhead& ahead = TheState().Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        HoldQueue& holding = ahead.Holding;
+
+        if (!holding.On || holding.Full)
+        {
+            return;
+        }
+
+        holding.Full = true;
+        holding.Archives.clear();
+        holding.NextStream = 0;
+        ++holding.Generation;
+        ahead.Changed.notify_all();
+
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::Note(std::format("HD hold: memory short, the fill stopped at {:.1f} MB held",
+                                         static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb));
+        }
+    }
+}
+
 size_t MCHdArt::CacheBudget()
 {
-    const size_t set = TheState().Budget;
-    return set != 0 ? set : static_cast<size_t>(MCMemoryRoom::MostHdBytes);
+    const State& state = TheState();
+
+    if (state.Budget != 0)
+    {
+        return state.Budget;
+    }
+
+    return PlanArt(GetReaderSettings()).FrameBytes;
+}
+
+size_t MCHdArt::Frame::AllocatedBytes() const
+{
+    return MCAllocatedBytes(Colors.data()) + MCAllocatedBytes(Indices.data());
 }
 
 void MCHdArt::SetCacheBudget(size_t bytes)
@@ -5719,10 +6374,37 @@ void MCHdArt::SetCacheBudget(size_t bytes)
     Trim();
 }
 
-void MCHdArt::NextFrame(bool memoryShort)
+std::optional<uint64_t> MCHdArt::NextFrame(bool memoryShort)
 {
     State& state = TheState();
     ++state.Frame;
+
+    // Port-only (SPEC-memory.md's ledger): the frames kept, those let go that live on, and those read ahead, as the
+    // frame starts.
+    state.Ledger.Set({.Payload = static_cast<int64_t>(state.Bytes - state.ColorBytes),
+                      .Allocated = static_cast<int64_t>(state.AllocatedBytes - state.ColorAllocatedBytes)});
+    state.ColorsLedger.Set({.Payload = static_cast<int64_t>(state.ColorBytes),
+                            .Allocated = static_cast<int64_t>(state.ColorAllocatedBytes)});
+    MCMemoryLedger::MCFigures letGo;
+    std::erase_if(state.LetGo,
+                  [&letGo](const LetGoFrame& frame)
+                  {
+                      if (frame.Frame.expired())
+                      {
+                          return true;
+                      }
+
+                      letGo.Payload += frame.Figures.Payload;
+                      letGo.Allocated += frame.Figures.Allocated;
+                      return false;
+                  });
+    state.LetGoLedger.Set(letGo);
+
+    {
+        ReadAhead& ahead = state.Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        ahead.Ledger.SetBytes(ahead.Bytes + ahead.PictureBytes);
+    }
 
     // Port-only: what was asked for ahead and dropped since, or left out for want of room, asked for again, at most
     // every AskAgainFrames (MCHdArt::MCAskedPackets asks again in a new generation).
@@ -5739,43 +6421,31 @@ void MCHdArt::NextFrame(bool memoryShort)
         trace.Out << std::format("F\t{}\t{}\n", TraceNow(trace), state.Frame);
     }
 
-    if (!memoryShort)
+    // Port-only (SPEC-memory.md's plan): the art's room shared out for this frame, each holder past its share giving back
+    // MCMemoryRoom::TrimmedBytesPerFrame at most: the frames' colours read ahead first, then (the renderer) the pictures
+    // past the working set, then the hold.
+    //
+    // While the system says memory is short (SPEC-memory.md's "When the system says memory is short"), the hold's fill
+    // stops first, then the frames kept go whatever the budget, then, when they've no more to give this frame, the hold,
+    // whatever -hdhold says.
+    if (memoryShort)
     {
-        return;
+        StopFilling();
     }
 
-    // Port-only (SPEC-pack-v2.md's Memory): the hold let go of whole, holding no more this mission.
-    LetGoHold();
+    const ArtPlan plan = PlanArt(GetReaderSettings());
+    MCFastFile::KeepStreamsUpTo(memoryShort ? MCFastFile::KeptStreamsLeast : plan.KeptStreams);
+    const size_t budget = memoryShort ? 0 : (state.Budget != 0 ? state.Budget : plan.FrameBytes);
+    const size_t freed = state.Bytes > budget ? TrimFrames(state, budget) : 0;
+    const size_t left = MCMemoryRoom::TrimmedBytesPerFrame - std::min(freed, MCMemoryRoom::TrimmedBytesPerFrame);
+    const size_t holdOver = memoryShort ? left : std::min(static_cast<size_t>(plan.HoldOver), left);
 
-    // The least recently used first, until TrimmedBytesPerFrame have gone or the next was asked for in the last frame
-    // (it and those after it are drawn, and would only be read again). A frame something else still holds (a texture's
-    // picture, asked for once) leaves the cache too, so its memory goes once that lets go of it, but it frees nothing
-    // now: it isn't counted, or the frames only the cache holds would wait for later frames.
-    size_t freed = 0;
-
-    while (!state.Order.empty() && freed < MCMemoryRoom::TrimmedBytesPerFrame)
+    if (holdOver > 0)
     {
-        const auto oldest = state.Frames.find(state.Order.front());
-
-        if (oldest == state.Frames.end())
-        {
-            state.Order.pop_front();
-            continue;
-        }
-
-        if (oldest->second.LastFrame + 1 >= state.Frame)
-        {
-            break;
-        }
-
-        // The cache's own reference alone: its bytes go with it.
-        if (oldest->second.Frame.use_count() == 1)
-        {
-            freed += oldest->second.Frame->Bytes();
-        }
-
-        Drop(state, oldest->first, oldest->second);
+        GiveBackHold(holdOver);
     }
+
+    return plan.PictureBytes;
 }
 
 size_t MCHdArt::ArchivesOpen()
@@ -5818,4 +6488,69 @@ std::chrono::nanoseconds MCHdArt::ReadTime()
 size_t MCHdArt::CachedBytes()
 {
     return TheState().Bytes;
+}
+
+std::span<const uint8_t> MCHdArt::ColorsOf(const Frame& frame)
+{
+    State& state = TheState();
+    const auto numbered = frame.Colors.empty() ? state.ById.find(frame.Id) : state.ById.end();
+
+    if (numbered == state.ById.end())
+    {
+        return frame.Colors;
+    }
+
+    const FrameKey key = numbered->second;
+    Cached& cached = state.Frames.at(key);
+
+    // Let go of whole since (and the GPU's picture with it): read again, as a first draw reads it.
+    if (cached.Frame == nullptr)
+    {
+        Cache(key, frame.OriginalWidth(), frame.OriginalHeight());
+    }
+    else if (cached.Colors.empty())
+    {
+        // The most recently used, so the trim after keeps it.
+        state.Order.splice(state.Order.end(), state.Order, cached.InOrder);
+        ReadColorsAgain(state, key, cached);
+        Trim();
+    }
+
+    return cached.Colors;
+}
+
+void MCHdArt::ColorsUploaded(const Frame& frame)
+{
+    State& state = TheState();
+    const auto numbered = frame.Colors.empty() ? state.ById.find(frame.Id) : state.ById.end();
+
+    if (numbered == state.ById.end())
+    {
+        return;
+    }
+
+    if (const auto found = state.Frames.find(numbered->second);
+        found != state.Frames.end() && found->second.Frame != nullptr)
+    {
+        found->second.OnGpu = true;
+        LetGoColors(state, found->second);
+    }
+}
+
+void MCHdArt::PictureDropped(uint64_t id)
+{
+    State& state = TheState();
+
+    if (const auto numbered = state.ById.find(id); numbered != state.ById.end())
+    {
+        if (const auto found = state.Frames.find(numbered->second); found != state.Frames.end())
+        {
+            found->second.OnGpu = false;
+        }
+    }
+}
+
+size_t MCHdArt::ColorsReadAgain()
+{
+    return TheState().ColorsReadAgain;
 }

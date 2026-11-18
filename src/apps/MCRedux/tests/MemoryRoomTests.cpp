@@ -45,14 +45,28 @@ namespace
 }
 
 /// <summary>
-/// The HD frames kept in memory may take 4 GB on any machine (MCMemoryRoom::MostHdBytes), never a share of its memory;
-/// those on the GPU what the system gives the game on the card less what the rest of the game holds there, at most 4
-/// GB, the same before and after the HD pictures hold some of it (what they hold is theirs to keep).
+/// Port-only (SPEC-memory.md's plan): the HD frames kept in memory take their share of the art's room, half the
+/// machine's memory less the game itself and the rest of the ledger (MCMemoryRoom::ArtRoom): on an 8 GB machine less
+/// than the ceiling, on a 64 GB one past the 4 GB they once stopped at. Those on the GPU what the system gives the game
+/// on the card (90% of a card of its own's) less what the rest of the game holds there, the same before and after the HD
+/// pictures hold some of it (what they hold is theirs to keep).
 /// </summary>
-TEST_CASE("hd caches: the frames in memory may take 4 GB, on the GPU what the card gives less the rest, at most 4 GB")
+TEST_CASE("hd caches: the frames in memory take the plan's share, on the GPU 90% of what its card gives less the rest")
 {
-    CHECK_EQ(MCHdArt::CacheBudget(), static_cast<size_t>(MCMemoryRoom::MostHdBytes));
     CHECK_EQ(MCMemoryRoom::MostHdBytes, 4 * GB);
+
+    for (const uint64_t machine : {8 * GB, 64 * GB})
+    {
+        MCTest::Scope where(std::format("a {} GB machine", machine / GB));
+        MCMemoryRoom::SetMachineBytes(machine);
+        const MCMemoryRoom::MCArtRoom art = MCMemoryRoom::ArtRoom();
+        CHECK(art.Bytes < machine / 2 - MCMemoryRoom::GameItselfBytes + 1);
+        CHECK(MCHdArt::CacheBudget() <= art.Bytes);
+        CHECK(MCHdArt::CacheBudget() > 0);
+    }
+
+    CHECK(MCHdArt::CacheBudget() > static_cast<size_t>(MCMemoryRoom::MostHdBytes));
+    MCMemoryRoom::SetMachineBytes(std::nullopt);
 
     constexpr std::array Machines = {
         MCMachine{"an 8 GB Mac", 5461 * MB, 900 * MB, true},
@@ -63,8 +77,9 @@ TEST_CASE("hd caches: the frames in memory may take 4 GB, on the GPU what the ca
         MCMachine{"an 8 GB PC with integrated graphics", 4 * GB, 700 * MB, true},
     };
 
-    // What each may take: the card's budget less the rest of the game, at most 4 GB.
-    constexpr std::array<uint64_t, Machines.size()> Rooms = {4 * GB, 4 * GB, 4 * GB, 2884 * MB, 4 * GB, 3396 * MB};
+    // What each may take: the card's budget (90% of a card of its own's) less the rest of the game.
+    constexpr std::array<uint64_t, Machines.size()> Rooms = {
+        4561 * MB, 10023 * MB, 48252 * MB, 3584 * MB * 9 / 10 - 700 * MB, 11 * GB * 9 / 10 - 700 * MB, 3396 * MB};
     constexpr std::array<uint64_t, 3> HeldAmounts = {0, 512 * MB, 2 * GB};
 
     const auto system = std::make_shared<MCFakeMemorySystem>();
@@ -89,7 +104,8 @@ TEST_CASE("hd caches: the frames in memory may take 4 GB, on the GPU what the ca
             CHECK_EQ(room.PictureBytes, Rooms[i]);
             CHECK(!room.MemoryShort);
             CHECK_EQ(system->AskedName, std::string(DeviceName));
-            CHECK_EQ(MCMemoryRoom::CardRoom(MCMemoryRoom::MCCard{machine.Budget, machine.Rest + held, false}, held),
+            CHECK_EQ(MCMemoryRoom::CardRoom(
+                         MCMemoryRoom::MCCard{machine.Budget, machine.Rest + held, machine.SharesMemory}, held),
                      Rooms[i]);
         }
     }
@@ -124,18 +140,20 @@ TEST_CASE("hd caches: the card is asked every two seconds, and memory or a share
     MCTestClock clock;
     MCMemoryRoom::MCReader reader(std::string(DeviceName), clock.Reads());
 
-    CHECK_EQ(reader.Frame(held).PictureBytes, 4 * GB);
+    // A card of its own: 90% of what it gives, less the rest.
+    const uint64_t first = 8 * GB * 9 / 10 - system->Rest;
+    CHECK_EQ(reader.Frame(held).PictureBytes, first);
     CHECK_EQ(system->CardReads, 1);
 
     // Another program takes most of the card: the room holds until the card is asked again.
     system->Budget = 2 * GB;
     clock.Now += std::chrono::seconds(1);
-    CHECK_EQ(reader.Frame(held).PictureBytes, 4 * GB);
+    CHECK_EQ(reader.Frame(held).PictureBytes, first);
     CHECK_EQ(system->CardReads, 1);
     clock.Now += std::chrono::seconds(1);
     MCMemoryRoom::MCFrameRoom room = reader.Frame(held);
     CHECK_EQ(system->CardReads, 2);
-    CHECK_EQ(room.PictureBytes, 2 * GB - system->Rest);
+    CHECK_EQ(room.PictureBytes, 2 * GB * 9 / 10 - system->Rest);
     CHECK(!room.MemoryShort);
 
     // Over its budget: the pictures go down to what's left; a card with memory of its own leaves the frames in memory.
@@ -143,7 +161,7 @@ TEST_CASE("hd caches: the card is asked every two seconds, and memory or a share
     MCMemoryRoom::AskAgain();
     room = reader.Frame(held);
     CHECK_EQ(system->CardReads, 3);
-    CHECK_EQ(room.PictureBytes, GB / 2);
+    CHECK_EQ(room.PictureBytes, 3 * GB / 4 * 9 / 10 - system->Rest);
     CHECK(!room.MemoryShort);
 
     // A card sharing the machine's memory over its budget: the frames in memory go too.
@@ -170,7 +188,7 @@ TEST_CASE("hd caches: the card is asked every two seconds, and memory or a share
     system->IsShort = false;
     room = reader.Frame(held);
     CHECK(!room.MemoryShort);
-    CHECK_EQ(room.PictureBytes, 4 * GB);
+    CHECK_EQ(room.PictureBytes, 8 * GB - system->Rest);
 
     // A card with memory of its own keeps its pictures while the system is short.
     system->SharesMemory = false;
@@ -178,7 +196,7 @@ TEST_CASE("hd caches: the card is asked every two seconds, and memory or a share
     MCMemoryRoom::AskAgain();
     room = reader.Frame(held);
     CHECK(room.MemoryShort);
-    CHECK_EQ(room.PictureBytes, 4 * GB);
+    CHECK_EQ(room.PictureBytes, 8 * GB * 9 / 10 - system->Rest);
 
     // A card the system can't speak for follows the memory, as one sharing it does.
     system->Reports = false;
@@ -186,6 +204,17 @@ TEST_CASE("hd caches: the card is asked every two seconds, and memory or a share
     room = reader.Frame(held);
     CHECK(room.MemoryShort);
     CHECK_EQ(room.PictureBytes, uint64_t{0});
+
+    // A card that says it gives nothing (DXGI's budget can read 0) is one the system can't speak for, not one over its
+    // budget: never short for it, and the pictures keep up to MostHdBytes.
+    system->Reports = true;
+    system->IsShort = false;
+    system->SharesMemory = true;
+    system->Budget = 0;
+    MCMemoryRoom::AskAgain();
+    room = reader.Frame(held);
+    CHECK(!room.MemoryShort);
+    CHECK_EQ(room.PictureBytes, MCMemoryRoom::MostHdBytes);
 }
 
 /// <summary>

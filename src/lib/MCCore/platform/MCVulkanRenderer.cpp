@@ -3,6 +3,7 @@
 #include "color/MCPalette.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCGpuCounted.h"
 #include "platform/MCShapeRows.h"
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCSharpLines.h"
@@ -21,6 +22,8 @@
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
+
+using MCMemoryLedger::MCHolder;
 
 namespace
 {
@@ -48,7 +51,7 @@ namespace
         info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
         info.size = static_cast<uint32_t>(size);
         std::shared_ptr<SDL_GPUTransferBuffer> buffer =
-            MCGpuHandle<SDL_GPUTransferBuffer>(SDL_CreateGPUTransferBuffer(device.get(), &info), MCGpuRelease{device});
+            MCGpuCounted::MakeTransferBuffer(device, info, MCHolder::GpuTransfers);
 
         if (buffer == nullptr)
         {
@@ -1219,12 +1222,13 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
         return std::unexpected(SdlError("SDL_CreateGPUSampler"));
     }
 
-    for (auto made : {renderer->EnsureTexture(renderer->_Blank, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, 1),
-                      renderer->EnsureTexture(renderer->_AlphaTexture, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
-                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, AlphaColorCount, 2),
-                      renderer->EnsureTexture(renderer->_PaletteTexture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, PaletteRows)})
+    for (auto made :
+         {renderer->EnsureTexture(renderer->_Blank, MCHolder::GpuOther, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                  SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, 1),
+          renderer->EnsureTexture(renderer->_AlphaTexture, MCHolder::GpuOther, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
+                                  SDL_GPU_TEXTUREUSAGE_SAMPLER, AlphaColorCount, 2),
+          renderer->EnsureTexture(renderer->_PaletteTexture, MCHolder::GpuOther, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                  SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, PaletteRows)})
     {
         if (!made)
         {
@@ -1326,7 +1330,8 @@ void MCVulkanRenderer::Release(Texture& texture)
     texture = Texture{};
 }
 
-std::expected<void, std::string> MCVulkanRenderer::EnsureTexture(Texture& texture, SDL_GPUTextureFormat format,
+std::expected<void, std::string> MCVulkanRenderer::EnsureTexture(Texture& texture, MCMemoryLedger::MCHolder holder,
+                                                                 SDL_GPUTextureFormat format,
                                                                  SDL_GPUTextureUsageFlags usage, uint32_t width,
                                                                  uint32_t height)
 {
@@ -1344,7 +1349,7 @@ std::expected<void, std::string> MCVulkanRenderer::EnsureTexture(Texture& textur
     info.height = height;
     info.layer_count_or_depth = 1;
     info.num_levels = 1;
-    texture.Handle = MCGpuHandle<SDL_GPUTexture>(SDL_CreateGPUTexture(_Device.get(), &info), MCGpuRelease{_Device});
+    texture.Handle = MCGpuCounted::MakeTexture(_Device, info, holder);
 
     if (texture.Handle == nullptr)
     {
@@ -1435,8 +1440,10 @@ void MCVulkanRenderer::BeginRecording()
 
     const MCMemoryRoom::MCFrameRoom room =
         _Room.has_value() ? _Room->Frame(_HdPictureBytes) : MCMemoryRoom::MCFrameRoom{};
-    MCHdArt::NextFrame(room.MemoryShort);
-    TrimHdPictures(static_cast<size_t>(room.PictureBytes));
+    // Port-only (SPEC-memory.md's plan): on shared memory, the pictures' share of the art's room too.
+    const std::optional<uint64_t> planned = MCHdArt::NextFrame(room.MemoryShort);
+    TrimHdPictures(static_cast<size_t>(std::min(room.PictureBytes, planned.value_or(room.PictureBytes))));
+    _HdPicturePayload.Set({.Payload = static_cast<int64_t>(_HdPictureBytes)});
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
     if (_Tables.empty())
@@ -1508,6 +1515,14 @@ void MCVulkanRenderer::ReleaseMovie(uint64_t movie)
     // A frame drawn this frame still has its colours made as the frame runs (its textures go after).
     if (found->second.Convert)
     {
+        const MoviePicture& movie = found->second;
+
+        for (const Texture* texture :
+             {&movie.Shown.Texture, &movie.Shown.HdColors, &movie.Luma, &movie.Blue, &movie.Red})
+        {
+            MCGpuCounted::Retire(texture->Handle);
+        }
+
         _Run->RetiredMovies.push_back(std::move(found->second));
     }
 
@@ -1581,6 +1596,7 @@ void MCVulkanRenderer::TrimHdPictures(size_t budget)
 
 void MCVulkanRenderer::DropHdPicture(std::unordered_map<uint64_t, Picture>::iterator it)
 {
+    MCHdArt::PictureDropped(it->first);
     _HdOrder.erase(it->second.InOrder);
     DropPicture(_HdPictures, it, _HdPictureBytes, HdRgbaBytes);
 }
@@ -2126,10 +2142,10 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTables()
 
         const uint32_t height = std::bit_ceil(std::max(rows, 64u));
 
-        for (auto made :
-             {EnsureTexture(_TableTexture, SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, height),
-              EnsureTexture(_FitTexture, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, SDL_GPU_TEXTUREUSAGE_SAMPLER, 1,
-                            height)})
+        for (auto made : {EnsureTexture(_TableTexture, MCHolder::GpuOther, SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+                                        SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, height),
+                          EnsureTexture(_FitTexture, MCHolder::GpuOther, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
+                                        SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, height)})
         {
             if (!made)
             {
@@ -2225,8 +2241,8 @@ auto MCVulkanRenderer::AtlasFor(int32_t width, int32_t height, const std::functi
     {
         _Pages.push_back(Page{});
 
-        if (!EnsureTexture(_Pages.back().Texture, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                           PageSize, PageSize))
+        if (!EnsureTexture(_Pages.back().Texture, MCHolder::GpuShapes, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
+                           SDL_GPU_TEXTUREUSAGE_SAMPLER, PageSize, PageSize))
         {
             _Pages.pop_back();
             return std::nullopt;
@@ -2434,12 +2450,14 @@ std::optional<uint32_t> MCVulkanRenderer::PictureOf(MCTexture& texture)
         // draws: the new pixels go into a picture of their own for the rest of the frame, the copy next frame.
         Texture picture;
 
-        if (!EnsureTexture(picture, SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
+        if (!EnsureTexture(picture, MCHolder::GpuPictures, SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                           width, height))
         {
             return std::nullopt;
         }
 
         std::memcpy(QueueUpload(picture.Handle, 0, 0, width, height, 1).data(), texture.Pixels.data(), size);
+        MCGpuCounted::Retire(picture.Handle);
         _Run->Retired.push_back(picture);
         ++_FrameUploads.Pictures;
         _FrameUploads.PictureBytes += static_cast<int64_t>(size);
@@ -2499,8 +2517,8 @@ std::expected<void, std::string> MCVulkanRenderer::UploadWhole(MCTexture& textur
     const auto height = static_cast<uint32_t>(texture.Height);
     const size_t size = static_cast<size_t>(width) * height;
 
-    if (auto made =
-            EnsureTexture(state.Copy, SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height);
+    if (auto made = EnsureTexture(state.Copy, MCHolder::GpuPictures, SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+                                  SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height);
         !made)
     {
         return made;
@@ -2532,7 +2550,8 @@ std::expected<void, std::string> MCVulkanRenderer::KeepFramePicture(MCTexture& t
     const auto width = static_cast<uint32_t>(texture.Width);
     const auto height = static_cast<uint32_t>(texture.Height);
 
-    if (auto made = EnsureTexture(kept, SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height);
+    if (auto made = EnsureTexture(kept, MCHolder::GpuPictures, SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+                                  SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height);
         !made)
     {
         return made;
@@ -2541,6 +2560,7 @@ std::expected<void, std::string> MCVulkanRenderer::KeepFramePicture(MCTexture& t
     _Run->Uploads.push_back(
         Upload{kept.Handle, 0, 0, width, height, 1, 0, nullptr, 0, _Run->Pictures[state.Index].Texture});
     _Run->Pictures[state.Index].Texture = kept.Handle;
+    MCGpuCounted::Retire(kept.Handle);
     _Run->Retired.push_back(kept);
     state.Frame = ~0ull;
     return {};
@@ -2717,12 +2737,13 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
     // A new page, in an emptied one's slot when there is one.
     SharedPage page;
     page.Layout = layout;
-    auto made = EnsureTexture(page.Texture, layout.Format, SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
+    auto made = EnsureTexture(page.Texture, (hd ? MCHolder::GpuHdPictures : MCHolder::GpuPictures), layout.Format,
+                              SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
 
     if (made && hd)
     {
-        made =
-            EnsureTexture(page.HdColors, layout.HdFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.HdSide, layout.HdSide);
+        made = EnsureTexture(page.HdColors, MCHolder::GpuHdPictures, layout.HdFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                             layout.HdSide, layout.HdSide);
     }
 
     if (!made)
@@ -2811,8 +2832,8 @@ std::optional<uint32_t> MCVulkanRenderer::PictureForKey(uint64_t key, uint32_t w
     {
         Picture picture;
 
-        if (!EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, width,
-                           height))
+        if (!EnsureTexture(picture.Texture, MCHolder::GpuPictures, SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+                           SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
         {
             return std::nullopt;
         }
@@ -3090,17 +3111,7 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow
     {
         state.HdLooked = true;
         state.HdPack = MCHdArt::PackVersion();
-        state.HdOnGpu = false;
         state.Hd = MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
-    }
-    else if (state.Hd != nullptr && state.HdOnGpu != _HdPictures.contains(state.Hd->Id))
-    {
-        // Port-only: once the GPU holds the picture (its colours copied up), the texture keeps the frame without them,
-        // so the pack's cache alone holds them and may let them go; once the GPU has let the picture go, the frame is
-        // found again (the cache's, or read again with its Id) to go up again.
-        state.HdOnGpu = !state.HdOnGpu;
-        state.Hd = state.HdOnGpu ? std::make_shared<const MCHdArt::Frame>(state.Hd->WithoutColors())
-                                 : MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
     }
 
     return state.Hd;
@@ -3493,9 +3504,17 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         const bool bc7 = frame.Format == MCHdArt::ColorFormat::Bc7;
         uint32_t colorWidth = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Width)) : width;
         uint32_t colorHeight = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Height)) : height;
+        // Port-only (SPEC-memory.md's one copy of a frame's colours): the cache's, which go once they're here.
+        const std::span<const uint8_t> source = MCHdArt::ColorsOf(frame);
+
+        if (source.empty())
+        {
+            _HdRefused.insert(frame.Id);
+            return std::nullopt;
+        }
 
         if (frame.Indices.size() != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes ||
-            frame.Colors.size() != static_cast<size_t>(colorWidth) * colorHeight * (bc7 ? HdBc7Bytes : HdRgbaBytes))
+            source.size() != static_cast<size_t>(colorWidth) * colorHeight * (bc7 ? HdBc7Bytes : HdRgbaBytes))
         {
             NotSupported("an HD art frame whose pixels don't match its size");
             return std::nullopt;
@@ -3510,11 +3529,11 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         // A GPU without BC7 gets the colours decoded here.
         const bool sendBc7 = bc7 && *_Bc7;
         std::vector<uint8_t> decoded;
-        std::span<const uint8_t> colors = frame.Colors;
+        std::span<const uint8_t> colors = source;
 
         if (bc7 && !sendBc7)
         {
-            decoded = MCBc7::Decode(frame.Colors, frame.Width, frame.Height);
+            decoded = MCBc7::Decode(source, frame.Width, frame.Height);
             colors = decoded;
             colorWidth = width;
             colorHeight = height;
@@ -3530,13 +3549,13 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
 
         if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))
         {
-            auto made = EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                                      originalWidth, originalHeight);
+            auto made = EnsureTexture(picture.Texture, MCHolder::GpuHdPictures, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
+                                      SDL_GPU_TEXTUREUSAGE_SAMPLER, originalWidth, originalHeight);
 
             if (made)
             {
-                made =
-                    EnsureTexture(picture.HdColors, colorFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, colorWidth, colorHeight);
+                made = EnsureTexture(picture.HdColors, MCHolder::GpuHdPictures, colorFormat,
+                                     SDL_GPU_TEXTUREUSAGE_SAMPLER, colorWidth, colorHeight);
             }
 
             if (!made)
@@ -3557,6 +3576,7 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
                                               sendBc7 ? HdBc7Bytes : HdRgbaBytes)
                                       .begin());
         picture.Bytes = frame.Indices.size() + colors.size();
+        MCHdArt::ColorsUploaded(frame);
         found = _HdPictures.emplace(frame.Id, picture).first;
         found->second.InOrder = _HdOrder.insert(_HdOrder.end(), frame.Id);
         _HdPictureBytes += picture.Bytes;
@@ -3604,12 +3624,15 @@ std::optional<uint32_t> MCVulkanRenderer::MoviePictureOf(const MCHdArt::Frame& f
         constexpr SDL_GPUTextureUsageFlags sampled = SDL_GPU_TEXTUREUSAGE_SAMPLER;
         constexpr SDL_GPUTextureUsageFlags drawnInto = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
         const std::array<std::expected<void, std::string>, MovieTextures> made = {
-            EnsureTexture(movie.Shown.Texture, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, sampled, originalWidth,
-                          originalHeight),
-            EnsureTexture(movie.Shown.HdColors, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, drawnInto, width, height),
-            EnsureTexture(movie.Luma, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, width, height),
-            EnsureTexture(movie.Blue, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, chromaWidth, chromaHeight),
-            EnsureTexture(movie.Red, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, chromaWidth, chromaHeight)};
+            EnsureTexture(movie.Shown.Texture, MCHolder::GpuMovies, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, sampled,
+                          originalWidth, originalHeight),
+            EnsureTexture(movie.Shown.HdColors, MCHolder::GpuMovies, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, drawnInto,
+                          width, height),
+            EnsureTexture(movie.Luma, MCHolder::GpuMovies, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, width, height),
+            EnsureTexture(movie.Blue, MCHolder::GpuMovies, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, chromaWidth,
+                          chromaHeight),
+            EnsureTexture(movie.Red, MCHolder::GpuMovies, SDL_GPU_TEXTUREFORMAT_R8_UNORM, sampled, chromaWidth,
+                          chromaHeight)};
 
         if (const auto failed = std::ranges::find_if(made, [](const auto& one) { return !one.has_value(); });
             failed != made.end())
@@ -3762,8 +3785,8 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
         const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SharpPageSide};
 
         if (!PlaceShared(PageKind::Sharp, layout, picture, width, height, 0, 0) &&
-            !EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, width,
-                           height))
+            !EnsureTexture(picture.Texture, MCHolder::GpuPictures, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                           SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
         {
             return std::nullopt;
         }
@@ -6013,15 +6036,14 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
                                            TerrainAtlasWidth, atlasHeight));
     }
 
-    if (auto made = EnsureTexture(_TerrainMesh.Atlas, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                                  TerrainAtlasWidth, atlasHeight);
+    if (auto made = EnsureTexture(_TerrainMesh.Atlas, MCHolder::GpuGround, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
+                                  SDL_GPU_TEXTUREUSAGE_SAMPLER, TerrainAtlasWidth, atlasHeight);
         !made)
     {
         return made;
     }
 
-    _TerrainMesh.Images =
-        MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &imagesInfo), MCGpuRelease{_Device});
+    _TerrainMesh.Images = MCGpuCounted::MakeBuffer(_Device, imagesInfo, MCHolder::GpuGround);
 
     if (_TerrainMesh.Images == nullptr)
     {
@@ -6265,7 +6287,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainCells(ChunkedUpl
     SDL_GPUBufferCreateInfo info{};
     info.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
     info.size = static_cast<uint32_t>(mesh.CellTiles.size() * TerrainCellInts * sizeof(uint32_t));
-    _TerrainMesh.Cells = MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &info), MCGpuRelease{_Device});
+    _TerrainMesh.Cells = MCGpuCounted::MakeBuffer(_Device, info, MCHolder::GpuGround);
 
     if (_TerrainMesh.Cells == nullptr)
     {
@@ -6318,7 +6340,7 @@ std::expected<void, std::string> MCVulkanRenderer::MakeHdTerrainAtlas(Texture& a
         return std::unexpected(std::format("the GPU doesn't sample its format ({})", static_cast<int>(format)));
     }
 
-    return EnsureTexture(atlas, format, SDL_GPU_TEXTUREUSAGE_SAMPLER, MaxHdAtlasSide, height);
+    return EnsureTexture(atlas, MCHolder::GpuHdGround, format, SDL_GPU_TEXTUREUSAGE_SAMPLER, MaxHdAtlasSide, height);
 }
 
 bool MCVulkanRenderer::ReliefMapsInUse()
@@ -6332,11 +6354,12 @@ std::expected<void, std::string> MCVulkanRenderer::UploadHdTile(ChunkedUpload& u
     const auto width = static_cast<uint32_t>(MCBc7::Padded(frame.Width));
     const auto height = static_cast<uint32_t>(MCBc7::Padded(frame.Height));
     std::vector<uint8_t> encoded;
-    std::span<const uint8_t> blocks = frame.Colors;
+    // Port-only: the cache's colours (the ground's frames go whole once its tiles are up: MCHdArt::DropGround).
+    std::span<const uint8_t> blocks = MCHdArt::ColorsOf(frame);
 
     if (frame.Format == MCHdArt::ColorFormat::Rgba8)
     {
-        encoded = MCBc7::Encode(frame.Colors, frame.Width, frame.Height);
+        encoded = MCBc7::Encode(blocks, frame.Width, frame.Height);
         blocks = encoded;
     }
 
@@ -6913,11 +6936,12 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
 {
     constexpr SDL_GPUTextureUsageFlags target = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
 
-    for (auto made : {EnsureTexture(surface.Target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, target, surface.DrawnWidth,
+    for (auto made : {EnsureTexture(surface.Target, MCHolder::GpuTargets, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, target,
+                                    surface.DrawnWidth, surface.DrawnHeight),
+                      EnsureTexture(surface.Index, MCHolder::GpuTargets, IndexFormat, target, surface.DrawnWidth,
                                     surface.DrawnHeight),
-                      EnsureTexture(surface.Index, IndexFormat, target, surface.DrawnWidth, surface.DrawnHeight),
-                      EnsureTexture(surface.Copy, IndexFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, surface.DrawnWidth,
-                                    surface.DrawnHeight)})
+                      EnsureTexture(surface.Copy, MCHolder::GpuTargets, IndexFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                                    surface.DrawnWidth, surface.DrawnHeight)})
     {
         if (!made)
         {
@@ -7254,8 +7278,9 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
     {
         if (_Strip.Handle == nullptr || _Strip.Height < run.StripRows)
         {
-            if (auto made = EnsureTexture(_Strip, SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                                          StripWidth, std::bit_ceil(std::max(run.StripRows, 64u)));
+            if (auto made = EnsureTexture(_Strip, MCHolder::GpuOther, SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+                                          SDL_GPU_TEXTUREUSAGE_SAMPLER, StripWidth,
+                                          std::bit_ceil(std::max(run.StripRows, 64u)));
                 !made)
             {
                 return made;
@@ -7308,7 +7333,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         SDL_GPUBufferCreateInfo info{};
         info.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
         info.size = static_cast<uint32_t>(drawBytes + drawBytes / 2);
-        _DrawBuffer = MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &info), MCGpuRelease{_Device});
+        _DrawBuffer = MCGpuCounted::MakeBuffer(_Device, info, MCHolder::GpuOther);
         _DrawBufferSize = _DrawBuffer != nullptr ? info.size : 0;
 
         if (_DrawBuffer == nullptr)
@@ -7631,8 +7656,9 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             const uint32_t height = surface.Target.Height;
 
             for (auto made :
-                 {EnsureTexture(kept.Colors[into], SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, usage, width, height),
-                  EnsureTexture(kept.Indices[into], IndexFormat, usage, width, height)})
+                 {EnsureTexture(kept.Colors[into], MCHolder::GpuTargets, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, usage,
+                                width, height),
+                  EnsureTexture(kept.Indices[into], MCHolder::GpuTargets, IndexFormat, usage, width, height)})
             {
                 if (!made)
                 {
@@ -7779,8 +7805,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                 constexpr SDL_GPUTextureUsageFlags usage =
                     SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
 
-                if (auto made =
-                        EnsureTexture(surface.Glints, GlintFormat, usage, surface.Target.Width, surface.Target.Height);
+                if (auto made = EnsureTexture(surface.Glints, MCHolder::GpuTargets, GlintFormat, usage,
+                                              surface.Target.Width, surface.Target.Height);
                     !made)
                 {
                     return made;
@@ -7995,6 +8021,7 @@ void MCVulkanRenderer::OnTextureReleased(MCTexture& texture)
 
     if (state.Copy.Handle != nullptr)
     {
+        MCGpuCounted::Retire(state.Copy.Handle);
         _Run->Retired.push_back(state.Copy);
     }
 

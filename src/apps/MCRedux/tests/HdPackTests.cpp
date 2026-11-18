@@ -34,6 +34,7 @@
 #include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteTree.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCMemoryLedger.h"
 #include "platform/MCRegisteredBlock.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSharpPictures.h"
@@ -1097,6 +1098,53 @@ TEST_CASE("hd art: a version 2 stream packed against a dictionary opens with the
 }
 
 /// <summary>
+/// The unpacked version 2 streams kept for their neighbours' reads stay within MCFastFile::KeepStreamsUpTo, the latest
+/// kept whatever its size, and the plan keeps from KeptStreamsLeast to KeptStreamsMost of them: the least while memory
+/// is short.
+/// </summary>
+TEST_CASE("hd art: the unpacked streams kept stay within the plan's share")
+{
+    const ScratchFolder scratch("kept-streams");
+    constexpr size_t StreamBytes = 4096;
+    const std::vector<ArchiveEntry> entries = {Raw("k\\0.hdf", std::vector<uint8_t>(StreamBytes, 1)),
+                                               Raw("k\\1.hdf", std::vector<uint8_t>(StreamBytes, 2))};
+    const std::filesystem::path path = scratch.Path() / "k.hda";
+    WriteBytes(
+        path, BuildVersion2Streams({Version2Stream{.Entries = {entries[0]}}, Version2Stream{.Entries = {entries[1]}}}));
+    const auto archive = MCFastFile::Create(MCFileSystem::ToUtf8(path));
+    REQUIRE(archive.has_value());
+    const size_t before = MCFastFile::KeptStreamsUpTo();
+    MCFastFile::KeepStreamsUpTo(MCFastFile::KeptStreamsMost);
+    const size_t earlier = MCFastFile::KeptStreamBytes();
+    std::vector<int32_t> indices;
+
+    for (const ArchiveEntry& entry : entries)
+    {
+        MCTest::Scope scope(entry.Name);
+        const std::optional<int32_t> index = (*archive)->Find(entry.Name);
+        REQUIRE(index.has_value());
+        const auto bytes = (*archive)->Unpack(*index, (*archive)->ReadStored(*index));
+        REQUIRE(bytes.has_value());
+        CHECK(*bytes == entry.Stored);
+        indices.push_back(*index);
+    }
+
+    CHECK_EQ(MCFastFile::KeptStreamBytes(), earlier + 2 * StreamBytes);
+    MCFastFile::KeepStreamsUpTo(1);
+    CHECK_EQ(MCFastFile::KeptStreamsUpTo(), size_t{1});
+    CHECK_EQ(MCFastFile::KeptStreamBytes(), StreamBytes);
+    CHECK((*archive)->KeptStreamOf(indices[0]) == nullptr);
+    CHECK((*archive)->KeptStreamOf(indices[1]) != nullptr);
+
+    MCHdArt::NextFrame(true);
+    CHECK_EQ(MCFastFile::KeptStreamsUpTo(), MCFastFile::KeptStreamsLeast);
+    MCHdArt::NextFrame(false);
+    CHECK(MCFastFile::KeptStreamsUpTo() >= MCFastFile::KeptStreamsLeast);
+    CHECK(MCFastFile::KeptStreamsUpTo() <= MCFastFile::KeptStreamsMost);
+    MCFastFile::KeepStreamsUpTo(before);
+}
+
+/// <summary>
 /// The pack's dicts.hdd is read with it: a version 2 ground tile packed against its dictionary 1 is drawn; with no
 /// dicts.hdd, a damaged one, or another dictionary under that number, it falls back to the original (no HD frame).
 /// </summary>
@@ -1127,7 +1175,7 @@ TEST_CASE("hd art: a pack's tiles packed against its dictionary are drawn, and f
     const auto decoded = MCHdArt::DecodeHdf(file, TileWidth, TileHeight);
     REQUIRE(decoded.has_value());
     CHECK_EQ(found->Width, decoded->Width);
-    CHECK(found->Colors == decoded->Colors);
+    CHECK(std::ranges::equal(MCHdArt::ColorsOf(*found), decoded->Colors));
     CHECK(found->Indices == decoded->Indices);
 
     WriteBytes(dictionaries, DictionariesFile({{1, DictionaryTwo}}));
@@ -1259,10 +1307,12 @@ TEST_CASE("hd art: a pack in a folder named outside the ANSI code page is read")
 
 /// <summary>
 /// A frame dropped to keep within the budget is read again when next drawn, with the Id it had (the GPU's copy of it
-/// stays good), while another frame has another.
+/// stays good), while another frame has another. The ledger counts a frame dropped while something else holds it as let
+/// go, until that lets go of it too.
 /// </summary>
-TEST_CASE("hd art: a frame read again keeps its Id")
+TEST_CASE("hd art: a frame read again keeps its Id, and one dropped while held counts as let go until it goes")
 {
+    using MCMemoryLedger::MCHolder;
     constexpr int32_t Width = 8;
     constexpr int32_t Height = 4;
     MCHdArt::Frame frame;
@@ -1284,25 +1334,131 @@ TEST_CASE("hd art: a frame read again keeps its Id")
     const int previous = GHdArt;
     GHdArt = 1;
     MCHdArt::SetPackFolder(pack);
+    MCHdArt::NextFrame(false);
+    const int64_t letGoBefore = MCMemoryLedger::Of(MCHolder::HdFramesLetGo).Payload;
 
     // Room for one frame: each one read drops the other.
     MCHdArt::SetCacheBudget(1);
-    const std::shared_ptr<const MCHdArt::Frame> first = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    std::shared_ptr<const MCHdArt::Frame> first = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
     REQUIRE(first != nullptr);
     const uint64_t firstId = first->Id;
-    const std::shared_ptr<const MCHdArt::Frame> second = MCHdArt::FindTerrainTile(tiles[1], Width, Height);
+    std::shared_ptr<const MCHdArt::Frame> second = MCHdArt::FindTerrainTile(tiles[1], Width, Height);
     REQUIRE(second != nullptr);
     CHECK(second->Id != firstId);
     const size_t read = MCHdArt::FramesRead();
-    const std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
     REQUIRE(again != nullptr);
     CHECK_EQ(MCHdArt::FramesRead(), read + 1);
     CHECK(again != first);
     CHECK_EQ(again->Id, firstId);
 
+    // As the next frame starts, the ledger: the frame kept (its record and its colours apart), its blocks as the
+    // allocator rounds them up; the two records dropped while this test held them, let go.
+    MCHdArt::NextFrame(false);
+    const MCMemoryLedger::MCFigures kept = MCMemoryLedger::Of(MCHolder::HdFrames);
+    const MCMemoryLedger::MCFigures colors = MCMemoryLedger::Of(MCHolder::HdColors);
+    CHECK_EQ(kept.Payload + colors.Payload, static_cast<int64_t>(MCHdArt::CachedBytes()));
+    CHECK(kept.Allocated >= kept.Payload);
+    CHECK(colors.Allocated >= colors.Payload);
+    const MCMemoryLedger::MCFigures letGo = MCMemoryLedger::Of(MCHolder::HdFramesLetGo);
+    CHECK_EQ(letGo.Payload - letGoBefore, static_cast<int64_t>(first->Bytes() + second->Bytes()));
+    CHECK(letGo.Allocated >= letGo.Payload);
+
+    // Let go of here too: gone from the ledger.
+    first.reset();
+    second.reset();
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdFramesLetGo).Payload, letGoBefore);
+
     MCHdArt::SetCacheBudget(0);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
+    again.reset();
+    MCHdArt::NextFrame(false);
+    std::filesystem::remove_all(pack);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's frame record and its one copy of a frame's colours): a frame the cache hands out is its
+/// record, its colours kept apart until the GPU has its picture (MCHdArt::ColorsUploaded); then the cache lets go of
+/// them, and keeps the record however little room it has, or however short the system is, until the GPU lets go of
+/// the picture, so a draw of it reads nothing. Asked for again, its colours are read again, the same, its record kept.
+/// </summary>
+TEST_CASE("hd art: a frame's colours go once the GPU has its picture, and its record stays while the picture does")
+{
+    using MCMemoryLedger::MCHolder;
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    MCHdArt::Frame frame;
+    frame.Width = Width;
+    frame.Height = Height;
+    frame.Scale = 1;
+    frame.Colors = SpriteLike(frame.Width, frame.Height);
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, MCHdArt::HasIndex);
+    const std::vector<uint8_t> file = MCHdArt::EncodeHdf(frame);
+    const auto stored = MCHdArt::DecodeHdf(file, Width, Height);
+    REQUIRE(stored.has_value());
+    const std::array<std::vector<uint8_t>, 2> tiles = {std::vector<uint8_t>{5, 6}, std::vector<uint8_t>{7, 8}};
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_frame_record_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack);
+    const std::vector<uint8_t> archive =
+        BuildArchive({{MCHdArt::TerrainTileName(tiles[0]) + ".hdf", file, file.size(), std::nullopt},
+                      {MCHdArt::TerrainTileName(tiles[1]) + ".hdf", file, file.size(), std::nullopt}});
+    std::ofstream(pack / "terrain.hda", std::ios::binary)
+        .write(reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size()));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+    MCHdArt::NextFrame(false);
+
+    // The record holds no colours: the cache keeps them apart, as stored, and counts them apart.
+    const std::shared_ptr<const MCHdArt::Frame> first = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(first != nullptr);
+    CHECK(first->Colors.empty());
+    CHECK(std::ranges::equal(MCHdArt::ColorsOf(*first), stored->Colors));
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdColors).Payload, static_cast<int64_t>(stored->Colors.size()));
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdFrames).Payload, static_cast<int64_t>(first->Bytes()));
+
+    // The GPU takes them: the cache lets go of them.
+    MCHdArt::ColorsUploaded(*first);
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdColors).Payload, 0);
+    CHECK_EQ(MCHdArt::CachedBytes(), first->Bytes());
+
+    // Room for one frame, then the system short: the cache lets go of all it can, but not the record of the frame on
+    // the GPU, whose draws read nothing.
+    MCHdArt::SetCacheBudget(1);
+    REQUIRE(MCHdArt::FindTerrainTile(tiles[1], Width, Height) != nullptr);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(true);
+    const size_t read = MCHdArt::FramesRead();
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height) == first);
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+
+    // Its colours asked for again (the GPU let go of its picture, or never kept it): read again, the same.
+    const size_t readAgain = MCHdArt::ColorsReadAgain();
+    CHECK(std::ranges::equal(MCHdArt::ColorsOf(*first), stored->Colors));
+    CHECK_EQ(MCHdArt::ColorsReadAgain(), readAgain + 1);
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height) == first);
+
+    // Once the GPU lets go of the picture, so may the cache: the next draw reads the frame again, numbered as before.
+    MCHdArt::PictureDropped(first->Id);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(true);
+    const std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(again != nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+    CHECK(again != first);
+    CHECK_EQ(again->Id, first->Id);
+
+    MCHdArt::SetCacheBudget(0);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+    MCHdArt::NextFrame(false);
     std::filesystem::remove_all(pack);
 }
 
@@ -1385,12 +1541,16 @@ TEST_CASE(
     CHECK_EQ(MCHdArt::CachedBytes(), Frames * frameBytes);
     CHECK_EQ(frameDrawn(), Frames * frameBytes);
 
-    // Short: the held frames leave the cache, freeing nothing, and 16 only it held go besides them; then 16 a frame, then
-    // only those drawn, however long it lasts.
+    // Short: the held frames leave the cache, freeing their colours (the cache's own: their records live on with their
+    // holders), and as many only it held go besides them as make 64 MB with those; then 16 a frame, then only those
+    // drawn, however long it lasts.
+    const size_t heldFreed = Held * frame.Colors.size();
+    REQUIRE(heldFreed < MCMemoryRoom::TrimmedBytesPerFrame);
+    const size_t goneBesides = (MCMemoryRoom::TrimmedBytesPerFrame - heldFreed + frameBytes - 1) / frameBytes;
     system->IsShort = true;
-    CHECK_EQ(frameDrawn(), (Frames - Held - GoneAFrame) * frameBytes);
+    CHECK_EQ(frameDrawn(), (Frames - Held - goneBesides) * frameBytes);
     held.clear();
-    CHECK_EQ(frameDrawn(), (Frames - Held - 2 * GoneAFrame) * frameBytes);
+    CHECK_EQ(frameDrawn(), (Frames - Held - goneBesides - GoneAFrame) * frameBytes);
     CHECK_EQ(frameDrawn(), Drawn * frameBytes);
     CHECK_EQ(frameDrawn(), Drawn * frameBytes);
     const size_t read = MCHdArt::FramesRead();
@@ -1597,9 +1757,11 @@ TEST_CASE("hd art: the ground's kept frames go once it's up, and come back with 
     const uint64_t groundId = ground->Id;
     REQUIRE(MCHdArt::FindOverlay(overlay, Width, Height) != nullptr);
     const size_t both = MCHdArt::CachedBytes();
+    // The ground's record and its colours, which the cache keeps apart.
+    const size_t groundBytes = ground->Bytes() + MCHdArt::ColorsOf(*ground).size();
 
     MCHdArt::DropGround();
-    CHECK_EQ(MCHdArt::CachedBytes(), both - ground->Bytes());
+    CHECK_EQ(MCHdArt::CachedBytes(), both - groundBytes);
     const size_t read = MCHdArt::FramesRead();
     REQUIRE(MCHdArt::FindOverlay(overlay, Width, Height) != nullptr);
     CHECK_EQ(MCHdArt::FramesRead(), read);
@@ -1884,12 +2046,17 @@ namespace
         return MCHdArt::FindShape(AheadTable, key.first, AheadWidth, AheadHeight, key.second, AheadFrames);
     }
 
-    /// <summary>Whether two frames are the same but for their Ids.</summary>
+    /// <summary>
+    /// Whether two frames are the same but for their Ids: their colours their own or, a frame the cache holds, the
+    /// cache's (MCHdArt::ColorsOf).
+    /// </summary>
     bool SameFrame(const MCHdArt::Frame& a, const MCHdArt::Frame& b)
     {
+        const std::span<const uint8_t> aColors = MCHdArt::ColorsOf(a);
+        const std::vector<uint8_t> colors(aColors.begin(), aColors.end());
         return a.Width == b.Width && a.Height == b.Height && a.Scale == b.Scale && a.Format == b.Format &&
-               a.Blended == b.Blended && a.PaintedShadow == b.PaintedShadow && a.Colors == b.Colors &&
-               a.Indices == b.Indices;
+               a.Blended == b.Blended && a.PaintedShadow == b.PaintedShadow &&
+               std::ranges::equal(colors, MCHdArt::ColorsOf(b)) && a.Indices == b.Indices;
     }
 
     /// <summary>The HD art's readers read as <c>settings</c> says while this lives, as they read before once it ends.</summary>
@@ -1996,6 +2163,10 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     CHECK(again != second);
     CHECK_EQ(again->Id, id);
     MCHdArt::SetCacheBudget(0);
+    // As read, with its colours (the cache's, which it lets go of as the pack is set again).
+    MCHdArt::Frame againWhole = *again;
+    const std::span<const uint8_t> againColors = MCHdArt::ColorsOf(*again);
+    againWhole.Colors.assign(againColors.begin(), againColors.end());
 
     // Drawn first, with the pack set again, frame 1 is read as drawn: the frame read ahead. Setting the pack closed
     // both handles, and the reader still opened its own once.
@@ -2005,7 +2176,7 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
     const size_t fresh = MCHdArt::FramesReadAhead();
     const std::shared_ptr<const MCHdArt::Frame> first = drawn({1, 0});
     CHECK_EQ(MCHdArt::FramesReadAhead(), fresh);
-    CHECK(SameFrame(*first, *again));
+    CHECK(SameFrame(*first, againWhole));
 
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
@@ -2220,51 +2391,66 @@ TEST_CASE("hd art: a packet read ahead with its turn middles has them found at t
 /// <summary>
 /// Port-only (SPEC-first-use.md: the camera's surroundings): a packet read ahead without its frames' count (an object's,
 /// whose shape isn't loaded) has every frame its archive holds read with its in-betweens, past a number the packet
-/// skips (an empty frame of the original's), and each is found at its draw without a read.
+/// skips (an empty frame of the original's), and each is found at its draw without a read; in a version 2 archive (its
+/// frames counted by their keys) as in today's, and asked again, counted as before.
 /// </summary>
 TEST_CASE("hd art: a packet read ahead without its count reads every frame its archive holds, past a number skipped")
 {
     constexpr int32_t Skipped = 2;
-    const ScratchFolder scratch("packet-ahead-count");
-    std::vector<ArchiveEntry> entries;
-
-    for (const AheadKey& key : AheadKeys())
-    {
-        if (key.first != Skipped)
-        {
-            entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
-        }
-    }
-
-    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
-    std::filesystem::create_directories((scratch.Path() / folder).parent_path());
-    WriteBytes(std::filesystem::path(scratch.Path() / folder).concat(".hda"), BuildArchive(entries));
     const int previous = GHdArt;
     GHdArt = 1;
-    MCHdArt::SetPackFolder(scratch.Path());
 
-    const size_t ahead = MCHdArt::FramesReadAhead();
-    MCHdArt::ReadPacketAhead(folder);
-    MCHdArt::WaitForReadAhead();
-    MCHdArt::KeepReadAhead();
-    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>((AheadFrames - 1) * AheadSteps));
-    const size_t read = MCHdArt::FramesRead();
-
-    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    for (const bool version2 : {false, true})
     {
-        for (int32_t step = 0; step < AheadSteps && frame != Skipped; ++step)
+        MCTest::Scope scope(version2 ? "version 2" : "version 1");
+        const ScratchFolder scratch(version2 ? "packet-ahead-count-v2" : "packet-ahead-count");
+        std::vector<ArchiveEntry> entries;
+
+        for (const AheadKey& key : AheadKeys())
         {
-            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
-            const std::shared_ptr<const MCHdArt::Frame> found =
-                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
-            REQUIRE(found != nullptr);
-            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+            if (key.first != Skipped)
+            {
+                entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
+            }
         }
+
+        const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+        std::filesystem::create_directories((scratch.Path() / folder).parent_path());
+        WriteBytes(std::filesystem::path(scratch.Path() / folder).concat(".hda"),
+                   version2 ? BuildVersion2Archive(entries) : BuildArchive(entries));
+        MCHdArt::SetPackFolder(scratch.Path());
+
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::ReadPacketAhead(folder);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        const size_t counted = ahead + static_cast<size_t>((AheadFrames - 1) * AheadSteps);
+        CHECK_EQ(MCHdArt::FramesReadAhead(), counted);
+        const size_t read = MCHdArt::FramesRead();
+
+        for (int32_t frame = 0; frame < AheadFrames; ++frame)
+        {
+            for (int32_t step = 0; step < AheadSteps && frame != Skipped; ++step)
+            {
+                MCTest::Scope frameScope(std::format("frame {}", AheadName({frame, step})));
+                const std::shared_ptr<const MCHdArt::Frame> found =
+                    MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+                REQUIRE(found != nullptr);
+                CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+            }
+        }
+
+        CHECK_EQ(MCHdArt::FramesRead(), read);
+
+        // Asked again (its count kept from the first ask): every frame is kept, so none is read again.
+        MCHdArt::ReadPacketAhead(folder);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), counted);
+        MCHdArt::SetPackFolder({});
     }
 
-    CHECK_EQ(MCHdArt::FramesRead(), read);
     GHdArt = previous;
-    MCHdArt::SetPackFolder({});
 }
 
 /// <summary>
@@ -3705,15 +3891,18 @@ TEST_CASE("hd art: the hold keeps a mission's packet and heads streams as stored
 }
 
 /// <summary>
-/// Port-only (SPEC-pack-v2.md's Memory): the machine's memory decides the hold (MCHdArt::HoldWanted): off below 16 GB's
-/// tier as the system reports it (MCHdArt::HoldLeastMemory), on from it; the command line's <c>-hdhold on|off</c> (the
-/// tests' and benchmarks') overrides it, and a value it can't take leaves it as it was.
+/// Port-only (SPEC-memory.md's fill): the plan decides how much the hold keeps (MCHdArt::HoldRoom): every byte that fits
+/// the HD art's room less the working set's, so an 8 GB machine holds a mission whole and one whose room the game itself
+/// takes holds none (whatever card was read last); the command line's <c>-hdhold off</c> holds nothing and
+/// <c>-hdhold on</c> (the tests' and benchmarks') every byte whatever the room, and a value it can't take leaves it as
+/// it was.
 /// </summary>
-TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 GB and with -hdhold on")
+TEST_CASE("hd art: the hold keeps what fits the plan's room, nothing with -hdhold off, everything with -hdhold on")
 {
     constexpr uint64_t EightGb = uint64_t{8} << 30;
     constexpr uint64_t ThirtyTwoGb = uint64_t{32} << 30;
-    constexpr uint64_t Mib = uint64_t{1} << 20;
+    // Half of it is the game itself, so the room left for the hold is none, on a card of its own or sharing the memory.
+    constexpr uint64_t NoRoom = 2 * MCMemoryRoom::GameItselfBytes;
     const ReaderScope readers({.Readers = 1});
     const auto system = std::make_shared<MCFakeMemorySystem>();
     const MCFakeMemoryScope memory(system);
@@ -3728,14 +3917,14 @@ TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 
         std::string_view Name;
         uint64_t Total = 0;
         std::string_view Line;
+        bool Wanted = false;
         bool Held = false;
     };
 
-    for (const Case& test : {Case{"8 GB", EightGb, {}, false},
-                             Case{"a MB short of 16 GB's tier", MCHdArt::HoldLeastMemory - Mib, {}, false},
-                             Case{"16 GB's tier", MCHdArt::HoldLeastMemory, {}, true},
-                             Case{"32 GB with -hdhold off", ThirtyTwoGb, "-hdhold off", false},
-                             Case{"8 GB with -hdhold on", EightGb, "-hdhold ON", true}})
+    for (const Case& test :
+         {Case{"8 GB", EightGb, {}, true, true}, Case{"a room the game itself takes", NoRoom, {}, true, false},
+          Case{"32 GB with -hdhold off", ThirtyTwoGb, "-hdhold off", false, false},
+          Case{"no room with -hdhold on", NoRoom, "-hdhold ON", true, true}})
     {
         MCTest::Scope scope{std::string(test.Name)};
         system->Total = test.Total;
@@ -3746,7 +3935,8 @@ TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 
             ParseCommandLine(test.Line);
         }
 
-        CHECK_EQ(MCHdArt::HoldWanted(), test.Held);
+        CHECK_EQ(MCHdArt::HoldWanted(), test.Wanted);
+        CHECK_EQ(MCHdArt::HoldRoom().has_value(), test.Line != "-hdhold ON");
         HoldAndWait();
         CHECK_EQ(MCHdArt::HeldBytes(), test.Held ? pack.HeldBytes() : 0);
         MCHdArt::LetGoHold();
@@ -3760,8 +3950,9 @@ TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 
 
 /// <summary>
 /// Port-only (SPEC-pack-v2.md's Memory): the hold is let go of whole when memory goes short (MCHdArt::NextFrame), and
-/// holds nothing more that mission (an archive opened after isn't held) until the next mission's starts it again; at a
-/// mission's end (MCHdArt::LetGoHold, MCMission::EndScenario's); and when the pack is set.
+/// holds nothing more that mission (an archive opened after isn't held) until the next mission's starts it again, its
+/// fill stopped first (a run being read keeps nothing); at a mission's end (MCHdArt::LetGoHold, MCMission::EndScenario's);
+/// and when the pack is set.
 /// </summary>
 TEST_CASE("hd art: the hold is let go of when memory goes short, at a mission's end and when the pack is set")
 {
@@ -3797,11 +3988,159 @@ TEST_CASE("hd art: the hold is let go of when memory goes short, at a mission's 
     }
 
     {
+        // SPEC-memory.md's first step when memory is short: the fill stops, even with nothing held yet to give back,
+        // and the run a reader is reading keeps nothing.
+        MCTest::Scope scope("memory short while the fill reads");
+        MCHdArt::LetGoHold();
+        MCHdArt::HoldTakenRuns(true);
+        MCHdArt::StartHold();
+        MCHdArt::WaitForHeldRun();
+        MCHdArt::NextFrame(true);
+        MCHdArt::HoldTakenRuns(false);
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    }
+
+    {
         MCTest::Scope scope("the pack set");
         MCHdArt::SetPackFolder(pack.Folder());
         CHECK_EQ(MCHdArt::HeldBytes(), 0u);
     }
 
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's fill): the hold starts with a mission's load (MCHdArt::StartLoadFill), holding every
+/// archive the load opens, and the load ends once it has read them (MCHdArt::FinishLoadFill, the bar shown as it
+/// waits and once more, whole): the bar's last LoadFillBarPercent is the hold's share read, none before the load hands
+/// it anything, and the bar never goes back as the load hands it more; the bar as the load says once it's done.
+/// </summary>
+TEST_CASE("hd art: the load's fill holds what the load opens before the load ends, the bar's last quarter the hold's")
+{
+    constexpr int32_t Part = 40;
+    constexpr int32_t Whole = 100;
+    constexpr int32_t Steps = Whole - MCHdArt::LoadFillBarPercent;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet, 1000}, {StreamKind::Tiles}};
+    const HoldPack pack("load-fill", pieces);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part);
+
+    MCHdArt::StartLoadFill();
+    CHECK_EQ(MCHdArt::LoadFillShare(), 0.0);
+    CHECK_EQ(MCHdArt::LoadBarPercent(0), 0);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part * Steps / Whole);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Whole), Steps);
+    pack.Open();
+    // The load's steps done and its archives handed, their share not all read: the bar stays where it was.
+    CHECK(MCHdArt::LoadBarPercent(Part) >= Steps);
+    int32_t shown = 0;
+    MCHdArt::FinishLoadFill([&shown] { ++shown; });
+    CHECK(shown >= 1);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    CHECK_EQ(MCHdArt::LoadFillShare(), 1.0);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's fill): today's pack (version 1) is held too: an archive of a shape's numbered frames is
+/// kept as stored, its entries in the order they lie, and with its file cut to nothing every frame is drawn as made, read
+/// from the hold (none of the frames kept, MCHdArt::SetCacheBudget).
+/// </summary>
+TEST_CASE("hd art: the hold keeps a version 1 archive's numbered frames as stored, and they're drawn without its file")
+{
+    const ReaderScope readers({.Readers = 1, .Hold = true});
+    const ScratchFolder scratch("hold-version-1");
+    std::vector<ArchiveEntry> entries;
+    size_t stored = 0;
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
+        stored += entries.back().Stored.size();
+    }
+
+    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+    const std::filesystem::path file = std::filesystem::path(scratch.Path() / folder).concat(".hda");
+    std::filesystem::create_directories(file.parent_path());
+    WriteBytes(file, BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    MCHdArt::StartHold();
+    REQUIRE(MCHdArt::FindShape(AheadTable, 0, AheadWidth, AheadHeight) != nullptr);
+    MCHdArt::WaitForHold();
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::HeldBytes(), stored);
+
+    std::filesystem::resize_file(file, 0);
+    MCHdArt::SetCacheBudget(1);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(false);
+    const size_t reads = MCHdArt::ReaderReads();
+
+    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::ReaderReads(), reads);
+    MCHdArt::SetCacheBudget(0);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan): the hold gives back what's past its share of the art's room as the room shrinks (a
+/// frame's MCHdArt::NextFrame, MCMemoryRoom::TrimmedBytesPerFrame at most), and holds nothing more that mission (an
+/// archive opened after isn't held) until the next mission's starts it again.
+/// </summary>
+TEST_CASE("hd art: the hold gives back what's past its share as the room shrinks, then holds no more that mission")
+{
+    constexpr uint64_t EightGb = uint64_t{8} << 30;
+    // Half of it is the game itself, so the art's room is none.
+    constexpr uint64_t NoRoom = 2 * MCMemoryRoom::GameItselfBytes;
+    constexpr size_t Archives = 2;
+    const ReaderScope readers({.Readers = 1});
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    const MCFakeMemoryScope memory(system);
+    system->Total = EightGb;
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("hold-give-back", pieces);
+    pack.Open();
+    HoldAndWait();
+    REQUIRE_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+
+    system->Total = NoRoom;
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    system->Total = EightGb;
+    pack.Open(true);
+    MCHdArt::WaitForHold();
+    CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+
+    HoldAndWait();
+    CHECK_EQ(MCHdArt::HeldBytes(), Archives * pack.HeldBytes());
+    MCHdArt::LetGoHold();
     GHdArt = previous;
 }
 
@@ -5053,18 +5392,16 @@ namespace
 
         found.Matched = pairs.size();
         found.Extra = static_cast<size_t>((*marked)->GetNumFiles()) - pairs.size();
-        const std::span<const MCFileEntry> streams = (*marked)->GetEntries();
-        std::ranges::sort(
-            pairs, [&](const auto& a, const auto& b)
-            { return streams[static_cast<size_t>(a.first)].Offset < streams[static_cast<size_t>(b.first)].Offset; });
+        const auto streamAt = [&marked](int32_t j) { return (*marked)->EntryAt(j).Offset; };
+        std::ranges::sort(pairs, [&](const auto& a, const auto& b) { return streamAt(a.first) < streamAt(b.first); });
         int32_t storedAt = -1;
         std::vector<uint8_t> stored;
 
         for (const auto& [j, i] : pairs)
         {
-            if (streams[static_cast<size_t>(j)].Offset != storedAt)
+            if (streamAt(j) != storedAt)
             {
-                storedAt = streams[static_cast<size_t>(j)].Offset;
+                storedAt = streamAt(j);
                 stored = (*marked)->ReadStored(j);
             }
 

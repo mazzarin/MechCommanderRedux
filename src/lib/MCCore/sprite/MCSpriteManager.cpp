@@ -10,6 +10,7 @@
 #include "platform/MCFrameLog.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCShapeFile.h"
 
 int Use90PixelSprite = 0;
 
@@ -90,8 +91,8 @@ namespace
             pak.SeekPacket(i);
             MCRegisteredBlock& shadow =
                 shadows.emplace_back(static_cast<size_t>(pak.GetPacketSize()), MCDataKind::Shapes);
-            pak.ReadPacket(i, shadow.Bytes());
-            MCHdArt::NoteOriginalRead("a mech shadow's packet read from its PAK", std::format("packet {}", i));
+            // Port-only: with HD art's numbered folders drawn, the pack's copy (MCShapeFile).
+            MCShapeFile::ReadPacket(pak, i, shadow.Bytes());
         }
 
         return shadows;

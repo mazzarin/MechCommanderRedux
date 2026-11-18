@@ -3,6 +3,7 @@
 #include "MCTest.h"
 #include "MCTestShapes.h"
 #include "TestGame.h"
+#include "engine/MCCraterManager.h"
 #include "fakes/MCFakeMemorySystem.h"
 #include "gui/MCGuiStartup.h"
 #include "lib/MCFastFile.h"
@@ -11,6 +12,7 @@
 #include "lib/MCLz.h"
 #include "lib/MCPacketFile.h"
 #include "lib/MCZstd.h"
+#include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
 #include "object/MCMover.h"
@@ -4990,4 +4992,126 @@ TEST_CASE("hd art: a shape file's loader takes the pack's copy of the original, 
 
     GHdArt = 0;
     CHECK(ReadThroughShapeFile(ShapePath) == game);
+}
+
+/// <summary>
+/// Port-only: with HD art's numbered folders drawn, the craters' and footprints' PAK (a mission's CraterFile) is read
+/// through MCShapeFile: each packet the pack's copy (shapes.hda's ShapeFileFolder record), reading nothing of the game's;
+/// a packet the pack lacks is read from the PAK, which the guard notes; HD art off reads the PAK as before.
+/// </summary>
+TEST_CASE("hd art: the craters' and footprints' packets come from the pack's copy of their PAK")
+{
+    constexpr std::string_view CraterName = "MapsCrater";
+    const std::string pakPath = GamePath(SpritePath, CraterName, ".pak");
+    const std::vector<std::vector<uint8_t>> packets = {{10, 11, 12}, {20, 21, 22, 23}, {40, 41}};
+    // The pack's copies of packets 0 and 1, of their sizes, told apart by their bytes; packet 2 the pack lacks.
+    const std::vector<std::vector<uint8_t>> packCopies = {{50, 51, 52}, {60, 61, 62, 63}};
+    constexpr int32_t NumCraters = 5;
+    const PutFiles put;
+    MCFileSystem::PutImage(pakPath, [&packets] { return std::optional(PacketFileBytes(packets)); });
+    std::map<std::string, std::vector<uint8_t>> facts;
+
+    for (size_t packet = 0; packet < packCopies.size(); ++packet)
+    {
+        facts[ShapesArchiveFolder(pakPath, static_cast<int32_t>(packet))] =
+            FactsRecord(MCPackRecords::Type::ShapeTable, packCopies[packet]);
+    }
+
+    const ScratchFolder scratch("crater-files");
+    WriteBytes(scratch.Path() / "shapes.hda", BuildVersion2Archive({}, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const PackOn on(scratch.Path());
+    REQUIRE(MCHdArt::NumberedFolders());
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    {
+        const std::expected<std::unique_ptr<MCCraterManager>, std::string> craters =
+            MCCraterManager::Create(NumCraters, CraterName);
+        REQUIRE(craters.has_value());
+        REQUIRE_EQ((*craters)->ShapeCount(), static_cast<int32_t>(packets.size()));
+        CHECK((*craters)->Shapes()[0] == packCopies[0]);
+        CHECK((*craters)->Shapes()[1] == packCopies[1]);
+        CHECK((*craters)->Shapes()[2] == packets[2]);
+        CHECK_EQ(GuardedCount(MCShapeFile::PacketRead), 1);
+    }
+
+    GHdArt = 0;
+    const std::expected<std::unique_ptr<MCCraterManager>, std::string> original =
+        MCCraterManager::Create(NumCraters, CraterName);
+    REQUIRE(original.has_value());
+
+    for (size_t packet = 0; packet < packets.size(); ++packet)
+    {
+        MCTest::Scope scope(std::format("packet {}", packet));
+        CHECK(original.value()->Shapes()[packet] == packets[packet]);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-guard-mission &lt;n&gt; --hd-guard-pack &lt;pack&gt;</c> starts mission <c>n</c> with HD art on and the
+/// version 2 pack at <c>pack</c> from the boot (as a player's preferences have it), and the guard of test runs on
+/// (MCHdArt::GuardOriginalReads, the app's <c>-hdguard</c>), plays <c>--hd-guard-frames &lt;n&gt;</c> frames (default
+/// GuardMissionFrames) and lists each kind of original art the load and the play read, with its first examples; it
+/// fails on any. One mission a run (the boot's rule): a survey of every mission runs it once a mission.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's load and play read with a version 2 "
+                   "pack")
+{
+    const std::optional<std::string_view> mission = MCTest::Option("hd-guard-mission");
+    const std::optional<std::string_view> pack = MCTest::Option("hd-guard-pack");
+
+    if (!mission.has_value() || !pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    // Ten seconds at the game's 15 frames a second: the load, the first moves and the first shots' effects.
+    constexpr int32_t GuardMissionFrames = 150;
+    constexpr float GuardFrameSeconds = 1.0f / 15.0f;
+    int32_t segment = 0;
+    int32_t frames = GuardMissionFrames;
+    REQUIRE(std::from_chars(mission->data(), mission->data() + mission->size(), segment).ec == std::errc());
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-guard-frames"); given.has_value())
+    {
+        REQUIRE(std::from_chars(given->data(), given->data() + given->size(), frames).ec == std::errc());
+    }
+
+    // The folder made absolute before the game starts: the game works in the install's folder.
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
+    MCTestGame::BootOptions.Started = [&packFolder]
+    {
+        GHdArt = 1;
+        MCHdArt::SetPackFolder(packFolder);
+        MCHdArt::GuardOriginalReads(true);
+    };
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(segment));
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    for (int32_t frame = 0; frame < frames; ++frame)
+    {
+        MCTestGame::RunFrame(GuardFrameSeconds);
+    }
+
+    const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
+    REQUIRE(reads.has_value());
+    size_t total = 0;
+
+    for (const MCHdArt::GuardedRead& read : *reads)
+    {
+        total += read.Count;
+        std::cout << std::format("  mission {}: {} x {}\n", segment, read.Count, read.Kind);
+
+        for (const std::string& example : read.Examples)
+        {
+            std::cout << std::format("    {}\n", example);
+        }
+    }
+
+    std::cout << std::format("  mission {}: {} reads of the original's art in {} frames\n", segment, total, frames);
+    MCHdArt::GuardOriginalReads(false);
+    CHECK_EQ(total, size_t{0});
 }

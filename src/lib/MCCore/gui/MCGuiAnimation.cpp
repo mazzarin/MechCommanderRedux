@@ -4,6 +4,7 @@
 #include "lib/MCFile.h"
 #include "main/MCGamePaths.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCShapeFile.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -38,7 +39,8 @@ auto MCGuiAnimation::Unload() -> void
 auto MCGuiAnimation::Load(std::string_view fileName) -> int32_t
 {
     Unload();
-    MCFile file;
+    // Port-only: with HD art's numbered folders drawn, the pack's copy of the shape file (MCShapeFile).
+    MCShapeFile file;
     const std::string path = std::format("{}{}", std::string_view(ArtPath), fileName);
 
     if (!FileExists(path))

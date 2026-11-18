@@ -1088,6 +1088,53 @@ TEST_CASE("hd art: a version 2 stream packed against a dictionary opens with the
 }
 
 /// <summary>
+/// The unpacked version 2 streams kept for their neighbours' reads stay within MCFastFile::KeepStreamsUpTo, the latest
+/// kept whatever its size, and the plan keeps from KeptStreamsLeast to KeptStreamsMost of them: the least while memory
+/// is short.
+/// </summary>
+TEST_CASE("hd art: the unpacked streams kept stay within the plan's share")
+{
+    const ScratchFolder scratch("kept-streams");
+    constexpr size_t StreamBytes = 4096;
+    const std::vector<ArchiveEntry> entries = {Raw("k\\0.hdf", std::vector<uint8_t>(StreamBytes, 1)),
+                                               Raw("k\\1.hdf", std::vector<uint8_t>(StreamBytes, 2))};
+    const std::filesystem::path path = scratch.Path() / "k.hda";
+    WriteBytes(
+        path, BuildVersion2Streams({Version2Stream{.Entries = {entries[0]}}, Version2Stream{.Entries = {entries[1]}}}));
+    const auto archive = MCFastFile::Create(MCFileSystem::ToUtf8(path));
+    REQUIRE(archive.has_value());
+    const size_t before = MCFastFile::KeptStreamsUpTo();
+    MCFastFile::KeepStreamsUpTo(MCFastFile::KeptStreamsMost);
+    const size_t earlier = MCFastFile::KeptStreamBytes();
+    std::vector<int32_t> indices;
+
+    for (const ArchiveEntry& entry : entries)
+    {
+        MCTest::Scope scope(entry.Name);
+        const std::optional<int32_t> index = (*archive)->Find(entry.Name);
+        REQUIRE(index.has_value());
+        const auto bytes = (*archive)->Unpack(*index, (*archive)->ReadStored(*index));
+        REQUIRE(bytes.has_value());
+        CHECK(*bytes == entry.Stored);
+        indices.push_back(*index);
+    }
+
+    CHECK_EQ(MCFastFile::KeptStreamBytes(), earlier + 2 * StreamBytes);
+    MCFastFile::KeepStreamsUpTo(1);
+    CHECK_EQ(MCFastFile::KeptStreamsUpTo(), size_t{1});
+    CHECK_EQ(MCFastFile::KeptStreamBytes(), StreamBytes);
+    CHECK((*archive)->KeptStreamOf(indices[0]) == nullptr);
+    CHECK((*archive)->KeptStreamOf(indices[1]) != nullptr);
+
+    MCHdArt::NextFrame(true);
+    CHECK_EQ(MCFastFile::KeptStreamsUpTo(), MCFastFile::KeptStreamsLeast);
+    MCHdArt::NextFrame(false);
+    CHECK(MCFastFile::KeptStreamsUpTo() >= MCFastFile::KeptStreamsLeast);
+    CHECK(MCFastFile::KeptStreamsUpTo() <= MCFastFile::KeptStreamsMost);
+    MCFastFile::KeepStreamsUpTo(before);
+}
+
+/// <summary>
 /// The pack's dicts.hdd is read with it: a version 2 ground tile packed against its dictionary 1 is drawn; with no
 /// dicts.hdd, a damaged one, or another dictionary under that number, it falls back to the original (no HD frame).
 /// </summary>

@@ -2909,6 +2909,8 @@ namespace
         uint64_t Held = 0;
         /// <summary>What none of the shares takes back: the kept unpacked streams, what's read ahead, frames let go that live on.</summary>
         uint64_t Rest = 0;
+        /// <summary>The kept unpacked streams, of Rest (MCFastFile::KeepStreamsUpTo).</summary>
+        uint64_t Kept = 0;
         /// <summary>The frames' records (never let go of while the GPU holds their pictures) and ColourFloorBytes.</summary>
         uint64_t Floor = 0;
         /// <summary>The GPU's HD pictures when they're in the same room (shared memory), else 0.</summary>
@@ -2919,8 +2921,8 @@ namespace
     {
         using MCMemoryLedger::MCHolder;
         ArtParts parts{.Room = MCMemoryRoom::ArtRoom(), .Held = MCFastFile::HeldBytes()};
-        parts.Rest = AllocatedOf(MCHolder::HdKeptStreams) + AllocatedOf(MCHolder::HdReadAhead) +
-                     AllocatedOf(MCHolder::HdFramesLetGo);
+        parts.Kept = AllocatedOf(MCHolder::HdKeptStreams);
+        parts.Rest = parts.Kept + AllocatedOf(MCHolder::HdReadAhead) + AllocatedOf(MCHolder::HdFramesLetGo);
         parts.Floor = AllocatedOf(MCHolder::HdFrames) + ColourFloorBytes;
         parts.Pictures = parts.Room.Shared ? AllocatedOf(MCHolder::GpuHdPictures) : 0;
         return parts;
@@ -6004,6 +6006,11 @@ namespace
         /// used first; 0 when -hdhold on forces it.
         /// </summary>
         uint64_t HoldOver = 0;
+        /// <summary>
+        /// The most of the unpacked streams kept (MCFastFile::KeepStreamsUpTo): what the room leaves past the rest less
+        /// them, the hold, the pictures and the frames at their floor, from KeptStreamsLeast to KeptStreamsMost.
+        /// </summary>
+        size_t KeptStreams = MCFastFile::KeptStreamsLeast;
     };
 
     /// <summary>
@@ -6011,7 +6018,8 @@ namespace
     /// what the ledger counts: the working set first (the pictures drawn, the frames' records and a floor of colours),
     /// then the hold, then the pictures past the working set, then the frames' colours read ahead. Taken back in the
     /// reverse: the colours read ahead first (FrameBytes), then the pictures past the working set (PictureBytes), then
-    /// the hold (HoldOver).
+    /// the hold (HoldOver). The unpacked streams kept take what's left past all but the colours, within their bounds
+    /// (KeptStreams).
     /// </summary>
     ArtPlan PlanArt(const MCHdArt::ReaderSettings& settings)
     {
@@ -6032,6 +6040,9 @@ namespace
             plan.HoldOver = Less(parts.Held, HoldShareOf(parts, parts.Pictures));
         }
 
+        const uint64_t spare = Less(room, Less(parts.Rest, parts.Kept) + parts.Held + parts.Pictures + parts.Floor);
+        plan.KeptStreams =
+            static_cast<size_t>(std::clamp<uint64_t>(spare, MCFastFile::KeptStreamsLeast, MCFastFile::KeptStreamsMost));
         return plan;
     }
 
@@ -6228,6 +6239,7 @@ std::optional<uint64_t> MCHdArt::NextFrame(bool memoryShort)
     }
 
     const ArtPlan plan = PlanArt(GetReaderSettings());
+    MCFastFile::KeepStreamsUpTo(memoryShort ? MCFastFile::KeptStreamsLeast : plan.KeptStreams);
     const size_t budget = memoryShort ? 0 : (state.Budget != 0 ? state.Budget : plan.FrameBytes);
     const size_t freed = state.Bytes > budget ? TrimFrames(state, budget) : 0;
     const size_t left = MCMemoryRoom::TrimmedBytesPerFrame - std::min(freed, MCMemoryRoom::TrimmedBytesPerFrame);

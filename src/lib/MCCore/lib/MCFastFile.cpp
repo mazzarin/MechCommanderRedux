@@ -54,15 +54,6 @@ namespace
     /// </summary>
     constexpr uint32_t MostUnpackedBytes = 256u << 20;
 
-    /// <summary>
-    /// Port-only (SPEC-memory.md's plan: a small kept-blocks list): the unpacked streams kept for their neighbours' reads,
-    /// across every archive, the latest kept whatever its size: with the mission held packed (MCHdArt::StartHold) a
-    /// stream let go of is unpacked again from memory, not read. full4's packets' and heads' streams: 0.42 MB unpacked at
-    /// the 90th percentile, 4.75 at the 99th, 244 of 62,550 past 8 MB and the largest 83.7 (18 Nov); 128 KB blocks once
-    /// pack v2 has them.
-    /// </summary>
-    constexpr size_t KeptStreamsBytes = size_t{64} << 20;
-
     /// <summary>A little-endian value at <paramref name="at"/> of <paramref name="bytes"/>, which must hold it.</summary>
     template <typename T> T ValueAt(std::span<const uint8_t> bytes, size_t at)
     {
@@ -113,6 +104,8 @@ namespace
         std::mutex Lock;
         std::list<KeptStream> Kept;
         size_t Bytes = 0;
+        /// <summary>The most Bytes kept (MCFastFile::KeepStreamsUpTo), the latest stream kept whatever its size.</summary>
+        size_t Most = MCFastFile::KeptStreamsLeast;
         /// <summary>Bytes, in the ledger.</summary>
         MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdKeptStreams};
     };
@@ -121,6 +114,18 @@ namespace
     {
         static KeptStreams kept;
         return kept;
+    }
+
+    /// <summary>Lets go of the oldest streams kept past their most, the latest kept whatever its size. With kept's lock held.</summary>
+    void TrimKept(KeptStreams& kept)
+    {
+        while (kept.Bytes > kept.Most && kept.Kept.size() > 1)
+        {
+            kept.Bytes -= kept.Kept.back().Bytes->size();
+            kept.Kept.pop_back();
+        }
+
+        kept.Ledger.SetBytes(kept.Bytes);
     }
 
     /// <summary>A run held: its bytes, and when an entry in it was last asked for (HeldStreams::Uses).</summary>
@@ -543,14 +548,7 @@ std::expected<std::shared_ptr<const std::vector<uint8_t>>, std::string> MCFastFi
     std::scoped_lock lock(kept.Lock);
     kept.Kept.push_front(KeptStream{_Serial, placed.Stream, bytes});
     kept.Bytes += bytes->size();
-
-    while (kept.Bytes > KeptStreamsBytes && kept.Kept.size() > 1)
-    {
-        kept.Bytes -= kept.Kept.back().Bytes->size();
-        kept.Kept.pop_back();
-    }
-
-    kept.Ledger.SetBytes(kept.Bytes);
+    TrimKept(kept);
     return bytes;
 }
 
@@ -743,6 +741,28 @@ void MCFastFile::LetGoHeld()
         held.Bytes = 0;
         held.Ledger.SetBytes(0);
     }
+}
+
+void MCFastFile::KeepStreamsUpTo(size_t bytes)
+{
+    KeptStreams& kept = TheKeptStreams();
+    std::scoped_lock lock(kept.Lock);
+    kept.Most = bytes;
+    TrimKept(kept);
+}
+
+size_t MCFastFile::KeptStreamsUpTo()
+{
+    KeptStreams& kept = TheKeptStreams();
+    std::scoped_lock lock(kept.Lock);
+    return kept.Most;
+}
+
+size_t MCFastFile::KeptStreamBytes()
+{
+    KeptStreams& kept = TheKeptStreams();
+    std::scoped_lock lock(kept.Lock);
+    return kept.Bytes;
 }
 
 size_t MCFastFile::HeldBytes()

@@ -253,6 +253,29 @@ public:
     /// <summary>Port-only: the stored bytes held now, every archive's.</summary>
     static size_t HeldBytes();
 
+    /// <summary>
+    /// Port-only (SPEC-memory.md's plan: a small kept-blocks list): the least and most bytes of unpacked version 2
+    /// streams the plan keeps for their neighbours' reads, every archive's (MCHdArt::NextFrame, from the art's room).
+    /// With the mission held packed (MCHdArt::StartHold) a stream let go of is unpacked again from memory on the game's
+    /// thread when a frame in it wasn't read ahead: full4's canyon at -hdmemory 16 had 41 such frames over a millisecond
+    /// with 64 MiB kept, 12 with 256 (18 Nov). full4's packets' and heads' streams: 0.42 MB unpacked at the 90th
+    /// percentile, 4.75 at the 99th, 244 of 62,550 past 8 MB and the largest 83.7; 128 KB blocks once pack v2 has them.
+    /// </summary>
+    static constexpr size_t KeptStreamsLeast = size_t{64} << 20;
+    static constexpr size_t KeptStreamsMost = size_t{256} << 20;
+
+    /// <summary>
+    /// Port-only: keeps at most <paramref name="bytes"/> of unpacked streams from now (KeptStreamsLeast until set), the
+    /// latest kept whatever its size; the oldest past it are let go of now.
+    /// </summary>
+    static void KeepStreamsUpTo(size_t bytes);
+
+    /// <summary>Port-only: the most bytes of unpacked streams kept now (<see cref="KeepStreamsUpTo"/>'s).</summary>
+    static size_t KeptStreamsUpTo();
+
+    /// <summary>Port-only: the bytes of unpacked streams kept now, every archive's.</summary>
+    static size_t KeptStreamBytes();
+
     /// <summary>Lets only <see cref="Create"/> construct an archive.</summary>
     class Key
     {

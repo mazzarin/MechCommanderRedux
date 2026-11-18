@@ -91,7 +91,8 @@ namespace
     {
         // A file a match reads from the release's own copy (lib/MCReleaseData.h): MCFile::Open reads it there.
         if (MCFileSystem::PutsImage(gamePath) || MCReleaseData::Find(gamePath) ||
-            MCDiskFile::Open(MCFileSystem::Resolve(gamePath), MCDiskFileMode::Read).has_value() ||
+            MCDiskFile::Open(MCFileSystem::Resolve(gamePath), MCDiskFileMode::Read, MCDiskFileReads::Buffered)
+                .has_value() ||
             MCFileSystem::FindImage(gamePath).has_value())
         {
             return std::nullopt;

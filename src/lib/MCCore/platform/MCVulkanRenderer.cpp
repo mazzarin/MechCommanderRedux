@@ -23,6 +23,9 @@
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
+// xxHash, header-only: its functions inline in this file alone (the kept surfaces' tiles).
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 
 using MCMemoryLedger::MCHolder;
 
@@ -552,6 +555,85 @@ namespace
     int64_t Area(const MCRect& rect)
     {
         return Empty(rect) ? 0 : static_cast<int64_t>(rect.X1 - rect.X0 + 1) * (rect.Y1 - rect.Y0 + 1);
+    }
+
+    /// <summary>Port-only (the kept surfaces): a tile's side, in window pixels (KeptPlan).</summary>
+    constexpr int32_t KeptTile = 16;
+    /// <summary>
+    /// Port-only (the kept surfaces): past this share of a surface's tiles changed, it's drawn whole (a pass that clears
+    /// costs less than one that loads what it held to draw most of it again).
+    /// </summary>
+    constexpr int64_t KeptMostPercent = 60;
+    /// <summary>
+    /// Port-only (the kept surfaces): past this many rectangles of changed tiles, their bounding box is drawn instead
+    /// (each rectangle is a draw call for each batch over it).
+    /// </summary>
+    constexpr size_t KeptMostRects = 16;
+    /// <summary>Port-only (the kept surfaces): a tile's hash before the draws over it.</summary>
+    constexpr uint64_t KeptTileSeed = 0x6b65707474696c65ull;
+
+    /// <summary>Port-only (the kept surfaces): <paramref name="hash"/> followed by <paramref name="value"/>.</summary>
+    uint64_t HashOn(uint64_t hash, uint64_t value)
+    {
+        return XXH3_64bits_withSeed(&value, sizeof(value), hash);
+    }
+
+    /// <summary>
+    /// Port-only (the kept surfaces): the tiles whose hashes in <paramref name="now"/> differ from
+    /// <paramref name="before"/>'s (<paramref name="columns"/> a row), merged into rectangles of tiles: each row's runs,
+    /// joined with the run of the same columns in the row above.
+    /// </summary>
+    std::vector<MCRect> ChangedTiles(std::span<const uint64_t> now, std::span<const uint64_t> before, uint32_t columns)
+    {
+        std::vector<MCRect> rects;
+        // The rectangles that reach the row above, by index.
+        std::vector<size_t> open;
+        std::vector<size_t> reaching;
+        const auto rows = static_cast<int32_t>(now.size() / std::max(columns, 1u));
+
+        for (int32_t y = 0; y < rows; ++y)
+        {
+            reaching.clear();
+
+            for (int32_t x = 0; x < static_cast<int32_t>(columns);)
+            {
+                const size_t at = static_cast<size_t>(y) * columns + static_cast<size_t>(x);
+
+                if (now[at] == before[at])
+                {
+                    ++x;
+                    continue;
+                }
+
+                int32_t end = x;
+
+                while (end + 1 < static_cast<int32_t>(columns) &&
+                       now[at + static_cast<size_t>(end + 1 - x)] != before[at + static_cast<size_t>(end + 1 - x)])
+                {
+                    ++end;
+                }
+
+                const auto above =
+                    std::ranges::find_if(open, [&](size_t i) { return rects[i].X0 == x && rects[i].X1 == end; });
+
+                if (above != open.end())
+                {
+                    rects[*above].Y1 = y;
+                    reaching.push_back(*above);
+                }
+                else
+                {
+                    rects.push_back(MCRect{x, y, end, y});
+                    reaching.push_back(rects.size() - 1);
+                }
+
+                x = end + 1;
+            }
+
+            std::swap(open, reaching);
+        }
+
+        return rects;
     }
 
     MCRect Union(const MCRect& a, const MCRect& b)
@@ -7006,6 +7088,303 @@ void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURen
 
 // The frame ----------------------------------------------------------------------------------------------------------
 
+uint64_t MCVulkanRenderer::StampOf(const std::shared_ptr<SDL_GPUTexture>& texture)
+{
+    if (texture == nullptr)
+    {
+        return 0;
+    }
+
+    TextureStamp& stamp = _TextureStamps[texture.get()];
+
+    // A texture made where one let go was has a stamp of its own.
+    if (stamp.Stamp == 0 || stamp.Texture.owner_before(texture) || texture.owner_before(stamp.Texture))
+    {
+        stamp.Texture = texture;
+        stamp.Stamp = ++_LastStamp;
+    }
+
+    return stamp.Stamp;
+}
+
+void MCVulkanRenderer::Restamp(const std::shared_ptr<SDL_GPUTexture>& texture)
+{
+    if (texture != nullptr)
+    {
+        TextureStamp& stamp = _TextureStamps[texture.get()];
+        stamp.Texture = texture;
+        stamp.Stamp = ++_LastStamp;
+    }
+}
+
+auto MCVulkanRenderer::PlanKept(const FrameRun& run, std::span<const uint32_t> order,
+                                const std::function<uint64_t(uint16_t surface, const Record& record)>& recordUniforms)
+    -> std::vector<KeptPlan>
+{
+    // The textures' stamps a while: those gone go once there are twice as many as after the last pruning.
+    constexpr size_t FewestPruned = 1024;
+
+    if (_TextureStamps.size() > 2 * std::max(_StampsPruned, FewestPruned))
+    {
+        std::erase_if(_TextureStamps, [](const auto& entry) { return entry.second.Texture.expired(); });
+        _StampsPruned = _TextureStamps.size();
+    }
+
+    // Which surfaces the frame draws on, and those it wipes first whose draws read only what the tiles follow: not
+    // the target's copy (pixels of other tiles), a terrain layer, or glints (kept apart from the tiles).
+    std::vector<KeptPlan> plans(_RunSurfaces.size());
+    std::vector<bool> drawn(_RunSurfaces.size(), false);
+    std::vector<bool> keepable(_RunSurfaces.size(), KeepSurfaces);
+
+    for (const uint32_t at : order)
+    {
+        const Record& record = run.Records[at];
+        const uint16_t index = record.SurfaceIndex;
+        const Surface& surface = _RunSurfaces[index];
+
+        // A surface made this frame starts again (drawn whole).
+        if (record.Resize)
+        {
+            keepable[index] = false;
+            continue;
+        }
+
+        if (!drawn[index])
+        {
+            drawn[index] = true;
+            keepable[index] = keepable[index] && surface.Target.Handle != nullptr && !surface.CatchesLight &&
+                              WipeColor(run, record, surface).has_value();
+        }
+
+        if (record.TerrainDraw >= 0 || record.ReadsCopy || record.Source == SourceKind::TargetCopy)
+        {
+            keepable[index] = false;
+        }
+    }
+
+    for (size_t i = 0; i < plans.size(); ++i)
+    {
+        if (keepable[i] && drawn[i])
+        {
+            const Surface& surface = _RunSurfaces[i];
+            plans[i].Columns = (surface.MappedWidth + KeptTile - 1) / KeptTile;
+            const uint32_t rows = (surface.MappedHeight + KeptTile - 1) / KeptTile;
+            plans[i].Tiles.assign(static_cast<size_t>(plans[i].Columns) * rows, KeptTileSeed);
+        }
+    }
+
+    // What every draw reads besides its source: the colour tables, the alpha colours, the tables' fits and the palette.
+    const uint64_t bound =
+        HashOn(HashOn(HashOn(HashOn(KeptTileSeed, StampOf(run.Tables)), StampOf(run.Alpha)), StampOf(run.Fits)),
+               StampOf(run.Palette));
+
+    // Each tile's hash: the hashes of the draws over it in turn, each of what it reads and how it draws. And where in
+    // the order each surface is last drawn on, and where a kept surface's draws read another (for the kept check).
+    struct SurfaceRead
+    {
+        uint16_t Reader = 0;
+        uint16_t Read = 0;
+        size_t Position = 0;
+    };
+
+    std::vector<size_t> lastDrawn(_RunSurfaces.size(), 0);
+    std::vector<SurfaceRead> surfaceReads;
+
+    for (size_t position = 0; position < order.size(); ++position)
+    {
+        const Record& record = run.Records[order[position]];
+        lastDrawn[record.SurfaceIndex] = position;
+        const uint16_t index = record.SurfaceIndex;
+        Surface& surface = _RunSurfaces[index];
+        KeptPlan& plan = plans[index];
+
+        if (!record.Resize && keepable[index])
+        {
+            uint64_t source = 0;
+
+            if (record.Source == SourceKind::Atlas)
+            {
+                source = StampOf(run.Pages[record.SourceIndex]);
+            }
+            else if (record.Source == SourceKind::Picture)
+            {
+                const FramePicture& picture = run.Pictures[record.SourceIndex];
+                source = HashOn(StampOf(picture.Texture), StampOf(picture.HdColors));
+            }
+            else if (record.Source == SourceKind::Surface)
+            {
+                source = _RunSurfaces[record.SourceIndex].Stamp;
+                surfaceReads.push_back(SurfaceRead{index, static_cast<uint16_t>(record.SourceIndex), position});
+            }
+
+            const uint64_t how =
+                static_cast<uint64_t>(record.Source) | static_cast<uint64_t>(record.Blend) << 8 |
+                static_cast<uint64_t>(record.IndexOnly) << 9 | static_cast<uint64_t>(record.Shadow) << 10 |
+                static_cast<uint64_t>(record.Marks) << 11 | static_cast<uint64_t>(record.Variant) << 12;
+            const uint64_t reads = HashOn(HashOn(HashOn(bound, source), how), recordUniforms(index, record));
+            const MCRect shown{0, 0, static_cast<int32_t>(surface.MappedWidth) - 1,
+                               static_cast<int32_t>(surface.MappedHeight) - 1};
+
+            for (uint32_t d = record.First; d < record.First + record.Count; ++d)
+            {
+                DrawFields draw = run.Draws[d];
+                uint64_t hash = reads;
+
+                // Written pixels are read from the frame's strip: their row's pixels, not its place.
+                if (record.Source == SourceKind::Strip)
+                {
+                    hash = XXH3_64bits_withSeed(&run.StripPixels[static_cast<size_t>(draw[5]) * StripWidth], StripWidth,
+                                                hash);
+                    draw[5] = 0;
+                }
+
+                hash = XXH3_64bits_withSeed(draw.data(), sizeof(draw), hash);
+                const MCRect covered = Intersection(MCRect{draw[0], draw[1], draw[2], draw[3]}, shown);
+
+                if (Empty(covered))
+                {
+                    continue;
+                }
+
+                for (int32_t y = covered.Y0 / KeptTile; y <= covered.Y1 / KeptTile; ++y)
+                {
+                    for (int32_t x = covered.X0 / KeptTile; x <= covered.X1 / KeptTile; ++x)
+                    {
+                        uint64_t& tile = plan.Tiles[static_cast<size_t>(y) * plan.Columns + static_cast<size_t>(x)];
+                        tile = HashOn(tile, hash);
+                    }
+                }
+            }
+        }
+
+        // What it holds once the record has drawn: new, for the draws that read it after.
+        surface.Stamp = ++_LastStamp;
+    }
+
+    // A kept surface whose draws read another drawn on after them.
+    for (const SurfaceRead& read : surfaceReads)
+    {
+        plans[read.Reader].ReadsChanging = plans[read.Reader].ReadsChanging || lastDrawn[read.Read] > read.Position;
+    }
+
+    // How each surface drawn on is drawn: as recorded; whole, its tiles new; only the tiles that changed; or not.
+    for (size_t i = 0; i < plans.size(); ++i)
+    {
+        Surface& surface = _RunSurfaces[i];
+        KeptPlan& plan = plans[i];
+
+        if (!drawn[i])
+        {
+            continue;
+        }
+
+        const bool held =
+            surface.TilesHeld && surface.TileColumns == plan.Columns && surface.Tiles.size() == plan.Tiles.size();
+        // Not held until the frame has run.
+        surface.TilesHeld = false;
+
+        if (!keepable[i])
+        {
+            continue;
+        }
+
+        if (!held)
+        {
+            plan.Mode = KeptMode::Whole;
+            continue;
+        }
+
+        std::vector<MCRect> changed = ChangedTiles(plan.Tiles, surface.Tiles, plan.Columns);
+        plan.Changed = std::ranges::fold_left(changed | std::views::transform(Area), int64_t{0}, std::plus{});
+
+        if (plan.Changed == 0)
+        {
+            plan.Mode = KeptMode::Unchanged;
+            continue;
+        }
+
+        if (plan.Changed * 100 > static_cast<int64_t>(plan.Tiles.size()) * KeptMostPercent)
+        {
+            plan.Mode = KeptMode::Whole;
+            continue;
+        }
+
+        if (changed.size() > KeptMostRects)
+        {
+            changed.assign(1, std::ranges::fold_left(changed, MCRect{0, 0, -1, -1}, Union));
+        }
+
+        plan.Mode = KeptMode::Tiled;
+        const MCRect shown{0, 0, static_cast<int32_t>(surface.MappedWidth) - 1,
+                           static_cast<int32_t>(surface.MappedHeight) - 1};
+        const MCRect target{0, 0, static_cast<int32_t>(surface.Target.Width) - 1,
+                            static_cast<int32_t>(surface.Target.Height) - 1};
+
+        for (const MCRect& tiles : changed)
+        {
+            const MCRect window = Intersection(MCRect{tiles.X0 * KeptTile, tiles.Y0 * KeptTile,
+                                                      (tiles.X1 + 1) * KeptTile - 1, (tiles.Y1 + 1) * KeptTile - 1},
+                                               shown);
+            const MCRect scissor =
+                Intersection(DrawnPixels(window, {surface.MappedWidth, surface.MappedHeight},
+                                         {surface.Target.Width, surface.Target.Height}, surface.Offset),
+                             target);
+
+            if (!Empty(scissor))
+            {
+                plan.Rects.push_back(window);
+                plan.Scissors.push_back(
+                    SDL_Rect{scissor.X0, scissor.Y0, scissor.X1 - scissor.X0 + 1, scissor.Y1 - scissor.Y0 + 1});
+            }
+        }
+    }
+
+    return plans;
+}
+
+auto MCVulkanRenderer::CompareKept() -> std::expected<KeptComparison, std::string>
+{
+    WaitForRunning();
+    KeptComparison comparison;
+    constexpr uint32_t BytesPerPixel = 4;
+
+    for (const KeptCheck& check : _KeptChecks)
+    {
+        const Surface& surface = _RunSurfaces[check.Surface];
+
+        if (surface.Target.Handle == nullptr || surface.Target.Width != check.Colors.Width ||
+            surface.Target.Height != check.Colors.Height)
+        {
+            continue;
+        }
+
+        const std::array<std::reference_wrapper<const Texture>, 4> textures{surface.Target, surface.Index, check.Colors,
+                                                                            check.Indices};
+        auto downloaded = DownloadTextures(textures, BytesPerPixel);
+
+        if (!downloaded)
+        {
+            return std::unexpected(std::format("MCVulkanRenderer: surface {}'s kept pixels aren't read back: {}",
+                                               check.Surface, downloaded.error()));
+        }
+
+        const std::vector<std::vector<uint8_t>>& pixels = *downloaded;
+        const size_t count = pixels[0].size() / BytesPerPixel;
+        ++comparison.Surfaces;
+        comparison.Pixels += static_cast<int64_t>(count);
+
+        for (size_t p = 0; p < count; ++p)
+        {
+            const size_t at = p * BytesPerPixel;
+            comparison.DifferentColors += std::memcmp(&pixels[0][at], &pixels[2][at], BytesPerPixel) != 0 ? 1 : 0;
+            comparison.DifferentIndices += std::memcmp(&pixels[1][at], &pixels[3][at], BytesPerPixel) != 0 ? 1 : 0;
+        }
+    }
+
+    _KeptChecks.clear();
+    return comparison;
+}
+
 void MCVulkanRenderer::TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface, const MCRect& rect)
 {
     surface.Copied = rect;
@@ -7132,6 +7511,9 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
     SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, TargetsWithoutGlints, nullptr));
     surface.Copied = MCRect{0, 0, -1, -1};
     surface.DrawnSinceCopy.clear();
+    // Port-only (the kept surfaces): it holds nothing a frame drew.
+    surface.TilesHeld = false;
+    surface.Stamp = ++_LastStamp;
     return {};
 }
 
@@ -7569,6 +7951,12 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                         upload.Y, upload.Width, upload.Height);
     }
 
+    // Port-only (the kept surfaces): what the uploads wrote is new to the draws that read it.
+    for (const Upload& upload : run.Uploads)
+    {
+        Restamp(upload.Texture);
+    }
+
     if (drawBytes > 0)
     {
         SDL_GPUTransferBufferLocation source{transfer.get(), static_cast<uint32_t>(drawOffset)};
@@ -7593,6 +7981,11 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
     // Port-only (HD movies): the movies' new frames' colours, from the planes just uploaded, before any draw reads them.
     ConvertMovies(commands, run);
+
+    for (const MovieConversion& movie : run.Conversions)
+    {
+        Restamp(movie.Colors.Handle);
+    }
 
     // The kept surfaces first (the fog of war, which the terrain layer reads), then those shown as underlays (the
     // screen's see-through draws read them finished), then the rest.
@@ -7653,6 +8046,19 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         return frame;
     };
 
+    // The clear a pass starting with a fill of all of a surface (its wipe, WipeColor) starts with instead of the fill:
+    // what draw.pshader's Opaque writes for the fill's colour, none for the key on a surface shown over another (with
+    // the pass's frame uniforms set).
+    const auto clearToWipe = [&](std::span<SDL_GPUColorTargetInfo> targets, uint8_t wipe)
+    {
+        const SDL_Color shown = run.Colors[run.Cycle.Remap(wipe)];
+        constexpr float Unit = 255.0f;
+        targets[0].clear_color = passFrame.Cycle[2] != 0 && wipe == UINT8_MAX
+                                     ? SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f}
+                                     : SDL_FColor{shown.r / Unit, shown.g / Unit, shown.b / Unit, 1.0f};
+        targets[1].clear_color = SDL_FColor{wipe / Unit, 0.0f, 0.0f, 0.0f};
+    };
+
     // The target's scale, and the source's when it is a surface.
     const auto scaleOf = [](const Surface& of, std::span<int32_t, 4> out)
     {
@@ -7664,9 +8070,9 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
     // A record's frame uniforms on a surface: the pass's, with the target's scale and the source's, and their drawn
     // grids' offsets (MCDrawnGrid).
-    const auto recordFrame = [&](const Surface& surface, const Record& record)
+    const auto recordFrame = [&](const Surface& surface, const Record& record, const FrameUniforms& pass)
     {
-        FrameUniforms frame = passFrame;
+        FrameUniforms frame = pass;
         scaleOf(surface, frame.Scale);
         std::ranges::fill(frame.SourceScale, 1);
         frame.Offset[0] = surface.Offset[0];
@@ -7772,7 +8178,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                                   {surface.Offset[0], surface.Offset[1], 0, 0}};
         SDL_PushGPUVertexUniformData(&commands, 0, &batch, sizeof(batch));
 
-        if (const FrameUniforms frame = recordFrame(surface, record);
+        if (const FrameUniforms frame = recordFrame(surface, record, passFrame);
             !pushedFrame.has_value() || std::memcmp(&*pushedFrame, &frame, sizeof(frame)) != 0)
         {
             SDL_PushGPUFragmentUniformData(&commands, 0, &frame, sizeof(frame));
@@ -7818,7 +8224,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         std::vector<uint8_t> seen = draw.Seen;
         const int32_t fogColumns = draw.FogColumns;
         // The terrain's frame uniforms (a record with no source's).
-        const FrameUniforms frame = recordFrame(surface, Record{});
+        const FrameUniforms frame = recordFrame(surface, Record{}, passFrame);
         // What the ground depends on of them: not the cycle's step (PlanGround follows it), nor the looks, which only
         // glows and shapes read (they change as the light does), nor the drawn grid's offset, which follows the view
         // (PlanGround's shift).
@@ -7931,10 +8337,25 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         return true;
     };
 
+    // Port-only (the kept surfaces): how each surface is drawn (KeptMode), and whether its draws are checked.
+    std::vector<KeptPlan> plans = PlanKept(run, order,
+                                           [&](uint16_t surfaceIndex, const Record& record)
+                                           {
+                                               const FrameUniforms frame = recordFrame(_RunSurfaces[surfaceIndex],
+                                                                                       record, framePass(surfaceIndex));
+                                               return XXH3_64bits(&frame, sizeof(frame));
+                                           });
+
+    if (CheckKeptSurfaces)
+    {
+        _KeptChecks.clear();
+    }
+
     for (size_t k = 0; k < order.size(); ++k)
     {
         const Record& record = run.Records[order[k]];
         Surface& surface = _RunSurfaces[record.SurfaceIndex];
+        const KeptPlan& plan = plans[record.SurfaceIndex];
 
         if (record.Resize)
         {
@@ -7949,7 +8370,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             continue;
         }
 
-        if (surface.Target.Handle == nullptr)
+        // Port-only (the kept surfaces): a surface whose draws changed nowhere keeps what it held.
+        if (surface.Target.Handle == nullptr || plan.Mode == KeptMode::Unchanged)
         {
             continue;
         }
@@ -8024,8 +8446,11 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             // its key, shown over the world) needn't load what the surface held, every texel of which the fill
             // writes: it starts cleared to what the fill writes instead, and the fill isn't drawn (a clear costs a
             // tile-based GPU nothing; the fill ran the draw shader for each pixel).
+            // Port-only (the kept surfaces): nor one drawn from its tiles, whose fill (the wipe) is drawn over the tiles
+            // that changed alone.
             const bool firstPass = !begun[record.SurfaceIndex];
-            const std::optional<uint8_t> wipe = firstPass ? WipeColor(run, record, surface) : std::nullopt;
+            const std::optional<uint8_t> wipe =
+                firstPass && plan.Mode != KeptMode::Tiled ? WipeColor(run, record, surface) : std::nullopt;
             begun[record.SurfaceIndex] = true;
             passFrame = framePass(record.SurfaceIndex);
 
@@ -8059,14 +8484,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             if (wipe.has_value())
             {
-                // What draw.pshader's Opaque writes for the fill's colour: none for the key on a surface shown over
-                // another.
-                const SDL_Color shown = run.Colors[run.Cycle.Remap(*wipe)];
-                constexpr float Unit = 255.0f;
-                targets[0].clear_color = passFrame.Cycle[2] != 0 && *wipe == UINT8_MAX
-                                             ? SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f}
-                                             : SDL_FColor{shown.r / Unit, shown.g / Unit, shown.b / Unit, 1.0f};
-                targets[1].clear_color = SDL_FColor{*wipe / Unit, 0.0f, 0.0f, 0.0f};
+                clearToWipe(targets, *wipe);
                 wiped = 1;
             }
 
@@ -8101,7 +8519,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             }
             else
             {
-                const FrameUniforms frame = recordFrame(surface, record);
+                const FrameUniforms frame = recordFrame(surface, record, passFrame);
                 DrawTerrain(commands, *pass, pipelines, run, surface, draw, std::as_bytes(std::span(&frame, 1)));
                 ++_GroundCounts.Direct;
             }
@@ -8135,7 +8553,26 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             ++last;
         }
 
-        if (count > wiped)
+        if (count > wiped && plan.Mode == KeptMode::Tiled)
+        {
+            // Port-only (the kept surfaces): over the tiles that changed alone.
+            MCRect writes{0, 0, -1, -1};
+
+            for (size_t i = k; i <= last; ++i)
+            {
+                writes = Union(writes, run.Records[order[i]].Writes);
+            }
+
+            for (size_t r = 0; r < plan.Rects.size(); ++r)
+            {
+                if (Overlaps(plan.Rects[r], writes))
+                {
+                    SDL_SetGPUScissor(pass, &plan.Scissors[r]);
+                    drawBatch(pass, surface, record, record.First + wiped, count - wiped);
+                }
+            }
+        }
+        else if (count > wiped)
         {
             drawBatch(pass, surface, record, record.First + wiped, count - wiped);
         }
@@ -8162,6 +8599,103 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
     endPass();
 
+    // Port-only, for the tests (CheckKeptSurfaces): each surface drawn from its tiles drawn whole too, apart, as a frame
+    // that doesn't keep it draws it (not one whose draws read another surface drawn on after them, which has since
+    // changed).
+    for (size_t i = 0; CheckKeptSurfaces && i < plans.size(); ++i)
+    {
+        const KeptPlan& plan = plans[i];
+
+        if ((plan.Mode != KeptMode::Tiled && plan.Mode != KeptMode::Unchanged) || plan.ReadsChanging)
+        {
+            continue;
+        }
+
+        const Surface& kept = _RunSurfaces[i];
+        KeptCheck& check = _KeptChecks.emplace_back();
+        check.Surface = static_cast<uint16_t>(i);
+        constexpr SDL_GPUTextureUsageFlags usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+
+        for (auto made : {EnsureTexture(check.Colors, MCHolder::GpuTargets, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, usage,
+                                        kept.Target.Width, kept.Target.Height),
+                          EnsureTexture(check.Indices, MCHolder::GpuTargets, IndexFormat, usage, kept.Target.Width,
+                                        kept.Target.Height)})
+        {
+            if (!made)
+            {
+                return made;
+            }
+        }
+
+        Surface whole;
+        whole.MappedWidth = kept.MappedWidth;
+        whole.MappedHeight = kept.MappedHeight;
+        whole.Offset = kept.Offset;
+        whole.Target = check.Colors;
+        whole.Index = check.Indices;
+        passFrame = framePass(static_cast<uint16_t>(i));
+        bool first = true;
+
+        for (const uint32_t at : order)
+        {
+            const Record& record = run.Records[at];
+
+            if (record.Resize || record.SurfaceIndex != i)
+            {
+                continue;
+            }
+
+            if (first)
+            {
+                SDL_GPUColorTargetInfo targets[TargetsWithoutGlints]{};
+                targets[0].texture = whole.Target.Handle.get();
+                targets[1].texture = whole.Index.Handle.get();
+
+                for (SDL_GPUColorTargetInfo& target : targets)
+                {
+                    target.load_op = SDL_GPU_LOADOP_CLEAR;
+                    target.store_op = SDL_GPU_STOREOP_STORE;
+                }
+
+                clearToWipe(targets, WipeColor(run, record, kept).value_or(0));
+                pass = SDL_BeginGPURenderPass(&commands, targets, TargetsWithoutGlints, nullptr);
+                startPass(pass, whole);
+            }
+
+            const uint32_t skipped = first ? 1 : 0;
+
+            if (record.Count > skipped)
+            {
+                drawBatch(pass, whole, record, record.First + skipped, record.Count - skipped);
+            }
+
+            first = false;
+        }
+
+        endPass();
+        forgetBound();
+    }
+
+    // Port-only (the kept surfaces): the frame has run, so what it drew is held, with its tiles.
+    for (size_t i = 0; i < plans.size(); ++i)
+    {
+        KeptPlan& plan = plans[i];
+        Surface& surface = _RunSurfaces[i];
+
+        if (plan.Mode == KeptMode::Drawn)
+        {
+            continue;
+        }
+
+        ++(plan.Mode == KeptMode::Whole   ? _KeptCounts.Whole
+           : plan.Mode == KeptMode::Tiled ? _KeptCounts.Tiled
+                                          : _KeptCounts.Unchanged);
+        _KeptCounts.TilesDrawn += plan.Changed;
+        surface.Tiles = std::move(plan.Tiles);
+        surface.TileColumns = plan.Columns;
+        surface.TilesHeld = true;
+    }
+
     for (size_t i = 0; i < run.Surfaces.size(); ++i)
     {
         Surface& surface = _RunSurfaces[i];
@@ -8180,6 +8714,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             Release(surface.Copy);
             Release(surface.Glints);
             surface.GlintsHeld = false;
+            surface.TilesHeld = false;
         }
     }
 

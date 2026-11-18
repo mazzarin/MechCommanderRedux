@@ -10214,6 +10214,281 @@ TEST_CASE_ISOLATED("game: a pan keeps the HD ground it draws whole, but not whil
     std::filesystem::remove_all(scene->Scratch);
 }
 
+namespace
+{
+    /// <summary>Port-only (the kept surfaces): the frames a kept screen's test ran, and what they did.</summary>
+    struct KeptScreenRun
+    {
+        MCVulkanRenderer::KeptCounts Before;
+        MCVulkanRenderer::KeptCounts Panned;
+        MCVulkanRenderer::KeptCounts After;
+        MCVulkanRenderer::KeptComparison Compared;
+        int32_t Frames = 0;
+        int32_t Stopped = 0;
+    };
+
+    /// <summary>
+    /// Port-only (the kept surfaces): <paramref name="panFrames"/> frames of a pan, then <paramref name="stillFrames"/>
+    /// still, with each frame's screen drawn whole too, apart, and compared with it (MCVulkanRenderer::CompareKept),
+    /// in <paramref name="scene"/>.
+    /// </summary>
+    KeptScreenRun RunKeptScreen(HdScene& scene, int32_t panFrames, int32_t stillFrames)
+    {
+        // A pan's step a frame (window pixels).
+        constexpr float StepAcross = 2.0f;
+        constexpr float StepDown = 1.0f;
+        KeptScreenRun run;
+        // A camera of its own place (none followed).
+        Eye()->ChangeTarget(nullptr, false);
+        MCVector3D position = Eye()->GetPosition();
+        run.Before = scene.Renderer->KeptSurfaceCounts();
+        const auto frame = [&](float across, float down)
+        {
+            run.Stopped += PanFrame(position, across, down) ? 0 : 1;
+            ++run.Frames;
+            const std::expected<MCVulkanRenderer::KeptComparison, std::string> kept = scene.Renderer->CompareKept();
+
+            if (!kept.has_value())
+            {
+                FAIL(kept.error());
+            }
+
+            run.Compared.Surfaces += kept->Surfaces;
+            run.Compared.Pixels += kept->Pixels;
+            run.Compared.DifferentColors += kept->DifferentColors;
+            run.Compared.DifferentIndices += kept->DifferentIndices;
+        };
+
+        for (int32_t step = 0; step < panFrames; ++step)
+        {
+            frame(StepAcross, StepDown);
+        }
+
+        run.Panned = scene.Renderer->KeptSurfaceCounts();
+
+        for (int32_t step = 0; step < stillFrames; ++step)
+        {
+            frame(0.0f, 0.0f);
+        }
+
+        run.After = scene.Renderer->KeptSurfaceCounts();
+        std::cout << std::format(
+            "  panning: {} whole, {} tiled ({} tiles), {} unchanged; still: {} whole, {} tiled ({} "
+            "tiles), {} unchanged; {} surfaces compared, {} pixels\n",
+            run.Panned.Whole - run.Before.Whole, run.Panned.Tiled - run.Before.Tiled,
+            run.Panned.TilesDrawn - run.Before.TilesDrawn, run.Panned.Unchanged - run.Before.Unchanged,
+            run.After.Whole - run.Panned.Whole, run.After.Tiled - run.Panned.Tiled,
+            run.After.TilesDrawn - run.Panned.TilesDrawn, run.After.Unchanged - run.Panned.Unchanged,
+            run.Compared.Surfaces, run.Compared.Pixels);
+        return run;
+    }
+
+    /// <summary>
+    /// Port-only (the kept surfaces): what every kept screen's test checks of <paramref name="run"/>: each pan frame
+    /// drew only the screen's tiles whose draws changed, the still ones fewer or none, and each frame's screen is the one
+    /// drawn whole, pixel for pixel (<paramref name="pixels"/> a frame, its colours and indices).
+    /// </summary>
+    void CheckKeptScreen(const KeptScreenRun& run, int32_t panFrames, int64_t pixels)
+    {
+        CHECK_EQ(run.Stopped, 0);
+        CHECK_EQ(run.Panned.Tiled - run.Before.Tiled, panFrames);
+        CHECK_EQ(run.Panned.Whole - run.Before.Whole, 0);
+        CHECK_EQ(run.After.Whole - run.Panned.Whole, 0);
+        CHECK(run.After.TilesDrawn - run.Panned.TilesDrawn < run.Panned.TilesDrawn - run.Before.TilesDrawn);
+        CHECK_EQ(run.Compared.Surfaces, run.Frames);
+        CHECK_EQ(run.Compared.Pixels, pixels * run.Frames);
+        CHECK_EQ(run.Compared.DifferentColors, 0);
+        CHECK_EQ(run.Compared.DifferentIndices, 0);
+    }
+
+    /// <summary>
+    /// Port-only (the kept surfaces): sets every surface a frame draws from its tiles drawn whole too, apart, while it
+    /// lives (MCVulkanRenderer::CheckKeptSurfaces), and the water's colour cycle held (each of its steps draws the
+    /// screen whole).
+    /// </summary>
+    class MCKeptChecked
+    {
+    public:
+        MCKeptChecked()
+        {
+            GuiSystem().PaletteCycle = 0;
+            SingleStepMode = 1;
+            MCVulkanRenderer::CheckKeptSurfaces = true;
+        }
+
+        ~MCKeptChecked() { MCVulkanRenderer::CheckKeptSurfaces = false; }
+
+        MCKeptChecked(const MCKeptChecked&) = delete;
+        MCKeptChecked& operator=(const MCKeptChecked&) = delete;
+    };
+}
+
+/// <summary>
+/// Port-only (the kept surfaces): the screen, which every frame starts by wiping to its key, keeps the tiles whose draws
+/// didn't change from the frame before and draws only the others again (as the view pans, the minimap's view box), or
+/// none. Each frame's screen is the one drawn whole, pixel for pixel (its colours and indices), and in mirror mode every
+/// index is the software renderer's.
+/// </summary>
+TEST_CASE_ISOLATED("game: the screen draws again only the tiles whose draws changed, the pixels those drawn whole")
+{
+    constexpr int32_t PanFrames = 6;
+    constexpr int32_t StillFrames = 4;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCHdArtOn hdArt(scene->Pack);
+    const MCKeptChecked checked;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    scene->Renderer->ResetMirror();
+    const MCWindow& screen = MCInput::Display()->Screen();
+    const KeptScreenRun run = RunKeptScreen(*scene, PanFrames, StillFrames);
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // Mirror mode draws the screen at its window's size.
+    CheckKeptScreen(run, PanFrames, static_cast<int64_t>(screen.XMax + 1) * (screen.YMax + 1));
+    CHECK_EQ(tally.Frames, run.Frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (the kept surfaces): on a screen drawn sharp, at the size it's shown (here 2.5 drawn pixels a window
+/// pixel, so a tile's edges fall within drawn pixels), the tiles drawn again are those the draws over them cover
+/// (shaders/pixels.hlsli's DrawnCorner), and each frame's screen is the one drawn whole, pixel for pixel.
+/// </summary>
+TEST_CASE_ISOLATED("game: a screen drawn sharp draws again only the tiles whose draws changed, the pixels drawn whole")
+{
+    constexpr int32_t PanFrames = 6;
+    constexpr int32_t StillFrames = 4;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCHdArtOn hdArt(scene->Pack);
+    const MCKeptChecked checked;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(MCInput::Display()->SharpScreen());
+    const MCWindow& screen = MCInput::Display()->Screen();
+    uint32_t width = 0;
+    uint32_t height = 0;
+    REQUIRE(scene->Renderer->SurfaceTexture(screen, width, height) != nullptr);
+    const auto [scaleX, scaleY] = scene->Renderer->SurfaceScale(screen);
+    std::cout << std::format("  the screen: {}x{} drawn at {}x{} ({:.2f}x{:.2f})\n", screen.XMax + 1, screen.YMax + 1,
+                             width, height, scaleX, scaleY);
+    // Drawn larger than its window, by a part of a pixel.
+    CHECK(width > static_cast<uint32_t>(screen.XMax + 1));
+    CHECK(width % static_cast<uint32_t>(screen.XMax + 1) != 0);
+    const KeptScreenRun run = RunKeptScreen(*scene, PanFrames, StillFrames);
+    CheckKeptScreen(run, PanFrames, static_cast<int64_t>(width) * height);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (the kept surfaces): a pilot's movie playing in its window on a sharp screen (as the radio plays one over
+/// the map) is drawn by the same draw each frame while its picture changes under it. Each new movie frame draws its
+/// window's tiles again (the picture's new stamp), never leaves the screen as it was, and each frame's screen is the one
+/// drawn whole, pixel for pixel.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a movie on a kept screen draws its window's tiles again with each new frame, the pixels drawn "
+    "whole")
+{
+    constexpr std::string_view Name = "PILOT00A";
+    constexpr int32_t MaxDisplays = 120;
+    constexpr int32_t MovieFrames = 24;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCHdArtOn hdArt(scene->Pack);
+    const MCKeptChecked checked;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(MCInput::Display()->SharpScreen());
+    std::unique_ptr<MCSmackTag> movie = SmackOpen(std::format("data\\movies\\{}.smk", Name), 0xfe000, -1);
+    REQUIRE(movie != nullptr);
+    // A window of its own on the screen, as the radio's movie has.
+    const MCPane& frame = ScreenPort()->Frame();
+    const RECT area{(frame.X1 - frame.X0) / 2, (frame.Y1 - frame.Y0) / 2, movie->Player->Width(),
+                    movie->Player->Height()};
+    // The tiles wholly inside the movie's window (window pixels).
+    constexpr int32_t Tile = 16;
+    const int64_t inside =
+        static_cast<int64_t>(movie->Player->Width() / Tile - 1) * (movie->Player->Height() / Tile - 1);
+    const MCGuiHandle<MCGuiSmackerWindow> made = ScreenWindow()->CreateChild<MCGuiSmackerWindow>(
+        [&area](MCGuiSmackerWindow& smacker) { smacker.Init(area, {}); });
+    const std::shared_ptr<MCGuiSmackerWindow> window = made.Lock();
+    REQUIRE_EQ(window->StartSmackerMovie(std::move(movie), false), 0);
+
+    int32_t displays = 0;
+    int32_t advanced = 0;
+    int32_t advancedUnchanged = 0;
+    int64_t leastTiles = std::numeric_limits<int64_t>::max();
+    MCVulkanRenderer::KeptComparison compared;
+    GamePaused = true;
+    // The window's first frame drawn.
+    MCTestGame::RunFrame(FrameSeconds);
+
+    for (; displays < MaxDisplays && advanced < MovieFrames && MovieOver == 0; ++displays)
+    {
+        const uint32_t before = window->Movie->Player->FrameNum();
+        const MCVulkanRenderer::KeptCounts counts = scene->Renderer->KeptSurfaceCounts();
+        MCTestGame::RunFrame(FrameSeconds);
+        const std::expected<MCVulkanRenderer::KeptComparison, std::string> kept = scene->Renderer->CompareKept();
+
+        if (!kept.has_value())
+        {
+            FAIL(kept.error());
+        }
+
+        compared.Surfaces += kept->Surfaces;
+        compared.DifferentColors += kept->DifferentColors;
+        compared.DifferentIndices += kept->DifferentIndices;
+
+        if (window->Movie->Player->FrameNum() == before)
+        {
+            continue;
+        }
+
+        const MCVulkanRenderer::KeptCounts now = scene->Renderer->KeptSurfaceCounts();
+        ++advanced;
+        advancedUnchanged += now.Unchanged > counts.Unchanged ? 1 : 0;
+        leastTiles = std::min(leastTiles, now.Tiled > counts.Tiled ? now.TilesDrawn - counts.TilesDrawn : 0);
+    }
+
+    GamePaused = false;
+    window->EndSmackerMovie();
+    CloseGuiObject(made);
+    std::cout << std::format("  {}: {} new frames in {} displays, at least {} tiles drawn again each ({} inside its "
+                             "window); {} screens compared\n",
+                             Name, advanced, displays, leastTiles, inside, compared.Surfaces);
+
+    CHECK_EQ(advanced, MovieFrames);
+    CHECK_EQ(advancedUnchanged, 0);
+    CHECK(leastTiles >= inside);
+    CHECK_EQ(compared.Surfaces, displays);
+    CHECK_EQ(compared.DifferentColors, 0);
+    CHECK_EQ(compared.DifferentIndices, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
 /// <summary>
 /// Port-only (MCDrawnGrid): with the GPU drawing the world 2.5 drawn pixels a window pixel, once a pan puts it on a
 /// grid offset across, the frame presented gives the mouse that grid (MCPresenter::ShownGrids: the world's rectangle,

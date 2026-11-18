@@ -893,7 +893,20 @@ volley 2545:5
             clear |= ClearBit << (cell * 2);
         }
 
-        std::map<std::pair<int32_t, int32_t>, uint32_t> opened;
+        // Each tile the line opens, with its cells as they were, in the line's order. A straight line leaves a tile for
+        // good, so a step in the tile before is the only repeat; a tile met again anyway (rounding at an edge) is put
+        // back last-opened first, so its first, untouched cells win.
+        struct MCOpened
+        {
+            int32_t TileR = 0;
+            int32_t TileC = 0;
+            uint32_t Cells = 0;
+        };
+
+        constexpr size_t OpenedReserve = 32;
+        std::vector<MCOpened> opened;
+        opened.reserve(OpenedReserve);
+        MCScenarioMap& map = GameMap();
         const MCVector3D from = shooter.GetPosition();
         const MCVector3D to = target->GetPosition();
         const float length = std::hypot(to.X - from.X, to.Y - from.Y);
@@ -911,20 +924,25 @@ volley 2545:5
                 MCVector3D(from.X + (to.X - from.X) * share, from.Y + (to.Y - from.Y) * share, 0.0f), tileR, tileC,
                 cellR, cellC);
 
-            if (GameMap().OnMap(tileR, tileC) && !opened.contains({tileR, tileC}))
+            if (!opened.empty() && opened.back().TileR == tileR && opened.back().TileC == tileC)
             {
-                MCMapTile& tile = GameMap().TileAt(tileR, tileC);
-                opened[{tileR, tileC}] = tile.Cells;
+                continue;
+            }
+
+            if (map.OnMap(tileR, tileC))
+            {
+                MCMapTile& tile = map.TileAt(tileR, tileC);
+                opened.push_back({.TileR = tileR, .TileC = tileC, .Cells = tile.Cells});
                 tile.Cells |= clear;
             }
         }
 
         const int32_t answer = shooter.FireWeapon(target, 0.0f, weaponIndex, 0, -1, std::nullopt);
 
-        for (const auto& [at, cells] : opened)
+        for (const MCOpened& was : std::views::reverse(opened))
         {
-            MCMapTile& tile = GameMap().TileAt(at.first, at.second);
-            tile.Cells = (tile.Cells & ~clear) | (cells & clear);
+            MCMapTile& tile = map.TileAt(was.TileR, was.TileC);
+            tile.Cells = (tile.Cells & ~clear) | (was.Cells & clear);
         }
 
         if (MCPort::RandState() == loaded)

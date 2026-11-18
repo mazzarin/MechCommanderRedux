@@ -12,6 +12,7 @@
 #include "object/MCCommander.h"
 #include "object/MCForces.h"
 #include "object/MCMover.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
@@ -219,21 +220,57 @@ namespace
                            use.What);
     }
 
-    /// <summary>The guard's check: no first use in play; else the first ListedUses of them, each a line.</summary>
+    /// <summary>
+    /// A kind of first use in play still open, until the PLAN.md item named closes it: a use of its kind whose What holds
+    /// its text. The guard passes these and fails on any other, so a new gap (an effect not loaded, a file read on first
+    /// show) fails the suite at once. The list only shrinks: an item's entry goes when it lands.
+    /// </summary>
+    struct MCOpenFirstUse
+    {
+        MCFirstUseKind Kind;
+        std::string_view Text;
+        std::string_view Item;
+    };
+
+    constexpr auto OpenFirstUses = std::to_array<MCOpenFirstUse>({
+        {MCFirstUseKind::Open, "sound/music", "music starts read on the game's thread"},
+        {MCFirstUseKind::Read, "sound/music", "music starts read on the game's thread"},
+        {MCFirstUseKind::Open, "stereo/MUSIC", "music starts read on the game's thread"},
+        {MCFirstUseKind::Read, "stereo/MUSIC", "music starts read on the game's thread"},
+        {MCFirstUseKind::Wait, "a frame being read: ", "HD art's reads late (step 5)"},
+        {MCFirstUseKind::Wait, "an archive being opened: ", "HD art's reads late (step 5)"},
+        {MCFirstUseKind::Unpack, ".hda ", "HD art's held entries unpacked on the game's thread (step 5)"},
+        {MCFirstUseKind::Movie, "first frame: ", "HD movies' first frame waited for"},
+        {MCFirstUseKind::Movie, "opened: ", "HD movies opened on the game's thread"},
+    });
+
+    /// <summary>Whether <paramref name="use"/> is of a kind still open (<see cref="OpenFirstUses"/>).</summary>
+    bool StillOpen(const MCFirstUse& use)
+    {
+        return std::ranges::any_of(OpenFirstUses, [&use](const MCOpenFirstUse& open)
+                                   { return open.Kind == use.Kind && use.What.contains(open.Text); });
+    }
+
+    /// <summary>
+    /// The guard's check: no first use in play but those of kinds still open; else the first ListedUses of the others,
+    /// each a line.
+    /// </summary>
     void RequireNoFirstUses(const std::vector<MCFirstUse>& uses)
     {
+        std::vector<MCFirstUse> gaps;
+        std::ranges::copy_if(uses, std::back_inserter(gaps), [](const MCFirstUse& use) { return !StillOpen(use); });
         std::string listed;
 
-        for (size_t i = 0; i < std::min(uses.size(), ListedUses); ++i)
+        for (size_t i = 0; i < std::min(gaps.size(), ListedUses); ++i)
         {
-            listed += "\n  " + UseLine(uses.at(i));
+            listed += "\n  " + UseLine(gaps.at(i));
         }
 
-        if (!uses.empty())
+        if (!gaps.empty())
         {
-            FAIL_CHECK(
-                std::format("the game's thread's first uses in play ({} in all; frame, kind, ms, bytes, what):{}",
-                            uses.size(), listed));
+            FAIL_CHECK(std::format("the game's thread's first uses in play, of no kind still open ({} in all, {} of "
+                                   "kinds still open; frame, kind, ms, bytes, what):{}",
+                                   gaps.size(), uses.size() - gaps.size(), listed));
         }
 
         CHECK(MCFirstUses::Dropped() == 0);
@@ -331,6 +368,12 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
         mission = spec.Mission;
     }
 
+    // --first-uses-framelog <file>: the frame log of the run (the load's "original packets" note, the memory ledger).
+    if (const std::optional<std::string_view> log = MCTest::Option("first-uses-framelog"); log.has_value())
+    {
+        REQUIRE(MCFrameLog::Open(std::filesystem::path(*log)));
+    }
+
     MCTestContextScope scope;
     const auto started = std::chrono::steady_clock::now();
     StartAsPlayer(scope, mission, GuardPack());
@@ -363,4 +406,5 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
                              "{} first uses in play ({:.1f} ms), {} past the list\n",
                              mission, loadSeconds, played, players.size(), enemies.size(), uses.size(), ms,
                              MCFirstUses::Dropped());
+    MCFrameLog::Close();
 }

@@ -257,9 +257,19 @@ public:
     static std::expected<std::unique_ptr<MCSmackerPlayer>, std::string> Open(const std::filesystem::path& path,
                                                                              std::shared_ptr<MCAudio> audio);
 
+    /// <summary>Port-only: opens a movie held in memory (<paramref name="data"/>), as <see cref="Open"/> opens a file.</summary>
+    static std::expected<std::unique_ptr<MCSmackerPlayer>, std::string> OpenMemory(std::vector<uint8_t> data,
+                                                                                   std::shared_ptr<MCAudio> audio);
+
     /// <summary>Stops the sound (<c>SmackClose</c>).</summary>
     ~MCSmackerPlayer();
 
+private:
+    /// <summary>The player of <paramref name="smacker"/> (or its open's error), its sound into <paramref name="audio"/>.</summary>
+    static std::expected<std::unique_ptr<MCSmackerPlayer>, std::string> Playing(
+        std::expected<std::unique_ptr<MCSmacker>, std::string> smacker, std::shared_ptr<MCAudio> audio);
+
+public:
     /// <summary>The decoder.</summary>
     MCSmacker& Decoder() { return *_Smacker; }
 
@@ -350,6 +360,12 @@ struct MCSmackTag
 /// <param name="extraBuffers">Not used.</param>
 /// <returns>The movie, or null when it can't be opened.</returns>
 std::unique_ptr<MCSmackTag> SmackOpen(std::string_view fileName, uint32_t flags, int32_t extraBuffers);
+
+/// <summary>
+/// Port-only: <see cref="SmackOpen"/> of a movie held in memory (<paramref name="data"/>, the file
+/// <paramref name="fileName"/>'s bytes), which reads nothing from the disk.
+/// </summary>
+std::unique_ptr<MCSmackTag> SmackOpenMemory(std::string_view fileName, std::vector<uint8_t> data);
 
 /// <summary>
 /// Sends movie sound to <paramref name="audio"/> (<c>SmackSoundUseDirectSound</c>) while it lives; empty plays movies

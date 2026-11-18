@@ -275,6 +275,10 @@ void MCSoundSystem::Load(std::string_view soundFileName)
     _BettyDataFile = std::make_unique<MCPacketFile>();
     result = _BettyDataFile->Open(GamePath(SoundPath, "Betty", ".pak"));
     Assert(result == 0, static_cast<uint32_t>(result), " Couldn't open bettyDataFile ");
+    // Port-only (the workspace's SPEC-first-use.md): the sound bites and Betty's lines held as the game starts (SOUND.PAK
+    // 1.7 MB, BETTY.PAK 3.4 MB), so a sound or an announcement first played in a mission reads nothing from the disk.
+    _SoundDataFile->HoldAllPackets();
+    _BettyDataFile->HoldAllPackets();
     SeekSoundBlock(soundFile, "SoundBites", " Couldn't find a variable in betty file ");
     uint32_t numBites = 0;
     ReadSetting(soundFile, "numBites", numBites, " Couldn't find a variable in betty file ");

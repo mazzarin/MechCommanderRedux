@@ -204,6 +204,13 @@ public:
     std::optional<MCGesturePacket> GesturePacket(int32_t gesture, int32_t part, float rotation) const;
 
     /// <summary>
+    /// Port-only (the first-use rule): every packet <see cref="GesturePacket"/> can give, each once: every gesture with
+    /// frames, every part, every stored facing (every fourth where the gesture has only those). Read at the load, so no
+    /// gesture's first show reads or unpacks in play.
+    /// </summary>
+    std::vector<MCGesturePacket> AllPackets() const;
+
+    /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): adds to <paramref name="packets"/> the packet part
     /// <paramref name="part"/> (the tree's numbering) of gesture <paramref name="gesture"/> draws at
     /// <paramref name="rotation"/> degrees, the large art's as GetGesture finds it and MCMechActor::Render draws it, and
@@ -282,6 +289,13 @@ public:
 private:
     /// <summary>The shape at <paramref name="where"/>, loading it if needed (none without its part's PAK).</summary>
     std::shared_ptr<MCShape> LoadGesturePacket(const MCGesturePacket& where, bool zoomedOut);
+
+    /// <summary>
+    /// Where the shape of part <paramref name="part"/> in gesture <paramref name="gesture"/> at stored facing
+    /// <paramref name="index"/> is (drawn mirrored when <paramref name="reverse"/>); nothing past the part's stored
+    /// facings.
+    /// </summary>
+    std::optional<MCGesturePacket> PacketAt(int32_t gesture, int32_t part, int32_t index, bool reverse) const;
 
     /// <summary>
     /// Port-only: tells HD art the folders of <paramref name="shape"/>'s neighbours in a turn, the packets at the facings

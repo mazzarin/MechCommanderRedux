@@ -10,6 +10,8 @@
 #include "object/MCArtilleryChunk.h"
 #include "object/MCCameraDrone.h"
 #include "object/MCCameraDroneType.h"
+#include "object/MCGroundVehicleGameSystem.h"
+#include "object/MCMasterComponent.h"
 #include "object/MCBuilding.h"
 #include "object/MCBuildingType.h"
 #include "object/MCBuildingMarines.h"
@@ -60,8 +62,7 @@ auto MCTurretType::MadeTypes() const -> std::vector<int32_t>
         return MadeTypesAnd({BlownEffectId});
     }
 
-    return MadeTypesAnd(
-        {BlownEffectId, WeaponFXTable[static_cast<uint8_t>(MasterComponentList[WeaponType].WeaponEffect)]});
+    return MadeTypesAnd({BlownEffectId, WeaponFXTable[MasterComponentList[WeaponType].WeaponEffect]});
 }
 
 auto MCTurretType::Init(MCFile& objFile, uint32_t fileSize) -> int32_t

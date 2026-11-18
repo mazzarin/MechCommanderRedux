@@ -215,6 +215,13 @@ namespace
         InstallAgain = MCAgain::No;
     }
 
+    /// <summary>Who chose the HD art's size, as the copy keeps it on <paramref name="disk"/> (the machine's without a choice kept).</summary>
+    MCContentUpdater::MCPicked PickedOn(MCUpdateDisk& disk)
+    {
+        const std::optional<MCContentUpdater::MCChoice> choice = MCContentUpdater::Choice(disk, Content->GameFolder);
+        return choice ? choice->Picked : MCContentUpdater::MCPicked::Machine;
+    }
+
     /// <summary>
     /// What the copy has of the HD pack, from its record (<paramref name="known"/>, the one the start read; none: read
     /// here), kept, and the sets chosen.
@@ -239,14 +246,31 @@ namespace
             Record = installed.value_or(MCInstalled::MCRecord{});
         }
 
+        const MCContentUpdater::MCSets wanted = MCContentUpdater::Wanted(*Content, *disk, Record);
         Hd = {.Managed = true,
               .Installed = MCInstalled::Has(Record, Content->GameFolder, MCContentList::HdSet),
-              .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, Record).contains(MCContentList::HdSet)};
+              .Chosen = wanted.contains(MCContentList::HdSet),
+              .TwoX = Record.Sets.contains(MCContentList::Hd2xSet),
+              .TwoXChosen = wanted.contains(MCContentList::Hd2xSet),
+              .PlayerPicked = PickedOn(*disk) == MCContentUpdater::MCPicked::Player};
 
         if (const auto bytes = Record.SetBytes.find(MCContentList::HdSet); bytes != Record.SetBytes.end())
         {
-            Hd.Bytes = bytes->second;
+            Hd.FullBytes = bytes->second;
         }
+
+        if (const auto bytes = Record.SetBytes.find(MCContentList::Hd2xSet); bytes != Record.SetBytes.end())
+        {
+            Hd.TwoXBytes = bytes->second;
+        }
+
+        Hd.Bytes = Hd.TwoX && Hd.TwoXBytes != 0 ? Hd.TwoXBytes : Hd.FullBytes;
+    }
+
+    /// <summary>Whether the HD pack the player chose differs from the copy's: in or out, or its art's size.</summary>
+    bool HdChangeWanted()
+    {
+        return Hd.Chosen != Hd.Installed || (Hd.Chosen && Hd.TwoXChosen != Hd.TwoX);
     }
 
     /// <summary>
@@ -585,7 +609,7 @@ namespace
         Step = MCStep::Idle;
         LookedInVain();
 
-        if (Hd.Managed && Hd.Chosen != Hd.Installed && Hd.Stage != MCStage::Failed)
+        if (Hd.Managed && HdChangeWanted() && Hd.Stage != MCStage::Failed)
         {
             StartSetsChange();
         }
@@ -1184,8 +1208,73 @@ auto MCUpdater::HdPack() -> const MCHdPack&
             break;
     }
 
-    Hd.WithUpdate = Step == MCStep::Offered && Hd.Chosen != Hd.Installed && Offer && Offer->Content != nullptr;
+    Hd.WithUpdate = Step == MCStep::Offered && HdChangeWanted() && Offer && Offer->Content != nullptr;
     return Hd;
+}
+
+namespace
+{
+    /// <summary>
+    /// The HD pack's choice is kept (<paramref name="sets"/>, the size picked by <paramref name="picked"/>), and the
+    /// change planned as the updater's step allows: now, with the update shown, after the change under way, or at a
+    /// later start.
+    /// </summary>
+    void ChangeHd(const MCContentUpdater::MCSets& sets, MCContentUpdater::MCPicked picked)
+    {
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+
+        if (const auto kept = MCContentUpdater::Choose(*disk, Content->GameFolder, sets, picked); !kept)
+        {
+            SDL_Log("Updater: the HD pack's choice isn't kept: %s", kept.error().c_str());
+            Hd.Stage = MCStage::Failed;
+            Hd.Error = Printable(kept.error(), MaxErrorLength, false);
+            return;
+        }
+
+        Hd.Chosen = sets.contains(MCContentList::HdSet);
+        Hd.TwoXChosen = MCContentUpdater::Wanted(*Content, *disk, Record).contains(MCContentList::Hd2xSet);
+        Hd.PlayerPicked = picked == MCContentUpdater::MCPicked::Player;
+
+        switch (Step)
+        {
+            case MCStep::Idle:
+                StartSetsChange();
+                break;
+            case MCStep::Finished:
+            {
+                // After a failed update this run, which then waits for the next start (INSTALL is no longer offered);
+                // one installing goes in as the game quits, the choice at a later start.
+                if (Current.Stage == MCStage::Failed)
+                {
+                    Current.Retry = false;
+                    Changed();
+                    StartSetsChange();
+                }
+
+                break;
+            }
+            case MCStep::Offered:
+                LookAgain();
+                break;
+            case MCStep::ChangingSets:
+            {
+                // Stopped where it is (staged files stay); its end plans the new choice, and clears them when that's
+                // back to what's installed.
+                SetsChosenAgain = true;
+                Hd.Stopping = true;
+
+                if (Work != nullptr)
+                {
+                    Work->Stop();
+                }
+
+                break;
+            }
+            default:
+                // An update's work comes first: the choice is planned at a later start.
+                break;
+        }
+    }
 }
 
 auto MCUpdater::ChooseHd(bool chosen) -> void
@@ -1196,7 +1285,8 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
     }
 
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-    MCContentUpdater::MCSets sets = MCContentUpdater::Wanted(*disk, Content->GameFolder, Record);
+    MCContentUpdater::MCSets sets = MCContentUpdater::Wanted(*Content, *disk, Record);
+    MCContentUpdater::MCPicked picked = PickedOn(*disk);
 
     if (chosen)
     {
@@ -1204,57 +1294,53 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
     }
     else
     {
+        // Out with its art's size: a GET later takes the machine's again.
         sets.erase(std::string(MCContentList::HdSet));
+        sets.erase(std::string(MCContentList::Hd2xSet));
+        picked = MCContentUpdater::MCPicked::Machine;
     }
 
-    if (const auto kept = MCContentUpdater::Choose(*disk, Content->GameFolder, sets); !kept)
+    ChangeHd(sets, picked);
+}
+
+auto MCUpdater::ChooseHdArt(bool twoX) -> void
+{
+    // The art's size is HD's: with no HD chosen there's nothing to size.
+    if (!Content || !Hd.Managed || !Hd.Chosen || (twoX == Hd.TwoXChosen && Hd.Stage != MCStage::Failed))
     {
-        SDL_Log("Updater: the HD pack's choice isn't kept: %s", kept.error().c_str());
-        Hd.Stage = MCStage::Failed;
-        Hd.Error = Printable(kept.error(), MaxErrorLength, false);
         return;
     }
 
-    Hd.Chosen = chosen;
+    MCContentUpdater::MCSets sets = MCContentUpdater::Wanted(*Content, *MakeDisk(), Record);
 
-    switch (Step)
+    if (twoX)
     {
-        case MCStep::Idle:
-            StartSetsChange();
-            break;
-        case MCStep::Finished:
-        {
-            // After a failed update this run, which then waits for the next start (INSTALL is no longer offered); one
-            // installing goes in as the game quits, the choice at a later start.
-            if (Current.Stage == MCStage::Failed)
-            {
-                Current.Retry = false;
-                Changed();
-                StartSetsChange();
-            }
+        sets.emplace(MCContentList::Hd2xSet);
+    }
+    else
+    {
+        sets.erase(std::string(MCContentList::Hd2xSet));
+    }
 
-            break;
-        }
-        case MCStep::Offered:
-            LookAgain();
-            break;
-        case MCStep::ChangingSets:
-        {
-            // Stopped where it is (staged files stay); its end plans the new choice, and clears them when that's back to
-            // what's installed.
-            SetsChosenAgain = true;
-            Hd.Stopping = true;
+    SDL_Log("Updater: the player picks the %s HD art", twoX ? "2x" : "full");
+    ChangeHd(sets, MCContentUpdater::MCPicked::Player);
+}
 
-            if (Work != nullptr)
-            {
-                Work->Stop();
-            }
+auto MCUpdater::SetGpuSamplesBc7(bool samples) -> void
+{
+    if (!Content || Content->Machine.SamplesBc7 == samples)
+    {
+        return;
+    }
 
-            break;
-        }
-        default:
-            // An update's work comes first: the choice is planned at a later start.
-            break;
+    Content->Machine.SamplesBc7 = samples;
+    SDL_Log("Updater: the GPU %s BC7: the machine's HD art is the %s set", samples ? "samples" : "can't sample",
+            MCContentUpdater::Takes2x(Content->Machine) ? "2x" : "full");
+
+    // Read again only while nothing runs (before the start's check, as the app tells it): the record is the start's.
+    if (Step == MCStep::Idle && Work == nullptr && Hd.Managed)
+    {
+        ReadHd(Record);
     }
 }
 
@@ -1345,6 +1431,16 @@ auto MCUpdater::Found(std::string version, std::string notes) -> void
     {
         if (Step == MCStep::CheckingProgram)
         {
+            // Below the lowest release a copy may stay on, it downloads unasked, from the next frame (never from inside
+            // the backend's own report), as INSTALL again does.
+            if (Offer && Offer->Forced)
+            {
+                SDL_Log(
+                    "Updater: build %llu downloads by itself: this one is below the lowest release a copy may stay on",
+                    static_cast<unsigned long long>(Offer->ProgramBuild.value_or(0)));
+                InstallAgain = MCAgain::Looking;
+            }
+
             ShowOffer();
         }
 

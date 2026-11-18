@@ -86,9 +86,11 @@ namespace
 
         /// <summary>
         /// release.json at <paramref name="issue"/>: release <paramref name="number"/> with the list, its program at
-        /// <paramref name="build"/> (the Mac's with its archive's signature unless <paramref name="macSigned"/> is false).
+        /// <paramref name="build"/> (the Mac's with its archive's signature unless <paramref name="macSigned"/> is false),
+        /// and the lowest release a copy may stay on, <paramref name="required"/>.
         /// </summary>
-        void Publish(uint64_t issue, uint64_t number, uint64_t build, bool macSigned = true) const
+        void Publish(uint64_t issue, uint64_t number, uint64_t build, bool macSigned = true,
+                     std::optional<MCReleaseFile::MCRequired> required = std::nullopt) const
         {
             MCReleaseFile::MCRelease release{.Number = number,
                                              .Version = std::string(ReleaseVersion),
@@ -100,7 +102,8 @@ namespace
                                        .EdSignatures = macSigned ? std::vector{MacSignature}
                                                                  : std::vector<MCReleaseFile::MCEdSignature>{}};
             release.Programs["windows"] = {.Build = build, .Size = ProgramSize};
-            const MCReleaseFile::MCReleases releases{.Format = 1, .Issue = issue, .Current = release};
+            const MCReleaseFile::MCReleases releases{
+                .Format = 1, .Issue = issue, .Current = release, .Required = std::move(required)};
             Write(Host.Path() / "release.json",
                   ReleaseKey.Envelope(MCSignedFile::ReleaseType, MCReleaseFile::ReleasesPayload(releases)));
         }
@@ -111,9 +114,26 @@ namespace
                     .UserFolder = User.Path(),
                     .RootKeys = {Root.Public},
                     .Platform = "mac",
-                    .RunningBuild = RunningBuild,
-                    .RunningVersion = std::string(RunningShown)};
+                    .RunningBuild = Build,
+                    .RunningVersion = Build == RunningBuild ? std::string(RunningShown)
+                                                            : std::format("{}.0 ({})", ReleaseVersion, Build),
+                    .Machine = Machine};
         }
+
+        /// <summary>The release's list is now <paramref name="list"/>, hosted, and release.json names it.</summary>
+        void SetList(MCContentList::MCList list)
+        {
+            List = std::move(list);
+            ListText = MCContentList::Write(List);
+            Write(Host.Path() / "lists" / (MCSha256::Hex(MCSha256::Of(ListText)) + ".json"), ListText);
+            Publish(1, 2, RunningBuild);
+        }
+
+        /// <summary>The machine the copy runs on (its memory not known: the full HD art).</summary>
+        MCContentUpdater::MCMachine Machine;
+
+        /// <summary>The build the copy runs (a test puts the new program in by changing it).</summary>
+        uint64_t Build = RunningBuild;
 
         /// <summary>Whether an update is armed, waiting for the next start.</summary>
         bool Armed() const { return MCContentSwap::Waiting(*MakeDisk(), Game.Path()) == true; }
@@ -157,11 +177,15 @@ namespace
         PutInPlace(release, **offer);
     }
 
-    /// <summary><paramref name="sets"/> chosen, planned against the release installed, and put in place.</summary>
-    void ChangeSets(const MCHostedRelease& release, const MCContentUpdater::MCSets& sets)
+    /// <summary>
+    /// <paramref name="sets"/> chosen (the HD art's size by <paramref name="picked"/>), planned against the release
+    /// installed, and put in place.
+    /// </summary>
+    void ChangeSets(const MCHostedRelease& release, const MCContentUpdater::MCSets& sets,
+                    MCContentUpdater::MCPicked picked = MCContentUpdater::MCPicked::Machine)
     {
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-        REQUIRE(MCContentUpdater::Choose(*disk, release.Game.Path(), sets).has_value());
+        REQUIRE(MCContentUpdater::Choose(*disk, release.Game.Path(), sets, picked).has_value());
         MCFolderSource source(release.Host.Path());
         const auto change = MCContentUpdater::CheckSets(release.Setup(), *disk, source);
         REQUIRE(change.has_value());
@@ -1036,6 +1060,124 @@ TEST_CASE("updater: the program alone holds the staging lock from INSTALL until 
     CHECK(StagingFree(game));
 }
 
+TEST_CASE(
+    "content updater: below the lowest release a copy may stay on, the program comes alone and forced, skipped or "
+    "not; at it, the update is as ever; a forced program arms no content and notes none due")
+{
+    MCHostedRelease release("forced-check");
+    const std::filesystem::path& game = release.Game.Path();
+    const MCReleaseFile::MCRequired required{.Release = 2, .Builds = {{"mac", NewerBuild}, {"windows", NewerBuild}}};
+    release.Publish(1, 2, NewerBuild, true, required);
+
+    // The player skipped release 2 before it was required: the program comes anyway.
+    {
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        MCFolderSource source(release.Host.Path());
+        const auto offer = MCContentUpdater::Check(release.Setup(), *disk, source);
+        REQUIRE(offer.has_value());
+        REQUIRE(offer->has_value());
+        REQUIRE(MCContentUpdater::Skip(release.Setup(), *disk, **offer).has_value());
+    }
+
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCFolderSource source(release.Host.Path());
+    const auto forced = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(forced.has_value());
+    REQUIRE(forced->has_value());
+    CHECK((*forced)->Forced);
+    CHECK((*forced)->ProgramBuild == std::optional<uint64_t>(NewerBuild));
+    CHECK((*forced)->Content == nullptr);
+    CHECK_EQ((*forced)->ContentBytes(), uint64_t{0});
+
+    // Armed, it leaves the content as it is: nothing waits for the next start, and the new program's start fetches
+    // nothing before anything opens.
+    REQUIRE(MCContentUpdater::Arm(release.Setup(), *disk, **forced).has_value());
+    CHECK(!release.Armed());
+    CHECK(!MCInstalled::ReadDue(*disk, game).has_value());
+    const auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+    CHECK_EQ(record->Release, uint64_t{1});
+    CHECK(MCInstalled::AtStart(*disk, game, *record, NewerBuild, 0) == MCInstalled::MCStartNeed::Nothing);
+
+    // At the lowest release's build, nothing is forced: the skip holds again.
+    release.Publish(2, 2, NewerBuild, true, MCReleaseFile::MCRequired{.Release = 2, .Builds = {{"mac", RunningBuild}}});
+    const auto atIt = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(atIt.has_value());
+    CHECK(!atIt->has_value());
+
+    // The new program on the old content: the release the player skipped stays skipped (only its program was
+    // forced), and the next release's update offers the content, as ever, the player's to take.
+    release.Build = NewerBuild;
+    const auto stillSkipped = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(stillSkipped.has_value());
+    CHECK(!stillSkipped->has_value());
+    release.Publish(3, 3, NewerBuild, true, required);
+    const auto content = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(content.has_value());
+    REQUIRE(content->has_value());
+    CHECK(!(*content)->Forced);
+    CHECK(!(*content)->ProgramBuild.has_value());
+    REQUIRE((*content)->Content != nullptr);
+    CHECK((*content)->Content->Plan.Changes());
+}
+
+TEST_CASE("content updater: a Mac copy below the lowest release whose program release.json gives no signature for "
+          "isn't forced: its update plans the content as ever")
+{
+    MCHostedRelease release("forced-unsigned");
+    release.Publish(1, 2, NewerBuild, false, MCReleaseFile::MCRequired{.Release = 2, .Builds = {{"mac", NewerBuild}}});
+    MCFolderSource source(release.Host.Path());
+    const auto offer = MCContentUpdater::Check(release.Setup(), *MakeDisk(), source);
+    REQUIRE(offer.has_value());
+    REQUIRE(offer->has_value());
+    CHECK(!(*offer)->Forced);
+    CHECK(!(*offer)->ProgramBuild.has_value());
+    CHECK((*offer)->Content != nullptr);
+}
+
+TEST_CASE("updater: below the lowest release a copy may stay on, the program downloads by itself and goes in as the "
+          "game quits, the content left as it was; the new program's start offers the content, the player's to take")
+{
+    MCHostedRelease release("forced-updater");
+    release.Publish(1, 2, NewerBuild, true,
+                    MCReleaseFile::MCRequired{.Release = 2, .Builds = {{"mac", NewerBuild}, {"windows", NewerBuild}}});
+
+    {
+        MCUpdaterScope scope(release, true);
+        MCUpdater::CheckAtStart();
+        REQUIRE(FramesUntil([&] { return !scope.Program->Checks.empty(); }));
+        CHECK(scope.Program->Checks.front() == std::optional<uint64_t>(NewerBuild));
+
+        // Found: no question; it downloads from the next frame, the page showing it (no SKIP to press).
+        MCUpdater::Found(std::format("{}.0 ({})", ReleaseVersion, NewerBuild), "Sparkle's own notes.");
+        CHECK(Stage() == MCStage::Downloading);
+        CHECK(scope.Program->Answers.empty());
+        REQUIRE(FramesUntil([&] { return !scope.Program->Answers.empty(); }));
+        CHECK(scope.Program->Answers.back() == MCAnswer::Install);
+        CHECK_EQ(MCUpdater::Status().Expected, ProgramSize);
+        CHECK(!StagingFree(release.Game.Path()));
+
+        // Ready: in as the game quits; nothing of the content armed or noted due.
+        MCUpdater::Ready();
+        REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+        CHECK(Stage() == MCStage::Ready);
+        CHECK(MCUpdater::Status().GoesIn == MCUpdater::MCGoesIn::AsItQuits);
+        CHECK(!release.Armed());
+        CHECK(!MCInstalled::ReadDue(*MakeDisk(), release.Game.Path()).has_value());
+        CHECK(StagingFree(release.Game.Path()));
+        CHECK_EQ(*scope.Quits, 0);
+        MCUpdater::Quit();
+    }
+
+    // The next start runs the new program on the old content: the update shows the content, waiting for INSTALL.
+    release.Build = NewerBuild;
+    MCUpdaterScope next(release, true);
+    CheckUntilFound(next, std::nullopt);
+    CHECK(next.Program->Checks.empty());
+    CHECK_EQ(MCUpdater::Status().Expected, release.ContentBytes());
+    CHECK(!release.Armed());
+}
+
 TEST_CASE("updater: Sparkle installing without its ready step (an update it downloaded before) arms the content too")
 {
     MCHostedRelease release("installs-at-once");
@@ -1154,7 +1296,7 @@ TEST_CASE(
     CHECK(!MCContentUpdater::Chosen(*disk, game).has_value());
     Write(game / "Redux update" / "sets.json", R"({"format": 1, "sets": ["game", 2]})");
     CHECK(!MCContentUpdater::Chosen(*disk, game).has_value());
-    CHECK(MCContentUpdater::Wanted(*disk, game, *MCInstalled::Read(game)) == WithoutHd);
+    CHECK(MCContentUpdater::Wanted(release.Setup(), *disk, *MCInstalled::Read(game)) == WithoutHd);
 }
 
 TEST_CASE("content updater: lists are kept: read again unfetched, fetched again when damaged, HD removed offline; only "
@@ -1245,6 +1387,246 @@ TEST_CASE("content updater: HD OPTIONS' REMOVE is planned from the record alone,
     ChangeSets(release, WithHd);
     CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
     CHECK(InstalledSets(release) == WithHd);
+}
+
+namespace
+{
+    /// <summary>The sets with the HD pack's 2x art.</summary>
+    const MCContentUpdater::MCSets WithHd2x = {"game", "hd", "hd2x"};
+
+    /// <summary>Machines whose default HD art is the 2x set (8 GB) and the full set (16 GB).</summary>
+    const MCContentUpdater::MCMachine SmallMachine{.MemoryBytes = uint64_t{8} << 30};
+    const MCContentUpdater::MCMachine BigMachine{.MemoryBytes = uint64_t{16} << 30};
+
+    /// <summary>The terrain's bytes in the 2x set, and HD's palette, the same in both sets.</summary>
+    constexpr std::string_view TerrainAt2x = "the terrain at 2x";
+    constexpr std::string_view Palette = "the HD palette";
+
+    /// <summary>
+    /// Release 2 with the 2x set: the terrain's variant at its path (its own zip), and a palette in both sets (the HD
+    /// set's zip), as the release script lists them.
+    /// </summary>
+    void AddTwoX(MCHostedRelease& release)
+    {
+        const std::string shared = StoredZip({{"HD/palette.rgb", std::string(Palette)}});
+        const std::string twoX = StoredZip({{"HD/terrain.hda", std::string(TerrainAt2x)}});
+        Write(release.Host.Path() / "hd-2.zip", shared);
+        Write(release.Host.Path() / "hd2x-2.zip", twoX);
+        MCContentList::MCList list = release.List;
+        list.Zips.push_back({"hd-2.zip", shared.size(), MCSha256::Of(shared)});
+        list.Zips.push_back({"hd2x-2.zip", twoX.size(), MCSha256::Of(twoX)});
+        list.Files.push_back({.Path = "HD/palette.rgb",
+                              .Set = "hd",
+                              .Size = Palette.size(),
+                              .Sha256 = MCSha256::Of(Palette),
+                              .Zip = "hd-2.zip"});
+        list.Variants.push_back({.Path = "HD/terrain.hda",
+                                 .Set = "hd2x",
+                                 .Size = TerrainAt2x.size(),
+                                 .Sha256 = MCSha256::Of(TerrainAt2x),
+                                 .Zip = "hd2x-2.zip"});
+        release.SetList(std::move(list));
+    }
+
+    /// <summary>The sets the update <paramref name="release"/>'s copy is offered plans for.</summary>
+    MCContentUpdater::MCSets OfferedSets(const MCHostedRelease& release)
+    {
+        MCFolderSource source(release.Host.Path());
+        const auto offer = MCContentUpdater::Check(release.Setup(), *MakeDisk(), source);
+        REQUIRE(offer.has_value());
+        REQUIRE(offer->has_value());
+        REQUIRE((*offer)->Content != nullptr);
+        return (*offer)->Content->Plan.Record.Sets;
+    }
+}
+
+TEST_CASE("content updater: where the player didn't pick the HD art's size, an update takes the machine's: the 2x art "
+          "under 12 GB, the full art above; a size the player picked holds on any machine; sets.json from before is "
+          "the machine's")
+{
+    MCHostedRelease release("two-x-machine");
+    AddTwoX(release);
+    const std::filesystem::path& game = release.Game.Path();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+
+    // An installer's answer from before the 2x set (no "picked"): the machine's.
+    Write(game / "Redux update" / "sets.json", R"({"format": 1, "sets": ["game", "hd"]})");
+    const auto before = MCContentUpdater::Choice(*disk, game);
+    REQUIRE(before.has_value());
+    CHECK(before->Picked == MCContentUpdater::MCPicked::Machine);
+    release.Machine = SmallMachine;
+    CHECK(OfferedSets(release) == WithHd2x);
+    release.Machine = BigMachine;
+    CHECK(OfferedSets(release) == WithHd);
+
+    // Kept, the copy keeps the size it has (the full art here), whatever the machine: nothing switches by itself.
+    release.Machine = SmallMachine;
+    const auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+    CHECK(MCContentUpdater::Wanted(release.Setup(), *disk, *record) == WithHd);
+    CHECK(MCContentUpdater::Wanted(release.Setup(), *disk, *record, MCContentUpdater::MCFor::Downloading) == WithHd2x);
+
+    // The player's pick holds on either machine.
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd, MCContentUpdater::MCPicked::Player).has_value());
+    CHECK(OfferedSets(release) == WithHd);
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd2x, MCContentUpdater::MCPicked::Player).has_value());
+    release.Machine = BigMachine;
+    CHECK(OfferedSets(release) == WithHd2x);
+    const auto picked = MCContentUpdater::Choice(*disk, game);
+    REQUIRE(picked.has_value());
+    CHECK(picked->Sets == WithHd2x);
+    CHECK(picked->Picked == MCContentUpdater::MCPicked::Player);
+
+    // The 2x art goes only with HD: without HD, none; the 2x set alone brings HD with it.
+    REQUIRE(MCContentUpdater::Choose(*disk, game, {"game", "hd2x"}, MCContentUpdater::MCPicked::Player).has_value());
+    CHECK(OfferedSets(release) == WithHd2x);
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    release.Machine = SmallMachine;
+    CHECK(OfferedSets(release) == WithoutHd);
+
+    // A pick that isn't the machine's or the player's leaves the copy with the sets it has.
+    Write(game / "Redux update" / "sets.json", R"({"format": 1, "sets": ["game"], "picked": "someone"})");
+    CHECK(!MCContentUpdater::Choice(*disk, game).has_value());
+
+    // The machine's default: memory under 12 GB, a card of its own under 4 GB (3.5 GiB), or no BC7.
+    CHECK(MCContentUpdater::Takes2x(SmallMachine));
+    CHECK(!MCContentUpdater::Takes2x(BigMachine));
+    CHECK(!MCContentUpdater::Takes2x({}));
+    CHECK(MCContentUpdater::Takes2x({.MemoryBytes = uint64_t{32} << 30, .CardBytes = uint64_t{3} << 30}));
+    CHECK(!MCContentUpdater::Takes2x({.MemoryBytes = uint64_t{32} << 30, .CardBytes = uint64_t{4000} << 20}));
+    CHECK(MCContentUpdater::Takes2x({.MemoryBytes = uint64_t{32} << 30, .SamplesBc7 = false}));
+}
+
+TEST_CASE("content updater: the 2x art and the full art switch at the release installed: the 2x files in its place, "
+          "the shared ones kept; back to the full art, the 2x files replaced and none kept; HD out, every file of both")
+{
+    MCHostedRelease release("two-x-switch");
+    AddTwoX(release);
+    const std::filesystem::path& game = release.Game.Path();
+    release.Machine = BigMachine;
+    UpdateToRelease2(release);
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    CHECK_EQ(Read(game / "HD" / "palette.rgb"), std::string(Palette));
+    CHECK(InstalledSets(release) == WithHd);
+    const auto full = MCInstalled::Read(game);
+    REQUIRE(full.has_value());
+    // Release 2's four files and the palette.
+    CHECK_EQ(full->Files.size(), size_t{5});
+    CHECK_EQ(full->SetBytes.at("hd"), uint64_t{Terrain().size() + Palette.size()});
+    CHECK_EQ(full->SetBytes.at("hd2x"), uint64_t{TerrainAt2x.size() + Palette.size()});
+
+    // The player picks the 2x art: only the terrain's 2x copy is fetched, the palette stays.
+    {
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd2x, MCContentUpdater::MCPicked::Player).has_value());
+        MCFolderSource source(release.Host.Path());
+        const auto change = MCContentUpdater::CheckSets(release.Setup(), *disk, source);
+        REQUIRE(change.has_value());
+        REQUIRE(change->has_value());
+        CHECK_EQ((*change)->ContentBytes(), uint64_t{std::filesystem::file_size(release.Host.Path() / "hd2x-2.zip")});
+        PutInPlace(release, **change);
+    }
+
+    CHECK_EQ(Read(game / "HD" / "terrain.hda"), std::string(TerrainAt2x));
+    CHECK_EQ(Read(game / "HD" / "palette.rgb"), std::string(Palette));
+    CHECK(InstalledSets(release) == WithHd2x);
+    CHECK(!std::filesystem::exists(game / "Redux backup" / "HD" / "terrain.hda"));
+
+    // Back to the full art: fetched again (not a removal planned from the record), the 2x copy not kept.
+    ChangeSets(release, WithHd, MCContentUpdater::MCPicked::Player);
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    CHECK(InstalledSets(release) == WithHd);
+    CHECK(!std::filesystem::exists(game / "Redux backup" / "HD" / "terrain.hda"));
+
+    // With the 2x art again, HD out: every HD file goes, kept nowhere.
+    ChangeSets(release, WithHd2x, MCContentUpdater::MCPicked::Player);
+    ChangeSets(release, WithoutHd);
+    CHECK(!std::filesystem::exists(game / "HD" / "terrain.hda"));
+    CHECK(!std::filesystem::exists(game / "HD" / "palette.rgb"));
+    CHECK(!std::filesystem::exists(game / "Redux backup" / "HD"));
+    CHECK(InstalledSets(release) == WithoutHd);
+}
+
+TEST_CASE("content updater: the first start takes the machine's HD art where the player didn't pick it, and the "
+          "player's where they did")
+{
+    MCHostedRelease release("two-x-first");
+    AddTwoX(release);
+    const std::filesystem::path& game = release.Game.Path();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+
+    const auto install = [&](const MCContentUpdater::MCSets& sets, MCContentUpdater::MCPicked picked)
+    {
+        std::filesystem::remove_all(game);
+        std::filesystem::create_directories(game);
+        REQUIRE(MCContentUpdater::Choose(*disk, game, sets, picked).has_value());
+        MCFolderSource source(release.Host.Path());
+        REQUIRE(MCContentUpdater::Install(release.Setup(), *disk, source, GoOn).has_value());
+        REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+        return InstalledSets(release);
+    };
+
+    release.Machine = SmallMachine;
+    CHECK(install(WithHd, MCContentUpdater::MCPicked::Machine) == WithHd2x);
+    CHECK_EQ(Read(game / "HD" / "terrain.hda"), std::string(TerrainAt2x));
+    CHECK_EQ(Read(game / "HD" / "palette.rgb"), std::string(Palette));
+    CHECK(install(WithHd, MCContentUpdater::MCPicked::Player) == WithHd);
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    release.Machine = BigMachine;
+    CHECK(install(WithHd, MCContentUpdater::MCPicked::Machine) == WithHd);
+    CHECK(install(WithHd2x, MCContentUpdater::MCPicked::Player) == WithHd2x);
+}
+
+TEST_CASE("updater: HD OPTIONS shows the HD art's size and both sets' sizes; the player's pick of the 2x art is kept "
+          "and put in at the next start; with an update shown, the update is planned again with it")
+{
+    MCHostedRelease release("two-x-updater");
+    AddTwoX(release);
+    const std::filesystem::path& game = release.Game.Path();
+    release.Machine = BigMachine;
+    UpdateToRelease2(release);
+
+    {
+        MCUpdaterScope scope(release, false);
+        CHECK(MCUpdater::HdPack().Installed);
+        CHECK(!MCUpdater::HdPack().TwoX);
+        CHECK(!MCUpdater::HdPack().TwoXChosen);
+        CHECK_EQ(MCUpdater::HdPack().Bytes, uint64_t{Terrain().size() + Palette.size()});
+        CHECK_EQ(MCUpdater::HdPack().TwoXBytes, uint64_t{TerrainAt2x.size() + Palette.size()});
+        MCUpdater::CheckAtStart();
+        REQUIRE(FramesUntilIdle());
+
+        MCUpdater::ChooseHdArt(true);
+        CHECK(MCUpdater::HdPack().TwoXChosen);
+        REQUIRE(FramesUntil([] { return MCUpdater::HdPack().Stage == MCStage::Ready; }));
+        CHECK(release.Armed());
+        const auto choice = MCContentUpdater::Choice(*MakeDisk(), game);
+        REQUIRE(choice.has_value());
+        CHECK(choice->Picked == MCContentUpdater::MCPicked::Player);
+    }
+
+    REQUIRE(MCContentSwap::Run(*MakeDisk(), game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(InstalledSets(release) == WithHd2x);
+
+    // An update shown (another copy, at release 1 with the full art): the player's pick of the 2x art plans it again.
+    MCHostedRelease shown("two-x-shown");
+    AddTwoX(shown);
+    shown.Machine = BigMachine;
+    MCUpdaterScope scope(shown, false);
+    CheckUntilFound(scope, std::nullopt);
+    const uint64_t withFull = MCUpdater::Status().Expected;
+    CHECK(!MCUpdater::HdPack().WithUpdate);
+    MCUpdater::ChooseHdArt(true);
+    CHECK(Stage() == MCStage::None);
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Found; }));
+    CHECK(MCUpdater::HdPack().WithUpdate);
+    CHECK(MCUpdater::Status().Expected != withFull);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    REQUIRE(Stage() == MCStage::Ready);
+    REQUIRE(MCContentSwap::Run(*MakeDisk(), shown.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(InstalledSets(shown) == WithHd2x);
+    CHECK_EQ(Read(shown.Game.Path() / "HD" / "terrain.hda"), std::string(TerrainAt2x));
 }
 
 TEST_CASE("content updater: an update is planned for the sets chosen")
@@ -1789,7 +2171,8 @@ namespace
     /// release.json naming the setup and, at setup level <paramref name="level"/>, the program's files and their zip;
     /// the copy's setup at <paramref name="copyLevel"/>, its program build 500's.
     /// </summary>
-    void PublishProgram(const MCHostedRelease& release, uint64_t level, uint64_t copyLevel)
+    void PublishProgram(const MCHostedRelease& release, uint64_t level, uint64_t copyLevel,
+                        std::optional<MCReleaseFile::MCRequired> required = std::nullopt)
     {
         PublishSetup(release, SetupBytes);
         std::vector<std::pair<std::string, std::string>> entries;
@@ -1818,7 +2201,8 @@ namespace
                                                   .Sha256 = MCSha256::Of(zip)};
         program.SetupLevel = level;
         entry.Programs["windows"] = program;
-        const MCReleaseFile::MCReleases releases{.Format = 1, .Issue = 1, .Current = entry};
+        const MCReleaseFile::MCReleases releases{
+            .Format = 1, .Issue = 1, .Current = entry, .Required = std::move(required)};
         Write(release.Host.Path() / "release.json",
               release.ReleaseKey.Envelope(MCSignedFile::ReleaseType, MCReleaseFile::ReleasesPayload(releases)));
 
@@ -1885,6 +2269,25 @@ TEST_CASE("updater on Windows: a release at the copy's setup level fetches the p
     CHECK(scope.Log->Started.empty());
     CHECK_EQ(scope.Log->Quits, 0);
     MCUpdater::SetQuit(nullptr);
+}
+
+TEST_CASE(
+    "updater on Windows: below the lowest release a copy may stay on, the program's zip downloads and swaps in by "
+    "itself, the content left as it was; the next start plays the new program")
+{
+    MCHostedRelease release("forced-swap");
+    PublishProgram(release, 1, 1, MCReleaseFile::MCRequired{.Release = 2, .Builds = {{"windows", NewerBuild}}});
+    MCSetupScope scope(release);
+    MCUpdater::CheckAtStart();
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Ready || Stage() == MCStage::Failed; }));
+    REQUIRE_EQ(MCUpdater::Status().Error, std::string());
+    CHECK(MCUpdater::Status().GoesIn == MCUpdater::MCGoesIn::NextStart);
+    CHECK(ProgramIs(release, NewProgram));
+    CHECK(!release.Armed());
+    CHECK(!MCInstalled::ReadDue(*MakeDisk(), release.Game.Path()).has_value());
+    CHECK(scope.Log->Started.empty());
+    MCUpdater::Quit();
+    CHECK(scope.Log->Started.empty());
 }
 
 TEST_CASE("updater on Windows: Windows refusing the new program fails the update before anything changes; the content "
@@ -3090,8 +3493,9 @@ TEST_CASE_ISOLATED("recovery screen: the question wraps its text over its button
 
 namespace
 {
-    /// <summary>HD OPTIONS' HD PACK row: first under PACKS.</summary>
+    /// <summary>HD OPTIONS' HD PACK row: first under PACKS; HD ART SIZE under it.</summary>
     constexpr int32_t HdPackRow = 1;
+    constexpr int32_t HdArtSizeRow = 2;
 
     /// <summary>Runs a few frames, as a player's screen would between inputs.</summary>
     void ScreenFrames()
@@ -3175,11 +3579,13 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown
              std::format("THE HD ART, SOUND AND MOVIES: {} TO DOWNLOAD.", MCUpdateWork::SizeText(Terrain().size())));
     const std::shared_ptr<MCLogTextButton> get = ShownButton("GET");
     CHECK(!ButtonShown("RESTART"));
+    CHECK_EQ(list->HeldReason(HdArtSizeRow), std::string_view("GET THE HD PACK FIRST."));
     MCScreenInput::SaveShot("hd options get", MCScreenInput::ScreenHash());
 
-    // GET downloads it at once, while the game goes on; RESTART then.
+    // GET downloads it at once, while the game goes on; RESTART then. This release's HD art has one size.
     RealClickOn(*get);
     CHECK(MCUpdater::HdPack().Chosen);
+    CHECK_EQ(list->HeldReason(HdArtSizeRow), std::string_view("THIS RELEASE HAS ONE SIZE OF HD ART."));
     REQUIRE(ScreenFramesUntil(MCStage::Ready));
     ScreenFrames();
     CHECK(release.Armed());
@@ -3190,6 +3596,54 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown
     RealClickOn(*restart);
     CHECK_EQ(*scope.Quits, 1);
     CHECK(MCUpdater::RestartWanted());
+}
+
+TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until the player picks, in HD PACK's "
+                   "button's column; 2X is downloaded at once, as GET's change is")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("hd-options-art-size");
+    AddTwoX(release);
+    release.Machine = BigMachine;
+    UpdateToRelease2(release);
+    MCUpdaterScope scope(release, false);
+    REQUIRE(MCTestGame::StartLogistics());
+    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
+    REQUIRE_EQ(list->Label(HdArtSizeRow), std::string_view("HD ART SIZE"));
+    CHECK(list->HeldReason(HdArtSizeRow).empty());
+    CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("FULL"));
+    const std::string full = MCUpdateWork::SizeText(Terrain().size() + Palette.size());
+    const std::string twoX = MCUpdateWork::SizeText(TerrainAt2x.size() + Palette.size());
+    CHECK_EQ(list->Description(HdArtSizeRow),
+             std::format("PICKED FOR THIS COMPUTER. FULL: {}. 2X: {}, HALF THE MEMORY.", full, twoX));
+
+    const std::shared_ptr<MCLogTextButton> remove = ShownButton("REMOVE");
+    const std::optional<std::pair<int32_t, int32_t>> centre = list->SettingCentre(HdArtSizeRow);
+    REQUIRE(centre.has_value());
+    CHECK_EQ(remove->GlobalX() + remove->Width() / 2, centre->first);
+    MCScreenInput::SaveShot("hd options art size", MCScreenInput::ScreenHash());
+
+    // A click picks 2X, the player's pick, downloaded while the game goes on; RESTART then.
+    MCScreenInput::RealClick(centre->first, centre->second);
+    ScreenFrames();
+    CHECK(MCUpdater::HdPack().TwoXChosen);
+    CHECK(MCUpdater::HdPack().PlayerPicked);
+    CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("2X"));
+    CHECK_EQ(list->Description(HdArtSizeRow),
+             std::format("FULL: {}. 2X: {}, HALF THE MEMORY, A TOUCH SOFTER ZOOMED IN.", full, twoX));
+    REQUIRE(ScreenFramesUntil(MCStage::Ready));
+    ScreenFrames();
+    CHECK(release.Armed());
+    CHECK_EQ(list->Description(HdPackRow), std::string("DOWNLOADED. RESTART THE GAME TO SEE IT."));
+    CHECK(ButtonShown("RESTART"));
+    MCScreenInput::SaveShot("hd options art size 2x", MCScreenInput::ScreenHash());
+    const std::optional<MCContentUpdater::MCChoice> choice = MCContentUpdater::Choice(*MakeDisk(), release.Game.Path());
+    REQUIRE(choice.has_value());
+    CHECK(choice->Picked == MCContentUpdater::MCPicked::Player);
 }
 
 TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD out")

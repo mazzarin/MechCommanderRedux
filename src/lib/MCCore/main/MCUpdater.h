@@ -117,8 +117,18 @@ namespace MCUpdater
         /// <summary>Whether the copy has it installed, and whether the player chose it.</summary>
         bool Installed = false;
         bool Chosen = false;
-        /// <summary>Its size at the release installed (0: not known).</summary>
+        /// <summary>Its size at the release installed, as the copy has it, full or 2x (0: not known).</summary>
         uint64_t Bytes = 0;
+        /// <summary>
+        /// Whether the copy has the 2x art (the 2x set) and whether it's the art chosen (the player's pick, else the
+        /// machine's); each set's size at the release installed (0: not known, or the release has no 2x set).
+        /// </summary>
+        bool TwoX = false;
+        bool TwoXChosen = false;
+        /// <summary>Whether the player picked the art's size; else it's the machine's, <see cref="TwoXChosen"/> its pick.</summary>
+        bool PlayerPicked = false;
+        uint64_t FullBytes = 0;
+        uint64_t TwoXBytes = 0;
         /// <summary>
         /// The change: none, downloading (<see cref="Received"/> of <see cref="Expected"/>), ready (in or out at the
         /// next start) or failed (<see cref="Error"/>).
@@ -263,8 +273,21 @@ namespace MCUpdater
     /// </summary>
     void ChooseHd(bool chosen);
 
+    /// <summary>
+    /// The player chose the HD art's size: the 2x art (<paramref name="twoX"/>) or the full art. Kept as the player's
+    /// pick, then, with HD, planned and put in as <see cref="ChooseHd"/>'s change is (with an update shown, the update
+    /// is planned again with it).
+    /// </summary>
+    void ChooseHdArt(bool twoX);
+
     /// <summary>RESTART on HD OPTIONS: with the HD pack's change ready, the game quits and starts again, putting it in.</summary>
     void RestartForHd();
+
+    /// <summary>
+    /// Whether the GPU the game draws on samples BC7 (the presenter tells it as its device starts, before the start's
+    /// check): one that can't takes the 2x HD art by default (MCContentUpdater::Takes2x).
+    /// </summary>
+    void SetGpuSamplesBc7(bool samples);
 
     /// <summary>The version running, as shown, or empty without a backend.</summary>
     std::string RunningVersion();

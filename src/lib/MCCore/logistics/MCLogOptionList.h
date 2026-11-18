@@ -45,6 +45,11 @@ public:
         std::string_view Key;
         /// <summary>Port: the value it edits instead, with no PREFS key (none: the key's).</summary>
         MCOptionalRef<int> Value;
+        /// <summary>
+        /// Port: what <see cref="Value"/> stands for as things are now, read into it each time it's asked for, as the
+        /// value is kept elsewhere (the updater's HD art size; none: <see cref="Value"/> is the setting itself).
+        /// </summary>
+        int32_t (*Current)() = nullptr;
         /// <summary>Its choices, in the order a click steps through them.</summary>
         std::span<const Choice> Choices;
         /// <summary>Port: only the GPU renderer draws it (it shows nothing while the CPU draws the game).</summary>

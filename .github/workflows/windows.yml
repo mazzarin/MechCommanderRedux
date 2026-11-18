@@ -8,7 +8,9 @@
 #
 # A release's setup: the release script (the workspace's tools/release/make_release.py make) runs it by hand with the
 # commit to build and the release's sets' sizes, which the setup shows. That run builds the commit as a release is built
-# (whole-program optimization, no cache) and keeps the sizes it was given as dist/setup-sizes.txt.
+# (whole-program optimization, no cache) and keeps the sizes it was given as dist/setup-sizes.txt. Where the release has
+# the smaller (2x) HD art, its HD size too (hd2x_bytes), and the setup offers it; a work build given one has a setup
+# whose silent installs choose it, for the setup's test.
 name: Windows (personal)
 
 on:
@@ -28,6 +30,10 @@ on:
         description: "The release's HD set, in bytes"
         required: false
         default: ''
+      hd2x_bytes:
+        description: "The release's HD set with the smaller (2x) art, in bytes; empty without one"
+        required: false
+        default: ''
 
 concurrency:
   group: windows-${{ github.ref }}-${{ inputs.commit }}
@@ -41,6 +47,7 @@ jobs:
       RELEASE_COMMIT: ${{ inputs.commit }}
       GAME_BYTES: ${{ inputs.game_bytes }}
       HD_BYTES: ${{ inputs.hd_bytes }}
+      HD2X_BYTES: ${{ inputs.hd2x_bytes }}
     steps:
       - name: Check the release's inputs
         if: inputs.commit
@@ -50,6 +57,12 @@ jobs:
           if ($env:GAME_BYTES -notmatch '^[1-9][0-9]*\z' -or $env:HD_BYTES -notmatch '^[1-9][0-9]*\z') {
             throw "A release's setup needs both sets' sizes in bytes (game $env:GAME_BYTES, HD $env:HD_BYTES)."
           }
+
+      - name: Check the smaller HD art's size
+        if: inputs.hd2x_bytes
+        shell: pwsh
+        run: |
+          if ($env:HD2X_BYTES -notmatch '^[1-9][0-9]*\z') { throw "The HD set with the smaller art isn't a size in bytes: $env:HD2X_BYTES" }
 
       - name: Check out
         uses: actions/checkout@v5
@@ -190,13 +203,16 @@ jobs:
           & src\installer\windows\make_licences.ps1 -LibDir "$pwd\src\lib" -Out $licences
           $sizes = @()
           if ($env:RELEASE_COMMIT) { $sizes = "/DGameBytes=$env:GAME_BYTES", "/DHdBytes=$env:HD_BYTES" }
+          if ($env:HD2X_BYTES) { $sizes += "/DHd2xBytes=$env:HD2X_BYTES" }
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "No Inno Setup 6 on this runner ($iscc)." }
           & $iscc "/DAppVersionNumber=$number" "/DAppVersionShown=$shown" "/DBinDir=$pwd\src\build\bin\x64\Release" `
             "/DDocsDir=$pwd\src\docs" "/DLicencesFile=$licences" "/DSetupLevel=$level" @sizes "/O$pwd\dist" src\installer\windows\MechCommanderRedux.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
           if ($env:RELEASE_COMMIT) {
-            Set-Content -LiteralPath dist\setup-sizes.txt -NoNewline -Value "commit=$env:RELEASE_COMMIT GameBytes=$env:GAME_BYTES HdBytes=$env:HD_BYTES"
+            $record = "commit=$env:RELEASE_COMMIT GameBytes=$env:GAME_BYTES HdBytes=$env:HD_BYTES"
+            if ($env:HD2X_BYTES) { $record += " Hd2xBytes=$env:HD2X_BYTES" }
+            Set-Content -LiteralPath dist\setup-sizes.txt -NoNewline -Value $record
           }
 
       - name: Keep the build

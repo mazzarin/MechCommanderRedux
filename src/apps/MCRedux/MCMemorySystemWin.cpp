@@ -11,6 +11,7 @@
 
 #pragma comment(lib, "dxgi.lib")
 
+#include <algorithm>
 #include <format>
 #include <memory>
 #include <string>
@@ -244,6 +245,40 @@ namespace
 std::shared_ptr<MCMemoryRoom::MCSystem> MCMakeMemorySystem()
 {
     return std::make_shared<MCWinMemory>();
+}
+
+std::optional<uint64_t> MCOwnCardBytes()
+{
+    ComPtr<IDXGIFactory1> factory;
+
+    if (const HRESULT made = CreateDXGIFactory1(IID_PPV_ARGS(&factory)); FAILED(made))
+    {
+        SDL_Log("Updates: no DXGI factory (0x%08x): the machine's card isn't known", static_cast<uint32_t>(made));
+        return std::nullopt;
+    }
+
+    uint64_t largest = 0;
+
+    for (UINT index = 0;; ++index)
+    {
+        ComPtr<IDXGIAdapter1> adapter;
+
+        if (FAILED(factory->EnumAdapters1(index, &adapter)))
+        {
+            break;
+        }
+
+        DXGI_ADAPTER_DESC1 description{};
+
+        if (FAILED(adapter->GetDesc1(&description)) || (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
+        {
+            continue;
+        }
+
+        largest = std::max<uint64_t>(largest, description.DedicatedVideoMemory);
+    }
+
+    return largest >= OwnCardLeast ? std::optional(largest) : std::nullopt;
 }
 
 #endif

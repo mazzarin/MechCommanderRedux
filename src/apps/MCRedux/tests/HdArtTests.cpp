@@ -9984,6 +9984,185 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
 
 namespace
 {
+    /// <summary>The world view's surface as the last frame sealed it (MCDrawnGrid): its drawn grid's offset.</summary>
+    std::optional<std::array<int32_t, 2>> WorldGridOffset(const MCVulkanRenderer& renderer)
+    {
+        const std::span<const MCUnderlay> underlays = MCRenderer::Underlays();
+        const std::shared_ptr<const MCWindow> world = underlays.empty() ? nullptr : underlays[0].Source.lock();
+
+        if (world == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        const std::optional<MCVulkanRenderer::SealedPlace> place =
+            renderer.SealedSize(MCVulkanRenderer::SurfaceKey(*world));
+        return place.has_value() ? std::optional(place->Offset) : std::nullopt;
+    }
+}
+
+/// <summary>
+/// Port-only (MCDrawnGrid): the world drawn 2.5 drawn pixels a window pixel (the tests' scaled-up view), panned a few
+/// window pixels a frame across, down and on the diagonal: the world lies on a grid whose offset changes as it goes, so
+/// every pan moves its picture by whole drawn pixels and the HD ground's kept pixels are moved, not drawn again (none
+/// drawn directly or whole), and in mirror mode every drawn pixel's palette index is still the software renderer's pixel's that
+/// it shows.
+/// </summary>
+TEST_CASE_ISOLATED("game: a pan moves the kept HD ground by whole drawn pixels, every index the original's")
+{
+    struct Pan
+    {
+        float Across = 0.0f;
+        float Down = 0.0f;
+    };
+
+    constexpr std::array<Pan, 6> Pans = {Pan{1.0f, 0.0f},  Pan{3.0f, 0.0f},  Pan{0.0f, 2.0f},
+                                         Pan{-2.0f, 0.0f}, Pan{2.0f, -1.0f}, Pan{0.0f, -3.0f}};
+    constexpr int32_t FramesEach = 4;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    scene->Renderer->ResetMirror();
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+
+    // East and north alike move the view straight across, east alone and south alike straight down
+    // (MCTerrain::ProjectTerrain): a window pixel's worth of each.
+    const float across = 1.0f / (2.0f * MCTerrain::ProjectionCos);
+    const float down = 1.0f / (2.0f * MCTerrain::ProjectionSin);
+    MCVector3D position = Eye()->GetPosition();
+    std::set<int32_t> offsets;
+    int32_t frames = 0;
+
+    for (const Pan& pan : Pans)
+    {
+        for (int32_t frame = 0; frame < FramesEach; ++frame)
+        {
+            position.X += pan.Across * across + pan.Down * down;
+            position.Y += pan.Across * across - pan.Down * down;
+            Eye()->SetPosition(position);
+            MCTestGame::RunFrame(FrameSeconds);
+            ++frames;
+            const std::optional<std::array<int32_t, 2>> offset = WorldGridOffset(*scene->Renderer);
+            REQUIRE(offset.has_value());
+            offsets.insert((*offset)[0]);
+            offsets.insert((*offset)[1]);
+        }
+    }
+
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+    std::cout << std::format("  {} frames: {} shifted, {} kept, {} whole, {} direct; the grid's offsets {}\n", frames,
+                             after.Shifted - before.Shifted, after.Kept - before.Kept, after.Whole - before.Whole,
+                             after.Direct - before.Direct, offsets.size());
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // Every frame laid from the kept ground: moved, or kept in place where the camera's step rounded to no move.
+    CHECK_EQ(after.Shifted - before.Shifted + after.Kept - before.Kept, frames);
+    CHECK(2 * (after.Shifted - before.Shifted) > frames);
+    CHECK_EQ(after.Whole - before.Whole, 0);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+    CHECK(offsets.size() > 2);
+    CHECK_EQ(tally.Frames, frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (MCDrawnGrid): with the GPU drawing the world 2.5 drawn pixels a window pixel, once a pan puts it on a
+/// grid offset across, the frame presented gives the mouse that grid (MCPresenter::ShownGrids: the world's rectangle,
+/// sizes and offset as sealed), and a window point over the world maps to the place its picture shows there: the
+/// logical point it came from less the offset's share of a drawn pixel (MCDisplay::OnShownGrids).
+/// </summary>
+TEST_CASE_ISOLATED("game: the mouse over the GPU's world maps through the drawn grid of the frame presented")
+{
+    constexpr int32_t MostFrames = 8;
+    constexpr float Inside = 0.37f;
+    constexpr float Near = 1e-3f;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const float across = 1.0f / (2.0f * MCTerrain::ProjectionCos);
+    MCVector3D position = Eye()->GetPosition();
+    MCTestGame::RunFrame(FrameSeconds);
+
+    for (int32_t frame = 0; frame < MostFrames && WorldGridOffset(*renderer).value_or(std::array{0, 0})[0] == 0;
+         ++frame)
+    {
+        position.X += across;
+        position.Y += across;
+        Eye()->SetPosition(position);
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    const std::optional<std::array<int32_t, 2>> offset = WorldGridOffset(*renderer);
+    REQUIRE(offset.has_value());
+    REQUIRE((*offset)[0] != 0);
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    const std::span<const MCShownGrid> grids = display->Presenter().ShownGrids();
+    REQUIRE_EQ(grids.size(), 1u);
+    const MCShownGrid& grid = grids[0];
+    const std::span<const MCUnderlay> underlays = MCRenderer::Underlays();
+    REQUIRE(!underlays.empty());
+    CHECK(grid.Offset == *offset);
+    CHECK_EQ(grid.Rect.X0, underlays[0].Rect.X0);
+    CHECK_EQ(grid.Rect.Y1, underlays[0].Rect.Y1);
+    REQUIRE(grid.Drawn[0] > grid.Window[0]);
+
+    // A point a little into a window pixel in the world's middle, there and back.
+    const float logicalX = static_cast<float>((grid.Rect.X0 + grid.Rect.X1) / 2) + Inside;
+    const float logicalY = static_cast<float>((grid.Rect.Y0 + grid.Rect.Y1) / 2) + Inside;
+    float windowX = 0.0f;
+    float windowY = 0.0f;
+    display->LogicalToWindow(logicalX, logicalY, windowX, windowY);
+    float mappedX = 0.0f;
+    float mappedY = 0.0f;
+    CHECK(display->WindowToLogical(windowX, windowY, mappedX, mappedY));
+    const auto shown = [](const MCRect& rect, size_t axis)
+    { return static_cast<float>(axis == 0 ? rect.X1 - rect.X0 + 1 : rect.Y1 - rect.Y0 + 1); };
+    const auto moved = [&](size_t axis)
+    {
+        return static_cast<float>(grid.Offset[axis]) * shown(grid.Rect, axis) /
+               (static_cast<float>(grid.Drawn[axis]) * static_cast<float>(grid.Window[axis]));
+    };
+
+    std::cout << std::format("  offset {}, {}: ({:.4f}, {:.4f}) mapped to ({:.4f}, {:.4f})\n", grid.Offset[0],
+                             grid.Offset[1], logicalX, logicalY, mappedX, mappedY);
+    CHECK(std::fabs(mappedX - (logicalX - moved(0))) < Near);
+    CHECK(std::fabs(mappedY - (logicalY - moved(1))) < Near);
+}
+
+namespace
+{
     /// <summary>
     /// A colour pressed into the middle (MutedFloor and MutedShare of it): ground bright enough to measure, and dim
     /// enough that none of it counts as a light's own pixels (composite.pshader's SelfLit, above 55%).

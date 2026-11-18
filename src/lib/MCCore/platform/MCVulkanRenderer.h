@@ -382,6 +382,26 @@ public:
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
     /// <summary>
+    /// Port-only (the kept ground), for the tests: the terrain layers run so far drawn directly, and those laid from the
+    /// kept ground as it was drawn whole, moved (shifted, the strips the view moved onto drawn), or kept in place (only
+    /// what changed drawn again, if anything).
+    /// </summary>
+    struct GroundCounts
+    {
+        int64_t Direct = 0;
+        int64_t Whole = 0;
+        int64_t Shifted = 0;
+        int64_t Kept = 0;
+    };
+
+    /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
+    GroundCounts KeptGroundCounts() const
+    {
+        WaitForRunning();
+        return _GroundCounts;
+    }
+
+    /// <summary>
     /// The ground meshes put on the GPU so far, and the times their tiles went up with them (a mesh of the tiles
     /// already up sends its cells alone).
     /// </summary>
@@ -1551,6 +1571,8 @@ private:
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
+    /// <summary>Port-only: how the terrain layers run were drawn (the run's side).</summary>
+    GroundCounts _GroundCounts;
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;

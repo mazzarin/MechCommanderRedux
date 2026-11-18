@@ -7840,6 +7840,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         }
 
         const bool shifted = !plan.Whole && (plan.Shift[0] != 0 || plan.Shift[1] != 0);
+        ++(plan.Whole ? _GroundCounts.Whole : shifted ? _GroundCounts.Shifted : _GroundCounts.Kept);
 
         if (plan.Whole || shifted || !plan.Redrawn.empty())
         {
@@ -8097,6 +8098,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             {
                 const FrameUniforms frame = recordFrame(surface, record);
                 DrawTerrain(commands, *pass, pipelines, run, surface, draw, std::as_bytes(std::span(&frame, 1)));
+                ++_GroundCounts.Direct;
             }
 
             // The terrain binds and pushes its own.

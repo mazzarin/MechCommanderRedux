@@ -263,8 +263,6 @@ static const float EdgeHigh = 0.7;
 // lower, so a thin line or a lone pixel of the original (a lamp's shadow, a palm's trunk) keeps most of its strength.
 static const float SpriteEdgeLow = 0.2;
 static const float SpriteEdgeHigh = 0.6;
-// An HD frame's alpha at an original pixel's centre over this, the original draws the pixel (KindHdSmooth).
-static const float HdMaskAlpha = 0.5;
 // Port-only: a unit's or an object's HD frame's mark pass (the renderer's IndexOnly on an HD frame's draw, through a
 // pipeline writing the indices' alpha alone) sets the alpha to StandingMark (the composite's: something stands on the
 // ground, as the original's pixels' indices have it) wherever the frame covers at least StandingCoverage of a pixel, so
@@ -313,6 +311,10 @@ static const uint BakedShadow = 254u;
 static const uint SpreadShadow = 252u;
 static const uint DrawnBlended = 251u;
 static const uint DrawnBlendedShadow = 250u;
+// Port-only (KindHdSmooth): a pixel without an index that the frame covers (its alpha at the pixel's centre over
+// hdcoverage.pshader's HdMaskAlpha: an in-between's edge), as MCVulkanRenderer::MarkHdCoverage marks a version 1
+// frame's on the GPU.
+static const uint CoveredNoIndex = 249u;
 
 // Port-only (SPEC-memory.md's indices): place.w's bit for a draw of a shape's indices from its version 2 HD frame's own
 // index picture (MCVulkanRenderer's Picture::HdMarks), in place of the original's rows: its green is the frame's marks,
@@ -1070,29 +1072,53 @@ float BakedShadowAt(int2 original, float2 shape)
     return weights.y > 0.0 ? weights.x / weights.y : 0.0;
 }
 
+// Port-only (KindHdSmooth): whether an HD frame's index picture's green marks an original pixel its frame covers, its
+// alpha at the pixel's centre over half (hdcoverage.pshader's HdMaskAlpha): drawn opaque, in a baked shadow or not, or
+// covered without an index (MCVulkanRenderer::MarkHdCoverage marks a version 1 frame's so as it goes up).
+bool CoversIn(float green)
+{
+    const uint mark = Byte(green);
+    return mark == HasIndex || mark == BakedShadow || mark == CoveredNoIndex;
+}
+
 // Port-only: an HD frame's coverage at `shape` (a place in its original's pixels, their centres at .5) for
-// KindHdSmooth: the original's pixels (`original` its size) that it draws, where the frame's alpha at their centre is
-// over HdMaskAlpha, smoothed as a smooth-edged shape's are (SmoothCoverage), so its edges are curves at the output's
-// resolution instead of its mask's steps. `nearest` becomes the drawn pixel nearest the place.
-float HdMaskCoverage(int2 original, int hdScale, float2 shape, out int2 nearest)
+// KindHdSmooth: the original's pixels (`original` its size) that its frame covers (CoversIn), smoothed as a smooth-edged
+// shape's are (SmoothCoverage), so its edges are curves at the output's resolution instead of its mask's steps.
+// `nearest` becomes the covered pixel nearest the place. The 4 x 4 pixels' marks are read 2 x 2 at a time, each by one
+// gather at the four's shared corner in the index picture, whose x, y, z, w are the four's bottom left, bottom right,
+// top right and top left; those outside the picture are not covered.
+float HdMaskCoverage(int2 original, float2 shape, out int2 nearest)
 {
     const float2 at = shape - 0.5;
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
     const float4 wx = BSplineWeights(f.x);
     const float4 wy = BSplineWeights(f.y);
+    uint width;
+    uint height;
+    sourceTex.GetDimensions(width, height);
+    const float2 sourceSize = float2((float)width, (float)height);
+    float4 marks[4];
+
+    [unroll] for (int quad = 0; quad < 4; quad++)
+    {
+        const int2 corner = sourceCorner + base + int2((quad & 1) * 2, (quad >> 1) * 2);
+        marks[quad] = sourceTex.GatherGreen(sourceSampler, float2(corner) / sourceSize);
+    }
+
     float coverage = 0.0;
     float nearestDistance = 1e9;
     nearest = int2(0, 0);
 
-    for (int y = 0; y < 4; y++)
+    [unroll] for (int y = 0; y < 4; y++)
     {
-        for (int x = 0; x < 4; x++)
+        [unroll] for (int x = 0; x < 4; x++)
         {
             const int2 texel = base + int2(x - 1, y - 1);
+            const float4 four = marks[(y >> 1) * 2 + (x >> 1)];
+            const float mark = (y & 1) == 0 ? ((x & 1) == 0 ? four.w : four.z) : ((x & 1) == 0 ? four.x : four.y);
 
-            if (any(texel < 0) || any(texel >= original) ||
-                HdAt(texel * hdScale + hdScale / 2).a <= HdMaskAlpha)
+            if (any(texel < 0) || any(texel >= original) || !CoversIn(mark))
             {
                 continue;
             }
@@ -1301,7 +1327,7 @@ Output HdPixelAt(Input input, float2 shape)
     if ((flags & 15u) == KindHdSmooth)
     {
         int2 nearest;
-        const float coverage = HdMaskCoverage(original, texelScale, shape, nearest);
+        const float coverage = HdMaskCoverage(original, shape, nearest);
         texel = nearest;
         const float4 inside = HdTexel(nearest * texelScale + texelScale / 2, size, texelScale, flags, key);
         const float3 own = color.a > 0.0 ? color.rgb / color.a : float3(0.0, 0.0, 0.0);

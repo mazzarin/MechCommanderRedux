@@ -7826,6 +7826,133 @@ TEST_CASE_ISOLATED("game: HD art draws a sprite's HD frame with its original's e
 }
 
 /// <summary>
+/// A version 1 HD frame's index picture says which original pixels have an index, its spread ones too; on the GPU it
+/// says which its frame covers (MCVulkanRenderer::MarkHdCoverage), marked once as it goes up. A staircase's frame, its
+/// alpha the staircase and every other row's pixel past it, its index picture the staircase spread two pixels without
+/// those, drawn three frames running, then let go and drawn again: its green on the GPU each time 255 where both say
+/// drawn, 253 where its index only spread to, 249 where its frame covers a pixel without an index, 0 elsewhere; its
+/// red as the pack's.
+/// </summary>
+TEST_CASE_ISOLATED("game: an HD frame's coverage is marked in its index picture on the GPU, once as it goes up")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+    const uint8_t plain = ContrastingIndex(colors, opaque);
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < StairRows; ++row)
+    {
+        rows.push_back(RunOf(row + 1));
+        rows.insert(rows.end(), static_cast<size_t>(row + 1), opaque);
+        rows.push_back(RowEnd);
+    }
+
+    const StairShape stairs = MakeStairShape("mc_tests_hd_coverage_marks", StairRows, rows);
+    constexpr int32_t Scale = 3;
+    constexpr uint8_t Spread = 253;
+    constexpr uint8_t CoveredNoIndex = 249;
+    const auto coveredAt = [](int32_t x, int32_t y) { return x <= y || (x == y + 1 && y % 2 == 0); };
+    const auto indexedAt = [](int32_t x, int32_t y) { return x <= y + 2 && !(x == y + 1 && y % 2 == 0); };
+    std::vector<uint8_t> picture(static_cast<size_t>(StairRows * Scale) * StairRows * Scale * BytesPerPixel);
+    std::vector<uint8_t> index(picture.size());
+
+    for (int32_t y = 0; y < StairRows * Scale; ++y)
+    {
+        for (int32_t x = 0; x < StairRows * Scale; ++x)
+        {
+            const size_t at = (static_cast<size_t>(y) * StairRows * Scale + x) * BytesPerPixel;
+            const bool indexed = indexedAt(x / Scale, y / Scale);
+            const SDL_Color& color = colors[opaque];
+            std::ranges::copy(
+                std::array{color.r, color.g, color.b, coveredAt(x / Scale, y / Scale) ? HasIndex : uint8_t{0}},
+                picture.begin() + static_cast<ptrdiff_t>(at));
+            std::ranges::copy(
+                std::array<uint8_t, 4>{indexed ? opaque : uint8_t{0}, indexed ? HasIndex : uint8_t{0}, 0, HasIndex},
+                index.begin() + static_cast<ptrdiff_t>(at));
+        }
+    }
+
+    const std::filesystem::path stem = stairs.Pack / MCHdArt::FolderOf(stairs.Key) / "0";
+    SavePng(std::filesystem::path(stem).concat(".png"), StairRows * Scale, StairRows * Scale, picture);
+    SavePng(std::filesystem::path(stem).concat("_idx.png"), StairRows * Scale, StairRows * Scale, index);
+    WritePaletteRgb(stairs.Pack, colors);
+
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    GamePaused = true;
+    const MCHdArtOn on(stairs.Pack);
+    std::shared_ptr<const MCHdArt::Frame> frame;
+
+    // The frame drawn and its frame run: the pixels whose marks on the GPU aren't as said.
+    const auto wrongMarks = [&]
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        VfxPaneWipe(pane, plain);
+        MCHdArt::Attach(stairs.Shape, stairs.Key);
+        AGShapeDraw(pane, stairs.Shape->FrameList(), 0, x, y);
+        ReadShown(stairs.Scratch);
+        frame = MCHdArt::Find(stairs.Shape->FrameList(), 0, StairRows, StairRows);
+        REQUIRE(frame != nullptr);
+        REQUIRE(!frame->Marked);
+        const std::expected<std::vector<uint8_t>, std::string> gpu = renderer->HdIndices(*frame);
+
+        if (!gpu)
+        {
+            FAIL(std::format("no index picture read back: {}", gpu.error()));
+        }
+
+        int32_t wrong = 0;
+
+        for (int32_t row = 0; row < StairRows; ++row)
+        {
+            for (int32_t column = 0; column < StairRows; ++column)
+            {
+                const bool covered = coveredAt(column, row);
+                const bool indexed = indexedAt(column, row);
+                const uint8_t green = covered && indexed ? HasIndex
+                                      : covered          ? CoveredNoIndex
+                                      : indexed          ? Spread
+                                                         : uint8_t{0};
+                const size_t at = (static_cast<size_t>(row) * StairRows + column) * MCHdArt::IndexBytes;
+                wrong += (*gpu)[at] != (indexed ? opaque : 0) || (*gpu)[at + 1] != green ? 1 : 0;
+            }
+        }
+
+        return wrong;
+    };
+
+    for (int32_t drawn = 0; drawn < 3; ++drawn)
+    {
+        CHECK_EQ(wrongMarks(), 0);
+    }
+
+    // Let go, then up again: marked again, once.
+    MCTestGame::RunFrame(FrameSeconds);
+    renderer->ForgetHdPictureForTests(frame->Id);
+    frame.reset();
+    CHECK_EQ(wrongMarks(), 0);
+    CHECK_EQ(wrongMarks(), 0);
+
+    frame.reset();
+    GamePaused = false;
+    std::filesystem::remove_all(stairs.Scratch);
+}
+
+/// <summary>
 /// A translucent shape's blended pixels that its HD frame leaves out (a shadow) are drawn with smooth edges: a shape
 /// whose rows hold two opaque pixels and then a halving staircase (a pixel longer each row), drawn as the frame test's,
 /// shows the shadow's edge with HD art off stepping about the screen's scale every few shown rows, and with it on

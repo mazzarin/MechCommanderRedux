@@ -448,6 +448,13 @@ public:
     /// </summary>
     std::expected<std::vector<uint8_t>, std::string> MovieColors(const MCHdArt::Frame& frame);
 
+    /// <summary>
+    /// Port-only (KindHdSmooth), for the tests: HD art frame <paramref name="frame"/>'s index picture as the GPU holds it
+    /// (R8G8 rows, its original's size: the marks MarkHdCoverage made), read back, waiting for the GPU. The frame must
+    /// have been drawn, and its frame run.
+    /// </summary>
+    std::expected<std::vector<uint8_t>, std::string> HdIndices(const MCHdArt::Frame& frame);
+
     /// <summary>Whether the ground is drawn with the HD art pack's colours (it has an HD terrain atlas).</summary>
     bool HdTerrain() const { return _TerrainMesh.HdAtlas.Handle != nullptr; }
 
@@ -1239,6 +1246,15 @@ private:
     /// </summary>
     void ConvertMovies(SDL_GPUCommandBuffer& commands, FrameRun& run);
     /// <summary>
+    /// Port-only (KindHdSmooth): marks in the index picture's green of each version 1 HD art frame gone up in
+    /// <paramref name="run"/> (FrameRun::CoverageMarks) which original pixels its frame covers, its alpha at their centre
+    /// over half (shaders/hdcoverage.pshader), a render pass for each index texture, after the frame's uploads and before
+    /// its draws: the pixels its index only spread to (marked 255 and 254, as drawn ones) become 253 and 252, a version 2
+    /// frame's spread marks; one it covers without an index, 249. shaders/draw.pshader's HdMaskCoverage then reads them
+    /// 2 x 2 in a gather, not the frame's alpha a pixel at a time. A version 2 frame's marks are the pack's.
+    /// </summary>
+    void MarkHdCoverage(SDL_GPUCommandBuffer& commands, const FrameRun& run);
+    /// <summary>
     /// Port-only: how HD art frame <paramref name="frame"/> of shape table <paramref name="table"/> draws its edges: its
     /// own when it holds its blended pixels (an effect's) or its table keeps them (MCHdArt::KeepsFrameEdges), else
     /// smooth.
@@ -1570,6 +1586,13 @@ private:
     /// </summary>
     MCGpuHandle<SDL_GPUShader> _MovieShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _MoviePipeline;
+    /// <summary>
+    /// Port-only (KindHdSmooth): <see cref="MarkHdCoverage"/>'s shader and pipelines (quad.vshader and
+    /// shaders/hdcoverage.pshader, onto an R8G8 index texture, its green alone): the pass marking the pixels a frame
+    /// doesn't cover (its green less, REVERSE_SUBTRACT), then the one marking those it does (at least, MAX).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _HdCoverageShader;
+    std::array<MCGpuHandle<SDL_GPUGraphicsPipeline>, 2> _HdCoveragePipelines;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
@@ -1793,6 +1816,21 @@ private:
 
     /// <summary>Port-only (HD movies): <see cref="ConvertMovies"/> for one picture.</summary>
     void ConvertMovie(SDL_GPUCommandBuffer& commands, const MovieConversion& movie);
+    /// <summary>
+    /// Port-only (KindHdSmooth): a version 1 HD art frame gone up as a frame runs, whose index picture's green
+    /// <see cref="MarkHdCoverage"/> marks: the textures of its indices and colours (a shared page's, or its own), its
+    /// place in them, its original's size and its scale.
+    /// </summary>
+    struct HdCoverageMark
+    {
+        Texture Indices;
+        Texture Colors;
+        PicturePlace Place;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        uint32_t Scale = 1;
+    };
+
     /// <summary>
     /// Port-only (HD movies): lets movie <paramref name="movie"/>'s picture go, kept till the frame runs when its draws
     /// wait for its colours.
@@ -2093,4 +2131,6 @@ struct MCVulkanRenderer::FrameRun
     std::array<float, 3> Look{};
     /// <summary>Port-only (HD movies): the movie pictures whose colours the frame makes from their planes.</summary>
     std::vector<MovieConversion> Conversions;
+    /// <summary>Port-only (KindHdSmooth): the version 1 HD art frames gone up whose coverage the frame marks.</summary>
+    std::vector<HdCoverageMark> CoverageMarks;
 };

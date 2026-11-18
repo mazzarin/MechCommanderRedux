@@ -196,10 +196,10 @@ TEST_CASE("memory ledger: -hdmemory plans as another machine, -hdcard as drawing
     CHECK_EQ(MCMemoryRoom::TotalBytes(), 48 * GB);
 
     {
-        // The card's room the driver gives the game, holding what the system says the game holds on the GPU.
+        // 90% of the card's room the driver gives the game, holding what the system says the game holds on the GPU.
         MCPlannedScope planned(16 * GB, 4 * GB);
         MCMemoryRoom::MCReader reader{std::string(DeviceName)};
-        CHECK_EQ(reader.Frame(GB).PictureBytes, 4 * GB - system->Rest);
+        CHECK_EQ(reader.Frame(GB).PictureBytes, 4 * GB * 9 / 10 - system->Rest);
         REQUIRE(reader.Card().has_value());
         CHECK(!reader.Card()->SharesMemory);
         CHECK_EQ(reader.Card()->Budget, 4 * GB);

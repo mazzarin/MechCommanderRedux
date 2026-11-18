@@ -12,18 +12,18 @@
 #include <string_view>
 
 // Port-only (HD art): the room the HD art frames may take, in memory (MCHdArt's frames kept) and on the GPU (the
-// renderer's HD pictures), by what the machine says it can spare. Each side keeps up to MostHdBytes; below that there's
-// no share of the memory or of the card, only what the system reports. On the card: the room the system gives the game
-// there, less what the game holds there, plus what the HD pictures hold, asked again every CardReadInterval. In memory:
+// renderer's HD pictures), by what the machine says it can spare. On the card: the room the system gives the game there
+// (90% of it on a card of its own), less what the game holds there, plus what the HD pictures hold, asked again every
+// CardReadInterval; on shared memory the plan's share keeps them too (MCHdArt::NextFrame). In memory:
 // the frames grow while the system isn't short of memory, and while it is they're let go of, TrimmedBytesPerFrame a
 // frame, until it stops saying so. A card that shares the machine's memory (Apple silicon, integrated graphics) follows
 // both: the memory short trims the pictures too, and the card's room falling below what they hold trims the frames.
 // Both are what may be kept, never memory set aside. The platform's answers come from an MCSystem the app sets
-// (MCMemorySystemMac.mm, MCMemorySystemWin.cpp); with none, nothing is short and each side keeps up to MostHdBytes.
+// (MCMemorySystemMac.mm, MCMemorySystemWin.cpp); with none, nothing is short and the pictures keep up to MostHdBytes.
 
 namespace MCMemoryRoom
 {
-    /// <summary>The most bytes of HD frames each side keeps, in memory and on the GPU.</summary>
+    /// <summary>The most bytes of HD pictures the GPU keeps when the system can't say what the card gives.</summary>
     inline constexpr uint64_t MostHdBytes = uint64_t{4} << 30;
 
     /// <summary>
@@ -100,7 +100,7 @@ namespace MCMemoryRoom
     std::string LedgerLine();
 
     /// <summary>
-    /// Sets the system asked (none: nothing is short and each side keeps up to MostHdBytes); every reader asks the card
+    /// Sets the system asked (none: nothing is short and the pictures keep up to MostHdBytes); every reader asks the card
     /// again at its next frame.
     /// </summary>
     void SetSystem(std::shared_ptr<MCSystem> system);
@@ -110,8 +110,8 @@ namespace MCMemoryRoom
 
     /// <summary>
     /// The room the HD pictures may take on a card of which the game holds <paramref name="card"/>'s Used, the pictures
-    /// <paramref name="held"/> of it: what the card gives the game less what the rest of the game holds, at most
-    /// MostHdBytes (0 when the rest takes it all).
+    /// <paramref name="held"/> of it: what the card gives the game (port-only: 90% of it on a card of its own,
+    /// MCMemoryLedger::CardCeiling) less what the rest of the game holds (0 when the rest takes it all).
     /// </summary>
     uint64_t CardRoom(const MCCard& card, uint64_t held);
 

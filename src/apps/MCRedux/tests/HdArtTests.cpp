@@ -3886,9 +3886,12 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
     CHECK_EQ(renderer->HdPictureCount(), Frames);
     CHECK_EQ(renderer->HdPictureBytes(), Frames * one);
 
-    // Another program takes most of the card: down to its room, oldest first; those drawn stay.
+    // Another program takes most of the card: down to its room, oldest first; those drawn stay. A card of its own's room
+    // is 90% of what its driver gives (MCMemoryLedger::CardCeiling), so the budget is the rest and the room over 90%.
     const uint64_t room = 40 * one + one / 2;
-    system->Budget = system->Rest + room;
+    constexpr uint64_t CardPercent = 90;
+    constexpr uint64_t Hundred = 100;
+    system->Budget = ((system->Rest + room) * Hundred + CardPercent - 1) / CardPercent;
     MCMemoryRoom::AskAgain();
     const size_t trimmed = settled(Drawn, room);
     CHECK(trimmed <= room);

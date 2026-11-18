@@ -158,8 +158,10 @@ MCMemoryRoom::MCArtRoom MCMemoryRoom::ArtRoom()
 
 uint64_t MCMemoryRoom::CardRoom(const MCCard& card, uint64_t held)
 {
-    const uint64_t given = card.Budget + held;
-    return std::min(given > card.Used ? given - card.Used : 0, MostHdBytes);
+    // Port-only (SPEC-memory.md's rule): a card of its own keeps within 90% of what its driver gives the game; on shared
+    // memory the plan's share keeps the pictures (MCHdArt::NextFrame), under Metal's working set.
+    const uint64_t given = (card.SharesMemory ? card.Budget : MCMemoryLedger::CardCeiling(card.Budget)) + held;
+    return given > card.Used ? given - card.Used : 0;
 }
 
 MCMemoryRoom::MCReader::MCReader(std::string deviceName, MCClock now)

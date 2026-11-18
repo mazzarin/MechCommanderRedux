@@ -1435,14 +1435,23 @@ TEST_CASE("hd art: a frame's colours go once the GPU has its picture, and its re
     MCHdArt::NextFrame(false);
     MCHdArt::NextFrame(true);
     const size_t read = MCHdArt::FramesRead();
-    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height) == first);
+    // Port-only (SPEC-memory.md's indices): the record kept is the frame's without its indices, which the GPU holds.
+    const std::shared_ptr<const MCHdArt::Frame> kept = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(kept != nullptr);
+    CHECK_EQ(kept->Id, first->Id);
+    CHECK(kept->Indices.empty());
     CHECK_EQ(MCHdArt::FramesRead(), read);
 
-    // Its colours asked for again (the GPU let go of its picture, or never kept it): read again, the same.
+    // Its colours asked for again (the GPU let go of its picture, or never kept it): read again, the same, and its
+    // indices with them.
     const size_t readAgain = MCHdArt::ColorsReadAgain();
     CHECK(std::ranges::equal(MCHdArt::ColorsOf(*first), stored->Colors));
     CHECK_EQ(MCHdArt::ColorsReadAgain(), readAgain + 1);
-    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height) == first);
+    const std::shared_ptr<const MCHdArt::Frame> withIndices = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(withIndices != nullptr);
+    CHECK_EQ(withIndices->Id, first->Id);
+    CHECK(withIndices->Indices == stored->Indices);
+    CHECK_EQ(MCHdArt::FramesRead(), read);
 
     // Once the GPU lets go of the picture, so may the cache: the next draw reads the frame again, numbered as before.
     MCHdArt::PictureDropped(first->Id);
@@ -1456,6 +1465,97 @@ TEST_CASE("hd art: a frame's colours go once the GPU has its picture, and its re
     CHECK_EQ(again->Id, first->Id);
 
     MCHdArt::SetCacheBudget(0);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+    MCHdArt::NextFrame(false);
+    std::filesystem::remove_all(pack);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's indices): a frame's record lets go of its indices a couple of frames after the GPU took
+/// its picture (which holds them), unless code on the CPU reads its folder's (MCHdArt::IndicesOf); asked for after, they
+/// are read again, the same, and from then on the folder's frames keep theirs.
+/// </summary>
+TEST_CASE("hd art: a frame's indices go once the GPU has its picture, unless code on the CPU reads its folder's")
+{
+    using MCMemoryLedger::MCHolder;
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    constexpr int KeptFrames = 2;
+    MCHdArt::Frame frame;
+    frame.Width = Width;
+    frame.Height = Height;
+    frame.Scale = 1;
+    frame.Colors = SpriteLike(frame.Width, frame.Height);
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, MCHdArt::HasIndex);
+    const std::vector<uint8_t> file = MCHdArt::EncodeHdf(frame);
+    const auto stored = MCHdArt::DecodeHdf(file, Width, Height);
+    REQUIRE(stored.has_value());
+    const std::array<std::vector<uint8_t>, 2> tiles = {std::vector<uint8_t>{5, 6}, std::vector<uint8_t>{7, 8}};
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_frame_indices_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack);
+    const std::vector<uint8_t> archive =
+        BuildArchive({{MCHdArt::TerrainTileName(tiles[0]) + ".hdf", file, file.size(), std::nullopt},
+                      {MCHdArt::TerrainTileName(tiles[1]) + ".hdf", file, file.size(), std::nullopt}});
+    std::ofstream(pack / "terrain.hda", std::ios::binary)
+        .write(reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size()));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+    MCHdArt::NextFrame(false);
+
+    // The GPU takes the first frame's picture: its record keeps its indices for a couple of frames, then lets them go.
+    const std::shared_ptr<const MCHdArt::Frame> first = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(first != nullptr);
+    CHECK(MCHdArt::IndicesOf(*first, MCHdArt::MCIndicesUse::Upload).size() == stored->Indices.size());
+    MCHdArt::ColorsUploaded(*first);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::FindTerrainTile(tiles[0], Width, Height)->Indices.empty());
+
+    for (int i = 0; i < KeptFrames; ++i)
+    {
+        MCHdArt::NextFrame(false);
+    }
+
+    const std::shared_ptr<const MCHdArt::Frame> record = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(record != nullptr);
+    CHECK_EQ(record->Id, first->Id);
+    CHECK(record->Indices.empty());
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdFrames).Payload, 0);
+
+    // Its colours read again while the GPU still has its picture (as a colour reader on the CPU does): the indices come
+    // back with them, and go again as after an upload.
+    CHECK(!MCHdArt::ColorsOf(*record).empty());
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height)->Indices == stored->Indices);
+
+    for (int i = 0; i <= KeptFrames; ++i)
+    {
+        MCHdArt::NextFrame(false);
+    }
+
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height)->Indices.empty());
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdFrames).Payload, 0);
+
+    // Code on the CPU asks for them: read again, the same, kept.
+    const size_t readAgain = MCHdArt::IndicesReadAgain();
+    CHECK(std::ranges::equal(MCHdArt::IndicesOf(*record), stored->Indices));
+    CHECK_EQ(MCHdArt::IndicesReadAgain(), readAgain + 1);
+
+    // The folder's other frames keep theirs now, once on the GPU too.
+    const std::shared_ptr<const MCHdArt::Frame> second = MCHdArt::FindTerrainTile(tiles[1], Width, Height);
+    REQUIRE(second != nullptr);
+    MCHdArt::ColorsUploaded(*second);
+
+    for (int i = 0; i <= KeptFrames; ++i)
+    {
+        MCHdArt::NextFrame(false);
+    }
+
+    CHECK(MCHdArt::FindTerrainTile(tiles[1], Width, Height)->Indices == stored->Indices);
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height)->Indices == stored->Indices);
+    CHECK_EQ(MCHdArt::IndicesReadAgain(), readAgain + 1);
+
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
     MCHdArt::NextFrame(false);

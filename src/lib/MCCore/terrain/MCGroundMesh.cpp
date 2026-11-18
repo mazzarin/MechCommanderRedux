@@ -1004,7 +1004,8 @@ namespace
             const std::shared_ptr<const MCHdArt::Frame> frame =
                 MCHdArt::FindOverlayByKey(name.Key, name.Width, name.Height);
             const std::optional<std::vector<uint8_t>> packet =
-                frame != nullptr ? MCRebuildGroundOverlay(frame->Indices, name, *known.SpotAt(slot)) : std::nullopt;
+                frame != nullptr ? MCRebuildGroundOverlay(MCHdArt::IndicesOf(*frame), name, *known.SpotAt(slot))
+                                 : std::nullopt;
 
             if (packet.has_value() && tiles.Put(slot, *packet))
             {
@@ -1056,9 +1057,9 @@ namespace
             }
 
             const std::optional<MCGroundTileShape> shape = known.ShapeAt(slot);
-            const std::optional<std::vector<uint8_t>> packet = frame != nullptr && shape.has_value()
-                                                                   ? MCRebuildGroundTile(frame->Indices, *name, *shape)
-                                                                   : std::nullopt;
+            const std::optional<std::vector<uint8_t>> packet =
+                frame != nullptr && shape.has_value() ? MCRebuildGroundTile(MCHdArt::IndicesOf(*frame), *name, *shape)
+                                                      : std::nullopt;
 
             if (packet.has_value() && tiles.Put(slot, *packet))
             {

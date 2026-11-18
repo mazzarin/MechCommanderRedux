@@ -647,6 +647,34 @@ namespace MCHdArt
     /// <summary>Port-only (the tests): how many times the cache read a frame again for its colours (ColorsOf).</summary>
     size_t ColorsReadAgain();
 
+    /// <summary>Port-only (SPEC-memory.md's indices): who asks for a frame's indices (<see cref="IndicesOf"/>).</summary>
+    enum class MCIndicesUse : uint8_t
+    {
+        /// <summary>Code on the CPU reading them: the frame's folder keeps its frames' indices from then on.</summary>
+        Read,
+        /// <summary>The GPU's upload of the frame's picture, which holds them after.</summary>
+        Upload
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): <paramref name="frame"/>'s indices: its own when it holds them, else its
+    /// cached record's, read again when the record let go of them (once the GPU had its picture, a couple of frames
+    /// after, unless code on the CPU had read its folder's: as a first draw reads a frame, on this thread). Valid until
+    /// the cache next changes.
+    /// </summary>
+    std::span<const uint8_t> IndicesOf(const Frame& frame, MCIndicesUse use = MCIndicesUse::Read);
+
+    /// <summary>Port-only (the tests, the frame log): how many times the cache read a frame again for its indices.</summary>
+    size_t IndicesReadAgain();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): while <paramref name="marked"/>, version 2 frames (Frame::Marked: a pack
+    /// whose shape tables are stripped, so code on the CPU reads their indices for the original's pixels) keep their
+    /// indices once the GPU has their pictures, whatever their folder: the weather, shown, measures every unit's frames
+    /// as they're drawn (MCWeather's columns), the loading bar's among them, before it has read any.
+    /// </summary>
+    void KeepIndices(bool marked);
+
     /// <summary>
     /// Whether the frames of the shape table starting at <paramref name="table"/> are drawn with their own alpha's edges
     /// (the mech bar's damage diagrams: the interface's pixel art), not the original's pixels' smoothed (the renderer's

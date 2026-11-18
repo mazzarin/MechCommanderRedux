@@ -19,6 +19,7 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
+#include "sprite/MCWeather.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
@@ -185,6 +186,13 @@ namespace
     /// </summary>
     constexpr uint32_t PictureBorder = 1u;
     /// <summary>
+    /// Port-only (SPEC-memory.md's indices): a draw's place.w bit for a source that is a version 2 HD frame's own index
+    /// picture, read as its marks (Picture::HdMarks; shaders/draw.pshader's HdMarksSource).
+    /// </summary>
+    constexpr uint32_t HdMarksSource = 1u;
+    /// <summary>The draw field carrying place.w (shaders/instance.vshader's <c>Draw::place</c>).</summary>
+    constexpr size_t PlaceFlagsField = 23;
+    /// <summary>
     /// Port-only: the most keyed holes a KindHd draw carries that later copies fill (FillHoles), in its draw's span and
     /// walk from FilledHolesSlot, two words a hole: its first original pixel and the one past its last, x in the low
     /// half and y in the high (shaders/draw.pshader's FilledHolesMost).
@@ -261,6 +269,25 @@ namespace
     /// </summary>
     constexpr uint32_t HdPageSide = 2048;
     constexpr uint32_t HdIndexPageSide = 1024;
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the side of an HD page's indices for frames of <paramref name="scale"/> HD
+    /// pixels an original pixel: the colours' side over the scale where that's less than HdIndexPageSide (683 at 3x,
+    /// so the two fill together: at 1024, 55% of the indices' page stayed empty), else HdIndexPageSide (2x already
+    /// matches). Frames of a scale with another side take pages of their own (SharedLayout): 1x and 2x share theirs.
+    /// </summary>
+    constexpr uint32_t HdIndexSideFor(int32_t scale)
+    {
+        const auto pixels = static_cast<uint32_t>(std::max(scale, 1));
+        return pixels * HdIndexPageSide > HdPageSide ? (HdPageSide + pixels - 1) / pixels : HdIndexPageSide;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the frames before a spare page the GPU had no room for is tried again (each
+    /// try that fails logs).
+    /// </summary>
+    constexpr uint64_t SpareRetryFrames = 60;
+
     /// <summary>Port-only: the pages sharp glyphs share (RGBA8, 4 MB; the interface's take 0.1 MB).</summary>
     constexpr uint32_t SharpPageSide = 1024;
     /// <summary>A place's corner or size packed as a draw's field: x in bits 0-15, y in 16-31.</summary>
@@ -577,47 +604,22 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: the original's index at pixel <paramref name="at"/> of a version 2 HD frame (its index picture's
-    /// red where its green says the original draws there: MCHdArt::OriginalDrawsMark), or none where it doesn't.
+    /// Port-only: the colours of the pixels the original draws in a version 2 HD frame's index picture
+    /// <paramref name="indices"/> (MCHdArt::OriginalDrawsMark), as DrawnColors gives an atlas image's.
     /// </summary>
-    std::optional<uint8_t> OriginalIndexAt(const MCHdArt::Frame& frame, size_t at)
+    std::bitset<256> HdDrawnColors(std::span<const uint8_t> indices)
     {
-        const size_t texel = at * MCHdArt::IndexBytes;
+        std::bitset<256> colors;
 
-        if (texel + 1 >= frame.Indices.size() || !MCHdArt::OriginalDrawsMark(frame.Indices[texel + 1]))
+        for (size_t at = 0; at + MCHdArt::IndexBytes <= indices.size(); at += MCHdArt::IndexBytes)
         {
-            return std::nullopt;
+            if (MCHdArt::OriginalDrawsMark(indices[at + 1]))
+            {
+                colors.set(indices[at]);
+            }
         }
 
-        return frame.Indices[texel];
-    }
-
-    /// <summary>
-    /// Port-only: a version 2 HD frame's index picture as MCShapeRows::Decode decodes the original's rows into
-    /// <paramref name="out"/> (the frame's original size): each pixel the original draws its index, drawn; nothing
-    /// elsewhere.
-    /// </summary>
-    void DecodeHdIndices(const MCHdArt::Frame& frame, std::span<uint8_t> out)
-    {
-        for (size_t at = 0; at * DecodedBytes < out.size(); ++at)
-        {
-            const std::optional<uint8_t> index = OriginalIndexAt(frame, at);
-            out[at * DecodedBytes] = index.value_or(0);
-            out[at * DecodedBytes + 1] = index.has_value() ? MCShapeRows::Drawn : MCShapeRows::Empty;
-        }
-    }
-
-    /// <summary>
-    /// Port-only: FillShape's picture of a version 2 HD frame in <paramref name="out"/> (the frame's original size):
-    /// each pixel the original draws its index (through <paramref name="xlat"/> when there is one), colour 0 elsewhere.
-    /// </summary>
-    void FillHdIndices(const MCHdArt::Frame& frame, const std::optional<MCColorTable>& xlat, std::span<uint8_t> out)
-    {
-        for (size_t at = 0; at < out.size(); ++at)
-        {
-            const std::optional<uint8_t> index = OriginalIndexAt(frame, at);
-            out[at] = !index.has_value() ? 0 : xlat.has_value() ? (*xlat)[*index] : *index;
-        }
+        return colors;
     }
 
     // Fast shapes (fastshp.cpp's format): rows of packets covering width + 1 pixels; c < 0x80 is a run of c pixels of
@@ -1280,7 +1282,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(picture.Texture);
     }
 
-    for (std::vector<SharedPage>* pages : {&_HdPages, &_SharpPages})
+    for (std::vector<SharedPage>* pages : {&_HdPages, &_SharpPages, &_SparePages})
     {
         for (SharedPage& page : *pages)
         {
@@ -1418,7 +1420,6 @@ void MCVulkanRenderer::BeginRecording()
 
         _Pages.clear();
         _DataImages.clear();
-        _HdIndexImages.clear();
     }
 
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
@@ -1440,9 +1441,12 @@ void MCVulkanRenderer::BeginRecording()
 
     const MCMemoryRoom::MCFrameRoom room =
         _Room.has_value() ? _Room->Frame(_HdPictureBytes) : MCMemoryRoom::MCFrameRoom{};
+    // Port-only (SPEC-memory.md's indices): the weather, shown, reads every unit's indices on the CPU.
+    MCHdArt::KeepIndices(MCWeather::Shown() != MCWeatherKind::Clear);
     // Port-only (SPEC-memory.md's plan): on shared memory, the pictures' share of the art's room too.
     const std::optional<uint64_t> planned = MCHdArt::NextFrame(room.MemoryShort);
     TrimHdPictures(static_cast<size_t>(std::min(room.PictureBytes, planned.value_or(room.PictureBytes))));
+    KeepSparePages();
     _HdPicturePayload.Set({.Payload = static_cast<int64_t>(_HdPictureBytes)});
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
@@ -1874,10 +1878,12 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     // Port-only: where its picture lies in the textures it reads (a shared page's).
     if (source == SourceKind::Picture)
     {
-        const PicturePlace& place = _Run->Pictures[sourceIndex].Place;
+        const FramePicture& picture = _Run->Pictures[sourceIndex];
+        const PicturePlace& place = picture.Place;
         draw[20] = PackedPair(place.X, place.Y);
         draw[21] = PackedPair(place.HdX, place.HdY);
         draw[22] = PackedPair(place.Width, place.Height);
+        draw[PlaceFlagsField] = picture.HdMarks ? static_cast<int32_t>(HdMarksSource) : 0;
     }
 
     const bool indexOnly = (op & IndexOnly) != 0;
@@ -2352,36 +2358,57 @@ auto MCVulkanRenderer::RowsGone(std::span<const uint8_t> table, int32_t shapeNum
     return true;
 }
 
-auto MCVulkanRenderer::HdIndexImage(const MCHdArt::Frame& frame, uint64_t seed) -> DataImage&
+auto MCVulkanRenderer::AtlasShapeIndices(std::span<const uint8_t> table, int32_t shapeNum,
+                                         std::span<const uint8_t> data, uint64_t seed, int32_t rows)
+    -> std::optional<ShapeIndices>
 {
-    BeginRecording();
-    const auto [found, fresh] = _HdIndexImages.try_emplace({frame.Id, seed});
+    const MCOptionalRef<DataImage> found = AtlasForData(
+        data, seed, "a shape",
+        [&]
+        {
+            Extent extent;
 
-    if (fresh)
+            // Port-only: a stripped table's frame without its HD frame has nothing to draw it from.
+            if (RowsGone(table, shapeNum))
+            {
+                return extent;
+            }
+
+            extent.Height = rows;
+            extent.Size = MCShapeRows::Extent(data, rows, extent.Width);
+            return extent;
+        },
+        [&](std::span<uint8_t> out, const Extent& extent) { MCShapeRows::Decode(data, rows, extent.Width, out); });
+
+    if (!found.has_value() || found->get().Measured.Width == 0)
     {
-        found->second.Measured = Extent{frame.Indices.size(), frame.OriginalWidth(), frame.OriginalHeight()};
-        ++_HdIndexImagesMade;
+        return std::nullopt;
     }
 
-    return found->second;
+    const DataImage& image = found->get();
+
+    if (!image.Place)
+    {
+        NotSupported("Shape larger than an atlas page");
+        return std::nullopt;
+    }
+
+    return ShapeIndices{SourceKind::Atlas, image.Place->Page,    image.Place->X,
+                        image.Place->Y,    image.Measured.Width, image.Colors};
 }
 
-auto MCVulkanRenderer::AtlasForHdIndices(const MCHdArt::Frame& frame, uint64_t seed) -> DataImage&
+auto MCVulkanRenderer::HdShapeIndices(const MCHdArt::Frame& frame) -> std::optional<ShapeIndices>
 {
-    DataImage& image = HdIndexImage(frame, seed);
-    const Extent& extent = image.Measured;
+    const std::optional<uint32_t> picture = HdPictureOf(frame);
+    const auto found = _HdPictures.find(frame.Id);
 
-    if (!image.Place && extent.Width > 0 && extent.Height > 0)
+    if (!picture.has_value() || found == _HdPictures.end() || frame.OriginalWidth() <= 0)
     {
-        image.Place = AtlasFor(extent.Width, extent.Height,
-                               [&](std::span<uint8_t> out)
-                               {
-                                   DecodeHdIndices(frame, out);
-                                   image.Colors = DrawnColors(out);
-                               });
+        return std::nullopt;
     }
 
-    return image;
+    ++_HdIndexPicturesDrawn;
+    return ShapeIndices{SourceKind::Picture, *picture, 0, 0, frame.OriginalWidth(), found->second.DrawnColors};
 }
 
 void MCVulkanRenderer::OnDataChanged(MCAddressKey first, size_t size)
@@ -2653,7 +2680,8 @@ uint32_t MCVulkanRenderer::UsePicture(Picture& picture)
 
     const auto index = static_cast<uint32_t>(_Run->Pictures.size());
     picture.FrameIndex = index;
-    _Run->Pictures.push_back(FramePicture{picture.Texture.Handle, picture.HdColors.Handle, picture.Place});
+    _Run->Pictures.push_back(
+        FramePicture{picture.Texture.Handle, picture.HdColors.Handle, picture.Place, picture.HdMarks});
     return index;
 }
 
@@ -2725,16 +2753,97 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         return true;
     };
 
-    // Only a page of the picture's own layout: its formats and its places' unit are the page's.
+    // Port-only (SPEC-memory.md's pages): the page of the layout placed in last.
+    auto open = std::ranges::find_if(_OpenPages,
+                                     [&](const OpenPage& page) { return page.Kind == kind && page.Layout == layout; });
+
+    if (open == _OpenPages.end())
+    {
+        open = _OpenPages.insert(_OpenPages.end(), OpenPage{kind, layout, 0});
+    }
+
+    // Only a page of the picture's own layout: its formats and its places' unit are the page's; not one that refused a
+    // picture no bigger. A refusal is kept as the page's smallest.
+    const PlaceSize size{width, height, hd ? static_cast<uint32_t>(blocks(hdWidth)) : 0,
+                         hd ? static_cast<uint32_t>(blocks(hdHeight)) : 0};
+    const auto tryIn = [&](uint32_t at)
+    {
+        SharedPage& page = pages[at];
+
+        if (page.Places == nullptr || page.Layout != layout ||
+            (page.Refused.has_value() && size.AtLeast(*page.Refused)))
+        {
+            return false;
+        }
+
+        if (placeIn(at))
+        {
+            open->Page = at;
+            return true;
+        }
+
+        if (!page.Refused.has_value() || page.Refused->AtLeast(size))
+        {
+            page.Refused = size;
+        }
+
+        return false;
+    };
+
+    // The open page first, then the others.
+    if (open->Page < pages.size() && tryIn(open->Page))
+    {
+        return true;
+    }
+
     for (uint32_t at = 0; at < pages.size(); ++at)
     {
-        if (pages[at].Places != nullptr && pages[at].Layout == layout && placeIn(at))
+        if (at != open->Page && tryIn(at))
         {
             return true;
         }
     }
 
-    // A new page, in an emptied one's slot when there is one.
+    // A new page (the one made ahead, when there is one: KeepSparePages), in an emptied one's slot when there is one.
+    std::optional<SharedPage> made;
+
+    if (const auto spare =
+            std::ranges::find_if(_SparePages, [&](const SharedPage& one) { return one.Layout == layout; });
+        kind == PageKind::Hd && spare != _SparePages.end())
+    {
+        made = std::move(*spare);
+        _SparePages.erase(spare);
+    }
+    else
+    {
+        made = MakePage(layout);
+    }
+
+    if (!made.has_value())
+    {
+        return false;
+    }
+
+    SharedPage& page = *made;
+    const auto empty = std::ranges::find_if(pages, [](const SharedPage& one) { return one.Places == nullptr; });
+    const auto at = static_cast<uint32_t>(std::distance(pages.begin(), empty));
+
+    if (empty == pages.end())
+    {
+        pages.push_back(std::move(page));
+    }
+    else
+    {
+        *empty = std::move(page);
+    }
+
+    open->Page = at;
+    return placeIn(at);
+}
+
+auto MCVulkanRenderer::MakePage(const SharedLayout& layout) -> std::optional<SharedPage>
+{
+    const bool hd = layout.HdFormat != SDL_GPU_TEXTUREFORMAT_INVALID;
     SharedPage page;
     page.Layout = layout;
     auto made = EnsureTexture(page.Texture, (hd ? MCHolder::GpuHdPictures : MCHolder::GpuPictures), layout.Format,
@@ -2749,25 +2858,47 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
     if (!made)
     {
         SDL_Log("MCVulkanRenderer: a shared page %ux%u: %s", layout.Side, layout.Side, made.error().c_str());
-        return false;
+        return std::nullopt;
     }
 
     page.Places.reset(sma_atlas_create(static_cast<int>(layout.Side), static_cast<int>(layout.Side)));
     const auto hdBlocks = static_cast<int>(layout.HdSide / layout.HdBlock);
     page.HdPlaces.reset(hd ? sma_atlas_create(hdBlocks, hdBlocks) : nullptr);
-    const auto empty = std::ranges::find_if(pages, [](const SharedPage& one) { return one.Places == nullptr; });
-    const auto at = static_cast<uint32_t>(std::distance(pages.begin(), empty));
+    return page;
+}
 
-    if (empty == pages.end())
+void MCVulkanRenderer::KeepSparePages()
+{
+    for (const OpenPage& open : _OpenPages)
     {
-        pages.push_back(std::move(page));
-    }
-    else
-    {
-        *empty = std::move(page);
-    }
+        if (open.Kind != PageKind::Hd)
+        {
+            continue;
+        }
 
-    return placeIn(at);
+        const auto ofLayout = [&](const SharedPage& page) { return page.Layout == open.Layout; };
+        const bool inUse = std::ranges::any_of(_HdPages, [&](const SharedPage& page)
+                                               { return page.Places != nullptr && ofLayout(page); });
+        const auto spare = std::ranges::find_if(_SparePages, ofLayout);
+
+        if (!inUse && spare != _SparePages.end())
+        {
+            Release(spare->Texture);
+            Release(spare->HdColors);
+            _SparePages.erase(spare);
+        }
+        else if (inUse && spare == _SparePages.end() && _Frame >= _SpareRetryFrame)
+        {
+            if (std::optional<SharedPage> made = MakePage(open.Layout); made.has_value())
+            {
+                _SparePages.push_back(std::move(*made));
+            }
+            else
+            {
+                _SpareRetryFrame = _Frame + SpareRetryFrames;
+            }
+        }
+    }
 }
 
 void MCVulkanRenderer::FreeShared(Picture& picture)
@@ -2791,15 +2922,20 @@ void MCVulkanRenderer::FreeRetiredPlaces()
     {
         SharedPage& page = PagesOf(retired.Kind)[retired.Page];
         sma_item_remove(page.Places.get(), retired.Item);
+        // Port-only (SPEC-memory.md's pages): room again, for any picture.
+        page.Refused.reset();
 
         if (retired.HdItem != nullptr)
         {
             sma_item_remove(page.HdPlaces.get(), retired.HdItem);
         }
 
-        // An emptied page goes (its textures once the frames that read them have run).
+        // An emptied page goes (its textures once the frames that read them have run, counted as retired till then:
+        // SPEC-memory.md's pages).
         if (--page.Pictures == 0)
         {
+            MCGpuCounted::Retire(page.Texture.Handle);
+            MCGpuCounted::Retire(page.HdColors.Handle);
             Release(page.Texture);
             Release(page.HdColors);
             page = SharedPage{};
@@ -3028,8 +3164,15 @@ bool MCVulkanRenderer::KeyedThroughout(const MCHdArt::Frame& frame, const Quad& 
     const int32_t width = frame.OriginalWidth();
     const int32_t height = frame.OriginalHeight();
 
-    if (rect[0] < 0 || rect[1] < 0 || rect[2] >= width || rect[3] >= height || rect[2] < rect[0] || rect[3] < rect[1] ||
-        frame.Indices.size() != static_cast<size_t>(width) * height * MCHdArt::IndexBytes)
+    if (rect[0] < 0 || rect[1] < 0 || rect[2] >= width || rect[3] >= height || rect[2] < rect[0] || rect[3] < rect[1])
+    {
+        return false;
+    }
+
+    // Port-only (SPEC-memory.md's indices): read on the CPU, so the menu pictures keep their indices.
+    const std::span<const uint8_t> indices = MCHdArt::IndicesOf(frame);
+
+    if (indices.size() != static_cast<size_t>(width) * height * MCHdArt::IndexBytes)
     {
         return false;
     }
@@ -3042,7 +3185,7 @@ bool MCVulkanRenderer::KeyedThroughout(const MCHdArt::Frame& frame, const Quad& 
 
             // As the draw shader's HdTexel leaves the key out: a pixel with an index (shaders/draw.pshader's
             // HasIndexIn) of the key.
-            if (!MCHdArt::HasIndexMark(frame.Indices[at + 1]) || frame.Indices[at] != key)
+            if (!MCHdArt::HasIndexMark(indices[at + 1]) || indices[at] != key)
             {
                 return false;
             }
@@ -3244,7 +3387,7 @@ auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, 
 
 void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                                    std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
-                                   bool smoothEdges, BlitPixels pixels)
+                                   bool smoothEdges, BlitPixels pixels, const std::optional<MCColorTable>& table)
 {
     const std::optional<std::pair<Quad, Quad>> place = BlitPlace(blit, width, height, command);
 
@@ -3263,10 +3406,12 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
     const uint16_t surface = SurfaceFor(target);
     const uint32_t op = KindTexture | OpaqueSource | AlphaBlend | (smoothEdges ? SmoothEdges : 0u) |
                         (pixels == BlitPixels::Blended ? BlendedOnly : 0u) |
-                        (pixels == BlitPixels::OpaqueIndices ? IndexOnly | OpaqueOnly : 0u);
+                        (pixels == BlitPixels::OpaqueIndices ? IndexOnly | OpaqueOnly : 0u) |
+                        (table.has_value() ? TableBefore : 0u);
+    const uint32_t before = table.has_value() ? TableRow(*table) : 0u;
 
     // A smooth-edged picture's place in the source is the whole picture.
-    if (Add(surface, SourceKind::Picture, *index, place->first, place->second, op, 0, 0, 0) && smoothEdges)
+    if (Add(surface, SourceKind::Picture, *index, place->first, place->second, op, 0, before, 0) && smoothEdges)
     {
         DrawFields& draw = _Run->Draws.back();
         draw[16] = 0;
@@ -3396,8 +3541,12 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
     // The shape's opaque pixels' indices, as the original's transform writes them (its colours' blit, blended, leaves
     // the indices): the composite tells what stands on the ground by them (the water, the relief's light, the rain's
     // wet look).
-    const auto indices = [&](const std::function<std::optional<uint32_t>()>& source)
-    { BlitPicture(target, command.Blit, width, height, ReadsOutside, source, false, BlitPixels::OpaqueIndices); };
+    const auto indices = [&](const std::function<std::optional<uint32_t>()>& source,
+                             const std::optional<MCColorTable>& through = std::nullopt)
+    {
+        BlitPicture(target, command.Blit, width, height, ReadsOutside, source, false, BlitPixels::OpaqueIndices,
+                    through);
+    };
 
     // Port-only: the HD art pack's frame instead, where it has one, its edges smooth unless it holds its blended pixels
     // (an effect's). A translucent shape's blended pixels that its frame leaves out are blended first, with smooth
@@ -3406,16 +3555,13 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         hd != nullptr && HdPictureOf(*hd).has_value())
     {
         // A version 2 frame's index picture stands for the original's rows, which a pack's shape table may leave out
-        // (SPEC-pack-v2.md's record 1): its indices where the original draws.
+        // (SPEC-pack-v2.md's record 1): its indices where the original draws, read from its own picture on the GPU
+        // through the blit's table (SPEC-memory.md's indices).
+        const bool fromHd = hd->Marked && hd->OriginalWidth() == width && hd->OriginalHeight() == height;
         const std::function<std::optional<uint32_t>()> shape =
-            hd->Marked
-                ? std::function<std::optional<uint32_t>()>(
-                      [&]
-                      {
-                          return pictureOf(HdIndexImage(*hd, Seed(ImageKind::ShapeFill, width, height)),
-                                           [&](std::span<uint8_t> out) { FillHdIndices(*hd, command.Table, out); });
-                      })
-                : std::function<std::optional<uint32_t>()>(picture);
+            fromHd ? std::function<std::optional<uint32_t>()>([&] { return HdPictureOf(*hd); })
+                   : std::function<std::optional<uint32_t>()>(picture);
+        const std::optional<MCColorTable> shapeTable = fromHd ? command.Table : std::nullopt;
         const std::optional<std::pair<Quad, Quad>> place = BlitPlace(command.Blit, width, height, ReadsOutside);
 
         if (!place)
@@ -3429,7 +3575,8 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
 
         if (blendsOwn && smooth)
         {
-            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, true, BlitPixels::Blended);
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, true, BlitPixels::Blended,
+                        shapeTable);
         }
 
         // A frame part of the way to its next (an effect's, a tree's, a building's, or a mech's legs turning) shows the pack's in-between
@@ -3463,10 +3610,11 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
         if (blendsOwn && !smooth)
         {
-            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, false, BlitPixels::Blended);
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, false, BlitPixels::Blended,
+                        shapeTable);
         }
 
-        indices(shape);
+        indices(shape, shapeTable);
         return;
     }
 
@@ -3504,8 +3652,10 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         const bool bc7 = frame.Format == MCHdArt::ColorFormat::Bc7;
         uint32_t colorWidth = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Width)) : width;
         uint32_t colorHeight = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Height)) : height;
-        // Port-only (SPEC-memory.md's one copy of a frame's colours): the cache's, which go once they're here.
+        // Port-only (SPEC-memory.md's one copy of a frame's colours): the cache's, which go once they're here, and the
+        // indices, which go after too unless code on the CPU reads them (SPEC-memory.md's indices).
         const std::span<const uint8_t> source = MCHdArt::ColorsOf(frame);
+        const std::span<const uint8_t> indices = MCHdArt::IndicesOf(frame, MCHdArt::MCIndicesUse::Upload);
 
         if (source.empty())
         {
@@ -3513,7 +3663,7 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
             return std::nullopt;
         }
 
-        if (frame.Indices.size() != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes ||
+        if (indices.size() != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes ||
             source.size() != static_cast<size_t>(colorWidth) * colorHeight * (bc7 ? HdBc7Bytes : HdRgbaBytes))
         {
             NotSupported("an HD art frame whose pixels don't match its size");
@@ -3543,8 +3693,8 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         // one, in textures of its own.
         const SDL_GPUTextureFormat colorFormat =
             sendBc7 ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexPageSide, colorFormat, HdPageSide,
-                                  sendBc7 ? Bc7Block : 1};
+        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexSideFor(frame.Scale), colorFormat,
+                                  HdPageSide, sendBc7 ? Bc7Block : 1};
         Picture picture;
 
         if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))
@@ -3569,13 +3719,16 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         }
 
         const PicturePlace& place = picture.Place;
-        std::ranges::copy(frame.Indices, QueueUpload(picture.Texture.Handle, place.X, place.Y, originalWidth,
-                                                     originalHeight, static_cast<uint32_t>(MCHdArt::IndexBytes))
-                                             .begin());
+        std::ranges::copy(indices, QueueUpload(picture.Texture.Handle, place.X, place.Y, originalWidth, originalHeight,
+                                               static_cast<uint32_t>(MCHdArt::IndexBytes))
+                                       .begin());
         std::ranges::copy(colors, QueueUpload(picture.HdColors.Handle, place.HdX, place.HdY, colorWidth, colorHeight,
                                               sendBc7 ? HdBc7Bytes : HdRgbaBytes)
                                       .begin());
-        picture.Bytes = frame.Indices.size() + colors.size();
+        picture.Bytes = indices.size() + colors.size();
+        // Port-only (SPEC-memory.md's indices): a version 2 frame's index passes read this picture, not the CPU's copy.
+        picture.HdMarks = frame.Marked;
+        picture.DrawnColors = frame.Marked ? HdDrawnColors(indices) : std::bitset<256>{};
         MCHdArt::ColorsUploaded(frame);
         found = _HdPictures.emplace(frame.Id, picture).first;
         found->second.InOrder = _HdOrder.insert(_HdOrder.end(), frame.Id);
@@ -3987,46 +4140,22 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
     // The whole shape when its header covers the rows drawn (so a shape scrolling past an edge keeps one atlas place).
     const int32_t rows = fromHd ? hd->OriginalHeight() : std::max(command.SkipRows + command.Rows, headerRows);
-    const MCOptionalRef<DataImage> found =
-        fromHd ? MCOptionalRef<DataImage>(AtlasForHdIndices(*hd, Seed(ImageKind::Shape, 0, rows)))
-               : AtlasForData(
-                     data, Seed(ImageKind::Shape, 0, rows), "a shape",
-                     [&]
-                     {
-                         Extent extent;
+    // Port-only (SPEC-memory.md's indices): a version 2 frame's index passes read its own index picture on the GPU.
+    const std::optional<ShapeIndices> indices =
+        fromHd ? HdShapeIndices(*hd)
+               : AtlasShapeIndices(command.ShapeTable, command.ShapeNum, data, Seed(ImageKind::Shape, 0, rows), rows);
 
-                         // Port-only: a stripped table's frame without its HD frame has nothing to draw it from.
-                         if (RowsGone(command.ShapeTable, command.ShapeNum))
-                         {
-                             return extent;
-                         }
-
-                         extent.Height = rows;
-                         extent.Size = MCShapeRows::Extent(data, rows, extent.Width);
-                         return extent;
-                     },
-                     [&](std::span<uint8_t> out, const Extent& extent)
-                     { MCShapeRows::Decode(data, rows, extent.Width, out); });
-
-    if (!found.has_value() || found->get().Measured.Width == 0)
+    if (!indices.has_value())
     {
         return;
     }
 
-    const DataImage& image = found->get();
-    const int32_t width = image.Measured.Width;
-    const std::optional<AtlasPlace>& place = image.Place;
-
-    if (!place)
-    {
-        NotSupported("Shape larger than an atlas page");
-        return;
-    }
+    const int32_t width = indices->Width;
 
     // The rows drawn, within the image's (a version 2 frame's may be fewer than a malformed header's rows drawn).
     const Quad at = {std::max(command.Left, command.Lo), command.Top, std::min(command.Left + width - 1, command.Hi),
                      std::min(command.Top + command.Rows, command.Top - command.SkipRows + rows) - 1};
-    const Quad from = {place->X + at[0] - command.Left, place->Y + command.SkipRows, 1, 1};
+    const Quad from = {indices->X + at[0] - command.Left, indices->Y + command.SkipRows, 1, 1};
 
     if (at[2] < at[0])
     {
@@ -4108,13 +4237,13 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     // atlas).
     const auto addSmooth = [&](const Quad& rect, const Quad& source, uint32_t smoothOp)
     {
-        if (Add(surface, SourceKind::Atlas, place->Page, rect, source, smoothOp, 0, before, after))
+        if (Add(surface, indices->Source, indices->Index, rect, source, smoothOp, 0, before, after))
         {
             DrawFields& draw = _Run->Draws.back();
-            draw[16] = place->X;
-            draw[17] = place->Y;
-            draw[18] = place->X + width - 1;
-            draw[19] = place->Y + rows - 1;
+            draw[16] = indices->X;
+            draw[17] = indices->Y;
+            draw[18] = indices->X + width - 1;
+            draw[19] = indices->Y + rows - 1;
         }
     };
 
@@ -4154,7 +4283,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
             if ((indexOp & Sways) != 0)
             {
-                Add(surface, SourceKind::Atlas, place->Page, at, from, indexOp, 0, before, after);
+                Add(surface, indices->Source, indices->Index, at, from, indexOp, 0, before, after);
             }
 
             // A frame part of the way to its next (an effect's, a tree's, a building's, or a mech's legs turning) shows the pack's in-between
@@ -4188,19 +4317,19 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             }
 
             // A translucent shape with no colour it shows opaque keeps no indices: its index pass would draw nothing.
-            if ((indexOp & Sways) == 0 && translucent && !AnyOpaqueAlphaColor(image.Colors))
+            if ((indexOp & Sways) == 0 && translucent && !AnyOpaqueAlphaColor(indices->Colors))
             {
                 NoteBlended(surface, at);
             }
             else if ((indexOp & Sways) == 0)
             {
-                Add(surface, SourceKind::Atlas, place->Page, at, from, indexOp, 0, before, after);
+                Add(surface, indices->Source, indices->Index, at, from, indexOp, 0, before, after);
             }
 
             // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
             if (blendsOwn && !smooth)
             {
-                Add(surface, SourceKind::Atlas, place->Page, at, from, op | BlendedOnly, 0, before, after);
+                Add(surface, indices->Source, indices->Index, at, from, op | BlendedOnly, 0, before, after);
             }
 
             return;
@@ -4211,12 +4340,12 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     // colour through the blend pipeline with its coverage taken between its own pixels.
     if (command.Op == MCShapeOp::Draw && MCHdArt::SmoothEdges(command.ShapeTable))
     {
-        Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly, 0, before, after);
+        Add(surface, indices->Source, indices->Index, at, from, op | IndexOnly, 0, before, after);
         addSmooth(at, from, op | SmoothEdges);
         return;
     }
 
-    Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, after);
+    Add(surface, indices->Source, indices->Index, at, from, op, 0, before, after);
 }
 
 void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& command)

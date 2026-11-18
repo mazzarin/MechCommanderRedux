@@ -36,13 +36,71 @@ namespace MCContentUpdater
     constexpr size_t MostListBytes = 64 << 20;
 
     /// <summary>
-    /// The sets the player chose, in the game folder: the installer's answer (whether HD was ticked), then HD OPTIONS'.
-    /// JSON: <c>{"format": 1, "sets": ["game", "hd"]}</c>. The copy plans for these; without the file, for the sets its
-    /// record has.
+    /// The sets the player chose, in the game folder: the installer's answer (whether HD was ticked, and the full HD art
+    /// or the 2x art), then HD OPTIONS'. JSON: <c>{"format": 1, "sets": ["game", "hd", "hd2x"], "picked": "machine"}</c>.
+    /// The copy plans for these; without the file, for the sets its record has. <c>picked</c> says who chose the HD
+    /// art's size (<see cref="MCPicked"/>); a file without it (every one before release 9) is the machine's.
     /// </summary>
     constexpr std::string_view ChosenFile = MCContentList::InUpdateFolder<"sets.json">;
 
     using MCSets = std::set<std::string, std::less<>>;
+
+    /// <summary>
+    /// The machine, for the HD art it takes by default (SPEC-memory.md's The 2x set): the 2x art with memory under 12
+    /// GB, a card of its own under 4 GB, or a GPU that can't sample BC7 (<see cref="Takes2x"/>).
+    /// </summary>
+    struct MCMachine
+    {
+        /// <summary>Its memory (0: not known, which counts as enough).</summary>
+        uint64_t MemoryBytes = 0;
+        /// <summary>The memory of its card, one of its own (none: the GPU shares the machine's memory, or not known).</summary>
+        std::optional<uint64_t> CardBytes;
+        /// <summary>Whether its GPU samples BC7 (taken as so until the GPU says otherwise).</summary>
+        bool SamplesBc7 = true;
+
+        bool operator==(const MCMachine&) const = default;
+    };
+
+    /// <summary>
+    /// The least memory, and the least memory of a card of its own, for the full HD art. 11.5 GiB: a 12 GB machine that
+    /// reports a little less (what the firmware or a GPU keeps) counts as 12.
+    /// </summary>
+    constexpr uint64_t FullArtMemory = uint64_t{11776} << 20;
+    /// <summary>3.5 GiB: a 4 GB card that reports a little less counts as 4.</summary>
+    constexpr uint64_t FullArtCard = uint64_t{3584} << 20;
+
+    /// <summary>Whether <paramref name="machine"/>'s default HD art is the 2x set.</summary>
+    bool Takes2x(const MCMachine& machine);
+
+    /// <summary>Who chose the HD art's size, full or 2x (<see cref="ChosenFile"/>'s <c>picked</c>).</summary>
+    enum class MCPicked : uint8_t
+    {
+        /// <summary>
+        /// The machine's default was taken: every download of HD takes the machine's (<see cref="MCSetup::Machine"/>):
+        /// the first install, an update and HD OPTIONS' GET; otherwise the copy keeps the size it has.
+        /// </summary>
+        Machine,
+        /// <summary>The player chose it: it stays as chosen.</summary>
+        Player,
+    };
+
+    /// <summary>The sets chosen, and who chose the HD art's size.</summary>
+    struct MCChoice
+    {
+        MCSets Sets;
+        MCPicked Picked = MCPicked::Machine;
+
+        bool operator==(const MCChoice&) const = default;
+    };
+
+    /// <summary>What the sets wanted are for (<see cref="Wanted"/>).</summary>
+    enum class MCFor : uint8_t
+    {
+        /// <summary>The sets the copy keeps: a size the machine picked stays as installed.</summary>
+        Keeping,
+        /// <summary>A download of HD (an update, a first install): a size the machine picked is the machine's now.</summary>
+        Downloading,
+    };
 
     /// <summary>
     /// Asked as a check plans (hashing the copy's files, which on a first plan may read gigabytes): false to stop, which
@@ -65,6 +123,11 @@ namespace MCContentUpdater
         /// <summary>The build running, and its version as shown ("0.2.1 (525)").</summary>
         uint64_t RunningBuild = 0;
         std::string RunningVersion;
+        /// <summary>
+        /// The machine, whose default HD art (<see cref="Takes2x"/>) is taken wherever the player hasn't picked the
+        /// size (<see cref="MCPicked"/>).
+        /// </summary>
+        MCMachine Machine;
         /// <summary>
         /// Windows: whether the setup installed the copy, as the program's backend asks it (MCSetupBackend::MCPlatform's
         /// SetupOwns), so the download offered is the one it fetches. None: the setup's.
@@ -93,6 +156,11 @@ namespace MCContentUpdater
         /// <c>update.json</c> for a change of sets), handed to the source that stages it (MCSource::UseMirrors).
         /// </summary>
         std::vector<std::string> Mirrors;
+        /// <summary>
+        /// The program running is below release.json's lowest release a copy may stay on: the program comes by itself
+        /// and alone (no content, and armed without noting the content due), and the player isn't asked.
+        /// </summary>
+        bool Forced = false;
 
         /// <summary>What the content downloads.</summary>
         uint64_t ContentBytes() const;
@@ -114,7 +182,9 @@ namespace MCContentUpdater
     /// </summary>
     /// <returns>
     /// The update; none when nothing's newer, the player skipped it, or an update already waits for the next start; or
-    /// why there's none (the files refused, the host out of reach, a game folder this account can't write).
+    /// why there's none (the files refused, the host out of reach, a game folder this account can't write). Below
+    /// release.json's lowest release a copy may stay on, the program alone, forced (<see cref="MCOffer::Forced"/>),
+    /// skipped or not.
     /// </returns>
     std::expected<std::optional<MCOffer>, std::string> Check(const MCSetup& setup, MCUpdateDisk& disk,
                                                              MCContentStage::MCSource& source, const MCGoOn& goOn = {});
@@ -183,20 +253,29 @@ namespace MCContentUpdater
     MCSets SetsFound(const std::filesystem::path& gameFolder);
 
     /// <summary>
-    /// The sets the player chose (<see cref="ChosenFile"/>), the game's data always among them; none without the file,
-    /// or when it can't be read (logged).
+    /// The sets the player chose (<see cref="ChosenFile"/>), the game's data always among them, and who chose the HD
+    /// art's size; none without the file, or when it can't be read (logged).
     /// </summary>
+    std::optional<MCChoice> Choice(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+
+    /// <summary>The sets the player chose (<see cref="Choice"/>'s).</summary>
     std::optional<MCSets> Chosen(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
 
-    /// <summary>Keeps <paramref name="sets"/> (the game's data added) as the sets the player chose.</summary>
+    /// <summary>
+    /// Keeps <paramref name="sets"/> (the game's data added) as the sets the player chose, the HD art's size chosen by
+    /// <paramref name="picked"/>.
+    /// </summary>
     std::expected<void, std::string> Choose(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
-                                            const MCSets& sets);
+                                            const MCSets& sets, MCPicked picked = MCPicked::Machine);
 
     /// <summary>
-    /// The sets the copy is to have: those chosen, else those <paramref name="installed"/> records, else those found;
-    /// the game's data always.
+    /// The sets the copy <paramref name="setup"/> describes is to have, for <paramref name="purpose"/>: those chosen,
+    /// else those <paramref name="installed"/> records, else those found; the game's data always, the 2x set only with
+    /// HD (and HD with it). Where the machine picked the HD art's size, a download takes the machine's
+    /// (<see cref="MCSetup::Machine"/>), and a copy keeping its sets the size it has (the machine's when it has no HD).
     /// </summary>
-    MCSets Wanted(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCInstalled::MCRecord& installed);
+    MCSets Wanted(const MCSetup& setup, MCUpdateDisk& disk, const MCInstalled::MCRecord& installed,
+                  MCFor purpose = MCFor::Keeping);
 
     /// <summary>
     /// Whether the copy awaits its first install: an installer left its answer (<see cref="ChosenFile"/>), and no

@@ -301,11 +301,11 @@ const
   VulkanDriverValue = 'VulkanDriverName';
   KhronosDriversKey = 'SOFTWARE\Khronos\Vulkan\Drivers';
   KhronosDriverLoaded = 0;
-  // The computers that take the smaller (2x) HD art by default (MachineTakesHd2x), in MiB: memory under 12 GiB, or a
-  // graphics card of its own (1 GiB or more) with under 4 GB (3.5 GiB, so a 4 GB card that reports a little less
-  // counts as 4).
+  // The computers that take the smaller (2x) HD art by default (MachineTakesHd2x), in MiB: memory under 12 GB (11.5 GiB,
+  // so a 12 GB machine that reports a little less counts as 12), or a graphics card of its own (1 GiB or more) with
+  // under 4 GB (3.5 GiB, so a 4 GB card that reports a little less counts as 4).
   BytesPerMiB = 1048576;
-  SmallMemoryMiB = 12288;
+  SmallMemoryMiB = 11776;
   CardOfItsOwnMiB = 1024;
   SmallCardMiB = 3584;
   // Where a display adapter's driver records its memory, under its key in the display adapters' class: a QWORD, 8
@@ -682,7 +682,7 @@ begin
     Result := 'the full art';
 end;
 
-// Whether the machine takes the smaller (2x) HD art by default: memory under 12 GiB, or a graphics card of its own with
+// Whether the machine takes the smaller (2x) HD art by default: memory under 12 GB, or a graphics card of its own with
 // under 4 GB (SmallMemoryMiB, CardOfItsOwnMiB, SmallCardMiB). What can't be read counts as full. The setup can't ask
 // the graphics whether they sample BC7, as the game does: where the size is the machine's, the game's own check rules.
 function MachineTakesHd2x: Boolean;

@@ -123,3 +123,20 @@ std::shared_ptr<MCMemoryRoom::MCSystem> MCMakeMemorySystem()
 {
     return std::make_shared<MCMacMemory>();
 }
+
+std::optional<uint64_t> MCOwnCardBytes()
+{
+    @autoreleasepool
+    {
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+
+        // Apple silicon's GPU shares the machine's memory: no card of its own.
+        if (device == nil || device.hasUnifiedMemory)
+        {
+            return std::nullopt;
+        }
+
+        const uint64_t bytes = device.recommendedMaxWorkingSetSize;
+        return bytes >= OwnCardLeast ? std::optional(bytes) : std::nullopt;
+    }
+}

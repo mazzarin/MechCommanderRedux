@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCVulkanPresenter.h"
+#include "main/MCUpdater.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCVulkanShaders.h"
 #include "sprite/MCParticles.h"
@@ -824,6 +825,9 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     }
 
     presenter->_Device = std::shared_ptr<SDL_GPUDevice>(device, MCSdlDeleter{});
+    // Port-only: a GPU that can't sample BC7 takes the 2x HD art by default (main/MCUpdater.h).
+    MCUpdater::SetGpuSamplesBc7(SDL_GPUTextureSupportsFormat(device, SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM,
+                                                             SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER));
 
     // Port-only: the third swapchain image, asked for the vsync the presenter starts with before the window is claimed,
     // so its swapchain is made once, with the images it keeps (two without vsync).

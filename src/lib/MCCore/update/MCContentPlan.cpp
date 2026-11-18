@@ -202,17 +202,17 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
     // A patch shared by identical files changed alike is downloaded once.
     std::set<std::string, std::less<>> patches;
 
-    for (const MCContentList::MCFile& file : list.Files)
-    {
-        if (!LeftToProgram(platform, file.Path))
-        {
-            plan.Record.SetBytes[file.Set] += file.Size;
-        }
-    }
+    // Each set's bytes, the program's own files left out (a variant set's: the sets it varies, its files in place).
+    MCContentList::MCList counted = list;
+    const auto programs = [&](const MCContentList::MCFile& file) { return LeftToProgram(platform, file.Path); };
+    std::erase_if(counted.Files, programs);
+    std::erase_if(counted.Variants, programs);
+    plan.Record.SetBytes = MCContentList::SetBytes(counted);
 
-    for (const MCContentList::MCFile& file : list.Files)
+    // The files of the sets, each variant of one of them in its file's place.
+    for (const MCContentList::MCFile& file : MCContentList::ForSets(list, sets))
     {
-        if (!sets.contains(file.Set) || LeftToProgram(platform, file.Path))
+        if (LeftToProgram(platform, file.Path))
         {
             continue;
         }

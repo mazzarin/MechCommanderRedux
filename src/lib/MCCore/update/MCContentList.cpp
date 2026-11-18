@@ -14,6 +14,7 @@ namespace
     constexpr std::string_view LowestProgramKey = "lowestProgram";
     constexpr std::string_view ZipsKey = "zips";
     constexpr std::string_view FilesKey = "files";
+    constexpr std::string_view VariantsKey = "variants";
     constexpr std::string_view NameKey = "name";
     constexpr std::string_view SizeKey = "size";
     constexpr std::string_view Sha256Key = "sha256";
@@ -156,6 +157,147 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>
+    /// Refuses a variant of a set the files have ("game", "hd": a variant is another set's copy), two variants of one
+    /// set at one path (case aside), a variant at a listed file's path spelled otherwise, and a variant of its own path
+    /// that clashes with the files (alike but for case, or where another's folder is).
+    /// </summary>
+    void CheckVariants(const std::vector<MCFile>& files, const std::vector<MCFile>& variants)
+    {
+        std::map<std::string, std::string_view, std::less<>> listed;
+        std::set<std::string, std::less<>> fileSets;
+
+        for (const MCFile& file : files)
+        {
+            listed.emplace(FoldedPath(file.Path), file.Path);
+            fileSets.insert(file.Set);
+        }
+
+        std::set<std::pair<std::string, std::string>> seen;
+        std::vector<MCFile> withOwnPaths = files;
+        std::set<std::string, std::less<>> ownPaths;
+
+        for (const MCFile& variant : variants)
+        {
+            if (fileSets.contains(variant.Set))
+            {
+                Fail("the variant \"{}\" is of the set \"{}\", which the files have", variant.Path, variant.Set);
+            }
+
+            std::string folded = FoldedPath(variant.Path);
+
+            if (!seen.emplace(folded, variant.Set).second)
+            {
+                Fail("\"{}\" has two variants of the set \"{}\"", variant.Path, variant.Set);
+            }
+
+            if (const auto file = listed.find(folded); file != listed.end())
+            {
+                if (file->second != variant.Path)
+                {
+                    Fail("the variant \"{}\" is spelled otherwise than the file \"{}\"", variant.Path, file->second);
+                }
+            }
+            else if (ownPaths.insert(folded).second)
+            {
+                withOwnPaths.push_back(variant);
+            }
+        }
+
+        CheckNoClashes(withOwnPaths);
+    }
+}
+
+std::vector<MCFile> MCContentList::ForSets(const MCList& list, const std::set<std::string, std::less<>>& sets)
+{
+    std::map<std::string, const MCFile*, std::less<>> variants;
+
+    for (const MCFile& variant : list.Variants)
+    {
+        if (sets.contains(variant.Set))
+        {
+            variants.emplace(FoldedPath(variant.Path), &variant);
+        }
+    }
+
+    std::vector<MCFile> files;
+    files.reserve(list.Files.size() + variants.size());
+
+    for (const MCFile& file : list.Files)
+    {
+        if (const auto variant = variants.find(FoldedPath(file.Path)); variant != variants.end())
+        {
+            files.push_back(*variant->second);
+            variants.erase(variant);
+        }
+        else if (sets.contains(file.Set))
+        {
+            files.push_back(file);
+        }
+    }
+
+    // The variants of their own paths, in the list's order.
+    for (const MCFile& variant : list.Variants)
+    {
+        if (variants.contains(FoldedPath(variant.Path)))
+        {
+            files.push_back(variant);
+        }
+    }
+
+    return files;
+}
+
+std::map<std::string, uint64_t, std::less<>> MCContentList::SetBytes(const MCList& list)
+{
+    std::map<std::string, uint64_t, std::less<>> bytes;
+
+    for (const MCFile& file : list.Files)
+    {
+        bytes[file.Set] += file.Size;
+    }
+
+    // A variant set's bytes are those of the sets it varies with it in place: the HD set with its 2x art.
+    std::map<std::string, std::set<std::string, std::less<>>, std::less<>> bases;
+    std::map<std::string, std::string, std::less<>> setOf;
+
+    for (const MCFile& file : list.Files)
+    {
+        setOf.emplace(FoldedPath(file.Path), file.Set);
+    }
+
+    for (const MCFile& variant : list.Variants)
+    {
+        auto& base = bases[variant.Set];
+
+        if (const auto file = setOf.find(FoldedPath(variant.Path)); file != setOf.end())
+        {
+            base.insert(file->second);
+        }
+    }
+
+    for (auto& [set, base] : bases)
+    {
+        std::set<std::string, std::less<>> with = base;
+        with.insert(set);
+        uint64_t total = 0;
+
+        for (const MCFile& file : ForSets(list, with))
+        {
+            if (with.contains(file.Set))
+            {
+                total += file.Size;
+            }
+        }
+
+        bytes[set] = total;
+    }
+
+    return bytes;
+}
+
 std::string MCContentList::FoldedPath(std::string_view path)
 {
     std::string folded(path);
@@ -284,22 +426,21 @@ std::expected<MCList, std::string> MCContentList::Read(std::string_view payload)
                                   }
 
                                   CheckNoClashes(list.Files);
+
+                                  // Added in format 1: a list before it has none, and a game before it reads past it.
+                                  for (const MCJson& entry : Array(json, VariantsKey, false))
+                                  {
+                                      list.Variants.push_back(ReadFile(entry, zipNames));
+                                  }
+
+                                  CheckVariants(list.Files, list.Variants);
                                   return list;
                               });
 }
 
-std::string MCContentList::Write(const MCList& list)
+namespace
 {
-    MCJson zips = MCJson::array();
-
-    for (const MCZip& zip : list.Zips)
-    {
-        zips.push_back({{NameKey, zip.Name}, {SizeKey, zip.Size}, {Sha256Key, MCSha256::Hex(zip.Sha256)}});
-    }
-
-    MCJson files = MCJson::array();
-
-    for (const MCFile& file : list.Files)
+    MCJson FileEntry(const MCFile& file)
     {
         MCJson entry{{PathKey, file.Path},
                      {SetKey, file.Set},
@@ -322,13 +463,41 @@ std::string MCContentList::Write(const MCList& list)
             entry[std::string(PatchesKey)] = std::move(patches);
         }
 
-        files.push_back(std::move(entry));
+        return entry;
+    }
+}
+
+std::string MCContentList::Write(const MCList& list)
+{
+    MCJson zips = MCJson::array();
+
+    for (const MCZip& zip : list.Zips)
+    {
+        zips.push_back({{NameKey, zip.Name}, {SizeKey, zip.Size}, {Sha256Key, MCSha256::Hex(zip.Sha256)}});
     }
 
-    return MCJson{{FormatKey, list.Format},
-                  {ReleaseKey, list.Release},
-                  {LowestProgramKey, list.LowestProgram},
-                  {ZipsKey, std::move(zips)},
-                  {FilesKey, std::move(files)}}
-        .dump(1);
+    const auto entries = [](const std::vector<MCFile>& listed)
+    {
+        MCJson files = MCJson::array();
+
+        for (const MCFile& file : listed)
+        {
+            files.push_back(FileEntry(file));
+        }
+
+        return files;
+    };
+
+    MCJson json{{FormatKey, list.Format},
+                {ReleaseKey, list.Release},
+                {LowestProgramKey, list.LowestProgram},
+                {ZipsKey, std::move(zips)},
+                {FilesKey, entries(list.Files)}};
+
+    if (!list.Variants.empty())
+    {
+        json[std::string(VariantsKey)] = entries(list.Variants);
+    }
+
+    return json.dump(1);
 }

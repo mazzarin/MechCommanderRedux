@@ -400,6 +400,30 @@ namespace
         return keys;
     }
 
+    /// <summary>
+    /// This machine, for the HD art it takes by default: its memory and its card of its own (its GPU's BC7 is told as
+    /// the GPU starts: MCUpdater::SetGpuSamplesBc7).
+    /// </summary>
+    MCContentUpdater::MCMachine ThisMachine()
+    {
+        // Looked at once a run: the start and the updater each make the setup.
+        static const MCContentUpdater::MCMachine machine = []
+        {
+            constexpr uint64_t BytesPerMegabyte = uint64_t{1} << 20;
+            const MCContentUpdater::MCMachine found{
+                .MemoryBytes = static_cast<uint64_t>(std::max(SDL_GetSystemRAM(), 0)) * BytesPerMegabyte,
+                .CardBytes = MCOwnCardBytes()};
+            const std::string card = found.CardBytes
+                                         ? std::format("a card of {} MB", *found.CardBytes / BytesPerMegabyte)
+                                         : std::string("no card of its own");
+            SDL_Log("Updates: %llu MB of memory, %s: the machine's HD art is the %s set",
+                    static_cast<unsigned long long>(found.MemoryBytes / BytesPerMegabyte), card.c_str(),
+                    MCContentUpdater::Takes2x(found) ? "2x" : "full");
+            return found;
+        }();
+        return machine;
+    }
+
     /// <summary>The copy and the build, for the game's own updater for the content.</summary>
     MCContentUpdater::MCSetup ContentSetup(const MCLaunchOptions& options,
                                            std::vector<MCSignedFile::MCPublicKey> rootKeys)
@@ -410,7 +434,8 @@ namespace
                                         .LowestKeyListIssue = LowestKeyListIssue,
                                         .Platform = std::string(ReleasePlatform),
                                         .RunningBuild = MC_VERSION_BUILD,
-                                        .RunningVersion = MC_VERSION_SHOWN};
+                                        .RunningVersion = MC_VERSION_SHOWN,
+                                        .Machine = ThisMachine()};
 #ifdef _WIN32
         setup.SetupOwns = MCSetupOwns;
 #endif

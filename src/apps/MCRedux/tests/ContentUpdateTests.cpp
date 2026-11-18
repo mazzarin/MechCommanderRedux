@@ -330,6 +330,65 @@ TEST_CASE("update files: release.json's mirrors are read and kept; a file naming
     CHECK(!MCReleaseFile::ReadReleases(numbered.dump()).has_value());
 }
 
+TEST_CASE("update files: release.json's lowest release a copy may stay on is read as the release script writes it; a "
+          "copy below its build for its platform is below it, and a build before it reads the file without it")
+{
+    // As tools/release/make_release.py writes it with --required: release 9's builds, the current release 10.
+    constexpr std::string_view Written = R"({
+  "format": 1,
+  "issue": 7,
+  "current": {
+    "release": 10,
+    "version": "0.7.1",
+    "notes": "Fixes.",
+    "programs": {
+      "mac": {"build": 1320, "size": 7000000},
+      "windows": {"build": 1320, "size": 12000000}
+    },
+    "content": {"list": "3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b", "size": 1203}
+  },
+  "required": {"release": 9, "builds": {"mac": 1290, "windows": 1291}}
+})";
+    const auto read = MCReleaseFile::ReadReleases(Written);
+    REQUIRE(read.has_value());
+    REQUIRE(read->Required.has_value());
+    CHECK_EQ(read->Required->Release, uint64_t{9});
+    CHECK_EQ(read->Required->Builds.at("mac"), uint64_t{1290});
+    CHECK_EQ(read->Required->Builds.at("windows"), uint64_t{1291});
+
+    // Below it: an older build on its platform. At or above it, or on a platform it doesn't name, not.
+    CHECK(MCReleaseFile::BelowRequired(*read, "mac", 1289));
+    CHECK(!MCReleaseFile::BelowRequired(*read, "mac", 1290));
+    CHECK(MCReleaseFile::BelowRequired(*read, "windows", 1290));
+    CHECK(!MCReleaseFile::BelowRequired(*read, "windows", 1320));
+    CHECK(!MCReleaseFile::BelowRequired(*read, "linux", 1));
+
+    // Written and read back alike.
+    const auto again = MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(*read));
+    REQUIRE(again.has_value());
+    CHECK(again->Required == read->Required);
+
+    // Without it, no copy is below it, and the file writes none: as a build before it (release 8) reads every file.
+    MCUpdateJson::MCJson without = MCUpdateJson::Object(Written);
+    without.erase("required");
+    const auto withoutRead = MCReleaseFile::ReadReleases(without.dump());
+    REQUIRE(withoutRead.has_value());
+    CHECK(!withoutRead->Required.has_value());
+    CHECK(!MCReleaseFile::BelowRequired(*withoutRead, "mac", 1));
+    CHECK(!MCUpdateJson::Object(MCReleaseFile::ReleasesPayload(*withoutRead)).contains("required"));
+
+    // A lowest release newer than the current one, a build that isn't a count, or no builds, is refused.
+    MCUpdateJson::MCJson newer = MCUpdateJson::Object(Written);
+    newer["required"]["release"] = 11;
+    CHECK(!MCReleaseFile::ReadReleases(newer.dump()).has_value());
+    MCUpdateJson::MCJson negative = MCUpdateJson::Object(Written);
+    negative["required"]["builds"]["mac"] = -3;
+    CHECK(!MCReleaseFile::ReadReleases(negative.dump()).has_value());
+    MCUpdateJson::MCJson noBuilds = MCUpdateJson::Object(Written);
+    noBuilds["required"].erase("builds");
+    CHECK(!MCReleaseFile::ReadReleases(noBuilds.dump()).has_value());
+}
+
 TEST_CASE("update files: Windows' program files, zip and setup level are read as the release script writes them, "
           "and written back the same; a release from before them reads with none; bad names are refused")
 {
@@ -521,6 +580,82 @@ TEST_CASE("update files: the Mac's program is held to release.json's: its build,
     CHECK(MCReleaseFile::ReadReleases(json.dump()).error_or("").find("63 bytes") != std::string::npos);
     json["current"]["programs"]["mac"]["edSignatures"] = MCUpdateJson::ToBase64(signature);
     CHECK(MCReleaseFile::ReadReleases(json.dump()).error_or("").find("isn't an array") != std::string::npos);
+}
+
+TEST_CASE("content list: the 2x set's variants are read and written as the release script lists them; a copy with the "
+          "2x set takes each in its file's place; a game before them reads the files alone; clashes are refused")
+{
+    MCContentList::MCList list{.Format = 1, .Release = 9, .LowestProgram = 1};
+    list.Zips = {{"base-9.zip", 100, MCSha256::Of("base")},
+                 {"hd-9.zip", 200, MCSha256::Of("hd")},
+                 {"hd2x-9.zip", 50, MCSha256::Of("hd2x")}};
+    list.Files = {Listed("data/a.fit", "a", "base-9.zip"), Listed("HD/terrain.hda", "terrain at 3x", "hd-9.zip", "hd"),
+                  Listed("HD/audio/fire.flac", "fire", "hd-9.zip", "hd")};
+    list.Variants = {Listed("HD/terrain.hda", "2x", "hd2x-9.zip", "hd2x")};
+    const std::string written = MCContentList::Write(list);
+    const auto read = MCContentList::Read(written);
+    REQUIRE(read.has_value());
+    REQUIRE_EQ(read->Variants.size(), size_t{1});
+    CHECK_EQ(read->Variants[0].Set, std::string("hd2x"));
+    CHECK_EQ(MCContentList::Write(*read), written);
+
+    // The 2x set: its variant in the file's place, the sound as the full set's; the full set and the game alone as
+    // ever.
+    const auto paths = [](const std::vector<MCContentList::MCFile>& files)
+    {
+        std::vector<std::pair<std::string, std::string>> found;
+
+        for (const MCContentList::MCFile& file : files)
+        {
+            found.emplace_back(file.Path, file.Set);
+        }
+
+        return found;
+    };
+
+    using MCPaths = std::vector<std::pair<std::string, std::string>>;
+    const MCPaths twoX = {{"data/a.fit", "game"}, {"HD/terrain.hda", "hd2x"}, {"HD/audio/fire.flac", "hd"}};
+    const MCPaths full = {{"data/a.fit", "game"}, {"HD/terrain.hda", "hd"}, {"HD/audio/fire.flac", "hd"}};
+    const MCPaths gameAlone = {{"data/a.fit", "game"}};
+    CHECK(paths(MCContentList::ForSets(*read, {"game", "hd", "hd2x"})) == twoX);
+    CHECK(paths(MCContentList::ForSets(*read, {"game", "hd"})) == full);
+    CHECK(paths(MCContentList::ForSets(*read, {"game"})) == gameAlone);
+    const auto bytes = MCContentList::SetBytes(*read);
+    CHECK_EQ(bytes.at("hd"), uint64_t{std::string_view("terrain at 3x").size() + 4});
+    CHECK_EQ(bytes.at("hd2x"), uint64_t{2 + 4});
+
+    // As a game before variants reads it (release 8's reader knows "files" alone): the full set, nothing refused.
+    MCUpdateJson::MCJson older = MCUpdateJson::Object(written);
+    older.erase("variants");
+    const auto olderRead = MCContentList::Read(older.dump());
+    REQUIRE(olderRead.has_value());
+    CHECK(olderRead->Variants.empty());
+    CHECK_EQ(olderRead->Files.size(), read->Files.size());
+    CHECK(!MCUpdateJson::Object(MCContentList::Write(*olderRead)).contains("variants"));
+
+    // A variant of its own path is its set's alone.
+    MCContentList::MCList own = list;
+    own.Variants.push_back(Listed("HD/only2x.hda", "only", "hd2x-9.zip", "hd2x"));
+    const auto ownRead = MCContentList::Read(MCContentList::Write(own));
+    REQUIRE(ownRead.has_value());
+    CHECK(paths(MCContentList::ForSets(*ownRead, {"game", "hd"})).size() == 3);
+    const std::pair<std::string, std::string> onlyTwoX = {"HD/only2x.hda", "hd2x"};
+    CHECK(paths(MCContentList::ForSets(*ownRead, {"game", "hd", "hd2x"})).back() == onlyTwoX);
+
+    // Refused: a variant of a set the files have, two of one set at one path, one spelled otherwise than its file, one
+    // of its own path where a file's folder is, one in a zip the list doesn't name.
+    const auto refused = [&](MCContentList::MCFile variant)
+    {
+        MCContentList::MCList bad = list;
+        bad.Variants.push_back(std::move(variant));
+        return !MCContentList::Read(MCContentList::Write(bad)).has_value();
+    };
+
+    CHECK(refused(Listed("data/a.fit", "b", "hd2x-9.zip", "hd")));
+    CHECK(refused(Listed("HD/terrain.hda", "again", "hd2x-9.zip", "hd2x")));
+    CHECK(refused(Listed("hd/TERRAIN.hda", "case", "hd2x-9.zip", "hd2x")));
+    CHECK(refused(Listed("HD/audio/fire.flac/inner", "folder", "hd2x-9.zip", "hd2x")));
+    CHECK(refused(Listed("HD/other.hda", "zip", "elsewhere.zip", "hd2x")));
 }
 
 TEST_CASE("content list: paths outside the folder, alike but for case, or that Windows can't hold are refused")

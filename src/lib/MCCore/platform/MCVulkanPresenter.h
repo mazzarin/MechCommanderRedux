@@ -119,6 +119,7 @@ public:
     void ShowFinished() override;
     void ShowPresented() override;
     void ShowBeforeInput() override;
+    std::span<const MCShownGrid> ShownGrids() const override { return _ShownGrids; }
 
 private:
     /// <summary>
@@ -404,6 +405,8 @@ private:
     Texture _NoLightTiles;
     /// <summary>Port-only (HD weather's snow): the underlays' specks' lattices, in the same order.</summary>
     std::vector<MCSpeckLattice> _Specks;
+    /// <summary>Port-only: the GPU worlds' drawn grids of the frame presented last (<see cref="ShownGrids"/>).</summary>
+    std::vector<MCShownGrid> _ShownGrids;
     /// <summary>The upload buffer, and its size; the light tiles' (uploaded after the frame's textures), and its.</summary>
     MCCountedGpuHandle<SDL_GPUTransferBuffer> _Upload;
     uint32_t _UploadSize = 0;

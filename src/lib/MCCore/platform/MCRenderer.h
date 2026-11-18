@@ -587,6 +587,50 @@ struct MCUnderlay
     std::weak_ptr<const MCWindow> Source;
 };
 
+/// <summary>
+/// Port-only: the drawn grid of a surface drawn at another size than its window's (the world view, drawn at the size
+/// it's shown), on each axis. Drawn pixel p of a surface W window pixels drawn at D shows window place
+/// ((2p + 1) W - 2r) / 2D, and the drawn pixel holding window place (2t + 1) / 2 is ((2t + 1) D + 2r) / 2W, rounded
+/// down (shaders/pixels.hlsli). Offset r is 0 but on a surface its terrain layer places: there it is the one that puts
+/// the window point of map vertex (0, 0) on a whole drawn pixel, so a pan, which moves that point by whole window
+/// pixels, moves the whole picture by whole drawn pixels (the kept ground is reused) and the ground, units and effects
+/// together. It moves the picture by less than half a drawn pixel; the game's camera, its world and what it sends
+/// never see it.
+/// </summary>
+struct MCDrawnGrid
+{
+    /// <summary>
+    /// The offset that puts window place <paramref name="origin"/> on a whole drawn pixel, G = round(origin D / W)
+    /// (halves down): r = G W - origin D, in (-W/2, W/2], so every drawn pixel still shows a window pixel in [0, W).
+    /// 0 where a window pixel is a whole number of drawn pixels.
+    /// </summary>
+    static int32_t Offset(int32_t origin, uint32_t window, uint32_t drawn);
+    /// <summary>The whole drawn place G that <see cref="Offset"/> puts window place <paramref name="origin"/> on.</summary>
+    static int64_t Whole(int32_t origin, uint32_t window, uint32_t drawn);
+    /// <summary>The window pixel drawn pixel <paramref name="drawnPixel"/>'s centre shows.</summary>
+    static int32_t WindowPixel(int64_t drawnPixel, uint32_t window, uint32_t drawn, int32_t offset);
+    /// <summary>The drawn pixel holding window pixel <paramref name="windowPixel"/>'s centre.</summary>
+    static int32_t DrawnPixel(int64_t windowPixel, uint32_t window, uint32_t drawn, int32_t offset);
+    /// <summary>
+    /// The window place drawn place <paramref name="drawnPlace"/> shows (continuous: drawn pixel p's centre is p + 1/2):
+    /// (drawnPlace W - r) / D.
+    /// </summary>
+    static double WindowPlace(double drawnPlace, uint32_t window, uint32_t drawn, int32_t offset);
+};
+
+/// <summary>
+/// Port-only: a world surface as the frame shown placed it under the screen (<see cref="MCDrawnGrid"/>): where its
+/// underlay shows it (screen pixels), its window's size, the size it is drawn at, and its grid's offset; for the
+/// mouse, which maps a point the player sees to the pixel the picture shows there.
+/// </summary>
+struct MCShownGrid
+{
+    MCRect Rect{0, 0, -1, -1};
+    std::array<uint32_t, 2> Window{};
+    std::array<uint32_t, 2> Drawn{};
+    std::array<int32_t, 2> Offset{};
+};
+
 /// <summary>Who draws the frame surfaces (<see cref="MCRenderer::AddFrameSurface"/>).</summary>
 enum class MCGpuDrawing
 {

@@ -214,6 +214,8 @@ public:
         /// <summary>The part of its window the drawn size covers, from its corner.</summary>
         uint32_t MappedWidth = 0;
         uint32_t MappedHeight = 0;
+        /// <summary>Its drawn grid's offset across and down (MCDrawnGrid).</summary>
+        std::array<int32_t, 2> Offset{};
     };
 
     /// <summary>
@@ -653,6 +655,18 @@ private:
         /// </summary>
         uint32_t DrawnWidth = 0;
         uint32_t DrawnHeight = 0;
+        /// <summary>
+        /// Port-only (MCDrawnGrid): the window point of map vertex (0, 0) the surface's terrain layer was last drawn at
+        /// (none: none drawn on it yet), and whether the frame being recorded drew one (its first places the grid).
+        /// </summary>
+        std::optional<std::array<int32_t, 2>> GridOrigin;
+        bool GridPlaced = false;
+        /// <summary>
+        /// Port-only: the offset of the surface's drawn grid across and down (MCDrawnGrid::Offset) from GridOrigin
+        /// and its sizes as the frame was sealed, which every drawn &lt;-&gt; window mapping on it takes (0 without
+        /// one). A frame without a terrain layer keeps the last one's, so what it draws lines up with what it keeps.
+        /// </summary>
+        std::array<int32_t, 2> Offset{};
         /// <summary>Execution: the part of the surface the copy holds, and what was drawn since it was taken.</summary>
         MCRect Copied{0, 0, -1, -1};
         std::vector<MCRect> DrawnSinceCopy;
@@ -749,7 +763,8 @@ private:
 
     /// <summary>
     /// Port-only: a surface as a frame was sealed (<see cref="Seal"/>): its window's address (none: let go, its textures
-    /// go once the frame has run), the sizes its commands saw and it is drawn at, whether its draws catch light, where
+    /// go once the frame has run), the sizes its commands saw and it is drawn at, its drawn grid's offset
+    /// (MCDrawnGrid), whether its draws catch light, where
     /// it is drawn among the surfaces (0 kept, 1 shown as an underlay, 2 the rest), and whether its key is drawn
     /// transparent (it lies over an underlay).
     /// </summary>
@@ -762,6 +777,7 @@ private:
         uint32_t MappedHeight = 0;
         uint32_t DrawnWidth = 0;
         uint32_t DrawnHeight = 0;
+        std::array<int32_t, 2> Offset{};
         bool CatchesLight = false;
         int32_t Rank = 2;
         bool KeyClear = false;

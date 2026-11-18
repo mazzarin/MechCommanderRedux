@@ -18,7 +18,8 @@
 // being only that scale): each drawn pixel takes the window pixel under its centre, (2 * drawn + 1) * window /
 // (2 * size drawn), the composite's rule, and is worked out as that window pixel. So the scaled surface holds what
 // scaling the window's pixels would show. Reading such a surface as a source takes the drawn pixel holding a window
-// pixel's centre.
+// pixel's centre. Port-only: both on the surface's drawn grid (pixels.hlsli, MCDrawnGrid), which puts the world view's
+// map on whole drawn pixels, so a pan moves its whole picture by whole drawn pixels.
 //
 // An HD art frame (port-only, sprite/MCHdArt.h) is drawn over the original shape's place: each drawn pixel takes the
 // frame's colour at its centre, filtered between the frame's pixels, so the shape shows at the output's resolution.
@@ -103,6 +104,8 @@ cbuffer Frame : register(b0, space3)
     // on (GHdSunShadows), how much of the light under it an object's baked shadow takes away (0: off, solid black); z 1
     // when the objects' baked shadows are hidden, each casting its own (MCSceneLights::RecastsSunShadows).
     float4 look;
+    // Port-only: the drawn grids' offsets (pixels.hlsli): xy the target's, zw the source's when it is a surface.
+    int4 offset;
 };
 
 struct Input
@@ -413,7 +416,20 @@ Output Blended(float4 color)
 
 float4 FetchSource(int2 texel)
 {
-    return SourceAt(DrawnPixel(texel, sourceScale));
+    return SourceAt(DrawnPixel(texel, sourceScale, offset.zw));
+}
+
+// The window place drawn pixel `target`'s centre shows (pixels.hlsli's WindowPixel, unrounded).
+float2 WindowPlace(int2 target)
+{
+    return ((float2(target) + 0.5) * float2(scale.xy) - float2(offset.xy)) / float2(scale.zw);
+}
+
+// Port-only: how far the target's drawn grid moves its picture (drawn pixels, under half of one): a window place lies at
+// drawn place window * drawn / window plus this.
+float2 GridShift()
+{
+    return float2(offset.xy) / float2(scale.xy);
 }
 
 // The colour the HD art pack's pictures were made from for an index.
@@ -484,7 +500,7 @@ float3 HdAtlasTexel(int2 texel, int2 low, int2 high, int atlas)
 // Where drawn pixel `target` lies in its terrain tile (terrain.vshader): in the tile's original pixels.
 float2 TileLocal(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     return float2(input.source.xy) + (window - float2(input.rect.xy)) - float2(input.walk.zw);
 }
 
@@ -627,7 +643,7 @@ float BlockedCount(uint4 ground, int dr, int dc)
 float BlockedAt(Input input, int2 target)
 {
     const uint4 ground = input.ground;
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 top = float2(LowHalf(ground.x), HighHalf(ground.x));
     const float right = LowHalf(ground.y);
     const float left = HighHalf(ground.y);
@@ -769,7 +785,7 @@ float SmoothCoverage(Input input, float2 at, inout uint value)
 // Where drawn pixel `target`'s centre lies in a smooth-edged shape's source, less half a texel (SmoothCoverage's `at`).
 float2 ShapePlace(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
     return float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
 }
@@ -830,7 +846,7 @@ Output TerrainSeamPixel(Input input, int2 target)
 {
     const int2 low = int2(input.walk.zw);
     const int2 high = low + input.span.xy - 1;
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 at = float2(input.source.xy) + (window - float2(input.rect.xy)) - 0.5;
     const int2 base = int2(floor(at));
     const uint drawn = PatchMask(base, low, high);
@@ -1366,7 +1382,7 @@ Output HdPixelAt(Input input, float2 shape)
 Output HdPixel(Input input, int2 target)
 {
     // The drawn pixel's centre in window pixels, and in the shape's bounds (a mirrored step reads from the right).
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
     return HdPixelAt(input, float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw));
 }
@@ -1375,7 +1391,7 @@ Output HdPixel(Input input, int2 target)
 // affine map of the window (u from span.xyz, v from span.w and walk.xy: floats; texel centres at .5).
 float2 MappedPlace(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float4 u = asfloat(input.span);
     const float2 v = asfloat(input.walk.xy);
     return float2(u.x * window.x + u.y * window.y + u.z, u.w * window.x + v.x * window.y + v.y);
@@ -1500,7 +1516,7 @@ float4 GlyphTexel(int2 texel, int2 size, bool runsOn)
 // glyph's scale (and SharpGlyphRunsOn), op.z the glyph's table.
 Output SharpGlyphPixel(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 glyph = float2(input.source.xy) + (window - float2(input.rect.xy));
     const float glyphScale = (float)(input.op.y & 255u);
     const int2 size = SourceSize();
@@ -1561,7 +1577,7 @@ static const float LineHalfWidth = 0.5;
 // ramped over a drawn pixel. Premultiplied, through the blend pipeline.
 Output SmoothShapePixel(Input input, int2 target, uint kind)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
     float distance;
 
@@ -1634,8 +1650,8 @@ float3 CaughtLight(Input input)
 Output RainStreakPixel(Input input, int2 target, float4 color)
 {
     const float2 drawn = float2(scale.zw) / float2(scale.xy);
-    const float2 tail = asfloat(input.span.xy) * drawn;
-    const float2 head = asfloat(input.span.zw) * drawn;
+    const float2 tail = asfloat(input.span.xy) * drawn + GridShift();
+    const float2 head = asfloat(input.span.zw) * drawn + GridShift();
     const float2 at = float2(target) + 0.5;
     const float height = head.y - tail.y;
 
@@ -1688,7 +1704,7 @@ Output HardParticlePixel(Input input, int2 target, float4 color)
 
     if (asfloat(input.walk.w) > 0.0)
     {
-        const float2 middle = floor(asfloat(input.span.xy) * drawn) + 0.5;
+        const float2 middle = floor(asfloat(input.span.xy) * drawn + GridShift()) + 0.5;
         const float2 radii = max(float2(size, size * asfloat(input.walk.y)), 0.5);
         const float2 p = (at - middle) / radii;
         // The implicit ellipse's value over its gradient's length: about the distance from it.
@@ -1699,8 +1715,8 @@ Output HardParticlePixel(Input input, int2 target, float4 color)
         const float side = max(round(2.0 * size), 1.0);
         // An odd square's middle on a pixel's centre, an even one's on a corner.
         const float grid = fmod(side, 2.0) == 1.0 ? 0.5 : 0.0;
-        const float2 a = floor(asfloat(input.span.xy) * drawn - grid + 0.5) + grid;
-        const float2 b = floor(asfloat(input.span.zw) * drawn - grid + 0.5) + grid;
+        const float2 a = floor(asfloat(input.span.xy) * drawn + GridShift() - grid + 0.5) + grid;
+        const float2 b = floor(asfloat(input.span.zw) * drawn + GridShift() - grid + 0.5) + grid;
         const float2 ab = b - a;
         const float length2 = dot(ab, ab);
         const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
@@ -1738,7 +1754,7 @@ Output ParticlePixel(Input input, int2 target)
         return HardParticlePixel(input, target, color);
     }
 
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
     // Distances down the screen as the ground's across.
     const float2 squash = float2(1.0, 1.0 / max(asfloat(input.walk.y), 1e-3));
@@ -1839,7 +1855,7 @@ float PolygonIndex(Input input, float2 window, uint corners)
 // pipeline.
 Output SmoothPolygonPixel(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
     const uint corners = input.walk.x;
     const float turn = (float)asint(input.walk.y);
@@ -1896,7 +1912,7 @@ Output SmoothPolygonPixel(Input input, int2 target)
 // it, the drawn pixel the edge crosses covered in part. Premultiplied, through the blend pipeline.
 Output SmoothBarPixel(Input input, int2 target)
 {
-    const float right = asfloat(input.span.x) * (float)scale.z / (float)scale.x;
+    const float right = asfloat(input.span.x) * (float)scale.z / (float)scale.x + GridShift().x;
     const float coverage = saturate(right - (float)target.x);
 
     if (coverage <= 0.0)
@@ -1914,7 +1930,7 @@ Output SmoothBarPixel(Input input, int2 target)
 // composite lights the world that much less.
 Output ShadowPixel(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 ground = float2(1.0, 1.0 / max(asfloat(input.walk.w), 1e-3));
     const float2 a = asfloat(input.span.xy) * ground;
     const float2 ab = asfloat(input.span.zw) * ground - a;
@@ -2014,7 +2030,7 @@ Output DrawnOutput(Input input)
 #endif
 
     // The window pixel it shows, which the original's kinds work from.
-    const int2 pixel = WindowPixel(target, scale);
+    const int2 pixel = WindowPixel(target, scale, offset.xy);
     const uint color = input.op.y & 255u;
     uint value = color;
     uint state = 1;

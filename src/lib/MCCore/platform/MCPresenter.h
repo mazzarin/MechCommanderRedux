@@ -229,6 +229,12 @@ public:
     /// <see cref="ShowFinished"/>.
     /// </summary>
     virtual void ShowBeforeInput() {}
+
+    /// <summary>
+    /// Port-only: the worlds drawn on a grid of their own (MCDrawnGrid) under the screen of the frame presented last,
+    /// in the order they're drawn (a later one over an earlier); none without a GPU renderer's.
+    /// </summary>
+    virtual std::span<const MCShownGrid> ShownGrids() const { return {}; }
 };
 
 /// <summary>

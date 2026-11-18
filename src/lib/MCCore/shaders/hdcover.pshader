@@ -1,0 +1,35 @@
+// Port-only (KindHdSmooth's coverage, draw.pshader's HdMaskCoverage): an HD art frame's index picture's green gets
+// HdCoverBit added wherever the frame's alpha at the original pixel's centre is over HdMaskAlpha, as the frame's picture
+// is uploaded (MCVulkanRenderer's MarkHdCovers). The upload clears the bit from the picture's marks first
+// (MCVulkanRenderer's CoverlessMark), so the green ends with the bit where the frame covers the pixel and the marks
+// otherwise as they were (draw.pshader's MarkIn). Drawn with quad.vshader over the picture's place in its page, through
+// a pipeline adding into the green alone.
+//
+// Bindings (SDL GPU, SPIR-V): fragment samplers in space2, fragment uniforms in space3.
+
+Texture2D<float4> colorsTex : register(t0, space2);
+SamplerState colorsSampler : register(s0, space2);
+
+cbuffer Cover : register(b0, space3)
+{
+    // xy: the HD texel at the centre of the original pixel the page's texel (0, 0) would be (the picture's HD corner,
+    // less its place in the page times its scale, plus half its scale); z: HD pixels per original pixel; w unused.
+    int4 place;
+};
+
+// An HD frame's alpha at an original pixel's centre over this, its colours cover the pixel (as draw.pshader read it
+// before the bit).
+static const float HdMaskAlpha = 0.5;
+// The bit of the index picture's green that says the frame covers the pixel (MCVulkanRenderer's HdCoverBit).
+static const float HdCoverBit = 8.0;
+
+float4 main(float4 position : SV_Position) : SV_Target0
+{
+    const int2 texel = int2(floor(position.xy)) * place.z + place.xy;
+    uint width;
+    uint height;
+    colorsTex.GetDimensions(width, height);
+    // As draw.pshader's HdAt reads it (Fetch: the texel's centre, through the nearest sampler).
+    const float alpha = colorsTex.SampleLevel(colorsSampler, (float2(texel) + 0.5) / float2(width, height), 0).a;
+    return float4(0.0, alpha > HdMaskAlpha ? HdCoverBit / 255.0 : 0.0, 0.0, 0.0);
+}

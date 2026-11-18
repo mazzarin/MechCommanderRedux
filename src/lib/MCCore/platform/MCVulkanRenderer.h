@@ -1570,6 +1570,12 @@ private:
     /// </summary>
     MCGpuHandle<SDL_GPUShader> _MovieShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _MoviePipeline;
+    /// <summary>
+    /// Port-only: the HD frames' covers' shader and pipeline (quad.vshader and shaders/hdcover.pshader, adding into an
+    /// index picture's green alone: <see cref="MarkHdCovers"/>).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _HdCoverShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _HdCoverPipeline;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
@@ -1793,6 +1799,45 @@ private:
 
     /// <summary>Port-only (HD movies): <see cref="ConvertMovies"/> for one picture.</summary>
     void ConvertMovie(SDL_GPUCommandBuffer& commands, const MovieConversion& movie);
+
+    /// <summary>
+    /// Port-only (KindHdSmooth's coverage): an HD frame's picture uploaded as a frame runs, whose index picture gets
+    /// <see cref="HdCoverBit"/> where the frame's colours cover each original pixel (<see cref="MarkHdCovers"/>): the
+    /// pages' textures, the picture's place and size in its index page, and its HD corner and scale.
+    /// </summary>
+    struct HdCover
+    {
+        std::shared_ptr<SDL_GPUTexture> Indices;
+        std::shared_ptr<SDL_GPUTexture> Colors;
+        uint32_t IndicesWidth = 0;
+        uint32_t IndicesHeight = 0;
+        PicturePlace Place;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        int32_t Scale = 1;
+    };
+
+    /// <summary>
+    /// Port-only (KindHdSmooth's coverage): the bit of an HD frame's index picture's green, on the GPU, that says its
+    /// colours cover the original pixel: its alpha at the pixel's centre is over half, as shaders/draw.pshader's
+    /// HdMaskCoverage reads it (shaders/hdcover.pshader's). Every mark has it (MCHdArt's 250 to 255); a mark the
+    /// colours don't cover is uploaded without it (<see cref="CoverlessMark"/>), and a pixel they cover that has no mark
+    /// holds it alone.
+    /// </summary>
+    static constexpr uint8_t HdCoverBit = 8;
+
+    /// <summary>
+    /// Port-only: an HD frame's index picture's green as uploaded, <see cref="HdCoverBit"/> left for
+    /// <see cref="MarkHdCovers"/> to add where the colours cover the pixel: a mark without it, or 0 (no mark).
+    /// </summary>
+    static uint8_t CoverlessMark(uint8_t green);
+
+    /// <summary>
+    /// Port-only (KindHdSmooth's coverage): adds <see cref="HdCoverBit"/> to the index pictures of the HD frames
+    /// uploaded in <paramref name="run"/> where their colours cover each original pixel (shaders/hdcover.pshader), a
+    /// render pass an index page, after the frame's uploads and before its draws.
+    /// </summary>
+    void MarkHdCovers(SDL_GPUCommandBuffer& commands, FrameRun& run);
     /// <summary>
     /// Port-only (HD movies): lets movie <paramref name="movie"/>'s picture go, kept till the frame runs when its draws
     /// wait for its colours.
@@ -2093,4 +2138,6 @@ struct MCVulkanRenderer::FrameRun
     std::array<float, 3> Look{};
     /// <summary>Port-only (HD movies): the movie pictures whose colours the frame makes from their planes.</summary>
     std::vector<MovieConversion> Conversions;
+    /// <summary>Port-only: the HD frames' pictures uploaded for the frame, whose covers it marks (MarkHdCovers).</summary>
+    std::vector<HdCover> Covers;
 };

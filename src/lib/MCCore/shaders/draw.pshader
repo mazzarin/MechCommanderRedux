@@ -263,8 +263,6 @@ static const float EdgeHigh = 0.7;
 // lower, so a thin line or a lone pixel of the original (a lamp's shadow, a palm's trunk) keeps most of its strength.
 static const float SpriteEdgeLow = 0.2;
 static const float SpriteEdgeHigh = 0.6;
-// An HD frame's alpha at an original pixel's centre over this, the original draws the pixel (KindHdSmooth).
-static const float HdMaskAlpha = 0.5;
 // Port-only: a unit's or an object's HD frame's mark pass (the renderer's IndexOnly on an HD frame's draw, through a
 // pipeline writing the indices' alpha alone) sets the alpha to StandingMark (the composite's: something stands on the
 // ground, as the original's pixels' indices have it) wherever the frame covers at least StandingCoverage of a pixel, so
@@ -351,12 +349,33 @@ uint Byte(float value)
     return (uint)round(value * 255.0);
 }
 
+// Port-only (KindHdSmooth's coverage): an HD frame's index picture's green holds HdCoverBit where its colours cover the
+// original pixel (MCVulkanRenderer's MarkHdCovers): every mark (DrawnBlendedShadow and above) has the bit unless they
+// don't, and a pixel with no mark has it alone where they do. LowestCoverless is the lowest mark without it.
+static const uint HdCoverBit = 8u;
+static const uint LowestCoverless = DrawnBlendedShadow & ~HdCoverBit;
+
+// An HD frame's index picture's mark (MCHdArt.h's green: HasIndex and the rest, 0 for none), whether or not its colours
+// cover the pixel.
+uint MarkIn(float4 entry)
+{
+    const uint green = Byte(entry.g);
+    return green >= LowestCoverless ? green | HdCoverBit : 0u;
+}
+
+// Whether an HD frame's colours cover an original pixel, by its index picture's green: their alpha at its centre is over
+// half (MCVulkanRenderer's MarkHdCovers).
+bool CoversIn(float green)
+{
+    return (Byte(green) & HdCoverBit) != 0u;
+}
+
 // Port-only: whether a version 2 HD frame's index picture's texel is a pixel the original draws, its red the original's
 // index (MCHdArt::OriginalDrawsMark): drawn, drawn and blended, in a baked shadow or not; not one its index only spread
 // to.
 bool OriginalDrawsIn(float4 entry)
 {
-    const uint green = Byte(entry.g);
+    const uint green = MarkIn(entry);
     return green == HasIndex || green == BakedShadow || green == DrawnBlended || green == DrawnBlendedShadow;
 }
 
@@ -982,7 +1001,7 @@ Output SmoothBlendedPixel(Input input, int2 target)
 // Whether an HD frame's index picture's texel has an index (MCHdArt::HasIndexMark).
 bool HasIndexIn(float4 entry)
 {
-    return Byte(entry.g) >= DrawnBlendedShadow;
+    return MarkIn(entry) >= DrawnBlendedShadow;
 }
 
 // Whether an HD frame's index picture's texel has an index its colour is recoloured by. In a frame holding its blended
@@ -992,13 +1011,13 @@ bool HasIndexIn(float4 entry)
 // the effect took their colours, dark and in the original's dither.
 bool RecolouringIndexIn(float4 entry, uint flags)
 {
-    return (flags & HdLight) != 0 ? Byte(entry.g) >= BakedShadow : HasIndexIn(entry);
+    return (flags & HdLight) != 0 ? MarkIn(entry) >= BakedShadow : HasIndexIn(entry);
 }
 
 // Whether an HD frame's index picture's texel is in a baked shadow (MCHdArt::InShadowMark).
 bool InShadowIn(float4 entry)
 {
-    const uint green = Byte(entry.g);
+    const uint green = MarkIn(entry);
     return green == BakedShadow || green == SpreadShadow || green == DrawnBlendedShadow;
 }
 
@@ -1071,28 +1090,43 @@ float BakedShadowAt(int2 original, float2 shape)
 }
 
 // Port-only: an HD frame's coverage at `shape` (a place in its original's pixels, their centres at .5) for
-// KindHdSmooth: the original's pixels (`original` its size) that it draws, where the frame's alpha at their centre is
-// over HdMaskAlpha, smoothed as a smooth-edged shape's are (SmoothCoverage), so its edges are curves at the output's
-// resolution instead of its mask's steps. `nearest` becomes the drawn pixel nearest the place.
-float HdMaskCoverage(int2 original, int hdScale, float2 shape, out int2 nearest)
+// KindHdSmooth: the original's pixels (`original` its size) that its colours cover (CoversIn), smoothed as a
+// smooth-edged shape's are (SmoothCoverage), so its edges are curves at the output's resolution instead of its mask's
+// steps. `nearest` becomes the covered pixel nearest the place. The 4 x 4 pixels' greens are read 2 x 2 at a time, each
+// by one gather at the four's shared corner in the index picture (a gather's x, y, z, w: the four's bottom left, bottom
+// right, top right and top left), those outside the frame's own place taken as uncovered.
+float HdMaskCoverage(int2 original, float2 shape, out int2 nearest)
 {
     const float2 at = shape - 0.5;
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
     const float4 wx = BSplineWeights(f.x);
     const float4 wy = BSplineWeights(f.y);
+    uint width;
+    uint height;
+    sourceTex.GetDimensions(width, height);
+    const float2 sourceSize = float2(width, height);
+    float4 greens[4];
+
+    [unroll] for (int quad = 0; quad < 4; quad++)
+    {
+        const int2 corner = base + int2((quad & 1) * 2, (quad >> 1) * 2) + sourceCorner;
+        greens[quad] = sourceTex.GatherGreen(sourceSampler, float2(corner) / sourceSize);
+    }
+
     float coverage = 0.0;
     float nearestDistance = 1e9;
     nearest = int2(0, 0);
 
-    for (int y = 0; y < 4; y++)
+    [unroll] for (int y = 0; y < 4; y++)
     {
-        for (int x = 0; x < 4; x++)
+        [unroll] for (int x = 0; x < 4; x++)
         {
             const int2 texel = base + int2(x - 1, y - 1);
+            const float4 four = greens[(y >> 1) * 2 + (x >> 1)];
+            const float green = (y & 1) == 0 ? ((x & 1) == 0 ? four.w : four.z) : ((x & 1) == 0 ? four.x : four.y);
 
-            if (any(texel < 0) || any(texel >= original) ||
-                HdAt(texel * hdScale + hdScale / 2).a <= HdMaskAlpha)
+            if (any(texel < 0) || any(texel >= original) || !CoversIn(green))
             {
                 continue;
             }
@@ -1301,7 +1335,7 @@ Output HdPixelAt(Input input, float2 shape)
     if ((flags & 15u) == KindHdSmooth)
     {
         int2 nearest;
-        const float coverage = HdMaskCoverage(original, texelScale, shape, nearest);
+        const float coverage = HdMaskCoverage(original, shape, nearest);
         texel = nearest;
         const float4 inside = HdTexel(nearest * texelScale + texelScale / 2, size, texelScale, flags, key);
         const float3 own = color.a > 0.0 ? color.rgb / color.a : float3(0.0, 0.0, 0.0);

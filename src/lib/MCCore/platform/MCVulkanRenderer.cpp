@@ -785,6 +785,20 @@ namespace
 
     constexpr uint32_t QuadVertices = 6;
 
+    /// <summary>Port-only: the HD frames' covers' uniforms (shaders/hdcover.pshader, cbuffer Cover).</summary>
+    struct CoverUniforms
+    {
+        int32_t Place[4];
+    };
+
+    /// <summary>
+    /// Port-only: an HD frame's index picture's texture: read by the draws, and drawn into as the frame's picture is
+    /// uploaded (MarkHdCovers).
+    /// </summary>
+    constexpr SDL_GPUTextureUsageFlags HdIndexUsage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    /// <summary>The byte of an index picture's pixel holding its green (its marks), after its index.</summary>
+    constexpr size_t MarkByte = 1;
+
     /// <summary>Port-only: the kept ground's copy's uniforms (shaders/ground.pshader, cbuffer Ground).</summary>
     struct GroundUniforms
     {
@@ -1027,10 +1041,11 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     renderer->_TerrainShader = std::move(*terrain);
 
     // Port-only: the kept ground's copy (KeepGround): a rectangle of the target, with its own fragment shader; and
-    // (HD movies) the movie conversion, the same way.
+    // (HD movies) the movie conversion and the HD frames' covers, the same way.
     for (auto [info, shader] : {std::pair{&MCVulkanShaders::Quad, &renderer->_QuadShader},
                                 std::pair{&MCVulkanShaders::GroundFragment, &renderer->_GroundShader},
-                                std::pair{&MCVulkanShaders::MovieFragment, &renderer->_MovieShader}})
+                                std::pair{&MCVulkanShaders::MovieFragment, &renderer->_MovieShader},
+                                std::pair{&MCVulkanShaders::HdCoverFragment, &renderer->_HdCoverShader}})
     {
         auto loaded = MCVulkanShaders::Load(device, *info);
 
@@ -1200,22 +1215,48 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     makeSurfacePipelines(renderer->_SurfacePipelines[WithoutGlints], TargetsWithoutGlints, "plain");
     makeSurfacePipelines(renderer->_SurfacePipelines[WithGlints], SurfaceTargets, "glints");
 
+    // A rectangle of one target (quad.vshader) with its own fragment shader.
+    const auto makeQuadPipeline =
+        [&device, &renderer](SDL_GPUShader& fragmentShader, const SDL_GPUColorTargetDescription& target)
+    {
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader = renderer->_QuadShader.get();
+        pipeline.fragment_shader = &fragmentShader;
+        pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        pipeline.target_info.num_color_targets = 1;
+        pipeline.target_info.color_target_descriptions = &target;
+        return MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline),
+                                                    MCGpuRelease{device});
+    };
+
     // Port-only (HD movies): the movie conversion writes a movie picture's colours alone, every pixel.
     job("movie", false, renderer->_MoviePipeline,
         [&]
         {
             SDL_GPUColorTargetDescription colors{};
             colors.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-            SDL_GPUGraphicsPipelineCreateInfo pipeline{};
-            pipeline.vertex_shader = renderer->_QuadShader.get();
-            pipeline.fragment_shader = renderer->_MovieShader.get();
-            pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-            pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-            pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-            pipeline.target_info.num_color_targets = 1;
-            pipeline.target_info.color_target_descriptions = &colors;
-            return MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline),
-                                                        MCGpuRelease{device});
+            return makeQuadPipeline(*renderer->_MovieShader, colors);
+        });
+
+    // Port-only (KindHdSmooth's coverage): the HD frames' covers add into an index picture's green alone, leaving its
+    // indices (MarkHdCovers).
+    job("hd cover", false, renderer->_HdCoverPipeline,
+        [&]
+        {
+            SDL_GPUColorTargetDescription indices{};
+            indices.format = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM;
+            indices.blend_state.enable_blend = true;
+            indices.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+            indices.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+            indices.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+            indices.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+            indices.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+            indices.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+            indices.blend_state.enable_color_write_mask = true;
+            indices.blend_state.color_write_mask = SDL_GPU_COLORCOMPONENT_G;
+            return makeQuadPipeline(*renderer->_HdCoverShader, indices);
         });
 
     std::ranges::move(moreJobs, std::back_inserter(jobs));
@@ -1230,6 +1271,11 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     if (renderer->_MoviePipeline == nullptr)
     {
         return std::unexpected(std::string("SDL_CreateGPUGraphicsPipeline(movie) failed"));
+    }
+
+    if (renderer->_HdCoverPipeline == nullptr)
+    {
+        return std::unexpected(std::string("SDL_CreateGPUGraphicsPipeline(hd cover) failed"));
     }
 
     SDL_GPUSamplerCreateInfo sampler{};
@@ -2870,7 +2916,7 @@ auto MCVulkanRenderer::MakePage(const SharedLayout& layout) -> std::optional<Sha
     SharedPage page;
     page.Layout = layout;
     auto made = EnsureTexture(page.Texture, (hd ? MCHolder::GpuHdPictures : MCHolder::GpuPictures), layout.Format,
-                              SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
+                              hd ? HdIndexUsage : SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
 
     if (made && hd)
     {
@@ -3723,7 +3769,7 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))
         {
             auto made = EnsureTexture(picture.Texture, MCHolder::GpuHdPictures, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
-                                      SDL_GPU_TEXTUREUSAGE_SAMPLER, originalWidth, originalHeight);
+                                      HdIndexUsage, originalWidth, originalHeight);
 
             if (made)
             {
@@ -3742,12 +3788,23 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         }
 
         const PicturePlace& place = picture.Place;
-        std::ranges::copy(indices, QueueUpload(picture.Texture.Handle, place.X, place.Y, originalWidth, originalHeight,
-                                               static_cast<uint32_t>(MCHdArt::IndexBytes))
-                                       .begin());
+        const std::span<uint8_t> stagedIndices =
+            QueueUpload(picture.Texture.Handle, place.X, place.Y, originalWidth, originalHeight,
+                        static_cast<uint32_t>(MCHdArt::IndexBytes));
+        std::ranges::copy(indices, stagedIndices.begin());
+
+        // Port-only (KindHdSmooth's coverage): the marks without HdCoverBit, which MarkHdCovers adds as the frame runs
+        // where the colours cover the pixel; before the next upload is queued, which may move the staging.
+        for (size_t at = MarkByte; at < stagedIndices.size(); at += MCHdArt::IndexBytes)
+        {
+            stagedIndices[at] = CoverlessMark(stagedIndices[at]);
+        }
+
         std::ranges::copy(colors, QueueUpload(picture.HdColors.Handle, place.HdX, place.HdY, colorWidth, colorHeight,
                                               sendBc7 ? HdBc7Bytes : HdRgbaBytes)
                                       .begin());
+        _Run->Covers.push_back(HdCover{picture.Texture.Handle, picture.HdColors.Handle, picture.Texture.Width,
+                                       picture.Texture.Height, place, originalWidth, originalHeight, frame.Scale});
         picture.Bytes = indices.size() + colors.size();
         // Port-only (SPEC-memory.md's indices): a version 2 frame's index passes read this picture, not the CPU's copy.
         picture.HdMarks = frame.Marked;
@@ -3873,6 +3930,57 @@ void MCVulkanRenderer::ConvertMovie(SDL_GPUCommandBuffer& commands, const MovieC
     SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
     SDL_DrawGPUPrimitives(pass, QuadVertices, 1, 0, 0);
     SDL_EndGPURenderPass(pass);
+}
+
+uint8_t MCVulkanRenderer::CoverlessMark(uint8_t green)
+{
+    return MCHdArt::HasIndexMark(green) ? static_cast<uint8_t>(green & ~HdCoverBit) : uint8_t{0};
+}
+
+void MCVulkanRenderer::MarkHdCovers(SDL_GPUCommandBuffer& commands, FrameRun& run)
+{
+    // An index page's pictures together, a render pass a page, each picture a rectangle of it.
+    std::ranges::stable_sort(run.Covers, std::less{}, [](const HdCover& cover) { return cover.Indices.get(); });
+    SDL_GPURenderPass* pass = nullptr;
+    const SDL_GPUTexture* into = nullptr;
+
+    for (const HdCover& cover : run.Covers)
+    {
+        if (cover.Indices.get() != into)
+        {
+            if (pass != nullptr)
+            {
+                SDL_EndGPURenderPass(pass);
+            }
+
+            SDL_GPUColorTargetInfo target{};
+            target.texture = cover.Indices.get();
+            target.load_op = SDL_GPU_LOADOP_LOAD;
+            target.store_op = SDL_GPU_STOREOP_STORE;
+            pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
+            SDL_BindGPUGraphicsPipeline(pass, _HdCoverPipeline.get());
+            into = cover.Indices.get();
+        }
+
+        const PicturePlace& place = cover.Place;
+        const QuadUniforms quad{
+            {static_cast<float>(place.X), static_cast<float>(place.Y), static_cast<float>(cover.Width),
+             static_cast<float>(cover.Height)},
+            {static_cast<float>(cover.IndicesWidth), static_cast<float>(cover.IndicesHeight), 0.0f, 0.0f}};
+        // The page's texel (0, 0) as the picture's original pixel before its place, at its HD centre.
+        const CoverUniforms uniforms{{place.HdX - place.X * cover.Scale + cover.Scale / 2,
+                                      place.HdY - place.Y * cover.Scale + cover.Scale / 2, cover.Scale, 0}};
+        const SDL_GPUTextureSamplerBinding colors{cover.Colors.get(), _Nearest.get()};
+        SDL_BindGPUFragmentSamplers(pass, 0, &colors, 1);
+        SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
+        SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
+        SDL_DrawGPUPrimitives(pass, QuadVertices, 1, 0, 0);
+    }
+
+    if (pass != nullptr)
+    {
+        SDL_EndGPURenderPass(pass);
+    }
 }
 
 bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> font, std::span<const uint8_t> glyph,
@@ -7417,6 +7525,7 @@ void MCVulkanRenderer::EmptyRun(FrameRun& run)
     run.RetiredTransfers.clear();
     run.RetiredMovies.clear();
     run.Conversions.clear();
+    run.Covers.clear();
     run.Pages.clear();
     run.Tables.reset();
     run.Alpha.reset();
@@ -7591,8 +7700,10 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         }
     }
 
-    // Port-only (HD movies): the movies' new frames' colours, from the planes just uploaded, before any draw reads them.
+    // Port-only (HD movies): the movies' new frames' colours, from the planes just uploaded, before any draw reads them;
+    // and the HD frames' covers in their index pictures, from the colours just uploaded.
     ConvertMovies(commands, run);
+    MarkHdCovers(commands, run);
 
     // The kept surfaces first (the fog of war, which the terrain layer reads), then those shown as underlays (the
     // screen's see-through draws read them finished), then the rest.

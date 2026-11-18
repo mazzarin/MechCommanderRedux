@@ -29,7 +29,12 @@ enum class MCShader : uint8_t
     /// <summary>Port-only: the composite with the weather but no specks (shaders/composite_unspecked.pshader).</summary>
     CompositeUnspecked,
     /// <summary>Port-only (HD movies): a movie's frame turned into colours (shaders/movie.pshader).</summary>
-    Movie
+    Movie,
+    /// <summary>
+    /// Port-only: an HD art frame's index picture marked where its colours cover each original pixel
+    /// (shaders/hdcover.pshader).
+    /// </summary>
+    HdCover
 };
 
 /// <summary>A shader the Vulkan renderer uses, and the resources its bindings declare.</summary>
@@ -85,6 +90,7 @@ namespace MCVulkanShaders
     extern const MCShaderInfo DrawHdFragment;
     extern const MCShaderInfo GroundFragment;
     extern const MCShaderInfo MovieFragment;
+    extern const MCShaderInfo HdCoverFragment;
     extern const MCShaderInfo TerrainVertex;
 
     /// <summary>

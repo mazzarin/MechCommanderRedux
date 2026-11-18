@@ -1114,6 +1114,13 @@ void MCVulkanPresenter::AskFramesInFlight(bool vsync)
     }
 
     _FramesInFlight = frames;
+
+    // The frames held follow the count from now (FramesHeldOnGpu), not from the next frame shown: SDL waited for the
+    // GPU as it took the count, so this lets go of the frames past it without a wait.
+    if (auto held = HoldFramesOnGpu(); !held)
+    {
+        KeepLate(held.error());
+    }
 }
 
 void MCVulkanPresenter::Release(Texture& texture)

@@ -309,7 +309,8 @@ private:
     std::expected<void, std::string> HoldFramesOnGpu();
     /// <summary>
     /// Port-only: asks SDL for the frames in flight vsync <paramref name="vsync"/> takes (_ThirdImage), when they
-    /// differ from those last asked: each change makes the claimed window's swapchain again.
+    /// differ from those last asked: each change makes the claimed window's swapchain again, and holds the frames on
+    /// the GPU to the new count (FramesHeldOnGpu).
     /// </summary>
     void AskFramesInFlight(bool vsync);
     MCPresentation _Presentation;

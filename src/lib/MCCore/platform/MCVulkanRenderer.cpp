@@ -274,7 +274,7 @@ namespace
     /// Port-only (SPEC-memory.md's pages): the side of an HD page's indices for frames of <paramref name="scale"/> HD
     /// pixels an original pixel: the colours' side over the scale where that's less than HdIndexPageSide (683 at 3x,
     /// so the two fill together: at 1024, 55% of the indices' page stayed empty), else HdIndexPageSide (2x already
-    /// matches). Frames of another scale take pages of their own (SharedLayout).
+    /// matches). Frames of a scale with another side take pages of their own (SharedLayout): 1x and 2x share theirs.
     /// </summary>
     constexpr uint32_t HdIndexSideFor(int32_t scale)
     {
@@ -2738,10 +2738,52 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         return true;
     };
 
-    // Only a page of the picture's own layout: its formats and its places' unit are the page's.
+    // Port-only (SPEC-memory.md's pages): the page of the layout placed in last.
+    auto open = std::ranges::find_if(_OpenPages,
+                                     [&](const OpenPage& page) { return page.Kind == kind && page.Layout == layout; });
+
+    if (open == _OpenPages.end())
+    {
+        open = _OpenPages.insert(_OpenPages.end(), OpenPage{kind, layout, 0});
+    }
+
+    // Only a page of the picture's own layout: its formats and its places' unit are the page's; not one that refused a
+    // picture no bigger. A refusal is kept as the page's smallest.
+    const PlaceSize size{width, height, hd ? static_cast<uint32_t>(blocks(hdWidth)) : 0,
+                         hd ? static_cast<uint32_t>(blocks(hdHeight)) : 0};
+    const auto tryIn = [&](uint32_t at)
+    {
+        SharedPage& page = pages[at];
+
+        if (page.Places == nullptr || page.Layout != layout ||
+            (page.Refused.has_value() && size.AtLeast(*page.Refused)))
+        {
+            return false;
+        }
+
+        if (placeIn(at))
+        {
+            open->Page = at;
+            return true;
+        }
+
+        if (!page.Refused.has_value() || page.Refused->AtLeast(size))
+        {
+            page.Refused = size;
+        }
+
+        return false;
+    };
+
+    // The open page first, then the others.
+    if (open->Page < pages.size() && tryIn(open->Page))
+    {
+        return true;
+    }
+
     for (uint32_t at = 0; at < pages.size(); ++at)
     {
-        if (pages[at].Places != nullptr && pages[at].Layout == layout && placeIn(at))
+        if (at != open->Page && tryIn(at))
         {
             return true;
         }
@@ -2780,6 +2822,7 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         *empty = std::move(page);
     }
 
+    open->Page = at;
     return placeIn(at);
 }
 
@@ -2804,6 +2847,8 @@ void MCVulkanRenderer::FreeRetiredPlaces()
     {
         SharedPage& page = PagesOf(retired.Kind)[retired.Page];
         sma_item_remove(page.Places.get(), retired.Item);
+        // Port-only (SPEC-memory.md's pages): room again, for any picture.
+        page.Refused.reset();
 
         if (retired.HdItem != nullptr)
         {

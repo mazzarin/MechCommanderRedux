@@ -522,6 +522,25 @@ private:
     };
 
     /// <summary>
+    /// Port-only (SPEC-memory.md's pages): a picture's size in a shared page's places: in its texture's pixels, and in
+    /// its HD colours' units (the layout's blocks; none without them). Frames of two scales may share a layout.
+    /// </summary>
+    struct PlaceSize
+    {
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        uint32_t HdWidth = 0;
+        uint32_t HdHeight = 0;
+
+        /// <summary>Whether it's at least as big as <paramref name="other"/> in both textures.</summary>
+        bool AtLeast(const PlaceSize& other) const
+        {
+            return Width >= other.Width && Height >= other.Height && HdWidth >= other.HdWidth &&
+                   HdHeight >= other.HdHeight;
+        }
+    };
+
+    /// <summary>
     /// Port-only: a page pictures share (HD art frames, or sharp glyphs), so the draws of any of them share their
     /// bindings (<see cref="SameBindings"/>): its layout, its texture (the HD frames' indices, or the glyphs' pixels) and
     /// the HD frames' colours, each packed by smol-atlas (the colours in whole BC7 blocks when they're BC7), and how many
@@ -537,6 +556,11 @@ private:
         std::unique_ptr<smol_atlas_t, DestroyPlaces> Places;
         std::unique_ptr<smol_atlas_t, DestroyPlaces> HdPlaces;
         uint32_t Pictures = 0;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's pages): the smallest picture its places refused since one last left it (none
+        /// when not): one at least as big in both of its textures wouldn't fit either, so it isn't tried.
+        /// </summary>
+        std::optional<PlaceSize> Refused;
     };
 
     /// <summary>Port-only: the pages a picture may share (none: a picture with textures of its own).</summary>
@@ -545,6 +569,17 @@ private:
         None,
         Hd,
         Sharp,
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the page of each kind and layout a picture was placed in last, tried first
+    /// for the next picture of that layout.
+    /// </summary>
+    struct OpenPage
+    {
+        PageKind Kind = PageKind::None;
+        SharedLayout Layout;
+        uint32_t Page = 0;
     };
 
     /// <summary>Port-only: a shared page's place let go, freed once the frame that let it go has run.</summary>
@@ -1829,6 +1864,7 @@ private:
     std::vector<SharedPage> _HdPages;
     std::vector<SharedPage> _SharpPages;
     std::vector<RetiredPlace> _RetiredPlaces;
+    std::vector<OpenPage> _OpenPages;
     /// <summary>Port-only: the shared pages of kind <paramref name="kind"/>.</summary>
     std::vector<SharedPage>& PagesOf(PageKind kind);
     /// <summary>

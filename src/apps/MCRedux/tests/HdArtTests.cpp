@@ -13747,9 +13747,12 @@ namespace
 /// pictures are (<c>--window</c>), the player's mechs (up to 12) sent at the nearest enemy as --hd-audit plays it. Each of
 /// <c>--showcase-frames &lt;n&gt;</c> frames (default 900: 30 seconds at 30 a second) from frame
 /// <c>--showcase-from &lt;n&gt;</c> on (default 0; the earlier ones are played, their sound mixed and dropped) is saved
-/// as <c>frames/NNNNN.png</c>, or with <c>--showcase-video 1</c> into <c>video.mp4</c>, and its share of the mix
-/// appended to <c>sound.f32</c> (48 kHz stereo, 32-bit float), with HD art on from the pack, or with
-/// <c>--hd-original 1</c> off; <c>--showcase-frames 0</c> scouts two minutes, saving only a look every
+/// as <c>frames/NNNNN.png</c>, or with <c>--showcase-video 1</c> into <c>video.mp4</c>, or not at all with
+/// <c>--showcase-pictures 0</c>, and its share of the mix appended to <c>sound.f32</c> (48 kHz stereo, 32-bit float),
+/// with HD art on from the pack, or with <c>--hd-original 1</c> off; the sound is the original's, or the pack's with
+/// <c>--showcase-hd-audio &lt;n&gt;</c> (PREFS HDAudio), at the preferences' levels or
+/// <c>--showcase-volumes &lt;music&gt;,&lt;radio&gt;,&lt;effects&gt;</c>; <c>--showcase-frames 0</c> scouts two
+/// minutes, saving only a look every
 /// <c>--showcase-peek &lt;n&gt;</c> frames (<c>peek/NNNNN.png</c>). Staging, all optional, a mech named by its place
 /// in the player's force (0 the first; <c>frame:mech</c>, or <c>frame:mech:what</c>, comma-separated):
 /// <c>--showcase-zoom &lt;lines&gt;</c> zooms the view to that many game lines (480 the closest a player gets, fewer
@@ -13860,12 +13863,35 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     MCTestContextScope scope;
     scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
     MCTestGame::BootOptions.Sound = true;
-    // The original's sound in both runs: the radio's lines last as long in each, so when the next one starts, and the
-    // dice it takes, match (HD audio's lines differ by a few samples, enough to part the runs within minutes).
+    // The original's sound unless --showcase-hd-audio <n> (PREFS HDAudio) says otherwise: the radio's lines last as long
+    // in each run, so when the next one starts, and the dice it takes, match (HD audio's lines differ by a few samples,
+    // enough to part an HD audio run from an original one within minutes; HD audio runs keep in step with each other).
+    const int32_t hdAudio = ShowcaseOption("hd-audio", HdAudioOff);
+    // --showcase-volumes <music>,<radio>,<effects> (PREFS' 0-127 levels; the preferences' defaults otherwise): two runs
+    // differing only by one kind's level at 0 differ by that kind's own sound.
+    const std::vector<int32_t> volumes = ShowcaseFrames("volumes");
+    constexpr size_t VolumeKinds = 3;
+    constexpr int32_t MostVolume = 127;
+    REQUIRE((volumes.empty() || volumes.size() == VolumeKinds));
     MCTestGame::BootOptions.Started = [&]
     {
-        GHdAudio = HdAudioOff;
+        GHdAudio = hdAudio;
         MCHdArt::SetPackFolder(original ? std::filesystem::path() : packFolder);
+
+        if (!volumes.empty())
+        {
+            // The settings' levels, and the sound system's copies of them if it has read them already.
+            MusicVolume = std::clamp(volumes[0], 0, MostVolume);
+            RadioVolume = std::clamp(volumes[1], 0, MostVolume);
+            SfxVolume = std::clamp(volumes[2], 0, MostVolume);
+
+            if (const std::shared_ptr<MCSoundSystem> sounds = SoundSystem(); sounds != nullptr)
+            {
+                sounds->MusicLevel = static_cast<uint8_t>(MusicVolume);
+                sounds->RadioLevel = static_cast<uint8_t>(RadioVolume);
+                sounds->DigitalMasterVolume = static_cast<uint8_t>(SfxVolume);
+            }
+        }
     };
 
     std::optional<MCHdArtOn> hdArt;
@@ -13890,6 +13916,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     const int32_t peek = ShowcaseOption("peek", 0);
     const int32_t hud = ShowcaseOption("hud", 0);
     const bool video = ShowcaseOption("video", 0) != 0;
+    // --showcase-pictures 0 records the sound alone (a mix's measures need no pictures).
+    const bool pictures = ShowcaseOption("pictures", 1) != 0;
 
     if (hud > 0)
     {
@@ -13967,6 +13995,11 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         soundFile.write(reinterpret_cast<const char*>(mix.data()),
                         static_cast<std::streamsize>(mix.size() * sizeof(float)));
+
+        if (!pictures)
+        {
+            continue;
+        }
 
         if (!video)
         {

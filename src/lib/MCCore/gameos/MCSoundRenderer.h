@@ -64,6 +64,11 @@ public:
     void SetChannelPanning(int32_t channel, float panning);
     /// <summary>Sets whether the channel's next play loops.</summary>
     void SetChannelLooping(int32_t channel, bool looping);
+    /// <summary>Sets whether the channel's sounds are voices (<see cref="MCSoundBuffer::SetVoice"/>), from its next play.
+    /// </summary>
+    void SetChannelVoice(int32_t channel, bool voice);
+    /// <summary>Whether the channel's sounds are voices (<see cref="SetChannelVoice"/>).</summary>
+    bool ChannelVoice(int32_t channel) const;
     /// <summary>The resource on the channel (null for none).</summary>
     std::shared_ptr<MCSoundResource> ChannelResource(int32_t channel) const;
     /// <summary>How many channels there are.</summary>

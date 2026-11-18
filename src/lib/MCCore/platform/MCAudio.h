@@ -166,6 +166,12 @@ public:
     /// <summary>The playback rate in Hz (<c>GetFrequency</c>).</summary>
     uint32_t GetFrequency() const;
 
+    /// <summary>
+    /// Marks the buffer as a voice (the radio's lines, Betty's), which the mixer keeps over the rest of the sound while
+    /// its voice priority is on (<see cref="MCAudio::SetVoicePriority"/>).
+    /// </summary>
+    void SetVoice(bool voice);
+
 private:
     friend class MCAudio;
     friend struct MCAudioCore;
@@ -193,6 +199,7 @@ private:
     int32_t _Pan = 0;
     uint32_t _Frequency = 0;
     bool _Registered = false;
+    bool _Voice = false;
 };
 
 /// <summary>
@@ -343,6 +350,21 @@ public:
 
     /// <summary>Scales everything, 0 (silent) to 1 (as mixed).</summary>
     void SetMasterVolume(float volume);
+
+    /// <summary>
+    /// Keeps the voices (<see cref="MCSoundBuffer::SetVoice"/>) over the rest of the sound, or mixes everything alike
+    /// as the original did (the default). With it on, the voices play 6 dB louder, and while one speaks the rest is
+    /// turned down as far as it takes, at most 12 dB, to keep the voice 6 dB louder than it (both measured as heard,
+    /// with BS.1770's K-weighting): a pilot's call stays clear over the battle and the music, and between calls nothing
+    /// changes.
+    /// </summary>
+    void SetVoicePriority(bool on);
+
+    /// <summary>Whether the voices are kept over the rest (<see cref="SetVoicePriority"/>).</summary>
+    bool VoicePriority() const;
+
+    /// <summary>How far the rest of the sound is turned down now, as a gain (1: not at all).</summary>
+    float VoiceDuck() const;
 
     /// <summary>Stops the device's output without stopping the buffers' clocks (the app lost focus, say).</summary>
     void PauseDevice(bool paused);

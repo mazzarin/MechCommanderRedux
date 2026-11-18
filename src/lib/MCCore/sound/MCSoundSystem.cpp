@@ -222,6 +222,9 @@ int32_t SoundPanPosition(float dx, float dy)
 MCSoundSystem::MCSoundSystem() : _Renderer(MCSoundRenderer::Install(NUM_SOUND_CHANNELS))
 {
     SmackSoundUseDirectSound(_Renderer.MixerReference());
+    // Port: the pilots' radio and Betty are the voices HD audio keeps over the rest (Update).
+    _Renderer.SetChannelVoice(PILOT_SPEECH_CHANNEL, true);
+    _Renderer.SetChannelVoice(BETTY_CHANNEL, true);
     _SoundOn = true;
 }
 
@@ -855,6 +858,14 @@ void MCSoundSystem::UpdateMusicChoice()
 
 void MCSoundSystem::Update()
 {
+    // Port-only: with HD audio on, the radio and Betty are kept over the battle and the music (the original mixed
+    // them alike, and in a battle its calls were 7 LU under the rest). Set only as it changes: it takes the mixer's lock.
+    if (const bool voicePriority = GHdAudio != HdAudioOff; voicePriority != _VoicePriority)
+    {
+        _Renderer.Mixer().SetVoicePriority(voicePriority);
+        _VoicePriority = voicePriority;
+    }
+
     // Port-only: the rain bed and the thunder play whether or not the music does.
     const bool scenarioRuns = Mission() != nullptr && Mission()->State == MCMissionState::Scenario;
     const MCWeather::MCWeatherLook heard =

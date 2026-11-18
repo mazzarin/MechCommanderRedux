@@ -995,9 +995,9 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _Unshown.reset();
     SDL_WaitForGPUIdle(_Device.get());
 
-    for (SDL_GPUFence* const fence : _Sent)
+    for (const SentFrame& sent : _Sent)
     {
-        SDL_ReleaseGPUFence(_Device.get(), fence);
+        SDL_ReleaseGPUFence(_Device.get(), sent.Fence);
     }
 
     _Sent.clear();
@@ -1988,15 +1988,17 @@ std::expected<void, std::string> MCVulkanPresenter::HoldFramesOnGpu()
     // is for the same frame, which it then finds done.
     while (_Sent.size() >= FramesHeldOnGpu(_FramesInFlight))
     {
-        SDL_GPUFence* const oldest = _Sent.front();
-        const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &oldest, 1);
-        SDL_ReleaseGPUFence(_Device.get(), oldest);
+        const SentFrame oldest = _Sent.front();
+        const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &oldest.Fence, 1);
+        SDL_ReleaseGPUFence(_Device.get(), oldest.Fence);
         _Sent.erase(_Sent.begin());
 
         if (!waited)
         {
             return std::unexpected(SdlError("SDL_WaitForGPUFences (a frame held on the GPU)"));
         }
+
+        _LastFrameWaitedFor = oldest.Number;
     }
 
     return {};
@@ -2141,7 +2143,8 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
 
     if (MCFrameLog::Scope part("present.submit"); _ThirdImage)
     {
-        // Its fence, for the frame after next to wait on (HoldFramesOnGpu): the work submitted before it is done too.
+        // Its fence, for a later frame to wait on (HoldFramesOnGpu): the next with three images, the one after with two.
+        // The work submitted before it is done too.
         SDL_GPUFence* const fence = SDL_SubmitGPUCommandBufferAndAcquireFence(&commands);
 
         if (fence == nullptr)
@@ -2149,7 +2152,7 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
             return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence"));
         }
 
-        _Sent.push_back(fence);
+        _Sent.push_back({fence, ++_FramesSent});
     }
     else if (!SDL_SubmitGPUCommandBuffer(&commands))
     {

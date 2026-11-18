@@ -115,6 +115,42 @@ namespace MCMemoryRoom
     /// </summary>
     uint64_t CardRoom(const MCCard& card, uint64_t held);
 
+    /// <summary>
+    /// Port-only (SPEC-memory.md's plan, "The art's room"): the game itself, which no holder of the ledger names (its
+    /// code, the original's data it reads, the frameworks): 374 MB on this Mac with HD off (HISTORY.md, 17 Nov), taken
+    /// up to the spec's 0.5 GB (est.).
+    /// </summary>
+    inline constexpr uint64_t GameItselfBytes = uint64_t{512} << 20;
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's fill, "the working set, always"): the room the plan keeps for the pictures drawn and
+    /// read ahead before it holds the mission packed: the canyon's HD pictures took 0.94 GB of the GPU at its end at 3x
+    /// (HISTORY.md, 17 Nov), the most a mission draws (est.).
+    /// </summary>
+    inline constexpr uint64_t WorkingSetBytes = uint64_t{1} << 30;
+
+    /// <summary>Port-only (SPEC-memory.md's plan): the room for the HD art, and the side it's in.</summary>
+    struct MCArtRoom
+    {
+        /// <summary>
+        /// The ceiling (half the machine's memory) less the fixed parts: the game itself (GameItselfBytes) and every
+        /// holder of the ledger that isn't the HD art's (the screen's targets, the ground, the GPU's other holders, the
+        /// transfers, the tables, the sounds), as allocated now; 0 when they take it all.
+        /// </summary>
+        uint64_t Bytes = 0;
+        /// <summary>
+        /// Whether the GPU's bytes come out of the same room (shared memory: every Mac, integrated graphics); else the
+        /// room is the machine's memory alone and the pictures keep to the card's (CardRoom).
+        /// </summary>
+        bool Shared = true;
+    };
+
+    /// <summary>Port-only (SPEC-memory.md's plan): the HD art's room now (any thread).</summary>
+    MCArtRoom ArtRoom();
+
+    /// <summary>Port-only: whether the GPU's bytes are the machine's memory, as the card was last read (unread: shared).</summary>
+    bool SharesMemory();
+
     /// <summary>What a frame's trims follow (<see cref="MCReader::Frame"/>).</summary>
     struct MCFrameRoom
     {

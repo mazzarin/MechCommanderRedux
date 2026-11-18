@@ -369,7 +369,8 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 
     if (!ConnectShape().Empty() && showProgress)
     {
-        DrawProgress(progress);
+        // Port-only (SPEC-memory.md): the bar's last stretch is the mission's art going into memory.
+        DrawProgress(MCHdArt::LoadBarPercent(progress));
     }
 
     FrameRateArray[FrPointer] = std::min(FrameRate, 60.0f);

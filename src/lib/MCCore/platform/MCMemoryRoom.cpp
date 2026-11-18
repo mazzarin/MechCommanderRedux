@@ -120,6 +120,42 @@ void MCMemoryRoom::AskAgain()
     ++TheState().Asked;
 }
 
+bool MCMemoryRoom::SharesMemory()
+{
+    MCRoomState& state = TheState();
+    std::scoped_lock lock(state.Lock);
+    return !state.LastCard.has_value() || state.LastCard->SharesMemory;
+}
+
+MCMemoryRoom::MCArtRoom MCMemoryRoom::ArtRoom()
+{
+    using MCMemoryLedger::MCHolder;
+    // The HD art's own holders, which the room is for.
+    constexpr std::array ArtHolders{MCHolder::HdFrames,     MCHolder::HdColors, MCHolder::HdFramesLetGo,
+                                    MCHolder::HdReadAhead,  MCHolder::HdHold,   MCHolder::HdKeptStreams,
+                                    MCHolder::GpuHdPictures};
+    const bool shared = SharesMemory();
+    uint64_t fixed = GameItselfBytes;
+
+    for (size_t holder = 0; holder < MCMemoryLedger::HolderCount; ++holder)
+    {
+        const auto named = static_cast<MCHolder>(holder);
+
+        if (std::ranges::contains(ArtHolders, named) ||
+            (!shared && MCMemoryLedger::SideOf(named) == MCMemoryLedger::MCSide::Gpu))
+        {
+            continue;
+        }
+
+        const MCMemoryLedger::MCFigures figures = MCMemoryLedger::Of(named);
+        fixed += static_cast<uint64_t>(std::max<int64_t>(figures.Allocated + figures.Retired, 0));
+    }
+
+    const uint64_t ceiling =
+        MCMemoryLedger::Ceiling(MCMemoryLedger::MCRoom{.MachineBytes = TotalBytes(), .Shared = shared});
+    return MCArtRoom{.Bytes = ceiling > fixed ? ceiling - fixed : 0, .Shared = shared};
+}
+
 uint64_t MCMemoryRoom::CardRoom(const MCCard& card, uint64_t held)
 {
     const uint64_t given = card.Budget + held;

@@ -936,8 +936,8 @@ auto MCMission::StartInterface() -> void
     MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs::Load);
     MCHdArt::WaitForLoadReads();
     MCHdArt::KeepReadAhead();
-    // Port-only (SPEC-pack-v2.md's Memory): on a machine with the memory, the mission's art held from here.
-    MCHdArt::StartHold();
+    // Port-only (SPEC-memory.md's fill): the mission's art was held under the loading bar (MCHdArt::StartLoadFill); the
+    // hold goes on holding the archives the mission opens in play.
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void

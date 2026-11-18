@@ -45,14 +45,29 @@ namespace
 }
 
 /// <summary>
-/// The HD frames kept in memory may take 4 GB on any machine (MCMemoryRoom::MostHdBytes), never a share of its memory;
-/// those on the GPU what the system gives the game on the card less what the rest of the game holds there, at most 4
-/// GB, the same before and after the HD pictures hold some of it (what they hold is theirs to keep).
+/// Port-only (SPEC-memory.md's plan): the HD frames kept in memory take their share of the art's room, half the
+/// machine's memory less the game itself and the rest of the ledger (MCMemoryRoom::ArtRoom): on an 8 GB machine less
+/// than the ceiling, on a 64 GB one past the 4 GB they once stopped at. Those on the GPU what the system gives the game
+/// on the card less what the rest of the game holds there, at most 4 GB, the same before and after the HD pictures hold
+/// some of it (what they hold is theirs to keep).
 /// </summary>
-TEST_CASE("hd caches: the frames in memory may take 4 GB, on the GPU what the card gives less the rest, at most 4 GB")
+TEST_CASE(
+    "hd caches: the frames in memory take the plan's share, on the GPU what the card gives less the rest, at most 4 GB")
 {
-    CHECK_EQ(MCHdArt::CacheBudget(), static_cast<size_t>(MCMemoryRoom::MostHdBytes));
     CHECK_EQ(MCMemoryRoom::MostHdBytes, 4 * GB);
+
+    for (const uint64_t machine : {8 * GB, 64 * GB})
+    {
+        MCTest::Scope where(std::format("a {} GB machine", machine / GB));
+        MCMemoryRoom::SetMachineBytes(machine);
+        const MCMemoryRoom::MCArtRoom art = MCMemoryRoom::ArtRoom();
+        CHECK(art.Bytes < machine / 2 - MCMemoryRoom::GameItselfBytes + 1);
+        CHECK(MCHdArt::CacheBudget() <= art.Bytes);
+        CHECK(MCHdArt::CacheBudget() > 0);
+    }
+
+    CHECK(MCHdArt::CacheBudget() > static_cast<size_t>(MCMemoryRoom::MostHdBytes));
+    MCMemoryRoom::SetMachineBytes(std::nullopt);
 
     constexpr std::array Machines = {
         MCMachine{"an 8 GB Mac", 5461 * MB, 900 * MB, true},

@@ -85,10 +85,20 @@ public:
     std::vector<uint8_t> ReadStored(int32_t index, MCDiskFile& file) const;
 
     /// <summary>The number of entries in the archive.</summary>
-    int32_t GetNumFiles() const { return static_cast<int32_t>(_Entries.size()); }
+    int32_t GetNumFiles() const { return static_cast<int32_t>(_Version2 ? _Placed.size() : _Entries.size()); }
 
-    /// <summary>The directory records, in the archive's order (for the tools; the game goes by name).</summary>
+    /// <summary>
+    /// The directory records, in the archive's order (for the tools; the game goes by name); none for a version 2
+    /// archive, which keeps its table's rows (<see cref="EntryAt"/>).
+    /// </summary>
     std::span<const MCFileEntry> GetEntries() const { return _Entries; }
+
+    /// <summary>
+    /// Entry <paramref name="index"/>'s record: a version 1 archive's as stored; port-only, a version 2 entry's made from
+    /// its table's rows (SPEC-memory.md's "The pack's tables stay as stored": its stream's place and its own size, no
+    /// name).
+    /// </summary>
+    MCFileEntry EntryAt(int32_t index) const;
 
     /// <summary>
     /// Port-only: closes the archive's file and keeps its directory, for a reader holding more archives than a process
@@ -102,7 +112,7 @@ public:
 
     /// <summary>
     /// Port-only: whether this is a version 2 HD archive (SPEC-pack-v2.md): its entries found by their paths' keys, with
-    /// no names, and packed together in streams. Its <see cref="GetEntries"/> give each entry its stream's place
+    /// no names, and packed together in streams. Its <see cref="EntryAt"/> give each entry its stream's place
     /// (Offset and Size, so a read of neighbouring entries reads a stream once) and its own bytes (RealSize).
     /// </summary>
     bool IsVersion2() const { return _Version2; }
@@ -188,15 +198,59 @@ public:
     bool HoldStream(uint32_t stream, std::vector<uint8_t>&& stored) const;
 
     /// <summary>
-    /// Port-only (version 2): entry <paramref name="index"/>'s stream's stored bytes when they are held
-    /// (<see cref="HoldStream"/>); none when they aren't, and for an archive of version 1.
+    /// Port-only (the hold, SPEC-memory.md's fill): a piece of the archive the hold may keep as stored, its place and
+    /// stored bytes, and whether it's one the hold keeps: a version 2 archive's stream (a packet's or the heads', not the
+    /// tiles' or pictures'), a version 1 archive's entry (every one).
     /// </summary>
-    std::shared_ptr<const std::vector<uint8_t>> HeldStreamOf(int32_t index) const;
+    struct HoldPiece
+    {
+        uint64_t At = 0;
+        uint32_t Stored = 0;
+        bool Kept = false;
+    };
 
-    /// <summary>Port-only: lets go of every stream held (<see cref="HoldStream"/>), every archive's.</summary>
+    /// <summary>
+    /// Port-only (the hold): the archive's pieces (<see cref="HoldPiece"/>), in the order they lie in it: a version 2
+    /// archive's streams, a version 1 archive's entries by their offsets.
+    /// </summary>
+    uint32_t HoldPieceCount() const;
+
+    /// <summary>Port-only (the hold): piece <paramref name="piece"/> in the order they lie.</summary>
+    HoldPiece HoldPieceAt(uint32_t piece) const;
+
+    /// <summary>
+    /// Port-only (the hold): keeps pieces <paramref name="first"/> to <paramref name="end"/> (one past the last) as stored,
+    /// read together as <paramref name="run"/> from <paramref name="start"/>, in memory, where
+    /// <see cref="ReadStored(int32_t)"/> and HD art's readers take them in place of the disk, until <see cref="LetGoHeld"/>:
+    /// each of a version 2 archive's streams its own bytes, a version 1 archive's run whole for its entries. False,
+    /// keeping nothing, when the run doesn't cover them.
+    /// </summary>
+    bool HoldPieces(uint32_t first, uint32_t end, uint64_t start, std::vector<uint8_t>&& run) const;
+
+    /// <summary>Port-only (the hold): an entry's stored bytes held, and what keeps them alive.</summary>
+    struct Held
+    {
+        std::shared_ptr<const std::vector<uint8_t>> Owner;
+        std::span<const uint8_t> Stored;
+    };
+
+    /// <summary>
+    /// Port-only: entry <paramref name="index"/>'s stored bytes when they are held (<see cref="HoldPieces"/>,
+    /// <see cref="HoldStream"/>): its version 2 stream's, or its own in a version 1 run held; none when they aren't.
+    /// </summary>
+    std::optional<Held> HeldOf(int32_t index) const;
+
+    /// <summary>Port-only: lets go of everything held (<see cref="HoldPieces"/>), every archive's.</summary>
     static void LetGoHeld();
 
-    /// <summary>Port-only: the stored bytes of the streams held now, every archive's.</summary>
+    /// <summary>
+    /// Port-only (SPEC-memory.md's give-back): lets go of the runs held whose entries were asked for least recently,
+    /// every archive's, until <paramref name="bytes"/> have gone or none is left (a run whole, so a little more).
+    /// </summary>
+    /// <returns>The bytes let go of.</returns>
+    static size_t GiveBackHeld(size_t bytes);
+
+    /// <summary>Port-only: the stored bytes held now, every archive's.</summary>
     static size_t HeldBytes();
 
     /// <summary>Lets only <see cref="Create"/> construct an archive.</summary>
@@ -217,7 +271,7 @@ private:
     std::filesystem::path _Path;
     uint32_t _Length = 0;
     std::filesystem::file_time_type _Written{};
-    /// <summary>The directory.</summary>
+    /// <summary>The directory (version 1's; a version 2 archive's is its rows: _EntryKeys, _Placed).</summary>
     std::vector<MCFileEntry> _Entries;
     /// <summary>Entry index by upper-cased name (the first entry of a name wins, as the original's search).</summary>
     std::unordered_map<std::string, int32_t> _Index;
@@ -254,9 +308,11 @@ private:
 
     bool _Version2 = false;
     /// <summary>
-    /// Port-only (version 2): this archive's own number, keying its unpacked streams kept a while and its streams held.
+    /// Port-only: this archive's own number, keying its unpacked streams kept a while (version 2) and what is held of it.
     /// </summary>
     uint64_t _Serial = 0;
+    /// <summary>Port-only (version 1, the hold): the entries' indices in the order their stored bytes lie.</summary>
+    std::vector<int32_t> _ByOffset;
     std::vector<Stream> _Streams;
     /// <summary>Port-only (version 2): the entries' keys, sorted, and each one's place (by the same index).</summary>
     std::vector<uint64_t> _EntryKeys;

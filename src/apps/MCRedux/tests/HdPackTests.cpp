@@ -3657,15 +3657,18 @@ TEST_CASE("hd art: the hold keeps a mission's packet and heads streams as stored
 }
 
 /// <summary>
-/// Port-only (SPEC-pack-v2.md's Memory): the machine's memory decides the hold (MCHdArt::HoldWanted): off below 16 GB's
-/// tier as the system reports it (MCHdArt::HoldLeastMemory), on from it; the command line's <c>-hdhold on|off</c> (the
-/// tests' and benchmarks') overrides it, and a value it can't take leaves it as it was.
+/// Port-only (SPEC-memory.md's fill): the plan decides how much the hold keeps (MCHdArt::HoldRoom): every byte that fits
+/// the HD art's room less the working set's, so an 8 GB machine holds a mission whole and one whose room the game itself
+/// takes holds none (whatever card was read last); the command line's <c>-hdhold off</c> holds nothing and
+/// <c>-hdhold on</c> (the tests' and benchmarks') every byte whatever the room, and a value it can't take leaves it as
+/// it was.
 /// </summary>
-TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 GB and with -hdhold on")
+TEST_CASE("hd art: the hold keeps what fits the plan's room, nothing with -hdhold off, everything with -hdhold on")
 {
     constexpr uint64_t EightGb = uint64_t{8} << 30;
     constexpr uint64_t ThirtyTwoGb = uint64_t{32} << 30;
-    constexpr uint64_t Mib = uint64_t{1} << 20;
+    // Half of it is the game itself, so the room left for the hold is none, on a card of its own or sharing the memory.
+    constexpr uint64_t NoRoom = 2 * MCMemoryRoom::GameItselfBytes;
     const ReaderScope readers({.Readers = 1});
     const auto system = std::make_shared<MCFakeMemorySystem>();
     const MCFakeMemoryScope memory(system);
@@ -3680,14 +3683,14 @@ TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 
         std::string_view Name;
         uint64_t Total = 0;
         std::string_view Line;
+        bool Wanted = false;
         bool Held = false;
     };
 
-    for (const Case& test : {Case{"8 GB", EightGb, {}, false},
-                             Case{"a MB short of 16 GB's tier", MCHdArt::HoldLeastMemory - Mib, {}, false},
-                             Case{"16 GB's tier", MCHdArt::HoldLeastMemory, {}, true},
-                             Case{"32 GB with -hdhold off", ThirtyTwoGb, "-hdhold off", false},
-                             Case{"8 GB with -hdhold on", EightGb, "-hdhold ON", true}})
+    for (const Case& test :
+         {Case{"8 GB", EightGb, {}, true, true}, Case{"a room the game itself takes", NoRoom, {}, true, false},
+          Case{"32 GB with -hdhold off", ThirtyTwoGb, "-hdhold off", false, false},
+          Case{"no room with -hdhold on", NoRoom, "-hdhold ON", true, true}})
     {
         MCTest::Scope scope{std::string(test.Name)};
         system->Total = test.Total;
@@ -3698,7 +3701,8 @@ TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 
             ParseCommandLine(test.Line);
         }
 
-        CHECK_EQ(MCHdArt::HoldWanted(), test.Held);
+        CHECK_EQ(MCHdArt::HoldWanted(), test.Wanted);
+        CHECK_EQ(MCHdArt::HoldRoom().has_value(), test.Line != "-hdhold ON");
         HoldAndWait();
         CHECK_EQ(MCHdArt::HeldBytes(), test.Held ? pack.HeldBytes() : 0);
         MCHdArt::LetGoHold();
@@ -3754,6 +3758,135 @@ TEST_CASE("hd art: the hold is let go of when memory goes short, at a mission's 
         CHECK_EQ(MCHdArt::HeldBytes(), 0u);
     }
 
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's fill): the hold starts with a mission's load (MCHdArt::StartLoadFill), holding every
+/// archive the load opens, and the load ends once it has read them (MCHdArt::FinishLoadFill, the bar shown as it
+/// waits): the bar's last LoadFillBarPercent is the hold's share read, full while it has nothing to read, the bar as the
+/// load says once it's done.
+/// </summary>
+TEST_CASE("hd art: the load's fill holds what the load opens before the load ends, the bar's last quarter the hold's")
+{
+    constexpr int32_t Part = 40;
+    constexpr int32_t Whole = 100;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet, 1000}, {StreamKind::Tiles}};
+    const HoldPack pack("load-fill", pieces);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part);
+
+    MCHdArt::StartLoadFill();
+    CHECK_EQ(MCHdArt::LoadBarPercent(0), MCHdArt::LoadFillBarPercent);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Part),
+             Part * (Whole - MCHdArt::LoadFillBarPercent) / Whole + MCHdArt::LoadFillBarPercent);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Whole), Whole);
+    pack.Open();
+    MCHdArt::FinishLoadFill([] {});
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    CHECK_EQ(MCHdArt::LoadFillShare(), 1.0);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's fill): today's pack (version 1) is held too: an archive of a shape's numbered frames is
+/// kept as stored, its entries in the order they lie, and with its file cut to nothing every frame is drawn as made, read
+/// from the hold (none of the frames kept, MCHdArt::SetCacheBudget).
+/// </summary>
+TEST_CASE("hd art: the hold keeps a version 1 archive's numbered frames as stored, and they're drawn without its file")
+{
+    const ReaderScope readers({.Readers = 1, .Hold = true});
+    const ScratchFolder scratch("hold-version-1");
+    std::vector<ArchiveEntry> entries;
+    size_t stored = 0;
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
+        stored += entries.back().Stored.size();
+    }
+
+    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+    const std::filesystem::path file = std::filesystem::path(scratch.Path() / folder).concat(".hda");
+    std::filesystem::create_directories(file.parent_path());
+    WriteBytes(file, BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    MCHdArt::StartHold();
+    REQUIRE(MCHdArt::FindShape(AheadTable, 0, AheadWidth, AheadHeight) != nullptr);
+    MCHdArt::WaitForHold();
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::HeldBytes(), stored);
+
+    std::filesystem::resize_file(file, 0);
+    MCHdArt::SetCacheBudget(1);
+    MCHdArt::NextFrame(false);
+    MCHdArt::NextFrame(false);
+    const size_t reads = MCHdArt::ReaderReads();
+
+    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::ReaderReads(), reads);
+    MCHdArt::SetCacheBudget(0);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan): the hold gives back what's past its share of the art's room as the room shrinks (a
+/// frame's MCHdArt::NextFrame, MCMemoryRoom::TrimmedBytesPerFrame at most), and holds nothing more that mission (an
+/// archive opened after isn't held) until the next mission's starts it again.
+/// </summary>
+TEST_CASE("hd art: the hold gives back what's past its share as the room shrinks, then holds no more that mission")
+{
+    constexpr uint64_t EightGb = uint64_t{8} << 30;
+    // Half of it is the game itself, so the art's room is none.
+    constexpr uint64_t NoRoom = 2 * MCMemoryRoom::GameItselfBytes;
+    constexpr size_t Archives = 2;
+    const ReaderScope readers({.Readers = 1});
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    const MCFakeMemoryScope memory(system);
+    system->Total = EightGb;
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("hold-give-back", pieces);
+    pack.Open();
+    HoldAndWait();
+    REQUIRE_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+
+    system->Total = NoRoom;
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    system->Total = EightGb;
+    pack.Open(true);
+    MCHdArt::WaitForHold();
+    CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+
+    HoldAndWait();
+    CHECK_EQ(MCHdArt::HeldBytes(), Archives * pack.HeldBytes());
+    MCHdArt::LetGoHold();
     GHdArt = previous;
 }
 
@@ -4845,18 +4978,16 @@ namespace
 
         found.Matched = pairs.size();
         found.Extra = static_cast<size_t>((*marked)->GetNumFiles()) - pairs.size();
-        const std::span<const MCFileEntry> streams = (*marked)->GetEntries();
-        std::ranges::sort(
-            pairs, [&](const auto& a, const auto& b)
-            { return streams[static_cast<size_t>(a.first)].Offset < streams[static_cast<size_t>(b.first)].Offset; });
+        const auto streamAt = [&marked](int32_t j) { return (*marked)->EntryAt(j).Offset; };
+        std::ranges::sort(pairs, [&](const auto& a, const auto& b) { return streamAt(a.first) < streamAt(b.first); });
         int32_t storedAt = -1;
         std::vector<uint8_t> stored;
 
         for (const auto& [j, i] : pairs)
         {
-            if (streams[static_cast<size_t>(j)].Offset != storedAt)
+            if (streamAt(j) != storedAt)
             {
-                storedAt = streams[static_cast<size_t>(j)].Offset;
+                storedAt = streamAt(j);
                 stored = (*marked)->ReadStored(j);
             }
 

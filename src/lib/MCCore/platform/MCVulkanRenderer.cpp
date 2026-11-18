@@ -1440,8 +1440,9 @@ void MCVulkanRenderer::BeginRecording()
 
     const MCMemoryRoom::MCFrameRoom room =
         _Room.has_value() ? _Room->Frame(_HdPictureBytes) : MCMemoryRoom::MCFrameRoom{};
-    MCHdArt::NextFrame(room.MemoryShort);
-    TrimHdPictures(static_cast<size_t>(room.PictureBytes));
+    // Port-only (SPEC-memory.md's plan): on shared memory, the pictures' share of the art's room too.
+    const std::optional<uint64_t> planned = MCHdArt::NextFrame(room.MemoryShort);
+    TrimHdPictures(static_cast<size_t>(std::min(room.PictureBytes, planned.value_or(room.PictureBytes))));
     _HdPicturePayload.Set({.Payload = static_cast<int64_t>(_HdPictureBytes)});
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.

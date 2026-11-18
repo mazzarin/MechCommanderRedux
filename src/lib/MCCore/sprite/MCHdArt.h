@@ -361,21 +361,27 @@ namespace MCHdArt
     std::filesystem::path FolderOf(const IconShapeKey& key);
 
     /// <summary>
-    /// The bytes of frames kept in memory before the least recently used go: MCMemoryRoom::MostHdBytes, unless
-    /// <see cref="SetCacheBudget"/> set another. Port-only: below it the frames go only while memory is short
-    /// (<see cref="NextFrame"/>).
+    /// The bytes of frames kept in memory before the least recently used go: port-only, the frames' share of the HD
+    /// art's room as it stands (SPEC-memory.md's plan: what the rest, the hold and the pictures leave, never below the
+    /// frames' records and a floor of colours), unless <see cref="SetCacheBudget"/> set another.
     /// </summary>
     size_t CacheBudget();
 
-    /// <summary>Sets the budget (0: MostHdBytes again), dropping frames until the kept ones fit (for the tests).</summary>
+    /// <summary>Sets the budget (0: the plan's again), dropping frames until the kept ones fit (for the tests).</summary>
     void SetCacheBudget(size_t bytes);
 
     /// <summary>
-    /// Port-only: a frame begins (the renderer's, as it starts recording one). While <paramref name="memoryShort"/>
-    /// (MCMemoryRoom::MCFrameRoom), the least recently used frames go until MCMemoryRoom::TrimmedBytesPerFrame have
-    /// gone, but never one asked for in the frame before or since: those are being drawn.
+    /// Port-only: a frame begins (the renderer's, as it starts recording one). The HD art's room is shared out
+    /// (SPEC-memory.md's plan: MCMemoryRoom::ArtRoom): past their shares the least recently used frames go, then the
+    /// hold's runs asked for least recently (it reads no more this mission), MCMemoryRoom::TrimmedBytesPerFrame a frame
+    /// in all; while <paramref name="memoryShort"/> (MCMemoryRoom::MCFrameRoom) the frames go whatever their share,
+    /// then the hold. Never a frame asked for in the frame before or since: those are being drawn.
     /// </summary>
-    void NextFrame(bool memoryShort);
+    /// <returns>
+    /// On shared memory, the room the GPU's HD pictures have this frame (the renderer keeps them to the smaller of it
+    /// and the card's); none on a card of its own.
+    /// </returns>
+    std::optional<uint64_t> NextFrame(bool memoryShort);
 
     /// <summary>
     /// Drops the kept frames of the ground and its relief maps, which nothing reads once the GPU has the ground up
@@ -977,33 +983,75 @@ namespace MCHdArt
     size_t ReaderReads();
 
     /// <summary>
-    /// Port-only (SPEC-pack-v2.md's Memory): the least memory the system reports on a machine whose missions' art is
-    /// held (<see cref="StartHold"/>): 16 GB's tier, as a 16 GB machine may report somewhat under 16,384 MiB.
-    /// </summary>
-    constexpr uint64_t HoldLeastMemory = uint64_t{15000} << 20;
-
-    /// <summary>
-    /// Port-only: the most bytes one of the hold's reads takes (a run of an archive's consecutive streams; a stream larger
-    /// than it alone), so a read asked for while the hold reads waits for at most this much more of the disk.
+    /// Port-only: the most bytes one of the hold's reads takes (a run of an archive's consecutive streams or entries; one
+    /// larger than it alone), so a read asked for while the hold reads waits for at most this much more of the disk.
     /// </summary>
     constexpr uint64_t HoldRunBytes = uint64_t{4} << 20;
 
     /// <summary>
-    /// Port-only: whether a mission's art would be held (<see cref="StartHold"/>): <see cref="ReaderSettings::Hold"/>
-    /// when set, else the machine has at least <see cref="HoldLeastMemory"/> (MCMemoryRoom::TotalBytes).
+    /// Port-only: whether a mission's art is held (<see cref="StartHold"/>): <see cref="ReaderSettings::Hold"/> when set
+    /// (the tests' and benchmarks' <c>-hdhold</c>; on, every byte, whatever the room), else always, as much as the plan's
+    /// room takes (<see cref="HoldRoom"/>).
     /// </summary>
     bool HoldWanted();
 
     /// <summary>
-    /// Port-only (SPEC-pack-v2.md's Memory: the hold): a mission's load is done; when HD art is drawn and the hold is
-    /// wanted (<see cref="HoldWanted"/>), the readers read every version 2 archive open, and each opened later in the
-    /// mission, below everything else they read (when nothing else waits, one run of at most <see cref="HoldRunBytes"/>
-    /// at a time), and keep its packets' and heads' streams as stored (MCFastFile::HoldStream), not unpacked, so no read
-    /// in play goes to the disk: a frame nobody read ahead is unpacked from them. Let go of (<see cref="LetGoHold"/>) at
-    /// the mission's end, all at once when memory goes short (<see cref="NextFrame"/>, holding no more that mission), and
-    /// when the pack is set.
+    /// Port-only (SPEC-memory.md's fill: the mission packed in memory, or as much as fits): the most bytes the hold may
+    /// keep now: the HD art's room (MCMemoryRoom::ArtRoom) less the working set's (MCMemoryRoom::WorkingSetBytes), on
+    /// shared memory and on a card alike, as the hold's own bytes are the machine's; none (no limit) with
+    /// <c>-hdhold on</c>.
+    /// </summary>
+    std::optional<uint64_t> HoldRoom();
+
+    /// <summary>
+    /// Port-only (SPEC-pack-v2.md's Memory: the hold): when HD art is drawn and the hold is wanted
+    /// (<see cref="HoldWanted"/>), the readers read every archive open, and each opened later in the mission, below
+    /// everything else they read (when nothing else waits, one run of at most <see cref="HoldRunBytes"/> at a time), and
+    /// keep what of it a mission draws as stored (MCFastFile::HoldPieces: a version 2 archive's packets' and heads'
+    /// streams, a version 1 archive's numbered frames), not unpacked, so no read in play goes to the disk: a frame nobody
+    /// read ahead is unpacked from them. As much as <see cref="HoldRoom"/> takes, in the order read. Let go of
+    /// (<see cref="LetGoHold"/>) at the mission's end, all at once when memory goes short (<see cref="NextFrame"/>,
+    /// holding no more that mission), and when the pack is set.
     /// </summary>
     void StartHold();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar"): a mission's load begins: when the hold is wanted, it holds
+    /// from now each archive the load opens or asks for (<see cref="OpenArchivesAhead"/>), not those the last missions
+    /// left open, its reads going several at once beside the load's, as readers are free of the load's own, until
+    /// <see cref="FinishLoadFill"/>.
+    /// </summary>
+    void StartLoadFill();
+
+    /// <summary>
+    /// Port-only (the loading bar's last stretch): waits until the hold has read every archive the load handed it (or
+    /// was let go of, or is full), calling <paramref name="shown"/> every <see cref="LoadFillShowEvery"/> meanwhile so the
+    /// bar moves and the screen stays live; from then on the hold reads below everything else, a run at a time.
+    /// </summary>
+    void FinishLoadFill(const std::function<void()>& shown);
+
+    /// <summary>Port-only: how often <see cref="FinishLoadFill"/> shows the bar while it waits.</summary>
+    constexpr std::chrono::milliseconds LoadFillShowEvery{33};
+
+    /// <summary>
+    /// Port-only: the share of the load's fill read (<see cref="StartLoadFill"/>): the bytes the hold has read over those
+    /// it was handed, 1 when it was handed none.
+    /// </summary>
+    double LoadFillShare();
+
+    /// <summary>
+    /// Port-only (the loading bar): the share of the bar the load's fill takes while it fills, the last stretch: the
+    /// load's own steps (0 to 100) take the rest before it.
+    /// </summary>
+    constexpr int32_t LoadFillBarPercent = 25;
+
+    /// <summary>
+    /// Port-only (the loading bar): the bar's percent for the load's own <paramref name="progress"/>: while a load fills
+    /// (<see cref="StartLoadFill"/> to <see cref="FinishLoadFill"/>) its steps take the bar up to
+    /// <see cref="LoadFillBarPercent"/> short of the end and the fill's share (<see cref="LoadFillShare"/>) the rest;
+    /// <paramref name="progress"/> itself otherwise.
+    /// </summary>
+    int32_t LoadBarPercent(int32_t progress);
 
     /// <summary>Port-only: lets go of the hold (<see cref="StartHold"/>) and holds no more: a mission's end.</summary>
     void LetGoHold();

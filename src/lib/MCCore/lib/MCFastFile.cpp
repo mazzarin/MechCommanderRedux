@@ -55,12 +55,13 @@ namespace
     constexpr uint32_t MostUnpackedBytes = 256u << 20;
 
     /// <summary>
-    /// Port-only: the unpacked streams kept for their neighbours' reads, across every archive: room for the largest a
-    /// stream may be beside others, since a stream that doesn't fit is unpacked again for each of its entries asked later
-    /// (an animation's frames are asked a few at a time) and pushes every other stream out as it's kept. full1's largest
-    /// is 87.8 MB unpacked (objects/shapes/47), thirteen past 32 MB.
+    /// Port-only (SPEC-memory.md's plan: a small kept-blocks list): the unpacked streams kept for their neighbours' reads,
+    /// across every archive, the latest kept whatever its size: with the mission held packed (MCHdArt::StartHold) a
+    /// stream let go of is unpacked again from memory, not read. full4's packets' and heads' streams: 0.42 MB unpacked at
+    /// the 90th percentile, 4.75 at the 99th, 244 of 62,550 past 8 MB and the largest 83.7 (18 Nov); 128 KB blocks once
+    /// pack v2 has them.
     /// </summary>
-    constexpr size_t KeptStreamsBytes = MostUnpackedBytes;
+    constexpr size_t KeptStreamsBytes = size_t{64} << 20;
 
     /// <summary>A little-endian value at <paramref name="at"/> of <paramref name="bytes"/>, which must hold it.</summary>
     template <typename T> T ValueAt(std::span<const uint8_t> bytes, size_t at)
@@ -122,14 +123,27 @@ namespace
         return kept;
     }
 
+    /// <summary>A run held: its bytes, and when an entry in it was last asked for (HeldStreams::Uses).</summary>
+    struct HeldRun
+    {
+        std::shared_ptr<const std::vector<uint8_t>> Bytes;
+        uint64_t LastUse = 0;
+    };
+
+    /// <summary>An archive's runs held, each by where it starts in the archive (MCFastFile::HoldPieces).</summary>
+    using HeldRuns = std::map<uint64_t, HeldRun>;
+
     /// <summary>
-    /// Port-only (the hold, SPEC-pack-v2.md's Memory): the streams held as stored, by HeldKey, and their bytes in all.
+    /// Port-only (the hold, SPEC-memory.md's fill): the runs of the archives' stored bytes held, by their archive's own
+    /// number (MCFastFile::_Serial), and their bytes in all.
     /// </summary>
     struct HeldStreams
     {
         std::mutex Lock;
-        std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> Held;
+        std::unordered_map<uint64_t, HeldRuns> Runs;
         size_t Bytes = 0;
+        /// <summary>Counts the asks for an entry held (MCFastFile::HeldOf), the runs' clock for giving back the oldest.</summary>
+        uint64_t Uses = 0;
         /// <summary>Bytes, in the ledger.</summary>
         MCMemoryLedger::MCShare Ledger{MCMemoryLedger::MCHolder::HdHold};
     };
@@ -141,17 +155,23 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: where a held stream's key holds its archive's number (MCFastFile::_Serial), above the stream's own: a
-    /// number a version 2 archive opened, so far below 2^32.
+    /// Port-only (the hold): keeps <paramref name="run"/>, an archive's stored bytes from <paramref name="start"/>, among
+    /// archive <paramref name="serial"/>'s runs held (a run already held there stays).
     /// </summary>
-    constexpr int HeldArchiveShift = 32;
-
-    uint64_t HeldKey(uint64_t archive, uint32_t stream)
+    void KeepRun(uint64_t serial, uint64_t start, std::vector<uint8_t>&& run)
     {
-        return (archive << HeldArchiveShift) | stream;
+        auto bytes = std::make_shared<const std::vector<uint8_t>>(std::move(run));
+        HeldStreams& held = TheHeldStreams();
+        std::scoped_lock lock(held.Lock);
+
+        if (held.Runs[serial].try_emplace(start, HeldRun{bytes, ++held.Uses}).second)
+        {
+            held.Bytes += bytes->size();
+            held.Ledger.SetBytes(held.Bytes);
+        }
     }
 
-    /// <summary>Port-only: each version 2 archive's own number (KeptStream::Archive).</summary>
+    /// <summary>Port-only: each archive's own number (KeptStream::Archive, HeldStreams::Runs).</summary>
     std::atomic<uint64_t> NextSerial{1};
 
     /// <summary>Port-only: the index of <paramref name="key"/> in sorted <paramref name="keys"/>, if there.</summary>
@@ -242,6 +262,20 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(
         fastFile->_Index.try_emplace(IndexKey(entry.GetName()), static_cast<int32_t>(i));
     }
 
+    // Port-only (the hold): its entries in the order their bytes lie, the longest first where two start together (an
+    // entry stored once for two names), and a number of its own for what is held of it.
+    std::vector<int32_t>& byOffset = fastFile->_ByOffset;
+    byOffset.resize(entries.size());
+    std::iota(byOffset.begin(), byOffset.end(), 0);
+    std::ranges::sort(byOffset,
+                      [&entries](int32_t a, int32_t b)
+                      {
+                          const MCFileEntry& first = entries[static_cast<size_t>(a)];
+                          const MCFileEntry& second = entries[static_cast<size_t>(b)];
+                          return first.Offset != second.Offset ? first.Offset < second.Offset
+                                                               : first.Size > second.Size;
+                      });
+    fastFile->_Serial = NextSerial.fetch_add(1);
     fastFile->CountTables();
     return fastFile;
 }
@@ -367,7 +401,6 @@ std::expected<void, std::string> MCFastFile::ReadVersion2(std::string_view fileN
 
     _EntryKeys.reserve(entries);
     _Placed.reserve(entries);
-    _Entries.reserve(entries);
 
     for (uint32_t i = 0; i < entries; ++i, at += EntryRowBytes)
     {
@@ -380,13 +413,8 @@ std::expected<void, std::string> MCFastFile::ReadVersion2(std::string_view fileN
             return std::unexpected(std::format("{}: entry {} lies outside its stream", fileName, i));
         }
 
-        const Stream& stream = _Streams[placed.Stream];
         _EntryKeys.push_back(ValueAt<uint64_t>(table, at));
         _Placed.push_back(placed);
-        _Entries.push_back(MCFileEntry{.Offset = static_cast<int32_t>(stream.At),
-                                       .Size = static_cast<int32_t>(stream.Stored),
-                                       .RealSize = static_cast<int32_t>(placed.Bytes),
-                                       .Name = {}});
     }
 
     if (!std::ranges::is_sorted(_EntryKeys) || !std::ranges::is_sorted(_FolderKeys))
@@ -467,7 +495,7 @@ std::expected<std::vector<uint8_t>, std::string> MCFastFile::Unpack(int32_t inde
 std::expected<std::shared_ptr<const std::vector<uint8_t>>, std::string> MCFastFile::StreamOf(
     int32_t index, std::span<const uint8_t> stored) const
 {
-    const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
+    const MCFileEntry entry = EntryAt(index);
 
     if (stored.size() != static_cast<size_t>(std::max(entry.Size, 0)))
     {
@@ -561,42 +589,157 @@ bool MCFastFile::HoldStream(uint32_t stream, std::vector<uint8_t>&& stored) cons
         return false;
     }
 
-    auto bytes = std::make_shared<const std::vector<uint8_t>>(std::move(stored));
-    HeldStreams& held = TheHeldStreams();
-    std::scoped_lock lock(held.Lock);
-
-    if (held.Held.try_emplace(HeldKey(_Serial, stream), bytes).second)
-    {
-        held.Bytes += bytes->size();
-        held.Ledger.SetBytes(held.Bytes);
-    }
-
+    KeepRun(_Serial, _Streams[stream].At, std::move(stored));
     return true;
 }
 
-std::shared_ptr<const std::vector<uint8_t>> MCFastFile::HeldStreamOf(int32_t index) const
+MCFileEntry MCFastFile::EntryAt(int32_t index) const
 {
     if (!_Version2)
     {
-        return nullptr;
+        return _Entries.at(static_cast<size_t>(index));
     }
 
-    const uint32_t stream = _Placed.at(static_cast<size_t>(index)).Stream;
+    // Its stream's place, so a read of neighbouring entries reads the stream once, and its own bytes.
+    const Placed& placed = _Placed.at(static_cast<size_t>(index));
+    const Stream& stream = _Streams.at(placed.Stream);
+    return MCFileEntry{.Offset = static_cast<int32_t>(stream.At),
+                       .Size = static_cast<int32_t>(stream.Stored),
+                       .RealSize = static_cast<int32_t>(placed.Bytes),
+                       .Name = {}};
+}
+
+uint32_t MCFastFile::HoldPieceCount() const
+{
+    return _Version2 ? static_cast<uint32_t>(_Streams.size()) : static_cast<uint32_t>(_ByOffset.size());
+}
+
+MCFastFile::HoldPiece MCFastFile::HoldPieceAt(uint32_t piece) const
+{
+    if (_Version2)
+    {
+        const Stream& stream = _Streams.at(piece);
+        return HoldPiece{.At = stream.At,
+                         .Stored = stream.Stored,
+                         .Kept = stream.Kind == StreamKind::Packet || stream.Kind == StreamKind::Heads};
+    }
+
+    const MCFileEntry& entry = _Entries.at(static_cast<size_t>(_ByOffset.at(piece)));
+    return HoldPiece{.At = static_cast<uint64_t>(entry.Offset),
+                     .Stored = static_cast<uint32_t>(std::max(entry.Size, 0)),
+                     .Kept = true};
+}
+
+bool MCFastFile::HoldPieces(uint32_t first, uint32_t end, uint64_t start, std::vector<uint8_t>&& run) const
+{
+    if (first >= end || end > HoldPieceCount())
+    {
+        return false;
+    }
+
+    // Every piece within the run's bytes.
+    for (uint32_t piece = first; piece < end; ++piece)
+    {
+        const HoldPiece facts = HoldPieceAt(piece);
+
+        if (facts.At < start || facts.At + facts.Stored > start + run.size())
+        {
+            return false;
+        }
+    }
+
+    KeepRun(_Serial, start, std::move(run));
+    return true;
+}
+
+std::optional<MCFastFile::Held> MCFastFile::HeldOf(int32_t index) const
+{
+    // A version 2 entry's Offset and Size are its stream's (ReadVersion2).
+    const MCFileEntry entry = EntryAt(index);
     HeldStreams& held = TheHeldStreams();
     std::scoped_lock lock(held.Lock);
-    const auto found = held.Held.find(HeldKey(_Serial, stream));
-    return found != held.Held.end() ? found->second : nullptr;
+    const auto runs = held.Runs.find(_Serial);
+
+    if (runs == held.Runs.end())
+    {
+        return std::nullopt;
+    }
+
+    // The run starting at or before the entry, if the entry lies whole in it.
+    const auto offset = static_cast<uint64_t>(entry.Offset);
+    const auto size = static_cast<uint64_t>(std::max(entry.Size, 0));
+    auto run = runs->second.upper_bound(offset);
+
+    if (run == runs->second.begin())
+    {
+        return std::nullopt;
+    }
+
+    --run;
+    const std::vector<uint8_t>& bytes = *run->second.Bytes;
+
+    if (offset + size > run->first + bytes.size())
+    {
+        return std::nullopt;
+    }
+
+    run->second.LastUse = ++held.Uses;
+    return Held{run->second.Bytes, std::span<const uint8_t>(bytes).subspan(offset - run->first, size)};
+}
+
+size_t MCFastFile::GiveBackHeld(size_t bytes)
+{
+    // Freed outside the lock.
+    std::vector<std::shared_ptr<const std::vector<uint8_t>>> going;
+    HeldStreams& held = TheHeldStreams();
+    std::scoped_lock lock(held.Lock);
+    // Every run's last use and place, the least recently used first.
+    std::vector<std::tuple<uint64_t, uint64_t, uint64_t>> runs;
+
+    for (const auto& [serial, archive] : held.Runs)
+    {
+        for (const auto& [start, run] : archive)
+        {
+            runs.emplace_back(run.LastUse, serial, start);
+        }
+    }
+
+    std::ranges::sort(runs);
+    size_t freed = 0;
+
+    for (const auto& [use, serial, start] : runs)
+    {
+        if (freed >= bytes)
+        {
+            break;
+        }
+
+        HeldRuns& archive = held.Runs.at(serial);
+        const auto run = archive.find(start);
+        freed += run->second.Bytes->size();
+        going.push_back(std::move(run->second.Bytes));
+        archive.erase(run);
+
+        if (archive.empty())
+        {
+            held.Runs.erase(serial);
+        }
+    }
+
+    held.Bytes -= freed;
+    held.Ledger.SetBytes(held.Bytes);
+    return freed;
 }
 
 void MCFastFile::LetGoHeld()
 {
     // Freed outside the lock: a mission's hold is up to a couple of GB in thousands of streams.
-    std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> going;
+    std::unordered_map<uint64_t, HeldRuns> going;
     HeldStreams& held = TheHeldStreams();
 
     {
         std::scoped_lock lock(held.Lock);
-        going.swap(held.Held);
+        going.swap(held.Runs);
         held.Bytes = 0;
         held.Ledger.SetBytes(0);
     }
@@ -632,6 +775,7 @@ void MCFastFile::CountTables()
     add(bytesOf(_FolderKeys));
     add(bytesOf(_FolderFacts));
     add(bytesOf(_Facts));
+    add(bytesOf(_ByOffset));
 
     // The index by name (version 1's): a node a name (its key, its number, the link and the hash) and the buckets; a
     // name longer than the string's own room is allocated apart. The allocator's rounding isn't known.
@@ -709,12 +853,12 @@ MCOptionalRef<MCDiskFile> MCFastFile::File()
 
 std::vector<uint8_t> MCFastFile::ReadStored(int32_t index)
 {
-    const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
+    const MCFileEntry entry = EntryAt(index);
 
-    // Port-only: a stream held (HoldStream) is taken from memory, its file not opened again.
-    if (const std::shared_ptr<const std::vector<uint8_t>> held = HeldStreamOf(index); held != nullptr)
+    // Port-only: bytes held (HoldPieces) are taken from memory, the file not opened again.
+    if (const std::optional<Held> held = HeldOf(index); held.has_value())
     {
-        return *held;
+        return std::vector<uint8_t>(held->Stored.begin(), held->Stored.end());
     }
 
     const MCOptionalRef<MCDiskFile> opened = File();
@@ -723,17 +867,17 @@ std::vector<uint8_t> MCFastFile::ReadStored(int32_t index)
 
 std::vector<uint8_t> MCFastFile::ReadStored(int32_t index, MCDiskFile& file) const
 {
-    if (const std::shared_ptr<const std::vector<uint8_t>> held = HeldStreamOf(index); held != nullptr)
+    if (const std::optional<Held> held = HeldOf(index); held.has_value())
     {
-        return *held;
+        return std::vector<uint8_t>(held->Stored.begin(), held->Stored.end());
     }
 
-    return StoredBytes(_Entries.at(static_cast<size_t>(index)), file);
+    return StoredBytes(EntryAt(index), file);
 }
 
 int32_t MCFastFile::ReadEntry(int32_t index, std::span<uint8_t> data)
 {
-    const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
+    const MCFileEntry entry = EntryAt(index);
     const MCOptionalRef<MCDiskFile> opened = File();
 
     if (!opened)

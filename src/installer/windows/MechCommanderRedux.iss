@@ -5,12 +5,13 @@
 ; its own (by default C:\Games\MechCommander Redux HD, else %LOCALAPPDATA%\Programs\MechCommander Redux HD) or the
 ; player's copy, which Redux HD installs into and takes over (the folder the game was last pointed at, else the one the
 ; original's installer recorded); and HD, ticked, unless the computer can't run Vulkan, which HD's art and movies need
-; (a line under it says they won't show: VulkanLack). It puts the program in, leaves the answers for the game (Redux
-; update\sets.json), and, shown, has the game download what the folder lacks before its Finish page (MCRedux
-; --get-content, the game's own download in its own window; closed or cut off, the first start carries on): the setup
-; itself downloads and copies no content. Windows' Apps list then gets the folder's size. MCX.EXE is the game itself
-; under the original's name (a hard link to MCRedux.exe: one file, so Windows and its antivirus see no other program),
-; so whatever starts the original gets Redux HD; what the program replaces there (the original's MCX.EXE and
+; (a line under it says they won't show: VulkanLack), and under it, where the release has the smaller (2x) HD art, the
+; full art or the smaller, the machine's default chosen (MachineTakesHd2x). It puts the program in, leaves the answers
+; for the game (Redux update\sets.json), and, shown, has the game download what the folder lacks before its Finish page
+; (MCRedux --get-content, the game's own download in its own window; closed or cut off, the first start carries on): the
+; setup itself downloads and copies no content. Windows' Apps list then gets the folder's size. MCX.EXE is the game
+; itself under the original's name (a hard link to MCRedux.exe: one file, so Windows and its antivirus see no other
+; program), so whatever starts the original gets Redux HD; what the program replaces there (the original's MCX.EXE and
 ; MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup". MechCommander Online's copy holds the original at
 ; other resolutions too (MCX1920x1080.EXE): each goes into the backup, and comes back as the game only where a shortcut,
 ; or the lobby's DirectPlay entry, starts it.
@@ -29,15 +30,18 @@
 ; Built by .github/workflows/windows.yml with Inno Setup 6.7:
 ;   ISCC /DAppVersionNumber=0.2.1.548 "/DAppVersionShown=0.2.1 (548)" /DBinDir=<the exes' folder>
 ;        /DDocsDir=<src\docs> /DLicencesFile=<make_licences.ps1's file> /DSetupLevel=<setup_level.py --check>
-;        [/DGameBytes=<n> /DHdBytes=<n>] /O<output folder> src\installer\windows\MechCommanderRedux.iss
+;        [/DGameBytes=<n> /DHdBytes=<n> [/DHd2xBytes=<n>]] /O<output folder>
+;        src\installer\windows\MechCommanderRedux.iss
 ; SetupLevel is the setup's level (setup-level.txt), which every install records in the game folder: a later release
 ; whose setup is at the same level puts its program in by the game itself (update/MCProgramSwap.h), without this setup.
 ; GameBytes and HdBytes are the release's sets' sizes, which make_release.py's setup-sizes prints from its content
 ; list. A build without them (a work branch's) has no release to download from, so its folder page asks only for the
-; player's copy, without HD; silent installs still take their answers.
+; player's copy, without HD; silent installs still take their answers. Hd2xBytes is HD's size with the smaller (2x)
+; art, where the release has it: only then is the HD art's size asked (and taken silently).
 ;
-; Silently: /DIR=<folder>, /GAME=DOWNLOAD or COPY (by default COPY for a folder holding the game, else DOWNLOAD), and
-; /HD=NO to leave HD out, /HD=YES to have it where the computer can't run Vulkan (which leaves it out by default).
+; Silently: /DIR=<folder>, /GAME=DOWNLOAD or COPY (by default COPY for a folder holding the game, else DOWNLOAD),
+; /HD=NO to leave HD out, /HD=YES to have it where the computer can't run Vulkan (which leaves it out by default), and
+; /HDSIZE=2X or FULL for the smaller or the full HD art (by default the machine's).
 
 #ifndef AppVersionNumber
   #error Pass /DAppVersionNumber=<major.minor.patch.build> (MC_VERSION in MCVersion.h)
@@ -62,6 +66,9 @@
 #endif
 #ifndef HdBytes
   #define HdBytes "0"
+#endif
+#ifndef Hd2xBytes
+  #define Hd2xBytes "0"
 #endif
 
 #define AppName "MechCommander Redux HD"
@@ -186,6 +193,9 @@ UseMyCopy=&Use my copy of MechCommander Gold
 TakeoverChoice=Redux HD takes over this copy. To keep it unchanged, choose Download it instead.%nUninstalling Redux HD restores your copy.
 TakeoverCopy=Redux HD takes over this copy.%nUninstalling Redux HD restores your copy.
 HdChoice=Redux &HD art, sound and movies
+HdFull=&Full HD art
+HdSmaller=&Smaller HD art
+HdSmallerFor=For computers with less than 12 GB of memory or a small graphics card. It needs half the memory and looks a touch softer zoomed all the way in.
 NoVulkan=Redux HD's art and movies won't show on this computer: its graphics can't run Vulkan, so the game plays in its original look.
 GameSize=%1 (%2 GB)
 HdSize=%1 (%2 GB more)
@@ -210,6 +220,7 @@ ReadyDownload=Then downloaded, before Setup finishes:
 ReadyGame=The game (%1 GB)
 ReadyCopy=What your copy lacks of the game
 ReadyHd=Redux HD art, sound and movies (%1 GB)
+ReadyHdSmaller=Redux HD's smaller art, sound and movies (%1 GB)
 GettingGame=Downloading the game...
 DownloadLeft=Setup has installed {#AppName}, but the game's download isn't finished yet. It carries on when you start {#AppName}.
 
@@ -290,6 +301,24 @@ const
   VulkanDriverValue = 'VulkanDriverName';
   KhronosDriversKey = 'SOFTWARE\Khronos\Vulkan\Drivers';
   KhronosDriverLoaded = 0;
+  // The computers that take the smaller (2x) HD art by default (MachineTakesHd2x), in MiB: memory under 12 GiB, or a
+  // graphics card of its own (1 GiB or more) with under 4 GB (3.5 GiB, so a 4 GB card that reports a little less
+  // counts as 4).
+  BytesPerMiB = 1048576;
+  SmallMemoryMiB = 12288;
+  CardOfItsOwnMiB = 1024;
+  SmallCardMiB = 3584;
+  // Where a display adapter's driver records its memory, under its key in the display adapters' class: a QWORD, 8
+  // bytes, the lowest first. One whose top byte has its top bit set is past Int64's, so not a card's memory.
+  AdapterMemoryValue = 'HardwareInformation.qwMemorySize';
+  QwordBytes = 8;
+  ByteValues = 256;
+  SignByte = $80;
+  // /HDSIZE's answers (silent installs), and who picked HD's size, for the game (sets.json's "picked").
+  Hd2xAnswer = '2X';
+  FullAnswer = 'FULL';
+  PlayerPicked = 'player';
+  MachinePicked = 'machine';
   // A file's size from its two halves (TFindRec's SizeHigh, SizeLow), and the KB Windows' Apps list counts in.
   HalfSize = 65536;
   BytesPerKB = 1024;
@@ -297,6 +326,25 @@ const
   ShortcutExtension = '.lnk';
   // Where the game puts the setup an update downloads, in its own folder (update/MCSetupBackend.h's ProgramFolder).
   UpdateSetupFolder = '\redux update\program';
+  // The HD art's sizes' indent under HD's box, and their note's under its button (past the button's circle), in pixels
+  // before scaling.
+  SizeIndent = 16;
+  SizeNoteIndent = 17;
+
+type
+  // GlobalMemoryStatusEx's MEMORYSTATUSEX, its sizes in bytes (DWORDLONG as Int64: no computer's memory reaches its
+  // top bit).
+  TMemoryStatusEx = record
+    dwLength: Cardinal;
+    dwMemoryLoad: Cardinal;
+    ullTotalPhys: Int64;
+    ullAvailPhys: Int64;
+    ullTotalPageFile: Int64;
+    ullAvailPageFile: Int64;
+    ullTotalVirtual: Int64;
+    ullAvailVirtual: Int64;
+    ullAvailExtendedVirtual: Int64;
+  end;
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -309,6 +357,13 @@ var
   HdBox: TNewCheckBox;
   // Under HD, when the computer can't run Vulkan: that HD's art and movies won't show.
   VulkanNote: TNewStaticText;
+  // Under HD, where the setup offers the smaller (2x) art (OffersHd2x): the full art or the smaller, a group of their
+  // own (radio buttons on one parent are one choice), the smaller's note under it; whether the machine takes the
+  // smaller by default (MachineTakesHd2x), and whether /HDSIZE named one.
+  SizePanel: TPanel;
+  FullButton, Hd2xButton: TNewRadioButton;
+  Hd2xNote: TNewStaticText;
+  MachineHd2x, SizeGiven: Boolean;
   // Under them, while the player's copy is chosen: that Redux HD takes it over, and how to leave it as it is.
   TakeoverNote: TNewStaticText;
   // What the computer lacks to run Vulkan (VulkanLack); empty when nothing is missing.
@@ -343,6 +398,9 @@ function GetFileAttributesW(FileName: String): Longint;
   external 'GetFileAttributesW@kernel32.dll stdcall';
 function SetFileAttributesW(FileName: String; Attributes: Longint): Integer;
   external 'SetFileAttributesW@kernel32.dll stdcall';
+// The computer's memory (its dwLength set to its size first).
+function GlobalMemoryStatusEx(var Buffer: TMemoryStatusEx): Integer;
+  external 'GlobalMemoryStatusEx@kernel32.dll stdcall';
 
 // The names of the files the program puts in the game folder: [Files]' and MCX.EXE, the game under its name.
 function ProgramFileNames: TArrayOfString;
@@ -446,6 +504,37 @@ begin
   Result := SizesKnown or WizardSilent;
 end;
 
+// Whether the setup offers the smaller (2x) HD art beside the full: only where the release has it (the build has its
+// size), and where it asks about HD.
+function OffersHd2x: Boolean;
+begin
+  Result := AsksDownloads and (StrToInt64Def('{#Hd2xBytes}', 0) > 0);
+end;
+
+// Whether HD's art is the smaller, as chosen.
+function UsesHd2x: Boolean;
+begin
+  Result := OffersHd2x and Hd2xButton.Checked;
+end;
+
+// HD's size in bytes (the build's) with the art chosen.
+function ChosenHdBytes: String;
+begin
+  if UsesHd2x then
+    Result := '{#Hd2xBytes}'
+  else
+    Result := '{#HdBytes}';
+end;
+
+// Who picked HD's size: the player, by /HDSIZE or by choosing other than the machine's default; else the machine.
+function PickedBy: String;
+begin
+  if SizeGiven or (UsesHd2x <> MachineHd2x) then
+    Result := PlayerPicked
+  else
+    Result := MachinePicked;
+end;
+
 // Whether one of a device class's keys (DisplayClassKey, SoftwareComponentClassKey; Devices, its subkeys) names a
 // Vulkan driver.
 function ClassNamesVulkanDriver(const ClassKey: String; const Devices: TArrayOfString): Boolean;
@@ -514,7 +603,101 @@ begin
   end;
 end;
 
-// The folder page's line under the folder: what the game takes on disk, with HD and without.
+// The computer's memory in MiB, as Windows counts it (GlobalMemoryStatusEx's ullTotalPhys, which the game's
+// SDL_GetSystemRAM reads too); -1 when it can't be read.
+function MemoryMiB: Int64;
+var
+  Status: TMemoryStatusEx;
+begin
+  Status.dwLength := SizeOf(Status);
+
+  if GlobalMemoryStatusEx(Status) <> 0 then
+    Result := Status.ullTotalPhys div BytesPerMiB
+  else
+    Result := -1;
+end;
+
+// A QWORD's bytes (the lowest first) in MiB; -1 when they aren't 8, or are past Int64's.
+function QwordMiB(const Data: AnsiString): Int64;
+var
+  Position: Integer;
+  Bytes: Int64;
+begin
+  Result := -1;
+
+  if Length(Data) <> QwordBytes then
+    Exit;
+
+  if Ord(Data[QwordBytes]) >= SignByte then
+    Exit;
+
+  Bytes := 0;
+
+  for Position := QwordBytes downto 1 do
+    Bytes := Bytes * ByteValues + Ord(Data[Position]);
+
+  Result := Bytes div BytesPerMiB;
+end;
+
+// The most memory a display adapter's driver records (its HardwareInformation.qwMemorySize), in MiB; -1 when none can
+// be read.
+function GraphicsMiB: Int64;
+var
+  Adapters: TArrayOfString;
+  Data: AnsiString;
+  Index: Integer;
+  MiB: Int64;
+begin
+  Result := -1;
+
+  if not RegGetSubkeyNames(HKLM64, DisplayClassKey, Adapters) then
+    Exit;
+
+  for Index := 0 to GetArrayLength(Adapters) - 1 do
+    // Read as it is stored: RegQueryBinaryValue takes a value of any type (and a QWORD's bytes are 8).
+    if RegQueryBinaryValue(HKLM64, DisplayClassKey + '\' + Adapters[Index], AdapterMemoryValue, Data) then
+    begin
+      MiB := QwordMiB(Data);
+
+      if MiB > Result then
+        Result := MiB;
+    end;
+end;
+
+// A size in MiB read from the computer, as the log says it.
+function MiBRead(const MiB: Int64): String;
+begin
+  if MiB < 0 then
+    Result := 'unknown'
+  else
+    Result := IntToStr(MiB) + ' MiB';
+end;
+
+// The HD art's size, as the log says it.
+function SizeName(const Hd2x: Boolean): String;
+begin
+  if Hd2x then
+    Result := 'the smaller (2x) art'
+  else
+    Result := 'the full art';
+end;
+
+// Whether the machine takes the smaller (2x) HD art by default: memory under 12 GiB, or a graphics card of its own with
+// under 4 GB (SmallMemoryMiB, CardOfItsOwnMiB, SmallCardMiB). What can't be read counts as full. The setup can't ask
+// the graphics whether they sample BC7, as the game does: where the size is the machine's, the game's own check rules.
+function MachineTakesHd2x: Boolean;
+var
+  Memory, Graphics: Int64;
+begin
+  Memory := MemoryMiB;
+  Graphics := GraphicsMiB;
+  Result := ((Memory >= 0) and (Memory < SmallMemoryMiB)) or
+            ((Graphics >= CardOfItsOwnMiB) and (Graphics < SmallCardMiB));
+  Log(Format('HD art: memory %s, the largest graphics card %s: the machine''s default is %s', [
+             MiBRead(Memory), MiBRead(Graphics), SizeName(Result)]));
+end;
+
+// The folder page's line under the folder: what the game takes on disk, with HD (its art as chosen) and without.
 procedure ShowTotals;
 begin
   WizardForm.DiskSpaceLabel.Visible := SizesKnown;
@@ -522,7 +705,20 @@ begin
   // A line of [Code] can't start with "[": Inno takes it for a section's.
   if SizesKnown then
     WizardForm.DiskSpaceLabel.Caption := FmtMessage(CustomMessage('Totals'), [
-      ShownGB(IntToStr(StrToInt64('{#GameBytes}') + StrToInt64('{#HdBytes}'))), ShownGB('{#GameBytes}')]);
+      ShownGB(IntToStr(StrToInt64('{#GameBytes}') + StrToInt64(ChosenHdBytes))), ShownGB('{#GameBytes}')]);
+end;
+
+// The player picked the other HD art: the total with HD follows.
+procedure SizeChosen(Sender: TObject);
+begin
+  ShowTotals;
+end;
+
+// The player ticked or unticked HD: its art's sizes can be chosen only with it.
+procedure HdChosen(Sender: TObject);
+begin
+  FullButton.Enabled := HdBox.Checked;
+  Hd2xButton.Enabled := HdBox.Checked;
 end;
 
 // The player picked the other answer to the game: the folder box shows that answer's folder, keeping the one edited.
@@ -545,6 +741,47 @@ begin
     WizardForm.DirEdit.Text := DownloadFolder;
 end;
 
+// Under HD at Top, where the setup offers the smaller (2x) art: the full art or the smaller, each with its size, and
+// under the smaller whom it's for. On a panel of their own, so they're one choice apart from the game's.
+procedure AddSizeChoice(Page: TWizardPage; Left, Top, Width: Integer);
+begin
+  SizePanel := TPanel.Create(WizardForm);
+  SizePanel.Parent := Page.Surface;
+  SizePanel.BevelOuter := bvNone;
+  SizePanel.Caption := '';
+  SizePanel.Color := Page.Surface.Color;
+  SizePanel.Left := Left + ScaleX(SizeIndent);
+  SizePanel.Top := Top;
+  SizePanel.Width := Width - ScaleX(SizeIndent);
+
+  FullButton := TNewRadioButton.Create(WizardForm);
+  FullButton.Parent := SizePanel;
+  FullButton.Left := 0;
+  FullButton.Top := 0;
+  FullButton.Width := SizePanel.Width;
+  FullButton.Caption := FmtMessage(CustomMessage('HdSize'), [CustomMessage('HdFull'), ShownGB('{#HdBytes}')]);
+
+  Hd2xButton := TNewRadioButton.Create(WizardForm);
+  Hd2xButton.Parent := SizePanel;
+  Hd2xButton.Left := 0;
+  Hd2xButton.Top := FullButton.Top + FullButton.Height + ScaleY(4);
+  Hd2xButton.Width := SizePanel.Width;
+  Hd2xButton.Caption := FmtMessage(CustomMessage('HdSize'), [CustomMessage('HdSmaller'), ShownGB('{#Hd2xBytes}')]);
+
+  Hd2xNote := TNewStaticText.Create(WizardForm);
+  Hd2xNote.Parent := SizePanel;
+  Hd2xNote.Left := ScaleX(SizeNoteIndent);
+  Hd2xNote.AutoSize := False;
+  Hd2xNote.WordWrap := True;
+  Hd2xNote.Width := SizePanel.Width - Hd2xNote.Left;
+  Hd2xNote.Caption := CustomMessage('HdSmallerFor');
+  Hd2xNote.Top := Hd2xButton.Top + Hd2xButton.Height;
+  Hd2xNote.AutoSize := True;
+
+  SizePanel.Height := Hd2xNote.Top + Hd2xNote.Height;
+  SizePanel.Visible := OffersHd2x;
+end;
+
 // The folder page's questions, above and below the folder: the game, and HD.
 procedure AddQuestions;
 var
@@ -558,7 +795,10 @@ begin
   if SizesKnown then
   begin
     DownloadCaption := FmtMessage(CustomMessage('GameSize'), [DownloadCaption, ShownGB('{#GameBytes}')]);
-    HdCaption := FmtMessage(CustomMessage('HdSize'), [HdCaption, ShownGB('{#HdBytes}')]);
+
+    // With the smaller art offered, each art has its size under HD.
+    if not OffersHd2x then
+      HdCaption := FmtMessage(CustomMessage('HdSize'), [HdCaption, ShownGB('{#HdBytes}')]);
   end;
 
   Page := PageFromID(wpSelectDir);
@@ -612,6 +852,11 @@ begin
 
   if VulkanNote.Visible then
     NotesTop := VulkanNote.Top + VulkanNote.Height;
+
+  AddSizeChoice(Page, GameDownload.Left, NotesTop + ScaleY(4), GameDownload.Width);
+
+  if SizePanel.Visible then
+    NotesTop := SizePanel.Top + SizePanel.Height;
 
   TakeoverNote := TNewStaticText.Create(WizardForm);
   TakeoverNote.Parent := Page.Surface;
@@ -764,6 +1009,48 @@ begin
     Log(Format('An update adds no shortcut: %s isn''t made', [ExpandConstant(Name)]));
 end;
 
+// HD's art where the setup offers the smaller (2x): the one /HDSIZE=2X or FULL names, else the machine's default
+// (MachineTakesHd2x). Without the smaller, the full, the one there is.
+procedure ChooseHdSize;
+var
+  Size: String;
+  Hd2x: Boolean;
+begin
+  Size := Uppercase(ExpandConstant('{param:HDSIZE|}'));
+  Hd2x := False;
+
+  if not OffersHd2x then
+  begin
+    Log('HD art: one size, this setup has no smaller art');
+
+    if Size <> '' then
+      Log(Format('/HDSIZE=%s left aside: this setup has no smaller HD art', [Size]));
+  end
+  else
+  begin
+    MachineHd2x := MachineTakesHd2x;
+    SizeGiven := (Size = Hd2xAnswer) or (Size = FullAnswer);
+
+    if SizeGiven then
+      Hd2x := Size = Hd2xAnswer
+    else
+    begin
+      Hd2x := MachineHd2x;
+
+      if Size <> '' then
+        Log(Format('/HDSIZE=%s is neither %s nor %s: the machine''s default', [Size, Hd2xAnswer, FullAnswer]));
+    end;
+
+    if SizeGiven then
+      Log(Format('HD art: %s, as /HDSIZE=%s names', [SizeName(Hd2x), Size]))
+    else
+      Log(Format('HD art: %s, the machine''s default', [SizeName(Hd2x)]));
+  end;
+
+  FullButton.Checked := not Hd2x;
+  Hd2xButton.Checked := Hd2x;
+end;
+
 procedure InitializeWizard;
 var
   Given, Answer, Hd: String;
@@ -779,6 +1066,7 @@ begin
   // HD by default where its art and movies show; /HD=NO leaves it out, any other answer has it anyway.
   Hd := Uppercase(ExpandConstant('{param:HD|}'));
   HdBox.Checked := (Hd <> NoAnswer) and ((Hd <> '') or (VulkanLacks = ''));
+  ChooseHdSize;
   DownloadFolder := DownloadFolderDefault;
   // The player's copy: the folder the game was last pointed at, else the one the original's installer recorded.
   CopyFolder := RememberedGameFolder;
@@ -831,6 +1119,11 @@ begin
 
   GameDownload.OnClick := @GameChosen;
   GameCopy.OnClick := @GameChosen;
+  // After the answers are set: a control's click comes with a change made here too.
+  HdBox.OnClick := @HdChosen;
+  FullButton.OnClick := @SizeChosen;
+  Hd2xButton.OnClick := @SizeChosen;
+  HdChosen(HdBox);
 
   // An update of a copy the setup didn't install goes into that copy, whatever install the setup made before.
   if FilesOnly then
@@ -1917,8 +2210,10 @@ begin
     else
       Result := Result + FmtMessage(CustomMessage('ReadyGame'), [ShownGB('{#GameBytes}')]);
 
-    if HdBox.Checked then
-      Result := Result + NewLine + Space + FmtMessage(CustomMessage('ReadyHd'), [ShownGB('{#HdBytes}')]);
+    if HdBox.Checked and UsesHd2x then
+      Result := Result + NewLine + Space + FmtMessage(CustomMessage('ReadyHdSmaller'), [ShownGB(ChosenHdBytes)])
+    else if HdBox.Checked then
+      Result := Result + NewLine + Space + FmtMessage(CustomMessage('ReadyHd'), [ShownGB(ChosenHdBytes)]);
   end;
 
   if MemoTasksInfo <> '' then
@@ -1926,10 +2221,12 @@ begin
 end;
 
 // A new install leaves the player's answers for the game (update/MCContentUpdater.h's ChosenFile): the game's data
-// always, HD when ticked. The game's first start downloads them; HD OPTIONS changes them later.
+// always, HD when ticked; where the setup offers the smaller (2x) art, HD's size too: "hd2x" with "hd" for the
+// smaller, and who picked it ("picked": the machine's default, or the player's). The game's first start downloads
+// them; HD OPTIONS changes them later.
 procedure LeaveAnswers(const Folder: String);
 var
-  Path, Sets: String;
+  Path, Sets, Answers: String;
 begin
   Path := AddBackslash(Folder) + '{#ChosenFolder}\{#ChosenFile}';
   Sets := '"game"';
@@ -1937,8 +2234,16 @@ begin
   if HdBox.Checked then
     Sets := Sets + ', "hd"';
 
-  if ForceDirectories(ExtractFileDir(Path)) and SaveStringToFile(Path, '{"format": 1, "sets": [' + Sets + ']}', False) then
-    Log(Format('The answers for the game: %s', [Sets]))
+  if HdBox.Checked and UsesHd2x then
+    Sets := Sets + ', "hd2x"';
+
+  if HdBox.Checked and OffersHd2x then
+    Answers := '{"format": 1, "sets": [' + Sets + '], "picked": "' + PickedBy + '"}'
+  else
+    Answers := '{"format": 1, "sets": [' + Sets + ']}';
+
+  if ForceDirectories(ExtractFileDir(Path)) and SaveStringToFile(Path, Answers, False) then
+    Log(Format('The answers for the game: %s', [Answers]))
   else
     Log(Format('Couldn''t write the answers for the game, %s', [Path]));
 end;

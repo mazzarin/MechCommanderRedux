@@ -234,6 +234,11 @@ namespace
         {
             std::shared_ptr<MCHdArchive> Archive;
             std::string Prefix;
+            /// <summary>
+            /// Port-only (ArchivedFrames): its numbered frames, counted once: a version 2 archive's by their keys, a
+            /// thousand looks, which each ask again would repeat.
+            /// </summary>
+            std::optional<int32_t> Frames = std::nullopt;
         };
 
         /// <summary>The archive its frames are in (found once: ArchiveOf; none there: null).</summary>
@@ -472,8 +477,9 @@ namespace
 
     /// <summary>
     /// Port-only (MCHdArt::StartHold, SPEC-pack-v2.md's Memory): the hold: whether it holds now (a mission's, until let
-    /// go), the archives it reads in turn (each version 2 archive once while it holds: Queued), the first one's next stream
-    /// to look at, its generation (a run read across a let-go keeps nothing), how many reads it made, and when it began.
+    /// go), the archives it reads in turn (each it keeps any of once while it holds, MCHdArchive::HoldBytes: Queued), the
+    /// first one's next piece to look at, its generation (a run read across a let-go keeps nothing), how many reads it
+    /// made, and when it began.
     /// </summary>
     struct HoldQueue
     {
@@ -502,6 +508,11 @@ namespace
         /// several at once, as the readers are free, rather than HoldReadsAtOnce.
         /// </summary>
         bool Loading = false;
+        /// <summary>
+        /// Port-only (MCHdArt::LoadBarPercent): the most of the loading bar shown since the load began: the fill's share
+        /// falls as the load hands the hold more archives, and the bar never goes back.
+        /// </summary>
+        int32_t BarShown = 0;
     };
 
     /// <summary>
@@ -1258,15 +1269,22 @@ namespace
     /// <summary>
     /// The frames <paramref name="folder"/>'s archive holds: one past the highest numbered frame (not an in-between or
     /// turn middle) among its entries (a packet may skip a number: an empty frame of the original's), as the archive
-    /// found them when it opened (MCHdArchive::FrameCounts). 0 outside an archive.
+    /// found them when it opened (MCHdArchive::FrameCounts), counted once a folder (FrameFolder::InArchive::Frames). 0
+    /// outside an archive.
     /// </summary>
     int32_t ArchivedFrames(FrameFolder& folder)
     {
-        const FrameFolder::InArchive& archived = ArchiveOf(folder);
+        ArchiveOf(folder);
+        FrameFolder::InArchive& archived = *folder.Archived;
 
         if (archived.Archive == nullptr)
         {
             return 0;
+        }
+
+        if (archived.Frames.has_value())
+        {
+            return *archived.Frames;
         }
 
         // A version 2 archive keeps no names: its numbered frames are found by their keys.
@@ -1282,11 +1300,13 @@ namespace
                 }
             }
 
+            archived.Frames = count;
             return count;
         }
 
         const auto found = archived.Archive->FrameCounts.find(Upper(archived.Prefix));
-        return found == archived.Archive->FrameCounts.end() ? 0 : found->second;
+        archived.Frames = found == archived.Archive->FrameCounts.end() ? 0 : found->second;
+        return *archived.Frames;
     }
 
     /// <summary>Whether <paramref name="entry"/> unpacks to no more than a frame file may be (MaxHdfBytes).</summary>
@@ -2840,6 +2860,26 @@ namespace
         }
 
         return bytes;
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::LoadFillShare): what the hold has read of the bytes it was handed (HoldRun counts a run's
+    /// pieces read or not, so it reaches them): none while a load has handed it nothing yet, all once it met its room or
+    /// was let go of (it reads no more), or outside a load when it was handed none. Call with ReadAhead::Lock held.
+    /// </summary>
+    double FillShareOf(const HoldQueue& holding)
+    {
+        if (holding.Full || !holding.On)
+        {
+            return 1.0;
+        }
+
+        if (holding.QueuedBytes == 0)
+        {
+            return holding.Loading ? 0.0 : 1.0;
+        }
+
+        return std::min(1.0, static_cast<double>(holding.ReadBytes) / static_cast<double>(holding.QueuedBytes));
     }
 
     /// <summary>
@@ -5058,7 +5098,7 @@ void MCHdArt::ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as)
     for (const PacketAhead& packet : packets)
     {
         const uint32_t index = FolderIndex(PackFolder() / packet.Folder, Naming::Number);
-        const int32_t count = packet.Frames.value_or(ArchivedFrames(TheState().Folders.at(index)));
+        const int32_t count = packet.Frames.has_value() ? *packet.Frames : ArchivedFrames(TheState().Folders.at(index));
 
         for (int32_t frame = 0; frame < count; ++frame)
         {
@@ -5812,6 +5852,7 @@ void MCHdArt::StartLoadFill()
     // A hold already on (a load begun without the last mission's let go) holds what it holds and takes this load's too.
     BeginHolding(holding);
     holding.Loading = true;
+    holding.BarShown = 0;
     ahead.Changed.notify_all();
 }
 
@@ -5838,39 +5879,40 @@ void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - ahead.Holding.Began).count()));
     }
 
+    const bool filled = ahead.Holding.Loading;
     ahead.Holding.Loading = false;
+    lock.unlock();
+
+    // The bar shown whole once the fill is done: its last showing while it waited fell short of it.
+    if (filled)
+    {
+        shown();
+    }
 }
 
 double MCHdArt::LoadFillShare()
 {
     ReadAhead& ahead = TheState().Ahead;
     std::scoped_lock lock(ahead.Lock);
-    const HoldQueue& holding = ahead.Holding;
-
-    if (holding.QueuedBytes == 0 || holding.Full || !HoldPending(ahead))
-    {
-        return 1.0;
-    }
-
-    return std::min(1.0, static_cast<double>(holding.ReadBytes) / static_cast<double>(holding.QueuedBytes));
+    return FillShareOf(ahead.Holding);
 }
 
 int32_t MCHdArt::LoadBarPercent(int32_t progress)
 {
     constexpr int32_t Whole = 100;
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    HoldQueue& holding = ahead.Holding;
 
+    if (!holding.Loading)
     {
-        ReadAhead& ahead = TheState().Ahead;
-        std::scoped_lock lock(ahead.Lock);
-
-        if (!ahead.Holding.Loading)
-        {
-            return progress;
-        }
+        return progress;
     }
 
     const int32_t steps = std::clamp(progress, 0, Whole) * (Whole - LoadFillBarPercent) / Whole;
-    return steps + static_cast<int32_t>(LoadFillShare() * LoadFillBarPercent);
+    const int32_t percent = steps + static_cast<int32_t>(FillShareOf(holding) * LoadFillBarPercent);
+    holding.BarShown = std::max(holding.BarShown, percent);
+    return holding.BarShown;
 }
 
 void MCHdArt::LetGoHold()

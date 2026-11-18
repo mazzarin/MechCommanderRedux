@@ -1017,16 +1017,17 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only (SPEC-memory.md's "Under the loading bar"): a mission's load begins: when the hold is wanted, it holds
-    /// from now each archive the load opens or asks for (<see cref="OpenArchivesAhead"/>), not those the last missions
-    /// left open, its reads going several at once beside the load's, as readers are free of the load's own, until
-    /// <see cref="FinishLoadFill"/>.
+    /// from now each archive the load opens or asks for (<see cref="OpenArchivesAhead"/>), one an earlier mission left
+    /// open too, but none the load doesn't ask for, its reads going several at once beside the load's, as readers are
+    /// free of the load's own, until <see cref="FinishLoadFill"/>.
     /// </summary>
     void StartLoadFill();
 
     /// <summary>
     /// Port-only (the loading bar's last stretch): waits until the hold has read every archive the load handed it (or
     /// was let go of, or is full), calling <paramref name="shown"/> every <see cref="LoadFillShowEvery"/> meanwhile so the
-    /// bar moves and the screen stays live; from then on the hold reads below everything else, a run at a time.
+    /// bar moves and the screen stays live, and once more after, the bar whole; from then on the hold reads below
+    /// everything else, a run at a time.
     /// </summary>
     void FinishLoadFill(const std::function<void()>& shown);
 
@@ -1035,7 +1036,8 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only: the share of the load's fill read (<see cref="StartLoadFill"/>): the bytes the hold has read over those
-    /// it was handed, 1 when it was handed none.
+    /// it was handed; 0 while a load has handed it none yet, 1 once it's full or let go of, or outside a load when it
+    /// was handed none.
     /// </summary>
     double LoadFillShare();
 
@@ -1048,8 +1050,9 @@ namespace MCHdArt
     /// <summary>
     /// Port-only (the loading bar): the bar's percent for the load's own <paramref name="progress"/>: while a load fills
     /// (<see cref="StartLoadFill"/> to <see cref="FinishLoadFill"/>) its steps take the bar up to
-    /// <see cref="LoadFillBarPercent"/> short of the end and the fill's share (<see cref="LoadFillShare"/>) the rest;
-    /// <paramref name="progress"/> itself otherwise.
+    /// <see cref="LoadFillBarPercent"/> short of the end and the fill's share (<see cref="LoadFillShare"/>) the rest, and
+    /// the bar never goes back (the share falls as the load hands the hold more); <paramref name="progress"/> itself
+    /// otherwise.
     /// </summary>
     int32_t LoadBarPercent(int32_t progress);
 

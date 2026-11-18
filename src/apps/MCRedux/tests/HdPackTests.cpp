@@ -2334,51 +2334,66 @@ TEST_CASE("hd art: a packet read ahead with its turn middles has them found at t
 /// <summary>
 /// Port-only (SPEC-first-use.md: the camera's surroundings): a packet read ahead without its frames' count (an object's,
 /// whose shape isn't loaded) has every frame its archive holds read with its in-betweens, past a number the packet
-/// skips (an empty frame of the original's), and each is found at its draw without a read.
+/// skips (an empty frame of the original's), and each is found at its draw without a read; in a version 2 archive (its
+/// frames counted by their keys) as in today's, and asked again, counted as before.
 /// </summary>
 TEST_CASE("hd art: a packet read ahead without its count reads every frame its archive holds, past a number skipped")
 {
     constexpr int32_t Skipped = 2;
-    const ScratchFolder scratch("packet-ahead-count");
-    std::vector<ArchiveEntry> entries;
-
-    for (const AheadKey& key : AheadKeys())
-    {
-        if (key.first != Skipped)
-        {
-            entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
-        }
-    }
-
-    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
-    std::filesystem::create_directories((scratch.Path() / folder).parent_path());
-    WriteBytes(std::filesystem::path(scratch.Path() / folder).concat(".hda"), BuildArchive(entries));
     const int previous = GHdArt;
     GHdArt = 1;
-    MCHdArt::SetPackFolder(scratch.Path());
 
-    const size_t ahead = MCHdArt::FramesReadAhead();
-    MCHdArt::ReadPacketAhead(folder);
-    MCHdArt::WaitForReadAhead();
-    MCHdArt::KeepReadAhead();
-    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>((AheadFrames - 1) * AheadSteps));
-    const size_t read = MCHdArt::FramesRead();
-
-    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    for (const bool version2 : {false, true})
     {
-        for (int32_t step = 0; step < AheadSteps && frame != Skipped; ++step)
+        MCTest::Scope scope(version2 ? "version 2" : "version 1");
+        const ScratchFolder scratch(version2 ? "packet-ahead-count-v2" : "packet-ahead-count");
+        std::vector<ArchiveEntry> entries;
+
+        for (const AheadKey& key : AheadKeys())
         {
-            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
-            const std::shared_ptr<const MCHdArt::Frame> found =
-                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
-            REQUIRE(found != nullptr);
-            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+            if (key.first != Skipped)
+            {
+                entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
+            }
         }
+
+        const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+        std::filesystem::create_directories((scratch.Path() / folder).parent_path());
+        WriteBytes(std::filesystem::path(scratch.Path() / folder).concat(".hda"),
+                   version2 ? BuildVersion2Archive(entries) : BuildArchive(entries));
+        MCHdArt::SetPackFolder(scratch.Path());
+
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::ReadPacketAhead(folder);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        const size_t counted = ahead + static_cast<size_t>((AheadFrames - 1) * AheadSteps);
+        CHECK_EQ(MCHdArt::FramesReadAhead(), counted);
+        const size_t read = MCHdArt::FramesRead();
+
+        for (int32_t frame = 0; frame < AheadFrames; ++frame)
+        {
+            for (int32_t step = 0; step < AheadSteps && frame != Skipped; ++step)
+            {
+                MCTest::Scope frameScope(std::format("frame {}", AheadName({frame, step})));
+                const std::shared_ptr<const MCHdArt::Frame> found =
+                    MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+                REQUIRE(found != nullptr);
+                CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+            }
+        }
+
+        CHECK_EQ(MCHdArt::FramesRead(), read);
+
+        // Asked again (its count kept from the first ask): every frame is kept, so none is read again.
+        MCHdArt::ReadPacketAhead(folder);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), counted);
+        MCHdArt::SetPackFolder({});
     }
 
-    CHECK_EQ(MCHdArt::FramesRead(), read);
     GHdArt = previous;
-    MCHdArt::SetPackFolder({});
 }
 
 /// <summary>
@@ -3764,13 +3779,14 @@ TEST_CASE("hd art: the hold is let go of when memory goes short, at a mission's 
 /// <summary>
 /// Port-only (SPEC-memory.md's fill): the hold starts with a mission's load (MCHdArt::StartLoadFill), holding every
 /// archive the load opens, and the load ends once it has read them (MCHdArt::FinishLoadFill, the bar shown as it
-/// waits): the bar's last LoadFillBarPercent is the hold's share read, full while it has nothing to read, the bar as the
-/// load says once it's done.
+/// waits and once more, whole): the bar's last LoadFillBarPercent is the hold's share read, none before the load hands
+/// it anything, and the bar never goes back as the load hands it more; the bar as the load says once it's done.
 /// </summary>
 TEST_CASE("hd art: the load's fill holds what the load opens before the load ends, the bar's last quarter the hold's")
 {
     constexpr int32_t Part = 40;
     constexpr int32_t Whole = 100;
+    constexpr int32_t Steps = Whole - MCHdArt::LoadFillBarPercent;
     const ReaderScope readers({.Readers = 2, .Hold = true});
     const int previous = GHdArt;
     GHdArt = 1;
@@ -3779,12 +3795,16 @@ TEST_CASE("hd art: the load's fill holds what the load opens before the load end
     CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part);
 
     MCHdArt::StartLoadFill();
-    CHECK_EQ(MCHdArt::LoadBarPercent(0), MCHdArt::LoadFillBarPercent);
-    CHECK_EQ(MCHdArt::LoadBarPercent(Part),
-             Part * (Whole - MCHdArt::LoadFillBarPercent) / Whole + MCHdArt::LoadFillBarPercent);
-    CHECK_EQ(MCHdArt::LoadBarPercent(Whole), Whole);
+    CHECK_EQ(MCHdArt::LoadFillShare(), 0.0);
+    CHECK_EQ(MCHdArt::LoadBarPercent(0), 0);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part * Steps / Whole);
+    CHECK_EQ(MCHdArt::LoadBarPercent(Whole), Steps);
     pack.Open();
-    MCHdArt::FinishLoadFill([] {});
+    // The load's steps done and its archives handed, their share not all read: the bar stays where it was.
+    CHECK(MCHdArt::LoadBarPercent(Part) >= Steps);
+    int32_t shown = 0;
+    MCHdArt::FinishLoadFill([&shown] { ++shown; });
+    CHECK(shown >= 1);
     CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
     CHECK_EQ(MCHdArt::LoadFillShare(), 1.0);
     CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part);

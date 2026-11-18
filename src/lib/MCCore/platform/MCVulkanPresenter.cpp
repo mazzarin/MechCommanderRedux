@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include <cstdio>
+#include <filesystem>
 #include "platform/MCVulkanPresenter.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCVulkanShaders.h"
@@ -832,6 +834,52 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     {
         presenter->_ThirdImage = true;
         presenter->AskFramesInFlight(vsync);
+
+        // PROBE: the pan's pacing trial (pan-pacing-probe): the mode and the per-frame log, by files beside the program.
+        if (const char* const base = SDL_GetBasePath(); base != nullptr)
+        {
+            const std::filesystem::path folder(base);
+            std::error_code missing;
+            presenter->_ProbeMode = std::filesystem::exists(folder / "pacing-hold-one", missing) ? 1
+                                    : std::filesystem::exists(folder / "pacing-drain", missing)  ? 2
+                                                                                                 : 0;
+
+            if (const SDL_DisplayMode* const mode =
+                    SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(presenter->_Window.get()));
+                mode != nullptr && mode->refresh_rate > 0.0f)
+            {
+                constexpr float LockedRefreshes = 1.5f;
+                presenter->_ProbeLockedMs = LockedRefreshes * 1000.0f / mode->refresh_rate;
+            }
+
+            if (std::filesystem::exists(folder / "pacing-probe", missing))
+            {
+                SDL_Time now = 0;
+                SDL_DateTime date{};
+
+                if (SDL_GetCurrentTime(&now) && SDL_TimeToDateTime(now, &date, true))
+                {
+                    const std::filesystem::path csv =
+                        folder / std::format("pacing-{:02}{:02}-{:02}{:02}{:02}.csv", date.month, date.day, date.hour,
+                                             date.minute, date.second);
+                    presenter->_ProbeFile = std::fopen(csv.string().c_str(), "w");
+
+                    if (presenter->_ProbeFile == nullptr)
+                    {
+                        SDL_Log("MCVulkanPresenter: PROBE can't write %s", csv.string().c_str());
+                    }
+                    else
+                    {
+                        std::fprintf(presenter->_ProbeFile, "frame,t_ms,frames_in_flight,mode,run_wait_ms,hold_ms,"
+                                                            "image_ms,unfinished,sent,held,age_ms,drained\n");
+                    }
+                }
+            }
+
+            presenter->_ProbeStart = SDL_GetPerformanceCounter();
+            SDL_Log("MCVulkanPresenter: PROBE mode %d, locked wait %.1f ms, log %d", presenter->_ProbeMode,
+                    presenter->_ProbeLockedMs, presenter->_ProbeFile != nullptr ? 1 : 0);
+        }
     }
 
     if (!SDL_ClaimWindowForGPUDevice(device, presenter->_Window.get()))
@@ -1006,6 +1054,14 @@ MCVulkanPresenter::~MCVulkanPresenter()
     }
 
     _Sent.clear();
+    _ProbeSentAt.clear();
+
+    // PROBE: the per-frame log ends.
+    if (_ProbeFile != nullptr)
+    {
+        std::fclose(_ProbeFile);
+        _ProbeFile = nullptr;
+    }
 
     if (_Renderer != nullptr && MCRenderer::Hardware() == _Renderer)
     {
@@ -1984,12 +2040,25 @@ std::expected<void, std::string> MCVulkanPresenter::HoldFramesOnGpu()
     // With three images SDL lets three frames be on the GPU (ThirdImageFrames): the game waits as two let it, so what
     // it shows is no older than with two. With two (vsync off) SDL's own wait as it takes the image is for the same
     // frame, which it then finds done.
-    while (_Sent.size() >= FramesHeldOnGpu)
+    // PROBE: one frame held with three images (pacing-hold-one), or for this frame alone (pacing-drain).
+    const bool holdOne =
+        _FramesInFlight == ThirdImageFrames && (_ProbeMode == 1 || (_ProbeMode == 2 && _ProbeDrainNow));
+    const size_t held = holdOne ? size_t{1} : FramesHeldOnGpu;
+    _ProbeAgeMs = -1.0;
+
+    while (_Sent.size() >= held)
     {
         SDL_GPUFence* const oldest = _Sent.front();
         const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &oldest, 1);
         SDL_ReleaseGPUFence(_Device.get(), oldest);
         _Sent.erase(_Sent.begin());
+
+        if (!_ProbeSentAt.empty())
+        {
+            _ProbeAgeMs = static_cast<double>(SDL_GetPerformanceCounter() - _ProbeSentAt.front()) * 1000.0 /
+                          static_cast<double>(SDL_GetPerformanceFrequency());
+            _ProbeSentAt.erase(_ProbeSentAt.begin());
+        }
 
         if (!waited)
         {
@@ -2086,18 +2155,58 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
             }
         } waited{_LastImageWaitMs, waitStart};
 
-        if (auto held = HoldFramesOnGpu(); !held)
+        // PROBE: the frames sent whose GPU work isn't done as this one is shown, the drain's trigger (the last frame's
+        // wait under 1 ms after one of 1.5 refreshes or more), and the two waits apart.
+        constexpr float ShortWaitMs = 1.0f;
+        const size_t sent = _Sent.size();
+        int64_t unfinished = 0;
+
+        for (SDL_GPUFence* const fence : _Sent)
         {
-            SDL_SubmitGPUCommandBuffer(&commands);
-            return held;
+            unfinished += SDL_QueryGPUFence(_Device.get(), fence) ? 0 : 1;
         }
 
-        if (!SDL_WaitAndAcquireGPUSwapchainTexture(&commands, _Window.get(), &swapchain, &swapchainWidth,
-                                                   &swapchainHeight))
+        MCFrameLog::Count("PROBE frames unfinished at the acquire", unfinished);
+        _ProbeDrainNow = _ProbeWaitBeforeLastMs >= _ProbeLockedMs && _LastImageWaitMs < ShortWaitMs;
+        _ProbeWaitBeforeLastMs = _LastImageWaitMs;
+        const auto sinceMs = [](uint64_t from, uint64_t to)
+        { return static_cast<double>(to - from) * 1000.0 / static_cast<double>(SDL_GetPerformanceFrequency()); };
+
+        if (MCFrameLog::Scope hold("present.hold"); true)
         {
-            SDL_SubmitGPUCommandBuffer(&commands);
-            return std::unexpected(SdlError("SDL_WaitAndAcquireGPUSwapchainTexture"));
+            if (auto held = HoldFramesOnGpu(); !held)
+            {
+                SDL_SubmitGPUCommandBuffer(&commands);
+                return held;
+            }
         }
+
+        const uint64_t holdEnd = SDL_GetPerformanceCounter();
+
+        if (MCFrameLog::Scope image("present.image"); true)
+        {
+            if (!SDL_WaitAndAcquireGPUSwapchainTexture(&commands, _Window.get(), &swapchain, &swapchainWidth,
+                                                       &swapchainHeight))
+            {
+                SDL_SubmitGPUCommandBuffer(&commands);
+                return std::unexpected(SdlError("SDL_WaitAndAcquireGPUSwapchainTexture"));
+            }
+        }
+
+        const uint64_t imageEnd = SDL_GetPerformanceCounter();
+        const bool drained = _ProbeMode == 2 && _ProbeDrainNow && _FramesInFlight == ThirdImageFrames;
+        MCFrameLog::Count("PROBE drains", drained ? 1 : 0);
+
+        if (_ProbeFile != nullptr)
+        {
+            std::fprintf(_ProbeFile, "%llu,%.3f,%u,%d,%.3f,%.3f,%.3f,%lld,%zu,%zu,%.3f,%d\n",
+                         static_cast<unsigned long long>(_ProbeFrame), sinceMs(_ProbeStart, waitStart), _FramesInFlight,
+                         _ProbeMode, _ProbeRunWaitMs, sinceMs(waitStart, holdEnd), sinceMs(holdEnd, imageEnd),
+                         static_cast<long long>(unfinished), sent, sent - _Sent.size(), _ProbeAgeMs, drained ? 1 : 0);
+        }
+
+        _ProbeFrame++;
+        _ProbeRunWaitMs = 0.0;
     }
 
     // No swapchain image (a minimised or hidden window): the frame is composited but not shown.
@@ -2148,6 +2257,7 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
         }
 
         _Sent.push_back(fence);
+        _ProbeSentAt.push_back(SDL_GetPerformanceCounter());
     }
     else if (!SDL_SubmitGPUCommandBuffer(&commands))
     {
@@ -2243,7 +2353,11 @@ std::expected<void, std::string> MCVulkanPresenter::FinishFrames()
     if (_Running != nullptr)
     {
         MCFrameLog::Scope part("present.wait");
+        const uint64_t runWaitStart = SDL_GetPerformanceCounter();
         _Thread.Wait();
+        // PROBE: the wait for the render thread, for the per-frame log.
+        _ProbeRunWaitMs = static_cast<double>(SDL_GetPerformanceCounter() - runWaitStart) * 1000.0 /
+                          static_cast<double>(SDL_GetPerformanceFrequency());
         TakeBack();
     }
 

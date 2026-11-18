@@ -288,6 +288,25 @@ private:
     /// <summary>Port-only (with the third image): the fences of the frames presented last, oldest first.</summary>
     std::vector<SDL_GPUFence*> _Sent;
     /// <summary>
+    /// PROBE (pan-pacing-probe, never merged): the A10 pan's pacing trial, set by files beside the program. 0: as
+    /// shipped; 1 (pacing-hold-one): one frame held on the GPU with three images; 2 (pacing-drain): one frame held
+    /// for one frame after the locked pattern (a wait of 1.5 refreshes or more, then one under 1 ms).
+    /// </summary>
+    int _ProbeMode = 0;
+    /// <summary>PROBE: each frame shown, to pacing-&lt;time&gt;.csv beside the program (pacing-probe beside it).</summary>
+    std::FILE* _ProbeFile = nullptr;
+    /// <summary>PROBE: when each fence in _Sent was submitted (performance counter), oldest first.</summary>
+    std::vector<uint64_t> _ProbeSentAt;
+    /// <summary>PROBE: the locked pattern's long wait (1.5 refreshes, ms), the wait before last, this frame's drain.</summary>
+    float _ProbeLockedMs = 25.0f;
+    float _ProbeWaitBeforeLastMs = 0.0f;
+    bool _ProbeDrainNow = false;
+    /// <summary>PROBE: the age of the last fence the hold waited for as the wait ended (ms; -1: none), the run's wait.</summary>
+    double _ProbeAgeMs = -1.0;
+    double _ProbeRunWaitMs = 0.0;
+    uint64_t _ProbeStart = 0;
+    uint64_t _ProbeFrame = 0;
+    /// <summary>
     /// Port-only (with the third image): waits for the frame before last's GPU work (_Sent); an error when the wait
     /// fails (a lost device).
     /// </summary>

@@ -488,6 +488,7 @@
     <ClCompile Include="sprite\MCPUAppearanceType.cpp" />
     <ClCompile Include="sprite\MCSceneLights.cpp" />
     <ClCompile Include="sprite\MCShape.cpp" />
+    <ClCompile Include="sprite\MCShapeFile.cpp" />
     <ClCompile Include="sprite\MCSpriteManager.cpp" />
     <ClCompile Include="sprite\MCSpriteMath.cpp" />
     <ClCompile Include="sprite\MCSpriteTree.cpp" />
@@ -986,6 +987,7 @@
     <ClInclude Include="sprite\MCPUAppearanceType.h" />
     <ClInclude Include="sprite\MCSceneLights.h" />
     <ClInclude Include="sprite\MCShape.h" />
+    <ClInclude Include="sprite\MCShapeFile.h" />
     <ClInclude Include="sprite\MCSpriteManager.h" />
     <ClInclude Include="sprite\MCSpriteMath.h" />
     <ClInclude Include="sprite\MCSpriteTree.h" />

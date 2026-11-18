@@ -301,6 +301,28 @@ namespace MCHdArt
     /// </summary>
     std::expected<PackShapeTable, std::string_view> StrippedShapeTable(const std::filesystem::path& folder);
 
+    /// <summary>
+    /// Port-only: the pack's folder of the original's shape file <paramref name="gamePath"/> (as the game opens it), or
+    /// of its packet <paramref name="packet"/> when it's a PAK: <c>shapes/&lt;its path, in lower case&gt;[/&lt;packet&gt;]</c>
+    /// in <c>shapes.hda</c>, whose shape table record holds the file's (or packet's) bytes whole.
+    /// </summary>
+    std::filesystem::path ShapeFileFolder(std::string_view gamePath, std::optional<int32_t> packet = std::nullopt);
+
+    /// <summary>
+    /// Port-only: the original's shape file <paramref name="gamePath"/> (its packet <paramref name="packet"/> of a
+    /// PAK) as the pack holds it (ShapeFileFolder), so its loader reads nothing of the original's with HD art's numbered
+    /// folders drawn; none when they aren't, the pack lacks it, or the game's file isn't <paramref name="size"/> bytes
+    /// as the pack's is (another file than the pack was made from: a mod's).
+    /// </summary>
+    std::optional<std::vector<uint8_t>> PackShapeFile(std::string_view gamePath, std::optional<int32_t> packet,
+                                                      uint32_t size);
+
+    /// <summary>
+    /// Port-only: tells HD art its shape loader (MCShapeFile) read <paramref name="bytes"/>, from the pack or from the
+    /// game's files (the guard noted that read there), so finding their HD frames by their hash notes no read.
+    /// </summary>
+    void NoteShapeLoaded(std::span<const uint8_t> bytes);
+
     /// <summary>Port-only: whether <paramref name="table"/> is an attached stripped shape's (MCShape::Stripped).</summary>
     bool Stripped(std::span<const uint8_t> table);
 
@@ -513,6 +535,10 @@ namespace MCHdArt
     /// <paramref name="what"/> (an example), while the guard is on with a version 2 pack drawn (GuardingOriginalReads).
     /// </summary>
     void NoteOriginalRead(std::string_view kind, std::string_view what);
+
+    /// <summary>Port-only: the guard's kind of read for a shape table found by its bytes' hash (FindShape's).</summary>
+    inline constexpr std::string_view ShapeHashRead =
+        "a shape table read from the original's files, found by its bytes' hash";
 
     /// <summary>Port-only: one kind of read the guard noted: how many, and the first few.</summary>
     struct GuardedRead

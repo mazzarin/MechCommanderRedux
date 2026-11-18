@@ -1581,7 +1581,48 @@ namespace
         return {static_cast<int32_t>(own.MinX - box.MinX), static_cast<int32_t>(own.MinY - box.MinY),
                 static_cast<int32_t>(box.MaxX - box.MinX), static_cast<int32_t>(box.MaxY - box.MinY)};
     }
+
+    /// <summary>
+    /// The pack's in-between <paramref name="step"/> of <paramref name="table"/>'s frame <paramref name="at"/> toward
+    /// <paramref name="next"/>, drawn over <paramref name="box"/>, where the pack has it at that size.
+    /// </summary>
+    auto PackInBetween(std::span<const uint8_t> table, int32_t at, int32_t next, int32_t step, const FrameBox& box)
+        -> std::optional<MCInBetween>
+    {
+        const std::optional<FrameBox> own = BoxOf(table, at, false);
+
+        if (!own.has_value())
+        {
+            return std::nullopt;
+        }
+
+        const MCInBetweenBounds bounds = BoundsRound(*own, box);
+
+        if (MCHdArt::Find(table, at, bounds.Width, bounds.Height, step) == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        return MCInBetween{at, next, step, bounds};
+    }
 } // namespace
+
+auto MCPartInBetween(std::span<const uint8_t> table, const MCLegsStep& step) -> std::optional<MCInBetween>
+{
+    const int32_t count = VfxShapeCount(table);
+    const auto inTable = [count](int32_t frame) { return frame >= 0 && frame < count; };
+
+    if (!inTable(step.From) || !inTable(step.To))
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<FrameBox> from = BoxOf(table, step.From, false);
+    const std::optional<FrameBox> to = BoxOf(table, step.To, false);
+    return from.has_value() && to.has_value()
+               ? PackInBetween(table, step.From, step.To, step.Step, Together(*from, *to))
+               : std::nullopt;
+}
 
 auto MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, bool backwards, bool loops)
     -> std::optional<MCLegsStep>
@@ -1695,26 +1736,14 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
     // The pack's in-between of frame at named step over box, if it has it.
     const auto found = [&](int32_t at, int32_t next, int32_t step, const FrameBox& box) -> std::optional<MCInBetween>
     {
-        const std::optional<FrameBox> own = BoxOf(table, at, false);
+        std::optional<MCInBetween> between = PackInBetween(table, at, next, step, box);
 
-        if (!own.has_value())
-        {
-            return std::nullopt;
-        }
-
-        const MCInBetweenBounds bounds = BoundsRound(*own, box);
-
-        if (MCHdArt::Find(table, at, bounds.Width, bounds.Height, step) == nullptr)
-        {
-            return std::nullopt;
-        }
-
-        if (middle.has_value())
+        if (between.has_value() && middle.has_value())
         {
             DrawnLegs->Degrees = middle->Degrees;
         }
 
-        return MCInBetween{at, next, step, bounds};
+        return between;
     };
 
     // On the way to the next frame: the in-between over both frames' boxes (or their turn middles'). Only where the GPU
@@ -1749,6 +1778,29 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
 
     const std::optional<FrameBox> box = boxOf(frame);
     return {frame, box.has_value() ? found(frame, frame, middle->Step, *box) : std::nullopt};
+}
+
+auto MCMechActor::UpperInBetween(const MCShape& part, int32_t frame, bool asPlayed) const -> std::optional<MCInBetween>
+{
+    // The upper body steps with the legs (Update), but on its own while it plays the gun change or holds its guns up.
+    if (!asPlayed || InCombatMode || CombatModeRaising || CombatModeLowering || !MCHdArt::Active() ||
+        MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        return std::nullopt;
+    }
+
+    const std::span<const uint8_t> table = part.FrameList();
+    const auto frames = static_cast<int32_t>(MechTree->Gestures[CurrentGesture].NumFrames);
+
+    // Only while the legs are on their way to their next frame of the gesture: past a transition's end the next
+    // gesture's frames come next (a mirrored part's set afresh by FollowStride), so none toward this one's.
+    if (!LegsStepNow(CurrentFrame[MCMechPart::Legs], frames, frames).has_value())
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<MCLegsStep> step = LegsStepNow(frame, frames, VfxShapeCount(table));
+    return step.has_value() ? MCPartInBetween(table, *step) : std::nullopt;
 }
 
 auto MCMechActor::DrawnFacing(MCBattleMech& mech) const -> float
@@ -2008,9 +2060,9 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     ElementList().OpenGroup(partsDepth, true);
     // Port-only (HD lighting's headlights): the parts stand on the mech's feet.
     const std::optional<float> feet = MCSceneLights::FeetRow(*this, mech->Position);
-    // Port-only (HD art): the legs' in-between as drawn (a turn middle, or on the way to the next frame), which their sun
-    // shadow casts too.
-    std::optional<MCInBetween> legsMiddle;
+    // Port-only (HD art): each part's in-between as drawn (the legs' turn middle, or a part on the way to its next
+    // frame), which its sun shadow casts too.
+    MCMechParts<std::optional<MCInBetween>> drawnBetween{};
 
     for (int32_t i = 0; i < MechPartCount; i++)
     {
@@ -2073,28 +2125,36 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             continue;
         }
 
-        // Port-only (HD art): the legs as the pack's in-between, a turn middle or the way to the next frame (drawn as
-        // they play, the frame before when played backwards).
+        // Port-only (HD art): the legs as the pack's in-between, a turn middle or the way to the next frame; the torso
+        // and arms the way to their next frame at the legs' step (drawn as they play, the frame before when played
+        // backwards).
+        const bool asPlayed = drawnShape[part] == shapes[part] && drawnFrame[part] == CurrentFrame[part];
+        // An arm blown off flies as the frame it plays, not the one an in-between (played backwards) is drawn from.
+        const int32_t playedFrame = drawnFrame[part];
+
         if (part == MCMechPart::Legs)
         {
-            const bool asPlayed = drawnShape[part] == shapes[part] && drawnFrame[part] == CurrentFrame[part];
             const MCLegsDrawn legs =
                 LegsInBetween(DrawnGesture(), drawnFrame[part], facing, *drawnShape[part], asPlayed);
             drawnFrame[part] = legs.Frame;
-            legsMiddle = legs.InBetween;
+            drawnBetween[part] = legs.InBetween;
+        }
+        else if (const std::optional<MCInBetween> between =
+                     UpperInBetween(*drawnShape[part], drawnFrame[part], asPlayed);
+                 between.has_value())
+        {
+            drawnFrame[part] = between->Frame;
+            drawnBetween[part] = between;
         }
 
         auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
                                                          drawnFrame[part], drawnReverse[part], fadeTable, 1);
         element.Feet = feet;
+        element.InBetween = drawnBetween[part];
 
-        if (part == MCMechPart::Legs)
+        if (part == MCMechPart::RightArm || part == MCMechPart::LeftArm)
         {
-            element.InBetween = legsMiddle;
-        }
-        else if (part == MCMechPart::RightArm || part == MCMechPart::LeftArm)
-        {
-            (part == MCMechPart::RightArm ? DrawnRightArm : DrawnLeftArm) = {drawnShape[part], drawnFrame[part],
+            (part == MCMechPart::RightArm ? DrawnRightArm : DrawnLeftArm) = {drawnShape[part], playedFrame,
                                                                              drawnReverse[part]};
         }
 
@@ -2119,12 +2179,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
                                                              drawnFrame[part], drawnReverse[part], std::nullopt, 1);
             element.SunShadow = true;
-
-            if (part == MCMechPart::Legs)
-            {
-                element.InBetween = legsMiddle;
-            }
-
+            element.InBetween = drawnBetween[part];
             ElementList().Add(element);
         }
 

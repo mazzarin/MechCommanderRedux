@@ -23,6 +23,7 @@
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTacticalMap.h"
 #include "vfx/MCVfxFunctions.h"
+#include "sprite/MCShapeFile.h"
 
 namespace
 {
@@ -432,7 +433,7 @@ auto MCFriendlyMechIcon::SetID(int32_t newPartId) -> void
     IconBackground->Init(const_cast<char*>("guiub00.tga"));
     Port().InitView(IconBackground->Width(), IconBackground->Height());
 
-    MCFile shapeFile;
+    MCShapeFile shapeFile;
 
     if (shapeFile.Open(GamePath(ArtPath, shapeName, ".shp")) != 0)
     {

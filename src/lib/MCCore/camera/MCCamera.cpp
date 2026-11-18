@@ -33,6 +33,7 @@
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 #include "object/MCObjectTypeManager.h"
+#include "sprite/MCShapeFile.h"
 
 bool LeaveSwoopyOff = false;
 auto PauseShape() -> MCRegisteredBlock&
@@ -89,7 +90,7 @@ namespace
     /// <summary>Loads a shape file of the art path (the pause and asked shapes), registered as draw data.</summary>
     MCRegisteredBlock LoadShape(std::string_view name, std::string_view errorMessage)
     {
-        MCFile shapeFile;
+        MCShapeFile shapeFile;
         const int32_t result = shapeFile.Open(GamePath(ArtPath, name, ".shp"));
         Assert(result == 0, static_cast<uint32_t>(result), errorMessage);
         MCRegisteredBlock shape(shapeFile.FileSize(), MCDataKind::Shapes);

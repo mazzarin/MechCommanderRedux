@@ -9,13 +9,19 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
 #include "lib/MCLz.h"
+#include "lib/MCPacketFile.h"
 #include "lib/MCZstd.h"
 #include "main/MCMissionGlobals.h"
+#include "object/MCBattleMech.h"
+#include "object/MCMover.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
+#include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCShapeFile.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteTree.h"
@@ -733,6 +739,9 @@ namespace
     /// <summary>A version 2 stream's codec: Zstandard (SPEC-pack-v2.md's streams).</summary>
     constexpr uint8_t ZstdCodec = 2;
 
+    /// <summary>The pack's zstd dictionaries' file, at its root (SPEC-pack-v2.md's <c>dicts.hdd</c>).</summary>
+    constexpr std::string_view PackDictionariesName = "dicts.hdd";
+
     /// <summary>
     /// A pack's <c>dicts.hdd</c> holding <paramref name="dictionaries"/> by number, in their order, its head giving
     /// <paramref name="count"/> of them (none: how many there are).
@@ -1090,7 +1099,7 @@ TEST_CASE("hd art: a pack's tiles packed against its dictionary are drawn, and f
     WriteBytes(scratch.Path() / "terrain.hda",
                BuildDictionaryArchive({Raw(MCHdArt::TerrainTileName(tile) + ".hdf", file)},
                                       MCFastFile::StreamKind::Tiles, 1, 1));
-    const std::filesystem::path dictionaries = scratch.Path() / "dicts.hdd";
+    const std::filesystem::path dictionaries = scratch.Path() / PackDictionariesName;
     std::vector<uint8_t> damaged = DictionariesFile({{1, DictionaryOne}});
     damaged[0] = 'X';
     const int previous = GHdArt;
@@ -2168,7 +2177,7 @@ TEST_CASE("hd art: an archive the readers open ahead unpacks against the pack's 
     std::filesystem::create_directories(table.parent_path());
     WriteBytes(std::filesystem::path(table).concat(".hda"),
                BuildDictionaryArchive(entries, MCFastFile::StreamKind::Packet, 1, 1));
-    WriteBytes(scratch.Path() / "dicts.hdd", DictionariesFile({{1, DictionaryOne}}));
+    WriteBytes(scratch.Path() / PackDictionariesName, DictionariesFile({{1, DictionaryOne}}));
     const int previous = GHdArt;
     GHdArt = 1;
     MCHdArt::SetPackFolder(scratch.Path());
@@ -2415,6 +2424,226 @@ TEST_CASE("hd art: a frame drawn the first time has the same frame at its neighb
 
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
+}
+
+namespace
+{
+    /// <summary>The upper-body in-betweens' torso (HD art's upper-body in-betweens): its file number and packet.</summary>
+    constexpr uint32_t UpperMech = 1;
+    constexpr uint32_t UpperPacket = 68;
+    /// <summary>Its two frames' side, the second's place right of and below the first's, and both together.</summary>
+    constexpr int32_t UpperSide = 4;
+    constexpr int32_t UpperRight = 2;
+    constexpr int32_t UpperDown = 1;
+    constexpr int32_t UpperWidth = UpperSide + UpperRight;
+    constexpr int32_t UpperHeight = UpperSide + UpperDown;
+
+    /// <summary>HD art on with a pack while it lives, and as it was after it, however the test ends.</summary>
+    class PackOn
+    {
+    public:
+        explicit PackOn(const std::filesystem::path& pack) : _Previous(GHdArt)
+        {
+            GHdArt = 1;
+            MCHdArt::SetPackFolder(pack);
+        }
+
+        ~PackOn()
+        {
+            GHdArt = _Previous;
+            MCHdArt::SetPackFolder({});
+        }
+
+        PackOn(const PackOn&) = delete;
+        PackOn& operator=(const PackOn&) = delete;
+
+    private:
+        int _Previous;
+    };
+
+    /// <summary>
+    /// Writes the upper-body in-betweens' torso's archive into <paramref name="pack"/>: its frames 0 and 1, frame 0's
+    /// steps 1 and 2 over both frames' boxes (UpperWidth x UpperHeight) and its step 3 at the frame's own size, and
+    /// frame 1's step 1 (not its step 2).
+    /// </summary>
+    void WriteUpperTorso(const std::filesystem::path& pack)
+    {
+        const std::filesystem::path torsos = pack / "mechs" / "torsos90";
+        std::filesystem::create_directories(torsos);
+        int32_t mix = 0;
+        const auto entry = [&](std::string_view name, int32_t width, int32_t height)
+        { return Raw(std::format("{}\\{}.hdf", UpperPacket, name), FrameFile(width, height, ++mix)); };
+        WriteBytes(torsos / std::format("{}.hda", UpperMech),
+                   BuildArchive({entry("0", UpperSide, UpperSide), entry("1", UpperSide, UpperSide),
+                                 entry("0_1", UpperWidth, UpperHeight), entry("0_2", UpperWidth, UpperHeight),
+                                 entry("0_3", UpperSide, UpperSide), entry("1_1", UpperWidth, UpperHeight)}));
+    }
+
+    /// <summary>
+    /// The upper-body in-betweens' torso, attached to its packet in the pack set: frame 0 an UpperSide square at the
+    /// hot spot, frame 1 one UpperRight right of and UpperDown below it.
+    /// </summary>
+    std::shared_ptr<MCShape> AttachedUpperTorso()
+    {
+        const std::vector<uint8_t> table = MCTestShapes::FramesTable(
+            std::array{MCTestShapes::TableFrame{0, 0, UpperSide, UpperSide, {}},
+                       MCTestShapes::TableFrame{UpperRight, UpperDown, UpperSide, UpperSide, {}}});
+        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+        std::ranges::copy(table, block.Bytes().begin());
+        auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+        const MCHdArt::MechShapeKey key{"torsos90", UpperMech, UpperPacket};
+        shape->HdFolder = MCHdArt::FolderOf(key);
+        MCHdArt::Attach(shape, key);
+        return shape;
+    }
+
+    /// <summary>A step, for a check's scope.</summary>
+    std::string StepName(const MCLegsStep& step)
+    {
+        return std::format("frame {} toward {}, step {}", step.From, step.To, step.Step);
+    }
+
+    /// <summary>
+    /// Checks that <paramref name="between"/> is the upper-body in-betweens' torso's in-between <paramref name="step"/>,
+    /// over both its frames, frame From at (<paramref name="frameX"/>, <paramref name="frameY"/>) in it.
+    /// </summary>
+    void CheckUpperBetween(const std::optional<MCInBetween>& between, const MCLegsStep& step, int32_t frameX,
+                           int32_t frameY)
+    {
+        MCTest::Scope scope(StepName(step));
+        REQUIRE(between.has_value());
+        CHECK_EQ(between->Frame, step.From);
+        CHECK_EQ(between->Next, step.To);
+        CHECK_EQ(between->Step, step.Step);
+        REQUIRE(between->Bounds.has_value());
+        CHECK_EQ(between->Bounds->FrameX, frameX);
+        CHECK_EQ(between->Bounds->FrameY, frameY);
+        CHECK_EQ(between->Bounds->Width, UpperWidth);
+        CHECK_EQ(between->Bounds->Height, UpperHeight);
+    }
+} // namespace
+
+/// <summary>
+/// Port-only (HD art's upper-body in-betweens): a torso's frame on its way to the next, at the legs' step, is drawn as
+/// the pack's in-between of that step over both frames' boxes (MCPartInBetween), as the legs' is: frame 0 (4 x 4 at
+/// the hot spot) toward frame 1 (4 x 4, 2 right and 1 down) over 6 x 5, the frame at its top left; frame 1 toward
+/// frame 0 over the same, the frame 2 right and 1 down in it. None where the pack lacks the step, has it at another
+/// size, or a frame is not the table's, nor with HD art off.
+/// </summary>
+TEST_CASE("hd art: a torso on its way to its next frame is drawn as the pack's in-between over both frames")
+{
+    const ScratchFolder scratch("upper-in-betweens");
+    WriteUpperTorso(scratch.Path());
+    const PackOn on(scratch.Path());
+    const std::shared_ptr<MCShape> shape = AttachedUpperTorso();
+    const auto none = [&](const MCLegsStep& step)
+    {
+        MCTest::Scope scope(StepName(step));
+        CHECK(!MCPartInBetween(shape->FrameList(), step).has_value());
+    };
+
+    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {0, 1, 1}), {0, 1, 1}, 0, 0);
+    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {0, 1, 2}), {0, 1, 2}, 0, 0);
+    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {1, 0, 1}), {1, 0, 1}, UpperRight, UpperDown);
+    none({0, 1, 3});
+    none({1, 0, 2});
+    none({0, 2, 1});
+    none({-1, 0, 1});
+
+    GHdArt = 0;
+    none({0, 1, 1});
+}
+
+/// <summary>
+/// Port-only (HD art's upper-body in-betweens): the GPU drawing, in mission 1, a player's mech walking has its torso
+/// (the test's, MCMechActor::UpperInBetween) drawn as the pack's in-between toward its next frame at its legs' step: a
+/// quarter of the way through frame 0, step 1 toward frame 1; played backwards, three quarters of the way through
+/// frame 1, step 1 of frame 0 toward it (a quarter of the way back), and none a quarter of the way through (step 3,
+/// which the pack has at another size). None for a frame not drawn as played, in the gun change or with the guns up,
+/// or with the legs on their transition's last frame (the next gesture's frames come next), but in a transition's
+/// middle as in the stride's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a walking mech's torso is drawn as the pack's in-between at its legs' step")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    // One of the player's mechs.
+    constexpr int32_t PlayerMech = 0x200;
+    const std::shared_ptr<MCMover> mover = GetMoverFromPartId(PlayerMech);
+    REQUIRE(mover != nullptr);
+    REQUIRE(mover->ObjectClass == MCObjectClass::BattleMech);
+    const auto actor = std::static_pointer_cast<MCMechActor>(std::static_pointer_cast<MCBattleMech>(mover)->Appearance);
+    REQUIRE(actor != nullptr);
+    REQUIRE(actor->MechTree != nullptr);
+    MCMechActor& mech = *actor;
+
+    const ScratchFolder scratch("upper-in-betweens-walk");
+    WriteUpperTorso(scratch.Path());
+    const PackOn on(scratch.Path());
+    const std::shared_ptr<MCShape> shape = AttachedUpperTorso();
+
+    // Walking, its legs on legsFrame, share of the way through it.
+    mech.CurrentGesture = MCStopGesture::Walk;
+    mech.InTransition = false;
+    mech.GestureDone = false;
+    mech.LyingStill = false;
+    mech.InCombatMode = false;
+    mech.CombatModeRaising = false;
+    mech.CombatModeLowering = false;
+    mech.PlayBackwards = false;
+    mech.StrideRate = 1.0f;
+    const float rate = mech.FrameRate[MCMechPart::Legs];
+    REQUIRE(rate > 0.0f);
+    const auto frames = static_cast<int32_t>(mech.MechTree->Gestures[MCStopGesture::Walk].NumFrames);
+    REQUIRE(frames > 2);
+    const auto through = [&](int32_t legsFrame, float share)
+    {
+        mech.CurrentFrame[MCMechPart::Legs] = legsFrame;
+        mech.CurrentTime[MCMechPart::Legs] = share / rate;
+    };
+
+    const auto upper = [&](int32_t frame, bool asPlayed) { return mech.UpperInBetween(*shape, frame, asPlayed); };
+    constexpr float Quarter = 0.25f;
+    constexpr float ThreeQuarters = 0.75f;
+
+    through(0, Quarter);
+    CheckUpperBetween(upper(0, true), {0, 1, 1}, 0, 0);
+    CHECK(!upper(0, false).has_value());
+
+    for (bool MCMechActor::* gunsUp :
+         {&MCMechActor::InCombatMode, &MCMechActor::CombatModeRaising, &MCMechActor::CombatModeLowering})
+    {
+        mech.*gunsUp = true;
+        CHECK(!upper(0, true).has_value());
+        mech.*gunsUp = false;
+    }
+
+    // Played backwards: from frame 0 toward frame 1, the rest of the way.
+    mech.PlayBackwards = true;
+    through(1, ThreeQuarters);
+    CheckUpperBetween(upper(1, true), {0, 1, 1}, 0, 0);
+    through(1, Quarter);
+    CHECK(!upper(1, true).has_value());
+    mech.PlayBackwards = false;
+
+    // In a transition: none with the legs on its last frame, wherever the torso is; in its middle, as in the stride.
+    mech.InTransition = true;
+    through(frames - 1, Quarter);
+    CHECK(!upper(0, true).has_value());
+    through(0, Quarter);
+    CheckUpperBetween(upper(0, true), {0, 1, 1}, 0, 0);
 }
 
 /// <summary>
@@ -4455,14 +4684,39 @@ namespace
     }
 
     /// <summary>
-    /// Every entry of today's archive <paramref name="todayPath"/> held to the version 2 one made from it.
+    /// The version 2 pack at <paramref name="root"/>'s dictionaries, as the game reads them (its <c>dicts.hdd</c>);
+    /// none when it has no such file.
     /// </summary>
-    auto ComparePackArchive(const std::filesystem::path& todayPath, const std::filesystem::path& markedPath)
-        -> PackComparison
+    auto ReadPackDictionaries(const std::filesystem::path& root) -> std::shared_ptr<const MCZstd::Dictionaries>
+    {
+        const std::filesystem::path path = root / PackDictionariesName;
+
+        if (!std::filesystem::exists(path))
+        {
+            return nullptr;
+        }
+
+        std::ifstream in(path, std::ios::binary);
+        const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+        auto read = MCZstd::Dictionaries::Read(bytes);
+        const MCTest::Scope scope{
+            std::format("{}: {}", MCFileSystem::ToUtf8(path), read.has_value() ? "read" : read.error())};
+        REQUIRE(read.has_value());
+        return *read;
+    }
+
+    /// <summary>
+    /// Every entry of today's archive <paramref name="todayPath"/> held to the version 2 one made from it, whose
+    /// streams unpack against <paramref name="dictionaries"/> (its pack's).
+    /// </summary>
+    auto ComparePackArchive(const std::filesystem::path& todayPath, const std::filesystem::path& markedPath,
+                            const std::shared_ptr<const MCZstd::Dictionaries>& dictionaries) -> PackComparison
     {
         PackComparison found;
         auto today = MCFastFile::Create(MCFileSystem::ToUtf8(todayPath));
-        auto marked = MCFastFile::Create(MCFileSystem::ToUtf8(markedPath));
+        auto marked = MCFastFile::Create(MCFileSystem::ToUtf8(markedPath), dictionaries);
+        const MCTest::Scope opened{
+            std::format("{}: {}", MCFileSystem::ToUtf8(markedPath), marked.has_value() ? "opened" : marked.error())};
         REQUIRE(today.has_value());
         REQUIRE(marked.has_value());
         CHECK(!(*today)->IsVersion2());
@@ -4548,7 +4802,8 @@ namespace
 /// Tool: <c>--pack-compare &lt;a version 2 pack&gt; --pack-compare-with &lt;the pack it was made from&gt;</c> holds
 /// every version 2 archive (<c>.hda</c>) to the version 1 archive at its path in the other: the same entries found by
 /// their paths, the same bytes unpacked but the frames' version and marks (SPEC-pack-v2.md's "A frame"), printing what
-/// differs an archive.
+/// differs an archive. The version 2 archives open against its <c>dicts.hdd</c>, when it has one, as the game's do; an
+/// archive the game would refuse fails.
 /// </summary>
 TEST_CASE("tool: --pack-compare holds a version 2 pack to the pack it was made from")
 {
@@ -4562,6 +4817,8 @@ TEST_CASE("tool: --pack-compare holds a version 2 pack to the pack it was made f
 
     const std::filesystem::path markedRoot = MCFileSystem::FromUtf8(*v2);
     const std::filesystem::path todayRoot = MCFileSystem::FromUtf8(*v1);
+    const std::shared_ptr<const MCZstd::Dictionaries> dictionaries = ReadPackDictionaries(markedRoot);
+    std::cout << std::format("{}: {} {}\n", *v2, dictionaries != nullptr ? "read its" : "no", PackDictionariesName);
     PackComparison all;
     size_t archives = 0;
     const auto started = std::chrono::steady_clock::now();
@@ -4583,16 +4840,17 @@ TEST_CASE("tool: --pack-compare holds a version 2 pack to the pack it was made f
             continue;
         }
 
-        auto marked = MCFastFile::Create(MCFileSystem::ToUtf8(item.path()));
+        auto marked = MCFastFile::Create(MCFileSystem::ToUtf8(item.path()), dictionaries);
 
         if (!marked.has_value() || !(*marked)->IsVersion2())
         {
             std::cout << std::format("{}: {}\n", relative.generic_string(),
                                      marked.has_value() ? "not version 2" : marked.error());
+            all.Failed += marked.has_value() ? 0 : 1;
             continue;
         }
 
-        const PackComparison found = ComparePackArchive(todayPath, item.path());
+        const PackComparison found = ComparePackArchive(todayPath, item.path(), dictionaries);
         std::string own;
 
         for (const auto& [type, data] : (*marked)->Facts({}))
@@ -4613,4 +4871,146 @@ TEST_CASE("tool: --pack-compare holds a version 2 pack to the pack it was made f
     CHECK(all.Failed == 0);
     CHECK(all.ColoursDiffer == 0);
     CHECK(all.OtherDiffer == 0);
+}
+
+namespace
+{
+    /// <summary>A PAK (MCPacketFile's) holding <paramref name="packets"/> raw, in their order.</summary>
+    std::vector<uint8_t> PacketFileBytes(const std::vector<std::vector<uint8_t>>& packets)
+    {
+        constexpr size_t HeadBytes = 8;
+        constexpr size_t FirstPacketAt = 4;
+        constexpr size_t EntryBytes = 4;
+        const auto first = static_cast<uint32_t>(HeadBytes + EntryBytes * packets.size());
+        std::vector<uint8_t> file(first);
+        PutAt(file, 0, MCPacketFile::PacketFileMagic);
+        PutAt(file, FirstPacketAt, first);
+
+        for (size_t packet = 0; packet < packets.size(); ++packet)
+        {
+            // Each entry its packet's offset, stored raw (MCPacketStorage::Raw: 0 in its top bits).
+            PutAt(file, HeadBytes + EntryBytes * packet, static_cast<uint32_t>(file.size()));
+            file.insert(file.end(), packets[packet].begin(), packets[packet].end());
+        }
+
+        return file;
+    }
+
+    /// <summary>The files a test put (MCFileSystem::PutImage) and the guard taken away, however the test ends.</summary>
+    class PutFiles
+    {
+    public:
+        PutFiles() = default;
+        PutFiles(const PutFiles&) = delete;
+        PutFiles& operator=(const PutFiles&) = delete;
+
+        ~PutFiles()
+        {
+            MCFileSystem::ClearPutImages();
+            MCHdArt::GuardOriginalReads(false);
+        }
+    };
+
+    /// <summary>How many reads of <paramref name="kind"/> the guard has noted.</summary>
+    size_t GuardedCount(std::string_view kind)
+    {
+        const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
+        REQUIRE(reads.has_value());
+        const auto found = std::ranges::find(*reads, kind, &MCHdArt::GuardedRead::Kind);
+        return found == reads->end() ? 0 : found->Count;
+    }
+
+    /// <summary>The folder in <c>shapes.hda</c> of a shape file or PAK packet (MCHdArt::ShapeFileFolder's).</summary>
+    std::string ShapesArchiveFolder(std::string_view gamePath, std::optional<int32_t> packet)
+    {
+        const std::filesystem::path folder = MCHdArt::ShapeFileFolder(gamePath, packet);
+        std::string inArchive;
+
+        for (auto part = std::next(folder.begin()); part != folder.end(); ++part)
+        {
+            inArchive += (inArchive.empty() ? "" : "\\") + part->generic_string();
+        }
+
+        return inArchive;
+    }
+
+    /// <summary>Shape file <paramref name="gamePath"/> read whole through MCShapeFile.</summary>
+    std::vector<uint8_t> ReadThroughShapeFile(std::string_view gamePath)
+    {
+        MCShapeFile file;
+        REQUIRE_EQ(file.Open(gamePath), NO_ERR);
+        std::vector<uint8_t> bytes(file.FileSize());
+        CHECK_EQ(file.Read(bytes), static_cast<int32_t>(bytes.size()));
+        return bytes;
+    }
+} // namespace
+
+/// <summary>
+/// Port-only: with HD art's numbered folders drawn, a shape file's loader (MCShapeFile: the effects', markers', shadows'
+/// and damage diagrams' files, the cursors' and sensor contacts' PAK packets) takes the pack's copy of the original's
+/// bytes (shapes.hda's ShapeFileFolder, its shape table record whole), reading nothing of the game's; a file of another
+/// size than the pack's (a mod's), a packet the pack lacks, or HD art off is read from the game's files, which the guard
+/// notes. A table the loader read is found by its hash without a note; another table with one.
+/// </summary>
+TEST_CASE("hd art: a shape file's loader takes the pack's copy of the original, a mod's file from the game's files")
+{
+    constexpr std::string_view ShapePath = "data\\sprites\\MapsTest.shp";
+    constexpr std::string_view ModPath = "data\\sprites\\mapsmod.shp";
+    constexpr std::string_view PakPath = "data\\sprites\\MapsTest.pak";
+    constexpr int32_t PackedPacket = 1;
+    const std::vector<uint8_t> game = {1, 2, 3, 4, 5, 6};
+    // The pack's copy, of the game's file's size, told apart by its bytes.
+    const std::vector<uint8_t> pack = {9, 8, 7, 6, 5, 4};
+    const std::vector<uint8_t> modded = {1, 2, 3, 4, 5, 6, 7};
+    const std::vector<std::vector<uint8_t>> packets = {{10, 11, 12}, {20, 21, 22, 23}};
+    const std::vector<uint8_t> packPacket = {30, 31, 32, 33};
+    const std::vector<uint8_t> unloaded = {42, 43};
+    const PutFiles put;
+    MCFileSystem::PutImage(ShapePath, [&game] { return std::optional(game); });
+    MCFileSystem::PutImage(ModPath, [&modded] { return std::optional(modded); });
+    MCFileSystem::PutImage(PakPath, [&packets] { return std::optional(PacketFileBytes(packets)); });
+    std::map<std::string, std::vector<uint8_t>> facts;
+    facts[ShapesArchiveFolder(ShapePath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    facts[ShapesArchiveFolder(ModPath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    facts[ShapesArchiveFolder(PakPath, PackedPacket)] = FactsRecord(MCPackRecords::Type::ShapeTable, packPacket);
+    const ScratchFolder scratch("shape-files");
+    WriteBytes(scratch.Path() / "shapes.hda", BuildVersion2Archive({}, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const PackOn on(scratch.Path());
+    REQUIRE(MCHdArt::NumberedFolders());
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    CHECK(ReadThroughShapeFile(ShapePath) == pack);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 0);
+    CHECK(ReadThroughShapeFile(ModPath) == modded);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 1);
+
+    MCPacketFile pak;
+    REQUIRE_EQ(pak.Open(PakPath), NO_ERR);
+    REQUIRE_EQ(pak.GetNumPackets(), static_cast<int32_t>(packets.size()));
+
+    for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
+    {
+        MCTest::Scope scope(std::format("packet {}", packet));
+        REQUIRE_EQ(pak.SeekPacket(packet), NO_ERR);
+        std::vector<uint8_t> bytes(static_cast<size_t>(pak.GetPacketSize()));
+        CHECK_EQ(MCShapeFile::ReadPacket(pak, packet, bytes), static_cast<int32_t>(bytes.size()));
+        CHECK(bytes == (packet == PackedPacket ? packPacket : packets[static_cast<size_t>(packet)]));
+    }
+
+    CHECK_EQ(GuardedCount(MCShapeFile::PacketRead), 1);
+
+    // Found by their hashes, as the renderer finds a table no folder is attached to.
+    for (const std::vector<uint8_t>& loaded : {pack, modded, packPacket})
+    {
+        MCHdArt::FindShape(MCHdArt::ShapeTableHash(loaded), 0, 1, 1, 0, 1);
+    }
+
+    CHECK_EQ(GuardedCount(MCHdArt::ShapeHashRead), 0);
+    MCHdArt::FindShape(MCHdArt::ShapeTableHash(unloaded), 0, 1, 1, 0, 1);
+    CHECK_EQ(GuardedCount(MCHdArt::ShapeHashRead), 1);
+
+    GHdArt = 0;
+    CHECK(ReadThroughShapeFile(ShapePath) == game);
 }

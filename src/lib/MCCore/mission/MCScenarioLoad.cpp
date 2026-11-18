@@ -64,6 +64,7 @@
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
+#include "sprite/MCShapeFile.h"
 
 namespace
 {
@@ -136,7 +137,7 @@ namespace
     /// <returns>The shapes, or no block when the file can't be opened.</returns>
     MCRegisteredBlock LoadShapeFile(std::string_view name)
     {
-        MCFile shapeFile;
+        MCShapeFile shapeFile;
 
         if (shapeFile.Open(GamePath(ShapesPath, name, ".shp")) != 0)
         {
@@ -665,7 +666,7 @@ auto MCScenario::LoadSensorContactShapes(MCFitIniFile& file) -> void
         Assert(size > 0, 0, " no RAM for Large Sensor Shape ");
         MCRegisteredBlock& shape = _SensorContactShapes[static_cast<size_t>(i)];
         shape = MCRegisteredBlock(static_cast<size_t>(size), MCDataKind::Shapes);
-        shapeFile.ReadPacket(i, shape.Bytes());
+        MCShapeFile::ReadPacket(shapeFile, i, shape.Bytes());
     }
 
     shapeFile.Close();

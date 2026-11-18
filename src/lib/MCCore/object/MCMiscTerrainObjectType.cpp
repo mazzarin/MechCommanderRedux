@@ -8,6 +8,7 @@
 #include "object/MCWeaponShotInfo.h"
 #include "terrain/MCTerrain.h"
 #include "terrain/MCTerrainTiles.h"
+#include "sprite/MCShapeFile.h"
 
 auto MCMiscTerrainObjectType::CreateInstance() -> std::shared_ptr<MCBaseObject>
 {
@@ -89,7 +90,7 @@ auto MCMiscTerrainObjectType::Init(MCFile& objFile, uint32_t fileSize) -> int32_
         *edgesName += 'x';
     }
 
-    MCFile edgesFile;
+    MCShapeFile edgesFile;
 
     if (const int32_t result = edgesFile.Open(GamePath(SpritePath, *edgesName, ".shp")); result != 0)
     {

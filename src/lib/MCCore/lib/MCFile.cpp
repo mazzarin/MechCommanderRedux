@@ -10,6 +10,30 @@ bool FileExists(std::string_view fileName)
     return MCFileSystem::Exists(fileName);
 }
 
+std::optional<uint32_t> FileSizeOf(std::string_view fileName)
+{
+    if (const std::optional<std::vector<uint8_t>> put = MCFileSystem::PutImageAt(fileName); put.has_value())
+    {
+        return static_cast<uint32_t>(put->size());
+    }
+
+    std::error_code error;
+    const std::filesystem::path path = MCFileSystem::Resolve(fileName);
+
+    if (std::filesystem::is_regular_file(path, error))
+    {
+        const std::uintmax_t size = std::filesystem::file_size(path, error);
+        return error ? std::nullopt : std::optional(static_cast<uint32_t>(size));
+    }
+
+    if (const std::optional<std::span<const uint8_t>> image = MCFileSystem::FindImage(fileName); image.has_value())
+    {
+        return static_cast<uint32_t>(image->size());
+    }
+
+    return MCGameContext::Current().FastFiles().SizeOf(fileName);
+}
+
 std::string GamePath(std::string_view directory, std::string_view name, std::string_view extension)
 {
     std::string path;

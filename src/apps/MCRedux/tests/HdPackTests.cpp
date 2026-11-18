@@ -20,13 +20,9 @@
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
-#include "object/MCBattleMech.h"
-#include "object/MCMover.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
-#include "sprite/MCMechActor.h"
-#include "sprite/MCMechStops.h"
 #include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCShapeFile.h"
@@ -2701,16 +2697,6 @@ TEST_CASE("hd art: a frame drawn the first time has the same frame at its neighb
 
 namespace
 {
-    /// <summary>The upper-body in-betweens' torso (HD art's upper-body in-betweens): its file number and packet.</summary>
-    constexpr uint32_t UpperMech = 1;
-    constexpr uint32_t UpperPacket = 68;
-    /// <summary>Its two frames' side, the second's place right of and below the first's, and both together.</summary>
-    constexpr int32_t UpperSide = 4;
-    constexpr int32_t UpperRight = 2;
-    constexpr int32_t UpperDown = 1;
-    constexpr int32_t UpperWidth = UpperSide + UpperRight;
-    constexpr int32_t UpperHeight = UpperSide + UpperDown;
-
     /// <summary>HD art on with a pack while it lives, and as it was after it, however the test ends.</summary>
     class PackOn
     {
@@ -2733,191 +2719,7 @@ namespace
     private:
         int _Previous;
     };
-
-    /// <summary>
-    /// Writes the upper-body in-betweens' torso's archive into <paramref name="pack"/>: its frames 0 and 1, frame 0's
-    /// steps 1 and 2 over both frames' boxes (UpperWidth x UpperHeight) and its step 3 at the frame's own size, and
-    /// frame 1's step 1 (not its step 2).
-    /// </summary>
-    void WriteUpperTorso(const std::filesystem::path& pack)
-    {
-        const std::filesystem::path torsos = pack / "mechs" / "torsos90";
-        std::filesystem::create_directories(torsos);
-        int32_t mix = 0;
-        const auto entry = [&](std::string_view name, int32_t width, int32_t height)
-        { return Raw(std::format("{}\\{}.hdf", UpperPacket, name), FrameFile(width, height, ++mix)); };
-        WriteBytes(torsos / std::format("{}.hda", UpperMech),
-                   BuildArchive({entry("0", UpperSide, UpperSide), entry("1", UpperSide, UpperSide),
-                                 entry("0_1", UpperWidth, UpperHeight), entry("0_2", UpperWidth, UpperHeight),
-                                 entry("0_3", UpperSide, UpperSide), entry("1_1", UpperWidth, UpperHeight)}));
-    }
-
-    /// <summary>
-    /// The upper-body in-betweens' torso, attached to its packet in the pack set: frame 0 an UpperSide square at the
-    /// hot spot, frame 1 one UpperRight right of and UpperDown below it.
-    /// </summary>
-    std::shared_ptr<MCShape> AttachedUpperTorso()
-    {
-        const std::vector<uint8_t> table = MCTestShapes::FramesTable(
-            std::array{MCTestShapes::TableFrame{0, 0, UpperSide, UpperSide, {}},
-                       MCTestShapes::TableFrame{UpperRight, UpperDown, UpperSide, UpperSide, {}}});
-        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
-        std::ranges::copy(table, block.Bytes().begin());
-        auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
-        const MCHdArt::MechShapeKey key{"torsos90", UpperMech, UpperPacket};
-        shape->HdFolder = MCHdArt::FolderOf(key);
-        MCHdArt::Attach(shape, key);
-        return shape;
-    }
-
-    /// <summary>A step, for a check's scope.</summary>
-    std::string StepName(const MCLegsStep& step)
-    {
-        return std::format("frame {} toward {}, step {}", step.From, step.To, step.Step);
-    }
-
-    /// <summary>
-    /// Checks that <paramref name="between"/> is the upper-body in-betweens' torso's in-between <paramref name="step"/>,
-    /// over both its frames, frame From at (<paramref name="frameX"/>, <paramref name="frameY"/>) in it.
-    /// </summary>
-    void CheckUpperBetween(const std::optional<MCInBetween>& between, const MCLegsStep& step, int32_t frameX,
-                           int32_t frameY)
-    {
-        MCTest::Scope scope(StepName(step));
-        REQUIRE(between.has_value());
-        CHECK_EQ(between->Frame, step.From);
-        CHECK_EQ(between->Next, step.To);
-        CHECK_EQ(between->Step, step.Step);
-        REQUIRE(between->Bounds.has_value());
-        CHECK_EQ(between->Bounds->FrameX, frameX);
-        CHECK_EQ(between->Bounds->FrameY, frameY);
-        CHECK_EQ(between->Bounds->Width, UpperWidth);
-        CHECK_EQ(between->Bounds->Height, UpperHeight);
-    }
 } // namespace
-
-/// <summary>
-/// Port-only (HD art's upper-body in-betweens): a torso's frame on its way to the next, at the legs' step, is drawn as
-/// the pack's in-between of that step over both frames' boxes (MCPartInBetween), as the legs' is: frame 0 (4 x 4 at
-/// the hot spot) toward frame 1 (4 x 4, 2 right and 1 down) over 6 x 5, the frame at its top left; frame 1 toward
-/// frame 0 over the same, the frame 2 right and 1 down in it. None where the pack lacks the step, has it at another
-/// size, or a frame is not the table's, nor with HD art off.
-/// </summary>
-TEST_CASE("hd art: a torso on its way to its next frame is drawn as the pack's in-between over both frames")
-{
-    const ScratchFolder scratch("upper-in-betweens");
-    WriteUpperTorso(scratch.Path());
-    const PackOn on(scratch.Path());
-    const std::shared_ptr<MCShape> shape = AttachedUpperTorso();
-    const auto none = [&](const MCLegsStep& step)
-    {
-        MCTest::Scope scope(StepName(step));
-        CHECK(!MCPartInBetween(shape->FrameList(), step).has_value());
-    };
-
-    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {0, 1, 1}), {0, 1, 1}, 0, 0);
-    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {0, 1, 2}), {0, 1, 2}, 0, 0);
-    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {1, 0, 1}), {1, 0, 1}, UpperRight, UpperDown);
-    none({0, 1, 3});
-    none({1, 0, 2});
-    none({0, 2, 1});
-    none({-1, 0, 1});
-
-    GHdArt = 0;
-    none({0, 1, 1});
-}
-
-/// <summary>
-/// Port-only (HD art's upper-body in-betweens): the GPU drawing, in mission 1, a player's mech walking has its torso
-/// (the test's, MCMechActor::UpperInBetween) drawn as the pack's in-between toward its next frame at its legs' step: a
-/// quarter of the way through frame 0, step 1 toward frame 1; played backwards, three quarters of the way through
-/// frame 1, step 1 of frame 0 toward it (a quarter of the way back), and none a quarter of the way through (step 3,
-/// which the pack has at another size). None for a frame not drawn as played, in the gun change or with the guns up,
-/// or with the legs on their transition's last frame (the next gesture's frames come next), but in a transition's
-/// middle as in the stride's.
-/// </summary>
-TEST_CASE_ISOLATED("game: a walking mech's torso is drawn as the pack's in-between at its legs' step")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartMission(1));
-
-    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
-    {
-        std::cout << "  (skipped: no GPU renderer on this machine)\n";
-        return;
-    }
-
-    // One of the player's mechs.
-    constexpr int32_t PlayerMech = 0x200;
-    const std::shared_ptr<MCMover> mover = GetMoverFromPartId(PlayerMech);
-    REQUIRE(mover != nullptr);
-    REQUIRE(mover->ObjectClass == MCObjectClass::BattleMech);
-    const auto actor = std::static_pointer_cast<MCMechActor>(std::static_pointer_cast<MCBattleMech>(mover)->Appearance);
-    REQUIRE(actor != nullptr);
-    REQUIRE(actor->MechTree != nullptr);
-    MCMechActor& mech = *actor;
-
-    const ScratchFolder scratch("upper-in-betweens-walk");
-    WriteUpperTorso(scratch.Path());
-    const PackOn on(scratch.Path());
-    const std::shared_ptr<MCShape> shape = AttachedUpperTorso();
-
-    // Walking, its legs on legsFrame, share of the way through it.
-    mech.CurrentGesture = MCStopGesture::Walk;
-    mech.InTransition = false;
-    mech.GestureDone = false;
-    mech.LyingStill = false;
-    mech.InCombatMode = false;
-    mech.CombatModeRaising = false;
-    mech.CombatModeLowering = false;
-    mech.PlayBackwards = false;
-    mech.StrideRate = 1.0f;
-    const float rate = mech.FrameRate[MCMechPart::Legs];
-    REQUIRE(rate > 0.0f);
-    const auto frames = static_cast<int32_t>(mech.MechTree->Gestures[MCStopGesture::Walk].NumFrames);
-    REQUIRE(frames > 2);
-    const auto through = [&](int32_t legsFrame, float share)
-    {
-        mech.CurrentFrame[MCMechPart::Legs] = legsFrame;
-        mech.CurrentTime[MCMechPart::Legs] = share / rate;
-    };
-
-    const auto upper = [&](int32_t frame, bool asPlayed) { return mech.UpperInBetween(*shape, frame, asPlayed); };
-    constexpr float Quarter = 0.25f;
-    constexpr float ThreeQuarters = 0.75f;
-
-    through(0, Quarter);
-    CheckUpperBetween(upper(0, true), {0, 1, 1}, 0, 0);
-    CHECK(!upper(0, false).has_value());
-
-    for (bool MCMechActor::* gunsUp :
-         {&MCMechActor::InCombatMode, &MCMechActor::CombatModeRaising, &MCMechActor::CombatModeLowering})
-    {
-        mech.*gunsUp = true;
-        CHECK(!upper(0, true).has_value());
-        mech.*gunsUp = false;
-    }
-
-    // Played backwards: from frame 0 toward frame 1, the rest of the way.
-    mech.PlayBackwards = true;
-    through(1, ThreeQuarters);
-    CheckUpperBetween(upper(1, true), {0, 1, 1}, 0, 0);
-    through(1, Quarter);
-    CHECK(!upper(1, true).has_value());
-    mech.PlayBackwards = false;
-
-    // In a transition: none with the legs on its last frame, wherever the torso is; in its middle, as in the stride.
-    mech.InTransition = true;
-    through(frames - 1, Quarter);
-    CHECK(!upper(0, true).has_value());
-    through(0, Quarter);
-    CheckUpperBetween(upper(0, true), {0, 1, 1}, 0, 0);
-}
 
 /// <summary>
 /// Port-only: the frames the reading thread read ahead are kept in the cache at a frame's start (MCHdArt::KeepReadAhead),

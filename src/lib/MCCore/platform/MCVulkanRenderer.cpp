@@ -269,6 +269,19 @@ namespace
     /// </summary>
     constexpr uint32_t HdPageSide = 2048;
     constexpr uint32_t HdIndexPageSide = 1024;
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the side of an HD page's indices for frames of <paramref name="scale"/> HD
+    /// pixels an original pixel: the colours' side over the scale where that's less than HdIndexPageSide (683 at 3x,
+    /// so the two fill together: at 1024, 55% of the indices' page stayed empty), else HdIndexPageSide (2x already
+    /// matches). Frames of another scale take pages of their own (SharedLayout).
+    /// </summary>
+    constexpr uint32_t HdIndexSideFor(int32_t scale)
+    {
+        const auto pixels = static_cast<uint32_t>(std::max(scale, 1));
+        return pixels * HdIndexPageSide > HdPageSide ? (HdPageSide + pixels - 1) / pixels : HdIndexPageSide;
+    }
+
     /// <summary>Port-only: the pages sharp glyphs share (RGBA8, 4 MB; the interface's take 0.1 MB).</summary>
     constexpr uint32_t SharpPageSide = 1024;
     /// <summary>A place's corner or size packed as a draw's field: x in bits 0-15, y in 16-31.</summary>
@@ -3557,8 +3570,8 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         // one, in textures of its own.
         const SDL_GPUTextureFormat colorFormat =
             sendBc7 ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexPageSide, colorFormat, HdPageSide,
-                                  sendBc7 ? Bc7Block : 1};
+        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexSideFor(frame.Scale), colorFormat,
+                                  HdPageSide, sendBc7 ? Bc7Block : 1};
         Picture picture;
 
         if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))

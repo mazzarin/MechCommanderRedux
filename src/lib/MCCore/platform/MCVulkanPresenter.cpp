@@ -16,11 +16,6 @@ namespace
         return std::format("{}: {}", what, SDL_GetError());
     }
 
-    /// <summary>
-    /// Port-only: the frames presented the game may still have on the GPU as it shows another (as many as SDL's two
-    /// swapchain images hold), whatever the swapchain's images (MCVulkanPresenter::_FramesInFlight).
-    /// </summary>
-    constexpr size_t FramesHeldOnGpu = MCVulkanPresenter::TwoImageFrames;
     /// <summary>Port-only: SDL's name for its Vulkan driver (SDL_GetGPUDeviceDriver).</summary>
     constexpr std::string_view VulkanDriver = "vulkan";
 
@@ -1004,9 +999,9 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _Unshown.reset();
     SDL_WaitForGPUIdle(_Device.get());
 
-    for (SDL_GPUFence* const fence : _Sent)
+    for (const SentFrame& sent : _Sent)
     {
-        SDL_ReleaseGPUFence(_Device.get(), fence);
+        SDL_ReleaseGPUFence(_Device.get(), sent.Fence);
     }
 
     _Sent.clear();
@@ -1123,6 +1118,13 @@ void MCVulkanPresenter::AskFramesInFlight(bool vsync)
     }
 
     _FramesInFlight = frames;
+
+    // The frames held follow the count from now (FramesHeldOnGpu), not from the next frame shown: SDL waited for the
+    // GPU as it took the count, so this lets go of the frames past it without a wait.
+    if (auto held = HoldFramesOnGpu(); !held)
+    {
+        KeepLate(held.error());
+    }
 }
 
 void MCVulkanPresenter::Release(Texture& texture)
@@ -1985,20 +1987,22 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
 
 std::expected<void, std::string> MCVulkanPresenter::HoldFramesOnGpu()
 {
-    // With three images SDL lets three frames be on the GPU (ThirdImageFrames): the game waits as two let it, so what
-    // it shows is no older than with two. With two (vsync off) SDL's own wait as it takes the image is for the same
-    // frame, which it then finds done.
-    while (_Sent.size() >= FramesHeldOnGpu)
+    // With three images SDL lets three frames be on the GPU (ThirdImageFrames): the game holds one, so what it shows is
+    // no older than the frame before. With two (vsync off) the game holds two, and SDL's own wait as it takes the image
+    // is for the same frame, which it then finds done.
+    while (_Sent.size() >= FramesHeldOnGpu(_FramesInFlight))
     {
-        SDL_GPUFence* const oldest = _Sent.front();
-        const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &oldest, 1);
-        SDL_ReleaseGPUFence(_Device.get(), oldest);
+        const SentFrame oldest = _Sent.front();
+        const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &oldest.Fence, 1);
+        SDL_ReleaseGPUFence(_Device.get(), oldest.Fence);
         _Sent.erase(_Sent.begin());
 
         if (!waited)
         {
-            return std::unexpected(SdlError("SDL_WaitForGPUFences (the frame before last's)"));
+            return std::unexpected(SdlError("SDL_WaitForGPUFences (a frame held on the GPU)"));
         }
+
+        _LastFrameWaitedFor = oldest.Number;
     }
 
     return {};
@@ -2143,7 +2147,8 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
 
     if (MCFrameLog::Scope part("present.submit"); _ThirdImage)
     {
-        // Its fence, for the frame after next to wait on (HoldFramesOnGpu): the work submitted before it is done too.
+        // Its fence, for a later frame to wait on (HoldFramesOnGpu): the next with three images, the one after with two.
+        // The work submitted before it is done too.
         SDL_GPUFence* const fence = SDL_SubmitGPUCommandBufferAndAcquireFence(&commands);
 
         if (fence == nullptr)
@@ -2151,7 +2156,7 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
             return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence"));
         }
 
-        _Sent.push_back(fence);
+        _Sent.push_back({fence, ++_FramesSent});
     }
     else if (!SDL_SubmitGPUCommandBuffer(&commands))
     {

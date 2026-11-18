@@ -7831,10 +7831,15 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         KeptGround& kept = _KeptGround;
         const std::array<int32_t, 2> origin{draw.Frame.OriginX, draw.Frame.OriginY};
         const bool moving = origin != kept.LastOrigin;
+        const bool changing = looks != kept.LastLooks;
         kept.LastOrigin = origin;
+        kept.LastLooks = looks;
 
-        // Drawn whole while the view moves, the next frame would draw it whole again: drawn directly instead.
-        if (plan.Whole && moving)
+        // Drawn whole once while the view moves (a step of the colour cycle over much of it, a jump), it's kept: the
+        // frames after move it by whole drawn pixels (the drawn grid), and draw again only what changed. Drawn whole
+        // while the view moves and what it's drawn from changes from frame to frame (a zoom easing), the next frame
+        // would draw it whole again: drawn directly instead.
+        if (plan.Whole && moving && changing)
         {
             return false;
         }

@@ -888,10 +888,12 @@ private:
         int32_t FogColumns = 0;
         int32_t CycleStep = 0;
         /// <summary>
-        /// The camera's place the frame before (the origin of the last terrain layer drawn, kept or not): a view moving
-        /// so its pixels can't be kept moved draws its terrain directly until it holds still.
+        /// The camera's place and the looks (as Looks) the frame before, of the last terrain layer drawn, kept or not:
+        /// a view moving while its looks change from frame to frame (a zoom easing) draws its terrain directly until
+        /// they hold.
         /// </summary>
         std::array<int32_t, 2> LastOrigin{INT32_MIN, INT32_MIN};
+        std::vector<uint8_t> LastLooks;
         /// <summary>
         /// The rest it was drawn with, as bytes (GroundLooks): the sizes, the terrain's steps and clip, the haze's
         /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).

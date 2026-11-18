@@ -852,8 +852,14 @@ auto MCMission::StartScenario(std::string_view name) -> void
 {
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
-    // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold).
-    MCHdArt::LetGoHold();
+
+    // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold); this one's,
+    // held since its briefing (SPEC-memory.md's "From the briefing", MCHdArt::StartBriefingHold), kept for its load.
+    if (!MCHdArt::HoldsFor(scenarioName))
+    {
+        MCHdArt::LetGoHold();
+    }
+
     // Port (personal): the reports measure the load, then the play (main/MCTelemetry.h).
     MCTelemetry::PlayLoading(scenarioName, MultiPlayer() != nullptr);
 

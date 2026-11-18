@@ -5,6 +5,7 @@
 #include "TestGame.h"
 #include "engine/MCCraterManager.h"
 #include "fakes/MCFakeMemorySystem.h"
+#include "gui/MCGuiPort.h"
 #include "gui/MCGuiStartup.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
@@ -12,6 +13,7 @@
 #include "lib/MCLz.h"
 #include "lib/MCPacketFile.h"
 #include "lib/MCZstd.h"
+#include "logistics/MCLogPort.h"
 #include "main/MCGamePaths.h"
 #include "main/MCHdSettings.h"
 #include "main/MCMissionGlobals.h"
@@ -5012,6 +5014,83 @@ TEST_CASE("hd art: a shape file's loader takes the pack's copy of the original, 
     CHECK(ReadThroughShapeFile(ShapePath) == game);
 }
 
+namespace
+{
+    /// <summary>
+    /// An 8-bit TGA as the game's pictures are and their loaders read them: <paramref name="width"/> by
+    /// <paramref name="height"/> at +0x0c and +0x0e, a palette of zeroes, then <paramref name="pixels"/> at 0x312.
+    /// </summary>
+    std::vector<uint8_t> PictureTga(int16_t width, int16_t height, std::span<const uint8_t> pixels)
+    {
+        constexpr size_t WidthAt = 0x0c;
+        constexpr size_t HeightAt = 0x0e;
+        constexpr size_t PixelsAt = 0x312;
+        std::vector<uint8_t> tga(PixelsAt);
+        std::memcpy(tga.data() + WidthAt, &width, sizeof(width));
+        std::memcpy(tga.data() + HeightAt, &height, sizeof(height));
+        tga.insert(tga.end(), pixels.begin(), pixels.end());
+        return tga;
+    }
+
+    /// <summary>A port's pixels, copied.</summary>
+    std::vector<uint8_t> PortPixels(const MCGuiPort& port)
+    {
+        const std::span<const uint8_t> pixels = port.Pixels();
+        return {pixels.begin(), pixels.end()};
+    }
+} // namespace
+
+/// <summary>
+/// Port-only: with HD art's numbered folders drawn, a menu's picture (MCGuiPort::Init by name) and a logistics screen's
+/// or briefing map's (MCLogPort::Load) take the pack's copy of the original's TGA (shapes.hda's ShapeFileFolder record,
+/// its bytes whole), reading nothing of the game's; a picture the pack lacks is read from the game's files, which the
+/// guard notes.
+/// </summary>
+TEST_CASE("hd art: a menu's and a logistics screen's pictures take the pack's copy of the original's TGA")
+{
+    constexpr std::string_view MenuName = "mapsmenu.tga";
+    constexpr int16_t Width = 4;
+    constexpr int16_t Height = 1;
+    const std::vector<uint8_t> gamePixels = {1, 2, 3, 4};
+    // The pack's copies, of the game's files' size, told apart by their pixels.
+    const std::vector<uint8_t> packPixels = {5, 6, 7, 8};
+    const std::string menuPath = std::format("{}{}", std::string_view(ArtPath), MenuName);
+    const std::string logPath = std::format("{}logart\\mapslog.tga", std::string_view(ArtPath));
+    const std::string unpackedPath = std::format("{}logart\\mapsnone.tga", std::string_view(ArtPath));
+    const std::vector<uint8_t> game = PictureTga(Width, Height, gamePixels);
+    const std::vector<uint8_t> pack = PictureTga(Width, Height, packPixels);
+    const PutFiles put;
+
+    for (const std::string& path : {menuPath, logPath, unpackedPath})
+    {
+        MCFileSystem::PutImage(path, [&game] { return std::optional(game); });
+    }
+
+    std::map<std::string, std::vector<uint8_t>> facts;
+    facts[ShapesArchiveFolder(menuPath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    facts[ShapesArchiveFolder(logPath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    const ScratchFolder scratch("picture-files");
+    WriteBytes(scratch.Path() / "shapes.hda", BuildVersion2Archive({}, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const PackOn on(scratch.Path());
+    REQUIRE(MCHdArt::NumberedFolders());
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    MCGuiPort menu;
+    REQUIRE_EQ(menu.Init(MenuName), 0);
+    CHECK(PortPixels(menu) == packPixels);
+    MCLogPort log;
+    log.Load(logPath);
+    CHECK(PortPixels(log) == packPixels);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 0);
+
+    MCLogPort unpacked;
+    unpacked.Load(unpackedPath);
+    CHECK(PortPixels(unpacked) == gamePixels);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 1);
+}
+
 /// <summary>
 /// Port-only: with HD art's numbered folders drawn, the craters' and footprints' PAK (a mission's CraterFile) is read
 /// through MCShapeFile: each packet the pack's copy (shapes.hda's ShapeFileFolder record), reading nothing of the game's;
@@ -5119,21 +5198,8 @@ TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's 
         MCTestGame::RunFrame(GuardFrameSeconds);
     }
 
-    const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
-    REQUIRE(reads.has_value());
-    size_t total = 0;
-
-    for (const MCHdArt::GuardedRead& read : *reads)
-    {
-        total += read.Count;
-        std::cout << std::format("  mission {}: {} x {}\n", segment, read.Count, read.Kind);
-
-        for (const std::string& example : read.Examples)
-        {
-            std::cout << std::format("    {}\n", example);
-        }
-    }
-
+    REQUIRE(MCHdArt::GuardedReads().has_value());
+    const size_t total = MCTestGame::PrintGuardedReads(std::format("mission {}", segment));
     std::cout << std::format("  mission {}: {} reads of the original's art in {} frames\n", segment, total, frames);
     MCHdArt::GuardOriginalReads(false);
     CHECK_EQ(total, size_t{0});

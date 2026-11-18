@@ -53,6 +53,7 @@
 #include "platform/MCAudio.h"
 #include "gameos/MCSoundRenderer.h"
 #include "main/MCGamePaths.h"
+#include "main/MCHdSettings.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCStagedBattle.h"
@@ -11135,6 +11136,18 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     const std::filesystem::path pack = packOption.has_value()
                                            ? std::filesystem::absolute(std::filesystem::path(*packOption))
                                            : std::filesystem::path();
+    // With --sharp-menus-guard 1, HD art on from the boot with the pack, as a player's app has it, and the guard of test
+    // runs on keeping every example: each of the original's pictures the screens read is listed at the end.
+    const bool guard = MCTest::Option("sharp-menus-guard").has_value();
+
+    if (guard)
+    {
+        UseHdByDefault();
+        MCHdArt::SetPackFolder(pack);
+        MCHdArt::GuardOriginalReads(true, std::numeric_limits<size_t>::max());
+        MCTestGame::BootOptions.Started = [] { GHdArt = 1; };
+    }
+
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
@@ -11277,6 +11290,13 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
         AuditLabel.clear();
         ReportAudit(tally, folder / "audit", audited);
         WriteAuditTables(tally, detail, folder / "audit", audited);
+    }
+
+    if (guard)
+    {
+        std::cout << std::format("  the screens: {} reads of the original's art\n",
+                                 MCTestGame::PrintGuardedReads("the screens"));
+        MCHdArt::GuardOriginalReads(false);
     }
 
     GHdArt = 0;

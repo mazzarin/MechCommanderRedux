@@ -1,8 +1,8 @@
 #include "stdafx.h"
 #include "logistics/MCLogPort.h"
 #include "lib/MCFatal.h"
-#include "lib/MCFile.h"
 #include "main/MCGamePaths.h"
+#include "sprite/MCShapeFile.h"
 
 namespace
 {
@@ -41,7 +41,8 @@ auto MCLogPort::Init(int32_t width, int32_t height) -> int32_t
 
 auto MCLogPort::Load(std::string_view fileName) -> void
 {
-    MCFile file;
+    // Port: through MCShapeFile, so with a version 2 pack the picture (a menu's, a briefing map) is the pack's copy.
+    MCShapeFile file;
 
     if (file.Open(std::format("{}{}", ArtPath, fileName)) != 0 && file.Open(fileName) != 0)
     {

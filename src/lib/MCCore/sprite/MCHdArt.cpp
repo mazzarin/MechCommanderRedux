@@ -5210,6 +5210,7 @@ namespace
         std::mutex Lock;
         std::atomic<bool> On = false;
         std::map<std::string, MCHdArt::GuardedRead, std::less<>> Reads;
+        size_t Examples = MCHdArt::GuardExamples;
     };
 
     Guard& TheGuard()
@@ -5217,16 +5218,14 @@ namespace
         static Guard guard;
         return guard;
     }
-
-    /// <summary>The examples kept of each kind of read the guard notes.</summary>
-    constexpr size_t GuardExamples = 4;
 } // namespace
 
-void MCHdArt::GuardOriginalReads(bool on)
+void MCHdArt::GuardOriginalReads(bool on, size_t examples)
 {
     Guard& guard = TheGuard();
     std::scoped_lock lock(guard.Lock);
     guard.Reads.clear();
+    guard.Examples = examples;
     guard.On = on;
 }
 
@@ -5251,7 +5250,7 @@ void MCHdArt::NoteOriginalRead(std::string_view kind, std::string_view what)
         found = guard.Reads.emplace(std::string(kind), GuardedRead{.Kind = std::string(kind)}).first;
     }
 
-    if (found->second.Examples.size() < GuardExamples)
+    if (found->second.Examples.size() < guard.Examples)
     {
         found->second.Examples.emplace_back(what);
     }

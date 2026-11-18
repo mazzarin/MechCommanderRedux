@@ -81,6 +81,12 @@ namespace MCTestGame
     bool StartLogistics(const std::function<void()>& afterBoot = {});
 
     /// <summary>
+    /// Port-only (HD art's guard, MCHdArt::GuardOriginalReads): prints each kind of original art read the guard noted
+    /// and its examples, each line led by <paramref name="label"/>; how many reads in all.
+    /// </summary>
+    size_t PrintGuardedReads(std::string_view label);
+
+    /// <summary>
     /// Boots the whole game as a multiplayer lobby starts it, with <paramref name="commandLine"/> (-host or -join and
     /// the lobby's other words): it hosts or joins the room as the game starts, then runs frames until logistics shows
     /// the room (the session screen), or the message saying the join failed. Same rules as

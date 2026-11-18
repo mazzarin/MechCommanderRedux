@@ -517,13 +517,17 @@ namespace MCHdArt
     /// <summary>Port-only: adds a note to the HD trace, if one is open (OpenTrace): <c>N time text</c>.</summary>
     void TraceNote(std::string_view text);
 
+    /// <summary>Port-only: the examples the guard keeps of each kind of read it notes (GuardOriginalReads).</summary>
+    inline constexpr size_t GuardExamples = 4;
+
     /// <summary>
     /// Port-only, for test runs alone (the tests; <c>-hdguard</c>, which no player passes): while on, each read of the
     /// original's art that a version 2 pack is drawn in place of (a shape table, a ground tile or overlay) is noted by its
     /// kind, so the run can fail on it (SPEC-pack-v2.md's done: no original art read). Setting it clears what it noted.
     /// The game reads the art as without the guard: a mod's art, which the pack lacks, still comes from its files.
+    /// Each kind keeps its first <paramref name="examples"/> examples (a survey of every screen's pictures keeps all).
     /// </summary>
-    void GuardOriginalReads(bool on);
+    void GuardOriginalReads(bool on, size_t examples = GuardExamples);
 
     /// <summary>Port-only: whether the guard is on (GuardOriginalReads) with a version 2 pack drawn.</summary>
     bool GuardingOriginalReads();

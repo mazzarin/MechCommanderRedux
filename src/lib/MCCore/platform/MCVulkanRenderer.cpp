@@ -2810,9 +2810,12 @@ void MCVulkanRenderer::FreeRetiredPlaces()
             sma_item_remove(page.HdPlaces.get(), retired.HdItem);
         }
 
-        // An emptied page goes (its textures once the frames that read them have run).
+        // An emptied page goes (its textures once the frames that read them have run, counted as retired till then:
+        // SPEC-memory.md's pages).
         if (--page.Pictures == 0)
         {
+            MCGpuCounted::Retire(page.Texture.Handle);
+            MCGpuCounted::Retire(page.HdColors.Handle);
             Release(page.Texture);
             Release(page.HdColors);
             page = SharedPage{};

@@ -65,7 +65,8 @@ public:
 
     /// <summary>
     /// Port-only (SPEC-first-use.md: the original's packets at the load): the object types an object of this type makes
-    /// in play (its explosion and wreck; a shot's hit, miss, smoke and light; a building's fire), so that a mission's load
+    /// in play (its explosion and wreck; a shot's hit, miss, smoke and light; a building's fire; a mech's sparks, jump
+    /// jets and arms thrown off; a vehicle's crew bailing out), so that a mission's load
     /// reads them ahead (MCObjectTypeManager::LoadMadeTypes). Below 1: none.
     /// </summary>
     virtual std::vector<int32_t> MadeTypes() const { return {ExplosionObject, DestroyedObject}; }

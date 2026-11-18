@@ -318,29 +318,35 @@ auto MCObjectTypeManager::LoadMadeTypes() -> MCPacketsHeld
         AppearanceTypeList().GetAppearance(type.AppearName);
     };
 
+    // What the game makes by its own numbers, no type's: a mine's blast (a mine laid, on the map or the staged battle's).
+    const std::array<int32_t, 1> gameMade{MineExplosion};
+
     for (;;)
     {
         std::vector<int32_t> wanted;
         std::vector<std::shared_ptr<MCObjectType>> loaded;
+        const auto ask = [&](int32_t made)
+        {
+            if (made < 1 || !asked.insert(made).second)
+            {
+                return;
+            }
+
+            if (std::shared_ptr<MCObjectType> found = Find(made); found == nullptr)
+            {
+                wanted.push_back(made);
+            }
+            else if (found->KeepMe == 0)
+            {
+                loaded.push_back(std::move(found));
+            }
+        };
+
+        std::ranges::for_each(gameMade, ask);
 
         for (const std::shared_ptr<MCObjectType>& type : _Types)
         {
-            for (const int32_t made : type->MadeTypes())
-            {
-                if (made < 1 || !asked.insert(made).second)
-                {
-                    continue;
-                }
-
-                if (std::shared_ptr<MCObjectType> found = Find(made); found == nullptr)
-                {
-                    wanted.push_back(made);
-                }
-                else if (found->KeepMe == 0)
-                {
-                    loaded.push_back(std::move(found));
-                }
-            }
+            std::ranges::for_each(type->MadeTypes(), ask);
         }
 
         if (wanted.empty() && loaded.empty())

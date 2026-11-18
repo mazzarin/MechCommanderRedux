@@ -956,6 +956,32 @@ TEST_CASE("sprites: legs whose art draws fewer frames than they play step only b
     CHECK(!MCLegsStepOf(0, Limp, 0, Quarter, false, true).has_value());
 }
 
+/// <summary>
+/// Port-only (HD art's walk in-betweens): art drawing more frames than its gesture plays (legs90/10's walk draws 28, the
+/// Mad Cat plays 27 of them, the Vulture all 28) steps round its loop from the last frame played to the first as its
+/// wrap, whose in-between the pack keeps apart from the art's next frame's (<c>26_wrap_1</c>, not <c>26_1</c>, which is
+/// 26 toward 27), either way round; every other step, and the whole art's loop, as before.
+/// </summary>
+TEST_CASE("sprites: legs whose art draws more frames than they play step round their loop as its wrap")
+{
+    constexpr float Quarter = 0.25f;
+    constexpr int32_t Drawn = 28;
+    constexpr int32_t MadCat = 27;
+    CHECK((MCLegsStepOf(MadCat - 1, MadCat, Drawn, Quarter, false, true) == MCLegsStep{MadCat - 1, 0, 1, true}));
+    CHECK((MCLegsStepOf(0, MadCat, Drawn, Quarter, true, true) ==
+           MCLegsStep{MadCat - 1, 0, LegsInBetweenSteps - 1, true}));
+    CHECK((MCLegsStepOf(MadCat - 2, MadCat, Drawn, Quarter, false, true) == MCLegsStep{MadCat - 2, MadCat - 1, 1}));
+    CHECK((MCLegsStepOf(Drawn - 1, Drawn, Drawn, Quarter, false, true) == MCLegsStep{Drawn - 1, 0, 1}));
+    CHECK((MCLegsStepOf(MadCat - 1, Drawn, Drawn, Quarter, false, true) == MCLegsStep{MadCat - 1, Drawn - 1, 1}));
+    CHECK(!MCLegsStepOf(MadCat - 1, MadCat, Drawn, Quarter, false, false).has_value());
+
+    // The name it asks the pack for: the step's own, or its wrap's (a turn middle's in-between's too).
+    const MCLegsStep wrap{MadCat - 1, 0, 2, true};
+    CHECK_EQ(wrap.Named(wrap.Step), WrapBetweenStep(2));
+    CHECK_EQ(wrap.Named(TurnBetweenStep(TurnStep, 2)), WrapBetweenStep(TurnBetweenStep(TurnStep, 2)));
+    CHECK_EQ((MCLegsStep{3, 4, 2}.Named(2)), 2);
+}
+
 TEST_CASE("sprites: a mech's transitions come from its own table when it has one")
 {
     SpriteFiles files({}, {}, {Fit(MechFit(true))});

@@ -1620,7 +1620,7 @@ auto MCPartInBetween(std::span<const uint8_t> table, const MCLegsStep& step) -> 
     const std::optional<FrameBox> from = BoxOf(table, step.From, false);
     const std::optional<FrameBox> to = BoxOf(table, step.To, false);
     return from.has_value() && to.has_value()
-               ? PackInBetween(table, step.From, step.To, step.Step, Together(*from, *to))
+               ? PackInBetween(table, step.From, step.To, step.Named(step.Step), Together(*from, *to))
                : std::nullopt;
 }
 
@@ -1652,22 +1652,26 @@ auto MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, boo
     };
 
     // Some art draws fewer frames than its gesture plays (Thor's and Hunchback's limp, a frame short): a frame past its
-    // last shows its last, so the step is between the frames shown, and none while the art holds its last.
-    const auto drawnStep = [&](int32_t from, int32_t to, int32_t at) -> std::optional<MCLegsStep>
+    // last shows its last, so the step is between the frames shown, and none while the art holds its last. Some draws
+    // more (the Mad Cat's walk, 27 of legs90/10's 28, which the Vulture plays whole): the loop's step round from the
+    // last played to the first is its wrap, not the art's next frame's.
+    const bool artGoesOn = drawn > frames;
+    const auto drawnStep = [&](int32_t from, int32_t to, int32_t at, bool round) -> std::optional<MCLegsStep>
     {
         const int32_t fromShown = std::min(from, drawn - 1);
         const int32_t toShown = std::min(to, drawn - 1);
-        return fromShown != toShown ? std::optional(MCLegsStep{fromShown, toShown, at}) : std::nullopt;
+        return fromShown != toShown ? std::optional(MCLegsStep{fromShown, toShown, at, round && artGoesOn})
+                                    : std::nullopt;
     };
 
     if (backwards)
     {
         const std::optional<int32_t> from = shown(frame - 1);
-        return from.has_value() ? drawnStep(*from, frame, LegsInBetweenSteps - step) : std::nullopt;
+        return from.has_value() ? drawnStep(*from, frame, LegsInBetweenSteps - step, frame == 0) : std::nullopt;
     }
 
     const std::optional<int32_t> to = shown(frame + 1);
-    return to.has_value() ? drawnStep(frame, *to, step) : std::nullopt;
+    return to.has_value() ? drawnStep(frame, *to, step, frame == frames - 1) : std::nullopt;
 }
 
 auto MCMechActor::LegsStepNow(int32_t frame, int32_t frames, int32_t drawn) const -> std::optional<MCLegsStep>
@@ -1727,8 +1731,11 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
             return own;
         }
 
-        const bool halfOn = middle->TowardMirrored && MCStrideGesture(gesture) && frames > 0;
-        const int32_t towardFrame = MCClampShapeFrame(toward->FrameList(), halfOn ? (at + frames / 2) % frames : at);
+        // Half a cycle of the art's frames, as the maker pairs them (a tree may play fewer).
+        const int32_t drawnToward = VfxShapeCount(toward->FrameList());
+        const bool halfOn = middle->TowardMirrored && MCStrideGesture(gesture) && drawnToward > 0;
+        const int32_t towardFrame =
+            MCClampShapeFrame(toward->FrameList(), halfOn ? (at + drawnToward / 2) % drawnToward : at);
         const std::optional<FrameBox> other = BoxOf(toward->FrameList(), towardFrame, middle->TowardMirrored);
         return other.has_value() ? std::optional(Together(*own, *other)) : std::nullopt;
     };
@@ -1761,7 +1768,8 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
 
         if (from.has_value() && to.has_value())
         {
-            const int32_t name = middle.has_value() ? TurnBetweenStep(middle->Step, step->Step) : step->Step;
+            const int32_t name =
+                step->Named(middle.has_value() ? TurnBetweenStep(middle->Step, step->Step) : step->Step);
 
             if (const std::optional<MCInBetween> between = found(step->From, step->To, name, Together(*from, *to));
                 between.has_value())

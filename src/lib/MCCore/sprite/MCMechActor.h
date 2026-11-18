@@ -44,13 +44,20 @@ struct MCLegsDrawn
 
 /// <summary>
 /// Port-only (HD art): the in-between of a mech's legs on their way between two frames: from frame
-/// <see cref="From"/> toward <see cref="To"/>, step <see cref="Step"/> of <see cref="LegsInBetweenSteps"/>.
+/// <see cref="From"/> toward <see cref="To"/>, step <see cref="Step"/> of <see cref="LegsInBetweenSteps"/>;
+/// <see cref="Wrap"/> where it is the loop's last frame played toward its first while the art draws more frames (the
+/// Mad Cat's walk plays 27 of legs90/10's 28), whose in-between the pack keeps apart from the art's next frame's
+/// (sprite/MCInBetween.h's WrapStep).
 /// </summary>
 struct MCLegsStep
 {
     int32_t From = 0;
     int32_t To = 0;
     int32_t Step = 0;
+    bool Wrap = false;
+
+    /// <summary>The step that names its in-between in the pack (<see cref="Step"/>, or its wrap's).</summary>
+    int32_t Named(int32_t step) const { return Wrap ? WrapBetweenStep(step) : step; }
 
     bool operator==(const MCLegsStep&) const = default;
 };
@@ -62,7 +69,8 @@ struct MCLegsStep
 /// rest of the way. Past either end, round to the other end when the gesture <paramref name="loops"/>, else none (the
 /// next gesture's frame comes next). None in a frame's first step. The art draws <paramref name="drawn"/> frames, which
 /// may be fewer than the gesture plays (a frame past its last shows its last, as MCClampShapeFrame has it): the step
-/// is between the frames shown, and none where both show the same one.
+/// is between the frames shown, and none where both show the same one. Or more: then the loop's step round from the
+/// last frame played to the first is its wrap (<see cref="MCLegsStep::Wrap"/>).
 /// </summary>
 std::optional<MCLegsStep> MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, bool backwards,
                                        bool loops);

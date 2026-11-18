@@ -171,6 +171,8 @@ namespace
     /// <summary>What a turn middle's name has in place of a step (sprite/MCInBetween.h's TurnStep, TurnMirroredStep).</summary>
     constexpr std::string_view TurnName = "turn";
     constexpr std::string_view TurnMirroredName = "turnm";
+    /// <summary>What a loop's wrap in-between's name has before its step (sprite/MCInBetween.h's WrapStep).</summary>
+    constexpr std::string_view WrapName = "wrap";
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
@@ -1358,8 +1360,9 @@ namespace
 
     /// <summary>
     /// The steps a numbered frame's step goes with (sprite/MCInBetween.h): the frame's own and its in-betweens toward
-    /// the next frame (an effect's, a walk's), or (HDTurns) a legs frame's turn middle and its in-betweens. Its members
-    /// are numbered from the frame's own (or the turn middle's), 0.
+    /// the next frame (an effect's, a walk's), or (HDTurns) a legs frame's turn middle and its in-betweens; or a walk's
+    /// in-betweens round its loop's wrap (WrapStep), its turn middle's too. Its members are numbered from the frame's own
+    /// (or the turn middle's), 0.
     /// </summary>
     struct StepFamily
     {
@@ -1368,22 +1371,37 @@ namespace
         /// <summary>The member a step is, and how many members there may be.</summary>
         int32_t Member = 0;
         int32_t Members = MaxInBetweenSteps;
+        /// <summary>Whether its in-betweens are toward the loop's first frame (WrapStep), not the art's next.</summary>
+        bool Wrap = false;
 
-        /// <summary>The step that names member <paramref name="member"/>.</summary>
-        int32_t StepOf(int32_t member) const { return Turn == 0 ? member : TurnBetweenStep(Turn, member); }
+        /// <summary>
+        /// The step that names member <paramref name="member"/>: a wrap's member 0 is the frame's own (or its turn
+        /// middle), which has no wrap of its own.
+        /// </summary>
+        int32_t StepOf(int32_t member) const
+        {
+            const int32_t step = Turn == 0 ? member : TurnBetweenStep(Turn, member);
+            return Wrap && member > 0 ? WrapBetweenStep(step) : step;
+        }
+
+        /// <summary>The family of the frames after: the art's next frames have their own in-betweens, not a wrap's.</summary>
+        StepFamily Unwrapped() const { return {Turn, 0, Members, false}; }
     };
 
     /// <summary>The family <paramref name="step"/> (a numbered frame key's, NumberedKey) is of, and its member.</summary>
     StepFamily FamilyOf(uint64_t step)
     {
+        const bool wrap = (step & static_cast<uint64_t>(WrapStep)) != 0;
+        step &= ~static_cast<uint64_t>(WrapStep);
+
         if (step < static_cast<uint64_t>(TurnStep))
         {
-            return {0, static_cast<int32_t>(step), MaxInBetweenSteps};
+            return {0, static_cast<int32_t>(step), wrap ? LegsInBetweenSteps : MaxInBetweenSteps, wrap};
         }
 
         constexpr uint64_t BetweenMask = (uint64_t{1} << TurnBetweenShift) - 1;
         return {static_cast<int32_t>(step & ~(BetweenMask << TurnBetweenShift)),
-                static_cast<int32_t>(step >> TurnBetweenShift & BetweenMask), LegsInBetweenSteps};
+                static_cast<int32_t>(step >> TurnBetweenShift & BetweenMask), LegsInBetweenSteps, wrap};
     }
 
     /// <summary>
@@ -1400,16 +1418,20 @@ namespace
             return frame;
         }
 
-        // A turn middle, or (HD art's walk in-betweens) a turn middle's in-between toward the next frame's.
-        if (const StepFamily family = FamilyOf(step); family.Turn != 0)
+        // A turn middle, or (HD art's walk in-betweens) a turn middle's in-between toward the next frame's, or round
+        // the loop's wrap (<frame>_turn_wrap_<step>).
+        const StepFamily family = FamilyOf(step);
+        const std::string wrap = family.Wrap ? std::format("{}{}", WrapName, InBetweenSeparator) : std::string();
+
+        if (family.Turn != 0)
         {
             const std::string_view turnName = family.Turn == TurnMirroredStep ? TurnMirroredName : TurnName;
             return family.Member == 0 ? std::format("{}{}{}", frame, InBetweenSeparator, turnName)
-                                      : std::format("{}{}{}{}{}", frame, InBetweenSeparator, turnName,
-                                                    InBetweenSeparator, family.Member);
+                                      : std::format("{}{}{}{}{}{}", frame, InBetweenSeparator, turnName,
+                                                    InBetweenSeparator, wrap, family.Member);
         }
 
-        return std::format("{}{}{}", frame, InBetweenSeparator, step);
+        return std::format("{}{}{}{}", frame, InBetweenSeparator, wrap, family.Member);
     }
 
     /// <summary>The name a hash gives a frame: 16 hex digits.</summary>
@@ -1708,12 +1730,12 @@ namespace
         const StepFamily family = FamilyOf(follow.Key.Name >> InBetweenNameShift);
         std::vector<AheadEntry> next;
 
-        // Frame at's family from member from on, up to the first member the archive lacks.
-        const auto addFamily = [&](int32_t at, int32_t from)
+        // Frame at's family of steps (of) from member from on, up to the first member the archive lacks.
+        const auto addFamily = [&](int32_t at, const StepFamily& of, int32_t from)
         {
-            for (int32_t member = from; member < family.Members; ++member)
+            for (int32_t member = from; member < of.Members; ++member)
             {
-                const uint64_t name = NumberedKey(at, family.StepOf(member));
+                const uint64_t name = NumberedKey(at, of.StepOf(member));
                 std::string entry = follow.Prefix + NumberedName(name) + std::string(HdfExtension);
                 const std::optional<int32_t> index = follow.Archive->File->Find(entry);
 
@@ -1729,15 +1751,15 @@ namespace
         // Port-only: a neighbour's in a turn, its own frame.
         if (follow.Itself)
         {
-            addFamily(frame, 0);
+            addFamily(frame, family, 0);
             return next;
         }
 
-        addFamily(frame, family.Member + 1);
+        addFamily(frame, family, family.Member + 1);
 
         for (int32_t on = 1; on <= FramesAhead && on < follow.Frames; ++on)
         {
-            addFamily((frame + on) % follow.Frames, 0);
+            addFamily((frame + on) % follow.Frames, family.Unwrapped(), 0);
         }
 
         return next;
@@ -3004,11 +3026,24 @@ namespace
             {
             }
 
-            // Each turn middle, then its in-betweens, up to the first the archive lacks.
+            // A walk's loop's wrap (the last frame a tree plays, where its art draws more): its in-betweens toward the
+            // first frame, up to the first the archive lacks.
+            for (int32_t step = 1; step < LegsInBetweenSteps && look(ask, NumberedKey(frame, WrapBetweenStep(step)));
+                 ++step)
+            {
+            }
+
+            // Each turn middle, then its in-betweens (and its wrap's), up to the first the archive lacks.
             for (const int32_t turn : {TurnStep, TurnMirroredStep})
             {
                 for (int32_t step = 0; ask.TurnMiddles && step < LegsInBetweenSteps &&
                                        look(ask, NumberedKey(frame, step == 0 ? turn : TurnBetweenStep(turn, step)));
+                     ++step)
+                {
+                }
+
+                for (int32_t step = 1; ask.TurnMiddles && step < LegsInBetweenSteps &&
+                                       look(ask, NumberedKey(frame, WrapBetweenStep(TurnBetweenStep(turn, step))));
                      ++step)
                 {
                 }

@@ -131,6 +131,10 @@ struct Output
     float4 glint : SV_Target2;
 };
 
+// The channels' values: the index target's marks, an HD frame's index picture's green, the palette entries the shaders
+// know.
+#include "channels.hlsli"
+
 // Kinds (op.x bits 0-3).
 static const uint KindFill = 0;
 static const uint KindHash = 1;
@@ -186,7 +190,6 @@ static const uint ReliefPlaceMask = 0xfffu;
 // span.w (terrain.vshader): the relief map's atlas; the index target's alpha where none of the ground can be entered is
 // BlockedMarkSpan below 1 (the composite's).
 static const int ReliefAtlasMask = 0xff;
-static const float BlockedMarkSpan = 0.25;
 // A terrain tile's ground (terrain.vshader's, BlockedAt): the step across in z's bits from GroundStepShift, how many of
 // its corners the fog of war leaves seen from GroundFogShift (1 to 3 at its edge, 0 elsewhere; every terrain tile's,
 // with a relief map or not; 0 for any other draw), the tile's count of movement cells that can't be entered from
@@ -199,17 +202,6 @@ static const uint GroundOwnShift = 28;
 static const uint BlockedRoundBits = 4;
 static const uint BlockedRoundMask = 15u;
 static const float MovementCells = 9.0;
-// Port-only (HD lighting's living water): the water's palette entries, its blues and its colour-cycled ones (the
-// composite's IsWater, which finds the water by them in the index target). The haze's tables at the fog of war's edge
-// map most of them to other ramps' entries (greys, greens) and a few to water blues, so a water pixel there keeps its
-// own index (HazedWater), and the composite finds the water whole, not a speckle of it. Without a relief map, its alpha
-// in the index target is FoggedWaterMark for each of its tile's corners the fog leaves seen (the composite's
-// FoggedWaterAt; under the canopy's mark); with one, the slopes' low bits hold them, as for all the ground.
-static const uint FirstWaterBlue = 0x58;
-static const uint WaterBlues = 6;
-static const uint FirstWaterColor = 0xd8;
-static const uint WaterColors = 8;
-static const float FoggedWaterMark = 8.0 / 255.0;
 // The least the quadratic BlockedAt solves may divide by (a cell squashed flat on the window: its middle's taken).
 static const float LeastCellSpan = 1e-3;
 static const int BlockSide = 4;
@@ -236,7 +228,6 @@ static const uint Particle = 1u << 23;
 // pass, StandingMark).
 static const uint Sways = 1u << 24;
 static const uint IndexOnly = 1u << 15;
-static const float SwayMark = 64.0 / 255.0;
 // Port-only (HD weather's snow): a footprint's or a crater's draw under the snow (MCVulkanRenderer's GroundFill), filled
 // in as far as op.x's bits from GroundFillShift say (of GroundFillMost): its pixels in the index target are marked as
 // flat ground (ReliefFlat, both slopes), their alpha FilledMarkFrom to FilledMarkFrom + FilledMarkSpan as far as it has
@@ -245,17 +236,12 @@ static const float SwayMark = 64.0 / 255.0;
 static const uint GroundFill = 1u << 25;
 static const uint GroundFillShift = 26;
 static const uint GroundFillMost = 63;
-static const float FilledMarkFrom = 0.52;
-static const float FilledMarkSpan = 0.2;
 // Port-only (HD lighting's headlights): a unit's draw (MCRenderer::StandingScope) carries the window row its feet stand
 // on in op.y's bits from FeetShift (MCVulkanRenderer's FeetBits: a quarter row a step, 1 more; 0 none), which its
 // pixels write in the index target's green (the high byte) and blue, as its HD frame's mark pass does (its pipeline
 // writing those too); everything else writes 0 there. The composite lights the unit's pixels where it stands, and
 // knows them in a beam's way (composite.pshader's FeetAt). Ground's green and blue are its slopes, told by the alpha.
-static const uint FeetShift = 16;
-static const uint BitsPerByte = 8;
-// A relief map's flat slope, as stored (the composite's ReliefFlat).
-static const float ReliefFlat = 128.0;
+
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
@@ -267,7 +253,6 @@ static const float SpriteEdgeHigh = 0.6;
 // pipeline writing the indices' alpha alone) sets the alpha to StandingMark (the composite's: something stands on the
 // ground, as the original's pixels' indices have it) wherever the frame covers at least StandingCoverage of a pixel, so
 // that its smooth edge past the original's pixels, whose indices stay the ground's, reads as the frame's too.
-static const float StandingMark = 0.0;
 static const float StandingCoverage = 0.1;
 // A shadow is full across this much of its width, softening to nothing at its edge (KindShadow).
 static const float ShadowCore = 0.35;
@@ -302,20 +287,6 @@ static int2 sourceCorner;
 static int2 hdCorner;
 static int2 placeSize;
 
-// An HD frame's index picture's green (MCHdArt.h): 255 for a pixel with an index, 254 for one that is also part of an
-// object's baked shadow (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's); in a version 2 frame also 253 and
-// 252 spread past the original's pixels (outside a shadow and in one), 251 and 250 drawn and blended (outside a shadow
-// and in one).
-static const uint HasIndex = 255u;
-static const uint BakedShadow = 254u;
-static const uint SpreadShadow = 252u;
-static const uint DrawnBlended = 251u;
-static const uint DrawnBlendedShadow = 250u;
-// Port-only (KindHdSmooth): a pixel without an index that the frame covers (its alpha at the pixel's centre over
-// hdcoverage.pshader's HdMaskAlpha: an in-between's edge), as MCVulkanRenderer::MarkHdCoverage marks a version 1
-// frame's on the GPU.
-static const uint CoveredNoIndex = 249u;
-
 // Port-only (SPEC-memory.md's indices): place.w's bit for a draw of a shape's indices from its version 2 HD frame's own
 // index picture (MCVulkanRenderer's Picture::HdMarks), in place of the original's rows: its green is the frame's marks,
 // not an atlas page's state, from main.
@@ -348,18 +319,12 @@ int2 SourceSize()
     return int2((int)width, (int)height);
 }
 
-uint Byte(float value)
-{
-    return (uint)round(value * 255.0);
-}
-
 // Port-only: whether a version 2 HD frame's index picture's texel is a pixel the original draws, its red the original's
 // index (MCHdArt::OriginalDrawsMark): drawn, drawn and blended, in a baked shadow or not; not one its index only spread
 // to.
 bool OriginalDrawsIn(float4 entry)
 {
-    const uint green = Byte(entry.g);
-    return green == HasIndex || green == BakedShadow || green == DrawnBlended || green == DrawnBlendedShadow;
+    return OriginalDrawsGreen(Byte(entry.g));
 }
 
 // Whether a shape's source texel is drawn: an HD frame's index picture's by its marks (sourceMarks), an atlas page's by
@@ -506,7 +471,12 @@ float2 TileLocal(Input input, int2 target)
     return float2(input.source.xy) + (window - float2(input.rect.xy)) - float2(input.walk.zw);
 }
 
-// Whether palette entry `index` is the water's (FirstWaterBlue's, FirstWaterColor's).
+// Port-only (HD lighting's living water): whether palette entry `index` is the water's, its blues or its colour-cycled
+// ones (the composite's IsWater, which finds the water by them in the index target). The haze's tables at the fog of
+// war's edge map most of them to other ramps' entries (greys, greens) and a few to water blues, so a water pixel there
+// keeps its own index (HazedWater), and the composite finds the water whole, not a speckle of it. Without a relief map,
+// its alpha in the index target is FoggedWaterMark for each of its tile's corners the fog leaves seen (the composite's
+// FoggedWaterAt; under the canopy's mark); with one, the slopes' low bits hold them, as for all the ground.
 bool IsWaterEntry(uint index)
 {
     return index - FirstWaterBlue < WaterBlues || index - FirstWaterColor < WaterColors;
@@ -984,7 +954,7 @@ Output SmoothBlendedPixel(Input input, int2 target)
 // Whether an HD frame's index picture's texel has an index (MCHdArt::HasIndexMark).
 bool HasIndexIn(float4 entry)
 {
-    return Byte(entry.g) >= DrawnBlendedShadow;
+    return HasIndexGreen(Byte(entry.g));
 }
 
 // Whether an HD frame's index picture's texel has an index its colour is recoloured by. In a frame holding its blended
@@ -994,14 +964,13 @@ bool HasIndexIn(float4 entry)
 // the effect took their colours, dark and in the original's dither.
 bool RecolouringIndexIn(float4 entry, uint flags)
 {
-    return (flags & HdLight) != 0 ? Byte(entry.g) >= BakedShadow : HasIndexIn(entry);
+    return RecolouringGreen(Byte(entry.g), (flags & HdLight) != 0);
 }
 
 // Whether an HD frame's index picture's texel is in a baked shadow (MCHdArt::InShadowMark).
 bool InShadowIn(float4 entry)
 {
-    const uint green = Byte(entry.g);
-    return green == BakedShadow || green == SpreadShadow || green == DrawnBlendedShadow;
+    return InShadowGreen(Byte(entry.g));
 }
 
 // An HD art frame's colour at a texel, transparent outside its size, and where a keyed copy (port-only: an HD picture
@@ -1073,12 +1042,11 @@ float BakedShadowAt(int2 original, float2 shape)
 }
 
 // Port-only (KindHdSmooth): whether an HD frame's index picture's green marks an original pixel its frame covers, its
-// alpha at the pixel's centre over half (hdcoverage.pshader's HdMaskAlpha): drawn opaque, in a baked shadow or not, or
+// alpha at the pixel's centre over half (channels.hlsli's HdMaskAlpha): drawn opaque, in a baked shadow or not, or
 // covered without an index (MCVulkanRenderer::MarkHdCoverage marks a version 1 frame's so as it goes up).
 bool CoversIn(float green)
 {
-    const uint mark = Byte(green);
-    return mark == HasIndex || mark == BakedShadow || mark == CoveredNoIndex;
+    return CoversGreen(Byte(green));
 }
 
 // Port-only: an HD frame's coverage at `shape` (a place in its original's pixels, their centres at .5) for

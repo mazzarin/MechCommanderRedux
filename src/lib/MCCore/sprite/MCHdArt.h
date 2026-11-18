@@ -3,6 +3,7 @@
 #include "lib/MCDiskFile.h"
 #include "platform/MCAddressKey.h"
 #include "platform/MCSharpLines.h"
+#include "shaders/channels.hlsli"
 #include "sprite/MCBc7.h"
 
 class MCShape;
@@ -143,30 +144,31 @@ namespace MCHdArt
 
     /// <summary>The bytes an index picture's pixel takes (R8G8), and the green of a pixel with an index.</summary>
     inline constexpr size_t IndexBytes = 2;
-    inline constexpr uint8_t HasIndex = 255;
+    inline constexpr auto HasIndex = static_cast<uint8_t>(MCGpuChannels::HasIndex);
     /// <summary>
     /// Port-only: an index picture's green for a pixel with an index that is part of an object's baked shadow
     /// (<see cref="MarkBakedShadows"/>, or marked by the pack's generator in art the game doesn't mark, a forest's);
     /// otherwise it is as HasIndex's.
     /// </summary>
-    inline constexpr uint8_t BakedShadow = 254;
+    inline constexpr auto BakedShadow = static_cast<uint8_t>(MCGpuChannels::BakedShadow);
     /// <summary>
     /// Port-only (a version 2 frame's green, <see cref="Frame::Marked"/>): a pixel the original doesn't draw, its index
     /// spread from the nearest drawn one (the HD edge reaches past the original's), outside a baked shadow or in one; a
     /// pixel the original draws and blends (a translucent shape's, through AlphaPal.ini), outside a baked shadow or in
-    /// one. A version 1 frame has only HasIndex, BakedShadow and 0.
+    /// one. A version 1 frame has only HasIndex, BakedShadow and 0, until the GPU marks its copy
+    /// (shaders/channels.hlsli).
     /// </summary>
-    inline constexpr uint8_t Spread = 253;
-    inline constexpr uint8_t SpreadShadow = 252;
-    inline constexpr uint8_t DrawnBlended = 251;
-    inline constexpr uint8_t DrawnBlendedShadow = 250;
+    inline constexpr auto Spread = static_cast<uint8_t>(MCGpuChannels::Spread);
+    inline constexpr auto SpreadShadow = static_cast<uint8_t>(MCGpuChannels::SpreadShadow);
+    inline constexpr auto DrawnBlended = static_cast<uint8_t>(MCGpuChannels::DrawnBlended);
+    inline constexpr auto DrawnBlendedShadow = static_cast<uint8_t>(MCGpuChannels::DrawnBlendedShadow);
 
     /// <summary>
     /// Whether an index picture's <paramref name="green"/> gives its pixel an index (draw.pshader's HasIndexIn).
     /// </summary>
     constexpr bool HasIndexMark(uint8_t green)
     {
-        return green >= DrawnBlendedShadow;
+        return MCGpuChannels::HasIndexGreen(green);
     }
 
     /// <summary>
@@ -175,7 +177,7 @@ namespace MCHdArt
     /// </summary>
     constexpr bool InShadowMark(uint8_t green)
     {
-        return green == BakedShadow || green == SpreadShadow || green == DrawnBlendedShadow;
+        return MCGpuChannels::InShadowGreen(green);
     }
 
     /// <summary>
@@ -185,7 +187,7 @@ namespace MCHdArt
     /// </summary>
     constexpr bool OriginalDrawsMark(uint8_t green)
     {
-        return green == HasIndex || green == BakedShadow || green == DrawnBlended || green == DrawnBlendedShadow;
+        return MCGpuChannels::OriginalDrawsGreen(green);
     }
 
     /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>
@@ -800,7 +802,7 @@ namespace MCHdArt
     std::shared_ptr<const Frame> FindTerrainTileByKey(uint64_t key, int32_t width, int32_t height);
 
     /// <summary>A relief map's byte for flat ground; a byte stands for a rise of (byte - this) / 127 of a pixel.</summary>
-    inline constexpr int32_t ReliefFlat = 128;
+    inline constexpr auto ReliefFlat = static_cast<int32_t>(MCGpuChannels::ReliefFlat);
 
     /// <summary>
     /// Terrain tile <paramref name="tile"/>'s relief map (its bounds <paramref name="width"/> x

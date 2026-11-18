@@ -203,11 +203,11 @@ namespace
     /// <summary>
     /// Port-only (HD lighting's headlights): a unit's draw (MCRenderer::StandingScope) carries the window row its feet
     /// stand on in its colour's bits from FeetShift, FeetSteps a row and 1 more (0: none, so at most FeetMost), which
-    /// its pixels write with their indices (shaders/draw.pshader's FeetShift). Only the kinds whose colour leaves those
-    /// bits free (CarriesFeet) carry it.
+    /// its pixels write with their indices (shaders/channels.hlsli's FeetShift). Only the kinds whose colour leaves
+    /// those bits free (CarriesFeet) carry it.
     /// </summary>
-    constexpr uint32_t FeetShift = 16;
-    constexpr float FeetSteps = 4.0f;
+    using MCGpuChannels::FeetShift;
+    using MCGpuChannels::FeetSteps;
     constexpr int32_t FeetMost = 0xffff;
 
     /// <summary>Whether a draw of op <paramref name="op"/> carries a unit's feet (FeetShift): a shape's or an HD frame's.</summary>
@@ -342,7 +342,7 @@ namespace
     /// </summary>
     constexpr size_t JoinReach = 16;
     /// <summary>The black a terrain tile no one has seen is filled with (composite.pshader's UnseenIndex).</summary>
-    constexpr uint32_t UnseenTileIndex = 0x10;
+    constexpr uint32_t UnseenTileIndex = MCGpuChannels::UnseenIndex;
 
     /// <summary>
     /// Clears <paramref name="targets"/> (a surface's, with its glints or without) as a window's new pixels start:
@@ -1123,7 +1123,7 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
         // Port-only: a forest's HD frame (HDSway) writes the sway mark (the indices' alpha) alone, as an HD frame's
         // mark pass (indexOnly too) writes what stands on the ground, with the feet of the unit it is (green and blue,
-        // shaders/draw.pshader's FeetShift; none for anything else).
+        // shaders/channels.hlsli's FeetShift; none for anything else).
         if (marks)
         {
             targets[1].blend_state.enable_color_write_mask = true;

@@ -121,6 +121,9 @@
     <ClCompile Include="tests\GameSessionTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\GpuChannelsTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\GpuDrawingTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

@@ -273,12 +273,11 @@ namespace
     constexpr float StepRingLifeHigh = 1.1f;
     constexpr float StepRingAlpha = 0.5f;
 
-    /// <summary>
-    /// The water's palette entries (composite.pshader's IsWater): its blues, and the colour cycle's (FirstWaterColor on).
-    /// </summary>
-    constexpr uint8_t FirstWaterBlue = 0x58;
-    constexpr uint8_t WaterBlues = 6;
-    constexpr uint8_t WaterColors = 8;
+    // The water's palette entries (composite.pshader's IsWater, shaders/channels.hlsli): its blues, and the colour
+    // cycle's (MCWaterCycle's FirstWaterColor on).
+    using MCGpuChannels::FirstWaterBlue;
+    using MCGpuChannels::WaterBlues;
+    using MCGpuChannels::WaterColors;
     /// <summary>The tile drawn over a world point is its own map vertex's, or one this many rows or columns off.</summary>
     constexpr int32_t TileNear = 2;
     /// <summary>A terrain tile's header, its hot spot and rows first (VfxTilePixel finds nothing in less).</summary>

@@ -72,8 +72,12 @@ namespace
         CHECK_EQ(MCRenderer::UnregisteredDraws(), 0);
     }
 
-    /// <summary>Port-only: the most frames the presenter keeps on the GPU, as two swapchain images held them.</summary>
-    constexpr size_t HeldOnGpu = MCVulkanPresenter::TwoImageFrames;
+    /// <summary>
+    /// Port-only: the most frames the presenter keeps on the GPU: one with the third swapchain image (vsync on), two
+    /// with two images (MCVulkanPresenter::FramesHeldOnGpu).
+    /// </summary>
+    constexpr size_t HeldWithThirdImage = 1;
+    constexpr size_t HeldWithTwoImages = 2;
 
     /// <summary>
     /// Port-only: mission 1 drawn by the GPU with the third swapchain image on every driver
@@ -790,9 +794,9 @@ TEST_CASE_ISOLATED("game: the GPU draws what lies apart in a batch for each kind
 
 /// <summary>
 /// Port-only: the third swapchain image (Vulkan's; here on every driver, so the Mac's Metal runs its waits): with vsync
-/// the swapchain has three images, the game still keeps at most two frames on the GPU, and draws on.
+/// the swapchain has three images, the game keeps at most one frame on the GPU, and draws on.
 /// </summary>
-TEST_CASE_ISOLATED("game: with a third swapchain image, the game keeps at most two frames on the GPU")
+TEST_CASE_ISOLATED("game: with a third swapchain image, the game keeps at most one frame on the GPU")
 {
     if (!MCTestGame::Available())
     {
@@ -807,13 +811,15 @@ TEST_CASE_ISOLATED("game: with a third swapchain image, the game keeps at most t
     }
 
     CHECK_EQ(presenter->FramesInFlight(), MCVulkanPresenter::ThirdImageFrames);
-    CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+    CHECK_EQ(MCVulkanPresenter::FramesHeldOnGpu(presenter->FramesInFlight()), HeldWithThirdImage);
+    CHECK_EQ(MostFramesOnGpu(*presenter), HeldWithThirdImage);
 }
 
 /// <summary>
 /// Port-only: the third swapchain image only while vsync is on (without it, a third image can leave Windows'
 /// compositor holding the game's frames after an overlay): a start without vsync (-novsync) makes two images, vsync
-/// turned on gives three and off two again, and the game draws on after each, at most two frames on the GPU.
+/// turned on gives three and off two again, and the game draws on after each, at most two frames on the GPU with two
+/// images and one with three.
 /// </summary>
 TEST_CASE_ISOLATED("game: with a third swapchain image, vsync off keeps two images and vsync on three")
 {
@@ -830,14 +836,14 @@ TEST_CASE_ISOLATED("game: with a third swapchain image, vsync off keeps two imag
     }
 
     CHECK_EQ(presenter->FramesInFlight(), MCVulkanPresenter::TwoImageFrames);
-    CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+    CHECK_EQ(MostFramesOnGpu(*presenter), HeldWithTwoImages);
 
     for (const bool vsync : {true, false})
     {
         MCInput::Display()->SetVSync(vsync);
         CHECK_EQ(presenter->FramesInFlight(),
                  vsync ? MCVulkanPresenter::ThirdImageFrames : MCVulkanPresenter::TwoImageFrames);
-        CHECK_EQ(MostFramesOnGpu(*presenter), HeldOnGpu);
+        CHECK_EQ(MostFramesOnGpu(*presenter), vsync ? HeldWithThirdImage : HeldWithTwoImages);
     }
 }
 

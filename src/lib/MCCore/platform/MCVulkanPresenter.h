@@ -76,6 +76,20 @@ public:
     static constexpr uint32_t TwoImageFrames = 2;
     static constexpr uint32_t ThirdImageFrames = 3;
 
+    /// <summary>
+    /// Port-only: the frames presented the game may still have on the GPU as it shows another (_Sent), with SDL's frames
+    /// in flight <paramref name="framesInFlight"/>: two, as SDL's two swapchain images hold them, or one with the third.
+    /// With three images and two held, a run could fall into a backlog it kept to its end, its waits for the next image
+    /// coming in pairs (two refreshes, then none), and then miss refreshes wherever a frame's GPU work ran long (the
+    /// A10's canyon pan, 18 Nov). Held to one, each frame waits for the one before it to be drawn, and the third image
+    /// is the slack for a frame that runs past a refresh.
+    /// </summary>
+    static constexpr size_t FramesHeldOnGpu(uint32_t framesInFlight)
+    {
+        constexpr size_t HeldWithThirdImage = 1;
+        return framesInFlight == ThirdImageFrames ? HeldWithThirdImage : TwoImageFrames;
+    }
+
     /// <summary>Port-only: the frames presented whose GPU work may not be done yet (_Sent), for the tests.</summary>
     size_t FramesOnGpu() const { return _Sent.size(); }
 
@@ -276,8 +290,8 @@ private:
     /// refresh alone, where with two the next frame waits too and the rate falls in steps (240, 120, 80 fps on a 240 Hz
     /// screen). Without vsync it keeps two: on Windows a third image often leaves the desktop's compositor holding the
     /// game's frames for good after anything brings it in for a moment (a screenshot, an overlay, a notification), at
-    /// 60 fps and some 60 ms late, where with two the game gets the screen back. In either count the game is held to
-    /// two frames on the GPU, as two images held it (_Sent).
+    /// 60 fps and some 60 ms late, where with two the game gets the screen back. The game holds two frames on the GPU
+    /// with two images and one with three (FramesHeldOnGpu, _Sent).
     /// </summary>
     bool _ThirdImage = false;
     /// <summary>
@@ -288,8 +302,9 @@ private:
     /// <summary>Port-only (with the third image): the fences of the frames presented last, oldest first.</summary>
     std::vector<SDL_GPUFence*> _Sent;
     /// <summary>
-    /// Port-only (with the third image): waits for the frame before last's GPU work (_Sent); an error when the wait
-    /// fails (a lost device).
+    /// Port-only (with the third image): waits for the GPU work of the frames presented past those held
+    /// (FramesHeldOnGpu, _Sent): the last frame's with three images, the frame before last's with two; an error when
+    /// the wait fails (a lost device).
     /// </summary>
     std::expected<void, std::string> HoldFramesOnGpu();
     /// <summary>

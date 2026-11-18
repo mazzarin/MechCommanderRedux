@@ -1467,6 +1467,19 @@ TEST_CASE("hd art: a frame's indices go once the GPU has its picture, unless cod
     CHECK(record->Indices.empty());
     CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdFrames).Payload, 0);
 
+    // Its colours read again while the GPU still has its picture (as a colour reader on the CPU does): the indices come
+    // back with them, and go again as after an upload.
+    CHECK(!MCHdArt::ColorsOf(*record).empty());
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height)->Indices == stored->Indices);
+
+    for (int i = 0; i <= KeptFrames; ++i)
+    {
+        MCHdArt::NextFrame(false);
+    }
+
+    CHECK(MCHdArt::FindTerrainTile(tiles[0], Width, Height)->Indices.empty());
+    CHECK_EQ(MCMemoryLedger::Of(MCHolder::HdFrames).Payload, 0);
+
     // Code on the CPU asks for them: read again, the same, kept.
     const size_t readAgain = MCHdArt::IndicesReadAgain();
     CHECK(std::ranges::equal(MCHdArt::IndicesOf(*record), stored->Indices));

@@ -1679,19 +1679,49 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (SPEC-memory.md's indices): a record as <paramref name="record"/> is, with <paramref name="indices"/>
+    /// as its indices: its own never copied (a record has no colours: they're kept beside it).
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> RecordWith(const MCHdArt::Frame& record, std::vector<uint8_t> indices)
+    {
+        // Every field but the pixels: a field added to MCHdArt::Frame is copied here too.
+        return std::make_shared<const MCHdArt::Frame>(MCHdArt::Frame{.Id = record.Id,
+                                                                     .Width = record.Width,
+                                                                     .Height = record.Height,
+                                                                     .Scale = record.Scale,
+                                                                     .Format = record.Format,
+                                                                     .Indices = std::move(indices),
+                                                                     .Blended = record.Blended,
+                                                                     .PaintedShadow = record.PaintedShadow,
+                                                                     .Marked = record.Marked,
+                                                                     .Colorspace = record.Colorspace,
+                                                                     .Movie = record.Movie});
+    }
+
+    /// <summary>
     /// Port-only (SPEC-memory.md's indices): <paramref name="cached"/>'s record without its indices, which the GPU's
     /// picture holds.
     /// </summary>
     void LetGoIndices(State& state, Cached& cached)
     {
-        if (cached.Frame->Indices.empty())
+        if (!cached.Frame->Indices.empty())
         {
-            return;
+            ReplaceRecord(state, cached, RecordWith(*cached.Frame, {}));
         }
+    }
 
-        auto record = std::make_shared<MCHdArt::Frame>(*cached.Frame);
-        std::vector<uint8_t>().swap(record->Indices);
-        ReplaceRecord(state, cached, std::move(record));
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): <paramref name="indices"/>, read again, back in <paramref name="cached"/>'s
+    /// record; let go again as after an upload while the GPU has its picture.
+    /// </summary>
+    void IndicesBack(State& state, const FrameKey& key, Cached& cached, std::vector<uint8_t> indices)
+    {
+        ReplaceRecord(state, cached, RecordWith(*cached.Frame, std::move(indices)));
+
+        if (cached.OnGpu)
+        {
+            state.Uploaded.emplace_back(key, state.Frame);
+        }
     }
 
     /// <summary>
@@ -3659,9 +3689,7 @@ namespace
             // Port-only (SPEC-memory.md's indices): the indices too, if its record let go of them.
             if (cached.Frame->Indices.empty() && !(*read)->Indices.empty())
             {
-                auto record = std::make_shared<MCHdArt::Frame>(*cached.Frame);
-                record->Indices = std::move((*read)->Indices);
-                ReplaceRecord(state, cached, std::move(record));
+                IndicesBack(state, key, cached, std::move((*read)->Indices));
             }
         }
     }
@@ -3690,11 +3718,54 @@ namespace
         }
         else if (*read != nullptr && !(*read)->Indices.empty())
         {
-            auto record = std::make_shared<MCHdArt::Frame>(*cached.Frame);
-            record->Indices = std::move((*read)->Indices);
-            ReplaceRecord(state, cached, std::move(record));
+            IndicesBack(state, key, cached, std::move((*read)->Indices));
             ++state.IndicesReadAgain;
         }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): the cache's record holding <paramref name="frame"/>'s indices, read again
+    /// if it let go of them, for a caller to hold while it reads them; null when <paramref name="frame"/>'s own are
+    /// its indices. Read (MCHdArt::MCIndicesUse) marks its folder's as read on the CPU.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> IndexedRecord(const MCHdArt::Frame& frame, MCHdArt::MCIndicesUse use)
+    {
+        State& state = TheState();
+        const auto numbered = state.ById.find(frame.Id);
+
+        if (numbered == state.ById.end())
+        {
+            return nullptr;
+        }
+
+        const FrameKey key = numbered->second;
+
+        if (use == MCHdArt::MCIndicesUse::Read)
+        {
+            state.Folders.at(key.Folder).IndicesRead = true;
+        }
+
+        const auto found = frame.Indices.empty() ? state.Frames.find(key) : state.Frames.end();
+
+        if (found == state.Frames.end())
+        {
+            return nullptr;
+        }
+
+        Cached& cached = found->second;
+
+        // Let go of whole since: read again, as a first draw reads it.
+        if (cached.Frame == nullptr)
+        {
+            return Cache(key, frame.OriginalWidth(), frame.OriginalHeight());
+        }
+
+        if (cached.Frame->Indices.empty())
+        {
+            ReadIndicesAgain(state, key, cached);
+        }
+
+        return cached.Frame;
     }
 }
 
@@ -4528,8 +4599,10 @@ void MCHdArt::VisitShape(std::span<const uint8_t> table, int32_t frame,
     const auto height = static_cast<int32_t>(bounds.Height);
     const auto minX = static_cast<int32_t>(bounds.MinX);
     const auto minY = static_cast<int32_t>(bounds.MinY);
-    // Port-only (SPEC-memory.md's indices): its folder's frames keep their indices from now on.
-    const std::span<const uint8_t> indices = IndicesOf(*hd);
+    // Port-only (SPEC-memory.md's indices): its folder's frames keep their indices from now on; the record held while
+    // the visits run, whatever they read.
+    const std::shared_ptr<const Frame> record = IndexedRecord(*hd, MCIndicesUse::Read);
+    const std::span<const uint8_t> indices = record != nullptr ? record->Indices : hd->Indices;
 
     for (int32_t y = 0; y < height; ++y)
     {
@@ -6002,46 +6075,9 @@ size_t MCHdArt::ColorsReadAgain()
 
 std::span<const uint8_t> MCHdArt::IndicesOf(const Frame& frame, MCIndicesUse use)
 {
-    State& state = TheState();
-    const auto numbered = state.ById.find(frame.Id);
-
-    if (numbered == state.ById.end())
-    {
-        return frame.Indices;
-    }
-
-    const FrameKey key = numbered->second;
-
-    if (use == MCIndicesUse::Read)
-    {
-        state.Folders.at(key.Folder).IndicesRead = true;
-    }
-
-    if (!frame.Indices.empty())
-    {
-        return frame.Indices;
-    }
-
-    const auto found = state.Frames.find(key);
-
-    if (found == state.Frames.end())
-    {
-        return frame.Indices;
-    }
-
-    Cached& cached = found->second;
-
-    // Let go of whole since: read again, as a first draw reads it.
-    if (cached.Frame == nullptr)
-    {
-        Cache(key, frame.OriginalWidth(), frame.OriginalHeight());
-    }
-    else if (cached.Frame->Indices.empty())
-    {
-        ReadIndicesAgain(state, key, cached);
-    }
-
-    return cached.Frame != nullptr ? std::span<const uint8_t>(cached.Frame->Indices) : frame.Indices;
+    // The cache holds the record until its next trim.
+    const std::shared_ptr<const Frame> record = IndexedRecord(frame, use);
+    return record != nullptr ? std::span<const uint8_t>(record->Indices) : frame.Indices;
 }
 
 size_t MCHdArt::IndicesReadAgain()

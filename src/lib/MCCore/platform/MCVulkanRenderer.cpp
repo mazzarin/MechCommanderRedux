@@ -274,13 +274,19 @@ namespace
     /// Port-only (SPEC-memory.md's pages): the side of an HD page's indices for frames of <paramref name="scale"/> HD
     /// pixels an original pixel: the colours' side over the scale where that's less than HdIndexPageSide (683 at 3x,
     /// so the two fill together: at 1024, 55% of the indices' page stayed empty), else HdIndexPageSide (2x already
-    /// matches). Frames of another scale take pages of their own (SharedLayout).
+    /// matches). Frames of a scale with another side take pages of their own (SharedLayout): 1x and 2x share theirs.
     /// </summary>
     constexpr uint32_t HdIndexSideFor(int32_t scale)
     {
         const auto pixels = static_cast<uint32_t>(std::max(scale, 1));
         return pixels * HdIndexPageSide > HdPageSide ? (HdPageSide + pixels - 1) / pixels : HdIndexPageSide;
     }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the frames before a spare page the GPU had no room for is tried again (each
+    /// try that fails logs).
+    /// </summary>
+    constexpr uint64_t SpareRetryFrames = 60;
 
     /// <summary>Port-only: the pages sharp glyphs share (RGBA8, 4 MB; the interface's take 0.1 MB).</summary>
     constexpr uint32_t SharpPageSide = 1024;
@@ -2750,12 +2756,14 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
 
     // Only a page of the picture's own layout: its formats and its places' unit are the page's; not one that refused a
     // picture no bigger. A refusal is kept as the page's smallest.
+    const PlaceSize size{width, height, hd ? static_cast<uint32_t>(blocks(hdWidth)) : 0,
+                         hd ? static_cast<uint32_t>(blocks(hdHeight)) : 0};
     const auto tryIn = [&](uint32_t at)
     {
         SharedPage& page = pages[at];
 
         if (page.Places == nullptr || page.Layout != layout ||
-            (width >= page.RefusedWidth && height >= page.RefusedHeight))
+            (page.Refused.has_value() && size.AtLeast(*page.Refused)))
         {
             return false;
         }
@@ -2766,10 +2774,9 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
             return true;
         }
 
-        if (width <= page.RefusedWidth && height <= page.RefusedHeight)
+        if (!page.Refused.has_value() || page.Refused->AtLeast(size))
         {
-            page.RefusedWidth = width;
-            page.RefusedHeight = height;
+            page.Refused = size;
         }
 
         return false;
@@ -2872,11 +2879,15 @@ void MCVulkanRenderer::KeepSparePages()
             Release(spare->HdColors);
             _SparePages.erase(spare);
         }
-        else if (inUse && spare == _SparePages.end())
+        else if (inUse && spare == _SparePages.end() && _Frame >= _SpareRetryFrame)
         {
             if (std::optional<SharedPage> made = MakePage(open.Layout); made.has_value())
             {
                 _SparePages.push_back(std::move(*made));
+            }
+            else
+            {
+                _SpareRetryFrame = _Frame + SpareRetryFrames;
             }
         }
     }
@@ -2904,8 +2915,7 @@ void MCVulkanRenderer::FreeRetiredPlaces()
         SharedPage& page = PagesOf(retired.Kind)[retired.Page];
         sma_item_remove(page.Places.get(), retired.Item);
         // Port-only (SPEC-memory.md's pages): room again, for any picture.
-        page.RefusedWidth = UINT32_MAX;
-        page.RefusedHeight = UINT32_MAX;
+        page.Refused.reset();
 
         if (retired.HdItem != nullptr)
         {

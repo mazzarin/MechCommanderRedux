@@ -576,6 +576,12 @@ namespace
         /// folders' cost more, every draw, than finding its frame.
         /// </summary>
         std::unordered_map<uint64_t, uint32_t> ShapeTableFolders;
+        /// <summary>
+        /// The hashes of the tables MCShapeFile read (NoteShapeLoaded): the guard noted each read from the game's
+        /// files where it was read, and those from the pack read nothing of the original's, so ShapeTableFolderIndex
+        /// notes neither. Kept across packs: the bytes stay the loaders' whichever pack is drawn.
+        /// </summary>
+        std::unordered_set<uint64_t> LoadedShapeHashes;
         std::unordered_map<FrameKey, Cached, FrameKeyHash> Frames;
         /// <summary>The keys of the frames held (those in Frames with one), least recently used first.</summary>
         std::list<FrameKey> Order;
@@ -4088,11 +4094,54 @@ bool MCHdArt::DrawsStrippedTables()
     return NumberedFolders() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
 }
 
+namespace
+{
+    /// <summary>Why a folder's shape table record isn't found (FolderShapeRecord): its archive isn't of version 2.</summary>
+    constexpr std::string_view NotVersion2 = "its folder isn't in a version 2 archive";
+    /// <summary>Why a folder's shape table record isn't found: its folder holds none.</summary>
+    constexpr std::string_view NoRecord = "its folder has no shape table record";
+
+    /// <summary>A folder of the pack's shape table record (record 1), with its archive's view of the folder.</summary>
+    struct FolderShapeTable
+    {
+        std::span<const uint8_t> Record;
+        std::reference_wrapper<const FrameFolder::InArchive> Archived;
+    };
+
+    /// <summary>
+    /// The shape table record of the pack's <paramref name="folder"/> (relative to the pack), held by its version 2
+    /// archive; else why not (NotVersion2, NoRecord).
+    /// </summary>
+    auto FolderShapeRecord(const std::filesystem::path& folder) -> std::expected<FolderShapeTable, std::string_view>
+    {
+        State& state = TheState();
+        const FrameFolder::InArchive& archived =
+            ArchiveOf(state.Folders[FolderIndex(MCHdArt::PackFolder() / folder, Naming::Number)]);
+
+        if (archived.Archive == nullptr || !archived.Archive->File->IsVersion2())
+        {
+            return std::unexpected(NotVersion2);
+        }
+
+        // The folder in its archive: the start of its frames' names without the separator after it.
+        const std::string_view inArchive =
+            std::string_view(archived.Prefix).substr(0, archived.Prefix.empty() ? 0 : archived.Prefix.size() - 1);
+
+        for (const auto& [type, data] : archived.Archive->File->Facts(inArchive))
+        {
+            if (type == static_cast<uint16_t>(MCPackRecords::Type::ShapeTable))
+            {
+                return FolderShapeTable{.Record = data, .Archived = std::cref(archived)};
+            }
+        }
+
+        return std::unexpected(NoRecord);
+    }
+}
+
 auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::expected<PackShapeTable, std::string_view>
 {
     constexpr std::string_view NotDrawn = "HD art doesn't draw stripped tables now";
-    constexpr std::string_view NotVersion2 = "its folder isn't in a version 2 archive";
-    constexpr std::string_view NoRecord = "its folder has no shape table record";
     constexpr std::string_view LacksFrame = "its archive lacks a frame the table holds with a box";
 
     // Each refusal reads the packet from its PAK (the guard's, with why).
@@ -4107,52 +4156,76 @@ auto MCHdArt::StrippedShapeTable(const std::filesystem::path& folder) -> std::ex
         return refuse(NotDrawn);
     }
 
+    const std::expected<FolderShapeTable, std::string_view> found = FolderShapeRecord(folder);
+
+    if (!found.has_value())
+    {
+        return refuse(found.error());
+    }
+
+    const std::span<const uint8_t> data = found->Record;
+    const FrameFolder::InArchive& archived = found->Archived.get();
+    const std::span<const uint8_t> table = data.subspan(std::min(MCShape::TableStart(data), data.size()));
+
+    // The original's packet whole (stripping it would take its rows): its frames drawn from its rows where the
+    // pack lacks them, as without a pack.
+    if (const std::expected<std::vector<uint8_t>, std::string> rowless = MCPackRecords::ShapeTable(data);
+        rowless.has_value() && rowless->size() < data.size())
+    {
+        return PackShapeTable{.Bytes = std::vector<uint8_t>(data.begin(), data.end()), .Stripped = false};
+    }
+
+    // Each frame it holds with a box is drawn from the pack, which must hold it: the table has no rows to draw.
+    for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+    {
+        const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+
+        if (MCVfxHasShape(table, frame) && bounds.Width > 0.0f && bounds.Height > 0.0f &&
+            !archived.Archive->File->Find(std::format("{}{}{}", archived.Prefix, frame, HdfExtension)))
+        {
+            return refuse(LacksFrame);
+        }
+    }
+
+    return PackShapeTable{.Bytes = std::vector<uint8_t>(data.begin(), data.end())};
+}
+
+auto MCHdArt::PackShapeFile(std::string_view gamePath, std::optional<int32_t> packet, uint32_t size)
+    -> std::optional<std::vector<uint8_t>>
+{
+    if (!NumberedFolders())
+    {
+        return std::nullopt;
+    }
+
+    const std::expected<FolderShapeTable, std::string_view> found =
+        FolderShapeRecord(ShapeFileFolder(gamePath, packet));
+
+    // Another size is another file than the pack was made from (a mod's): the loader reads it.
+    if (!found.has_value() || found->Record.size() != size)
+    {
+        return std::nullopt;
+    }
+
+    return std::vector<uint8_t>(found->Record.begin(), found->Record.end());
+}
+
+std::filesystem::path MCHdArt::ShapeFileFolder(std::string_view gamePath, std::optional<int32_t> packet)
+{
+    std::string name(gamePath);
+    std::ranges::replace(name, '\\', '/');
+    std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::filesystem::path folder = std::filesystem::path(ShapeFolder) / MCFileSystem::FromUtf8(name);
+    return packet.has_value() ? folder / std::to_string(*packet) : folder;
+}
+
+void MCHdArt::NoteShapeLoaded(std::span<const uint8_t> bytes)
+{
+    // The renderer names a table by its bytes from where its draws point to the end of its block: the file's start,
+    // or its table's past a shape file's version header.
     State& state = TheState();
-    const FrameFolder::InArchive& archived =
-        ArchiveOf(state.Folders[FolderIndex(PackFolder() / folder, Naming::Number)]);
-
-    if (archived.Archive == nullptr || !archived.Archive->File->IsVersion2())
-    {
-        return refuse(NotVersion2);
-    }
-
-    // The folder in its archive: the start of its frames' names without the separator after it.
-    const std::string_view inArchive =
-        std::string_view(archived.Prefix).substr(0, archived.Prefix.empty() ? 0 : archived.Prefix.size() - 1);
-
-    for (const auto& [type, data] : archived.Archive->File->Facts(inArchive))
-    {
-        if (type != static_cast<uint16_t>(MCPackRecords::Type::ShapeTable))
-        {
-            continue;
-        }
-
-        const std::span<const uint8_t> table = data.subspan(std::min(MCShape::TableStart(data), data.size()));
-
-        // The original's packet whole (stripping it would take its rows): its frames drawn from its rows where the
-        // pack lacks them, as without a pack.
-        if (const std::expected<std::vector<uint8_t>, std::string> rowless = MCPackRecords::ShapeTable(data);
-            rowless.has_value() && rowless->size() < data.size())
-        {
-            return PackShapeTable{.Bytes = std::vector<uint8_t>(data.begin(), data.end()), .Stripped = false};
-        }
-
-        // Each frame it holds with a box is drawn from the pack, which must hold it: the table has no rows to draw.
-        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
-        {
-            const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
-
-            if (MCVfxHasShape(table, frame) && bounds.Width > 0.0f && bounds.Height > 0.0f &&
-                !archived.Archive->File->Find(std::format("{}{}{}", archived.Prefix, frame, HdfExtension)))
-            {
-                return refuse(LacksFrame);
-            }
-        }
-
-        return PackShapeTable{.Bytes = std::vector<uint8_t>(data.begin(), data.end())};
-    }
-
-    return refuse(NoRecord);
+    state.LoadedShapeHashes.insert(ShapeTableHash(bytes));
+    state.LoadedShapeHashes.insert(ShapeTableHash(bytes.subspan(std::min(MCShape::TableStart(bytes), bytes.size()))));
 }
 
 bool MCHdArt::Stripped(std::span<const uint8_t> table)
@@ -4979,9 +5052,13 @@ namespace
         if (fresh)
         {
             folder->second = FolderIndex(MCHdArt::PackFolder() / MCHdArt::ShapeTableFolder(hash), Naming::Number);
-            // Each table named by its bytes was read from the original's files to be named (the guard's).
-            MCHdArt::NoteOriginalRead("a shape table read from the original's files, found by its bytes' hash",
-                                      HashName(hash));
+
+            // Each table named by its bytes was read from the original's files to be named (the guard's), but those
+            // MCShapeFile read: noted where it read them, or the pack's copies.
+            if (!TheState().LoadedShapeHashes.contains(hash))
+            {
+                MCHdArt::NoteOriginalRead(MCHdArt::ShapeHashRead, HashName(hash));
+            }
         }
 
         return folder->second;

@@ -9,6 +9,7 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
 #include "lib/MCLz.h"
+#include "lib/MCPacketFile.h"
 #include "lib/MCZstd.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
@@ -20,6 +21,7 @@
 #include "sprite/MCMechStops.h"
 #include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCShapeFile.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteTree.h"
@@ -4846,4 +4848,146 @@ TEST_CASE("tool: --pack-compare holds a version 2 pack to the pack it was made f
     CHECK(all.Failed == 0);
     CHECK(all.ColoursDiffer == 0);
     CHECK(all.OtherDiffer == 0);
+}
+
+namespace
+{
+    /// <summary>A PAK (MCPacketFile's) holding <paramref name="packets"/> raw, in their order.</summary>
+    std::vector<uint8_t> PacketFileBytes(const std::vector<std::vector<uint8_t>>& packets)
+    {
+        constexpr size_t HeadBytes = 8;
+        constexpr size_t FirstPacketAt = 4;
+        constexpr size_t EntryBytes = 4;
+        const auto first = static_cast<uint32_t>(HeadBytes + EntryBytes * packets.size());
+        std::vector<uint8_t> file(first);
+        PutAt(file, 0, MCPacketFile::PacketFileMagic);
+        PutAt(file, FirstPacketAt, first);
+
+        for (size_t packet = 0; packet < packets.size(); ++packet)
+        {
+            // Each entry its packet's offset, stored raw (MCPacketStorage::Raw: 0 in its top bits).
+            PutAt(file, HeadBytes + EntryBytes * packet, static_cast<uint32_t>(file.size()));
+            file.insert(file.end(), packets[packet].begin(), packets[packet].end());
+        }
+
+        return file;
+    }
+
+    /// <summary>The files a test put (MCFileSystem::PutImage) and the guard taken away, however the test ends.</summary>
+    class PutFiles
+    {
+    public:
+        PutFiles() = default;
+        PutFiles(const PutFiles&) = delete;
+        PutFiles& operator=(const PutFiles&) = delete;
+
+        ~PutFiles()
+        {
+            MCFileSystem::ClearPutImages();
+            MCHdArt::GuardOriginalReads(false);
+        }
+    };
+
+    /// <summary>How many reads of <paramref name="kind"/> the guard has noted.</summary>
+    size_t GuardedCount(std::string_view kind)
+    {
+        const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
+        REQUIRE(reads.has_value());
+        const auto found = std::ranges::find(*reads, kind, &MCHdArt::GuardedRead::Kind);
+        return found == reads->end() ? 0 : found->Count;
+    }
+
+    /// <summary>The folder in <c>shapes.hda</c> of a shape file or PAK packet (MCHdArt::ShapeFileFolder's).</summary>
+    std::string ShapesArchiveFolder(std::string_view gamePath, std::optional<int32_t> packet)
+    {
+        const std::filesystem::path folder = MCHdArt::ShapeFileFolder(gamePath, packet);
+        std::string inArchive;
+
+        for (auto part = std::next(folder.begin()); part != folder.end(); ++part)
+        {
+            inArchive += (inArchive.empty() ? "" : "\\") + part->generic_string();
+        }
+
+        return inArchive;
+    }
+
+    /// <summary>Shape file <paramref name="gamePath"/> read whole through MCShapeFile.</summary>
+    std::vector<uint8_t> ReadThroughShapeFile(std::string_view gamePath)
+    {
+        MCShapeFile file;
+        REQUIRE_EQ(file.Open(gamePath), NO_ERR);
+        std::vector<uint8_t> bytes(file.FileSize());
+        CHECK_EQ(file.Read(bytes), static_cast<int32_t>(bytes.size()));
+        return bytes;
+    }
+} // namespace
+
+/// <summary>
+/// Port-only: with HD art's numbered folders drawn, a shape file's loader (MCShapeFile: the effects', markers', shadows'
+/// and damage diagrams' files, the cursors' and sensor contacts' PAK packets) takes the pack's copy of the original's
+/// bytes (shapes.hda's ShapeFileFolder, its shape table record whole), reading nothing of the game's; a file of another
+/// size than the pack's (a mod's), a packet the pack lacks, or HD art off is read from the game's files, which the guard
+/// notes. A table the loader read is found by its hash without a note; another table with one.
+/// </summary>
+TEST_CASE("hd art: a shape file's loader takes the pack's copy of the original, a mod's file from the game's files")
+{
+    constexpr std::string_view ShapePath = "data\\sprites\\MapsTest.shp";
+    constexpr std::string_view ModPath = "data\\sprites\\mapsmod.shp";
+    constexpr std::string_view PakPath = "data\\sprites\\MapsTest.pak";
+    constexpr int32_t PackedPacket = 1;
+    const std::vector<uint8_t> game = {1, 2, 3, 4, 5, 6};
+    // The pack's copy, of the game's file's size, told apart by its bytes.
+    const std::vector<uint8_t> pack = {9, 8, 7, 6, 5, 4};
+    const std::vector<uint8_t> modded = {1, 2, 3, 4, 5, 6, 7};
+    const std::vector<std::vector<uint8_t>> packets = {{10, 11, 12}, {20, 21, 22, 23}};
+    const std::vector<uint8_t> packPacket = {30, 31, 32, 33};
+    const std::vector<uint8_t> unloaded = {42, 43};
+    const PutFiles put;
+    MCFileSystem::PutImage(ShapePath, [&game] { return std::optional(game); });
+    MCFileSystem::PutImage(ModPath, [&modded] { return std::optional(modded); });
+    MCFileSystem::PutImage(PakPath, [&packets] { return std::optional(PacketFileBytes(packets)); });
+    std::map<std::string, std::vector<uint8_t>> facts;
+    facts[ShapesArchiveFolder(ShapePath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    facts[ShapesArchiveFolder(ModPath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    facts[ShapesArchiveFolder(PakPath, PackedPacket)] = FactsRecord(MCPackRecords::Type::ShapeTable, packPacket);
+    const ScratchFolder scratch("shape-files");
+    WriteBytes(scratch.Path() / "shapes.hda", BuildVersion2Archive({}, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const PackOn on(scratch.Path());
+    REQUIRE(MCHdArt::NumberedFolders());
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    CHECK(ReadThroughShapeFile(ShapePath) == pack);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 0);
+    CHECK(ReadThroughShapeFile(ModPath) == modded);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 1);
+
+    MCPacketFile pak;
+    REQUIRE_EQ(pak.Open(PakPath), NO_ERR);
+    REQUIRE_EQ(pak.GetNumPackets(), static_cast<int32_t>(packets.size()));
+
+    for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
+    {
+        MCTest::Scope scope(std::format("packet {}", packet));
+        REQUIRE_EQ(pak.SeekPacket(packet), NO_ERR);
+        std::vector<uint8_t> bytes(static_cast<size_t>(pak.GetPacketSize()));
+        CHECK_EQ(MCShapeFile::ReadPacket(pak, packet, bytes), static_cast<int32_t>(bytes.size()));
+        CHECK(bytes == (packet == PackedPacket ? packPacket : packets[static_cast<size_t>(packet)]));
+    }
+
+    CHECK_EQ(GuardedCount(MCShapeFile::PacketRead), 1);
+
+    // Found by their hashes, as the renderer finds a table no folder is attached to.
+    for (const std::vector<uint8_t>& loaded : {pack, modded, packPacket})
+    {
+        MCHdArt::FindShape(MCHdArt::ShapeTableHash(loaded), 0, 1, 1, 0, 1);
+    }
+
+    CHECK_EQ(GuardedCount(MCHdArt::ShapeHashRead), 0);
+    MCHdArt::FindShape(MCHdArt::ShapeTableHash(unloaded), 0, 1, 1, 0, 1);
+    CHECK_EQ(GuardedCount(MCHdArt::ShapeHashRead), 1);
+
+    GHdArt = 0;
+    CHECK(ReadThroughShapeFile(ShapePath) == game);
 }

@@ -36,6 +36,7 @@
 #include "sprite/MCWeather.h"
 #include "sprite/MCWeatherPace.h"
 #include "vfx/MCVfxFunctions.h"
+#include "sprite/MCShapeFile.h"
 
 namespace
 {
@@ -270,7 +271,7 @@ auto MCGuiSystem::LoadCursors() -> void
             Fatal(-1, " no RAM for cursors ");
         }
 
-        cursorFile.ReadPacket(i, _CursorShapes[static_cast<size_t>(i)].Bytes());
+        MCShapeFile::ReadPacket(cursorFile, i, _CursorShapes[static_cast<size_t>(i)].Bytes());
     }
 
     cursorFile.Close();

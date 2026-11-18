@@ -289,6 +289,12 @@ protected:
 bool FileExists(std::string_view fileName);
 
 /// <summary>
+/// Port-only: the length <see cref="MCFile::Open"/> would give <paramref name="fileName"/> to read, found where it would
+/// find it (a file the game made, the disk, the context's memory, the FastFiles), without reading a FastFile's entry.
+/// </summary>
+std::optional<uint32_t> FileSizeOf(std::string_view fileName);
+
+/// <summary>
 /// A game path built from a directory (with its trailing <c>\</c>), a name and an extension: <c>data\art\</c> +
 /// <c>access00</c> + <c>.tga</c>.
 /// </summary>

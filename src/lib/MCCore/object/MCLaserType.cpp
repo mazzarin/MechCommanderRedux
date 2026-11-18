@@ -6,6 +6,7 @@
 #include "object/MCLaser.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCObjectTypeManager.h"
+#include "sprite/MCShapeFile.h"
 
 auto MCLaserType::CreateInstance() -> std::shared_ptr<MCBaseObject>
 {
@@ -51,7 +52,7 @@ auto MCLaserType::Init(MCFile& objFile, uint32_t fileSize) -> int32_t
     if (const MCFitResult<std::string> shapeName = laserFile.Read<std::string>("LaserEffectShape");
         shapeName.has_value())
     {
-        MCFile shapeFile;
+        MCShapeFile shapeFile;
 
         if (const int32_t result = shapeFile.Open(GamePath(SpritePath, *shapeName, ".shp")); result != 0)
         {

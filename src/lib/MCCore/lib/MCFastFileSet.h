@@ -36,6 +36,12 @@ public:
     /// </summary>
     std::optional<std::vector<uint8_t>> Read(std::string_view gamePath);
 
+    /// <summary>
+    /// Port-only: the unpacked size of <paramref name="gamePath"/> in the first archive that holds it (the bytes
+    /// <see cref="Read"/> gives), found without reading it.
+    /// </summary>
+    std::optional<uint32_t> SizeOf(std::string_view gamePath) const;
+
     /// <summary>The open archives, in search order.</summary>
     const std::vector<std::unique_ptr<MCFastFile>>& Files() const { return _Files; }
 

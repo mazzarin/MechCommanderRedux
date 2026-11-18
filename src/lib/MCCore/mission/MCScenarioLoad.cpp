@@ -6,6 +6,7 @@
 #include "platform/MCInput.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 #include "abl/MCAblRuntime.h"
 #include "ai/MCMoveSystem.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -42,6 +43,7 @@
 #include "object/MCMoverGameSystem.h"
 #include "object/MCMoverGroup.h"
 #include "object/MCObjectSystem.h"
+#include "object/MCObjectType.h"
 #include "object/MCObjectTypeManager.h"
 #include "object/MCTrain.h"
 #include "object/MCTrainCar.h"
@@ -52,17 +54,34 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCGVAppearance.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
+#include "sprite/MCSpriteTree.h"
 #include "sprite/MCWeather.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
+#include "sprite/MCShapeFile.h"
 
 namespace
 {
+    /// <summary>
+    /// Port-only: whether a unit of the mission's parts (every side's, made by LoadParts) can lay mines: a ground
+    /// vehicle with mines to lay (none in a match without mines).
+    /// </summary>
+    auto MissionLaysMines() -> bool
+    {
+        return std::ranges::any_of(ObjectList()->DefaultList(),
+                                   [](const std::shared_ptr<MCBaseObject>& object)
+                                   {
+                                       return object->ObjectClass == MCObjectClass::GroundVehicle &&
+                                              static_cast<const MCGroundVehicle&>(*object).MineLayer;
+                                   });
+    }
+
     /// <summary>Degrees to radians, as MCX.EXE stores it (a hair under pi / 180).</summary>
     constexpr double DegreesToRadians = 0x1.1df46a2526c7ap-6;
 
@@ -118,7 +137,7 @@ namespace
     /// <returns>The shapes, or no block when the file can't be opened.</returns>
     MCRegisteredBlock LoadShapeFile(std::string_view name)
     {
-        MCFile shapeFile;
+        MCShapeFile shapeFile;
 
         if (shapeFile.Open(GamePath(ShapesPath, name, ".shp")) != 0)
         {
@@ -278,12 +297,22 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         GameMap().ClearMines();
     }
 
+    // Port-only: the tiles the map's mines draw, which the map's vertices don't name, read with the ground.
+    MCTerrainReadMinesAhead();
+
     LoadScript(file);
     LoadWarriors(file);
     LoadParts(file);
     LoadCarriers(file);
     LoadObjectives(file);
     LoadGroups(file);
+
+    // Port-only: a mine layer in the mission may lay a mine on any cell, so every cell's mine tile is read with the
+    // ground, not by its first draw.
+    if (MissionLaysMines())
+    {
+        MCTerrainReadMinesAhead(MCMinesAhead::EveryCell);
+    }
 
     ClanTeam()->BuildRoster(*this);
     InnerSphereTeam()->BuildRoster(*this);
@@ -315,7 +344,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     // Port-only (HD particles, HD weather): none from the last mission, and their dice from the start.
     MCParticles::Clear();
     MCWeather::Clear();
-    // Port-only (HD particles): the explosions' looks measured here, under the loading bar, rather than as each shows.
+    // Port-only: the original's packets the mission's first uses would read, read here together; then the explosions'
+    // looks (HD particles) measured here, under the loading bar, rather than as each shows.
+    LoadOriginalPackets();
     MCParticles::MeasureExplosions();
     MissionStartTime = 0;
     RunningTime = 0.0f;
@@ -629,7 +660,7 @@ auto MCScenario::LoadSensorContactShapes(MCFitIniFile& file) -> void
         Assert(size > 0, 0, " no RAM for Large Sensor Shape ");
         MCRegisteredBlock& shape = _SensorContactShapes[static_cast<size_t>(i)];
         shape = MCRegisteredBlock(static_cast<size_t>(size), MCDataKind::Shapes);
-        shapeFile.ReadPacket(i, shape.Bytes());
+        MCShapeFile::ReadPacket(shapeFile, i, shape.Bytes());
     }
 
     shapeFile.Close();
@@ -934,7 +965,136 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
         CreatePartObject(i);
     }
 
+    // Port-only (MechBraking): every mech type's stops are given at the load's end, with its packets
+    // (LoadOriginalPackets).
     UpdateDisplay(false, true, 20, true, 90);
+}
+
+auto MCScenario::LoadOriginalPackets() -> void
+{
+    const auto started = std::chrono::steady_clock::now();
+    const MCPacketsHeld types = ObjectTypeManager().LoadMadeTypes();
+
+    // Every side's mechs: each mech type's PreloadGestures packets once, and each mech's packets drawn now; and
+    // (MechBraking) each type's art its stops are looked up by, as stored, in the same reads (MCStopsArtPackets).
+    std::vector<MCSpriteTree::MCTreePacket> mechPackets;
+    std::vector<std::shared_ptr<MCSpriteTree>> stopsTrees;
+    std::vector<MCStoredWanted> stopsArt;
+    std::vector<MCMechParts<std::optional<size_t>>> stopsArtAt;
+
+    for (const MCPart& part : Parts)
+    {
+        const auto object = std::static_pointer_cast<MCGameObject>(part.Object.lock());
+
+        if (object == nullptr || object->ObjectClass != MCObjectClass::BattleMech)
+        {
+            continue;
+        }
+
+        const auto actor = std::static_pointer_cast<MCMechActor>(object->GetAppearance());
+        const auto tree =
+            actor != nullptr ? std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType()) : nullptr;
+
+        if (tree == nullptr)
+        {
+            continue;
+        }
+
+        if (!tree->GesturesPreloaded)
+        {
+            std::ranges::transform(tree->PreloadPackets(), std::back_inserter(mechPackets),
+                                   [&](const MCGesturePacket& where)
+                                   { return MCSpriteTree::MCTreePacket{tree, where}; });
+            tree->GesturesPreloaded = true;
+        }
+
+        std::ranges::transform(actor->DrawnPackets(), std::back_inserter(mechPackets),
+                               [&](const MCGesturePacket& where) { return MCSpriteTree::MCTreePacket{tree, where}; });
+
+        // Port-only (MechBraking): a version 2 HD pack's stops keys give a tree's stops with none of its art read.
+        if (!tree->StopsPrepared && std::ranges::find(stopsTrees, tree) == stopsTrees.end() &&
+            !MCPrepareStopsFromPack(*tree))
+        {
+            MCMechParts<std::optional<size_t>>& at = stopsArtAt.emplace_back();
+            const MCMechParts<std::optional<MCStoredWanted>> art = MCStopsArtPackets(*tree);
+            stopsTrees.push_back(tree);
+
+            for (size_t part = 0; part < art.size(); ++part)
+            {
+                if (art[part].has_value())
+                {
+                    at[part] = stopsArt.size();
+                    stopsArt.push_back(*art[part]);
+                }
+            }
+        }
+    }
+
+    MCShapesLoaded mechs = MCSpriteTree::LoadPacketsTogether(mechPackets, 1, stopsArt);
+
+    // Port-only (MechBraking): every mech type's stops before play, from the table the program carries.
+    std::vector<MCStopsArtStored> stopsStored(stopsTrees.size());
+
+    for (size_t tree = 0; tree < stopsTrees.size(); ++tree)
+    {
+        for (size_t part = 0; part < stopsArtAt[tree].size(); ++part)
+        {
+            if (const std::optional<size_t> at = stopsArtAt[tree][part]; at.has_value() && *at < mechs.Stored.size())
+            {
+                stopsStored[tree][part] = std::move(mechs.Stored[*at]);
+            }
+        }
+    }
+
+    MCPrepareStops(stopsTrees, stopsStored);
+    stopsStored.clear();
+
+    // The kept types' appearances' shapes (the effects', the wrecks'), every packet of their PAKs, kept with them.
+    std::vector<MCShapeWanted> wanted;
+    std::unordered_set<uint32_t> appearances;
+
+    for (const std::shared_ptr<MCObjectType>& type : ObjectTypeManager().Types())
+    {
+        if (type->KeepMe == 0 || !appearances.insert(type->AppearName).second)
+        {
+            continue;
+        }
+
+        const std::span<const std::shared_ptr<MCAppearanceType>> listed = AppearanceTypeList().Types();
+
+        if (const auto found = std::ranges::find(listed, type->AppearName, &MCAppearanceType::AppearanceNum);
+            found != listed.end())
+        {
+            std::ranges::move((*found)->ShapesUnloaded(), std::back_inserter(wanted));
+        }
+    }
+
+    const MCShapesLoaded shapes =
+        SpriteManager() != nullptr ? SpriteManager()->GetShapesData(wanted, Turn) : MCShapesLoaded{};
+
+    for (size_t i = 0; i < shapes.Shapes.size(); ++i)
+    {
+        if (const std::shared_ptr<MCAppearanceType> owner = wanted[i].Owner.lock(); owner != nullptr)
+        {
+            owner->KeepShape(wanted[i].Packet, shapes.Shapes[i]);
+        }
+    }
+
+    if (MCFrameLog::Enabled())
+    {
+        const auto loaded = [](const MCShapesLoaded& batch)
+        {
+            return static_cast<size_t>(
+                std::ranges::count_if(batch.Shapes, [](const auto& shape) { return shape != nullptr; }));
+        };
+
+        constexpr double BytesPerMb = 1024.0 * 1024.0;
+        MCFrameLog::Note(
+            std::format("original packets: {} in {} reads, {:.1f} ms, {:.1f} MB",
+                        types.Packets + loaded(mechs) + loaded(shapes), types.Reads + mechs.Reads + shapes.Reads,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+                        static_cast<double>(types.Bytes + mechs.Bytes + shapes.Bytes) / BytesPerMb));
+    }
 }
 
 auto MCScenario::LoadCarriers(MCFitIniFile& file) -> void
@@ -1268,10 +1428,8 @@ auto MCScenario::CreatePartObject(int32_t partNumber) -> void
             actor->SetGesture(part.GestureId);
         }
 
-        if (part.Alignment == HomeTeam()->Alignment)
-        {
-            actor->PreloadGestures();
-        }
+        // Port: every side's mechs' gestures are read with the rest at the load's end (LoadOriginalPackets), not the home
+        // team's alone here, one at a time.
 
         // Port-only: every side's HD archives open under the loading bar, not when the mech first comes into view.
         if (actor != nullptr)

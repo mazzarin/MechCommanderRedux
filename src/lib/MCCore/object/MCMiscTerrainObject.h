@@ -69,6 +69,11 @@ public:
     /// made passable or blocked, and (for a bridge) the global move-map area closed.
     /// </summary>
     void SetDamage(float newDamage) override;
+    /// <summary>
+    /// Port-only (HD art): the overlay tile its vertex shows once it's destroyed (<see cref="SetDamage"/>'s), so the
+    /// mission's load can have it in hand: none once it's destroyed, or for a kind that changes none.
+    /// </summary>
+    std::optional<int32_t> DestroyedOverlayTile() const;
     int IsBuilding() override { return 1; }
     /// <summary>Whether any of the four vertices around it is visible to the home team.</summary>
     int IsRevealed() override;

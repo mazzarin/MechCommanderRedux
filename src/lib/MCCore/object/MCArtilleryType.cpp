@@ -10,6 +10,7 @@
 #include "object/MCTurretType.h"
 #include "object/MCWeaponShotInfo.h"
 #include "sprite/MCSpriteManager.h"
+#include "sprite/MCShapeFile.h"
 
 auto MCArtilleryType::CreateInstance() -> std::shared_ptr<MCBaseObject>
 {
@@ -106,7 +107,7 @@ auto MCArtilleryType::Init(MCFile& objFile, uint32_t fileSize) -> int32_t
         MinArtilleryHeadRange = artFile.Read<int32_t>("MinArtilleryHeadRange").value_or(5);
     }
 
-    MCFile spriteFile;
+    MCShapeFile spriteFile;
 
     if (const int32_t result = spriteFile.Open(GamePath(ShapesPath, *spriteName, ".shp")); result != 0)
     {

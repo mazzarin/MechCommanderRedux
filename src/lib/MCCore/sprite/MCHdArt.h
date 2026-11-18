@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCDiskFile.h"
 #include "platform/MCAddressKey.h"
 #include "platform/MCSharpLines.h"
 #include "sprite/MCBc7.h"
@@ -114,6 +115,11 @@ namespace MCHdArt
         /// </summary>
         bool PaintedShadow = false;
         /// <summary>
+        /// Port-only (a version 2 pack's frame, SPEC-pack-v2.md's "A frame"): its index picture's green says what each
+        /// pixel is (drawn, spread, in a baked shadow, blended: <see cref="HasIndexMark"/>), so it isn't marked again.
+        /// </summary>
+        bool Marked = false;
+        /// <summary>
         /// Port-only (HD movies): a <see cref="ColorFormat::Yuv420"/> frame's colour space (its matrix and range), and
         /// the movie it is a frame of: a number of the movie's own, which every frame of it has (the GPU keeps one set
         /// of textures for a movie, each frame put in place of the one before); 0 for any other frame.
@@ -144,6 +150,44 @@ namespace MCHdArt
     /// otherwise it is as HasIndex's.
     /// </summary>
     inline constexpr uint8_t BakedShadow = 254;
+    /// <summary>
+    /// Port-only (a version 2 frame's green, <see cref="Frame::Marked"/>): a pixel the original doesn't draw, its index
+    /// spread from the nearest drawn one (the HD edge reaches past the original's), outside a baked shadow or in one; a
+    /// pixel the original draws and blends (a translucent shape's, through AlphaPal.ini), outside a baked shadow or in
+    /// one. A version 1 frame has only HasIndex, BakedShadow and 0.
+    /// </summary>
+    inline constexpr uint8_t Spread = 253;
+    inline constexpr uint8_t SpreadShadow = 252;
+    inline constexpr uint8_t DrawnBlended = 251;
+    inline constexpr uint8_t DrawnBlendedShadow = 250;
+
+    /// <summary>
+    /// Whether an index picture's <paramref name="green"/> gives its pixel an index (draw.pshader's HasIndexIn).
+    /// </summary>
+    constexpr bool HasIndexMark(uint8_t green)
+    {
+        return green >= DrawnBlendedShadow;
+    }
+
+    /// <summary>
+    /// Whether an index picture's <paramref name="green"/> puts its pixel in a baked shadow (draw.pshader's
+    /// InShadowIn).
+    /// </summary>
+    constexpr bool InShadowMark(uint8_t green)
+    {
+        return green == BakedShadow || green == SpreadShadow || green == DrawnBlendedShadow;
+    }
+
+    /// <summary>
+    /// Whether a version 2 frame's (<see cref="Frame::Marked"/>) index picture's <paramref name="green"/> is a pixel the
+    /// original draws, its red the original's index: drawn, drawn and blended, in a baked shadow or not. A version 1
+    /// frame's green doesn't say.
+    /// </summary>
+    constexpr bool OriginalDrawsMark(uint8_t green)
+    {
+        return green == HasIndex || green == BakedShadow || green == DrawnBlended || green == DrawnBlendedShadow;
+    }
+
     /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>
     inline constexpr uint8_t BakedShadowIndex = 0x10;
     /// <summary>An index picture's blue in a frame that holds its blended pixels (<see cref="Frame::Blended"/>).</summary>
@@ -179,7 +223,8 @@ namespace MCHdArt
     /// original's object art (trees, buildings, rocks, turrets) casts its shadow down and right in solid
     /// <see cref="BakedShadowIndex"/>; the same black also draws detail inside an object (a tank's hull). Its shadow is
     /// that black outside the rest of the art's outline (closed over one-pixel gaps, holes filled), in groups that touch
-    /// at least as many empty pixels as drawn ones. A frame that holds its blended pixels (an effect's) has none.
+    /// at least as many empty pixels as drawn ones. A frame that holds its blended pixels (an effect's) has none; a
+    /// version 2 frame (<see cref="Frame::Marked"/>) is marked already.
     /// </summary>
     void MarkBakedShadows(Frame& frame);
 
@@ -213,6 +258,98 @@ namespace MCHdArt
 
     /// <summary>The folder in a pack that holds the frames of the shape loaded from <paramref name="key"/>.</summary>
     std::filesystem::path FolderOf(const MechShapeKey& key);
+
+    /// <summary>
+    /// The folder in a pack that holds mech <paramref name="mechNum"/>'s frames of part PAK <paramref name="partFile"/>
+    /// ("legs90"), its archive's (<c>mechs/legs90/12</c>).
+    /// </summary>
+    std::filesystem::path MechArchiveFolder(std::string_view partFile, uint32_t mechNum);
+
+    /// <summary>
+    /// Port-only (a version 2 pack, SPEC-pack-v2.md's "The facts"): the data of the facts record of type
+    /// <paramref name="type"/> in the own folder of the archive standing for <paramref name="folder"/> (below the
+    /// pack); none when HD art isn't drawn, or the pack has no such archive, an archive of version 1 or no such record.
+    /// </summary>
+    std::optional<std::vector<uint8_t>> ArchiveFacts(const std::filesystem::path& folder, uint16_t type);
+
+    /// <summary>
+    /// Port-only (a version 2 pack, SPEC-pack-v2.md's "A frame"): whether the archive standing for
+    /// <paramref name="folder"/> (below the pack) is of version 2, so its frames' green says which pixels the original
+    /// draws (<see cref="OriginalDrawsMark"/>) apart from those its indices spread to; false when HD art isn't drawn or
+    /// the pack has no such archive.
+    /// </summary>
+    bool MarksOriginalPixels(const std::filesystem::path& folder);
+
+    /// <summary>
+    /// Port-only (a version 2 pack, SPEC-pack-v2.md's record 1): whether shapes may be loaded from the pack's stripped
+    /// shape tables: HD art drawn from numbered folders, by the GPU alone (the software renderer and mirror mode draw the
+    /// original's rows).
+    /// </summary>
+    bool DrawsStrippedTables();
+
+    /// <summary>Port-only: a shape table from a version 2 pack's record 1 (StrippedShapeTable).</summary>
+    struct PackShapeTable
+    {
+        std::vector<uint8_t> Bytes;
+        /// <summary>
+        /// Its frames' rows stripped (each frame it holds with a box drawn from the pack); else the original's packet
+        /// whole, rows and all, which the builder stores where the pack lacks some of its frames at their size.
+        /// </summary>
+        bool Stripped = true;
+    };
+
+    /// <summary>
+    /// Port-only (record 1): the shape table standing for the packet whose frames are in <paramref name="folder"/>
+    /// (FolderOf its key), when <see cref="DrawsStrippedTables"/> and the folder's archive, of version 2, holds the
+    /// record: stripped, when the archive holds a frame for each frame the table holds with a box; or the original's
+    /// packet whole (drawn from its rows as without a pack). Otherwise why not, in a few words the same each time (the
+    /// loader then reads the original's packet, which the guard notes; --sprite-pack-check counts them).
+    /// </summary>
+    std::expected<PackShapeTable, std::string_view> StrippedShapeTable(const std::filesystem::path& folder);
+
+    /// <summary>
+    /// Port-only: the pack's folder of the original's shape file <paramref name="gamePath"/> (as the game opens it), or
+    /// of its packet <paramref name="packet"/> when it's a PAK: <c>shapes/&lt;its path, in lower case&gt;[/&lt;packet&gt;]</c>
+    /// in <c>shapes.hda</c>, whose shape table record holds the file's (or packet's) bytes whole.
+    /// </summary>
+    std::filesystem::path ShapeFileFolder(std::string_view gamePath, std::optional<int32_t> packet = std::nullopt);
+
+    /// <summary>
+    /// Port-only: the original's shape file <paramref name="gamePath"/> (its packet <paramref name="packet"/> of a
+    /// PAK) as the pack holds it (ShapeFileFolder), so its loader reads nothing of the original's with HD art's numbered
+    /// folders drawn; none when they aren't, the pack lacks it, or the game's file isn't <paramref name="size"/> bytes
+    /// as the pack's is (another file than the pack was made from: a mod's).
+    /// </summary>
+    std::optional<std::vector<uint8_t>> PackShapeFile(std::string_view gamePath, std::optional<int32_t> packet,
+                                                      uint32_t size);
+
+    /// <summary>
+    /// Port-only: tells HD art its shape loader (MCShapeFile) read <paramref name="bytes"/>, from the pack or from the
+    /// game's files (the guard noted that read there), so finding their HD frames by their hash notes no read.
+    /// </summary>
+    void NoteShapeLoaded(std::span<const uint8_t> bytes);
+
+    /// <summary>Port-only: whether <paramref name="table"/> is an attached stripped shape's (MCShape::Stripped).</summary>
+    bool Stripped(std::span<const uint8_t> table);
+
+    /// <summary>
+    /// Port-only: VfxShapeVisit's pixels of frame <paramref name="frame"/> of <paramref name="table"/>, a stripped
+    /// table's from its HD frame's index picture where the original draws (<see cref="OriginalDrawsMark"/>), the frame
+    /// read if need be; none when the pack has no such frame.
+    /// </summary>
+    void VisitShape(std::span<const uint8_t> table, int32_t frame,
+                    const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel);
+
+    /// <summary>
+    /// Port-only: the HD frame that stands for frame <paramref name="frame"/> of a stripped table
+    /// <paramref name="table"/> (<see cref="Stripped"/>), read if need be; none for a table that isn't stripped, a frame
+    /// it doesn't hold, or one the pack lacks. Its Id names the frame where its bytes can't: a stripped frame's bytes
+    /// are its header alone, alike in frames of the same bounds.
+    /// </summary>
+    std::shared_ptr<const Frame> StrippedFrame(std::span<const uint8_t> table, int32_t frame);
+
+    /// <summary>Port-only: forgets <paramref name="table"/>'s attachment (its shape takes another packet).</summary>
+    void Detach(std::span<const uint8_t> table);
     std::filesystem::path FolderOf(const ObjectShapeKey& key);
     std::filesystem::path FolderOf(const CraterShapeKey& key);
 
@@ -250,6 +387,13 @@ namespace MCHdArt
 
     /// <summary>The pack's folder's name, in the user folder or a game folder.</summary>
     inline constexpr std::string_view DefaultFolder = "HD";
+
+    /// <summary>
+    /// The pack's folders of the ground tiles' and the overlays' frames (terrain.hda, overlays.hda; a version 2 pack's
+    /// records 2 and 3 in their own folders).
+    /// </summary>
+    inline constexpr std::string_view TerrainFolder = "terrain";
+    inline constexpr std::string_view OverlayFolder = "overlays";
 
     /// <summary>
     /// The pack's folder: the one set, else the user folder's <c>HD</c> when there is one, else the game folder's (a
@@ -300,8 +444,9 @@ namespace MCHdArt
     void Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key);
 
     /// <summary>
-    /// Opens now the pack's archive holding <paramref name="key"/>'s frames, if it has one, so that the first draw of a
-    /// shape loaded from it doesn't read the archive's directory. Does nothing while HD art is off.
+    /// Has the readers open the pack's archive holding <paramref name="key"/>'s frames, if it has one
+    /// (<see cref="OpenArchivesAhead"/>), so that the first draw of a shape loaded from it doesn't read the archive's
+    /// directory. Does nothing while HD art is off.
     /// </summary>
     void Prepare(const MechShapeKey& key);
 
@@ -321,6 +466,142 @@ namespace MCHdArt
     /// noted only while HD art is on (AttachFolder notes them when it goes on).
     /// </summary>
     void SetNeighbours(const std::shared_ptr<MCShape>& shape, std::vector<std::filesystem::path> folders);
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): what reads ahead are for: a load's, which it waits for
+    /// (<see cref="WaitForLoadReads"/>); what the camera's surroundings draw soon (a unit's packets now and next), read
+    /// after the frames drawn next; or a set's, read when nothing else is. Those but a load's within the cache's room for
+    /// the sets.
+    /// </summary>
+    enum class ReadAs : uint8_t
+    {
+        Load,
+        Soon,
+        Set,
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): a packet to read ahead whole: the pack's numbered folder
+    /// (FolderOf a key), its first <see cref="Frames"/> frames (none given: every frame its archive holds), each with its
+    /// in-betweens, and with <see cref="TurnMiddles"/> its frames' turn middles too (a legs packet's).
+    /// </summary>
+    struct PacketAhead
+    {
+        std::filesystem::path Folder;
+        std::optional<int32_t> Frames;
+        bool TurnMiddles = false;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): has the readers read <paramref name="packets"/> whole,
+    /// ahead of their first draws, as <paramref name="as"/> (Soon or Set): a unit's or object's in or near the view. A
+    /// packet's archive entries neighbour each other, so it is one read or a few. Nothing when HD art doesn't draw
+    /// numbered folders, and none of a frame kept, read, looked at or asked for already.
+    /// </summary>
+    void ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as);
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: a load): has the readers open the archives standing for the pack's numbered
+    /// <paramref name="folders"/> (FolderOf keys) and read their directories, ahead of everything else they read, so the
+    /// game's thread takes them open when it first looks in one (waiting while a reader opens it) rather than read a
+    /// directory itself (up to a few MB a mech part's): a mission's mechs and objects at its load. Nothing for those found
+    /// or asked for already, or when HD art doesn't draw numbered folders.
+    /// </summary>
+    void OpenArchivesAhead(std::span<const std::filesystem::path> folders);
+
+    /// <summary>Port-only: how many archives the game's thread has taken open from the readers (OpenArchivesAhead).</summary>
+    size_t ArchivesOpenedAhead();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: proving nothing is late): starts the HD trace into <paramref name="path"/>
+    /// (replaced; <c>-hdtrace &lt;file&gt;</c>), a line a time, tab-separated, times in microseconds from its start:
+    /// each frame begun (<c>F</c>), each read asked of the readers (<c>A</c>: its kind, archive, offset, stored bytes and
+    /// entry), each of their reads (<c>R</c>: begun, its bytes in, its frames unpacked, its kind, archive, offset, bytes,
+    /// entries; <c>K</c>: a run served from memory, its streams kept unpacked or held as stored, no read: begun, its
+    /// frames unpacked, its kind, archive, offset, entries), each of the hold's reads (<c>H</c>: begun, its bytes in,
+    /// archive, offset, bytes, streams held; <see cref="StartHold"/>), each archive named once (<c>P</c>), each frame's
+    /// first use (<c>U</c>: kept as read ahead, taken from the
+    /// readers, read by the game's thread or lacked, its folder and name, and the game's thread's microseconds on it),
+    /// and notes (<c>N</c>: a benchmark's sections), for replaying the reads against another disk
+    /// (tools: the read-ahead replay). False when it can't be written.
+    /// </summary>
+    bool OpenTrace(const std::filesystem::path& path);
+
+    /// <summary>Port-only: ends the HD trace, if one is open (OpenTrace).</summary>
+    void CloseTrace();
+
+    /// <summary>Port-only: adds a note to the HD trace, if one is open (OpenTrace): <c>N time text</c>.</summary>
+    void TraceNote(std::string_view text);
+
+    /// <summary>Port-only: the examples the guard keeps of each kind of read it notes (GuardOriginalReads).</summary>
+    inline constexpr size_t GuardExamples = 4;
+
+    /// <summary>
+    /// Port-only, for test runs alone (the tests; <c>-hdguard</c>, which no player passes): while on, each read of the
+    /// original's art that a version 2 pack is drawn in place of (a shape table, a ground tile or overlay) is noted by its
+    /// kind, so the run can fail on it (SPEC-pack-v2.md's done: no original art read). Setting it clears what it noted.
+    /// The game reads the art as without the guard: a mod's art, which the pack lacks, still comes from its files.
+    /// Each kind keeps its first <paramref name="examples"/> examples (a survey of every screen's pictures keeps all).
+    /// </summary>
+    void GuardOriginalReads(bool on, size_t examples = GuardExamples);
+
+    /// <summary>Port-only: whether the guard is on (GuardOriginalReads) with a version 2 pack drawn.</summary>
+    bool GuardingOriginalReads();
+
+    /// <summary>
+    /// Port-only: notes a read of the original's art, of <paramref name="kind"/> (which reads are told apart by) and
+    /// <paramref name="what"/> (an example), while the guard is on with a version 2 pack drawn (GuardingOriginalReads).
+    /// </summary>
+    void NoteOriginalRead(std::string_view kind, std::string_view what);
+
+    /// <summary>Port-only: the guard's kind of read for a shape table found by its bytes' hash (FindShape's).</summary>
+    inline constexpr std::string_view ShapeHashRead =
+        "a shape table read from the original's files, found by its bytes' hash";
+
+    /// <summary>Port-only: one kind of read the guard noted: how many, and the first few.</summary>
+    struct GuardedRead
+    {
+        std::string Kind;
+        size_t Count = 0;
+        std::vector<std::string> Examples;
+    };
+
+    /// <summary>
+    /// Port-only: the reads the guard noted since it was set on (GuardOriginalReads), by kind; none while it's off.
+    /// </summary>
+    std::optional<std::vector<GuardedRead>> GuardedReads();
+
+    /// <summary>
+    /// Port-only: <see cref="ReadPacketsAhead"/> of one packet, without its turn middles, as a set's: folder
+    /// <paramref name="folder"/>'s first <paramref name="frames"/> frames (none given: all its archive holds).
+    /// </summary>
+    void ReadPacketAhead(const std::filesystem::path& folder, std::optional<int32_t> frames = std::nullopt);
+
+    /// <summary>
+    /// Port-only: counts the times the readers forgot what they read and were asked (the pack set), and the times some of
+    /// what was asked for ahead was dropped or left out for want of room (at most every few frames: NextFrame): an ask
+    /// made before is asked again. The game's thread's, without the readers' lock.
+    /// </summary>
+    uint64_t AheadGeneration();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): the packets an asker has had read ahead, each asked for
+    /// once while the readers remember what they read (AheadGeneration), so an appearance can ask for what it draws every
+    /// frame and only a packet it hasn't asked for costs a look in the archive.
+    /// </summary>
+    class MCAskedPackets
+    {
+    public:
+        /// <summary>
+        /// Whether <paramref name="packet"/> (a number naming it to the asker) is yet to be asked for since the readers
+        /// last forgot; it is noted as asked.
+        /// </summary>
+        bool Ask(uint64_t packet);
+
+    private:
+        /// <summary>Each packet asked for: the generation it was asked in, plus one.</summary>
+        std::unordered_map<uint64_t, uint64_t> _Asked;
+    };
 
     /// <summary>
     /// Notes that shape table <paramref name="table"/> was loaded from <paramref name="key"/>: while
@@ -393,11 +674,11 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only: has the reading thread read the HD copies of <paramref name="pictures"/> ahead of their first draw, those
-    /// the pack's archives have (the menus', the maps') that aren't kept, looked at or asked for already, in order, while
-    /// they and the frames kept take at most half the cache's budget; <see cref="KeepReadAhead"/> keeps them as drawn ones
-    /// are kept.
+    /// the pack's archives have (the menus', the maps') that aren't kept, looked at or asked for already, in order, as
+    /// <paramref name="as"/>: as sets while they and the frames kept take at most half the cache's budget, or as a load's
+    /// (a mission's interface) within the whole budget; <see cref="KeepReadAhead"/> keeps them as drawn ones are kept.
     /// </summary>
-    void ReadPicturesAhead(std::span<const PictureAhead> pictures);
+    void ReadPicturesAhead(std::span<const PictureAhead> pictures, ReadAs as = ReadAs::Set);
 
     /// <summary>
     /// Port-only (SPEC-first-use.md): has the readers read the screens' whole set ahead, every picture in the pack's
@@ -447,10 +728,22 @@ namespace MCHdArt
     std::string TerrainTileName(std::span<const uint8_t> tile);
 
     /// <summary>
+    /// The key the pack keeps terrain tile or overlay <paramref name="tile"/> under (the hash <see cref="TerrainTileName"/>
+    /// writes in hex).
+    /// </summary>
+    uint64_t TerrainTileKey(std::span<const uint8_t> tile);
+
+    /// <summary>
     /// The HD copy of terrain tile <paramref name="tile"/> (its bounds <paramref name="width"/> x
     /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainTile(std::span<const uint8_t> tile, int32_t width, int32_t height);
+
+    /// <summary>
+    /// Port-only (terrain/MCGroundNames.h): as FindTerrainTile, for the tile whose key (<see cref="TerrainTileKey"/>)
+    /// is <paramref name="key"/>, known without its bytes.
+    /// </summary>
+    std::shared_ptr<const Frame> FindTerrainTileByKey(uint64_t key, int32_t width, int32_t height);
 
     /// <summary>A relief map's byte for flat ground; a byte stands for a rise of (byte - this) / 127 of a pixel.</summary>
     inline constexpr int32_t ReliefFlat = 128;
@@ -461,12 +754,20 @@ namespace MCHdArt
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainRelief(std::span<const uint8_t> tile, int32_t width, int32_t height);
 
+    /// <summary>Port-only (terrain/MCGroundNames.h): as FindTerrainRelief, by the tile's key, as FindTerrainTileByKey.</summary>
+    std::shared_ptr<const Frame> FindTerrainReliefByKey(uint64_t key, int32_t width, int32_t height);
+
     /// <summary>Port-only: a ground tile whose HD copy to read ahead (<see cref="ReadGroundAhead"/>): FindTerrainTile's.</summary>
     struct GroundAhead
     {
         std::span<const uint8_t> Tile;
         int32_t Width = 0;
         int32_t Height = 0;
+        /// <summary>
+        /// Port-only (terrain/MCGroundNames.h): its key (<see cref="TerrainTileKey"/>) when it is known without the
+        /// tile's bytes, which are then empty; otherwise the key is worked out from them.
+        /// </summary>
+        std::optional<uint64_t> Key;
     };
 
     /// <summary>
@@ -479,11 +780,24 @@ namespace MCHdArt
     void ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief);
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: a load): has the readers read the HD frames of the map's <paramref name="overlays"/>
+    /// (each a fast shape's bytes up to its last row's end and its size, as the renderer finds them: FindOverlay) as a
+    /// load's reads, as ReadGroundAhead does the ground's, so the first frame of play finds them without a read.
+    /// </summary>
+    void ReadOverlaysAhead(std::span<const GroundAhead> overlays);
+
+    /// <summary>
     /// The HD copy of terrain overlay <paramref name="shape"/> (a fast shape's bytes, <see cref="FastShapeSize"/>; its
     /// bounds <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when HD art
     /// is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindOverlay(std::span<const uint8_t> shape, int32_t width, int32_t height);
+
+    /// <summary>
+    /// Port-only (terrain/MCGroundNames.h): as FindOverlay, for the overlay whose key (<see cref="TerrainTileKey"/>) is
+    /// <paramref name="key"/>, known without its bytes.
+    /// </summary>
+    std::shared_ptr<const Frame> FindOverlayByKey(uint64_t key, int32_t width, int32_t height);
 
     /// <summary>
     /// The name the pack keeps a shape table loaded outside the sprite, crater and icon files under (a tree's shadow, a
@@ -516,12 +830,11 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only (SPEC-first-use.md): has the readers read the HD copies of <paramref name="shapes"/>' frames (each
-    /// table's own folder, found by its bytes' hash: <see cref="ShapeTableHash"/>) as a load's reads, as
-    /// <see cref="ReadGroundAhead"/> reads the ground: several at once, each archive's in its order, waited for by
-    /// <see cref="WaitForLoadReads"/> and kept by <see cref="KeepReadAhead"/>, so FindShape then finds them without a
-    /// read.
+    /// table's own folder, found by its bytes' hash: <see cref="ShapeTableHash"/>) as <paramref name="as"/>' reads:
+    /// several at once, each archive's in its order, kept by <see cref="KeepReadAhead"/>, so FindShape then finds them
+    /// without a read.
     /// </summary>
-    void ReadShapesAhead(std::span<const ShapeAhead> shapes);
+    void ReadShapesAhead(std::span<const ShapeAhead> shapes, ReadAs as);
 
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's
@@ -604,13 +917,16 @@ namespace MCHdArt
     /// frames unpacked on it), at most how many reads of the sets read ahead (a screen's pictures) may be in flight at
     /// once (0: as many as there are readers), and whether they run a step below the game's thread or level with it
     /// (platform/MCThreadPriority.h). The game's command line sets them (<c>-hdreaders</c>, <c>-hdsetreads</c>,
-    /// <c>-hdreaderpriority level|below</c>); the defaults are to be measured on the M4 Pro and the A10.
+    /// <c>-hdreaderpriority level|below</c>); the defaults are to be measured on the M4 Pro and the A10. Port-only: for
+    /// the tests and benchmarks, whether a mission's art is held (<see cref="StartHold"/>) whatever the machine's
+    /// memory (<c>-hdhold on|off</c>; none: the memory decides). No player sets it.
     /// </summary>
     struct ReaderSettings
     {
         size_t Readers = 4;
         size_t SetReads = 0;
         bool Below = true;
+        std::optional<bool> Hold;
 
         bool operator==(const ReaderSettings&) const = default;
     };
@@ -628,20 +944,91 @@ namespace MCHdArt
     ReaderSettings GetReaderSettings();
 
     /// <summary>
-    /// Port-only (SPEC-first-use.md): the most bytes one of the readers' reads of an archive's neighbouring entries takes,
-    /// and the widest gap between two entries one read takes both across (read and thrown away: a read saved costs a slow
-    /// disk more than this many bytes do).
+    /// Port-only, for the tests: with <paramref name="hold"/>, the readers take none of the reads waiting (they still
+    /// open archives and make reads of what is asked for ahead), so a test lays out what waits before one is taken; let
+    /// go, once what was asked for is made reads, they take them again.
     /// </summary>
-    constexpr uint64_t ReaderRunBytes = 1024u * 1024u;
-    constexpr uint64_t ReaderRunGap = 64u * 1024u;
+    void HoldReads(bool hold);
 
     /// <summary>
-    /// Port-only: how many reads of the archives the readers have made: one for a run of neighbouring entries read
-    /// together (at most <see cref="ReaderRunBytes"/>, across gaps of at most <see cref="ReaderRunGap"/>).
+    /// Port-only, for the tests: with <paramref name="hold"/>, each reader that takes a run of reads holds it before
+    /// reading it, its span counted as being read (so the reads asked for meanwhile whose entries lie in it wait on it);
+    /// let go, they read them.
+    /// </summary>
+    void HoldTakenRuns(bool hold);
+
+    /// <summary>
+    /// Port-only, for the tests: waits until a reader holds a run it took (<see cref="HoldTakenRuns"/>) and the others have
+    /// nothing in hand (what was asked for is made reads: waiting, holding a run, or served by one held).
+    /// </summary>
+    void WaitForHeldRun();
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): the most bytes one of the readers' reads of an archive's neighbouring entries takes
+    /// (a version 2 archive's stream is read whole, however large, once for all its entries waiting), and the widest gap
+    /// between two entries one read takes both across (read and thrown away: a read saved costs a slow disk more than this
+    /// many bytes do).
+    /// </summary>
+    constexpr uint64_t ReaderRunBytes = MCDiskFile::RunMostBytes;
+    constexpr uint64_t ReaderRunGap = MCDiskFile::RunGapBytes;
+
+    /// <summary>
+    /// Port-only: how many reads of the archives the readers have made: one for a run of an archive's entries read
+    /// together, the first read waiting and those waiting of any kind, asked for in any order, whose entries lie in its
+    /// span (a version 2 stream's) or within <see cref="ReaderRunGap"/> of it (at most <see cref="ReaderRunBytes"/> in
+    /// all), with those asked for while it reads whose entries lie in it; none for a run whose version 2 streams are kept
+    /// unpacked from an earlier read.
     /// </summary>
     size_t ReaderReads();
 
-    /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
+    /// <summary>
+    /// Port-only (SPEC-pack-v2.md's Memory): the least memory the system reports on a machine whose missions' art is
+    /// held (<see cref="StartHold"/>): 16 GB's tier, as a 16 GB machine may report somewhat under 16,384 MiB.
+    /// </summary>
+    constexpr uint64_t HoldLeastMemory = uint64_t{15000} << 20;
+
+    /// <summary>
+    /// Port-only: the most bytes one of the hold's reads takes (a run of an archive's consecutive streams; a stream larger
+    /// than it alone), so a read asked for while the hold reads waits for at most this much more of the disk.
+    /// </summary>
+    constexpr uint64_t HoldRunBytes = uint64_t{4} << 20;
+
+    /// <summary>
+    /// Port-only: whether a mission's art would be held (<see cref="StartHold"/>): <see cref="ReaderSettings::Hold"/>
+    /// when set, else the machine has at least <see cref="HoldLeastMemory"/> (MCMemoryRoom::TotalBytes).
+    /// </summary>
+    bool HoldWanted();
+
+    /// <summary>
+    /// Port-only (SPEC-pack-v2.md's Memory: the hold): a mission's load is done; when HD art is drawn and the hold is
+    /// wanted (<see cref="HoldWanted"/>), the readers read every version 2 archive open, and each opened later in the
+    /// mission, below everything else they read (when nothing else waits, one run of at most <see cref="HoldRunBytes"/>
+    /// at a time), and keep its packets' and heads' streams as stored (MCFastFile::HoldStream), not unpacked, so no read
+    /// in play goes to the disk: a frame nobody read ahead is unpacked from them. Let go of (<see cref="LetGoHold"/>) at
+    /// the mission's end, all at once when memory goes short (<see cref="NextFrame"/>, holding no more that mission), and
+    /// when the pack is set.
+    /// </summary>
+    void StartHold();
+
+    /// <summary>Port-only: lets go of the hold (<see cref="StartHold"/>) and holds no more: a mission's end.</summary>
+    void LetGoHold();
+
+    /// <summary>Port-only: the stored bytes the hold keeps now (<see cref="StartHold"/>).</summary>
+    size_t HeldBytes();
+
+    /// <summary>Port-only: how many reads the hold has made (<see cref="StartHold"/>), for the tests.</summary>
+    size_t HeldReads();
+
+    /// <summary>
+    /// Port-only, for the tests: waits until the hold (<see cref="StartHold"/>) has read every archive it was handed, or
+    /// was let go of.
+    /// </summary>
+    void WaitForHold();
+
+    /// <summary>
+    /// How many of the pack's archives are open (each opened once, the first time it is needed, or by the readers when
+    /// asked ahead: OpenArchivesAhead).
+    /// </summary>
     size_t ArchivesOpen();
 
     /// <summary>

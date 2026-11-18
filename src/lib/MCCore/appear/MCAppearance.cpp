@@ -8,9 +8,19 @@
 #include "lib/MCVector2D.h"
 #include "lib/MCDice.h"
 #include "object/MCBigGameObject.h"
+#include "platform/MCFrameLog.h"
+#include "sprite/MCHdArt.h"
 
 namespace
 {
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): how far past the view's edges, as a share of its size,
+    /// an appearance has the packets it would draw read ahead (MCAppearance::NearView).
+    /// </summary>
+    constexpr float NearViewShare = 0.5f;
+    /// <summary>Port-only: the frame log's part for an appearance's asks (MCAppearance::ReadAheadNear).</summary>
+    constexpr std::string_view FrameLogAsk = "hd.ask";
+
     /// <summary>The depth the selection marks draw at (in front of everything).</summary>
     constexpr int32_t SelectDepth = -50000;
 
@@ -117,4 +127,23 @@ auto MCAppearance::DrawSelectBrackets(uint8_t color) -> void
     AddSelectLine(outLeft, bottom, outLeft, outBottom, color);
     AddSelectLine(outLeft, outBottom, outRight, outBottom, color);
     AddSelectLine(outRight, outBottom, outRight, bottom, color);
+}
+
+auto MCAppearance::NearView(const MCCamera& view) const -> bool
+{
+    const auto width = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewWidth)));
+    const auto height = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewHeight)));
+    const float marginX = width * NearViewShare;
+    const float marginY = height * NearViewShare;
+    return -marginX <= LowerRight.X && -marginY <= LowerRight.Y && UpperLeft.X <= width + marginX &&
+           UpperLeft.Y <= height + marginY;
+}
+
+auto MCAppearance::ReadAheadNear(const MCCamera& view, bool shown) -> void
+{
+    if ((shown || NearView(view)) && MCHdArt::NumberedFolders())
+    {
+        const MCFrameLog::Scope part(FrameLogAsk);
+        ReadAhead();
+    }
 }

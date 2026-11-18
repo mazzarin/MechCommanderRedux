@@ -27,6 +27,8 @@ class MCLaserType : public MCObjectType
 public:
     /// <summary>Makes a <see cref="MCLaser"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
+    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
+    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({LaserHitEffect, LaserMissEffect}); }
     /// <summary>
     /// Reads the laser data, loads the effect shape (from the sprite path) and its PPC data, reads numStages friendly
     /// then numStages enemy stages, the common type data, and loads the hit and miss types.

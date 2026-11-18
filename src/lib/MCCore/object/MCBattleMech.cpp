@@ -913,7 +913,17 @@ auto MCBattleMech::OnScreen() -> int
             ((relative.X * camera->SinAngle + camera->HalfHeight) - relative.Y * camera->SinAngle) - relative.Z;
     }
 
-    if (Appearance != nullptr && Appearance->RecalcBounds(*camera) != 0)
+    const bool shown = Appearance != nullptr && Appearance->RecalcBounds(*camera) != 0;
+
+    // Port-only (SPEC-first-use.md: the camera's surroundings): in or near the view, each part's packet is read whole
+    // ahead of its frames' first draws, so a pan or its walk brings it into view with them in hand, and a packet drawn
+    // is read in one go, not a frame at a time.
+    if (Appearance != nullptr)
+    {
+        Appearance->ReadAheadNear(*camera, shown);
+    }
+
+    if (shown)
     {
         WindowsVisible = Turn;
         return 1;

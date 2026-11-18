@@ -28,6 +28,7 @@
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
 #include "object/MCBattleMech.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCSpriteTree.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCLogMech.h"
@@ -464,6 +465,25 @@ namespace MCTestGame
         return false;
     }
 
+    size_t PrintGuardedReads(std::string_view label)
+    {
+        const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
+        size_t total = 0;
+
+        for (const MCHdArt::GuardedRead& read : reads.value_or(std::vector<MCHdArt::GuardedRead>{}))
+        {
+            total += read.Count;
+            std::cout << std::format("  {}: {} x {}\n", label, read.Count, read.Kind);
+
+            for (const std::string& example : read.Examples)
+            {
+                std::cout << std::format("    {}\n", example);
+            }
+        }
+
+        return total;
+    }
+
     bool StartLogistics(const std::function<void()>& afterBoot)
     {
         if (booted != 0)
@@ -749,18 +769,40 @@ std::vector<std::pair<std::string, int32_t>> MCTestGame::MechTrees()
     return trees;
 }
 
+namespace
+{
+    /// <summary>The mech tree in packet <paramref name="packet"/> of the game's sprite PAK.</summary>
+    auto MechTreeAt(int32_t packet) -> std::shared_ptr<MCSpriteTree>
+    {
+        constexpr uint32_t MechTreeType = 0x01000000u;
+        return std::static_pointer_cast<MCSpriteTree>(
+            AppearanceTypeList().GetAppearance(MechTreeType | static_cast<uint32_t>(packet)));
+    }
+} // namespace
+
 std::shared_ptr<MCSpriteTree> MCTestGame::FindMechTree(std::string_view name)
 {
     for (const auto& [treeName, packet] : MechTrees())
     {
         if (treeName == name)
         {
-            return std::static_pointer_cast<MCSpriteTree>(
-                AppearanceTypeList().GetAppearance(0x01000000u | static_cast<uint32_t>(packet)));
+            return MechTreeAt(packet);
         }
     }
 
     return nullptr;
+}
+
+std::vector<std::shared_ptr<MCSpriteTree>> MCTestGame::EveryMechTree()
+{
+    std::vector<std::shared_ptr<MCSpriteTree>> trees;
+
+    for (const auto& [name, packet] : MechTrees())
+    {
+        trees.push_back(MechTreeAt(packet));
+    }
+
+    return trees;
 }
 
 void MCTestGame::FaceMech(MCBattleMech& mech, float degrees)

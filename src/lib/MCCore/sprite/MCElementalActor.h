@@ -23,6 +23,12 @@ public:
 
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): the gesture's packet as Render takes it, read ahead
+    /// (MCAppearanceType::MCAskingAhead).
+    /// </summary>
+    void ReadAhead() override;
+
     /// <summary>Jumps straight to gesture <paramref name="gesture"/>.</summary>
     int32_t SetGesture(uint32_t gesture) override
     {

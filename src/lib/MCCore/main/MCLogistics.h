@@ -14,6 +14,7 @@
 #include "main/MCLogWarriorList.h"
 #include "main/MCMPPlayerLights.h"
 #include "platform/MCRegisteredBlock.h"
+#include "sprite/MCHdArt.h"
 
 class MCBriefingScreen;
 class MCFidpMessage;
@@ -104,9 +105,10 @@ public:
 
     /// <summary>
     /// Port-only: on a sharp screen, has the pack's reading thread read the HD copies of the pictures every live texture
-    /// shows (MCHdArt::ReadPicturesAhead): MakeAhead's for the menus, and a mission's interface as its load ends.
+    /// shows (MCHdArt::ReadPicturesAhead) as <paramref name="as"/>: MakeAhead's for the menus, and a mission's
+    /// interface as its load ends and as the scenario starts.
     /// </summary>
-    static void ReadTexturesAhead();
+    static void ReadTexturesAhead(MCHdArt::ReadAs as = MCHdArt::ReadAs::Set);
 
     /// <summary>Port-only: a picture's 8-bit pixels, row by row, and its size (<see cref="BriefingMapOf"/>).</summary>
     struct MCPicturePixels

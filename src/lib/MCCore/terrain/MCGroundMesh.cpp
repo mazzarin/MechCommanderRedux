@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "terrain/MCGroundMesh.h"
+#include "terrain/MCGroundNames.h"
 #include "ai/MCMoveSystem.h"
+#include "ai/MCScenarioMap.h"
 #include "camera/MCCamera.h"
 #include "color/MCPalette.h"
 #include "engine/MCByteFlag.h"
@@ -9,7 +11,13 @@
 #include "object/MCElementalType.h"
 #include "object/MCElementalGameSystem.h"
 #include "object/MCForces.h"
+#include "object/MCMiscTerrainObject.h"
+#include "object/MCObjectList.h"
+#include "object/MCObjectQueue.h"
+#include "object/MCObjectSystem.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCRenderer.h"
+#include "platform/MCSoftwareRenderer.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
 #include "terrain/MCMapBlockManager.h"
@@ -18,6 +26,7 @@
 #include "terrain/MCTerrainWindow.h"
 #include "vfx/MCVfx.h"
 #include "vfx/MCVfxClip.h"
+#include "vfx/MCVfxFunctions.h"
 
 #include <unordered_set>
 
@@ -458,6 +467,133 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
 
 namespace
 {
+    /// <summary>Where a fast shape's header keeps its height and its width less one (as the renderer reads them).</summary>
+    constexpr size_t FastShapeHeightAt = 8;
+    constexpr size_t FastShapeWidthAt = 10;
+
+    /// <summary>
+    /// Each distinct slot (not negative) the map's vertices name in <paramref name="slotOf"/>'s field, in the order the
+    /// vertices first name it, from row and column <paramref name="from"/> (negative: the off-map ring's vertices too,
+    /// the off-map block's, MapVertexIndex).
+    /// </summary>
+    template <typename SlotOf>
+    std::vector<int32_t> DistinctSlots(MCMapBlockManager& blocks, int32_t from, SlotOf slotOf)
+    {
+        const int32_t mapSide = MCTerrain::BlocksMapSide * MCTerrain::VerticesBlockSide;
+        std::unordered_set<int32_t> seen;
+        std::vector<int32_t> slots;
+
+        for (int32_t r = from; r < mapSide; ++r)
+        {
+            for (int32_t c = from; c < mapSide; ++c)
+            {
+                const int32_t slot = slotOf(blocks.MapVertexAt(r, c));
+
+                if (slot >= 0 && seen.insert(slot).second)
+                {
+                    slots.push_back(slot);
+                }
+            }
+        }
+
+        return slots;
+    }
+
+    /// <summary>The slots of the map's ground tiles, a block's width of off-map vertices too (the mesh's ring).</summary>
+    std::vector<int32_t> GroundSlots(MCMapBlockManager& blocks)
+    {
+        return DistinctSlots(blocks, -MCTerrain::VerticesBlockSide,
+                             [](const auto& vertex) { return static_cast<int32_t>(vertex.TextureData); });
+    }
+
+    /// <summary>The slots of the map's overlays.</summary>
+    std::vector<int32_t> OverlaySlots(MCMapBlockManager& blocks)
+    {
+        return DistinctSlots(blocks, 0, [](const auto& vertex) { return static_cast<int32_t>(vertex.OverlayData); });
+    }
+
+    /// <summary>Whether the HD ground is drawn: HD art on and the GPU drawing (the software renderer draws no HD art).</summary>
+    bool HdGroundDrawn(const MCTerrain& terrain)
+    {
+        return MCHdArt::Active() && MCRenderer::GpuDrawing() != MCGpuDrawing::Off && terrain.MapBlocks != nullptr &&
+               terrain.Tiles != nullptr;
+    }
+
+    /// <summary>
+    /// Port-only (PLAN.md's first-use item 10): whether the overlays the program's table names are rebuilt from their HD
+    /// frames rather than read: the HD ground drawn, and the pack's overlays of version 2, whose frames mark the pixels
+    /// the original draws apart from those their indices spread to (MCRebuildGroundOverlay).
+    /// </summary>
+    bool HdOverlaysRebuilt(const MCTerrain& terrain)
+    {
+        return HdGroundDrawn(terrain) && MCHdArt::MarksOriginalPixels(MCHdArt::OverlayFolder);
+    }
+
+    /// <summary>Whether <paramref name="known"/> names slot <paramref name="slot"/>'s overlay and carries its hot spot.</summary>
+    bool OverlayKnown(const MCKnownGroundNames& known, int32_t slot)
+    {
+        return known.At(slot).Overlay.has_value() && known.SpotAt(slot).has_value();
+    }
+
+    /// <summary>
+    /// Adds to <paramref name="slots"/> each of <paramref name="more"/> whose entry of <paramref name="known"/> names
+    /// what <paramref name="part"/> holds and that it lacks. How many it added.
+    /// </summary>
+    size_t AddNamed(std::vector<int32_t>& slots, std::span<const int32_t> more, const MCKnownGroundNames& known,
+                    std::optional<MCGroundName> MCGroundSlotNames::* part)
+    {
+        const size_t before = slots.size();
+
+        for (const int32_t slot : more)
+        {
+            if ((known.At(slot).*part).has_value() && !std::ranges::contains(slots, slot))
+            {
+                slots.push_back(slot);
+            }
+        }
+
+        return slots.size() - before;
+    }
+
+    /// <summary>
+    /// The slots of the map's ground tiles (GroundSlots), then the ground tiles <paramref name="known"/> names that a
+    /// vertex holds as its overlay (OverlaySlots): drawn too, so rebuilt the same way.
+    /// </summary>
+    std::vector<int32_t> GroundTileSlots(MCMapBlockManager& blocks, const MCKnownGroundNames& known)
+    {
+        std::vector<int32_t> slots = GroundSlots(blocks);
+        AddNamed(slots, OverlaySlots(blocks), known, &MCGroundSlotNames::Tile);
+        return slots;
+    }
+
+    /// <summary>
+    /// The slots of <paramref name="terrain"/>'s overlays (OverlaySlots), then those its .pre lists besides that
+    /// <paramref name="known"/> names as overlays (MCTerrain::PreloadedSlots): those a terrain object puts on its vertex
+    /// as it's destroyed, drawn from then on.
+    /// </summary>
+    std::vector<int32_t> OverlaySlotsAndPreloaded(const MCTerrain& terrain, const MCKnownGroundNames& known)
+    {
+        std::vector<int32_t> slots = OverlaySlots(*terrain.MapBlocks);
+        AddNamed(slots, terrain.PreloadedSlots, known, &MCGroundSlotNames::Overlay);
+        return slots;
+    }
+
+    /// <summary>
+    /// The mines' tiles MCTerrainReadMinesAhead left unread for MCTerrainReadHdTiles to rebuild from their HD frames, and
+    /// the terrain whose they are; the load's, on the game's thread.
+    /// </summary>
+    struct MinesLeft
+    {
+        std::weak_ptr<const MCTerrain> Of;
+        std::vector<int32_t> Slots;
+    };
+
+    MinesLeft& MinesLeftToRebuild()
+    {
+        static MinesLeft left;
+        return left;
+    }
+
     /// <summary>
     /// The map's ground tiles, each once, as the ground mesh draws them (MCTerrainReadHdTiles): none while HD art is off
     /// or the software renderer draws.
@@ -465,59 +601,515 @@ namespace
     std::vector<MCHdArt::GroundAhead> HdGroundTiles()
     {
         const std::shared_ptr<MCTerrain> terrain = Terrain();
+        return terrain != nullptr && HdGroundDrawn(*terrain) ? MCTerrainHdGroundByBytes(*terrain).Tiles
+                                                             : std::vector<MCHdArt::GroundAhead>();
+    }
 
-        // The software renderer draws no HD art.
-        if (!MCHdArt::Active() || MCRenderer::GpuDrawing() == MCGpuDrawing::Off || terrain == nullptr ||
-            terrain->MapBlocks == nullptr || terrain->Tiles == nullptr)
+    /// <summary>The names in <paramref name="slots"/>' entries of <paramref name="known"/> that <paramref name="part"/> holds.</summary>
+    std::vector<MCHdArt::GroundAhead> NamedAhead(const MCKnownGroundNames& known, std::span<const int32_t> slots,
+                                                 std::optional<MCGroundName> MCGroundSlotNames::* part)
+    {
+        std::vector<MCHdArt::GroundAhead> ahead;
+
+        for (const int32_t slot : slots)
         {
-            return {};
-        }
-
-        MCMapBlockManager& blocks = *terrain->MapBlocks;
-        const int32_t side = MCTerrain::VerticesBlockSide;
-        const int32_t mapSide = MCTerrain::BlocksMapSide * side;
-        std::unordered_set<int32_t> seen;
-        std::vector<MCHdArt::GroundAhead> tiles;
-
-        // A block's width of off-map vertices too: those are the off-map block's (MapVertexIndex), which the mesh's
-        // ring holds, whatever its width.
-        for (int32_t r = -side; r < mapSide; ++r)
-        {
-            for (int32_t c = -side; c < mapSide; ++c)
+            if (const std::optional<MCGroundName> name = known.At(slot).*part)
             {
-                const int32_t textureData = blocks.MapVertexAt(r, c).TextureData;
-
-                if (textureData < 0 || !seen.insert(textureData).second)
-                {
-                    continue;
-                }
-
-                if (const std::span<const uint8_t> tile = GroundTile(*terrain->Tiles, textureData); !tile.empty())
-                {
-                    if (const int32_t width = VfxTileWidth(tile); width != 0)
-                    {
-                        tiles.push_back(MCHdArt::GroundAhead{tile, width, tile[2]});
-                    }
-                }
+                ahead.push_back(MCHdArt::GroundAhead{{}, name->Width, name->Height, name->Key});
             }
         }
 
-        return tiles;
+        return ahead;
+    }
+}
+
+MCHdArt::GroundAhead MCGroundTileOf(MCTerrainTiles& tiles, int32_t slot)
+{
+    if (const std::span<const uint8_t> tile = GroundTile(tiles, slot); !tile.empty())
+    {
+        if (const int32_t width = VfxTileWidth(tile); width != 0)
+        {
+            return MCHdArt::GroundAhead{tile, width, tile[2]};
+        }
+    }
+
+    return {};
+}
+
+std::optional<MCHdArt::GroundAhead> MCGroundOverlayOf(MCTerrainTiles& tiles, int32_t slot)
+{
+    const std::optional<std::span<const uint8_t>> shape = FastShapeAt(tiles.Lookup(slot), 0);
+    const std::optional<size_t> size = shape.has_value() ? FastShapeSize(*shape) : std::nullopt;
+
+    if (!size.has_value())
+    {
+        return std::nullopt;
+    }
+
+    return MCHdArt::GroundAhead{shape->first(*size), MCRead16(*shape, FastShapeWidthAt) + 1,
+                                MCRead16(*shape, FastShapeHeightAt)};
+}
+
+MCHdGroundAsks MCTerrainHdGroundByBytes(MCTerrain& terrain)
+{
+    MCHdGroundAsks asks;
+
+    if (terrain.MapBlocks == nullptr || terrain.Tiles == nullptr)
+    {
+        return asks;
+    }
+
+    for (const int32_t slot : GroundSlots(*terrain.MapBlocks))
+    {
+        if (MCHdArt::GroundAhead tile = MCGroundTileOf(*terrain.Tiles, slot); !tile.Tile.empty())
+        {
+            asks.Tiles.push_back(tile);
+        }
+    }
+
+    for (const int32_t slot : OverlaySlots(*terrain.MapBlocks))
+    {
+        if (std::optional<MCHdArt::GroundAhead> overlay = MCGroundOverlayOf(*terrain.Tiles, slot))
+        {
+            asks.Overlays.push_back(*overlay);
+        }
+    }
+
+    return asks;
+}
+
+std::optional<MCHdGroundAsks> MCTerrainHdGroundByName(const MCTerrain& terrain)
+{
+    if (terrain.MapBlocks == nullptr || terrain.Tiles == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(*terrain.Tiles);
+
+    if (!known.has_value())
+    {
+        return std::nullopt;
+    }
+
+    return MCHdGroundAsks{NamedAhead(*known, GroundTileSlots(*terrain.MapBlocks, *known), &MCGroundSlotNames::Tile),
+                          NamedAhead(*known, OverlaySlotsAndPreloaded(terrain, *known), &MCGroundSlotNames::Overlay)};
+}
+
+void MCTerrainLeaveRebuiltTiles(const MCTerrain& terrain, std::vector<int32_t>& slots)
+{
+    const MCOptionalRef<const MCKnownGroundNames> known =
+        HdGroundDrawn(terrain) ? MCKnownGroundNamesOf(*terrain.Tiles) : std::nullopt;
+
+    if (!known.has_value())
+    {
+        return;
+    }
+
+    // The map's ground tiles the table holds (a vertex's overlay that is one too), and with a version 2 pack the
+    // overlays of the map and its .pre, as RebuildGroundFromHd goes through them; any other slot (an overlay of a
+    // version 1 pack, a tile the table lacks) is read.
+    std::unordered_set<int32_t> leftOut;
+
+    for (const int32_t slot : GroundTileSlots(*terrain.MapBlocks, *known))
+    {
+        if (known->get().ShapeAt(slot).has_value())
+        {
+            leftOut.insert(slot);
+        }
+    }
+
+    if (HdOverlaysRebuilt(terrain))
+    {
+        for (const int32_t slot : OverlaySlotsAndPreloaded(terrain, *known))
+        {
+            if (OverlayKnown(*known, slot))
+            {
+                leftOut.insert(slot);
+            }
+        }
+    }
+
+    // The .pre's ground tiles that no vertex names: never drawn (no vertex's ground tile changes in play), so not read.
+    const std::vector<int32_t> used = terrain.MapBlocks->TilesUsed();
+
+    for (const int32_t slot : terrain.PreloadedSlots)
+    {
+        if (known->get().At(slot).Tile.has_value() && !std::ranges::binary_search(used, slot))
+        {
+            leftOut.insert(slot);
+        }
+    }
+
+    std::erase_if(slots, [&leftOut](int32_t slot) { return leftOut.contains(slot); });
+}
+
+std::vector<int32_t> MCTerrainDestroyedOverlaySlots()
+{
+    std::vector<int32_t> slots;
+    const std::shared_ptr<MCObjectQueue> objects = ObjectList();
+
+    if (objects == nullptr)
+    {
+        return slots;
+    }
+
+    for (const std::shared_ptr<MCObjectList>& list : objects->Lists())
+    {
+        for (const std::shared_ptr<MCBaseObject> object : *list)
+        {
+            if (object->ObjectClass != MCObjectClass::MiscTerrainObject)
+            {
+                continue;
+            }
+
+            const std::optional<int32_t> slot = static_cast<const MCMiscTerrainObject&>(*object).DestroyedOverlayTile();
+
+            if (slot.has_value() && !std::ranges::contains(slots, *slot))
+            {
+                slots.push_back(*slot);
+            }
+        }
+    }
+
+    return slots;
+}
+
+bool MCTerrainAskHdGroundByName(const MCTerrain& terrain)
+{
+    if (!HdGroundDrawn(terrain))
+    {
+        return false;
+    }
+
+    const std::optional<MCHdGroundAsks> asks = MCTerrainHdGroundByName(terrain);
+
+    if (!asks.has_value())
+    {
+        return false;
+    }
+
+    MCHdArt::ReadGroundAhead(asks->Tiles, MCSceneLights::ReliefMapsOn());
+    MCHdArt::ReadOverlaysAhead(asks->Overlays);
+    return true;
+}
+
+std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain, MCMinesAhead cells)
+{
+    std::vector<int32_t> slots;
+
+    if (terrain.MapBlocks == nullptr)
+    {
+        return slots;
+    }
+
+    const MCScenarioMap& map = GameMap();
+    const MCMapBlockManager& blocks = *terrain.MapBlocks;
+    const auto level = [&blocks](int32_t row, int32_t col) { return uint32_t{blocks.MapVertexAt(row, col).Elevation}; };
+    bool mined = false;
+
+    for (int32_t row = 0; row < map.Height; ++row)
+    {
+        for (int32_t col = 0; col < map.Width; ++col)
+        {
+            // Either side's, as the one playing it (or god mode) sees them.
+            const MCMineView view = MCTerrainMineView(map.TileAt(row, col).Overlay, true, true);
+            mined = mined || view.InnerSphereMine || view.ClanMine || view.Crater;
+
+            if (cells == MCMinesAhead::Mined && !view.InnerSphereMine && !view.ClanMine)
+            {
+                continue;
+            }
+
+            // The cell's corners as a terrain block has them: top-left, top-right, bottom-right, bottom-left.
+            const int32_t slot =
+                MCMineTileNumber(level(row, col), level(row, col + 1), level(row + 1, col + 1), level(row + 1, col));
+
+            if (!std::ranges::contains(slots, slot))
+            {
+                slots.push_back(slot);
+            }
+        }
+    }
+
+    if (mined || (cells == MCMinesAhead::EveryCell && !slots.empty()))
+    {
+        slots.push_back(MCMineCraterTile);
+    }
+
+    return slots;
+}
+
+void MCTerrainReadMinesAhead(MCMinesAhead cells)
+{
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (terrain == nullptr || terrain->Tiles == nullptr)
+    {
+        return;
+    }
+
+    const std::vector<int32_t> slots = MCTerrainMineSlots(*terrain, cells);
+
+    if (slots.empty())
+    {
+        return;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    const bool hdGround = HdGroundDrawn(*terrain);
+    const MCOptionalRef<const MCKnownGroundNames> known =
+        hdGround ? MCKnownGroundNamesOf(*terrain->Tiles) : std::nullopt;
+
+    // By name, the HD overlays' reads start before the original's.
+    if (known.has_value())
+    {
+        MCHdArt::ReadOverlaysAhead(NamedAhead(*known, slots, &MCGroundSlotNames::Overlay));
+    }
+
+    // With a version 2 pack, those the table names are rebuilt from their HD frames with the ground
+    // (MCTerrainReadHdTiles) rather than read.
+    std::vector<int32_t> toRead;
+    size_t left = 0;
+
+    if (known.has_value() && HdOverlaysRebuilt(*terrain))
+    {
+        MinesLeft& mines = MinesLeftToRebuild();
+
+        if (mines.Of.lock() != terrain)
+        {
+            mines = MinesLeft{terrain, {}};
+        }
+
+        for (const int32_t slot : slots)
+        {
+            if (!OverlayKnown(*known, slot))
+            {
+                toRead.push_back(slot);
+                continue;
+            }
+
+            ++left;
+
+            if (!std::ranges::contains(mines.Slots, slot))
+            {
+                mines.Slots.push_back(slot);
+            }
+        }
+    }
+    else
+    {
+        toRead = slots;
+    }
+
+    const MCTileReads read = terrain->Tiles->ReadTiles(toRead);
+
+    if (hdGround && !known.has_value())
+    {
+        std::vector<MCHdArt::GroundAhead> overlays;
+
+        for (const int32_t slot : slots)
+        {
+            if (std::optional<MCHdArt::GroundAhead> overlay = MCGroundOverlayOf(*terrain->Tiles, slot))
+            {
+                overlays.push_back(*overlay);
+            }
+        }
+
+        MCHdArt::ReadOverlaysAhead(overlays);
+    }
+
+    if (MCFrameLog::Enabled())
+    {
+        MCFrameLog::Note(std::format(
+            "mines' tiles ({}): {}, {} left to rebuild from HD, {} read in {} reads, {:.1f} ms",
+            cells == MCMinesAhead::EveryCell ? "every cell's" : "the mined cells'", slots.size(), left, read.Tiles,
+            read.Reads, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
     }
 }
 
 void MCTerrainReadHdTilesAhead()
 {
-    MCHdArt::ReadGroundAhead(HdGroundTiles(), MCSceneLights::ReliefMapsOn());
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (terrain == nullptr || !HdGroundDrawn(*terrain))
+    {
+        return;
+    }
+
+    // By name when the program knows the tile set (the readers pass over what the terrain's load asked for already),
+    // so no tile is hashed, and the overlays its bridges, forests and walls take as they're destroyed, their objects in
+    // now; otherwise by the tiles' own bytes.
+    if (MCTerrainAskHdGroundByName(*terrain))
+    {
+        const MCKnownGroundNames& known = MCKnownGroundNamesOf(*terrain->Tiles)->get();
+        std::vector<int32_t> slots = OverlaySlotsAndPreloaded(*terrain, known);
+        const size_t destroyed = AddNamed(slots, MCTerrainDestroyedOverlaySlots(), known, &MCGroundSlotNames::Overlay);
+        MCHdArt::ReadOverlaysAhead(NamedAhead(known, std::span(slots).last(destroyed), &MCGroundSlotNames::Overlay));
+        return;
+    }
+
+    const MCHdGroundAsks asks = MCTerrainHdGroundByBytes(*terrain);
+    MCHdArt::ReadGroundAhead(asks.Tiles, MCSceneLights::ReliefMapsOn());
+    MCHdArt::ReadOverlaysAhead(asks.Overlays);
 }
 
-void MCTerrainReadHdTiles()
+namespace
 {
+    /// <summary>
+    /// Port-only (PLAN.md's first-use item 10): with a version 2 pack (HdOverlaysRebuilt), each overlay of the map, its
+    /// .pre, its destroyed bridges, forests and walls (MCTerrainDestroyedOverlaySlots) and its mines (those
+    /// MCTerrainReadMinesAhead left) that the terrain's load left out or never read, rebuilt from its HD frame
+    /// (MCRebuildGroundOverlay) and put in the cache; one that isn't (no frame, or not the overlay's bytes) is added to
+    /// <paramref name="unread"/>. How many it rebuilt.
+    /// </summary>
+    size_t RebuildOverlaysFromHd(MCTerrain& terrain, const MCKnownGroundNames& known, std::vector<int32_t>& unread)
+    {
+        MinesLeft& mines = MinesLeftToRebuild();
+        std::vector<int32_t> slots = OverlaySlotsAndPreloaded(terrain, known);
+        AddNamed(slots, MCTerrainDestroyedOverlaySlots(), known, &MCGroundSlotNames::Overlay);
+
+        if (mines.Of.lock().get() == &terrain)
+        {
+            for (const int32_t slot : mines.Slots)
+            {
+                if (!std::ranges::contains(slots, slot))
+                {
+                    slots.push_back(slot);
+                }
+            }
+        }
+
+        mines = MinesLeft{};
+
+        if (!HdOverlaysRebuilt(terrain))
+        {
+            return 0;
+        }
+
+        MCTerrainTiles& tiles = *terrain.Tiles;
+        size_t rebuilt = 0;
+
+        for (const int32_t slot : slots)
+        {
+            const MCOptionalRef<const MCTerrainTile> cached = tiles.Slot(slot);
+
+            if (!OverlayKnown(known, slot) || !cached.has_value() || cached->get().Missing ||
+                !cached->get().TileData().empty())
+            {
+                continue;
+            }
+
+            const MCGroundName name = *known.At(slot).Overlay;
+            const std::shared_ptr<const MCHdArt::Frame> frame =
+                MCHdArt::FindOverlayByKey(name.Key, name.Width, name.Height);
+            const std::optional<std::vector<uint8_t>> packet =
+                frame != nullptr ? MCRebuildGroundOverlay(frame->Indices, name, *known.SpotAt(slot)) : std::nullopt;
+
+            if (packet.has_value() && tiles.Put(slot, *packet))
+            {
+                ++rebuilt;
+                continue;
+            }
+
+            unread.push_back(slot);
+        }
+
+        return rebuilt;
+    }
+
+    /// <summary>
+    /// MCTerrainReadHdTiles for a tile set the program knows (<paramref name="known"/>): each of the map's ground tiles'
+    /// HD frames in hand by name, and each original tile not cached rebuilt from its frame, or read where it can't be.
+    /// </summary>
+    MCGroundRebuilt RebuildGroundFromHd(MCTerrain& terrain, const MCKnownGroundNames& known)
+    {
+        MCHdArt::WaitForLoadReads();
+        MCHdArt::KeepReadAhead();
+        const auto start = std::chrono::steady_clock::now();
+        MCTerrainTiles& tiles = *terrain.Tiles;
+        std::vector<int32_t> unread;
+        size_t rebuilt = 0;
+
+        for (const int32_t slot : GroundTileSlots(*terrain.MapBlocks, known))
+        {
+            const std::optional<MCGroundName> name = known.At(slot).Tile;
+
+            if (!name.has_value())
+            {
+                continue;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> frame =
+                MCHdArt::FindTerrainTileByKey(name->Key, name->Width, name->Height);
+
+            if (MCSceneLights::ReliefMapsOn())
+            {
+                MCHdArt::FindTerrainReliefByKey(name->Key, name->Width, name->Height);
+            }
+
+            const MCOptionalRef<const MCTerrainTile> cached = tiles.Slot(slot);
+
+            if (!cached.has_value() || cached->get().Missing || !cached->get().TileData().empty())
+            {
+                continue;
+            }
+
+            const std::optional<MCGroundTileShape> shape = known.ShapeAt(slot);
+            const std::optional<std::vector<uint8_t>> packet = frame != nullptr && shape.has_value()
+                                                                   ? MCRebuildGroundTile(frame->Indices, *name, *shape)
+                                                                   : std::nullopt;
+
+            if (packet.has_value() && tiles.Put(slot, *packet))
+            {
+                ++rebuilt;
+                continue;
+            }
+
+            unread.push_back(slot);
+        }
+
+        const size_t overlays = RebuildOverlaysFromHd(terrain, known, unread);
+        const MCTileReads read = tiles.ReadTiles(unread);
+
+        // A pack that doesn't match the game's tiles costs only the reads, so say so where it would go unseen.
+        if (!unread.empty())
+        {
+            SDL_Log(
+                "HD art: %zu of the map's %zu ground tiles and overlays weren't rebuilt from the pack (no frame, or "
+                "not the tile's bytes), so they were read",
+                unread.size(), unread.size() + rebuilt + overlays);
+        }
+
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::Note(std::format(
+                "ground tiles: {} rebuilt from HD, {} overlays rebuilt from HD, {} read in {} reads, {:.1f} ms",
+                rebuilt, overlays, read.Tiles, read.Reads,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
+        }
+
+        return MCGroundRebuilt{rebuilt, read.Tiles, overlays};
+    }
+} // namespace
+
+MCGroundRebuilt MCTerrainReadHdTiles()
+{
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (terrain != nullptr && HdGroundDrawn(*terrain))
+    {
+        if (const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(*terrain->Tiles))
+        {
+            return RebuildGroundFromHd(*terrain, known->get());
+        }
+    }
+
     const std::vector<MCHdArt::GroundAhead> tiles = HdGroundTiles();
 
     if (tiles.empty())
     {
-        return;
+        return {};
     }
 
     // Those read ahead (MCTerrainReadHdTilesAhead) are kept; any left, or whose read failed, are read here.
@@ -534,6 +1126,8 @@ void MCTerrainReadHdTiles()
             MCHdArt::FindTerrainRelief(tile.Tile, tile.Width, tile.Height);
         }
     }
+
+    return {};
 }
 
 MCTerrainMeshSteps MCTerrainScreenSteps(const MCCamera& camera)

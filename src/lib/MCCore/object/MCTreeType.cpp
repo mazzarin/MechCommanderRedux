@@ -9,6 +9,7 @@
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCVfxAppearance.h"
 #include "sprite/MCVfxAppearanceType.h"
+#include "sprite/MCShapeFile.h"
 
 int32_t LoadShadowShape(MCFitIniFile& typeFile, std::string_view entry, MCRegisteredBlock& shadow)
 {
@@ -19,7 +20,7 @@ int32_t LoadShadowShape(MCFitIniFile& typeFile, std::string_view entry, MCRegist
         return 0;
     }
 
-    MCFile shadowFile;
+    MCShapeFile shadowFile;
 
     if (const int32_t result = shadowFile.Open(GamePath(SpritePath, *shadowName, ".shp")); result != 0)
     {

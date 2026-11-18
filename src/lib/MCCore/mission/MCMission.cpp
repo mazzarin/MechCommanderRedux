@@ -52,6 +52,7 @@
 #include "object/MCMasterComponent.h"
 #include "object/MCObjectTypeManager.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCHdArt.h"
 #include "terrain/MCTacticalMap.h"
 #include "vfx/MCVfxFunctions.h"
 #include "platform/MCFileSystem.h"
@@ -501,6 +502,8 @@ auto MCMission::Shutdown() -> void
         MCGameContext::Current().SetScenario(nullptr);
     }
 
+    // Port-only: the mission's held art let go of when its session ends without the mission's end (MCHdArt::StartHold).
+    MCHdArt::LetGoHold();
     RemoveCallback(_MissionCallback);
 
     if (GlobalLog() != nullptr)
@@ -867,6 +870,8 @@ auto MCMission::StartScenario(std::string_view name) -> void
 {
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
+    // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold).
+    MCHdArt::LetGoHold();
     // Port (personal): the reports measure the load, then the play (main/MCTelemetry.h).
     MCTelemetry::PlayLoading(scenarioName, MultiPlayer() != nullptr);
 
@@ -923,7 +928,7 @@ auto MCMission::StartScenario(std::string_view name) -> void
         Fatal(result, " Couldnt init scenario ");
     }
 
-    TacticalInterface()->StartScenario();
+    StartInterface();
     LoadWindowStatus();
     ScenarioResult = 0;
     State = MCMissionState::Scenario;
@@ -941,6 +946,16 @@ auto MCMission::StartScenario(std::string_view name) -> void
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     MCTelemetry::PlayStarted(game != nullptr ? game->NumPlayers() : 1, game != nullptr && game->IsServer);
     MCFrameLog::Note("mission started");
+}
+
+auto MCMission::StartInterface() -> void
+{
+    TacticalInterface()->StartScenario();
+    MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs::Load);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+    // Port-only (SPEC-pack-v2.md's Memory): on a machine with the memory, the mission's art held from here.
+    MCHdArt::StartHold();
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void
@@ -1123,6 +1138,9 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
         Scenario()->Unload();
         MCGameContext::Current().SetScenario(nullptr);
     }
+
+    // Port-only: the mission's held art let go of (MCHdArt::StartHold).
+    MCHdArt::LetGoHold();
 
     // Port-only: each way back to logistics is returned to be done by the caller (EndScenario at once).
     if (ScenarioResult > 3)

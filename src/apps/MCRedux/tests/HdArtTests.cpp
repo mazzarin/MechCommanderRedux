@@ -4,6 +4,7 @@
 #include "MCInternetSpots.h"
 #include "fakes/MCNullAudioDevice.h"
 #include "MCTest.h"
+#include "MCTestArchive.h"
 #include "MCTestShapes.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -52,6 +53,7 @@
 #include "platform/MCAudio.h"
 #include "gameos/MCSoundRenderer.h"
 #include "main/MCGamePaths.h"
+#include "main/MCHdSettings.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCStagedBattle.h"
@@ -88,6 +90,7 @@
 #include "sprite/MCElementalTree.h"
 #include "sprite/MCGVAppearanceType.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCPackRecords.h"
 #include "sprite/MCHdMovie.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCMechStops.h"
@@ -104,8 +107,11 @@
 #include "sprite/MCWeather.h"
 #include "sprite/MCWeatherPace.h"
 #include "terrain/MCGroundMesh.h"
+#include "terrain/MCGroundNames.h"
+#include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
+#include "terrain/MCTerrainTiles.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
@@ -2294,6 +2300,86 @@ TEST_CASE_ISOLATED("game: an HD art pack's frames show in a mech's place")
 /// HD art changes only the colours shown: in mirror mode, with the mech drawn from the pack, the GPU's palette indices
 /// (what the hashes, the fog test and the comparison read) are still the software renderer's, frame after frame.
 /// </summary>
+namespace
+{
+    /// <summary>
+    /// Ten frames of <paramref name="scene"/> in mirror mode with HD art on: the shapes drawn from the pack, and the
+    /// GPU's palette indices the software renderer's every frame.
+    /// </summary>
+    void CheckIndicesKept(const HdScene& scene)
+    {
+        constexpr int32_t Frames = 10;
+        std::optional<MCHdArtOn> hdArt(std::in_place, scene.Pack);
+        scene.Renderer->ResetMirror();
+        const int64_t drawnBefore = scene.Renderer->HdDrawn();
+
+        for (int32_t frame = 0; frame < Frames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        hdArt.reset();
+        const MCVulkanRenderer::MirrorTally& tally = scene.Renderer->Mirror();
+        CHECK(scene.Renderer->HdDrawn() > drawnBefore);
+        CHECK_EQ(tally.Frames, Frames);
+        CHECK_EQ(tally.DifferentFrames, 0);
+
+        if (tally.DifferentFrames != 0)
+        {
+            std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="pack"/>'s frames (PNG pairs, WritePack's) as a version 2 pack's (SPEC-pack-v2.md's "A frame"):
+    /// <c>.hdf</c> files whose index pictures say what each pixel is, every pixel the original doesn't draw spread
+    /// (MCHdArt::Spread) at <paramref name="spreadIndex"/>, an index the original draws nowhere there. How many.
+    /// </summary>
+    size_t MarkPackVersion2(const std::filesystem::path& pack, uint8_t spreadIndex)
+    {
+        constexpr std::string_view IndexSuffix = "_idx.png";
+        std::vector<std::filesystem::path> stems;
+
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(pack))
+        {
+            const std::string name = entry.path().filename().string();
+
+            if (name.ends_with(IndexSuffix))
+            {
+                stems.push_back(entry.path().parent_path() / name.substr(0, name.size() - IndexSuffix.size()));
+            }
+        }
+
+        for (const std::filesystem::path& stem : stems)
+        {
+            const std::filesystem::path color = std::filesystem::path(stem).concat(".png");
+            const std::filesystem::path index = std::filesystem::path(stem).concat(IndexSuffix);
+            std::expected<MCHdArt::Frame, std::string> frame = MCHdArt::FrameFromPngs(color, index, TestPackScale);
+            REQUIRE(frame.has_value());
+            frame->Marked = true;
+
+            for (size_t at = 0; at < frame->Indices.size(); at += MCHdArt::IndexBytes)
+            {
+                if (frame->Indices[at + 1] != MCHdArt::HasIndex)
+                {
+                    frame->Indices[at] = spreadIndex;
+                    frame->Indices[at + 1] = MCHdArt::Spread;
+                }
+            }
+
+            const std::vector<uint8_t> hdf = MCHdArt::EncodeHdf(*frame);
+            std::ofstream out(std::filesystem::path(stem).concat(".hdf"), std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(hdf.data()), static_cast<std::streamsize>(hdf.size()));
+            REQUIRE(out.good());
+            out.close();
+            std::filesystem::remove(color);
+            std::filesystem::remove(index);
+        }
+
+        return stems.size();
+    }
+}
+
 TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
 {
     const std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
@@ -2303,27 +2389,33 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
         return;
     }
 
-    constexpr int32_t Frames = 10;
-    std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
-    scene->Renderer->ResetMirror();
-    const int64_t drawnBefore = scene->Renderer->HdDrawn();
+    CheckIndicesKept(*scene);
+    std::filesystem::remove_all(scene->Scratch);
+}
 
-    for (int32_t frame = 0; frame < Frames; ++frame)
+/// <summary>
+/// Port-only: a version 2 pack's frame stands for the original's rows (SPEC-pack-v2.md's record 1, which leaves them
+/// out): the shape's index pass is drawn from the frame's index picture where its green says the original draws, and
+/// nowhere it says spread (the HD edge past the original's pixels), so in mirror mode the GPU's palette indices are
+/// still the software renderer's. A pixel spread at an index the mech never draws would differ (taken as drawn, the
+/// first frame differs).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art from a version 2 pack keeps the original's palette indices from its frames' marks")
+{
+    const std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
     {
-        MCTestGame::RunFrame(FrameSeconds);
+        return;
     }
 
-    hdArt.reset();
-    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
-    CHECK(scene->Renderer->HdDrawn() > drawnBefore);
-    CHECK_EQ(tally.Frames, Frames);
-    CHECK_EQ(tally.DifferentFrames, 0);
+    // Index 0xd8 is the water's colour cycle, which no mech draws.
+    constexpr uint8_t NeverDrawn = 0xd8;
+    REQUIRE(MarkPackVersion2(scene->Pack, NeverDrawn) > 0);
+    const int64_t madeBefore = scene->Renderer->HdIndexImagesMade();
 
-    if (tally.DifferentFrames != 0)
-    {
-        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
-    }
-
+    CheckIndicesKept(*scene);
+    CHECK(scene->Renderer->HdIndexImagesMade() > madeBefore);
     std::filesystem::remove_all(scene->Scratch);
 }
 
@@ -3137,25 +3229,55 @@ namespace
     /// <summary>The appearance number the effect tests' pack keeps their frame under (none of the game's).</summary>
     constexpr uint32_t TestEffectAppearance = 0xfffff;
 
+    /// <summary>The free colours (10..245) and an opaque colour's least channel, as the tests pick them.</summary>
+    constexpr int32_t FirstFreeColor = 10;
+    constexpr int32_t EndFreeColor = 246;
+    constexpr uint8_t FullChannel = 40;
+
     /// <summary>
     /// An opaque colour (one of the free colours, 10..245) with every channel at 40 or more: an HD colour is corrected
     /// channel by channel by its index's colour.
     /// </summary>
     uint8_t FullColorIndex(std::span<const SDL_Color, 256> colors)
     {
-        constexpr int32_t FirstFree = 10;
-        constexpr int32_t EndFree = 246;
-        constexpr uint8_t Channel = 40;
-        const auto free = std::views::iota(FirstFree, EndFree);
+        const auto free = std::views::iota(FirstFreeColor, EndFreeColor);
         const auto full = std::ranges::find_if(free,
                                                [&](int32_t i)
                                                {
                                                    const SDL_Color& c = colors[static_cast<size_t>(i)];
-                                                   return SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= Channel &&
-                                                          c.g >= Channel && c.b >= Channel;
+                                                   return SpecialColor[static_cast<size_t>(i)] == 0 &&
+                                                          c.r >= FullChannel && c.g >= FullChannel &&
+                                                          c.b >= FullChannel;
                                                });
         REQUIRE(full != free.end());
         return static_cast<uint8_t>(*full);
+    }
+
+    /// <summary>
+    /// <paramref name="count"/> opaque colours (free ones, each channel at 40 or more, as FullColorIndex's), each unlike
+    /// the others (a channel 32 or more apart).
+    /// </summary>
+    std::vector<uint8_t> UnlikeColorIndices(std::span<const SDL_Color, 256> colors, size_t count)
+    {
+        constexpr int32_t Unlike = 32;
+        const auto apart = [](SDL_Color a, SDL_Color b)
+        { return std::abs(a.r - b.r) >= Unlike || std::abs(a.g - b.g) >= Unlike || std::abs(a.b - b.b) >= Unlike; };
+        std::vector<uint8_t> indices;
+
+        for (int32_t i = FirstFreeColor; i < EndFreeColor && indices.size() < count; ++i)
+        {
+            const SDL_Color& c = colors[static_cast<size_t>(i)];
+
+            if (SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= FullChannel && c.g >= FullChannel &&
+                c.b >= FullChannel &&
+                std::ranges::all_of(indices, [&](uint8_t chosen) { return apart(c, colors[chosen]); }))
+            {
+                indices.push_back(static_cast<uint8_t>(i));
+            }
+        }
+
+        REQUIRE_EQ(indices.size(), count);
+        return indices;
     }
 
     /// <summary>
@@ -3481,30 +3603,11 @@ TEST_CASE_ISOLATED("game: the GPU draws HD art frames apart in as many batches a
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
 
-    // Frames of one colour each, every colour unlike the others' (each channel 40 or more, as FullColorIndex's).
+    // Frames of one colour each, every colour unlike the others'.
     constexpr size_t Frames = 8;
     constexpr int32_t Width = 24;
     constexpr int32_t Height = 16;
-    constexpr int32_t FirstFree = 10;
-    constexpr int32_t EndFree = 246;
-    constexpr uint8_t Channel = 40;
-    constexpr int32_t Unlike = 32;
-    const auto apart = [](SDL_Color a, SDL_Color b)
-    { return std::abs(a.r - b.r) >= Unlike || std::abs(a.g - b.g) >= Unlike || std::abs(a.b - b.b) >= Unlike; };
-    std::vector<uint8_t> indices;
-
-    for (int32_t i = FirstFree; i < EndFree && indices.size() < Frames; ++i)
-    {
-        const SDL_Color& c = colors[static_cast<size_t>(i)];
-
-        if (SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= Channel && c.g >= Channel && c.b >= Channel &&
-            std::ranges::all_of(indices, [&](uint8_t chosen) { return apart(c, colors[chosen]); }))
-        {
-            indices.push_back(static_cast<uint8_t>(i));
-        }
-    }
-
-    REQUIRE_EQ(indices.size(), Frames);
+    const std::vector<uint8_t> indices = UnlikeColorIndices(colors, Frames);
     constexpr uint8_t RowPixels = 2 * Width + 1;
     constexpr uint8_t RowEnd = 0;
     std::vector<std::vector<uint8_t>> rows(Frames);
@@ -7124,147 +7227,201 @@ TEST_CASE_ISOLATED(
     CHECK(smallShook == 0.0f);
 }
 
-/// <summary>
-/// An effect's frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over
-/// the two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
-/// lies two columns right of its first shows its frame alone, then within the scope the in-between's columns where the
-/// two frames' are, drawn as it is and mirrored about the hot spot (as the frame is).
-/// </summary>
-TEST_CASE_ISOLATED("game: an effect's frame part of the way to its next shows the pack's in-between")
+namespace
 {
-    if (!MCTestGame::Available())
+    /// <summary>
+    /// A frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over the
+    /// two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
+    /// lies two columns right of its first shows its frame alone, then within the scope the in-between's columns where
+    /// the two frames' are, drawn as it is and mirrored about the hot spot (as the frame is); a frame whose next is
+    /// itself shows the frame alone. An effect's frames hold their blended pixels; a <paramref name="plain"/> one's (a
+    /// tree's, a building's) don't.
+    /// </summary>
+    void CheckInBetweenShown(bool plain)
     {
-        return;
-    }
-
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartMission(1));
-    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
-
-    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
-    {
-        std::cout << "  (skipped: no GPU renderer on this machine)\n";
-        return;
-    }
-
-    std::array<SDL_Color, 256> colors{};
-    MCInput::Display()->GetShownColors(colors);
-    const uint8_t opaque = FullColorIndex(colors);
-
-    // Two frames of 4 x 4 opaque pixels, the second 2 columns right of the first: 6 columns together.
-    constexpr int32_t Side = 4;
-    constexpr int32_t Shift = 2;
-    constexpr int32_t Together = Side + Shift;
-    constexpr uint8_t FourPixels = 9;
-    constexpr uint8_t RowEnd = 0;
-    std::vector<uint8_t> rows;
-
-    for (int32_t row = 0; row < Side; ++row)
-    {
-        rows.insert(rows.end(), {FourPixels, opaque, opaque, opaque, opaque, RowEnd});
-    }
-
-    const std::vector<uint8_t> table =
-        FramesTable(std::array{TableFrame{0, 0, Side, Side, rows}, TableFrame{Shift, 0, Side, Side, rows}});
-    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
-    std::ranges::copy(table, block.Bytes().begin());
-    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
-    REQUIRE(VfxShapeCount(shape->FrameList()) == 2);
-
-    // The frames red and green; the in-between of the first toward the second blue in its first 3 columns, yellow in
-    // the rest, so a mirrored one shows which way it lies.
-    constexpr int32_t Scale = 2;
-    constexpr int32_t FirstYellow = 3;
-    constexpr SDL_Color Red = {200, 0, 0, 255};
-    constexpr SDL_Color Green = {0, 200, 0, 255};
-    constexpr SDL_Color Blue = {0, 0, 200, 255};
-    constexpr SDL_Color Yellow = {200, 200, 0, 255};
-    const auto none = [](int32_t) { return std::optional<uint8_t>(); };
-    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_in_between";
-    std::filesystem::remove_all(scratch);
-    const std::filesystem::path pack = scratch / "pack";
-    const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
-    const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
-    std::filesystem::create_directories(folder);
-    WriteBlendedFrame(folder / "0", Side, Side, Scale, [&](int32_t) { return Red; }, none);
-    WriteBlendedFrame(folder / "1", Side, Side, Scale, [&](int32_t) { return Green; }, none);
-    WriteBlendedFrame(
-        folder / "0_1", Together, Side, Scale, [&](int32_t column) { return column < FirstYellow ? Blue : Yellow; },
-        none);
-    WritePaletteRgb(pack, colors);
-
-    const std::shared_ptr<MCDisplay> display = MCInput::Display();
-    MCPane& pane = ScreenPort()->Frame();
-    const int32_t x = (pane.X1 - pane.X0) / 2;
-    const int32_t y = (pane.Y1 - pane.Y0) / 2;
-    const int32_t width = display->Width();
-    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
-    MCHdArt::Attach(shape, key);
-
-    // The screen's pixels after drawing frame 0 with its hot spot at (x, y), as it is or mirrored, in the scope of an
-    // in-between (none: none), and before.
-    const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
-    {
-        MCTestGame::RunFrame(FrameSeconds);
-        auto before = display->ReadFrame();
-        REQUIRE(before.has_value());
+        if (!MCTestGame::Available())
         {
-            const MCRenderer::InBetweenScope scope(inBetween);
-
-            if (mirrored)
-            {
-                AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
-            }
-            else
-            {
-                AGShapeDraw(pane, shape->FrameList(), 0, x, y);
-            }
+            return;
         }
 
-        auto after = display->ReadFrame();
-        REQUIRE(after.has_value());
-        return std::pair{std::move(*before), std::move(*after)};
-    };
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartMission(1));
+        const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
 
-    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
-    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
-    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
-    const auto same = [&](SDL_Color actual, SDL_Color expected)
-    { return near(actual.r, expected.r) && near(actual.g, expected.g) && near(actual.b, expected.b); };
-
-    // The hot spot's columns each way the two frames reach: a column of the first frame shows red alone, of the
-    // in-between blue or yellow (as it is, column c of the bounds at x + c; mirrored, at x - c).
-    for (const bool mirrored : {false, true})
-    {
-        for (const bool between : {false, true})
+        if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
         {
-            const auto [before, after] = drawn(mirrored, between ? std::optional(MCInBetween{0, 1, 1}) : std::nullopt);
+            std::cout << "  (skipped: no GPU renderer on this machine)\n";
+            return;
+        }
+
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        // A plain frame's colours are its indices' (WriteObjectFrame): frame 0's, frame 1's, the in-between's first
+        // columns' and the rest's, each unlike the others; an effect's frames are drawn at one index.
+        constexpr size_t Indices = 4;
+        const std::vector<uint8_t> unlike = UnlikeColorIndices(colors, Indices);
+        const uint8_t opaque = FullColorIndex(colors);
+        const auto indexOf = [&](size_t which) { return plain ? unlike[which] : opaque; };
+
+        // Two frames of 4 x 4 opaque pixels, the second 2 columns right of the first: 6 columns together.
+        constexpr int32_t Side = 4;
+        constexpr int32_t Shift = 2;
+        constexpr int32_t Together = Side + Shift;
+        constexpr uint8_t FourPixels = 9;
+        constexpr uint8_t RowEnd = 0;
+        std::array<std::vector<uint8_t>, 2> rows;
+
+        for (size_t frame = 0; frame < rows.size(); ++frame)
+        {
+            const uint8_t at = indexOf(frame);
 
             for (int32_t row = 0; row < Side; ++row)
             {
-                for (int32_t column = 0; column < Together; ++column)
-                {
-                    const int32_t shown = mirrored ? -column : column;
-                    const SDL_Color pixel = at(after, shown, row);
-                    MCTest::Scope scope(std::format("{}{}, column {}, row {}: {} {} {}",
-                                                    mirrored ? "mirrored" : "as is", between ? ", in-between" : "",
-                                                    column, row, pixel.r, pixel.g, pixel.b));
+                rows[frame].insert(rows[frame].end(), {FourPixels, at, at, at, at, RowEnd});
+            }
+        }
 
-                    if (between)
+        const std::vector<uint8_t> table =
+            FramesTable(std::array{TableFrame{0, 0, Side, Side, rows[0]}, TableFrame{Shift, 0, Side, Side, rows[1]}});
+        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+        std::ranges::copy(table, block.Bytes().begin());
+        const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+        REQUIRE(VfxShapeCount(shape->FrameList()) == 2);
+
+        // The frames red and green; the in-between of the first toward the second blue in its first 3 columns, yellow in
+        // the rest, so a mirrored one shows which way it lies (a plain frame's: its indices' colours).
+        constexpr int32_t Scale = 2;
+        constexpr int32_t FirstYellow = 3;
+        const SDL_Color Red = plain ? colors[unlike[0]] : SDL_Color{200, 0, 0, 255};
+        const SDL_Color Green = plain ? colors[unlike[1]] : SDL_Color{0, 200, 0, 255};
+        const SDL_Color Blue = plain ? colors[unlike[2]] : SDL_Color{0, 0, 200, 255};
+        const SDL_Color Yellow = plain ? colors[unlike[3]] : SDL_Color{200, 200, 0, 255};
+        const auto none = [](int32_t) { return std::optional<uint8_t>(); };
+        const std::filesystem::path scratch = std::filesystem::temp_directory_path() /
+                                              (plain ? "mc_tests_hd_plain_in_between" : "mc_tests_hd_in_between");
+        std::filesystem::remove_all(scratch);
+        const std::filesystem::path pack = scratch / "pack";
+        const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
+        const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
+        std::filesystem::create_directories(folder);
+
+        if (plain)
+        {
+            const auto all = [](uint8_t index) { return [index](int32_t, int32_t) { return std::optional(index); }; };
+            WriteObjectFrame(folder / "0", Side, Side, Scale, colors, all(unlike[0]));
+            WriteObjectFrame(folder / "1", Side, Side, Scale, colors, all(unlike[1]));
+            WriteObjectFrame(folder / "0_1", Together, Side, Scale, colors, [&](int32_t column, int32_t)
+                             { return std::optional(column < FirstYellow ? unlike[2] : unlike[3]); });
+        }
+        else
+        {
+            WriteBlendedFrame(folder / "0", Side, Side, Scale, [&](int32_t) { return Red; }, none);
+            WriteBlendedFrame(folder / "1", Side, Side, Scale, [&](int32_t) { return Green; }, none);
+            WriteBlendedFrame(
+                folder / "0_1", Together, Side, Scale,
+                [&](int32_t column) { return column < FirstYellow ? Blue : Yellow; }, none);
+        }
+
+        WritePaletteRgb(pack, colors);
+
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        MCPane& pane = ScreenPort()->Frame();
+        const int32_t x = (pane.X1 - pane.X0) / 2;
+        const int32_t y = (pane.Y1 - pane.Y0) / 2;
+        const int32_t width = display->Width();
+        std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+        MCHdArt::Attach(shape, key);
+
+        // The screen's pixels after drawing frame 0 with its hot spot at (x, y), as it is or mirrored, in the scope of an
+        // in-between (none: none), and before.
+        const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            auto before = display->ReadFrame();
+            REQUIRE(before.has_value());
+            {
+                const MCRenderer::InBetweenScope scope(inBetween);
+
+                if (mirrored)
+                {
+                    AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
+                }
+                else
+                {
+                    AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+                }
+            }
+
+            auto after = display->ReadFrame();
+            REQUIRE(after.has_value());
+            return std::pair{std::move(*before), std::move(*after)};
+        };
+
+        const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+        { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+        const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
+        const auto same = [&](SDL_Color actual, SDL_Color expected)
+        { return near(actual.r, expected.r) && near(actual.g, expected.g) && near(actual.b, expected.b); };
+
+        // The hot spot's columns each way the two frames reach: a column of the first frame shows red alone, of the
+        // in-between blue or yellow (as it is, column c of the bounds at x + c; mirrored, at x - c). A frame whose next is
+        // itself (a state of one frame that loops) shows the frame alone, though the pack holds its in-between toward 1.
+        const std::array<std::optional<MCInBetween>, 3> draws = {std::nullopt, MCInBetween{0, 1, 1},
+                                                                 MCInBetween{0, 0, 1}};
+
+        for (const bool mirrored : {false, true})
+        {
+            for (const std::optional<MCInBetween>& draw : draws)
+            {
+                const bool between = draw.has_value() && draw->Next != draw->Frame;
+                const auto [before, after] = drawn(mirrored, draw);
+
+                for (int32_t row = 0; row < Side; ++row)
+                {
+                    for (int32_t column = 0; column < Together; ++column)
                     {
-                        CHECK(same(pixel, column < FirstYellow ? Blue : Yellow));
-                    }
-                    else
-                    {
-                        CHECK(same(pixel, column < Side ? Red : at(before, shown, row)));
+                        const int32_t shown = mirrored ? -column : column;
+                        const SDL_Color pixel = at(after, shown, row);
+                        MCTest::Scope scope(std::format("{}{}, column {}, row {}: {} {} {}",
+                                                        mirrored ? "mirrored" : "as is",
+                                                        !draw.has_value() ? ""
+                                                        : between         ? ", in-between"
+                                                                          : ", next itself",
+                                                        column, row, pixel.r, pixel.g, pixel.b));
+
+                        if (between)
+                        {
+                            CHECK(same(pixel, column < FirstYellow ? Blue : Yellow));
+                        }
+                        else
+                        {
+                            CHECK(same(pixel, column < Side ? Red : at(before, shown, row)));
+                        }
                     }
                 }
             }
         }
-    }
 
-    hdArt.reset();
-    std::filesystem::remove_all(scratch);
+        hdArt.reset();
+        std::filesystem::remove_all(scratch);
+    }
+} // namespace
+
+/// <summary>
+/// An effect's frame part of the way to its next shows the pack's in-between (CheckInBetweenShown).
+/// </summary>
+TEST_CASE_ISOLATED("game: an effect's frame part of the way to its next shows the pack's in-between")
+{
+    CheckInBetweenShown(false);
+}
+
+/// <summary>
+/// A plain frame (a tree's, a building's: a version 2 pack holds their in-betweens) part of the way to its next shows the
+/// pack's in-between, as an effect's does (CheckInBetweenShown).
+/// </summary>
+TEST_CASE_ISOLATED("game: a plain frame part of the way to its next shows the pack's in-between")
+{
+    CheckInBetweenShown(true);
 }
 
 /// <summary>
@@ -9386,24 +9543,30 @@ namespace
     /// <summary>
     /// Writes the HD copies of the ground mesh's tiles into <paramref name="pack"/>'s terrain folder: each pixel's shown
     /// colour as <paramref name="paint"/> makes it (inverted), at <see cref="TerrainScale"/> (nearest), opaque, with the
-    /// index picture beside it.
+    /// index picture beside it; that of the mesh's tile <paramref name="misnamed"/>, if given, with its first drawn
+    /// pixel's index one more than the tile's (a pack that doesn't match the game's tiles).
     /// </summary>
     size_t WriteTerrainPack(const std::filesystem::path& pack, const MCTerrainMesh& mesh,
                             std::span<const SDL_Color, 256> colors,
-                            const std::function<SDL_Color(SDL_Color)>& paint = Inverted)
+                            const std::function<SDL_Color(SDL_Color)>& paint = Inverted,
+                            std::optional<size_t> misnamed = std::nullopt)
     {
         const std::filesystem::path folder = pack / "terrain";
         std::filesystem::create_directories(folder);
         size_t written = 0;
 
-        for (const std::vector<uint8_t>& tile : mesh.Tiles)
+        for (size_t t = 0; t < mesh.Tiles.size(); ++t)
         {
+            const std::vector<uint8_t>& tile = mesh.Tiles[t];
             const DecodedTile decoded = DecodeTile(tile);
 
             if (decoded.Width == 0)
             {
                 continue;
             }
+
+            const auto firstDrawn = static_cast<size_t>(std::ranges::find(decoded.Drawn, 1) - decoded.Drawn.begin());
+            const std::optional<size_t> wrongAt = misnamed == t ? std::optional(firstDrawn) : std::nullopt;
 
             const int32_t width = decoded.Width * TerrainScale;
             const int32_t height = decoded.Height * TerrainScale;
@@ -9421,7 +9584,7 @@ namespace
                     color[to + 1] = painted.g;
                     color[to + 2] = painted.b;
                     color[to + 3] = HasIndex;
-                    index[to] = decoded.Index[from];
+                    index[to] = static_cast<uint8_t>(decoded.Index[from] + (wrongAt == from ? 1 : 0));
                     index[to + 1] = decoded.Drawn[from] != 0 ? HasIndex : 0;
                     index[to + 3] = HasIndex;
                 }
@@ -9539,6 +9702,80 @@ TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs i
     MCTestGame::RunFrame(FrameSeconds);
     CHECK(scene->Renderer->HdTerrain());
     CHECK_EQ(MCHdArt::FramesRead(), loaded);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): for a tile set the program's table holds, the load's HD ground
+/// (MCTerrainReadHdTiles) puts each of the map's original ground tiles in the cache rebuilt from its HD frame, byte for
+/// byte the tile's packet, rather than reading it, and the terrain's load leaves them out of its reads
+/// (MCTerrainLeaveRebuiltTiles); a tile whose HD frame doesn't hold its pixels is read.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art's ground rebuilds the original's ground tiles from their HD frames, byte for byte")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    // The ground alone, one tile's index picture not the tile's.
+    const std::filesystem::path pack = scene->Scratch / "ground";
+    REQUIRE(WriteTerrainPack(pack, mesh, colors, Inverted, size_t{0}) > 1);
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    REQUIRE(terrain != nullptr);
+    // Mission 1's tile set, whose tiles the load read, opened again with none read.
+    constexpr std::string_view TileSet = "tiles";
+    std::expected<std::unique_ptr<MCTerrainTiles>, std::string> fresh = MCTerrainTiles::Create(TileSet);
+    std::expected<std::unique_ptr<MCTerrainTiles>, std::string> reference = MCTerrainTiles::Create(TileSet);
+    REQUIRE(fresh.has_value());
+    REQUIRE(reference.has_value());
+    const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(**fresh);
+    REQUIRE(known.has_value());
+    REQUIRE_EQ((*fresh)->FilesHash(), terrain->Tiles->FilesHash());
+    terrain->Tiles = std::move(*fresh);
+    const MCHdArtOn hdArt(pack);
+
+    // The terrain's load leaves out the map's ground tiles the table holds, not its overlays or a slot it lacks.
+    std::vector<int32_t> slots = terrain->MapBlocks->TilesUsed();
+    const size_t used = slots.size();
+    MCTerrainLeaveRebuiltTiles(*terrain, slots);
+    CHECK(!slots.empty());
+    CHECK(slots.size() < used);
+    CHECK(std::ranges::none_of(slots, [&](int32_t slot) { return known->get().ShapeAt(slot).has_value(); }));
+
+    const MCGroundRebuilt done = MCTerrainReadHdTiles();
+    CHECK_EQ(done.Read, size_t{1});
+    CHECK(done.Rebuilt + done.Read >= mesh.Tiles.size() - 1);
+    size_t cached = 0;
+    size_t differ = 0;
+
+    for (const MCGroundNameRow& row : known->get().Tiles)
+    {
+        const MCOptionalRef<const MCTerrainTile> tile = terrain->Tiles->Slot(row.Slot);
+        REQUIRE(tile.has_value());
+
+        if (!tile->get().TileData().empty())
+        {
+            ++cached;
+            differ += std::ranges::equal(tile->get().TileData(), (*reference)->Lookup(row.Slot)) ? 0 : 1;
+        }
+    }
+
+    std::cout << std::format("  {} ground tiles rebuilt, {} read; {} cached\n", done.Rebuilt, done.Read, cached);
+    CHECK_EQ(cached, done.Rebuilt + done.Read);
+    CHECK_EQ(differ, size_t{0});
+    // The mission draws on from the rebuilt tiles.
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK(scene->Renderer->HdTerrain());
     std::filesystem::remove_all(scene->Scratch);
 }
 
@@ -11039,6 +11276,18 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     const std::filesystem::path pack = packOption.has_value()
                                            ? std::filesystem::absolute(std::filesystem::path(*packOption))
                                            : std::filesystem::path();
+    // With --sharp-menus-guard 1, HD art on from the boot with the pack, as a player's app has it, and the guard of test
+    // runs on keeping every example: each of the original's pictures the screens read is listed at the end.
+    const bool guard = MCTest::Option("sharp-menus-guard").has_value();
+
+    if (guard)
+    {
+        UseHdByDefault();
+        MCHdArt::SetPackFolder(pack);
+        MCHdArt::GuardOriginalReads(true, std::numeric_limits<size_t>::max());
+        MCTestGame::BootOptions.Started = [] { GHdArt = 1; };
+    }
+
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
@@ -11181,6 +11430,13 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
         AuditLabel.clear();
         ReportAudit(tally, folder / "audit", audited);
         WriteAuditTables(tally, detail, folder / "audit", audited);
+    }
+
+    if (guard)
+    {
+        std::cout << std::format("  the screens: {} reads of the original's art\n",
+                                 MCTestGame::PrintGuardedReads("the screens"));
+        MCHdArt::GuardOriginalReads(false);
     }
 
     GHdArt = 0;
@@ -18866,4 +19122,587 @@ TEST_CASE_ISOLATED("game: a mech's legs turning cast their turn middle's sun sha
     GamePaused = false;
     hdArt.reset();
     std::filesystem::remove_all(scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// Puts the PNG pairs under the pack's folder <paramref name="folder"/> (MCHdArt::FrameFromPngs's, at
+    /// <paramref name="scale"/>) into the archive beside it, <c>&lt;folder&gt;.hda</c>, as the pack's tools lay it out:
+    /// each frame an entry named by its path under the folder (a backslash between folders), in name order; then the
+    /// folder deleted, so that the game reads them from the archive, as it does the shipped pack's.
+    /// </summary>
+    void ArchiveFolderPngs(const std::filesystem::path& folder, int32_t scale)
+    {
+        constexpr std::string_view IndexSuffix = "_idx";
+        std::vector<MCTestArchive::ArchiveEntry> entries;
+
+        for (const std::filesystem::directory_entry& file : std::filesystem::recursive_directory_iterator(folder))
+        {
+            const std::string stem = MCFileSystem::ToUtf8(file.path().stem());
+
+            if (!file.is_regular_file() || file.path().extension() != ".png" || stem.ends_with(IndexSuffix))
+            {
+                continue;
+            }
+
+            const std::expected<MCHdArt::Frame, std::string> frame = MCHdArt::FrameFromPngs(
+                file.path(), file.path().parent_path() / (stem + std::string(IndexSuffix) + ".png"), scale);
+
+            if (!frame.has_value())
+            {
+                MCTest::Scope scope(frame.error());
+                REQUIRE(false);
+            }
+
+            std::string name =
+                MCFileSystem::ToUtf8(std::filesystem::relative(file.path(), folder).replace_extension(".hdf"));
+            std::ranges::replace(name, '/', '\\');
+            entries.push_back(MCTestArchive::Raw(std::move(name), MCHdArt::EncodeHdf(*frame)));
+        }
+
+        REQUIRE(!entries.empty());
+        std::ranges::sort(entries, [](const MCTestArchive::ArchiveEntry& a, const MCTestArchive::ArchiveEntry& b)
+                          { return MCFileSystem::NameLess(a.Name, b.Name); });
+        std::filesystem::remove_all(folder);
+        MCTestArchive::WriteBytes(std::filesystem::path(folder).concat(".hda"), MCTestArchive::BuildArchive(entries));
+    }
+
+    /// <summary>The frames read from the pack on the game's thread so far: those the reading thread didn't read ahead.</summary>
+    size_t FramesReadOnTheGamesThread()
+    {
+        return MCHdArt::FramesRead() - MCHdArt::FramesReadAhead();
+    }
+
+    /// <summary>Frames of play drawn after a load, as its first are.</summary>
+    constexpr int32_t FirstFrames = 10;
+
+    /// <summary>Draws <see cref="FirstFrames"/> frames of play.</summary>
+    void RunFirstFrames()
+    {
+        for (int32_t frame = 0; frame < FirstFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    }
+}
+
+/// <summary>
+/// Port-only: a mission's load reads ahead, as its own reads, the HD copy of every terrain overlay its map uses (the
+/// shape its blocks draw, the first of the overlay's table, as the renderer finds it), so its first frames read none on
+/// the game's thread; from the pack's archive, as the shipped pack holds them. The same frames with nothing read ahead
+/// read them.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's load reads its map's HD overlays ahead, its first frames reading none")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_overlays_ahead";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    REQUIRE(WriteOverlays(OverlayFolderOf(pack), colors, TestPackScale, Inverted).Written > 0);
+    WritePaletteRgb(pack, colors);
+    ArchiveFolderPngs(OverlayFolderOf(pack), TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // As the load asks for them, waits for them and keeps them.
+    const size_t aheadBefore = MCHdArt::FramesReadAhead();
+    MCTerrainReadHdTilesAhead();
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+    const size_t kept = MCHdArt::FramesReadAhead() - aheadBefore;
+    const size_t onThread = FramesReadOnTheGamesThread();
+    RunFirstFrames();
+    CHECK(kept > 0);
+    CHECK_EQ(FramesReadOnTheGamesThread(), onThread);
+
+    // The pack afresh and nothing asked: the same frames read the overlays they draw.
+    MCHdArt::SetPackFolder(pack);
+    RunFirstFrames();
+    const size_t unasked = FramesReadOnTheGamesThread() - onThread;
+    std::cout << std::format("  {} overlays kept from the load; {} read by the frames without it\n", kept, unasked);
+    CHECK(unasked > 0);
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only: a mission's interface, as it starts (MCMission::StartInterface), reads ahead as the load's reads the HD
+/// copies of the pictures it made (the lance icons' among them, made after the load's own asks) and of its mech icons'
+/// damage diagrams, and waits for them, so its first frames read none on the game's thread; from the pack's archives,
+/// as the shipped pack holds them. The interface started without them reads them.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a mission's interface reads its HD pictures and damage diagrams as it starts, its frames none")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_interface_ahead";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    std::filesystem::create_directories(PictureFolderOf(pack));
+    std::set<std::string> pictures;
+
+    // Every picture the interface has made, under its name in the pack.
+    for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
+    {
+        if (texture == nullptr || texture->CpuStale || texture->Pixels.empty() || texture->Width <= 0 ||
+            texture->Height <= 0)
+        {
+            continue;
+        }
+
+        const std::string name =
+            MCHdArt::PictureName(MCHdArt::PictureHash(texture->Pixels, texture->Width, texture->Height));
+
+        if (pictures.insert(name).second)
+        {
+            DecodedFrame picture;
+            picture.Width = texture->Width;
+            picture.Height = texture->Height;
+            picture.Index.assign(texture->Pixels.begin(), texture->Pixels.end());
+            picture.Drawn.assign(picture.Index.size(), 1);
+            WriteFramePngs(PictureFolderOf(pack) / name, picture, colors, TestPackScale, Inverted, false);
+        }
+    }
+
+    size_t translucent = 0;
+    const std::vector<Sequence> icons = IconSequences(translucent);
+    REQUIRE(!pictures.empty());
+    REQUIRE(!icons.empty());
+    WritePack(pack, icons, colors, TestPackScale, Inverted);
+    WritePaletteRgb(pack, colors);
+    ArchiveFolderPngs(PictureFolderOf(pack), TestPackScale);
+    ArchiveFolderPngs(pack / "icons", TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // The interface started again as a mission's start starts it (as the mech handover's tests do): its icons made anew.
+    const auto restart = [](bool readAhead)
+    {
+        TacticalInterface()->EndScenario();
+        HomeCommander()->AddToGui(1);
+
+        if (readAhead)
+        {
+            MCMission::StartInterface();
+        }
+        else
+        {
+            TacticalInterface()->StartScenario();
+        }
+    };
+
+    const size_t aheadBefore = MCHdArt::FramesReadAhead();
+    restart(true);
+    const size_t kept = MCHdArt::FramesReadAhead() - aheadBefore;
+    const size_t onThread = FramesReadOnTheGamesThread();
+    RunFirstFrames();
+    CHECK(kept > 0);
+    CHECK_EQ(FramesReadOnTheGamesThread(), onThread);
+
+    // The pack afresh and the interface started without its asks: its frames read its pictures.
+    MCHdArt::SetPackFolder(pack);
+    restart(false);
+    RunFirstFrames();
+    const size_t unasked = FramesReadOnTheGamesThread() - onThread;
+    std::cout << std::format(
+        "  {} pictures and diagrams kept as the interface started; {} read by its frames without\n", kept, unasked);
+    CHECK(unasked > 0);
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+namespace
+{
+    /// <summary>One pack folder's original frames held against its HD frames (the --sprite-pack-check tool).</summary>
+    struct SpriteCheck
+    {
+        /// <summary>Each outcome's count and its first example.</summary>
+        std::map<std::string, std::pair<size_t, std::string>> Outcomes;
+        size_t Frames = 0;
+        size_t Pixels = 0;
+        size_t Drawn = 0;
+        size_t Spread = 0;
+        size_t WrongIndex = 0;
+        size_t Unmarked = 0;
+        /// <summary>A translucent frame's blended pixels, left out of the check.</summary>
+        size_t Blended = 0;
+        /// <summary>PLAN.md's option D: every frame's drawn pixels, an archive at a time (WriteSpriteStretches).</summary>
+        std::vector<uint8_t> Stretches;
+
+        void Note(const std::string& outcome, const std::string& example)
+        {
+            Outcomes.try_emplace(outcome, size_t{0}, example).first->second.first++;
+        }
+    };
+
+    void PutVarint(std::vector<uint8_t>& out, size_t value)
+    {
+        constexpr size_t More = 0x80;
+
+        for (; value >= More; value >>= 7)
+        {
+            out.push_back(static_cast<uint8_t>((value & (More - 1)) | More));
+        }
+
+        out.push_back(static_cast<uint8_t>(value));
+    }
+
+    /// <summary>
+    /// A frame's drawn pixels as option D would carry them: a row at a time, its stretches' count, then each one's skip
+    /// from the last one's end and its length.
+    /// </summary>
+    void PutStretches(std::vector<uint8_t>& out, const DecodedFrame& frame)
+    {
+        for (int32_t row = 0; row < frame.Height; ++row)
+        {
+            const std::span<const uint8_t> line =
+                std::span<const uint8_t>(frame.Drawn).subspan(static_cast<size_t>(row) * frame.Width, frame.Width);
+            std::vector<std::pair<size_t, size_t>> stretches;
+
+            for (size_t x = 0; x < line.size();)
+            {
+                if (line[x] == 0)
+                {
+                    ++x;
+                    continue;
+                }
+
+                const size_t start = x;
+
+                for (; x < line.size() && line[x] != 0; ++x)
+                {
+                }
+
+                stretches.emplace_back(start, x - start);
+            }
+
+            PutVarint(out, stretches.size());
+            size_t end = 0;
+
+            for (const auto& [start, length] : stretches)
+            {
+                PutVarint(out, start - end);
+                PutVarint(out, length);
+                end = start + length;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every frame of <paramref name="table"/> against the HD frame for it in <paramref name="folder"/>: its size, each
+    /// drawn pixel's index (the index picture's red) and mark (draw.pshader's HasIndexIn), and the pixels marked past the
+    /// drawn ones.
+    /// </summary>
+    void CheckSpriteTable(SpriteCheck& check, std::span<const uint8_t> packet, const std::filesystem::path& folder,
+                          const std::string& where)
+    {
+        // As MCShape finds it: a mech gesture's packet has a 6-byte gesture header in front of its table.
+        constexpr size_t GestureHeaderSize = 6;
+        const std::span<const uint8_t> table =
+            VfxIsShapeTable(packet) || packet.size() < GestureHeaderSize ? packet : packet.subspan(GestureHeaderSize);
+
+        if (!VfxIsShapeTable(table))
+        {
+            std::string start;
+
+            for (const uint8_t byte : table.first(std::min<size_t>(table.size(), 8)))
+            {
+                start += std::format("{:02x}", byte);
+            }
+
+            check.Note("original: a packet that isn't a shape table",
+                       std::format("{} ({} bytes, starting {})", where, table.size(), start));
+            return;
+        }
+
+        const int32_t count = VfxShapeCount(table);
+
+        for (int32_t frame = 0; frame < count; ++frame)
+        {
+            const std::string example = std::format("{} frame {}", where, frame);
+
+            // OB-190: some retail tables count frames they don't hold.
+            if (!MCVfxHasShape(table, frame))
+            {
+                check.Note("original: a frame the table counts but doesn't hold", example);
+                continue;
+            }
+
+            const std::expected<DecodedFrame, std::string> decoded = Decode(table, frame);
+
+            if (!decoded.has_value())
+            {
+                check.Note("original: undecodable", std::format("{} ({})", example, decoded.error()));
+                continue;
+            }
+
+            if (decoded->Width == 0)
+            {
+                check.Note("original: empty", example);
+                continue;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> hd =
+                MCHdArt::FindInFolder(folder, frame, decoded->Width, decoded->Height);
+            const size_t pixels = decoded->Index.size();
+
+            if (hd == nullptr || hd->Indices.size() != pixels * MCHdArt::IndexBytes)
+            {
+                check.Note(decoded->Translucent ? "translucent: no HD frame of its size" : "no HD frame of its size",
+                           example);
+                continue;
+            }
+
+            size_t wrong = 0;
+            size_t unmarked = 0;
+            size_t spread = 0;
+            size_t drawn = 0;
+
+            for (size_t at = 0; at < pixels; ++at)
+            {
+                const bool marked = hd->Indices[at * MCHdArt::IndexBytes + 1] >= MCHdArt::BakedShadow;
+
+                if (decoded->Drawn[at] == 0)
+                {
+                    spread += marked ? 1 : 0;
+                    continue;
+                }
+
+                // A translucent frame's blended pixels (AlphaPal.ini's colours) have no index in its HD frame, which
+                // draws them itself; its index pass draws the opaque ones only (OpaqueOnly).
+                if (decoded->Translucent && SpecialColor[decoded->Index[at]] != 0)
+                {
+                    ++check.Blended;
+                    continue;
+                }
+
+                ++drawn;
+                unmarked += marked ? 0 : 1;
+                wrong += marked && hd->Indices[at * MCHdArt::IndexBytes] != decoded->Index[at] ? 1 : 0;
+            }
+
+            const std::string_view kind = decoded->Translucent ? "translucent: " : "";
+            ++check.Frames;
+            check.Pixels += pixels;
+            check.Drawn += drawn;
+            check.Spread += spread;
+            check.WrongIndex += wrong;
+            check.Unmarked += unmarked;
+
+            if (wrong != 0)
+            {
+                check.Note(std::format("{}a drawn pixel's index differs", kind),
+                           std::format("{}: {} of {}", example, wrong, drawn));
+            }
+
+            if (unmarked != 0)
+            {
+                check.Note(std::format("{}a drawn pixel unmarked", kind),
+                           std::format("{}: {} of {}", example, unmarked, drawn));
+            }
+
+            if (wrong == 0 && unmarked == 0)
+            {
+                check.Note(std::format("{}every drawn pixel's index in its HD frame", kind), example);
+            }
+
+            if (spread != 0)
+            {
+                check.Note("marked past its drawn pixels", example);
+            }
+
+            PutStretches(check.Stretches, *decoded);
+        }
+    }
+
+    /// <summary>
+    /// Whether the pack's record 1 for <paramref name="folder"/> stands for <paramref name="packet"/>, the original's: the
+    /// game takes it (MCHdArt::StrippedShapeTable) and it is the packet stripped as the game strips one
+    /// (MCPackRecords::ShapeTable), or the packet whole; else why not.
+    /// </summary>
+    void CheckStrippedTable(SpriteCheck& check, std::span<const uint8_t> packet, const std::filesystem::path& folder,
+                            const std::string& where)
+    {
+        const std::expected<MCHdArt::PackShapeTable, std::string_view> taken = MCHdArt::StrippedShapeTable(folder);
+
+        if (!taken.has_value())
+        {
+            check.Note(std::format("record 1: {}", taken.error()), where);
+            return;
+        }
+
+        const std::expected<std::vector<uint8_t>, std::string> stripped = MCPackRecords::ShapeTable(packet);
+
+        if (!stripped.has_value())
+        {
+            check.Note("record 1: the original's packet won't strip", std::format("{}: {}", where, stripped.error()));
+            return;
+        }
+
+        if (!taken->Stripped)
+        {
+            check.Note(std::ranges::equal(taken->Bytes, packet) ? "record 1: the original's packet whole"
+                                                                : "record 1: not the original's packet whole",
+                       where);
+            return;
+        }
+
+        check.Note(taken->Bytes == *stripped ? "record 1: the original's packet stripped, every boxed frame held"
+                                             : "record 1: not the original's packet stripped",
+                   where);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--sprite-pack-check &lt;pack folder&gt;</c> holds every original frame of the mechs' parts and the objects
+/// (each part PAK's and shape PAK's packets the pack has a folder for, opened as MCSpriteManager opens them) against the
+/// pack's HD frame for it (MCHdArt::FindInFolder in MCHdArt::FolderOf's folder): whether the HD frame's index picture
+/// holds every drawn pixel's index (PLAN.md's first-use item 13, option D's premise), how many pixels it marks past the
+/// drawn ones, what option D would carry (each frame's drawn stretches), and whether the folder's stripped shape table
+/// (record 1) is the one the game takes in place of the packet (CheckStrippedTable). Counted by outcome, with an example
+/// each.
+/// <c>--sprite-pack-masks &lt;folder&gt;</c> also writes each pack folder's stretches there (each archive's as a 4-byte
+/// length, then its bytes), for their deflated size. Reads the pack and the game, writes nothing else.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --sprite-pack-check holds the original's sprite frames against a pack's HD frames")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("sprite-pack-check");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    GHdArt = 1;
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
+    MCHdArt::SetPackFolder(packFolder);
+    REQUIRE(MCHdArt::Active());
+    const std::optional<std::string_view> masks = MCTest::Option("sprite-pack-masks");
+    constexpr std::array<std::string_view, 2> Kinds = {"mechs", "objects"};
+
+    for (const std::string_view kind : Kinds)
+    {
+        std::vector<std::filesystem::path> parts;
+
+        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(packFolder / kind))
+        {
+            if (entry.is_directory())
+            {
+                parts.push_back(entry.path());
+            }
+        }
+
+        std::ranges::sort(parts);
+
+        for (const std::filesystem::path& part : parts)
+        {
+            const std::string file = part.filename().string();
+            MCPacketFile parent;
+
+            if (parent.Open(GamePath(SpritePath, file, ".pak")) != 0)
+            {
+                std::cout << std::format("{}/{}: the game has no {}.pak\n", kind, file, file);
+                continue;
+            }
+
+            std::vector<uint32_t> numbers;
+
+            for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(part))
+            {
+                const std::string stem = entry.path().stem().string();
+
+                if (entry.path().extension() == ".hda" && !stem.empty() &&
+                    std::ranges::all_of(stem, [](unsigned char c) { return std::isdigit(c) != 0; }))
+                {
+                    numbers.push_back(static_cast<uint32_t>(std::stoul(stem)));
+                }
+            }
+
+            std::ranges::sort(numbers);
+            SpriteCheck check;
+            std::ofstream maskFile;
+
+            if (masks.has_value())
+            {
+                maskFile.open(std::filesystem::path(*masks) / std::format("{}-{}.bin", kind, file), std::ios::binary);
+                REQUIRE(maskFile.good());
+            }
+
+            for (const uint32_t number : numbers)
+            {
+                const std::string where = std::format("{}/{}/{}", kind, file, number);
+                const auto archiveNumber = static_cast<int32_t>(number);
+
+                if (parent.SeekPacket(archiveNumber) != 0 || parent.GetPacketSize() == 0)
+                {
+                    check.Note("archive: no original packet", where);
+                    continue;
+                }
+
+                MCPacketFile inner;
+
+                if (inner.Open(parent, static_cast<uint32_t>(parent.GetPacketSize())) != 0)
+                {
+                    check.Note("archive: its original packet not a packet file", where);
+                    continue;
+                }
+
+                const size_t before = check.Stretches.size();
+
+                for (int32_t packet = 0; packet < inner.GetNumPackets(); ++packet)
+                {
+                    if (inner.SeekPacket(packet) != 0 || inner.GetPacketSize() <= 0)
+                    {
+                        continue;
+                    }
+
+                    std::vector<uint8_t> table(static_cast<size_t>(inner.GetPacketSize()));
+
+                    if (inner.ReadPacket(packet, table) != static_cast<int32_t>(table.size()))
+                    {
+                        check.Note("original: a table unreadable", std::format("{} packet {}", where, packet));
+                        continue;
+                    }
+
+                    const auto packetNumber = static_cast<uint32_t>(packet);
+                    const std::filesystem::path folder =
+                        kind == Kinds[0] ? MCHdArt::FolderOf(MCHdArt::MechShapeKey{file, number, packetNumber})
+                                         : MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{file, number, packetNumber});
+                    CheckSpriteTable(check, table, folder, std::format("{} packet {}", where, packet));
+                    CheckStrippedTable(check, table, folder, std::format("{} packet {}", where, packet));
+                }
+
+                if (maskFile.is_open())
+                {
+                    const auto length = static_cast<uint32_t>(check.Stretches.size() - before);
+                    maskFile.write(reinterpret_cast<const char*>(&length), sizeof(length));
+                    maskFile.write(reinterpret_cast<const char*>(check.Stretches.data() + before), length);
+                }
+            }
+
+            std::cout << std::format(
+                "{}/{}: {} archives, {} frames held, {} original pixels, {} drawn, {} marked past "
+                "them, {} blended (translucent frames'); {} drawn pixels' indices differ, {} unmarked; option D's "
+                "stretches {} KB\n",
+                kind, file, numbers.size(), check.Frames, check.Pixels, check.Drawn, check.Spread, check.Blended,
+                check.WrongIndex, check.Unmarked, check.Stretches.size() / 1024);
+
+            for (const auto& [outcome, counted] : check.Outcomes)
+            {
+                std::cout << std::format("  {:8} {} (e.g. {})\n", counted.first, outcome, counted.second);
+            }
+        }
+    }
 }

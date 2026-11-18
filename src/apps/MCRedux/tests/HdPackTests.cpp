@@ -3,27 +3,54 @@
 #include "MCTest.h"
 #include "MCTestShapes.h"
 #include "TestGame.h"
+#include "engine/MCCraterManager.h"
 #include "fakes/MCFakeMemorySystem.h"
+#include "gui/MCGuiFont.h"
+#include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiPort.h"
 #include "gui/MCGuiStartup.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
 #include "lib/MCLz.h"
-#include "gui/MCGuiFont.h"
-#include "gui/MCGuiGlobals.h"
+#include "lib/MCPacketFile.h"
+#include "lib/MCZstd.h"
+#include "logistics/MCLogPort.h"
+#include "main/MCGamePaths.h"
+#include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
-#include "platform/MCSharpPictures.h"
-#include "vfx/MCVfxFunctions.h"
+#include "main/MCMissionGlobals.h"
+#include "object/MCBattleMech.h"
+#include "object/MCMover.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
+#include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
+#include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCShapeFile.h"
+#include "sprite/MCSpriteManager.h"
+#include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteTree.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCRegisteredBlock.h"
+#include "platform/MCRenderer.h"
+#include "platform/MCSharpPictures.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCUtf8Path.h"
 #include "sound/MCHdAudio.h"
+#include "terrain/MCGroundMesh.h"
+#include "terrain/MCGroundNames.h"
+#include "terrain/MCMapBlockManager.h"
+#include "terrain/MCTerrain.h"
+#include "terrain/MCTerrainTiles.h"
+#include "vfx/MCAgShape.h"
+#include "vfx/MCVfxFunctions.h"
+
+// xxHash, header-only: its functions inline in this file alone (the version 2 archives' table hashes).
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 
 namespace
 {
@@ -235,6 +262,36 @@ TEST_CASE("hd art: a frame file reads back as written, and a wrong one is refuse
     CHECK(blended->Blended);
     CHECK(blended->Indices == frame.Indices);
 
+    CHECK(!read->Marked);
+
+    // A version 2 frame (SPEC-pack-v2.md's "A frame") reads back marked, and the game's rule leaves its marks alone.
+    frame.Blended = false;
+    constexpr std::array<uint8_t, 6> Greens = {MCHdArt::HasIndex,     MCHdArt::BakedShadow,
+                                               MCHdArt::Spread,       MCHdArt::SpreadShadow,
+                                               MCHdArt::DrawnBlended, MCHdArt::DrawnBlendedShadow};
+
+    for (size_t i = 0; i < frame.Indices.size(); i += MCHdArt::IndexBytes)
+    {
+        frame.Indices[i] = MCHdArt::BakedShadowIndex;
+        frame.Indices[i + 1] = Greens[(i / MCHdArt::IndexBytes) % Greens.size()];
+    }
+
+    frame.Marked = true;
+    auto marked = MCHdArt::DecodeHdf(MCHdArt::EncodeHdf(frame), Width, Height);
+    REQUIRE(marked.has_value());
+    CHECK(marked->Marked);
+    MCHdArt::MarkBakedShadows(*marked);
+    CHECK(marked->Indices == frame.Indices);
+    CHECK(std::ranges::all_of(Greens, [](uint8_t green) { return MCHdArt::HasIndexMark(green); }));
+    CHECK(!MCHdArt::HasIndexMark(0));
+    CHECK(MCHdArt::InShadowMark(MCHdArt::BakedShadow));
+    CHECK(MCHdArt::InShadowMark(MCHdArt::SpreadShadow));
+    CHECK(!MCHdArt::InShadowMark(MCHdArt::HasIndex));
+    CHECK(!MCHdArt::InShadowMark(MCHdArt::Spread));
+    CHECK(!MCHdArt::InShadowMark(MCHdArt::DrawnBlended));
+    CHECK(MCHdArt::InShadowMark(MCHdArt::DrawnBlendedShadow));
+    CHECK(!MCHdArt::HasIndexMark(MCHdArt::DrawnBlendedShadow - 1));
+
     CHECK(MCHdArt::DecodeHdf(file, 0, 0).has_value());
     CHECK(!MCHdArt::DecodeHdf(file, Width + 1, Height).has_value());
     CHECK(!MCHdArt::DecodeHdf(std::span(file).first(file.size() - 1), Width, Height).has_value());
@@ -347,6 +404,94 @@ namespace
     constexpr uint64_t DynamicHash = 0xbd94f97d8dc50624ull;
     constexpr std::string_view DynamicEnd = "The Mad Cat walks. ";
 
+    /// <summary>
+    /// Zstandard frames made by the zstd tool (1.5.7, level 19, with its content checksum, as the version 2 pack's streams
+    /// are): "MechCommander Gold: the Atlas falls.", and 60 lines of "Frame n: the Mad Cat walks, the Atlas falls, the
+    /// Raven runs.", which unpack to ZstdSize bytes of ZstdHash (64-bit FNV-1a) ending ZstdEnd.
+    /// </summary>
+    constexpr std::array<uint8_t, 49> ZstdSmallStream = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x21, 0x01, 0x00, 0x4d, 0x65, 0x63, 0x68, 0x43, 0x6f, 0x6d, 0x6d,
+        0x61, 0x6e, 0x64, 0x65, 0x72, 0x20, 0x47, 0x6f, 0x6c, 0x64, 0x3a, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41,
+        0x74, 0x6c, 0x61, 0x73, 0x20, 0x66, 0x61, 0x6c, 0x6c, 0x73, 0x2e, 0xce, 0x85, 0xf8, 0xd7};
+    constexpr std::array<uint8_t, 185> ZstdStream = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x65, 0x05, 0x00, 0x32, 0x88, 0x19, 0x18, 0x80, 0x6d, 0x0e, 0x00,
+        0xc0, 0xf8, 0xdf, 0x41, 0xa5, 0x02, 0x8e, 0xe2, 0xfa, 0xdd, 0xbd, 0x93, 0x94, 0x62, 0x29, 0xda, 0xe4,
+        0x12, 0x3d, 0x01, 0xef, 0xee, 0xed, 0xec, 0x7f, 0x9f, 0xbf, 0xd7, 0xf5, 0xd7, 0xae, 0x5b, 0xb3, 0x7e,
+        0x77, 0xf3, 0xea, 0xea, 0xc7, 0x8e, 0x1b, 0x33, 0x3e, 0x37, 0xaf, 0x2e, 0x7e, 0xae, 0xb1, 0x37, 0xaf,
+        0xae, 0x7d, 0xae, 0xb1, 0x37, 0xaf, 0xea, 0x73, 0x8d, 0xbd, 0x79, 0x15, 0x10, 0xa2, 0x67, 0x82, 0xf2,
+        0x51, 0x28, 0x88, 0xc4, 0x08, 0x97, 0x8c, 0x60, 0x94, 0x88, 0x20, 0x6a, 0x22, 0xac, 0x52, 0x82, 0x45,
+        0x26, 0xf0, 0x48, 0x85, 0x91, 0x72, 0x58, 0xa9, 0x38, 0x10, 0x32, 0x02, 0x3e, 0xa8, 0x11, 0x70, 0xf2,
+        0x1e, 0xc3, 0x9e, 0x01, 0xe0, 0xa5, 0x61, 0x0d, 0x11, 0x24, 0x08, 0x42, 0xf0, 0xff, 0xff, 0x0a, 0x3f,
+        0x9b, 0x22, 0x45, 0x8e, 0x18, 0x48, 0x88, 0x1c, 0x71, 0x44, 0xa9, 0x8c, 0x11, 0x44, 0x86, 0x8a, 0x94,
+        0x11, 0x95, 0x28, 0x09, 0xa5, 0x11, 0x95, 0x24, 0x92, 0xa1, 0x40, 0x9e, 0x99, 0xc8, 0x44, 0x99, 0xc8,
+        0xbc, 0x0d, 0x01, 0xe4, 0xaa, 0xd2, 0xb6, 0xfe, 0x0d, 0xd8, 0x55, 0x5e, 0x47, 0xb6, 0x72};
+    constexpr size_t ZstdSize = 3710;
+    constexpr uint64_t ZstdHash = 0xfaa3c4740cbbd29bull;
+    constexpr std::string_view ZstdEnd = "the Raven runs.\n";
+
+    /// <summary>
+    /// Zstandard dictionaries made by zstd's ZDICT_finalizeDictionary (1.5.7) from lines of mechs' moves, the same
+    /// content with ID 1 and with ID 2, and DictionaryText packed against the first (level 19, with its checksum: 36
+    /// bytes, 79 without the dictionary).
+    /// </summary>
+    constexpr std::array<uint8_t, 436> DictionaryOne = {
+        0x37, 0xa4, 0x30, 0xec, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x10, 0xf8, 0xec, 0x06, 0xff, 0x5f, 0x2f, 0xf7, 0x88,
+        0x48, 0x19, 0x43, 0x40, 0x40, 0x40, 0x20, 0x10, 0x6c, 0xd4, 0x6c, 0x84, 0x88, 0x88, 0xc8, 0x03, 0x54, 0xa0,
+        0x40, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0xc1, 0xf3, 0x52, 0x4a, 0x29, 0xa5, 0xaa, 0xaa, 0x07, 0x64, 0xc0, 0x80, 0x56, 0x83, 0xc1, 0x60,
+        0x30, 0x18, 0x0c, 0x06, 0x83, 0xc1, 0x30, 0x0c, 0xc3, 0x30, 0x0c, 0xc3, 0x30, 0x0c, 0xc3, 0x18, 0x63, 0x8c,
+        0x31, 0x66, 0x76, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x54, 0x68, 0x65,
+        0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x6c, 0x6b, 0x73, 0x20, 0x61, 0x74, 0x20, 0x64, 0x61,
+        0x77, 0x6e, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64,
+        0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x72, 0x69, 0x64, 0x67, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d,
+        0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x65, 0x61, 0x73,
+        0x74, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x6c, 0x6b, 0x73,
+        0x20, 0x61, 0x74, 0x20, 0x64, 0x75, 0x73, 0x6b, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61,
+        0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x70, 0x61, 0x73, 0x73, 0x3b, 0x20,
+        0x74, 0x68, 0x65, 0x20, 0x4d, 0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65,
+        0x73, 0x20, 0x77, 0x65, 0x73, 0x74, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20,
+        0x72, 0x75, 0x6e, 0x73, 0x20, 0x61, 0x74, 0x20, 0x6e, 0x6f, 0x6f, 0x6e, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20,
+        0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x67, 0x61,
+        0x74, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d, 0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69,
+        0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x6e, 0x6f, 0x72, 0x74, 0x68, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52,
+        0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x69, 0x74, 0x73, 0x20, 0x61, 0x74, 0x20, 0x6e, 0x69, 0x67, 0x68,
+        0x74, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73,
+        0x20, 0x74, 0x68, 0x65, 0x20, 0x62, 0x72, 0x69, 0x64, 0x67, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d,
+        0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x73, 0x6f, 0x75,
+        0x74, 0x68, 0x2e, 0x0a};
+    constexpr std::array<uint8_t, 436> DictionaryTwo = {
+        0x37, 0xa4, 0x30, 0xec, 0x02, 0x00, 0x00, 0x00, 0x0b, 0x10, 0xf8, 0xec, 0x06, 0xff, 0x5f, 0x2f, 0xf7, 0x88,
+        0x48, 0x19, 0x43, 0x40, 0x40, 0x40, 0x20, 0x10, 0x6c, 0xd4, 0x6c, 0x84, 0x88, 0x88, 0xc8, 0x03, 0x54, 0xa0,
+        0x40, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0xc1, 0xf3, 0x52, 0x4a, 0x29, 0xa5, 0xaa, 0xaa, 0x07, 0x64, 0xc0, 0x80, 0x56, 0x83, 0xc1, 0x60,
+        0x30, 0x18, 0x0c, 0x06, 0x83, 0xc1, 0x30, 0x0c, 0xc3, 0x30, 0x0c, 0xc3, 0x30, 0x0c, 0xc3, 0x18, 0x63, 0x8c,
+        0x31, 0x66, 0x76, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x54, 0x68, 0x65,
+        0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x6c, 0x6b, 0x73, 0x20, 0x61, 0x74, 0x20, 0x64, 0x61,
+        0x77, 0x6e, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64,
+        0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x72, 0x69, 0x64, 0x67, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d,
+        0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x65, 0x61, 0x73,
+        0x74, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x6c, 0x6b, 0x73,
+        0x20, 0x61, 0x74, 0x20, 0x64, 0x75, 0x73, 0x6b, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61,
+        0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x70, 0x61, 0x73, 0x73, 0x3b, 0x20,
+        0x74, 0x68, 0x65, 0x20, 0x4d, 0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65,
+        0x73, 0x20, 0x77, 0x65, 0x73, 0x74, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52, 0x61, 0x76, 0x65, 0x6e, 0x20,
+        0x72, 0x75, 0x6e, 0x73, 0x20, 0x61, 0x74, 0x20, 0x6e, 0x6f, 0x6f, 0x6e, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20,
+        0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73, 0x20, 0x74, 0x68, 0x65, 0x20, 0x67, 0x61,
+        0x74, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d, 0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69,
+        0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x6e, 0x6f, 0x72, 0x74, 0x68, 0x2e, 0x0a, 0x54, 0x68, 0x65, 0x20, 0x52,
+        0x61, 0x76, 0x65, 0x6e, 0x20, 0x77, 0x61, 0x69, 0x74, 0x73, 0x20, 0x61, 0x74, 0x20, 0x6e, 0x69, 0x67, 0x68,
+        0x74, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x41, 0x74, 0x6c, 0x61, 0x73, 0x20, 0x68, 0x6f, 0x6c, 0x64, 0x73,
+        0x20, 0x74, 0x68, 0x65, 0x20, 0x62, 0x72, 0x69, 0x64, 0x67, 0x65, 0x3b, 0x20, 0x74, 0x68, 0x65, 0x20, 0x4d,
+        0x61, 0x64, 0x20, 0x43, 0x61, 0x74, 0x20, 0x63, 0x69, 0x72, 0x63, 0x6c, 0x65, 0x73, 0x20, 0x73, 0x6f, 0x75,
+        0x74, 0x68, 0x2e, 0x0a};
+    constexpr std::array<uint8_t, 36> DictionaryFrame = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x25, 0x01, 0x5e, 0xb5, 0x00, 0x00, 0x30, 0x54, 0x68, 0x20, 0x54, 0x2e, 0x0a, 0x05,
+        0xf0, 0x1e, 0x82, 0x88, 0x1b, 0x46, 0xb1, 0x86, 0xb6, 0x16, 0x32, 0x7a, 0x14, 0x06, 0xb6, 0x9f, 0x5a, 0xba};
+    constexpr std::string_view DictionaryText =
+        "The Raven runs at dusk; the Atlas holds the ridge; the Mad Cat circles north. The Raven runs.\n";
+
     uint64_t Fnv(std::span<const uint8_t> bytes)
     {
         uint64_t hash = 0xcbf29ce484222325ull;
@@ -433,6 +578,270 @@ namespace
         return out;
     }
 
+    /// <summary>A little-endian <paramref name="value"/> written at <paramref name="at"/> of <paramref name="out"/>.</summary>
+    template <typename T> void PutAt(std::vector<uint8_t>& out, size_t at, T value)
+    {
+        std::memcpy(out.data() + at, &value, sizeof(T));
+    }
+
+    /// <summary>A facts record (SPEC-pack-v2.md's "The facts"): its type, 2 bytes of 0, its data's size and its data.</summary>
+    std::vector<uint8_t> FactsRecord(MCPackRecords::Type type, std::span<const uint8_t> data)
+    {
+        constexpr size_t HeadBytes = 8;
+        std::vector<uint8_t> record(HeadBytes);
+        PutAt(record, 0, static_cast<uint16_t>(type));
+        PutAt(record, 4, static_cast<uint32_t>(data.size()));
+        record.insert(record.end(), data.begin(), data.end());
+        return record;
+    }
+
+    /// <summary>
+    /// A version 2 archive's stream to write (BuildVersion2Streams): its entries, its kind, and what it stores in place
+    /// of its entries' bytes, packed by Codec against Dictionary (empty: their bytes, stored as they are).
+    /// </summary>
+    struct Version2Stream
+    {
+        std::vector<ArchiveEntry> Entries;
+        MCFastFile::StreamKind Kind = MCFastFile::StreamKind::Packet;
+        std::vector<uint8_t> Packed;
+        uint8_t Codec = 0;
+        uint16_t Dictionary = 0;
+    };
+
+    /// <summary>
+    /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="streams"/>, each stored as it is (codec 0) or as
+    /// packed (Version2Stream::Packed), in their order, and its entries (their stored bytes as they unpack, no sharing)
+    /// in theirs: each found by its path's key, each folder its first name is in by its own, with the facts
+    /// <paramref name="facts"/> gives a folder (its records, FactsRecord's).
+    /// </summary>
+    std::vector<uint8_t> BuildVersion2Streams(const std::vector<Version2Stream>& streams,
+                                              const std::map<std::string, std::vector<uint8_t>>& facts = {})
+    {
+        constexpr size_t HeaderBytes = 64;
+        constexpr size_t FolderRowBytes = 16;
+        constexpr size_t StreamRowBytes = 24;
+        constexpr size_t StreamCodecAt = 16;
+        constexpr size_t StreamKindAt = 17;
+        constexpr size_t StreamDictionaryAt = 18;
+        constexpr size_t EntryRowBytes = 20;
+        constexpr uint16_t Format = 2;
+        std::vector<std::pair<uint64_t, std::array<uint32_t, 3>>> rows;
+        std::set<uint64_t> folders;
+        std::vector<uint8_t> data;
+        // Each stream's start in the data, and its bytes unpacked.
+        std::vector<size_t> starts;
+        std::vector<uint32_t> unpacked;
+
+        for (uint32_t number = 0; number < streams.size(); ++number)
+        {
+            const Version2Stream& stream = streams[number];
+            starts.push_back(data.size());
+            uint32_t at = 0;
+
+            for (const ArchiveEntry& entry : stream.Entries)
+            {
+                rows.push_back(
+                    {MCFastFile::PathKey(entry.Name), {number, at, static_cast<uint32_t>(entry.Stored.size())}});
+                at += static_cast<uint32_t>(entry.Stored.size());
+
+                if (stream.Packed.empty())
+                {
+                    data.insert(data.end(), entry.Stored.begin(), entry.Stored.end());
+                }
+
+                if (const size_t cut = entry.Name.find('\\'); cut != std::string::npos)
+                {
+                    folders.insert(MCFastFile::PathKey(std::string_view(entry.Name).substr(0, cut)));
+                }
+            }
+
+            data.insert(data.end(), stream.Packed.begin(), stream.Packed.end());
+            unpacked.push_back(at);
+        }
+
+        std::map<uint64_t, std::span<const uint8_t>> factsOf;
+        size_t factsBytes = 0;
+
+        for (const auto& [folder, records] : facts)
+        {
+            folders.insert(MCFastFile::PathKey(folder));
+            factsOf[MCFastFile::PathKey(folder)] = records;
+            factsBytes += records.size();
+        }
+
+        std::ranges::sort(rows);
+        std::vector<uint8_t> table(folders.size() * FolderRowBytes + streams.size() * StreamRowBytes +
+                                   rows.size() * EntryRowBytes);
+        size_t at = 0;
+        std::vector<uint8_t> allFacts;
+
+        for (const uint64_t folder : folders)
+        {
+            PutAt(table, at, folder);
+
+            if (const auto found = factsOf.find(folder); found != factsOf.end())
+            {
+                PutAt(table, at + 8, static_cast<uint32_t>(allFacts.size()));
+                PutAt(table, at + 12, static_cast<uint32_t>(found->second.size()));
+                allFacts.insert(allFacts.end(), found->second.begin(), found->second.end());
+            }
+
+            at += FolderRowBytes;
+        }
+
+        table.insert(table.end(), allFacts.begin(), allFacts.end());
+
+        const uint64_t dataAt = HeaderBytes + table.size();
+
+        for (size_t number = 0; number < streams.size(); ++number)
+        {
+            const size_t end = number + 1 < streams.size() ? starts[number + 1] : data.size();
+            const auto bytes = static_cast<uint32_t>(end - starts[number]);
+            PutAt(table, at, dataAt + starts[number]);
+            PutAt(table, at + 8, bytes);
+            PutAt(table, at + 12, unpacked[number]);
+            PutAt(table, at + StreamCodecAt, streams[number].Codec);
+            PutAt(table, at + StreamKindAt, std::to_underlying(streams[number].Kind));
+            PutAt(table, at + StreamDictionaryAt, streams[number].Dictionary);
+            at += StreamRowBytes;
+        }
+
+        for (const auto& [key, place] : rows)
+        {
+            PutAt(table, at, key);
+
+            for (size_t value = 0; value < place.size(); ++value)
+            {
+                PutAt(table, at + 8 + value * sizeof(uint32_t), place[value]);
+            }
+
+            at += EntryRowBytes;
+        }
+
+        std::vector<uint8_t> out(HeaderBytes);
+        std::ranges::copy(std::string_view("MCH2"), out.begin());
+        PutAt(out, 4, Format);
+        PutAt(out, 8, static_cast<uint32_t>(table.size()));
+        PutAt(out, 12, static_cast<uint32_t>(table.size()));
+        PutAt(out, 20, static_cast<uint32_t>(folders.size()));
+        PutAt(out, 24, static_cast<uint32_t>(streams.size()));
+        PutAt(out, 28, static_cast<uint32_t>(rows.size()));
+        PutAt(out, 32, static_cast<uint32_t>(factsBytes));
+        PutAt(out, 40, dataAt);
+        PutAt(out, 48, static_cast<uint64_t>(XXH3_64bits(table.data(), table.size())));
+        out.insert(out.end(), table.begin(), table.end());
+        out.insert(out.end(), data.begin(), data.end());
+        return out;
+    }
+
+    /// <summary>
+    /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="entries"/> (their stored bytes as they unpack, no
+    /// sharing), all in one packet's stream stored as it is (codec 0) in their order, with the facts
+    /// <paramref name="facts"/> gives a folder (BuildVersion2Streams).
+    /// </summary>
+    std::vector<uint8_t> BuildVersion2Archive(const std::vector<ArchiveEntry>& entries,
+                                              const std::map<std::string, std::vector<uint8_t>>& facts = {})
+    {
+        return BuildVersion2Streams({Version2Stream{.Entries = entries}}, facts);
+    }
+
+    /// <summary>A version 2 stream's codec: Zstandard (SPEC-pack-v2.md's streams).</summary>
+    constexpr uint8_t ZstdCodec = 2;
+
+    /// <summary>The pack's zstd dictionaries' file, at its root (SPEC-pack-v2.md's <c>dicts.hdd</c>).</summary>
+    constexpr std::string_view PackDictionariesName = "dicts.hdd";
+
+    /// <summary>
+    /// A pack's <c>dicts.hdd</c> holding <paramref name="dictionaries"/> by number, in their order, its head giving
+    /// <paramref name="count"/> of them (none: how many there are).
+    /// </summary>
+    std::vector<uint8_t> DictionariesFile(
+        const std::vector<std::pair<uint16_t, std::span<const uint8_t>>>& dictionaries,
+        std::optional<uint16_t> count = std::nullopt)
+    {
+        constexpr uint16_t Format = 2;
+        constexpr size_t HeadBytes = 8;
+        constexpr size_t DictionaryHeadBytes = 6;
+        std::vector<uint8_t> file(HeadBytes);
+        std::ranges::copy(std::string_view("MCD2"), file.begin());
+        PutAt(file, 4, Format);
+        PutAt(file, 6, count.value_or(static_cast<uint16_t>(dictionaries.size())));
+
+        for (const auto& [number, bytes] : dictionaries)
+        {
+            const size_t at = file.size();
+            file.resize(at + DictionaryHeadBytes);
+            PutAt(file, at, number);
+            PutAt(file, at + 2, static_cast<uint32_t>(bytes.size()));
+            file.insert(file.end(), bytes.begin(), bytes.end());
+        }
+
+        return file;
+    }
+
+    /// <summary>
+    /// A Zstandard frame of <paramref name="content"/> in raw blocks that names dictionary <paramref name="id"/> in its
+    /// header, as one packed against it does, with its checksum: the decoder checks both, and the content needs no
+    /// dictionary to come out (the game has no Zstandard packer to make a real one).
+    /// </summary>
+    std::vector<uint8_t> RawZstdFrame(std::span<const uint8_t> content, uint8_t id)
+    {
+        // The descriptor: a 4-byte content size (bits 6-7: 2), one segment (bit 5), a checksum (bit 2) and a 1-byte
+        // dictionary ID (bits 0-1: 1). Each block's 3-byte head: whether it's the last (bit 0), its type (bits 1-2: 0,
+        // raw) and its size (from bit 3), at most 128 KB.
+        constexpr std::array<uint8_t, 4> Magic = {0x28, 0xb5, 0x2f, 0xfd};
+        constexpr uint8_t Descriptor = 0xa5;
+        constexpr size_t MostBlockBytes = 128 * 1024;
+        constexpr size_t BlockHeadBytes = 3;
+        constexpr uint32_t LastBlock = 1;
+        constexpr int BlockSizeShift = 3;
+        std::vector<uint8_t> frame(Magic.begin(), Magic.end());
+        frame.push_back(Descriptor);
+        frame.push_back(id);
+        frame.resize(frame.size() + sizeof(uint32_t));
+        PutAt(frame, frame.size() - sizeof(uint32_t), static_cast<uint32_t>(content.size()));
+        size_t at = 0;
+
+        do
+        {
+            const size_t bytes = std::min(MostBlockBytes, content.size() - at);
+            const uint32_t head =
+                static_cast<uint32_t>(bytes) << BlockSizeShift | (at + bytes == content.size() ? LastBlock : 0);
+            const std::array<uint8_t, 4> headBytes = std::bit_cast<std::array<uint8_t, 4>>(head);
+            frame.insert(frame.end(), headBytes.begin(), headBytes.begin() + BlockHeadBytes);
+            frame.insert(frame.end(), content.begin() + static_cast<ptrdiff_t>(at),
+                         content.begin() + static_cast<ptrdiff_t>(at + bytes));
+            at += bytes;
+        } while (at < content.size());
+
+        // The checksum: XXH64's low 32 bits.
+        frame.resize(frame.size() + sizeof(uint32_t));
+        PutAt(frame, frame.size() - sizeof(uint32_t), static_cast<uint32_t>(XXH64(content.data(), content.size(), 0)));
+        return frame;
+    }
+
+    /// <summary>
+    /// A version 2 archive of <paramref name="entries"/> (their bytes as they unpack) in one stream of
+    /// <paramref name="kind"/>, packed as a Zstandard frame naming dictionary <paramref name="id"/> (RawZstdFrame), and
+    /// whose row names dictionary <paramref name="number"/> of the pack's.
+    /// </summary>
+    std::vector<uint8_t> BuildDictionaryArchive(const std::vector<ArchiveEntry>& entries, MCFastFile::StreamKind kind,
+                                                uint16_t number, uint8_t id)
+    {
+        std::vector<uint8_t> content;
+
+        for (const ArchiveEntry& entry : entries)
+        {
+            content.insert(content.end(), entry.Stored.begin(), entry.Stored.end());
+        }
+
+        return BuildVersion2Streams({Version2Stream{.Entries = entries,
+                                                    .Kind = kind,
+                                                    .Packed = RawZstdFrame(content, id),
+                                                    .Codec = ZstdCodec,
+                                                    .Dictionary = number}});
+    }
+
     void WriteBytes(const std::filesystem::path& path, std::span<const uint8_t> bytes)
     {
         std::ofstream(path, std::ios::binary)
@@ -497,6 +906,236 @@ TEST_CASE("hd art: DEFLATE streams inflate, and damaged ones are refused")
     std::array<uint8_t, StoredStream.size()> damaged = StoredStream;
     damaged[3] ^= 0xff;
     CHECK(!MCInflate::Inflate(damaged, 28).has_value());
+}
+
+/// <summary>
+/// Zstandard: a small frame and one of Huffman-coded sequences (the zstd tool's, level 19, with a checksum) unpack to what
+/// was packed; a frame cut short, one with a byte past it, one asked for another size, one whose checksum fails, and one
+/// made without a checksum are refused.
+/// </summary>
+TEST_CASE("hd art: Zstandard streams unpack, and damaged ones are refused")
+{
+    const std::string_view smallText = "MechCommander Gold: the Atlas falls.";
+    const auto small = MCZstd::Unpack(ZstdSmallStream, smallText.size());
+    REQUIRE(small.has_value());
+    CHECK(std::ranges::equal(*small, AsBytes(smallText)));
+
+    const auto big = MCZstd::Unpack(ZstdStream, ZstdSize);
+    REQUIRE(big.has_value());
+    CHECK_EQ(Fnv(*big), ZstdHash);
+    CHECK(std::ranges::equal(std::span(*big).last(ZstdEnd.size()), AsBytes(ZstdEnd)));
+
+    CHECK(!MCZstd::Unpack(std::span(ZstdStream).first(ZstdStream.size() / 2), ZstdSize).has_value());
+    CHECK(!MCZstd::Unpack(ZstdStream, ZstdSize - 1).has_value());
+    CHECK(!MCZstd::Unpack(ZstdStream, ZstdSize + 1).has_value());
+
+    std::vector<uint8_t> trailing(ZstdStream.begin(), ZstdStream.end());
+    trailing.push_back(0);
+    CHECK(!MCZstd::Unpack(trailing, ZstdSize).has_value());
+
+    // The last 4 bytes are the checksum: a changed one fails it, the content unchanged.
+    std::array<uint8_t, ZstdSmallStream.size()> damaged = ZstdSmallStream;
+    damaged.back() ^= 0xff;
+    CHECK(!MCZstd::Unpack(damaged, smallText.size()).has_value());
+
+    // The frame header's descriptor without its checksum flag (bit 2), the checksum cut off: a whole frame, refused.
+    std::vector<uint8_t> unchecked(ZstdSmallStream.begin(), ZstdSmallStream.end() - 4);
+    unchecked[4] &= static_cast<uint8_t>(~0x04);
+    CHECK(!MCZstd::Unpack(unchecked, smallText.size()).has_value());
+}
+
+/// <summary>
+/// Zstandard dictionaries (SPEC-pack-v2.md's dicts.hdd): a frame packed against one unpacks against it alone, not against
+/// its twin of another ID nor without one, and a frame packed without one isn't unpacked against one. Bytes that aren't a
+/// trained dictionary (text, an ID of 0, the head without its tables) are refused.
+/// </summary>
+TEST_CASE("hd art: a Zstandard stream packed against a dictionary unpacks against it alone")
+{
+    const auto one = MCZstd::Dictionary::Make(DictionaryOne);
+    const auto two = MCZstd::Dictionary::Make(DictionaryTwo);
+    REQUIRE(one.has_value());
+    REQUIRE(two.has_value());
+    CHECK_EQ((*one)->Id(), 1u);
+    CHECK_EQ((*two)->Id(), 2u);
+
+    const auto unpacked = MCZstd::Unpack(DictionaryFrame, DictionaryText.size(), std::cref(**one));
+    REQUIRE(unpacked.has_value());
+    CHECK(std::ranges::equal(*unpacked, AsBytes(DictionaryText)));
+    CHECK(!MCZstd::Unpack(DictionaryFrame, DictionaryText.size(), std::cref(**two)).has_value());
+    CHECK(!MCZstd::Unpack(DictionaryFrame, DictionaryText.size()).has_value());
+
+    const std::string_view smallText = "MechCommander Gold: the Atlas falls.";
+    CHECK(!MCZstd::Unpack(ZstdSmallStream, smallText.size(), std::cref(**one)).has_value());
+
+    // A frame of raw blocks naming dictionary 1 unpacks against it (the archives' tests' frames).
+    const std::vector<uint8_t> raw = RawZstdFrame(AsBytes(DictionaryText), 1);
+    const auto rawUnpacked = MCZstd::Unpack(raw, DictionaryText.size(), std::cref(**one));
+    REQUIRE(rawUnpacked.has_value());
+    CHECK(std::ranges::equal(*rawUnpacked, AsBytes(DictionaryText)));
+    CHECK(!MCZstd::Unpack(raw, DictionaryText.size(), std::cref(**two)).has_value());
+
+    constexpr size_t IdAt = 4;
+    constexpr size_t HeadBytes = 8;
+    std::vector<uint8_t> noId(DictionaryOne.begin(), DictionaryOne.end());
+    PutAt(noId, IdAt, uint32_t{0});
+    CHECK(!MCZstd::Dictionary::Make(AsBytes(DictionaryText)).has_value());
+    CHECK(!MCZstd::Dictionary::Make(noId).has_value());
+    CHECK(!MCZstd::Dictionary::Make(std::span(DictionaryOne).first(HeadBytes)).has_value());
+}
+
+/// <summary>
+/// A pack's dicts.hdd (SPEC-pack-v2.md) is read by number, an empty one too; one of another kind or format, a number 0
+/// or given twice, a count other than the head's, a dictionary of no bytes, cut short or that isn't one, a head cut
+/// short and bytes past the last are refused whole.
+/// </summary>
+TEST_CASE("hd art: a pack's dicts.hdd is read by number, and a damaged one is refused whole")
+{
+    const std::vector<uint8_t> good = DictionariesFile({{1, DictionaryOne}, {2, DictionaryTwo}});
+    const auto read = MCZstd::Dictionaries::Read(good);
+    REQUIRE(read.has_value());
+    CHECK_EQ((*read)->Count(), 2u);
+    REQUIRE((*read)->Find(1).has_value());
+    REQUIRE((*read)->Find(2).has_value());
+    CHECK_EQ((*read)->Find(1)->get().Id(), 1u);
+    CHECK_EQ((*read)->Find(2)->get().Id(), 2u);
+    CHECK(!(*read)->Find(0).has_value());
+    CHECK(!(*read)->Find(3).has_value());
+
+    const auto empty = MCZstd::Dictionaries::Read(DictionariesFile({}));
+    REQUIRE(empty.has_value());
+    CHECK_EQ((*empty)->Count(), 0u);
+
+    constexpr size_t FormatAt = 4;
+    std::vector<uint8_t> magic = good;
+    magic[3] = '3';
+    std::vector<uint8_t> format = good;
+    PutAt(format, FormatAt, uint16_t{3});
+    std::vector<uint8_t> trailing = good;
+    trailing.insert(trailing.end(), {0, 0, 0});
+    const std::vector<uint8_t> noBytes = DictionariesFile({{1, {}}});
+    const std::vector<uint8_t> numberZero = DictionariesFile({{0, DictionaryOne}});
+    const std::vector<uint8_t> twice = DictionariesFile({{1, DictionaryOne}, {1, DictionaryTwo}});
+    const std::vector<uint8_t> miscounted = DictionariesFile({{1, DictionaryOne}}, uint16_t{2});
+    const std::vector<uint8_t> text = DictionariesFile({{1, AsBytes(DictionaryText)}});
+    const std::vector<std::pair<std::string_view, std::span<const uint8_t>>> bad = {
+        {"another kind", magic},
+        {"a later format", format},
+        {"bytes past the last", trailing},
+        {"no bytes", noBytes},
+        {"number 0", numberZero},
+        {"a number twice", twice},
+        {"another count", miscounted},
+        {"not a dictionary", text},
+        {"cut inside a dictionary", std::span(good).first(good.size() - 1)},
+        {"cut inside the head", std::span(good).first(5)},
+    };
+
+    for (const auto& [what, file] : bad)
+    {
+        MCTest::Scope scope{std::string(what)};
+        CHECK(!MCZstd::Dictionaries::Read(file).has_value());
+    }
+}
+
+/// <summary>
+/// A version 2 archive's stream packed against a dictionary (its row's number) opens with the pack's dictionaries and
+/// its entries unpack against it; without them, or with a set lacking its number, the archive is refused whole, as one
+/// naming a dictionary for a codec that takes none. With another dictionary under its number, it opens and the stream's
+/// unpack is refused.
+/// </summary>
+TEST_CASE("hd art: a version 2 stream packed against a dictionary opens with the pack's dictionaries alone")
+{
+    const ScratchFolder scratch("dictionary-stream");
+    const std::span<const uint8_t> text = AsBytes(DictionaryText);
+    const size_t half = text.size() / 2;
+    const std::vector<ArchiveEntry> entries = {
+        Raw("a\\0.hdf", {text.begin(), text.begin() + static_cast<ptrdiff_t>(half)}),
+        Raw("a\\1.hdf", {text.begin() + static_cast<ptrdiff_t>(half), text.end()})};
+    const std::filesystem::path path = scratch.Path() / "a.hda";
+    const std::string name = MCFileSystem::ToUtf8(path);
+    WriteBytes(path, BuildVersion2Streams({Version2Stream{.Entries = entries,
+                                                          .Packed = {DictionaryFrame.begin(), DictionaryFrame.end()},
+                                                          .Codec = ZstdCodec,
+                                                          .Dictionary = 1}}));
+
+    const auto dictionaries = MCZstd::Dictionaries::Read(DictionariesFile({{1, DictionaryOne}}));
+    REQUIRE(dictionaries.has_value());
+    const auto archive = MCFastFile::Create(name, *dictionaries);
+    REQUIRE(archive.has_value());
+
+    for (const ArchiveEntry& entry : entries)
+    {
+        MCTest::Scope scope(entry.Name);
+        const std::optional<int32_t> index = (*archive)->Find(entry.Name);
+        REQUIRE(index.has_value());
+        const auto bytes = (*archive)->Unpack(*index, (*archive)->ReadStored(*index));
+        REQUIRE(bytes.has_value());
+        CHECK(*bytes == entry.Stored);
+    }
+
+    const auto none = MCFastFile::Create(name);
+    REQUIRE(!none.has_value());
+    CHECK(none.error().find("dicts.hdd lacks") != std::string::npos);
+    const auto otherNumber = MCZstd::Dictionaries::Read(DictionariesFile({{2, DictionaryOne}}));
+    REQUIRE(otherNumber.has_value());
+    CHECK(!MCFastFile::Create(name, *otherNumber).has_value());
+
+    const auto twin = MCZstd::Dictionaries::Read(DictionariesFile({{1, DictionaryTwo}}));
+    REQUIRE(twin.has_value());
+    const auto wrong = MCFastFile::Create(name, *twin);
+    REQUIRE(wrong.has_value());
+    const std::optional<int32_t> first = (*wrong)->Find(entries[0].Name);
+    REQUIRE(first.has_value());
+    CHECK(!(*wrong)->Unpack(*first, (*wrong)->ReadStored(*first)).has_value());
+
+    constexpr uint8_t DeflateCodec = 1;
+    WriteBytes(path, BuildVersion2Streams({Version2Stream{.Entries = entries,
+                                                          .Packed = {DictionaryFrame.begin(), DictionaryFrame.end()},
+                                                          .Codec = DeflateCodec,
+                                                          .Dictionary = 1}}));
+    CHECK(!MCFastFile::Create(name, *dictionaries).has_value());
+}
+
+/// <summary>
+/// The pack's dicts.hdd is read with it: a version 2 ground tile packed against its dictionary 1 is drawn; with no
+/// dicts.hdd, a damaged one, or another dictionary under that number, it falls back to the original (no HD frame).
+/// </summary>
+TEST_CASE("hd art: a pack's tiles packed against its dictionary are drawn, and fall back without its dicts.hdd")
+{
+    const ScratchFolder scratch("dictionary-pack");
+    const std::vector<uint8_t> tile = {1, 2, 3};
+    const std::vector<uint8_t> file = TileFrameFile();
+    WriteBytes(scratch.Path() / "terrain.hda",
+               BuildDictionaryArchive({Raw(MCHdArt::TerrainTileName(tile) + ".hdf", file)},
+                                      MCFastFile::StreamKind::Tiles, 1, 1));
+    const std::filesystem::path dictionaries = scratch.Path() / PackDictionariesName;
+    std::vector<uint8_t> damaged = DictionariesFile({{1, DictionaryOne}});
+    damaged[0] = 'X';
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    const auto drawn = [&]
+    {
+        MCHdArt::SetPackFolder(scratch.Path());
+        return MCHdArt::FindTerrainTile(tile, TileWidth, TileHeight);
+    };
+
+    CHECK(drawn() == nullptr);
+    WriteBytes(dictionaries, DictionariesFile({{1, DictionaryOne}}));
+    const std::shared_ptr<const MCHdArt::Frame> found = drawn();
+    REQUIRE(found != nullptr);
+    const auto decoded = MCHdArt::DecodeHdf(file, TileWidth, TileHeight);
+    REQUIRE(decoded.has_value());
+    CHECK_EQ(found->Width, decoded->Width);
+    CHECK(found->Colors == decoded->Colors);
+    CHECK(found->Indices == decoded->Indices);
+
+    WriteBytes(dictionaries, DictionariesFile({{1, DictionaryTwo}}));
+    CHECK(drawn() == nullptr);
+    WriteBytes(dictionaries, damaged);
+    CHECK(drawn() == nullptr);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
 }
 
 /// <summary>
@@ -992,10 +1631,13 @@ TEST_CASE("hd art: a mech's archive opens before its shapes are drawn")
     MCHdArt::SetPackFolder(pack);
     CHECK_EQ(MCHdArt::ArchivesOpen(), 0);
 
+    // Opened by the readers.
     MCHdArt::Prepare({"legs90", 5, 0});
+    MCHdArt::WaitForReadAhead();
     CHECK_EQ(MCHdArt::ArchivesOpen(), 1);
     MCHdArt::Prepare({"legs90", 5, 3});
     MCHdArt::Prepare({"legs90", 6, 0});
+    MCHdArt::WaitForReadAhead();
     CHECK_EQ(MCHdArt::ArchivesOpen(), 1);
 
     GHdArt = 0;
@@ -1049,11 +1691,13 @@ TEST_CASE("hd art: no more than 128 archive files stay open, a closed one openin
     CHECK(MCHdArt::FindTerrainTile(tiles[0], TileWidth, TileHeight) != nullptr);
     CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{1});
 
+    // Opened by the readers, their files among those kept open before the game takes them.
     for (uint32_t n = 0; n < Mechs; ++n)
     {
         MCHdArt::Prepare({"legs90", n, 0});
     }
 
+    MCHdArt::WaitForReadAhead();
     CHECK_EQ(MCHdArt::ArchivesOpen(), size_t{Mechs + 1});
     CHECK_EQ(MCHdArt::ArchiveFilesOpen(), MaxOpen);
 
@@ -1077,7 +1721,33 @@ TEST_CASE("hd art: no more than 128 archive files stay open, a closed one openin
         MCHdArt::Prepare({"legs90", n, 0});
     }
 
+    MCHdArt::WaitForReadAhead();
     CHECK(MCHdArt::FindTerrainTile(tiles[2], TileWidth, TileHeight) == nullptr);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// The game's thread asks the pack's listing, made once, which folders and archives it holds (MCHdArt's ListPack), not
+/// the disk: a packet's frames are found in their part's archive whichever case the pack's names are in, and an archive
+/// put in the pack after it was listed is found once the pack is set again.
+/// </summary>
+TEST_CASE("hd art: the pack is listed once, its names found in any case")
+{
+    const ScratchFolder scratch("listed");
+    const std::filesystem::path& pack = scratch.Path();
+    const std::vector<uint8_t> frame = TileFrameFile();
+    std::filesystem::create_directories(pack / "Mechs" / "LEGS90");
+    WriteBytes(pack / "Mechs" / "LEGS90" / "5.HDA", BuildArchive({Raw("0\\0.hdf", frame)}));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+    CHECK(MCHdArt::FindInFolder("mechs/legs90/5/0", 0, TileWidth, TileHeight) != nullptr);
+
+    WriteBytes(pack / "Mechs" / "LEGS90" / "6.HDA", BuildArchive({Raw("0\\0.hdf", frame)}));
+    CHECK(MCHdArt::FindInFolder("mechs/legs90/6/0", 0, TileWidth, TileHeight) == nullptr);
+    MCHdArt::SetPackFolder(pack);
+    CHECK(MCHdArt::FindInFolder("mechs/legs90/6/0", 0, TileWidth, TileHeight) != nullptr);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }
@@ -1342,6 +2012,262 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
 }
 
 /// <summary>
+/// Port-only (SPEC-first-use.md: the camera's surroundings): a packet read ahead whole (MCHdArt::ReadPacketAhead, a mech
+/// part's in or near the view) has every frame and its in-betweens read by the readers and kept, not its turn middles
+/// (a follow's as one is drawn), and each is found at its draw without a read, the same frame; asked for again, nothing
+/// more is read.
+/// </summary>
+TEST_CASE("hd art: a packet read ahead whole is found at its draws without a read, its turn middles left")
+{
+    const ScratchFolder scratch("packet-ahead");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+    const auto readAhead = [&]
+    {
+        MCHdArt::ReadPacketAhead(folder, AheadFrames);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+    };
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    readAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>(AheadFrames * AheadSteps));
+    const size_t read = MCHdArt::FramesRead();
+    const size_t reads = MCHdArt::ReaderReads();
+
+    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    readAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>(AheadFrames * AheadSteps));
+    CHECK_EQ(MCHdArt::ReaderReads(), reads);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: proving nothing is late): the HD trace (MCHdArt::OpenTrace, -hdtrace) has a line for
+/// each read asked of the readers, each of their reads, each archive once, each first use and each note, tab-separated:
+/// a packet read ahead is its frames' asks and a read, and its first frame's draw a use of one kept.
+/// </summary>
+TEST_CASE("hd art: the HD trace has each read asked, each reader's read and each first use")
+{
+    const ScratchFolder scratch("hd-trace");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::filesystem::path trace = scratch.Path() / "trace.tsv";
+    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+    REQUIRE(MCHdArt::OpenTrace(trace));
+    MCHdArt::ReadPacketAhead(folder, AheadFrames);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    REQUIRE(MCHdArt::FindShape(AheadTable, 0, AheadWidth, AheadHeight, 0) != nullptr);
+    MCHdArt::TraceNote("done");
+    MCHdArt::CloseTrace();
+
+    std::map<std::string, std::vector<std::vector<std::string>>> lines;
+    std::ifstream in(trace);
+
+    for (std::string line; std::getline(in, line);)
+    {
+        std::vector<std::string> fields;
+
+        for (const auto part : std::views::split(line, '\t'))
+        {
+            fields.emplace_back(part.begin(), part.end());
+        }
+
+        lines[fields.front()].push_back(std::move(fields));
+    }
+
+    CHECK_EQ(lines["A"].size(), static_cast<size_t>(AheadFrames * AheadSteps));
+    CHECK(!lines["R"].empty());
+    REQUIRE_EQ(lines["P"].size(), 1u);
+    REQUIRE_EQ(lines["U"].size(), 1u);
+    CHECK_EQ(lines["U"].front()[2], "kept");
+    CHECK_EQ(lines["U"].front()[3], MCFileSystem::ToUtf8(folder));
+    CHECK_EQ(lines["U"].front()[4], "0");
+    REQUIRE_EQ(lines["N"].size(), 1u);
+    CHECK_EQ(lines["N"].front()[2], "done");
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a load): an archive the readers open ahead (MCHdArt::OpenArchivesAhead, a mission's
+/// mechs' and objects' at its load) is taken open by the game's thread at its first look in it, which draws its frames
+/// as before; one asked for again isn't opened twice; and with the pack set before it's taken, the readers' is
+/// forgotten and the game's thread opens it as it looks.
+/// </summary>
+TEST_CASE("hd art: an archive the readers open ahead is taken open at the first look in it")
+{
+    const ScratchFolder scratch("archive-ahead");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::array<std::filesystem::path, 1> folder{MCHdArt::ShapeTableFolder(AheadTable)};
+
+    const size_t opened = MCHdArt::ArchivesOpenedAhead();
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::WaitForLoadReads();
+    const std::shared_ptr<const MCHdArt::Frame> found = FindAhead({0, 0});
+    REQUIRE(found != nullptr);
+    CHECK(SameFrame(*found, AheadFrame({0, 0}, 0)));
+    CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
+    // Open already: asked again, nothing.
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::WaitForLoadReads();
+    CHECK(FindAhead({1, 0}) != nullptr);
+    CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
+
+    MCHdArt::SetPackFolder(scratch.Path());
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::SetPackFolder(scratch.Path());
+    CHECK(FindAhead({0, 0}) != nullptr);
+    CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// An archive the readers open ahead unpacks against the pack's dictionaries, as the game's thread read them: its frames
+/// packed against dictionary 1 are drawn from it.
+/// </summary>
+TEST_CASE("hd art: an archive the readers open ahead unpacks against the pack's dictionaries")
+{
+    const ScratchFolder scratch("archive-ahead-dictionary");
+    std::vector<ArchiveEntry> entries;
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
+    }
+
+    const std::filesystem::path table = scratch.Path() / MCHdArt::ShapeTableFolder(AheadTable);
+    std::filesystem::create_directories(table.parent_path());
+    WriteBytes(std::filesystem::path(table).concat(".hda"),
+               BuildDictionaryArchive(entries, MCFastFile::StreamKind::Packet, 1, 1));
+    WriteBytes(scratch.Path() / PackDictionariesName, DictionariesFile({{1, DictionaryOne}}));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::array<std::filesystem::path, 1> folder{MCHdArt::ShapeTableFolder(AheadTable)};
+
+    const size_t opened = MCHdArt::ArchivesOpenedAhead();
+    MCHdArt::OpenArchivesAhead(folder);
+    MCHdArt::WaitForLoadReads();
+    const std::shared_ptr<const MCHdArt::Frame> found = FindAhead({0, 0});
+    REQUIRE(found != nullptr);
+    CHECK(SameFrame(*found, AheadFrame({0, 0}, 0)));
+    // Taken open from the readers, not opened again here.
+    CHECK_EQ(MCHdArt::ArchivesOpenedAhead(), opened + 1);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: the camera's surroundings): a legs packet read ahead with its turn middles
+/// (MCHdArt::PacketAhead::TurnMiddles, read soon) has every frame's steps and turn middles read by the readers, and each
+/// is found at its draw without a read.
+/// </summary>
+TEST_CASE("hd art: a packet read ahead with its turn middles has them found at their draws without a read")
+{
+    const ScratchFolder scratch("packet-ahead-turns");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::array<MCHdArt::PacketAhead, 1> packet{{{MCHdArt::ShapeTableFolder(AheadTable), AheadFrames, true}}};
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::ReadPacketsAhead(packet, MCHdArt::ReadAs::Soon);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + AheadKeys().size());
+    const size_t read = MCHdArt::FramesRead();
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        MCTest::Scope scope(std::format("frame {}", AheadName(key)));
+        const std::shared_ptr<const MCHdArt::Frame> found =
+            MCHdArt::FindShape(AheadTable, key.first, AheadWidth, AheadHeight, key.second);
+        REQUIRE(found != nullptr);
+        CHECK(SameFrame(*found, AheadFrame(key, 0)));
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: the camera's surroundings): a packet read ahead without its frames' count (an object's,
+/// whose shape isn't loaded) has every frame its archive holds read with its in-betweens, past a number the packet
+/// skips (an empty frame of the original's), and each is found at its draw without a read.
+/// </summary>
+TEST_CASE("hd art: a packet read ahead without its count reads every frame its archive holds, past a number skipped")
+{
+    constexpr int32_t Skipped = 2;
+    const ScratchFolder scratch("packet-ahead-count");
+    std::vector<ArchiveEntry> entries;
+
+    for (const AheadKey& key : AheadKeys())
+    {
+        if (key.first != Skipped)
+        {
+            entries.push_back(Raw(AheadName(key) + ".hdf", AheadFile(key, 0)));
+        }
+    }
+
+    const std::filesystem::path folder = MCHdArt::ShapeTableFolder(AheadTable);
+    std::filesystem::create_directories((scratch.Path() / folder).parent_path());
+    WriteBytes(std::filesystem::path(scratch.Path() / folder).concat(".hda"), BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::ReadPacketAhead(folder);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>((AheadFrames - 1) * AheadSteps));
+    const size_t read = MCHdArt::FramesRead();
+
+    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps && frame != Skipped; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only (HD art's read-ahead): a mech part's neighbours in a turn are the facings beside its own, nearest first, the
 /// one toward straight ahead first: round the turn where the part's facings go all the way round, else stopping at
 /// straight ahead and back; a fall's every fourth facing steps four.
@@ -1485,6 +2411,226 @@ TEST_CASE("hd art: a frame drawn the first time has the same frame at its neighb
 
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
+}
+
+namespace
+{
+    /// <summary>The upper-body in-betweens' torso (HD art's upper-body in-betweens): its file number and packet.</summary>
+    constexpr uint32_t UpperMech = 1;
+    constexpr uint32_t UpperPacket = 68;
+    /// <summary>Its two frames' side, the second's place right of and below the first's, and both together.</summary>
+    constexpr int32_t UpperSide = 4;
+    constexpr int32_t UpperRight = 2;
+    constexpr int32_t UpperDown = 1;
+    constexpr int32_t UpperWidth = UpperSide + UpperRight;
+    constexpr int32_t UpperHeight = UpperSide + UpperDown;
+
+    /// <summary>HD art on with a pack while it lives, and as it was after it, however the test ends.</summary>
+    class PackOn
+    {
+    public:
+        explicit PackOn(const std::filesystem::path& pack) : _Previous(GHdArt)
+        {
+            GHdArt = 1;
+            MCHdArt::SetPackFolder(pack);
+        }
+
+        ~PackOn()
+        {
+            GHdArt = _Previous;
+            MCHdArt::SetPackFolder({});
+        }
+
+        PackOn(const PackOn&) = delete;
+        PackOn& operator=(const PackOn&) = delete;
+
+    private:
+        int _Previous;
+    };
+
+    /// <summary>
+    /// Writes the upper-body in-betweens' torso's archive into <paramref name="pack"/>: its frames 0 and 1, frame 0's
+    /// steps 1 and 2 over both frames' boxes (UpperWidth x UpperHeight) and its step 3 at the frame's own size, and
+    /// frame 1's step 1 (not its step 2).
+    /// </summary>
+    void WriteUpperTorso(const std::filesystem::path& pack)
+    {
+        const std::filesystem::path torsos = pack / "mechs" / "torsos90";
+        std::filesystem::create_directories(torsos);
+        int32_t mix = 0;
+        const auto entry = [&](std::string_view name, int32_t width, int32_t height)
+        { return Raw(std::format("{}\\{}.hdf", UpperPacket, name), FrameFile(width, height, ++mix)); };
+        WriteBytes(torsos / std::format("{}.hda", UpperMech),
+                   BuildArchive({entry("0", UpperSide, UpperSide), entry("1", UpperSide, UpperSide),
+                                 entry("0_1", UpperWidth, UpperHeight), entry("0_2", UpperWidth, UpperHeight),
+                                 entry("0_3", UpperSide, UpperSide), entry("1_1", UpperWidth, UpperHeight)}));
+    }
+
+    /// <summary>
+    /// The upper-body in-betweens' torso, attached to its packet in the pack set: frame 0 an UpperSide square at the
+    /// hot spot, frame 1 one UpperRight right of and UpperDown below it.
+    /// </summary>
+    std::shared_ptr<MCShape> AttachedUpperTorso()
+    {
+        const std::vector<uint8_t> table = MCTestShapes::FramesTable(
+            std::array{MCTestShapes::TableFrame{0, 0, UpperSide, UpperSide, {}},
+                       MCTestShapes::TableFrame{UpperRight, UpperDown, UpperSide, UpperSide, {}}});
+        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+        std::ranges::copy(table, block.Bytes().begin());
+        auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+        const MCHdArt::MechShapeKey key{"torsos90", UpperMech, UpperPacket};
+        shape->HdFolder = MCHdArt::FolderOf(key);
+        MCHdArt::Attach(shape, key);
+        return shape;
+    }
+
+    /// <summary>A step, for a check's scope.</summary>
+    std::string StepName(const MCLegsStep& step)
+    {
+        return std::format("frame {} toward {}, step {}", step.From, step.To, step.Step);
+    }
+
+    /// <summary>
+    /// Checks that <paramref name="between"/> is the upper-body in-betweens' torso's in-between <paramref name="step"/>,
+    /// over both its frames, frame From at (<paramref name="frameX"/>, <paramref name="frameY"/>) in it.
+    /// </summary>
+    void CheckUpperBetween(const std::optional<MCInBetween>& between, const MCLegsStep& step, int32_t frameX,
+                           int32_t frameY)
+    {
+        MCTest::Scope scope(StepName(step));
+        REQUIRE(between.has_value());
+        CHECK_EQ(between->Frame, step.From);
+        CHECK_EQ(between->Next, step.To);
+        CHECK_EQ(between->Step, step.Step);
+        REQUIRE(between->Bounds.has_value());
+        CHECK_EQ(between->Bounds->FrameX, frameX);
+        CHECK_EQ(between->Bounds->FrameY, frameY);
+        CHECK_EQ(between->Bounds->Width, UpperWidth);
+        CHECK_EQ(between->Bounds->Height, UpperHeight);
+    }
+} // namespace
+
+/// <summary>
+/// Port-only (HD art's upper-body in-betweens): a torso's frame on its way to the next, at the legs' step, is drawn as
+/// the pack's in-between of that step over both frames' boxes (MCPartInBetween), as the legs' is: frame 0 (4 x 4 at
+/// the hot spot) toward frame 1 (4 x 4, 2 right and 1 down) over 6 x 5, the frame at its top left; frame 1 toward
+/// frame 0 over the same, the frame 2 right and 1 down in it. None where the pack lacks the step, has it at another
+/// size, or a frame is not the table's, nor with HD art off.
+/// </summary>
+TEST_CASE("hd art: a torso on its way to its next frame is drawn as the pack's in-between over both frames")
+{
+    const ScratchFolder scratch("upper-in-betweens");
+    WriteUpperTorso(scratch.Path());
+    const PackOn on(scratch.Path());
+    const std::shared_ptr<MCShape> shape = AttachedUpperTorso();
+    const auto none = [&](const MCLegsStep& step)
+    {
+        MCTest::Scope scope(StepName(step));
+        CHECK(!MCPartInBetween(shape->FrameList(), step).has_value());
+    };
+
+    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {0, 1, 1}), {0, 1, 1}, 0, 0);
+    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {0, 1, 2}), {0, 1, 2}, 0, 0);
+    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {1, 0, 1}), {1, 0, 1}, UpperRight, UpperDown);
+    none({0, 1, 3});
+    none({1, 0, 2});
+    none({0, 2, 1});
+    none({-1, 0, 1});
+
+    GHdArt = 0;
+    none({0, 1, 1});
+}
+
+/// <summary>
+/// Port-only (HD art's upper-body in-betweens): the GPU drawing, in mission 1, a player's mech walking has its torso
+/// (the test's, MCMechActor::UpperInBetween) drawn as the pack's in-between toward its next frame at its legs' step: a
+/// quarter of the way through frame 0, step 1 toward frame 1; played backwards, three quarters of the way through
+/// frame 1, step 1 of frame 0 toward it (a quarter of the way back), and none a quarter of the way through (step 3,
+/// which the pack has at another size). None for a frame not drawn as played, in the gun change or with the guns up,
+/// or with the legs on their transition's last frame (the next gesture's frames come next), but in a transition's
+/// middle as in the stride's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a walking mech's torso is drawn as the pack's in-between at its legs' step")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    // One of the player's mechs.
+    constexpr int32_t PlayerMech = 0x200;
+    const std::shared_ptr<MCMover> mover = GetMoverFromPartId(PlayerMech);
+    REQUIRE(mover != nullptr);
+    REQUIRE(mover->ObjectClass == MCObjectClass::BattleMech);
+    const auto actor = std::static_pointer_cast<MCMechActor>(std::static_pointer_cast<MCBattleMech>(mover)->Appearance);
+    REQUIRE(actor != nullptr);
+    REQUIRE(actor->MechTree != nullptr);
+    MCMechActor& mech = *actor;
+
+    const ScratchFolder scratch("upper-in-betweens-walk");
+    WriteUpperTorso(scratch.Path());
+    const PackOn on(scratch.Path());
+    const std::shared_ptr<MCShape> shape = AttachedUpperTorso();
+
+    // Walking, its legs on legsFrame, share of the way through it.
+    mech.CurrentGesture = MCStopGesture::Walk;
+    mech.InTransition = false;
+    mech.GestureDone = false;
+    mech.LyingStill = false;
+    mech.InCombatMode = false;
+    mech.CombatModeRaising = false;
+    mech.CombatModeLowering = false;
+    mech.PlayBackwards = false;
+    mech.StrideRate = 1.0f;
+    const float rate = mech.FrameRate[MCMechPart::Legs];
+    REQUIRE(rate > 0.0f);
+    const auto frames = static_cast<int32_t>(mech.MechTree->Gestures[MCStopGesture::Walk].NumFrames);
+    REQUIRE(frames > 2);
+    const auto through = [&](int32_t legsFrame, float share)
+    {
+        mech.CurrentFrame[MCMechPart::Legs] = legsFrame;
+        mech.CurrentTime[MCMechPart::Legs] = share / rate;
+    };
+
+    const auto upper = [&](int32_t frame, bool asPlayed) { return mech.UpperInBetween(*shape, frame, asPlayed); };
+    constexpr float Quarter = 0.25f;
+    constexpr float ThreeQuarters = 0.75f;
+
+    through(0, Quarter);
+    CheckUpperBetween(upper(0, true), {0, 1, 1}, 0, 0);
+    CHECK(!upper(0, false).has_value());
+
+    for (bool MCMechActor::* gunsUp :
+         {&MCMechActor::InCombatMode, &MCMechActor::CombatModeRaising, &MCMechActor::CombatModeLowering})
+    {
+        mech.*gunsUp = true;
+        CHECK(!upper(0, true).has_value());
+        mech.*gunsUp = false;
+    }
+
+    // Played backwards: from frame 0 toward frame 1, the rest of the way.
+    mech.PlayBackwards = true;
+    through(1, ThreeQuarters);
+    CheckUpperBetween(upper(1, true), {0, 1, 1}, 0, 0);
+    through(1, Quarter);
+    CHECK(!upper(1, true).has_value());
+    mech.PlayBackwards = false;
+
+    // In a transition: none with the legs on its last frame, wherever the torso is; in its middle, as in the stride.
+    mech.InTransition = true;
+    through(frames - 1, Quarter);
+    CHECK(!upper(0, true).has_value());
+    through(0, Quarter);
+    CheckUpperBetween(upper(0, true), {0, 1, 1}, 0, 0);
 }
 
 /// <summary>
@@ -1955,6 +3101,61 @@ TEST_CASE("hd art: a load's ground is read ahead by the readers, tiles and relie
 }
 
 /// <summary>
+/// Port-only (SPEC-first-use.md: a load): a load's overlays read ahead (MCHdArt::ReadOverlaysAhead, the map's roads,
+/// banks and rubble) are read by the readers as a load's reads, and once waited for and kept, each is found as a drawn
+/// one is (MCHdArt::FindOverlay), the same frame, without a read.
+/// </summary>
+TEST_CASE("hd art: a load's overlays are read ahead by the readers, found without a read")
+{
+    constexpr size_t Overlays = 6;
+    constexpr int32_t Side = 8;
+    constexpr uint8_t ShapeByte = 0x3c;
+    const ScratchFolder scratch("overlays-ahead");
+    std::vector<std::vector<uint8_t>> shapes;
+    std::vector<std::vector<uint8_t>> files;
+    std::vector<ArchiveEntry> entries;
+
+    for (size_t overlay = 0; overlay < Overlays; ++overlay)
+    {
+        shapes.push_back({static_cast<uint8_t>(overlay), ShapeByte, ShapeByte});
+        files.push_back(FrameFile(Side, Side, static_cast<int32_t>(overlay) + 1));
+        entries.push_back(Raw(MCHdArt::TerrainTileName(shapes.back()) + ".hdf", files.back()));
+    }
+
+    WriteBytes(scratch.Path() / "overlays.hda", BuildArchive(entries));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    std::vector<MCHdArt::GroundAhead> asked;
+
+    for (const std::vector<uint8_t>& shape : shapes)
+    {
+        asked.push_back({shape, Side, Side});
+    }
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::ReadOverlaysAhead(asked);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Overlays);
+    const size_t read = MCHdArt::FramesRead();
+
+    for (size_t overlay = 0; overlay < Overlays; ++overlay)
+    {
+        MCTest::Scope scope(std::format("overlay {}", overlay));
+        const std::shared_ptr<const MCHdArt::Frame> found = MCHdArt::FindOverlay(shapes[overlay], Side, Side);
+        REQUIRE(found != nullptr);
+        const auto decoded = MCHdArt::DecodeHdf(files[overlay], Side, Side);
+        REQUIRE(decoded.has_value());
+        CHECK(SameFrame(*found, *decoded));
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only (SPEC-first-use.md): shapes' frames read ahead (MCHdArt::ReadShapesAhead, the cursors' at the game's start)
 /// are read by the readers as a load's, several tables' folders in one archive in one read, and found once kept as a
 /// drawn one is, the same frames, without a read.
@@ -1991,7 +3192,7 @@ TEST_CASE("hd art: shapes' frames are read ahead by the readers, several tables'
 
     const size_t ahead = MCHdArt::FramesReadAhead();
     const size_t reads = MCHdArt::ReaderReads();
-    MCHdArt::ReadShapesAhead(asked);
+    MCHdArt::ReadShapesAhead(asked, MCHdArt::ReadAs::Load);
     MCHdArt::WaitForLoadReads();
     MCHdArt::KeepReadAhead();
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Tables);
@@ -2014,11 +3215,1115 @@ TEST_CASE("hd art: shapes' frames are read ahead by the readers, several tables'
     MCHdArt::SetPackFolder({});
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only: an archive of shapes' frames for the readers' runs (TakeRun): each piece a frame (a table's frame 0, of
+    /// <see cref="Side"/>'s or its own size) or bytes no frame holds, in the archive's order as given.
+    /// </summary>
+    struct RunPiece
+    {
+        int32_t Width = 0;
+        int32_t Height = 0;
+        size_t FillerBytes = 0;
+    };
+
+    class RunArchive
+    {
+    public:
+        static constexpr int32_t Side = 8;
+
+        /// <summary>
+        /// <paramref name="pieces"/> in an archive of version 1, or (<paramref name="version2"/>) of version 2 in one stream,
+        /// the bytes no frame holds an entry of their own there too.
+        /// </summary>
+        RunArchive(std::string_view name, std::span<const RunPiece> pieces, bool version2 = false) : _Scratch(name)
+        {
+            constexpr uint8_t TableByte = 0x5e;
+            std::vector<ArchiveEntry> entries;
+
+            for (const RunPiece& piece : pieces)
+            {
+                if (piece.FillerBytes > 0)
+                {
+                    entries.push_back(
+                        Raw(std::format("filler{}.bin", entries.size()), std::vector<uint8_t>(piece.FillerBytes)));
+                    continue;
+                }
+
+                const auto number = static_cast<uint8_t>(_Tables.size());
+                _Tables.push_back({number, TableByte, static_cast<uint8_t>(entries.size())});
+                _Sizes.emplace_back(piece.Width, piece.Height);
+                _Files.push_back(FrameFile(piece.Width, piece.Height, static_cast<int32_t>(number) + 1));
+                const std::filesystem::path folder = MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(_Tables.back()));
+                entries.push_back(Raw(MCFileSystem::ToUtf8(folder.filename()) + "\\0.hdf", _Files.back()));
+            }
+
+            WriteBytes(_Scratch.Path() /
+                           std::filesystem::path(MCHdArt::ShapeTableFolder(0)).parent_path().concat(".hda"),
+                       version2 ? BuildVersion2Archive(entries) : BuildArchive(entries));
+            MCHdArt::SetPackFolder(_Scratch.Path());
+        }
+
+        ~RunArchive() { MCHdArt::SetPackFolder({}); }
+        RunArchive(const RunArchive&) = delete;
+        RunArchive& operator=(const RunArchive&) = delete;
+
+        /// <summary>Has the readers read frame <paramref name="frame"/> (the archive's frames counted) as <paramref name="as"/>.</summary>
+        void Ask(size_t frame, MCHdArt::ReadAs as) const
+        {
+            const MCHdArt::ShapeAhead shape{_Tables[frame], 0, _Sizes[frame].first, _Sizes[frame].second};
+            MCHdArt::ReadShapesAhead(std::span(&shape, 1), as);
+        }
+
+        /// <summary>Frame <paramref name="frame"/> as drawn.</summary>
+        std::shared_ptr<const MCHdArt::Frame> Find(size_t frame) const
+        {
+            return MCHdArt::FindShape(MCHdArt::ShapeTableHash(_Tables[frame]), 0, _Sizes[frame].first,
+                                      _Sizes[frame].second);
+        }
+
+        /// <summary>Checks each frame is found without a read, as its own file decodes.</summary>
+        void CheckFound() const
+        {
+            const size_t read = MCHdArt::FramesRead();
+
+            for (size_t frame = 0; frame < _Tables.size(); ++frame)
+            {
+                MCTest::Scope scope(std::format("frame {}", frame));
+                const std::shared_ptr<const MCHdArt::Frame> found = Find(frame);
+                REQUIRE(found != nullptr);
+                const auto decoded = MCHdArt::DecodeHdf(_Files[frame], _Sizes[frame].first, _Sizes[frame].second);
+                REQUIRE(decoded.has_value());
+                CHECK(SameFrame(*found, *decoded));
+            }
+
+            CHECK_EQ(MCHdArt::FramesRead(), read);
+        }
+
+        size_t Frames() const { return _Tables.size(); }
+        size_t FileBytes(size_t frame) const { return _Files[frame].size(); }
+
+    private:
+        ScratchFolder _Scratch;
+        std::vector<std::vector<uint8_t>> _Tables;
+        std::vector<std::pair<int32_t, int32_t>> _Sizes;
+        std::vector<std::vector<uint8_t>> _Files;
+    };
+
+    /// <summary>A small frame, of RunArchive::Side.</summary>
+    constexpr RunPiece Small{RunArchive::Side, RunArchive::Side, 0};
+} // namespace
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): a reader takes the first read waiting and with it every read of the same archive
+/// waiting whose entry lies within MCHdArt::ReaderRunGap of the read's span, before it or after it, asked for in any
+/// order, in one read of at most MCHdArt::ReaderRunBytes: a gap wider than that splits them, the read's limit too, and an
+/// entry larger than it is read alone. Each frame is then found as drawn ones are, the same frame, without a read.
+/// </summary>
+TEST_CASE("hd art: the readers read an archive's waiting entries near each other in one read, in any order asked")
+{
+    // A frame of a third of the most a read takes (64 bytes of BC7 a shape pixel at the scale), one larger than it all.
+    constexpr RunPiece Third{80, 60, 0};
+    constexpr RunPiece Larger{130, 130, 0};
+    constexpr RunPiece Gap{0, 0, MCHdArt::ReaderRunGap + 1};
+    const ReaderScope readers({.Readers = 1});
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    struct Layout
+    {
+        std::string_view Name;
+        std::vector<RunPiece> Pieces;
+        std::vector<size_t> Asked;
+        size_t Reads = 0;
+    };
+
+    for (const Layout& layout :
+         {Layout{"back to back", std::vector<RunPiece>(8, Small), {5, 2, 7, 0, 3, 6, 1, 4}, 1},
+          Layout{"a gap past the widest read across",
+                 {Small, Small, Small, Small, Gap, Small, Small, Small, Small},
+                 {6, 1, 4, 3, 0, 7, 2, 5},
+                 2},
+          Layout{"three to the most a read takes", std::vector<RunPiece>(9, Third), {0, 1, 2, 3, 4, 5, 6, 7, 8}, 3},
+          Layout{"one larger than a read takes", {Small, Small, Larger, Small, Small}, {3, 2, 0, 4, 1}, 3}})
+    {
+        MCTest::Scope scope{std::string(layout.Name)};
+        const RunArchive archive("runs", layout.Pieces);
+        REQUIRE(archive.FileBytes(0) * 3 <= MCHdArt::ReaderRunBytes);
+        const size_t reads = MCHdArt::ReaderReads();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::HoldReads(true);
+
+        for (const size_t frame : layout.Asked)
+        {
+            archive.Ask(frame, MCHdArt::ReadAs::Set);
+        }
+
+        MCHdArt::HoldReads(false);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
+        CHECK_EQ(MCHdArt::ReaderReads(), reads + layout.Reads);
+        archive.CheckFound();
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md): the read a reader takes first is the most urgent waiting (a load's before the sets'),
+/// and the less urgent reads waiting near it come in the same read; a read whose frame the game's thread read itself
+/// meanwhile isn't read.
+/// </summary>
+TEST_CASE("hd art: the readers' first read takes the less urgent reads near it, and none the game's thread read")
+{
+    const ReaderScope readers({.Readers = 1});
+    const int previous = GHdArt;
+    GHdArt = 1;
+
+    {
+        MCTest::Scope scope("a load's frame amid a set's");
+        const RunArchive archive("runs-urgent", std::vector<RunPiece>(8, Small));
+        const size_t reads = MCHdArt::ReaderReads();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::HoldReads(true);
+
+        for (const size_t frame : {0, 1, 2, 3, 5, 6, 7})
+        {
+            archive.Ask(frame, MCHdArt::ReadAs::Set);
+        }
+
+        archive.Ask(4, MCHdArt::ReadAs::Load);
+        MCHdArt::HoldReads(false);
+        MCHdArt::WaitForLoadReads();
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
+        archive.CheckFound();
+    }
+
+    {
+        MCTest::Scope scope("a frame the game's thread read while it waited");
+        const RunArchive archive("runs-read", std::vector<RunPiece>(8, Small));
+        constexpr size_t ReadByTheGame = 2;
+        const size_t reads = MCHdArt::ReaderReads();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+        MCHdArt::HoldReads(true);
+
+        for (size_t frame = 0; frame < archive.Frames(); ++frame)
+        {
+            archive.Ask(frame, MCHdArt::ReadAs::Set);
+        }
+
+        const size_t read = MCHdArt::FramesRead();
+        REQUIRE(archive.Find(ReadByTheGame) != nullptr);
+        CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+        MCHdArt::HoldReads(false);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames() - 1);
+        archive.CheckFound();
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md): a version 2 archive's stream is read once for all its entries waiting, asked for in any
+/// order, however much larger it is than a read of neighbouring entries takes (MCHdArt::ReaderRunBytes): one reader takes
+/// them all, the others none (each holding the run it took until all have taken theirs); and unpacked once. Kept
+/// unpacked after, its other entries asked for later need no read. Each frame is found as drawn ones are, the same frame,
+/// without a read.
+/// </summary>
+TEST_CASE("hd art: the readers read a version 2 stream once for all its entries, however large it is")
+{
+    constexpr size_t Asked = 6;
+    constexpr RunPiece Filler{0, 0, MCHdArt::ReaderRunBytes};
+    const ReaderScope readers({.Readers = 4});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    std::vector<RunPiece> pieces(Asked + 2, Small);
+    pieces.push_back(Filler);
+    const RunArchive archive("runs-stream", pieces, true);
+    const size_t reads = MCHdArt::ReaderReads();
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::HoldReads(true);
+
+    for (const size_t frame : {4, 1, 5, 0, 3, 2})
+    {
+        archive.Ask(frame, MCHdArt::ReadAs::Set);
+    }
+
+    MCHdArt::HoldTakenRuns(true);
+    MCHdArt::HoldReads(false);
+    MCHdArt::WaitForHeldRun();
+    MCHdArt::HoldTakenRuns(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Asked);
+
+    {
+        MCTest::Scope scope("the stream's other frames asked for after, kept unpacked");
+
+        for (size_t frame = Asked; frame < archive.Frames(); ++frame)
+        {
+            archive.Ask(frame, MCHdArt::ReadAs::Set);
+        }
+
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
+    }
+
+    archive.CheckFound();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md): an entry asked for while a reader reads its stream (another reader free to read it) waits
+/// on that read, and is served from it: two entries of one stream asked for one after the other are one read.
+/// </summary>
+TEST_CASE("hd art: an entry asked for while its version 2 stream is read is served by that read")
+{
+    constexpr RunPiece Filler{0, 0, MCHdArt::ReaderRunBytes};
+    const ReaderScope readers({.Readers = 2});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const RunArchive archive("runs-joined", std::vector<RunPiece>{Small, Small, Filler}, true);
+    const size_t reads = MCHdArt::ReaderReads();
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::HoldTakenRuns(true);
+    archive.Ask(0, MCHdArt::ReadAs::Set);
+    MCHdArt::WaitForHeldRun();
+    archive.Ask(1, MCHdArt::ReadAs::Set);
+    MCHdArt::WaitForHeldRun();
+    MCHdArt::HoldTakenRuns(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::ReaderReads(), reads + 1);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + archive.Frames());
+    archive.CheckFound();
+    GHdArt = previous;
+}
+
+namespace
+{
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold): a stream of a HoldPack's archives: its kind, and the bytes no frame holds after its
+    /// frame (an entry of their own) to make it larger.
+    /// </summary>
+    struct HoldPiece
+    {
+        MCFastFile::StreamKind Kind = MCFastFile::StreamKind::Packet;
+        size_t FillerBytes = 0;
+    };
+
+    /// <summary>
+    /// Port-only (MCHdArt::StartHold): a pack of two version 2 archives of the same streams (HoldPiece's, each a shape
+    /// table's frame 0 of RunArchive::Side and its filler): the shapes' (shapes.hda), whose frames FindShape draws, and
+    /// another (MoreFolder's), opened apart.
+    /// </summary>
+    class HoldPack
+    {
+    public:
+        static constexpr std::string_view MoreFolder = "more";
+
+        HoldPack(std::string_view name, std::span<const HoldPiece> pieces) : _Scratch(name)
+        {
+            constexpr uint8_t TableByte = 0x6b;
+            std::vector<Version2Stream> streams;
+
+            for (const HoldPiece& piece : pieces)
+            {
+                const auto number = static_cast<uint8_t>(_Tables.size());
+                _Tables.push_back({number, TableByte});
+                _Files.push_back(FrameFile(RunArchive::Side, RunArchive::Side, number + 1));
+                const std::filesystem::path folder = MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(_Tables.back()));
+                Version2Stream& stream = streams.emplace_back(Version2Stream{{}, piece.Kind});
+                stream.Entries.push_back(Raw(MCFileSystem::ToUtf8(folder.filename()) + "\\0.hdf", _Files.back()));
+
+                if (piece.FillerBytes > 0)
+                {
+                    stream.Entries.push_back(
+                        Raw(std::format("filler{}.bin", number), std::vector<uint8_t>(piece.FillerBytes)));
+                }
+
+                _Kinds.push_back(piece.Kind);
+                _Stored.push_back(_Files.back().size() + piece.FillerBytes);
+            }
+
+            const std::vector<uint8_t> archive = BuildVersion2Streams(streams);
+            _Shapes = _Scratch.Path() / std::filesystem::path(ShapesFolder()).concat(".hda");
+            WriteBytes(_Shapes, archive);
+            WriteBytes(_Scratch.Path() / std::filesystem::path(MoreFolder).concat(".hda"), archive);
+            MCHdArt::SetPackFolder(_Scratch.Path());
+        }
+
+        ~HoldPack() { MCHdArt::SetPackFolder({}); }
+        HoldPack(const HoldPack&) = delete;
+        HoldPack& operator=(const HoldPack&) = delete;
+
+        /// <summary>The pack's folder of shapes' frames, which shapes.hda stands for.</summary>
+        static std::filesystem::path ShapesFolder() { return MCHdArt::ShapeTableFolder(0).parent_path(); }
+
+        /// <summary>Opens the shapes' archive (or the other), as a mission's load does, reading none of its streams.</summary>
+        void Open(bool more = false) const
+        {
+            MCHdArt::ArchiveFacts(more ? std::filesystem::path(MoreFolder) : ShapesFolder(), 0);
+        }
+
+        /// <summary>Whether the hold keeps stream <paramref name="stream"/>: a packet's or the heads'.</summary>
+        bool Held(size_t stream) const
+        {
+            return _Kinds[stream] == MCFastFile::StreamKind::Packet || _Kinds[stream] == MCFastFile::StreamKind::Heads;
+        }
+
+        /// <summary>The stored bytes the hold keeps of one of the archives: its packets' and heads' streams'.</summary>
+        size_t HeldBytes() const
+        {
+            size_t bytes = 0;
+
+            for (size_t stream = 0; stream < _Stored.size(); ++stream)
+            {
+                bytes += Held(stream) ? _Stored[stream] : 0;
+            }
+
+            return bytes;
+        }
+
+        /// <summary>Has the readers read stream <paramref name="stream"/>'s frame as <paramref name="as"/>.</summary>
+        void Ask(size_t stream, MCHdArt::ReadAs as) const
+        {
+            const MCHdArt::ShapeAhead shape{_Tables[stream], 0, RunArchive::Side, RunArchive::Side};
+            MCHdArt::ReadShapesAhead(std::span(&shape, 1), as);
+        }
+
+        /// <summary>
+        /// Checks each stream's frame is drawn, as its own file decodes, where the hold keeps it (or the readers read it
+        /// ahead), and none where it doesn't: its file cut (CutShapes), they can't be read.
+        /// </summary>
+        void CheckDrawnFromTheHold() const
+        {
+            for (size_t stream = 0; stream < _Tables.size(); ++stream)
+            {
+                MCTest::Scope scope(std::format("stream {}", stream));
+                const std::shared_ptr<const MCHdArt::Frame> found =
+                    MCHdArt::FindShape(MCHdArt::ShapeTableHash(_Tables[stream]), 0, RunArchive::Side, RunArchive::Side);
+
+                if (!Held(stream))
+                {
+                    CHECK(found == nullptr);
+                    continue;
+                }
+
+                REQUIRE(found != nullptr);
+                const auto decoded = MCHdArt::DecodeHdf(_Files[stream], RunArchive::Side, RunArchive::Side);
+                REQUIRE(decoded.has_value());
+                CHECK(SameFrame(*found, *decoded));
+            }
+        }
+
+        /// <summary>Cuts the shapes' archive's file to nothing (open, it stays open), so no stream of it can be read.</summary>
+        void CutShapes() const { std::filesystem::resize_file(_Shapes, 0); }
+
+        const std::filesystem::path& Folder() const { return _Scratch.Path(); }
+
+    private:
+        ScratchFolder _Scratch;
+        std::filesystem::path _Shapes;
+        std::vector<std::vector<uint8_t>> _Tables;
+        std::vector<std::vector<uint8_t>> _Files;
+        std::vector<MCFastFile::StreamKind> _Kinds;
+        std::vector<size_t> _Stored;
+    };
+
+    /// <summary>The hold started (MCHdArt::StartHold) and done reading.</summary>
+    void HoldAndWait()
+    {
+        MCHdArt::StartHold();
+        MCHdArt::WaitForHold();
+    }
+
+    using StreamKind = MCFastFile::StreamKind;
+} // namespace
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md's Memory: the hold): once a mission's load is done (MCHdArt::StartHold), the readers read
+/// every version 2 archive open, and one opened later, and keep its packets' and heads' streams as stored, the tiles' and
+/// pictures' not: two reads here, the tiles and pictures between the streams cutting the archive's run. Its file cut to
+/// nothing after, the frames of the streams held are drawn as they were made, and one the readers read ahead is read from
+/// memory (no read of theirs); those of the streams not held can't be read.
+/// </summary>
+TEST_CASE("hd art: the hold keeps a mission's packet and heads streams as stored, and their frames need no read")
+{
+    constexpr size_t AheadStream = 1;
+    constexpr size_t HoldRuns = 2;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet},   {StreamKind::Packet, 1000},
+                                        {StreamKind::Tiles}, {StreamKind::Pictures}, {StreamKind::Packet}};
+
+    for (const bool openedLater : {false, true})
+    {
+        MCTest::Scope scope(openedLater ? "an archive opened after the load" : "an archive open as the load ends");
+        const HoldPack pack("hold", pieces);
+        const size_t holdReads = MCHdArt::HeldReads();
+        const size_t reads = MCHdArt::ReaderReads();
+        const size_t ahead = MCHdArt::FramesReadAhead();
+
+        if (!openedLater)
+        {
+            pack.Open();
+        }
+
+        MCHdArt::StartHold();
+
+        if (openedLater)
+        {
+            pack.Open();
+        }
+
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+        CHECK_EQ(MCHdArt::HeldReads(), holdReads + HoldRuns);
+        pack.CutShapes();
+        pack.Ask(AheadStream, MCHdArt::ReadAs::Set);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 1);
+        CHECK_EQ(MCHdArt::ReaderReads(), reads);
+        pack.CheckDrawnFromTheHold();
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md's Memory): the machine's memory decides the hold (MCHdArt::HoldWanted): off below 16 GB's
+/// tier as the system reports it (MCHdArt::HoldLeastMemory), on from it; the command line's <c>-hdhold on|off</c> (the
+/// tests' and benchmarks') overrides it, and a value it can't take leaves it as it was.
+/// </summary>
+TEST_CASE("hd art: the hold is off below 16 GB and with -hdhold off, on from 16 GB and with -hdhold on")
+{
+    constexpr uint64_t EightGb = uint64_t{8} << 30;
+    constexpr uint64_t ThirtyTwoGb = uint64_t{32} << 30;
+    constexpr uint64_t Mib = uint64_t{1} << 20;
+    const ReaderScope readers({.Readers = 1});
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    const MCFakeMemoryScope memory(system);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Packet}};
+    const HoldPack pack("hold-memory", pieces);
+    pack.Open();
+
+    struct Case
+    {
+        std::string_view Name;
+        uint64_t Total = 0;
+        std::string_view Line;
+        bool Held = false;
+    };
+
+    for (const Case& test : {Case{"8 GB", EightGb, {}, false},
+                             Case{"a MB short of 16 GB's tier", MCHdArt::HoldLeastMemory - Mib, {}, false},
+                             Case{"16 GB's tier", MCHdArt::HoldLeastMemory, {}, true},
+                             Case{"32 GB with -hdhold off", ThirtyTwoGb, "-hdhold off", false},
+                             Case{"8 GB with -hdhold on", EightGb, "-hdhold ON", true}})
+    {
+        MCTest::Scope scope{std::string(test.Name)};
+        system->Total = test.Total;
+        MCHdArt::SetReaderSettings({.Readers = 1});
+
+        if (!test.Line.empty())
+        {
+            ParseCommandLine(test.Line);
+        }
+
+        CHECK_EQ(MCHdArt::HoldWanted(), test.Held);
+        HoldAndWait();
+        CHECK_EQ(MCHdArt::HeldBytes(), test.Held ? pack.HeldBytes() : 0);
+        MCHdArt::LetGoHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    }
+
+    ParseCommandLine("-hdhold off -hdhold maybe");
+    CHECK(MCHdArt::GetReaderSettings().Hold == std::optional<bool>(false));
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md's Memory): the hold is let go of whole when memory goes short (MCHdArt::NextFrame), and
+/// holds nothing more that mission (an archive opened after isn't held) until the next mission's starts it again; at a
+/// mission's end (MCHdArt::LetGoHold, MCMission::EndScenario's); and when the pack is set.
+/// </summary>
+TEST_CASE("hd art: the hold is let go of when memory goes short, at a mission's end and when the pack is set")
+{
+    constexpr size_t Archives = 2;
+    const ReaderScope readers({.Readers = 1, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("hold-let-go", pieces);
+    pack.Open();
+    HoldAndWait();
+    REQUIRE_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+
+    {
+        MCTest::Scope scope("memory short");
+        MCHdArt::NextFrame(false);
+        CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+        MCHdArt::NextFrame(true);
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        pack.Open(true);
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        HoldAndWait();
+        CHECK_EQ(MCHdArt::HeldBytes(), Archives * pack.HeldBytes());
+    }
+
+    {
+        MCTest::Scope scope("a mission's end");
+        MCHdArt::LetGoHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        HoldAndWait();
+        CHECK_EQ(MCHdArt::HeldBytes(), Archives * pack.HeldBytes());
+    }
+
+    {
+        MCTest::Scope scope("the pack set");
+        MCHdArt::SetPackFolder(pack.Folder());
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-pack-v2.md's Memory): the hold reads below everything else, a run of at most MCHdArt::HoldRunBytes at
+/// a time: a load's read asked for while the one reader reads the hold's first run (each run here a stream as large) is
+/// read as that run ends, before the hold's next two (the HD trace's H lines and the load's R line, in order).
+/// </summary>
+TEST_CASE("hd art: a read asked for while the hold reads waits for one of the hold's runs at most")
+{
+    constexpr size_t AskedStream = 3;
+    constexpr size_t HoldRuns = 3;
+    // The kind's place in a reader's read's trace line (R begun read unpacked kind ...).
+    constexpr size_t ReadKindField = 4;
+    const ReaderScope readers({.Readers = 1, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Packet, MCHdArt::HoldRunBytes},
+                                        {StreamKind::Packet, MCHdArt::HoldRunBytes},
+                                        {StreamKind::Packet, MCHdArt::HoldRunBytes},
+                                        {StreamKind::Tiles}};
+    const HoldPack pack("hold-urgent", pieces);
+    const ScratchFolder traces("hold-urgent-trace");
+    const std::filesystem::path trace = traces.Path() / "trace.tsv";
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    REQUIRE(MCHdArt::OpenTrace(trace));
+    pack.Open();
+    MCHdArt::HoldTakenRuns(true);
+    MCHdArt::StartHold();
+    MCHdArt::WaitForHeldRun();
+    pack.Ask(AskedStream, MCHdArt::ReadAs::Load);
+    MCHdArt::HoldTakenRuns(false);
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::WaitForHold();
+    MCHdArt::CloseTrace();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 1);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+
+    size_t holds = 0;
+    std::optional<size_t> holdsBeforeLoad;
+    std::ifstream in(trace);
+
+    for (std::string line; std::getline(in, line);)
+    {
+        std::vector<std::string> fields;
+
+        for (const auto part : std::views::split(line, '\t'))
+        {
+            fields.emplace_back(part.begin(), part.end());
+        }
+
+        if (fields.front() == "H")
+        {
+            ++holds;
+        }
+        else if (fields.front() == "R" && fields.size() > ReadKindField && fields[ReadKindField] == "load")
+        {
+            holdsBeforeLoad = holdsBeforeLoad.value_or(holds);
+        }
+    }
+
+    CHECK_EQ(holds, HoldRuns);
+    REQUIRE(holdsBeforeLoad.has_value());
+    CHECK_EQ(*holdsBeforeLoad, 1u);
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only: a sprite packet stripped for a version 2 pack's record 1 (MCPackRecords::ShapeTable) keeps its gesture
+/// header, its frames' count, their headers and translucency and their directory's second words, and a frame it lists but
+/// doesn't hold, without the rows: the table ends after its last frame's header. A packet with no table, or one whose
+/// directory runs past it, is refused.
+/// </summary>
+TEST_CASE("hd art: a shape table stripped for a version 2 pack keeps its frames' headers, not their rows")
+{
+    constexpr std::array<uint8_t, 6> GestureHeader = {1, 2, 3, 4, 5, 6};
+    constexpr size_t HeaderBytes = sizeof(MCVfxShapeHeader);
+    constexpr size_t TranslucentBytes = 2;
+    constexpr int32_t NotHeld = 1;
+    constexpr int32_t Translucent = 2;
+    constexpr uint32_t SecondWord = 0x1234;
+    constexpr size_t SecondWordAt = 12;
+    // A run of 3 of colour 7, then the row's end; the translucent frame's starts 03 00 (a lone pixel of colour 0).
+    constexpr std::array<uint8_t, 3> OpaqueRows = {6, 7, 0};
+    constexpr std::array<uint8_t, 5> TranslucentRows = {3, 0, 4, 9, 0};
+    const std::array<MCTestShapes::TableFrame, 3> frames = {MCTestShapes::TableFrame{0, 0, 3, 1, OpaqueRows},
+                                                            MCTestShapes::TableFrame{1, 0, 3, 1, OpaqueRows},
+                                                            MCTestShapes::TableFrame{-1, -2, 3, 1, TranslucentRows}};
+    std::vector<uint8_t> table = MCTestShapes::FramesTable(frames);
+    // Frame 1 listed but not held (its directory entry at the table's end, as OB-190's are).
+    PutAt(table, static_cast<size_t>(8 + 8 * NotHeld), static_cast<uint32_t>(table.size()));
+    PutAt(table, SecondWordAt, SecondWord);
+    std::vector<uint8_t> packet(GestureHeader.begin(), GestureHeader.end());
+    packet.insert(packet.end(), table.begin(), table.end());
+
+    for (const bool gesture : {true, false})
+    {
+        MCTest::Scope scope(gesture ? "a gesture's packet" : "a bare table");
+        const std::expected<std::vector<uint8_t>, std::string> stripped =
+            MCPackRecords::ShapeTable(gesture ? std::span<const uint8_t>(packet) : std::span<const uint8_t>(table));
+        REQUIRE(stripped.has_value());
+        const size_t start = gesture ? GestureHeader.size() : 0;
+        CHECK(std::ranges::equal(std::span(*stripped).first(start), std::span(GestureHeader).first(start)));
+        const std::span<const uint8_t> kept = std::span(*stripped).subspan(start);
+        CHECK_EQ(kept.size(), 8 + 8 * frames.size() + 2 * HeaderBytes + TranslucentBytes);
+        CHECK_EQ(VfxShapeCount(kept), VfxShapeCount(table));
+        CHECK_EQ(MCVfxRead32(kept, SecondWordAt), static_cast<int32_t>(SecondWord));
+
+        for (int32_t frame = 0; frame < static_cast<int32_t>(frames.size()); ++frame)
+        {
+            MCTest::Scope frameScope(std::format("frame {}", frame));
+            REQUIRE_EQ(MCVfxHasShape(kept, frame), frame != NotHeld);
+            CHECK_EQ(MCAgShapeIsAlpha(kept, frame), frame == Translucent);
+
+            if (frame != NotHeld)
+            {
+                CHECK(std::ranges::equal(MCVfxShape(kept, frame).first(HeaderBytes),
+                                         MCVfxShape(std::span<const uint8_t>(table), frame).first(HeaderBytes)));
+            }
+        }
+    }
+
+    CHECK(!MCPackRecords::ShapeTable(GestureHeader).has_value());
+    std::vector<uint8_t> overlong = table;
+    PutAt(overlong, 4, static_cast<int32_t>(table.size()));
+    CHECK(!MCPackRecords::ShapeTable(overlong).has_value());
+}
+
+namespace
+{
+    /// <summary>
+    /// A version 2 frame of <paramref name="frame"/> of <paramref name="table"/> at <paramref name="scale"/> times its
+    /// size: the tests' colours, and its index picture the pixels the original's rows draw (MCHdArt::HasIndex).
+    /// </summary>
+    std::vector<uint8_t> MarkedFrameFile(std::span<const uint8_t> table, int32_t frame, int32_t scale)
+    {
+        const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+        const auto width = static_cast<int32_t>(bounds.Width);
+        const auto height = static_cast<int32_t>(bounds.Height);
+        MCHdArt::Frame hd;
+        hd.Width = width * scale;
+        hd.Height = height * scale;
+        hd.Scale = scale;
+        hd.Colors = SpriteLike(hd.Width, hd.Height);
+        hd.Indices.assign(static_cast<size_t>(width) * height * MCHdArt::IndexBytes, 0);
+        hd.Marked = true;
+        VfxShapeVisit(table, frame,
+                      [&](int32_t x, int32_t y, uint8_t color)
+                      {
+                          const int32_t column = x - static_cast<int32_t>(bounds.MinX);
+                          const int32_t row = y - static_cast<int32_t>(bounds.MinY);
+                          REQUIRE((column >= 0 && column < width && row >= 0 && row < height));
+                          const size_t at = (static_cast<size_t>(row) * width + column) * MCHdArt::IndexBytes;
+                          hd.Indices[at] = color;
+                          hd.Indices[at + 1] = MCHdArt::HasIndex;
+                      });
+        return MCHdArt::EncodeHdf(hd);
+    }
+
+    /// <summary>The pixels <paramref name="visit"/> visits of a frame, in order of their place.</summary>
+    std::vector<std::tuple<int32_t, int32_t, uint8_t>> Visited(
+        const std::function<void(const std::function<void(int32_t, int32_t, uint8_t)>&)>& visit)
+    {
+        std::vector<std::tuple<int32_t, int32_t, uint8_t>> pixels;
+        visit([&pixels](int32_t x, int32_t y, uint8_t color) { pixels.emplace_back(y, x, color); });
+        std::ranges::sort(pixels);
+        return pixels;
+    }
+}
+
+/// <summary>
+/// Port-only: with HD art drawing on the GPU alone and a version 2 pack whose mech folder holds its packet's stripped
+/// table (record 1) and a frame for each frame the table holds with a box, the mech's shape is loaded from the pack in
+/// place of its packet (no rows: MCHdArt::Stripped), its pixels visited from its frames' index pictures as the
+/// original's rows visit them (MCHdArt::VisitShape), and with HD art off it takes its packet again
+/// (MCSpriteManager::RestoreOriginalShapes). A folder lacking one of its frames is loaded from the packet, which the
+/// guard of test runs notes (MCHdArt::GuardOriginalReads); given the packet whole as its record (the builder's for a
+/// folder the pack lacks frames of), from the pack with its rows, nothing read.
+/// </summary>
+TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's shapes, their pixels from the frames")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    constexpr int32_t Scale = 2;
+    const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree("madcat");
+    REQUIRE(tree != nullptr);
+    const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+    REQUIRE(sprites != nullptr);
+
+    // Two packets of one part's PAK, so one archive holds both: the first whole, the second lacking a frame.
+    const std::vector<MCGesturePacket> preloaded = tree->PreloadPackets();
+    REQUIRE(!preloaded.empty());
+    std::vector<MCGesturePacket> packets = {preloaded.front()};
+
+    for (const MCGesturePacket& packet : preloaded)
+    {
+        if (packet.FilePart == packets.front().FilePart && packet.Packet != packets.front().Packet)
+        {
+            packets.push_back(packet);
+            break;
+        }
+    }
+
+    REQUIRE_EQ(packets.size(), 2);
+    const MCMechPart part = packets.front().FilePart;
+    const uint32_t mechNum = tree->FileNumbers[part];
+    const auto load = [&](size_t which)
+    {
+        const std::shared_ptr<MCShape> shape =
+            sprites->GetMechShapeData(mechNum, packets[which].Packet, part, Turn, tree, true);
+        REQUIRE(shape != nullptr);
+        return shape;
+    };
+
+    const auto folderOf = [&](size_t which)
+    {
+        return MCHdArt::FolderOf(
+            MCHdArt::MechShapeKey{sprites->PartFileName(part, true), mechNum, packets[which].Packet});
+    };
+
+    std::vector<std::vector<uint8_t>> originals;
+    std::vector<ArchiveEntry> entries;
+    std::map<std::string, std::vector<uint8_t>> facts;
+
+    for (size_t which = 0; which < packets.size(); ++which)
+    {
+        const std::span<const uint8_t> table = load(which)->FrameList();
+        originals.emplace_back(table.begin(), table.end());
+        const std::string folder = std::to_string(packets[which].Packet);
+        std::vector<int32_t> boxed;
+
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+
+            if (MCVfxHasShape(table, frame) && bounds.Width > 0.0f && bounds.Height > 0.0f)
+            {
+                boxed.push_back(frame);
+            }
+        }
+
+        REQUIRE(!boxed.empty());
+
+        // The second packet's folder lacks its last frame.
+        for (const int32_t frame : which == 0 ? boxed : std::vector(boxed.begin(), boxed.end() - 1))
+        {
+            entries.push_back(Raw(std::format("{}\\{}.hdf", folder, frame), MarkedFrameFile(table, frame, Scale)));
+        }
+
+        const std::expected<std::vector<uint8_t>, std::string> stripped = MCPackRecords::ShapeTable(table);
+        REQUIRE(stripped.has_value());
+        facts[folder] = FactsRecord(MCPackRecords::Type::ShapeTable, *stripped);
+    }
+
+    const ScratchFolder scratch("stripped-tables");
+    const std::filesystem::path archive =
+        scratch.Path() / std::filesystem::path(folderOf(0)).parent_path().concat(".hda");
+    std::filesystem::create_directories(archive.parent_path());
+    WriteBytes(archive, BuildVersion2Archive(entries, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    sprites->DumpAll();
+    REQUIRE(MCHdArt::DrawsStrippedTables());
+    const size_t fromPack = sprites->ShapeTablesFromPack();
+    // The guard of test runs (-hdguard) on, to note the packet read from its PAK.
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+    const std::shared_ptr<MCShape> stripped = load(0);
+    const std::shared_ptr<MCShape> lacking = load(1);
+    const std::optional<std::vector<MCHdArt::GuardedRead>> guarded = MCHdArt::GuardedReads();
+    REQUIRE(guarded.has_value());
+    REQUIRE_EQ(guarded->size(), size_t{1});
+    CHECK_EQ(guarded->front().Count, size_t{1});
+    CHECK_EQ(guarded->front().Examples.front(), MCFileSystem::ToUtf8(std::filesystem::path(folderOf(1))));
+    MCHdArt::GuardOriginalReads(false);
+    CHECK(stripped->Stripped);
+    CHECK(MCHdArt::Stripped(stripped->FrameList()));
+    CHECK(stripped->FrameList().size() < originals[0].size());
+    CHECK(!lacking->Stripped);
+    CHECK(std::ranges::equal(lacking->FrameList(), originals[1]));
+    CHECK_EQ(sprites->ShapeTablesFromPack(), fromPack + 1);
+    const std::span<const uint8_t> original = originals[0];
+    REQUIRE_EQ(VfxShapeCount(stripped->FrameList()), VfxShapeCount(original));
+    size_t visited = 0;
+
+    for (int32_t frame = 0; frame < VfxShapeCount(original); ++frame)
+    {
+        MCTest::Scope scope(std::format("frame {}", frame));
+        CHECK_EQ(MCVfxHasShape(stripped->FrameList(), frame), MCVfxHasShape(original, frame));
+        using Pixel = std::function<void(int32_t, int32_t, uint8_t)>;
+        const auto fromRows = Visited([&](const Pixel& pixel) { VfxShapeVisit(original, frame, pixel); });
+        const auto fromFrame =
+            Visited([&](const Pixel& pixel) { MCHdArt::VisitShape(stripped->FrameList(), frame, pixel); });
+        CHECK(fromFrame == fromRows);
+        visited += fromRows.size();
+    }
+
+    CHECK(visited > 0);
+    CHECK_EQ(sprites->RestoreOriginalShapes(), 1);
+    CHECK(!stripped->Stripped);
+    CHECK(!MCHdArt::Stripped(stripped->FrameList()));
+    CHECK(std::ranges::equal(stripped->FrameList(), originals[0]));
+
+    // The folder lacking a frame given its packet whole as its record (the builder's): loaded from the pack with its
+    // rows, nothing read of the original's.
+    facts[std::to_string(packets[1].Packet)] = FactsRecord(MCPackRecords::Type::ShapeTable, originals[1]);
+    WriteBytes(archive, BuildVersion2Archive(entries, facts));
+    MCHdArt::SetPackFolder({});
+    MCHdArt::SetPackFolder(scratch.Path());
+    sprites->DumpAll();
+    MCHdArt::GuardOriginalReads(true);
+    const size_t beforeWhole = sprites->ShapeTablesFromPack();
+    const std::shared_ptr<MCShape> whole = load(1);
+    CHECK(!whole->Stripped);
+    CHECK(std::ranges::equal(whole->FrameList(), originals[1]));
+    CHECK_EQ(sprites->ShapeTablesFromPack(), beforeWhole + 1);
+    const std::optional<std::vector<MCHdArt::GuardedRead>> wholeReads = MCHdArt::GuardedReads();
+    REQUIRE(wholeReads.has_value());
+    CHECK(wholeReads->empty());
+    MCHdArt::GuardOriginalReads(false);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
 /// <summary>
 /// Port-only (SPEC-first-use.md): the command line sets how HD art's readers read (<c>-hdreaders</c>,
 /// <c>-hdsetreads</c>, <c>-hdreaderpriority</c>), the readers held to 1 to MCHdArt::MostReaders; a value a switch can't
 /// take leaves its setting as it was.
 /// </summary>
+/// <summary>
+/// Port-only (PLAN.md's first-use item 10): with a version 2 pack, whose overlays' frames mark the pixels the original
+/// draws apart from those their indices spread to, the terrain's load leaves the map's overlays, the .pre's and its
+/// mines' tiles unread (MCTerrainLeaveRebuiltTiles, MCTerrainReadMinesAhead), and the .pre's ground tiles no vertex
+/// names, never drawn; with those its bridges, forests and walls take as they're destroyed
+/// (MCTerrainDestroyedOverlaySlots), the load's HD ground
+/// (MCTerrainReadHdTiles) puts each overlay in the cache rebuilt from its HD frame, byte for byte the original's packet;
+/// one whose frame doesn't hold its pixels is read, which the guard of test runs notes (MCHdArt::GuardOriginalReads),
+/// and no other. Mission 8, which starts with mined cells, its tile set opened again with none read.
+/// </summary>
+TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays, its .pre's and its mines' tiles, "
+                   "none read, the guard noting the one read")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t MinedMission = 8;
+    constexpr int32_t Scale = 2;
+    constexpr float FrameSeconds = 1.0f / 15.0f;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(MinedMission));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    REQUIRE(terrain != nullptr);
+    // The mission's tile set opened again twice: one with none read, one to hold the rebuilt ones to.
+    const auto open = [&terrain]() -> std::unique_ptr<MCTerrainTiles>
+    {
+        for (const std::string_view set : {"tiles", "gtiles"})
+        {
+            std::expected<std::unique_ptr<MCTerrainTiles>, std::string> tiles = MCTerrainTiles::Create(set);
+
+            if (tiles.has_value() && (*tiles)->FilesHash() == terrain->Tiles->FilesHash())
+            {
+                return std::move(*tiles);
+            }
+        }
+
+        return nullptr;
+    };
+
+    std::unique_ptr<MCTerrainTiles> fresh = open();
+    const std::unique_ptr<MCTerrainTiles> reference = open();
+    REQUIRE(fresh != nullptr);
+    REQUIRE(reference != nullptr);
+    const MCOptionalRef<const MCKnownGroundNames> known = MCKnownGroundNamesOf(*fresh);
+    REQUIRE(known.has_value());
+    const auto isOverlay = [&known](int32_t slot) { return known->get().At(slot).Overlay.has_value(); };
+
+    // The map's overlays, the .pre's besides, its destroyed bridges', forests' and walls', then its mines' tiles.
+    const std::vector<int32_t> mapUsed = terrain->MapBlocks->TilesUsed();
+    std::vector<int32_t> slots;
+    std::ranges::copy_if(mapUsed, std::back_inserter(slots), isOverlay);
+    const size_t mapOverlays = slots.size();
+    const auto addOverlays = [&slots, &isOverlay](std::span<const int32_t> more)
+    {
+        for (const int32_t slot : more)
+        {
+            if (isOverlay(slot) && !std::ranges::contains(slots, slot))
+            {
+                slots.push_back(slot);
+            }
+        }
+    };
+
+    addOverlays(terrain->PreloadedSlots);
+    const size_t preOverlays = slots.size() - mapOverlays;
+    addOverlays(MCTerrainDestroyedOverlaySlots());
+    const size_t destroyedOverlays = slots.size() - mapOverlays - preOverlays;
+    addOverlays(MCTerrainMineSlots(*terrain));
+    REQUIRE(mapOverlays > 0);
+    REQUIRE(preOverlays > 0);
+    REQUIRE(slots.size() > mapOverlays + preOverlays + destroyedOverlays);
+
+    // Their HD frames at version 2: the original's index where it draws, spread everywhere else; the first overlay's
+    // first drawn pixel one index off, a pack that doesn't match the game's.
+    std::vector<ArchiveEntry> entries;
+
+    for (const int32_t slot : slots)
+    {
+        const MCGroundName name = *known->get().At(slot).Overlay;
+        const std::optional<MCHdArt::GroundAhead> shape = MCGroundOverlayOf(*reference, slot);
+        REQUIRE(shape.has_value());
+        std::vector<uint8_t> indices = MCGroundOverlayIndices(reference->Lookup(slot), name);
+        REQUIRE(!indices.empty());
+        bool misnamed = slot == slots.front();
+
+        for (size_t at = 0; at < indices.size(); at += MCHdArt::IndexBytes)
+        {
+            if (indices[at + 1] == 0)
+            {
+                indices[at + 1] = MCHdArt::Spread;
+            }
+            else if (misnamed)
+            {
+                ++indices[at];
+                misnamed = false;
+            }
+        }
+
+        MCHdArt::Frame hd;
+        hd.Width = name.Width * Scale;
+        hd.Height = name.Height * Scale;
+        hd.Scale = Scale;
+        hd.Colors = SpriteLike(hd.Width, hd.Height);
+        hd.Indices = std::move(indices);
+        hd.Marked = true;
+        entries.push_back(Raw(MCHdArt::TerrainTileName(shape->Tile) + ".hdf", MCHdArt::EncodeHdf(hd)));
+    }
+
+    const ScratchFolder scratch("overlays-rebuilt");
+    WriteBytes(scratch.Path() / (std::string(MCHdArt::OverlayFolder) + ".hda"), BuildVersion2Archive(entries));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    REQUIRE(MCHdArt::MarksOriginalPixels(MCHdArt::OverlayFolder));
+    terrain->Tiles = std::move(fresh);
+    // The guard of test runs (-hdguard) on, to note the original's tiles read.
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    // The terrain's load (the .pre's slots, then the map's) leaves out the overlays and the .pre's ground tiles no
+    // vertex names; the mines' read leaves theirs.
+    std::vector<int32_t> used = terrain->PreloadedSlots;
+    used.insert(used.end(), mapUsed.begin(), mapUsed.end());
+    MCTerrainLeaveRebuiltTiles(*terrain, used);
+    CHECK(std::ranges::none_of(used, isOverlay));
+    CHECK(std::ranges::none_of(
+        used, [&known, &mapUsed](int32_t slot)
+        { return known->get().At(slot).Tile.has_value() && !std::ranges::contains(mapUsed, slot); }));
+    MCTerrainReadMinesAhead();
+    const auto cached = [&terrain](int32_t slot)
+    {
+        const MCOptionalRef<const MCTerrainTile> tile = terrain->Tiles->Slot(slot);
+        return tile.has_value() && !tile->get().TileData().empty();
+    };
+
+    CHECK(std::ranges::none_of(slots, cached));
+
+    // The load's HD ground rebuilds all but the misnamed one, which it reads.
+    const MCGroundRebuilt done = MCTerrainReadHdTiles();
+    CHECK_EQ(done.Overlays, slots.size() - 1);
+    size_t differ = 0;
+
+    for (const int32_t slot : slots)
+    {
+        REQUIRE(cached(slot));
+        differ += std::ranges::equal(terrain->Tiles->Slot(slot)->get().TileData(), reference->Lookup(slot)) ? 0 : 1;
+    }
+
+    std::cout << std::format(
+        "  mission {}: {} overlays, {} the .pre's, {} destroyed objects' and {} mines' tiles, {} rebuilt from HD\n",
+        MinedMission, mapOverlays, preOverlays, destroyedOverlays,
+        slots.size() - mapOverlays - preOverlays - destroyedOverlays, done.Overlays);
+    CHECK_EQ(differ, size_t{0});
+    // The guard noted the misnamed overlay read from the tile file, and no other overlay.
+    const std::optional<std::vector<MCHdArt::GuardedRead>> guarded = MCHdArt::GuardedReads();
+    REQUIRE(guarded.has_value());
+    const auto overlaysRead = std::ranges::find(*guarded, MCOverlayReadFromFile, &MCHdArt::GuardedRead::Kind);
+    REQUIRE(overlaysRead != guarded->end());
+    CHECK_EQ(overlaysRead->Count, size_t{1});
+    CHECK(overlaysRead->Examples.front().starts_with(std::format("slot {} ", slots.front())));
+    MCHdArt::GuardOriginalReads(false);
+    CHECK(!MCHdArt::GuardedReads().has_value());
+    // The mission draws on from them.
+    MCTestGame::RunFrame(FrameSeconds);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
 TEST_CASE("hd art: the command line sets the readers, the sets' reads at once and the readers' priority")
 {
     constexpr size_t Readers = 8;
@@ -2172,7 +4477,7 @@ TEST_CASE_ISOLATED(
         MCFitIniFile file;
         REQUIRE_EQ(file.Create((pack / "pack.cfg").string()), 0);
         file.WriteBlock("HDArtPack");
-        file.WriteIdLong("Format", 2);
+        file.WriteIdLong("Format", 3);
         file.Close();
     }
 
@@ -2552,4 +4857,660 @@ TEST_CASE_ISOLATED("hd art: the sharp screens' pictures are the pack's sharp.hda
     MCHdArt::SetPackFolder(bare.Path());
     CHECK(!MCHdArt::SharpArchive().has_value());
     GHdArt = 0;
+}
+
+namespace
+{
+    /// <summary>What --pack-compare found in one archive (or all of them).</summary>
+    struct PackComparison
+    {
+        size_t Entries = 0;
+        size_t Matched = 0;
+        size_t Extra = 0;
+        size_t SameBytes = 0;
+        size_t Frames = 0;
+        size_t Failed = 0;
+        size_t ColoursDiffer = 0;
+        size_t IndexChanged = 0;
+        size_t IndexPixels = 0;
+        size_t ShadowFrames = 0;
+        size_t ShadowDiffers = 0;
+        size_t OtherDiffer = 0;
+        std::map<std::string, size_t> Missing;
+        /// <summary>The shadow's pixels off the game's rule, by which way and the version 2 green.</summary>
+        std::map<std::string, size_t> ShadowOffBy;
+
+        auto Add(const PackComparison& other) -> void
+        {
+            Entries += other.Entries;
+            Matched += other.Matched;
+            Extra += other.Extra;
+            SameBytes += other.SameBytes;
+            Frames += other.Frames;
+            Failed += other.Failed;
+            ColoursDiffer += other.ColoursDiffer;
+            IndexChanged += other.IndexChanged;
+            IndexPixels += other.IndexPixels;
+            ShadowFrames += other.ShadowFrames;
+            ShadowDiffers += other.ShadowDiffers;
+            OtherDiffer += other.OtherDiffer;
+
+            for (const auto& [kind, count] : other.Missing)
+            {
+                Missing[kind] += count;
+            }
+
+            for (const auto& [kind, count] : other.ShadowOffBy)
+            {
+                ShadowOffBy[kind] += count;
+            }
+        }
+
+        [[nodiscard]] auto Text() const -> std::string
+        {
+            std::string missing;
+
+            for (const auto& [kind, count] : Missing)
+            {
+                missing += std::format(" {}={}", kind, count);
+            }
+
+            for (const auto& [kind, count] : ShadowOffBy)
+            {
+                missing += std::format(" (shadow {}: {})", kind, count);
+            }
+
+            return std::format("{} entries, {} found ({} the same bytes), {} only in version 2; {} frames compared, {} "
+                               "unreadable, {} with other colours, {} with other indices ({} pixels), {} with shadow "
+                               "marks ({} pixels off the game's rule), {} other files differing; missing:{}",
+                               Entries, Matched, SameBytes, Extra, Frames, Failed, ColoursDiffer, IndexChanged,
+                               IndexPixels, ShadowFrames, ShadowDiffers, OtherDiffer,
+                               missing.empty() ? " none" : missing);
+        }
+    };
+
+    /// <summary>
+    /// A version 1 frame and the version 2 one made from it, held to SPEC-pack-v2.md's rule: the same size, scale,
+    /// format and colours; each pixel with an index in one has one in the other, at the same index (only a translucent
+    /// frame's and an icon's may change); the shadow marks those the game's own rule marks.
+    /// </summary>
+    auto CompareFrames(const MCHdArt::Frame& today, const MCHdArt::Frame& marked, PackComparison& found) -> void
+    {
+        ++found.Frames;
+
+        if (today.Width != marked.Width || today.Height != marked.Height || today.Scale != marked.Scale ||
+            today.Format != marked.Format || today.Blended != marked.Blended || today.Colors != marked.Colors ||
+            today.Indices.size() != marked.Indices.size() || !marked.Marked || today.Marked)
+        {
+            ++found.ColoursDiffer;
+            return;
+        }
+
+        // The shadow's reference: the pack's own marks where today's frame has them (a forest's, which the game
+        // doesn't mark), else the game's rule.
+        MCHdArt::Frame ruled = today;
+        bool painted = false;
+
+        for (size_t at = 1; at < today.Indices.size() && !painted; at += MCHdArt::IndexBytes)
+        {
+            painted = today.Indices[at] == MCHdArt::BakedShadow;
+        }
+
+        if (!painted)
+        {
+            MCHdArt::MarkBakedShadows(ruled);
+        }
+
+        size_t changed = 0;
+        size_t shadow = 0;
+        size_t shadowOff = 0;
+
+        for (size_t at = 0; at < marked.Indices.size(); at += MCHdArt::IndexBytes)
+        {
+            const bool had = today.Indices[at + 1] != 0;
+            const bool has = MCHdArt::HasIndexMark(marked.Indices[at + 1]);
+
+            if (had != has || (has && today.Indices[at] != marked.Indices[at]))
+            {
+                ++changed;
+            }
+
+            const bool inShadow = MCHdArt::InShadowMark(marked.Indices[at + 1]);
+            const bool ruledShadow = MCHdArt::InShadowMark(ruled.Indices[at + 1]);
+            shadow += inShadow ? 1 : 0;
+            shadowOff += inShadow != ruledShadow ? 1 : 0;
+
+            if (inShadow != ruledShadow)
+            {
+                ++found.ShadowOffBy[std::format("{}{}", inShadow ? "added " : "dropped ", marked.Indices[at + 1])];
+            }
+        }
+
+        found.IndexChanged += changed != 0 ? 1 : 0;
+        found.IndexPixels += changed;
+        found.ShadowFrames += shadow != 0 ? 1 : 0;
+        found.ShadowDiffers += shadow != 0 ? shadowOff : 0;
+    }
+
+    /// <summary>
+    /// The version 2 pack at <paramref name="root"/>'s dictionaries, as the game reads them (its <c>dicts.hdd</c>);
+    /// none when it has no such file.
+    /// </summary>
+    auto ReadPackDictionaries(const std::filesystem::path& root) -> std::shared_ptr<const MCZstd::Dictionaries>
+    {
+        const std::filesystem::path path = root / PackDictionariesName;
+
+        if (!std::filesystem::exists(path))
+        {
+            return nullptr;
+        }
+
+        std::ifstream in(path, std::ios::binary);
+        const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+        auto read = MCZstd::Dictionaries::Read(bytes);
+        const MCTest::Scope scope{
+            std::format("{}: {}", MCFileSystem::ToUtf8(path), read.has_value() ? "read" : read.error())};
+        REQUIRE(read.has_value());
+        return *read;
+    }
+
+    /// <summary>
+    /// Every entry of today's archive <paramref name="todayPath"/> held to the version 2 one made from it, whose
+    /// streams unpack against <paramref name="dictionaries"/> (its pack's).
+    /// </summary>
+    auto ComparePackArchive(const std::filesystem::path& todayPath, const std::filesystem::path& markedPath,
+                            const std::shared_ptr<const MCZstd::Dictionaries>& dictionaries) -> PackComparison
+    {
+        PackComparison found;
+        auto today = MCFastFile::Create(MCFileSystem::ToUtf8(todayPath));
+        auto marked = MCFastFile::Create(MCFileSystem::ToUtf8(markedPath), dictionaries);
+        const MCTest::Scope opened{
+            std::format("{}: {}", MCFileSystem::ToUtf8(markedPath), marked.has_value() ? "opened" : marked.error())};
+        REQUIRE(today.has_value());
+        REQUIRE(marked.has_value());
+        CHECK(!(*today)->IsVersion2());
+        REQUIRE((*marked)->IsVersion2());
+
+        // Read in the version 2 archive's order, so each stream is read and unpacked once.
+        std::vector<std::pair<int32_t, int32_t>> pairs;
+        const std::span<const MCFileEntry> entries = (*today)->GetEntries();
+        found.Entries = entries.size();
+
+        for (int32_t i = 0; i < static_cast<int32_t>(entries.size()); ++i)
+        {
+            const std::string_view name = entries[static_cast<size_t>(i)].GetName();
+            const std::optional<int32_t> j = (*marked)->Find(name);
+
+            if (!j.has_value())
+            {
+                const size_t dot = name.rfind('.');
+                ++found.Missing[dot == std::string_view::npos ? std::string("(none)") : std::string(name.substr(dot))];
+                continue;
+            }
+
+            pairs.emplace_back(*j, i);
+        }
+
+        found.Matched = pairs.size();
+        found.Extra = static_cast<size_t>((*marked)->GetNumFiles()) - pairs.size();
+        const std::span<const MCFileEntry> streams = (*marked)->GetEntries();
+        std::ranges::sort(
+            pairs, [&](const auto& a, const auto& b)
+            { return streams[static_cast<size_t>(a.first)].Offset < streams[static_cast<size_t>(b.first)].Offset; });
+        int32_t storedAt = -1;
+        std::vector<uint8_t> stored;
+
+        for (const auto& [j, i] : pairs)
+        {
+            if (streams[static_cast<size_t>(j)].Offset != storedAt)
+            {
+                storedAt = streams[static_cast<size_t>(j)].Offset;
+                stored = (*marked)->ReadStored(j);
+            }
+
+            const std::string_view name = entries[static_cast<size_t>(i)].GetName();
+            MCTest::Scope scope{std::string(name)};
+            const auto before = (*today)->Unpack(i, (*today)->ReadStored(i));
+            const auto after = (*marked)->Unpack(j, stored);
+
+            if (!before.has_value() || !after.has_value())
+            {
+                ++found.Failed;
+                continue;
+            }
+
+            if (*before == *after)
+            {
+                ++found.SameBytes;
+                continue;
+            }
+
+            if (!name.ends_with(".hdf"))
+            {
+                ++found.OtherDiffer;
+                continue;
+            }
+
+            const auto beforeFrame = MCHdArt::DecodeHdf(*before, 0, 0);
+            const auto afterFrame = MCHdArt::DecodeHdf(*after, 0, 0);
+
+            if (!beforeFrame.has_value() || !afterFrame.has_value())
+            {
+                ++found.Failed;
+                continue;
+            }
+
+            CompareFrames(*beforeFrame, *afterFrame, found);
+        }
+
+        return found;
+    }
+} // namespace
+
+/// <summary>
+/// Tool: <c>--pack-compare &lt;a version 2 pack&gt; --pack-compare-with &lt;the pack it was made from&gt;</c> holds
+/// every version 2 archive (<c>.hda</c>) to the version 1 archive at its path in the other: the same entries found by
+/// their paths, the same bytes unpacked but the frames' version and marks (SPEC-pack-v2.md's "A frame"), printing what
+/// differs an archive. The version 2 archives open against its <c>dicts.hdd</c>, when it has one, as the game's do; an
+/// archive the game would refuse fails.
+/// </summary>
+TEST_CASE("tool: --pack-compare holds a version 2 pack to the pack it was made from")
+{
+    const std::optional<std::string_view> v2 = MCTest::Option("pack-compare");
+    const std::optional<std::string_view> v1 = MCTest::Option("pack-compare-with");
+
+    if (!v2.has_value() || !v1.has_value())
+    {
+        return;
+    }
+
+    const std::filesystem::path markedRoot = MCFileSystem::FromUtf8(*v2);
+    const std::filesystem::path todayRoot = MCFileSystem::FromUtf8(*v1);
+    const std::shared_ptr<const MCZstd::Dictionaries> dictionaries = ReadPackDictionaries(markedRoot);
+    std::cout << std::format("{}: {} {}\n", *v2, dictionaries != nullptr ? "read its" : "no", PackDictionariesName);
+    PackComparison all;
+    size_t archives = 0;
+    const auto started = std::chrono::steady_clock::now();
+
+    for (const auto& item : std::filesystem::recursive_directory_iterator(markedRoot))
+    {
+        if (!item.is_regular_file() || item.path().extension() != ".hda")
+        {
+            continue;
+        }
+
+        const std::filesystem::path relative = item.path().lexically_relative(markedRoot);
+        const std::filesystem::path todayPath = todayRoot / relative;
+        MCTest::Scope scope(relative.generic_string());
+
+        if (!std::filesystem::exists(todayPath))
+        {
+            std::cout << std::format("{}: not in {}\n", relative.generic_string(), *v1);
+            continue;
+        }
+
+        auto marked = MCFastFile::Create(MCFileSystem::ToUtf8(item.path()), dictionaries);
+
+        if (!marked.has_value() || !(*marked)->IsVersion2())
+        {
+            std::cout << std::format("{}: {}\n", relative.generic_string(),
+                                     marked.has_value() ? "not version 2" : marked.error());
+            all.Failed += marked.has_value() ? 0 : 1;
+            continue;
+        }
+
+        const PackComparison found = ComparePackArchive(todayPath, item.path(), dictionaries);
+        std::string own;
+
+        for (const auto& [type, data] : (*marked)->Facts({}))
+        {
+            own += std::format(" {} ({} bytes)", type, data.size());
+        }
+
+        std::cout << std::format("{}: {}; its own folder's facts:{}\n", relative.generic_string(), found.Text(),
+                                 own.empty() ? " none" : own);
+        all.Add(found);
+        ++archives;
+    }
+
+    std::cout << std::format("{} archives, {:.1f} s: {}\n", archives,
+                             std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(),
+                             all.Text());
+    CHECK(archives > 0);
+    CHECK(all.Failed == 0);
+    CHECK(all.ColoursDiffer == 0);
+    CHECK(all.OtherDiffer == 0);
+}
+
+namespace
+{
+    /// <summary>A PAK (MCPacketFile's) holding <paramref name="packets"/> raw, in their order.</summary>
+    std::vector<uint8_t> PacketFileBytes(const std::vector<std::vector<uint8_t>>& packets)
+    {
+        constexpr size_t HeadBytes = 8;
+        constexpr size_t FirstPacketAt = 4;
+        constexpr size_t EntryBytes = 4;
+        const auto first = static_cast<uint32_t>(HeadBytes + EntryBytes * packets.size());
+        std::vector<uint8_t> file(first);
+        PutAt(file, 0, MCPacketFile::PacketFileMagic);
+        PutAt(file, FirstPacketAt, first);
+
+        for (size_t packet = 0; packet < packets.size(); ++packet)
+        {
+            // Each entry its packet's offset, stored raw (MCPacketStorage::Raw: 0 in its top bits).
+            PutAt(file, HeadBytes + EntryBytes * packet, static_cast<uint32_t>(file.size()));
+            file.insert(file.end(), packets[packet].begin(), packets[packet].end());
+        }
+
+        return file;
+    }
+
+    /// <summary>The files a test put (MCFileSystem::PutImage) and the guard taken away, however the test ends.</summary>
+    class PutFiles
+    {
+    public:
+        PutFiles() = default;
+        PutFiles(const PutFiles&) = delete;
+        PutFiles& operator=(const PutFiles&) = delete;
+
+        ~PutFiles()
+        {
+            MCFileSystem::ClearPutImages();
+            MCHdArt::GuardOriginalReads(false);
+        }
+    };
+
+    /// <summary>How many reads of <paramref name="kind"/> the guard has noted.</summary>
+    size_t GuardedCount(std::string_view kind)
+    {
+        const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
+        REQUIRE(reads.has_value());
+        const auto found = std::ranges::find(*reads, kind, &MCHdArt::GuardedRead::Kind);
+        return found == reads->end() ? 0 : found->Count;
+    }
+
+    /// <summary>The folder in <c>shapes.hda</c> of a shape file or PAK packet (MCHdArt::ShapeFileFolder's).</summary>
+    std::string ShapesArchiveFolder(std::string_view gamePath, std::optional<int32_t> packet)
+    {
+        const std::filesystem::path folder = MCHdArt::ShapeFileFolder(gamePath, packet);
+        std::string inArchive;
+
+        for (auto part = std::next(folder.begin()); part != folder.end(); ++part)
+        {
+            inArchive += (inArchive.empty() ? "" : "\\") + part->generic_string();
+        }
+
+        return inArchive;
+    }
+
+    /// <summary>Shape file <paramref name="gamePath"/> read whole through MCShapeFile.</summary>
+    std::vector<uint8_t> ReadThroughShapeFile(std::string_view gamePath)
+    {
+        MCShapeFile file;
+        REQUIRE_EQ(file.Open(gamePath), NO_ERR);
+        std::vector<uint8_t> bytes(file.FileSize());
+        CHECK_EQ(file.Read(bytes), static_cast<int32_t>(bytes.size()));
+        return bytes;
+    }
+} // namespace
+
+/// <summary>
+/// Port-only: with HD art's numbered folders drawn, a shape file's loader (MCShapeFile: the effects', markers', shadows'
+/// and damage diagrams' files, the cursors' and sensor contacts' PAK packets) takes the pack's copy of the original's
+/// bytes (shapes.hda's ShapeFileFolder, its shape table record whole), reading nothing of the game's; a file of another
+/// size than the pack's (a mod's), a packet the pack lacks, or HD art off is read from the game's files, which the guard
+/// notes. A table the loader read is found by its hash without a note; another table with one.
+/// </summary>
+TEST_CASE("hd art: a shape file's loader takes the pack's copy of the original, a mod's file from the game's files")
+{
+    constexpr std::string_view ShapePath = "data\\sprites\\MapsTest.shp";
+    constexpr std::string_view ModPath = "data\\sprites\\mapsmod.shp";
+    constexpr std::string_view PakPath = "data\\sprites\\MapsTest.pak";
+    constexpr int32_t PackedPacket = 1;
+    const std::vector<uint8_t> game = {1, 2, 3, 4, 5, 6};
+    // The pack's copy, of the game's file's size, told apart by its bytes.
+    const std::vector<uint8_t> pack = {9, 8, 7, 6, 5, 4};
+    const std::vector<uint8_t> modded = {1, 2, 3, 4, 5, 6, 7};
+    const std::vector<std::vector<uint8_t>> packets = {{10, 11, 12}, {20, 21, 22, 23}};
+    const std::vector<uint8_t> packPacket = {30, 31, 32, 33};
+    const std::vector<uint8_t> unloaded = {42, 43};
+    const PutFiles put;
+    MCFileSystem::PutImage(ShapePath, [&game] { return std::optional(game); });
+    MCFileSystem::PutImage(ModPath, [&modded] { return std::optional(modded); });
+    MCFileSystem::PutImage(PakPath, [&packets] { return std::optional(PacketFileBytes(packets)); });
+    std::map<std::string, std::vector<uint8_t>> facts;
+    facts[ShapesArchiveFolder(ShapePath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    facts[ShapesArchiveFolder(ModPath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    facts[ShapesArchiveFolder(PakPath, PackedPacket)] = FactsRecord(MCPackRecords::Type::ShapeTable, packPacket);
+    const ScratchFolder scratch("shape-files");
+    WriteBytes(scratch.Path() / "shapes.hda", BuildVersion2Archive({}, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const PackOn on(scratch.Path());
+    REQUIRE(MCHdArt::NumberedFolders());
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    CHECK(ReadThroughShapeFile(ShapePath) == pack);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 0);
+    CHECK(ReadThroughShapeFile(ModPath) == modded);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 1);
+
+    MCPacketFile pak;
+    REQUIRE_EQ(pak.Open(PakPath), NO_ERR);
+    REQUIRE_EQ(pak.GetNumPackets(), static_cast<int32_t>(packets.size()));
+
+    for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
+    {
+        MCTest::Scope scope(std::format("packet {}", packet));
+        REQUIRE_EQ(pak.SeekPacket(packet), NO_ERR);
+        std::vector<uint8_t> bytes(static_cast<size_t>(pak.GetPacketSize()));
+        CHECK_EQ(MCShapeFile::ReadPacket(pak, packet, bytes), static_cast<int32_t>(bytes.size()));
+        CHECK(bytes == (packet == PackedPacket ? packPacket : packets[static_cast<size_t>(packet)]));
+    }
+
+    CHECK_EQ(GuardedCount(MCShapeFile::PacketRead), 1);
+
+    // Found by their hashes, as the renderer finds a table no folder is attached to.
+    for (const std::vector<uint8_t>& loaded : {pack, modded, packPacket})
+    {
+        MCHdArt::FindShape(MCHdArt::ShapeTableHash(loaded), 0, 1, 1, 0, 1);
+    }
+
+    CHECK_EQ(GuardedCount(MCHdArt::ShapeHashRead), 0);
+    MCHdArt::FindShape(MCHdArt::ShapeTableHash(unloaded), 0, 1, 1, 0, 1);
+    CHECK_EQ(GuardedCount(MCHdArt::ShapeHashRead), 1);
+
+    GHdArt = 0;
+    CHECK(ReadThroughShapeFile(ShapePath) == game);
+}
+
+namespace
+{
+    /// <summary>
+    /// An 8-bit TGA as the game's pictures are and their loaders read them: <paramref name="width"/> by
+    /// <paramref name="height"/> at +0x0c and +0x0e, a palette of zeroes, then <paramref name="pixels"/> at 0x312.
+    /// </summary>
+    std::vector<uint8_t> PictureTga(int16_t width, int16_t height, std::span<const uint8_t> pixels)
+    {
+        constexpr size_t WidthAt = 0x0c;
+        constexpr size_t HeightAt = 0x0e;
+        constexpr size_t PixelsAt = 0x312;
+        std::vector<uint8_t> tga(PixelsAt);
+        std::memcpy(tga.data() + WidthAt, &width, sizeof(width));
+        std::memcpy(tga.data() + HeightAt, &height, sizeof(height));
+        tga.insert(tga.end(), pixels.begin(), pixels.end());
+        return tga;
+    }
+
+    /// <summary>A port's pixels, copied.</summary>
+    std::vector<uint8_t> PortPixels(const MCGuiPort& port)
+    {
+        const std::span<const uint8_t> pixels = port.Pixels();
+        return {pixels.begin(), pixels.end()};
+    }
+} // namespace
+
+/// <summary>
+/// Port-only: with HD art's numbered folders drawn, a menu's picture (MCGuiPort::Init by name) and a logistics screen's
+/// or briefing map's (MCLogPort::Load) take the pack's copy of the original's TGA (shapes.hda's ShapeFileFolder record,
+/// its bytes whole), reading nothing of the game's; a picture the pack lacks is read from the game's files, which the
+/// guard notes.
+/// </summary>
+TEST_CASE("hd art: a menu's and a logistics screen's pictures take the pack's copy of the original's TGA")
+{
+    constexpr std::string_view MenuName = "mapsmenu.tga";
+    constexpr int16_t Width = 4;
+    constexpr int16_t Height = 1;
+    const std::vector<uint8_t> gamePixels = {1, 2, 3, 4};
+    // The pack's copies, of the game's files' size, told apart by their pixels.
+    const std::vector<uint8_t> packPixels = {5, 6, 7, 8};
+    const std::string menuPath = std::format("{}{}", std::string_view(ArtPath), MenuName);
+    const std::string logPath = std::format("{}logart\\mapslog.tga", std::string_view(ArtPath));
+    const std::string unpackedPath = std::format("{}logart\\mapsnone.tga", std::string_view(ArtPath));
+    const std::vector<uint8_t> game = PictureTga(Width, Height, gamePixels);
+    const std::vector<uint8_t> pack = PictureTga(Width, Height, packPixels);
+    const PutFiles put;
+
+    for (const std::string& path : {menuPath, logPath, unpackedPath})
+    {
+        MCFileSystem::PutImage(path, [&game] { return std::optional(game); });
+    }
+
+    std::map<std::string, std::vector<uint8_t>> facts;
+    facts[ShapesArchiveFolder(menuPath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    facts[ShapesArchiveFolder(logPath, std::nullopt)] = FactsRecord(MCPackRecords::Type::ShapeTable, pack);
+    const ScratchFolder scratch("picture-files");
+    WriteBytes(scratch.Path() / "shapes.hda", BuildVersion2Archive({}, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const PackOn on(scratch.Path());
+    REQUIRE(MCHdArt::NumberedFolders());
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    MCGuiPort menu;
+    REQUIRE_EQ(menu.Init(MenuName), 0);
+    CHECK(PortPixels(menu) == packPixels);
+    MCLogPort log;
+    log.Load(logPath);
+    CHECK(PortPixels(log) == packPixels);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 0);
+
+    MCLogPort unpacked;
+    unpacked.Load(unpackedPath);
+    CHECK(PortPixels(unpacked) == gamePixels);
+    CHECK_EQ(GuardedCount(MCShapeFile::FileRead), 1);
+}
+
+/// <summary>
+/// Port-only: with HD art's numbered folders drawn, the craters' and footprints' PAK (a mission's CraterFile) is read
+/// through MCShapeFile: each packet the pack's copy (shapes.hda's ShapeFileFolder record), reading nothing of the game's;
+/// a packet the pack lacks is read from the PAK, which the guard notes; HD art off reads the PAK as before.
+/// </summary>
+TEST_CASE("hd art: the craters' and footprints' packets come from the pack's copy of their PAK")
+{
+    constexpr std::string_view CraterName = "MapsCrater";
+    const std::string pakPath = GamePath(SpritePath, CraterName, ".pak");
+    const std::vector<std::vector<uint8_t>> packets = {{10, 11, 12}, {20, 21, 22, 23}, {40, 41}};
+    // The pack's copies of packets 0 and 1, of their sizes, told apart by their bytes; packet 2 the pack lacks.
+    const std::vector<std::vector<uint8_t>> packCopies = {{50, 51, 52}, {60, 61, 62, 63}};
+    constexpr int32_t NumCraters = 5;
+    const PutFiles put;
+    MCFileSystem::PutImage(pakPath, [&packets] { return std::optional(PacketFileBytes(packets)); });
+    std::map<std::string, std::vector<uint8_t>> facts;
+
+    for (size_t packet = 0; packet < packCopies.size(); ++packet)
+    {
+        facts[ShapesArchiveFolder(pakPath, static_cast<int32_t>(packet))] =
+            FactsRecord(MCPackRecords::Type::ShapeTable, packCopies[packet]);
+    }
+
+    const ScratchFolder scratch("crater-files");
+    WriteBytes(scratch.Path() / "shapes.hda", BuildVersion2Archive({}, facts));
+    REQUIRE(MCHdArt::WritePackFile(scratch.Path()).has_value());
+    const PackOn on(scratch.Path());
+    REQUIRE(MCHdArt::NumberedFolders());
+    MCHdArt::GuardOriginalReads(true);
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+
+    {
+        const std::expected<std::unique_ptr<MCCraterManager>, std::string> craters =
+            MCCraterManager::Create(NumCraters, CraterName);
+        REQUIRE(craters.has_value());
+        REQUIRE_EQ((*craters)->ShapeCount(), static_cast<int32_t>(packets.size()));
+        CHECK((*craters)->Shapes()[0] == packCopies[0]);
+        CHECK((*craters)->Shapes()[1] == packCopies[1]);
+        CHECK((*craters)->Shapes()[2] == packets[2]);
+        CHECK_EQ(GuardedCount(MCShapeFile::PacketRead), 1);
+    }
+
+    GHdArt = 0;
+    const std::expected<std::unique_ptr<MCCraterManager>, std::string> original =
+        MCCraterManager::Create(NumCraters, CraterName);
+    REQUIRE(original.has_value());
+
+    for (size_t packet = 0; packet < packets.size(); ++packet)
+    {
+        MCTest::Scope scope(std::format("packet {}", packet));
+        CHECK(original.value()->Shapes()[packet] == packets[packet]);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-guard-mission &lt;n&gt; --hd-guard-pack &lt;pack&gt;</c> starts mission <c>n</c> with HD art on and the
+/// version 2 pack at <c>pack</c> from the boot (as a player's preferences have it), and the guard of test runs on
+/// (MCHdArt::GuardOriginalReads, the app's <c>-hdguard</c>), plays <c>--hd-guard-frames &lt;n&gt;</c> frames (default
+/// GuardMissionFrames) and lists each kind of original art the load and the play read, with its first examples; it
+/// fails on any. One mission a run (the boot's rule): a survey of every mission runs it once a mission.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's load and play read with a version 2 "
+                   "pack")
+{
+    const std::optional<std::string_view> mission = MCTest::Option("hd-guard-mission");
+    const std::optional<std::string_view> pack = MCTest::Option("hd-guard-pack");
+
+    if (!mission.has_value() || !pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    // Ten seconds at the game's 15 frames a second: the load, the first moves and the first shots' effects.
+    constexpr int32_t GuardMissionFrames = 150;
+    constexpr float GuardFrameSeconds = 1.0f / 15.0f;
+    int32_t segment = 0;
+    int32_t frames = GuardMissionFrames;
+    REQUIRE(std::from_chars(mission->data(), mission->data() + mission->size(), segment).ec == std::errc());
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-guard-frames"); given.has_value())
+    {
+        REQUIRE(std::from_chars(given->data(), given->data() + given->size(), frames).ec == std::errc());
+    }
+
+    // The folder made absolute before the game starts: the game works in the install's folder. HD art on from the
+    // boot, as the player's app has it (its personal defaults, the pack set before the menus' first loads), so nothing
+    // the start loads is read before the pack is.
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
+    UseHdByDefault();
+    MCHdArt::SetPackFolder(packFolder);
+    MCHdArt::GuardOriginalReads(true);
+    MCTestGame::BootOptions.Started = [] { GHdArt = 1; };
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(segment));
+    REQUIRE(MCHdArt::GuardingOriginalReads());
+    const std::optional<std::vector<MCHdArt::GuardedRead>> loadReads = MCHdArt::GuardedReads();
+    REQUIRE(loadReads.has_value());
+    std::cout << std::format("  mission {}: {} reads of the original's art by the end of the load\n", segment,
+                             std::ranges::fold_left(*loadReads | std::views::transform(&MCHdArt::GuardedRead::Count),
+                                                    size_t{0}, std::plus<>()));
+
+    for (int32_t frame = 0; frame < frames; ++frame)
+    {
+        MCTestGame::RunFrame(GuardFrameSeconds);
+    }
+
+    REQUIRE(MCHdArt::GuardedReads().has_value());
+    const size_t total = MCTestGame::PrintGuardedReads(std::format("mission {}", segment));
+    std::cout << std::format("  mission {}: {} reads of the original's art in {} frames\n", segment, total, frames);
+    MCHdArt::GuardOriginalReads(false);
+    CHECK_EQ(total, size_t{0});
 }

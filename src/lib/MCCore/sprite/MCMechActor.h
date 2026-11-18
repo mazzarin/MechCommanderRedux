@@ -44,13 +44,20 @@ struct MCLegsDrawn
 
 /// <summary>
 /// Port-only (HD art): the in-between of a mech's legs on their way between two frames: from frame
-/// <see cref="From"/> toward <see cref="To"/>, step <see cref="Step"/> of <see cref="LegsInBetweenSteps"/>.
+/// <see cref="From"/> toward <see cref="To"/>, step <see cref="Step"/> of <see cref="LegsInBetweenSteps"/>;
+/// <see cref="Wrap"/> where it is the loop's last frame played toward its first while the art draws more frames (the
+/// Mad Cat's walk plays 27 of legs90/10's 28), whose in-between the pack keeps apart from the art's next frame's
+/// (sprite/MCInBetween.h's WrapStep).
 /// </summary>
 struct MCLegsStep
 {
     int32_t From = 0;
     int32_t To = 0;
     int32_t Step = 0;
+    bool Wrap = false;
+
+    /// <summary>The step that names its in-between in the pack (<see cref="Step"/>, or its wrap's).</summary>
+    int32_t Named(int32_t step) const { return Wrap ? WrapBetweenStep(step) : step; }
 
     bool operator==(const MCLegsStep&) const = default;
 };
@@ -62,10 +69,19 @@ struct MCLegsStep
 /// rest of the way. Past either end, round to the other end when the gesture <paramref name="loops"/>, else none (the
 /// next gesture's frame comes next). None in a frame's first step. The art draws <paramref name="drawn"/> frames, which
 /// may be fewer than the gesture plays (a frame past its last shows its last, as MCClampShapeFrame has it): the step
-/// is between the frames shown, and none where both show the same one.
+/// is between the frames shown, and none where both show the same one. Or more: then the loop's step round from the
+/// last frame played to the first is its wrap (<see cref="MCLegsStep::Wrap"/>).
 /// </summary>
 std::optional<MCLegsStep> MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, bool backwards,
                                        bool loops);
+
+/// <summary>
+/// Port-only (HD art): the HD art pack's in-between of a mech part's frame on its way to the next (<paramref name="step"/>:
+/// from frame From of <paramref name="table"/> toward frame To, as the legs step), drawn over both frames' boxes round
+/// the hot spot, as the legs' is (<c>&lt;frame&gt;_&lt;step&gt;</c>, MCHdArt.h), with where it lies round frame From;
+/// none where the pack lacks it at that size, or either frame is not the table's.
+/// </summary>
+std::optional<MCInBetween> MCPartInBetween(std::span<const uint8_t> table, const MCLegsStep& step);
 
 /// <summary>
 /// Port-only (HDStops): a stride drawn on while its mech stands with its move held up: each part's frame as last drawn,
@@ -126,6 +142,52 @@ public:
 
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): has HD art's readers read whole, ahead of their frames'
+    /// first draws, the packets each part draws now (its gesture and facing as Render takes them) and those a turn comes
+    /// to, and the next gesture's a transition plays, all soon (MCHdArt::ReadAs::Soon); and as sets, a move's first
+    /// gesture from standing, walking or running, and the upper parts raised for combat or lowered from it. The mech is
+    /// in or near the view (MCAppearance::ReadAheadNear), which a pan or its walk brings it into. Each packet is asked
+    /// for once (MCSpriteTree::PacketsAhead).
+    /// </summary>
+    void ReadAhead() override;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: a unit's first frames): the packets each part draws now, as Render takes them (the
+    /// tree's part at its rotation, an arm from the other's sprites when mirrored; a part gone none), for a mission's load
+    /// to read with the rest.
+    /// </summary>
+    std::vector<MCGesturePacket> DrawnPackets();
+
+    /// <summary>Port-only (HDTurns): the facing <paramref name="mech"/> is drawn at (eased by update).</summary>
+    float DrawnFacing(MCBattleMech& mech) const;
+
+    /// <summary>
+    /// Port-only: <paramref name="part"/>(gesture, the tree's part, rotation) for each part <paramref name="mech"/> draws
+    /// with its legs in gesture <paramref name="legs"/> and its upper parts in <paramref name="upper"/>, as Render takes
+    /// them: the legs, the torso (not a wreck's), each arm it has (from the other's sprites when mirrored).
+    /// </summary>
+    void ForEachPartDrawn(MCBattleMech& mech, int32_t legs, int32_t upper,
+                          const std::function<void(int32_t, int32_t, float)>& part) const;
+
+    /// <summary>The upper body's gesture: the combat gestures while the gun is up or moving, else the legs'.</summary>
+    int32_t UpperGesture() const;
+
+    /// <summary>
+    /// The arms' rotations as drawn, the original's rotation2 and rotation3: the facing <paramref name="facing"/> with the
+    /// torso's and the left arm's, then the right arm's; the right arm is drawn at the first and the left at the second.
+    /// </summary>
+    static std::pair<float, float> ArmRotations(const MCBattleMech& mech, float facing);
+
+    /// <summary>
+    /// Whether an arm is drawn from the other arm's sprites (part <paramref name="otherPart"/> of the tree) in the upper
+    /// gesture <paramref name="upper"/> at <paramref name="rotation"/>, under legs gesture
+    /// <paramref name="legsGesture"/>: when the gesture's arms are symmetrical and that sprite is mirrored. OB-179 fixed:
+    /// the original swapped on the sign of the angle alone, also facing straight ahead or back, where the sprite isn't
+    /// mirrored, so a lone arm jumped sides.
+    /// </summary>
+    bool ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPart, float rotation) const;
+
     /// <summary>Jumps to gesture <paramref name="gesture"/> (once until the next update).</summary>
     /// <returns>0, or 0xEADE0004 (negative) when a gesture was already set this update.</returns>
     int32_t SetGesture(uint32_t gesture) override;
@@ -150,9 +212,6 @@ public:
 
     /// <summary>The hot spot (weapon mount) table index for <paramref name="location"/>.</summary>
     static uint32_t GetHotSpotIndex(uint32_t location);
-
-    /// <summary>Loads the tree's stand, walk and run shapes.</summary>
-    void PreloadGestures() const;
 
     /// <summary>Port-only: opens the tree's HD art archives (MCSpriteTree::PrepareHdArt).</summary>
     void PrepareHdArt() const;
@@ -267,6 +326,15 @@ public:
     /// on stays put while the mech moves between frames. Each with where it lies round its frame.
     /// </summary>
     MCLegsDrawn LegsInBetween(int32_t gesture, int32_t frame, float facing, const MCShape& legs, bool asPlayed);
+
+    /// <summary>
+    /// Port-only (HD art): the HD art pack's in-between to draw the torso or an arm (shape <paramref name="part"/>, at
+    /// frame <paramref name="frame"/>) as, drawn as it plays (<paramref name="asPlayed"/>): the way toward its next frame
+    /// at the legs' step (<see cref="LegsStepNow"/>), so it moves as smoothly as the legs (MCPartInBetween); none while
+    /// the upper body plays the gun change or holds its guns up, while the legs are on no way to a next frame of their
+    /// gesture, or where the pack lacks it.
+    /// </summary>
+    std::optional<MCInBetween> UpperInBetween(const MCShape& part, int32_t frame, bool asPlayed) const;
 
     /// <summary>
     /// Port-only (HD art): playing <paramref name="frames"/> frames, at frame <paramref name="frame"/>, the step of the

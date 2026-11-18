@@ -57,7 +57,16 @@ namespace MCMemoryRoom
         /// when the system can't say.
         /// </summary>
         virtual std::optional<MCCard> Card(std::string_view deviceName) = 0;
+
+        /// <summary>
+        /// The machine's memory, in bytes, as the system reports it (SDL_GetSystemRAM: a machine sold as 16 GB may report
+        /// somewhat less); 0 when it can't say.
+        /// </summary>
+        virtual uint64_t TotalBytes();
     };
+
+    /// <summary>The machine's memory as the system set says (MCSystem::TotalBytes), or SDL with none set.</summary>
+    uint64_t TotalBytes();
 
     /// <summary>
     /// Sets the system asked (none: nothing is short and each side keeps up to MostHdBytes); every reader asks the card

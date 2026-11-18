@@ -563,8 +563,13 @@ namespace
     }
 }
 
-TEST_CASE_ISOLATED(
-    "game: every cursor shape is made at load, and switching between shapes shown in today's colours makes none")
+/// <summary>
+/// Port-only (SPEC-first-use.md): no cursor shape is made before it's shown: each is made the first time, once; then an
+/// unchanged palette and window make no more, whatever is shown. (The slow part on Windows is the icon built when one is
+/// first shown over the window, which a hidden test window never has, so the count is what is checked.)
+/// </summary>
+TEST_CASE_ISOLATED("game: each cursor shape is made when first shown, and switching between shapes shown in today's "
+                   "colours makes none")
 {
     if (!MCTestGame::Available() || !MCTestGame::StartMission(1))
     {
@@ -573,17 +578,16 @@ TEST_CASE_ISOLATED(
 
     const std::vector<size_t> shapes = CursorShapesInPlay();
     REQUIRE(shapes.size() > 2);
-    // The boot made one per shape. The mission's palette isn't the boot's, so each is made again the first time it
-    // shows in the mission, once; then an unchanged palette and window make no more, whatever is shown. (The slow
-    // part on Windows is the icon built when one is first shown over the window, which a hidden test window never
-    // has, so the count is what is checked.)
-    CHECK(MCCursor::CursorsMade() >= shapes.size());
+    // The boot and the mission made only those shown so far.
+    const uint64_t started = MCCursor::CursorsMade();
+    CHECK(started < shapes.size());
 
     for (const size_t shape : shapes)
     {
         MCCursor::ShowShape(shape);
     }
 
+    CHECK(MCCursor::CursorsMade() - started <= shapes.size());
     const uint64_t before = MCCursor::CursorsMade();
 
     for (int i = 0; i < 200; ++i)

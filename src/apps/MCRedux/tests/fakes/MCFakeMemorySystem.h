@@ -22,8 +22,12 @@ public:
     /// <summary>How many times the card was asked, and the name it was asked by last.</summary>
     int CardReads = 0;
     std::string AskedName;
+    /// <summary>The machine's memory the system reports (16 GB unless the test says).</summary>
+    uint64_t Total = uint64_t{16} << 30;
 
     bool Short() override { return IsShort; }
+
+    uint64_t TotalBytes() override { return Total; }
 
     std::optional<MCMemoryRoom::MCCard> Card(std::string_view deviceName) override
     {

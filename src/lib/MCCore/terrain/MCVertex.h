@@ -117,3 +117,6 @@ MCMineView MCTerrainMineView(uint32_t overlay, bool playingInnerSphere, bool god
 /// the corners' levels above the lowest as base-3 digits, from the first mine tile 0xed1.
 /// </summary>
 int32_t MCMineTileNumber(uint32_t e0, uint32_t e1, uint32_t e2, uint32_t e3);
+
+/// <summary>The tile of the crater a mine leaves when it goes off.</summary>
+inline constexpr int32_t MCMineCraterTile = 0xf21;

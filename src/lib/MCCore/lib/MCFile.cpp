@@ -12,6 +12,30 @@ bool FileExists(std::string_view fileName)
     return MCFileSystem::Exists(fileName);
 }
 
+std::optional<uint32_t> FileSizeOf(std::string_view fileName)
+{
+    if (const std::optional<std::vector<uint8_t>> put = MCFileSystem::PutImageAt(fileName); put.has_value())
+    {
+        return static_cast<uint32_t>(put->size());
+    }
+
+    std::error_code error;
+    const std::filesystem::path path = MCFileSystem::Resolve(fileName);
+
+    if (std::filesystem::is_regular_file(path, error))
+    {
+        const std::uintmax_t size = std::filesystem::file_size(path, error);
+        return error ? std::nullopt : std::optional(static_cast<uint32_t>(size));
+    }
+
+    if (const std::optional<std::span<const uint8_t>> image = MCFileSystem::FindImage(fileName); image.has_value())
+    {
+        return static_cast<uint32_t>(image->size());
+    }
+
+    return MCGameContext::Current().FastFiles().SizeOf(fileName);
+}
+
 std::string GamePath(std::string_view directory, std::string_view name, std::string_view extension)
 {
     std::string path;
@@ -107,14 +131,21 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
     const MCReleaseData::MCHeld held =
         mode == MCFileMode::Read && !put.has_value() ? MCReleaseData::Find(_FileName) : MCReleaseData::MCHeld{};
 
-    // Port: files opened to write live in the user folder.
+    // Port: files opened to write live in the user folder; a file the release's copy holds loose is read from there.
+    std::filesystem::path path;
+
+    if (!put.has_value())
+    {
+        path = held.Loose.has_value()     ? *held.Loose
+               : mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName)
+                                          : MCFileSystem::ResolveWrite(_FileName);
+    }
+
     std::optional<MCDiskFile> disk =
         put.has_value() || held.InArchive
             ? std::nullopt
-            : MCDiskFile::Open(held.Loose.has_value()     ? *held.Loose
-                               : mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName)
-                                                          : MCFileSystem::ResolveWrite(_FileName),
-                               mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read);
+            : MCDiskFile::Open(path, mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read,
+                               MCDiskFileReads::Buffered);
     _State.reset();
 
     if (!disk.has_value())
@@ -165,8 +196,9 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
     _Length = 0;
     _IsChild = false;
     _ParentState.reset();
-    _State = std::make_shared<OpenState>(OpenState{.Disk = std::move(disk)});
+    _State = std::make_shared<OpenState>(OpenState{.Disk = std::move(disk), .Path = std::move(path)});
     _Length = GetLength();
+    _State->Length = _Length;
     _ParentOffset = 0;
     _PhysicalLength = _Length;
     return NO_ERR;
@@ -538,4 +570,127 @@ void MCFile::Skip(int32_t bytesToSkip)
     {
         Seek(static_cast<int32_t>(_LogicalPosition) + bytesToSkip);
     }
+}
+
+namespace
+{
+    /// <summary>
+    /// A reader of <paramref name="length"/> bytes from <paramref name="base"/> of the file on disk <paramref name="state"/>
+    /// holds, opened again by its path; none unless its length is still what it was at the open (the folders' files may
+    /// have changed since).
+    /// </summary>
+    template <typename State>
+    std::optional<std::tuple<MCDiskFile, uint32_t, uint32_t>> ReopenDisk(const State& state, uint32_t base,
+                                                                         uint32_t length)
+    {
+        if (state.Path.empty())
+        {
+            return std::nullopt;
+        }
+
+        std::optional<MCDiskFile> disk = MCDiskFile::Open(state.Path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+
+        if (!disk.has_value() || disk->Length() != state.Length)
+        {
+            return std::nullopt;
+        }
+
+        return std::tuple(std::move(*disk), base, length);
+    }
+}
+
+std::optional<MCFileReader> MCFile::OpenReader() const
+{
+    if (_FileMode != MCFileMode::Read || !IsOpen())
+    {
+        return std::nullopt;
+    }
+
+    if (_InRam)
+    {
+        return MCFileReader(std::nullopt, _FileImage, 0, static_cast<uint32_t>(_FileImage.size()));
+    }
+
+    const std::shared_ptr<OpenState> state = DiskState();
+
+    if (state == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    auto disk = ReopenDisk(*state, _IsChild ? _ParentOffset : 0, _IsChild ? _PhysicalLength : _Length);
+
+    if (!disk.has_value())
+    {
+        return std::nullopt;
+    }
+
+    auto& [file, base, length] = *disk;
+    return MCFileReader(std::move(file), {}, base, length);
+}
+
+std::optional<MCFileReader> MCFile::OpenRootReader() const
+{
+    if (!_IsChild || _InRam || _FileMode != MCFileMode::Read)
+    {
+        return OpenReader();
+    }
+
+    const std::shared_ptr<OpenState> state = DiskState();
+
+    if (state == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    auto disk = ReopenDisk(*state, 0, state->Length);
+
+    if (!disk.has_value())
+    {
+        return std::nullopt;
+    }
+
+    auto& [file, base, length] = *disk;
+    return MCFileReader(std::move(file), {}, base, length);
+}
+
+MCAddressKey MCFile::RootKey() const
+{
+    if (_InRam)
+    {
+        return MCAddressKey::Of(*this);
+    }
+
+    const std::shared_ptr<OpenState> state = DiskState();
+    return state != nullptr ? MCAddressKey::Of(*state) : MCAddressKey();
+}
+
+uint32_t MCFile::RootOffset() const
+{
+    return _IsChild && !_InRam ? _ParentOffset : 0;
+}
+
+MCFileReader::MCFileReader(std::optional<MCDiskFile> disk, std::span<const uint8_t> bytes, uint32_t base,
+                           uint32_t length)
+    : _Disk(std::move(disk)), _Bytes(bytes), _Base(base), _Length(length)
+{
+}
+
+size_t MCFileReader::ReadAt(uint32_t offset, std::span<uint8_t> buffer)
+{
+    if (offset >= _Length)
+    {
+        return 0;
+    }
+
+    const std::span<uint8_t> asked = buffer.first(std::min<size_t>(buffer.size(), _Length - offset));
+
+    if (_Disk.has_value())
+    {
+        return _Disk->ReadAt(_Base + offset, asked);
+    }
+
+    const size_t count = std::min(asked.size(), _Bytes.size() - std::min<size_t>(offset, _Bytes.size()));
+    std::copy_n(_Bytes.begin() + offset, count, asked.begin());
+    return count;
 }

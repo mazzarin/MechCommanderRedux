@@ -154,7 +154,31 @@ public:
     MCAppearanceLoad Load(MCFile& apprFile, uint32_t fileSize) override;
 
     /// <summary>Loads (once) the shapes of the stand, walk and run gestures, every facing of every part.</summary>
+    /// <remarks>Port: their packets read together (<see cref="LoadPacketsTogether"/>), those loaded already kept.</remarks>
     void PreloadGestures();
+
+    /// <summary>
+    /// Port-only: the packets <see cref="PreloadGestures"/> loads (the large art's): stand, walk and run at every stored
+    /// facing of every part.
+    /// </summary>
+    std::vector<MCGesturePacket> PreloadPackets() const;
+
+    /// <summary>Port-only: a tree's packet, to load with others' (<see cref="LoadPacketsTogether"/>).</summary>
+    struct MCTreePacket
+    {
+        std::shared_ptr<MCSpriteTree> Tree;
+        MCGesturePacket Where;
+    };
+
+    /// <summary>
+    /// Port-only: loads each of <paramref name="packets"/> its tree hasn't loaded (the large art's, as MCMechActor::Render
+    /// draws), each once, together (MCSpriteManager::GetMechShapesData: a few large reads, on threads), into its tree's
+    /// shape list, tied to the facings either side in a turn as LoadGesturePacket ties one, used at
+    /// <paramref name="turnUsed"/>; and the runs <paramref name="stored"/> of the large art's packets as stored, in the
+    /// same reads (MCShapesLoaded::Stored).
+    /// </summary>
+    static MCShapesLoaded LoadPacketsTogether(std::span<const MCTreePacket> packets, int32_t turnUsed,
+                                              std::span<const MCStoredWanted> stored = {});
 
     /// <summary>Port-only: opens the HD art pack's archives of the mech's parts (MCHdArt::Prepare).</summary>
     void PrepareHdArt() const;
@@ -178,6 +202,16 @@ public:
     /// at <paramref name="rotation"/> degrees is; nothing when the gesture has no frames.
     /// </summary>
     std::optional<MCGesturePacket> GesturePacket(int32_t gesture, int32_t part, float rotation) const;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): adds to <paramref name="packets"/> the packet part
+    /// <paramref name="part"/> (the tree's numbering) of gesture <paramref name="gesture"/> draws at
+    /// <paramref name="rotation"/> degrees, the large art's as GetGesture finds it and MCMechActor::Render draws it, and
+    /// with <paramref name="turns"/> those of the facings either side of it, which a turn draws next: each whole, the
+    /// legs' with their turn middles, unless asked for already (the tree's, any mech's of it: MCHdArt::MCAskedPackets).
+    /// </summary>
+    void PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns,
+                      std::vector<MCHdArt::PacketAhead>& packets);
 
     /// <summary>
     /// Port-only (HDFootprints): the way part <paramref name="part"/> (the tree's numbering) of gesture
@@ -225,6 +259,15 @@ public:
     std::optional<MCTransitionTable> TransitionArray;
     /// <summary>Whether <see cref="PreloadGestures"/> has run.</summary>
     bool GesturesPreloaded = false;
+    /// <summary>Port-only: FIT "Name" ("Main Info"), for the logs.</summary>
+    std::string Name;
+    /// <summary>
+    /// Port-only (MechBraking): whether the tree's stops have been looked up or worked out (MCPrepareStops), filling
+    /// what follows.
+    /// </summary>
+    bool StopsPrepared = false;
+    /// <summary>Port-only (MechBraking): the art's hash the stops were looked up by (MCStopsArtHash), once prepared.</summary>
+    std::optional<uint64_t> StopsLookedUpBy;
     /// <summary>Port-only (MechBraking): whether each gesture looked at has its art drawn (MCHasGestureArt).</summary>
     std::map<int32_t, bool> GestureArtDrawn;
     /// <summary>Port-only (MechBraking): the run to walk made from the run and walk (MCRunToWalkMade), once worked out.</summary>
@@ -254,6 +297,10 @@ private:
     /// </summary>
     std::vector<MCGesturePacket> ArtStandIns(int32_t gesture, int32_t part, float rotation,
                                              const MCGesturePacket& where) const;
+
+private:
+    /// <summary>Port-only: the packets asked to be read ahead (PacketsAhead), by part PAK and packet.</summary>
+    MCHdArt::MCAskedPackets _AskedAhead;
 };
 
 /// <summary>The number of entries of a tree's shape list (all four parts).</summary>

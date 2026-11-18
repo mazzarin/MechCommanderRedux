@@ -447,6 +447,9 @@
     <ClCompile Include="lib\MCWorkers.cpp">
       <Filter>lib</Filter>
     </ClCompile>
+    <ClCompile Include="lib\MCZstd.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
     <ClCompile Include="linkup\MCFidpGroup.cpp">
       <Filter>linkup</Filter>
     </ClCompile>
@@ -1330,6 +1333,9 @@
     <ClCompile Include="sprite\MCMechStops.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
+    <ClCompile Include="sprite\MCPackRecords.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
     <ClCompile Include="sprite\MCPaletteNight.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
@@ -1346,6 +1352,9 @@
       <Filter>sprite</Filter>
     </ClCompile>
     <ClCompile Include="sprite\MCShape.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
+    <ClCompile Include="sprite\MCShapeFile.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
     <ClCompile Include="sprite\MCSpriteManager.cpp">
@@ -1380,6 +1389,9 @@
       <Filter>terrain</Filter>
     </ClCompile>
     <ClCompile Include="terrain\MCGroundMesh.cpp">
+      <Filter>terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="terrain\MCGroundNames.cpp">
       <Filter>terrain</Filter>
     </ClCompile>
     <ClCompile Include="terrain\MCMapBlockManager.cpp">
@@ -1892,6 +1904,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCWorkers.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCZstd.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="linkup\MCFidpGroup.h">
@@ -2769,6 +2784,12 @@
     <ClInclude Include="sprite\MCMechStops.h">
       <Filter>sprite</Filter>
     </ClInclude>
+    <ClInclude Include="sprite\MCMechStopsKnown.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCPackRecords.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
     <ClInclude Include="sprite\MCPaletteNight.h">
       <Filter>sprite</Filter>
     </ClInclude>
@@ -2785,6 +2806,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCShape.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCShapeFile.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCSpriteManager.h">
@@ -2823,6 +2847,12 @@
       <Filter>terrain</Filter>
     </ClInclude>
     <ClInclude Include="terrain\MCGroundMesh.h">
+      <Filter>terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="terrain\MCGroundNames.h">
+      <Filter>terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="terrain\MCGroundNamesKnown.h">
       <Filter>terrain</Filter>
     </ClInclude>
     <ClInclude Include="terrain\MCMapBlockManager.h">
@@ -2928,6 +2958,9 @@
       <Filter>vfx</Filter>
     </ClInclude>
     <ClInclude Include="vfx\MCVfxFunctions.h">
+      <Filter>vfx</Filter>
+    </ClInclude>
+    <ClInclude Include="vfx\MCVfxShapeRuns.h">
       <Filter>vfx</Filter>
     </ClInclude>
     <ClInclude Include="vfx\MCVfxView.h">

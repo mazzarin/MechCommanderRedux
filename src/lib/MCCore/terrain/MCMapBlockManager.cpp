@@ -154,6 +154,28 @@ MCMapBlockManager::MCMapBlockManager(std::span<const MCPrecompVertex> vertices, 
     std::ranges::copy(vertices.first(std::min(vertices.size(), _Vertices.size())), _Vertices.begin());
 }
 
+auto MCMapBlockManager::TilesUsed() const -> std::vector<int32_t>
+{
+    std::vector<int32_t> tiles;
+    tiles.reserve(_Vertices.size() * 2);
+
+    for (const MCPrecompVertex& vertex : _Vertices)
+    {
+        for (const int16_t tile : {vertex.TextureData, vertex.OverlayData})
+        {
+            if (tile >= 0)
+            {
+                tiles.push_back(tile);
+            }
+        }
+    }
+
+    std::ranges::sort(tiles);
+    const auto [first, last] = std::ranges::unique(tiles);
+    tiles.erase(first, last);
+    return tiles;
+}
+
 auto MCMapBlockManager::BlockStart(int32_t blockNum) const -> size_t
 {
     if (blockNum < 0 || blockNum >= _NumBlocks)

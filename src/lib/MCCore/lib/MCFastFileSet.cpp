@@ -43,3 +43,16 @@ std::optional<std::vector<uint8_t>> MCFastFileSet::Read(std::string_view gamePat
 
     return std::nullopt;
 }
+
+std::optional<uint32_t> MCFastFileSet::SizeOf(std::string_view gamePath) const
+{
+    for (const std::unique_ptr<MCFastFile>& fastFile : _Files)
+    {
+        if (const std::optional<int32_t> index = fastFile->Find(gamePath); index.has_value())
+        {
+            return static_cast<uint32_t>(std::max(fastFile->GetEntries()[static_cast<size_t>(*index)].RealSize, 0));
+        }
+    }
+
+    return std::nullopt;
+}

@@ -71,6 +71,7 @@
 #include "platform/MCSharpPictures.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCShapeFile.h"
 #include "vfx/MCVfxFunctions.h"
 
 std::type_identity_t<std::array<bool, 7>> LogCheatActive{};
@@ -147,8 +148,11 @@ namespace
         return port;
     }
 
-    /// <summary>Loads the whole of an opened shape file into a block registered as shapes (the repair and icon shapes).</summary>
-    MCRegisteredBlock ReadShapeFile(MCFile& file, std::string_view sizeError)
+    /// <summary>
+    /// Loads the whole of an opened shape file into a block registered as shapes (the repair and icon shapes): with HD
+    /// art's numbered folders drawn, the pack's copy (MCShapeFile).
+    /// </summary>
+    MCRegisteredBlock ReadShapeFile(MCShapeFile& file, std::string_view sizeError)
     {
         const uint32_t length = file.GetLength();
         MCRegisteredBlock shapes(length, MCDataKind::Shapes);
@@ -159,7 +163,7 @@ namespace
     }
 
     /// <summary>Opens shape file <paramref name="fileName"/> (asserting it exists) and loads it (<see cref="ReadShapeFile"/>).</summary>
-    MCRegisteredBlock LoadShapeFile(MCFile& file, std::string_view fileName, std::string_view openError,
+    MCRegisteredBlock LoadShapeFile(MCShapeFile& file, std::string_view fileName, std::string_view openError,
                                     std::string_view sizeError)
     {
         const int32_t result = file.Open(fileName);
@@ -568,27 +572,29 @@ auto MCLogistics::Start() -> void
     VfxPaneWipe(ClockBackPort->Frame(), 0x10);
     RepairBackPort = NewArtPort("logart\\lsrupm00.tga");
 
+    MCShapeFile shapeFile;
+
     for (size_t i = 0; i < MechRepShapes.size(); ++i)
     {
-        MechRepShapes[i] = LoadShapeFile(file, std::format("{}mechrep{:02}.shp", ArtPath, i),
+        MechRepShapes[i] = LoadShapeFile(shapeFile, std::format("{}mechrep{:02}.shp", ArtPath, i),
                                          "could not open mechrep shape file", "unexpected mechrep size");
-        MechIconShapes[i] = LoadShapeFile(file, std::format("{}mi{:02}.shp", ArtPath, i),
+        MechIconShapes[i] = LoadShapeFile(shapeFile, std::format("{}mi{:02}.shp", ArtPath, i),
                                           "could not open mechicon shape file", "unexpected mechicon size");
     }
 
     // A vehicle without a repair picture has no icon either.
     for (size_t i = 0; i < VehicleRepShapes.size(); ++i)
     {
-        if (file.Open(std::format("{}vr1{:02}.shp", ArtPath, i)) != 0)
+        if (shapeFile.Open(std::format("{}vr1{:02}.shp", ArtPath, i)) != 0)
         {
             continue;
         }
 
-        VehicleRepShapes[i] = ReadShapeFile(file, "unexpected vhclrep size");
+        VehicleRepShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
 
-        if (file.Open(std::format("{}vi1{:02}.shp", ArtPath, i)) == 0)
+        if (shapeFile.Open(std::format("{}vi1{:02}.shp", ArtPath, i)) == 0)
         {
-            VehicleIconShapes[i] = ReadShapeFile(file, "unexpected vhclrep size");
+            VehicleIconShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
         }
     }
 
@@ -701,7 +707,8 @@ auto MCLogistics::AttachHdArt() -> void
         {
             if (!icons[i].Empty())
             {
-                MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, MCHdArt::IconShapeKey{std::format("{}{:02}", prefix, i)});
+                const MCHdArt::IconShapeKey key{std::format("{}{:02}", prefix, i)};
+                MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, key);
             }
 
             if (repairs[i].Empty())
@@ -772,7 +779,7 @@ auto MCLogistics::MakeAhead() const -> void
     GuiSystem().ReadMenuSetAhead();
 }
 
-auto MCLogistics::ReadTexturesAhead() -> void
+auto MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs as) -> void
 {
     if (!DrawsSharp())
     {
@@ -789,7 +796,7 @@ auto MCLogistics::ReadTexturesAhead() -> void
         }
     }
 
-    MCHdArt::ReadPicturesAhead(pictures);
+    MCHdArt::ReadPicturesAhead(pictures, as);
 }
 
 auto MCLogistics::BriefingMapOf(std::string_view scenario) -> std::optional<MCPicturePixels>

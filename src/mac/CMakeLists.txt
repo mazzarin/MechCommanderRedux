@@ -146,6 +146,15 @@ add_library(mc_libdeflate STATIC ${MC_LIBDEFLATE_DIR}/lib/deflate_decompress.c $
 target_compile_options(mc_libdeflate PRIVATE -w)
 target_include_directories(mc_libdeflate PUBLIC ${MC_LIBDEFLATE_DIR})
 target_link_libraries(MCCore PUBLIC mc_libdeflate)
+# Zstandard's decompressor (the version 2 HD art pack's streams): the C files MCCore.vcxproj lists, as on Windows, a
+# library of its own outside MCCore's C++ options; without its x86-64 assembly (its README.md).
+mc_vcxproj_items(MC_ZSTD_ITEMS ${MC_SRC}/lib/MCCore/MCCore.vcxproj "" ClCompile "\\$\\(MCLibDir\\)zstd-1\\.5\\.7[^\"]+\\.c")
+list(TRANSFORM MC_ZSTD_ITEMS REPLACE "^/\\$\\(MCLibDir\\)" "${MC_SRC}/lib/")
+add_library(mc_zstd STATIC ${MC_ZSTD_ITEMS})
+target_compile_definitions(mc_zstd PRIVATE ZSTD_DISABLE_ASM)
+target_compile_options(mc_zstd PRIVATE -w)
+target_include_directories(mc_zstd PUBLIC ${MC_SRC}/lib/zstd-1.5.7/lib)
+target_link_libraries(MCCore PUBLIC mc_zstd)
 # HDiffPatch's patcher (lib/MCFilePatch applies updates' patches): one C file, single-threaded, as on Windows.
 add_library(mc_hpatch STATIC ${MC_SRC}/lib/HDiffPatch-5.1.3/libHDiffPatch/HPatch/patch.c)
 target_compile_definitions(mc_hpatch PRIVATE _IS_USED_MULTITHREAD=0)
@@ -306,6 +315,8 @@ add_custom_command(TARGET MCRedux POST_BUILD
 # The tests run the Mac's real reports backend too (TelemetryBackendTests.cpp).
 add_executable(mc_tests ${MCTESTS_SOURCES} ${MC_TELEMETRY_BACKEND})
 target_include_directories(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux)
+# xxHash, as every Windows project has it (MechCommander.props): the tests' version 2 archives' table hashes.
+target_include_directories(mc_tests PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
 target_precompile_headers(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
 target_link_libraries(mc_tests PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework IOKit"
                       "-framework Metal")

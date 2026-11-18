@@ -23,6 +23,27 @@
 
 namespace
 {
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): the state a pop-up's open and close cycle goes to from
+    /// <paramref name="state"/> (none from a destroyed one).
+    /// </summary>
+    std::optional<MCPUActorState> NextInCycle(MCPUActorState state)
+    {
+        switch (state)
+        {
+            case MCPUActorState::Closed:
+                return MCPUActorState::Opening;
+            case MCPUActorState::Opening:
+                return MCPUActorState::Open;
+            case MCPUActorState::Open:
+                return MCPUActorState::Closing;
+            case MCPUActorState::Closing:
+                return MCPUActorState::Closed;
+            default:
+                return std::nullopt;
+        }
+    }
+
     /// <summary>The pixel offset of a turret or gate; false for other classes.</summary>
     auto PixelOffset(MCGameObject& obj, int32_t& offsetX, int32_t& offsetY) -> bool
     {
@@ -131,6 +152,52 @@ auto MCPUAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     return 0;
 }
 
+auto MCPUAppearance::DrawnRotation(MCGameObject& obj, MCPUActorState state) const -> float
+{
+    float rotation = Rotation;
+
+    if (obj.ObjectClass == MCObjectClass::GroundVehicle)
+    {
+        rotation = static_cast<float>(MCActorFacing(obj) + static_cast<MCGroundVehicle&>(obj).TurretRotation);
+    }
+    else if (obj.ObjectClass == MCObjectClass::Turret)
+    {
+        rotation = static_cast<MCTurret&>(obj).TurretRotation;
+    }
+
+    if (rotation < 0.0)
+    {
+        rotation = static_cast<float>(rotation + 360.0);
+    }
+
+    // Snap to the nearest drawn rotation.
+    const int32_t numRotations = AppearType->StateData(state).NumRotations + 1;
+    const int32_t rotationIndex = static_cast<int16_t>(static_cast<int32_t>(
+        std::floor(static_cast<double>(static_cast<float>(numRotations) * rotation) * (1.0 / 360.0))));
+    return static_cast<float>(360.0 / numRotations) * static_cast<float>(rotationIndex);
+}
+
+auto MCPUAppearance::ReadAhead() -> void
+{
+    const std::shared_ptr<MCGameObject> obj = Owner.lock();
+
+    if (obj == nullptr || AppearType == nullptr)
+    {
+        return;
+    }
+
+    // The state's packet Render takes now, and the next state's in the open and close cycle at the same facing (snapped
+    // to that state's rotations, as Render will once the state changes).
+    const MCAppearanceType::MCAskingAhead asking;
+    float frameRate = 0.0f;
+    AppearType->GetShape(CurrentState, static_cast<int32_t>(DrawnRotation(*obj, CurrentState)), 0, frameRate);
+
+    if (const std::optional<MCPUActorState> next = NextInCycle(CurrentState); next.has_value())
+    {
+        AppearType->GetShape(*next, static_cast<int32_t>(DrawnRotation(*obj, *next)), 0, frameRate);
+    }
+}
+
 auto MCPUAppearance::Render(int32_t depthFixup) -> int32_t
 {
     const std::shared_ptr<MCGameObject> obj = Owner.lock();
@@ -144,26 +211,8 @@ auto MCPUAppearance::Render(int32_t depthFixup) -> int32_t
         ScreenPos.Y = static_cast<float>(offsetY) + ScreenPos.Y;
     }
 
-    if (obj->ObjectClass == MCObjectClass::GroundVehicle)
-    {
-        Rotation = static_cast<float>(MCActorFacing(*obj) + static_cast<MCGroundVehicle&>(*obj).TurretRotation);
-    }
-    else if (obj->ObjectClass == MCObjectClass::Turret)
-    {
-        Rotation = static_cast<MCTurret&>(*obj).TurretRotation;
-    }
-
-    if (Rotation < 0.0)
-    {
-        Rotation = static_cast<float>(Rotation + 360.0);
-    }
-
-    // Snap to the nearest drawn rotation.
+    Rotation = DrawnRotation(*obj, CurrentState);
     const MCPUActorState state = CurrentState;
-    const int32_t numRotations = AppearType->StateData(state).NumRotations + 1;
-    const int32_t rotationIndex = static_cast<int16_t>(static_cast<int32_t>(
-        std::floor(static_cast<double>(static_cast<float>(numRotations) * Rotation) * (1.0 / 360.0))));
-    Rotation = static_cast<float>(360.0 / numRotations) * static_cast<float>(rotationIndex);
     const std::shared_ptr<MCShape> shape = AppearType->GetShape(state, static_cast<int32_t>(Rotation), 0, FrameRate);
     CurrentShape = shape;
 

@@ -5,6 +5,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCSmoke.h"
+#include "sprite/MCShapeFile.h"
 
 auto MCSmokeType::CreateInstance() -> std::shared_ptr<MCBaseObject>
 {
@@ -72,7 +73,7 @@ auto MCSmokeType::Init(MCFile& objFile, uint32_t fileSize) -> int32_t
         return std::to_underlying(shapeName.error());
     }
 
-    MCFile shapeFile;
+    MCShapeFile shapeFile;
 
     if (const int32_t result = shapeFile.Open(GamePath(ShapesPath, *shapeName, ".shp")); result != 0)
     {

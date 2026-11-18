@@ -18,7 +18,11 @@ MCCursorImage MCCursorImageFromShape(std::span<const uint8_t> shapeTable, int32_
 /// <summary>The whole of <paramref name="pane"/> as an opaque cursor picture with its hot spot at (hotX, hotY).</summary>
 MCCursorImage MCCursorImageFromPane(const MCPane& pane, int32_t hotX, int32_t hotY);
 
-/// <summary>Makes the system cursors of every loaded shape in <paramref name="shapes"/>; <c>aSystem::init</c> calls it.</summary>
+/// <summary>
+/// Sets the system cursors' shapes to the loaded shapes in <paramref name="shapes"/> (the GUI's, kept while it runs), each
+/// one's picture and cursor made the first time it is shown, its HD frame read ahead by then: the shape shown first now,
+/// the rest by HD art's readers as a set (SPEC-first-use.md); <c>aSystem::init</c> calls it.
+/// </summary>
 void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes);
 
 /// <summary>Forgets what the last frame's cursor carried; <c>UpdateDisplay</c> calls it before the GUI draws.</summary>

@@ -5,7 +5,9 @@
 #include "MCScratchFolder.h"
 #include "TestGame.h"
 #include "fakes/MCMemoryFileSource.h"
+#include "fixtures/MCPakBytes.h"
 #include "lib/MCDice.h"
+#include "lib/MCDiskFile.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFilePatch.h"
 #include "lib/MCFile.h"
@@ -202,6 +204,201 @@ TEST_CASE("fastfile: entries are found by name and read raw or unpacked")
 
     CHECK_EQ(file.Open("data\\nothere.bin"), FILE_NOT_FOUND);
     CHECK(file.GetFilename().empty());
+}
+
+namespace
+{
+    /// <summary>Bytes no two neighbouring stretches share, so a read from the wrong place shows.</summary>
+    std::vector<uint8_t> MixedBytes(size_t size)
+    {
+        constexpr uint32_t Mix = 2654435761u;
+        std::vector<uint8_t> bytes(size);
+        std::ranges::generate(bytes, [at = uint32_t{0}]() mutable { return static_cast<uint8_t>((at++ * Mix) >> 24); });
+        return bytes;
+    }
+
+    /// <summary><paramref name="bytes"/>' bytes at <paramref name="offset"/>, as many of <paramref name="size"/> as it has.</summary>
+    std::vector<uint8_t> BytesAt(const std::vector<uint8_t>& bytes, size_t offset, size_t size)
+    {
+        const size_t from = std::min(offset, bytes.size());
+        return std::vector<uint8_t>(bytes.begin() + static_cast<ptrdiff_t>(from),
+                                    bytes.begin() + static_cast<ptrdiff_t>(std::min(bytes.size(), from + size)));
+    }
+
+    /// <summary>What <paramref name="file"/> reads at <paramref name="offset"/>, up to <paramref name="size"/> bytes.</summary>
+    std::vector<uint8_t> DiskBytes(MCDiskFile& file, size_t offset, size_t size)
+    {
+        std::vector<uint8_t> got(size);
+        got.resize(file.ReadAt(static_cast<uint32_t>(offset), got));
+        return got;
+    }
+}
+
+/// <summary>
+/// Port-only: a buffered disk file (the original's loose files, read a byte, word or line at a time; the music and
+/// movies) reads through a buffer of its own, the same bytes as a plain read: 16 KB first, doubled at each fill that
+/// carries on where the last read ended, up to 256 KB; back to 16 KB after a jump; a read across the buffer's end takes
+/// what it holds and carries on from there; a read of the next fill's size or more straight in, the buffer kept; short
+/// past the end.
+/// </summary>
+TEST_CASE("disk file: a buffered file's buffer grows while it's read in order, and starts again small after a jump")
+{
+    ScratchFolder folder("disk-file-buffered");
+    constexpr size_t First = MCDiskFile::FirstFillBytes;
+    constexpr size_t Most = MCDiskFile::MostFillBytes;
+    constexpr size_t FileBytes = Most * 8;
+    const std::vector<uint8_t> bytes = MixedBytes(FileBytes);
+    const std::filesystem::path path = folder.Path() / "bytes.bin";
+    WriteFile(path, bytes);
+    std::optional<MCDiskFile> opened = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Buffered);
+    REQUIRE(opened.has_value());
+    MCDiskFile& file = *opened;
+    CHECK_EQ(file.Length(), static_cast<uint32_t>(FileBytes));
+    CHECK(!MCDiskFile::Open(folder.Path() / "missing.bin", MCDiskFileMode::Read, MCDiskFileReads::Buffered));
+
+    // Byte by byte from the start, as the original reads: fills of 16, 32, 64, 128, 256 and 256 KB.
+    constexpr size_t InOrder = First * (1 + 2 + 4 + 8 + 16) + Most;
+    std::vector<uint8_t> sequential;
+
+    for (size_t at = 0; at < InOrder; ++at)
+    {
+        std::array<uint8_t, 1> one{};
+
+        if (file.Read(one) == one.size())
+        {
+            sequential.push_back(one.front());
+        }
+    }
+
+    CHECK(sequential == BytesAt(bytes, 0, InOrder));
+    CHECK_EQ(file.SystemReads(), size_t{6});
+
+    // A jump: 16 KB again, then 32 KB carrying on from there.
+    const size_t jump = Most * 6;
+    CHECK(DiskBytes(file, jump, 2) == BytesAt(bytes, jump, 2));
+    CHECK_EQ(file.SystemReads(), size_t{7});
+    CHECK(DiskBytes(file, jump + 2, First - 2) == BytesAt(bytes, jump + 2, First - 2));
+    CHECK_EQ(file.SystemReads(), size_t{7});
+    CHECK(DiskBytes(file, jump + First, 1) == BytesAt(bytes, jump + First, 1));
+    CHECK_EQ(file.SystemReads(), size_t{8});
+
+    // A word across the buffer's end: its first byte from the buffer, the rest from the next fill (64 KB).
+    const size_t bufferEnd = jump + First * 3;
+    CHECK(DiskBytes(file, bufferEnd - 1, 2) == BytesAt(bytes, bufferEnd - 1, 2));
+    CHECK_EQ(file.SystemReads(), size_t{9});
+    CHECK(DiskBytes(file, bufferEnd + First * 4 - 2, 2) == BytesAt(bytes, bufferEnd + First * 4 - 2, 2));
+    CHECK_EQ(file.SystemReads(), size_t{9});
+
+    // A read of the next fill's size or more: straight in, the buffer kept; a fill carrying on from it doubles.
+    CHECK(DiskBytes(file, 100, First * 8) == BytesAt(bytes, 100, First * 8));
+    CHECK_EQ(file.SystemReads(), size_t{10});
+    CHECK(DiskBytes(file, bufferEnd + 10, 2) == BytesAt(bytes, bufferEnd + 10, 2));
+    CHECK_EQ(file.SystemReads(), size_t{10});
+    CHECK(DiskBytes(file, 100 + First * 8, First * 8 - 1) == BytesAt(bytes, 100 + First * 8, First * 8 - 1));
+    CHECK_EQ(file.SystemReads(), size_t{11});
+
+    // Past the end, short: across it, at it, beyond it, and a large read across it.
+    CHECK(DiskBytes(file, FileBytes - 5, 20) == BytesAt(bytes, FileBytes - 5, 5));
+    CHECK(DiskBytes(file, FileBytes, 4).empty());
+    CHECK(DiskBytes(file, FileBytes + 1000, 4).empty());
+    CHECK(DiskBytes(file, FileBytes - 100, Most * 2) == BytesAt(bytes, FileBytes - 100, 100));
+
+    // Read goes on from where the last read ended.
+    CHECK(DiskBytes(file, 10, 2) == BytesAt(bytes, 10, 2));
+    std::array<uint8_t, 4> next{};
+    REQUIRE_EQ(file.Read(next), next.size());
+    CHECK(std::vector<uint8_t>(next.begin(), next.end()) == BytesAt(bytes, 12, 4));
+}
+
+/// <summary>
+/// Port-only: a buffered file of 256 KB or less is read whole at its first read, every read after it from memory; and
+/// an archive's file (direct) reads each time exactly the bytes asked for, one call each, short past its end.
+/// </summary>
+TEST_CASE("disk file: a small file is read whole at its first read, and an archive's reads are the bytes asked")
+{
+    ScratchFolder folder("disk-file-small");
+    constexpr size_t FileBytes = 100 * 1024;
+    const std::vector<uint8_t> bytes = MixedBytes(FileBytes);
+    const std::filesystem::path path = folder.Path() / "small.bin";
+    WriteFile(path, bytes);
+
+    std::optional<MCDiskFile> buffered = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Buffered);
+    REQUIRE(buffered.has_value());
+
+    for (const auto& [offset, size] : {std::pair<size_t, size_t>{50000, 4},
+                                       {0, 5},
+                                       {FileBytes - 3, 3},
+                                       {FileBytes - 1, 10},
+                                       {FileBytes, 4},
+                                       {20000, 30000},
+                                       {7, 70000}})
+    {
+        MCTest::Scope scope(std::format("{} bytes at {}", size, offset));
+        CHECK(DiskBytes(*buffered, offset, size) == BytesAt(bytes, offset, size));
+    }
+
+    CHECK_EQ(buffered->SystemReads(), size_t{1});
+
+    std::optional<MCDiskFile> direct = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+    REQUIRE(direct.has_value());
+    CHECK(DiskBytes(*direct, 10, 2) == BytesAt(bytes, 10, 2));
+    CHECK(DiskBytes(*direct, 12, 2) == BytesAt(bytes, 12, 2));
+    CHECK_EQ(direct->SystemReads(), size_t{2});
+    std::array<uint8_t, 4> next{};
+    REQUIRE_EQ(direct->Read(next), next.size());
+    CHECK(std::vector<uint8_t>(next.begin(), next.end()) == BytesAt(bytes, 14, 4));
+    CHECK_EQ(direct->SystemReads(), size_t{3});
+    CHECK(DiskBytes(*direct, FileBytes - 2, 10) == BytesAt(bytes, FileBytes - 2, 2));
+    CHECK(DiskBytes(*direct, FileBytes * 2, 4).empty());
+
+    // An empty file reads nothing.
+    WriteFile(folder.Path() / "empty.bin", {});
+    std::optional<MCDiskFile> empty =
+        MCDiskFile::Open(folder.Path() / "empty.bin", MCDiskFileMode::Read, MCDiskFileReads::Buffered);
+    REQUIRE(empty.has_value());
+    CHECK(DiskBytes(*empty, 0, 4).empty());
+}
+
+/// <summary>
+/// Port-only: a disk file's writes go at their offset and empty its buffer, so what it reads after is what it wrote;
+/// writing past the end makes the file longer; a file created over one empties it; and another handle opens it while
+/// it's open, as a stream's could.
+/// </summary>
+TEST_CASE("disk file: a write empties the buffer, and the bytes read back")
+{
+    ScratchFolder folder("disk-file-write");
+    const std::filesystem::path path = folder.Path() / "written.bin";
+    constexpr size_t Written = 1000;
+    const std::vector<uint8_t> filler(Written, 'a');
+    std::optional<MCDiskFile> file = MCDiskFile::Open(path, MCDiskFileMode::Create, MCDiskFileReads::Buffered);
+    REQUIRE(file.has_value());
+    CHECK_EQ(file->Write(filler), Written);
+    CHECK_EQ(file->Length(), static_cast<uint32_t>(Written));
+
+    // Read into the buffer, written over, read again: the new bytes.
+    CHECK(DiskBytes(*file, 8, 7) == Bytes("aaaaaaa"));
+    CHECK_EQ(file->WriteAt(10, Bytes("XYZ")), size_t{3});
+    CHECK(DiskBytes(*file, 8, 7) == Bytes("aaXYZaa"));
+
+    // Written on from the position the write left, and past the end: longer.
+    CHECK_EQ(file->WriteAt(Written - 2, Bytes("yz")), size_t{2});
+    CHECK_EQ(file->Write(Bytes("end")), size_t{3});
+    CHECK_EQ(file->Length(), static_cast<uint32_t>(Written + 3));
+    CHECK(DiskBytes(*file, Written - 4, 7) == Bytes("aayzend"));
+
+    // Another handle opens it meanwhile and reads what was written.
+    std::optional<MCDiskFile> reader = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+    REQUIRE(reader.has_value());
+    CHECK(DiskBytes(*reader, Written, 3) == Bytes("end"));
+    reader.reset();
+    file.reset();
+    CHECK(ReadFile(path).size() == Written + 3);
+
+    // Created again: empty.
+    file = MCDiskFile::Open(path, MCDiskFileMode::Create, MCDiskFileReads::Buffered);
+    REQUIRE(file.has_value());
+    CHECK_EQ(file->Length(), uint32_t{0});
+    CHECK(DiskBytes(*file, 0, 4).empty());
 }
 
 /// <summary>Seeks are checked against the length; values are little-endian; lines end at CR, CR LF or LF.</summary>
@@ -753,6 +950,413 @@ TEST_CASE("packet file: a file held to a most unpacked size refuses an LZ packet
     pak.Close();
     REQUIRE_EQ(pak.Open(folder / "held.pak"), NO_ERR);
     CHECK_EQ(pak.SeekPacket(0), NO_ERR);
+}
+
+namespace
+{
+    /// <summary>
+    /// Runs <paramref name="check"/> on the packet file <paramref name="bytes"/> opened from a file on disk (in the
+    /// scratch folder <paramref name="name"/>), then from a test's file in memory (read whole).
+    /// </summary>
+    void OnDiskAndInMemory(std::string_view name, const std::vector<uint8_t>& bytes,
+                           const std::function<void(MCPacketFile&)>& check)
+    {
+        {
+            MCTest::Scope place("on disk");
+            ScratchFolder folder(name);
+            WriteFile(folder.Path() / "test.pak", bytes);
+            MCPacketFile pak;
+            REQUIRE_EQ(pak.Open(folder / "test.pak"), NO_ERR);
+            check(pak);
+        }
+
+        MCTest::Scope place("in memory");
+        MCTestContextScope scope;
+        MCMemoryFileSource& files = scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+        files.AddFile("data\\test.pak", bytes);
+        MCPacketFile pak;
+        REQUIRE_EQ(pak.Open("data\\test.pak"), NO_ERR);
+        check(pak);
+    }
+
+    /// <summary>Packets <paramref name="first"/> to <paramref name="last"/>.</summary>
+    std::vector<int32_t> PacketsFrom(int32_t first, int32_t last)
+    {
+        std::vector<int32_t> packets(static_cast<size_t>(last - first + 1));
+        std::iota(packets.begin(), packets.end(), first);
+        return packets;
+    }
+}
+
+/// <summary>
+/// Port-only: packets read together (MCPacketFile::ReadPackets) are what ReadPacket reads of each, in few reads: in the
+/// order they lie in the file, neighbours within 64 KB of each other in one read whatever the order asked, before the
+/// first asked or after it; a gap past 64 KB two reads; no read past 1 MB, a bigger packet read alone; nothing read for
+/// a Nul or empty packet; a packet asked twice read once. On disk, each thread its own handle, and in memory.
+/// </summary>
+TEST_CASE("packet file: packets read together come in few reads, neighbours within 64 KB in one, none past 1 MB")
+{
+    using namespace MCPakBytes;
+    constexpr size_t Gap = MCDiskFile::RunGapBytes;
+    constexpr size_t Most = MCDiskFile::RunMostBytes;
+    constexpr size_t Small = 3000;
+    constexpr size_t Wide = 60u * 1024u;
+    constexpr int32_t WideCount = 20;
+    std::vector<MCStored> stored;
+
+    // 0-7: small packets back to back, raw and LZ in turn.
+    for (uint32_t i = 0; i < 8; ++i)
+    {
+        stored.push_back(i % 2 == 0 ? Raw(Filled(Small, i)) : Lz(Filled(Small, i)));
+    }
+
+    // 8: a byte more than a read crosses; 9 past it. 10-29: 1.2 MB of neighbours.
+    stored.push_back(Raw(Filled(Gap + 1, 8)));
+    stored.push_back(Raw(Filled(1000, 9)));
+
+    for (int32_t i = 0; i < WideCount; ++i)
+    {
+        stored.push_back(Raw(Filled(Wide, static_cast<uint32_t>(10 + i))));
+    }
+
+    // 30: bigger than a read. 31: Nul, 32: empty. 33, then just what a read crosses (34), then 35.
+    stored.push_back(Raw(Filled(Most + 1, 30)));
+    stored.push_back(As(MCPacketStorage::Nul, {}));
+    stored.push_back(Raw({}));
+    stored.push_back(Raw(Filled(100, 33)));
+    stored.push_back(Raw(Filled(Gap, 34)));
+    stored.push_back(Raw(Filled(100, 35)));
+
+    OnDiskAndInMemory("packets-together", Pak(stored),
+                      [&](MCPacketFile& pak)
+                      {
+                          // Read together, each as ReadPacket reads it alone.
+                          const auto together = [&](const std::vector<int32_t>& packets)
+                          {
+                              MCPacketBatch batch = pak.ReadPackets(packets);
+                              REQUIRE_EQ(batch.Packets.size(), packets.size());
+
+                              for (size_t i = 0; i < packets.size(); ++i)
+                              {
+                                  MCTest::Scope packet(std::format("packet {}", packets[i]));
+                                  REQUIRE(batch.Packets[i].has_value());
+                                  CHECK(*batch.Packets[i] == ReadAlone(pak, packets[i]));
+                              }
+
+                              return batch;
+                          };
+
+                          CHECK_EQ(together({5, 2, 7, 0, 3, 6, 1, 4}).Reads, 1u);
+                          CHECK_EQ(together({4, 0, 7}).Reads, 1u);
+                          CHECK_EQ(together({7, 9}).Reads, 2u);
+                          CHECK_EQ(together({35, 33}).Reads, 1u);
+                          const MCPacketBatch wide = together(PacketsFrom(10, 10 + WideCount - 1));
+                          CHECK_EQ(wide.Reads, 2u);
+                          CHECK_EQ(wide.MostReadBytes, Most / Wide * Wide);
+                          const MCPacketBatch alone = together({29, 30, 33});
+                          CHECK_EQ(alone.Reads, 3u);
+                          CHECK_EQ(alone.MostReadBytes, Most + 1);
+                          const MCPacketBatch empty = together({31, 32});
+                          CHECK_EQ(empty.Reads, 0u);
+                          CHECK(empty.Packets[0]->empty());
+                          CHECK(empty.Packets[1]->empty());
+                          CHECK_EQ(together({3, 5, 3}).Reads, 1u);
+                          // 0-24 (to 1 MB), 25-29, 30 alone, 32-35.
+                          CHECK_EQ(together(PacketsFrom(0, 35)).Reads, 4u);
+                      });
+}
+
+/// <summary>
+/// Port-only: runs of a file's packets wanted as stored (MCPacketsWanted::Stored: a mech's art, for its stops' hash)
+/// come with the packets read together, each as ReadStoredPackets gives it (a Nul packet's bytes in it), in the same
+/// reads: a packet both wanted and in a run, or in two runs, read once, and one bigger than a read in one read however
+/// it's wanted. A run of none, or one past the table's end, comes as nothing, the caller's to read.
+/// </summary>
+TEST_CASE("packet file: runs wanted as stored come in the packets' reads, as ReadStoredPackets gives them")
+{
+    using namespace MCPakBytes;
+    constexpr size_t Most = MCDiskFile::RunMostBytes;
+    constexpr size_t Small = 3000;
+    constexpr size_t NulBytes = 100;
+    constexpr size_t Last = 100;
+    // The small packets (0-5), then the Nul one (6), the one bigger than a read (7) and the last (8).
+    constexpr int32_t SmallCount = 6;
+    constexpr int32_t Nul = SmallCount;
+    constexpr int32_t Big = Nul + 1;
+    std::vector<MCStored> stored;
+
+    for (uint32_t i = 0; i < static_cast<uint32_t>(SmallCount); ++i)
+    {
+        stored.push_back(i % 2 == 0 ? Raw(Filled(Small, i)) : Lz(Filled(Small, i)));
+    }
+
+    stored.push_back(As(MCPacketStorage::Nul, Filled(NulBytes, Nul)));
+    stored.push_back(Raw(Filled(Most + 1, Big)));
+    stored.push_back(Raw(Filled(Last, Big + 1)));
+    const auto count = static_cast<int32_t>(stored.size());
+
+    OnDiskAndInMemory(
+        "packets-stored", Pak(stored),
+        [&](MCPacketFile& pak)
+        {
+            const std::vector<int32_t> packets{1, 3, Big, Big + 1};
+            // Two runs sharing 2 and 3, one from the Nul packet to the end, one of none, one past the end.
+            const std::vector<MCStoredRun> runs{
+                MCStoredRun{.First = 0, .Count = 4}, MCStoredRun{.First = 2, .Count = 5},
+                MCStoredRun{.First = Nul, .Count = 3}, MCStoredRun{.First = 0, .Count = 0},
+                MCStoredRun{.First = count - 2, .Count = 3}};
+            const std::set<size_t> none{3, 4};
+            const std::array<MCPacketsWanted, 1> withPackets{MCPacketsWanted{pak, packets, runs}};
+            const std::array<MCPacketsWanted, 1> runsAlone{MCPacketsWanted{pak, {}, runs}};
+
+            for (const auto& [wanted, name] : {std::pair{withPackets, "with packets"}, std::pair{runsAlone, "alone"}})
+            {
+                MCTest::Scope scope(name);
+                const std::vector<MCPacketBatch> batches = MCPacketFile::ReadPackets(wanted);
+                REQUIRE_EQ(batches.size(), 1u);
+                const MCPacketBatch& batch = batches[0];
+                // 0-6 in one read, 7 alone, 8 alone (7 fills a read).
+                CHECK_EQ(batch.Reads, 3u);
+                REQUIRE_EQ(batch.Packets.size(), wanted[0].Packets.size());
+
+                for (size_t i = 0; i < batch.Packets.size(); ++i)
+                {
+                    MCTest::Scope packet(std::format("packet {}", packets[i]));
+                    REQUIRE(batch.Packets[i].has_value());
+                    CHECK(*batch.Packets[i] == ReadAlone(pak, packets[i]));
+                }
+
+                REQUIRE_EQ(batch.Stored.size(), runs.size());
+
+                for (size_t i = 0; i < runs.size(); ++i)
+                {
+                    MCTest::Scope run(std::format("run from {}, {} of them", runs[i].First, runs[i].Count));
+                    const std::vector<uint8_t> alone = pak.ReadStoredPackets(runs[i].First, runs[i].Count);
+                    REQUIRE_EQ(batch.Stored[i].has_value(), !none.contains(i));
+                    CHECK_EQ(alone.empty(), none.contains(i));
+
+                    if (batch.Stored[i].has_value())
+                    {
+                        CHECK(*batch.Stored[i] == alone);
+                    }
+                }
+
+                // The Nul packet's stored bytes are in its runs: the table, then 6's, 7's and 8's bytes.
+                REQUIRE(batch.Stored[2].has_value());
+                CHECK_EQ(batch.Stored[2]->size(), 3 * sizeof(uint32_t) + NulBytes + Most + 1 + Last);
+            }
+        });
+}
+
+/// <summary>
+/// Port-only: packets read together leave the caller what ReadPacket doesn't read plainly, to read itself: a packet
+/// stored other than raw, LZ or Nul (SeekPacket keeps the size the packet before gave), an LZ packet claiming more than
+/// its data could make or the file is held to (issue #25), one that doesn't unpack to its size or is too short to hold
+/// it, a packet at the header, one ending past the file's end or starting past it (a file cut short of its table), a
+/// number outside the table. The rest still come; an LZ packet of nothing comes empty.
+/// </summary>
+TEST_CASE("packet file: packets read together leave the caller what ReadPacket doesn't read plainly")
+{
+    using namespace MCPakBytes;
+    constexpr uint32_t Fwf = 1;
+    constexpr uint32_t Huffman = 3;
+    constexpr uint32_t Zlib = 4;
+    constexpr std::array<uint32_t, 2> Unnamed{5, 6};
+    const std::vector<uint8_t> data = Filled(4000, 6);
+    const auto lzMost = static_cast<int32_t>((Lz(data).Bytes.size() - sizeof(int32_t)) * 4096);
+    // The packet at the header first: the one before a packet at 0 would end before it starts.
+    const std::vector<MCStored> stored{
+        MCStored{.Bytes = Filled(100, 0), .Offset = 0},
+        Lz(Filled(5000, 1)),
+        MCStored{.Storage = Fwf, .Bytes = Filled(300, 2)},
+        MCStored{.Storage = Huffman, .Bytes = Filled(300, 3)},
+        MCStored{.Storage = Zlib, .Bytes = Filled(300, 4)},
+        MCStored{.Storage = Unnamed[0], .Bytes = Filled(300, 5)},
+        MCStored{.Storage = Unnamed[1], .Bytes = Filled(300, 6)},
+        Lz(data, lzMost + 1),
+        Lz(data, static_cast<int32_t>(data.size()) + 50),
+        As(MCPacketStorage::Lzd, {0, 0}),
+        Raw(Filled(100, 10)),
+        MCStored{.Offset = 0x100000},
+        Raw(Filled(100, 12)),
+        Lz({}),
+    };
+
+    const std::set<int32_t> plain{1, 12, 13};
+
+    OnDiskAndInMemory("packets-plainly", Pak(stored),
+                      [&](MCPacketFile& pak)
+                      {
+                          REQUIRE_EQ(pak.GetNumPackets(), static_cast<int32_t>(stored.size()));
+                          std::vector<int32_t> packets = PacketsFrom(-1, pak.GetNumPackets());
+                          const MCPacketBatch batch = pak.ReadPackets(packets);
+
+                          for (size_t i = 0; i < packets.size(); ++i)
+                          {
+                              MCTest::Scope packet(std::format("packet {}", packets[i]));
+                              REQUIRE_EQ(batch.Packets[i].has_value(), plain.contains(packets[i]));
+
+                              if (batch.Packets[i].has_value())
+                              {
+                                  CHECK(*batch.Packets[i] == ReadAlone(pak, packets[i]));
+                              }
+                          }
+
+                          // Packets from -1: packet 13, an LZ packet of nothing, comes empty.
+                          CHECK(batch.Packets[13 + 1]->empty());
+                          CHECK_EQ(batch.Packets[1 + 1]->size(), 5000u);
+                          // Held to less than packet 1 unpacks to.
+                          pak.SetMostUnpacked(4999);
+                          CHECK(!pak.ReadPackets(std::vector{1}).Packets[0].has_value());
+                          CHECK(ReadAlone(pak, 1).empty());
+                      });
+}
+
+/// <summary>
+/// Port-only: a packet file that can't hand out readers of its own (a file written, a file closed, a file on disk
+/// changed since it opened) leaves every packet read together to the caller.
+/// </summary>
+TEST_CASE("packet file: packets read together are the caller's from a file written, closed or changed")
+{
+    using namespace MCPakBytes;
+    ScratchFolder folder("packets-readers");
+    const std::vector<uint8_t> bytes = Pak({Raw(Filled(100, 0)), Raw(Filled(100, 1))});
+    WriteFile(folder.Path() / "test.pak", bytes);
+    const std::vector<int32_t> both{0, 1};
+    const auto noneRead = [&](const MCPacketFile& pak)
+    {
+        const MCPacketBatch batch = pak.ReadPackets(both);
+        return !pak.OpenReader().has_value() && !batch.Packets[0].has_value() && !batch.Packets[1].has_value() &&
+               batch.Reads == 0;
+    };
+
+    MCPacketFile written;
+    REQUIRE_EQ(written.Create(folder / "written.pak"), NO_ERR);
+    written.Reserve(2);
+    written.WritePacket(0, Filled(10, 2), MCPacketStorage::Raw);
+    CHECK(noneRead(written));
+    CHECK(noneRead(MCPacketFile()));
+
+    MCPacketFile changed;
+    REQUIRE_EQ(changed.Open(folder / "test.pak"), NO_ERR);
+    REQUIRE(changed.OpenReader().has_value());
+    CHECK_EQ(changed.ReadPackets(both).Reads, 1u);
+    std::vector<uint8_t> longer = bytes;
+    longer.push_back(0);
+    WriteFile(folder.Path() / "test.pak", longer);
+    CHECK(noneRead(changed));
+}
+
+/// <summary>
+/// Port-only: a child window into a packet file on disk (a mech's PAK inside a part PAK's packet) hands out readers of
+/// its own bytes, read from its parent's file at its place there and no further, so its packets read together are
+/// ReadPacket's; and two windows into one file read together share reads, their neighbours joined across them.
+/// </summary>
+TEST_CASE("packet file: a child window's packets read together come from its parent's file, two windows' in one read")
+{
+    using namespace MCPakBytes;
+    const std::vector<uint8_t> first = Pak({Raw(Filled(100, 0)), Lz(Filled(3000, 1)), Raw(Filled(200, 2))});
+    const std::vector<uint8_t> second = Pak({Raw(Filled(150, 3)), Lz(Filled(2000, 4))});
+    ScratchFolder folder("packets-children");
+    WriteFile(folder.Path() / "parts.pak", Pak({Raw(Filled(500, 5)), Raw(first), Raw(second)}));
+    MCPacketFile parts;
+    REQUIRE_EQ(parts.Open(folder / "parts.pak"), NO_ERR);
+    std::array<MCPacketFile, 2> children;
+
+    for (int32_t k = 0; k < 2; ++k)
+    {
+        REQUIRE_EQ(parts.SeekPacket(k + 1), NO_ERR);
+        REQUIRE_EQ(children[static_cast<size_t>(k)].Open(parts, static_cast<uint32_t>(parts.GetPacketSize())), NO_ERR);
+    }
+
+    // A reader of the first child reads its bytes, and none past them.
+    std::optional<MCFileReader> reader = children[0].OpenReader();
+    REQUIRE(reader.has_value());
+    std::vector<uint8_t> read(first.size() + 10, 0);
+    CHECK_EQ(reader->ReadAt(0, read), first.size());
+    CHECK(std::equal(first.begin(), first.end(), read.begin()));
+    CHECK_EQ(reader->ReadAt(static_cast<uint32_t>(first.size()), read), 0u);
+
+    const std::vector<int32_t> ofFirst = PacketsFrom(0, 2);
+    const std::vector<int32_t> ofSecond = PacketsFrom(0, 1);
+    const MCPacketBatch alone = children[0].ReadPackets(ofFirst);
+    CHECK_EQ(alone.Reads, 1u);
+
+    for (size_t i = 0; i < ofFirst.size(); ++i)
+    {
+        REQUIRE(alone.Packets[i].has_value());
+        CHECK(*alone.Packets[i] == ReadAlone(children[0], ofFirst[i]));
+    }
+
+    const std::array<MCPacketsWanted, 2> both{MCPacketsWanted{children[0], ofFirst},
+                                              MCPacketsWanted{children[1], ofSecond}};
+    const std::vector<MCPacketBatch> together = MCPacketFile::ReadPackets(both);
+    REQUIRE_EQ(together.size(), 2u);
+    CHECK_EQ(together[0].Reads + together[1].Reads, 1u);
+
+    for (size_t i = 0; i < ofSecond.size(); ++i)
+    {
+        REQUIRE(together[1].Packets[i].has_value());
+        CHECK(*together[1].Packets[i] == ReadAlone(children[1], ofSecond[i]));
+    }
+
+    CHECK(together[0].Packets == alone.Packets);
+}
+
+/// <summary>
+/// Port-only: packets held (MCPacketFile::HoldPackets: a mission's load's object types) seek and read as SeekPacket and
+/// ReadPacket leave and give them, the file's position and the packet's size included; let go, they're read as ever.
+/// A FIT file inside one opens from what's held.
+/// </summary>
+TEST_CASE("packet file: packets held seek and read as SeekPacket and ReadPacket do")
+{
+    using namespace MCPakBytes;
+    const std::vector<uint8_t> fit = Bytes("FITini\r\n[ObjectClass]\r\nl ObjectTypeNum = 3\r\n\r\nFITend\r\n");
+    const std::vector<MCStored> stored{Raw(Filled(300, 0)), Lz(Filled(4000, 1)), As(MCPacketStorage::Nul, {}), Lz(fit),
+                                       Raw(Filled(100, 2))};
+
+    OnDiskAndInMemory("packets-held", Pak(stored),
+                      [&](MCPacketFile& pak)
+                      {
+                          MCPacketFile plain;
+                          REQUIRE_EQ(plain.Open(pak.GetFilename()), NO_ERR);
+                          const std::vector<int32_t> held = PacketsFrom(0, 3);
+                          const MCPacketsHeld kept = pak.HoldPackets(held);
+                          CHECK_EQ(kept.Packets, held.size());
+                          CHECK_EQ(kept.Bytes, 300u + 4000u + fit.size());
+
+                          for (const int32_t packet : PacketsFrom(-1, 5))
+                          {
+                              MCTest::Scope scope(std::format("packet {}", packet));
+                              CHECK_EQ(pak.Holds(packet), packet >= 0 && packet <= 3);
+                              CHECK_EQ(pak.SeekPacket(packet), plain.SeekPacket(packet));
+                              CHECK_EQ(pak.GetPacketSize(), plain.GetPacketSize());
+                              CHECK_EQ(pak.GetLogicalPosition(), plain.GetLogicalPosition());
+                              std::vector<uint8_t> ours(static_cast<size_t>(std::max(pak.GetPacketSize(), 0)) + 5,
+                                                        0xcc);
+                              std::vector<uint8_t> theirs = ours;
+                              CHECK_EQ(pak.ReadPacket(packet, ours), plain.ReadPacket(packet, theirs));
+                              CHECK(ours == theirs);
+                              CHECK_EQ(pak.GetLogicalPosition(), plain.GetLogicalPosition());
+                          }
+
+                          pak.ReleaseHeld();
+                          CHECK(!pak.Holds(0));
+                          CHECK(ReadAlone(pak, 1) == ReadAlone(plain, 1));
+                      });
+
+    // A FIT file in a held packet opens from what's held, as MCObjectTypeManager::Load opens a type's (a child window
+    // reads only from a file on disk).
+    ScratchFolder folder("packets-held-fit");
+    WriteFile(folder.Path() / "test.pak", Pak(stored));
+    MCPacketFile pak;
+    REQUIRE_EQ(pak.Open(folder / "test.pak"), NO_ERR);
+    CHECK_EQ(pak.HoldPackets(std::vector{3}).Packets, 1u);
+    REQUIRE_EQ(pak.SeekPacket(3), NO_ERR);
+    MCFitIniFile classFile;
+    REQUIRE_EQ(classFile.Open(pak, static_cast<uint32_t>(pak.GetPacketSize())), 0);
+    REQUIRE_EQ(classFile.SeekBlock("ObjectClass"), 0);
+    CHECK(classFile.Read<int32_t>("ObjectTypeNum") == MCFitResult<int32_t>(3));
 }
 
 /// <summary>A FIT file stored as a packet opens straight from the packet file (read into memory).</summary>

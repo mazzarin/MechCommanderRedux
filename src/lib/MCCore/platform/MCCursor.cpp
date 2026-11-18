@@ -292,8 +292,12 @@ namespace
 
     struct MCCursorState
     {
-        /// <summary>The game's cursor shapes (<see cref="MCCursor::Preload"/>).</summary>
-        std::vector<MCCursorImage> Shapes;
+        /// <summary>
+        /// The game's cursor shapes (<see cref="MCCursor::Preload"/>), each picture made by MakeShape the first time
+        /// it is asked for (MCCursor::ShapeImage).
+        /// </summary>
+        std::vector<std::optional<MCCursorImage>> Shapes;
+        std::function<MCCursorImage(size_t)> MakeShape;
         /// <summary>Each shape's cursor, at the current scale; null until made.</summary>
         std::vector<MCMadeCursor> ShapeCursors;
         /// <summary>The last other picture shown (a dragged item), remade when it changes.</summary>
@@ -915,7 +919,7 @@ namespace MCCursor
         return bitmap;
     }
 
-    void Preload(std::vector<MCCursorImage> shapes)
+    void Preload(size_t count, std::function<MCCursorImage(size_t)> make)
     {
         MCCursorState& cursor = state();
 
@@ -924,22 +928,30 @@ namespace MCCursor
             retire(cursor, made);
         }
 
-        cursor.Shapes = std::move(shapes);
-        cursor.ShapeCursors.assign(cursor.Shapes.size(), {});
+        cursor.Shapes.assign(count, std::nullopt);
+        cursor.MakeShape = std::move(make);
+        cursor.ShapeCursors.assign(count, {});
+    }
 
-        // Every shape made now, at load, in the colours shown now, so each is warmed (Windows' slow part) before play.
-        if (const std::shared_ptr<MCDisplay> display = shownDisplay())
+    const MCCursorImage& ShapeImage(size_t shape)
+    {
+        static const MCCursorImage none;
+        MCCursorState& cursor = state();
+
+        if (shape >= cursor.Shapes.size())
         {
-            prepare(cursor, *display);
-
-            for (size_t shape = 0; shape < cursor.Shapes.size(); ++shape)
-            {
-                if (cursor.Shapes[shape].Width > 0)
-                {
-                    ensure(cursor, cursor.ShapeCursors[shape], cursor.Shapes[shape], cursor.ShownColors);
-                }
-            }
+            return none;
         }
+
+        std::optional<MCCursorImage>& image = cursor.Shapes[shape];
+
+        if (!image.has_value())
+        {
+            MCFrameLog::Scope part("cursor.picture");
+            image = cursor.MakeShape != nullptr ? cursor.MakeShape(shape) : MCCursorImage{};
+        }
+
+        return *image;
     }
 
     void ShowShape(size_t shape)
@@ -947,7 +959,9 @@ namespace MCCursor
         MCCursorState& cursor = state();
         const std::shared_ptr<MCDisplay> display = shownDisplay();
 
-        if (display == nullptr || shape >= cursor.Shapes.size() || cursor.Shapes[shape].Width <= 0)
+        const MCCursorImage& image = ShapeImage(shape);
+
+        if (display == nullptr || image.Width <= 0)
         {
             Hide();
             return;
@@ -957,7 +971,7 @@ namespace MCCursor
         MCMadeCursor& made = cursor.ShapeCursors[shape];
 
         // Only the shape on screen follows the colours and scale; another is made again when it is next shown.
-        if (!ensure(cursor, made, cursor.Shapes[shape], cursor.ShownColors))
+        if (!ensure(cursor, made, image, cursor.ShownColors))
         {
             return;
         }

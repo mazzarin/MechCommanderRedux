@@ -5,12 +5,12 @@
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFatal.h"
-#include "lib/MCFile.h"
 #include "main/MCGamePaths.h"
 #include "vfx/MCVfxFunctions.h"
 #include "platform/MCCursor.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
+#include "sprite/MCShapeFile.h"
 
 namespace
 {
@@ -431,7 +431,8 @@ auto MCGuiSystem::ActivatePalette(std::span<const uint8_t> colors, int32_t first
 auto MCGuiSystem::ActivatePaletteFromTga(std::string_view fileName) -> void
 {
     std::string path = std::format("{}{}", std::string_view(ArtPath), fileName);
-    MCFile tgaFile;
+    // Port: through MCShapeFile, so with a version 2 pack its colours come from the pack's copy.
+    MCShapeFile tgaFile;
 
     if (tgaFile.Open(path) != 0)
     {

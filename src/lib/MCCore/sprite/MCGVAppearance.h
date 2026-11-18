@@ -27,6 +27,12 @@ public:
 
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): the body's and the turret's packets as Render takes
+    /// them, and the next rotation's either way, read ahead (MCAppearanceType::MCAskingAhead).
+    /// </summary>
+    void ReadAhead() override;
+
     /// <summary>Switches to <paramref name="state"/> when the type has it.</summary>
     void SetTypeId(MCGVActorState state)
     {
@@ -69,4 +75,22 @@ public:
     /// <summary>The shape's size (50 before a shape).</summary>
     float ShapeMaxX = 50.0f;
     float ShapeMaxY = 50.0f;
+
+private:
+    /// <summary>The body's facing (snapped to its state's drawn rotations) and the turret's, in degrees.</summary>
+    struct MCGVRotations
+    {
+        float Body = 0.0f;
+        float Turret = 0.0f;
+    };
+
+    /// <summary>The facings Render draws <paramref name="obj"/> at (from the last ones, for an object of another class).</summary>
+    MCGVRotations DrawnRotations(MCGameObject& obj) const;
+
+    /// <summary>
+    /// Port-only: the degrees at the middle of the packet next to <paramref name="rotation"/>'s on
+    /// <paramref name="side"/> (-1 or 1) among <paramref name="state"/>'s rotations, as the type picks a rotation's packet
+    /// (MCGVAppearanceType::GetShape); <paramref name="rotation"/> itself when it has none.
+    /// </summary>
+    int32_t TurnedRotation(MCGVActorState state, float rotation, int32_t side) const;
 };

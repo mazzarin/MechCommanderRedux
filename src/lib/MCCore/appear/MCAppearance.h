@@ -74,6 +74,25 @@ public:
     /// <summary>The appearance's class (the top byte of its type id); 0 for the base.</summary>
     virtual uint32_t GetAppearanceClass() { return 0; }
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): whether the bounds RecalcBounds last found for
+    /// <paramref name="view"/> lie within half the view's size past its edges.
+    /// </summary>
+    bool NearView(const MCCamera& view) const;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): <see cref="ReadAhead"/> while HD art draws numbered
+    /// folders and the appearance is <paramref name="shown"/> in <paramref name="view"/> (RecalcBounds found it on
+    /// screen) or near it (NearView), which a pan or its move brings it into. Its object's on-screen check calls it.
+    /// </summary>
+    void ReadAheadNear(const MCCamera& view, bool shown);
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): has HD art's readers read the packets the appearance
+    /// draws now (as its Render finds them) whole, ahead of their frames' first draws, each once. Nothing for the base.
+    /// </summary>
+    virtual void ReadAhead() {}
+
     /// <summary>Where the owner is on screen through <paramref name="cam"/>.</summary>
     MCVector2D GetScreenPos(const MCCamera& cam) const;
 

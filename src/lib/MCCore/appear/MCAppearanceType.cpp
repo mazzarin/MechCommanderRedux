@@ -2,6 +2,7 @@
 #include "appear/MCAppearanceType.h"
 #include "sprite/MCShape.h"
 #include "main/MCMissionGlobals.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCSpriteManager.h"
 
 MCAppearanceFit::MCAppearanceFit(MCFile& packet, uint32_t size)
@@ -73,11 +74,63 @@ auto MCAppearanceType::MakeShapeList(std::vector<std::weak_ptr<MCShape>>& shapes
     }
 
     shapes.assign(static_cast<size_t>(numShapes), {});
+    _PacketSlots = shapes;
+
+    // Port-only (SPEC-first-use.md: a load): the HD archive holding the type's frames opened by HD art's readers now,
+    // its directory not read by the game's thread at the type's first draw or ask.
+    if (MCHdArt::NumberedFolders())
+    {
+        if (const std::string shapeFile = SpriteManager()->ShapeFileName(ShapeFileNum()); !shapeFile.empty())
+        {
+            const std::array<std::filesystem::path, 1> folder{
+                MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{shapeFile, ShapeFileNum(), 0})};
+            MCHdArt::OpenArchivesAhead(folder);
+        }
+    }
+
     return {};
+}
+
+auto MCAppearanceType::ShapesUnloaded() -> std::vector<MCShapeWanted>
+{
+    std::vector<MCShapeWanted> wanted;
+
+    if (!_PacketSlots.has_value())
+    {
+        return wanted;
+    }
+
+    const std::vector<std::weak_ptr<MCShape>>& slots = _PacketSlots->get();
+
+    for (size_t packet = 0; packet < slots.size(); ++packet)
+    {
+        if (slots[packet].expired())
+        {
+            wanted.push_back(MCShapeWanted{
+                .FileNum = ShapeFileNum(), .Packet = static_cast<uint32_t>(packet), .Owner = weak_from_this()});
+        }
+    }
+
+    return wanted;
+}
+
+auto MCAppearanceType::KeepShape(uint32_t packet, const std::shared_ptr<MCShape>& shape) -> void
+{
+    if (_PacketSlots.has_value() && packet < _PacketSlots->get().size() && shape != nullptr)
+    {
+        _PacketSlots->get()[packet] = shape;
+    }
 }
 
 auto MCAppearanceType::PacketShape(std::weak_ptr<MCShape>& slot, uint32_t packet) -> std::shared_ptr<MCShape>
 {
+    // Port-only (SPEC-first-use.md): asked ahead, the packet's HD frames read, not the shape loaded.
+    if (MCAskingAhead::Asking)
+    {
+        AskPacketAhead(packet);
+        return slot.lock();
+    }
+
     if (std::shared_ptr<MCShape> shape = slot.lock())
     {
         shape->LastTurnUsed = Turn;
@@ -87,4 +140,19 @@ auto MCAppearanceType::PacketShape(std::weak_ptr<MCShape>& slot, uint32_t packet
     std::shared_ptr<MCShape> shape = SpriteManager()->GetShapeData(ShapeFileNum(), packet, Turn, weak_from_this());
     slot = shape;
     return shape;
+}
+
+auto MCAppearanceType::AskPacketAhead(uint32_t packet) -> void
+{
+    if (!_AskedAhead.Ask(packet))
+    {
+        return;
+    }
+
+    const std::string shapeFile = SpriteManager()->ShapeFileName(ShapeFileNum());
+
+    if (!shapeFile.empty())
+    {
+        MCHdArt::ReadPacketAhead(MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{shapeFile, ShapeFileNum(), packet}));
+    }
 }

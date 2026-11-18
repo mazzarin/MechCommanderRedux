@@ -32,7 +32,7 @@ namespace
 
     /// <summary>
     /// Sets HD ART and HD LIGHTING to <paramref name="art"/>'s, tying the shapes loaded so far to the pack when HD art
-    /// comes on.
+    /// comes on, and giving those loaded from its stripped tables their original packets when it goes off.
     /// </summary>
     void SetArt(const MCArtMode& art)
     {
@@ -43,6 +43,12 @@ namespace
         if (hdArtWas == HdArtOff && GHdArt != HdArtOff)
         {
             AttachHdArtToLoaded();
+        }
+        else if (const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+                 hdArtWas != HdArtOff && GHdArt == HdArtOff && sprites != nullptr)
+        {
+            // Port-only: shapes loaded from the HD pack's stripped tables have no rows for the original's look.
+            sprites->RestoreOriginalShapes();
         }
     }
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
 #include "platform/MCRegisteredBlock.h"
 
 class MCPacketFile;
@@ -19,6 +20,15 @@ struct MCTerrainTile
     bool Missing = false;
 };
 
+/// <summary>Port-only: what <see cref="MCTerrainTiles::ReadTiles"/> read.</summary>
+struct MCTileReads
+{
+    /// <summary>The tiles read into the cache, those found missing included.</summary>
+    size_t Tiles = 0;
+    /// <summary>The reads of the tile files that took (a tile read alone counted as one).</summary>
+    size_t Reads = 0;
+};
+
 /// <summary>
 /// The terrain tile cache: the tile bitmaps of the terrain's tile set, read on demand from two packet files
 /// (<c>&lt;tilePath&gt;&lt;name&gt;.pak</c> and the rotated set <c>&lt;tile90Path&gt;&lt;name&gt;90.pak</c>). The
@@ -30,6 +40,14 @@ struct MCTerrainTile
 /// file, the rest from the normal one. A <c>.pre</c> file in the terrain folder lists (as int32 indices) the tiles to
 /// preload.
 /// </remarks>
+/// <summary>
+/// Port-only (MCHdArt::GuardOriginalReads, test runs alone): the kinds of tile read from a set's files the guard notes:
+/// what the HD pack names the slot there (an overlay, a ground tile) or neither.
+/// </summary>
+inline constexpr std::string_view MCOverlayReadFromFile = "an overlay read from its tile file";
+inline constexpr std::string_view MCGroundTileReadFromFile = "a ground tile read from its tile file";
+inline constexpr std::string_view MCUnnamedTileReadFromFile = "a tile the HD pack doesn't name read from its file";
+
 class MCTerrainTiles
 {
 public:
@@ -44,8 +62,34 @@ public:
     MCTerrainTiles(const MCTerrainTiles&) = delete;
     MCTerrainTiles& operator=(const MCTerrainTiles&) = delete;
 
-    /// <summary>Loads the tiles listed in <c>&lt;terrainPath&gt;&lt;terrainName&gt;.pre</c>, if there is one.</summary>
-    void Preload(std::string_view terrainName);
+    /// <summary>
+    /// The slots of the tiles listed in <c>&lt;terrainPath&gt;&lt;terrainName&gt;.pre</c> (as int32 indices of the normal
+    /// set), to preload; none without one. Port: the load reads them with the map's (<see cref="ReadTiles"/>), first.
+    /// </summary>
+    std::vector<int32_t> PreloadSlots(std::string_view terrainName) const;
+
+    /// <summary>
+    /// Port-only: reads each of the slots <paramref name="slots"/> of the table that isn't cached or missing into the
+    /// cache (once, however often it's listed), as <see cref="ReadTile"/> would one at a time in the order listed, but
+    /// together: each file's in a few large reads on threads of their own (<see cref="MCPacketFile::ReadPackets"/>),
+    /// placed in the cache on this thread. A slot that can't be read so (one past the table, a file not open, a packet
+    /// the batch leaves to its caller) is read by ReadTile, after the packet ReadTile would have sought last before it.
+    /// </summary>
+    MCTileReads ReadTiles(std::span<const int32_t> slots);
+
+    /// <summary>
+    /// Port-only: slot <paramref name="tileNum"/> of the table as it is, read or not (none outside the table's slots and
+    /// the one past it).
+    /// </summary>
+    MCOptionalRef<const MCTerrainTile> Slot(int32_t tileNum) const;
+
+    /// <summary>
+    /// Port-only (PLAN.md's first-use item 10): puts <paramref name="packet"/> in the cache as slot
+    /// <paramref name="slot"/>'s tile, as reading it would (a ground tile rebuilt from its HD frame,
+    /// MCRebuildGroundTile). Whether it did: not for a slot outside the table, cached already or missing, or an empty
+    /// packet.
+    /// </summary>
+    bool Put(int32_t slot, std::span<const uint8_t> packet);
 
     /// <summary>
     /// The cached tile <paramref name="tileNum"/> of the view's tile set (<paramref name="rotated"/>: the rotated
@@ -63,6 +107,13 @@ public:
 
     /// <summary>The tile set isn't the default one ("tiles").</summary>
     bool CustomTileSet() const { return _CustomTileSet; }
+
+    /// <summary>
+    /// Port-only (HD art, terrain/MCGroundNames.h): a 64-bit FNV-1a hash of the tile set's two files as they open: each
+    /// one's seek table and length (none for a file not open). What names the set in the program's table of the HD
+    /// pack's names without reading a tile.
+    /// </summary>
+    uint64_t FilesHash() const;
 
     /// <summary>Added to a vertex's tile index: [0] = 0 for the normal view, [1] = numTiles / 2 for the rotated one.</summary>
     std::array<int32_t, 2> TileSetOffset{};

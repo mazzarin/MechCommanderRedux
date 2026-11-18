@@ -11,6 +11,7 @@
 #include "platform/MCRenderer.h"
 #include "main/MCMissionGlobals.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCShapeFile.h"
 #include "sprite/MCWeather.h"
 #include "terrain/MCTerrain.h"
 
@@ -92,7 +93,8 @@ auto MCCraterManager::Create(int32_t numCraters, std::string_view craterFileName
         {
             std::vector<uint8_t>& shape = shapes[static_cast<size_t>(i)];
             shape.resize(static_cast<size_t>(packetFile.GetPacketSize()));
-            packetFile.ReadPacket(i, shape);
+            // Port-only: with HD art's numbered folders drawn, the pack's copy (MCShapeFile).
+            MCShapeFile::ReadPacket(packetFile, i, shape);
         }
     }
 

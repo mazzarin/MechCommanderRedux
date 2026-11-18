@@ -26,6 +26,12 @@ public:
 
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): the state's packet as Render takes it, and the next
+    /// state's in the open and close cycle, read ahead (MCAppearanceType::MCAskingAhead).
+    /// </summary>
+    void ReadAhead() override;
+
     /// <summary>Switches to <paramref name="state"/> when the type has it.</summary>
     void SetTypeId(MCPUActorState state)
     {
@@ -71,4 +77,11 @@ public:
     /// <summary>The shape's size (50 before a shape).</summary>
     float ShapeMaxX = 50.0f;
     float ShapeMaxY = 50.0f;
+
+private:
+    /// <summary>
+    /// The facing Render draws <paramref name="obj"/> at in <paramref name="state"/>, snapped to that state's drawn
+    /// rotations, in degrees.
+    /// </summary>
+    float DrawnRotation(MCGameObject& obj, MCPUActorState state) const;
 };

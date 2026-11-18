@@ -406,11 +406,6 @@ auto MCMechActor::GetHotSpotIndex(uint32_t location) -> uint32_t
     return HotSpotFinderArray[location];
 }
 
-auto MCMechActor::PreloadGestures() const -> void
-{
-    MechTree->PreloadGestures();
-}
-
 auto MCMechActor::PrepareHdArt() const -> void
 {
     MechTree->PrepareHdArt();
@@ -1586,7 +1581,48 @@ namespace
         return {static_cast<int32_t>(own.MinX - box.MinX), static_cast<int32_t>(own.MinY - box.MinY),
                 static_cast<int32_t>(box.MaxX - box.MinX), static_cast<int32_t>(box.MaxY - box.MinY)};
     }
+
+    /// <summary>
+    /// The pack's in-between <paramref name="step"/> of <paramref name="table"/>'s frame <paramref name="at"/> toward
+    /// <paramref name="next"/>, drawn over <paramref name="box"/>, where the pack has it at that size.
+    /// </summary>
+    auto PackInBetween(std::span<const uint8_t> table, int32_t at, int32_t next, int32_t step, const FrameBox& box)
+        -> std::optional<MCInBetween>
+    {
+        const std::optional<FrameBox> own = BoxOf(table, at, false);
+
+        if (!own.has_value())
+        {
+            return std::nullopt;
+        }
+
+        const MCInBetweenBounds bounds = BoundsRound(*own, box);
+
+        if (MCHdArt::Find(table, at, bounds.Width, bounds.Height, step) == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        return MCInBetween{at, next, step, bounds};
+    }
 } // namespace
+
+auto MCPartInBetween(std::span<const uint8_t> table, const MCLegsStep& step) -> std::optional<MCInBetween>
+{
+    const int32_t count = VfxShapeCount(table);
+    const auto inTable = [count](int32_t frame) { return frame >= 0 && frame < count; };
+
+    if (!inTable(step.From) || !inTable(step.To))
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<FrameBox> from = BoxOf(table, step.From, false);
+    const std::optional<FrameBox> to = BoxOf(table, step.To, false);
+    return from.has_value() && to.has_value()
+               ? PackInBetween(table, step.From, step.To, step.Named(step.Step), Together(*from, *to))
+               : std::nullopt;
+}
 
 auto MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, bool backwards, bool loops)
     -> std::optional<MCLegsStep>
@@ -1616,22 +1652,26 @@ auto MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, boo
     };
 
     // Some art draws fewer frames than its gesture plays (Thor's and Hunchback's limp, a frame short): a frame past its
-    // last shows its last, so the step is between the frames shown, and none while the art holds its last.
-    const auto drawnStep = [&](int32_t from, int32_t to, int32_t at) -> std::optional<MCLegsStep>
+    // last shows its last, so the step is between the frames shown, and none while the art holds its last. Some draws
+    // more (the Mad Cat's walk, 27 of legs90/10's 28, which the Vulture plays whole): the loop's step round from the
+    // last played to the first is its wrap, not the art's next frame's.
+    const bool artGoesOn = drawn > frames;
+    const auto drawnStep = [&](int32_t from, int32_t to, int32_t at, bool round) -> std::optional<MCLegsStep>
     {
         const int32_t fromShown = std::min(from, drawn - 1);
         const int32_t toShown = std::min(to, drawn - 1);
-        return fromShown != toShown ? std::optional(MCLegsStep{fromShown, toShown, at}) : std::nullopt;
+        return fromShown != toShown ? std::optional(MCLegsStep{fromShown, toShown, at, round && artGoesOn})
+                                    : std::nullopt;
     };
 
     if (backwards)
     {
         const std::optional<int32_t> from = shown(frame - 1);
-        return from.has_value() ? drawnStep(*from, frame, LegsInBetweenSteps - step) : std::nullopt;
+        return from.has_value() ? drawnStep(*from, frame, LegsInBetweenSteps - step, frame == 0) : std::nullopt;
     }
 
     const std::optional<int32_t> to = shown(frame + 1);
-    return to.has_value() ? drawnStep(frame, *to, step) : std::nullopt;
+    return to.has_value() ? drawnStep(frame, *to, step, frame == frames - 1) : std::nullopt;
 }
 
 auto MCMechActor::LegsStepNow(int32_t frame, int32_t frames, int32_t drawn) const -> std::optional<MCLegsStep>
@@ -1691,8 +1731,11 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
             return own;
         }
 
-        const bool halfOn = middle->TowardMirrored && MCStrideGesture(gesture) && frames > 0;
-        const int32_t towardFrame = MCClampShapeFrame(toward->FrameList(), halfOn ? (at + frames / 2) % frames : at);
+        // Half a cycle of the art's frames, as the maker pairs them (a tree may play fewer).
+        const int32_t drawnToward = VfxShapeCount(toward->FrameList());
+        const bool halfOn = middle->TowardMirrored && MCStrideGesture(gesture) && drawnToward > 0;
+        const int32_t towardFrame =
+            MCClampShapeFrame(toward->FrameList(), halfOn ? (at + drawnToward / 2) % drawnToward : at);
         const std::optional<FrameBox> other = BoxOf(toward->FrameList(), towardFrame, middle->TowardMirrored);
         return other.has_value() ? std::optional(Together(*own, *other)) : std::nullopt;
     };
@@ -1700,26 +1743,14 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
     // The pack's in-between of frame at named step over box, if it has it.
     const auto found = [&](int32_t at, int32_t next, int32_t step, const FrameBox& box) -> std::optional<MCInBetween>
     {
-        const std::optional<FrameBox> own = BoxOf(table, at, false);
+        std::optional<MCInBetween> between = PackInBetween(table, at, next, step, box);
 
-        if (!own.has_value())
-        {
-            return std::nullopt;
-        }
-
-        const MCInBetweenBounds bounds = BoundsRound(*own, box);
-
-        if (MCHdArt::Find(table, at, bounds.Width, bounds.Height, step) == nullptr)
-        {
-            return std::nullopt;
-        }
-
-        if (middle.has_value())
+        if (between.has_value() && middle.has_value())
         {
             DrawnLegs->Degrees = middle->Degrees;
         }
 
-        return MCInBetween{at, next, step, bounds};
+        return between;
     };
 
     // On the way to the next frame: the in-between over both frames' boxes (or their turn middles'). Only where the GPU
@@ -1737,7 +1768,8 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
 
         if (from.has_value() && to.has_value())
         {
-            const int32_t name = middle.has_value() ? TurnBetweenStep(middle->Step, step->Step) : step->Step;
+            const int32_t name =
+                step->Named(middle.has_value() ? TurnBetweenStep(middle->Step, step->Step) : step->Step);
 
             if (const std::optional<MCInBetween> between = found(step->From, step->To, name, Together(*from, *to));
                 between.has_value())
@@ -1756,6 +1788,167 @@ auto MCMechActor::LegsInBetween(int32_t gesture, int32_t frameNow, float facing,
     return {frame, box.has_value() ? found(frame, frame, middle->Step, *box) : std::nullopt};
 }
 
+auto MCMechActor::UpperInBetween(const MCShape& part, int32_t frame, bool asPlayed) const -> std::optional<MCInBetween>
+{
+    // The upper body steps with the legs (Update), but on its own while it plays the gun change or holds its guns up.
+    if (!asPlayed || InCombatMode || CombatModeRaising || CombatModeLowering || !MCHdArt::Active() ||
+        MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        return std::nullopt;
+    }
+
+    const std::span<const uint8_t> table = part.FrameList();
+    const auto frames = static_cast<int32_t>(MechTree->Gestures[CurrentGesture].NumFrames);
+
+    // Only while the legs are on their way to their next frame of the gesture: past a transition's end the next
+    // gesture's frames come next (a mirrored part's set afresh by FollowStride), so none toward this one's.
+    if (!LegsStepNow(CurrentFrame[MCMechPart::Legs], frames, frames).has_value())
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<MCLegsStep> step = LegsStepNow(frame, frames, VfxShapeCount(table));
+    return step.has_value() ? MCPartInBetween(table, *step) : std::nullopt;
+}
+
+auto MCMechActor::DrawnFacing(MCBattleMech& mech) const -> float
+{
+    return GHdTurns != 0 && TurnedFacing.has_value() ? *TurnedFacing : static_cast<float>(MCActorFacing(mech));
+}
+
+auto MCMechActor::UpperGesture() const -> int32_t
+{
+    return InCombatMode                                ? GestureCombat
+           : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange
+                                                       : CurrentGesture;
+}
+
+auto MCMechActor::ArmRotations(const MCBattleMech& mech, float facing) -> std::pair<float, float>
+{
+    return {facing + mech.LeftArmRotation + mech.TorsoRotation, facing + mech.RightArmRotation + mech.TorsoRotation};
+}
+
+auto MCMechActor::ArmSwapped(int32_t legsGesture, int32_t upper, int32_t otherPart, float rotation) const -> bool
+{
+    const std::optional<MCGesturePacket> packet = MechTree->GesturePacket(upper, otherPart, rotation);
+    return MechTree->Gestures[legsGesture].ArmSymmetrical != 0 && packet.has_value() && packet->Reverse;
+}
+
+auto MCMechActor::ForEachPartDrawn(MCBattleMech& mech, int32_t legs, int32_t upper,
+                                   const std::function<void(int32_t, int32_t, float)>& part) const -> void
+{
+    const auto isGesture = [&](int32_t gesture)
+    { return gesture >= 0 && static_cast<size_t>(gesture) < MechTree->Gestures.size(); };
+
+    if (MechTree == nullptr || !isGesture(legs) || !isGesture(upper))
+    {
+        return;
+    }
+
+    const float facing = DrawnFacing(mech);
+    const auto [rotation2, rotation3] = ArmRotations(mech, facing);
+    part(legs, 0, facing);
+
+    if (!Wrecked)
+    {
+        part(upper, 1, facing + mech.TorsoRotation);
+    }
+
+    if (!RightArmGone)
+    {
+        part(upper, ArmSwapped(legs, upper, 3, rotation2) ? 3 : 2, rotation2);
+    }
+
+    if (!LeftArmGone)
+    {
+        part(upper, ArmSwapped(legs, upper, 2, rotation3) ? 2 : 3, rotation3);
+    }
+}
+
+auto MCMechActor::DrawnPackets() -> std::vector<MCGesturePacket>
+{
+    const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
+    std::vector<MCGesturePacket> packets;
+
+    if (mech == nullptr || MechTree == nullptr)
+    {
+        return packets;
+    }
+
+    ForEachPartDrawn(*mech, CurrentGesture, UpperGesture(),
+                     [&](int32_t gesture, int32_t part, float rotation)
+                     {
+                         if (const std::optional<MCGesturePacket> where =
+                                 MechTree->GesturePacket(gesture, part, rotation))
+                         {
+                             packets.push_back(*where);
+                         }
+                     });
+    return packets;
+}
+
+auto MCMechActor::ReadAhead() -> void
+{
+    const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
+
+    if (mech == nullptr || MechTree == nullptr)
+    {
+        return;
+    }
+
+    std::vector<MCHdArt::PacketAhead> soon;
+    std::vector<MCHdArt::PacketAhead> later;
+
+    // Each part's packets with the legs in gesture legs and the upper parts in upper, and with turns the facings either
+    // side.
+    const auto add = [&](int32_t legs, int32_t upper, bool turns, std::vector<MCHdArt::PacketAhead>& packets)
+    {
+        ForEachPartDrawn(*mech, legs, upper, [&](int32_t gesture, int32_t part, float rotation)
+                         { MechTree->PacketsAhead(gesture, part, rotation, turns, packets); });
+    };
+
+    // The upper parts' gesture over the legs' gesture legs, as UpperGesture takes it.
+    const auto upperOver = [&](int32_t legs)
+    {
+        return InCombatMode ? GestureCombat : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange : legs;
+    };
+
+    // Soon: the gestures drawn now, at their facing and those a turn comes to, and the one a transition plays next.
+    add(CurrentGesture, UpperGesture(), true, soon);
+
+    if (InTransition)
+    {
+        add(NextGesture, upperOver(NextGesture), false, soon);
+    }
+
+    // Later, as sets: a move's first gesture from standing, walking or running to either of the others, and the upper
+    // parts raised for combat or lowered from it.
+    if (!InTransition && CurrentStateGesture >= MCStopState::Stand && CurrentStateGesture <= MCStopState::Run)
+    {
+        for (const int32_t goal : {MCStopState::Stand, MCStopState::Walk, MCStopState::Run})
+        {
+            if (goal != CurrentStateGesture)
+            {
+                const int32_t first = MCStopTransition(*MechTree, goal, CurrentStateGesture, 0, MCMechBrakingInForce());
+                add(first, upperOver(first), false, later);
+            }
+        }
+    }
+
+    if (!CombatModeRaising && !CombatModeLowering)
+    {
+        add(CurrentGesture, GestureCombatChange, false, later);
+
+        if (!InCombatMode)
+        {
+            add(CurrentGesture, GestureCombat, false, later);
+        }
+    }
+
+    MCHdArt::ReadPacketsAhead(soon, MCHdArt::ReadAs::Soon);
+    MCHdArt::ReadPacketsAhead(later, MCHdArt::ReadAs::Set);
+}
+
 auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 {
     const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
@@ -1766,20 +1959,15 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     constexpr bool largeSprites = true;
     RenderJump();
 
-    // Port-only (HDTurns): the facing as drawn (eased by update).
-    const float facing =
-        GHdTurns != 0 && TurnedFacing.has_value() ? *TurnedFacing : static_cast<float>(MCActorFacing(*mech));
+    const float facing = DrawnFacing(*mech);
     const float torso = mech->TorsoRotation;
-    const float rightArm = mech->RightArmRotation;
-    const float leftArm = mech->LeftArmRotation;
 
     // The torso and arms play the combat gestures while the gun is up or moving.
     const bool combatAnim = InCombatMode || CombatModeRaising || CombatModeLowering;
-    const int32_t upperGesture = InCombatMode                                ? GestureCombat
-                                 : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange
-                                                                             : CurrentGesture;
-    const float rotation2 = facing + leftArm + torso;
-    const float rotation3 = facing + rightArm + torso;
+    const int32_t upperGesture = UpperGesture();
+    const std::pair<float, float> armRotations = ArmRotations(*mech, facing);
+    const float rotation2 = armRotations.first;
+    const float rotation3 = armRotations.second;
 
     // Each part's shape, the legs in gesture legsGesture and the upper body in upper, its mirroring and rate set in
     // reverse and rate.
@@ -1791,18 +1979,9 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
                                                        rate[MCMechPart::Legs], largeSprites);
         found[MCMechPart::Torso] = MechTree->GetGesture(upper, 1, facing + torso, reverse[MCMechPart::Torso],
                                                         rate[MCMechPart::Torso], largeSprites);
-        const bool armSymmetrical = MechTree->Gestures[legsGesture].ArmSymmetrical != 0;
-
-        // A mirrored arm is drawn from the other arm's sprites. OB-179 fixed: the original swapped on the sign of the
-        // angle alone, also facing straight ahead or back, where the sprite isn't mirrored, so a lone arm jumped sides.
-        const auto mirrored = [&](int32_t part, float rotation)
-        {
-            const std::optional<MCGesturePacket> packet = MechTree->GesturePacket(upper, part, rotation);
-            return armSymmetrical && packet.has_value() && packet->Reverse;
-        };
-
-        const bool swapRightArm = mirrored(3, rotation2);
-        const bool swapLeftArm = mirrored(2, rotation3);
+        // A mirrored arm is drawn from the other arm's sprites (ArmSwapped; OB-179 fixed).
+        const bool swapRightArm = ArmSwapped(legsGesture, upper, 3, rotation2);
+        const bool swapLeftArm = ArmSwapped(legsGesture, upper, 2, rotation3);
 
         if (!RightArmGone)
         {
@@ -1889,9 +2068,9 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     ElementList().OpenGroup(partsDepth, true);
     // Port-only (HD lighting's headlights): the parts stand on the mech's feet.
     const std::optional<float> feet = MCSceneLights::FeetRow(*this, mech->Position);
-    // Port-only (HD art): the legs' in-between as drawn (a turn middle, or on the way to the next frame), which their sun
-    // shadow casts too.
-    std::optional<MCInBetween> legsMiddle;
+    // Port-only (HD art): each part's in-between as drawn (the legs' turn middle, or a part on the way to its next
+    // frame), which its sun shadow casts too.
+    MCMechParts<std::optional<MCInBetween>> drawnBetween{};
 
     for (int32_t i = 0; i < MechPartCount; i++)
     {
@@ -1954,28 +2133,36 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             continue;
         }
 
-        // Port-only (HD art): the legs as the pack's in-between, a turn middle or the way to the next frame (drawn as
-        // they play, the frame before when played backwards).
+        // Port-only (HD art): the legs as the pack's in-between, a turn middle or the way to the next frame; the torso
+        // and arms the way to their next frame at the legs' step (drawn as they play, the frame before when played
+        // backwards).
+        const bool asPlayed = drawnShape[part] == shapes[part] && drawnFrame[part] == CurrentFrame[part];
+        // An arm blown off flies as the frame it plays, not the one an in-between (played backwards) is drawn from.
+        const int32_t playedFrame = drawnFrame[part];
+
         if (part == MCMechPart::Legs)
         {
-            const bool asPlayed = drawnShape[part] == shapes[part] && drawnFrame[part] == CurrentFrame[part];
             const MCLegsDrawn legs =
                 LegsInBetween(DrawnGesture(), drawnFrame[part], facing, *drawnShape[part], asPlayed);
             drawnFrame[part] = legs.Frame;
-            legsMiddle = legs.InBetween;
+            drawnBetween[part] = legs.InBetween;
+        }
+        else if (const std::optional<MCInBetween> between =
+                     UpperInBetween(*drawnShape[part], drawnFrame[part], asPlayed);
+                 between.has_value())
+        {
+            drawnFrame[part] = between->Frame;
+            drawnBetween[part] = between;
         }
 
         auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
                                                          drawnFrame[part], drawnReverse[part], fadeTable, 1);
         element.Feet = feet;
+        element.InBetween = drawnBetween[part];
 
-        if (part == MCMechPart::Legs)
+        if (part == MCMechPart::RightArm || part == MCMechPart::LeftArm)
         {
-            element.InBetween = legsMiddle;
-        }
-        else if (part == MCMechPart::RightArm || part == MCMechPart::LeftArm)
-        {
-            (part == MCMechPart::RightArm ? DrawnRightArm : DrawnLeftArm) = {drawnShape[part], drawnFrame[part],
+            (part == MCMechPart::RightArm ? DrawnRightArm : DrawnLeftArm) = {drawnShape[part], playedFrame,
                                                                              drawnReverse[part]};
         }
 
@@ -2000,12 +2187,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
                                                              drawnFrame[part], drawnReverse[part], std::nullopt, 1);
             element.SunShadow = true;
-
-            if (part == MCMechPart::Legs)
-            {
-                element.InBetween = legsMiddle;
-            }
-
+            element.InBetween = drawnBetween[part];
             ElementList().Add(element);
         }
 

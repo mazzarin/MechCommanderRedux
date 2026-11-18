@@ -157,6 +157,21 @@ auto MCVfxAppearance::FrameDrawing() const -> MCFrameDrawing
     return type.Scaled ? MCFrameDrawing::Delta : MCFrameDrawing::Nothing;
 }
 
+auto MCVfxAppearance::ReadAhead() -> void
+{
+    const std::shared_ptr<MCGameObject> obj = Owner.lock();
+
+    if (obj == nullptr || AppearType == nullptr)
+    {
+        return;
+    }
+
+    const MCAppearanceType::MCAskingAhead asking;
+    float frameRate = 0.0f;
+    bool reverse = false;
+    AppearType->GetShape(CurrentState, CurrentSubState, static_cast<int32_t>(MCActorFacing(*obj)), frameRate, reverse);
+}
+
 auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
 {
     const std::shared_ptr<MCGameObject> obj = Owner.lock();

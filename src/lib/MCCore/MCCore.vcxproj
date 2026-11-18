@@ -152,7 +152,11 @@
     <ClCompile Include="iface\MCTacticalInterfaceMouseState.cpp" />
     <ClCompile Include="iface\MCTacticalInterfaceSelection.cpp" />
     <ClCompile Include="lib\MCDice.cpp" />
-    <ClCompile Include="lib\MCDiskFile.cpp" />
+    <ClCompile Include="lib\MCDiskFile.cpp">
+      <!-- The disk file is the system's own, so it includes windows.h, which must not meet the game's Win32
+           stand-ins in the precompiled header. -->
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="lib\MCFastFile.cpp" />
     <ClCompile Include="lib\MCFastFileSet.cpp" />
     <ClCompile Include="lib\MCFatal.cpp" />
@@ -169,6 +173,7 @@
     <ClCompile Include="lib\MCSha256.cpp" />
     <ClCompile Include="lib\MCThreadKeeper.cpp" />
     <ClCompile Include="lib\MCWorkers.cpp" />
+    <ClCompile Include="lib\MCZstd.cpp" />
     <ClCompile Include="linkup\MCFidpGroup.cpp" />
     <ClCompile Include="linkup\MCFidpMessage.cpp" />
     <ClCompile Include="linkup\MCFidpNetworkProtocol.cpp" />
@@ -476,12 +481,14 @@
     <ClCompile Include="sprite\MCHdMovie.cpp" />
     <ClCompile Include="sprite\MCMechActor.cpp" />
     <ClCompile Include="sprite\MCMechStops.cpp" />
+    <ClCompile Include="sprite\MCPackRecords.cpp" />
     <ClCompile Include="sprite\MCPaletteNight.cpp" />
     <ClCompile Include="sprite\MCParticles.cpp" />
     <ClCompile Include="sprite\MCPUAppearance.cpp" />
     <ClCompile Include="sprite\MCPUAppearanceType.cpp" />
     <ClCompile Include="sprite\MCSceneLights.cpp" />
     <ClCompile Include="sprite\MCShape.cpp" />
+    <ClCompile Include="sprite\MCShapeFile.cpp" />
     <ClCompile Include="sprite\MCSpriteManager.cpp" />
     <ClCompile Include="sprite\MCSpriteMath.cpp" />
     <ClCompile Include="sprite\MCSpriteTree.cpp" />
@@ -496,6 +503,7 @@
     </ClCompile>
     <ClCompile Include="terrain\MCArtilleryButton.cpp" />
     <ClCompile Include="terrain\MCGroundMesh.cpp" />
+    <ClCompile Include="terrain\MCGroundNames.cpp" />
     <ClCompile Include="terrain\MCMapBlockManager.cpp" />
     <ClCompile Include="terrain\MCTacticalMap.cpp" />
     <ClCompile Include="terrain\MCTacticalMapPages.cpp" />
@@ -678,6 +686,7 @@
     <ClInclude Include="lib\MCVector2D.h" />
     <ClInclude Include="lib\MCVector3D.h" />
     <ClInclude Include="lib\MCWorkers.h" />
+    <ClInclude Include="lib\MCZstd.h" />
     <ClInclude Include="linkup\MCFidpGroup.h" />
     <ClInclude Include="linkup\MCFidpMessage.h" />
     <ClInclude Include="linkup\MCFidpNetworkProtocol.h" />
@@ -971,12 +980,15 @@
     <ClInclude Include="sprite\MCInBetween.h" />
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCMechStops.h" />
+    <ClInclude Include="sprite\MCMechStopsKnown.h" />
+    <ClInclude Include="sprite\MCPackRecords.h" />
     <ClInclude Include="sprite\MCPaletteNight.h" />
     <ClInclude Include="sprite\MCParticles.h" />
     <ClInclude Include="sprite\MCPUAppearance.h" />
     <ClInclude Include="sprite\MCPUAppearanceType.h" />
     <ClInclude Include="sprite\MCSceneLights.h" />
     <ClInclude Include="sprite\MCShape.h" />
+    <ClInclude Include="sprite\MCShapeFile.h" />
     <ClInclude Include="sprite\MCSpriteManager.h" />
     <ClInclude Include="sprite\MCSpriteMath.h" />
     <ClInclude Include="sprite\MCSpriteTree.h" />
@@ -991,6 +1003,8 @@
     <ClInclude Include="targetver.h" />
     <ClInclude Include="terrain\MCArtilleryButton.h" />
     <ClInclude Include="terrain\MCGroundMesh.h" />
+    <ClInclude Include="terrain\MCGroundNames.h" />
+    <ClInclude Include="terrain\MCGroundNamesKnown.h" />
     <ClInclude Include="terrain\MCMapBlockManager.h" />
     <ClInclude Include="terrain\MCTacticalMap.h" />
     <ClInclude Include="terrain\MCTacticalMapLayout.h" />
@@ -1026,6 +1040,7 @@
     <ClInclude Include="vfx\MCVfx.h" />
     <ClInclude Include="vfx\MCVfxClip.h" />
     <ClInclude Include="vfx\MCVfxFunctions.h" />
+    <ClInclude Include="vfx\MCVfxShapeRuns.h" />
     <ClInclude Include="vfx\MCVfxView.h" />
   </ItemGroup>
   <!-- HLSL shaders, compiled to SPIR-V headers in build\generated\shaders (the pinned dxc, $(MCDxc): see
@@ -1199,6 +1214,91 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+  <!-- Zstandard 1.5.7 (src\lib\zstd-1.5.7, BSD): its decompressor unpacks the version 2 HD art pack's streams
+       (its README.md). C units outside MCCore, so their own ItemGroup, each object in a folder of its own;
+       src\mac\CMakeLists.txt reads the list from here. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\debug.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\entropy_common.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\error_private.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\fse_decompress.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\xxhash.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\common\zstd_common.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\decompress\huf_decompress.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\decompress\zstd_ddict.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\decompress\zstd_decompress.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)zstd-1.5.7\lib\decompress\zstd_decompress_block.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)zstd\</ObjectFileName>
+      <PreprocessorDefinitions>ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemGroup>
   <!-- HDiffPatch 5.1.3's patcher (src\lib\HDiffPatch-5.1.3, MIT): applies updates' patches (lib\MCFilePatch),

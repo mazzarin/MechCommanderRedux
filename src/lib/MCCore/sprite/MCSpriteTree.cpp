@@ -106,11 +106,14 @@ namespace
     constexpr int32_t FourthFacingStep = 4;
 
     /// <summary>
-    /// Port-only (HD art's read-ahead, MCHdArt::SetNeighbours): how many facings on each side of a part's own have their
-    /// frames read with it: the legs turn with the mech's way; the torso and arms with its aim too, and faster.
+    /// Port-only (HD art's read-ahead, MCHdArt::SetNeighbours; MCSpriteTree::PacketsAhead's whole packets): how many
+    /// facings on each side of a part's own have their frames read with it: the legs turn with the mech's way; the torso
+    /// and arms with its aim too, and faster.
     /// </summary>
     constexpr int32_t LegNeighbours = 1;
     constexpr int32_t UpperNeighbours = 2;
+    /// <summary>Port-only: where a packet's part PAK sits in the key it is asked for by (MCSpriteTree::PacketsAhead).</summary>
+    constexpr int32_t PartKeyShift = 32;
 
     /// <summary>
     /// The fall a fall from a run looks most like when it has no art, and the other way round: the same fall from
@@ -230,29 +233,36 @@ auto MCSpriteTree::PreloadGestures() -> void
     // The shapes load as the large (90-pixel) art, which MCMechActor::Render asks for: the camera scale is pinned
     // to 100. The original loaded the small art here (it started zoomed out), and the cached shape then stood in for
     // the large one, so a preloaded gesture drew at half size.
-    auto preloadPart = [this](MCMechPart part, uint32_t gesture, int32_t numRotations)
+    const auto self = std::static_pointer_cast<MCSpriteTree>(shared_from_this());
+    std::vector<MCTreePacket> packets;
+
+    for (const MCGesturePacket& where : PreloadPackets())
     {
-        const uint32_t fileNumber = FileNumbers[part];
+        packets.push_back(MCTreePacket{self, where});
+    }
+
+    LoadPacketsTogether(packets, 1);
+    GesturesPreloaded = true;
+}
+
+auto MCSpriteTree::PreloadPackets() const -> std::vector<MCGesturePacket>
+{
+    std::vector<MCGesturePacket> packets;
+    const auto preloadPart = [&](MCMechPart part, uint32_t gesture, int32_t numRotations)
+    {
+        if (FileNumbers[part] == NoFileNumber)
+        {
+            return;
+        }
+
+        const auto first = static_cast<uint32_t>(static_cast<int32_t>(PacketFinderArray[gesture]) * numRotations);
 
         for (int32_t i = 0; i < numRotations; i++)
         {
-            const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
-
-            if (fileNumber == NoFileNumber || spriteManager == nullptr)
-            {
-                continue;
-            }
-
-            const auto first = static_cast<uint32_t>(static_cast<int32_t>(PacketFinderArray[gesture]) * numRotations);
             const uint32_t packet = first + static_cast<uint32_t>(i);
-            std::shared_ptr<MCShape> shape =
-                spriteManager->GetMechShapeData(fileNumber, packet, part, 1, weak_from_this(), true);
             // Port-only: stand, walk and run have every facing.
-            SetHdNeighbours(shape,
-                            MCGesturePacket{part, packet, PartShapeStart[part] + packet, false, first, numRotations, 1,
-                                            numRotations != PartRotations(false)},
-                            true);
-            ShapeList[PartShapeStart[part] + packet] = std::move(shape);
+            packets.push_back(MCGesturePacket{part, packet, PartShapeStart[part] + packet, false, first, numRotations,
+                                              1, numRotations != PartRotations(false)});
         }
     };
 
@@ -270,10 +280,50 @@ auto MCSpriteTree::PreloadGestures() -> void
         preloadPart(MCMechPart::LeftArm, gesture, PartRotations(data.ArmSymmetrical));
     }
 
-    GesturesPreloaded = true;
-    // Port-only (MechBraking): the run to walk made for a tree without one drawn, worked out now the run and walk are
-    // in, not as a mech first slows.
-    static_cast<void>(MCRunToWalkMade(*this, true));
+    return packets;
+}
+
+auto MCSpriteTree::LoadPacketsTogether(std::span<const MCTreePacket> packets, int32_t turnUsed,
+                                       std::span<const MCStoredWanted> stored) -> MCShapesLoaded
+{
+    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+
+    if (spriteManager == nullptr)
+    {
+        return {};
+    }
+
+    // Each tree's shape-list slots not loaded, once each, with the packets to load into them.
+    std::vector<MCShapeWanted> wanted;
+    std::vector<std::reference_wrapper<const MCTreePacket>> into;
+    std::set<std::pair<MCAddressKey, uint32_t>> seen;
+
+    for (const MCTreePacket& packet : packets)
+    {
+        MCSpriteTree& tree = *packet.Tree;
+        const MCGesturePacket& where = packet.Where;
+        const uint32_t fileNumber = tree.FileNumbers[where.FilePart];
+
+        if (fileNumber == NoFileNumber || where.ListIndex >= tree.ShapeList.size() ||
+            !tree.ShapeList[where.ListIndex].expired() || !seen.emplace(MCAddressKey::Of(tree), where.ListIndex).second)
+        {
+            continue;
+        }
+
+        wanted.push_back(MCShapeWanted{fileNumber, where.Packet, where.FilePart, packet.Tree});
+        into.emplace_back(packet);
+    }
+
+    MCShapesLoaded loaded = spriteManager->GetMechShapesData(wanted, turnUsed, true, stored);
+
+    for (size_t i = 0; i < into.size(); ++i)
+    {
+        const MCTreePacket& packet = into[i];
+        packet.Tree->SetHdNeighbours(loaded.Shapes[i], packet.Where, true);
+        packet.Tree->ShapeList[packet.Where.ListIndex] = loaded.Shapes[i];
+    }
+
+    return loaded;
 }
 
 auto MCSpriteTree::PrepareHdArt() const -> void
@@ -333,7 +383,7 @@ auto MCSpriteTree::Load(MCFile& apprFile, uint32_t fileSize) -> MCAppearanceLoad
 {
     MCAppearanceFit fit(apprFile, fileSize);
     fit.SeekBlock("Main Info");
-    fit.Read<std::string>("Name");
+    Name = fit.Read<std::string>("Name");
     FileNumbers[MCMechPart::Legs] = fit.Read<uint32_t>("legFileNumber");
     FileNumbers[MCMechPart::Torso] = fit.Read<uint32_t>("torsoFileNumber");
     FileNumbers[MCMechPart::RightArm] = fit.Read<uint32_t>("rightArmFileNumber");
@@ -628,6 +678,52 @@ auto MCSpriteTree::SetHdNeighbours(const std::shared_ptr<MCShape>& shape, const 
     }
 
     MCHdArt::SetNeighbours(shape, std::move(folders));
+}
+
+auto MCSpriteTree::PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns,
+                                std::vector<MCHdArt::PacketAhead>& packets) -> void
+{
+    const std::optional<MCGesturePacket> where = GesturePacket(gesture, part, rotation);
+
+    if (!where.has_value() || FileNumbers[where->FilePart] == NoFileNumber)
+    {
+        return;
+    }
+
+    // Asked for every frame, so nothing is made until a packet is new to this tree: its part's file name (the large
+    // art's, as MCMechActor::Render draws) and folder.
+    const bool legs = where->FilePart == MCMechPart::Legs;
+    std::optional<std::string> partFile;
+    const auto add = [&](uint32_t packet)
+    {
+        if (!_AskedAhead.Ask(static_cast<uint64_t>(where->FilePart) << PartKeyShift | packet))
+        {
+            return;
+        }
+
+        if (!partFile.has_value())
+        {
+            const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+            partFile = spriteManager == nullptr ? std::string() : spriteManager->PartFileName(where->FilePart, true);
+        }
+
+        if (!partFile->empty())
+        {
+            packets.push_back(MCHdArt::PacketAhead{
+                MCHdArt::FolderOf(MCHdArt::MechShapeKey{*partFile, FileNumbers[where->FilePart], packet}),
+                static_cast<int32_t>(Gestures[gesture].NumFrames), legs});
+        }
+    };
+
+    add(where->Packet);
+
+    if (turns)
+    {
+        for (const uint32_t packet : NeighbourPackets(*where, legs ? LegNeighbours : UpperNeighbours))
+        {
+            add(packet);
+        }
+    }
 }
 
 auto MCSpriteTree::ArtStandIns(int32_t gesture, int32_t part, float rotation, const MCGesturePacket& where) const

@@ -83,6 +83,13 @@ public:
     void StartScenario(std::string_view scenarioName);
 
     /// <summary>
+    /// Port-only: starts the tactical interface on the scenario loaded (MCTacticalInterface::StartScenario), the HD copies
+    /// of what it makes (the lance icons' pictures and their mechs' diagrams: MCMechIcon::AttachHdArt) read as the
+    /// load's and kept, rather than in the scenario's first frame.
+    /// </summary>
+    static void StartInterface();
+
+    /// <summary>
     /// Asks for scenario <paramref name="scenarioName"/> to start: <see cref="Run"/> starts it after its frame's work,
     /// once the click or network handler that asked has returned.
     /// </summary>

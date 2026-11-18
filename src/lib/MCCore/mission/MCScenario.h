@@ -214,6 +214,13 @@ private:
     void LoadObjectives(MCFitIniFile& file);
     /// <summary>Hands out each commander's strikes and builds its groups from the part numbers of its mates.</summary>
     void LoadGroups(MCFitIniFile& file);
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: the original's packets at the load): the original's packets the mission's first
+    /// uses would read, read now together in a few large reads: every side's mechs' (the parts parked too) stand, walk
+    /// and run at every stored facing and each one's packets drawn now; and what the types loaded can make in play
+    /// (wrecks, explosions) with every shape of the kept types' appearances (the effects'), all kept for the mission.
+    /// </summary>
+    void LoadOriginalPackets();
 
     /// <summary>The warriors, 1-based (entry 0 is null).</summary>
     std::vector<std::shared_ptr<MCMechWarrior>> _Warriors;

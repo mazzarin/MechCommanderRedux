@@ -31,6 +31,12 @@ public:
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: the camera's surroundings): the state's packet as Render takes it, read ahead
+    /// (MCAppearanceType::MCAskingAhead).
+    /// </summary>
+    void ReadAhead() override;
+
+    /// <summary>
     /// Switches to <paramref name="state"/> (restarting it) and, in the normal state, to sub-state
     /// <paramref name="subState"/> (<see cref="NoSubState"/> for none).
     /// </summary>

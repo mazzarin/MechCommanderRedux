@@ -33,6 +33,7 @@
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 #include "object/MCObjectTypeManager.h"
+#include "sprite/MCShapeFile.h"
 
 bool LeaveSwoopyOff = false;
 auto PauseShape() -> MCRegisteredBlock&
@@ -55,12 +56,6 @@ namespace
     constexpr double RadiansToDegrees = 0x1.ca5dc1a6402aap+5;
     /// <summary>60 degrees in radians, as MCX.EXE stores it (0x0077cd28).</summary>
     constexpr double SixtyDegrees = 0x1.0c152382d45b2p+0;
-
-    /// <summary>
-    /// Set once the first render has emptied the sprite cache: the original did on every switch between camera scale
-    /// 1 and 100, and the first render switched from neither.
-    /// </summary>
-    bool SpriteCacheDumped = false;
 
     /// <summary>The error of the first of <paramref name="values"/> that failed, if any.</summary>
     template <typename... T> std::optional<std::string> FirstError(const std::expected<T, std::string>&... values)
@@ -95,7 +90,7 @@ namespace
     /// <summary>Loads a shape file of the art path (the pause and asked shapes), registered as draw data.</summary>
     MCRegisteredBlock LoadShape(std::string_view name, std::string_view errorMessage)
     {
-        MCFile shapeFile;
+        MCShapeFile shapeFile;
         const int32_t result = shapeFile.Open(GamePath(ArtPath, name, ".shp"));
         Assert(result == 0, static_cast<uint32_t>(result), errorMessage);
         MCRegisteredBlock shape(shapeFile.FileSize(), MCDataKind::Shapes);
@@ -736,11 +731,10 @@ auto MCCamera::Render() -> void
         SetViewSize(paneWidth, paneHeight);
     }
 
-    if (!SpriteCacheDumped)
-    {
-        SpriteManager()->DumpAll();
-        SpriteCacheDumped = true;
-    }
+    // Port: the original emptied the sprite cache here, at a run's first render, as at every switch between camera scale
+    // 1 and 100 (the first render switched from neither; the port's scale is pinned to 100). Its cache filled; the
+    // port's never does, so the shapes a mission's load read (every side's mechs', the effects' and wrecks') are kept
+    // for their first draws, not read again.
 
     ElementList().Reset();
     // Port-only (HD lighting): the shots, fires and explosions drawn now light the world they're drawn into.

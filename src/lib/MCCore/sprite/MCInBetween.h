@@ -53,6 +53,21 @@ inline constexpr int32_t TurnBetweenStep(int32_t turnStep, int32_t step)
 }
 
 /// <summary>
+/// Port-only (HD art): marks a walk in-between as its loop's wrap, where a tree plays fewer frames than its art draws
+/// (the Mad Cat's walk plays 27 of legs90/10's 28): its last frame played toward the first, which isn't the art's next
+/// frame, so the pack keeps it apart (tools/upscale/make_walk_betweens.py): <c>&lt;frame&gt;_wrap_&lt;step&gt;</c>, and
+/// over a turn middle <c>&lt;frame&gt;_turn_wrap_&lt;step&gt;</c> and <c>&lt;frame&gt;_turnm_wrap_&lt;step&gt;</c>. Above
+/// any turn step's bits.
+/// </summary>
+inline constexpr int32_t WrapStep = 0x1000;
+
+/// <summary>Port-only (HD art): <paramref name="step"/> (a walk in-between's, or a turn middle's) as its loop's wrap.</summary>
+inline constexpr int32_t WrapBetweenStep(int32_t step)
+{
+    return step | WrapStep;
+}
+
+/// <summary>
 /// Port-only (HDTurns): where a turn middle lies round the frame it is drawn over: the frame's first column and row
 /// within the middle's bounds, and the bounds' size (original pixels; the frame's and its neighbour's together).
 /// </summary>

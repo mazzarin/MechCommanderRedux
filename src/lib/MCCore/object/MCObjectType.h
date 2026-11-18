@@ -64,10 +64,28 @@ public:
     virtual int HandleDestruction(MCGameObject& collidee, uint32_t colliderId);
 
     /// <summary>
+    /// Port-only (SPEC-first-use.md: the original's packets at the load): the object types an object of this type makes
+    /// in play (its explosion and wreck; a shot's hit, miss, smoke and light; a building's fire), so that a mission's load
+    /// reads them ahead (MCObjectTypeManager::LoadMadeTypes). Below 1: none.
+    /// </summary>
+    virtual std::vector<int32_t> MadeTypes() const { return {ExplosionObject, DestroyedObject}; }
+
+    /// <summary>
     /// Reads the "ObjectType" block: Type, Appearance, ExplosionObject, DestroyedObject, ExtentRadius, and the
     /// optional KeepMe, IconNumber and Alignment.
     /// </summary>
     int32_t Init(MCFitIniFile& typeFile);
+
+protected:
+    /// <summary>Port-only: <see cref="MadeTypes"/>' base list with <paramref name="more"/> (a type's own, as stored).</summary>
+    std::vector<int32_t> MadeTypesAnd(std::initializer_list<uint32_t> more) const
+    {
+        std::vector<int32_t> made = MCObjectType::MadeTypes();
+        std::ranges::transform(more, std::back_inserter(made), [](uint32_t id) { return static_cast<int32_t>(id); });
+        return made;
+    }
+
+public:
     /// <summary>
     /// Makes the type's explosion object at <paramref name="position"/>; with a nonzero <paramref name="radius"/>
     /// it also gets that radius and <paramref name="damage"/>. The explosion goes on the end of the first object list.

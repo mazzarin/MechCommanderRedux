@@ -7,6 +7,9 @@ class MCDynamicsType;
 class MCFile;
 class MCFitIniFile;
 
+/// <summary>The object type of the sparks a hit item throws (MCBattleMech::HitInventoryItem).</summary>
+inline constexpr uint32_t MechHitSparksType = 0x3f;
+
 /// <summary>A mech type: the mech file's header, internal structure, debris, dynamics and movement settings, and the
 /// appearance's hot spots.</summary>
 /// <remarks>Original source: <c>object\mech.cpp</c>.</remarks>
@@ -26,6 +29,8 @@ public:
     int32_t Init(MCFile& objFile, uint32_t fileSize) override;
     /// <summary>Makes a <see cref="MCBattleMech"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
+    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
+    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({MechHitSparksType}); }
     /// <summary>Ramming, jumping onto, trees, buildings and train cars against a mech of this type.</summary>
     int HandleCollision(MCGameObject& collidee, MCGameObject& collider) override;
     /// <summary>Kills the mech: disables its sensor, alarms its pilot, destroys every location and sets the

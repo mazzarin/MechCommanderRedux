@@ -6,8 +6,11 @@
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCLogistics.h"
+#include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCShapeFile.h"
 
 int Use90PixelSprite = 0;
 
@@ -19,6 +22,29 @@ namespace
     /// <summary>The sprite PAKs' places in MCSpriteManager::_SpriteFiles: the preferred one, then the fallback.</summary>
     constexpr uint8_t PreferredSprites = 0;
     constexpr uint8_t FallbackSprites = 1;
+
+    /// <summary>
+    /// Port-only: packet <paramref name="packetNum"/> of <paramref name="file"/> in a new block (an empty one when it
+    /// can't be read): a stripped shape's original packet again.
+    /// </summary>
+    MCRegisteredBlock ReadPacketBlock(MCPacketFile& file, uint32_t packetNum)
+    {
+        if (file.SeekPacket(static_cast<int32_t>(packetNum)) != 0)
+        {
+            return {};
+        }
+
+        const auto size = static_cast<uint32_t>(file.GetPacketSize());
+
+        if (size == 0)
+        {
+            return {};
+        }
+
+        MCRegisteredBlock packet(size, MCDataKind::Shapes);
+        return file.ReadPacket(static_cast<int32_t>(packetNum), packet.Bytes()) > 0 ? std::move(packet)
+                                                                                    : MCRegisteredBlock{};
+    }
 
     /// <summary><paramref name="text"/> in lower case (a PAK's name, as the HD art pack's folders spell it).</summary>
     std::string LowerCase(std::string_view text)
@@ -65,7 +91,8 @@ namespace
             pak.SeekPacket(i);
             MCRegisteredBlock& shadow =
                 shadows.emplace_back(static_cast<size_t>(pak.GetPacketSize()), MCDataKind::Shapes);
-            pak.ReadPacket(i, shadow.Bytes());
+            // Port-only: with HD art's numbered folders drawn, the pack's copy (MCShapeFile).
+            MCShapeFile::ReadPacket(pak, i, shadow.Bytes());
         }
 
         return shadows;
@@ -219,6 +246,8 @@ auto MCSpriteManager::ShapeFileName(uint32_t appearanceNum) -> std::string
 auto MCSpriteManager::LoadShape(MCPacketFile& file, uint32_t packetNum, uint32_t size, int32_t turnUsed,
                                 std::weak_ptr<MCAppearanceType> owner, bool checkSize) -> std::shared_ptr<MCShape>
 {
+    // Port-only: a packet read on the game's thread as it's first needed (the frame log's), not with the load's.
+    MCFrameLog::Count(MCPacketsFirstUsedCount);
     MCRegisteredBlock packet(size, MCDataKind::Shapes);
     const int32_t sizeRead = file.ReadPacket(static_cast<int32_t>(packetNum), packet.Bytes());
 
@@ -228,6 +257,254 @@ auto MCSpriteManager::LoadShape(MCPacketFile& file, uint32_t packetNum, uint32_t
     }
 
     return _Shapes.emplace_back(std::make_shared<MCShape>(std::move(packet), std::move(owner), turnUsed));
+}
+
+auto MCSpriteManager::AddShape(std::span<const uint8_t> bytes, int32_t turnUsed, std::weak_ptr<MCAppearanceType> owner)
+    -> std::shared_ptr<MCShape>
+{
+    MCRegisteredBlock packet(bytes.size(), MCDataKind::Shapes);
+    std::ranges::copy(bytes, packet.Bytes().begin());
+    return _Shapes.emplace_back(std::make_shared<MCShape>(std::move(packet), std::move(owner), turnUsed));
+}
+
+auto MCSpriteManager::StrippedShape(const std::filesystem::path& folder, int32_t turnUsed,
+                                    std::weak_ptr<MCAppearanceType> owner,
+                                    std::function<MCRegisteredBlock()> readOriginal) -> std::shared_ptr<MCShape>
+{
+    const std::expected<MCHdArt::PackShapeTable, std::string_view> table = MCHdArt::StrippedShapeTable(folder);
+
+    if (!table.has_value())
+    {
+        return nullptr;
+    }
+
+    // A record holding the original's packet whole is a shape as its PAK's would be, with nothing to read again.
+    std::shared_ptr<MCShape> shape = AddShape(table->Bytes, turnUsed, std::move(owner));
+    shape->Stripped = table->Stripped;
+
+    if (table->Stripped)
+    {
+        shape->ReadOriginal = std::move(readOriginal);
+    }
+
+    ++_TablesFromPack;
+    MCFrameLog::Count(MCShapeTablesFromPackCount);
+    return shape;
+}
+
+auto MCSpriteManager::StrippedObjectShape(uint32_t appearanceNum, uint32_t packetNum, int32_t turnUsed,
+                                          std::weak_ptr<MCAppearanceType> owner) -> std::shared_ptr<MCShape>
+{
+    const MCHdArt::ObjectShapeKey key{_SpriteFileNames[_AppearanceSources[appearanceNum]], appearanceNum, packetNum};
+    return StrippedShape(MCHdArt::FolderOf(key), turnUsed, std::move(owner),
+                         [this, appearanceNum, packetNum]
+                         {
+                             return OpenAppearanceFile(appearanceNum)
+                                        ? ReadPacketBlock(*_AppearanceFiles[appearanceNum], packetNum)
+                                        : MCRegisteredBlock{};
+                         });
+}
+
+auto MCSpriteManager::StrippedMechShape(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
+                                        std::weak_ptr<MCAppearanceType> owner, bool zoomedOut)
+    -> std::shared_ptr<MCShape>
+{
+    const MCHdArt::MechShapeKey key{PartFileName(part, zoomedOut), mechNum, packetNum};
+    return StrippedShape(MCHdArt::FolderOf(key), turnUsed, std::move(owner),
+                         [this, mechNum, packetNum, part, zoomedOut]
+                         {
+                             const MCOptionalRef<MCPacketFile> file = MechFile(mechNum, part, zoomedOut);
+                             return file ? ReadPacketBlock(file->get(), packetNum) : MCRegisteredBlock{};
+                         });
+}
+
+auto MCSpriteManager::RestoreOriginalShapes() -> size_t
+{
+    size_t restored = 0;
+
+    for (const std::shared_ptr<MCShape>& shape : _Shapes)
+    {
+        if (!shape->Stripped)
+        {
+            continue;
+        }
+
+        MCRegisteredBlock original = shape->ReadOriginal != nullptr ? shape->ReadOriginal() : MCRegisteredBlock{};
+
+        if (original.Size() == 0)
+        {
+            SDL_Log("MCSpriteManager: a stripped shape's original packet couldn't be read again (%s)",
+                    MCFileSystem::ToUtf8(shape->HdFolder).c_str());
+            continue;
+        }
+
+        MCHdArt::Detach(shape->FrameList());
+        shape->TakePacket(std::move(original));
+        shape->Stripped = false;
+        shape->ReadOriginal = nullptr;
+        ++restored;
+    }
+
+    return restored;
+}
+
+auto MCSpriteManager::LoadTogether(
+    std::span<const MCShapeWanted> wanted, int32_t turnUsed,
+    const std::function<std::shared_ptr<MCShape>(const MCShapeWanted&)>& fromPack,
+    const std::function<MCOptionalRef<MCPacketFile>(const MCShapeWanted&)>& fileOf,
+    const std::function<std::shared_ptr<MCShape>(const MCShapeWanted&)>& alone,
+    const std::function<void(const std::shared_ptr<MCShape>&, const MCShapeWanted&)>& tie,
+    std::span<const MCStoredWanted> stored) -> MCShapesLoaded
+{
+    // Each file once with the packets and runs as stored wanted of it, and where each wanted's and run's result is (its
+    // file, its place there).
+    std::vector<std::reference_wrapper<MCPacketFile>> files;
+    std::vector<std::vector<int32_t>> packets;
+    std::vector<std::vector<MCStoredRun>> runs;
+    std::vector<std::optional<std::pair<size_t, size_t>>> at(wanted.size());
+    std::vector<std::optional<std::pair<size_t, size_t>>> storedAt(stored.size());
+    const auto indexOf = [&](const MCShapeWanted& of) -> std::optional<size_t>
+    {
+        const MCOptionalRef<MCPacketFile> file = fileOf(of);
+
+        if (!file.has_value())
+        {
+            return std::nullopt;
+        }
+
+        const auto found =
+            std::ranges::find_if(files, [&](const MCPacketFile& known) { return &known == &file->get(); });
+
+        if (found == files.end())
+        {
+            files.push_back(*file);
+            packets.emplace_back();
+            runs.emplace_back();
+            return files.size() - 1;
+        }
+
+        return static_cast<size_t>(found - files.begin());
+    };
+
+    // Port-only: those the HD pack's stripped tables stand for, read from no file.
+    std::vector<std::shared_ptr<MCShape>> packed(wanted.size());
+
+    for (size_t i = 0; i < wanted.size(); ++i)
+    {
+        if ((packed[i] = fromPack(wanted[i])) != nullptr)
+        {
+            continue;
+        }
+
+        if (const std::optional<size_t> index = indexOf(wanted[i]))
+        {
+            at[i] = std::pair(*index, packets[*index].size());
+            packets[*index].push_back(static_cast<int32_t>(wanted[i].Packet));
+        }
+    }
+
+    for (size_t i = 0; i < stored.size(); ++i)
+    {
+        if (const std::optional<size_t> index = indexOf(stored[i].Of))
+        {
+            storedAt[i] = std::pair(*index, runs[*index].size());
+            runs[*index].push_back(
+                MCStoredRun{static_cast<int32_t>(stored[i].Of.Packet), static_cast<int32_t>(stored[i].Count)});
+        }
+    }
+
+    std::vector<MCPacketsWanted> asks;
+
+    for (size_t index = 0; index < files.size(); ++index)
+    {
+        asks.push_back(MCPacketsWanted{files[index].get(), packets[index], runs[index]});
+    }
+
+    std::vector<MCPacketBatch> batches = MCPacketFile::ReadPackets(asks);
+    MCShapesLoaded loaded;
+    loaded.Shapes.resize(wanted.size());
+    loaded.Stored.resize(stored.size());
+
+    for (size_t i = 0; i < stored.size(); ++i)
+    {
+        if (storedAt[i].has_value())
+        {
+            loaded.Stored[i] = std::move(batches[storedAt[i]->first].Stored[storedAt[i]->second]);
+        }
+    }
+
+    for (const MCPacketBatch& batch : batches)
+    {
+        loaded.Reads += batch.Reads;
+    }
+
+    for (size_t i = 0; i < wanted.size(); ++i)
+    {
+        if (packed[i] != nullptr)
+        {
+            loaded.Shapes[i] = std::move(packed[i]);
+            tie(loaded.Shapes[i], wanted[i]);
+            continue;
+        }
+
+        const MCOptionalRef<const std::optional<std::vector<uint8_t>>> read =
+            at[i].has_value()
+                ? MCOptionalRef<const std::optional<std::vector<uint8_t>>>(batches[at[i]->first].Packets[at[i]->second])
+                : std::nullopt;
+
+        if (read.has_value() && read->get().has_value())
+        {
+            const std::vector<uint8_t>& bytes = *read->get();
+
+            // An empty packet loads none, as one at a time.
+            if (!bytes.empty())
+            {
+                loaded.Shapes[i] = AddShape(bytes, turnUsed, wanted[i].Owner);
+                tie(loaded.Shapes[i], wanted[i]);
+                loaded.Bytes += bytes.size();
+            }
+
+            continue;
+        }
+
+        loaded.Shapes[i] = alone(wanted[i]);
+        ++loaded.Reads;
+    }
+
+    return loaded;
+}
+
+auto MCSpriteManager::GetMechShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed, bool zoomedOut,
+                                        std::span<const MCStoredWanted> stored) -> MCShapesLoaded
+{
+    return LoadTogether(
+        wanted, turnUsed, [&](const MCShapeWanted& shape)
+        { return StrippedMechShape(shape.FileNum, shape.Packet, shape.Part, turnUsed, shape.Owner, zoomedOut); },
+        [&](const MCShapeWanted& shape) { return MechFile(shape.FileNum, shape.Part, zoomedOut); },
+        [&](const MCShapeWanted& shape)
+        { return GetMechShapeData(shape.FileNum, shape.Packet, shape.Part, turnUsed, shape.Owner, zoomedOut); },
+        [&](const std::shared_ptr<MCShape>& shape, const MCShapeWanted& of)
+        { TieMechShape(shape, of.FileNum, of.Packet, of.Part, zoomedOut); }, stored);
+}
+
+auto MCSpriteManager::GetShapesData(std::span<const MCShapeWanted> wanted, int32_t turnUsed) -> MCShapesLoaded
+{
+    return LoadTogether(
+        wanted, turnUsed,
+        [&](const MCShapeWanted& shape) -> std::shared_ptr<MCShape>
+        {
+            return OpenAppearanceFile(shape.FileNum)
+                       ? StrippedObjectShape(shape.FileNum, shape.Packet, turnUsed, shape.Owner)
+                       : nullptr;
+        },
+        [&](const MCShapeWanted& shape) -> MCOptionalRef<MCPacketFile>
+        {
+            return OpenAppearanceFile(shape.FileNum) ? MCOptionalRef<MCPacketFile>(*_AppearanceFiles[shape.FileNum])
+                                                     : std::nullopt;
+        },
+        [&](const MCShapeWanted& shape) { return GetShapeData(shape.FileNum, shape.Packet, turnUsed, shape.Owner); },
+        [&](const std::shared_ptr<MCShape>& shape, const MCShapeWanted& of)
+        { TieShape(shape, of.FileNum, of.Packet); });
 }
 
 auto MCSpriteManager::Dump(const std::function<bool(const MCShape&)>& dump) -> void
@@ -267,8 +544,22 @@ auto MCSpriteManager::GetShapeData(uint32_t appearanceNum, uint32_t packetNum, i
         return nullptr;
     }
 
-    std::shared_ptr<MCShape> shape = LoadShape(file, packetNum, size, turnUsed, std::move(owner), true);
+    // Port-only: the HD pack's stripped table in its place where the pack has one (SPEC-pack-v2.md's record 1).
+    std::shared_ptr<MCShape> shape = StrippedObjectShape(appearanceNum, packetNum, turnUsed, owner);
 
+    if (shape == nullptr)
+    {
+        shape = LoadShape(file, packetNum, size, turnUsed, std::move(owner), true);
+        ++_ReadAlone.Others;
+    }
+
+    TieShape(shape, appearanceNum, packetNum);
+    return shape;
+}
+
+auto MCSpriteManager::TieShape(const std::shared_ptr<MCShape>& shape, uint32_t appearanceNum, uint32_t packetNum) const
+    -> void
+{
     // Port-only: the HD art pack's frames for it, if it has them; tied now only while HD art is on, and by its HdFolder
     // when HD art comes on later (AttachHdArt).
     const MCHdArt::ObjectShapeKey key{_SpriteFileNames[_AppearanceSources[appearanceNum]], appearanceNum, packetNum};
@@ -282,13 +573,9 @@ auto MCSpriteManager::GetShapeData(uint32_t appearanceNum, uint32_t packetNum, i
     {
         MCHdArt::Attach(shape, key);
     }
-
-    return shape;
 }
 
-auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
-                                       std::weak_ptr<MCAppearanceType> owner, bool zoomedOut)
-    -> std::shared_ptr<MCShape>
+auto MCSpriteManager::MechFile(uint32_t mechNum, MCMechPart part, bool zoomedOut) -> MCOptionalRef<MCPacketFile>
 {
     const bool use90 = zoomedOut && _PartFiles90[part] != nullptr;
     MCPacketFile& parent = use90 ? *_PartFiles90[part] : *_PartFiles[part];
@@ -299,14 +586,14 @@ auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCM
         // The mech's PAK, a packet of the part PAK, opened when first asked for.
         if (parent.SeekPacket(static_cast<int32_t>(mechNum)) != 0)
         {
-            return nullptr;
+            return std::nullopt;
         }
 
         auto opened = std::make_unique<MCPacketFile>();
 
         if (opened->Open(parent, static_cast<uint32_t>(parent.GetPacketSize())) != 0)
         {
-            return nullptr;
+            return std::nullopt;
         }
 
         if (table.size() <= mechNum)
@@ -317,7 +604,65 @@ auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCM
         table[mechNum] = std::move(opened);
     }
 
-    MCPacketFile& file = *table[mechNum];
+    return *table[mechNum];
+}
+
+auto MCSpriteManager::MechPacketsStored(uint32_t mechNum, MCMechPart part, uint32_t first, uint32_t count,
+                                        bool zoomedOut) -> std::vector<uint8_t>
+{
+    const MCOptionalRef<MCPacketFile> file = MechFile(mechNum, part, zoomedOut);
+    ++_ReadAlone.MechsStored;
+    return file ? file->get().ReadStoredPackets(static_cast<int32_t>(first), static_cast<int32_t>(count))
+                : std::vector<uint8_t>{};
+}
+
+auto MCSpriteManager::MechPacketsPlace(uint32_t mechNum, MCMechPart part, uint32_t first, uint32_t count,
+                                       bool zoomedOut) -> std::optional<MCMechPacketsPlace>
+{
+    const bool use90 = zoomedOut && _PartFiles90[part] != nullptr;
+    const auto& parent = use90 ? _PartFiles90[part] : _PartFiles[part];
+    const MCOptionalRef<MCPacketFile> file = MechFile(mechNum, part, zoomedOut);
+
+    if (parent == nullptr || !file || count == 0)
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<MCStoredPacket> mech = parent->StoredPacket(static_cast<int32_t>(mechNum));
+    const std::optional<MCStoredPacket> from = file->get().StoredPacket(static_cast<int32_t>(first));
+    const std::optional<MCStoredPacket> to = file->get().StoredPacket(static_cast<int32_t>(first + count - 1));
+
+    if (!mech.has_value() || !from.has_value() || !to.has_value() || to->Offset < from->Offset)
+    {
+        return std::nullopt;
+    }
+
+    return MCMechPacketsPlace{.MechAt = mech->Offset,
+                              .MechBytes = mech->Size,
+                              .RunAt = from->Offset,
+                              .RunBytes = to->Offset + to->Size - from->Offset};
+}
+
+auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
+                                       std::weak_ptr<MCAppearanceType> owner, bool zoomedOut)
+    -> std::shared_ptr<MCShape>
+{
+    // Port-only: the HD pack's stripped table in its place where the pack has one (SPEC-pack-v2.md's record 1), the
+    // mech's PAK not opened for it.
+    if (std::shared_ptr<MCShape> stripped = StrippedMechShape(mechNum, packetNum, part, turnUsed, owner, zoomedOut))
+    {
+        TieMechShape(stripped, mechNum, packetNum, part, zoomedOut);
+        return stripped;
+    }
+
+    const MCOptionalRef<MCPacketFile> opened = MechFile(mechNum, part, zoomedOut);
+
+    if (!opened)
+    {
+        return nullptr;
+    }
+
+    MCPacketFile& file = opened->get();
 
     if (file.SeekPacket(static_cast<int32_t>(packetNum)) != 0)
     {
@@ -332,6 +677,14 @@ auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCM
     }
 
     std::shared_ptr<MCShape> shape = LoadShape(file, packetNum, size, turnUsed, std::move(owner), false);
+    ++_ReadAlone.Mechs;
+    TieMechShape(shape, mechNum, packetNum, part, zoomedOut);
+    return shape;
+}
+
+auto MCSpriteManager::TieMechShape(const std::shared_ptr<MCShape>& shape, uint32_t mechNum, uint32_t packetNum,
+                                   MCMechPart part, bool zoomedOut) const -> void
+{
     // Port-only: the HD art pack's frames for it, if it has them.
     const MCHdArt::MechShapeKey key{PartFileName(part, zoomedOut), mechNum, packetNum};
 
@@ -341,7 +694,6 @@ auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCM
     }
 
     MCHdArt::Attach(shape, key);
-    return shape;
 }
 
 auto MCSpriteManager::AttachHdArt() -> void

@@ -478,6 +478,13 @@ std::optional<size_t> FastShapeRowBytes(std::span<const uint8_t> row, int32_t wi
 std::optional<size_t> FastShapeSize(std::span<const uint8_t> shape);
 
 /// <summary>
+/// Port-only: shape <paramref name="shapeNum"/> of fast-shape table <paramref name="shapeTable"/> (its header on: the
+/// bytes <see cref="FastShapeDraw"/> draws it from), or none for a table not tagged <see cref="FastShapeTag"/> or whose
+/// shape or header lie outside the data.
+/// </summary>
+std::optional<std::span<const uint8_t>> FastShapeAt(std::span<const uint8_t> shapeTable, int32_t shapeNum);
+
+/// <summary>
 /// Port-only: the pixel shape <paramref name="shapeNum"/> of fast-shape table <paramref name="shapeTable"/> covers
 /// (<paramref name="x"/>, <paramref name="y"/>) right and down of its hot spot with (where <see cref="FastShapeDraw"/>
 /// puts it drawn at that hot spot); none where a run of colour 255 leaves it see-through, outside its box, for a

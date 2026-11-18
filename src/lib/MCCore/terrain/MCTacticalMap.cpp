@@ -36,6 +36,7 @@
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfx.h"
 #include "vfx/MCVfxFunctions.h"
+#include "sprite/MCShapeFile.h"
 
 using namespace MCTacmapLayout;
 
@@ -2005,7 +2006,7 @@ auto MCTacticalMap::SetID(int32_t partId) -> void
     }
 
     // The part diagram's shapes.
-    MCFile shapeFile;
+    MCShapeFile shapeFile;
 
     if (shapeFile.Open(GamePath(ArtPath, shapeName, ".shp")) != 0)
     {

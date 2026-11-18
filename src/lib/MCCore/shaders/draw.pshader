@@ -301,6 +301,22 @@ static int2 sourceCorner;
 static int2 hdCorner;
 static int2 placeSize;
 
+// An HD frame's index picture's green (MCHdArt.h): 255 for a pixel with an index, 254 for one that is also part of an
+// object's baked shadow (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's); in a version 2 frame also 253 and
+// 252 spread past the original's pixels (outside a shadow and in one), 251 and 250 drawn and blended (outside a shadow
+// and in one).
+static const uint HasIndex = 255u;
+static const uint BakedShadow = 254u;
+static const uint SpreadShadow = 252u;
+static const uint DrawnBlended = 251u;
+static const uint DrawnBlendedShadow = 250u;
+
+// Port-only (SPEC-memory.md's indices): place.w's bit for a draw of a shape's indices from its version 2 HD frame's own
+// index picture (MCVulkanRenderer's Picture::HdMarks), in place of the original's rows: its green is the frame's marks,
+// not an atlas page's state, from main.
+static const uint HdMarksSource = 1u;
+static bool sourceMarks;
+
 // A texel of the draw's source, in its picture.
 float4 SourceAt(int2 texel)
 {
@@ -330,6 +346,27 @@ int2 SourceSize()
 uint Byte(float value)
 {
     return (uint)round(value * 255.0);
+}
+
+// Port-only: whether a version 2 HD frame's index picture's texel is a pixel the original draws, its red the original's
+// index (MCHdArt::OriginalDrawsMark): drawn, drawn and blended, in a baked shadow or not; not one its index only spread
+// to.
+bool OriginalDrawsIn(float4 entry)
+{
+    const uint green = Byte(entry.g);
+    return green == HasIndex || green == BakedShadow || green == DrawnBlended || green == DrawnBlendedShadow;
+}
+
+// Whether a shape's source texel is drawn: an HD frame's index picture's by its marks (sourceMarks), an atlas page's by
+// its state (green: 0 empty, 2 skipped).
+uint SourceState(float4 sample, uint flags)
+{
+    if (sourceMarks)
+    {
+        return OriginalDrawsIn(sample) ? 1u : 0u;
+    }
+
+    return (flags & OpaqueSource) != 0 ? 1u : Byte(sample.g);
 }
 
 uint Table(uint row, uint index)
@@ -650,13 +687,15 @@ bool DrawnTexel(Input input, int2 texel, out uint value)
     const float4 sample = SourceAt(texel);
     value = Byte(sample.r);
 
-    // A picture of indices (an opaque source): colours 0 and 255 draw nothing. An atlas page: the state says.
+    // A picture of indices (an opaque source): colours 0 and 255 draw nothing, as its table makes them (an HD frame's
+    // index picture is read through it). An atlas page: the state says.
     if ((input.op.x & OpaqueSource) != 0)
     {
-        return value != 0 && value != 255;
+        const uint shown = sourceMarks && (input.op.x & TableBefore) != 0 ? Table(input.op.z, value) : value;
+        return (!sourceMarks || OriginalDrawsIn(sample)) && shown != 0 && shown != 255;
     }
 
-    const uint state = Byte(sample.g);
+    const uint state = SourceState(sample, input.op.x);
     return state != 0 && state != 2;
 }
 
@@ -923,14 +962,6 @@ Output SmoothBlendedPixel(Input input, int2 target)
 
     return Blended(blend * share);
 }
-
-// An HD frame's index picture's green (MCHdArt.h): 255 for a pixel with an index, 254 for one that is also part of an
-// object's baked shadow (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's); in a version 2 frame also 253 and
-// 252 spread past the original's pixels (outside a shadow and in one), 251 and 250 drawn and blended (outside a shadow
-// and in one).
-static const uint BakedShadow = 254u;
-static const uint SpreadShadow = 252u;
-static const uint DrawnBlendedShadow = 250u;
 
 // Whether an HD frame's index picture's texel has an index (MCHdArt::HasIndexMark).
 bool HasIndexIn(float4 entry)
@@ -2006,7 +2037,7 @@ Output DrawnOutput(Input input)
         const int2 texel = input.source.xy + (pixel - input.rect.xy) * input.source.zw;
         const float4 sample = FetchSource(texel);
         value = Byte(sample.r);
-        state = (flags & OpaqueSource) != 0 ? 1 : Byte(sample.g);
+        state = SourceState(sample, flags);
 
 #if DRAWS_SPRITE_KINDS
         if ((flags & SmoothEdges) != 0)
@@ -2155,6 +2186,7 @@ Output main(Input input)
     sourceCorner = int2(input.place.x & 0xffffu, input.place.x >> 16);
     hdCorner = int2(input.place.y & 0xffffu, input.place.y >> 16);
     placeSize = int2(input.place.z & 0xffffu, input.place.z >> 16);
+    sourceMarks = (input.place.w & HdMarksSource) != 0;
     Output output = DrawnOutput(input);
 
     // Port-only (HD lighting): a light's glow, premultiplied through the blend pipeline, fainter as look.x.

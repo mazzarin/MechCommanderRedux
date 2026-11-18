@@ -2395,7 +2395,8 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
 
 /// <summary>
 /// Port-only: a version 2 pack's frame stands for the original's rows (SPEC-pack-v2.md's record 1, which leaves them
-/// out): the shape's index pass is drawn from the frame's index picture where its green says the original draws, and
+/// out): the shape's index pass is drawn from the frame's own index picture on the GPU (SPEC-memory.md's indices: no
+/// copy in the shape atlas) where its green says the original draws, and
 /// nowhere it says spread (the HD edge past the original's pixels), so in mirror mode the GPU's palette indices are
 /// still the software renderer's. A pixel spread at an index the mech never draws would differ (taken as drawn, the
 /// first frame differs).
@@ -2412,10 +2413,10 @@ TEST_CASE_ISOLATED("game: HD art from a version 2 pack keeps the original's pale
     // Index 0xd8 is the water's colour cycle, which no mech draws.
     constexpr uint8_t NeverDrawn = 0xd8;
     REQUIRE(MarkPackVersion2(scene->Pack, NeverDrawn) > 0);
-    const int64_t madeBefore = scene->Renderer->HdIndexImagesMade();
+    const int64_t drawnBefore = scene->Renderer->HdIndexPicturesDrawn();
 
     CheckIndicesKept(*scene);
-    CHECK(scene->Renderer->HdIndexImagesMade() > madeBefore);
+    CHECK(scene->Renderer->HdIndexPicturesDrawn() > drawnBefore);
     std::filesystem::remove_all(scene->Scratch);
 }
 
@@ -3846,7 +3847,8 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
     };
 
     // The bytes a picture takes, and what the frames kept in memory take with every one read: their records alone, the
-    // colours gone once on the GPU (SPEC-memory.md's one copy of a frame's colours).
+    // colours gone once on the GPU (SPEC-memory.md's one copy of a frame's colours), and their indices too a couple of
+    // frames after (SPEC-memory.md's indices: nothing on the CPU reads these frames').
     const size_t one = drawn(1);
     REQUIRE(one > 0);
     CHECK_EQ(drawn(Frames), Frames * one);
@@ -3918,13 +3920,20 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
         drawn(Drawn);
     }
 
-    CHECK_EQ(MCHdArt::CachedBytes(), kept - (Frames - Drawn) * record);
+    // The frames drawn keep their records, which have let go of their indices; the rest are gone.
+    CHECK_EQ(MCHdArt::CachedBytes(), 0);
 
-    // No longer short: both keep every frame drawn again.
+    // No longer short: both keep every frame drawn again, the records read again letting go of their indices once
+    // their pictures are up, none read again for them.
     system->IsShort = false;
+    const size_t indicesReadAgain = MCHdArt::IndicesReadAgain();
     drawn(Frames);
     CHECK_EQ(drawn(Frames), Frames * one);
-    CHECK_EQ(MCHdArt::CachedBytes(), kept);
+    CHECK(MCHdArt::CachedBytes() <= kept);
+    drawn(Frames);
+    drawn(Frames);
+    CHECK_EQ(MCHdArt::CachedBytes(), 0);
+    CHECK_EQ(MCHdArt::IndicesReadAgain(), indicesReadAgain);
 
     hdArt.reset();
     std::filesystem::remove_all(scratch);

@@ -396,10 +396,10 @@ public:
     int64_t HdDrawn() const { return _HdDrawn; }
 
     /// <summary>
-    /// Port-only: the shapes' images made from version 2 HD frames' index pictures so far, standing for the
-    /// original's rows (<see cref="HdIndexImage"/>).
+    /// Port-only: the shapes drawn so far whose index passes read their version 2 HD frame's own index picture, standing
+    /// for the original's rows (<see cref="HdShapeIndices"/>).
     /// </summary>
-    int64_t HdIndexImagesMade() const { return _HdIndexImagesMade; }
+    int64_t HdIndexPicturesDrawn() const { return _HdIndexPicturesDrawn; }
     /// <summary>
     /// Port-only: how many times a stripped shape table's rows were asked for (a version 2 pack's, drawn without its HD
     /// frame: RowsGone), each drawn as nothing.
@@ -924,7 +924,8 @@ private:
     /// </summary>
     void BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                      std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
-                     bool smoothEdges = false, BlitPixels pixels = BlitPixels::All);
+                     bool smoothEdges = false, BlitPixels pixels = BlitPixels::All,
+                     const std::optional<MCColorTable>& table = std::nullopt);
     /// <summary>
     /// Where a blit of a picture <paramref name="width"/> x <paramref name="height"/> goes (its rectangle) and reads
     /// from (its first pixel and steps); none when it draws nothing, or reads outside the picture (then
@@ -1268,16 +1269,34 @@ private:
                                           const std::function<Extent()>& measure,
                                           const std::function<void(std::span<uint8_t>, const Extent&)>& decode);
     /// <summary>
-    /// Port-only: the image of a shape drawn from a version 2 HD frame (<see cref="MCHdArt::Frame::Marked"/>, with
-    /// <paramref name="seed"/>), its index picture standing for the original's rows, which a pack's shape table may
-    /// leave out (SPEC-pack-v2.md's record 1): the frame's original size, found by the frame's number.
+    /// Where a shape's draws read its indices (Shape): an atlas page's place (<see cref="AtlasShapeIndices"/>), or
+    /// port-only (SPEC-memory.md's indices) a version 2 HD frame's own index picture on the GPU
+    /// (<see cref="HdShapeIndices"/>, read as its marks: Picture::HdMarks); its width, and the colours of the pixels
+    /// it draws (a translucent shape with none a translucent draw shows opaque has no index pass).
     /// </summary>
-    DataImage& HdIndexImage(const MCHdArt::Frame& frame, uint64_t seed);
+    struct ShapeIndices
+    {
+        SourceKind Source = SourceKind::None;
+        uint32_t Index = 0;
+        int32_t X = 0;
+        int32_t Y = 0;
+        int32_t Width = 0;
+        std::bitset<256> Colors;
+    };
+
     /// <summary>
-    /// <see cref="HdIndexImage"/>, in the atlas as the original's rows decode (MCShapeRows::Decode): each pixel the
-    /// original draws (MCHdArt::OriginalDrawsMark) its index, drawn; nothing elsewhere.
+    /// The atlas's image of frame <paramref name="shapeNum"/> of <paramref name="table"/> (its rows
+    /// <paramref name="data"/>, <paramref name="rows"/> of them, with <paramref name="seed"/>), decoded the first time;
+    /// none for an empty one or one larger than an atlas page.
     /// </summary>
-    DataImage& AtlasForHdIndices(const MCHdArt::Frame& frame, uint64_t seed);
+    std::optional<ShapeIndices> AtlasShapeIndices(std::span<const uint8_t> table, int32_t shapeNum,
+                                                  std::span<const uint8_t> data, uint64_t seed, int32_t rows);
+    /// <summary>
+    /// Port-only: a version 2 HD frame's (<see cref="MCHdArt::Frame::Marked"/>) own index picture standing for the
+    /// original's rows, which a pack's shape table may leave out (SPEC-pack-v2.md's record 1): the frame's original
+    /// size; none when the GPU hasn't its picture.
+    /// </summary>
+    std::optional<ShapeIndices> HdShapeIndices(const MCHdArt::Frame& frame);
 
     /// <summary>
     /// Port-only: whether <paramref name="table"/> is a stripped shape table (sprite/MCHdArt.h's Stripped), with no rows
@@ -1585,11 +1604,6 @@ private:
     /// <summary>The images made from registered data, by the address they're read from and their seed.</summary>
     std::map<std::pair<MCAddressKey, uint64_t>, DataImage> _DataImages;
     /// <summary>
-    /// Port-only: the images made from version 2 HD frames' index pictures (<see cref="HdIndexImage"/>), by the frame's
-    /// number and their seed; let go with the atlas.
-    /// </summary>
-    std::map<std::pair<uint64_t, uint64_t>, DataImage> _HdIndexImages;
-    /// <summary>
     /// Port-only: the hashes of the shape tables nothing attached (<see cref="HdShape"/>), by the table's address, until
     /// its bytes change; none for a table outside the registered blocks.
     /// </summary>
@@ -1619,6 +1633,13 @@ private:
         smol_atlas_item_t* HdItem = nullptr;
         /// <summary>Port-only: an HD art frame's place in _HdOrder.</summary>
         std::list<uint64_t>::iterator InOrder;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's indices): a version 2 HD frame's, whose index picture stands for the original's
+        /// rows: shape draws read its green as the frame's marks (shaders/draw.pshader's HdMarksSource), and the colours
+        /// of the pixels the original draws, found once as it goes up (the CPU's copy of its indices may go after).
+        /// </summary>
+        bool HdMarks = false;
+        std::bitset<256> DrawnColors;
     };
 
     std::unordered_map<uint64_t, Picture> _Pictures;
@@ -1696,7 +1717,7 @@ private:
     /// <summary>Port-only: how each font's two-tone glyphs are layered, by the font's address, until its bytes change.</summary>
     std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
-    int64_t _HdIndexImagesMade = 0;
+    int64_t _HdIndexPicturesDrawn = 0;
     int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
     std::optional<AuditedDraw> _Audited;
@@ -1797,6 +1818,8 @@ private:
         std::shared_ptr<SDL_GPUTexture> Texture;
         std::shared_ptr<SDL_GPUTexture> HdColors;
         PicturePlace Place;
+        /// <summary>Port-only: Picture::HdMarks.</summary>
+        bool HdMarks = false;
     };
 
     /// <summary>

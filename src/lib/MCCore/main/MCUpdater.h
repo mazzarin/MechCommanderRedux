@@ -125,6 +125,8 @@ namespace MCUpdater
         /// </summary>
         bool TwoX = false;
         bool TwoXChosen = false;
+        /// <summary>Whether the player picked the art's size; else it's the machine's, <see cref="TwoXChosen"/> its pick.</summary>
+        bool PlayerPicked = false;
         uint64_t FullBytes = 0;
         uint64_t TwoXBytes = 0;
         /// <summary>

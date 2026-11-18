@@ -3493,8 +3493,9 @@ TEST_CASE_ISOLATED("recovery screen: the question wraps its text over its button
 
 namespace
 {
-    /// <summary>HD OPTIONS' HD PACK row: first under PACKS.</summary>
+    /// <summary>HD OPTIONS' HD PACK row: first under PACKS; HD ART SIZE under it.</summary>
     constexpr int32_t HdPackRow = 1;
+    constexpr int32_t HdArtSizeRow = 2;
 
     /// <summary>Runs a few frames, as a player's screen would between inputs.</summary>
     void ScreenFrames()
@@ -3578,11 +3579,13 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown
              std::format("THE HD ART, SOUND AND MOVIES: {} TO DOWNLOAD.", MCUpdateWork::SizeText(Terrain().size())));
     const std::shared_ptr<MCLogTextButton> get = ShownButton("GET");
     CHECK(!ButtonShown("RESTART"));
+    CHECK_EQ(list->HeldReason(HdArtSizeRow), std::string_view("GET THE HD PACK FIRST."));
     MCScreenInput::SaveShot("hd options get", MCScreenInput::ScreenHash());
 
-    // GET downloads it at once, while the game goes on; RESTART then.
+    // GET downloads it at once, while the game goes on; RESTART then. This release's HD art has one size.
     RealClickOn(*get);
     CHECK(MCUpdater::HdPack().Chosen);
+    CHECK_EQ(list->HeldReason(HdArtSizeRow), std::string_view("THIS RELEASE HAS ONE SIZE OF HD ART."));
     REQUIRE(ScreenFramesUntil(MCStage::Ready));
     ScreenFrames();
     CHECK(release.Armed());
@@ -3593,6 +3596,54 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown
     RealClickOn(*restart);
     CHECK_EQ(*scope.Quits, 1);
     CHECK(MCUpdater::RestartWanted());
+}
+
+TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until the player picks, in HD PACK's "
+                   "button's column; 2X is downloaded at once, as GET's change is")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("hd-options-art-size");
+    AddTwoX(release);
+    release.Machine = BigMachine;
+    UpdateToRelease2(release);
+    MCUpdaterScope scope(release, false);
+    REQUIRE(MCTestGame::StartLogistics());
+    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
+    REQUIRE_EQ(list->Label(HdArtSizeRow), std::string_view("HD ART SIZE"));
+    CHECK(list->HeldReason(HdArtSizeRow).empty());
+    CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("FULL"));
+    const std::string full = MCUpdateWork::SizeText(Terrain().size() + Palette.size());
+    const std::string twoX = MCUpdateWork::SizeText(TerrainAt2x.size() + Palette.size());
+    CHECK_EQ(list->Description(HdArtSizeRow),
+             std::format("PICKED FOR THIS COMPUTER. FULL: {}. 2X: {}, HALF THE MEMORY.", full, twoX));
+
+    const std::shared_ptr<MCLogTextButton> remove = ShownButton("REMOVE");
+    const std::optional<std::pair<int32_t, int32_t>> centre = list->SettingCentre(HdArtSizeRow);
+    REQUIRE(centre.has_value());
+    CHECK_EQ(remove->GlobalX() + remove->Width() / 2, centre->first);
+    MCScreenInput::SaveShot("hd options art size", MCScreenInput::ScreenHash());
+
+    // A click picks 2X, the player's pick, downloaded while the game goes on; RESTART then.
+    MCScreenInput::RealClick(centre->first, centre->second);
+    ScreenFrames();
+    CHECK(MCUpdater::HdPack().TwoXChosen);
+    CHECK(MCUpdater::HdPack().PlayerPicked);
+    CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("2X"));
+    CHECK_EQ(list->Description(HdArtSizeRow),
+             std::format("FULL: {}. 2X: {}, HALF THE MEMORY, A TOUCH SOFTER ZOOMED IN.", full, twoX));
+    REQUIRE(ScreenFramesUntil(MCStage::Ready));
+    ScreenFrames();
+    CHECK(release.Armed());
+    CHECK_EQ(list->Description(HdPackRow), std::string("DOWNLOADED. RESTART THE GAME TO SEE IT."));
+    CHECK(ButtonShown("RESTART"));
+    MCScreenInput::SaveShot("hd options art size 2x", MCScreenInput::ScreenHash());
+    const std::optional<MCContentUpdater::MCChoice> choice = MCContentUpdater::Choice(*MakeDisk(), release.Game.Path());
+    REQUIRE(choice.has_value());
+    CHECK(choice->Picked == MCContentUpdater::MCPicked::Player);
 }
 
 TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD out")

@@ -215,6 +215,13 @@ namespace
         InstallAgain = MCAgain::No;
     }
 
+    /// <summary>Who chose the HD art's size, as the copy keeps it on <paramref name="disk"/> (the machine's without a choice kept).</summary>
+    MCContentUpdater::MCPicked PickedOn(MCUpdateDisk& disk)
+    {
+        const std::optional<MCContentUpdater::MCChoice> choice = MCContentUpdater::Choice(disk, Content->GameFolder);
+        return choice ? choice->Picked : MCContentUpdater::MCPicked::Machine;
+    }
+
     /// <summary>
     /// What the copy has of the HD pack, from its record (<paramref name="known"/>, the one the start read; none: read
     /// here), kept, and the sets chosen.
@@ -244,7 +251,8 @@ namespace
               .Installed = MCInstalled::Has(Record, Content->GameFolder, MCContentList::HdSet),
               .Chosen = wanted.contains(MCContentList::HdSet),
               .TwoX = Record.Sets.contains(MCContentList::Hd2xSet),
-              .TwoXChosen = wanted.contains(MCContentList::Hd2xSet)};
+              .TwoXChosen = wanted.contains(MCContentList::Hd2xSet),
+              .PlayerPicked = PickedOn(*disk) == MCContentUpdater::MCPicked::Player};
 
         if (const auto bytes = Record.SetBytes.find(MCContentList::HdSet); bytes != Record.SetBytes.end())
         {
@@ -1225,6 +1233,7 @@ namespace
 
         Hd.Chosen = sets.contains(MCContentList::HdSet);
         Hd.TwoXChosen = MCContentUpdater::Wanted(*Content, *disk, Record).contains(MCContentList::Hd2xSet);
+        Hd.PlayerPicked = picked == MCContentUpdater::MCPicked::Player;
 
         switch (Step)
         {
@@ -1266,14 +1275,6 @@ namespace
                 break;
         }
     }
-
-    /// <summary>Who chose the HD art's size, as the copy keeps it (the machine's without a choice kept).</summary>
-    MCContentUpdater::MCPicked HdPicked()
-    {
-        const std::optional<MCContentUpdater::MCChoice> choice =
-            MCContentUpdater::Choice(*MakeDisk(), Content->GameFolder);
-        return choice ? choice->Picked : MCContentUpdater::MCPicked::Machine;
-    }
 }
 
 auto MCUpdater::ChooseHd(bool chosen) -> void
@@ -1283,8 +1284,9 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
         return;
     }
 
-    MCContentUpdater::MCSets sets = MCContentUpdater::Wanted(*Content, *MakeDisk(), Record);
-    MCContentUpdater::MCPicked picked = HdPicked();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCContentUpdater::MCSets sets = MCContentUpdater::Wanted(*Content, *disk, Record);
+    MCContentUpdater::MCPicked picked = PickedOn(*disk);
 
     if (chosen)
     {

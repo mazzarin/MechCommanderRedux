@@ -537,6 +537,12 @@ private:
         std::unique_ptr<smol_atlas_t, DestroyPlaces> Places;
         std::unique_ptr<smol_atlas_t, DestroyPlaces> HdPlaces;
         uint32_t Pictures = 0;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's pages): the smallest picture its places refused since one last left it (in the
+        /// pictures' pixels; none: the most): one at least as wide and as tall wouldn't fit either, so it isn't tried.
+        /// </summary>
+        uint32_t RefusedWidth = UINT32_MAX;
+        uint32_t RefusedHeight = UINT32_MAX;
     };
 
     /// <summary>Port-only: the pages a picture may share (none: a picture with textures of its own).</summary>
@@ -545,6 +551,17 @@ private:
         None,
         Hd,
         Sharp,
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the page of each kind and layout a picture was placed in last, tried first
+    /// for the next picture of that layout.
+    /// </summary>
+    struct OpenPage
+    {
+        PageKind Kind = PageKind::None;
+        SharedLayout Layout;
+        uint32_t Page = 0;
     };
 
     /// <summary>Port-only: a shared page's place let go, freed once the frame that let it go has run.</summary>
@@ -1829,6 +1846,7 @@ private:
     std::vector<SharedPage> _HdPages;
     std::vector<SharedPage> _SharpPages;
     std::vector<RetiredPlace> _RetiredPlaces;
+    std::vector<OpenPage> _OpenPages;
     /// <summary>Port-only: the shared pages of kind <paramref name="kind"/>.</summary>
     std::vector<SharedPage>& PagesOf(PageKind kind);
     /// <summary>

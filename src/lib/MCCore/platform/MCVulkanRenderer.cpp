@@ -2738,10 +2738,51 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         return true;
     };
 
-    // Only a page of the picture's own layout: its formats and its places' unit are the page's.
+    // Port-only (SPEC-memory.md's pages): the page of the layout placed in last.
+    auto open = std::ranges::find_if(_OpenPages,
+                                     [&](const OpenPage& page) { return page.Kind == kind && page.Layout == layout; });
+
+    if (open == _OpenPages.end())
+    {
+        open = _OpenPages.insert(_OpenPages.end(), OpenPage{kind, layout, 0});
+    }
+
+    // Only a page of the picture's own layout: its formats and its places' unit are the page's; not one that refused a
+    // picture no bigger. A refusal is kept as the page's smallest.
+    const auto tryIn = [&](uint32_t at)
+    {
+        SharedPage& page = pages[at];
+
+        if (page.Places == nullptr || page.Layout != layout ||
+            (width >= page.RefusedWidth && height >= page.RefusedHeight))
+        {
+            return false;
+        }
+
+        if (placeIn(at))
+        {
+            open->Page = at;
+            return true;
+        }
+
+        if (width <= page.RefusedWidth && height <= page.RefusedHeight)
+        {
+            page.RefusedWidth = width;
+            page.RefusedHeight = height;
+        }
+
+        return false;
+    };
+
+    // The open page first, then the others.
+    if (open->Page < pages.size() && tryIn(open->Page))
+    {
+        return true;
+    }
+
     for (uint32_t at = 0; at < pages.size(); ++at)
     {
-        if (pages[at].Places != nullptr && pages[at].Layout == layout && placeIn(at))
+        if (at != open->Page && tryIn(at))
         {
             return true;
         }
@@ -2780,6 +2821,7 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         *empty = std::move(page);
     }
 
+    open->Page = at;
     return placeIn(at);
 }
 
@@ -2804,6 +2846,9 @@ void MCVulkanRenderer::FreeRetiredPlaces()
     {
         SharedPage& page = PagesOf(retired.Kind)[retired.Page];
         sma_item_remove(page.Places.get(), retired.Item);
+        // Port-only (SPEC-memory.md's pages): room again, for any picture.
+        page.RefusedWidth = UINT32_MAX;
+        page.RefusedHeight = UINT32_MAX;
 
         if (retired.HdItem != nullptr)
         {

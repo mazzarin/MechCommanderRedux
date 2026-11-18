@@ -3013,10 +3013,10 @@ namespace
         }
 
         holding.InFlightBytes += runBytes;
-
-        WaitWhileRunsHeld(ahead, lock);
+        // The run belongs to the generations it was taken in: after a let-go, memory short's stop or a pack set, none kept.
         const uint64_t generation = ahead.Generation;
         const uint64_t holdGeneration = holding.Generation;
+        WaitWhileRunsHeld(ahead, lock);
         std::optional<ReaderHandle> handle = BorrowHandle(ahead, lock, run->Archive);
         // Borrowing may have let go of the lock: the hold may have been let go of, or the pack set, meanwhile.
         const bool current =
@@ -6114,6 +6114,35 @@ namespace
                                          static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb));
         }
     }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "When the system says memory is short", its first step): the hold's fill stops before
+    /// anything is given back: it reads and queues no more this mission, and a run being read keeps nothing (its
+    /// generation moved on).
+    /// </summary>
+    void StopFilling()
+    {
+        ReadAhead& ahead = TheState().Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        HoldQueue& holding = ahead.Holding;
+
+        if (!holding.On || holding.Full)
+        {
+            return;
+        }
+
+        holding.Full = true;
+        holding.Archives.clear();
+        holding.NextStream = 0;
+        ++holding.Generation;
+        ahead.Changed.notify_all();
+
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::Note(std::format("HD hold: memory short, the fill stopped at {:.1f} MB held",
+                                         static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb));
+        }
+    }
 }
 
 size_t MCHdArt::CacheBudget()
@@ -6190,8 +6219,14 @@ std::optional<uint64_t> MCHdArt::NextFrame(bool memoryShort)
     // MCMemoryRoom::TrimmedBytesPerFrame at most: the frames' colours read ahead first, then (the renderer) the pictures
     // past the working set, then the hold.
     //
-    // While the system says memory is short (SPEC-memory.md's "When the system says memory is short"), the frames kept
-    // go whatever the budget, then, when they've no more to give this frame, the hold, whatever -hdhold says.
+    // While the system says memory is short (SPEC-memory.md's "When the system says memory is short"), the hold's fill
+    // stops first, then the frames kept go whatever the budget, then, when they've no more to give this frame, the hold,
+    // whatever -hdhold says.
+    if (memoryShort)
+    {
+        StopFilling();
+    }
+
     const ArtPlan plan = PlanArt(GetReaderSettings());
     const size_t budget = memoryShort ? 0 : (state.Budget != 0 ? state.Budget : plan.FrameBytes);
     const size_t freed = state.Bytes > budget ? TrimFrames(state, budget) : 0;

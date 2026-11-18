@@ -181,6 +181,14 @@ MCMemoryRoom::MCFrameRoom MCMemoryRoom::MCReader::Frame(uint64_t held)
         _Asked = asked;
         _NextRead = now + CardReadInterval;
         _Card = system != nullptr ? system->Card(_DeviceName) : std::nullopt;
+
+        // A card that says it gives the game nothing (DXGI's local budget can read 0) is one the system can't speak for:
+        // taken as over its budget, every frame would be short and the hold given back.
+        if (_Card.has_value() && _Card->Budget == 0)
+        {
+            _Card = std::nullopt;
+        }
+
         MCRoomState& state = TheState();
         std::scoped_lock lock(state.Lock);
 

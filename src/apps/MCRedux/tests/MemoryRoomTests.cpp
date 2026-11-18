@@ -204,6 +204,17 @@ TEST_CASE("hd caches: the card is asked every two seconds, and memory or a share
     room = reader.Frame(held);
     CHECK(room.MemoryShort);
     CHECK_EQ(room.PictureBytes, uint64_t{0});
+
+    // A card that says it gives nothing (DXGI's budget can read 0) is one the system can't speak for, not one over its
+    // budget: never short for it, and the pictures keep up to MostHdBytes.
+    system->Reports = true;
+    system->IsShort = false;
+    system->SharesMemory = true;
+    system->Budget = 0;
+    MCMemoryRoom::AskAgain();
+    room = reader.Frame(held);
+    CHECK(!room.MemoryShort);
+    CHECK_EQ(room.PictureBytes, MCMemoryRoom::MostHdBytes);
 }
 
 /// <summary>

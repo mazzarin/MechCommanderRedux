@@ -3731,8 +3731,9 @@ TEST_CASE("hd art: the hold keeps what fits the plan's room, nothing with -hdhol
 
 /// <summary>
 /// Port-only (SPEC-pack-v2.md's Memory): the hold is let go of whole when memory goes short (MCHdArt::NextFrame), and
-/// holds nothing more that mission (an archive opened after isn't held) until the next mission's starts it again; at a
-/// mission's end (MCHdArt::LetGoHold, MCMission::EndScenario's); and when the pack is set.
+/// holds nothing more that mission (an archive opened after isn't held) until the next mission's starts it again, its
+/// fill stopped first (a run being read keeps nothing); at a mission's end (MCHdArt::LetGoHold, MCMission::EndScenario's);
+/// and when the pack is set.
 /// </summary>
 TEST_CASE("hd art: the hold is let go of when memory goes short, at a mission's end and when the pack is set")
 {
@@ -3765,6 +3766,20 @@ TEST_CASE("hd art: the hold is let go of when memory goes short, at a mission's 
         CHECK_EQ(MCHdArt::HeldBytes(), 0u);
         HoldAndWait();
         CHECK_EQ(MCHdArt::HeldBytes(), Archives * pack.HeldBytes());
+    }
+
+    {
+        // SPEC-memory.md's first step when memory is short: the fill stops, even with nothing held yet to give back,
+        // and the run a reader is reading keeps nothing.
+        MCTest::Scope scope("memory short while the fill reads");
+        MCHdArt::LetGoHold();
+        MCHdArt::HoldTakenRuns(true);
+        MCHdArt::StartHold();
+        MCHdArt::WaitForHeldRun();
+        MCHdArt::NextFrame(true);
+        MCHdArt::HoldTakenRuns(false);
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
     }
 
     {

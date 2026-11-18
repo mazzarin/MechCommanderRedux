@@ -45,7 +45,8 @@ MCHdGroundAsks MCTerrainHdGroundByBytes(MCTerrain& terrain);
 /// <summary>
 /// Port-only (PLAN.md's first-use item 6, Part B): <paramref name="terrain"/>'s HD ground by the names the program
 /// carries for its tile set (terrain/MCGroundNames.h), reading no tile; none for a tile set the table lacks. The same
-/// asks as MCTerrainHdGroundByBytes, keyed rather than holding the tiles' bytes.
+/// asks as MCTerrainHdGroundByBytes, keyed rather than holding the tiles' bytes, and the overlays the map's .pre lists
+/// besides (MCTerrain::PreloadedSlots: those a terrain object puts on its vertex as it's destroyed).
 /// </summary>
 std::optional<MCHdGroundAsks> MCTerrainHdGroundByName(const MCTerrain& terrain);
 
@@ -58,10 +59,18 @@ std::optional<MCHdGroundAsks> MCTerrainHdGroundByName(const MCTerrain& terrain);
 bool MCTerrainAskHdGroundByName(const MCTerrain& terrain);
 
 /// <summary>
+/// Port-only (HD art): the overlay slots the map's bridges, forests and walls put on their vertices as they're destroyed
+/// (MCMiscTerrainObject::DestroyedOverlayTile), each once: drawn from then on, so read ahead and, with a version 2 pack,
+/// rebuilt with the map's (MCTerrainReadHdTiles). The terrain's objects are in once its load is done.
+/// </summary>
+std::vector<int32_t> MCTerrainDestroyedOverlaySlots();
+
+/// <summary>
 /// Port-only (PLAN.md's first-use item 10): takes out of <paramref name="slots"/> those whose ground tile
-/// MCTerrainReadHdTiles rebuilds from its HD frame rather than reading it (the map's ground tiles the table holds):
-/// while the HD ground is drawn, for a tile set the program's table holds (as MCTerrainAskHdGroundByName asks), so the
-/// terrain's load reads only the rest.
+/// MCTerrainReadHdTiles rebuilds from its HD frame rather than reading it (the map's ground tiles the table holds, and
+/// with a version 2 pack the overlays of the map and its .pre), and the .pre's ground tiles no vertex names (never
+/// drawn): while the HD ground is drawn, for a tile set the program's table holds (as MCTerrainAskHdGroundByName asks),
+/// so the terrain's load reads only the rest.
 /// </summary>
 void MCTerrainLeaveRebuiltTiles(const MCTerrain& terrain, std::vector<int32_t>& slots);
 
@@ -122,7 +131,8 @@ struct MCGroundRebuilt
 /// (MCTerrainReadHdTilesAhead) waited for and kept, the rest read. For a tile set the program's table holds (PLAN.md's
 /// first-use item 10), each original tile the terrain's load left out (MCTerrainLeaveRebuiltTiles) is rebuilt from its
 /// HD frame (MCRebuildGroundTile) rather than read; one that isn't (no frame, or not the tile's bytes) is read. With a
-/// version 2 pack the map's overlays and its mines' tiles (MCTerrainReadMinesAhead's) are rebuilt the same way
+/// version 2 pack the overlays of the map, its .pre and its destroyed bridges, forests and walls
+/// (MCTerrainDestroyedOverlaySlots) and its mines' tiles (MCTerrainReadMinesAhead's) are rebuilt the same way
 /// (MCRebuildGroundOverlay). Does nothing while HD art is off or the software renderer draws. How many original tiles
 /// and overlays it rebuilt and read.
 /// </summary>

@@ -272,7 +272,8 @@ auto MCTerrain::Load(std::string_view fileName) -> std::expected<void, std::stri
 
     Tiles = std::move(*tiles);
     // The tiles the .pre lists, read with the map's below.
-    std::vector<int32_t> tilesAhead = Tiles->PreloadSlots(fileName);
+    PreloadedSlots = Tiles->PreloadSlots(fileName);
+    std::vector<int32_t> tilesAhead = PreloadedSlots;
 
     const auto flagSide = static_cast<uint32_t>(BlocksMapSide * VerticesBlockSide);
     ISVisibleBits = std::make_unique<MCByteFlag>(flagSide, flagSide, false);

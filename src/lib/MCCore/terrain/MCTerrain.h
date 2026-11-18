@@ -135,6 +135,12 @@ public:
     std::unique_ptr<MCTerrainTiles> Tiles;
     /// <summary>The block cache (shared: the windows refer to the cache that built their grids).</summary>
     std::shared_ptr<MCMapBlockManager> MapBlocks;
+    /// <summary>
+    /// Port-only: the slots the map's .pre lists (MCTerrainTiles::PreloadSlots), read with the map's own at the load:
+    /// besides the tiles its vertices name, the overlays a terrain object puts on its vertex as it's destroyed
+    /// (MCMiscTerrainObject: a broken bridge's, a burnt forest's, a wall's rubble), and ground tiles no vertex names.
+    /// </summary>
+    std::vector<int32_t> PreloadedSlots;
     /// <summary>The object blocks of the map.</summary>
     std::unique_ptr<MCObjectBlockManager> ObjectBlocks;
     /// <summary>What the Inner Sphere (the player, unless playing Clan) sees this frame, per map vertex.</summary>

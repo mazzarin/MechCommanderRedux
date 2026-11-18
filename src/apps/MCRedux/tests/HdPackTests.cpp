@@ -13,6 +13,7 @@
 #include "lib/MCPacketFile.h"
 #include "lib/MCZstd.h"
 #include "main/MCGamePaths.h"
+#include "main/MCHdSettings.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
 #include "object/MCMover.h"
@@ -3978,14 +3979,16 @@ TEST_CASE_ISOLATED("game: a version 2 pack's stripped shape tables load a mech's
 /// </summary>
 /// <summary>
 /// Port-only (PLAN.md's first-use item 10): with a version 2 pack, whose overlays' frames mark the pixels the original
-/// draws apart from those their indices spread to, the terrain's load leaves the map's overlays and its mines' tiles
-/// unread (MCTerrainLeaveRebuiltTiles, MCTerrainReadMinesAhead), and the load's HD ground (MCTerrainReadHdTiles) puts
-/// each in the cache rebuilt from its HD frame, byte for byte the original's packet; one whose frame doesn't hold its
-/// pixels is read, which the guard of test runs notes (MCHdArt::GuardOriginalReads), and no other. Mission 8, which
-/// starts with mined cells, its tile set opened again with none read.
+/// draws apart from those their indices spread to, the terrain's load leaves the map's overlays, the .pre's and its
+/// mines' tiles unread (MCTerrainLeaveRebuiltTiles, MCTerrainReadMinesAhead), and the .pre's ground tiles no vertex
+/// names, never drawn; with those its bridges, forests and walls take as they're destroyed
+/// (MCTerrainDestroyedOverlaySlots), the load's HD ground
+/// (MCTerrainReadHdTiles) puts each overlay in the cache rebuilt from its HD frame, byte for byte the original's packet;
+/// one whose frame doesn't hold its pixels is read, which the guard of test runs notes (MCHdArt::GuardOriginalReads),
+/// and no other. Mission 8, which starts with mined cells, its tile set opened again with none read.
 /// </summary>
-TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays and its mines' tiles, none read, "
-                   "the guard noting the one read")
+TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays, its .pre's and its mines' tiles, "
+                   "none read, the guard noting the one read")
 {
     if (!MCTestGame::Available())
     {
@@ -4030,22 +4033,30 @@ TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays
     REQUIRE(known.has_value());
     const auto isOverlay = [&known](int32_t slot) { return known->get().At(slot).Overlay.has_value(); };
 
-    // The map's overlays, then its mines' tiles.
+    // The map's overlays, the .pre's besides, its destroyed bridges', forests' and walls', then its mines' tiles.
+    const std::vector<int32_t> mapUsed = terrain->MapBlocks->TilesUsed();
     std::vector<int32_t> slots;
-    std::ranges::copy_if(terrain->MapBlocks->TilesUsed(), std::back_inserter(slots), isOverlay);
+    std::ranges::copy_if(mapUsed, std::back_inserter(slots), isOverlay);
     const size_t mapOverlays = slots.size();
-    const std::vector<int32_t> mines = MCTerrainMineSlots(*terrain);
-
-    for (const int32_t slot : mines)
+    const auto addOverlays = [&slots, &isOverlay](std::span<const int32_t> more)
     {
-        if (isOverlay(slot) && !std::ranges::contains(slots, slot))
+        for (const int32_t slot : more)
         {
-            slots.push_back(slot);
+            if (isOverlay(slot) && !std::ranges::contains(slots, slot))
+            {
+                slots.push_back(slot);
+            }
         }
-    }
+    };
 
+    addOverlays(terrain->PreloadedSlots);
+    const size_t preOverlays = slots.size() - mapOverlays;
+    addOverlays(MCTerrainDestroyedOverlaySlots());
+    const size_t destroyedOverlays = slots.size() - mapOverlays - preOverlays;
+    addOverlays(MCTerrainMineSlots(*terrain));
     REQUIRE(mapOverlays > 0);
-    REQUIRE(slots.size() > mapOverlays);
+    REQUIRE(preOverlays > 0);
+    REQUIRE(slots.size() > mapOverlays + preOverlays + destroyedOverlays);
 
     // Their HD frames at version 2: the original's index where it draws, spread everywhere else; the first overlay's
     // first drawn pixel one index off, a pack that doesn't match the game's.
@@ -4095,10 +4106,15 @@ TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays
     MCHdArt::GuardOriginalReads(true);
     REQUIRE(MCHdArt::GuardingOriginalReads());
 
-    // The terrain's load leaves out the map's overlays; the mines' read leaves theirs.
-    std::vector<int32_t> used = terrain->MapBlocks->TilesUsed();
+    // The terrain's load (the .pre's slots, then the map's) leaves out the overlays and the .pre's ground tiles no
+    // vertex names; the mines' read leaves theirs.
+    std::vector<int32_t> used = terrain->PreloadedSlots;
+    used.insert(used.end(), mapUsed.begin(), mapUsed.end());
     MCTerrainLeaveRebuiltTiles(*terrain, used);
     CHECK(std::ranges::none_of(used, isOverlay));
+    CHECK(std::ranges::none_of(
+        used, [&known, &mapUsed](int32_t slot)
+        { return known->get().At(slot).Tile.has_value() && !std::ranges::contains(mapUsed, slot); }));
     MCTerrainReadMinesAhead();
     const auto cached = [&terrain](int32_t slot)
     {
@@ -4119,8 +4135,10 @@ TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays
         differ += std::ranges::equal(terrain->Tiles->Slot(slot)->get().TileData(), reference->Lookup(slot)) ? 0 : 1;
     }
 
-    std::cout << std::format("  mission {}: {} overlays and {} mines' tiles, {} rebuilt from HD\n", MinedMission,
-                             mapOverlays, slots.size() - mapOverlays, done.Overlays);
+    std::cout << std::format(
+        "  mission {}: {} overlays, {} the .pre's, {} destroyed objects' and {} mines' tiles, {} rebuilt from HD\n",
+        MinedMission, mapOverlays, preOverlays, destroyedOverlays,
+        slots.size() - mapOverlays - preOverlays - destroyedOverlays, done.Overlays);
     CHECK_EQ(differ, size_t{0});
     // The guard noted the misnamed overlay read from the tile file, and no other overlay.
     const std::optional<std::vector<MCHdArt::GuardedRead>> guarded = MCHdArt::GuardedReads();
@@ -5078,18 +5096,23 @@ TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's 
         REQUIRE(std::from_chars(given->data(), given->data() + given->size(), frames).ec == std::errc());
     }
 
-    // The folder made absolute before the game starts: the game works in the install's folder.
+    // The folder made absolute before the game starts: the game works in the install's folder. HD art on from the
+    // boot, as the player's app has it (its personal defaults, the pack set before the menus' first loads), so nothing
+    // the start loads is read before the pack is.
     const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
-    MCTestGame::BootOptions.Started = [&packFolder]
-    {
-        GHdArt = 1;
-        MCHdArt::SetPackFolder(packFolder);
-        MCHdArt::GuardOriginalReads(true);
-    };
+    UseHdByDefault();
+    MCHdArt::SetPackFolder(packFolder);
+    MCHdArt::GuardOriginalReads(true);
+    MCTestGame::BootOptions.Started = [] { GHdArt = 1; };
 
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartMission(segment));
     REQUIRE(MCHdArt::GuardingOriginalReads());
+    const std::optional<std::vector<MCHdArt::GuardedRead>> loadReads = MCHdArt::GuardedReads();
+    REQUIRE(loadReads.has_value());
+    std::cout << std::format("  mission {}: {} reads of the original's art by the end of the load\n", segment,
+                             std::ranges::fold_left(*loadReads | std::views::transform(&MCHdArt::GuardedRead::Count),
+                                                    size_t{0}, std::plus<>()));
 
     for (int32_t frame = 0; frame < frames; ++frame)
     {

@@ -11,6 +11,10 @@
 #include "object/MCElementalType.h"
 #include "object/MCElementalGameSystem.h"
 #include "object/MCForces.h"
+#include "object/MCMiscTerrainObject.h"
+#include "object/MCObjectList.h"
+#include "object/MCObjectQueue.h"
+#include "object/MCObjectSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSoftwareRenderer.h"
@@ -532,6 +536,49 @@ namespace
     }
 
     /// <summary>
+    /// Adds to <paramref name="slots"/> each of <paramref name="more"/> whose entry of <paramref name="known"/> names
+    /// what <paramref name="part"/> holds and that it lacks. How many it added.
+    /// </summary>
+    size_t AddNamed(std::vector<int32_t>& slots, std::span<const int32_t> more, const MCKnownGroundNames& known,
+                    std::optional<MCGroundName> MCGroundSlotNames::* part)
+    {
+        const size_t before = slots.size();
+
+        for (const int32_t slot : more)
+        {
+            if ((known.At(slot).*part).has_value() && !std::ranges::contains(slots, slot))
+            {
+                slots.push_back(slot);
+            }
+        }
+
+        return slots.size() - before;
+    }
+
+    /// <summary>
+    /// The slots of the map's ground tiles (GroundSlots), then the ground tiles <paramref name="known"/> names that a
+    /// vertex holds as its overlay (OverlaySlots): drawn too, so rebuilt the same way.
+    /// </summary>
+    std::vector<int32_t> GroundTileSlots(MCMapBlockManager& blocks, const MCKnownGroundNames& known)
+    {
+        std::vector<int32_t> slots = GroundSlots(blocks);
+        AddNamed(slots, OverlaySlots(blocks), known, &MCGroundSlotNames::Tile);
+        return slots;
+    }
+
+    /// <summary>
+    /// The slots of <paramref name="terrain"/>'s overlays (OverlaySlots), then those its .pre lists besides that
+    /// <paramref name="known"/> names as overlays (MCTerrain::PreloadedSlots): those a terrain object puts on its vertex
+    /// as it's destroyed, drawn from then on.
+    /// </summary>
+    std::vector<int32_t> OverlaySlotsAndPreloaded(const MCTerrain& terrain, const MCKnownGroundNames& known)
+    {
+        std::vector<int32_t> slots = OverlaySlots(*terrain.MapBlocks);
+        AddNamed(slots, terrain.PreloadedSlots, known, &MCGroundSlotNames::Overlay);
+        return slots;
+    }
+
+    /// <summary>
     /// The mines' tiles MCTerrainReadMinesAhead left unread for MCTerrainReadHdTiles to rebuild from their HD frames, and
     /// the terrain whose they are; the load's, on the game's thread.
     /// </summary>
@@ -645,8 +692,8 @@ std::optional<MCHdGroundAsks> MCTerrainHdGroundByName(const MCTerrain& terrain)
         return std::nullopt;
     }
 
-    return MCHdGroundAsks{NamedAhead(*known, GroundSlots(*terrain.MapBlocks), &MCGroundSlotNames::Tile),
-                          NamedAhead(*known, OverlaySlots(*terrain.MapBlocks), &MCGroundSlotNames::Overlay)};
+    return MCHdGroundAsks{NamedAhead(*known, GroundTileSlots(*terrain.MapBlocks, *known), &MCGroundSlotNames::Tile),
+                          NamedAhead(*known, OverlaySlotsAndPreloaded(terrain, *known), &MCGroundSlotNames::Overlay)};
 }
 
 void MCTerrainLeaveRebuiltTiles(const MCTerrain& terrain, std::vector<int32_t>& slots)
@@ -659,30 +706,73 @@ void MCTerrainLeaveRebuiltTiles(const MCTerrain& terrain, std::vector<int32_t>& 
         return;
     }
 
-    // The map's ground tiles the table holds, and its overlays with a version 2 pack, as RebuildGroundFromHd goes
-    // through them; any other slot (the .pre's that the map doesn't name, an overlay of a version 1 pack) is read.
-    std::unordered_set<int32_t> rebuilt;
+    // The map's ground tiles the table holds (a vertex's overlay that is one too), and with a version 2 pack the
+    // overlays of the map and its .pre, as RebuildGroundFromHd goes through them; any other slot (an overlay of a
+    // version 1 pack, a tile the table lacks) is read.
+    std::unordered_set<int32_t> leftOut;
 
-    for (const int32_t slot : GroundSlots(*terrain.MapBlocks))
+    for (const int32_t slot : GroundTileSlots(*terrain.MapBlocks, *known))
     {
         if (known->get().ShapeAt(slot).has_value())
         {
-            rebuilt.insert(slot);
+            leftOut.insert(slot);
         }
     }
 
     if (HdOverlaysRebuilt(terrain))
     {
-        for (const int32_t slot : OverlaySlots(*terrain.MapBlocks))
+        for (const int32_t slot : OverlaySlotsAndPreloaded(terrain, *known))
         {
             if (OverlayKnown(*known, slot))
             {
-                rebuilt.insert(slot);
+                leftOut.insert(slot);
             }
         }
     }
 
-    std::erase_if(slots, [&rebuilt](int32_t slot) { return rebuilt.contains(slot); });
+    // The .pre's ground tiles that no vertex names: never drawn (no vertex's ground tile changes in play), so not read.
+    const std::vector<int32_t> used = terrain.MapBlocks->TilesUsed();
+
+    for (const int32_t slot : terrain.PreloadedSlots)
+    {
+        if (known->get().At(slot).Tile.has_value() && !std::ranges::binary_search(used, slot))
+        {
+            leftOut.insert(slot);
+        }
+    }
+
+    std::erase_if(slots, [&leftOut](int32_t slot) { return leftOut.contains(slot); });
+}
+
+std::vector<int32_t> MCTerrainDestroyedOverlaySlots()
+{
+    std::vector<int32_t> slots;
+    const std::shared_ptr<MCObjectQueue> objects = ObjectList();
+
+    if (objects == nullptr)
+    {
+        return slots;
+    }
+
+    for (const std::shared_ptr<MCObjectList>& list : objects->Lists())
+    {
+        for (const std::shared_ptr<MCBaseObject> object : *list)
+        {
+            if (object->ObjectClass != MCObjectClass::MiscTerrainObject)
+            {
+                continue;
+            }
+
+            const std::optional<int32_t> slot = static_cast<const MCMiscTerrainObject&>(*object).DestroyedOverlayTile();
+
+            if (slot.has_value() && !std::ranges::contains(slots, *slot))
+            {
+                slots.push_back(*slot);
+            }
+        }
+    }
+
+    return slots;
 }
 
 bool MCTerrainAskHdGroundByName(const MCTerrain& terrain)
@@ -842,10 +932,20 @@ void MCTerrainReadHdTilesAhead()
 {
     const std::shared_ptr<MCTerrain> terrain = Terrain();
 
-    // By name when the program knows the tile set (the readers pass over what the terrain's load asked for already),
-    // so no tile is hashed; otherwise by the tiles' own bytes.
-    if (terrain == nullptr || !HdGroundDrawn(*terrain) || MCTerrainAskHdGroundByName(*terrain))
+    if (terrain == nullptr || !HdGroundDrawn(*terrain))
     {
+        return;
+    }
+
+    // By name when the program knows the tile set (the readers pass over what the terrain's load asked for already),
+    // so no tile is hashed, and the overlays its bridges, forests and walls take as they're destroyed, their objects in
+    // now; otherwise by the tiles' own bytes.
+    if (MCTerrainAskHdGroundByName(*terrain))
+    {
+        const MCKnownGroundNames& known = MCKnownGroundNamesOf(*terrain->Tiles)->get();
+        std::vector<int32_t> slots = OverlaySlotsAndPreloaded(*terrain, known);
+        const size_t destroyed = AddNamed(slots, MCTerrainDestroyedOverlaySlots(), known, &MCGroundSlotNames::Overlay);
+        MCHdArt::ReadOverlaysAhead(NamedAhead(known, std::span(slots).last(destroyed), &MCGroundSlotNames::Overlay));
         return;
     }
 
@@ -857,15 +957,17 @@ void MCTerrainReadHdTilesAhead()
 namespace
 {
     /// <summary>
-    /// Port-only (PLAN.md's first-use item 10): with a version 2 pack (HdOverlaysRebuilt), each overlay of the map and of
-    /// its mines (those MCTerrainReadMinesAhead left) that the terrain's load left out, rebuilt from its HD frame
+    /// Port-only (PLAN.md's first-use item 10): with a version 2 pack (HdOverlaysRebuilt), each overlay of the map, its
+    /// .pre, its destroyed bridges, forests and walls (MCTerrainDestroyedOverlaySlots) and its mines (those
+    /// MCTerrainReadMinesAhead left) that the terrain's load left out or never read, rebuilt from its HD frame
     /// (MCRebuildGroundOverlay) and put in the cache; one that isn't (no frame, or not the overlay's bytes) is added to
     /// <paramref name="unread"/>. How many it rebuilt.
     /// </summary>
     size_t RebuildOverlaysFromHd(MCTerrain& terrain, const MCKnownGroundNames& known, std::vector<int32_t>& unread)
     {
         MinesLeft& mines = MinesLeftToRebuild();
-        std::vector<int32_t> slots = OverlaySlots(*terrain.MapBlocks);
+        std::vector<int32_t> slots = OverlaySlotsAndPreloaded(terrain, known);
+        AddNamed(slots, MCTerrainDestroyedOverlaySlots(), known, &MCGroundSlotNames::Overlay);
 
         if (mines.Of.lock().get() == &terrain)
         {
@@ -929,7 +1031,7 @@ namespace
         std::vector<int32_t> unread;
         size_t rebuilt = 0;
 
-        for (const int32_t slot : GroundSlots(*terrain.MapBlocks))
+        for (const int32_t slot : GroundTileSlots(*terrain.MapBlocks, known))
         {
             const std::optional<MCGroundName> name = known.At(slot).Tile;
 

@@ -534,10 +534,14 @@ TEST_CASE_ISOLATED("ground names: the program's table holds the original's tile 
 
 /// <summary>
 /// The HD ground a mission asks for by the names the program carries is what it would ask for by its tiles' bytes,
-/// tile for tile and overlay for overlay in the same order, so no tile is read late for want of a name. Mission 1, or
+/// tile for tile and overlay for overlay in the same order, so no tile is read late for want of a name; then what the
+/// bytes don't ask for: the ground tiles a vertex holds as its overlay, and the overlays the map's .pre lists besides
+/// (those its bridges, forests and walls take as they're destroyed). Mission 1, or
 /// <c>--ground-names-mission &lt;n&gt;</c>'s (every mission was checked so, 15 Nov).
 /// </summary>
-TEST_CASE_ISOLATED("ground names: a mission's HD ground asked by name is what its tiles' bytes ask for")
+TEST_CASE_ISOLATED(
+    "ground names: a mission's HD ground asked by name is what its tiles' bytes ask for, then the .pre's "
+    "overlays and the ground tiles held as overlays")
 {
     if (!MCTestGame::Available())
     {
@@ -576,8 +580,33 @@ TEST_CASE_ISOLATED("ground names: a mission's HD ground asked by name is what it
                              byBytes.Tiles.size(), byBytes.Overlays.size(), laid, MCTerrainMineSlots(*terrain).size(),
                              layers, MCTerrainMineSlots(*terrain, MCMinesAhead::EveryCell).size());
     CHECK(!byBytes.Tiles.empty());
-    CHECK(NamesOf(byName->Tiles) == NamesOf(byBytes.Tiles));
-    CHECK(NamesOf(byName->Overlays) == NamesOf(byBytes.Overlays));
+    const std::vector<MCGroundName> tilesByName = NamesOf(byName->Tiles);
+    const std::vector<MCGroundName> overlaysByName = NamesOf(byName->Overlays);
+    const std::vector<MCGroundName> tilesByBytes = NamesOf(byBytes.Tiles);
+    const std::vector<MCGroundName> overlaysByBytes = NamesOf(byBytes.Overlays);
+    REQUIRE(tilesByName.size() >= tilesByBytes.size());
+    REQUIRE(overlaysByName.size() >= overlaysByBytes.size());
+    CHECK(std::ranges::equal(std::span(tilesByName).first(tilesByBytes.size()), tilesByBytes));
+    CHECK(std::ranges::equal(std::span(overlaysByName).first(overlaysByBytes.size()), overlaysByBytes));
+    // What follows: ground tiles some vertex holds, and overlays the .pre lists.
+    const MCKnownGroundNames& known = MCKnownGroundNamesOf(*terrain->Tiles)->get();
+    const std::vector<int32_t> used = terrain->MapBlocks->TilesUsed();
+    const auto namedIn = [&known](std::span<const int32_t> slots, std::optional<MCGroundName> MCGroundSlotNames::* part)
+    {
+        return [&known, slots, part](const MCGroundName& name)
+        {
+            return std::ranges::any_of(slots,
+                                       [&known, &name, part](int32_t slot) { return known.At(slot).*part == name; });
+        };
+    };
+
+    CHECK(std::ranges::all_of(std::span(tilesByName).subspan(tilesByBytes.size()),
+                              namedIn(used, &MCGroundSlotNames::Tile)));
+    CHECK(std::ranges::all_of(std::span(overlaysByName).subspan(overlaysByBytes.size()),
+                              namedIn(terrain->PreloadedSlots, &MCGroundSlotNames::Overlay)));
+    std::cout << std::format(
+        "  mission {}: by name besides, {} ground tiles held as overlays and {} the .pre's overlays\n", mission,
+        tilesByName.size() - tilesByBytes.size(), overlaysByName.size() - overlaysByBytes.size());
 }
 
 /// <summary>

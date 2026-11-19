@@ -2106,10 +2106,11 @@ namespace
     }
 
     /// <summary>
-    /// Writes the read-ahead pack made with <paramref name="seed"/> into <paramref name="pack"/>: the table's folder as
-    /// an archive, the even frames' entries packed (DEFLATE), the odd ones' stored.
+    /// Writes the read-ahead pack made with <paramref name="seed"/> into <paramref name="pack"/>: the folder of the table
+    /// whose bytes hash to <paramref name="table"/> as an archive, the even frames' entries packed (DEFLATE), the odd
+    /// ones' stored.
     /// </summary>
-    void WriteAheadPack(const std::filesystem::path& pack, uint8_t seed)
+    void WriteAheadPack(const std::filesystem::path& pack, uint8_t seed, uint64_t table = AheadTable)
     {
         std::vector<ArchiveEntry> entries;
 
@@ -2123,7 +2124,7 @@ namespace
                                   : Raw(std::move(name), std::move(file)));
         }
 
-        const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(AheadTable);
+        const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(table);
         std::filesystem::create_directories(folder.parent_path());
         WriteBytes(std::filesystem::path(folder).concat(".hda"), BuildArchive(entries));
     }
@@ -2321,6 +2322,56 @@ TEST_CASE("hd art: a packet read ahead whole is found at its draws without a rea
     readAhead();
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>(AheadFrames * AheadSteps));
     CHECK_EQ(MCHdArt::ReaderReads(), reads);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a mission's effects at its load): a shape table the loader read (MCHdArt::NoteShapeLoaded,
+/// a laser's or an explosion's) has every frame and its in-betweens read by the readers at the load
+/// (MCHdArt::ReadLoadedShapesAhead) and kept, so each is found at its first draw, at any facing, without a read on the
+/// game's thread; a second call reads nothing more, the tables read since the first.
+/// </summary>
+TEST_CASE(
+    "hd art: a shape table the loader read has every frame read ahead at the load, found at its draws without a read")
+{
+    const ScratchFolder scratch("loaded-shapes-ahead");
+    // Any bytes stand for a table the loader read: the pack names the table's folder by their hash.
+    const std::vector<uint8_t> table{0x45, 0x46, 0x46, 0x45, 0x43, 0x54, 0x01, 0x02};
+    const uint64_t hash = MCHdArt::ShapeTableHash(table);
+    WriteAheadPack(scratch.Path(), 0, hash);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    MCHdArt::NoteShapeLoaded(table);
+    const auto readLoaded = []
+    {
+        MCHdArt::ReadLoadedShapesAhead();
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+    };
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    readLoaded();
+    const size_t whole = ahead + static_cast<size_t>(AheadFrames * AheadSteps);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), whole);
+    const size_t read = MCHdArt::FramesRead();
+
+    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(hash, frame, AheadWidth, AheadHeight, step, AheadFrames);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    readLoaded();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), whole);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }

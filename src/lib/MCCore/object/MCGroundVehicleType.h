@@ -1,5 +1,6 @@
 #pragma once
 
+#include "object/MCBuildingMarines.h"
 #include "object/MCGroundVehicleGameSystem.h"
 #include "object/MCObjectType.h"
 
@@ -24,6 +25,11 @@ public:
     int32_t Init(MCFile& objFile, uint32_t fileSize) override;
     /// <summary>Makes a <see cref="MCGroundVehicle"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
+    /// <summary>
+    /// Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own: the marine who bails out of the dead
+    /// vehicle (MCGroundVehicle::CreateVehiclePilot).
+    /// </summary>
+    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({static_cast<uint32_t>(DefaultPilotId)}); }
     /// <summary>Ramming, trees, buildings, mines and weapons against a vehicle of this type.</summary>
     int HandleCollision(MCGameObject& collidee, MCGameObject& collider) override;
     /// <summary>Kills the vehicle: disables its sensor, alarms its pilot, sets the destroyed flags and takes it off

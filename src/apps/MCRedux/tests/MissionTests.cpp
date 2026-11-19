@@ -10,7 +10,9 @@
 #include "mission/MCScenario.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
+#include "object/MCBuildingMarines.h"
 #include "object/MCExplosionType.h"
+#include "object/MCGroundVehicleType.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechControlData.h"
 #include "object/MCMover.h"
@@ -667,6 +669,65 @@ TEST_CASE_ISOLATED("game: a mission's load keeps the wrecks and explosions its t
     CHECK(explosions > 0);
     std::cout << std::format("  {} wrecks, {} explosions made, {} kept types' shapes in hand\n", wrecks, explosions,
                              shapes);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md: the bar ends with the mission's whole art in memory): what a mission makes in play by
+/// other than a type's wreck and explosion, a mech's arms thrown off and its jump jets' flames, a vehicle's crew
+/// bailing out and a mine's blast (the game's own number), is loaded at the load and kept with its appearance, so the
+/// load's fill holds its art. The canyon's cold battle on the A10 (18 Nov) first read five such archives in play.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's load keeps the arms thrown off, the jump jets, the crews and a mine's blast")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const MCObjectTypeManager& manager = ObjectTypeManager();
+    const std::span<const std::shared_ptr<MCAppearanceType>> listed = AppearanceTypeList().Types();
+    const auto keptWithAppearance = [&](int32_t number)
+    {
+        MCTest::Scope scope(std::format("type {}", number));
+        const std::shared_ptr<MCObjectType> type = manager.Find(number);
+        REQUIRE(type != nullptr);
+        CHECK(type->KeepMe != 0);
+        CHECK(std::ranges::find(listed, type->AppearName, &MCAppearanceType::AppearanceNum) != listed.end());
+    };
+
+    size_t arms = 0;
+    size_t vehicles = 0;
+
+    for (const std::shared_ptr<MCObjectType>& type : manager.Types())
+    {
+        if (const auto* mech = dynamic_cast<const MCBattleMechType*>(type.get()); mech != nullptr)
+        {
+            for (const uint32_t arm : {mech->RightArmDebrisId, mech->LeftArmDebrisId})
+            {
+                if (static_cast<int32_t>(arm) > 0)
+                {
+                    keptWithAppearance(static_cast<int32_t>(arm));
+                    arms++;
+                }
+            }
+        }
+        else if (dynamic_cast<const MCGroundVehicleType*>(type.get()) != nullptr)
+        {
+            vehicles++;
+        }
+    }
+
+    CHECK(arms > 0);
+    keptWithAppearance(static_cast<int32_t>(MechJumpJetType));
+    keptWithAppearance(MineExplosion);
+
+    if (vehicles > 0)
+    {
+        keptWithAppearance(DefaultPilotId);
+    }
+
+    std::cout << std::format("  {} arms, {} vehicle types\n", arms, vehicles);
 }
 
 /// <summary>

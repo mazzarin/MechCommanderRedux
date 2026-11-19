@@ -477,6 +477,17 @@ namespace
     };
 
     /// <summary>
+    /// Port-only (MCHdArt::OpenArchivesAhead): an archive a reader opened for the game's thread to take (or why it
+    /// couldn't), and the hold's generation (HoldQueue::Generation) its folder was last asked for in: only that hold's
+    /// takes it (QueueHold, MCHdArt::StartHold), never a later mission's (a briefing left with its opens in flight).
+    /// </summary>
+    struct OpenedArchive
+    {
+        std::expected<std::shared_ptr<MCHdArchive>, std::string> Archive;
+        uint64_t HoldGeneration = 0;
+    };
+
+    /// <summary>
     /// Port-only (AskAhead): a frame asked for ahead, for a reader to look for in its folder's archive with its
     /// in-betweens (Steps) and a legs packet's turn middles: its folder's follow in its batch (AskBatch::Follows), its
     /// name, the shape size a picture is asked for at (0 x 0 with Steps: a numbered frame's, any), and whether its
@@ -646,11 +657,14 @@ namespace
         /// <summary>
         /// Port-only (MCHdArt::OpenArchivesAhead): the archives to open, ahead of everything else (a read needs its
         /// archive's directory); the folders the game's thread waits on while their archives are opened (each open's, not
-        /// in Opened yet); and those opened, until it takes them (ArchiveFor), by the folder each stands for.
+        /// in Opened yet), each with the hold's generation it was last asked for in (OpenedArchive's); and those opened,
+        /// until it takes them (ArchiveFor), by the folder each stands for.
         /// </summary>
         std::deque<ArchiveOpen> Opens;
-        std::set<std::filesystem::path> Opening;
-        std::map<std::filesystem::path, std::expected<std::shared_ptr<MCHdArchive>, std::string>> Opened;
+        std::map<std::filesystem::path, uint64_t> Opening;
+        std::map<std::filesystem::path, OpenedArchive> Opened;
+        /// <summary>Port-only, for the tests: the readers take no opens (MCHdArt::HoldOpens).</summary>
+        bool OpensHeld = false;
         /// <summary>
         /// Port-only (AskAhead): the frames asked for ahead, not made reads yet, in turn; and how many of those batches,
         /// with one a reader is making reads of, are a load's (MCHdArt::WaitForLoadReads waits for them too).
@@ -703,6 +717,8 @@ namespace
         /// (MCHdArt::StartLoadFill to MCHdArt::FinishLoadFill), and the pack's folders it handed the hold meanwhile, each
         /// once, in the order handed (NoteLoadFolder: MCHdArt::LoadFolders), its keys in LoadFolderKeys.
         /// </summary>
+        /// <summary>Port-only, for test runs (-hdbriefinghold off): no hold from the briefing, so it starts at the load.</summary>
+        bool BriefingHoldOff = false;
         bool RecordingLoad = false;
         std::vector<std::filesystem::path> LoadFolders;
         std::unordered_set<std::string> LoadFolderKeys;
@@ -1272,7 +1288,7 @@ namespace
             return std::nullopt;
         }
 
-        return std::move(opened.mapped());
+        return std::move(opened.mapped().Archive);
     }
 
     void QueueHold(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive);
@@ -3448,13 +3464,19 @@ namespace
         {
             for (auto& [folder, archive] : opened)
             {
-                // Port-only: one opened while a mission's art is held is held too (MCHdArt::StartHold).
-                if (archive.has_value())
+                // Port-only: one opened while a mission's art is held is held too (MCHdArt::StartHold), when it was asked
+                // for that hold (a later mission's ask takes it over): one asked for a mission let go of since is the game's
+                // thread's to take, never another's hold.
+                const auto wanted = ahead.Opening.find(folder);
+                const uint64_t holdGeneration =
+                    wanted != ahead.Opening.end() ? wanted->second : ahead.Holding.Generation;
+
+                if (archive.has_value() && holdGeneration == ahead.Holding.Generation)
                 {
                     QueueHold(ahead, *archive);
                 }
 
-                ahead.Opened.insert_or_assign(folder, std::move(archive));
+                ahead.Opened.insert_or_assign(folder, OpenedArchive{std::move(archive), holdGeneration});
             }
         }
 
@@ -3489,14 +3511,17 @@ namespace
         MCSetCurrentThreadPriority(ahead.GamePriority, ahead.Settings.Below);
         std::optional<AheadKind> kind;
 
-        while (ahead.Changed.wait(
-                   lock, stop, [&]
-                   { return (kind = NextKind(ahead)).has_value() || !ahead.Opens.empty() || !ahead.Asks.empty(); }) &&
+        while (ahead.Changed.wait(lock, stop,
+                                  [&]
+                                  {
+                                      return (kind = NextKind(ahead)).has_value() ||
+                                             (!ahead.Opens.empty() && !ahead.OpensHeld) || !ahead.Asks.empty();
+                                  }) &&
                !stop.stop_requested())
         {
             ++ahead.Working;
 
-            if (!ahead.Opens.empty())
+            if (!ahead.Opens.empty() && !ahead.OpensHeld)
             {
                 ArchiveOpen open = std::move(ahead.Opens.front());
                 ahead.Opens.pop_front();
@@ -5219,19 +5244,29 @@ void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
                 continue;
             }
 
-            // Port-only: one opened for the game's thread to take is held too; one being opened is as it opens.
+            // Port-only: one opened for the game's thread to take is held too; one being opened is as it opens. Either is
+            // this hold's from now (a briefing left for another mission's asks for some of the first's). A folder
+            // found to have no archive of its own is passed for those above it, as the game's thread's walk passes it.
             if (const auto opened = ahead.Opened.find(at); opened != ahead.Opened.end())
             {
-                if (opened->second.has_value())
+                opened->second.HoldGeneration = ahead.Holding.Generation;
+
+                if (opened->second.Archive.has_value() && *opened->second.Archive == nullptr)
                 {
-                    QueueHold(ahead, *opened->second);
+                    continue;
+                }
+
+                if (opened->second.Archive.has_value())
+                {
+                    QueueHold(ahead, *opened->second.Archive);
                 }
 
                 break;
             }
 
-            if (ahead.Opening.contains(at))
+            if (const auto opening = ahead.Opening.find(at); opening != ahead.Opening.end())
             {
+                opening->second = ahead.Holding.Generation;
                 break;
             }
 
@@ -5240,7 +5275,11 @@ void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
 
         if (!open.Folders.empty())
         {
-            ahead.Opening.insert(open.Folders.begin(), open.Folders.end());
+            for (const std::filesystem::path& at : open.Folders)
+            {
+                ahead.Opening.insert_or_assign(at, ahead.Holding.Generation);
+            }
+
             ahead.Opens.push_back(std::move(open));
             asked = true;
         }
@@ -5559,7 +5598,7 @@ void MCHdArt::ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as)
         const uint32_t index = FolderIndex(PackFolder() / packet.Folder, Naming::Number);
         const int32_t count = packet.Frames.has_value() ? *packet.Frames : ArchivedFrames(TheState().Folders.at(index));
 
-        for (int32_t frame = 0; frame < count; ++frame)
+        for (int32_t frame = packet.First; frame < packet.First + count; ++frame)
         {
             asks.push_back(FrameAsk{index, NumberedKey(frame, 0), 0, 0, true, packet.TurnMiddles});
         }
@@ -6413,6 +6452,14 @@ void MCHdArt::HoldReads(bool hold)
     ahead.Changed.notify_all();
 }
 
+void MCHdArt::HoldOpens(bool hold)
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    ahead.OpensHeld = hold;
+    ahead.Changed.notify_all();
+}
+
 void MCHdArt::HoldTakenRuns(bool hold)
 {
     ReadAhead& ahead = TheState().Ahead;
@@ -6478,12 +6525,14 @@ void MCHdArt::StartHold()
     ReadAhead& ahead = state.Ahead;
     std::scoped_lock lock(ahead.Lock);
 
-    // Those the readers opened for the mission's types and the game's thread hasn't taken yet too.
+    // Those the readers opened for the mission's types and the game's thread hasn't taken yet too: this hold's, not a
+    // mission's let go of since (a briefing left before its opens were taken).
     for (const auto& [folder, opened] : ahead.Opened)
     {
-        if (opened.has_value() && *opened != nullptr)
+        if (opened.HoldGeneration == ahead.Holding.Generation && opened.Archive.has_value() &&
+            *opened.Archive != nullptr)
         {
-            open.push_back(*opened);
+            open.push_back(*opened.Archive);
         }
     }
 
@@ -6613,9 +6662,19 @@ size_t MCHdArt::HeldBytes()
     return MCFastFile::HeldBytes();
 }
 
+void MCHdArt::SetBriefingHold(bool on)
+{
+    TheState().BriefingHoldOff = !on;
+}
+
+bool MCHdArt::BriefingHoldWanted()
+{
+    return HoldWanted() && !TheState().BriefingHoldOff;
+}
+
 void MCHdArt::StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders)
 {
-    if (!Active() || !HoldWanted() || mission.empty())
+    if (!Active() || !BriefingHoldWanted() || mission.empty())
     {
         return;
     }
@@ -7045,7 +7104,7 @@ size_t MCHdArt::ArchivesOpen()
     ReadAhead& ahead = state.Ahead;
     std::scoped_lock lock(ahead.Lock);
     const auto openedAhead = [](const auto& archive)
-    { return archive.second.has_value() && *archive.second != nullptr; };
+    { return archive.second.Archive.has_value() && *archive.second.Archive != nullptr; };
     return static_cast<size_t>(std::ranges::count_if(state.Archives, open) +
                                std::ranges::count_if(ahead.Opened, openedAhead));
 }

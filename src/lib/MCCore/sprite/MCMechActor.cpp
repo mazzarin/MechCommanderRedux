@@ -45,6 +45,13 @@ namespace
     /// <summary>Per gesture, the state gesture it counts as for the transitions (-1: none).</summary>
     constexpr std::array<int32_t, 10> EquivalentGestureArray = {0, -1, 1, -1, 2, -1, -1, 3, -1, 0};
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): how many of the frames a gesture to come starts on are read ahead sooner, at the
+    /// facings either side too (MCMechActor::ReadAhead): the first draws the frame the gesture starts, the next a game
+    /// step on, by when what the first's draw has read next (its follow) is in.
+    /// </summary>
+    constexpr int32_t NextFirstFrames = 2;
+
     /// <summary>The gestures (the tree's gesture numbers).</summary>
     constexpr int32_t GestureStand = 2;
     constexpr int32_t GestureJump = 20;
@@ -1942,10 +1949,22 @@ auto MCMechActor::ReadAhead() -> void
 
     // Each part's packets with the legs in gesture legs and the upper parts in upper, and with turns the facings either
     // side.
-    const auto add = [&](int32_t legs, int32_t upper, bool turns, std::vector<MCHdArt::PacketAhead>& packets)
+    const auto add = [&](int32_t legs, int32_t upper, bool turns, std::vector<MCHdArt::PacketAhead>& packets,
+                         std::optional<MCGestureStart> start = std::nullopt)
     {
         ForEachPartDrawn(*mech, legs, upper, [&](int32_t gesture, int32_t part, float rotation)
-                         { MechTree->PacketsAhead(gesture, part, rotation, turns, packets); });
+                         { MechTree->PacketsAhead(gesture, part, rotation, turns, packets, start); });
+    };
+
+    // Port-only (SPEC-first-use.md): a gesture to come as a set, whole at the part's facing, and the frames it starts on
+    // sooner at the facings either side too (its last with fromEnd: one played backwards): one starts drawing the
+    // frame it's chosen, often a facing on from the one asked for (the canyon's force raising every torso and arm at
+    // once), and a set may not be read by then.
+    std::vector<MCHdArt::PacketAhead> heads;
+    const auto addLater = [&](int32_t legs, int32_t upper, bool fromEnd = false)
+    {
+        add(legs, upper, false, later);
+        add(legs, upper, true, heads, MCGestureStart{NextFirstFrames, fromEnd});
     };
 
     // The upper parts' gesture over the legs' gesture legs, as UpperGesture takes it.
@@ -1971,19 +1990,26 @@ auto MCMechActor::ReadAhead() -> void
             if (goal != CurrentStateGesture)
             {
                 const int32_t first = MCStopTransition(*MechTree, goal, CurrentStateGesture, 0, MCMechBrakingInForce());
-                add(first, upperOver(first), false, later);
+                addLater(first, upperOver(first));
             }
         }
     }
 
+    // The gun raised plays the change from its start, lowered from its end (Update, on CombatModeChanged).
     if (!CombatModeRaising && !CombatModeLowering)
     {
-        add(CurrentGesture, GestureCombatChange, false, later);
+        addLater(CurrentGesture, GestureCombatChange, InCombatMode);
 
         if (!InCombatMode)
         {
-            add(CurrentGesture, GestureCombat, false, later);
+            addLater(CurrentGesture, GestureCombat);
         }
+    }
+
+    // The readers' settings only when there are some, as they're read under the readers' lock.
+    if (!heads.empty() && MCHdArt::GetReaderSettings().FirstFramesSoon)
+    {
+        soon.insert(soon.end(), heads.begin(), heads.end());
     }
 
     MCHdArt::ReadPacketsAhead(soon, MCHdArt::ReadAs::Soon);

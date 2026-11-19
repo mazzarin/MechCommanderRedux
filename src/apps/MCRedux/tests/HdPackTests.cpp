@@ -2360,6 +2360,46 @@ TEST_CASE("hd art: a packet read ahead whole is found at its draws without a rea
 }
 
 /// <summary>
+/// Port-only (SPEC-first-use.md: a gesture's start, MCSpriteTree::PacketsAhead): a packet read ahead from a frame on
+/// (PacketAhead::First, a gesture played backwards from its end) reads those frames alone (the count read ahead), with
+/// their in-betweens, each found at its draw without a read.
+/// </summary>
+TEST_CASE("hd art: a packet's last frames read ahead are found at their draws without a read, the others left")
+{
+    constexpr int32_t Last = 2;
+    const ScratchFolder scratch("packet-ahead-last");
+    WriteAheadPack(scratch.Path(), 0);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    const std::array<MCHdArt::PacketAhead, 1> packet{
+        {{MCHdArt::ShapeTableFolder(AheadTable), Last, false, AheadFrames - Last}}};
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    MCHdArt::ReadPacketsAhead(packet, MCHdArt::ReadAs::Soon);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>(Last * AheadSteps));
+    const size_t read = MCHdArt::FramesRead();
+
+    for (int32_t frame = AheadFrames - Last; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(AheadTable, frame, AheadWidth, AheadHeight, step);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
 /// Port-only (SPEC-first-use.md: a mission's effects at its load): a shape table the loader read (MCHdArt::NoteShapeLoaded,
 /// a laser's or an explosion's) has every frame and its in-betweens read by the readers at the load
 /// (MCHdArt::ReadLoadedShapesAhead) and kept, so each is found at its first draw, at any facing, without a read on the
@@ -4149,6 +4189,49 @@ TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mis
         CHECK(!MCHdArt::HoldsFor(Other));
     }
 
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (MCHdArt::StartBriefingHold): a briefing left before the readers opened its archives hands none of them to
+/// the next mission's hold, as they open or at its start (MCHdArt::StartHold): each open is the hold's it was asked
+/// in, let go of with it (MCHdArt::LetGoHold), the archive the game's thread's to take. A later mission asking for
+/// them again holds them, past a folder found to have no archive of its own.
+/// </summary>
+TEST_CASE("hd art: a briefing left before its archives open hands them to no other mission's hold")
+{
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view Other = "mis0102";
+    constexpr std::string_view Third = "mis0103";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Packet, 1000}, {StreamKind::Heads}};
+    const HoldPack pack("briefing-left", pieces);
+    // A folder in the shapes' without an archive of its own: its frames are the shapes' archive's.
+    const std::array<std::filesystem::path, 1> shapes{HoldPack::ShapesFolder() / "sub"};
+    const std::array<std::filesystem::path, 1> more{std::filesystem::path(HoldPack::MoreFolder)};
+
+    // The first briefing's archive waits to be opened while the player goes on to another mission's briefing.
+    MCHdArt::HoldOpens(true);
+    MCHdArt::StartBriefingHold(Mission, shapes);
+    MCHdArt::StartBriefingHold(Other, more);
+    MCHdArt::HoldOpens(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::WaitForHold();
+    CHECK(MCHdArt::HoldsFor(Other));
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    // The hold started again with the archives opened: still the other mission's alone.
+    MCHdArt::StartHold();
+    MCHdArt::WaitForHold();
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    // A third mission's briefing asks for the first's folder: the shapes' archive opened for it is held now.
+    MCHdArt::StartBriefingHold(Third, shapes);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::WaitForHold();
+    CHECK(MCHdArt::HoldsFor(Third));
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    MCHdArt::LetGoHold();
     GHdArt = previous;
 }
 

@@ -745,6 +745,52 @@ TEST_CASE("sprites: a part's packets read ahead are its facing's and those a tur
     CHECK_EQ(packets.size(), MCSpriteTree::NeighbourPackets(*torso, 2).size());
 }
 
+/// <summary>
+/// Port-only (SPEC-first-use.md; the guard's canyon, the force's guns raised at once): a gesture to come has the frames it
+/// starts on read sooner (MCSpriteTree::PacketsAhead with an MCGestureStart): its first, or its last for one played
+/// backwards, each asked for apart from the packet whole and from the other end, once; no more than the gesture has.
+/// </summary>
+TEST_CASE("sprites: the frames a gesture starts on are asked for apart from its packet whole, its first or its last")
+{
+    SpriteFiles files({}, {}, {Fit(MechFit(false))});
+    auto tree = std::static_pointer_cast<MCSpriteTree>(AppearanceTypeList().GetAppearance(0x01000000));
+    REQUIRE(tree != nullptr);
+    constexpr int32_t Stand = 2;
+    constexpr int32_t Torso = 1;
+    constexpr int32_t Legs = 0;
+    constexpr int32_t StartFrames = 2;
+    constexpr float Facing = 90.0f;
+    const auto frames = static_cast<int32_t>(tree->Gestures[Stand].NumFrames);
+    REQUIRE(frames > StartFrames);
+    std::vector<MCHdArt::PacketAhead> packets;
+
+    // Whole, then its first frames and its last: each asked for.
+    tree->PacketsAhead(Stand, Torso, Facing, false, packets);
+    tree->PacketsAhead(Stand, Torso, Facing, false, packets, MCGestureStart{StartFrames});
+    tree->PacketsAhead(Stand, Torso, Facing, false, packets, MCGestureStart{StartFrames, true});
+    REQUIRE_EQ(packets.size(), 3u);
+    CHECK(packets[0].Frames == std::optional(frames));
+    CHECK_EQ(packets[0].First, 0);
+    CHECK(packets[1].Frames == std::optional(StartFrames));
+    CHECK_EQ(packets[1].First, 0);
+    CHECK(packets[2].Frames == std::optional(StartFrames));
+    CHECK_EQ(packets[2].First, frames - StartFrames);
+    CHECK(packets[1].Folder == packets[0].Folder);
+    CHECK(packets[2].Folder == packets[0].Folder);
+
+    // Asked for again: none.
+    packets.clear();
+    tree->PacketsAhead(Stand, Torso, Facing, false, packets, MCGestureStart{StartFrames});
+    tree->PacketsAhead(Stand, Torso, Facing, false, packets, MCGestureStart{StartFrames, true});
+    CHECK(packets.empty());
+
+    // More frames than the gesture has: its frames, from its first.
+    tree->PacketsAhead(Stand, Legs, Facing, false, packets, MCGestureStart{frames + 1, true});
+    REQUIRE_EQ(packets.size(), 1u);
+    CHECK(packets[0].Frames == std::optional(frames));
+    CHECK_EQ(packets[0].First, 0);
+}
+
 TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrored where the gesture is symmetrical")
 {
     SpriteFiles files({}, {}, {Fit(MechFit(false))});

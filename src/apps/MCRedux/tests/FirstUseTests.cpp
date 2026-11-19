@@ -13,6 +13,8 @@
 #include "object/MCForces.h"
 #include "object/MCMover.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCMemoryLedger.h"
+#include "platform/MCMemoryRoom.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
@@ -32,6 +34,8 @@ namespace
     constexpr int32_t OrderEveryFrames = 45;
     /// <summary>When the player's strikes are called, in frames of play (once the fight has begun).</summary>
     constexpr int32_t StrikesAtFrame = 450;
+    /// <summary>Bytes in a megabyte, for the output.</summary>
+    constexpr double BytesPerMb = 1024.0 * 1024.0;
     /// <summary>A player's window: the view sees as much of the map as at 1080p.</summary>
     constexpr int PlayerWindowWidth = 1920;
     constexpr int PlayerWindowHeight = 1080;
@@ -160,12 +164,57 @@ namespace
     }
 
     /// <summary>
+    /// The HD art's memory on the CPU through a play, taken after each frame: its frames' records and colours, those
+    /// let go of that something still holds, those read ahead and the unpacked streams kept (not the hold's, which a
+    /// mission holds whole); and the most mechs up at once, for its cost per mech.
+    /// </summary>
+    struct HdMemory
+    {
+        static constexpr std::array Holders{MCMemoryLedger::MCHolder::HdFrames, MCMemoryLedger::MCHolder::HdColors,
+                                            MCMemoryLedger::MCHolder::HdFramesLetGo,
+                                            MCMemoryLedger::MCHolder::HdReadAhead,
+                                            MCMemoryLedger::MCHolder::HdKeptStreams};
+
+        int64_t Peak = 0;
+        double Sum = 0.0;
+        int64_t Samples = 0;
+        size_t Mechs = 0;
+
+        void Sample()
+        {
+            int64_t bytes = 0;
+
+            for (const MCMemoryLedger::MCHolder holder : Holders)
+            {
+                bytes += MCMemoryLedger::Of(holder).Payload;
+            }
+
+            Peak = std::max(Peak, bytes);
+            Sum += static_cast<double>(bytes);
+            ++Samples;
+            size_t mechs = 0;
+
+            for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; ++partId)
+            {
+                const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+                mechs += mover != nullptr && mover->ObjectClass == MCObjectClass::BattleMech && mover->IsDisabled() == 0
+                             ? 1
+                             : 0;
+            }
+
+            Mechs = std::max(Mechs, mechs);
+        }
+
+        double Mean() const { return Samples > 0 ? Sum / static_cast<double>(Samples) : 0.0; }
+    };
+
+    /// <summary>
     /// Plays the mission up for <paramref name="frames"/> frames as a player would: the player's units sent at their
     /// nearest enemies every few seconds, the camera on the fight, the player's strikes called once the fight is on.
     /// Ends early once a side has no one left.
     /// </summary>
     /// <returns>The frames played.</returns>
-    int32_t PlayBattle(int32_t frames)
+    int32_t PlayBattle(int32_t frames, HdMemory& memory)
     {
         int32_t frame = 0;
 
@@ -182,6 +231,7 @@ namespace
             }
 
             MCTestGame::RunFrame(PlayFrameSeconds);
+            memory.Sample();
         }
 
         return frame;
@@ -199,7 +249,7 @@ namespace
     }
 
     /// <summary>Plays the staged battle <paramref name="spec"/>, its mission up, for its frames.</summary>
-    void PlayStaged(const MCBattleSpec& spec)
+    void PlayStaged(const MCBattleSpec& spec, HdMemory& memory)
     {
         MCStagedBattle battle(spec, [](MCBattleLine, std::string_view) {});
         const std::expected<void, std::string> begun = battle.Begin();
@@ -210,6 +260,7 @@ namespace
             battle.Stage(frame);
             MCTestGame::RunFrame(BattleFrameSeconds);
             battle.Staged(frame);
+            memory.Sample();
         }
     }
 
@@ -298,7 +349,8 @@ namespace
 
         MCTestContextScope scope;
         StartAsPlayer(scope, mission, GuardPack());
-        PlayBattle(GuardPlayFrames);
+        HdMemory memory;
+        PlayBattle(GuardPlayFrames, memory);
         RequireNoFirstUses(MCFirstUses::Take());
     }
 }
@@ -325,7 +377,8 @@ TEST_CASE_ISOLATED("game: in the canyon's battle the game's thread reads and unp
     REQUIRE(put.has_value());
     MCTestContextScope scope;
     StartAsPlayer(scope, spec.Mission, GuardPack());
-    PlayStaged(spec);
+    HdMemory memory;
+    PlayStaged(spec, memory);
     RequireNoFirstUses(MCFirstUses::Take());
 }
 
@@ -334,7 +387,12 @@ TEST_CASE_ISOLATED("game: in the canyon's battle the game's thread reads and unp
 /// (default 1) as a player's game for <c>--first-uses-seconds &lt;s&gt;</c> of the game's time (default 240), or with
 /// <c>--first-uses-battle canyon</c> the trailer's staged battle, with the HD pack <c>--hd-pack &lt;folder&gt;</c> (none:
 /// the original's art), and appends each first use the game's thread made in play to the file, a line each: the
-/// mission, the frame, the kind, its milliseconds, its bytes and what. Its count and cost go to the output.
+/// mission, the frame, the kind, its milliseconds, its bytes and what. Its count and cost go to the output, with the HD
+/// art's memory at most and on average (HdMemory's) and the most mechs up at once. With
+/// <c>--first-uses-framelog</c>, <c>--first-uses-trace</c> and <c>--first-uses-memory &lt;GB&gt;</c>: the run's frame log,
+/// its HD trace, and its plan as a machine with that much memory; with <c>--first-uses-first-frames off</c>, a mech's
+/// gestures to come read without the frames they start on sooner (MCHdArt::ReaderSettings::FirstFramesSoon), to
+/// measure them.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists the game's thread's first uses")
 {
@@ -374,20 +432,46 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
         REQUIRE(MCFrameLog::Open(std::filesystem::path(*log)));
     }
 
+    // --first-uses-trace <file>: the HD trace of the run (MCHdArt::OpenTrace: each read asked, each frame's first use).
+    if (const std::optional<std::string_view> trace = MCTest::Option("first-uses-trace"); trace.has_value())
+    {
+        REQUIRE(MCHdArt::OpenTrace(std::filesystem::path(*trace)));
+    }
+
+    // --first-uses-memory <GB>: planned as a machine with that much memory (MCMemoryRoom::SetMachineBytes).
+    if (const std::optional<std::string_view> gb = MCTest::Option("first-uses-memory"); gb.has_value())
+    {
+        constexpr int BytesPerGbShift = 30;
+        uint64_t planned = 0;
+        std::from_chars(gb->data(), gb->data() + gb->size(), planned);
+        REQUIRE(planned > 0);
+        MCMemoryRoom::SetMachineBytes(planned << BytesPerGbShift);
+    }
+
+    // --first-uses-first-frames off: a mech's gestures to come read without the frames they start on sooner, to measure
+    // them.
+    if (MCTest::Option("first-uses-first-frames") == std::optional<std::string_view>("off"))
+    {
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.FirstFramesSoon = false;
+        MCHdArt::SetReaderSettings(settings);
+    }
+
     MCTestContextScope scope;
     const auto started = std::chrono::steady_clock::now();
     StartAsPlayer(scope, mission, GuardPack());
     const double loadSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     int32_t played = 0;
+    HdMemory memory;
 
     if (canyon)
     {
-        PlayStaged(spec);
+        PlayStaged(spec, memory);
         played = spec.Frames;
     }
     else
     {
-        played = PlayBattle(static_cast<int32_t>(std::lround(static_cast<float>(seconds) / PlayFrameSeconds)));
+        played = PlayBattle(static_cast<int32_t>(std::lround(static_cast<float>(seconds) / PlayFrameSeconds)), memory);
     }
 
     const std::vector<MCFirstUse> uses = MCFirstUses::Take();
@@ -403,8 +487,12 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
 
     const auto [players, enemies] = Sides();
     std::cout << std::format("  mission {}: up in {:.1f} s, {} frames played ({} of the player's and {} enemies left), "
-                             "{} first uses in play ({:.1f} ms), {} past the list\n",
+                             "{} first uses in play ({:.1f} ms), {} past the list; the HD art's memory at most "
+                             "{:.1f} MB (on average {:.1f}), {} mechs up at most\n",
                              mission, loadSeconds, played, players.size(), enemies.size(), uses.size(), ms,
-                             MCFirstUses::Dropped());
+                             MCFirstUses::Dropped(), static_cast<double>(memory.Peak) / BytesPerMb,
+                             memory.Mean() / BytesPerMb, memory.Mechs);
     MCFrameLog::Close();
+    MCHdArt::CloseTrace();
+    MCMemoryRoom::SetMachineBytes(std::nullopt);
 }

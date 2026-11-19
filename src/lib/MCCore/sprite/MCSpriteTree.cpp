@@ -114,6 +114,12 @@ namespace
     constexpr int32_t UpperNeighbours = 2;
     /// <summary>Port-only: where a packet's part PAK sits in the key it is asked for by (MCSpriteTree::PacketsAhead).</summary>
     constexpr int32_t PartKeyShift = 32;
+    /// <summary>
+    /// Port-only: the key's bits for a packet's start asked apart from it whole (MCSpriteTree::PacketsAhead, its first
+    /// frames or its last), so one asked for never stops another.
+    /// </summary>
+    constexpr uint64_t FirstFramesKey = uint64_t{1} << 63;
+    constexpr uint64_t LastFramesKey = uint64_t{1} << 62;
 
     /// <summary>
     /// The fall a fall from a run looks most like when it has no art, and the other way round: the same fall from
@@ -723,7 +729,7 @@ auto MCSpriteTree::SetHdNeighbours(const std::shared_ptr<MCShape>& shape, const 
 }
 
 auto MCSpriteTree::PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns,
-                                std::vector<MCHdArt::PacketAhead>& packets) -> void
+                                std::vector<MCHdArt::PacketAhead>& packets, std::optional<MCGestureStart> start) -> void
 {
     const std::optional<MCGesturePacket> where = GesturePacket(gesture, part, rotation);
 
@@ -738,7 +744,9 @@ auto MCSpriteTree::PacketsAhead(int32_t gesture, int32_t part, float rotation, b
     std::optional<std::string> partFile;
     const auto add = [&](uint32_t packet)
     {
-        if (!_AskedAhead.Ask(static_cast<uint64_t>(where->FilePart) << PartKeyShift | packet))
+        const uint64_t startKey = !start.has_value() ? 0 : start->FromEnd ? LastFramesKey : FirstFramesKey;
+
+        if (!_AskedAhead.Ask(static_cast<uint64_t>(where->FilePart) << PartKeyShift | packet | startKey))
         {
             return;
         }
@@ -751,9 +759,11 @@ auto MCSpriteTree::PacketsAhead(int32_t gesture, int32_t part, float rotation, b
 
         if (!partFile->empty())
         {
+            const auto frames = static_cast<int32_t>(Gestures[gesture].NumFrames);
+            const int32_t count = start.has_value() ? std::clamp(start->Count, 0, frames) : frames;
             packets.push_back(MCHdArt::PacketAhead{
-                MCHdArt::FolderOf(MCHdArt::MechShapeKey{*partFile, FileNumbers[where->FilePart], packet}),
-                static_cast<int32_t>(Gestures[gesture].NumFrames), legs});
+                MCHdArt::FolderOf(MCHdArt::MechShapeKey{*partFile, FileNumbers[where->FilePart], packet}), count, legs,
+                start.has_value() && start->FromEnd ? frames - count : 0});
         }
     };
 

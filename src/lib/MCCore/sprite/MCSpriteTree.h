@@ -101,6 +101,17 @@ struct MCGesturePacket
     bool Mirrored = true;
 };
 
+/// <summary>
+/// Port-only (SPEC-first-use.md, <see cref="MCSpriteTree::PacketsAhead"/>): the frames of a gesture's packets it starts
+/// drawing on: its first <see cref="Count"/>, or with <see cref="FromEnd"/> its last (a gesture played backwards from
+/// its end, as the gun lowering plays the change).
+/// </summary>
+struct MCGestureStart
+{
+    int32_t Count = 0;
+    bool FromEnd = false;
+};
+
 /// <summary>Port-only (HDFootprints): which way a mech part is drawn facing (<see cref="MCSpriteTree::DrawnFacing"/>).</summary>
 struct MCDrawnFacing
 {
@@ -214,11 +225,12 @@ public:
     /// Port-only (SPEC-first-use.md: the camera's surroundings): adds to <paramref name="packets"/> the packet part
     /// <paramref name="part"/> (the tree's numbering) of gesture <paramref name="gesture"/> draws at
     /// <paramref name="rotation"/> degrees, the large art's as GetGesture finds it and MCMechActor::Render draws it, and
-    /// with <paramref name="turns"/> those of the facings either side of it, which a turn draws next: each whole, the
-    /// legs' with their turn middles, unless asked for already (the tree's, any mech's of it: MCHdArt::MCAskedPackets).
+    /// with <paramref name="turns"/> those of the facings either side of it, which a turn draws next: each whole, or with
+    /// <paramref name="start"/> only the frames the gesture starts on, the legs' with their turn middles, unless asked for
+    /// already (the tree's, any mech's of it: MCHdArt::MCAskedPackets; a packet's starts apart from it whole).
     /// </summary>
     void PacketsAhead(int32_t gesture, int32_t part, float rotation, bool turns,
-                      std::vector<MCHdArt::PacketAhead>& packets);
+                      std::vector<MCHdArt::PacketAhead>& packets, std::optional<MCGestureStart> start = std::nullopt);
 
     /// <summary>
     /// Port-only (HDFootprints): the way part <paramref name="part"/> (the tree's numbering) of gesture

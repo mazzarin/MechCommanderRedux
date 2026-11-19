@@ -10,6 +10,7 @@
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "main/MCMissionGlobals.h"
+#include "mission/MCScenario.h"
 #include "object/MCGameObject.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
@@ -57,6 +58,48 @@ TEST_CASE_ISOLATED("game: the eye is the mission's current camera, shown by the 
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(GlobalPane == ScreenPort()->SharedFrame());
     CHECK(Eye() == eye);
+}
+
+/// <summary>
+/// Port-only: the loading bar's frames once the cameras are active (the load's fill, MCScenario::ShowLoadingBar) leave
+/// out the main window their activation put up, so the mission's view is first shown in play: the interface's start
+/// toggles its zoom at once, and the mission opens at that zoom rather than easing there from the view's first one.
+/// </summary>
+TEST_CASE_ISOLATED("game: the loading bar's last frames leave the main view unshown, so a mission opens at its zoom")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The zoom as in play, not fixed.
+    MCTestGame::BootOptions.FixedZoomHeight = 0.0f;
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCViewWindow> view = MCMainView();
+    REQUIRE(view != nullptr);
+    const std::shared_ptr<MCMainWindow> holder = MainHolder();
+    REQUIRE(holder != nullptr);
+    REQUIRE(holder->IsShowing());
+
+    // The view as the load's fill finds it: its window up (the cameras' activation), the view never shown, its zoom
+    // not yet started. The bar's frame leaves the view undrawn (its first draw would start the zoom) and the window up.
+    view->ZoomShown = false;
+    view->ZoomHeight = 0.0f;
+    MCScenario::ShowLoadingBar();
+    CHECK(holder->IsShowing());
+    CHECK(!view->ZoomShown);
+    CHECK_EQ(view->ZoomHeight, 0.0f);
+
+    // The interface's start (MCMission::LoadWindowStatus) toggles the zoom: it takes effect at once.
+    CHECK(!view->ZoomedOut());
+    const float first = view->ZoomHeight;
+    holder->ZoomActivePane();
+    CHECK(view->ZoomTarget != first);
+    CHECK_EQ(view->ZoomHeight, view->ZoomTarget);
+
+    // A frame of play shows the view: a zoom from then on eases.
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK(view->ZoomShown);
 }
 
 /// <summary>

@@ -61,6 +61,14 @@ public:
     /// <summary>Draws the camera views into <paramref name="window"/>.</summary>
     static int32_t Render(MCGuiObject& window);
 
+    /// <summary>
+    /// Port-only: the loading bar, whole, once the cameras are active (the load's fill, MCHdArt::FinishLoadFill), shown
+    /// as the load's earlier frames show it: without the main window their activation put up. So no world is drawn
+    /// under the bar, and the mission's view is first shown in play, at the zoom the interface's start toggles to at
+    /// once (MCViewWindow::ZoomTo before ZoomShown), not eased there from the view's first zoom.
+    /// </summary>
+    static void ShowLoadingBar();
+
     /// <summary>One frame: updates the world, runs the scenario's ABL brain and takes its result.</summary>
     int32_t Run();
 

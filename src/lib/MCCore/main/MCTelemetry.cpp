@@ -7,6 +7,7 @@
 #include "main/MCHdSettings.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCMemoryRoom.h"
 #include "sprite/MCHdArt.h"
 
 int GReports = 0;
@@ -45,6 +46,8 @@ namespace
     constexpr int64_t SecondsPerDay = 86400;
     constexpr double MillisecondsPerSecond = 1000.0;
     constexpr double SecondsPerMinute = 60.0;
+    /// <summary>A GB as the reports count it, as the backends count the machine's memory (a GiB).</summary>
+    constexpr double BytesPerGb = 1024.0 * 1024.0 * 1024.0;
     /// <summary>A crash report's frames, at most.</summary>
     constexpr size_t MaxCrashFrames = 40;
     /// <summary>
@@ -592,18 +595,36 @@ namespace
         Box.get().Frames++;
     }
 
-    /// <summary>The computer, as a report holds it.</summary>
+    /// <summary>
+    /// The computer, as a report holds it. Port-only (SPEC-memory.md's "By machine"): the card the game draws on as the
+    /// system says it as the report is made: its own memory where the system says it (cardMemoryGb: Windows' dedicated
+    /// video memory), what the system gives the game there (gpuBudgetGb: DXGI's budget, Metal's working set) and whether
+    /// it's the machine's memory (sharedMemory: Apple silicon, integrated graphics); each left out where the system can't
+    /// say (the CPU draws), never sent as 0.
+    /// </summary>
     std::string MachineJson()
     {
-        return MCJsonObject()
-            .Text("model", Machine.Model)
+        MCJsonObject machine;
+        machine.Text("model", Machine.Model)
             .Text("cpu", Machine.Cpu)
             .Integer("performanceCores", Machine.PerformanceCores)
             .Integer("efficiencyCores", Machine.EfficiencyCores)
             .Integer("gpuCores", Machine.GpuCores)
             .Integer("memoryGb", Machine.MemoryGb)
-            .Text("system", Machine.System)
-            .Close();
+            .Text("system", Machine.System);
+
+        if (const std::optional<MCMemoryRoom::MCCard> card = MCMemoryRoom::DrawnCard(); card.has_value())
+        {
+            if (card->OwnBytes.has_value())
+            {
+                machine.Number("cardMemoryGb", static_cast<double>(*card->OwnBytes) / BytesPerGb);
+            }
+
+            machine.Number("gpuBudgetGb", static_cast<double>(card->Budget) / BytesPerGb)
+                .Flag("sharedMemory", card->SharesMemory);
+        }
+
+        return machine.Close();
     }
 
     /// <summary>The window, the screen and the graphics as the game draws them now.</summary>

@@ -985,8 +985,9 @@ TEST_CASE_ISOLATED("tool: --hd-make-sharp writes the sharp screens' text and lin
 namespace
 {
     /// <summary>
-    /// The most of the game's thread a unit's part diagram may take as the DATA page first shows it: a 240 Hz frame
-    /// is 4.2 ms, and the page's line art shares it with the rest of the frame.
+    /// The soft benchmark's bar: the most of the game's thread a unit's part diagram should take as the DATA page first
+    /// shows it (a 240 Hz frame is 4.2 ms, and the page's line art shares it with the rest of the frame). Printed every
+    /// run, never failed: the suite's parallel runs stretch it (you, 19 Nov: "why not have the 1ms soft benchmark?").
     /// </summary>
     constexpr std::chrono::microseconds MostDiagramTime{1000};
     /// <summary>The outlines the measure of the game's thread redrawing them is given for (a unit's, on a busy machine).</summary>
@@ -1003,8 +1004,9 @@ namespace
 /// draws the shown unit's part diagram (mechrep##.shp, the store's diagrams' file) as the store does: its outlines as
 /// line art, smooth strokes, the dark silhouette under them a shape. As a player sees it, waiting for nothing: the page
 /// opened on the unit the interface chose at the mission's start, then another unit picked, each draws its outlines as
-/// line art from the frame after the click, whoever made them (made ahead off the game's thread or redrawn on it), and
-/// takes the game's thread under 1 ms for them. Prints what redrawing a unit's outlines on the game's thread costs.
+/// line art from the frame after the click, every one made ahead off the game's thread (MakePartDiagramsAhead), none
+/// redrawn there. A soft benchmark prints the game's thread's time for them against MostDiagramTime (1 ms), never
+/// failing; and what redrawing a unit's outlines on the game's thread would cost.
 /// </summary>
 TEST_CASE_ISOLATED("game: the tactical map's DATA page draws a unit's part diagram as line art with HD art on")
 {
@@ -1037,8 +1039,8 @@ TEST_CASE_ISOLATED("game: the tactical map's DATA page draws a unit's part diagr
     REQUIRE(other != nullptr);
     Settle();
 
-    // The page's first frame after the click: every outline it shows put on the GPU as line art then, none later, in
-    // under MostDiagramTime of the game's thread.
+    // The page's first frame after the click: every outline it shows put on the GPU as line art then, none later, none
+    // redrawn on the game's thread; the game's thread's time for them printed against MostDiagramTime.
     const auto showsAsPlayed = [&](const std::function<void()>& click, int32_t partId, std::string_view which)
     {
         const MCVulkanRenderer::SharpCounts before = renderer->SharpPictures();
@@ -1052,18 +1054,22 @@ TEST_CASE_ISOLATED("game: the tactical map's DATA page draws a unit's part diagr
         const std::span<const uint8_t> shapes = map->PartShapes.Bytes();
         const int32_t silhouette = MCTacticalMap::PartSilhouette(*mover);
         const size_t redrawn = first.LinesRedrawn - before.LinesRedrawn;
+        const std::chrono::nanoseconds time = first.LinesTime - before.LinesTime;
+        std::cout << std::format("  {}: {} outlines on its first frame, {} made ahead, {} redrawn on the game's "
+                                 "thread; {} put later\n",
+                                 which, first.LinesPut - before.LinesPut, first.LinesPut - before.LinesPut - redrawn,
+                                 redrawn, settled.LinesPut - first.LinesPut);
         std::cout << std::format(
-            "  {}: {} outlines on its first frame, {} made ahead, {} redrawn on the game's thread, "
-            "{:.3f} ms of it; {} put later\n",
-            which, first.LinesPut - before.LinesPut, first.LinesPut - before.LinesPut - redrawn, redrawn,
-            Milliseconds(first.LinesTime - before.LinesTime), settled.LinesPut - first.LinesPut);
+            "  soft benchmark, {}: the game's thread {:.3f} ms for its outlines on the first frame "
+            "(bar {:.0f} ms){}\n",
+            which, Milliseconds(time), Milliseconds(MostDiagramTime), time < MostDiagramTime ? "" : ": over the bar");
         REQUIRE(silhouette < VfxShapeCount(shapes));
         CHECK(MCHdArt::LineArt(shapes, 0));
         CHECK(MCHdArt::LineArt(shapes, silhouette - 1));
         CHECK(!MCHdArt::LineArt(shapes, silhouette));
         CHECK(first.LinesPut > before.LinesPut);
         CHECK_EQ(settled.LinesPut, first.LinesPut);
-        CHECK(first.LinesTime - before.LinesTime < MostDiagramTime);
+        CHECK_EQ(redrawn, 0u);
     };
 
     // The DATA page opened (the unit the interface chose at the mission's start), then another unit's icon clicked in

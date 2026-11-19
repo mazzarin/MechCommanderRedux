@@ -386,6 +386,10 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         }
     }
 
+    // Port-only (SPEC-first-use.md: a mission's effects at its load): every frame of the shape tables the load read (a
+    // laser's, smoke's, an explosion's, each facing's), read here by HD art's readers, under the loading bar, and kept,
+    // rather than unpacked on the game's thread as each first shows at a facing.
+    MCHdArt::ReadLoadedShapesAhead();
     // Port-only (HD art): the interface's HD pictures read here, under the loading bar, and kept, rather than read in
     // the mission's first frame.
     MCLogistics::ReadTexturesAhead();

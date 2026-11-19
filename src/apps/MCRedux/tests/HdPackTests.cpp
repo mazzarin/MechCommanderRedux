@@ -3,6 +3,7 @@
 #include "MCTest.h"
 #include "MCTestShapes.h"
 #include "TestGame.h"
+#include "appear/MCAppearanceTypeList.h"
 #include "engine/MCCraterManager.h"
 #include "fakes/MCFakeMemorySystem.h"
 #include "gui/MCGuiFont.h"
@@ -16,17 +17,20 @@
 #include "lib/MCPacketFile.h"
 #include "lib/MCZstd.h"
 #include "logistics/MCLogPort.h"
+#include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
+#include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
+#include "mission/MCMission.h"
+#include "mission/MCScenario.h"
 #include "object/MCBattleMech.h"
 #include "object/MCMover.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
 #include "sprite/MCMechActor.h"
-#include "sprite/MCMechStops.h"
 #include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCShapeFile.h"
@@ -2110,10 +2114,11 @@ namespace
     }
 
     /// <summary>
-    /// Writes the read-ahead pack made with <paramref name="seed"/> into <paramref name="pack"/>: the table's folder as
-    /// an archive, the even frames' entries packed (DEFLATE), the odd ones' stored.
+    /// Writes the read-ahead pack made with <paramref name="seed"/> into <paramref name="pack"/>: the folder of the table
+    /// whose bytes hash to <paramref name="table"/> as an archive, the even frames' entries packed (DEFLATE), the odd
+    /// ones' stored.
     /// </summary>
-    void WriteAheadPack(const std::filesystem::path& pack, uint8_t seed)
+    void WriteAheadPack(const std::filesystem::path& pack, uint8_t seed, uint64_t table = AheadTable)
     {
         std::vector<ArchiveEntry> entries;
 
@@ -2127,7 +2132,7 @@ namespace
                                   : Raw(std::move(name), std::move(file)));
         }
 
-        const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(AheadTable);
+        const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(table);
         std::filesystem::create_directories(folder.parent_path());
         WriteBytes(std::filesystem::path(folder).concat(".hda"), BuildArchive(entries));
     }
@@ -2325,6 +2330,56 @@ TEST_CASE("hd art: a packet read ahead whole is found at its draws without a rea
     readAhead();
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + static_cast<size_t>(AheadFrames * AheadSteps));
     CHECK_EQ(MCHdArt::ReaderReads(), reads);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: a mission's effects at its load): a shape table the loader read (MCHdArt::NoteShapeLoaded,
+/// a laser's or an explosion's) has every frame and its in-betweens read by the readers at the load
+/// (MCHdArt::ReadLoadedShapesAhead) and kept, so each is found at its first draw, at any facing, without a read on the
+/// game's thread; a second call reads nothing more, the tables read since the first.
+/// </summary>
+TEST_CASE(
+    "hd art: a shape table the loader read has every frame read ahead at the load, found at its draws without a read")
+{
+    const ScratchFolder scratch("loaded-shapes-ahead");
+    // Any bytes stand for a table the loader read: the pack names the table's folder by their hash.
+    const std::vector<uint8_t> table{0x45, 0x46, 0x46, 0x45, 0x43, 0x54, 0x01, 0x02};
+    const uint64_t hash = MCHdArt::ShapeTableHash(table);
+    WriteAheadPack(scratch.Path(), 0, hash);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(scratch.Path());
+    MCHdArt::NoteShapeLoaded(table);
+    const auto readLoaded = []
+    {
+        MCHdArt::ReadLoadedShapesAhead();
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+    };
+
+    const size_t ahead = MCHdArt::FramesReadAhead();
+    readLoaded();
+    const size_t whole = ahead + static_cast<size_t>(AheadFrames * AheadSteps);
+    CHECK_EQ(MCHdArt::FramesReadAhead(), whole);
+    const size_t read = MCHdArt::FramesRead();
+
+    for (int32_t frame = 0; frame < AheadFrames; ++frame)
+    {
+        for (int32_t step = 0; step < AheadSteps; ++step)
+        {
+            MCTest::Scope scope(std::format("frame {}", AheadName({frame, step})));
+            const std::shared_ptr<const MCHdArt::Frame> found =
+                MCHdArt::FindShape(hash, frame, AheadWidth, AheadHeight, step, AheadFrames);
+            REQUIRE(found != nullptr);
+            CHECK(SameFrame(*found, AheadFrame({frame, step}, 0)));
+        }
+    }
+
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    readLoaded();
+    CHECK_EQ(MCHdArt::FramesReadAhead(), whole);
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
 }
@@ -2701,16 +2756,6 @@ TEST_CASE("hd art: a frame drawn the first time has the same frame at its neighb
 
 namespace
 {
-    /// <summary>The upper-body in-betweens' torso (HD art's upper-body in-betweens): its file number and packet.</summary>
-    constexpr uint32_t UpperMech = 1;
-    constexpr uint32_t UpperPacket = 68;
-    /// <summary>Its two frames' side, the second's place right of and below the first's, and both together.</summary>
-    constexpr int32_t UpperSide = 4;
-    constexpr int32_t UpperRight = 2;
-    constexpr int32_t UpperDown = 1;
-    constexpr int32_t UpperWidth = UpperSide + UpperRight;
-    constexpr int32_t UpperHeight = UpperSide + UpperDown;
-
     /// <summary>HD art on with a pack while it lives, and as it was after it, however the test ends.</summary>
     class PackOn
     {
@@ -2733,191 +2778,7 @@ namespace
     private:
         int _Previous;
     };
-
-    /// <summary>
-    /// Writes the upper-body in-betweens' torso's archive into <paramref name="pack"/>: its frames 0 and 1, frame 0's
-    /// steps 1 and 2 over both frames' boxes (UpperWidth x UpperHeight) and its step 3 at the frame's own size, and
-    /// frame 1's step 1 (not its step 2).
-    /// </summary>
-    void WriteUpperTorso(const std::filesystem::path& pack)
-    {
-        const std::filesystem::path torsos = pack / "mechs" / "torsos90";
-        std::filesystem::create_directories(torsos);
-        int32_t mix = 0;
-        const auto entry = [&](std::string_view name, int32_t width, int32_t height)
-        { return Raw(std::format("{}\\{}.hdf", UpperPacket, name), FrameFile(width, height, ++mix)); };
-        WriteBytes(torsos / std::format("{}.hda", UpperMech),
-                   BuildArchive({entry("0", UpperSide, UpperSide), entry("1", UpperSide, UpperSide),
-                                 entry("0_1", UpperWidth, UpperHeight), entry("0_2", UpperWidth, UpperHeight),
-                                 entry("0_3", UpperSide, UpperSide), entry("1_1", UpperWidth, UpperHeight)}));
-    }
-
-    /// <summary>
-    /// The upper-body in-betweens' torso, attached to its packet in the pack set: frame 0 an UpperSide square at the
-    /// hot spot, frame 1 one UpperRight right of and UpperDown below it.
-    /// </summary>
-    std::shared_ptr<MCShape> AttachedUpperTorso()
-    {
-        const std::vector<uint8_t> table = MCTestShapes::FramesTable(
-            std::array{MCTestShapes::TableFrame{0, 0, UpperSide, UpperSide, {}},
-                       MCTestShapes::TableFrame{UpperRight, UpperDown, UpperSide, UpperSide, {}}});
-        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
-        std::ranges::copy(table, block.Bytes().begin());
-        auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
-        const MCHdArt::MechShapeKey key{"torsos90", UpperMech, UpperPacket};
-        shape->HdFolder = MCHdArt::FolderOf(key);
-        MCHdArt::Attach(shape, key);
-        return shape;
-    }
-
-    /// <summary>A step, for a check's scope.</summary>
-    std::string StepName(const MCLegsStep& step)
-    {
-        return std::format("frame {} toward {}, step {}", step.From, step.To, step.Step);
-    }
-
-    /// <summary>
-    /// Checks that <paramref name="between"/> is the upper-body in-betweens' torso's in-between <paramref name="step"/>,
-    /// over both its frames, frame From at (<paramref name="frameX"/>, <paramref name="frameY"/>) in it.
-    /// </summary>
-    void CheckUpperBetween(const std::optional<MCInBetween>& between, const MCLegsStep& step, int32_t frameX,
-                           int32_t frameY)
-    {
-        MCTest::Scope scope(StepName(step));
-        REQUIRE(between.has_value());
-        CHECK_EQ(between->Frame, step.From);
-        CHECK_EQ(between->Next, step.To);
-        CHECK_EQ(between->Step, step.Step);
-        REQUIRE(between->Bounds.has_value());
-        CHECK_EQ(between->Bounds->FrameX, frameX);
-        CHECK_EQ(between->Bounds->FrameY, frameY);
-        CHECK_EQ(between->Bounds->Width, UpperWidth);
-        CHECK_EQ(between->Bounds->Height, UpperHeight);
-    }
 } // namespace
-
-/// <summary>
-/// Port-only (HD art's upper-body in-betweens): a torso's frame on its way to the next, at the legs' step, is drawn as
-/// the pack's in-between of that step over both frames' boxes (MCPartInBetween), as the legs' is: frame 0 (4 x 4 at
-/// the hot spot) toward frame 1 (4 x 4, 2 right and 1 down) over 6 x 5, the frame at its top left; frame 1 toward
-/// frame 0 over the same, the frame 2 right and 1 down in it. None where the pack lacks the step, has it at another
-/// size, or a frame is not the table's, nor with HD art off.
-/// </summary>
-TEST_CASE("hd art: a torso on its way to its next frame is drawn as the pack's in-between over both frames")
-{
-    const ScratchFolder scratch("upper-in-betweens");
-    WriteUpperTorso(scratch.Path());
-    const PackOn on(scratch.Path());
-    const std::shared_ptr<MCShape> shape = AttachedUpperTorso();
-    const auto none = [&](const MCLegsStep& step)
-    {
-        MCTest::Scope scope(StepName(step));
-        CHECK(!MCPartInBetween(shape->FrameList(), step).has_value());
-    };
-
-    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {0, 1, 1}), {0, 1, 1}, 0, 0);
-    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {0, 1, 2}), {0, 1, 2}, 0, 0);
-    CheckUpperBetween(MCPartInBetween(shape->FrameList(), {1, 0, 1}), {1, 0, 1}, UpperRight, UpperDown);
-    none({0, 1, 3});
-    none({1, 0, 2});
-    none({0, 2, 1});
-    none({-1, 0, 1});
-
-    GHdArt = 0;
-    none({0, 1, 1});
-}
-
-/// <summary>
-/// Port-only (HD art's upper-body in-betweens): the GPU drawing, in mission 1, a player's mech walking has its torso
-/// (the test's, MCMechActor::UpperInBetween) drawn as the pack's in-between toward its next frame at its legs' step: a
-/// quarter of the way through frame 0, step 1 toward frame 1; played backwards, three quarters of the way through
-/// frame 1, step 1 of frame 0 toward it (a quarter of the way back), and none a quarter of the way through (step 3,
-/// which the pack has at another size). None for a frame not drawn as played, in the gun change or with the guns up,
-/// or with the legs on their transition's last frame (the next gesture's frames come next), but in a transition's
-/// middle as in the stride's.
-/// </summary>
-TEST_CASE_ISOLATED("game: a walking mech's torso is drawn as the pack's in-between at its legs' step")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartMission(1));
-
-    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
-    {
-        std::cout << "  (skipped: no GPU renderer on this machine)\n";
-        return;
-    }
-
-    // One of the player's mechs.
-    constexpr int32_t PlayerMech = 0x200;
-    const std::shared_ptr<MCMover> mover = GetMoverFromPartId(PlayerMech);
-    REQUIRE(mover != nullptr);
-    REQUIRE(mover->ObjectClass == MCObjectClass::BattleMech);
-    const auto actor = std::static_pointer_cast<MCMechActor>(std::static_pointer_cast<MCBattleMech>(mover)->Appearance);
-    REQUIRE(actor != nullptr);
-    REQUIRE(actor->MechTree != nullptr);
-    MCMechActor& mech = *actor;
-
-    const ScratchFolder scratch("upper-in-betweens-walk");
-    WriteUpperTorso(scratch.Path());
-    const PackOn on(scratch.Path());
-    const std::shared_ptr<MCShape> shape = AttachedUpperTorso();
-
-    // Walking, its legs on legsFrame, share of the way through it.
-    mech.CurrentGesture = MCStopGesture::Walk;
-    mech.InTransition = false;
-    mech.GestureDone = false;
-    mech.LyingStill = false;
-    mech.InCombatMode = false;
-    mech.CombatModeRaising = false;
-    mech.CombatModeLowering = false;
-    mech.PlayBackwards = false;
-    mech.StrideRate = 1.0f;
-    const float rate = mech.FrameRate[MCMechPart::Legs];
-    REQUIRE(rate > 0.0f);
-    const auto frames = static_cast<int32_t>(mech.MechTree->Gestures[MCStopGesture::Walk].NumFrames);
-    REQUIRE(frames > 2);
-    const auto through = [&](int32_t legsFrame, float share)
-    {
-        mech.CurrentFrame[MCMechPart::Legs] = legsFrame;
-        mech.CurrentTime[MCMechPart::Legs] = share / rate;
-    };
-
-    const auto upper = [&](int32_t frame, bool asPlayed) { return mech.UpperInBetween(*shape, frame, asPlayed); };
-    constexpr float Quarter = 0.25f;
-    constexpr float ThreeQuarters = 0.75f;
-
-    through(0, Quarter);
-    CheckUpperBetween(upper(0, true), {0, 1, 1}, 0, 0);
-    CHECK(!upper(0, false).has_value());
-
-    for (bool MCMechActor::* gunsUp :
-         {&MCMechActor::InCombatMode, &MCMechActor::CombatModeRaising, &MCMechActor::CombatModeLowering})
-    {
-        mech.*gunsUp = true;
-        CHECK(!upper(0, true).has_value());
-        mech.*gunsUp = false;
-    }
-
-    // Played backwards: from frame 0 toward frame 1, the rest of the way.
-    mech.PlayBackwards = true;
-    through(1, ThreeQuarters);
-    CheckUpperBetween(upper(1, true), {0, 1, 1}, 0, 0);
-    through(1, Quarter);
-    CHECK(!upper(1, true).has_value());
-    mech.PlayBackwards = false;
-
-    // In a transition: none with the legs on its last frame, wherever the torso is; in its middle, as in the stride.
-    mech.InTransition = true;
-    through(frames - 1, Quarter);
-    CHECK(!upper(0, true).has_value());
-    through(0, Quarter);
-    CheckUpperBetween(upper(0, true), {0, 1, 1}, 0, 0);
-}
 
 /// <summary>
 /// Port-only: the frames the reading thread read ahead are kept in the cache at a frame's start (MCHdArt::KeepReadAhead),
@@ -4144,6 +4005,104 @@ TEST_CASE("hd art: the load's fill holds what the load opens before the load end
     CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part);
     MCHdArt::LetGoHold();
     GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "From the briefing"): the hold starts at a mission's briefing
+/// (MCHdArt::StartBriefingHold), reading the archives of the folders it's given in runs of MCHdArt::BriefingRunBytes
+/// (here two, where the load reads the same archive in one); the mission's load keeps it (MCHdArt::HoldsFor, as
+/// MCMission::StartScenario asks), its bar starting from what the briefing read, and notes the folders it hands the hold
+/// (MCHdArt::LoadFolders); another mission's briefing lets go of it first.
+/// </summary>
+TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mission's load keeps it")
+{
+    constexpr size_t Filler = 600'000;
+    constexpr size_t BriefingRuns = 2;
+    constexpr size_t LoadRuns = 1;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view Other = "mis0102";
+    static_assert(Filler < MCHdArt::BriefingRunBytes && 2 * Filler > MCHdArt::BriefingRunBytes &&
+                  2 * Filler < MCHdArt::HoldRunBytes);
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{
+        {StreamKind::Packet, Filler}, {StreamKind::Packet, Filler}, {StreamKind::Heads}};
+    const HoldPack pack("briefing-hold", pieces);
+    const std::array<std::filesystem::path, 1> shapes{HoldPack::ShapesFolder()};
+    const std::array<std::filesystem::path, 1> more{std::filesystem::path(HoldPack::MoreFolder)};
+    CHECK(!MCHdArt::HoldsFor(Mission));
+    const size_t reads = MCHdArt::HeldReads();
+
+    {
+        MCTest::Scope scope("the briefing");
+        MCHdArt::StartBriefingHold(Mission, shapes);
+        // Its archive opened by the readers, then held.
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+        CHECK_EQ(MCHdArt::HeldReads(), reads + BriefingRuns);
+        CHECK(MCHdArt::HoldsFor(Mission));
+        CHECK(MCHdArt::HoldsFor("MIS0101"));
+        CHECK(!MCHdArt::HoldsFor(Other));
+    }
+
+    {
+        MCTest::Scope scope("its load");
+        MCHdArt::StartLoadFill();
+        CHECK(MCHdArt::HoldsFor(Mission));
+        CHECK_EQ(MCHdArt::LoadFillShare(), 1.0);
+        MCHdArt::OpenArchivesAhead(more);
+        // As the load waits for its reads ahead (the opens among them) before its fill.
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::FinishLoadFill([] {});
+        CHECK_EQ(MCHdArt::HeldBytes(), 2 * pack.HeldBytes());
+        CHECK_EQ(MCHdArt::HeldReads(), reads + BriefingRuns + LoadRuns);
+        const std::vector<std::filesystem::path> folders = MCHdArt::LoadFolders();
+        REQUIRE_EQ(folders.size(), 1u);
+        CHECK_EQ(folders[0], more[0]);
+    }
+
+    {
+        MCTest::Scope scope("another mission's briefing");
+        MCHdArt::StartBriefingHold(Other, {});
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        CHECK(MCHdArt::HoldsFor(Other));
+        CHECK(!MCHdArt::HoldsFor(Mission));
+        MCHdArt::LetGoHold();
+        CHECK(!MCHdArt::HoldsFor(Other));
+    }
+
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only, for test runs: -hdbriefing (TestBriefingSeconds) waits before a game segment's load with the mission's
+/// hold started as its briefing would start it, and the load keeps that hold (MCHdArt::HoldsFor); the wait is spent.
+/// </summary>
+TEST_CASE_ISOLATED("hd art: -hdbriefing holds a game segment's mission before its load, and the load keeps it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t WaitSeconds = 1;
+    const ScratchFolder pack("hdbriefing");
+    MCTestGame::BootOptions.Started = [folder = pack.Path()]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+        TestBriefingSeconds = WaitSeconds;
+    };
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    CHECK(MCHdArt::HoldsFor(mission));
+    CHECK_EQ(TestBriefingSeconds, 0);
 }
 
 /// <summary>
@@ -5950,4 +5909,326 @@ TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's 
     std::cout << std::format("  mission {}: {} reads of the original's art in {} frames\n", segment, total, frames);
     MCHdArt::GuardOriginalReads(false);
     CHECK_EQ(total, size_t{0});
+}
+
+/// <summary>
+/// Tool (SPEC-memory.md's "From the briefing": a mission's list): <c>--hold-list &lt;pack&gt;</c> loads mission
+/// <c>--hold-list-mission &lt;n&gt;</c> (1 by default) with the pack and its hold on, as a player's load is, and writes the
+/// pack's folders the load handed the hold (MCHdArt::LoadFolders), one a line in the order handed, to
+/// <c>&lt;--hold-list-out&gt;/&lt;mission&gt;.txt</c> (the working folder by default): all but those of the player's mechs
+/// that no other unit's tree shares, which a briefing reads as each is placed in the lance. A type's packets' folders
+/// (<c>objects/shapes90/&lt;n&gt;/&lt;packet&gt;</c>) are listed once, by its packet 0's, as the game hands a type's art
+/// ahead (MCAppearanceType's MCHdArt::OpenArchivesAhead): any of them opens the same archive.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "tool: --hold-list writes the pack's folders a mission's load hands the hold, the player's mechs' out")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hold-list");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    int32_t segment = 1;
+
+    if (const std::optional<std::string_view> asked = MCTest::Option("hold-list-mission"))
+    {
+        REQUIRE(std::from_chars(asked->data(), asked->data() + asked->size(), segment).ec == std::errc());
+    }
+
+    const std::filesystem::path out = MCFileSystem::FromUtf8(MCTest::Option("hold-list-out").value_or("."));
+    MCTestGame::BootOptions.Started = [folder = MCFileSystem::FromUtf8(*pack)]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    };
+
+    REQUIRE(MCTestGame::StartMission(segment));
+    REQUIRE(MCHdArt::Active());
+    const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+    REQUIRE(sprites != nullptr);
+
+    // Each mech's trees' folders, the player's parts' (PlayerPart in the mission's file, part n its Part<n + 1>) apart.
+    MCFitIniFile file;
+    REQUIRE_EQ(file.Open(GamePath(MissionPath, mission, ".fit")), 0);
+    std::set<std::string> players;
+    std::set<std::string> others;
+    const std::vector<MCPart>& parts = Scenario()->Parts;
+
+    // Part n is the file's Part<n> block (Parts[0] is none).
+    for (size_t index = 1; index < parts.size(); ++index)
+    {
+        const auto object = std::dynamic_pointer_cast<MCGameObject>(parts[index].Object.lock());
+        const auto actor = object != nullptr && object->ObjectClass == MCObjectClass::BattleMech
+                               ? std::static_pointer_cast<MCMechActor>(object->GetAppearance())
+                               : nullptr;
+        const auto tree =
+            actor != nullptr ? std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType()) : nullptr;
+
+        if (tree == nullptr)
+        {
+            continue;
+        }
+
+        REQUIRE_EQ(file.SeekBlock(std::format("Part{}", index)), 0);
+        std::set<std::string>& into = file.Read<bool>("PlayerPart").value_or(false) ? players : others;
+
+        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+        {
+            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
+            {
+                into.insert(MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber).generic_string());
+            }
+        }
+    }
+
+    REQUIRE(!players.empty());
+    const auto playersOnly = [&](const std::filesystem::path& folder)
+    {
+        const std::string text = folder.generic_string();
+        const auto under = [&text](const std::string& tree)
+        { return text == tree || (text.starts_with(tree) && text[tree.size()] == '/'); };
+        return std::ranges::any_of(players, under) && !std::ranges::any_of(others, under);
+    };
+
+    // A type's folder (the first three of a deeper folder's names) by its packet 0's.
+    constexpr size_t TypeDepth = 3;
+    const auto typeFolder = [](const std::filesystem::path& folder)
+    {
+        std::filesystem::path type;
+        size_t depth = 0;
+
+        for (auto name = folder.begin(); name != folder.end() && depth < TypeDepth; ++name, ++depth)
+        {
+            type /= *name;
+        }
+
+        return std::distance(folder.begin(), folder.end()) > static_cast<ptrdiff_t>(TypeDepth) ? type / "0" : folder;
+    };
+
+    size_t left = 0;
+    std::string lines;
+    std::set<std::string> listed;
+
+    for (const std::filesystem::path& folder : MCHdArt::LoadFolders())
+    {
+        if (playersOnly(folder))
+        {
+            ++left;
+            continue;
+        }
+
+        if (std::string type = typeFolder(folder).generic_string(); listed.insert(type).second)
+        {
+            lines += type + '\n';
+        }
+    }
+
+    std::filesystem::create_directories(out);
+    const std::filesystem::path written = out / MCFileSystem::FromUtf8(mission + ".txt");
+    std::ofstream(written, std::ios::binary) << lines;
+    std::cout << std::format(
+        "  mission {} ({}): {} folders handed, {} of the player's mechs' left out, {} types' listed, "
+        "to {}\n",
+        segment, mission, MCHdArt::LoadFolders().size(), left, listed.size(), MCFileSystem::ToUtf8(written));
+    CHECK(!lines.empty());
+
+    // With --hold-list-chassis, every mech chassis in the object file (an "ObjectClass" of 2) and its tree's folders,
+    // a line each to <out>/chassis.txt, for a briefing to read a lance's mechs as they're placed.
+    if (!MCTest::Option("hold-list-chassis").has_value())
+    {
+        return;
+    }
+
+    constexpr int32_t MechClass = 2;
+    MCPacketFile objects;
+    REQUIRE_EQ(objects.Open(GamePath(ObjectPath, ObjectPakName)), 0);
+    std::string chassisLines;
+    size_t chassisCount = 0;
+
+    for (int32_t number = 1; number < objects.GetNumPackets(); ++number)
+    {
+        MCFitIniFile packet;
+
+        if (objects.SeekPacket(number) != 0 || objects.GetPacketSize() == 0 ||
+            packet.Open(objects, static_cast<uint32_t>(objects.GetPacketSize())) != 0 ||
+            packet.SeekBlock("ObjectClass") != 0 || packet.Read<int32_t>("ObjectTypeNum").value_or(-1) != MechClass)
+        {
+            continue;
+        }
+
+        // The appearance its type would draw ("ObjectType"'s "Appearance"), read without making the type: a packet that
+        // won't make one would stop the game (Fatal).
+        const int32_t appearance =
+            packet.SeekBlock("ObjectType") == 0 ? packet.Read<int32_t>("Appearance").value_or(-1) : -1;
+        const auto tree = appearance >= 0 ? std::dynamic_pointer_cast<MCSpriteTree>(
+                                                AppearanceTypeList().GetAppearance(static_cast<uint32_t>(appearance)))
+                                          : nullptr;
+
+        if (tree == nullptr)
+        {
+            continue;
+        }
+
+        std::string row = std::to_string(number);
+
+        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+        {
+            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
+            {
+                row +=
+                    ' ' +
+                    (MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber) / "0").generic_string();
+            }
+        }
+
+        chassisLines += row + '\n';
+        ++chassisCount;
+    }
+
+    std::ofstream(out / "chassis.txt", std::ios::binary) << chassisLines;
+    std::cout << std::format("  {} mech chassis\n", chassisCount);
+    CHECK(chassisCount > 0);
+}
+
+/// <summary>
+/// Tool (SPEC-memory.md's "From the briefing"): <c>--hold-lists-table &lt;folder&gt;</c> reads the lists
+/// <c>--hold-list</c> wrote there (<c>&lt;mission&gt;.txt</c> each, and <c>chassis.txt</c>) and writes
+/// sprite/MCHoldLists.h, the lists the program carries, to <c>--hold-lists-out &lt;file&gt;</c>
+/// (<c>&lt;folder&gt;/MCHoldLists.h</c> by default): each folder once, each mission's and each mech chassis's as indices
+/// into them, the missions by name and the chassis by number.
+/// </summary>
+TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table the program carries")
+{
+    const std::optional<std::string_view> in = MCTest::Option("hold-lists-table");
+
+    if (!in.has_value())
+    {
+        return;
+    }
+
+    constexpr std::string_view ChassisFile = "chassis";
+    constexpr size_t RowLength = 16;
+    const std::filesystem::path folder = MCFileSystem::FromUtf8(*in);
+    const std::filesystem::path out = MCTest::Option("hold-lists-out").has_value()
+                                          ? MCFileSystem::FromUtf8(*MCTest::Option("hold-lists-out"))
+                                          : folder / "MCHoldLists.h";
+    std::map<std::string, std::vector<std::string>> missions;
+    std::map<uint32_t, std::vector<std::string>> chassis;
+
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(folder))
+    {
+        if (entry.path().extension() != ".txt")
+        {
+            continue;
+        }
+
+        std::string name = MCFileSystem::ToUtf8(entry.path().stem());
+        std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::ifstream file(entry.path());
+
+        for (std::string line; std::getline(file, line);)
+        {
+            if (line.empty())
+            {
+                continue;
+            }
+
+            if (name != ChassisFile)
+            {
+                missions[name].push_back(line);
+                continue;
+            }
+
+            // "<number> <folder> <folder>...".
+            std::istringstream row(line);
+            uint32_t number = 0;
+            REQUIRE(static_cast<bool>(row >> number));
+            std::vector<std::string>& folders = chassis[number];
+
+            for (std::string word; row >> word;)
+            {
+                folders.push_back(word);
+            }
+        }
+    }
+
+    REQUIRE(!missions.empty());
+    REQUIRE(!chassis.empty());
+    std::vector<std::string> folders;
+    std::unordered_map<std::string, size_t> indices;
+    std::string lists;
+
+    // An array of indices into Folders named <identifier>, of <lines>' folders (each added to Folders the first time).
+    const auto listOf = [&](std::string identifier, const std::vector<std::string>& lines)
+    {
+        std::ranges::replace_if(identifier, [](unsigned char c) { return std::isalnum(c) == 0; }, '_');
+        std::string numbers;
+
+        for (size_t at = 0; at < lines.size(); ++at)
+        {
+            const auto [found, fresh] = indices.try_emplace(lines[at], folders.size());
+
+            if (fresh)
+            {
+                folders.push_back(lines[at]);
+            }
+
+            numbers += std::format("{}{},", at % RowLength == 0 ? "\n    " : " ", found->second);
+        }
+
+        lists += std::format("inline constexpr std::array<uint16_t, {}> {}{{{{{}\n}}}};\n", lines.size(), identifier,
+                             numbers);
+        return identifier;
+    };
+
+    std::string missionRows;
+    std::string chassisRows;
+
+    for (const auto& [name, lines] : missions)
+    {
+        missionRows += std::format("    {{\"{}\", {}}},\n", name, listOf("Mission_" + name, lines));
+    }
+
+    for (const auto& [number, lines] : chassis)
+    {
+        chassisRows += std::format("    {{{}, {}}},\n", number, listOf(std::format("Chassis_{}", number), lines));
+    }
+
+    REQUIRE(folders.size() <= std::numeric_limits<uint16_t>::max());
+    std::string names;
+
+    for (const std::string& name : folders)
+    {
+        names += std::format("    \"{}\",\n", name);
+    }
+
+    std::ofstream(out, std::ios::binary) << std::format(
+        "#pragma once\n\n"
+        "// Port-only (SPEC-memory.md's \"From the briefing\"): the HD pack's folders each mission's load hands the "
+        "hold,\n"
+        "// which its briefing reads ahead (MCHdArt::BriefingFolders), and each mech chassis's, read as it's placed in "
+        "the\n"
+        "// lance (MCHdArt::ChassisFolders): worked out by loading each mission with mc_tests --hold-list and written "
+        "by\n"
+        "// mc_tests --hold-lists-table (tests/HdPackTests.cpp). Don't edit it.\n\n"
+        "#include <array>\n#include <cstdint>\n#include <span>\n#include <string_view>\n\n"
+        "// clang-format off\n"
+        "namespace MCHoldLists\n{{\n"
+        "/// <summary>A mission (its file's name, lower case) and its folders, as indices into Folders.</summary>\n"
+        "struct Mission\n{{\n    std::string_view Name;\n    std::span<const uint16_t> Folders;\n}};\n\n"
+        "/// <summary>A mech chassis (its packet in the object file) and its tree's folders, as indices into "
+        "Folders.</summary>\n"
+        "struct Chassis\n{{\n    uint32_t Number;\n    std::span<const uint16_t> Folders;\n}};\n\n"
+        "inline constexpr std::array<std::string_view, {}> Folders{{{{\n{}}}}};\n\n{}\n"
+        "inline constexpr std::array<Mission, {}> Missions{{{{\n{}}}}};\n\n"
+        "inline constexpr std::array<Chassis, {}> Mechs{{{{\n{}}}}};\n}}\n\n// clang-format on\n",
+        folders.size(), names, lists, missions.size(), missionRows, chassis.size(), chassisRows);
+    std::cout << std::format("  {} missions, {} chassis, {} folders, to {}\n", missions.size(), chassis.size(),
+                             folders.size(), MCFileSystem::ToUtf8(out));
 }

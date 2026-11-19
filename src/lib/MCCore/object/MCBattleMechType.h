@@ -9,6 +9,8 @@ class MCFitIniFile;
 
 /// <summary>The object type of the sparks a hit item throws (MCBattleMech::HitInventoryItem).</summary>
 inline constexpr uint32_t MechHitSparksType = 0x3f;
+/// <summary>The object type of each jump jet's flame as a mech jumps (MCBattleMech::CreateJumpFX).</summary>
+inline constexpr uint32_t MechJumpJetType = 0x1c6;
 
 /// <summary>A mech type: the mech file's header, internal structure, debris, dynamics and movement settings, and the
 /// appearance's hot spots.</summary>
@@ -29,8 +31,15 @@ public:
     int32_t Init(MCFile& objFile, uint32_t fileSize) override;
     /// <summary>Makes a <see cref="MCBattleMech"/> of this type and gives it the next object id.</summary>
     std::shared_ptr<MCBaseObject> CreateInstance() override;
-    /// <summary>Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own.</summary>
-    std::vector<int32_t> MadeTypes() const override { return MadeTypesAnd({MechHitSparksType}); }
+    /// <summary>
+    /// Port-only: <see cref="MCObjectType::MadeTypes"/>, with the type's own: a hit item's sparks, the jump jets' flames
+    /// and the arms thrown off (none below 1: 0xffffffff is -1).
+    /// </summary>
+    std::vector<int32_t> MadeTypes() const override
+    {
+        return MadeTypesAnd({MechHitSparksType, MechJumpJetType, RightArmDebrisId, LeftArmDebrisId});
+    }
+
     /// <summary>Ramming, jumping onto, trees, buildings and train cars against a mech of this type.</summary>
     int HandleCollision(MCGameObject& collidee, MCGameObject& collider) override;
     /// <summary>Kills the mech: disables its sensor, alarms its pilot, destroys every location and sets the

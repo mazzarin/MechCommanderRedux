@@ -11,6 +11,7 @@
 
 #include <bitset>
 #include <list>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace MCHdArt
@@ -394,6 +395,49 @@ public:
     /// </summary>
     static inline bool GlintsEveryFrame = false;
 
+    /// <summary>
+    /// Port-only (the kept surfaces, KeptPlan), for the tests: the frames run so far that drew a surface they wipe whole,
+    /// drew only its tiles whose draws changed (and how many tiles), or left it as it was (nothing changed).
+    /// </summary>
+    struct KeptCounts
+    {
+        int64_t Whole = 0;
+        int64_t Tiled = 0;
+        int64_t TilesDrawn = 0;
+        int64_t Unchanged = 0;
+    };
+
+    /// <summary>The kept surfaces' counts (<see cref="KeptCounts"/>), once a frame running has run.</summary>
+    KeptCounts KeptSurfaceCounts() const
+    {
+        WaitForRunning();
+        return _KeptCounts;
+    }
+
+    /// <summary>
+    /// Port-only (the kept surfaces), for the tests: whether a surface a frame wipes keeps what its tiles held from the
+    /// frame before (else every one is drawn whole, as before); and whether each surface drawn from its tiles is drawn
+    /// whole too, apart, for <see cref="CompareKept"/>.
+    /// </summary>
+    static inline bool KeepSurfaces = true;
+    static inline bool CheckKeptSurfaces = false;
+
+    /// <summary>The result of <see cref="CompareKept"/>.</summary>
+    struct KeptComparison
+    {
+        /// <summary>The surfaces compared, and their pixels whose colours or indices differ from those drawn whole.</summary>
+        int64_t Surfaces = 0;
+        int64_t Pixels = 0;
+        int64_t DifferentColors = 0;
+        int64_t DifferentIndices = 0;
+    };
+
+    /// <summary>
+    /// Port-only, for the tests (<see cref="CheckKeptSurfaces"/>): downloads each surface the last frame run drew from its
+    /// tiles, and the same surface it drew whole apart, waiting for the GPU, and compares them pixel for pixel.
+    /// </summary>
+    std::expected<KeptComparison, std::string> CompareKept();
+
     /// <summary>The terrain layers drawn from the mesh so far.</summary>
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
@@ -735,6 +779,16 @@ private:
         /// <summary>Execution: the part of the surface the copy holds, and what was drawn since it was taken.</summary>
         MCRect Copied{0, 0, -1, -1};
         std::vector<MCRect> DrawnSinceCopy;
+        /// <summary>
+        /// Port-only (the kept surfaces, KeptPlan), execution: for a surface whose frames start by wiping all of it (the
+        /// screen's wipe to its key), a hash a tile (KeptTile window pixels square, TileColumns a row) of the draws the
+        /// frame run last laid on it in their order, while it holds what they drew (TilesHeld). And a stamp of what it
+        /// holds, new with each of a frame's records on it, for the draws that read it.
+        /// </summary>
+        std::vector<uint64_t> Tiles;
+        uint32_t TileColumns = 0;
+        bool TilesHeld = false;
+        uint64_t Stamp = 0;
     };
 
     /// <summary>A draw's rectangle (x0, y0, x1, y1), or where it reads from and its steps (x, y, step x, step y).</summary>
@@ -976,6 +1030,65 @@ private:
         /// <summary>The parts drawn again (drawn pixels), when not whole.</summary>
         std::vector<MCRect> Redrawn;
     };
+
+    /// <summary>
+    /// Port-only (the kept surfaces): how a frame draws a surface. A surface the frame starts by wiping all of (the
+    /// screen's wipe to its key, every frame) holds nothing the frame before drew, so its pixels follow from the
+    /// frame's draws alone; a tile of it is the same as the frame before's wherever the draws over the tile are, in the
+    /// same order, from the same pictures (a draw covers the drawn pixels of its window rectangle alone:
+    /// shaders/pixels.hlsli's DrawnCorner). Only the tiles whose draws changed are drawn again, over what it held.
+    /// </summary>
+    enum class KeptMode : uint8_t
+    {
+        /// <summary>Drawn as recorded: not wiped first, or its draws read what the tiles can't follow (KeptPlan).</summary>
+        Drawn,
+        /// <summary>Drawn whole, its tiles kept for the next frame.</summary>
+        Whole,
+        /// <summary>Its tiles whose draws changed drawn again (KeptPlan::Scissors), the rest kept.</summary>
+        Tiled,
+        /// <summary>No tile's draws changed: left as it was.</summary>
+        Unchanged
+    };
+
+    /// <summary>Port-only (the kept surfaces): how a frame draws a surface, and its tiles' hashes for the next frame.</summary>
+    struct KeptPlan
+    {
+        KeptMode Mode = KeptMode::Drawn;
+        std::vector<uint64_t> Tiles;
+        uint32_t Columns = 0;
+        /// <summary>Tiled: the drawn pixels drawn again (the changed tiles', merged into rectangles), with their window pixels.</summary>
+        std::vector<SDL_Rect> Scissors;
+        std::vector<MCRect> Rects;
+        /// <summary>
+        /// The tiles that changed, and whether a draw reads another surface drawn on after it (which the kept check,
+        /// drawing it again once the frame's draws are done, can't).
+        /// </summary>
+        int64_t Changed = 0;
+        bool ReadsChanging = false;
+    };
+
+    /// <summary>
+    /// Port-only (the kept surfaces): a texture a draw reads, kept by its address while it lives (the control block
+    /// tells a texture made at a freed one's address apart), and a stamp new with each write to it.
+    /// </summary>
+    struct TextureStamp
+    {
+        std::weak_ptr<SDL_GPUTexture> Texture;
+        uint64_t Stamp = 0;
+    };
+
+    /// <summary>Port-only (the kept surfaces): the stamp of what <paramref name="texture"/> holds (none: 0).</summary>
+    uint64_t StampOf(const std::shared_ptr<SDL_GPUTexture>& texture);
+    /// <summary>Port-only (the kept surfaces): notes a write to <paramref name="texture"/> (a new stamp).</summary>
+    void Restamp(const std::shared_ptr<SDL_GPUTexture>& texture);
+    /// <summary>
+    /// Port-only (the kept surfaces): how frame <paramref name="run"/> draws each surface (<see cref="KeptMode"/>), its
+    /// records run in <paramref name="order"/>; <paramref name="recordUniforms"/> gives a hash of the fragment uniforms a
+    /// record's draws on a surface are drawn with.
+    /// </summary>
+    std::vector<KeptPlan> PlanKept(
+        const FrameRun& run, std::span<const uint32_t> order,
+        const std::function<uint64_t(uint16_t surface, const Record& record)>& recordUniforms);
 
     /// <summary>The surface for <paramref name="window"/> (made on first use); records a resize when its size changed.</summary>
     uint16_t SurfaceFor(const MCWindow& window);
@@ -1669,6 +1782,27 @@ private:
     int64_t _TerrainLayersDrawn = 0;
     /// <summary>Port-only: how the terrain layers run were drawn (the run's side).</summary>
     GroundCounts _GroundCounts;
+    /// <summary>
+    /// Port-only (the kept surfaces), the run's side: how surfaces were drawn; the textures draws read, by address, with
+    /// the stamps of what they hold (pruned of those gone once twice as many as after the last pruning); the last stamp
+    /// given.
+    /// </summary>
+    KeptCounts _KeptCounts;
+    std::unordered_map<const SDL_GPUTexture*, TextureStamp> _TextureStamps;
+    size_t _StampsPruned = 0;
+    uint64_t _LastStamp = 0;
+    /// <summary>
+    /// Port-only, for the tests (CheckKeptSurfaces): the surfaces the last frame run drew from their tiles, each drawn
+    /// whole apart too (its colours and indices).
+    /// </summary>
+    struct KeptCheck
+    {
+        uint16_t Surface = 0;
+        Texture Colors;
+        Texture Indices;
+    };
+
+    std::vector<KeptCheck> _KeptChecks;
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;

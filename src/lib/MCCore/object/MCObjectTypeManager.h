@@ -49,7 +49,8 @@ public:
 
     /// <summary>
     /// Port-only (SPEC-first-use.md: the original's packets at the load): loads what the types loaded can make in play
-    /// (MCObjectType::MadeTypes: wrecks, explosions, shots' effects and lights, fires), and theirs, round by round, each
+    /// (MCObjectType::MadeTypes: wrecks, explosions, shots' effects and lights, fires, mechs' jump jets and arms, vehicles'
+    /// crews) and what the game makes by its own numbers (a mine's blast), and theirs, round by round, each
     /// round's packets read together (MCPacketFile::HoldPackets), each kept for the mission as a kept type is (its
     /// appearance with it), so that none is read as it's first made. A type whose packet won't make one is left to fail
     /// as the original fails, if the mission ever makes it.

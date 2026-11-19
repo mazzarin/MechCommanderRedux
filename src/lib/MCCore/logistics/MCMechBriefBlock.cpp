@@ -16,6 +16,7 @@
 #include "sound/MCSoundSystem.h"
 #include "vfx/MCVfxFunctions.h"
 #include "lib/MCFatal.h"
+#include "sprite/MCHdArt.h"
 
 namespace
 {
@@ -254,6 +255,8 @@ auto MCMechBriefBlock::PlaceInEmptySlot(int32_t lance, int32_t slot) const -> bo
         CurDeployTonnage = DeployTonnageWith(*mech, 1.0f);
         mech->Deployed = true;
         GlobalLog()->AssignedWarriorList->SetDeployed(mech->PilotIndex, true);
+        // Port-only (SPEC-memory.md's "From the briefing"): its HD art read from now, behind the briefing.
+        MCHdArt::HoldMechAhead(mech->Chassis);
         return true;
     }
 

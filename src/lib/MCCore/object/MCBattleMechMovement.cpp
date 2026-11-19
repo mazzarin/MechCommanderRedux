@@ -1730,7 +1730,7 @@ auto MCBattleMech::CreateJumpFX() -> void
 
     for (std::shared_ptr<MCGameObject>& jet : JumpFX)
     {
-        jet = CreateObject(0x1c6);
+        jet = CreateObject(static_cast<int32_t>(MechJumpJetType));
         static_cast<MCJet&>(*jet).SetOwner(*this);
     }
 

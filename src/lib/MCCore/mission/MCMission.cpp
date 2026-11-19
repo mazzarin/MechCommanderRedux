@@ -63,6 +63,7 @@
 #include "logistics/MCBriefingScreen.h"
 
 int32_t GlobalGameSegment = 0;
+int32_t TestBriefingSeconds = 0;
 float MinPilotSkill = 0.0f;
 float MaxPilotSkill = 0.0f;
 uint32_t ScenarioResult = 0;
@@ -153,6 +154,72 @@ namespace
 
             callback.reset();
         }
+    }
+
+    /// <summary>
+    /// Port-only, for test runs (-hdbriefing): reads ahead each of the player's mechs in the scenario's file, as its
+    /// briefing reads each lance mech as it's placed (MCHdArt::HoldMechAhead).
+    /// </summary>
+    void HoldPlayersMechs(const std::string& scenarioName)
+    {
+        MCFitIniFile file;
+
+        if (file.Open(GamePath(MissionPath, scenarioName, ".fit")) != 0 || file.SeekBlock("Parts") != 0)
+        {
+            SDL_Log("-hdbriefing: no parts in %s's file; its mechs are read at the load", scenarioName.c_str());
+            return;
+        }
+
+        const uint32_t parts = file.Read<uint32_t>("NumParts").value_or(0);
+
+        // Part n is the file's Part<n> block.
+        for (uint32_t part = 1; part <= parts; ++part)
+        {
+            if (file.SeekBlock(std::format("Part{}", part)) == 0 && file.Read<bool>("PlayerPart").value_or(false))
+            {
+                if (const MCFitResult<uint32_t> chassis = file.Read<uint32_t>("ObjectNumber"); chassis.has_value())
+                {
+                    MCHdArt::HoldMechAhead(*chassis);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Port-only, for test runs (-hdbriefing): whether a game segment's load still waits for its TestBriefingSeconds,
+    /// its hold started on the first call as the mission's briefing would start it (its list, then the player's mechs).
+    /// </summary>
+    bool WaitingAtBriefing(const std::string& scenarioName)
+    {
+        using Clock = std::chrono::steady_clock;
+        static std::optional<Clock::time_point> started;
+
+        if (GlobalGameSegment == 0 || TestBriefingSeconds <= 0)
+        {
+            return false;
+        }
+
+        if (!started.has_value())
+        {
+            started = Clock::now();
+            MCHdArt::StartBriefingHold(scenarioName, MCHdArt::BriefingFolders(scenarioName));
+            HoldPlayersMechs(scenarioName);
+            MCFrameLog::Note(std::format("briefing: the hold starts, {} s before the load", TestBriefingSeconds));
+            MCHdArt::TraceNote("briefing: the hold starts");
+        }
+
+        if (Clock::now() - *started < std::chrono::seconds(TestBriefingSeconds))
+        {
+            return true;
+        }
+
+        // Once: a later scenario of the run loads at once.
+        constexpr double BytesPerMb = 1024.0 * 1024.0;
+        TestBriefingSeconds = 0;
+        MCFrameLog::Note(std::format("briefing: Launch, {:.1f} MB held, {} reads",
+                                     static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb, MCHdArt::HeldReads()));
+        MCHdArt::TraceNote("briefing: Launch");
+        return false;
     }
 }
 
@@ -703,14 +770,21 @@ auto MCMission::Run() -> int32_t
         {
             if (CurrentScenario != -1)
             {
+                const std::string scenarioName = (MultiPlayer() == nullptr || GlobalLog() == nullptr)
+                                                     ? Scenarios[static_cast<size_t>(CurrentScenario)]
+                                                     : std::string(GlobalLog()->MpMissionName);
+
+                // Port-only, for test runs: -hdbriefing's head start before a game segment's load.
+                if (WaitingAtBriefing(scenarioName))
+                {
+                    break;
+                }
+
                 if (SoundSystem() != nullptr)
                 {
                     SoundSystem()->StopDigitalMusic();
                 }
 
-                const std::string scenarioName = (MultiPlayer() == nullptr || GlobalLog() == nullptr)
-                                                     ? Scenarios[static_cast<size_t>(CurrentScenario)]
-                                                     : std::string(GlobalLog()->MpMissionName);
                 StartScenario(scenarioName);
                 GuiSystem().SetCursorVisible(true);
             }
@@ -870,8 +944,14 @@ auto MCMission::StartScenario(std::string_view name) -> void
 {
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
-    // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold).
-    MCHdArt::LetGoHold();
+
+    // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold); this one's,
+    // held since its briefing (SPEC-memory.md's "From the briefing", MCHdArt::StartBriefingHold), kept for its load.
+    if (!MCHdArt::HoldsFor(scenarioName))
+    {
+        MCHdArt::LetGoHold();
+    }
+
     // Port (personal): the reports measure the load, then the play (main/MCTelemetry.h).
     MCTelemetry::PlayLoading(scenarioName, MultiPlayer() != nullptr);
 

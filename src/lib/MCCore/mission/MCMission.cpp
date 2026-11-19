@@ -212,8 +212,10 @@ namespace
         }
 
         // Once: a later scenario of the run loads at once.
+        constexpr double BytesPerMb = 1024.0 * 1024.0;
         TestBriefingSeconds = 0;
-        MCFrameLog::Note("briefing: Launch");
+        MCFrameLog::Note(std::format("briefing: Launch, {:.1f} MB held, {} reads",
+                                     static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb, MCHdArt::HeldReads()));
         MCHdArt::TraceNote("briefing: Launch");
         return false;
     }

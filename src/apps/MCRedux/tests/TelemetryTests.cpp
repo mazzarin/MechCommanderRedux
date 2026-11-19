@@ -1,8 +1,11 @@
 #include "stdafx.h"
+#include "../MCMemorySystem.h"
+#include "../MCTelemetryBackend.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "MCTestGuest.h"
 #include "TestGame.h"
+#include "fakes/MCFakeMemorySystem.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCPacketFile.h"
@@ -17,12 +20,16 @@
 #include "main/MCTelemetry.h"
 #include "mission/MCMission.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCMemoryRoom.h"
+#include "platform/MCSdlHandle.h"
+#include "platform/MCVulkanShaders.h"
 
 // The reports (main/MCTelemetry.h), with a stand-in for the app's backend: nothing sent before the player has seen
 // what the reports hold, the question where the law wants consent first (the system's own region, or the server's),
 // the notice elsewhere; a match's report at its end, the missions' at the first and then a week apart; the last run's
-// crash with its black box; a file the campaign's load refused, at once, saying why; and the main menu's notice and
-// question (logistics/MCReportsNotice.h).
+// crash with its black box; a file the campaign's load refused, at once, saying why; the card the game draws on, as
+// the system says it (a stand-in's, and this platform's own); and the main menu's notice and question
+// (logistics/MCReportsNotice.h).
 
 namespace
 {
@@ -40,6 +47,8 @@ namespace
         /// <summary>The game's version: a later one after a restart is the game updated.</summary>
         std::string AppVersion = "0.2.1 (468)";
         std::optional<MCTelemetry::MCCrash> Crash;
+        /// <summary>The computer as this platform's backend reads it (none: the stand-in MacBook Air below).</summary>
+        std::optional<MCTelemetry::MCMachine> Machine;
         /// <summary>The black box's file: it outlives a backend, as a file does a run.</summary>
         std::shared_ptr<std::vector<std::byte>> BlackBox = std::make_shared<std::vector<std::byte>>();
         int32_t PowerReads = 0;
@@ -54,6 +63,11 @@ namespace
 
         MCTelemetry::MCMachine Machine() override
         {
+            if (_Log->Machine.has_value())
+            {
+                return *_Log->Machine;
+            }
+
             return {.Platform = "mac",
                     .AppVersion = _Log->AppVersion,
                     .Model = "MacBookAir10,1",
@@ -583,6 +597,133 @@ TEST_CASE("reports: a refused load is reported at once, saying why and what was 
     CHECK(Holds(crash, " load refused: components\""));
     CHECK(Holds(crash, " load refused: unopened\""));
     CHECK(Holds(crash, " load refused: missionPast\""));
+}
+
+TEST_CASE("reports: each says the card the game draws on as the system says it then, and nothing of one it can't say")
+{
+    constexpr uint64_t QuarterGb = uint64_t{1} << 28;
+    constexpr std::string_view DeviceName = "Test GPU";
+    const MCTelemetry::MCRefusedLoad load{.Reason = MCTelemetry::MCLoadRefusal::Unopened, .Kind = "pkk"};
+    MCFakeReports reports;
+    StartReporting(reports);
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    const MCFakeMemoryScope scope(system);
+    const std::vector<std::pair<std::string, std::string>>& sent = reports.Log->Requests;
+
+    {
+        // A card of its own (a PC's): its memory, and the budget DXGI gives the game there.
+        system->Budget = 29 * QuarterGb;
+        system->OwnBytes = 32 * QuarterGb;
+        const MCMemoryRoom::MCReader renderer{std::string(DeviceName)};
+        MCTelemetry::LoadRefused(load);
+        REQUIRE_EQ(sent.size(), size_t{1});
+        CHECK(Holds(sent[0].second, R"("system":"26.5","cardMemoryGb":8.00,"gpuBudgetGb":7.25,"sharedMemory":false})"));
+        CHECK_EQ(system->AskedName, std::string(DeviceName));
+
+        // Apple silicon's: the machine's memory, Metal's working set, and no memory of the card's own.
+        system->SharesMemory = true;
+        system->OwnBytes.reset();
+        system->Budget = 21 * QuarterGb;
+        MCTelemetry::LoadRefused(load);
+        REQUIRE_EQ(sent.size(), size_t{2});
+        CHECK(Holds(sent[1].second, R"("system":"26.5","gpuBudgetGb":5.25,"sharedMemory":true})"));
+
+        // A card the system can't speak for (no answer, or a budget of 0): nothing of it, never a 0.
+        system->Reports = false;
+        MCTelemetry::LoadRefused(load);
+        system->Reports = true;
+        system->Budget = 0;
+        MCTelemetry::LoadRefused(load);
+        REQUIRE_EQ(sent.size(), size_t{4});
+        CHECK(Holds(sent[2].second, R"("system":"26.5"})"));
+        CHECK(Holds(sent[3].second, R"("system":"26.5"})"));
+    }
+
+    // The renderer gone (the CPU draws): its device is asked no more.
+    system->Budget = 29 * QuarterGb;
+    const int reads = system->CardReads;
+    MCTelemetry::LoadRefused(load);
+    REQUIRE_EQ(sent.size(), size_t{5});
+    CHECK((system->CardReads == reads || system->AskedName != DeviceName));
+}
+
+/// <summary>
+/// The personal build: a report made with this platform's real backend (MCTelemetryMac.mm, MCTelemetryWin.cpp) and
+/// memory system (MCMemorySystemMac.mm, MCMemorySystemWin.cpp) says the card SDL's GPU device runs on, as the system
+/// says it; the report's computer printed, a sample of what this machine sends. Skipped without a GPU, or on Windows
+/// where DXGI says nothing of the device (a build machine's, drawing in software).
+/// </summary>
+TEST_CASE_ISOLATED("reports: a report says the card SDL's GPU device runs on, as this platform says it")
+{
+    constexpr std::string_view UnusedServer = "https://reports.invalid";
+    constexpr std::string_view MachineKey = R"("machine":{)";
+
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
+    {
+        std::cout << std::format("  (skipped: no video: {})\n", SDL_GetError());
+        return;
+    }
+
+    std::shared_ptr<SDL_GPUDevice> device(SDL_CreateGPUDevice(MCVulkanShaders::Format, false, MCVulkanShaders::Driver),
+                                          MCSdlDeleter{});
+
+    if (device == nullptr)
+    {
+        std::cout << std::format("  (skipped: no GPU device: {})\n", SDL_GetError());
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return;
+    }
+
+    const char* const name =
+        SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device.get()), SDL_PROP_GPU_DEVICE_NAME_STRING, "");
+    REQUIRE(name != nullptr);
+
+    {
+        MCMemoryRoom::SetSystem(MCMakeMemorySystem());
+        const MCMemoryRoom::MCReader renderer{std::string(name)};
+        const std::optional<MCMemoryRoom::MCCard> card = MCMemoryRoom::DrawnCard();
+        MCFakeReports reports;
+        const auto backend = MCMakeTelemetryBackend(MCFileSystem::UserRoot(), UnusedServer);
+        REQUIRE(backend != nullptr);
+        reports.Log->Machine = backend->Machine();
+        StartReporting(reports);
+        MCTelemetry::LoadRefused({.Reason = MCTelemetry::MCLoadRefusal::Unopened, .Kind = "pkk"});
+        REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+        const std::string& report = reports.Log->Requests[0].second;
+        const size_t at = report.find(MachineKey);
+        REQUIRE(at != std::string::npos);
+        std::cout << std::format("  {}: {}\n", name, report.substr(at, report.find('}', at) - at + 1));
+
+#ifdef _WIN32
+        if (!card.has_value())
+        {
+            std::cout << std::format("  (skipped: DXGI says nothing of {})\n", name);
+        }
+#endif
+
+#if defined(__APPLE__) && defined(__aarch64__)
+        // Apple silicon: the machine's memory, Metal's working set, and nothing of a card's own.
+        REQUIRE(card.has_value());
+        CHECK(Holds(report, R"("sharedMemory":true})"));
+        CHECK(!Holds(report, "cardMemoryGb"));
+#endif
+
+        if (card.has_value())
+        {
+            CHECK(card->Budget > 0);
+            CHECK(Holds(report, R"("gpuBudgetGb":)"));
+            CHECK(Holds(report, card->SharesMemory ? R"("sharedMemory":true)" : R"("sharedMemory":false)"));
+            CHECK_EQ(Holds(report, R"("cardMemoryGb":)"), card->OwnBytes.has_value());
+        }
+        else
+        {
+            CHECK(!Holds(report, "gpuBudgetGb"));
+        }
+    }
+
+    MCMemoryRoom::SetSystem(nullptr);
+    device.reset();
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
 TEST_CASE("reports: missions are reported at the first, then a week or more after, each report holding all since")

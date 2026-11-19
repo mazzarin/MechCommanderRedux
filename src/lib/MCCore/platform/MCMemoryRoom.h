@@ -43,6 +43,11 @@ namespace MCMemoryRoom
         uint64_t Used = 0;
         /// <summary>Whether the card's memory is the machine's (Apple silicon, integrated graphics).</summary>
         bool SharesMemory = false;
+        /// <summary>
+        /// Port-only (the reports, main/MCTelemetry.h): the card's own memory, as the system says it (Windows' dedicated
+        /// video memory, an integrated chip's share set aside for it among it); none where the system doesn't say (Metal).
+        /// </summary>
+        std::optional<uint64_t> OwnBytes;
     };
 
     /// <summary>The platform's answers (the tests' stand-ins too). Asked on the game's thread.</summary>
@@ -151,6 +156,14 @@ namespace MCMemoryRoom
     /// <summary>Port-only: whether the GPU's bytes are the machine's memory, as the card was last read (unread: shared).</summary>
     bool SharesMemory();
 
+    /// <summary>
+    /// Port-only (the reports, main/MCTelemetry.h): the card the game draws on, as the system says it now: the one SDL's
+    /// device of the newest reader made runs on while that reader lives (the renderer's, made as the GPU starts, so
+    /// before the main menu; the game has one at a time), with -hdcard's stand-in left out; none with no reader (the CPU
+    /// draws), no system, or when the system can't say. On the game's thread.
+    /// </summary>
+    std::optional<MCCard> DrawnCard();
+
     /// <summary>What a frame's trims follow (<see cref="MCReader::Frame"/>).</summary>
     struct MCFrameRoom
     {
@@ -173,6 +186,10 @@ namespace MCMemoryRoom
         /// A reader of the card SDL's device named <paramref name="deviceName"/> runs on, timed by <paramref name="now"/>.
         /// </summary>
         explicit MCReader(std::string deviceName, MCClock now = std::chrono::steady_clock::now);
+        /// <summary>The reader goes: DrawnCard asks of its device no more (a newer reader's stays).</summary>
+        ~MCReader();
+        MCReader(const MCReader&) = delete;
+        MCReader& operator=(const MCReader&) = delete;
 
         /// <summary>The frame's room, the HD pictures holding <paramref name="held"/> bytes on the card.</summary>
         MCFrameRoom Frame(uint64_t held);
@@ -183,6 +200,8 @@ namespace MCMemoryRoom
     private:
         std::string _DeviceName;
         MCClock _Now;
+        /// <summary>The reader's number, which DrawnCard's device is kept under while it's the newest.</summary>
+        uint64_t _Number = 0;
         /// <summary>When the card is asked next, and the generation of AskAgain it was last asked under.</summary>
         std::optional<std::chrono::steady_clock::time_point> _NextRead;
         uint64_t _Asked = 0;

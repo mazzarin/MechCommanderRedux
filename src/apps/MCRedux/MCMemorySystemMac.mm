@@ -113,6 +113,7 @@ namespace
                     return std::nullopt;
                 }
 
+                // Metal says nothing of a card's own memory (OwnBytes): the working set is what it gives the game.
                 return MCMemoryRoom::MCCard{.Budget = _Device.recommendedMaxWorkingSetSize,
                                             .Used = _Device.currentAllocatedSize,
                                             .SharesMemory = _Device.hasUnifiedMemory};

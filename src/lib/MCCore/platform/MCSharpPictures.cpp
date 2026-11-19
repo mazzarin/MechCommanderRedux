@@ -2,7 +2,6 @@
 #include "platform/MCSharpPictures.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFnvHash.h"
-#include "lib/MCInflate.h"
 #include "lib/MCWorkers.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCShapeRows.h"
@@ -118,18 +117,23 @@ namespace
     using Job = std::variant<FontJob, GlyphJob, LinesJob>;
 
     /// <summary>
-    /// The pack's sharp.hda read whole: its directory (MCFastFile::Find; its file closed once read) and its pictures as
-    /// stored, from <see cref="StoredAt"/> in the file on: about 3 MB (14 Nov), so that the helpers and a late draw
-    /// take them without reading the disk.
+    /// The pack's sharp.hda read whole: its directory (MCFastFile::Find; its file closed once read), its name as logged,
+    /// and its pictures as stored, from <see cref="StoredAt"/> in the file on: about 3 MB (14 Nov), so that the helpers
+    /// and a late draw take them without reading the disk. A version 1 archive's are its entries, each stored on its own;
+    /// a version 2 archive's (SPEC-pack-v2.md) its streams, each entry cut from its stream unpacked.
     /// </summary>
     struct Packed
     {
         std::unique_ptr<MCFastFile> Archive;
+        std::string Name;
         std::vector<uint8_t> Stored;
         size_t StoredAt = 0;
     };
 
-    /// <summary>The archive at <paramref name="path"/> read whole; null (logged) when it can't be.</summary>
+    /// <summary>
+    /// The archive at <paramref name="path"/> read whole; null (logged) when it can't be. Its pictures' streams are packed
+    /// without a dictionary (SPEC-pack-v2.md), so it's opened without the pack's: one naming a dictionary is refused.
+    /// </summary>
     std::shared_ptr<const Packed> ReadPack(const std::filesystem::path& path)
     {
         const std::string name = MCFileSystem::ToUtf8(path);
@@ -142,17 +146,21 @@ namespace
             return nullptr;
         }
 
-        // Where its entries' stored bytes lie, checked before they're read.
+        // Where its entries' stored bytes lie, checked before they're read: a version 2 entry's Offset and Size are its
+        // stream's (MCFastFile::EntryAt), so neighbours in a stream share them.
         auto packed = std::make_shared<Packed>();
+        packed->Name = name;
         size_t first = std::numeric_limits<size_t>::max();
         size_t end = 0;
 
-        for (const MCFileEntry& entry : (*archive)->GetEntries())
+        for (int32_t index = 0; index < (*archive)->GetNumFiles(); ++index)
         {
+            const MCFileEntry entry = (*archive)->EntryAt(index);
+
             if (entry.Offset < 0 || entry.Size < 0 || entry.RealSize < 0)
             {
-                SDL_Log("MCSharpPictures: the pack's %s has an entry that can't be (%.*s; its pictures are made)",
-                        name.c_str(), static_cast<int>(entry.GetName().size()), entry.GetName().data());
+                SDL_Log("MCSharpPictures: the pack's %s has an entry that can't be (entry %d; its pictures are made)",
+                        name.c_str(), index);
                 return nullptr;
             }
 
@@ -188,7 +196,8 @@ namespace
 
     /// <summary>
     /// The picture under <paramref name="key"/> in <paramref name="pack"/>, <paramref name="bytes"/> its red and green
-    /// bytes; none when the pack has no such picture, or one of another size or that doesn't unpack (logged).
+    /// bytes; none when the pack has no such picture or one of another size, or (logged) when its entry lies outside the
+    /// bytes read or doesn't unpack to its size.
     /// </summary>
     std::optional<MCSharpPictures::MCMadePicture> FromPack(const Packed& pack, uint64_t key, size_t bytes)
     {
@@ -199,32 +208,39 @@ namespace
             return std::nullopt;
         }
 
-        const MCFileEntry& entry = pack.Archive->GetEntries()[static_cast<size_t>(*index)];
+        // ReadPack checked every entry's sizes aren't negative.
+        const MCFileEntry entry = pack.Archive->EntryAt(*index);
 
         if (static_cast<size_t>(entry.RealSize) != bytes)
         {
             return std::nullopt;
         }
 
-        const std::span<const uint8_t> stored =
-            std::span(pack.Stored)
-                .subspan(static_cast<size_t>(entry.Offset) - pack.StoredAt, static_cast<size_t>(entry.Size));
+        const auto offset = static_cast<size_t>(entry.Offset);
+        const auto size = static_cast<size_t>(entry.Size);
 
-        if (entry.Size == entry.RealSize)
+        if (offset < pack.StoredAt || offset - pack.StoredAt > pack.Stored.size() ||
+            size > pack.Stored.size() - (offset - pack.StoredAt))
         {
-            return MCSharpPictures::MCMadePicture::OfRedGreen({stored.begin(), stored.end()});
-        }
-
-        std::expected<std::vector<uint8_t>, std::string> inflated = MCInflate::Inflate(stored, bytes);
-
-        if (!inflated)
-        {
-            SDL_Log("MCSharpPictures: the pack's picture %016llx doesn't unpack: %s (it's made)",
-                    static_cast<unsigned long long>(key), inflated.error().c_str());
+            SDL_Log("MCSharpPictures: the pack's %s has picture %016llx outside the bytes read (it's made)",
+                    pack.Name.c_str(), static_cast<unsigned long long>(key));
             return std::nullopt;
         }
 
-        return MCSharpPictures::MCMadePicture::OfRedGreen(std::move(*inflated));
+        // A version 1 entry inflated when packed, a version 2 one cut from its stream unpacked.
+        std::expected<std::vector<uint8_t>, std::string> unpacked =
+            pack.Archive->Unpack(*index, std::span(pack.Stored).subspan(offset - pack.StoredAt, size));
+
+        if (!unpacked || unpacked->size() != bytes)
+        {
+            const std::string why =
+                unpacked ? std::format("{} of {} bytes", unpacked->size(), bytes) : std::move(unpacked.error());
+            SDL_Log("MCSharpPictures: the pack's %s has picture %016llx that doesn't unpack: %s (it's made)",
+                    pack.Name.c_str(), static_cast<unsigned long long>(key), why.c_str());
+            return std::nullopt;
+        }
+
+        return MCSharpPictures::MCMadePicture::OfRedGreen(std::move(*unpacked));
     }
 
     /// <summary>A picture made, and the bytes it counts against MostLineArtBytes (0: a glyph's).</summary>
@@ -505,7 +521,8 @@ namespace
                 lock.lock();
                 state.Pack = std::move(pack);
                 state.PackReadFrom = path;
-                state.Tally.PackPictures = state.Pack != nullptr ? state.Pack->Archive->GetEntries().size() : 0;
+                state.Tally.PackPictures =
+                    state.Pack != nullptr ? static_cast<size_t>(state.Pack->Archive->GetNumFiles()) : 0;
             }
 
             const std::shared_ptr<const Packed> pack = state.Pack;

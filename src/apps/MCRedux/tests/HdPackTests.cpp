@@ -617,10 +617,12 @@ namespace
     /// A version 2 HD archive (SPEC-pack-v2.md) of <paramref name="streams"/>, each stored as it is (codec 0) or as
     /// packed (Version2Stream::Packed), in their order, and its entries (their stored bytes as they unpack, no sharing)
     /// in theirs: each found by its path's key, each folder its first name is in by its own, with the facts
-    /// <paramref name="facts"/> gives a folder (its records, FactsRecord's).
+    /// <paramref name="facts"/> gives a folder (its records, FactsRecord's); with <paramref name="names"/>, each entry's
+    /// path after the data, in the table's order, as pack_v2.py writes them.
     /// </summary>
     std::vector<uint8_t> BuildVersion2Streams(const std::vector<Version2Stream>& streams,
-                                              const std::map<std::string, std::vector<uint8_t>>& facts = {})
+                                              const std::map<std::string, std::vector<uint8_t>>& facts = {},
+                                              bool names = false)
     {
         constexpr size_t HeaderBytes = 64;
         constexpr size_t FolderRowBytes = 16;
@@ -631,6 +633,7 @@ namespace
         constexpr size_t EntryRowBytes = 20;
         constexpr uint16_t Format = 2;
         std::vector<std::pair<uint64_t, std::array<uint32_t, 3>>> rows;
+        std::map<uint64_t, std::string> nameOf;
         std::set<uint64_t> folders;
         std::vector<uint8_t> data;
         // Each stream's start in the data, and its bytes unpacked.
@@ -647,6 +650,7 @@ namespace
             {
                 rows.push_back(
                     {MCFastFile::PathKey(entry.Name), {number, at, static_cast<uint32_t>(entry.Stored.size())}});
+                nameOf[MCFastFile::PathKey(entry.Name)] = entry.Name;
                 at += static_cast<uint32_t>(entry.Stored.size());
 
                 if (stream.Packed.empty())
@@ -736,6 +740,20 @@ namespace
         PutAt(out, 48, static_cast<uint64_t>(XXH3_64bits(table.data(), table.size())));
         out.insert(out.end(), table.begin(), table.end());
         out.insert(out.end(), data.begin(), data.end());
+
+        if (names)
+        {
+            constexpr size_t NamesAt = 56;
+            PutAt(out, NamesAt, static_cast<uint64_t>(out.size()));
+
+            for (const auto& [key, place] : rows)
+            {
+                const std::string& name = nameOf.at(key);
+                out.insert(out.end(), name.begin(), name.end());
+                out.push_back(0);
+            }
+        }
+
         return out;
     }
 
@@ -749,6 +767,13 @@ namespace
     {
         return BuildVersion2Streams({Version2Stream{.Entries = entries}}, facts);
     }
+
+    /// <summary>The version of archive a test packs its pictures in: 1, or 2 (SPEC-pack-v2.md).</summary>
+    enum class PackVersion
+    {
+        One,
+        Two,
+    };
 
     /// <summary>A version 2 stream's codec: Zstandard (SPEC-pack-v2.md's streams).</summary>
     constexpr uint8_t ZstdCodec = 2;
@@ -2987,6 +3012,122 @@ TEST_CASE("hd art: a briefing map's picture is found in maps.hda, a screen's in 
     MCHdArt::SetPackFolder({});
 }
 
+namespace
+{
+    /// <summary>The screens' set read ahead (the tests below), its archives <paramref name="version"/>'s.</summary>
+    void CheckMenuSetAhead(PackVersion version)
+    {
+        constexpr int32_t Width = AheadWidth;
+        constexpr int32_t Height = AheadHeight;
+        // The screens' pictures, then one whose name is a picture of another size's (its file made for this size), then a
+        // map.
+        constexpr uint8_t Screens = 4;
+        constexpr uint8_t Misfit = Screens;
+        constexpr uint8_t Map = Screens + 1;
+        constexpr int32_t MisfitWidth = Width + 2;
+        // The menus' and the maps' archives as <paramref name="version"/>'s: a version 2 one each picture its own stream, as
+        // the pack's are, its names kept (or not).
+        const auto archive = [&](const std::vector<ArchiveEntry>& entries, bool keepNames = true)
+        {
+            if (version == PackVersion::One)
+            {
+                return BuildArchive(entries);
+            }
+
+            std::vector<Version2Stream> streams;
+
+            for (const ArchiveEntry& entry : entries)
+            {
+                streams.push_back(Version2Stream{.Entries = {entry}, .Kind = MCFastFile::StreamKind::Pictures});
+            }
+
+            return BuildVersion2Streams(streams, {}, keepNames);
+        };
+
+        const ScratchFolder scratch(version == PackVersion::One ? "menu-set" : "menu-set-2");
+        std::vector<std::vector<uint8_t>> pixels;
+        std::vector<std::vector<uint8_t>> files;
+        std::vector<std::string> names;
+
+        for (uint8_t picture = 0; picture <= Map; ++picture)
+        {
+            const int32_t width = picture == Misfit ? MisfitWidth : Width;
+            std::vector<uint8_t>& shown = pixels.emplace_back(static_cast<size_t>(width) * Height);
+            std::ranges::generate(shown,
+                                  [&, at = 0]() mutable { return static_cast<uint8_t>(picture * Width + at++); });
+            files.push_back(AheadFile({picture, 0}, static_cast<uint8_t>(picture + 1)));
+            names.push_back(MCHdArt::PictureName(MCHdArt::PictureHash(shown, width, Height)) + ".hdf");
+        }
+
+        std::vector<ArchiveEntry> set;
+
+        for (uint8_t picture = 0; picture < Map; ++picture)
+        {
+            set.push_back(Raw(names[picture], files[picture]));
+        }
+
+        const std::filesystem::path split = scratch.Path() / "split";
+        std::filesystem::create_directories(split);
+        WriteBytes(split / "menus.hda", archive(set));
+        WriteBytes(split / "maps.hda", archive({Raw(names[Map], files[Map])}));
+        const std::filesystem::path before = scratch.Path() / "before";
+        std::filesystem::create_directories(before);
+        set.push_back(Raw(names[Map], files[Map]));
+        WriteBytes(before / "menus.hda", archive(set));
+        const int previous = GHdArt;
+        GHdArt = 1;
+
+        // The split pack: the set read ahead, the map not.
+        MCHdArt::SetPackFolder(split);
+        size_t ahead = MCHdArt::FramesReadAhead();
+        CHECK(MCHdArt::ReadMenuSetAhead() > 0);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Screens + 1);
+        CHECK_EQ(MCHdArt::ReadMenuSetAhead(), 0u);
+        size_t read = MCHdArt::FramesRead();
+
+        for (uint8_t picture = 0; picture < Screens; ++picture)
+        {
+            MCTest::Scope scope(std::format("picture {}", picture));
+            const std::shared_ptr<const MCHdArt::Frame> frame = MCHdArt::FindPicture(pixels[picture], Width, Height);
+            REQUIRE(frame != nullptr);
+            const auto decoded = MCHdArt::DecodeHdf(files[picture], Width, Height);
+            REQUIRE(decoded.has_value());
+            CHECK(SameFrame(*frame, *decoded));
+        }
+
+        CHECK_EQ(MCHdArt::FramesRead(), read);
+        CHECK(MCHdArt::FindPicture(pixels[Misfit], MisfitWidth, Height) == nullptr);
+        read = MCHdArt::FramesRead();
+        CHECK(MCHdArt::FindPicture(pixels[Map], Width, Height) != nullptr);
+        CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+
+        // The pack made before: nothing read ahead.
+        MCHdArt::SetPackFolder(before);
+        ahead = MCHdArt::FramesReadAhead();
+        CHECK_EQ(MCHdArt::ReadMenuSetAhead(), 0u);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::KeepReadAhead();
+        CHECK_EQ(MCHdArt::FramesReadAhead(), ahead);
+
+        // Version 2 without its names: nothing read ahead (logged), the pictures left to their draws.
+        if (version == PackVersion::Two)
+        {
+            const std::filesystem::path nameless = scratch.Path() / "nameless";
+            std::filesystem::create_directories(nameless);
+            set.pop_back();
+            WriteBytes(nameless / "menus.hda", archive(set, false));
+            WriteBytes(nameless / "maps.hda", archive({Raw(names[Map], files[Map])}));
+            MCHdArt::SetPackFolder(nameless);
+            CHECK_EQ(MCHdArt::ReadMenuSetAhead(), 0u);
+        }
+
+        GHdArt = previous;
+        MCHdArt::SetPackFolder({});
+    }
+}
+
 /// <summary>
 /// Port-only (SPEC-first-use.md): with the briefing maps in an archive of their own, the screens' whole set is read
 /// ahead (MCHdArt::ReadMenuSetAhead), every picture in the menus' archive whatever shows it, and each is found as drawn
@@ -2995,82 +3136,17 @@ TEST_CASE("hd art: a briefing map's picture is found in maps.hda, a screen's in 
 /// </summary>
 TEST_CASE("hd art: the screens' whole set is read ahead where the maps lie apart, each found without a read")
 {
-    constexpr int32_t Width = AheadWidth;
-    constexpr int32_t Height = AheadHeight;
-    // The screens' pictures, then one whose name is a picture of another size's (its file made for this size), then a
-    // map.
-    constexpr uint8_t Screens = 4;
-    constexpr uint8_t Misfit = Screens;
-    constexpr uint8_t Map = Screens + 1;
-    constexpr int32_t MisfitWidth = Width + 2;
-    const ScratchFolder scratch("menu-set");
-    std::vector<std::vector<uint8_t>> pixels;
-    std::vector<std::vector<uint8_t>> files;
-    std::vector<std::string> names;
+    CheckMenuSetAhead(PackVersion::One);
+}
 
-    for (uint8_t picture = 0; picture <= Map; ++picture)
-    {
-        const int32_t width = picture == Misfit ? MisfitWidth : Width;
-        std::vector<uint8_t>& shown = pixels.emplace_back(static_cast<size_t>(width) * Height);
-        std::ranges::generate(shown, [&, at = 0]() mutable { return static_cast<uint8_t>(picture * Width + at++); });
-        files.push_back(AheadFile({picture, 0}, static_cast<uint8_t>(picture + 1)));
-        names.push_back(MCHdArt::PictureName(MCHdArt::PictureHash(shown, width, Height)) + ".hdf");
-    }
-
-    std::vector<ArchiveEntry> set;
-
-    for (uint8_t picture = 0; picture < Map; ++picture)
-    {
-        set.push_back(Raw(names[picture], files[picture]));
-    }
-
-    const std::filesystem::path split = scratch.Path() / "split";
-    std::filesystem::create_directories(split);
-    WriteBytes(split / "menus.hda", BuildArchive(set));
-    WriteBytes(split / "maps.hda", BuildArchive({Raw(names[Map], files[Map])}));
-    const std::filesystem::path before = scratch.Path() / "before";
-    std::filesystem::create_directories(before);
-    set.push_back(Raw(names[Map], files[Map]));
-    WriteBytes(before / "menus.hda", BuildArchive(set));
-    const int previous = GHdArt;
-    GHdArt = 1;
-
-    // The split pack: the set read ahead, the map not.
-    MCHdArt::SetPackFolder(split);
-    size_t ahead = MCHdArt::FramesReadAhead();
-    CHECK(MCHdArt::ReadMenuSetAhead() > 0);
-    MCHdArt::WaitForReadAhead();
-    MCHdArt::KeepReadAhead();
-    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + Screens + 1);
-    CHECK_EQ(MCHdArt::ReadMenuSetAhead(), 0u);
-    size_t read = MCHdArt::FramesRead();
-
-    for (uint8_t picture = 0; picture < Screens; ++picture)
-    {
-        MCTest::Scope scope(std::format("picture {}", picture));
-        const std::shared_ptr<const MCHdArt::Frame> frame = MCHdArt::FindPicture(pixels[picture], Width, Height);
-        REQUIRE(frame != nullptr);
-        const auto decoded = MCHdArt::DecodeHdf(files[picture], Width, Height);
-        REQUIRE(decoded.has_value());
-        CHECK(SameFrame(*frame, *decoded));
-    }
-
-    CHECK_EQ(MCHdArt::FramesRead(), read);
-    CHECK(MCHdArt::FindPicture(pixels[Misfit], MisfitWidth, Height) == nullptr);
-    read = MCHdArt::FramesRead();
-    CHECK(MCHdArt::FindPicture(pixels[Map], Width, Height) != nullptr);
-    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
-
-    // The pack made before: nothing read ahead.
-    MCHdArt::SetPackFolder(before);
-    ahead = MCHdArt::FramesReadAhead();
-    CHECK_EQ(MCHdArt::ReadMenuSetAhead(), 0u);
-    MCHdArt::WaitForReadAhead();
-    MCHdArt::KeepReadAhead();
-    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead);
-
-    GHdArt = previous;
-    MCHdArt::SetPackFolder({});
+/// <summary>
+/// Port-only: a version 2 pack's screens' set is read ahead as version 1's is, found by its menus' archive's names
+/// (SPEC-pack-v2.md: it has no directory), which the game reads for it alone; one keeping none reads nothing ahead.
+/// It read nothing ahead before (19 Nov: pack v2's final art), finding the set in the directory version 2 lacks.
+/// </summary>
+TEST_CASE("hd art: a version 2 pack's screens' set is read ahead by its menus' archive's names")
+{
+    CheckMenuSetAhead(PackVersion::Two);
 }
 
 /// <summary>
@@ -5115,147 +5191,241 @@ TEST_CASE_ISOLATED("tool: --hd-measure-lz packs frame files with the game's LZ")
                              std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
 }
 
+namespace
+{
+    /// <summary>
+    /// The sharp pictures' test (the two below): the pictures it packs, as <paramref name="version"/>'s archive, and what
+    /// the game takes of them.
+    /// </summary>
+    void CheckSharpPack(PackVersion version)
+    {
+        if (!MCTestGame::Available())
+        {
+            return;
+        }
+
+        REQUIRE(MCTestGame::StartLogistics());
+        GHdArt = 1;
+        GlobalLog()->AttachHdArt();
+        REQUIRE(WhiteFont != nullptr);
+        const std::span<const uint8_t> font = WhiteFont->FontData.Bytes();
+        const MCSharpText::MCFontLayers layers = MCSharpText::LayersOf(font);
+
+        // A picture's red and green bytes, and the pack's of it: each byte changed, so that one taken from the pack is
+        // told from one redrawn.
+        const auto redGreen = [](std::vector<uint8_t> rgba)
+        {
+            const MCSharpPictures::MCMadePicture picture(std::move(rgba));
+            REQUIRE(picture.RedGreen().has_value());
+            return std::vector<uint8_t>(picture.RedGreen()->begin(), picture.RedGreen()->end());
+        };
+
+        const auto marked = [](std::vector<uint8_t> bytes)
+        {
+            std::ranges::transform(bytes, bytes.begin(),
+                                   [](uint8_t byte) { return static_cast<uint8_t>(byte ^ 0x5a); });
+            return bytes;
+        };
+
+        const auto name = [](uint64_t key) { return std::format("{:016x}.rg8", key); };
+
+        // The printable glyphs' pictures.
+        struct Glyph
+        {
+            uint64_t Key = 0;
+            int32_t Columns = 0;
+            int32_t Rows = 0;
+            std::vector<uint8_t> Redrawn;
+        };
+
+        std::vector<Glyph> glyphs;
+        std::set<uint64_t> seen;
+
+        for (int32_t character = 0x20; character <= 0x7e; ++character)
+        {
+            const std::optional<MCSharpPictures::MCFontGlyph> glyph = MCSharpPictures::FontGlyph(font, character);
+
+            if (!glyph.has_value() || glyph->Pitch <= 0)
+            {
+                continue;
+            }
+
+            const MCSharpPictures::MCGlyphPictures how =
+                MCSharpPictures::GlyphPictures(glyph->Pixels, glyph->Pitch, glyph->Height, layers);
+            std::vector<std::vector<uint8_t>> redrawn =
+                MCSharpPictures::RedrawGlyph(glyph->Pixels, glyph->Pitch, glyph->Height, how);
+
+            for (size_t picture = 0; picture < how.Count(); ++picture)
+            {
+                if (seen.insert(how.KeyOf(picture)).second)
+                {
+                    glyphs.push_back({how.KeyOf(picture), glyph->Pitch, glyph->Height, redGreen(redrawn[picture])});
+                }
+            }
+        }
+
+        REQUIRE(glyphs.size() > 10);
+
+        // What the pack holds of a picture: its bytes as they unpack, and whether they're its own picture's (taken from
+        // the pack), of another size (left out) or don't unpack (logged, and redrawn).
+        enum class Held
+        {
+            Taken,
+            OtherSize,
+            Broken,
+        };
+
+        struct Packing
+        {
+            std::string Name;
+            std::vector<uint8_t> Bytes;
+            Held How = Held::Taken;
+        };
+
+        // Every other glyph's picture in the pack: the second of those of another size, the third broken.
+        constexpr size_t OtherSizeGlyph = 2;
+        constexpr size_t BrokenGlyph = 4;
+        std::vector<Packing> pictures;
+        std::set<uint64_t> packed;
+
+        for (size_t at = 0; at < glyphs.size(); at += 2)
+        {
+            const Glyph& glyph = glyphs[at];
+            const Held how = at == OtherSizeGlyph ? Held::OtherSize : at == BrokenGlyph ? Held::Broken : Held::Taken;
+            pictures.push_back(
+                {name(glyph.Key),
+                 how == Held::OtherSize ? std::vector<uint8_t>(glyph.Redrawn.size() + 2) : marked(glyph.Redrawn), how});
+
+            if (how == Held::Taken)
+            {
+                packed.insert(glyph.Key);
+            }
+        }
+
+        // A mech's diagram's first frame, never made ahead: read from the pack as it's first drawn.
+        const std::span<const uint8_t> atlas = GlobalLog()->MechRepShapes[0].Bytes();
+        const int32_t frame = MCLogistics::MechArmorShapes;
+        REQUIRE(MCHdArt::LineArt(atlas, frame));
+        const std::optional<MCSharpPictures::MCLineArtCut> cut =
+            MCSharpPictures::CutLineArt(atlas, frame, MCHdArt::LineArtDrawn(atlas, frame));
+        REQUIRE(cut.has_value());
+        const std::vector<uint8_t> lines = marked(redGreen(MCSharpLines::Redraw(
+            cut->Art, cut->Columns, cut->Columns, cut->Rows, MCHdArt::LineArtDrawn(atlas, frame))));
+        pictures.push_back({name(cut->Key), lines, Held::Taken});
+
+        // Version 1: the first stored raw, the rest packed (DEFLATE), the broken one's stored bytes a block of a type
+        // DEFLATE lacks. Version 2: the first and fourth cut from one stream stored as it is, the rest each its own
+        // stream (a Zstandard frame), the broken one's checksum spoiled.
+        std::vector<uint8_t> archive;
+
+        if (version == PackVersion::One)
+        {
+            constexpr size_t BrokenBytes = 8;
+            constexpr uint8_t ReservedBlocks = 0xff;
+            std::vector<ArchiveEntry> entries;
+
+            for (size_t at = 0; at < pictures.size(); ++at)
+            {
+                const Packing& picture = pictures[at];
+                entries.push_back(at == 0 ? Raw(picture.Name, picture.Bytes)
+                                          : ArchiveEntry{picture.Name,
+                                                         picture.How == Held::Broken
+                                                             ? std::vector<uint8_t>(BrokenBytes, ReservedBlocks)
+                                                             : StoredDeflate(picture.Bytes),
+                                                         picture.Bytes.size(), std::nullopt});
+            }
+
+            archive = BuildArchive(entries);
+        }
+        else
+        {
+            constexpr size_t SharesWithFirst = 3;
+            constexpr uint8_t NoDictionary = 0;
+            std::vector<Version2Stream> streams(1, Version2Stream{.Kind = MCFastFile::StreamKind::Pictures});
+
+            for (size_t at = 0; at < pictures.size(); ++at)
+            {
+                const Packing& picture = pictures[at];
+
+                if (at == 0 || at == SharesWithFirst)
+                {
+                    streams.front().Entries.push_back(Raw(picture.Name, picture.Bytes));
+                    continue;
+                }
+
+                std::vector<uint8_t> frame = RawZstdFrame(picture.Bytes, NoDictionary);
+
+                if (picture.How == Held::Broken)
+                {
+                    frame.back() ^= 0xff;
+                }
+
+                streams.push_back(Version2Stream{.Entries = {Raw(picture.Name, picture.Bytes)},
+                                                 .Kind = MCFastFile::StreamKind::Pictures,
+                                                 .Packed = std::move(frame),
+                                                 .Codec = ZstdCodec});
+            }
+
+            archive = BuildVersion2Streams(streams);
+        }
+
+        const ScratchFolder scratch("sharp-pictures");
+        WriteBytes(scratch.Path() / "sharp.hda", archive);
+        MCHdArt::SetPackFolder(scratch.Path());
+        REQUIRE(MCHdArt::SharpArchive() == scratch.Path() / "sharp.hda");
+        MCSharpPictures::MakeFont(font);
+        MCSharpPictures::WaitForMade();
+        CHECK_EQ(MCSharpPictures::Tally().PackPictures, pictures.size());
+        CHECK_EQ(MCSharpPictures::Tally().FromPack, packed.size());
+
+        for (const Glyph& glyph : glyphs)
+        {
+            const MCTest::Scope scope(std::format("picture {}", name(glyph.Key)));
+            const std::optional<MCSharpPictures::MCMadePicture> taken =
+                MCSharpPictures::Take(glyph.Key, glyph.Columns, glyph.Rows);
+            REQUIRE(taken.has_value());
+            REQUIRE(taken->RedGreen().has_value());
+            CHECK(std::ranges::equal(*taken->RedGreen(),
+                                     packed.contains(glyph.Key) ? marked(glyph.Redrawn) : glyph.Redrawn));
+        }
+
+        // Drawn first: the pack's, the size the key's picture is.
+        const size_t fromPack = MCSharpPictures::Tally().TakenFromPack;
+        CHECK(!MCSharpPictures::Take(cut->Key, cut->Columns + 1, cut->Rows).has_value());
+        const std::optional<MCSharpPictures::MCMadePicture> drawn =
+            MCSharpPictures::Take(cut->Key, cut->Columns, cut->Rows);
+        REQUIRE(drawn.has_value());
+        REQUIRE(drawn->RedGreen().has_value());
+        CHECK(std::ranges::equal(*drawn->RedGreen(), lines));
+        CHECK_EQ(MCSharpPictures::Tally().TakenFromPack, fromPack + 1);
+
+        // A pack without one: none.
+        const ScratchFolder bare("sharp-pictures-none");
+        MCHdArt::SetPackFolder(bare.Path());
+        CHECK(!MCHdArt::SharpArchive().has_value());
+        GHdArt = 0;
+    }
+}
+
 /// <summary>
 /// Port-only: the pack's sharp.hda (MCHdArt::SharpArchive) holds the sharp screens' pictures, each named by its key
 /// (<c>&lt;key&gt;.rg8</c>, its red and green bytes): a font's glyphs and line art made ahead are taken from it where
-/// it has them, of the size the key's picture is; the rest are redrawn; and a picture never made ahead is read from it
-/// as it's first drawn.
+/// it has them, of the size the key's picture is; the rest are redrawn, as is one that doesn't unpack; and a picture
+/// never made ahead is read from it as it's first drawn.
 /// </summary>
 TEST_CASE_ISOLATED("hd art: the sharp screens' pictures are the pack's sharp.hda's where it has them, the rest redrawn")
 {
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
+    CheckSharpPack(PackVersion::One);
+}
 
-    REQUIRE(MCTestGame::StartLogistics());
-    GHdArt = 1;
-    GlobalLog()->AttachHdArt();
-    REQUIRE(WhiteFont != nullptr);
-    const std::span<const uint8_t> font = WhiteFont->FontData.Bytes();
-    const MCSharpText::MCFontLayers layers = MCSharpText::LayersOf(font);
-
-    // A picture's red and green bytes, and the pack's of it: each byte changed, so that one taken from the pack is
-    // told from one redrawn.
-    const auto redGreen = [](std::vector<uint8_t> rgba)
-    {
-        const MCSharpPictures::MCMadePicture picture(std::move(rgba));
-        REQUIRE(picture.RedGreen().has_value());
-        return std::vector<uint8_t>(picture.RedGreen()->begin(), picture.RedGreen()->end());
-    };
-
-    const auto marked = [](std::vector<uint8_t> bytes)
-    {
-        std::ranges::transform(bytes, bytes.begin(), [](uint8_t byte) { return static_cast<uint8_t>(byte ^ 0x5a); });
-        return bytes;
-    };
-
-    const auto name = [](uint64_t key) { return std::format("{:016x}.rg8", key); };
-
-    // The printable glyphs' pictures: every other one in the pack (one stored raw, the rest packed), one of another
-    // size, the rest not.
-    struct Glyph
-    {
-        uint64_t Key = 0;
-        int32_t Columns = 0;
-        int32_t Rows = 0;
-        std::vector<uint8_t> Redrawn;
-    };
-
-    std::vector<Glyph> glyphs;
-    std::set<uint64_t> seen;
-
-    for (int32_t character = 0x20; character <= 0x7e; ++character)
-    {
-        const std::optional<MCSharpPictures::MCFontGlyph> glyph = MCSharpPictures::FontGlyph(font, character);
-
-        if (!glyph.has_value() || glyph->Pitch <= 0)
-        {
-            continue;
-        }
-
-        const MCSharpPictures::MCGlyphPictures how =
-            MCSharpPictures::GlyphPictures(glyph->Pixels, glyph->Pitch, glyph->Height, layers);
-        std::vector<std::vector<uint8_t>> redrawn =
-            MCSharpPictures::RedrawGlyph(glyph->Pixels, glyph->Pitch, glyph->Height, how);
-
-        for (size_t picture = 0; picture < how.Count(); ++picture)
-        {
-            if (seen.insert(how.KeyOf(picture)).second)
-            {
-                glyphs.push_back({how.KeyOf(picture), glyph->Pitch, glyph->Height, redGreen(redrawn[picture])});
-            }
-        }
-    }
-
-    REQUIRE(glyphs.size() > 10);
-    std::vector<ArchiveEntry> entries;
-    std::set<uint64_t> packed;
-
-    for (size_t at = 0; at < glyphs.size(); at += 2)
-    {
-        const Glyph& glyph = glyphs[at];
-        const std::vector<uint8_t> bytes = marked(glyph.Redrawn);
-
-        if (at == 2)
-        {
-            // Another size: left out.
-            const std::vector<uint8_t> longer(bytes.size() + 2);
-            entries.push_back({name(glyph.Key), StoredDeflate(longer), longer.size(), std::nullopt});
-            continue;
-        }
-
-        entries.push_back(at == 0 ? Raw(name(glyph.Key), bytes)
-                                  : ArchiveEntry{name(glyph.Key), StoredDeflate(bytes), bytes.size(), std::nullopt});
-        packed.insert(glyph.Key);
-    }
-
-    // A mech's diagram's first frame, never made ahead: read from the pack as it's first drawn.
-    const std::span<const uint8_t> atlas = GlobalLog()->MechRepShapes[0].Bytes();
-    const int32_t frame = MCLogistics::MechArmorShapes;
-    REQUIRE(MCHdArt::LineArt(atlas, frame));
-    const std::optional<MCSharpPictures::MCLineArtCut> cut =
-        MCSharpPictures::CutLineArt(atlas, frame, MCHdArt::LineArtDrawn(atlas, frame));
-    REQUIRE(cut.has_value());
-    const std::vector<uint8_t> lines = marked(redGreen(
-        MCSharpLines::Redraw(cut->Art, cut->Columns, cut->Columns, cut->Rows, MCHdArt::LineArtDrawn(atlas, frame))));
-    entries.push_back({name(cut->Key), StoredDeflate(lines), lines.size(), std::nullopt});
-
-    const ScratchFolder scratch("sharp-pictures");
-    WriteBytes(scratch.Path() / "sharp.hda", BuildArchive(entries));
-    MCHdArt::SetPackFolder(scratch.Path());
-    REQUIRE(MCHdArt::SharpArchive() == scratch.Path() / "sharp.hda");
-    MCSharpPictures::MakeFont(font);
-    MCSharpPictures::WaitForMade();
-    CHECK_EQ(MCSharpPictures::Tally().PackPictures, entries.size());
-    CHECK_EQ(MCSharpPictures::Tally().FromPack, packed.size());
-
-    for (const Glyph& glyph : glyphs)
-    {
-        const MCTest::Scope scope(std::format("picture {}", name(glyph.Key)));
-        const std::optional<MCSharpPictures::MCMadePicture> taken =
-            MCSharpPictures::Take(glyph.Key, glyph.Columns, glyph.Rows);
-        REQUIRE(taken.has_value());
-        REQUIRE(taken->RedGreen().has_value());
-        CHECK(
-            std::ranges::equal(*taken->RedGreen(), packed.contains(glyph.Key) ? marked(glyph.Redrawn) : glyph.Redrawn));
-    }
-
-    // Drawn first: the pack's, the size the key's picture is.
-    const size_t fromPack = MCSharpPictures::Tally().TakenFromPack;
-    CHECK(!MCSharpPictures::Take(cut->Key, cut->Columns + 1, cut->Rows).has_value());
-    const std::optional<MCSharpPictures::MCMadePicture> drawn =
-        MCSharpPictures::Take(cut->Key, cut->Columns, cut->Rows);
-    REQUIRE(drawn.has_value());
-    REQUIRE(drawn->RedGreen().has_value());
-    CHECK(std::ranges::equal(*drawn->RedGreen(), lines));
-    CHECK_EQ(MCSharpPictures::Tally().TakenFromPack, fromPack + 1);
-
-    // A pack without one: none.
-    const ScratchFolder bare("sharp-pictures-none");
-    MCHdArt::SetPackFolder(bare.Path());
-    CHECK(!MCHdArt::SharpArchive().has_value());
-    GHdArt = 0;
+/// <summary>
+/// Port-only: a version 2 sharp.hda (SPEC-pack-v2.md: no names, each entry cut from its stream) gives the sharp
+/// screens' pictures as a version 1 one does, one that doesn't unpack redrawn. It crashed the menus' making thread
+/// before (19 Nov: pack v2's final art), which took a version 2 entry's stream for its own stored bytes.
+/// </summary>
+TEST_CASE_ISOLATED("hd art: a version 2 sharp.hda gives the sharp screens' pictures as version 1's does")
+{
+    CheckSharpPack(PackVersion::Two);
 }
 
 namespace

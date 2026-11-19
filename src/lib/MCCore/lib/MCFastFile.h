@@ -94,6 +94,14 @@ public:
     /// </summary>
     std::vector<uint8_t> ReadStored(int32_t index, MCDiskFile& file) const;
 
+    /// <summary>
+    /// Port-only: the entries' paths, in the archive's order: a version 1 archive's directory's, a version 2 archive's
+    /// read from its names (SPEC-pack-v2.md, after its data; the tools' list, read by the game for the menus' set
+    /// alone, MCHdArt::ReadMenuSetAhead); or why they can't be had (a version 2 archive keeping none, or names that
+    /// don't fit it).
+    /// </summary>
+    std::expected<std::vector<std::string>, std::string> Names() const;
+
     /// <summary>The number of entries in the archive.</summary>
     int32_t GetNumFiles() const { return static_cast<int32_t>(_Version2 ? _Placed.size() : _Entries.size()); }
 
@@ -340,6 +348,8 @@ private:
     };
 
     bool _Version2 = false;
+    /// <summary>Port-only (version 2): where its names start in the file (0: none), as its header says.</summary>
+    uint64_t _NamesAt = 0;
     /// <summary>
     /// Port-only: this archive's own number, keying its unpacked streams kept a while (version 2) and what is held of it.
     /// </summary>

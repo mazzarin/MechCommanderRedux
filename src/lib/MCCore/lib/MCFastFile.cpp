@@ -54,6 +54,8 @@ namespace
     /// allocate more); the builder cuts a packet's stream well below it.
     /// </summary>
     constexpr uint32_t MostUnpackedBytes = 256u << 20;
+    /// <summary>The most bytes of a version 2 archive's names read (the menus' 1,478: about 45 KB, 19 Nov).</summary>
+    constexpr uint64_t MostNamesBytes = 64u << 20;
 
     /// <summary>A little-endian value at <paramref name="at"/> of <paramref name="bytes"/>, which must hold it.</summary>
     template <typename T> T ValueAt(std::span<const uint8_t> bytes, size_t at)
@@ -318,6 +320,7 @@ std::expected<void, std::string> MCFastFile::ReadVersion2(std::string_view fileN
     const auto factsBytes = ValueAt<uint32_t>(header, 32);
     const auto dataAt = ValueAt<uint64_t>(header, 40);
     const auto tableHash = ValueAt<uint64_t>(header, 48);
+    const auto namesAt = ValueAt<uint64_t>(header, 56);
 
     if (format != Version2Format)
     {
@@ -436,9 +439,67 @@ std::expected<void, std::string> MCFastFile::ReadVersion2(std::string_view fileN
     }
 
     _Facts.assign(table.begin() + static_cast<ptrdiff_t>(at), table.end());
+    _NamesAt = namesAt;
     _Version2 = true;
     _Serial = NextSerial.fetch_add(1);
     return {};
+}
+
+std::expected<std::vector<std::string>, std::string> MCFastFile::Names() const
+{
+    const std::string name = MCFileSystem::ToUtf8(_Path);
+    std::vector<std::string> names;
+
+    if (!_Version2)
+    {
+        names.reserve(_Entries.size());
+
+        for (const MCFileEntry& entry : _Entries)
+        {
+            names.emplace_back(entry.GetName());
+        }
+
+        return names;
+    }
+
+    if (_NamesAt == 0)
+    {
+        return std::unexpected(std::format("{} keeps no names", name));
+    }
+
+    if (_NamesAt < Version2HeaderBytes || _NamesAt >= _Length || _Length - _NamesAt > MostNamesBytes)
+    {
+        return std::unexpected(std::format("{}: its names at {} don't fit its {} bytes", name, _NamesAt, _Length));
+    }
+
+    std::optional<MCDiskFile> file = OpenAnother();
+    std::vector<uint8_t> bytes(static_cast<size_t>(_Length - _NamesAt));
+
+    if (!file.has_value() || file->ReadAt(static_cast<uint32_t>(_NamesAt), bytes) != bytes.size())
+    {
+        return std::unexpected(std::format("{}: its names can't be read", name));
+    }
+
+    // Each zero-terminated, one an entry.
+    names.reserve(_Placed.size());
+    size_t start = 0;
+
+    for (size_t at = 0; at < bytes.size(); ++at)
+    {
+        if (bytes[at] == 0)
+        {
+            names.emplace_back(reinterpret_cast<const char*>(bytes.data() + start), at - start);
+            start = at + 1;
+        }
+    }
+
+    if (start != bytes.size() || names.size() != _Placed.size())
+    {
+        return std::unexpected(std::format("{}: {} names for {} entries{}", name, names.size(), _Placed.size(),
+                                           start != bytes.size() ? ", the last unterminated" : ""));
+    }
+
+    return names;
 }
 
 uint64_t MCFastFile::PathKey(std::string_view path)

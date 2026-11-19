@@ -1317,7 +1317,6 @@ Output HdPixelAt(Input input, float2 shape)
     const uint flags = input.op.x;
     const uint key = (input.op.y >> 8) & 255u;
     const int texelScale = (int)hdScale;
-    float4 color = HdColourBetween(input, shape, original);
     int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
 #if DRAW_STANDS
     // A fold's original pixel under it: the pass's texel (the draws' places agree, MCVulkanRenderer::Shape).
@@ -1328,15 +1327,34 @@ Output HdPixelAt(Input input, float2 shape)
     const bool foldTable = (flags & TableBefore) != 0;
     const uint foldedIndex = foldTable ? Table(input.op.z, Byte(underEntry.r)) : Byte(underEntry.r);
     const bool foldsIndex = folds && inPicture && OriginalDrawsIn(underEntry) && (!foldTable || foldedIndex != 255u);
+#else
+    const bool foldsIndex = false;
 #endif
 
-    // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
-    if ((flags & 15u) == KindHdSmooth)
+    // A smooth-edged frame's coverage comes first: where it covers nothing its pixel is transparent whatever its colour
+    // (a light's too: no colour without coverage), so it is left (but a fold's original pixel) before its colour is read.
+    // Most of a tree's rectangle is so.
+    const bool smooth = (flags & 15u) == KindHdSmooth;
+    float coverage = 0.0;
+
+    if (smooth)
     {
         int2 nearest;
-        const float coverage = HdMaskCoverage(original, shape, nearest);
+        coverage = HdMaskCoverage(original, shape, nearest);
         texel = nearest;
-        const float4 inside = HdTexel(nearest * texelScale + texelScale / 2, size, texelScale, flags, key);
+
+        if (coverage <= 0.0 && !foldsIndex)
+        {
+            discard;
+        }
+    }
+
+    float4 color = HdColourBetween(input, shape, original);
+
+    // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
+    if (smooth)
+    {
+        const float4 inside = HdTexel(texel * texelScale + texelScale / 2, size, texelScale, flags, key);
         const float3 own = color.a > 0.0 ? color.rgb / color.a : float3(0.0, 0.0, 0.0);
         const float3 near = inside.a > 0.0 ? inside.rgb / inside.a : own;
         color = float4(lerp(near, own, saturate(color.a / HdOwnColourAlpha)) * coverage, coverage);

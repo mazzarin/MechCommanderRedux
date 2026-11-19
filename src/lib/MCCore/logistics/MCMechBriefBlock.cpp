@@ -375,6 +375,8 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                         deploy.Unit = GlobalLog()->ForceMechList->GetMechIndex(Mech());
                         CurDeployTonnage = DeployTonnageWith(*Mech(), 1.0f);
                         Mech()->Deployed = true;
+                        // Port-only (SPEC-memory.md's "From the briefing"): as PlaceInEmptySlot's.
+                        MCHdArt::HoldMechAhead(Mech()->Chassis);
                     }
                 }
                 else
@@ -414,6 +416,8 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                         CurDeployTonnage = DeployTonnageWith(*Mech(), 1.0f);
                         Mech()->Deployed = true;
                         GlobalLog()->AssignedWarriorList->SetDeployed(Mech()->PilotIndex, true);
+                        // Port-only (SPEC-memory.md's "From the briefing"): as PlaceInEmptySlot's.
+                        MCHdArt::HoldMechAhead(Mech()->Chassis);
                     }
                 }
                 else

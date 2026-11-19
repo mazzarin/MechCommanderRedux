@@ -285,6 +285,7 @@ void MCFitIniFile::AtClose()
 
 int32_t MCFitIniFile::Open(std::string_view fileName, MCFileMode mode)
 {
+    const MCProbeIo::Timer probeTimer(MCProbeIo::FitNs, MCProbeIo::Fits);
     const int32_t result = MCFile::Open(fileName, mode);
 
     if (result != 0)

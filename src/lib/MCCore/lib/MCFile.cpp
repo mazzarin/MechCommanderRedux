@@ -91,6 +91,7 @@ void MCFile::CloseIfOrphaned()
 
 int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
 {
+    const MCProbeIo::Timer probeTimer(MCProbeIo::OpenNs, MCProbeIo::Opens);
     _FileName = fileName;
     _FileMode = mode;
 
@@ -107,7 +108,11 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
     // Port-only: a file read ahead (lib/MCFilesAhead.h) was looked for already, as below: an archive's entry, or none.
     if (mode == MCFileMode::Read)
     {
-        if (std::optional<MCFilesAhead::MCAheadFile> ahead = MCFilesAhead::Take(_FileName); ahead.has_value())
+        std::optional<MCProbeIo::Timer> probeTake(std::in_place, MCProbeIo::TakeNs, MCProbeIo::Takes);
+        std::optional<MCFilesAhead::MCAheadFile> ahead = MCFilesAhead::Take(_FileName);
+        probeTake.reset();
+
+        if (ahead.has_value())
         {
             MCFilesAhead::Looked(_FileName);
             _State.reset();
@@ -131,6 +136,7 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
     const MCReleaseData::MCHeld held =
         mode == MCFileMode::Read && !put.has_value() ? MCReleaseData::Find(_FileName) : MCReleaseData::MCHeld{};
 
+    std::optional<MCProbeIo::Timer> probeResolve(std::in_place, MCProbeIo::ResolveNs, MCProbeIo::Resolves);
     // Port: files opened to write live in the user folder; a file the release's copy holds loose is read from there.
     std::filesystem::path path;
 
@@ -147,6 +153,7 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
             : MCDiskFile::Open(path, mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read,
                                MCDiskFileReads::Buffered);
     _State.reset();
+    probeResolve.reset();
 
     if (!disk.has_value())
     {
@@ -183,7 +190,13 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
             MCFilesAhead::Looked(_FileName);
         }
 
-        if (auto entry = MCGameContext::Current().FastFiles().Read(_FileName); entry.has_value())
+        if (auto entry =
+                [&]
+            {
+                const MCProbeIo::Timer t(MCProbeIo::FstNs, MCProbeIo::Fsts);
+                return MCGameContext::Current().FastFiles().Read(_FileName);
+            }();
+            entry.has_value())
         {
             return inRam(std::move(*entry));
         }
@@ -347,6 +360,7 @@ int32_t MCFile::ReadRawAt(uint32_t pos, std::span<uint8_t> buffer)
         return 0;
     }
 
+    const MCProbeIo::Timer probeTimer(MCProbeIo::DiskReadNs, MCProbeIo::DiskReads);
     return static_cast<int32_t>(disk->Disk->ReadAt(_ParentOffset + pos, buffer));
 }
 

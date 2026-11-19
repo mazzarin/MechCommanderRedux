@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCMainMenu.h"
 #include "ai/MCMoveGeometry.h"
+#include "gui/MCUpdateDisplay.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGenericScreen.h"
@@ -30,21 +31,37 @@ namespace
         EnsureRegistryVersion();
         SoundSystem()->StopDigitalMusic();
         SoundSystem()->PlayBettySample(0x19);
-        MissionName = campaign;
-        Mission()->ReloadCampaign(MissionName);
 
-        if (firstPlanet)
+        // Port-only: the campaign started and its briefing set up in the fade from the click once the screen is nearly
+        // black, then what the fade into the briefing does (FadeOutWhile), where the main menu sat frozen for it before
+        // its fade began (64-65 ms on the A10, 18-38 on the M4 Pro). Betty's line and the music's stop at the click.
+        // PROBE A/B: MC_PROBE_OLDFADE, the campaign started at the click, before its fade (release 9's).
+        if (std::getenv("MC_PROBE_OLDFADE") != nullptr)
         {
-            CurPlanet = 0;
+            BeginCampaign(campaign, startFile, firstPlanet);
+            return;
         }
 
-        Solo = false;
-        LastLogisticsMissionState = 0;
-        GlobalLog()->LoadCampaign(startFile, ".pkk", false, false);
-        GlobalLog()->BriefingScreen->HideBriefing();
-        GlobalLog()->SetUpBriefingScreen(false);
-        GlobalLog()->MainScreen->ShowGuiWindow(false);
+        FadeOutWhile([&] { BeginCampaign(campaign, startFile, firstPlanet); });
     }
+}
+
+void BeginCampaign(std::string_view campaign, std::string_view startFile, bool firstPlanet)
+{
+    MissionName = campaign;
+    Mission()->ReloadCampaign(MissionName);
+
+    if (firstPlanet)
+    {
+        CurPlanet = 0;
+    }
+
+    Solo = false;
+    LastLogisticsMissionState = 0;
+    GlobalLog()->LoadCampaign(startFile, ".pkk", false, false);
+    GlobalLog()->BriefingScreen->HideBriefing();
+    GlobalLog()->SetUpBriefingScreen(false);
+    GlobalLog()->MainScreen->ShowGuiWindow(false);
 }
 
 // Each menu action first made sure a campaign CD was in a drive (scanning C: to Z: for data\tiles\gtiles90.pak,

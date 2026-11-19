@@ -3,6 +3,8 @@
 #include "lib/MCFatal.h"
 #include "main/MCGamePaths.h"
 #include "sprite/MCShapeFile.h"
+#include "sprite/MCHdArt.h"
+#include "platform/MCFrameLog.h"
 
 namespace
 {
@@ -21,6 +23,14 @@ auto LogArt(std::string_view fileName) -> std::shared_ptr<MCLogPort>
 
     auto art = std::make_shared<MCLogPort>();
     art->Load(name);
+
+    if (const std::shared_ptr<MCTexture> probeTexture = art->Bitmap().Texture.lock(); probeTexture != nullptr)
+    {
+        MCFrameLog::Note(
+            std::format("probe: art {} hash {:016x}", name,
+                        MCHdArt::PictureHash(probeTexture->Pixels, probeTexture->Width, probeTexture->Height)));
+    }
+
     return LoadedArt.emplace(name, std::move(art)).first->second;
 }
 
@@ -47,6 +57,7 @@ auto MCLogPort::Init(int32_t width, int32_t height) -> int32_t
 auto MCLogPort::Load(std::string_view fileName) -> void
 {
     // Port: through MCShapeFile, so with a version 2 pack the picture (a menu's, a briefing map) is the pack's copy.
+    const MCProbeIo::Timer probeTimer(MCProbeIo::TgaNs, MCProbeIo::Tgas);
     MCShapeFile file;
 
     if (file.Open(std::format("{}{}", ArtPath, fileName)) != 0 && file.Open(fileName) != 0)

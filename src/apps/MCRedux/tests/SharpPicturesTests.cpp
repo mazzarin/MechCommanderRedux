@@ -11,6 +11,8 @@
 #include "logistics/MCLogPort.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCSplashScreen.h"
+#include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "platform/MCDisplay.h"
@@ -347,9 +349,9 @@ TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame 
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     const std::vector<uint8_t> menu = ShownBytes();
 
-    // The briefing set up (its palette waits for the next frame's fade), then rehearsed: what it shows is taken and
-    // sent up, and the main menu is still what's shown.
-    NewCampaign();
+    // The briefing set up as NEW CAMPAIGN's fade sets it up, at once (its palette waits for the next frame's fade),
+    // then rehearsed: what it shows is taken and sent up, and the main menu is still what's shown.
+    BeginCampaign("mechcmdr1", "start0", true);
     MCSharpPictures::WaitForMade();
     const size_t before = SharpTaken(*renderer);
     RehearseScreen();
@@ -596,6 +598,93 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
     const size_t closed = RehearsalsRun();
     MCTestGame::RunFrame(FrameSeconds);
     CHECK_EQ(RehearsalsRun(), closed);
+    GHdArt = 0;
+}
+
+/// <summary>
+/// Port-only: NEW CAMPAIGN's click fades the main menu at once and starts the campaign (its load, the briefing's
+/// set-up) once the screen is nearly black, then does what a fade into the briefing does; the next frame's fade, from
+/// black, does none of it again.
+/// </summary>
+TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its click, once the screen is nearly black")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartSharpLogistics();
+    REQUIRE(GlobalLog()->MainScreen->IsShowing());
+    REQUIRE(GuiSystem().CanFade());
+
+    // At each present of the click, how far the fade had gone and whether the campaign had started (the main menu
+    // hidden: the work's last step).
+    struct MCShown
+    {
+        int Fade = 0;
+        bool Started = false;
+    };
+
+    std::vector<MCShown> shown;
+    const size_t rehearsed = RehearsalsRun();
+    MCTestGame::OnPresent = [&]
+    { shown.push_back({.Fade = MCInput::Display()->Fade(), .Started = !GlobalLog()->MainScreen->IsShowing()}); };
+
+    NewCampaign();
+    MCTestGame::OnPresent = {};
+    REQUIRE(!shown.empty());
+    REQUIRE(!shown.front().Started);
+    const auto firstStarted = std::ranges::find_if(shown, &MCShown::Started);
+    REQUIRE(firstStarted != shown.end());
+    CHECK(std::prev(firstStarted)->Fade >= MCGuiSystem::FadeNearBlack);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(!GuiSystem().CanFade());
+    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
+    const size_t started = RehearsalsRun();
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK_EQ(RehearsalsRun(), started);
+    GHdArt = 0;
+}
+
+/// <summary>
+/// Port-only: a fade into a screen (a new palette for the next frame, as a campaign's load sets) rehearses it and
+/// readies the screens a slide from it brings in once the screen is nearly black, where a piece's longer step can't be
+/// seen.
+/// </summary>
+TEST_CASE_ISOLATED("game: a fade into a screen rehearses it once the screen is nearly black")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartSharpLogistics();
+    NewCampaign();
+    MCSharpPictures::WaitForMade();
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    REQUIRE(GuiSystem().CanFade());
+
+    // At each present of the next frame, how far its fade had gone and the rehearsals run.
+    struct MCShown
+    {
+        int Fade = 0;
+        size_t Rehearsals = 0;
+    };
+
+    std::vector<MCShown> shown;
+    const size_t rehearsed = RehearsalsRun();
+    MCTestGame::OnPresent = [&]
+    { shown.push_back({.Fade = MCInput::Display()->Fade(), .Rehearsals = RehearsalsRun()}); };
+    GuiSystem().ActivatePaletteFromTga(ArtPath + "logart\\lsrupm05.tga");
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::OnPresent = {};
+    const auto firstRehearsed =
+        std::ranges::find_if(shown, [rehearsed](const MCShown& at) { return at.Rehearsals > rehearsed; });
+    REQUIRE(firstRehearsed != shown.end());
+    REQUIRE(firstRehearsed != shown.begin());
+    CHECK(std::prev(firstRehearsed)->Fade >= MCGuiSystem::FadeNearBlack);
+    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
     GHdArt = 0;
 }
 
@@ -879,4 +968,93 @@ TEST_CASE_ISOLATED("tool: --hd-make-sharp writes the sharp screens' text and lin
     CHECK(glyphPictures > 0);
     CHECK(drawings > 0);
     GHdArt = 0;
+}
+
+// SCRATCH PROBE (never commit): the maker's time with and without a pack's sharp.hda.
+#ifdef _WIN32
+// kernel32's two, declared alone: windows.h after this file's headers doesn't compile (its types clash with theirs).
+extern "C" __declspec(dllimport) int __stdcall GetProcessTimes(void* process, uint64_t* created, uint64_t* ended,
+                                                               uint64_t* kernel, uint64_t* user);
+extern "C" __declspec(dllimport) void* __stdcall GetCurrentProcess();
+#else
+#include <sys/resource.h>
+#endif
+TEST_CASE_ISOLATED("probe: sharp maker time")
+{
+    const char* const on = std::getenv("MC_PROBE_SHARP");
+
+    if (on == nullptr || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    GHdArt = 1;
+    GlobalLog()->AttachHdArt();
+
+    if (const char* const pack = std::getenv("MC_PROBE_SHARP_PACK"); pack != nullptr)
+    {
+        MCHdArt::SetPackFolder(pack);
+    }
+
+    // The process's CPU time, user and system, in ms.
+    const auto cpu = []
+    {
+#ifdef _WIN32
+        // FILETIMEs: 100 ns units, as two 32-bit halves, low first (a uint64_t's layout on x64).
+        uint64_t created = 0, ended = 0, kernel = 0, user = 0;
+        GetProcessTimes(GetCurrentProcess(), &created, &ended, &kernel, &user);
+        return static_cast<double>(kernel + user) / 10000.0;
+#else
+        rusage use{};
+        getrusage(RUSAGE_SELF, &use);
+        return static_cast<double>(use.ru_utime.tv_sec + use.ru_stime.tv_sec) * 1000.0 +
+               static_cast<double>(use.ru_utime.tv_usec + use.ru_stime.tv_usec) / 1000.0;
+#endif
+    };
+
+    const auto now = [] { return std::chrono::steady_clock::now(); };
+    const auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    std::set<const MCGuiFont*> fonts;
+    double cpu0 = cpu();
+    auto t0 = now();
+
+    for (const auto& sizes : Fonts)
+    {
+        for (const auto& font : sizes)
+        {
+            if (font != nullptr && !font->FontData.Empty() && fonts.insert(font.get()).second)
+            {
+                MCSharpPictures::MakeFont(font->FontData.Bytes());
+            }
+        }
+    }
+
+    MCSharpPictures::WaitForMade();
+    const double fontsMs = ms(now() - t0);
+    const double fontsCpu = cpu() - cpu0;
+    cpu0 = cpu();
+    t0 = now();
+
+    for (size_t mech = 0; mech < 12; ++mech)
+    {
+        const std::span<const uint8_t> table = GlobalLog()->MechRepShapes[mech].Bytes();
+
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            if (MCHdArt::LineArt(table, frame))
+            {
+                MCSharpPictures::MakeLineArt(table, frame, MCHdArt::LineArtDrawn(table, frame));
+            }
+        }
+    }
+
+    MCSharpPictures::WaitForMade();
+    const double linesMs = ms(now() - t0);
+    const double linesCpu = cpu() - cpu0;
+    const MCSharpPictures::MCMadeTally tally = MCSharpPictures::Tally();
+    std::cout << std::format("PROBE fonts {:.1f} ms ({:.1f} ms cpu), {} glyph pictures; line art {:.1f} ms ({:.1f} ms "
+                             "cpu), {} drawings; from pack {} of {}\n",
+                             fontsMs, fontsCpu, tally.GlyphPictures, linesMs, linesCpu, tally.Drawings, tally.FromPack,
+                             tally.PackPictures);
 }

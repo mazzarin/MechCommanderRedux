@@ -309,10 +309,27 @@ namespace
             VfxPaneWipe(ScreenWindow()->Frame(), 0);
         }
 
+        const auto probeStart = std::chrono::steady_clock::now();
+
         for (int32_t i = 0; i < ScreenWindow()->NumberOfChildren(); i++)
         {
+            const auto childStart = std::chrono::steady_clock::now();
             ScreenWindow()->Child(i)->Display();
+            const double childMs =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - childStart).count();
+
+            if (childMs > 0.5)
+            {
+                const MCGuiObject& probeChild = *ScreenWindow()->Child(i);
+                MCFrameLog::Note(std::format("probe:   child {} {} {:.2f} ms{}", i, typeid(probeChild).name(), childMs,
+                                             MCRenderer::Rehearsing() ? " (rehearsal)" : ""));
+            }
         }
+
+        MCFrameLog::Note(std::format(
+            "probe: display draw {:.2f} ms{}",
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count(),
+            MCRenderer::Rehearsing() ? " (rehearsal)" : ""));
     }
 }
 
@@ -325,6 +342,12 @@ namespace
     /// </summary>
     bool CanRehearse()
     {
+        // PROBE A/B: no rehearsals (first-use as it was).
+        if (std::getenv("MC_PROBE_NOREHEARSE") != nullptr)
+        {
+            return false;
+        }
+
         return InMouseCritSec == 0 && MCRenderer::GpuDrawing() == MCGpuDrawing::On && GlobalLog() != nullptr &&
                Mission() != nullptr && Mission()->State == MCMissionState::Logistics &&
                GuiSystem().SmackerWindow == nullptr;
@@ -406,8 +429,11 @@ namespace
                         const std::vector<MCGuiHandle<MCLogInvScreen>> screens = logistics->ScreensSlidIn();
                         const int32_t shown = logistics->CurrentInvTab;
 
-                        // With a tab shown that isn't one of the four (none is), only it is readied.
-                        if (slid >= screens.size() || ((shown < 0 || shown >= MCLogistics::InventoryTabs) && step > 0))
+                        // A tab past the four (none is) readied only as shown. PROBE A/B: MC_PROBE_NOTABS readies only
+                        // the tab shown, as before piece 3.
+                        if (slid >= screens.size() ||
+                            ((shown < 0 || shown >= MCLogistics::InventoryTabs) && step > 0) ||
+                            (step > 0 && std::getenv("MC_PROBE_NOTABS") != nullptr))
                         {
                             return;
                         }
@@ -451,7 +477,9 @@ bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
         return false;
     }
 
+    const auto probeStart = std::chrono::steady_clock::now();
     setUp();
+    const auto probeSetUp = std::chrono::steady_clock::now();
     Rehearse(
         [&screen]
         {
@@ -459,6 +487,11 @@ bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
             screen.Display();
             screen.ShowGuiWindow(false);
         });
+    MCFrameLog::Note(
+        std::format("probe: hidden {} tab {} readied: set-up {:.2f} ms, rehearsal {:.2f} ms", typeid(screen).name(),
+                    GlobalLog() != nullptr ? GlobalLog()->CurrentInvTab : -1,
+                    std::chrono::duration<double, std::milli>(probeSetUp - probeStart).count(),
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeSetUp).count()));
     return true;
 }
 
@@ -479,6 +512,13 @@ void FadeOutWhile(const std::function<void()>& work)
     }
 
     std::vector<std::function<void()>> pieces = IntoScreenPieces();
+
+    // PROBE A/B: MC_PROBE_NOWAYBACKREADY, the way back's fade with its work alone.
+    if (std::getenv("MC_PROBE_NOWAYBACKREADY") != nullptr)
+    {
+        pieces.clear();
+    }
+
     pieces.insert(pieces.begin(), work);
     gui.FadeDownCurrentPalette(pieces, MCGuiSystem::FadeNearBlack);
 }
@@ -498,11 +538,15 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
         display->ShowFinished();
     }
 
-    // Port-only: the screen the palette is for, set up already, rehearsed as the fade begins, then the screens a slide
-    // from it may bring in, a step each (IntoScreenPieces). A fade of FadeOutWhile's did them already.
+    // Port-only: the screen the palette is for, set up already, rehearsed once the fade is nearly black, then the
+    // screens a slide from it may bring in, a step each (IntoScreenPieces): there a piece's step, darkened by its time,
+    // can't be seen, where at the fade's start each held the bright screen (up to 35 ms on the A10). A fade of
+    // FadeOutWhile's did them already.
     if (!gui.PendingPalette.empty())
     {
-        gui.FadeDownCurrentPalette(IntoScreenPieces());
+        // PROBE A/B: MC_PROBE_OLDFADE, the pieces from the fade's start (release 9's).
+        gui.FadeDownCurrentPalette(IntoScreenPieces(),
+                                   std::getenv("MC_PROBE_OLDFADE") != nullptr ? 0 : MCGuiSystem::FadeNearBlack);
     }
 
     std::scoped_lock lock(MouseCritSec);

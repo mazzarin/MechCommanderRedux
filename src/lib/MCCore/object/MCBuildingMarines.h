@@ -25,6 +25,14 @@ std::shared_ptr<MCMover> MakeMarine(std::string_view createFailure);
 std::unique_ptr<MCFitIniFile> ReadMarineProfile();
 
 /// <summary>
+/// Port-only (the first-use rule): the effect object type of each weapon <paramref name="profile"/> (the marine
+/// profile) arms its marines with, so the load makes them ready: marines are made in play (a destroyed building's, a
+/// dead vehicle's crew), and no type loaded at the load names their weapons. A weapon its items don't read is left out
+/// (logged), for the marine's own load to fail on as the original did.
+/// </summary>
+std::vector<int32_t> MarineWeaponEffects(MCFitIniFile& profile);
+
+/// <summary>
 /// Loads the marine profile into <paramref name="marine"/> (the mission's, read at the load); Fatal with the profile's
 /// errors when it can't be opened or read.
 /// </summary>

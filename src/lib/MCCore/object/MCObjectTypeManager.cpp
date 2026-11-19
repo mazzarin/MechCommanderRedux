@@ -311,7 +311,7 @@ auto MCObjectTypeManager::LoadType(int32_t objTypeNum, int keepMe, bool fatal) -
     return Add(std::move(objType));
 }
 
-auto MCObjectTypeManager::LoadMadeTypes() -> MCPacketsHeld
+auto MCObjectTypeManager::LoadMadeTypes(std::span<const int32_t> alsoMade) -> MCPacketsHeld
 {
     MCPacketsHeld read;
     // The types asked for (one that won't load is asked once).
@@ -324,14 +324,12 @@ auto MCObjectTypeManager::LoadMadeTypes() -> MCPacketsHeld
     };
 
     // What the game makes by its own numbers, no type's: a mine's blast (a mine laid, on the map or the staged battle's),
-    // each kind of strike a commander may call (its counts the mission's, a script's or the enemy's; the multiplayer
-    // kinds too), the camera drone a probe launches, and every weapon's effect (WeaponFXTable): a unit made in play
-    // fires its weapons' (a dead vehicle's crew, whose weapons are the marine profile's; a reinforcement), which no
-    // type loaded at the load names. Those the data lacks (-1, the expansion's in the campaign) are passed over.
+    // each kind of strike a commander may call (a script works out its kind as it runs; the multiplayer kinds too), the
+    // camera drone a probe launches; and what the caller names (the marines' weapons' effects). Those the data lacks
+    // (-1, the expansion's in the campaign) are passed over.
     std::vector<int32_t> gameMade{MineExplosion, CameraDroneType};
     gameMade.insert(gameMade.end(), ArtilleryTypeTable.begin(), ArtilleryTypeTable.end());
-    std::ranges::transform(WeaponFXTable, std::back_inserter(gameMade),
-                           [](uint32_t effect) { return static_cast<int32_t>(effect); });
+    gameMade.insert(gameMade.end(), alsoMade.begin(), alsoMade.end());
 
     for (;;)
     {

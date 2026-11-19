@@ -326,6 +326,10 @@ auto MCGuiSystem::Start(std::string_view commandLine, int16_t screenWidth, int16
         Fatal(0, "Error opening art file");
     }
 
+    // Port-only (the workspace's SPEC-first-use.md): the interface's numbered pictures held (265 KB), so those a screen
+    // shows in play (a unit icon's wounded and dead pilot) read nothing.
+    ArtFile->HoldAllPackets();
+
     OpenDisplay();
     LoadCursors();
     MCInput::ShowCursor(false);

@@ -127,23 +127,21 @@ auto MCGuiPort::Init(int32_t artPacket) -> int32_t
         Fatal(0, "Art packet not found");
     }
 
-    MCFile file;
-
-    if (file.Open(artFile, static_cast<uint32_t>(artFile.GetPacketSize())) != 0)
-    {
-        Fatal(0, "Cant open child file.");
-    }
-
-    const uint32_t size = file.FileSize();
+    const auto size = static_cast<size_t>(artFile.GetPacketSize());
 
     if (size == 0)
     {
         Fatal(-2, "Bad child file in art.pak");
     }
 
+    // Port-only: the packet read whole (the original read it as a child file of the art file's), from the bytes held
+    // (MCGuiSystem holds them all) rather than the disk.
     std::vector<uint8_t> gif(size);
-    file.Read(gif);
-    file.Close();
+
+    if (artFile.ReadPacket(artPacket, gif) == 0)
+    {
+        Fatal(-2, std::format("Bad child file in art.pak: packet {} can't be read", artPacket));
+    }
 
     // The game's own art: a picture it can't draw means a damaged install, which it can't run without.
     const std::expected<int32_t, std::string> resolution = VfxGifResolution(gif);

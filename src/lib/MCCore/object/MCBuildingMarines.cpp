@@ -5,6 +5,8 @@
 #include "main/MCGamePaths.h"
 #include "mission/MCScenario.h"
 #include "object/MCForces.h"
+#include "object/MCGroundVehicleGameSystem.h"
+#include "object/MCMasterComponent.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCObjectList.h"
@@ -34,6 +36,55 @@ namespace
 std::unique_ptr<MCFitIniFile> ReadMarineProfile()
 {
     return OpenMarineProfile().value_or(nullptr);
+}
+
+std::vector<int32_t> MarineWeaponEffects(MCFitIniFile& profile)
+{
+    std::vector<int32_t> effects;
+    MCFitReader read(profile);
+    int32_t others = 0;
+    int32_t weapons = 0;
+
+    // The weapons follow the other equipment in the items, as MCElemental::LoadProfile reads them.
+    const bool inventory = profile.SeekBlock("InventoryInfo") == 0;
+
+    if (inventory)
+    {
+        read.Value("NumOther", others);
+        read.Value("NumWeapons", weapons);
+    }
+
+    if (!inventory || read.Failed() || others < 0 || weapons < 0)
+    {
+        SDL_Log("MarineWeaponEffects: %.*s's inventory can't be read; its weapons' effects are loaded as first fired",
+                static_cast<int>(MarineProfileName.size()), MarineProfileName.data());
+        return effects;
+    }
+
+    for (int32_t item = others; item < others + weapons; ++item)
+    {
+        uint8_t masterId = 0;
+        const bool found = profile.SeekBlock(std::format("Item:{}", item)) == 0;
+
+        if (found)
+        {
+            read.Value("MasterID", masterId);
+        }
+
+        const size_t effect = masterId < MasterComponentList.size() ? MasterComponentList[masterId].WeaponEffect
+                                                                    : std::size(WeaponFXTable);
+
+        if (!found || read.Failed() || effect >= std::size(WeaponFXTable))
+        {
+            SDL_Log("MarineWeaponEffects: %.*s's item %d isn't a weapon read; its effect is loaded as first fired",
+                    static_cast<int>(MarineProfileName.size()), MarineProfileName.data(), item);
+            return effects;
+        }
+
+        effects.push_back(static_cast<int32_t>(WeaponFXTable[effect]));
+    }
+
+    return effects;
 }
 
 void LoadMarineProfile(MCMover& marine)

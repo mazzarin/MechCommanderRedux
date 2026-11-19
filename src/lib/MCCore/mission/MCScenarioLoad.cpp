@@ -352,8 +352,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCWeather::Clear();
     // Port-only: the original's packets the mission's first uses would read, read here together; then the explosions'
     // looks (HD particles) measured here, under the loading bar, rather than as each shows.
-    LoadOriginalPackets();
     MarineProfile = ReadMarineProfile();
+    LoadOriginalPackets();
     LoadOverlayShapes();
     MCParticles::MeasureExplosions();
     MissionStartTime = 0;
@@ -993,7 +993,8 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
 auto MCScenario::LoadOriginalPackets() -> void
 {
     const auto started = std::chrono::steady_clock::now();
-    const MCPacketsHeld types = ObjectTypeManager().LoadMadeTypes();
+    const MCPacketsHeld types = ObjectTypeManager().LoadMadeTypes(
+        MarineProfile != nullptr ? MarineWeaponEffects(*MarineProfile) : std::vector<int32_t>());
 
     // Every side's mechs: each mech type's packets once, every gesture's (MCSpriteTree::AllPackets: the first-use rule,
     // none read in play; stand, walk and run were PreloadGestures'), and each mech's packets drawn now; and (MechBraking)

@@ -806,18 +806,6 @@ struct MCVulkanPresenter::PlannedFrame
     std::string Error;
 };
 
-namespace
-{
-
-    /// <summary>Upload offsets are kept on this boundary (the strictest any backend asks of a texture copy).</summary>
-    constexpr uint32_t UploadAlignment = 512;
-
-    uint32_t AlignUpload(uint32_t offset)
-    {
-        return (offset + UploadAlignment - 1) & ~(UploadAlignment - 1);
-    }
-}
-
 std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter::Create(
     std::shared_ptr<SDL_Window> window, bool vsync, const MCPresentation& presentation)
 {
@@ -832,6 +820,16 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     }
 
     presenter->_Device = std::shared_ptr<SDL_GPUDevice>(device, MCSdlDeleter{});
+
+    // Port-only (SPEC-memory.md's upload slots): every upload's memory, made now and kept for the session.
+    auto slots = MCUploadSlots::Make(presenter->_Device, MCUploadSlots::BytesFor(MCMemoryRoom::TotalBytes()));
+
+    if (!slots)
+    {
+        return std::unexpected(slots.error());
+    }
+
+    presenter->_Slots = std::move(*slots);
     // Port-only: a GPU that can't sample BC7 takes the 2x HD art by default (main/MCUpdater.h).
     MCUpdater::SetGpuSamplesBc7(SDL_GPUTextureSupportsFormat(device, SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM,
                                                              SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER));
@@ -946,7 +944,7 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
 
     if (drawing != MCGpuDrawing::Off)
     {
-        made = MCVulkanRenderer::Create(presenter->_Device, jobs);
+        made = MCVulkanRenderer::Create(presenter->_Device, presenter->_Slots, jobs);
     }
 
     // Port-only: the composites' pipelines, made with the renderer's, or here without a renderer (or one that failed
@@ -1048,8 +1046,6 @@ MCVulkanPresenter::~MCVulkanPresenter()
         }
     }
 
-    _Upload.reset();
-    _LightTileUpload.reset();
     _Nearest.reset();
     _Linear.reset();
     _CompositePipeline.reset();
@@ -1409,13 +1405,13 @@ std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer&
             }
         }
 
-        parts.push_back({std::as_bytes(frame.Pixels), *_Screen.Handle, width, height, 1, 0});
+        parts.push_back({std::as_bytes(frame.Pixels), *_Screen.Handle, width, height, 1});
 
         if (!frame.Underlays.empty())
         {
-            parts.push_back({std::as_bytes(frame.Ops), *_Ops.Handle, width, height, 1, 0});
+            parts.push_back({std::as_bytes(frame.Ops), *_Ops.Handle, width, height, 1});
             parts.push_back({std::as_bytes(MCRenderer::OpTables()), *_Tables.Handle, 256,
-                             static_cast<uint32_t>(MCRenderer::OpTableCount()), 1, 0});
+                             static_cast<uint32_t>(MCRenderer::OpTableCount()), 1});
         }
 
         for (size_t i = 0; i < frame.Underlays.size(); ++i)
@@ -1423,85 +1419,66 @@ std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer&
             const MCWindow& source = *sources[i];
             const auto sourceWidth = static_cast<uint32_t>(source.XMax + 1);
             const auto sourceHeight = static_cast<uint32_t>(source.YMax + 1);
-            parts.push_back({std::as_bytes(source.Bytes()), *_Underlays[i].Handle, sourceWidth, sourceHeight, 1, 0});
+            parts.push_back({std::as_bytes(source.Bytes()), *_Underlays[i].Handle, sourceWidth, sourceHeight, 1});
         }
     }
 
     if (planned.PaletteChanged || paletteNew)
     {
         // SDL_Color is r, g, b, a bytes: RGBA's layout. The alpha isn't used. The colour cycle is the shader's.
-        parts.push_back({std::as_bytes(std::span(planned.Palette)), *_Palette.Handle, 256, 1, 4, 0});
+        parts.push_back({std::as_bytes(std::span(planned.Palette)), *_Palette.Handle, 256, 1, 4});
     }
 
-    return UploadParts(commands, parts, _Upload, _UploadSize);
+    return UploadParts(parts);
 }
 
-std::expected<void, std::string> MCVulkanPresenter::UploadParts(SDL_GPUCommandBuffer& commands,
-                                                                std::span<UploadPart> parts,
-                                                                MCCountedGpuHandle<SDL_GPUTransferBuffer>& buffer,
-                                                                uint32_t& bufferSize)
+std::expected<void, std::string> MCVulkanPresenter::UploadParts(std::span<const UploadPart> parts)
 {
     if (parts.empty())
     {
         return {};
     }
 
-    uint32_t total = 0;
+    // Port-only (SPEC-memory.md's upload slots): staged in the slots, never waiting (past them when none are free), and
+    // sent on a command buffer of their own before the frame's.
+    MCUploadBatch batch(_Device, _Slots, MCUploadSlots::MCKind::Frame);
+    std::vector<MCUploadBatch::MCStaged> staged;
+    staged.reserve(parts.size());
 
-    for (UploadPart& part : parts)
+    for (const UploadPart& part : parts)
     {
-        part.Offset = AlignUpload(total);
-        total = part.Offset + part.Width * part.Height * part.BytesPerPixel;
+        staged.push_back(batch.Stage(static_cast<size_t>(part.Width) * part.Height * part.BytesPerPixel,
+                                     MCVulkanRenderer::FrameLeaseBytes, false));
+        std::memcpy(staged.back().Bytes.data(), part.Data.data(),
+                    std::min(staged.back().Bytes.size(), part.Data.size()));
     }
 
-    if (buffer == nullptr || bufferSize < total)
-    {
-        buffer.reset();
-        SDL_GPUTransferBufferCreateInfo info{};
-        info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        info.size = total + total / 4;
-        buffer = MCGpuCounted::MakeTransferBuffer(_Device, info, MCMemoryLedger::MCHolder::GpuTransfers);
-        bufferSize = buffer != nullptr ? info.size : 0;
-
-        if (buffer == nullptr)
+    return batch.Submit(
+        [&](SDL_GPUCopyPass& pass)
         {
-            return std::unexpected(SdlError("SDL_CreateGPUTransferBuffer"));
-        }
-    }
+            for (size_t i = 0; i < parts.size(); ++i)
+            {
+                const UploadPart& part = parts[i];
 
-    void* const mapped = SDL_MapGPUTransferBuffer(_Device.get(), buffer.get(), true);
+                // Nothing could hold its bytes (logged as staged): not sent.
+                if (staged[i].Buffer == nullptr)
+                {
+                    continue;
+                }
 
-    if (mapped == nullptr)
-    {
-        return std::unexpected(SdlError("SDL_MapGPUTransferBuffer"));
-    }
-
-    for (const UploadPart& part : parts)
-    {
-        std::memcpy(static_cast<uint8_t*>(mapped) + part.Offset, part.Data.data(),
-                    static_cast<size_t>(part.Width) * part.Height * part.BytesPerPixel);
-    }
-
-    SDL_UnmapGPUTransferBuffer(_Device.get(), buffer.get());
-    SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(&commands);
-
-    for (const UploadPart& part : parts)
-    {
-        SDL_GPUTextureTransferInfo source{};
-        source.transfer_buffer = buffer.get();
-        source.offset = part.Offset;
-        source.pixels_per_row = part.Width;
-        source.rows_per_layer = part.Height;
-        SDL_GPUTextureRegion destination{};
-        destination.texture = &part.Texture.get();
-        destination.w = part.Width;
-        destination.h = part.Height;
-        destination.d = 1;
-        SDL_UploadToGPUTexture(pass, &source, &destination, false);
-    }
-
-    SDL_EndGPUCopyPass(pass);
-    return {};
+                SDL_GPUTextureTransferInfo source{};
+                source.transfer_buffer = staged[i].Buffer;
+                source.offset = staged[i].Offset;
+                source.pixels_per_row = part.Width;
+                source.rows_per_layer = part.Height;
+                SDL_GPUTextureRegion destination{};
+                destination.texture = &part.Texture.get();
+                destination.w = part.Width;
+                destination.h = part.Height;
+                destination.d = 1;
+                SDL_UploadToGPUTexture(&pass, &source, &destination, false);
+            }
+        });
 }
 
 void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& planned)
@@ -1708,8 +1685,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
 
     if (noLightTilesNew)
     {
-        tileParts.push_back({std::as_bytes(std::span(&NoLights, 1)), *_NoLightTiles.Handle, LightTileTexelsWide, 1,
-                             sizeof(uint32_t), 0});
+        tileParts.push_back(
+            {std::as_bytes(std::span(&NoLights, 1)), *_NoLightTiles.Handle, LightTileTexelsWide, 1, sizeof(uint32_t)});
     }
 
     static const auto NothingStands = static_cast<uint8_t>(MCGpuChannels::Byte(MCGpuChannels::NoStand));
@@ -1717,7 +1694,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
     if (nothingStandsNew)
     {
         tileParts.push_back(
-            {std::as_bytes(std::span(&NothingStands, 1)), *_NothingStands.Handle, 1, 1, sizeof(NothingStands), 0});
+            {std::as_bytes(std::span(&NothingStands, 1)), *_NothingStands.Handle, 1, 1, sizeof(NothingStands)});
     }
 
     for (size_t i = 0; i < underlayDraws.size(); ++i)
@@ -1740,10 +1717,10 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
 
         drawn.LightTileTexture = _LightTiles[i].Handle.get();
         tileParts.push_back({std::as_bytes(std::span(drawn.Lights.Tiles)), *drawn.LightTileTexture,
-                             drawn.Lights.Across * LightTileTexelsWide, drawn.Lights.Down, sizeof(uint32_t), 0});
+                             drawn.Lights.Across * LightTileTexelsWide, drawn.Lights.Down, sizeof(uint32_t)});
     }
 
-    if (auto uploaded = UploadParts(commands, tileParts, _LightTileUpload, _LightTileUploadSize); !uploaded)
+    if (auto uploaded = UploadParts(tileParts); !uploaded)
     {
         SDL_Log("MCVulkanPresenter: the lights shown without their tiles: %s", uploaded.error().c_str());
 

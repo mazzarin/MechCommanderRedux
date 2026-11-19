@@ -7,6 +7,7 @@
 #include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
+#include "platform/MCUploadSlots.h"
 #include "sprite/MCHdMovie.h"
 
 #include <bitset>
@@ -68,11 +69,13 @@ public:
     };
 
     /// <summary>
-    /// Makes the renderer's pipelines and fixed textures on <paramref name="device"/>. Port-only: the pipelines of
-    /// <paramref name="moreJobs"/> (the presenter's) are made with the renderer's, all at once, which empties it; it's
-    /// left as it was when the renderer fails before its pipelines are made.
+    /// Makes the renderer's pipelines and fixed textures on <paramref name="device"/>, its uploads going up through
+    /// <paramref name="slots"/> (the presenter's too). Port-only: the pipelines of <paramref name="moreJobs"/> (the
+    /// presenter's) are made with the renderer's, all at once, which empties it; it's left as it was when the renderer
+    /// fails before its pipelines are made.
     /// </summary>
     static std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> Create(std::shared_ptr<SDL_GPUDevice> device,
+                                                                                std::shared_ptr<MCUploadSlots> slots,
                                                                                 std::vector<PipelineJob>& moreJobs);
 
     /// <summary>
@@ -481,17 +484,25 @@ public:
     int64_t TerrainTileUploads() const { return _TerrainTileUploads; }
 
     /// <summary>
-    /// A frame's uploads are staged and sent through memory kept for the next frames up to this many bytes each (the
-    /// staging and the transfer buffer); a frame that sends more sends it through memory of its own, gone once the
-    /// frame has run, so the burst isn't held all session.
+    /// Port-only (SPEC-memory.md's upload slots): a frame's uploads take the slots in leases of at least this many
+    /// bytes (one slot), the frame's next uploads placed after them while they fit.
     /// </summary>
-    static constexpr size_t KeptUploadBytes = 16 * 1024 * 1024;
+    static constexpr size_t FrameLeaseBytes = MCUploadSlots::SlotBytes;
 
     /// <summary>
-    /// The bytes kept for the next frames' uploads (the staging's, the frame being recorded's and the one run last's,
-    /// and the transfer buffer's), once the frame sealed last has run.
+    /// Port-only: the ground's uploads take the slots in leases of this many bytes, each sent up as it fills (as its own
+    /// two chunks of this size did before the slots).
+    /// </summary>
+    static constexpr size_t GroundLeaseBytes = size_t{32} << 20;
+
+    /// <summary>
+    /// The bytes kept for uploads once the frame sealed last has run: the upload slots' (made at the start, for the
+    /// session), and any frame's uploads past them not yet let go.
     /// </summary>
     size_t UploadBytesKept() const;
+
+    /// <summary>Port-only: the upload slots every upload goes up through.</summary>
+    const std::shared_ptr<MCUploadSlots>& UploadSlots() const { return _Slots; }
 
     /// <summary>The shapes drawn from the HD art pack so far (<see cref="MCHdArt"/>).</summary>
     int64_t HdDrawn() const { return _HdDrawn; }
@@ -1413,6 +1424,29 @@ private:
     std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
+    /// <summary>Whether the GPU samples BC7 (asked once); else HD colours are decoded to RGBA8.</summary>
+    bool TakesBc7();
+    /// <summary>
+    /// Port-only (SPEC-memory.md's fill caps): places the pictures the fill put in the slots (MCHdArt::TakeStagedPictures)
+    /// as a frame begins: all of them under the loading bar; in play as many as FillMostPerFrame and FillShare of a frame's
+    /// time at the copy speed take (MCUploadSlots::CopyBytesPerSecond; FillGuessBytesPerSecond before it's measured),
+    /// FillLeastBytes at least.
+    /// </summary>
+    void PlaceStagedPictures();
+    /// <summary>Port-only (PlaceStagedPictures): the share of a frame's time the fill's copies may take in play.</summary>
+    static constexpr double FillShare = 0.1;
+    /// <summary>Port-only: the copy speed guessed until one is measured (SPEC-memory.md's 2.5 GB/s, est.).</summary>
+    static constexpr double FillGuessBytesPerSecond = 2.5e9;
+    /// <summary>Port-only: bytes in a GB, for the load's end note on the slots (PlaceStagedPictures).</summary>
+    static constexpr double BytesPerGb = 1e9;
+    /// <summary>Port-only: the fill's bytes a frame in play at the least, so it keeps moving.</summary>
+    static constexpr size_t FillLeastBytes = size_t{256} << 10;
+    /// <summary>Port-only: the most of the fill's pictures a frame in play copies up.</summary>
+    static constexpr size_t FillMostPerFrame = 64;
+    /// <summary>Port-only: the frame times the fill's budget is reckoned between (360 Hz to 30 Hz), and their smoothing.</summary>
+    static constexpr double FillLeastPeriod = 1.0 / 360.0;
+    static constexpr double FillMostPeriod = 1.0 / 30.0;
+    static constexpr double FillPeriodWeight = 0.05;
     /// <summary>
     /// Port-only (HD movies): <see cref="HdPictureOf"/> for a movie's frame (<see cref="MCHdArt::ColorFormat::Yuv420"/>):
     /// its movie's picture (<see cref="MoviePicture"/>), made the first time, with the frame's planes and indices
@@ -1849,10 +1883,12 @@ private:
     /// <summary>Port-only: waits for a frame running, when frames may run on another thread (<see cref="WaitForRun"/>).</summary>
     void WaitForRunning() const;
     /// <summary>
-    /// Port-only: empties <paramref name="run"/> for a frame to come, its memory kept (a burst's staging let go,
-    /// KeptUploadBytes), what it held let go.
+    /// Port-only: empties <paramref name="run"/> for a frame to come, its memory kept, what it held let go (its uploads'
+    /// slots given back, if it didn't run).
     /// </summary>
     static void EmptyRun(FrameRun& run);
+    /// <summary>Port-only: a run for a frame to come, its uploads going up through the slots.</summary>
+    SealedFrame NewRun() const;
     /// <summary>
     /// The table rows (256 bytes each, row 0 the identity) and the texture holding them. A row stays while its table
     /// does; rows dropped (the table changed or went) are free again from the next frame on (<c>_ReleasedRows</c>,
@@ -1914,6 +1950,10 @@ private:
     /// copy of the same rectangle from that texture. A null <c>Texture</c> was dropped. An upload holds what it reads
     /// and writes until the frame has run.
     /// </summary>
+    /// <summary>
+    /// An upload of the frame: its bytes where its run's batch staged them (<see cref="MCUploadBatch::MCStaged"/>: none
+    /// where nothing could hold them, which isn't sent), or a copy from <c>From</c>.
+    /// </summary>
     struct Upload
     {
         std::shared_ptr<SDL_GPUTexture> Texture;
@@ -1922,18 +1962,13 @@ private:
         uint32_t Width;
         uint32_t Height;
         uint32_t BytesPerPixel;
-        size_t Offset;
-        std::shared_ptr<SDL_GPUTransferBuffer> Buffer;
-        uint32_t RowPixels = 0;
+        uint32_t Offset;
+        SDL_GPUTransferBuffer* Buffer = nullptr;
         std::shared_ptr<SDL_GPUTexture> From;
     };
 
-    /// <summary>
-    /// The transfer buffer the frames' uploads (their staging, FrameRun::Staging) go up through, kept for the next
-    /// frames up to <see cref="KeptUploadBytes"/> (a bigger frame's go once it has run); the run's side.
-    /// </summary>
-    std::shared_ptr<SDL_GPUTransferBuffer> _Transfer;
-    uint32_t _TransferSize = 0;
+    /// <summary>Port-only (SPEC-memory.md's upload slots): what every upload goes up through, the presenter's too.</summary>
+    std::shared_ptr<MCUploadSlots> _Slots;
     MCCountedGpuHandle<SDL_GPUBuffer> _DrawBuffer;
     uint32_t _DrawBufferSize = 0;
 
@@ -1989,6 +2024,28 @@ private:
         std::bitset<256> DrawnColors;
     };
 
+    /// <summary>
+    /// Port-only: a new HD picture's textures for <paramref name="frame"/>, its colours <paramref name="colorWidth"/> x
+    /// <paramref name="colorHeight"/> (BC7 when <paramref name="bc7"/>, else RGBA8): in a page the HD frames share, or,
+    /// too big for one, in textures of its own; none (logged, the frame refused) when they can't be made.
+    /// </summary>
+    std::optional<Picture> NewHdPicture(const MCHdArt::Frame& frame, uint32_t colorWidth, uint32_t colorHeight,
+                                        bool bc7);
+    /// <summary>
+    /// Port-only: keeps <paramref name="picture"/> (its uploads queued) as <paramref name="frame"/>'s, the colours
+    /// <paramref name="drawnColors"/> its indices draw where the original does, its colours on the GPU now
+    /// (MCHdArt::ColorsUploaded).
+    /// </summary>
+    std::unordered_map<uint64_t, Picture>::iterator KeepHdPicture(const MCHdArt::Frame& frame, Picture&& picture,
+                                                                  std::bitset<256> drawnColors);
+    /// <summary>
+    /// Port-only (MCHdArt::FillGpu): <paramref name="staged"/>'s picture, which a reader put in the upload slots, made and
+    /// copied up from there with this frame's uploads, which carry its lease until their copies have run; none when it
+    /// can't be (its frame told: MCHdArt::PictureDropped).
+    /// </summary>
+    std::optional<std::unordered_map<uint64_t, Picture>::iterator> PlaceStagedPicture(
+        const MCHdArt::StagedPicture& staged);
+
     std::unordered_map<uint64_t, Picture> _Pictures;
     size_t _PictureBytes = 0;
     /// <summary>
@@ -2010,6 +2067,11 @@ private:
     uint64_t _HdPackChanged = 0;
     /// <summary>The HD art frames the GPU couldn't take (logged once each, then drawn from the 1x shape).</summary>
     std::unordered_set<uint64_t> _HdRefused;
+    /// <summary>Port-only (PlaceStagedPictures): when the last frame began, and the frames' time, smoothed.</summary>
+    std::optional<std::chrono::steady_clock::time_point> _LastFrameStart;
+    double _FramePeriod = FillMostPeriod;
+    /// <summary>Port-only (PlaceStagedPictures): whether the last frame was under a load's bar (its end noted once).</summary>
+    bool _WasLoadFilling = false;
 
     /// <summary>
     /// Port-only (HD movies): a movie's frames on the GPU, kept while it shows, each frame put in place of the one
@@ -2336,9 +2398,12 @@ struct MCVulkanRenderer::FrameRun
     /// </summary>
     std::vector<uint32_t> DrawNext;
     bool DrawsMoved = false;
-    /// <summary>The uploads, run in order before the draws, and their bytes (the staging; Upload::Offset).</summary>
+    /// <summary>
+    /// The uploads, run in order before the draws, and their bytes, staged in the upload slots (Upload::Buffer and
+    /// Offset), which go up on a command buffer of their own before the frame's.
+    /// </summary>
     std::vector<Upload> Uploads;
-    std::vector<uint8_t> Staging;
+    MCUploadBatch Staging;
     std::vector<TerrainDraw> TerrainDraws;
     /// <summary>The frame's pictures in use (SourceKind::Picture's indices).</summary>
     std::vector<FramePicture> Pictures;
@@ -2350,7 +2415,6 @@ struct MCVulkanRenderer::FrameRun
     /// has run (SDL frees them once the GPU is done with them).
     /// </summary>
     std::vector<Texture> Retired;
-    std::vector<std::shared_ptr<SDL_GPUTransferBuffer>> RetiredTransfers;
     std::vector<MoviePicture> RetiredMovies;
 
     // Taken as it is sealed.

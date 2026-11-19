@@ -3,8 +3,11 @@
 #include "lib/MCDiskFile.h"
 #include "platform/MCAddressKey.h"
 #include "platform/MCSharpLines.h"
+#include "platform/MCUploadSlots.h"
 #include "shaders/channels.hlsli"
 #include "sprite/MCBc7.h"
+
+#include <bitset>
 
 class MCShape;
 
@@ -655,6 +658,88 @@ namespace MCHdArt
 
     /// <summary>Port-only: the GPU let go of the picture of the frame numbered <paramref name="id"/>.</summary>
     void PictureDropped(uint64_t id);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): the palette indices <paramref name="indices"/> (R8G8: an index and its mark)
+    /// draws where the original draws (<see cref="OriginalDrawsMark"/>).
+    /// </summary>
+    std::bitset<256> DrawnColorsOf(std::span<const uint8_t> indices);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's plan, item 2: the whole mission on the GPU): a frame's picture a reader put in the
+    /// upload slots, for the renderer to copy into its place: the frame's record (numbered, kept by the cache, its colours
+    /// left out), the lease holding the bytes (shared by the frames put in it, freed once every copy from it has run),
+    /// where its colours and indices lie in the slots' buffer, whether the colours are BC7 (else RGBA, decoded by the
+    /// reader for a GPU without BC7), and the colours its indices draw where the original does (a marked frame's).
+    /// </summary>
+    struct StagedPicture
+    {
+        std::shared_ptr<const Frame> Record;
+        std::shared_ptr<const MCUploadSlots::MCLease> Lease;
+        uint32_t ColorsAt = 0;
+        uint32_t ColorBytes = 0;
+        uint32_t IndicesAt = 0;
+        uint32_t IndexBytes = 0;
+        bool Bc7 = false;
+        std::bitset<256> DrawnColors;
+    };
+
+    /// <summary>
+    /// Port-only: the renderer's upload slots, which the mission's fill on the GPU stages its pictures in (none: no fill,
+    /// a renderer without them), and whether its GPU takes BC7 (else the readers decode the colours).
+    /// </summary>
+    void SetUploadSlots(std::shared_ptr<MCUploadSlots> slots, bool bc7);
+
+    /// <summary>
+    /// Port-only (the whole mission on the GPU, if it fits): on a card of its own, the bytes its pictures may take
+    /// (MCMemoryRoom::CardRoom), noted each frame before <see cref="NextFrame"/>; none on shared memory, where the art's
+    /// room says.
+    /// </summary>
+    void NoteGpuRoom(std::optional<uint64_t> cardPictureBytes);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's plan, item 2): has the readers put <paramref name="packets"/>' frames on the GPU (each
+    /// read, or unpacked from the hold, into the upload slots), in the order given, below every other read: when the
+    /// whole mission fits on the GPU (<see cref="GpuFillNow"/>), from a load's start (<see cref="StartLoadFill"/>) to its
+    /// mission's end. A folder asked for before is left as it is. The load's folders (<see cref="LoadFolders"/>) go in
+    /// the order handed, after these.
+    /// </summary>
+    void FillGpu(std::span<const PacketAhead> packets);
+
+    /// <summary>Port-only: the mission's fill on the GPU now (<see cref="FillGpu"/>), for the frame log and the tests.</summary>
+    struct GpuFill
+    {
+        /// <summary>Whether the whole mission fits on the GPU now (it fills), and the bytes it takes there (est.).</summary>
+        bool Fits = false;
+        uint64_t MissionBytes = 0;
+        /// <summary>The frames asked for, put in the slots, and on the GPU, and the bytes of those.</summary>
+        uint64_t Asked = 0;
+        uint64_t Staged = 0;
+        uint64_t Up = 0;
+        uint64_t UpBytes = 0;
+        /// <summary>Those in the slots that the renderer hasn't taken, and whether reads are left (asked or read now).</summary>
+        size_t Waiting = 0;
+        bool Reading = false;
+    };
+
+    GpuFill GpuFillNow();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's fill caps): the pictures the readers put in the slots, the soonest asked first, as many
+    /// as <paramref name="mostCount"/> and <paramref name="mostBytes"/> take (one at least while any wait): kept by the
+    /// cache, for the renderer to copy up this frame (the game's thread's, as a frame starts).
+    /// </summary>
+    std::vector<StagedPicture> TakeStagedPictures(size_t mostCount, size_t mostBytes);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md: a picture a frame draws is never capped): the picture of the frame numbered
+    /// <paramref name="id"/> the readers put in the slots, which a draw took from them (its record kept), for the
+    /// renderer to copy up now; none when there's none.
+    /// </summary>
+    std::optional<StagedPicture> TakeStagedPicture(uint64_t id);
+
+    /// <summary>Port-only: whether a load's fill runs now (<see cref="StartLoadFill"/> to <see cref="FinishLoadFill"/>).</summary>
+    bool LoadFilling();
 
     /// <summary>Port-only (the tests): how many times the cache read a frame again for its colours (ColorsOf).</summary>
     size_t ColorsReadAgain();

@@ -688,13 +688,15 @@ MCFastFile::HoldPiece MCFastFile::HoldPieceAt(uint32_t piece) const
         const Stream& stream = _Streams.at(piece);
         return HoldPiece{.At = stream.At,
                          .Stored = stream.Stored,
-                         .Kept = stream.Kind == StreamKind::Packet || stream.Kind == StreamKind::Heads};
+                         .Kept = stream.Kind == StreamKind::Packet || stream.Kind == StreamKind::Heads,
+                         .Unpacked = stream.Unpacked};
     }
 
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(_ByOffset.at(piece)));
     return HoldPiece{.At = static_cast<uint64_t>(entry.Offset),
                      .Stored = static_cast<uint32_t>(std::max(entry.Size, 0)),
-                     .Kept = true};
+                     .Kept = true,
+                     .Unpacked = static_cast<uint32_t>(std::max(entry.RealSize, 0))};
 }
 
 bool MCFastFile::HoldPieces(uint32_t first, uint32_t end, uint64_t start, std::vector<uint8_t>&& run) const

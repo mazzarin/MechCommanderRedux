@@ -1288,6 +1288,9 @@
     <ClCompile Include="platform\MCTlsThreading.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCUploadSlots.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCVulkanPresenter.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -2734,6 +2737,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCTlsThreading.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCUploadSlots.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCUtf8Path.h">

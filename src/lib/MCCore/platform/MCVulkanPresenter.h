@@ -264,7 +264,7 @@ private:
     /// only; else the frame's screen, op plane and underlays, read where the frame lies: on the game's thread).
     /// </summary>
     std::expected<void, std::string> Upload(SDL_GPUCommandBuffer& commands, const PlannedFrame& planned);
-    /// <summary>Bytes to go up into a texture's top left, and (UploadParts') where they lie in the transfer buffer.</summary>
+    /// <summary>Bytes to go up into a texture's top left.</summary>
     struct UploadPart
     {
         std::span<const std::byte> Data;
@@ -272,16 +272,13 @@ private:
         uint32_t Width;
         uint32_t Height;
         uint32_t BytesPerPixel;
-        uint32_t Offset;
     };
 
     /// <summary>
-    /// Uploads <paramref name="parts"/> (none: nothing) in a copy pass on <paramref name="commands"/>, through
-    /// <paramref name="buffer"/> (<paramref name="bufferSize"/> bytes; made or grown as needed).
+    /// Uploads <paramref name="parts"/> (none: nothing) through the upload slots, on a command buffer of their own
+    /// submitted now, before the frame's (the GPU runs them first).
     /// </summary>
-    std::expected<void, std::string> UploadParts(SDL_GPUCommandBuffer& commands, std::span<UploadPart> parts,
-                                                 MCCountedGpuHandle<SDL_GPUTransferBuffer>& buffer,
-                                                 uint32_t& bufferSize);
+    std::expected<void, std::string> UploadParts(std::span<const UploadPart> parts);
     /// <summary>
     /// Composites the frame planned into the frame texture, from the uploaded textures or the GPU's surfaces.
     /// </summary>
@@ -412,11 +409,8 @@ private:
     std::vector<MCSpeckLattice> _Specks;
     /// <summary>Port-only: the GPU worlds' drawn grids of the frame presented last (<see cref="ShownGrids"/>).</summary>
     std::vector<MCShownGrid> _ShownGrids;
-    /// <summary>The upload buffer, and its size; the light tiles' (uploaded after the frame's textures), and its.</summary>
-    MCCountedGpuHandle<SDL_GPUTransferBuffer> _Upload;
-    uint32_t _UploadSize = 0;
-    MCCountedGpuHandle<SDL_GPUTransferBuffer> _LightTileUpload;
-    uint32_t _LightTileUploadSize = 0;
+    /// <summary>Port-only (SPEC-memory.md's upload slots): what every upload goes up through, the renderer's too.</summary>
+    std::shared_ptr<MCUploadSlots> _Slots;
     /// <summary>The renderer of the frame surfaces (the renderers refer to it while it is set as the hardware one).</summary>
     std::shared_ptr<MCVulkanRenderer> _Renderer;
     /// <summary>

@@ -3894,6 +3894,46 @@ namespace
         /// <summary>Cuts the shapes' archive's file to nothing (open, it stays open), so no stream of it can be read.</summary>
         void CutShapes() const { std::filesystem::resize_file(_Shapes, 0); }
 
+        /// <summary>Port-only (MCHdArt::FillGpu): each stream's folder as a packet, every frame its archive holds.</summary>
+        std::vector<MCHdArt::PacketAhead> Packets() const
+        {
+            std::vector<MCHdArt::PacketAhead> packets;
+
+            for (const std::vector<uint8_t>& table : _Tables)
+            {
+                packets.push_back({MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table)), std::nullopt, false, 0});
+            }
+
+            return packets;
+        }
+
+        /// <summary>
+        /// Port-only (MCHdArt::FillGpu): checks each stream's frame went up through the slots (<paramref name="up"/>):
+        /// its colours there as its file decodes them, its indices beside them, and the cache's record, which a draw
+        /// finds, keeping no colours.
+        /// </summary>
+        void CheckStaged(std::span<const MCHdArt::StagedPicture> up) const
+        {
+            REQUIRE_EQ(up.size(), _Tables.size());
+
+            for (size_t stream = 0; stream < _Tables.size(); ++stream)
+            {
+                MCTest::Scope scope(std::format("stream {}", stream));
+                const std::shared_ptr<const MCHdArt::Frame> found =
+                    MCHdArt::FindShape(MCHdArt::ShapeTableHash(_Tables[stream]), 0, RunArchive::Side, RunArchive::Side);
+                REQUIRE(found != nullptr);
+                CHECK(found->Colors.empty());
+                const auto picture = std::ranges::find_if(up, [&found](const MCHdArt::StagedPicture& staged)
+                                                          { return staged.Record->Id == found->Id; });
+                REQUIRE(picture != up.end());
+                const auto decoded = MCHdArt::DecodeHdf(_Files[stream], RunArchive::Side, RunArchive::Side);
+                REQUIRE(decoded.has_value());
+                const std::span<const uint8_t> colors = picture->Lease->At(picture->ColorsAt, picture->ColorBytes);
+                CHECK(std::ranges::equal(colors, decoded->Colors));
+                CHECK_EQ(picture->IndexBytes, decoded->Indices.size());
+            }
+        }
+
         const std::filesystem::path& Folder() const { return _Scratch.Path(); }
 
     private:
@@ -4119,6 +4159,181 @@ TEST_CASE("hd art: the load's fill holds what the load opens before the load end
     CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
     CHECK_EQ(MCHdArt::LoadFillShare(), 1.0);
     CHECK_EQ(MCHdArt::LoadBarPercent(Part), Part);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+namespace
+{
+    /// <summary>Port-only (MCHdArt::FillGpu): upload slots over memory of the test's, whose copies are done at once.</summary>
+    class FillSlotsBacking final : public MCUploadSlots::MCBacking
+    {
+    public:
+        explicit FillSlotsBacking(size_t slots) : _Memory(slots * MCUploadSlots::SlotBytes) {}
+
+        std::span<uint8_t> Memory() override { return _Memory; }
+        SDL_GPUTransferBuffer* Buffer() override { return nullptr; }
+        bool Done(SDL_GPUFence*) override { return true; }
+        bool Wait(SDL_GPUFence*) override { return true; }
+        void Release(SDL_GPUFence*) override {}
+        void Flush() override {}
+
+    private:
+        std::vector<uint8_t> _Memory;
+    };
+
+    /// <summary>Port-only: the fill's slots for a scope, as the renderer sets its own (MCHdArt::SetUploadSlots).</summary>
+    class FillSlotsScope
+    {
+    public:
+        static constexpr size_t Slots = 64;
+
+        FillSlotsScope() : _Slots(MCUploadSlots::MakeWith(std::make_unique<FillSlotsBacking>(Slots)))
+        {
+            MCHdArt::SetUploadSlots(_Slots, true);
+        }
+
+        ~FillSlotsScope() { MCHdArt::SetUploadSlots(nullptr, false); }
+        FillSlotsScope(const FillSlotsScope&) = delete;
+        FillSlotsScope& operator=(const FillSlotsScope&) = delete;
+
+        MCUploadSlots& Pool() const { return *_Slots; }
+
+    private:
+        std::shared_ptr<MCUploadSlots> _Slots;
+    };
+
+    /// <summary>
+    /// Port-only: a load's fill, the renderer's part done as each frame of the bar is shown (the pictures the readers put
+    /// in the slots taken, all of them, their copies recorded): the pictures taken.
+    /// </summary>
+    std::vector<MCHdArt::StagedPicture> FillUnderTheBar(const HoldPack& pack)
+    {
+        MCHdArt::StartLoadFill();
+        pack.Open();
+        MCHdArt::FillGpu(pack.Packets());
+        std::vector<MCHdArt::StagedPicture> up;
+        MCHdArt::FinishLoadFill(
+            [&up]
+            {
+                for (MCHdArt::StagedPicture& picture : MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(),
+                                                                                   std::numeric_limits<size_t>::max()))
+                {
+                    MCHdArt::ColorsUploaded(*picture.Record);
+                    up.push_back(std::move(picture));
+                }
+            });
+        return up;
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2: the whole mission on the GPU, if it fits): under the loading bar the readers
+/// unpack the mission's frames from the hold and put their pictures in the upload slots, which the renderer copies up as
+/// the bar is shown; the bar ends once they're all up. Each picture's bytes are its file's, and the cache's record, which
+/// a draw finds with the archive's file gone, keeps no colours: nothing is read again for them.
+/// </summary>
+TEST_CASE("hd art: a mission that fits goes on the GPU under the loading bar, through the upload slots")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}, {StreamKind::Packet, 1000}};
+    const HoldPack pack("gpu-fill", pieces);
+    const FillSlotsScope slots;
+    const size_t again = MCHdArt::ColorsReadAgain();
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    const std::vector<MCHdArt::StagedPicture> up = FillUnderTheBar(pack);
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    CHECK(fill.Fits);
+    CHECK(fill.MissionBytes > 0);
+    CHECK_EQ(fill.Up, before + pieces.size());
+    CHECK(!fill.Reading);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    pack.CutShapes();
+    pack.CheckStaged(up);
+    CHECK_EQ(MCHdArt::ColorsReadAgain(), again);
+    MCHdArt::LetGoHold();
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, items 2 and 3): a mission that doesn't fit on the GPU (a room the game itself takes)
+/// isn't put there: the bar ends once the hold has it, and its frames are drawn from the hold's memory as they were.
+/// </summary>
+TEST_CASE("hd art: a mission that doesn't fit on the GPU stays in the hold, its frames drawn from memory")
+{
+    constexpr uint64_t NoRoom = 2 * MCMemoryRoom::GameItselfBytes;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    const MCFakeMemoryScope memory(system);
+    system->Total = NoRoom;
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-short", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    const std::vector<MCHdArt::StagedPicture> up = FillUnderTheBar(pack);
+    CHECK(up.empty());
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    pack.CutShapes();
+    pack.CheckDrawnFromTheHold();
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's upload slots: a fill reader waits for its room before it takes any read): with the fill's
+/// share of the slots held (as pictures staged and not yet recorded hold it), its reader waits and the bar is shown
+/// meanwhile, the game's thread never waiting; once the share is given back the mission goes up whole.
+/// </summary>
+TEST_CASE("hd art: the fill waits for room in the upload slots, the bar shown meanwhile, then goes up whole")
+{
+    constexpr size_t ShowsHeld = 3;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-room", pieces);
+    const FillSlotsScope slots;
+    MCUploadSlots& pool = slots.Pool();
+    const int64_t waits = pool.Tally().Of(MCUploadSlots::MCKind::Fill).Waits;
+    std::optional<MCUploadSlots::MCLease> share =
+        pool.TryTake(MCUploadSlots::MCKind::Fill, pool.MostFor(MCUploadSlots::MCKind::Fill) * MCUploadSlots::SlotBytes);
+    REQUIRE(share.has_value());
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    size_t shows = 0;
+    uint64_t upWhileHeld = 0;
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::FinishLoadFill(
+        [&]
+        {
+            if (++shows == ShowsHeld)
+            {
+                upWhileHeld = MCHdArt::GpuFillNow().Up - before;
+                share.reset();
+            }
+
+            for (MCHdArt::StagedPicture& picture :
+                 MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+            {
+                MCHdArt::ColorsUploaded(*picture.Record);
+                up.push_back(std::move(picture));
+            }
+        });
+    CHECK(shows > ShowsHeld);
+    CHECK_EQ(upWhileHeld, 0);
+    CHECK(pool.Tally().Of(MCUploadSlots::MCKind::Fill).Waits > waits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before + pieces.size());
+    pack.CutShapes();
+    pack.CheckStaged(up);
     MCHdArt::LetGoHold();
     GHdArt = previous;
 }

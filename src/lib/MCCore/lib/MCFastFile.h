@@ -218,13 +218,15 @@ public:
     /// <summary>
     /// Port-only (the hold, SPEC-memory.md's fill): a piece of the archive the hold may keep as stored, its place and
     /// stored bytes, and whether it's one the hold keeps: a version 2 archive's stream (a packet's or the heads', not the
-    /// tiles' or pictures'), a version 1 archive's entry (every one).
+    /// tiles' or pictures'), a version 1 archive's entry (every one); and its bytes unpacked (the frames' pictures as
+    /// the GPU takes them: SPEC-memory.md's whole mission on the GPU).
     /// </summary>
     struct HoldPiece
     {
         uint64_t At = 0;
         uint32_t Stored = 0;
         bool Kept = false;
+        uint32_t Unpacked = 0;
     };
 
     /// <summary>

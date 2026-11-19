@@ -20381,6 +20381,86 @@ TEST_CASE_ISOLATED("game: the results screen's HD pictures are kept from the int
 }
 
 /// <summary>
+/// Port-only (SPEC-first-use.md: HD craters and footprints): a mission's crater and footprint frames are read by HD
+/// art's readers at its load (MCCraterManager::AttachHdArt) and kept for the mission as its interface starts
+/// (MCCraterManager::KeepHdArtForMission), so its first crater and footprint find theirs with no read on the game's
+/// thread (none unpacked there), while the mission's frames overfill a budget that keeps nothing else; let go of with
+/// the hold (MCHdArt::LetGoHold), the same frames trim them, and finding them reads them again.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's first crater and footprint need no unpack on the game's thread")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    size_t translucent = 0;
+    const std::vector<Sequence> sequences = CraterSequences(translucent);
+    REQUIRE(!sequences.empty());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_craters_kept";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    WritePack(pack, sequences, colors, TestPackScale, Inverted);
+    // In craters.hda, as the shipped pack has them.
+    ArchiveFolderPngs(pack / "craters", TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // As a mission's load: HD art turned on ties the craters to the pack as the load does (MCCraterManager::AttachHdArt,
+    // its frames asked of the readers), the load's reads waited for and kept, then the interface started.
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    TacticalInterface()->EndScenario();
+    HomeCommander()->AddToGui(1);
+    MCMission::StartInterface();
+    const MCCraterManager& craters = CraterManager();
+    const auto findAll = [&craters]
+    {
+        size_t found = 0;
+
+        for (const std::vector<uint8_t>& table : craters.Shapes().first(static_cast<size_t>(craters.ShapeCount())))
+        {
+            for (int32_t frame = 0; frame < (table.empty() ? 0 : VfxShapeCount(table)); ++frame)
+            {
+                if (MCVfxHasShape(table, frame))
+                {
+                    const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+                    found += MCHdArt::Find(table, frame, static_cast<int32_t>(bounds.Width),
+                                           static_cast<int32_t>(bounds.Height)) != nullptr;
+                }
+            }
+        }
+
+        return found;
+    };
+
+    const size_t kept = MCHdArt::KeptForMissionBytes();
+    MCHdArt::SetCacheBudget(1);
+    RunFirstFrames();
+    const size_t before = FramesReadOnTheGamesThread();
+    const size_t found = findAll();
+    CHECK(kept > 0);
+    CHECK(found > 0);
+    CHECK_EQ(FramesReadOnTheGamesThread(), before);
+
+    // Let go of with the hold: the same frames trim them, and finding them reads them.
+    MCHdArt::LetGoHold();
+    RunFirstFrames();
+    const size_t trimmed = FramesReadOnTheGamesThread();
+    CHECK_EQ(MCHdArt::KeptForMissionBytes(), 0);
+    CHECK_EQ(findAll(), found);
+    std::cout << std::format("  {} crater and footprint frames kept ({:.2f} MB with the rest kept); {} read again once "
+                             "let go of\n",
+                             found, static_cast<double>(kept) / (1024.0 * 1024.0),
+                             FramesReadOnTheGamesThread() - trimmed);
+    CHECK(FramesReadOnTheGamesThread() > trimmed);
+    MCHdArt::SetCacheBudget(0);
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
 /// Port-only: the results screen's first frame on screen, as a mission's end brings it up with HD art on, shows its
 /// pictures' HD copies, as its later frames do, not the original's pixels for a frame (you, 19 Nov: "can you fix this
 /// so it doesn't ever load the 1998 pixels for one frame"): mission 1 won on a screen shown larger, with a pack of every

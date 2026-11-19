@@ -783,6 +783,15 @@ namespace MCHdArt
     /// </summary>
     size_t KeepForMission(std::span<const PictureAhead> pictures);
 
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: HD craters and footprints): keeps every frame of the attached shape tables
+    /// <paramref name="tables"/> in the cache as <see cref="KeepForMission"/> keeps pictures, until the hold lets go or
+    /// the pack changes: shapes the game makes in play at no unit's lead (a blast's crater, a step's footprint), read
+    /// at the load (MCCraterManager::AttachHdArt). Called once the load's reads are kept; a frame they left out is read
+    /// now, under the loading bar. The bytes kept so (the pictures' with them).
+    /// </summary>
+    size_t KeepShapesForMission(std::span<const std::vector<uint8_t>> tables);
+
     /// <summary>Port-only: the bytes <see cref="KeepForMission"/> keeps now.</summary>
     size_t KeptForMissionBytes();
 

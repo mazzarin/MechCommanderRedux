@@ -42,8 +42,9 @@ std::vector<int32_t> MarineWeaponEffects(MCFitIniFile& profile)
 {
     std::vector<int32_t> effects;
     MCFitReader read(profile);
-    int32_t others = 0;
-    int32_t weapons = 0;
+    // As MCMover keeps them (a FIT entry is found by its type too).
+    uint8_t others = 0;
+    uint8_t weapons = 0;
 
     // The weapons follow the other equipment in the items, as MCElemental::LoadProfile reads them.
     const bool inventory = profile.SeekBlock("InventoryInfo") == 0;
@@ -54,14 +55,14 @@ std::vector<int32_t> MarineWeaponEffects(MCFitIniFile& profile)
         read.Value("NumWeapons", weapons);
     }
 
-    if (!inventory || read.Failed() || others < 0 || weapons < 0)
+    if (!inventory || read.Failed())
     {
         SDL_Log("MarineWeaponEffects: %.*s's inventory can't be read; its weapons' effects are loaded as first fired",
                 static_cast<int>(MarineProfileName.size()), MarineProfileName.data());
         return effects;
     }
 
-    for (int32_t item = others; item < others + weapons; ++item)
+    for (int32_t item = others; item < int32_t{others} + weapons; ++item)
     {
         uint8_t masterId = 0;
         const bool found = profile.SeekBlock(std::format("Item:{}", item)) == 0;

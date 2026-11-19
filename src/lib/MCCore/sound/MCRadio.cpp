@@ -197,9 +197,12 @@ void MCRadio::ReadMovies(const MCRadioMessageTable& table)
         return;
     }
 
+    // Each code once, read or not (most messages share a few).
+    std::set<char> tried;
+
     for (const MCRadioMessageInfo& info : table)
     {
-        if (info.MovieCode == NoMovieCode || info.MovieCode == '\0' || Movies.contains(info.MovieCode))
+        if (info.MovieCode == NoMovieCode || info.MovieCode == '\0' || !tried.insert(info.MovieCode).second)
         {
             continue;
         }

@@ -61,7 +61,7 @@ bool MCTerrainAskHdGroundByName(const MCTerrain& terrain);
 /// <summary>
 /// Port-only (HD art): the overlay slots the map's bridges, forests and walls put on their vertices as they're destroyed
 /// (MCMiscTerrainObject::DestroyedOverlayTile), each once: drawn from then on, and the map's vertices don't name them, so
-/// the mission's load reads them with the mines' (MCTerrainReadOverlaysAhead) and, with a version 2 pack, rebuilds
+/// the mission's load reads them with the mines' (MCTerrainReadDestroyedAhead) and, with a version 2 pack, rebuilds
 /// them with the map's (MCTerrainReadHdTiles). The terrain's objects are in once its load is done.
 /// </summary>
 std::vector<int32_t> MCTerrainDestroyedOverlaySlots();
@@ -111,6 +111,13 @@ std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain, MCMinesAhead c
 /// mine a mine layer lays with EveryCell. Call it once the map's mines are set (a match without mines clears them).
 /// </summary>
 void MCTerrainReadMinesAhead(MCMinesAhead cells = MCMinesAhead::Mined);
+
+/// <summary>
+/// Port-only (the workspace's SPEC-first-use.md): reads the tiles the map's bridges, forests and walls show once
+/// destroyed (MCTerrainDestroyedOverlaySlots) with MCTerrainReadOverlaysAhead, so the frame that first draws one reads
+/// none. Call it once the terrain's objects are in, before MCTerrainReadHdTiles.
+/// </summary>
+void MCTerrainReadDestroyedAhead();
 
 /// <summary>
 /// Port-only (the workspace's SPEC-first-use.md): reads tiles <paramref name="slots"/>, which the map's vertices don't

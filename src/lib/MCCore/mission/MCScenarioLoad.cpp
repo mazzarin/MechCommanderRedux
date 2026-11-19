@@ -303,7 +303,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     // Port-only: the tiles the map's mines draw, which the map's vertices don't name, read with the ground; and those
     // its bridges, forests and walls show once destroyed.
     MCTerrainReadMinesAhead();
-    MCTerrainReadOverlaysAhead(MCTerrainDestroyedOverlaySlots(), "destroyed terrain objects' tiles");
+    MCTerrainReadDestroyedAhead();
 
     LoadScript(file);
     LoadWarriors(file);

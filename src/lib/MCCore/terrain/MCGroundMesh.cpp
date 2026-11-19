@@ -855,6 +855,11 @@ void MCTerrainReadMinesAhead(MCMinesAhead cells)
                                                                         : "mines' tiles (the mined cells')");
 }
 
+void MCTerrainReadDestroyedAhead()
+{
+    MCTerrainReadOverlaysAhead(MCTerrainDestroyedOverlaySlots(), "destroyed terrain objects' tiles");
+}
+
 void MCTerrainReadOverlaysAhead(std::span<const int32_t> slots, std::string_view what)
 {
     const std::shared_ptr<MCTerrain> terrain = Terrain();
@@ -946,7 +951,7 @@ void MCTerrainReadHdTilesAhead()
 
     // By name when the program knows the tile set (the readers pass over what the terrain's load asked for already),
     // so no tile is hashed; otherwise by the tiles' own bytes. The overlays its bridges, forests and walls take as
-    // they're destroyed are the mission's load's to read, with the mines' (MCTerrainReadOverlaysAhead).
+    // they're destroyed are the mission's load's to read, with the mines' (MCTerrainReadDestroyedAhead).
     if (MCTerrainAskHdGroundByName(*terrain))
     {
         return;

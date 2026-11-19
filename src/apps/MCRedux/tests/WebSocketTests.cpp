@@ -106,6 +106,26 @@ namespace
         std::string WhyClosed;
     };
 
+#if defined(__APPLE__)
+    /// <summary>MCWebSocketMac's close for NSURLErrorSecureConnectionFailed, with nothing more to say.</summary>
+    constexpr std::string_view MacHandshakeFailed = "NSURLErrorDomain error -1200";
+#endif
+
+    /// <summary>
+    /// Whether <paramref name="outcome"/> is macOS failing the handshake before the host offered a certificate: never
+    /// open, no message, a bare -1200. macOS 26 does so now and then with badssl.com's hosts (no server-trust challenge
+    /// comes, so nothing was judged or trusted). Never elsewhere.
+    /// </summary>
+    bool RefusedBeforeCertificate(const Outcome& outcome)
+    {
+#if defined(__APPLE__)
+        return !outcome.Opened && outcome.FirstMessage.empty() && outcome.WhyClosed == MacHandshakeFailed;
+#else
+        static_cast<void>(outcome);
+        return false;
+#endif
+    }
+
     /// <summary>
     /// A WebSocket service on this machine that answers a socket's handshake, then reads nothing more, as a service
     /// whose network stalled: what the socket sends it fills the connection's buffers, and the rest waits to go.
@@ -263,12 +283,14 @@ TEST_CASE("tool: --websocket-service <address> checks this platform's WebSocket 
     for (const std::string_view host : BadCertificateHosts)
     {
         const Outcome bad = Try(host);
+        const bool beforeCertificate = RefusedBeforeCertificate(bad);
 
         // badssl.com is someone else's: when the socket neither opened nor was refused for the certificate, and the
         // host can't be reached at all (no name, no TCP connection), there was no handshake to judge, so it's skipped,
         // said why. A socket that opens, or one that reached the host and closed for anything but the certificate,
         // still fails.
-        if (!bad.Opened && bad.FirstMessage.empty() && !bad.WhyClosed.starts_with(MCWebSocketUntrusted))
+        if (!bad.Opened && bad.FirstMessage.empty() && !bad.WhyClosed.starts_with(MCWebSocketUntrusted) &&
+            !beforeCertificate)
         {
             if (const std::optional<std::string> why = Unreachable(host); why.has_value())
             {
@@ -278,13 +300,14 @@ TEST_CASE("tool: --websocket-service <address> checks this platform's WebSocket 
         }
 
         const std::string said = std::format("{}: opened {}, closed \"{}\"", host, bad.Opened, bad.WhyClosed);
-        // How each closed, passing or not (the Mac's own certificate check names a refusal macOS reported as a bare TLS
-        // failure).
-        std::cout << "  " << said << "\n";
+        // How each closed, passing or not.
+        std::cout << "  "
+                  << (beforeCertificate ? std::format("{}: refused before its certificate (macOS -1200)", host) : said)
+                  << "\n";
         const MCTest::Scope badScope(said);
         CHECK(!bad.Opened);
         CHECK(bad.FirstMessage.empty());
-        CHECK(bad.WhyClosed.starts_with(MCWebSocketUntrusted));
+        CHECK(beforeCertificate || bad.WhyClosed.starts_with(MCWebSocketUntrusted));
     }
 }
 

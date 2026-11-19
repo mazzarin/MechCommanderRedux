@@ -97,6 +97,43 @@ namespace
         return kind == MCMiscTerrainKind::Wall || kind == MCMiscTerrainKind::MediumWall ||
                kind == MCMiscTerrainKind::LightWall;
     }
+
+    /// <summary>What destroying a bridge adds to its vertex's overlay tile: the broken span.</summary>
+    constexpr int32_t BrokenBridgeStep = 0xf;
+    /// <summary>What burning a forest adds to its vertex's overlay tile: the cleared ground.</summary>
+    constexpr int32_t BurntForestStep = 8;
+    /// <summary>What burning a forest adds to a forest edge's overlay tile (ForestEdgeFirst to ForestEdgeLast).</summary>
+    constexpr int32_t BurntForestEdgeStep = 4;
+    /// <summary>The first and last overlay tiles of a forest's edge.</summary>
+    constexpr int32_t ForestEdgeFirst = 0xd0a;
+    constexpr int32_t ForestEdgeLast = 0xd0d;
+    /// <summary>What knocking a wall down adds to its vertex's overlay tile: the rubble.</summary>
+    constexpr int32_t WallRubbleStep = 0x13;
+
+    /// <summary>
+    /// What destroying a <paramref name="kind"/> adds to its vertex's overlay tile <paramref name="overlayTile"/>; none
+    /// for a kind that changes none.
+    /// </summary>
+    std::optional<int32_t> DestroyedOverlayStep(MCMiscTerrainKind kind, int32_t overlayTile)
+    {
+        if (kind == MCMiscTerrainKind::Bridge)
+        {
+            return BrokenBridgeStep;
+        }
+
+        if (kind == MCMiscTerrainKind::Forest)
+        {
+            return overlayTile < ForestEdgeFirst || ForestEdgeLast < overlayTile ? BurntForestStep
+                                                                                 : BurntForestEdgeStep;
+        }
+
+        if (IsWall(kind))
+        {
+            return WallRubbleStep;
+        }
+
+        return std::nullopt;
+    }
 } // namespace
 
 std::array<int32_t, 9> MCMiscTerrainObject::CellArray = {};
@@ -338,7 +375,7 @@ auto MCMiscTerrainObject::SetDamage(float newDamage) -> void
             return;
         }
 
-        Terrain()->SetOverlayTile(BlockNumber, VertexNumber, 0xf);
+        ShowDestroyedOverlay();
         MCTerrain::ForceRedraw = true;
         OverlayDestroyed = true;
         Destroyed = true;
@@ -386,8 +423,7 @@ auto MCMiscTerrainObject::SetDamage(float newDamage) -> void
             return;
         }
 
-        const int32_t overlayTile = Terrain()->GetOverlayTile(BlockNumber, VertexNumber);
-        Terrain()->SetOverlayTile(BlockNumber, VertexNumber, overlayTile < 0xd0a || 0xd0d < overlayTile ? 8 : 4);
+        ShowDestroyedOverlay();
         MCTerrain::ForceRedraw = true;
         OverlayDestroyed = true;
         Destroyed = true;
@@ -406,8 +442,7 @@ auto MCMiscTerrainObject::SetDamage(float newDamage) -> void
             return;
         }
 
-        Terrain()->GetOverlayTile(BlockNumber, VertexNumber);
-        Terrain()->SetOverlayTile(BlockNumber, VertexNumber, 0x13);
+        ShowDestroyedOverlay();
         MCTerrain::ForceRedraw = true;
         OverlayDestroyed = true;
         Destroyed = true;
@@ -420,6 +455,57 @@ auto MCMiscTerrainObject::SetDamage(float newDamage) -> void
             SetAllCells(tile, 1);
         }
     }
+}
+
+auto MCMiscTerrainObject::DestroyedOverlayTile() const -> std::optional<int32_t>
+{
+    const int32_t overlayTile = Terrain()->GetOverlayTile(BlockNumber, VertexNumber);
+    const std::optional<int32_t> step = DestroyedOverlayStep(Kind, overlayTile);
+
+    if (!step.has_value())
+    {
+        return std::nullopt;
+    }
+
+    // As the vertex keeps it (SetOverlayTile adds to a 16-bit tile number).
+    return static_cast<int16_t>(overlayTile + *step);
+}
+
+auto MCMiscTerrainObject::ShowDestroyedOverlay() -> void
+{
+    if (const std::optional<int32_t> step =
+            DestroyedOverlayStep(Kind, Terrain()->GetOverlayTile(BlockNumber, VertexNumber));
+        step.has_value())
+    {
+        Terrain()->SetOverlayTile(BlockNumber, VertexNumber, *step);
+    }
+}
+
+std::vector<int32_t> MCDestroyedTerrainTiles()
+{
+    std::vector<int32_t> tiles;
+
+    for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
+    {
+        for (const std::shared_ptr<MCBaseObject> object : *list)
+        {
+            if (object->ObjectClass != MCObjectClass::MiscTerrainObject)
+            {
+                continue;
+            }
+
+            // Every one, even one the map shows broken: its first update forgets that, so a hit steps it again.
+            const std::optional<int32_t> tile =
+                std::static_pointer_cast<MCMiscTerrainObject>(object)->DestroyedOverlayTile();
+
+            if (tile.has_value() && *tile >= 0 && !std::ranges::contains(tiles, *tile))
+            {
+                tiles.push_back(*tile);
+            }
+        }
+    }
+
+    return tiles;
 }
 
 auto MCMiscTerrainObject::Init(std::shared_ptr<MCObjectType> objType) -> int32_t

@@ -84,6 +84,11 @@ public:
     void DrawBars(MCVector2D screenPos);
     /// <summary>A 1-point hit, and more burning time for its fire if it has one.</summary>
     void LightOnFire(float timeToBurn);
+    /// <summary>
+    /// Port-only (the workspace's SPEC-first-use.md): the overlay tile its vertex shows once it is destroyed (SetDamage
+    /// adds its kind's step to the vertex's overlay), or none for a kind that changes none.
+    /// </summary>
+    std::optional<int32_t> DestroyedOverlayTile() const;
 
     /// <summary>The line-of-fire bits of the nine cells of the tile, saved by <see cref="ClearLineOfFire"/>.</summary>
     static std::array<int32_t, 9> CellArray;
@@ -104,4 +109,15 @@ public:
     MCFireLink FireObject;
     /// <summary>Set once destroyed: further hits are ignored and render updates the map's passability.</summary>
     bool Destroyed = false;
+
+private:
+    /// <summary>Adds its kind's step to its vertex's overlay tile, which then shows it destroyed.</summary>
+    void ShowDestroyedOverlay();
 };
+
+/// <summary>
+/// Port-only (the workspace's SPEC-first-use.md): the overlay tiles the map's bridges, forests and walls show once
+/// destroyed (DestroyedOverlayTile), each once. The map's vertices don't name them, so the mission's load reads them
+/// with the mines' (MCTerrainReadOverlaysAhead) and the frame that first draws one reads none.
+/// </summary>
+std::vector<int32_t> MCDestroyedTerrainTiles();

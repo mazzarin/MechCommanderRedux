@@ -40,6 +40,7 @@
 #include "object/MCMasterComponent.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
+#include "object/MCMiscTerrainObject.h"
 #include "object/MCMoverGameSystem.h"
 #include "object/MCMoverGroup.h"
 #include "object/MCObjectSystem.h"
@@ -300,8 +301,10 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         GameMap().ClearMines();
     }
 
-    // Port-only: the tiles the map's mines draw, which the map's vertices don't name, read with the ground.
+    // Port-only: the tiles the map's mines draw, which the map's vertices don't name, read with the ground; and those
+    // its bridges, forests and walls show once destroyed.
     MCTerrainReadMinesAhead();
+    MCTerrainReadOverlaysAhead(MCDestroyedTerrainTiles(), "destroyed terrain objects' tiles");
 
     LoadScript(file);
     LoadWarriors(file);

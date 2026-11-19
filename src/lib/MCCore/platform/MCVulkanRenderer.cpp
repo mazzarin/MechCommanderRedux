@@ -4265,7 +4265,18 @@ bool MCVulkanRenderer::AddSharpLines(uint16_t surface, std::span<const uint8_t> 
         return MCSharpLines::Redraw(art, columns, columns, rows, drawn);
     };
 
-    return AddSharpPicture(surface, key, redraw, columns, rows, at, from, tableRow);
+    // Port-only: the first put on the GPU timed, the game's thread's share of line art (SharpCounts::LinesTime).
+    const bool first = !_SharpGlyphs.contains(key);
+    const auto start = first ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const bool added = AddSharpPicture(surface, key, redraw, columns, rows, at, from, tableRow);
+
+    if (first)
+    {
+        _SharpCounts.LinesTime += std::chrono::steady_clock::now() - start;
+        _SharpCounts.LinesPut += added ? 1 : 0;
+    }
+
+    return added;
 }
 
 MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(

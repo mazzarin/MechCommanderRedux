@@ -10,6 +10,7 @@
 #include "sprite/MCHdMovie.h"
 
 #include <bitset>
+#include <chrono>
 #include <list>
 #include <unordered_map>
 #include <unordered_set>
@@ -245,7 +246,8 @@ public:
     /// <summary>
     /// Port-only: the sharp pictures put on the GPU since the start: redrawn as they were first drawn, or taken made
     /// ahead (platform/MCSharpPictures); and the bytes they take there now. Of those redrawn, the line art's
-    /// (MCSharpLines: a shape's frame, not a font's glyph).
+    /// (MCSharpLines: a shape's frame, not a font's glyph). The line art put there, however made, and the game's
+    /// thread's time for it: waiting for a picture being made ahead, taking it or redrawing it, and its upload's copy.
     /// </summary>
     struct SharpCounts
     {
@@ -253,11 +255,15 @@ public:
         size_t TakenAhead = 0;
         size_t Bytes = 0;
         size_t LinesRedrawn = 0;
+        size_t LinesPut = 0;
+        std::chrono::nanoseconds LinesTime{0};
     };
 
     SharpCounts SharpPictures() const
     {
-        return {_SharpCounts.Redrawn, _SharpCounts.TakenAhead, _SharpGlyphBytes, _SharpCounts.LinesRedrawn};
+        SharpCounts counts = _SharpCounts;
+        counts.Bytes = _SharpGlyphBytes;
+        return counts;
     }
 
     /// <summary>

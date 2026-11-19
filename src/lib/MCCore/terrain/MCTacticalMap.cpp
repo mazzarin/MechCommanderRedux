@@ -42,6 +42,8 @@
 #include "vfx/MCVfxFunctions.h"
 #include "sprite/MCShapeFile.h"
 
+#include <unordered_set>
+
 using namespace MCTacmapLayout;
 
 bool MCTacticalMap::MarkersLit = false;
@@ -1939,6 +1941,73 @@ auto MCTacticalMap::RefreshSalvageList() -> void
     SalvageText->PositionScrollTab();
 }
 
+namespace
+{
+    /// <summary>The generic vehicle's part diagram (vr106.shp): a vehicle's whose icon is 0, and the first kept.</summary>
+    constexpr std::string_view GenericVehicleShapes = "vr106";
+
+    /// <summary>
+    /// The part diagram file (no extension) the DATA page shows for <paramref name="unit"/>: a mech's mechrep##, a
+    /// vehicle's vr1## (the generic vehicle's when its icon is 0); none for another unit.
+    /// </summary>
+    std::optional<std::string> PartShapesName(MCGameObject& unit)
+    {
+        const std::shared_ptr<MCObjectType> type = unit.GetObjectType();
+
+        if (type == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        const int32_t icon = type->IconNumber;
+
+        if (unit.ObjectClass == MCObjectClass::BattleMech)
+        {
+            return std::format("mechrep{:02}", icon);
+        }
+
+        if (unit.ObjectClass == MCObjectClass::GroundVehicle)
+        {
+            return icon == 0 ? std::string(GenericVehicleShapes) : std::format("vr{}", icon);
+        }
+
+        return std::nullopt;
+    }
+
+    /// <summary>
+    /// Port-only: the frames of <paramref name="mover"/>'s part diagram <paramref name="shapes"/> drawn as line art: all
+    /// but its silhouette, one-pixel outlines (the store's own diagrams), a mech's with the parts drawn by hand there
+    /// (the Atlas's eyes, MCLogistics::RepairShapesDrawn).
+    /// </summary>
+    std::vector<MCHdArt::LineArtFrame> PartLineArt(std::span<const uint8_t> shapes, MCMover& mover)
+    {
+        const MCAddressKey table = MCAddressKey::OfData(shapes);
+        const int32_t silhouette = MCTacticalMap::PartSilhouette(mover);
+        const bool mech = mover.ObjectClass == MCObjectClass::BattleMech;
+        std::vector<MCHdArt::LineArtFrame> lineArt;
+
+        for (int32_t frame = 0; frame < VfxShapeCount(shapes); ++frame)
+        {
+            if (frame != silhouette)
+            {
+                lineArt.push_back({table, frame,
+                                   mech ? MCLogistics::RepairShapesDrawn(
+                                              static_cast<size_t>(mover.GetObjectType()->IconNumber), frame)
+                                        : std::vector<MCSharpLines::MCDrawnLoop>{}});
+            }
+        }
+
+        return lineArt;
+    }
+
+    /// <summary>Whether line art is drawn now: HD art on, on a sharp screen (the renderer's draws ask the same).</summary>
+    bool DrawsLineArt()
+    {
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        return GHdArt != 0 && display != nullptr && display->SharpScreen();
+    }
+}
+
 auto MCTacticalMap::SetID(int32_t partId) -> void
 {
     auto obj = std::static_pointer_cast<MCGameObject>(ObjectList()->FindObjectFromPart(partId));
@@ -1965,7 +2034,7 @@ auto MCTacticalMap::SetID(int32_t partId) -> void
 
     // Port fix: the original leaves the shape file's name unset for elementals and other movers (whatever the stack
     // held); the port keeps the last one, starting with the generic vehicle's.
-    static std::string shapeName = "vr106";
+    static std::string shapeName(GenericVehicleShapes);
 
     if (obj->ObjectClass == MCObjectClass::BattleMech)
     {
@@ -1977,7 +2046,6 @@ auto MCTacticalMap::SetID(int32_t partId) -> void
         front.MoveTo(0xf, 0xcc, false);
         DataButtons[2]->MoveTo(0x56, 0xcc, false);
         DataButtons[1]->ShowGuiWindow(true);
-        shapeName = std::format("mechrep{:02}", obj->GetObjectType()->IconNumber);
         InfoPorts[0]->Init(obj->GetPilot()->Picture.data());
     }
     else if (obj->ObjectClass == MCObjectClass::GroundVehicle)
@@ -2006,9 +2074,11 @@ auto MCTacticalMap::SetID(int32_t partId) -> void
                 InfoPorts[static_cast<size_t>(seat)]->Init(vehicle->Passengers[seat].lock()->Picture.data());
             }
         }
+    }
 
-        const auto icon = obj->GetObjectType()->IconNumber;
-        shapeName = icon == 0 ? std::string("vr106") : std::format("vr{}", icon);
+    if (const std::optional<std::string> name = PartShapesName(*obj); name.has_value())
+    {
+        shapeName = *name;
     }
 
     // The part diagram's shapes.
@@ -2035,35 +2105,61 @@ auto MCTacticalMap::PartSilhouette(const MCMover& mover) -> int32_t
 
 auto MCTacticalMap::SetPartShapes(MCRegisteredBlock shapes, MCMover& mover) -> void
 {
-    // Port-only: the frames but the silhouette are one-pixel outlines, the store's own diagrams (mechrep##.shp,
-    // vr1##.shp), so they're drawn as its line art is (the Atlas's eyes by hand). Marked before the shapes shown
-    // before go, which takes theirs out.
-    const MCAddressKey table = MCAddressKey::OfData(shapes.Bytes());
-    const int32_t silhouette = PartSilhouette(mover);
-    const bool mech = mover.ObjectClass == MCObjectClass::BattleMech;
-    std::vector<MCHdArt::LineArtFrame> lineArt;
-
-    for (int32_t frame = 0; frame < VfxShapeCount(shapes.Bytes()); ++frame)
-    {
-        if (frame != silhouette)
-        {
-            lineArt.push_back(
-                {table, frame,
-                 mech ? MCLogistics::RepairShapesDrawn(static_cast<size_t>(mover.GetObjectType()->IconNumber), frame)
-                      : std::vector<MCSharpLines::MCDrawnLoop>{}});
-        }
-    }
-
+    // Port-only: drawn as the store's line art is (PartLineArt). Marked before the shapes shown before go, which takes
+    // theirs out.
+    const std::vector<MCHdArt::LineArtFrame> lineArt = PartLineArt(shapes.Bytes(), mover);
     MCHdArt::SetLineArtFrames(lineArt, MCHdArt::LineArtSet::PartDiagram);
     PartShapes = std::move(shapes);
 
-    // On a sharp screen, their strokes made ahead off the game's thread (or taken from the pack's sharp.hda): made as
-    // the page first draws them, each would take 0.1 to 1 ms of the game's thread.
-    if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr && display->SharpScreen())
+    // Their strokes made ahead off the game's thread (or taken from the pack's sharp.hda), unless MakePartDiagramsAhead
+    // made them at the mission's start: a unit chosen now races the page's next frame.
+    if (DrawsLineArt())
     {
         for (const MCHdArt::LineArtFrame& frame : lineArt)
         {
             MCSharpPictures::MakeLineArt(PartShapes.Bytes(), frame.Frame, frame.Drawn);
+        }
+    }
+}
+
+auto MCTacticalMap::MakePartDiagramsAhead(std::span<const int32_t> partIds) -> void
+{
+    // Port-only: made as a unit is chosen, its 16 to 20 outlines race the DATA page's next frame, and each one the
+    // game's thread redraws takes it 0.25 to 1.5 ms. Made at the mission's start, they're in hand by then. The
+    // logistics screens show the same files, so any the mission doesn't show are taken there.
+    if (!DrawsLineArt())
+    {
+        return;
+    }
+
+    std::unordered_set<std::string> read;
+
+    for (const int32_t partId : partIds)
+    {
+        const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+        const std::optional<std::string> name = mover != nullptr ? PartShapesName(*mover) : std::nullopt;
+
+        if (!name.has_value() || !read.insert(*name).second)
+        {
+            continue;
+        }
+
+        MCShapeFile shapeFile;
+
+        if (shapeFile.Open(GamePath(ArtPath, *name, ".shp")) != 0)
+        {
+            SDL_Log("MCTacticalMap: unit %d's part diagram %s.shp can't be opened to make its line art ahead", partId,
+                    name->c_str());
+            continue;
+        }
+
+        std::vector<uint8_t> shapes(shapeFile.GetLength());
+        shapeFile.Read(shapes);
+        shapeFile.Close();
+
+        for (const MCHdArt::LineArtFrame& frame : PartLineArt(shapes, *mover))
+        {
+            MCSharpPictures::MakeLineArt(shapes, frame.Frame, frame.Drawn);
         }
     }
 }

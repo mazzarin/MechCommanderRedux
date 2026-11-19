@@ -243,16 +243,21 @@ public:
 
     /// <summary>
     /// Port-only: the sharp pictures put on the GPU since the start: redrawn as they were first drawn, or taken made
-    /// ahead (platform/MCSharpPictures); and the bytes they take there now.
+    /// ahead (platform/MCSharpPictures); and the bytes they take there now. Of those redrawn, the line art's
+    /// (MCSharpLines: a shape's frame, not a font's glyph).
     /// </summary>
     struct SharpCounts
     {
         size_t Redrawn = 0;
         size_t TakenAhead = 0;
         size_t Bytes = 0;
+        size_t LinesRedrawn = 0;
     };
 
-    SharpCounts SharpPictures() const { return {_SharpCounts.Redrawn, _SharpCounts.TakenAhead, _SharpGlyphBytes}; }
+    SharpCounts SharpPictures() const
+    {
+        return {_SharpCounts.Redrawn, _SharpCounts.TakenAhead, _SharpGlyphBytes, _SharpCounts.LinesRedrawn};
+    }
 
     /// <summary>
     /// The colour texture of <paramref name="window"/>'s surface (premultiplied RGBA, as <see cref="Execute"/> left it)

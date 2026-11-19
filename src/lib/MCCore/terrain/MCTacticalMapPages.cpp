@@ -321,10 +321,7 @@ auto MCTacticalMap::DrawInfoPage() -> void
             VfxPaneCopy(background->Frame(), 0, 0, DisplayPort->Frame(), 6, 0x5d, -1);
         }
 
-        const int32_t shape = obj->ObjectClass == MCObjectClass::BattleMech
-                                  ? mover->NumArmorLocations() + 1 + mover->NumBodyLocations()
-                                  : mover->NumBodyLocations();
-        AGShapeDraw(Port().Frame(), PartShapes.Bytes(), shape, 0x22, 0x65);
+        AGShapeDraw(Port().Frame(), PartShapes.Bytes(), PartSilhouette(*mover), 0x22, 0x65);
         DrawParts();
     }
 

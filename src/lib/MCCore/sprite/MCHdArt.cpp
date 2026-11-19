@@ -821,8 +821,12 @@ namespace
         std::map<std::weak_ptr<MCFastFile>, std::list<std::weak_ptr<MCFastFile>>::iterator, std::owner_less<>> OpenAt;
         /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
         std::unordered_set<MCAddressKey> SmoothTables;
-        /// <summary>The shape frames redrawn as line art (SetLineArtFrames), and their parts drawn by hand.</summary>
-        std::map<std::pair<MCAddressKey, int32_t>, std::vector<MCSharpLines::MCDrawnLoop>> LineArtFrames;
+        /// <summary>
+        /// The shape frames redrawn as line art (SetLineArtFrames): which set each is in, and its parts drawn by hand.
+        /// </summary>
+        std::map<std::pair<MCAddressKey, int32_t>,
+                 std::pair<MCHdArt::LineArtSet, std::vector<MCSharpLines::MCDrawnLoop>>>
+            LineArtFrames;
         /// <summary>The pictures the game made of the pack's (MCHdArt::KeepPicture), by their pixels' hash.</summary>
         std::unordered_map<uint64_t, std::shared_ptr<const MCHdArt::Frame>> KeptPictures;
         /// <summary>
@@ -4557,14 +4561,14 @@ bool MCHdArt::SmoothEdges(std::span<const uint8_t> table)
     return GHdArt != 0 && TheState().SmoothTables.contains(MCAddressKey::OfData(table));
 }
 
-void MCHdArt::SetLineArtFrames(std::span<const LineArtFrame> frames)
+void MCHdArt::SetLineArtFrames(std::span<const LineArtFrame> frames, LineArtSet set)
 {
     auto& kept = TheState().LineArtFrames;
-    kept.clear();
+    std::erase_if(kept, [set](const auto& entry) { return entry.second.first == set; });
 
     for (const LineArtFrame& frame : frames)
     {
-        kept.insert_or_assign({frame.Table, frame.Frame}, frame.Drawn);
+        kept.insert_or_assign({frame.Table, frame.Frame}, std::pair{set, frame.Drawn});
     }
 }
 
@@ -4577,7 +4581,7 @@ std::span<const MCSharpLines::MCDrawnLoop> MCHdArt::LineArtDrawn(std::span<const
 {
     const auto& kept = TheState().LineArtFrames;
     const auto found = kept.find({MCAddressKey::OfData(table), frame});
-    return found == kept.end() ? std::span<const MCSharpLines::MCDrawnLoop>{} : found->second;
+    return found == kept.end() ? std::span<const MCSharpLines::MCDrawnLoop>{} : found->second.second;
 }
 
 uint64_t MCHdArt::PackVersion()

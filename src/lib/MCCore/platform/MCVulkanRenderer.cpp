@@ -4262,9 +4262,13 @@ bool MCVulkanRenderer::AddSharpLines(uint16_t surface, std::span<const uint8_t> 
                                      std::span<const MCSharpLines::MCDrawnLoop> drawn)
 {
     const uint64_t key = MCSharpPictures::LineArtKey(art, columns, rows, drawn);
-    return AddSharpPicture(
-        surface, key, [&] { return MCSharpLines::Redraw(art, columns, columns, rows, drawn); }, columns, rows, at, from,
-        tableRow);
+    const auto redraw = [&]
+    {
+        ++_SharpCounts.LinesRedrawn;
+        return MCSharpLines::Redraw(art, columns, columns, rows, drawn);
+    };
+
+    return AddSharpPicture(surface, key, redraw, columns, rows, at, from, tableRow);
 }
 
 MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(

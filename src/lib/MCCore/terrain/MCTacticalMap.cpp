@@ -12,6 +12,7 @@
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "main/MCGamePaths.h"
+#include "main/MCLogistics.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "terrain/MCMapBlockManager.h"
 #include "main/MCMissionGlobals.h"
@@ -29,7 +30,10 @@
 #include "object/MCObjectQueue.h"
 #include "object/MCForces.h"
 #include "object/MCMechWarrior.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
+#include "platform/MCSharpPictures.h"
 #include "sound/MCRadio.h"
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTacticalMapLayout.h"
@@ -635,6 +639,7 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     InfoObject.reset();
     ZoomOffset = 0;
     ObjectivesRevealed = false;
+    MCHdArt::SetLineArtFrames({}, MCHdArt::LineArtSet::PartDiagram);
     PartShapes = {};
     MapVertexSide = MCTerrain::VerticesBlockSide * MCTerrain::BlocksMapSide;
 
@@ -1035,6 +1040,7 @@ auto MCTacticalMap::OnDestroy() -> void
 
     MissionBackground.reset();
     _OwnedSalvageBackground.reset();
+    MCHdArt::SetLineArtFrames({}, MCHdArt::LineArtSet::PartDiagram);
     PartShapes = {};
     ColorRemap = {};
     MouseInside = false;
@@ -2013,11 +2019,53 @@ auto MCTacticalMap::SetID(int32_t partId) -> void
         Fatal(0, "Unable to open damage display shape file");
     }
 
-    PartShapes = MCRegisteredBlock(shapeFile.GetLength(), MCDataKind::Shapes);
-    shapeFile.Read(PartShapes.Bytes());
+    MCRegisteredBlock shapes(shapeFile.GetLength(), MCDataKind::Shapes);
+    shapeFile.Read(shapes.Bytes());
     shapeFile.Close();
+    SetPartShapes(std::move(shapes), *std::static_pointer_cast<MCMover>(obj));
     InfoObject = obj;
     RefreshPage();
+}
+
+auto MCTacticalMap::PartSilhouette(const MCMover& mover) -> int32_t
+{
+    return mover.ObjectClass == MCObjectClass::BattleMech ? mover.NumArmorLocations() + 1 + mover.NumBodyLocations()
+                                                          : mover.NumBodyLocations();
+}
+
+auto MCTacticalMap::SetPartShapes(MCRegisteredBlock shapes, MCMover& mover) -> void
+{
+    // Port-only: the frames but the silhouette are one-pixel outlines, the store's own diagrams (mechrep##.shp,
+    // vr1##.shp), so they're drawn as its line art is (the Atlas's eyes by hand). Marked before the shapes shown
+    // before go, which takes theirs out.
+    const MCAddressKey table = MCAddressKey::OfData(shapes.Bytes());
+    const int32_t silhouette = PartSilhouette(mover);
+    const bool mech = mover.ObjectClass == MCObjectClass::BattleMech;
+    std::vector<MCHdArt::LineArtFrame> lineArt;
+
+    for (int32_t frame = 0; frame < VfxShapeCount(shapes.Bytes()); ++frame)
+    {
+        if (frame != silhouette)
+        {
+            lineArt.push_back(
+                {table, frame,
+                 mech ? MCLogistics::RepairShapesDrawn(static_cast<size_t>(mover.GetObjectType()->IconNumber), frame)
+                      : std::vector<MCSharpLines::MCDrawnLoop>{}});
+        }
+    }
+
+    MCHdArt::SetLineArtFrames(lineArt, MCHdArt::LineArtSet::PartDiagram);
+    PartShapes = std::move(shapes);
+
+    // On a sharp screen, their strokes made ahead off the game's thread (or taken from the pack's sharp.hda): made as
+    // the page first draws them, each would take 0.1 to 1 ms of the game's thread.
+    if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr && display->SharpScreen())
+    {
+        for (const MCHdArt::LineArtFrame& frame : lineArt)
+        {
+            MCSharpPictures::MakeLineArt(PartShapes.Bytes(), frame.Frame, frame.Drawn);
+        }
+    }
 }
 
 auto MCTacticalMap::UpdateOrderPalette() -> void

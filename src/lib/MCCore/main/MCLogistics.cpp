@@ -691,6 +691,11 @@ namespace
     }
 }
 
+auto MCLogistics::RepairShapesDrawn(size_t mech, int32_t frame) -> std::vector<MCSharpLines::MCDrawnLoop>
+{
+    return mech == AtlasMech && frame == AtlasHead ? AtlasEyes() : std::vector<MCSharpLines::MCDrawnLoop>{};
+}
+
 auto MCLogistics::AttachHdArt() -> void
 {
     // A new owner: ties made before go with the old one.
@@ -742,14 +747,14 @@ auto MCLogistics::AttachHdArt() -> void
 
         for (MCHdArt::LineArtFrame& frame : lineArt)
         {
-            if (frame.Table == atlas && frame.Frame == AtlasHead)
+            if (frame.Table == atlas)
             {
-                frame.Drawn = AtlasEyes();
+                frame.Drawn = RepairShapesDrawn(AtlasMech, frame.Frame);
             }
         }
     }
 
-    MCHdArt::SetLineArtFrames(lineArt);
+    MCHdArt::SetLineArtFrames(lineArt, MCHdArt::LineArtSet::Logistics);
 }
 
 namespace
@@ -933,7 +938,7 @@ MCLogistics::~MCLogistics()
     MCFilesAhead::StopNoting();
     // Port-only: the line art made ahead for this logistics' lists goes with them.
     MCSharpPictures::ForgetLineArt();
-    MCHdArt::SetLineArtFrames({});
+    MCHdArt::SetLineArtFrames({}, MCHdArt::LineArtSet::Logistics);
     HdArtOwner.reset();
 
     MCRenderer::UnregisterData(std::span(ShapeLookaside[0].data(), sizeof(ShapeLookaside)));

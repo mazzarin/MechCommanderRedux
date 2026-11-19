@@ -16245,6 +16245,128 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on its first draw
 }
 
 /// <summary>
+/// The loading screen's static (MCRenderer::Noise, colours 0 to 0x1f) on mission 1's screen shown larger, with HD art on:
+/// as fine as the screen, the shown pixels of an original pixel's square unlike each other, not one colour a square as
+/// the original's pixels shown larger are.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws the loading screen's static at the screen's own pixels")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // A pack (a picture and the palette) for HD art to be on.
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_static";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const std::shared_ptr<MCWindow> picture = StripedPicture(0x30);
+    WritePackPicture(pack, *picture, colors);
+    WritePaletteRgb(pack, colors);
+
+    // A band of the screen's rows written as noise as the loading screen writes them (colours 0 to 0x1f, the same rows
+    // each time) and shown; then the original pixels' squares of shown pixels inside it that show more than one colour
+    // counted (the original's pixels shown larger show one).
+    constexpr int32_t Band = 64;
+    constexpr uint8_t NoiseColours = 0x20;
+    MCPane& screen = ScreenPort()->Frame();
+    const std::shared_ptr<MCWindow> window = screen.Window.lock();
+    REQUIRE(window != nullptr);
+    const int32_t width = screen.X1 - screen.X0 + 1;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+    const int32_t shownWidth = MCInput::Display()->Width();
+    REQUIRE(shownWidth > 0);
+    std::vector<uint8_t> line(static_cast<size_t>(width));
+    struct Squares
+    {
+        int32_t Counted = 0;
+        int32_t Mixed = 0;
+    };
+
+    const auto shownSquares = [&]
+    {
+        std::minstd_rand random(1);
+        GamePaused = true;
+        MCTestGame::RunFrame(FrameSeconds);
+
+        for (int32_t row = top; row < top + Band; ++row)
+        {
+            for (uint8_t& pixel : line)
+            {
+                pixel = static_cast<uint8_t>(random() % NoiseColours);
+            }
+
+            MCRenderer::For(*window).Noise(*window, screen.X0, screen.Y0 + row, line);
+        }
+
+        const Shown seen = ReadShown(scratch);
+        GamePaused = false;
+
+        // The screen shown larger by a scale that needn't be whole (2.5 here): an original pixel's square is the two by
+        // two shown pixels from the first inside it.
+        const double scale = static_cast<double>(seen.Width) / static_cast<double>(shownWidth);
+        REQUIRE(scale >= 2.0);
+        const auto firstShown = [scale](int32_t original)
+        { return static_cast<int32_t>(std::ceil(static_cast<double>(original) * scale)); };
+        Squares squares;
+
+        for (int32_t y = screen.Y0 + top + 1; y < screen.Y0 + top + Band - 1; ++y)
+        {
+            for (int32_t x = screen.X0 + 1; x < screen.X0 + width - 1; ++x)
+            {
+                const int32_t shownX = firstShown(x);
+                const int32_t shownY = firstShown(y);
+
+                // Only squares inside the original pixel.
+                if (shownX + 1 >= firstShown(x + 1) || shownY + 1 >= firstShown(y + 1))
+                {
+                    continue;
+                }
+
+                const auto at = [&](int32_t dx, int32_t dy)
+                {
+                    const size_t i = (static_cast<size_t>(shownY + dy) * static_cast<size_t>(seen.Width) +
+                                      static_cast<size_t>(shownX + dx)) *
+                                     BytesPerPixel;
+                    return std::array{seen.Pixels[i], seen.Pixels[i + 1], seen.Pixels[i + 2]};
+                };
+
+                ++squares.Counted;
+                squares.Mixed += at(0, 0) != at(1, 0) || at(0, 0) != at(0, 1) || at(0, 0) != at(1, 1) ? 1 : 0;
+            }
+        }
+
+        return squares;
+    };
+
+    const Squares original = shownSquares();
+    Squares hd;
+    {
+        const MCHdArtOn on(pack);
+        hd = shownSquares();
+    }
+
+    std::cout << std::format("  static: {} of {} original pixels' squares show more than one colour with HD art, {} "
+                             "without\n",
+                             hd.Mixed, hd.Counted, original.Mixed);
+    CHECK(hd.Counted > 0);
+    CHECK_EQ(hd.Counted, original.Counted);
+    // Most squares fine-grained (the palette's colours 0 to 0x1f repeat some colours, so not every one).
+    CHECK(hd.Mixed > original.Mixed + hd.Counted / 4);
+    MCRenderer::DestroyTexture(*picture);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's one copy of a frame's colours): the texture keeps the picture's record, without its
 /// colours; once the GPU holds the picture the pack's cache lets them go, and the picture is drawn from the GPU's copy
 /// with nothing read even with the cache held to a byte; once the GPU lets the picture go, its colours are read again

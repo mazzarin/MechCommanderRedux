@@ -194,7 +194,8 @@ namespace
             }
 
             MCWindow& screen = ScreenBuffer();
-            MCRenderer::For(screen).Write(screen, 0, row, line);
+            // Port-only: as noise, which a sharp screen with HD art on shows at its own pixels.
+            MCRenderer::For(screen).Noise(screen, 0, row, line);
         }
     }
 

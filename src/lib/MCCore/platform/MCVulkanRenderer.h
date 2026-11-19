@@ -90,6 +90,7 @@ public:
     void AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& command) override;
     void ShapeBlit(MCWindow& target, const MCShapeBlitCommand& command) override;
     void Write(MCWindow& target, int32_t x, int32_t y, std::span<const uint8_t> pixels) override;
+    void Noise(MCWindow& target, int32_t x, int32_t y, std::span<const uint8_t> pixels) override;
     void Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t color) override;
     void Shape(MCWindow& target, const MCShapeCommand& command) override;
     void FastShape(MCWindow& target, const MCFastShapeCommand& command) override;
@@ -1868,6 +1869,25 @@ private:
     /// <summary>The palette drawn with (RGBA8, 256 x 1), its colours, whether they changed, and the colour cycle.</summary>
     Texture _PaletteTexture;
     std::array<SDL_Color, 256> _Colors{};
+    /// <summary>
+    /// Port-only (<see cref="Noise"/>): the noise picture, <see cref="NoiseColumns"/> x <see cref="NoiseRows"/> original
+    /// pixels of colours 0 to <see cref="NoiseColors"/> - 1 at <see cref="NoiseScale"/>, made from the palette's colours
+    /// as they were then (<see cref="_NoiseMadeFrom"/>), and the state of the random numbers placing it (the game's dice
+    /// left alone).
+    /// </summary>
+    static constexpr int32_t NoiseColors = 0x20;
+    static constexpr int32_t NoiseColumns = 1024;
+    static constexpr int32_t NoiseRows = 32;
+    static constexpr int32_t NoiseScale = 2;
+    std::shared_ptr<const MCHdArt::Frame> _NoisePicture;
+    std::array<SDL_Color, NoiseColors> _NoiseMadeFrom{};
+    uint32_t _NoiseRandom = 0x9e3779b9u;
+
+    /// <summary>The noise picture for the palette's colours now, made again when they changed.</summary>
+    const MCHdArt::Frame& NoisePicture();
+
+    /// <summary>The next of <see cref="Noise"/>'s random numbers (xorshift32).</summary>
+    uint32_t NextNoise();
     bool _ColorsChanged = true;
     /// <summary>Output pixels per screen pixel the underlays are shown at (<see cref="SetUnderlayScale"/>).</summary>
     float _UnderlayScaleX = 1.0f;

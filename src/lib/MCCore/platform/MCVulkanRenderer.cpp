@@ -4443,6 +4443,97 @@ void MCVulkanRenderer::Write(MCWindow& target, int32_t x, int32_t y, std::span<c
     }
 }
 
+void MCVulkanRenderer::Noise(MCWindow& target, int32_t x, int32_t y, std::span<const uint8_t> pixels)
+{
+    Write(target, x, y, pixels);
+    const uint16_t surface = SurfaceFor(target);
+
+    // Port-only: on a sharp screen with HD art on, the noise picture over the row (which keeps its indices), from a
+    // random row and column of it, a picture pixel to each screen pixel: static as fine as the screen, not the
+    // original's pixels shown larger.
+    if (!SharpScreenSurface(surface) || !MCHdArt::Active())
+    {
+        return;
+    }
+
+    const MCHdArt::Frame& noise = NoisePicture();
+    const auto count = static_cast<int32_t>(pixels.size());
+
+    for (int32_t done = 0; done < count; done += NoiseColumns)
+    {
+        const int32_t length = std::min(count - done, NoiseColumns);
+        const auto fromX = static_cast<int32_t>(NextNoise() % static_cast<uint32_t>(NoiseColumns - length + 1));
+        const auto fromY = static_cast<int32_t>(NextNoise() % static_cast<uint32_t>(NoiseRows));
+        AddHd(surface, noise, Quad{x + done, y, x + done + length - 1, y},
+              Quad{fromX, fromY, fromX + length - 1, fromY}, std::nullopt, std::nullopt, HdColours::AsMade,
+              HdEdges::Picture);
+    }
+}
+
+const MCHdArt::Frame& MCVulkanRenderer::NoisePicture()
+{
+    const auto shown = std::span(_Colors).first<NoiseColors>();
+    const auto same = [](const SDL_Color& a, const SDL_Color& b)
+    { return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a; };
+
+    if (_NoisePicture != nullptr && std::ranges::equal(shown, _NoiseMadeFrom, same))
+    {
+        return *_NoisePicture;
+    }
+
+    constexpr size_t RgbaBytes = 4;
+    constexpr uint8_t Drawn = 255;
+    auto made = std::make_shared<MCHdArt::Frame>();
+    made->Id = MCHdArt::NewFrameId();
+    made->Width = NoiseColumns * NoiseScale;
+    made->Height = NoiseRows * NoiseScale;
+    made->Scale = NoiseScale;
+    made->Colors.resize(static_cast<size_t>(made->Width) * static_cast<size_t>(made->Height) * RgbaBytes);
+    made->Indices.resize(static_cast<size_t>(NoiseColumns) * NoiseRows * 2);
+
+    // Each picture pixel a colour of the noise drawn as the original draws it (any of the first NoiseColors, evenly);
+    // an original pixel's index is its first picture pixel's.
+    for (int32_t y = 0; y < made->Height; ++y)
+    {
+        for (int32_t x = 0; x < made->Width; ++x)
+        {
+            const auto index = static_cast<uint8_t>(NextNoise() % NoiseColors);
+            const SDL_Color& colour = shown[index];
+            const size_t at =
+                (static_cast<size_t>(y) * static_cast<size_t>(made->Width) + static_cast<size_t>(x)) * RgbaBytes;
+            // Opaque: premultiplied is the colour itself.
+            made->Colors[at] = colour.r;
+            made->Colors[at + 1] = colour.g;
+            made->Colors[at + 2] = colour.b;
+            made->Colors[at + 3] = Drawn;
+
+            if (x % NoiseScale == 0 && y % NoiseScale == 0)
+            {
+                const size_t pixel =
+                    static_cast<size_t>(y / NoiseScale) * NoiseColumns + static_cast<size_t>(x / NoiseScale);
+                made->Indices[pixel * 2] = index;
+                made->Indices[pixel * 2 + 1] = Drawn;
+            }
+        }
+    }
+
+    std::ranges::copy(shown, _NoiseMadeFrom.begin());
+    _NoisePicture = std::move(made);
+    return *_NoisePicture;
+}
+
+uint32_t MCVulkanRenderer::NextNoise()
+{
+    // xorshift32 (Marsaglia): the renderer's own numbers, so drawing the noise finer never moves the game's dice.
+    constexpr int ShiftLeftFirst = 13;
+    constexpr int ShiftRight = 17;
+    constexpr int ShiftLeftLast = 5;
+    _NoiseRandom ^= _NoiseRandom << ShiftLeftFirst;
+    _NoiseRandom ^= _NoiseRandom >> ShiftRight;
+    _NoiseRandom ^= _NoiseRandom << ShiftLeftLast;
+    return _NoiseRandom;
+}
+
 void MCVulkanRenderer::Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t color)
 {
     const AuditScope audit(*this, "Pixel", target);

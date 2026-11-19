@@ -188,6 +188,174 @@ TEST_CASE("presenter: a scaled-up screen composites its underlay at the output's
 
 namespace
 {
+    /// <summary>A surface's window size and the size it's drawn at, on one axis.</summary>
+    struct GridSizes
+    {
+        uint32_t Window = 0;
+        uint32_t Drawn = 0;
+    };
+}
+
+/// <summary>
+/// Port-only (MCDrawnGrid): a world drawn at a size a window pixel isn't a whole number of drawn pixels of (764 window
+/// pixels at 3599, full screen on this Mac; 640 at 1600; 1000 at 640) lies on a grid whose offset puts the map's corner
+/// on a whole drawn pixel. At every place of the corner a pan reaches, the offset is within half a window's width,
+/// the window's first and last drawn pixels show its own pixels, a pan of any length moves what each drawn pixel shows
+/// by whole drawn pixels (the grid's whole places' difference: the same map pixel shown there), and the drawn pixel
+/// holding a window pixel shows it. Where a window pixel is a whole number of drawn pixels (2x, 1x), it is 0 throughout.
+/// </summary>
+TEST_CASE("presenter: a world's drawn grid moves its picture by whole drawn pixels as the view pans")
+{
+    constexpr std::array<int32_t, 7> Moves = {1, 2, 3, 7, -1, -4, 25};
+    constexpr int64_t DrawnSamples = 101;
+
+    for (const GridSizes sizes :
+         {GridSizes{764, 3599}, GridSizes{640, 1600}, GridSizes{1000, 640}, GridSizes{800, 1600}, GridSizes{480, 480}})
+    {
+        MCTest::Scope scope(std::format("{} window pixels drawn at {}", sizes.Window, sizes.Drawn));
+        const int64_t window = sizes.Window;
+        const int64_t drawn = sizes.Drawn;
+        const bool wholeScale = drawn % window == 0;
+        const int64_t step = std::max<int64_t>(drawn / DrawnSamples, 1);
+        int64_t badOffsets = 0;
+        int64_t outside = 0;
+        int64_t slid = 0;
+        int64_t unheld = 0;
+        std::set<int32_t> offsets;
+
+        for (auto origin = static_cast<int32_t>(-2 * window); origin <= 2 * window; ++origin)
+        {
+            const int32_t offset = MCDrawnGrid::Offset(origin, sizes.Window, sizes.Drawn);
+            const int64_t whole = MCDrawnGrid::Whole(origin, sizes.Window, sizes.Drawn);
+            offsets.insert(offset);
+            badOffsets += 2 * offset <= -window || 2 * offset > window || (wholeScale && offset != 0) ||
+                                  whole * window - origin * drawn != offset
+                              ? 1
+                              : 0;
+
+            for (const int64_t edge : {int64_t{0}, drawn - 1})
+            {
+                const int32_t shown = MCDrawnGrid::WindowPixel(edge, sizes.Window, sizes.Drawn, offset);
+                outside += shown < 0 || shown >= window ? 1 : 0;
+            }
+
+            for (const int32_t move : Moves)
+            {
+                const int32_t to = origin + move;
+                const int32_t toOffset = MCDrawnGrid::Offset(to, sizes.Window, sizes.Drawn);
+                const int64_t shift = MCDrawnGrid::Whole(to, sizes.Window, sizes.Drawn) - whole;
+
+                for (int64_t p = std::max<int64_t>(-shift, 0); p < drawn && p + shift < drawn; p += step)
+                {
+                    const int32_t before = MCDrawnGrid::WindowPixel(p, sizes.Window, sizes.Drawn, offset) - origin;
+                    const int32_t after = MCDrawnGrid::WindowPixel(p + shift, sizes.Window, sizes.Drawn, toOffset) - to;
+                    slid += before != after ? 1 : 0;
+                }
+            }
+
+            for (int64_t t = 0; drawn >= window && t < window; ++t)
+            {
+                const int32_t holding = MCDrawnGrid::DrawnPixel(t, sizes.Window, sizes.Drawn, offset);
+                unheld += MCDrawnGrid::WindowPixel(holding, sizes.Window, sizes.Drawn, offset) != t ? 1 : 0;
+            }
+        }
+
+        CHECK_EQ(badOffsets, 0);
+        CHECK_EQ(outside, 0);
+        CHECK_EQ(slid, 0);
+        CHECK_EQ(unheld, 0);
+        CHECK_EQ(offsets.size() == 1, wholeScale);
+    }
+}
+
+/// <summary>
+/// Port-only (MCDrawnGrid): over a world on a grid of its own, the mouse picks the window pixel the picture shows where
+/// it points (MCDisplay::OnShownGrids). A 764-pixel world drawn at 3599 (full screen on this Mac) at its corner's every
+/// offset across a window pixel: at each drawn pixel's centre (but those exactly on a window pixel's edge), the point
+/// lands in the window pixel the drawn pixel shows, on both sides of every edge, where the plain mapping misses some;
+/// a point over a world on no offset, or past its rectangle, stays where it was.
+/// </summary>
+TEST_CASE("presenter: over a world on its drawn grid, the mouse picks the pixel the picture shows there")
+{
+    constexpr uint32_t Window = 764;
+    constexpr uint32_t Drawn = 3599;
+    constexpr uint32_t WindowRows = 430;
+    constexpr uint32_t DrawnRows = 2022;
+    constexpr int32_t Left = 18;
+    constexpr int32_t Top = 7;
+    MCShownGrid grid;
+    grid.Rect = MCRect{Left, Top, Left + static_cast<int32_t>(Window) - 1, Top + static_cast<int32_t>(WindowRows) - 1};
+    grid.Window = {Window, WindowRows};
+    grid.Drawn = {Drawn, DrawnRows};
+    const std::array<MCShownGrid, 1> grids = {grid};
+    int64_t points = 0;
+    int64_t missed = 0;
+    int64_t plainMissed = 0;
+    int64_t edges = 0;
+    int64_t movedDown = 0;
+    std::set<int32_t> offsets;
+    constexpr float Middle = static_cast<float>(Top) + 0.5f * static_cast<float>(WindowRows);
+
+    // The corner's places across a window pixel's worth of the drawn grid's offsets.
+    for (int32_t origin = 0; origin < 2 * static_cast<int32_t>(Window); origin += 3)
+    {
+        grid.Offset = {MCDrawnGrid::Offset(origin, Window, Drawn), 0};
+        offsets.insert(grid.Offset[0]);
+        const std::array<MCShownGrid, 1> shown = {grid};
+        int32_t last = -1;
+
+        for (int64_t m = 0; m < Drawn; ++m)
+        {
+            const int32_t expected = MCDrawnGrid::WindowPixel(m, Window, Drawn, grid.Offset[0]);
+            const bool edge = expected != last;
+            last = expected;
+
+            // A centre exactly on a window pixel's edge belongs to the one after it, which a float can't promise.
+            if (((2 * m + 1) * Window - 2 * static_cast<int64_t>(grid.Offset[0])) % (2 * Drawn) == 0)
+            {
+                continue;
+            }
+
+            float x = static_cast<float>(Left) +
+                      (static_cast<float>(m) + 0.5f) * static_cast<float>(Window) / static_cast<float>(Drawn);
+            float y = Middle;
+            const int32_t plain = static_cast<int32_t>(std::floor(x)) - Left;
+            MCDisplay::OnShownGrids(shown, x, y);
+            const int32_t picked = static_cast<int32_t>(std::floor(x)) - Left;
+            ++points;
+            edges += edge ? 1 : 0;
+            missed += picked != expected ? 1 : 0;
+            plainMissed += plain != expected ? 1 : 0;
+            movedDown += y != Middle ? 1 : 0;
+        }
+    }
+
+    std::cout << std::format("  {} points, {} at a window pixel's first drawn pixel; {} the plain mapping misses\n",
+                             points, edges, plainMissed);
+    CHECK(offsets.size() > 2);
+    CHECK(edges > 0);
+    CHECK_EQ(missed, 0);
+    CHECK(plainMissed > 0);
+    CHECK_EQ(movedDown, 0);
+
+    // No offset: unchanged; past the rectangle: unchanged.
+    float x = 123.456f;
+    float y = 45.5f;
+    MCDisplay::OnShownGrids(grids, x, y);
+    CHECK_EQ(x, 123.456f);
+    CHECK_EQ(y, 45.5f);
+    grid.Offset = {MCDrawnGrid::Offset(1, Window, Drawn), MCDrawnGrid::Offset(1, WindowRows, DrawnRows)};
+    REQUIRE(grid.Offset[0] != 0);
+    const std::array<MCShownGrid, 1> offset = {grid};
+    x = static_cast<float>(Left) - 0.25f;
+    y = static_cast<float>(Top) + 3.5f;
+    MCDisplay::OnShownGrids(offset, x, y);
+    CHECK_EQ(x, static_cast<float>(Left) - 0.25f);
+    CHECK_EQ(y, static_cast<float>(Top) + 3.5f);
+}
+
+namespace
+{
     /// <summary>
     /// Boots mission 1, picks <paramref name="uiResolution"/> (PREFS "UIResolution") and makes the window 1600x1200:
     /// the screen is then <paramref name="lines"/> tall at the window's aspect, and the world view is composited at

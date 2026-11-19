@@ -308,6 +308,11 @@ namespace
     /// <summary>Port-only (HD weather): the surfaces' glint targets (Surface::Glints), premultiplied RGBA8.</summary>
     constexpr SDL_GPUTextureFormat GlintFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     /// <summary>
+    /// Port-only (KindHdSmooth): an HD art frame's index texture (a shared page's or its own) is read, and drawn into as
+    /// its frames' coverage is marked (MCVulkanRenderer::MarkHdCoverage).
+    /// </summary>
+    constexpr SDL_GPUTextureUsageFlags HdIndexUsage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    /// <summary>
     /// A surface's colour targets: its colours, its indices and (port-only) its glints, which a pass has only when the
     /// frame's draws on the surface catch light (Surface::CatchesLight).
     /// </summary>
@@ -418,6 +423,8 @@ namespace
     {
         float TargetSize[4];
         uint32_t Batch[4];
+        /// <summary>Port-only: the target's drawn grid's offset across and down (MCDrawnGrid); zw unused.</summary>
+        int32_t Offset[4];
     };
 
     /// <summary>The draw shader's fragment uniforms (shaders/draw.pshader, cbuffer Frame).</summary>
@@ -432,6 +439,11 @@ namespace
         /// shadows on, how much of the light under it an object's baked shadow takes away (0: off, solid black).
         /// </summary>
         float Look[4];
+        /// <summary>
+        /// Port-only: the drawn grids' offsets across and down (MCDrawnGrid): xy the target's, zw the source's when it
+        /// is a surface.
+        /// </summary>
+        int32_t Offset[4];
     };
 
     /// <summary>shaders/draw.pshader's alpha colour kinds.</summary>
@@ -517,10 +529,12 @@ namespace
 
     /// <summary>
     /// The drawn pixels whose window pixels (draw.pshader's WindowPixel) lie in <paramref name="window"/>, on a surface
-    /// of <paramref name="windowSize"/> window pixels drawn at <paramref name="drawnSize"/>: shaders/pixels.hlsli's
-    /// DrawnCorner, those t with 2 * x0 * drawn &lt;= (2t + 1) * size &lt; 2 * (x1 + 1) * drawn. Empty when none.
+    /// of <paramref name="windowSize"/> window pixels drawn at <paramref name="drawnSize"/> on a grid offset by
+    /// <paramref name="offset"/> (MCDrawnGrid): shaders/pixels.hlsli's DrawnCorner, those t with
+    /// 2 * x0 * drawn &lt;= (2t + 1) * size - 2r &lt; 2 * (x1 + 1) * drawn. Empty when none.
     /// </summary>
-    MCRect DrawnPixels(const MCRect& window, std::array<uint32_t, 2> windowSize, std::array<uint32_t, 2> drawnSize)
+    MCRect DrawnPixels(const MCRect& window, std::array<uint32_t, 2> windowSize, std::array<uint32_t, 2> drawnSize,
+                       std::array<int32_t, 2> offset)
     {
         const auto floorDivide = [](int64_t n, int64_t d) { return n >= 0 ? n / d : -((-n + d - 1) / d); };
         std::array<int32_t, 2> first{};
@@ -532,8 +546,9 @@ namespace
             const int64_t drawn = std::max(drawnSize[i], 1u);
             const int64_t from = i == 0 ? window.X0 : window.Y0;
             const int64_t to = i == 0 ? window.X1 : window.Y1;
-            first[i] = static_cast<int32_t>(-floorDivide(size - 2 * from * drawn, 2 * size));
-            last[i] = static_cast<int32_t>(floorDivide(2 * (to + 1) * drawn - 1 - size, 2 * size));
+            const int64_t r = offset[i];
+            first[i] = static_cast<int32_t>(-floorDivide(size - 2 * from * drawn - 2 * r, 2 * size));
+            last[i] = static_cast<int32_t>(floorDivide(2 * (to + 1) * drawn - 1 - size + 2 * r, 2 * size));
         }
 
         return MCRect{first[0], first[1], last[0], last[1]};
@@ -789,6 +804,23 @@ namespace
         int32_t Sizes[4];
     };
 
+    /// <summary>
+    /// Port-only (KindHdSmooth): the coverage marks' uniforms (shaders/hdcoverage.pshader, cbuffer Coverage): the frame's
+    /// places, then its scale and which pass.
+    /// </summary>
+    struct CoverageUniforms
+    {
+        int32_t Place[4];
+        int32_t Marking[4];
+    };
+
+    /// <summary>
+    /// Port-only (KindHdSmooth): MarkHdCoverage's passes (_HdCoveragePipelines), in their order: the pixels a frame
+    /// doesn't cover, then those it does.
+    /// </summary>
+    constexpr size_t HdCoverageSpread = 0;
+    constexpr size_t HdCoverageCovered = 1;
+
     /// <summary>Port-only (HD movies): the textures a movie's frame takes: its three planes, colours and indices.</summary>
     constexpr size_t MovieTextures = 5;
 
@@ -804,6 +836,8 @@ namespace
         int32_t Clip[4];
         uint32_t Haze[4];
         int32_t Pane[4];
+        /// <summary>Port-only: the target's drawn grid's offset across and down (MCDrawnGrid); zw unused.</summary>
+        int32_t Offset[4];
     };
 
     /// <summary>The address of the frame surface <paramref name="window"/> is (or lies over), or none.</summary>
@@ -834,20 +868,31 @@ namespace
     /// The index shown at (<paramref name="x"/>, <paramref name="y"/>) of the GPU's screen (index
     /// <paramref name="pixel"/>) over an underlay shown in <paramref name="shown"/>: the index; at the key, the world
     /// pixel under the pixel's centre (<paramref name="world"/>'s indices, <paramref name="worldWidth"/> x
-    /// <paramref name="worldHeight"/>). The composite shader's rule.
+    /// <paramref name="worldHeight"/>, of a window <paramref name="window"/> big on a grid offset by
+    /// <paramref name="offset"/>, MCDrawnGrid: the drawn pixel holding that place of the window). The composite
+    /// shader's rule.
     /// </summary>
     uint8_t ShownIndex(uint8_t pixel, int32_t x, int32_t y, const MCRect& shown, std::span<const uint8_t> world,
-                       int64_t worldWidth, int64_t worldHeight)
+                       int64_t worldWidth, int64_t worldHeight, std::array<uint32_t, 2> window,
+                       std::array<int32_t, 2> offset)
     {
         if (pixel != MCRenderer::UnderlayKey)
         {
             return pixel;
         }
 
-        const int64_t shownWidth = shown.X1 - shown.X0 + 1;
-        const int64_t shownHeight = shown.Y1 - shown.Y0 + 1;
-        const auto wx = static_cast<size_t>((2 * (x - shown.X0) + 1) * worldWidth / (2 * shownWidth));
-        const auto wy = static_cast<size_t>((2 * (y - shown.Y0) + 1) * worldHeight / (2 * shownHeight));
+        // (2 * at + 1) * drawn / (2 * shown) + r / window, rounded down, in [0, drawn).
+        const auto drawnAt = [](int64_t at, int64_t shownSize, int64_t drawn, int64_t windowSize, int64_t r)
+        {
+            const int64_t size = std::max<int64_t>(windowSize, 1);
+            const int64_t n = (2 * at + 1) * drawn * size + 2 * r * shownSize;
+            const int64_t d = 2 * shownSize * size;
+            const int64_t place = n >= 0 ? n / d : -((-n + d - 1) / d);
+            return static_cast<size_t>(std::clamp<int64_t>(place, 0, drawn - 1));
+        };
+
+        const size_t wx = drawnAt(x - shown.X0, shown.X1 - shown.X0 + 1, worldWidth, window[0], offset[0]);
+        const size_t wy = drawnAt(y - shown.Y0, shown.Y1 - shown.Y0 + 1, worldHeight, window[1], offset[1]);
         return world[wy * static_cast<size_t>(worldWidth) + wx];
     }
 
@@ -1007,7 +1052,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     // (HD movies) the movie conversion, the same way.
     for (auto [info, shader] : {std::pair{&MCVulkanShaders::Quad, &renderer->_QuadShader},
                                 std::pair{&MCVulkanShaders::GroundFragment, &renderer->_GroundShader},
-                                std::pair{&MCVulkanShaders::MovieFragment, &renderer->_MovieShader}})
+                                std::pair{&MCVulkanShaders::MovieFragment, &renderer->_MovieShader},
+                                std::pair{&MCVulkanShaders::HdCoverageFragment, &renderer->_HdCoverageShader}})
     {
         auto loaded = MCVulkanShaders::Load(device, *info);
 
@@ -1195,6 +1241,38 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                                                         MCGpuRelease{device});
         });
 
+    // Port-only (KindHdSmooth): MarkHdCoverage's passes write an HD index texture's green alone, blended so its marks
+    // change without being read: less where a frame doesn't cover a pixel, at least where it does.
+    for (const auto [pass, op] : {std::pair{HdCoverageSpread, SDL_GPU_BLENDOP_REVERSE_SUBTRACT},
+                                  std::pair{HdCoverageCovered, SDL_GPU_BLENDOP_MAX}})
+    {
+        job(std::format("hd coverage {}", pass), false, renderer->_HdCoveragePipelines[pass],
+            [&, op]
+            {
+                SDL_GPUColorTargetDescription indices{};
+                indices.format = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM;
+                indices.blend_state.enable_blend = true;
+                indices.blend_state.color_blend_op = op;
+                indices.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                indices.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                indices.blend_state.alpha_blend_op = op;
+                indices.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                indices.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                indices.blend_state.enable_color_write_mask = true;
+                indices.blend_state.color_write_mask = SDL_GPU_COLORCOMPONENT_G;
+                SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+                pipeline.vertex_shader = renderer->_QuadShader.get();
+                pipeline.fragment_shader = renderer->_HdCoverageShader.get();
+                pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+                pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+                pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+                pipeline.target_info.num_color_targets = 1;
+                pipeline.target_info.color_target_descriptions = &indices;
+                return MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline),
+                                                            MCGpuRelease{device});
+            });
+    }
+
     std::ranges::move(moreJobs, std::back_inserter(jobs));
     moreJobs.clear();
     MakePipelines(jobs);
@@ -1207,6 +1285,11 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     if (renderer->_MoviePipeline == nullptr)
     {
         return std::unexpected(std::string("SDL_CreateGPUGraphicsPipeline(movie) failed"));
+    }
+
+    if (!std::ranges::all_of(renderer->_HdCoveragePipelines, [](const auto& made) { return made != nullptr; }))
+    {
+        return std::unexpected(std::string("SDL_CreateGPUGraphicsPipeline(hd coverage) failed"));
     }
 
     SDL_GPUSamplerCreateInfo sampler{};
@@ -1318,6 +1401,8 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _SurfacePipelines = {};
     _MoviePipeline.reset();
     _MovieShader.reset();
+    _HdCoveragePipelines = {};
+    _HdCoverageShader.reset();
     _VertexShader.reset();
     _FragmentShader.reset();
     _BasicFragmentShader.reset();
@@ -2846,8 +2931,9 @@ auto MCVulkanRenderer::MakePage(const SharedLayout& layout) -> std::optional<Sha
     const bool hd = layout.HdFormat != SDL_GPU_TEXTUREFORMAT_INVALID;
     SharedPage page;
     page.Layout = layout;
+    // Port-only (KindHdSmooth): an HD page's indices are drawn into too, its frames' coverage marked (MarkHdCoverage).
     auto made = EnsureTexture(page.Texture, (hd ? MCHolder::GpuHdPictures : MCHolder::GpuPictures), layout.Format,
-                              SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
+                              hd ? HdIndexUsage : SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
 
     if (made && hd)
     {
@@ -3700,7 +3786,7 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))
         {
             auto made = EnsureTexture(picture.Texture, MCHolder::GpuHdPictures, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
-                                      SDL_GPU_TEXTUREUSAGE_SAMPLER, originalWidth, originalHeight);
+                                      HdIndexUsage, originalWidth, originalHeight);
 
             if (made)
             {
@@ -3726,6 +3812,16 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
                                               sendBc7 ? HdBc7Bytes : HdRgbaBytes)
                                       .begin());
         picture.Bytes = indices.size() + colors.size();
+
+        // Port-only (KindHdSmooth): a version 1 frame's marks say which pixels have an index, its spread ones too; which
+        // its frame covers is marked on the GPU (MarkHdCoverage). A frame holding its blended pixels draws its own
+        // edges.
+        if (!frame.Marked && !frame.Blended)
+        {
+            _Run->CoverageMarks.push_back(HdCoverageMark{picture.Texture, picture.HdColors, place, originalWidth,
+                                                         originalHeight, static_cast<uint32_t>(frame.Scale)});
+        }
+
         // Port-only (SPEC-memory.md's indices): a version 2 frame's index passes read this picture, not the CPU's copy.
         picture.HdMarks = frame.Marked;
         picture.DrawnColors = frame.Marked ? HdDrawnColors(indices) : std::bitset<256>{};
@@ -3850,6 +3946,58 @@ void MCVulkanRenderer::ConvertMovie(SDL_GPUCommandBuffer& commands, const MovieC
     SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
     SDL_DrawGPUPrimitives(pass, QuadVertices, 1, 0, 0);
     SDL_EndGPURenderPass(pass);
+}
+
+void MCVulkanRenderer::MarkHdCoverage(SDL_GPUCommandBuffer& commands, const FrameRun& run)
+{
+    // A render pass for each index texture the frames went up into, each pass's frames drawn in turn.
+    std::vector<SDL_GPUTexture*> marked;
+
+    for (const HdCoverageMark& first : run.CoverageMarks)
+    {
+        SDL_GPUTexture* const indices = first.Indices.Handle.get();
+
+        if (std::ranges::contains(marked, indices))
+        {
+            continue;
+        }
+
+        marked.push_back(indices);
+        // The other frames in the texture keep their marks.
+        SDL_GPUColorTargetInfo target{};
+        target.texture = indices;
+        target.load_op = SDL_GPU_LOADOP_LOAD;
+        target.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* const pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
+
+        for (const size_t which : {HdCoverageSpread, HdCoverageCovered})
+        {
+            SDL_BindGPUGraphicsPipeline(pass, _HdCoveragePipelines[which].get());
+
+            for (const HdCoverageMark& mark : run.CoverageMarks)
+            {
+                if (mark.Indices.Handle.get() != indices)
+                {
+                    continue;
+                }
+
+                const PicturePlace& place = mark.Place;
+                const QuadUniforms quad{
+                    {static_cast<float>(place.X), static_cast<float>(place.Y), static_cast<float>(mark.Width),
+                     static_cast<float>(mark.Height)},
+                    {static_cast<float>(mark.Indices.Width), static_cast<float>(mark.Indices.Height), 0.0f, 0.0f}};
+                const CoverageUniforms uniforms{{place.X, place.Y, place.HdX, place.HdY},
+                                                {static_cast<int32_t>(mark.Scale), static_cast<int32_t>(which), 0, 0}};
+                const SDL_GPUTextureSamplerBinding colors{mark.Colors.Handle.get(), _Nearest.get()};
+                SDL_BindGPUFragmentSamplers(pass, 0, &colors, 1);
+                SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
+                SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
+                SDL_DrawGPUPrimitives(pass, QuadVertices, 1, 0, 0);
+            }
+        }
+
+        SDL_EndGPURenderPass(pass);
+    }
 }
 
 bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> font, std::span<const uint8_t> glyph,
@@ -5961,8 +6109,17 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     draw.Frame.Fog.reset();
     draw.Frame.Haze = {};
 
+    // Port-only: the frame's first terrain layer on the surface places its drawn grid (MCDrawnGrid) at the window
+    // point of map vertex (0, 0).
+    Surface& drawn = _Surfaces[surface];
+
+    if (!drawn.GridPlaced)
+    {
+        drawn.GridOrigin = std::array{frame.PaneX + frame.OriginX, frame.PaneY + frame.OriginY};
+        drawn.GridPlaced = true;
+    }
+
     // The pane's clip, within the surface.
-    const Surface& drawn = _Surfaces[surface];
     draw.Frame.Clip = MCRect{std::max(frame.Clip.X0, 0), std::max(frame.Clip.Y0, 0),
                              std::min(frame.Clip.X1, static_cast<int32_t>(drawn.RecordedWidth) - 1),
                              std::min(frame.Clip.Y1, static_cast<int32_t>(drawn.RecordedHeight) - 1)};
@@ -6558,6 +6715,8 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     uniforms.Pane[0] = frame.PaneX;
     uniforms.Pane[1] = frame.PaneY;
     uniforms.Pane[3] = _TerrainMesh.ReliefAtlas.Handle != nullptr ? _TerrainMesh.ReliefScale : 0;
+    uniforms.Offset[0] = surface.Offset[0];
+    uniforms.Offset[1] = surface.Offset[1];
 
     SDL_BindGPUGraphicsPipeline(&pass, pipelines.Terrain.get());
     const SDL_GPUTextureSamplerBinding fogBinding{fog.Index.Handle.get(), _Nearest.get()};
@@ -6674,25 +6833,25 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
         return plan;
     }
 
-    // The view's move (window pixels). The kept pixels move with it when that is a whole number of drawn pixels: the
-    // pixels showing a window pixel then move with it (draw.pshader's WindowPixel is in whole numbers), and the
-    // shaders' sums there come out the same but for rounding (exactly, when a window pixel is a power of two drawn).
+    // The view's move (window pixels). The kept pixels move with it by whole drawn pixels: the surface's drawn grid
+    // (MCDrawnGrid) puts the window point of map vertex (0, 0) on a whole drawn pixel, so every pixel showing a place
+    // on the map moves with it by the difference (the window places drawn pixels show move by the view's move
+    // exactly), and the shaders' sums there come out the same but for rounding (exactly, when a window pixel is a
+    // power of two drawn).
     const int32_t moveX = now.OriginX - then.OriginX;
     const int32_t moveY = now.OriginY - then.OriginY;
     const bool moved = moveX != 0 || moveY != 0;
     const MCRect& clip = now.Clip;
-    const auto drawnMove = [](int32_t move, uint32_t window, uint32_t drawn) -> std::optional<int32_t>
+    const auto drawnMove = [](int32_t pane, int32_t from, int32_t to, uint32_t window, uint32_t drawn)
     {
-        const int64_t scaled = static_cast<int64_t>(move) * drawn;
-        return window != 0 && scaled % window == 0 ? std::optional(static_cast<int32_t>(scaled / window))
-                                                   : std::nullopt;
+        return static_cast<int32_t>(MCDrawnGrid::Whole(pane + to, window, drawn) -
+                                    MCDrawnGrid::Whole(pane + from, window, drawn));
     };
 
-    const std::optional<int32_t> shiftX = drawnMove(moveX, surface.MappedWidth, surface.Target.Width);
-    const std::optional<int32_t> shiftY = drawnMove(moveY, surface.MappedHeight, surface.Target.Height);
+    const int32_t shiftX = drawnMove(now.PaneX, then.OriginX, now.OriginX, surface.MappedWidth, surface.Target.Width);
+    const int32_t shiftY = drawnMove(now.PaneY, then.OriginY, now.OriginY, surface.MappedHeight, surface.Target.Height);
 
-    if (!shiftX.has_value() || !shiftY.has_value() ||
-        (moved && (std::abs(moveX) > clip.X1 - clip.X0 || std::abs(moveY) > clip.Y1 - clip.Y0)))
+    if (moved && (std::abs(moveX) > clip.X1 - clip.X0 || std::abs(moveY) > clip.Y1 - clip.Y0))
     {
         return plan;
     }
@@ -6700,7 +6859,7 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     const bool fogChanged = !std::ranges::equal(seen, kept.Seen);
     const bool cycled = cycleStep != kept.CycleStep;
     plan.Whole = false;
-    plan.Shift = {*shiftX, *shiftY};
+    plan.Shift = {shiftX, shiftY};
 
     if (!moved && !fogChanged && !cycled)
     {
@@ -6847,12 +7006,10 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
         }
     }
 
-    // In drawn pixels, a pixel wider each way (one near a window pixel's edge may show either; drawing more again
-    // changes nothing), in the clip.
+    // In drawn pixels (on the surface's drawn grid), a pixel wider each way (drawing more again changes nothing), in
+    // the surface.
     const auto width = static_cast<int64_t>(surface.Target.Width);
     const auto height = static_cast<int64_t>(surface.Target.Height);
-    const auto windowWidth = static_cast<int64_t>(std::max(surface.MappedWidth, 1u));
-    const auto windowHeight = static_cast<int64_t>(std::max(surface.MappedHeight, 1u));
 
     for (const MCRect& part : parts)
     {
@@ -6863,11 +7020,17 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
             continue;
         }
 
-        plan.Redrawn.push_back(
-            MCRect{static_cast<int32_t>(std::max<int64_t>(cut.X0 * width / windowWidth - 1, 0)),
-                   static_cast<int32_t>(std::max<int64_t>(cut.Y0 * height / windowHeight - 1, 0)),
-                   static_cast<int32_t>(std::min<int64_t>((cut.X1 + 1) * width / windowWidth + 1, width - 1)),
-                   static_cast<int32_t>(std::min<int64_t>((cut.Y1 + 1) * height / windowHeight + 1, height - 1))});
+        const MCRect drawn = DrawnPixels(cut, {surface.MappedWidth, surface.MappedHeight},
+                                         {surface.Target.Width, surface.Target.Height}, surface.Offset);
+
+        if (Empty(drawn))
+        {
+            continue;
+        }
+
+        plan.Redrawn.push_back(MCRect{std::max(drawn.X0 - 1, 0), std::max(drawn.Y0 - 1, 0),
+                                      static_cast<int32_t>(std::min<int64_t>(drawn.X1 + 1, width - 1)),
+                                      static_cast<int32_t>(std::min<int64_t>(drawn.Y1 + 1, height - 1))});
     }
 
     // Parts drawn as one where their bounds add little, then as few as MostGroundParts (as their bounds). Past
@@ -6934,8 +7097,8 @@ void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURen
                                       KeptGroundMode mode, std::optional<size_t> from, std::array<int32_t, 2> shift)
 {
     // The drawn pixels showing the clip's window pixels, every one of which the ground's shader draws.
-    const MCRect drawn =
-        DrawnPixels(clip, {surface.MappedWidth, surface.MappedHeight}, {surface.Target.Width, surface.Target.Height});
+    const MCRect drawn = DrawnPixels(clip, {surface.MappedWidth, surface.MappedHeight},
+                                     {surface.Target.Width, surface.Target.Height}, surface.Offset);
     const QuadUniforms quad{
         {static_cast<float>(drawn.X0), static_cast<float>(drawn.Y0),
          static_cast<float>(std::max(drawn.X1 - drawn.X0 + 1, 0)),
@@ -7142,6 +7305,20 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
     BeginRecording();
     PlaceSurfaces(underlays);
 
+    // Port-only: each surface's drawn grid, from the last terrain layer drawn on it at its sizes now (MCDrawnGrid).
+    for (Surface& surface : _Surfaces)
+    {
+        surface.Offset = {};
+
+        if (surface.GridOrigin.has_value())
+        {
+            surface.Offset = {MCDrawnGrid::Offset((*surface.GridOrigin)[0], surface.MappedWidth, surface.DrawnWidth),
+                              MCDrawnGrid::Offset((*surface.GridOrigin)[1], surface.MappedHeight, surface.DrawnHeight)};
+        }
+
+        surface.GridPlaced = false;
+    }
+
     // Port-only (HD weather), for the tests: every surface drawn as one whose draws catch light.
     if (GlintsEveryFrame)
     {
@@ -7213,6 +7390,7 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
         sealed.MappedHeight = surface.MappedHeight;
         sealed.DrawnWidth = surface.DrawnWidth;
         sealed.DrawnHeight = surface.DrawnHeight;
+        sealed.Offset = surface.Offset;
         sealed.CatchesLight = surface.CatchesLight;
 
         // The kept surfaces are drawn first (the fog of war, which the terrain layer reads), then those shown as
@@ -7364,6 +7542,7 @@ void MCVulkanRenderer::EmptyRun(FrameRun& run)
     run.RetiredTransfers.clear();
     run.RetiredMovies.clear();
     run.Conversions.clear();
+    run.CoverageMarks.clear();
     run.Pages.clear();
     run.Tables.reset();
     run.Alpha.reset();
@@ -7399,6 +7578,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         surface.MappedHeight = sealed.MappedHeight;
         surface.DrawnWidth = sealed.DrawnWidth;
         surface.DrawnHeight = sealed.DrawnHeight;
+        surface.Offset = sealed.Offset;
         surface.CatchesLight = sealed.CatchesLight;
     }
 
@@ -7539,6 +7719,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
     // Port-only (HD movies): the movies' new frames' colours, from the planes just uploaded, before any draw reads them.
     ConvertMovies(commands, run);
+    // Port-only (KindHdSmooth): the new HD art frames' coverage, from their colours just uploaded, likewise.
+    MarkHdCoverage(commands, run);
 
     // The kept surfaces first (the fog of war, which the terrain layer reads), then those shown as underlays (the
     // screen's see-through draws read them finished), then the rest.
@@ -7608,20 +7790,28 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         out[3] = static_cast<int32_t>(std::max(of.Target.Height, 1u));
     };
 
-    // A record's frame uniforms on a surface: the pass's, with the target's scale and the source's.
+    // A record's frame uniforms on a surface: the pass's, with the target's scale and the source's, and their drawn
+    // grids' offsets (MCDrawnGrid).
     const auto recordFrame = [&](const Surface& surface, const Record& record)
     {
         FrameUniforms frame = passFrame;
         scaleOf(surface, frame.Scale);
         std::ranges::fill(frame.SourceScale, 1);
+        frame.Offset[0] = surface.Offset[0];
+        frame.Offset[1] = surface.Offset[1];
 
         if (record.Source == SourceKind::Surface && _RunSurfaces[record.SourceIndex].Index.Handle != nullptr)
         {
-            scaleOf(_RunSurfaces[record.SourceIndex], frame.SourceScale);
+            const Surface& source = _RunSurfaces[record.SourceIndex];
+            scaleOf(source, frame.SourceScale);
+            frame.Offset[2] = source.Offset[0];
+            frame.Offset[3] = source.Offset[1];
         }
         else if (record.Source == SourceKind::TargetCopy)
         {
             scaleOf(surface, frame.SourceScale);
+            frame.Offset[2] = surface.Offset[0];
+            frame.Offset[3] = surface.Offset[1];
         }
 
         return frame;
@@ -7706,7 +7896,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
         const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
                                    static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},
-                                  {first, 0, 0, 0}};
+                                  {first, 0, 0, 0},
+                                  {surface.Offset[0], surface.Offset[1], 0, 0}};
         SDL_PushGPUVertexUniformData(&commands, 0, &batch, sizeof(batch));
 
         if (const FrameUniforms frame = recordFrame(surface, record);
@@ -7757,24 +7948,32 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         // The terrain's frame uniforms (a record with no source's).
         const FrameUniforms frame = recordFrame(surface, Record{});
         // What the ground depends on of them: not the cycle's step (PlanGround follows it), nor the looks, which only
-        // glows and shapes read (they change as the light does).
+        // glows and shapes read (they change as the light does), nor the drawn grid's offset, which follows the view
+        // (PlanGround's shift).
         FrameUniforms unstepped = frame;
         unstepped.Cycle[1] = 0;
         std::ranges::fill(unstepped.Look, 0.0f);
+        std::ranges::fill(unstepped.Offset, 0);
         std::vector<uint8_t> looks = GroundLooks(run, surface, draw, std::as_bytes(std::span(&unstepped, 1)));
         const GroundPlan plan = PlanGround(surfaceIndex, draw, looks, seen, fogColumns, run.Cycle);
         KeptGround& kept = _KeptGround;
         const std::array<int32_t, 2> origin{draw.Frame.OriginX, draw.Frame.OriginY};
         const bool moving = origin != kept.LastOrigin;
+        const bool changing = looks != kept.LastLooks;
         kept.LastOrigin = origin;
+        kept.LastLooks = looks;
 
-        // Drawn whole while the view moves, the next frame would draw it whole again: drawn directly instead.
-        if (plan.Whole && moving)
+        // Drawn whole once while the view moves (a step of the colour cycle over much of it, a jump), it's kept: the
+        // frames after move it by whole drawn pixels (the drawn grid), and draw again only what changed. Drawn whole
+        // while the view moves and what it's drawn from changes from frame to frame (a zoom easing), the next frame
+        // would draw it whole again: drawn directly instead.
+        if (plan.Whole && moving && changing)
         {
             return false;
         }
 
         const bool shifted = !plan.Whole && (plan.Shift[0] != 0 || plan.Shift[1] != 0);
+        ++(plan.Whole ? _GroundCounts.Whole : shifted ? _GroundCounts.Shifted : _GroundCounts.Kept);
 
         if (plan.Whole || shifted || !plan.Redrawn.empty())
         {
@@ -8032,6 +8231,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             {
                 const FrameUniforms frame = recordFrame(surface, record);
                 DrawTerrain(commands, *pass, pipelines, run, surface, draw, std::as_bytes(std::span(&frame, 1)));
+                ++_GroundCounts.Direct;
             }
 
             // The terrain binds and pushes its own.
@@ -8264,7 +8464,8 @@ auto MCVulkanRenderer::SealedSize(MCAddressKey key) const -> std::optional<Seale
     {
         if (key && surface.Key == key && surface.DrawnWidth > 0 && surface.DrawnHeight > 0)
         {
-            return SealedPlace{surface.DrawnWidth, surface.DrawnHeight, surface.MappedWidth, surface.MappedHeight};
+            return SealedPlace{surface.DrawnWidth, surface.DrawnHeight, surface.MappedWidth, surface.MappedHeight,
+                               surface.Offset};
         }
     }
 
@@ -8479,6 +8680,42 @@ auto MCVulkanRenderer::MovieColors(const MCHdArt::Frame& frame) -> std::expected
     return std::move(downloaded->front());
 }
 
+auto MCVulkanRenderer::HdIndices(const MCHdArt::Frame& frame) -> std::expected<std::vector<uint8_t>, std::string>
+{
+    WaitForRunning();
+    const auto found = _HdPictures.find(frame.Id);
+
+    if (found == _HdPictures.end())
+    {
+        return std::unexpected(std::format("HD frame {} isn't on the GPU", frame.Id));
+    }
+
+    const Picture& picture = found->second;
+    const std::array<std::reference_wrapper<const Texture>, 1> indices{picture.Texture};
+    auto downloaded = DownloadTextures(indices, static_cast<uint32_t>(MCHdArt::IndexBytes));
+
+    if (!downloaded)
+    {
+        return std::unexpected(downloaded.error());
+    }
+
+    // Its place in the page (a texture of its own: all of it).
+    const auto width = static_cast<size_t>(frame.OriginalWidth());
+    const auto height = static_cast<size_t>(frame.OriginalHeight());
+    const std::vector<uint8_t>& whole = downloaded->front();
+    const size_t row = width * MCHdArt::IndexBytes;
+    std::vector<uint8_t> pixels(row * height);
+
+    for (size_t y = 0; y < height; ++y)
+    {
+        const size_t from = ((picture.Place.Y + y) * picture.Texture.Width + picture.Place.X) * MCHdArt::IndexBytes;
+        std::copy_n(whole.begin() + static_cast<ptrdiff_t>(from), row,
+                    pixels.begin() + static_cast<ptrdiff_t>(y * row));
+    }
+
+    return pixels;
+}
+
 auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnderlay> underlays)
     -> std::expected<std::vector<uint8_t>, std::string>
 {
@@ -8599,7 +8836,8 @@ auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnder
             for (int32_t x = std::max(over.Rect.X0, 0); x <= std::min(over.Rect.X1, width - 1); ++x)
             {
                 const size_t at = static_cast<size_t>(y) * width + x;
-                pixels[at] = ShownIndex(gpu[at], x, y, over.Rect, worldPixels, world.Index.Width, world.Index.Height);
+                pixels[at] = ShownIndex(gpu[at], x, y, over.Rect, worldPixels, world.Index.Width, world.Index.Height,
+                                        {world.MappedWidth, world.MappedHeight}, world.Offset);
             }
         }
     }
@@ -8656,7 +8894,8 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
         const std::vector<uint8_t>& gpu = (*downloaded)[surfaceIndex];
         const int32_t width = window.XMax + 1;
         const int32_t height = window.YMax + 1;
-        // A surface drawn scaled is compared drawn pixel by drawn pixel with the window pixel each one shows.
+        // A surface drawn scaled is compared drawn pixel by drawn pixel with the window pixel each one shows (on its
+        // drawn grid, MCDrawnGrid).
         const auto drawnWidth = static_cast<int32_t>(compared.Index.Width);
         const auto drawnHeight = static_cast<int32_t>(compared.Index.Height);
         // The software renderer maps what blended draws covered through AlphaTable; the GPU blended colours there.
@@ -8688,11 +8927,17 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
 
         for (int32_t y = 0; y < drawnHeight; ++y)
         {
-            const auto wy = static_cast<int32_t>((2 * static_cast<int64_t>(y) + 1) * height / (2 * drawnHeight));
+            const int32_t wy =
+                std::clamp(MCDrawnGrid::WindowPixel(y, static_cast<uint32_t>(height),
+                                                    static_cast<uint32_t>(drawnHeight), compared.Offset[1]),
+                           0, height - 1);
 
             for (int32_t x = 0; x < drawnWidth; ++x)
             {
-                const auto wx = static_cast<int32_t>((2 * static_cast<int64_t>(x) + 1) * width / (2 * drawnWidth));
+                const int32_t wx =
+                    std::clamp(MCDrawnGrid::WindowPixel(x, static_cast<uint32_t>(width),
+                                                        static_cast<uint32_t>(drawnWidth), compared.Offset[0]),
+                               0, width - 1);
                 const uint8_t cpu = window.Pixels[static_cast<size_t>(wy) * width + wx];
                 const uint8_t drawn = gpu[static_cast<size_t>(y) * drawnWidth + x];
 

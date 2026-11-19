@@ -478,17 +478,21 @@ namespace
     /// <summary>
     /// Sets <paramref name="uniforms"/>' lighting (sprite/MCSceneLights.h) to the lights world window
     /// <paramref name="world"/> shows, its pixels scaled to its texture's (<paramref name="width"/> by
-    /// <paramref name="height"/>), and distances in the texture's pixels across, with the snow's specks moved on in
-    /// <paramref name="specks"/>; returns how many lights it set (their tiles: <see cref="TileLights"/>). Reads the
-    /// game's lights and weather: the game's thread, as the frame is presented.
+    /// <paramref name="height"/>) and moved by its drawn grid (<paramref name="shift"/> of the texture's pixels across
+    /// and down, MCDrawnGrid, as the world drawn there is), and distances in the texture's pixels across, with the
+    /// snow's specks moved on in <paramref name="specks"/>; returns how many lights it set (their tiles:
+    /// <see cref="TileLights"/>). Reads the game's lights and weather: the game's thread, as the frame is presented.
     /// </summary>
     size_t SetLighting(CompositeUniforms& uniforms, MCSpeckLattice& specks, const MCWindow& world, float width,
-                       float height)
+                       float height, std::array<float, 2> shift)
     {
         const std::span<const MCSceneLight> lights = MCSceneLights::Shown(world);
         const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
         const float across = width / static_cast<float>(world.XMax + 1);
         const float down = height / static_cast<float>(world.YMax + 1);
+        // A window place's place in the texture.
+        const auto placeX = [across, shift](float x) { return x * across + shift[0]; };
+        const auto placeY = [down, shift](float y) { return y * down + shift[1]; };
         const size_t count = std::min(lights.size(), MCSceneLights::MaxLights);
         uniforms.Lighting[0] = static_cast<float>(count);
         uniforms.Lighting[1] = lighting.Strength;
@@ -546,8 +550,8 @@ namespace
         const bool flat = std::abs(determinant) < MinGroundDeterminant;
         uniforms.Water[0] = !flat && GHdLighting != HdLightingOff ? lighting.Water : 0.0f;
         uniforms.Water[1] = MCSceneLights::ShownWaterPhase();
-        uniforms.Ground[0] = ground.OriginX * across;
-        uniforms.Ground[1] = ground.OriginY * down;
+        uniforms.Ground[0] = placeX(ground.OriginX);
+        uniforms.Ground[1] = placeY(ground.OriginY);
 
         {
             // The fog of war's edge's shades, for the weather and the living water (composite.pshader's FogEdgeShade).
@@ -639,8 +643,8 @@ namespace
 
         for (size_t i = 0; i < fires; ++i)
         {
-            uniforms.Heat[i][0] = (heat[i].X + 0.5f) * across;
-            uniforms.Heat[i][1] = (heat[i].Y + 0.5f) * down;
+            uniforms.Heat[i][0] = placeX(heat[i].X + 0.5f);
+            uniforms.Heat[i][1] = placeY(heat[i].Y + 0.5f);
             uniforms.Heat[i][2] = std::max(heat[i].HalfWidth * across, 1.0f);
             uniforms.Heat[i][3] = std::max(heat[i].Rise * down, 1.0f);
         }
@@ -650,10 +654,10 @@ namespace
             // A light's point is a pixel's: its centre.
             const MCSceneLight& light = lights[i];
             const std::span<float, 4> ends = uniforms.Lights[i * 3];
-            ends[0] = (light.X0 + 0.5f) * across;
-            ends[1] = (light.Y0 + 0.5f) * down;
-            ends[2] = (light.X1 + 0.5f) * across;
-            ends[3] = (light.Y1 + 0.5f) * down;
+            ends[0] = placeX(light.X0 + 0.5f);
+            ends[1] = placeY(light.Y0 + 0.5f);
+            ends[2] = placeX(light.X1 + 0.5f);
+            ends[3] = placeY(light.Y1 + 0.5f);
             uniforms.Lights[i * 3 + 1][0] = light.Height * across;
             uniforms.Lights[i * 3 + 1][1] = light.Reach * across;
             uniforms.Lights[i * 3 + 1][2] = light.SpotX * across;
@@ -667,8 +671,8 @@ namespace
             {
                 const MCSceneUnitBox& unit = light.Units[k];
                 const std::span<float, 4> shown = uniforms.LightUnits[i * MCSceneLights::LightUnits + k];
-                shown[0] = (unit.X + 0.5f) * across;
-                shown[1] = (unit.Y + 0.5f) * down;
+                shown[0] = placeX(unit.X + 0.5f);
+                shown[1] = placeY(unit.Y + 0.5f);
                 shown[2] = unit.HalfWidth * across;
                 shown[3] = unit.Height * down;
             }
@@ -746,6 +750,8 @@ namespace
         MCRect Rect{};
         /// <summary>Its picture's size in use: its GPU surface's as sealed, else its window's.</summary>
         std::array<uint32_t, 2> Size{};
+        /// <summary>Port-only: its GPU surface's drawn grid as sealed (MCDrawnGrid; none drawn by the CPU).</summary>
+        std::optional<MCShownGrid> Grid;
         /// <summary>Its uniforms' lighting (<see cref="SetLighting"/>), and the lights it set.</summary>
         CompositeUniforms Uniforms{};
         size_t Lights = 0;
@@ -1223,6 +1229,21 @@ auto MCVulkanPresenter::Plan(const MCFrame& frame, bool read)
     planned->GpuSurfaces = ShowsGpuSurfaces(frame);
     planned->ScreenKey = MCVulkanRenderer::SurfaceKey(frame.Screen.get());
     PlanComposite(frame, *planned);
+
+    // Port-only: the world's drawn grids of the frame now shown, for the mouse (ShownGrids).
+    if (!read)
+    {
+        _ShownGrids.clear();
+
+        for (const PlannedWorld& world : planned->Worlds)
+        {
+            if (world.Shown && world.Grid.has_value())
+            {
+                _ShownGrids.push_back(*world.Grid);
+            }
+        }
+    }
+
     return planned;
 }
 
@@ -1251,6 +1272,10 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
             continue;
         }
 
+        // Port-only: the world's drawn grid (MCDrawnGrid; none but on the GPU's surfaces), and how far it moves the
+        // world drawn in the texture.
+        std::array<float, 2> shift{};
+
         if (planned.GpuSurfaces)
         {
             // The GPU's surface as the frame sealed it: its textures that size once the frame has run.
@@ -1263,6 +1288,10 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
             }
 
             world.Size = {place->Width, place->Height};
+            world.Grid =
+                MCShownGrid{underlay.Rect, {place->MappedWidth, place->MappedHeight}, world.Size, place->Offset};
+            shift = {static_cast<float>(place->Offset[0]) / static_cast<float>(std::max(place->MappedWidth, 1u)),
+                     static_cast<float>(place->Offset[1]) / static_cast<float>(std::max(place->MappedHeight, 1u))};
         }
         else
         {
@@ -1271,7 +1300,7 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
 
         world.Shown = true;
         world.Lights = SetLighting(world.Uniforms, _Specks[i], *source, static_cast<float>(world.Size[0]),
-                                   static_cast<float>(world.Size[1]));
+                                   static_cast<float>(world.Size[1]), shift);
     }
 }
 

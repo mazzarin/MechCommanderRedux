@@ -214,6 +214,8 @@ public:
         /// <summary>The part of its window the drawn size covers, from its corner.</summary>
         uint32_t MappedWidth = 0;
         uint32_t MappedHeight = 0;
+        /// <summary>Its drawn grid's offset across and down (MCDrawnGrid).</summary>
+        std::array<int32_t, 2> Offset{};
     };
 
     /// <summary>
@@ -380,6 +382,26 @@ public:
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
     /// <summary>
+    /// Port-only (the kept ground), for the tests: the terrain layers run so far drawn directly, and those laid from the
+    /// kept ground as it was drawn whole, moved (shifted, the strips the view moved onto drawn), or kept in place (only
+    /// what changed drawn again, if anything).
+    /// </summary>
+    struct GroundCounts
+    {
+        int64_t Direct = 0;
+        int64_t Whole = 0;
+        int64_t Shifted = 0;
+        int64_t Kept = 0;
+    };
+
+    /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
+    GroundCounts KeptGroundCounts() const
+    {
+        WaitForRunning();
+        return _GroundCounts;
+    }
+
+    /// <summary>
     /// The ground meshes put on the GPU so far, and the times their tiles went up with them (a mesh of the tiles
     /// already up sends its cells alone).
     /// </summary>
@@ -425,6 +447,13 @@ public:
     /// must have been drawn, and its frame run, and be its movie's latest.
     /// </summary>
     std::expected<std::vector<uint8_t>, std::string> MovieColors(const MCHdArt::Frame& frame);
+
+    /// <summary>
+    /// Port-only (KindHdSmooth), for the tests: HD art frame <paramref name="frame"/>'s index picture as the GPU holds it
+    /// (R8G8 rows, its original's size: the marks MarkHdCoverage made), read back, waiting for the GPU. The frame must
+    /// have been drawn, and its frame run.
+    /// </summary>
+    std::expected<std::vector<uint8_t>, std::string> HdIndices(const MCHdArt::Frame& frame);
 
     /// <summary>Whether the ground is drawn with the HD art pack's colours (it has an HD terrain atlas).</summary>
     bool HdTerrain() const { return _TerrainMesh.HdAtlas.Handle != nullptr; }
@@ -653,6 +682,18 @@ private:
         /// </summary>
         uint32_t DrawnWidth = 0;
         uint32_t DrawnHeight = 0;
+        /// <summary>
+        /// Port-only (MCDrawnGrid): the window point of map vertex (0, 0) the surface's terrain layer was last drawn at
+        /// (none: none drawn on it yet), and whether the frame being recorded drew one (its first places the grid).
+        /// </summary>
+        std::optional<std::array<int32_t, 2>> GridOrigin;
+        bool GridPlaced = false;
+        /// <summary>
+        /// Port-only: the offset of the surface's drawn grid across and down (MCDrawnGrid::Offset) from GridOrigin
+        /// and its sizes as the frame was sealed, which every drawn &lt;-&gt; window mapping on it takes (0 without
+        /// one). A frame without a terrain layer keeps the last one's, so what it draws lines up with what it keeps.
+        /// </summary>
+        std::array<int32_t, 2> Offset{};
         /// <summary>Execution: the part of the surface the copy holds, and what was drawn since it was taken.</summary>
         MCRect Copied{0, 0, -1, -1};
         std::vector<MCRect> DrawnSinceCopy;
@@ -749,7 +790,8 @@ private:
 
     /// <summary>
     /// Port-only: a surface as a frame was sealed (<see cref="Seal"/>): its window's address (none: let go, its textures
-    /// go once the frame has run), the sizes its commands saw and it is drawn at, whether its draws catch light, where
+    /// go once the frame has run), the sizes its commands saw and it is drawn at, its drawn grid's offset
+    /// (MCDrawnGrid), whether its draws catch light, where
     /// it is drawn among the surfaces (0 kept, 1 shown as an underlay, 2 the rest), and whether its key is drawn
     /// transparent (it lies over an underlay).
     /// </summary>
@@ -762,6 +804,7 @@ private:
         uint32_t MappedHeight = 0;
         uint32_t DrawnWidth = 0;
         uint32_t DrawnHeight = 0;
+        std::array<int32_t, 2> Offset{};
         bool CatchesLight = false;
         int32_t Rank = 2;
         bool KeyClear = false;
@@ -852,10 +895,12 @@ private:
         int32_t FogColumns = 0;
         int32_t CycleStep = 0;
         /// <summary>
-        /// The camera's place the frame before (the origin of the last terrain layer drawn, kept or not): a view moving
-        /// so its pixels can't be kept moved draws its terrain directly until it holds still.
+        /// The camera's place and the looks (as Looks) the frame before, of the last terrain layer drawn, kept or not:
+        /// a view moving while its looks change from frame to frame (a zoom easing) draws its terrain directly until
+        /// they hold.
         /// </summary>
         std::array<int32_t, 2> LastOrigin{INT32_MIN, INT32_MIN};
+        std::vector<uint8_t> LastLooks;
         /// <summary>
         /// The rest it was drawn with, as bytes (GroundLooks): the sizes, the terrain's steps and clip, the haze's
         /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).
@@ -1201,6 +1246,15 @@ private:
     /// </summary>
     void ConvertMovies(SDL_GPUCommandBuffer& commands, FrameRun& run);
     /// <summary>
+    /// Port-only (KindHdSmooth): marks in the index picture's green of each version 1 HD art frame gone up in
+    /// <paramref name="run"/> (FrameRun::CoverageMarks) which original pixels its frame covers, its alpha at their centre
+    /// over half (shaders/hdcoverage.pshader), a render pass for each index texture, after the frame's uploads and before
+    /// its draws: the pixels its index only spread to (marked 255 and 254, as drawn ones) become 253 and 252, a version 2
+    /// frame's spread marks; one it covers without an index, 249. shaders/draw.pshader's HdMaskCoverage then reads them
+    /// 2 x 2 in a gather, not the frame's alpha a pixel at a time. A version 2 frame's marks are the pack's.
+    /// </summary>
+    void MarkHdCoverage(SDL_GPUCommandBuffer& commands, const FrameRun& run);
+    /// <summary>
     /// Port-only: how HD art frame <paramref name="frame"/> of shape table <paramref name="table"/> draws its edges: its
     /// own when it holds its blended pixels (an effect's) or its table keeps them (MCHdArt::KeepsFrameEdges), else
     /// smooth.
@@ -1532,9 +1586,18 @@ private:
     /// </summary>
     MCGpuHandle<SDL_GPUShader> _MovieShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _MoviePipeline;
+    /// <summary>
+    /// Port-only (KindHdSmooth): <see cref="MarkHdCoverage"/>'s shader and pipelines (quad.vshader and
+    /// shaders/hdcoverage.pshader, onto an R8G8 index texture, its green alone): the pass marking the pixels a frame
+    /// doesn't cover (its green less, REVERSE_SUBTRACT), then the one marking those it does (at least, MAX).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _HdCoverageShader;
+    std::array<MCGpuHandle<SDL_GPUGraphicsPipeline>, 2> _HdCoveragePipelines;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
+    /// <summary>Port-only: how the terrain layers run were drawn (the run's side).</summary>
+    GroundCounts _GroundCounts;
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;
@@ -1753,6 +1816,21 @@ private:
 
     /// <summary>Port-only (HD movies): <see cref="ConvertMovies"/> for one picture.</summary>
     void ConvertMovie(SDL_GPUCommandBuffer& commands, const MovieConversion& movie);
+    /// <summary>
+    /// Port-only (KindHdSmooth): a version 1 HD art frame gone up as a frame runs, whose index picture's green
+    /// <see cref="MarkHdCoverage"/> marks: the textures of its indices and colours (a shared page's, or its own), its
+    /// place in them, its original's size and its scale.
+    /// </summary>
+    struct HdCoverageMark
+    {
+        Texture Indices;
+        Texture Colors;
+        PicturePlace Place;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        uint32_t Scale = 1;
+    };
+
     /// <summary>
     /// Port-only (HD movies): lets movie <paramref name="movie"/>'s picture go, kept till the frame runs when its draws
     /// wait for its colours.
@@ -2053,4 +2131,6 @@ struct MCVulkanRenderer::FrameRun
     std::array<float, 3> Look{};
     /// <summary>Port-only (HD movies): the movie pictures whose colours the frame makes from their planes.</summary>
     std::vector<MovieConversion> Conversions;
+    /// <summary>Port-only (KindHdSmooth): the version 1 HD art frames gone up whose coverage the frame marks.</summary>
+    std::vector<HdCoverageMark> CoverageMarks;
 };

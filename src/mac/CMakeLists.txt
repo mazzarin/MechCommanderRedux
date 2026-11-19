@@ -291,9 +291,8 @@ set(MC_SPARKLE_UPDATER ${MC_SRC}/apps/MCRedux/MCSparkleUpdater.mm)
 set_source_files_properties(${MC_SPARKLE_UPDATER} PROPERTIES SKIP_PRECOMPILE_HEADERS ON
                             COMPILE_OPTIONS "-fobjc-arc;-F${MC_SPARKLE}")
 # Personal build: the reports' backend on the Mac (MCTelemetryMac.mm: IOKit for the machine and its power), the
-# updates' downloads (MCHttpGetMac.mm: NSURLSession), the internet games' service (MCWebSocketMac.mm: NSURLSession,
-# and Security for its own look at a refused certificate) and the HD caches' room (MCMemorySystemMac.mm: the memory
-# pressure and Metal's working set).
+# updates' downloads (MCHttpGetMac.mm: NSURLSession), the internet games' service (MCWebSocketMac.mm: NSURLSession) and
+# the HD caches' room (MCMemorySystemMac.mm: the memory pressure and Metal's working set).
 set(MC_TELEMETRY_BACKEND ${MC_SRC}/apps/MCRedux/MCTelemetryMac.mm ${MC_SRC}/apps/MCRedux/MCHttpGetMac.mm
                          ${MC_SRC}/apps/MCRedux/MCWebSocketMac.mm ${MC_SRC}/apps/MCRedux/MCMemorySystemMac.mm)
 set_source_files_properties(${MC_TELEMETRY_BACKEND} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -fobjc-arc)
@@ -304,7 +303,7 @@ target_include_directories(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux)
 target_precompile_headers(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
 target_link_options(MCRedux PRIVATE -F${MC_SPARKLE} "-Wl,-rpath,@executable_path/../Frameworks")
 target_link_libraries(MCRedux PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework IOKit"
-                      "-framework Metal" "-framework Security" "-framework Sparkle")
+                      "-framework Metal" "-framework Sparkle")
 add_custom_command(TARGET MCRedux POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MC_GENERATED_DIR}/Info.plist
           $<TARGET_BUNDLE_CONTENT_DIR:MCRedux>/Info.plist
@@ -321,4 +320,4 @@ target_include_directories(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux)
 target_include_directories(mc_tests PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
 target_precompile_headers(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
 target_link_libraries(mc_tests PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework IOKit"
-                      "-framework Metal" "-framework Security")
+                      "-framework Metal")

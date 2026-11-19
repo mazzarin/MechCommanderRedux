@@ -30,6 +30,7 @@
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
+#include "sprite/MCMechActor.h"
 #include "sprite/MCPackRecords.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCShapeFile.h"

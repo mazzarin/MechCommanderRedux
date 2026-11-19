@@ -20857,46 +20857,37 @@ TEST_CASE_ISOLATED("tool: --sprite-pack-check holds the original's sprite frames
 namespace
 {
     /// <summary>
-    /// A forest's version 2 frame (MakeTestForest's, MarkPackVersion2's) swaying over mission 1, drawn by
-    /// <paramref name="drawing"/> (its world shown larger than the screen when <paramref name="scaledUp"/>), paused:
-    /// the frame shown with its index pass apart and then folded into its draw (MCVulkanRenderer's HdMarks::Folded),
-    /// and the renderer; none when the GPU can't draw it so.
+    /// A forest's version 2 frame (MakeTestForest's, MarkPackVersion2's) twice, one above the other, swaying over
+    /// mission 1, drawn by <paramref name="drawing"/>, paused: the frames shown with their index passes apart, then
+    /// both folded into their draws (MCVulkanRenderer's HdMarks::Folded), then the upper apart and the lower folded
+    /// (Mixed: the lower's draw follows the upper's in the same draw call's reach, with the same picture); and the
+    /// renderer; none when the GPU can't draw it so.
     /// </summary>
     struct FoldedForest
     {
         std::shared_ptr<MCVulkanRenderer> Renderer;
         std::vector<SDL_Color> Apart;
         std::vector<SDL_Color> Folded;
+        std::vector<SDL_Color> Mixed;
+        /// <summary>In mirror mode, the frames with the forest compared with the software renderer's.</summary>
+        int64_t ForestFramesCompared = 0;
     };
 
-    std::optional<FoldedForest> DrawFoldedForest(MCGpuDrawing drawing, bool scaledUp)
+    std::optional<FoldedForest> DrawFoldedForest(MCGpuDrawing drawing)
     {
         if (!MCTestGame::Available())
         {
             return std::nullopt;
         }
 
-        std::shared_ptr<MCVulkanRenderer> renderer;
+        MCRenderer::RequestGpuDrawing(drawing);
+        REQUIRE(MCTestGame::StartMission(1));
+        std::shared_ptr<MCVulkanRenderer> renderer =
+            std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
 
-        if (scaledUp)
+        if (renderer == nullptr || MCRenderer::GpuDrawing() != drawing)
         {
-            renderer = StartScaledUp(drawing);
-        }
-        else
-        {
-            MCRenderer::RequestGpuDrawing(drawing);
-            REQUIRE(MCTestGame::StartMission(1));
-            renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
-
-            if (renderer == nullptr || MCRenderer::GpuDrawing() != drawing)
-            {
-                std::cout << "  (skipped: no GPU renderer on this machine)\n";
-                renderer = nullptr;
-            }
-        }
-
-        if (renderer == nullptr)
-        {
+            std::cout << "  (skipped: no GPU renderer on this machine)\n";
             return std::nullopt;
         }
 
@@ -20927,34 +20918,57 @@ namespace
         GamePaused = true;
         GHdSway = 1;
 
-        // A frame of the world with the forest drawn in it (a little right of the middle and up, clear of the units).
+        // A frame of the world with the forest drawn in it twice (a little right of the middle and up, clear of the
+        // units, and below that, apart from it), the upper folding or not, then the lower.
         constexpr int32_t Aside = 30;
-        const auto drawn = [&](bool folds)
+        constexpr int32_t Below = TestForest::Height + 16;
+        int64_t forestFramesCompared = 0;
+        const auto drawn = [&](bool upperFolds, bool lowerFolds)
         {
-            renderer->SetFoldsIndexPasses(folds);
+            renderer->SetFoldsIndexPasses(upperFolds);
             MCTestGame::RunFrame(FrameSeconds);
             MCPane& world = camera->View()->WorldFrame();
-            AGShapeDraw(world, table.Bytes(), 0, (world.X1 - world.X0) / 2 + Aside, (world.Y1 - world.Y0) / 2 - Aside);
+            const int32_t x = (world.X1 - world.X0) / 2 + Aside;
+            const int32_t y = (world.Y1 - world.Y0) / 2 - Aside;
+            AGShapeDraw(world, table.Bytes(), 0, x, y);
+            renderer->SetFoldsIndexPasses(lowerFolds);
+            AGShapeDraw(world, table.Bytes(), 0, x, y + Below);
             auto frame = MCInput::Display()->ReadFrame();
             REQUIRE(frame.has_value());
+
+            // In mirror mode, this frame compared too: a frame read is shown nowhere, so the presenter compares only
+            // the frames the game runs, before the forest is drawn.
+            if (drawing == MCGpuDrawing::Mirror)
+            {
+                const auto compared = renderer->Compare({}, {});
+                REQUIRE(compared.has_value());
+                ++forestFramesCompared;
+            }
+
             return std::move(*frame);
         };
 
         renderer->ResetMirror();
         FoldedForest result{.Renderer = renderer};
         const int64_t foldsBefore = renderer->HdFolds();
-        result.Apart = drawn(false);
+        result.Apart = drawn(false, false);
         CHECK_EQ(renderer->HdFolds(), foldsBefore);
         // A frame without a fold binds no stands, as before them; one with it binds them on the world's passes alone,
         // the screen kept over it (the kept surfaces) as in a frame without one.
         CHECK_EQ(renderer->LastFrameStandsPasses(), 0);
         const MCVulkanRenderer::KeptCounts keptBefore = renderer->KeptSurfaceCounts();
-        result.Folded = drawn(true);
+        result.Folded = drawn(true, true);
         CHECK(renderer->HdFolds() > foldsBefore);
         CHECK(renderer->LastFrameStandsPasses() > 0);
         const MCVulkanRenderer::KeptCounts keptAfter = renderer->KeptSurfaceCounts();
         CHECK(keptAfter.Whole + keptAfter.Tiled + keptAfter.Unchanged >
               keptBefore.Whole + keptBefore.Tiled + keptBefore.Unchanged);
+        // A folded draw just after one apart, of the same picture, draws through its own pipeline (the fold's), not the
+        // other's: a draw call takes the records that follow on with the same pipeline alone.
+        const int64_t foldsMixed = renderer->HdFolds();
+        result.Mixed = drawn(false, true);
+        CHECK(renderer->HdFolds() > foldsMixed);
+        result.ForestFramesCompared = forestFramesCompared;
         renderer->SetFoldsIndexPasses(true);
         GHdSway = 0;
         GamePaused = false;
@@ -20968,13 +20982,14 @@ namespace
 
 /// <summary>
 /// Port-only: a forest's version 2 frame folds its index pass into its own draw (MCVulkanRenderer's HdMarks::Folded):
-/// swaying over mission 1 drawn by the GPU, the frame drawn with the fold shows as it does drawn without it, pixel for
-/// pixel, over the middle of the screen it is drawn in (the minimap's blips blink as the clock goes): its canopy marked
-/// to sway and to lean brighter, its painted shadow not, through the stands target.
+/// swaying over mission 1 drawn by the GPU, the frames drawn with the fold show as they do drawn without it, pixel for
+/// pixel, over the middle of the screen they are drawn in (the minimap's blips blink as the clock goes): their canopies
+/// marked to sway and to lean brighter, their painted shadows not, through the stands target; and so does a fold drawn
+/// just after a frame drawn apart, of the same picture (each through its own pipeline, not in the other's draw call).
 /// </summary>
 TEST_CASE_ISOLATED("game: a forest's version 2 frame folds its index pass into its draw and shows as drawn apart")
 {
-    const std::optional<FoldedForest> forest = DrawFoldedForest(MCGpuDrawing::On, false);
+    const std::optional<FoldedForest> forest = DrawFoldedForest(MCGpuDrawing::On);
 
     if (!forest.has_value())
     {
@@ -20984,43 +20999,51 @@ TEST_CASE_ISOLATED("game: a forest's version 2 frame folds its index pass into i
     const int32_t width = MCInput::Display()->Width();
     const int32_t height = MCInput::Display()->Height();
     REQUIRE(forest->Apart.size() == static_cast<size_t>(width) * height);
-    REQUIRE(forest->Folded.size() == forest->Apart.size());
-    size_t differing = 0;
-    int32_t left = width;
-    int32_t top = height;
-    int32_t right = -1;
-    int32_t bottom = -1;
 
-    for (int32_t y = height / 4; y < height * 3 / 4; ++y)
+    // The pixels of the middle where a frame differs from the one drawn apart, and where.
+    const auto differingFromApart = [&](std::string_view name, const std::vector<SDL_Color>& shown)
     {
-        for (int32_t x = width / 4; x < width * 3 / 4; ++x)
-        {
-            const size_t at = static_cast<size_t>(y) * width + x;
+        REQUIRE(shown.size() == forest->Apart.size());
+        size_t differing = 0;
+        int32_t left = width;
+        int32_t top = height;
+        int32_t right = -1;
+        int32_t bottom = -1;
 
-            if (!SameColor(forest->Apart[at], forest->Folded[at]))
+        for (int32_t y = height / 4; y < height * 3 / 4; ++y)
+        {
+            for (int32_t x = width / 4; x < width * 3 / 4; ++x)
             {
-                ++differing;
-                left = std::min(left, x);
-                top = std::min(top, y);
-                right = std::max(right, x);
-                bottom = std::max(bottom, y);
+                const size_t at = static_cast<size_t>(y) * width + x;
+
+                if (!SameColor(forest->Apart[at], shown[at]))
+                {
+                    ++differing;
+                    left = std::min(left, x);
+                    top = std::min(top, y);
+                    right = std::max(right, x);
+                    bottom = std::max(bottom, y);
+                }
             }
         }
-    }
 
-    std::cout << std::format("  {} pixels of the middle differ", differing);
-    std::cout << (differing != 0 ? std::format(", in ({}, {}) to ({}, {})\n", left, top, right, bottom) : "\n");
-    CHECK_EQ(differing, 0u);
+        std::cout << std::format("  {}: {} pixels of the middle differ", name, differing);
+        std::cout << (differing != 0 ? std::format(", in ({}, {}) to ({}, {})\n", left, top, right, bottom) : "\n");
+        return differing;
+    };
+
+    CHECK_EQ(differingFromApart("both folded", forest->Folded), 0u);
+    CHECK_EQ(differingFromApart("the lower folded after the upper apart", forest->Mixed), 0u);
 }
 
 /// <summary>
-/// Port-only: the same in mirror mode, its world shown larger than the screen: the GPU's palette indices are the
-/// software renderer's with the fold and without it (the folded draw writes the original's where it draws, and only
-/// there).
+/// Port-only: the same in mirror mode: the GPU's palette indices are the software renderer's in every frame with the
+/// forest, with the fold, without it, and with a fold just after a frame drawn apart (the folded draw writes the
+/// original's where it draws, and only there, through its own pipeline).
 /// </summary>
 TEST_CASE_ISOLATED("game: a forest's version 2 frame folded into its draw keeps the original's palette indices")
 {
-    const std::optional<FoldedForest> forest = DrawFoldedForest(MCGpuDrawing::Mirror, true);
+    const std::optional<FoldedForest> forest = DrawFoldedForest(MCGpuDrawing::Mirror);
 
     if (!forest.has_value())
     {
@@ -21028,7 +21051,8 @@ TEST_CASE_ISOLATED("game: a forest's version 2 frame folded into its draw keeps 
     }
 
     const MCVulkanRenderer::MirrorTally& tally = forest->Renderer->Mirror();
-    CHECK(tally.Frames > 0);
+    CHECK_EQ(forest->ForestFramesCompared, 3);
+    CHECK(tally.Frames >= forest->ForestFramesCompared);
     CHECK_EQ(tally.DifferentFrames, 0);
 
     if (tally.DifferentFrames != 0)

@@ -16,6 +16,7 @@
 #include "network/MCMultiPlayer.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
+#include "object/MCElementalGameSystem.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCObjectQueue.h"

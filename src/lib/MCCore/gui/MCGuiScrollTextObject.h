@@ -95,5 +95,14 @@ public:
 
 /// <summary>The scroll text thumb's paint routine.</summary>
 void PaintScrollTab(MCGuiObject& obj);
+
+/// <summary>
+/// Paints a scroll thumb <paramref name="width"/> x <paramref name="height"/> into <paramref name="pane"/>, as both
+/// scroll texts' (and logistics') draw it: a face of colour 0x1a, its top and left edges lit (0x1f), its right and
+/// bottom ones shaded (0x16). Port-only: on a sharp screen with HD art on, an HD frame of it is shown over its pixels
+/// (MCRenderer::ShowHdPicture), so it's drawn at the screen's pixels: its edges an original pixel wide and crisp, its face
+/// lit from the top down in a smooth ramp round its colour, as the HD menus' grey buttons are.
+/// </summary>
+void PaintScrollTabBevel(MCPane& pane, int32_t width, int32_t height);
 /// <summary>The scroll text thumb's event routine: dragging it scrolls the text.</summary>
 void ScrollTabEventHandler(MCGuiObject& obj, MCGuiEvent& event);

@@ -2,6 +2,7 @@
 #include "logistics/MCLogScrollTextObject.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
+#include "gui/MCGuiScrollTextObject.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -41,14 +42,7 @@ namespace
 
 auto LogPaintScrollTab(MCGuiObject& tab) -> void
 {
-    const int32_t width = tab.Width();
-    const int32_t height = tab.Height();
-    MCPane& pane = static_cast<MCLogObject&>(tab).Lport()->Frame();
-    VfxPaneWipe(pane, 0x1a);
-    VfxLineDraw(pane, 0, 0, width - 2, 0, 0x1f);
-    VfxLineDraw(pane, 0, 0, 0, height - 2, 0x1f);
-    VfxLineDraw(pane, width - 1, 0, width - 1, height - 1, 0x16);
-    VfxLineDraw(pane, 0, height - 1, width - 1, height - 1, 0x16);
+    PaintScrollTabBevel(static_cast<MCLogObject&>(tab).Lport()->Frame(), tab.Width(), tab.Height());
 }
 
 auto LogScrollTabHandleEvent(MCGuiObject& tab, MCGuiEvent& event) -> void

@@ -2,6 +2,10 @@
 #include "gui/MCGuiScrollTextObject.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
+#include "platform/MCRenderer.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -39,14 +43,158 @@ namespace
 
 auto PaintScrollTab(MCGuiObject& obj) -> void
 {
-    const int32_t width = obj.Width();
-    const int32_t height = obj.Height();
-    MCPane& pane = obj.Port().Frame();
-    VfxPaneWipe(pane, 0x1a);
-    VfxLineDraw(pane, 0, 0, width - 2, 0, 0x1f);
-    VfxLineDraw(pane, 0, 0, 0, height - 2, 0x1f);
-    VfxLineDraw(pane, width - 1, 0, width - 1, height - 1, 0x16);
-    VfxLineDraw(pane, 0, height - 1, width - 1, height - 1, 0x16);
+    PaintScrollTabBevel(obj.Port().Frame(), obj.Width(), obj.Height());
+}
+
+namespace
+{
+    /// <summary>The scroll thumb's colours: its face, its lit edges (top, left) and its shaded ones (right, bottom).</summary>
+    constexpr uint8_t TabFace = 0x1a;
+    constexpr uint8_t TabLit = 0x1f;
+    constexpr uint8_t TabShaded = 0x16;
+    /// <summary>Port-only: the HD thumb's pixels per original pixel, and how many sizes' frames are kept.</summary>
+    constexpr int32_t TabHdScale = 4;
+    constexpr size_t TabFramesKept = 8;
+    /// <summary>
+    /// Port-only: how much lighter the HD thumb's face is at its top than its colour, and darker at its bottom (a share of
+    /// the way to white and to black): a face lit from above, as the HD menus' grey buttons are.
+    /// </summary>
+    constexpr float TabFaceRamp = 0.12f;
+
+    /// <summary>Port-only: an HD thumb's frame, by its size and the three colours it was made in.</summary>
+    struct TabFrame
+    {
+        int32_t Width = 0;
+        int32_t Height = 0;
+        std::array<SDL_Color, 3> Colours{};
+        std::shared_ptr<const MCHdArt::Frame> Frame;
+    };
+
+    bool SameColour(const SDL_Color& a, const SDL_Color& b)
+    {
+        return a.r == b.r && a.g == b.g && a.b == b.b;
+    }
+
+    /// <summary>
+    /// Port-only: the HD frame of a thumb <paramref name="width"/> x <paramref name="height"/> in
+    /// <paramref name="colours"/> (face, lit, shaded), each original pixel <see cref="TabHdScale"/> square: the edges where
+    /// the bevel's lines lie, the face a smooth ramp from lighter at the top to darker at the bottom.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> MakeTabFrame(int32_t width, int32_t height,
+                                                       const std::array<SDL_Color, 3>& colours)
+    {
+        constexpr size_t RgbaBytes = 4;
+        constexpr uint8_t Opaque = 255;
+        constexpr float Full = 255.0f;
+        auto made = std::make_shared<MCHdArt::Frame>();
+        made->Id = MCHdArt::NewFrameId();
+        made->Width = width * TabHdScale;
+        made->Height = height * TabHdScale;
+        made->Scale = TabHdScale;
+        made->Colors.resize(static_cast<size_t>(made->Width) * static_cast<size_t>(made->Height) * RgbaBytes);
+        made->Indices.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 2);
+        const SDL_Color& face = colours[0];
+
+        for (int32_t y = 0; y < made->Height; ++y)
+        {
+            const int32_t row = y / TabHdScale;
+            // The face's light: +TabFaceRamp toward white at the top, toward black at the bottom.
+            const float down = (static_cast<float>(y) + 0.5f) / static_cast<float>(made->Height);
+            const float light = TabFaceRamp * (1.0f - 2.0f * down);
+            const auto ramp = [light](uint8_t value)
+            {
+                const float v = static_cast<float>(value);
+                const float lit = light >= 0.0f ? v + (Full - v) * light : v * (1.0f + light);
+                return static_cast<uint8_t>(std::clamp(std::lround(lit), 0L, 255L));
+            };
+
+            for (int32_t x = 0; x < made->Width; ++x)
+            {
+                const int32_t column = x / TabHdScale;
+                // As the lines are drawn: the top edge but its last pixel, the left edge but its last, then the right
+                // edge and the bottom edge whole.
+                const bool shaded = column == width - 1 || row == height - 1;
+                const bool lit = !shaded && (row == 0 || column == 0);
+                const uint8_t index = shaded ? TabShaded : lit ? TabLit : TabFace;
+                const SDL_Color& colour = shaded ? colours[2] : lit ? colours[1] : face;
+                const size_t at =
+                    (static_cast<size_t>(y) * static_cast<size_t>(made->Width) + static_cast<size_t>(x)) * RgbaBytes;
+                const bool onFace = !shaded && !lit;
+                made->Colors[at] = onFace ? ramp(colour.r) : colour.r;
+                made->Colors[at + 1] = onFace ? ramp(colour.g) : colour.g;
+                made->Colors[at + 2] = onFace ? ramp(colour.b) : colour.b;
+                made->Colors[at + 3] = Opaque;
+
+                if (x % TabHdScale == 0 && y % TabHdScale == 0)
+                {
+                    const size_t pixel =
+                        static_cast<size_t>(row) * static_cast<size_t>(width) + static_cast<size_t>(column);
+                    made->Indices[pixel * 2] = index;
+                    made->Indices[pixel * 2 + 1] = Opaque;
+                }
+            }
+        }
+
+        return made;
+    }
+
+    /// <summary>
+    /// Port-only: shows the HD frame of the thumb painted into <paramref name="pane"/> over its pixels, on a sharp
+    /// screen with HD art on (else none: its pixels alone).
+    /// </summary>
+    void ShowTabHd(MCPane& pane, int32_t width, int32_t height)
+    {
+        const std::shared_ptr<MCWindow> window = pane.Window.lock();
+        const std::shared_ptr<MCTexture> texture = window != nullptr ? window->Texture.lock() : nullptr;
+
+        if (texture == nullptr)
+        {
+            return;
+        }
+
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+
+        if (display == nullptr || !display->SharpScreen() || !MCHdArt::Active() || !MCRenderer::ShowsHdPictures() ||
+            width <= 0 || height <= 0)
+        {
+            MCRenderer::ShowHdPicture(*texture, nullptr, 0, 0);
+            return;
+        }
+
+        std::array<SDL_Color, 256> shown{};
+        display->GetShownColors(shown);
+        const std::array<SDL_Color, 3> colours = {shown[TabFace], shown[TabLit], shown[TabShaded]};
+        static std::deque<TabFrame> kept;
+        auto found = std::ranges::find_if(kept,
+                                          [&](const TabFrame& frame)
+                                          {
+                                              return frame.Width == width && frame.Height == height &&
+                                                     std::ranges::equal(frame.Colours, colours, SameColour);
+                                          });
+
+        if (found == kept.end())
+        {
+            if (kept.size() == TabFramesKept)
+            {
+                kept.pop_back();
+            }
+
+            kept.push_front({width, height, colours, MakeTabFrame(width, height, colours)});
+            found = kept.begin();
+        }
+
+        MCRenderer::ShowHdPicture(*texture, found->Frame, pane.X0, pane.Y0);
+    }
+}
+
+auto PaintScrollTabBevel(MCPane& pane, int32_t width, int32_t height) -> void
+{
+    VfxPaneWipe(pane, TabFace);
+    VfxLineDraw(pane, 0, 0, width - 2, 0, TabLit);
+    VfxLineDraw(pane, 0, 0, 0, height - 2, TabLit);
+    VfxLineDraw(pane, width - 1, 0, width - 1, height - 1, TabShaded);
+    VfxLineDraw(pane, 0, height - 1, width - 1, height - 1, TabShaded);
+    ShowTabHd(pane, width, height);
 }
 
 auto ScrollTabEventHandler(MCGuiObject& obj, MCGuiEvent& event) -> void

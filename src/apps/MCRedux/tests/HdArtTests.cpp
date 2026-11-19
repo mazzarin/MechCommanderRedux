@@ -26,6 +26,7 @@
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
+#include "gui/MCGuiScrollTextObject.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCGuiButton.h"
 #include "gui/MCGuiSystem.h"
@@ -16362,6 +16363,90 @@ TEST_CASE_ISOLATED("game: HD art draws the loading screen's static at the screen
     CHECK_EQ(hd.Counted, original.Counted);
     // Most squares fine-grained (the palette's colours 0 to 0x1f repeat some colours, so not every one).
     CHECK(hd.Mixed > original.Mixed + hd.Counted / 4);
+    MCRenderer::DestroyTexture(*picture);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// A scroll thumb (PaintScrollTabBevel, as the scroll texts and logistics paint theirs) copied onto mission 1's screen
+/// shown larger, with HD art on: drawn at the screen's pixels, its face lit from the top down (lighter at its top than at
+/// its bottom), not the original's one flat colour shown larger.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a scroll thumb at the screen's pixels, its face lit from the top")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_thumb";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const std::shared_ptr<MCWindow> picture = StripedPicture(0x30);
+    WritePackPicture(pack, *picture, colors);
+    WritePaletteRgb(pack, colors);
+    const MCHdArtOn on(pack);
+
+    // A thumb as a scroll text's is: 13 pixels wide, painted, then copied onto the screen.
+    constexpr int32_t TabWidth = 13;
+    constexpr int32_t TabHeight = 120;
+    const std::shared_ptr<MCWindow> tab = MCWindow::Make(TabWidth, TabHeight);
+    MCRenderer::CreateTexture(*tab, MCTextureUse::Static);
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0 - TabHeight) / 2;
+    GamePaused = true;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCPane pane = MCPane::Over(tab);
+    PaintScrollTabBevel(pane, TabWidth, TabHeight);
+    VfxPaneCopy(pane, 0, 0, screen, left, top, VfxNoColor);
+    const Shown seen = ReadShown(scratch);
+    GamePaused = false;
+
+    // The face's mean brightness over its top quarter and its bottom quarter, two original pixels in from its edges.
+    const int32_t shownWidth = MCInput::Display()->Width();
+    REQUIRE(shownWidth > 0);
+    // The screen shown larger by a scale that needn't be whole (2.5 here).
+    const double scale = static_cast<double>(seen.Width) / static_cast<double>(shownWidth);
+    REQUIRE(scale >= 2.0);
+    const auto firstShown = [scale](int32_t original)
+    { return static_cast<int32_t>(std::ceil(static_cast<double>(original) * scale)); };
+    const auto mean = [&](int32_t firstRow, int32_t endRow)
+    {
+        int64_t sum = 0;
+        int64_t count = 0;
+
+        for (int32_t y = firstShown(screen.Y0 + top + firstRow); y < firstShown(screen.Y0 + top + endRow); ++y)
+        {
+            for (int32_t x = firstShown(screen.X0 + left + 2); x < firstShown(screen.X0 + left + TabWidth - 2); ++x)
+            {
+                const size_t i =
+                    (static_cast<size_t>(y) * static_cast<size_t>(seen.Width) + static_cast<size_t>(x)) * BytesPerPixel;
+                sum += seen.Pixels[i] + seen.Pixels[i + 1] + seen.Pixels[i + 2];
+                ++count;
+            }
+        }
+
+        REQUIRE(count > 0);
+        return static_cast<double>(sum) / static_cast<double>(count * 3);
+    };
+
+    constexpr int32_t Quarter = TabHeight / 4;
+    constexpr double LitAtLeast = 8.0;
+    const double faceTop = mean(2, Quarter);
+    const double faceBottom = mean(TabHeight - Quarter, TabHeight - 2);
+    std::cout << std::format("  thumb's face: {:.1f} at its top, {:.1f} at its bottom\n", faceTop, faceBottom);
+    CHECK(faceTop - faceBottom > LitAtLeast);
+    MCRenderer::DestroyTexture(*tab);
     MCRenderer::DestroyTexture(*picture);
     std::filesystem::remove_all(scratch);
 }

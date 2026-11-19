@@ -587,6 +587,11 @@ namespace
     {
         std::weak_ptr<const MCTerrain> Of;
         std::vector<int32_t> Slots;
+        /// <summary>
+        /// Those the table names as ground tiles (a destroyed object's overlay that is one: the expansion set's slot
+        /// 3428), rebuilt with the map's ground tiles (RebuildGroundFromHd), as GroundTileSlots' are.
+        /// </summary>
+        std::vector<int32_t> GroundSlots;
     };
 
     OverlaysLeft& OverlaysLeftToRebuild()
@@ -896,18 +901,32 @@ void MCTerrainReadOverlaysAhead(std::span<const int32_t> slots, std::string_view
 
         for (const int32_t slot : slots)
         {
-            if (!OverlayKnown(*known, slot))
+            const MCGroundSlotNames names = known->get().At(slot);
+            std::vector<int32_t>* const rebuilt = OverlayKnown(*known, slot) ? &overlaysLeft.Slots
+                                                  : names.Tile.has_value() && known->get().ShapeAt(slot).has_value()
+                                                      ? &overlaysLeft.GroundSlots
+                                                      : nullptr;
+
+            if (rebuilt != nullptr)
             {
-                toRead.push_back(slot);
+                ++left;
+
+                if (!std::ranges::contains(*rebuilt, slot))
+                {
+                    rebuilt->push_back(slot);
+                }
+
                 continue;
             }
 
-            ++left;
-
-            if (!std::ranges::contains(overlaysLeft.Slots, slot))
+            // A slot the table names neither way holds no picture (the tile sets' slot 3665, a 16-byte placeholder a
+            // destroyed forest's step comes to): nothing to show, so not read ahead.
+            if (!names.Overlay.has_value() && !names.Tile.has_value())
             {
-                overlaysLeft.Slots.push_back(slot);
+                continue;
             }
+
+            toRead.push_back(slot);
         }
     }
     else
@@ -1039,7 +1058,21 @@ namespace
         std::vector<int32_t> unread;
         size_t rebuilt = 0;
 
-        for (const int32_t slot : GroundTileSlots(*terrain.MapBlocks, known))
+        // The map's ground tiles, then those MCTerrainReadOverlaysAhead left that the table names as ground tiles.
+        std::vector<int32_t> groundSlots = GroundTileSlots(*terrain.MapBlocks, known);
+
+        if (const OverlaysLeft& left = OverlaysLeftToRebuild(); left.Of.lock().get() == &terrain)
+        {
+            for (const int32_t slot : left.GroundSlots)
+            {
+                if (!std::ranges::contains(groundSlots, slot))
+                {
+                    groundSlots.push_back(slot);
+                }
+            }
+        }
+
+        for (const int32_t slot : groundSlots)
         {
             const std::optional<MCGroundName> name = known.At(slot).Tile;
 

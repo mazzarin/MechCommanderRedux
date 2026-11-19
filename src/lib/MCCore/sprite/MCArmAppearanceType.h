@@ -39,6 +39,11 @@ public:
     /// </summary>
     std::shared_ptr<MCShape> GetShape(int32_t rotation, float& frameRate, bool& reverse);
 
+    /// <summary>
+    /// Port-only: a frameless arm draws none of its shapes (GetShape gives none), so none is read at the load.
+    /// </summary>
+    bool DrawsShapes() const override { return ActorData.NumFrames != 0; }
+
     /// <summary>The state.</summary>
     MCArmActorData ActorData;
     /// <summary>The loaded shape of each packet (expired once the cache drops it).</summary>

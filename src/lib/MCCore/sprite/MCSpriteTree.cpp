@@ -525,6 +525,26 @@ auto MCSpriteTree::AllPackets() const -> std::vector<MCGesturePacket>
     std::set<std::pair<MCMechPart, uint32_t>> seen;
     const size_t gestures = std::min(Gestures.size(), PacketFinderArray.size());
 
+    // A tree's gestures can name facings past its part PAK's end (the legs90 PAKs hold 189 packets, and gestures with
+    // frames name packets 189 on): no mech plays those, so the original never reads them, and none is asked for here.
+    // The PAKs are LoadPacketsTogether's, the zoomed-out ones; a part whose PAK doesn't open keeps every packet.
+    constexpr bool zoomedOut = true;
+    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+    MCMechParts<std::optional<uint32_t>> held;
+
+    for (const MCMechPart filePart : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+    {
+        if (spriteManager == nullptr || FileNumbers[filePart] == NoFileNumber)
+        {
+            continue;
+        }
+
+        held[filePart] = spriteManager->MechPacketCount(FileNumbers[filePart], filePart, zoomedOut);
+    }
+
+    const auto inPak = [&held](const MCGesturePacket& where)
+    { return !held[where.FilePart].has_value() || where.Packet < *held[where.FilePart]; };
+
     for (size_t gesture = 0; gesture < gestures; ++gesture)
     {
         const MCGestureData& data = Gestures[gesture];
@@ -544,7 +564,7 @@ auto MCSpriteTree::AllPackets() const -> std::vector<MCGesturePacket>
             for (int32_t index = 0; index < stored; index += step)
             {
                 if (const std::optional<MCGesturePacket> where = PacketAt(at, part, index, false);
-                    where.has_value() && FileNumbers[where->FilePart] != NoFileNumber &&
+                    where.has_value() && FileNumbers[where->FilePart] != NoFileNumber && inPak(*where) &&
                     seen.emplace(where->FilePart, where->Packet).second)
                 {
                     packets.push_back(*where);

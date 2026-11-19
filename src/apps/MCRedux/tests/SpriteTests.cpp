@@ -134,6 +134,9 @@ namespace
         return {text.begin(), text.end()};
     }
 
+    /// <summary>The packets of each mech part PAK's mech (SpriteFiles).</summary>
+    constexpr int32_t PartPackets = 0x100;
+
     /// <summary>
     /// A context with the files a sprite manager opens: the sprite PAKs <c>test90.pak</c> and <c>test.pak</c>, the part
     /// PAKs (one mech, each part's packets tagged by part), the shadows, and the type PAK <c>types.pak</c>.
@@ -141,7 +144,7 @@ namespace
     struct SpriteFiles
     {
         SpriteFiles(std::vector<std::vector<uint8_t>> preferred, std::vector<std::vector<uint8_t>> fallback,
-                    std::vector<std::vector<uint8_t>> types)
+                    std::vector<std::vector<uint8_t>> types, int32_t partPackets = PartPackets)
         {
             // A PAK has at least one packet.
             for (std::vector<std::vector<uint8_t>>& packets :
@@ -163,7 +166,7 @@ namespace
             {
                 std::vector<std::vector<uint8_t>> packets;
 
-                for (int32_t i = 0; i < 0x100; ++i)
+                for (int32_t i = 0; i < partPackets; ++i)
                 {
                     packets.push_back(Shape(1000 * (static_cast<int32_t>(part[0]) % 10) + i));
                 }
@@ -789,6 +792,75 @@ TEST_CASE("sprites: the frames a gesture starts on are asked for apart from its 
     REQUIRE_EQ(packets.size(), 1u);
     CHECK(packets[0].Frames == std::optional(frames));
     CHECK_EQ(packets[0].First, 0);
+}
+
+/// <summary>
+/// Port-only (the first-use rule's load, 760ed525: every gesture read at the load): the packets a mech's gestures can
+/// give (MCSpriteTree::AllPackets) are only those its part PAK holds. A tree's gestures can name facings past the PAK's
+/// end (the legs90 PAKs hold 189 packets, and gestures with frames name 189 on): no mech plays them, and the original
+/// never reads them, so the load asks for none (the guard counted each as an original read, its folder having no record).
+/// </summary>
+TEST_CASE("sprites: the packets a mech's gestures give at the load are only those its part PAKs hold")
+{
+    const auto legsPackets = [](int32_t partPackets)
+    {
+        SpriteFiles files({}, {}, {Fit(MechFit(false))}, partPackets);
+        auto tree = std::static_pointer_cast<MCSpriteTree>(AppearanceTypeList().GetAppearance(0x01000000));
+        REQUIRE(tree != nullptr);
+        std::vector<uint32_t> legs;
+
+        for (const MCGesturePacket& where : tree->AllPackets())
+        {
+            if (where.FilePart == MCMechPart::Legs)
+            {
+                legs.push_back(where.Packet);
+            }
+        }
+
+        return legs;
+    };
+
+    // With every packet held, the legs' last is the PAK's end for the next try.
+    const std::vector<uint32_t> all = legsPackets(PartPackets);
+    REQUIRE(!all.empty());
+    const uint32_t last = std::ranges::max(all);
+    REQUIRE(last < static_cast<uint32_t>(PartPackets));
+
+    // A PAK ending at that packet: it and any past it left out, every other kept.
+    const std::vector<uint32_t> held = legsPackets(static_cast<int32_t>(last));
+    CHECK(std::ranges::all_of(held, [last](uint32_t packet) { return packet < last; }));
+    CHECK_EQ(held.size(),
+             static_cast<size_t>(std::ranges::count_if(all, [last](uint32_t packet) { return packet < last; })));
+    CHECK(held.size() < all.size());
+}
+
+/// <summary>
+/// Port-only (the first-use rule's load, 760ed525: every loaded type's appearance's packets read at the load): a type
+/// that draws none of its shapes asks for none (MCAppearanceType::DrawsShapes). The Catapult's arms are frameless arm
+/// types over PAKs of blank packets, never drawn; the guard counted each packet as an original read.
+/// </summary>
+TEST_CASE("sprites: a frameless arm type asks for none of its packets at the load, an arm with frames for them")
+{
+    constexpr uint32_t ArmAppearance = 0x06000000;
+    // Whether an arm type of <frames> frames draws its shapes, and how many packets it asks for at the load.
+    const auto armAsks = [](uint32_t frames)
+    {
+        SpriteFiles files(
+            {FortyShapes()}, {{}},
+            {Fit(std::format("FITini\n[Main Info]\n[State]\nul NumFrames = {}\nf FrameRate = 10.0\n"
+                             "ul BasePacketNumber = 0\nuc NumRotations = 32\nul Symmetrical = 1\nFITend\n",
+                             frames))});
+        const std::shared_ptr<MCAppearanceType> type = AppearanceTypeList().GetAppearance(ArmAppearance);
+        REQUIRE(type != nullptr);
+        return std::pair(type->DrawsShapes(), type->ShapesUnloaded().size());
+    };
+
+    const auto [drawn, drawnAsks] = armAsks(1);
+    CHECK(drawn);
+    CHECK(drawnAsks > 0u);
+    const auto [frameless, framelessAsks] = armAsks(0);
+    CHECK(!frameless);
+    CHECK_EQ(framelessAsks, 0u);
 }
 
 TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrored where the gesture is symmetrical")

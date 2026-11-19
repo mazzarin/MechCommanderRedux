@@ -198,6 +198,13 @@ public:
     /// </summary>
     std::string PartFileName(MCMechPart part, bool zoomedOut) const;
 
+    /// <summary>
+    /// Port-only: how many packets the PAK of <paramref name="part"/> of mech <paramref name="mechNum"/> holds (the one
+    /// <see cref="GetMechShapeData"/> reads with <paramref name="zoomedOut"/>), opening it when first asked for; none when
+    /// it can't be opened.
+    /// </summary>
+    std::optional<uint32_t> MechPacketCount(uint32_t mechNum, MCMechPart part, bool zoomedOut);
+
     /// <summary>The number of packets in appearance <paramref name="appearanceNum"/>'s PAK (0 when it has none).</summary>
     int32_t GetNumShapes(uint32_t appearanceNum);
 

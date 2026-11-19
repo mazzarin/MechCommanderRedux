@@ -216,8 +216,8 @@ public:
 
     /// <summary>
     /// Port-only (the first-use rule): every packet <see cref="GesturePacket"/> can give, each once: every gesture with
-    /// frames, every part, every stored facing (every fourth where the gesture has only those). Read at the load, so no
-    /// gesture's first show reads or unpacks in play.
+    /// frames, every part, every stored facing (every fourth where the gesture has only those) that its part PAK holds.
+    /// Read at the load, so no gesture's first show reads or unpacks in play.
     /// </summary>
     std::vector<MCGesturePacket> AllPackets() const;
 

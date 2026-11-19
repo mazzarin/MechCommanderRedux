@@ -153,6 +153,12 @@ public:
     /// </summary>
     std::vector<MCShapeWanted> ShapesUnloaded();
 
+    /// <summary>
+    /// Port-only (the first-use rule's load): whether the type draws any of its PAK's shapes. ShapesUnloaded asks for
+    /// none of a type that draws none (a frameless arm's: the Catapult's arms, whose PAKs hold blank packets).
+    /// </summary>
+    virtual bool DrawsShapes() const { return true; }
+
     /// <summary>Port-only: keeps <paramref name="shape"/>, loaded with others', as packet <paramref name="packet"/>'s.</summary>
     void KeepShape(uint32_t packet, const std::shared_ptr<MCShape>& shape);
 

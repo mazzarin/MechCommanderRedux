@@ -95,7 +95,7 @@ auto MCAppearanceType::ShapesUnloaded() -> std::vector<MCShapeWanted>
 {
     std::vector<MCShapeWanted> wanted;
 
-    if (!_PacketSlots.has_value())
+    if (!_PacketSlots.has_value() || !DrawsShapes())
     {
         return wanted;
     }

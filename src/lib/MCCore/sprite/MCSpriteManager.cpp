@@ -710,6 +710,12 @@ auto MCSpriteManager::PartFileName(MCMechPart part, bool zoomedOut) const -> std
     return std::format("{}{}", PartFileNames[static_cast<size_t>(part)], use90 ? "90" : "");
 }
 
+auto MCSpriteManager::MechPacketCount(uint32_t mechNum, MCMechPart part, bool zoomedOut) -> std::optional<uint32_t>
+{
+    const MCOptionalRef<MCPacketFile> file = MechFile(mechNum, part, zoomedOut);
+    return file.has_value() ? std::optional(static_cast<uint32_t>(file->get().GetNumPackets())) : std::nullopt;
+}
+
 auto MCSpriteManager::GetNumShapes(uint32_t appearanceNum) -> int32_t
 {
     return OpenAppearanceFile(appearanceNum) ? _AppearanceFiles[appearanceNum]->GetNumPackets() : 0;

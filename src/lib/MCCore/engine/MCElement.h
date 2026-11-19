@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <optional>
+
 #include "sprite/MCInBetween.h"
 #include "sprite/MCSpriteTurn.h"
 
@@ -44,4 +47,10 @@ public:
     /// <see cref="MCRenderer::TurnScope"/>.
     /// </summary>
     std::optional<MCSpriteTurn> Turn;
+    /// <summary>
+    /// Port-only (HDSmoothPlace, a prototype): how far past the whole window pixel it is drawn at the element's place
+    /// lies (0 to 1, across and down), drawn there in a <see cref="MCRenderer::SubPixelScope"/>: a moving unit's parts
+    /// shown where it is, not on the original's pixel grid. None: on the grid, as the original.
+    /// </summary>
+    std::optional<std::array<float, 2>> SubPixel;
 };

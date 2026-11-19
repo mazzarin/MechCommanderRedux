@@ -201,6 +201,25 @@ namespace
     /// <summary>The draw field carrying place.w (shaders/instance.vshader's <c>Draw::place</c>).</summary>
     constexpr size_t PlaceFlagsField = 23;
     /// <summary>
+    /// Port-only (HDSmoothPlace, a prototype): place.w's bit for a draw placed past its whole window pixel
+    /// (MCRenderer::SubPixelScope), by SubPixelSteps-ths of one across (from SubPixelXShift) and down (SubPixelYShift):
+    /// the shaders move it by that on the target's drawn grid (shaders/pixels.hlsli's SubPixelOffset).
+    /// </summary>
+    constexpr uint32_t SubPixelPlaced = 2u;
+    constexpr uint32_t SubPixelXShift = 8;
+    constexpr uint32_t SubPixelYShift = 16;
+
+    constexpr float SubPixelSteps = 256.0f;
+    constexpr int32_t SubPixelMost = 255;
+
+    /// <summary>A fraction of a window pixel (0 to 1) as place.w's steps.</summary>
+    uint32_t SubPixelBits(float fraction)
+    {
+        return static_cast<uint32_t>(
+            std::clamp(static_cast<int32_t>(std::lround(fraction * SubPixelSteps)), 0, SubPixelMost));
+    }
+
+    /// <summary>
     /// Port-only: the most keyed holes a KindHd draw carries that later copies fill (FillHoles), in its draw's span and
     /// walk from FilledHolesSlot, two words a hole: its first original pixel and the one past its last, x in the low
     /// half and y in the high (shaders/draw.pshader's FilledHolesMost).
@@ -2163,6 +2182,13 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         draw[21] = PackedPair(place.HdX, place.HdY);
         draw[22] = PackedPair(place.Width, place.Height);
         draw[PlaceFlagsField] = picture.HdMarks ? static_cast<int32_t>(HdMarksSource) : 0;
+    }
+
+    // Port-only (HDSmoothPlace): placed past its whole window pixel by the scope's fraction.
+    if (const std::optional<std::array<float, 2>> fraction = MCRenderer::DrawingSubPixel(); fraction.has_value())
+    {
+        draw[PlaceFlagsField] |= static_cast<int32_t>(SubPixelPlaced | SubPixelBits((*fraction)[0]) << SubPixelXShift |
+                                                      SubPixelBits((*fraction)[1]) << SubPixelYShift);
     }
 
     const bool indexOnly = (op & IndexOnly) != 0;
@@ -6426,6 +6452,7 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     if (!drawn.GridPlaced)
     {
         drawn.GridOrigin = std::array{frame.PaneX + frame.OriginX, frame.PaneY + frame.OriginY};
+        drawn.GridFraction = frame.OriginFraction;
         drawn.GridPlaced = true;
     }
 
@@ -7152,14 +7179,18 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     const int32_t moveY = now.OriginY - then.OriginY;
     const bool moved = moveX != 0 || moveY != 0;
     const MCRect& clip = now.Clip;
-    const auto drawnMove = [](int32_t pane, int32_t from, int32_t to, uint32_t window, uint32_t drawn)
+    // Port-only (HDSmoothCamera): each with the camera's fraction of a pixel it was drawn at, which moves the grid too.
+    const auto drawnMove = [&now, &then](size_t axis, uint32_t window, uint32_t drawn)
     {
-        return static_cast<int32_t>(MCDrawnGrid::Whole(pane + to, window, drawn) -
-                                    MCDrawnGrid::Whole(pane + from, window, drawn));
+        const int32_t pane = axis == 0 ? now.PaneX : now.PaneY;
+        const int32_t from = pane + (axis == 0 ? then.OriginX : then.OriginY);
+        const int32_t to = pane + (axis == 0 ? now.OriginX : now.OriginY);
+        return static_cast<int32_t>(MCDrawnGrid::Whole(to, window, drawn, now.OriginFraction[axis]) -
+                                    MCDrawnGrid::Whole(from, window, drawn, then.OriginFraction[axis]));
     };
 
-    const int32_t shiftX = drawnMove(now.PaneX, then.OriginX, now.OriginX, surface.MappedWidth, surface.Target.Width);
-    const int32_t shiftY = drawnMove(now.PaneY, then.OriginY, now.OriginY, surface.MappedHeight, surface.Target.Height);
+    const int32_t shiftX = drawnMove(0, surface.MappedWidth, surface.Target.Width);
+    const int32_t shiftY = drawnMove(1, surface.MappedHeight, surface.Target.Height);
 
     if (moved && (std::abs(moveX) > clip.X1 - clip.X0 || std::abs(moveY) > clip.Y1 - clip.Y0))
     {
@@ -7925,8 +7956,10 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
 
         if (surface.GridOrigin.has_value())
         {
-            surface.Offset = {MCDrawnGrid::Offset((*surface.GridOrigin)[0], surface.MappedWidth, surface.DrawnWidth),
-                              MCDrawnGrid::Offset((*surface.GridOrigin)[1], surface.MappedHeight, surface.DrawnHeight)};
+            surface.Offset = {MCDrawnGrid::Offset((*surface.GridOrigin)[0], surface.MappedWidth, surface.DrawnWidth,
+                                                  surface.GridFraction[0]),
+                              MCDrawnGrid::Offset((*surface.GridOrigin)[1], surface.MappedHeight, surface.DrawnHeight,
+                                                  surface.GridFraction[1])};
         }
 
         surface.GridPlaced = false;

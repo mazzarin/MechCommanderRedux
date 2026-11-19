@@ -647,6 +647,9 @@ namespace
     /// <summary>The row a <see cref="MCRenderer::StandingScope"/>'s unit stands on, none outside one.</summary>
     std::optional<float> StandingDrawn;
 
+    /// <summary>How far past their whole pixels a <see cref="MCRenderer::SubPixelScope"/>'s draws lie, none outside one.</summary>
+    std::optional<std::array<float, 2>> SubPixelDrawn;
+
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
     {
@@ -930,6 +933,21 @@ std::optional<float> MCRenderer::DrawingStanding()
     return StandingDrawn;
 }
 
+MCRenderer::SubPixelScope::SubPixelScope(std::optional<std::array<float, 2>> fraction) : _Was(SubPixelDrawn)
+{
+    SubPixelDrawn = fraction;
+}
+
+MCRenderer::SubPixelScope::~SubPixelScope()
+{
+    SubPixelDrawn = _Was;
+}
+
+std::optional<std::array<float, 2>> MCRenderer::DrawingSubPixel()
+{
+    return SubPixelDrawn;
+}
+
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)
 {
     auto& surfaces = FrameSurfaces();
@@ -1066,25 +1084,28 @@ namespace
     }
 }
 
-int32_t MCDrawnGrid::Offset(int32_t origin, uint32_t window, uint32_t drawn)
+int32_t MCDrawnGrid::Offset(int32_t origin, uint32_t window, uint32_t drawn, int32_t fraction)
 {
     if (window == 0 || drawn == 0 || window == drawn)
     {
         return 0;
     }
 
-    return static_cast<int32_t>(Whole(origin, window, drawn) * window - static_cast<int64_t>(origin) * drawn);
+    return static_cast<int32_t>(Whole(origin, window, drawn, fraction) * window - static_cast<int64_t>(origin) * drawn);
 }
 
-int64_t MCDrawnGrid::Whole(int32_t origin, uint32_t window, uint32_t drawn)
+int64_t MCDrawnGrid::Whole(int32_t origin, uint32_t window, uint32_t drawn, int32_t fraction)
 {
     if (window == 0 || drawn == 0 || window == drawn)
     {
         return origin;
     }
 
+    // round((origin - fraction / F) D / W), halves down, in whole numbers: floor((2 (origin F - fraction) D + F W) /
+    // 2 F W).
     const int64_t w = window;
-    return FloorDivide(2 * static_cast<int64_t>(origin) * drawn + w, 2 * w);
+    const int64_t place = static_cast<int64_t>(origin) * FractionSteps - fraction;
+    return FloorDivide(2 * place * drawn + FractionSteps * w, 2 * FractionSteps * w);
 }
 
 int32_t MCDrawnGrid::WindowPixel(int64_t drawnPixel, uint32_t window, uint32_t drawn, int32_t offset)

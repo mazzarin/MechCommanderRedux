@@ -556,6 +556,13 @@ inline constexpr float SettleMostSeconds = 0.4f;
 extern int GHdTurns;
 
 /// <summary>
+/// Port-only (HDSmoothPlace, a prototype; a tool flag, no PREFS key yet): 1 draws a mech's parts and their sun shadows
+/// where it is, past the whole window pixel the original rounds it down to (MCElement::SubPixel), so a walking mech
+/// moves evenly instead of a pixel at a time; 0 as the original.
+/// </summary>
+extern int GHdSmoothPlace;
+
+/// <summary>
 /// Port-only (HDTurns): how fast a mech's drawn facing follows its facing, degrees a second (its pivot rate's floor; it
 /// turns walking at 720 or more, a corner in a frame or two).
 /// </summary>

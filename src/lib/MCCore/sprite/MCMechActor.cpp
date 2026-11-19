@@ -1624,6 +1624,7 @@ auto MCMechActor::RenderJump() -> void
 }
 
 int GHdTurns = 0;
+int GHdSmoothPlace = 0;
 
 auto MCEaseFacing(float shown, float facing, float maxTurn, float lagMost) -> float
 {
@@ -1637,6 +1638,20 @@ auto MCEaseFacing(float shown, float facing, float maxTurn, float lagMost) -> fl
 
 namespace
 {
+    /// <summary>
+    /// Port-only (HDSmoothPlace): with it on, how far past the whole window pixel MCVfxElement rounds it down to a part
+    /// drawn at <paramref name="at"/> lies (0 to 1, across and down); none with it off.
+    /// </summary>
+    std::optional<std::array<float, 2>> SmoothPlace(const MCVector2D& at)
+    {
+        if (GHdSmoothPlace == 0)
+        {
+            return std::nullopt;
+        }
+
+        return std::array{at.X - std::floor(at.X), at.Y - std::floor(at.Y)};
+    }
+
     /// <summary>
     /// The float error a frame time's sum may carry: a step of the legs' in-betweens is taken this much early, so 60 a
     /// second lands on each step's start rather than just short of it.
@@ -2024,6 +2039,19 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     const float y = ScreenPos.Y;
     RenderJump();
 
+    // Port-only (HDSmoothPlace): the parts drawn where the mech is, ScreenPos moved by what the original's projection
+    // rounded off (MCBattleMech::OnScreen's ProjectToScreen; not a jump, which RenderJump places by the camera).
+    MCVector2D placed = ScreenPos;
+
+    if (GHdSmoothPlace != 0 && CurrentGesture != GestureJump && UseOldProject == 0 && Terrain() != nullptr)
+    {
+        const MCVector3D position = mech->GetPosition();
+        const MCVector2D exact = MCTerrain::ProjectTerrainUnrounded(position);
+        const MCVector2D rounded = MCTerrain::ProjectTerrain(position);
+        placed.X += exact.X - rounded.X;
+        placed.Y += exact.Y - rounded.Y;
+    }
+
     const float facing = DrawnFacing(*mech);
 
     // The torso and arms play the combat gestures while the gun is up or moving.
@@ -2163,9 +2191,10 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             legsMiddle = legs.InBetween;
         }
 
-        auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
+        auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), placed.X, placed.Y,
                                                          drawnFrame[part], drawnReverse[part], fadeTable, 1);
         element.Feet = feet;
+        element.SubPixel = SmoothPlace(placed);
 
         if (part == MCMechPart::Legs)
         {
@@ -2195,9 +2224,10 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
                 continue;
             }
 
-            auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
+            auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), placed.X, placed.Y,
                                                              drawnFrame[part], drawnReverse[part], std::nullopt, 1);
             element.SunShadow = true;
+            element.SubPixel = SmoothPlace(placed);
 
             if (part == MCMechPart::Legs)
             {

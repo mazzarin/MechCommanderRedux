@@ -36,6 +36,7 @@
 #include "sprite/MCShapeFile.h"
 
 bool LeaveSwoopyOff = false;
+int GHdSmoothCamera = 0;
 auto PauseShape() -> MCRegisteredBlock&
 {
     static MCNeverDestroyed<MCRegisteredBlock> shape;
@@ -721,6 +722,20 @@ auto MCCamera::Update() -> void
     if (Terrain() != nullptr)
     {
         ScreenUL = MCTerrain::ProjectTerrain(Position);
+        ScreenULFraction = {};
+
+        if (GHdSmoothCamera != 0)
+        {
+            const MCVector2D exact = MCTerrain::ProjectTerrainUnrounded(Position);
+            const auto steps = [](float past)
+            {
+                constexpr int32_t Most = MCDrawnGrid::FractionSteps - 1;
+                const auto rounded = static_cast<int32_t>(std::lround(past * MCDrawnGrid::FractionSteps));
+                return std::clamp(rounded, -Most, Most);
+            };
+
+            ScreenULFraction = {steps(exact.X - ScreenUL.X), steps(exact.Y - ScreenUL.Y)};
+        }
     }
 
     TargetChanged = false;

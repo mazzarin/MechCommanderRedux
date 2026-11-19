@@ -8192,6 +8192,20 @@ namespace
             GHdTurns = 1;
             std::cout << "  turns: eased, legs between facings\n";
         }
+
+        // HDSmoothPlace: mechs drawn where they are, past the original's whole pixels.
+        if (MCTest::Option("hd-smooth-place").has_value())
+        {
+            GHdSmoothPlace = 1;
+            std::cout << "  smooth place: mechs drawn between the original's pixels\n";
+        }
+
+        // HDSmoothCamera: the world view moved by the camera's place between the original's pixels.
+        if (MCTest::Option("hd-smooth-camera").has_value())
+        {
+            GHdSmoothCamera = 1;
+            std::cout << "  smooth camera: the view moved between the original's pixels, by whole drawn pixels\n";
+        }
     }
 
     /// <summary>

@@ -13,6 +13,7 @@
 #include "object/MCForces.h"
 #include "object/MCMover.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCMemoryRoom.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
@@ -334,7 +335,9 @@ TEST_CASE_ISOLATED("game: in the canyon's battle the game's thread reads and unp
 /// (default 1) as a player's game for <c>--first-uses-seconds &lt;s&gt;</c> of the game's time (default 240), or with
 /// <c>--first-uses-battle canyon</c> the trailer's staged battle, with the HD pack <c>--hd-pack &lt;folder&gt;</c> (none:
 /// the original's art), and appends each first use the game's thread made in play to the file, a line each: the
-/// mission, the frame, the kind, its milliseconds, its bytes and what. Its count and cost go to the output.
+/// mission, the frame, the kind, its milliseconds, its bytes and what. Its count and cost go to the output. With
+/// <c>--first-uses-framelog</c>, <c>--first-uses-trace</c> and <c>--first-uses-memory &lt;GB&gt;</c>: the run's frame log,
+/// its HD trace, and its plan as a machine with that much memory.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists the game's thread's first uses")
 {
@@ -374,6 +377,22 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
         REQUIRE(MCFrameLog::Open(std::filesystem::path(*log)));
     }
 
+    // --first-uses-trace <file>: the HD trace of the run (MCHdArt::OpenTrace: each read asked, each frame's first use).
+    if (const std::optional<std::string_view> trace = MCTest::Option("first-uses-trace"); trace.has_value())
+    {
+        REQUIRE(MCHdArt::OpenTrace(std::filesystem::path(*trace)));
+    }
+
+    // --first-uses-memory <GB>: planned as a machine with that much memory (MCMemoryRoom::SetMachineBytes).
+    if (const std::optional<std::string_view> gb = MCTest::Option("first-uses-memory"); gb.has_value())
+    {
+        constexpr int BytesPerGbShift = 30;
+        uint64_t planned = 0;
+        std::from_chars(gb->data(), gb->data() + gb->size(), planned);
+        REQUIRE(planned > 0);
+        MCMemoryRoom::SetMachineBytes(planned << BytesPerGbShift);
+    }
+
     MCTestContextScope scope;
     const auto started = std::chrono::steady_clock::now();
     StartAsPlayer(scope, mission, GuardPack());
@@ -407,4 +426,6 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
                              mission, loadSeconds, played, players.size(), enemies.size(), uses.size(), ms,
                              MCFirstUses::Dropped());
     MCFrameLog::Close();
+    MCHdArt::CloseTrace();
+    MCMemoryRoom::SetMachineBytes(std::nullopt);
 }

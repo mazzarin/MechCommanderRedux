@@ -201,7 +201,7 @@ namespace
     /// <summary>The draw field carrying place.w (shaders/instance.vshader's <c>Draw::place</c>).</summary>
     constexpr size_t PlaceFlagsField = 23;
     /// <summary>
-    /// Port-only (HDSmoothPlace, a prototype): place.w's bit for a draw placed past its whole window pixel
+    /// Port-only (HDSmoothPlace): place.w's bit for a draw placed past its whole window pixel
     /// (MCRenderer::SubPixelScope), by SubPixelSteps-ths of one across (from SubPixelXShift) and down (SubPixelYShift):
     /// the shaders move it by that on the target's drawn grid (shaders/pixels.hlsli's SubPixelOffset).
     /// </summary>
@@ -1035,14 +1035,17 @@ namespace
             return pixel;
         }
 
-        // (2 * at + 1) * drawn / (2 * shown) + r / window, rounded down, in [0, drawn).
+        // (2 * at + 1) * drawn / (2 * shown) + r / window, rounded down, within the drawn pixels that show a window
+        // pixel (MCDrawnGrid::Showing: past them, the edge's).
         const auto drawnAt = [](int64_t at, int64_t shownSize, int64_t drawn, int64_t windowSize, int64_t r)
         {
             const int64_t size = std::max<int64_t>(windowSize, 1);
             const int64_t n = (2 * at + 1) * drawn * size + 2 * r * shownSize;
             const int64_t d = 2 * shownSize * size;
             const int64_t place = n >= 0 ? n / d : -((-n + d - 1) / d);
-            return static_cast<size_t>(std::clamp<int64_t>(place, 0, drawn - 1));
+            const std::array<int64_t, 2> showing = MCDrawnGrid::Showing(
+                static_cast<uint32_t>(windowSize), static_cast<uint32_t>(drawn), static_cast<int32_t>(r));
+            return static_cast<size_t>(std::clamp<int64_t>(place, showing[0], showing[1]));
         };
 
         const size_t wx = drawnAt(x - shown.X0, shown.X1 - shown.X0 + 1, worldWidth, window[0], offset[0]);

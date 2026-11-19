@@ -48,7 +48,7 @@ public:
     /// </summary>
     std::optional<MCSpriteTurn> Turn;
     /// <summary>
-    /// Port-only (HDSmoothPlace, a prototype): how far past the whole window pixel it is drawn at the element's place
+    /// Port-only (HDSmoothPlace): how far past the whole window pixel it is drawn at the element's place
     /// lies (0 to 1, across and down), drawn there in a <see cref="MCRenderer::SubPixelScope"/>: a moving unit's parts
     /// shown where it is, not on the original's pixel grid. None: on the grid, as the original.
     /// </summary>

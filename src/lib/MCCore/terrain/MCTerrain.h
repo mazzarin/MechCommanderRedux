@@ -65,7 +65,7 @@ public:
     static MCVector2D ProjectTerrain(const MCVector3D& pos);
 
     /// <summary>
-    /// Port-only (HDSmoothPlace, HDSmoothCamera; prototypes): <see cref="ProjectTerrain"/> without its floors (it rounds
+    /// Port-only (HDSmoothPlace, HDSmoothCamera): <see cref="ProjectTerrain"/> without its floors (it rounds
     /// across, down and the height down apart, so a walking unit steps a pixel at a time and flicks up and down where
     /// two of them round on different frames).
     /// </summary>

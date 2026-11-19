@@ -471,7 +471,7 @@ struct MCTerrainFrame
     int32_t OriginX = 0;
     int32_t OriginY = 0;
     /// <summary>
-    /// Port-only (HDSmoothCamera, a prototype): how far past the whole pixel the camera's place lies across and down
+    /// Port-only (HDSmoothCamera): how far past the whole pixel the camera's place lies across and down
     /// (MCCamera::ScreenULFraction, MCDrawnGrid::FractionSteps of a pixel), the window point of map vertex (0, 0)
     /// unrounded being OriginX and OriginY less it; the surface's drawn grid moves the picture by it (MCDrawnGrid).
     /// </summary>
@@ -605,7 +605,7 @@ struct MCUnderlay
 /// </summary>
 struct MCDrawnGrid
 {
-    /// <summary>Port-only (HDSmoothCamera, a prototype): the steps a window pixel's fraction is counted in.</summary>
+    /// <summary>Port-only (HDSmoothCamera): the steps a window pixel's fraction is counted in.</summary>
     static constexpr int32_t FractionSteps = 256;
 
     /// <summary>
@@ -613,7 +613,7 @@ struct MCDrawnGrid
     /// (halves down): r = G W - origin D, in (-W/2, W/2], so every drawn pixel still shows a window pixel in [0, W).
     /// 0 where a window pixel is a whole number of drawn pixels.
     /// <para>
-    /// Port-only (HDSmoothCamera, a prototype): with a <paramref name="fraction"/> f (FractionSteps of a window pixel),
+    /// Port-only (HDSmoothCamera): with a <paramref name="fraction"/> f (FractionSteps of a window pixel),
     /// the place the camera puts the point at unrounded is origin - f, and G = round((origin - f) D / W): the picture,
     /// drawn with the point at origin, moves by the camera's fraction rounded to whole drawn pixels, r in
     /// (-W/2 - f D, W/2 - f D]. Past the window's edge it moves onto, the drawn pixels show no window pixel.
@@ -631,6 +631,12 @@ struct MCDrawnGrid
     /// (drawnPlace W - r) / D.
     /// </summary>
     static double WindowPlace(double drawnPlace, uint32_t window, uint32_t drawn, int32_t offset);
+    /// <summary>
+    /// The first and last drawn pixels that show a window pixel (one in [0, W)), within [0, D): every drawn pixel but
+    /// for a camera's fraction (<see cref="Offset"/>), which moves the picture off the window's edge, leaving a strip
+    /// past it that shows none. The world is shown there as its edge (shaders/composite.pshader's worldShowing).
+    /// </summary>
+    static std::array<int64_t, 2> Showing(uint32_t window, uint32_t drawn, int32_t offset);
 };
 
 /// <summary>
@@ -933,7 +939,7 @@ public:
     static std::optional<float> DrawingStanding();
 
     /// <summary>
-    /// Port-only (HDSmoothPlace, a prototype): while one made with a fraction lives, the draws are placed that far past
+    /// Port-only (HDSmoothPlace): while one made with a fraction lives, the draws are placed that far past
     /// the whole window pixel they are given (0 to 1, across and down): the hardware renderer moves them by it on a
     /// surface drawn larger than its window (nothing in software, nor at 1:1). One made with none changes nothing.
     /// </summary>

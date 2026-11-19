@@ -1140,6 +1140,24 @@ double MCDrawnGrid::WindowPlace(double drawnPlace, uint32_t window, uint32_t dra
     return (drawnPlace * window - offset) / drawn;
 }
 
+std::array<int64_t, 2> MCDrawnGrid::Showing(uint32_t window, uint32_t drawn, int32_t offset)
+{
+    const int64_t last = std::max<int64_t>(static_cast<int64_t>(drawn) - 1, 0);
+
+    if (window == drawn || window == 0 || drawn == 0)
+    {
+        return {0, last};
+    }
+
+    // Drawn pixel p shows window pixel floor(((2p + 1) W - 2r) / 2D): at least 0 from p = ceil((2r - W) / 2W), and
+    // under W while (2p + 1) W - 2r < 2 D W, so up to floor((2 D W + 2r - W - 1) / 2W).
+    const int64_t w = window;
+    const int64_t r = offset;
+    const int64_t first = -FloorDivide(w - 2 * r, 2 * w);
+    const int64_t end = FloorDivide(2 * static_cast<int64_t>(drawn) * w + 2 * r - w - 1, 2 * w);
+    return {std::clamp<int64_t>(first, 0, last), std::clamp<int64_t>(end, 0, last)};
+}
+
 namespace
 {
     int64_t StaleReads = 0;

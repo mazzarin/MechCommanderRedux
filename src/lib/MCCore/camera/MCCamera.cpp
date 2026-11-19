@@ -37,6 +37,7 @@
 
 bool LeaveSwoopyOff = false;
 int GHdSmoothCamera = 0;
+int GHdSmoothMotion = 0;
 auto PauseShape() -> MCRegisteredBlock&
 {
     static MCNeverDestroyed<MCRegisteredBlock> shape;
@@ -724,7 +725,7 @@ auto MCCamera::Update() -> void
         ScreenUL = MCTerrain::ProjectTerrain(Position);
         ScreenULFraction = {};
 
-        if (GHdSmoothCamera != 0)
+        if (MCSmoothCamera())
         {
             const MCVector2D exact = MCTerrain::ProjectTerrainUnrounded(Position);
             const auto steps = [](float past)
@@ -754,7 +755,13 @@ auto MCCamera::Render() -> void
     if (_View != nullptr)
     {
         GlobalPane = _View->SharedWorldFrame();
-        MCOverlay = MCOverlayTarget{_View->FramePane, _View->WorldScaleX(), _View->WorldScaleY()};
+        // Port-only (HDSmoothCamera): the world's picture moved by the camera's fraction past ScreenUL, taken off.
+        constexpr auto steps = static_cast<float>(MCDrawnGrid::FractionSteps);
+        MCOverlay = MCOverlayTarget{
+            _View->FramePane,
+            _View->WorldScaleX(),
+            _View->WorldScaleY(),
+            {static_cast<float>(-ScreenULFraction[0]) / steps, static_cast<float>(-ScreenULFraction[1]) / steps}};
     }
 
     const std::shared_ptr<MCTerrainWindow> terrainWindow = TerrainWindow.lock();

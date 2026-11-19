@@ -594,12 +594,12 @@ auto MCOverlayPoint(MCVector2D point) -> MCVector2D
 
 auto MCOverlayX(float x) -> float
 {
-    return x * MCOverlay.ScaleX;
+    return (x + MCOverlay.Shift[0]) * MCOverlay.ScaleX;
 }
 
 auto MCOverlayY(float y) -> float
 {
-    return y * MCOverlay.ScaleY;
+    return (y + MCOverlay.Shift[1]) * MCOverlay.ScaleY;
 }
 
 auto MCMainView() -> std::shared_ptr<MCViewWindow>

@@ -540,9 +540,9 @@ auto MCDrawDamageBar(const MCAppearance& appearance, std::shared_ptr<MCAppearanc
 
     // Port: the bar is an overlay, on the screen over the view: it follows the sprite through the zoom, its size
     // doesn't change.
-    left = MCOverlayX(left);
-    top = MCOverlayY(top);
-    right = MCOverlayX(right);
+    left = MCOverlayX(left + appearance.DrawnShift.X);
+    top = MCOverlayY(top + appearance.DrawnShift.Y);
+    right = MCOverlayX(right + appearance.DrawnShift.X);
     constexpr float gap = 5.0f;
     constexpr float barWidth = 38.0f;
     constexpr float barHeight = 4.0f;

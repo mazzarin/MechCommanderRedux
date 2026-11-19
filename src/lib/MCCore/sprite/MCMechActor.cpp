@@ -1638,13 +1638,19 @@ auto MCEaseFacing(float shown, float facing, float maxTurn, float lagMost) -> fl
 
 namespace
 {
+    /// <summary>Port-only: whether mechs are drawn where they are (HDSmoothMotion, or HDSmoothPlace alone).</summary>
+    bool SmoothPlaced()
+    {
+        return GHdSmoothMotion != 0 || GHdSmoothPlace != 0;
+    }
+
     /// <summary>
     /// Port-only (HDSmoothPlace): with it on, how far past the whole window pixel MCVfxElement rounds it down to a part
     /// drawn at <paramref name="at"/> lies (0 to 1, across and down); none with it off.
     /// </summary>
     std::optional<std::array<float, 2>> SmoothPlace(const MCVector2D& at)
     {
-        if (GHdSmoothPlace == 0)
+        if (!SmoothPlaced())
         {
             return std::nullopt;
         }
@@ -2043,7 +2049,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     // rounded off (MCBattleMech::OnScreen's ProjectToScreen; not a jump, which RenderJump places by the camera).
     MCVector2D placed = ScreenPos;
 
-    if (GHdSmoothPlace != 0 && CurrentGesture != GestureJump && UseOldProject == 0 && Terrain() != nullptr)
+    if (SmoothPlaced() && CurrentGesture != GestureJump && UseOldProject == 0 && Terrain() != nullptr)
     {
         const MCVector3D position = mech->GetPosition();
         const MCVector2D exact = MCTerrain::ProjectTerrainUnrounded(position);
@@ -2051,6 +2057,8 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         placed.X += exact.X - rounded.X;
         placed.Y += exact.Y - rounded.Y;
     }
+
+    DrawnShift = MCVector2D(placed.X - ScreenPos.X, placed.Y - ScreenPos.Y);
 
     const float facing = DrawnFacing(*mech);
 
@@ -3114,8 +3122,9 @@ auto MCMechActor::DrawBars() -> void
     // doesn't change.
     constexpr float barWidth = 38.0f;
     constexpr float barHeight = 4.0f;
-    const float barY = (MCOverlayY(UpperLeft.Y) - 24.0f) - barHeight;
-    const float barX = static_cast<float>(std::floor(static_cast<double>(MCOverlayX(ScreenPos.X) - barWidth * 0.5f)));
+    const float barY = (MCOverlayY(UpperLeft.Y + DrawnShift.Y) - 24.0f) - barHeight;
+    const float barX =
+        static_cast<float>(std::floor(static_cast<double>(MCOverlayX(ScreenPos.X + DrawnShift.X) - barWidth * 0.5f)));
 
     const auto mech = std::static_pointer_cast<MCMover>(Owner.lock());
 

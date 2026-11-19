@@ -600,9 +600,9 @@ TEST_CASE_ISOLATED("game: after the GPU fails to start, HD OPTIONS dims what onl
     CHECK_EQ(list->Status(), "VULKAN DIDN'T START ON THIS COMPUTER: THE CPU DRAWS THE GAME.");
 
     // Every setting on the page is one the GPU alone draws or one the CPU keeps.
-    constexpr std::array<std::string_view, 10> gpuOnly = {"HDArt",    "HDLighting", "HDSunShadows", "HDRelief",
-                                                          "HDClouds", "HDSway",     "HDParticles",  "HDFlecks",
-                                                          "HDShake",  "HDWeather"};
+    constexpr std::array<std::string_view, 11> gpuOnly = {"HDArt",    "HDLighting", "HDSunShadows",  "HDRelief",
+                                                          "HDClouds", "HDSway",     "HDParticles",   "HDFlecks",
+                                                          "HDShake",  "HDWeather",  "HDSmoothMotion"};
     constexpr std::array<std::string_view, 6> cpuKeeps = {"HDAudio", "HDFootprints", "HDTurns",
                                                           "HDStops", "MechBraking",  "Reports"};
     CHECK_EQ(gpuOnly.size() + cpuKeeps.size() + Unlisted.size(), MCHdSettings::All().size());

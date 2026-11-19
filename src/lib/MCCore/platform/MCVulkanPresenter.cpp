@@ -64,6 +64,11 @@ namespace
         float Clouds[4] = {};
         /// <summary>The shake: the world's texels the world shown is moved by.</summary>
         float Shake[4] = {};
+        /// <summary>
+        /// Port-only (HDSmoothCamera): the world's texels that show a pixel of its window, the first and last across and
+        /// down (MCDrawnGrid::Showing; every texel by default).
+        /// </summary>
+        float WorldShowing[4] = {0.0f, 0.0f, std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
         /// <summary>The world's own light's colour (times Lighting's), and how much of their colour its colours lose.</summary>
         float AmbientLook[4] = {1.0f, 1.0f, 1.0f, 0.0f};
         /// <summary>
@@ -1296,6 +1301,13 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
             world.Size = {place->Width, place->Height};
             world.Grid =
                 MCShownGrid{underlay.Rect, {place->MappedWidth, place->MappedHeight}, world.Size, place->Offset};
+            const std::array<int64_t, 2> across =
+                MCDrawnGrid::Showing(place->MappedWidth, place->Width, place->Offset[0]);
+            const std::array<int64_t, 2> down =
+                MCDrawnGrid::Showing(place->MappedHeight, place->Height, place->Offset[1]);
+            std::ranges::copy(std::array{static_cast<float>(across[0]), static_cast<float>(down[0]),
+                                         static_cast<float>(across[1]), static_cast<float>(down[1])},
+                              world.Uniforms.WorldShowing);
             shift = {static_cast<float>(place->Offset[0]) / static_cast<float>(std::max(place->MappedWidth, 1u)),
                      static_cast<float>(place->Offset[1]) / static_cast<float>(std::max(place->MappedHeight, 1u))};
         }

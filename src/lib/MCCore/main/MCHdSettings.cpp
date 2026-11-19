@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "main/MCHdSettings.h"
+#include "camera/MCCamera.h"
 #include "engine/MCCraterManager.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
@@ -64,6 +65,8 @@ namespace
         MCSetting{.Key = "HDTurns", .Value = GHdTurns},
         // HDStops has a mech stopped mid-stride with its move held up hold its stride (sprite/MCMechActor.h).
         MCSetting{.Key = "HDStops", .Value = GHdStops},
+        // HDSmoothMotion has walking mechs and the view glide between the original's pixels (camera/MCCamera.h).
+        MCSetting{.Key = "HDSmoothMotion", .Value = GHdSmoothMotion},
         // MechBraking (gameplay) has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
         MCSetting{.Key = "MechBraking", .Value = GMechBraking, .Gameplay = true},
         // MoreUnits (gameplay) lets the player own 100 mechs and vehicles outside a match, not 50

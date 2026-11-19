@@ -269,7 +269,7 @@ TEST_CASE("presenter: a world's drawn grid moves its picture by whole drawn pixe
 }
 
 /// <summary>
-/// Port-only (HDSmoothCamera, a prototype): with the camera's fraction of a window pixel, the drawn grid puts the map's
+/// Port-only (HDSmoothCamera): with the camera's fraction of a window pixel, the drawn grid puts the map's
 /// corner on the whole drawn pixel nearest where the camera puts it unrounded (within half a drawn pixel), the offset
 /// still the whole place's less the drawn one, and a pan between any two places and fractions moves what each drawn
 /// pixel shows by whole drawn pixels (the kept ground slides, never redrawn for the camera's place). A fraction of 0 is
@@ -330,6 +330,60 @@ TEST_CASE("presenter: a world's drawn grid moves its picture by the camera's fra
         CHECK_EQ(badOffsets, 0);
         CHECK_EQ(farOff, 0);
         CHECK_EQ(slid, 0);
+    }
+}
+
+/// <summary>
+/// Port-only (HDSmoothCamera): the drawn pixels that show a window pixel (MCDrawnGrid::Showing, which the composite
+/// shows the world within, its edge past them) are exactly those whose window pixel is in [0, W): all of them without a
+/// fraction; with one, every drawn pixel but a strip past the edge the picture moved off, under one window pixel wide
+/// (D / W drawn pixels), on one side only.
+/// </summary>
+TEST_CASE("presenter: a world's drawn pixels that show its window, past which it is shown as its edge")
+{
+    constexpr int32_t FractionStep = 29;
+    constexpr int32_t Steps = MCDrawnGrid::FractionSteps;
+
+    for (const GridSizes sizes :
+         {GridSizes{764, 3599}, GridSizes{640, 1600}, GridSizes{1000, 640}, GridSizes{640, 640}})
+    {
+        MCTest::Scope scope(std::format("{} window pixels drawn at {}", sizes.Window, sizes.Drawn));
+        const int64_t window = sizes.Window;
+        const int64_t drawn = sizes.Drawn;
+        // The widest strip: a whole window pixel's drawn pixels, rounded up.
+        const int64_t widest = (drawn + window - 1) / window;
+        int64_t wrong = 0;
+        int64_t wideStrips = 0;
+        int64_t bothSides = 0;
+        int64_t cutWithout = 0;
+
+        for (auto origin = static_cast<int32_t>(-window); origin <= window; origin += 13)
+        {
+            for (int32_t fraction = 1 - Steps; fraction < Steps; fraction += FractionStep)
+            {
+                const int32_t offset = MCDrawnGrid::Offset(origin, sizes.Window, sizes.Drawn, fraction);
+                const auto [first, last] = MCDrawnGrid::Showing(sizes.Window, sizes.Drawn, offset);
+
+                for (int64_t p = 0; p < drawn; ++p)
+                {
+                    const int32_t shown = MCDrawnGrid::WindowPixel(p, sizes.Window, sizes.Drawn, offset);
+                    const bool showing = shown >= 0 && shown < window;
+                    wrong += showing != (p >= first && p <= last) ? 1 : 0;
+                }
+
+                wideStrips += first > widest || drawn - 1 - last > widest ? 1 : 0;
+                bothSides += first > 0 && last < drawn - 1 ? 1 : 0;
+            }
+
+            const int32_t whole = MCDrawnGrid::Offset(origin, sizes.Window, sizes.Drawn);
+            const auto [first, last] = MCDrawnGrid::Showing(sizes.Window, sizes.Drawn, whole);
+            cutWithout += first != 0 || last != drawn - 1 ? 1 : 0;
+        }
+
+        CHECK_EQ(wrong, 0);
+        CHECK_EQ(wideStrips, 0);
+        CHECK_EQ(bothSides, 0);
+        CHECK_EQ(cutWithout, 0);
     }
 }
 

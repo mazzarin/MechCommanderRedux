@@ -782,7 +782,7 @@ private:
         /// </summary>
         std::optional<std::array<int32_t, 2>> GridOrigin;
         /// <summary>
-        /// Port-only (HDSmoothCamera, a prototype): the camera's fraction of a pixel past GridOrigin's place
+        /// Port-only (HDSmoothCamera): the camera's fraction of a pixel past GridOrigin's place
         /// (MCTerrainFrame::OriginFraction), which moves the grid too.
         /// </summary>
         std::array<int32_t, 2> GridFraction{};

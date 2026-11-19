@@ -43,7 +43,12 @@ enum class MCShader : uint8_t
     DrawBasicStands,
     DrawTerrainStands,
     DrawHdStands,
-    GroundStands
+    GroundStands,
+    /// <summary>
+    /// Port-only: the draws of a forest's HD frames alone (shaders/draw_trees.pshader), and their stands build.
+    /// </summary>
+    DrawTrees,
+    DrawTreesStands
 };
 
 /// <summary>A shader the Vulkan renderer uses, and the resources its bindings declare.</summary>
@@ -102,6 +107,8 @@ namespace MCVulkanShaders
     extern const MCShaderInfo DrawBasicStandsFragment;
     extern const MCShaderInfo DrawTerrainStandsFragment;
     extern const MCShaderInfo DrawHdStandsFragment;
+    extern const MCShaderInfo DrawTreesFragment;
+    extern const MCShaderInfo DrawTreesStandsFragment;
     extern const MCShaderInfo GroundStandsFragment;
     extern const MCShaderInfo MovieFragment;
     extern const MCShaderInfo HdCoverageFragment;

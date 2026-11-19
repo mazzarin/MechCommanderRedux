@@ -16,6 +16,8 @@
 #include "shaders/draw_stands.msl.h"
 #include "shaders/draw_terrain.msl.h"
 #include "shaders/draw_terrain_stands.msl.h"
+#include "shaders/draw_trees.msl.h"
+#include "shaders/draw_trees_stands.msl.h"
 #include "shaders/ground.msl.h"
 #include "shaders/ground_stands.msl.h"
 #include "shaders/hdcoverage.msl.h"
@@ -40,6 +42,8 @@
 #include "shaders/draw_stands.spv.h"
 #include "shaders/draw_terrain.spv.h"
 #include "shaders/draw_terrain_stands.spv.h"
+#include "shaders/draw_trees.spv.h"
+#include "shaders/draw_trees_stands.spv.h"
 #include "shaders/ground.spv.h"
 #include "shaders/ground_stands.spv.h"
 #include "shaders/hdcoverage.spv.h"
@@ -71,6 +75,8 @@ namespace MCVulkanShaders
     const MCShaderInfo DrawBasicStandsFragment{MCShader::DrawBasicStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTerrainStandsFragment{MCShader::DrawTerrainStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawHdStandsFragment{MCShader::DrawHdStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo DrawTreesFragment{MCShader::DrawTrees, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo DrawTreesStandsFragment{MCShader::DrawTreesStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo GroundStandsFragment{MCShader::GroundStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
     const MCShaderInfo MovieFragment{MCShader::Movie, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
     const MCShaderInfo HdCoverageFragment{MCShader::HdCoverage, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1};
@@ -122,6 +128,10 @@ namespace MCVulkanShaders
                 return "draw_hd_stands";
             case MCShader::GroundStands:
                 return "ground_stands";
+            case MCShader::DrawTrees:
+                return "draw_trees";
+            case MCShader::DrawTreesStands:
+                return "draw_trees_stands";
         }
 
         return {};
@@ -173,6 +183,10 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(draw_hd_stands);
             case MCShader::GroundStands:
                 return MC_BUILT_IN_SHADER(ground_stands);
+            case MCShader::DrawTrees:
+                return MC_BUILT_IN_SHADER(draw_trees);
+            case MCShader::DrawTreesStands:
+                return MC_BUILT_IN_SHADER(draw_trees_stands);
         }
 
         return {};

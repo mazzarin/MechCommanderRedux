@@ -1,0 +1,6 @@
+// Port-only: the Vulkan renderer's draws of a forest's HD frames alone (MCVulkanRenderer's TreeDraw: KindHdSmooth,
+// swaying). It is draw.pshader with the other kinds left out and the flags such a draw has fixed (draw.pshader's
+// TreeKnown), so these pixels, a forest frame's many, don't pay for the paths they never take.
+
+#define DRAW_VARIANT DRAW_TREE_KINDS
+#include "draw.pshader"

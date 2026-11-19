@@ -824,17 +824,19 @@ private:
 
     /// <summary>
     /// Port-only: the draw shader's build a draw goes through (VariantOf): the one for every kind, or the one for the
-    /// original's own kinds alone (shaders/draw_basic.pshader) or for HD art frames alone (draw_hd.pshader).
+    /// original's own kinds alone (shaders/draw_basic.pshader), for HD art frames alone (draw_hd.pshader) or for a
+    /// forest's HD frames alone (draw_trees.pshader: its pipelines only the blend marks' and the blend fold's).
     /// </summary>
     enum class DrawVariant : uint8_t
     {
         Every,
         Basic,
-        Hd
+        Hd,
+        Trees
     };
 
     /// <summary>The draw variants.</summary>
-    static constexpr size_t DrawVariants = 3;
+    static constexpr size_t DrawVariants = 4;
     /// <summary>
     /// Port-only: the surfaces' pipeline sets (_SurfacePipelines), one for each pass's targets: without the glints and
     /// with them, without the stands and with them.
@@ -1705,6 +1707,9 @@ private:
     MCGpuHandle<SDL_GPUShader> _StandsFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsBasicFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsHdFragmentShader;
+    /// <summary>Port-only: the tree build of the draws' fragment shader (shaders/draw_trees.pshader), and its stands build.</summary>
+    MCGpuHandle<SDL_GPUShader> _TreesFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _StandsTreesFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsTerrainFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsGroundShader;
 
@@ -1729,8 +1734,11 @@ private:
         /// the indices' red, green and blue by its alpha there, and the stands.
         /// </summary>
         MCGpuHandle<SDL_GPUGraphicsPipeline> BlendFold;
-        /// <summary>Whether every pipeline was made (BlendFold only for a set with the stands: <paramref name="folds"/>).</summary>
-        bool Made(bool folds) const;
+        /// <summary>
+        /// Whether every pipeline was made (BlendFold only for a set with the stands: <paramref name="folds"/>; only
+        /// BlendMarks and BlendFold for the tree build's: <paramref name="trees"/>).
+        /// </summary>
+        bool Made(bool folds, bool trees) const;
         /// <summary>The pipeline <paramref name="record"/>'s draws go through (not a shadow's).</summary>
         SDL_GPUGraphicsPipeline* For(const Record& record) const;
     };

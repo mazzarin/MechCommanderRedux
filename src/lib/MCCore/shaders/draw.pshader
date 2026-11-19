@@ -41,7 +41,8 @@
 // Port-only: this shader is also built for some draws alone (DRAW_VARIANT), whose pixels then don't pay for the
 // registers the other kinds take: draw_basic.pshader for the original's own kinds (fills, hashes, textures, Gouraud
 // spans and texel walks, without smooth edges; MCVulkanRenderer's BasicDraw), draw_terrain.pshader for the terrain's
-// (terrain.vshader's: those, with HD colours, and the seam pass).
+// (terrain.vshader's: those, with HD colours, and the seam pass), draw_hd.pshader for HD art frames' (KindHd and
+// KindHdSmooth), and draw_trees.pshader for a forest's HD frames alone (TreeDraw below).
 //
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3.
 
@@ -49,6 +50,7 @@
 #define DRAW_BASIC_KINDS 1
 #define DRAW_TERRAIN_KINDS 2
 #define DRAW_HD_KINDS 3
+#define DRAW_TREE_KINDS 4
 
 #ifndef DRAW_VARIANT
 #define DRAW_VARIANT DRAW_EVERY_KIND
@@ -2071,7 +2073,7 @@ Output DrawnOutput(Input input)
     // The drawn pixel, one whose window pixel lies in the rectangle (the vertex shaders draw no other).
     const int2 target = int2(floor(input.position.xy));
 
-#if DRAW_VARIANT == DRAW_HD_KINDS
+#if DRAW_VARIANT == DRAW_HD_KINDS || DRAW_VARIANT == DRAW_TREE_KINDS
     return HdPixel(input, target);
 #else
     const uint flags = input.op.x;
@@ -2308,8 +2310,20 @@ Output DrawnOutput(Input input)
 #endif
 }
 
+#if DRAW_VARIANT == DRAW_TREE_KINDS
+// Port-only: a forest's HD frame's draw (MCVulkanRenderer's TreeDraw: a smooth-edged frame, blended, that sways, with no
+// key, light, glow, sun shadow, mark pass, ground fill or colours as made). The tree build knows those flags, so its
+// pixels skip the paths no such draw takes; a table's (TableBefore) and the rest stay the draw's.
+static const uint TreeKnown = 15u | ColorKey | Glow | AlphaBlend | IndexOnly | HdAsMade | HdLight | SunShadowDraw |
+                              Sways | GroundFill;
+static const uint TreeFlags = KindHdSmooth | AlphaBlend | Sways;
+#endif
+
 Output main(Input input)
 {
+#if DRAW_VARIANT == DRAW_TREE_KINDS
+    input.op.x = (input.op.x & ~TreeKnown) | TreeFlags;
+#endif
     sourceCorner = int2(input.place.x & 0xffffu, input.place.x >> 16);
     hdCorner = int2(input.place.y & 0xffffu, input.place.y >> 16);
     placeSize = int2(input.place.z & 0xffffu, input.place.z >> 16);

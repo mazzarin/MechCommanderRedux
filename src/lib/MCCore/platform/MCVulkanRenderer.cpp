@@ -194,6 +194,14 @@ namespace
     /// </summary>
     constexpr uint32_t FoldsIndex = 2u;
     /// <summary>
+    /// Port-only: the flags whose values a forest's HD frame's draw has (TreeFlags: smooth-edged, blended, swaying, and
+    /// none of the rest), which the tree build of the draws' shader takes as given (shaders/draw.pshader's TreeKnown and
+    /// TreeFlags): only such a draw goes through it (VariantOf).
+    /// </summary>
+    constexpr uint32_t TreeKnown =
+        KindMask | ColorKey | Glow | AlphaBlend | IndexOnly | HdAsMade | HdLight | SunShadowDraw | Sways | GroundFill;
+    constexpr uint32_t TreeFlags = KindHdSmooth | AlphaBlend | Sways;
+    /// <summary>
     /// Port-only (SPEC-memory.md's indices): a draw's place.w bit for a source that is a version 2 HD frame's own index
     /// picture, read as its marks (Picture::HdMarks; shaders/draw.pshader's HdMarksSource).
     /// </summary>
@@ -1163,10 +1171,12 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     for (auto [info, shader] :
          {std::pair{&MCVulkanShaders::DrawBasicFragment, &renderer->_BasicFragmentShader},
           std::pair{&MCVulkanShaders::DrawHdFragment, &renderer->_HdFragmentShader},
+          std::pair{&MCVulkanShaders::DrawTreesFragment, &renderer->_TreesFragmentShader},
           std::pair{&MCVulkanShaders::DrawTerrainFragment, &renderer->_TerrainFragmentShader},
           std::pair{&MCVulkanShaders::DrawStandsFragment, &renderer->_StandsFragmentShader},
           std::pair{&MCVulkanShaders::DrawBasicStandsFragment, &renderer->_StandsBasicFragmentShader},
           std::pair{&MCVulkanShaders::DrawHdStandsFragment, &renderer->_StandsHdFragmentShader},
+          std::pair{&MCVulkanShaders::DrawTreesStandsFragment, &renderer->_StandsTreesFragmentShader},
           std::pair{&MCVulkanShaders::DrawTerrainStandsFragment, &renderer->_StandsTerrainFragmentShader},
           std::pair{&MCVulkanShaders::GroundStandsFragment, &renderer->_StandsGroundShader}})
     {
@@ -1332,30 +1342,33 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                                    }});
     };
 
-    // Port-only: a set's fragment shaders: the draws' (every kind, the original's own, HD frames'), the terrain's and the
-    // kept ground's; the stands builds for the passes with the stands.
+    // Port-only: a set's fragment shaders: the draws' (every kind, the original's own, HD frames', a forest's HD
+    // frames'), the terrain's and the kept ground's; the stands builds for the passes with the stands.
     struct SetShaders
     {
         SDL_GPUShader* Every = nullptr;
         SDL_GPUShader* Basic = nullptr;
         SDL_GPUShader* Hd = nullptr;
+        SDL_GPUShader* Trees = nullptr;
         SDL_GPUShader* Terrain = nullptr;
         SDL_GPUShader* Ground = nullptr;
     };
 
-    const SetShaders plainShaders{renderer->_FragmentShader.get(), renderer->_BasicFragmentShader.get(),
-                                  renderer->_HdFragmentShader.get(), renderer->_TerrainFragmentShader.get(),
-                                  renderer->_GroundShader.get()};
-    const SetShaders standsShaders{renderer->_StandsFragmentShader.get(), renderer->_StandsBasicFragmentShader.get(),
-                                   renderer->_StandsHdFragmentShader.get(),
-                                   renderer->_StandsTerrainFragmentShader.get(), renderer->_StandsGroundShader.get()};
+    const SetShaders plainShaders{renderer->_FragmentShader.get(),        renderer->_BasicFragmentShader.get(),
+                                  renderer->_HdFragmentShader.get(),      renderer->_TreesFragmentShader.get(),
+                                  renderer->_TerrainFragmentShader.get(), renderer->_GroundShader.get()};
+    const SetShaders standsShaders{
+        renderer->_StandsFragmentShader.get(),        renderer->_StandsBasicFragmentShader.get(),
+        renderer->_StandsHdFragmentShader.get(),      renderer->_StandsTreesFragmentShader.get(),
+        renderer->_StandsTerrainFragmentShader.get(), renderer->_StandsGroundShader.get()};
 
     const auto makeSurfacePipelines = [&](SurfaceLayout layout, std::string_view surface)
     {
         SurfacePipelines& pipelines = renderer->_SurfacePipelines[layout.Set()];
         const SetShaders& shaders = layout.Stands ? standsShaders : plainShaders;
+        // Port-only: the tree build's draws are a forest's HD frames alone, blended with their marks (VariantOf).
         const auto makeDrawPipelines =
-            [&](DrawPipelines& draws, SDL_GPUShader& fragmentShader, std::string_view variant, bool slow)
+            [&](DrawPipelines& draws, SDL_GPUShader& fragmentShader, std::string_view variant, bool slow, bool trees)
         {
             SDL_GPUShader& vertexShader = *renderer->_VertexShader;
             const auto draw = [&](std::string_view kind, MCGpuHandle<SDL_GPUGraphicsPipeline>& into, bool blend,
@@ -1366,11 +1379,15 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                      fold] { return makePipeline(layout, *vertex, blend, indexOnly, false, marks, fragment, fold); });
             };
 
-            draw("opaque", draws.Opaque, false, false, false);
-            draw("blend", draws.Blend, true, false, false);
-            draw("index only", draws.IndexOnly, false, true, false);
+            if (!trees)
+            {
+                draw("opaque", draws.Opaque, false, false, false);
+                draw("blend", draws.Blend, true, false, false);
+                draw("index only", draws.IndexOnly, false, true, false);
+                draw("index marks", draws.IndexMarks, false, true, true);
+            }
+
             draw("blend marks", draws.BlendMarks, true, false, true);
-            draw("index marks", draws.IndexMarks, false, true, true);
 
             // Port-only: a fold, only in a pass with the stands.
             if (layout.Stands)
@@ -1379,9 +1396,13 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
             }
         };
 
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], *shaders.Every, "every", true);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], *shaders.Basic, "basic", false);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], *shaders.Hd, "hd", false);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], *shaders.Every, "every", true,
+                          false);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], *shaders.Basic, "basic", false,
+                          false);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], *shaders.Hd, "hd", false, false);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Trees)], *shaders.Trees, "trees", false,
+                          true);
         job(std::format("{} shadow", surface), true, pipelines.Shadow, [&, layout]
             { return makePipeline(layout, *renderer->_VertexShader, false, false, true, false, shaders.Every); });
         job(std::format("{} terrain", surface), false, pipelines.Terrain, [&, layout]
@@ -1921,6 +1942,12 @@ auto MCVulkanRenderer::VariantOf(uint32_t op) -> DrawVariant
         return DrawVariant::Basic;
     }
 
+    // Port-only: a forest's HD frame (TreeFlags) through its own build.
+    if ((op & TreeKnown) == TreeFlags)
+    {
+        return DrawVariant::Trees;
+    }
+
     return kind == KindHd || kind == KindHdSmooth ? DrawVariant::Hd : DrawVariant::Every;
 }
 
@@ -1945,16 +1972,23 @@ std::optional<uint8_t> MCVulkanRenderer::WipeColor(const FrameRun& run, const Re
     return static_cast<uint8_t>(draw[9] & 255);
 }
 
-bool MCVulkanRenderer::DrawPipelines::Made(bool folds) const
+bool MCVulkanRenderer::DrawPipelines::Made(bool folds, bool trees) const
 {
-    return Opaque != nullptr && Blend != nullptr && IndexOnly != nullptr && BlendMarks != nullptr &&
-           IndexMarks != nullptr && (!folds || BlendFold != nullptr);
+    return (trees || (Opaque != nullptr && Blend != nullptr && IndexOnly != nullptr && IndexMarks != nullptr)) &&
+           BlendMarks != nullptr && (!folds || BlendFold != nullptr);
 }
 
 bool MCVulkanRenderer::SurfacePipelines::Made(bool folds) const
 {
-    return std::ranges::all_of(Draws, [folds](const DrawPipelines& draws) { return draws.Made(folds); }) &&
-           Shadow != nullptr && Terrain != nullptr && TerrainSeam != nullptr && Ground != nullptr &&
+    for (size_t variant = 0; variant < Draws.size(); ++variant)
+    {
+        if (!Draws[variant].Made(folds, variant == static_cast<size_t>(DrawVariant::Trees)))
+        {
+            return false;
+        }
+    }
+
+    return Shadow != nullptr && Terrain != nullptr && TerrainSeam != nullptr && Ground != nullptr &&
            GroundOver != nullptr && GroundIndex != nullptr;
 }
 

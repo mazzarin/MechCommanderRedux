@@ -37,6 +37,15 @@ namespace
     /// the way).</summary>
     constexpr double ZoomEaseTime = 70.0;
 
+    /// <summary>
+    /// Port: the lines past its target the zoom eases toward, stopping at the target: it starts as it would toward the
+    /// target, and ends on time at about a line a frame at 120 Hz instead of creeping through its last lines (a zoom
+    /// key's step takes 0.3 s, not 0.5).
+    /// </summary>
+    constexpr double ZoomFinishLines = 8.0;
+    /// <summary>Port: how near its target (lines) the zoom counts as there.</summary>
+    constexpr double ZoomThereLines = 0.5;
+
     /// <summary>Port: the zoom's clock (ms): the game's, or a staged battle's (MCZoomEaseClock).</summary>
     uint32_t ZoomNow()
     {
@@ -532,11 +541,20 @@ auto MCViewWindow::EaseZoom() -> void
         return;
     }
 
-    ZoomHeight += static_cast<float>((ZoomTarget - ZoomHeight) * (1.0 - std::exp(-elapsed / ZoomEaseTime)));
+    const double left = static_cast<double>(ZoomTarget) - static_cast<double>(ZoomHeight);
+    const double aim = static_cast<double>(ZoomTarget) + std::copysign(ZoomFinishLines, left);
+    const double eased = static_cast<double>(ZoomHeight) +
+                         (aim - static_cast<double>(ZoomHeight)) * (1.0 - std::exp(-elapsed / ZoomEaseTime));
 
-    if (std::fabs(ZoomTarget - ZoomHeight) < 0.5f)
+    // At the target once it reaches it (or is within half a line).
+    if ((static_cast<double>(ZoomTarget) - eased) * left <= 0.0 ||
+        std::fabs(static_cast<double>(ZoomTarget) - eased) < ZoomThereLines)
     {
         ZoomHeight = ZoomTarget;
+    }
+    else
+    {
+        ZoomHeight = static_cast<float>(eased);
     }
 }
 

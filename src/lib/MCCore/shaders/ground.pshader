@@ -2,7 +2,8 @@
 // window pixels lie in the terrain's clip (MCVulkanRenderer's DrawnPixels). The kept ground is the terrain layer drawn
 // over nothing (transparent): its colours (premultiplied; alpha 1 where the terrain's first pass drew, partly where
 // only its seam pass reached) and indices. Each pixel reads the kept pixel `shift` before it (drawn pixels, clamped to
-// the copy).
+// the copy), or, while a zoom eases (`scale`, MCVulkanRenderer's GroundScale), the kept place its centre shows: the
+// colours between the kept pixels round it, the indices the one it lies in.
 // By mode:
 // - Copy (opaque pipeline): the kept colours and indices as they are, no glints; to move the kept ground.
 // - Clear (opaque pipeline): nothing (transparent, index 0), to draw a part of it again.
@@ -22,6 +23,9 @@ cbuffer Ground : register(b0, space3)
 {
     // xy: how far before the drawn pixel its kept pixel lies (drawn pixels); z: the mode; w unused.
     int4 shift;
+    // Port-only (a zoom easing): the kept place a drawn place shows, xy a drawn pixel across and down, zw the place
+    // drawn place 0 shows; x 0 when the kept ground isn't scaled.
+    float4 scale;
 };
 
 static const int ModeCopy = 0;
@@ -111,8 +115,19 @@ Output main(float4 position : SV_Position)
     uint height;
     colorsTex.GetDimensions(width, height);
     const int2 size = int2(width, height);
-    const int2 kept = clamp(target - shift.xy, int2(0, 0), size - 1);
-    KeptAt(kept, size, output.color, output.index);
+    int2 kept = clamp(target - shift.xy, int2(0, 0), size - 1);
+
+    if (scale.x != 0.0)
+    {
+        const float2 place = (float2(target) + 0.5) * scale.xy + scale.zw;
+        kept = clamp(int2(floor(place)), int2(0, 0), size - 1);
+        output.color = colorsTex.SampleLevel(colorsSampler, place / float2(size), 0);
+        output.index = indicesTex.SampleLevel(indicesSampler, (float2(kept) + 0.5) / float2(size), 0);
+    }
+    else
+    {
+        KeptAt(kept, size, output.color, output.index);
+    }
 
     if (shift.z != ModeCopy && output.color.a > 0.0 && output.color.a < 1.0)
     {

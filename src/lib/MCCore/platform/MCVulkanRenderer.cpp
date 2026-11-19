@@ -3533,17 +3533,14 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow
 
     const std::shared_ptr<MCTexture> texture = window.Texture.lock();
 
-    if (texture == nullptr || texture->CpuStale)
+    if (texture == nullptr || texture->Hardware == nullptr || texture->CpuStale)
     {
         return nullptr;
     }
 
     TextureState& state = StateOf(*texture);
 
-    // Looked up from the pixels the GPU is about to take, whenever they changed since it took them (Dirty: a picture's
-    // first draw, or a change), so that draw shows the pack's copy, not the original's pixels or the last picture's
-    // copy for a frame (the results screen's background, first drawn at a mission's end).
-    if (texture->Dirty || !state.HdLooked || state.HdPack != MCHdArt::PackVersion())
+    if (!state.HdLooked || state.HdPack != MCHdArt::PackVersion())
     {
         state.HdLooked = true;
         state.HdPack = MCHdArt::PackVersion();
@@ -4464,9 +4461,9 @@ void MCVulkanRenderer::Noise(MCWindow& target, int32_t x, int32_t y, std::span<c
         const int32_t length = std::min(count - done, NoiseColumns);
         const auto fromX = static_cast<int32_t>(NextNoise() % static_cast<uint32_t>(NoiseColumns - length + 1));
         const auto fromY = static_cast<int32_t>(NextNoise() % static_cast<uint32_t>(NoiseRows));
-        AddHd(surface, noise, Quad{x + done, y, x + done + length - 1, y},
-              Quad{fromX, fromY, fromX + length - 1, fromY}, std::nullopt, std::nullopt, HdColours::AsMade,
-              HdEdges::Picture);
+        // From there a picture pixel a step each way, as the strip's row is drawn (Write's).
+        AddHd(surface, noise, Quad{x + done, y, x + done + length - 1, y}, Quad{fromX, fromY, 1, 1}, std::nullopt,
+              std::nullopt, HdColours::AsMade, HdEdges::Picture);
     }
 }
 

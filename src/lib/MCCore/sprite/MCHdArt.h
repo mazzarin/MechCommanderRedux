@@ -772,6 +772,25 @@ namespace MCHdArt
     void KeepPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height, Frame&& frame);
 
     /// <summary>
+    /// Port-only (SPEC-memory.md's cache budget): keeps the HD copies of <paramref name="pictures"/> in the cache, its
+    /// budget whatever, until the hold lets go (<see cref="LetGoHold"/>, at the mission's results' end or instead of
+    /// them) or the pack changes: a screen's pictures first drawn at the mission's end, the frame it's decided, with no
+    /// lead for a read (the results screen's: MCMissionResultsScreen::KeepPicturesForEnd). Called once the load's reads
+    /// are kept (<see cref="KeepReadAhead"/>); one they left out is read now, under the loading bar. They count in the
+    /// cache's bytes. The bytes kept so.
+    /// </summary>
+    size_t KeepForMission(std::span<const PictureAhead> pictures);
+
+    /// <summary>Port-only: the bytes <see cref="KeepForMission"/> keeps now.</summary>
+    size_t KeptForMissionBytes();
+
+    /// <summary>
+    /// Port-only: lets go of what <see cref="KeepForMission"/> kept, trimmed from the next frame as any other frames are
+    /// (<see cref="LetGoHold"/> calls it).
+    /// </summary>
+    void LetGoKeptForMission();
+
+    /// <summary>
     /// Port-only: a frame of <paramref name="like"/>'s scale and colour format for a picture of
     /// <paramref name="width"/> x <paramref name="height"/> original pixels, all blank (no colour, no index).
     /// </summary>

@@ -16146,109 +16146,21 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
     std::filesystem::remove_all(scratch);
 }
 
-/// <summary>
-/// A picture the HD art pack has is drawn from it on its own first draw (one never drawn before, as the results
-/// screen's background is until a mission ends), not the original's pixels for a frame; and a picture whose pixels
-/// change to another the pack has is drawn from the new one's copy at once, not the last one's for a frame: copied
-/// onto mission 1's screen (shown larger) with HD art on, its shown colours are those of a fresh copy of the same
-/// picture.
-/// </summary>
-TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on its first draw, and a changed one's new copy at once")
+namespace
 {
-    if (!MCTestGame::Available())
+    /// <summary>With --shots: the frame ReadShown last read (scratch's shown.png) kept in the shots folder as name.</summary>
+    void CopyShot(const std::filesystem::path& scratch, const std::optional<std::string_view>& shots,
+                  std::string_view name)
     {
-        return;
+        if (!shots.has_value())
+        {
+            return;
+        }
+
+        std::filesystem::create_directories(*shots);
+        std::filesystem::copy_file(scratch / "shown.png", std::filesystem::path(*shots) / name,
+                                   std::filesystem::copy_options::overwrite_existing);
     }
-
-    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
-
-    if (renderer == nullptr)
-    {
-        return;
-    }
-
-    // Two pictures of their own, both in the pack: upright stripes of four colours from two places in the palette.
-    constexpr int32_t Side = StripedSide;
-    constexpr uint8_t FirstColor = 0x30;
-    constexpr uint8_t SecondColor = 0x60;
-    std::array<SDL_Color, 256> colors{};
-    MCInput::Display()->GetShownColors(colors);
-    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_first_draw";
-    std::filesystem::remove_all(scratch);
-    const std::filesystem::path pack = scratch / "pack";
-    const std::shared_ptr<MCWindow> first = StripedPicture(FirstColor);
-    const std::shared_ptr<MCWindow> second = StripedPicture(SecondColor);
-    WritePackPicture(pack, *first, colors);
-    WritePackPicture(pack, *second, colors);
-    WritePaletteRgb(pack, colors);
-    const MCHdArtOn on(pack);
-
-    MCPane& screen = ScreenPort()->Frame();
-    const int32_t left = (screen.X1 - screen.X0) / 2;
-    const int32_t top = (screen.Y1 - screen.Y0) / 2;
-
-    struct Copied
-    {
-        int64_t HdDrawn = 0;
-        Shown Seen;
-    };
-
-    // A frame, then the picture copied onto the screen and shown.
-    const auto copy = [&](const std::shared_ptr<MCWindow>& picture)
-    {
-        MCTestGame::RunFrame(FrameSeconds);
-        Copied copied;
-        const int64_t before = renderer->HdDrawn();
-        VfxPaneCopy(MCPane::Over(picture), 0, 0, screen, left, top, VfxNoColor);
-        copied.HdDrawn = renderer->HdDrawn() - before;
-        copied.Seen = ReadShown(scratch);
-        return copied;
-    };
-
-    GamePaused = true;
-
-    // Never drawn before: a fresh texture of the first picture's pixels, then of the second's (the reference).
-    const std::shared_ptr<MCWindow> fresh = StripedPicture(FirstColor);
-    const Copied firstDraw = copy(fresh);
-    const std::shared_ptr<MCWindow> reference = StripedPicture(SecondColor);
-    const Copied secondFresh = copy(reference);
-
-    // The drawn picture's pixels changed to the second's, as the game writes a picture's memory.
-    std::ranges::copy(second->Bytes(), fresh->Bytes().begin());
-    fresh->Texture.lock()->Dirty = true;
-    const Copied changed = copy(fresh);
-    GamePaused = false;
-
-    CHECK_EQ(firstDraw.HdDrawn, 1);
-    CHECK_EQ(secondFresh.HdDrawn, 1);
-    CHECK_EQ(changed.HdDrawn, 1);
-
-    // The picture's place in the shown frame (the screen shown larger), a pixel in from its edges.
-    const int32_t width = MCInput::Display()->Width();
-    REQUIRE(width > 0);
-    const float scale = static_cast<float>(changed.Seen.Width) / static_cast<float>(width);
-    const int32_t x0 = static_cast<int32_t>(std::ceil(static_cast<float>(screen.X0 + left) * scale)) + 1;
-    const int32_t y0 = static_cast<int32_t>(std::ceil(static_cast<float>(screen.Y0 + top) * scale)) + 1;
-    const int32_t x1 = static_cast<int32_t>(static_cast<float>(screen.X0 + left + Side) * scale) - 2;
-    const int32_t y1 = static_cast<int32_t>(static_cast<float>(screen.Y0 + top + Side) * scale) - 2;
-    const MCRect inside{x0, y0, x1, y1};
-    const int32_t area = (x1 - x0 + 1) * (y1 - y0 + 1);
-
-    // The changed picture shows the second's copy, as a fresh one does, not the first's.
-    const Changed fromReference = Compare(secondFresh.Seen, changed.Seen, inside);
-    const Changed fromFirst = Compare(firstDraw.Seen, changed.Seen, inside);
-    std::cout << std::format(
-        "  changed picture: {} of {} shown pixels unlike the second's copy, {} unlike the first's\n",
-        fromReference.Count, area, fromFirst.Count);
-    CHECK(fromReference.Count < area / 20);
-    CHECK(fromFirst.Count > area * 3 / 4);
-
-    for (const std::shared_ptr<MCWindow>& picture : {first, second, fresh, reference})
-    {
-        MCRenderer::DestroyTexture(*picture);
-    }
-
-    std::filesystem::remove_all(scratch);
 }
 
 /// <summary>
@@ -16297,9 +16209,14 @@ TEST_CASE_ISOLATED("game: HD art draws the loading screen's static at the screen
     {
         int32_t Counted = 0;
         int32_t Mixed = 0;
+        /// <summary>Those whose top two shown pixels differ (across the row), and whose left two do (down it).</summary>
+        int32_t Across = 0;
+        int32_t Down = 0;
     };
 
-    const auto shownSquares = [&]
+    // With --shots, each shown screen kept there as <name>.png, for a look.
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+    const auto shownSquares = [&](std::string_view name)
     {
         std::minstd_rand random(1);
         GamePaused = true;
@@ -16317,6 +16234,8 @@ TEST_CASE_ISOLATED("game: HD art draws the loading screen's static at the screen
 
         const Shown seen = ReadShown(scratch);
         GamePaused = false;
+
+        CopyShot(scratch, shots, std::string(name) + ".png");
 
         // The screen shown larger by a scale that needn't be whole (2.5 here): an original pixel's square is the two by
         // two shown pixels from the first inside it.
@@ -16349,26 +16268,31 @@ TEST_CASE_ISOLATED("game: HD art draws the loading screen's static at the screen
 
                 ++squares.Counted;
                 squares.Mixed += at(0, 0) != at(1, 0) || at(0, 0) != at(0, 1) || at(0, 0) != at(1, 1) ? 1 : 0;
+                squares.Across += at(0, 0) != at(1, 0) ? 1 : 0;
+                squares.Down += at(0, 0) != at(0, 1) ? 1 : 0;
             }
         }
 
         return squares;
     };
 
-    const Squares original = shownSquares();
+    const Squares original = shownSquares("static_original");
     Squares hd;
     {
         const MCHdArtOn on(pack);
-        hd = shownSquares();
+        hd = shownSquares("static_hd");
     }
 
-    std::cout << std::format("  static: {} of {} original pixels' squares show more than one colour with HD art, {} "
-                             "without\n",
-                             hd.Mixed, hd.Counted, original.Mixed);
+    std::cout << std::format("  static: {} of {} original pixels' squares show more than one colour with HD art ({} "
+                             "across, {} down), {} without\n",
+                             hd.Mixed, hd.Counted, hd.Across, hd.Down, original.Mixed);
     CHECK(hd.Counted > 0);
     CHECK_EQ(hd.Counted, original.Counted);
-    // Most squares fine-grained (the palette's colours 0 to 0x1f repeat some colours, so not every one).
+    // Most squares fine-grained both ways (the palette's colours 0 to 0x1f repeat some colours, so not every one): a
+    // static flat along the row (the picture's steps wrong) or down it fails.
     CHECK(hd.Mixed > original.Mixed + hd.Counted / 4);
+    CHECK(hd.Across > hd.Counted / 2);
+    CHECK(hd.Down > hd.Counted / 2);
     MCRenderer::DestroyTexture(*picture);
     std::filesystem::remove_all(scratch);
 }
@@ -20233,6 +20157,40 @@ namespace
             MCTestGame::RunFrame(FrameSeconds);
         }
     }
+
+    /// <summary>
+    /// Writes an HD copy of every picture the game has made (MCRenderer::Textures) into <paramref name="pack"/>'s
+    /// pictures, under its name there, at the test pack's scale, in <paramref name="colors"/>; the names written.
+    /// </summary>
+    std::set<std::string> WriteMadePictures(const std::filesystem::path& pack, const std::array<SDL_Color, 256>& colors)
+    {
+        std::filesystem::create_directories(PictureFolderOf(pack));
+        std::set<std::string> pictures;
+
+        for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
+        {
+            if (texture == nullptr || texture->CpuStale || texture->Pixels.empty() || texture->Width <= 0 ||
+                texture->Height <= 0)
+            {
+                continue;
+            }
+
+            const std::string name =
+                MCHdArt::PictureName(MCHdArt::PictureHash(texture->Pixels, texture->Width, texture->Height));
+
+            if (pictures.insert(name).second)
+            {
+                DecodedFrame picture;
+                picture.Width = texture->Width;
+                picture.Height = texture->Height;
+                picture.Index.assign(texture->Pixels.begin(), texture->Pixels.end());
+                picture.Drawn.assign(picture.Index.size(), 1);
+                WriteFramePngs(PictureFolderOf(pack) / name, picture, colors, TestPackScale, Inverted, false);
+            }
+        }
+
+        return pictures;
+    }
 }
 
 /// <summary>
@@ -20298,32 +20256,8 @@ TEST_CASE_ISOLATED(
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_interface_ahead";
     std::filesystem::remove_all(scratch);
     const std::filesystem::path pack = scratch / "pack";
-    std::filesystem::create_directories(PictureFolderOf(pack));
-    std::set<std::string> pictures;
-
     // Every picture the interface has made, under its name in the pack.
-    for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
-    {
-        if (texture == nullptr || texture->CpuStale || texture->Pixels.empty() || texture->Width <= 0 ||
-            texture->Height <= 0)
-        {
-            continue;
-        }
-
-        const std::string name =
-            MCHdArt::PictureName(MCHdArt::PictureHash(texture->Pixels, texture->Width, texture->Height));
-
-        if (pictures.insert(name).second)
-        {
-            DecodedFrame picture;
-            picture.Width = texture->Width;
-            picture.Height = texture->Height;
-            picture.Index.assign(texture->Pixels.begin(), texture->Pixels.end());
-            picture.Drawn.assign(picture.Index.size(), 1);
-            WriteFramePngs(PictureFolderOf(pack) / name, picture, colors, TestPackScale, Inverted, false);
-        }
-    }
-
+    const std::set<std::string> pictures = WriteMadePictures(pack, colors);
     size_t translucent = 0;
     const std::vector<Sequence> icons = IconSequences(translucent);
     REQUIRE(!pictures.empty());
@@ -20367,6 +20301,171 @@ TEST_CASE_ISOLATED(
         "  {} pictures and diagrams kept as the interface started; {} read by its frames without\n", kept, unasked);
     CHECK(unasked > 0);
     hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's cache budget): the results screen's HD pictures, kept as the mission's interface starts
+/// (MCMissionResultsScreen::KeepPicturesForEnd), stay in the cache while the mission's frames overfill a budget that
+/// keeps nothing else, so the screen finds them at the mission's end with no read; let go of with the hold
+/// (MCHdArt::LetGoHold), the same frames trim them, and finding them reads them again.
+/// </summary>
+TEST_CASE_ISOLATED("game: the results screen's HD pictures are kept from the interface's start to the mission's end")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    const MCGuiHandle<MCMissionResultsScreen> screen = Mission()->ResultsScreen;
+    REQUIRE(screen != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_results_kept";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    REQUIRE(!WriteMadePictures(pack, colors).empty());
+    WritePaletteRgb(pack, colors);
+    ArchiveFolderPngs(PictureFolderOf(pack), TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // The screen's background and the move-on button's faces, as its first draw at the end finds them.
+    std::vector<std::shared_ptr<MCGuiPort>> shown{screen->BackgroundPort};
+    // The move-on button: the screen's only button in single player.
+    std::shared_ptr<MCGuiButton> moveOn;
+
+    for (const std::shared_ptr<MCGuiObject>& child : screen->Children())
+    {
+        moveOn = moveOn != nullptr ? moveOn : std::dynamic_pointer_cast<MCGuiButton>(child);
+    }
+
+    REQUIRE(moveOn != nullptr);
+    shown.push_back(moveOn->GetUpPicture());
+    shown.push_back(moveOn->GetDownPicture());
+    const auto findAll = [&shown]
+    {
+        size_t found = 0;
+
+        for (const std::shared_ptr<MCGuiPort>& port : shown)
+        {
+            found += port != nullptr && MCHdArt::FindPicture(port->Pixels(), port->Width(), port->Height()) != nullptr;
+        }
+
+        return found;
+    };
+
+    // The interface started as a mission's start starts it; then a budget that keeps nothing else, and its frames.
+    TacticalInterface()->EndScenario();
+    HomeCommander()->AddToGui(1);
+    MCMission::StartInterface();
+    const size_t kept = MCHdArt::KeptForMissionBytes();
+    MCHdArt::SetCacheBudget(1);
+    RunFirstFrames();
+    const size_t before = FramesReadOnTheGamesThread();
+    CHECK(kept > 0);
+    CHECK_EQ(findAll(), shown.size());
+    CHECK_EQ(FramesReadOnTheGamesThread(), before);
+
+    // Let go of with the hold: the same frames trim them, and finding them reads them.
+    MCHdArt::LetGoHold();
+    RunFirstFrames();
+    const size_t trimmed = FramesReadOnTheGamesThread();
+    CHECK_EQ(MCHdArt::KeptForMissionBytes(), 0);
+    CHECK_EQ(findAll(), shown.size());
+    std::cout << std::format("  {:.2f} MB kept for the end; {} read again once let go of\n",
+                             static_cast<double>(kept) / (1024.0 * 1024.0), FramesReadOnTheGamesThread() - trimmed);
+    CHECK(FramesReadOnTheGamesThread() > trimmed);
+    MCHdArt::SetCacheBudget(0);
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only: the results screen's first frame on screen, as a mission's end brings it up with HD art on, shows its
+/// pictures' HD copies, as its later frames do, not the original's pixels for a frame (you, 19 Nov: "can you fix this
+/// so it doesn't ever load the 1998 pixels for one frame"): mission 1 won on a screen shown larger, with a pack of every
+/// picture the game has made (their copies in inverted colours, unlike the original's), each frame the screen shows
+/// compared with its last over the screen's place, and the last with the same frame from a pack with no pictures (the
+/// original's pixels), which most of it is unlike.
+/// </summary>
+TEST_CASE_ISOLATED("game: the results screen's first frame shows its HD pictures, as its later frames do")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    if (StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    constexpr int32_t EndFrames = 120;
+    constexpr int32_t ShownFrames = 6;
+    constexpr uint32_t Won = 4;
+    // The screen's place on the 640 by 480 screen (MCMissionResultsScreen::Init), a few pixels in from its edges.
+    constexpr MCRect ResultsPlace{0x28 + 8, 0xf + 8, 0x28 + 0x230 - 9, 0xf + 0x1bc - 9};
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_results_first";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    REQUIRE(!WriteMadePictures(pack, colors).empty());
+    WritePaletteRgb(pack, colors);
+    ArchiveFolderPngs(PictureFolderOf(pack), TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    // Won as the game decides it (its timer stopped, as the results tests stop it); each frame the screen shows kept.
+    MouseTimerKill();
+
+    for (int32_t i = 0; i < Scenario()->Objectives.Count(); i++)
+    {
+        Scenario()->Objectives[i].Status = 1;
+    }
+
+    ScenarioResult = Won;
+    std::vector<Shown> shown;
+
+    for (int32_t frame = 0; frame < EndFrames && std::ssize(shown) < ShownFrames; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+
+        if (Mission()->ResultsScreen != nullptr && Mission()->ResultsScreen->ShowWindow)
+        {
+            shown.push_back(ReadShown(scratch));
+            CopyShot(scratch, shots, std::format("results_{}.png", shown.size()));
+        }
+    }
+
+    // The last frame again from a pack with no pictures: the original's pixels.
+    hdArt.reset();
+    hdArt.emplace(EmptyPack("mc_tests_hd_results_empty"));
+    MCTestGame::RunFrame(FrameSeconds);
+    const Shown original = ReadShown(scratch);
+    CopyShot(scratch, shots, "results_original.png");
+    hdArt.reset();
+
+    REQUIRE_EQ(std::ssize(shown), ShownFrames);
+    const int32_t width = MCInput::Display()->Width();
+    REQUIRE(width > 0);
+    const double scale = static_cast<double>(shown.back().Width) / static_cast<double>(width);
+    const MCPane& screen = ScreenPort()->Frame();
+    const auto at = [scale](int32_t original) { return static_cast<int32_t>(std::ceil(original * scale)); };
+    const MCRect place{at(screen.X0 + ResultsPlace.X0), at(screen.Y0 + ResultsPlace.Y0),
+                       at(screen.X0 + ResultsPlace.X1), at(screen.Y0 + ResultsPlace.Y1)};
+    const int32_t area = (place.X1 - place.X0 + 1) * (place.Y1 - place.Y0 + 1);
+
+    for (size_t i = 0; i < shown.size(); ++i)
+    {
+        std::cout << std::format("  results frame {}: {} of {} shown pixels unlike its last frame\n", i + 1,
+                                 Compare(shown[i], shown.back(), place).Count, area);
+    }
+
+    const int32_t unlikeOriginal = Compare(original, shown.back(), place).Count;
+    std::cout << std::format("  the original's pixels: {} of {} unlike the last frame\n", unlikeOriginal, area);
+    CHECK(Compare(shown.front(), shown.back(), place).Count < area / 20);
+    CHECK(unlikeOriginal > area / 2);
     std::filesystem::remove_all(scratch);
 }
 

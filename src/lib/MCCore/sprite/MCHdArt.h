@@ -512,9 +512,10 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): has the readers read <paramref name="packets"/> whole,
-    /// ahead of their first draws, as <paramref name="as"/> (Soon or Set): a unit's or object's in or near the view. A
-    /// packet's archive entries neighbour each other, so it is one read or a few. Nothing when HD art doesn't draw
-    /// numbered folders, and none of a frame kept, read, looked at or asked for already.
+    /// ahead of their first draws, as <paramref name="as"/> (Soon or Set; Soon is the load's under
+    /// <see cref="MCOpeningViewAsks"/>): a unit's or object's in or near the view. A packet's archive entries neighbour
+    /// each other, so it is one read or a few. Nothing when HD art doesn't draw numbered folders, and none of a frame
+    /// kept, read, looked at or asked for already.
     /// </summary>
     void ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as);
 
@@ -590,8 +591,9 @@ namespace MCHdArt
     std::optional<std::vector<GuardedRead>> GuardedReads();
 
     /// <summary>
-    /// Port-only: <see cref="ReadPacketsAhead"/> of one packet, without its turn middles, as a set's: folder
-    /// <paramref name="folder"/>'s first <paramref name="frames"/> frames (none given: all its archive holds).
+    /// Port-only: <see cref="ReadPacketsAhead"/> of one packet, without its turn middles, as a set's (the load's under
+    /// <see cref="MCOpeningViewAsks"/>): folder <paramref name="folder"/>'s first <paramref name="frames"/> frames (none
+    /// given: all its archive holds).
     /// </summary>
     void ReadPacketAhead(const std::filesystem::path& folder, std::optional<int32_t> frames = std::nullopt);
 
@@ -765,6 +767,29 @@ namespace MCHdArt
     /// asks for, as one read then is, and has the frames drawn after it read ahead. The game's thread, once a frame.
     /// </summary>
     void KeepReadAhead();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): while one lives (the end of a mission's
+    /// load), what play's first frames draw is asked for as the load's own reads, which the load waits for
+    /// (<see cref="WaitForLoadReads"/>): a unit's packets drawn now (<see cref="ReadAs::Soon"/>) and an object's
+    /// (<see cref="ReadPacketAhead"/>). A unit's sets to come stay sets. The game's thread's; the folders asked are noted
+    /// for <see cref="KeepOpeningView"/>.
+    /// </summary>
+    class MCOpeningViewAsks
+    {
+    public:
+        MCOpeningViewAsks();
+        ~MCOpeningViewAsks();
+        MCOpeningViewAsks(const MCOpeningViewAsks&) = delete;
+        MCOpeningViewAsks& operator=(const MCOpeningViewAsks&) = delete;
+    };
+
+    /// <summary>
+    /// Port-only (the opening view): keeps what the readers read (<see cref="KeepReadAhead"/>) and gives the frames of
+    /// the folders asked for under <see cref="MCOpeningViewAsks"/> that are kept and not yet drawn, for the GPU to take
+    /// before play (MCRenderer::PrepareHdPictures); the folders noted are forgotten.
+    /// </summary>
+    std::vector<std::shared_ptr<const Frame>> KeepOpeningView();
 
     /// <summary>
     /// Port-only: keeps <paramref name="frame"/>, numbered anew, as the HD copy of the picture with

@@ -283,11 +283,16 @@ namespace
         std::string_view Item;
     };
 
+    /// <summary>The music's files, as their first uses name them (its own PLAN.md item).</summary>
+    constexpr std::string_view MusicFiles = "sound/music";
+    constexpr std::string_view StereoMusicFiles = "stereo/MUSIC";
+    constexpr std::string_view MusicItem = "music starts read on the game's thread";
+
     constexpr auto OpenFirstUses = std::to_array<MCOpenFirstUse>({
-        {MCFirstUseKind::Open, "sound/music", "music starts read on the game's thread"},
-        {MCFirstUseKind::Read, "sound/music", "music starts read on the game's thread"},
-        {MCFirstUseKind::Open, "stereo/MUSIC", "music starts read on the game's thread"},
-        {MCFirstUseKind::Read, "stereo/MUSIC", "music starts read on the game's thread"},
+        {MCFirstUseKind::Open, MusicFiles, MusicItem},
+        {MCFirstUseKind::Read, MusicFiles, MusicItem},
+        {MCFirstUseKind::Open, StereoMusicFiles, MusicItem},
+        {MCFirstUseKind::Read, StereoMusicFiles, MusicItem},
         {MCFirstUseKind::Wait, "a frame being read: ", "HD art's reads late (step 5)"},
         {MCFirstUseKind::Wait, "an archive being opened: ", "HD art's reads late (step 5)"},
         {MCFirstUseKind::Unpack, ".hda ", "HD art's held entries unpacked on the game's thread (step 5)"},
@@ -303,13 +308,14 @@ namespace
     }
 
     /// <summary>
-    /// The guard's check: no first use in play but those of kinds still open; else the first ListedUses of the others,
-    /// each a line.
+    /// The first ListedUses of <paramref name="uses"/> but those <paramref name="passed"/> passes, each a line, failed as
+    /// the game's thread's first uses <paramref name="when"/>.
     /// </summary>
-    void RequireNoFirstUses(const std::vector<MCFirstUse>& uses)
+    void RequireNoGaps(const std::vector<MCFirstUse>& uses, const std::function<bool(const MCFirstUse&)>& passed,
+                       std::string_view when)
     {
         std::vector<MCFirstUse> gaps;
-        std::ranges::copy_if(uses, std::back_inserter(gaps), [](const MCFirstUse& use) { return !StillOpen(use); });
+        std::ranges::copy_if(uses, std::back_inserter(gaps), [&passed](const MCFirstUse& use) { return !passed(use); });
         std::string listed;
 
         for (size_t i = 0; i < std::min(gaps.size(), ListedUses); ++i)
@@ -319,12 +325,57 @@ namespace
 
         if (!gaps.empty())
         {
-            FAIL_CHECK(std::format("the game's thread's first uses in play, of no kind still open ({} in all, {} of "
-                                   "kinds still open; frame, kind, ms, bytes, what):{}",
-                                   gaps.size(), uses.size() - gaps.size(), listed));
+            FAIL_CHECK(std::format("the game's thread's first uses {} ({} in all, {} passed; frame, kind, ms, bytes, "
+                                   "what):{}",
+                                   when, gaps.size(), uses.size() - gaps.size(), listed));
         }
 
         CHECK(MCFirstUses::Dropped() == 0);
+    }
+
+    /// <summary>
+    /// The guard's check: no first use in play but those of kinds still open; else the first ListedUses of the others,
+    /// each a line.
+    /// </summary>
+    void RequireNoFirstUses(const std::vector<MCFirstUse>& uses)
+    {
+        RequireNoGaps(uses, StillOpen, "in play, of no kind still open");
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): the frames of play the opening's check
+    /// plays: the first shown and the next, whose draws the load prepared.
+    /// </summary>
+    constexpr int32_t OpeningFrames = 2;
+
+    /// <summary>
+    /// The interface's HD line art and glyphs taken from the pack as each is first shown (MCSharpPictures::Take), its
+    /// own item: about 4 us a picture, 0.1-0.2 ms in play's first frames (19 Nov).
+    /// </summary>
+    constexpr std::string_view SharpPictures = "sharp pictures ";
+    /// <summary>A crater or footprint a unit makes in play, its own item (SPEC-first-use.md's craters, step5-fill).</summary>
+    constexpr std::string_view Craters = "craters.hda ";
+
+    /// <summary>
+    /// Whether <paramref name="use"/> is one the opening's check passes: the music's start, the interface's line art or a
+    /// crater made in play (each its own item), not the opening view's.
+    /// </summary>
+    bool OpeningPasses(const MCFirstUse& use)
+    {
+        const bool music = (use.Kind == MCFirstUseKind::Open || use.Kind == MCFirstUseKind::Read) &&
+                           (use.What.contains(MusicFiles) || use.What.contains(StereoMusicFiles));
+        const bool made = use.What.starts_with(SharpPictures) || use.What.contains(Craters);
+        return music || (use.Kind == MCFirstUseKind::Unpack && made);
+    }
+
+    /// <summary>
+    /// The opening's check: nothing in play's first frames read, unpacked, waited on, decoded or opened for the first
+    /// time on the game's thread, not even of the kinds still open in play (HD art's held entries unpacked among them),
+    /// the music's start, the interface's line art and craters made in play aside (OpeningPasses); else the first ListedUses, each a line.
+    /// </summary>
+    void RequireOpeningUsesNothing(const std::vector<MCFirstUse>& uses)
+    {
+        RequireNoGaps(uses, OpeningPasses, "in play's first frames, not the music's, the line art's or craters'");
     }
 
     /// <summary>The pack the guard plays with: --hd-pack's (absolute: the game works in the install's folder), else none.</summary>
@@ -380,6 +431,43 @@ TEST_CASE_ISOLATED("game: in the canyon's battle the game's thread reads and unp
     HdMemory memory;
     PlayStaged(spec, memory);
     RequireNoFirstUses(MCFirstUses::Take());
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): play's first frames in mission 1, as a
+/// player's, with the guard's pack (--hd-pack), read, unpack and wait on nothing on the game's thread: the load read and
+/// unpacked what its view and the ring around it draw, and put it on the GPU.
+/// </summary>
+TEST_CASE_ISOLATED("game: play's first frames in mission 1 read and unpack nothing on the game's thread")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestContextScope scope;
+    StartAsPlayer(scope, 1, GuardPack());
+    HdMemory memory;
+    PlayBattle(OpeningFrames, memory);
+    RequireOpeningUsesNothing(MCFirstUses::Take());
+}
+
+/// <summary>Port-only (the opening view): the same for the canyon's battle, its staged force as the benchmark plays it.</summary>
+TEST_CASE_ISOLATED("game: play's first frames in the canyon read and unpack nothing on the game's thread")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCBattleSpec spec = CanyonSpec(OpeningFrames);
+    const std::expected<void, std::string> put = MCTrailerMission::Put(spec.Force);
+    REQUIRE(put.has_value());
+    MCTestContextScope scope;
+    StartAsPlayer(scope, spec.Mission, GuardPack());
+    HdMemory memory;
+    PlayStaged(spec, memory);
+    RequireOpeningUsesNothing(MCFirstUses::Take());
 }
 
 /// <summary>

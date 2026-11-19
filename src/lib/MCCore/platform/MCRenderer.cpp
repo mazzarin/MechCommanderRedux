@@ -561,6 +561,11 @@ std::expected<void, std::string> MCRenderer::PrepareTerrain(const MCTerrainMesh&
     return {};
 }
 
+size_t MCRenderer::PrepareHdPictures(std::span<const std::shared_ptr<const MCHdArt::Frame>> /*frames*/)
+{
+    return 0;
+}
+
 void MCRenderer::Shadow(MCWindow& /*target*/, const MCShadowCommand& /*command*/)
 {
 }

@@ -2,6 +2,7 @@
 #include "MCWebSocketOpen.h"
 
 #import <Foundation/Foundation.h>
+#import <Security/Security.h>
 
 #include <algorithm>
 #include <format>
@@ -32,6 +33,11 @@ namespace
         NSURLSessionWebSocketTask* Task = nil;
         /// <summary>The bytes sent (or waiting to) whose send hasn't completed.</summary>
         size_t Unsent = 0;
+        /// <summary>
+        /// Why the delegate's own check of the server's certificate failed (its server-trust challenge), or empty: a
+        /// socket that never opened, then fails, closes as untrusted with it (WhyFailed).
+        /// </summary>
+        std::string TrustRefused;
 
         /// <summary>Ends it (under the lock), with the first reason given.</summary>
         void End(std::string why)
@@ -69,6 +75,40 @@ namespace
     {
         const std::string text = std::format("{} error {}", error.domain.UTF8String, static_cast<long>(error.code));
         return RefusedCertificate(error) ? std::format("{} ({})", MCWebSocketUntrusted, text) : text;
+    }
+
+    /// <summary>
+    /// Why <paramref name="shared"/>'s socket failed with <paramref name="error"/> (under its lock): its text, as
+    /// untrusted when the system refused the server's certificate, or when the socket never opened and the delegate's
+    /// own check of the certificate failed (macOS 26 reports a refusal now and then as a bare TLS failure,
+    /// NSURLErrorSecureConnectionFailed, with nothing in it to tell). An open socket's close keeps its own reason.
+    /// </summary>
+    std::string WhyFailed(const MCShared& shared, NSError* error)
+    {
+        if (!RefusedCertificate(error) && shared.State == MCWebSocket::State::Opening && !shared.TrustRefused.empty())
+        {
+            return std::format("{} ({}; {})", MCWebSocketUntrusted, shared.TrustRefused, ErrorText(error));
+        }
+
+        return ErrorText(error);
+    }
+
+    /// <summary>
+    /// Why the system's check of a server's certificate failed, as <see cref="MCShared::TrustRefused"/> keeps it.
+    /// </summary>
+    std::string TrustFailureText(CFErrorRef failure)
+    {
+        // Ours from here (ARC releases it).
+        NSError* const error = CFBridgingRelease(failure);
+
+        if (error == nil)
+        {
+            return "the system's check of its certificate failed";
+        }
+
+        const char* const said = error.localizedDescription.UTF8String;
+        return std::format("the system's check: {} (OSStatus {})", said != nullptr ? said : "",
+                           static_cast<long>(error.code));
     }
 
     size_t MessageBytes(NSURLSessionWebSocketMessage* message)
@@ -115,7 +155,7 @@ namespace
 
               if (error != nil || message == nil)
               {
-                  shared->End(error != nil ? ErrorText(error) : std::string("it ended"));
+                  shared->End(error != nil ? WhyFailed(*shared, error) : std::string("it ended"));
                   return;
               }
 
@@ -215,8 +255,38 @@ namespace
     if (shared != nullptr)
     {
         const std::scoped_lock lock(shared->Lock);
-        shared->End(error != nil ? ErrorText(error) : std::string("it ended"));
+        shared->End(error != nil ? WhyFailed(*shared, error) : std::string("it ended"));
     }
+}
+
+- (void)URLSession:(NSURLSession*)session
+                   task:(NSURLSessionTask*)task
+    didReceiveChallenge:(NSURLAuthenticationChallenge*)challenge
+      completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential* _Nullable))completionHandler
+{
+    // Port-only: the server's certificate checked once more, only to keep why it failed (WhyFailed). On the session's
+    // own delegate queue, never the game's thread (a check can reach the network for revocation). The system's own
+    // handling decides every challenge: no credential of ours.
+    const SecTrustRef trust = challenge.protectionSpace.serverTrust;
+
+    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust] &&
+        trust != nullptr)
+    {
+        CFErrorRef failure = nullptr;
+
+        if (!SecTrustEvaluateWithError(trust, &failure))
+        {
+            std::string why = TrustFailureText(failure);
+
+            if (const std::shared_ptr<MCShared> shared = _Shared.lock())
+            {
+                const std::scoped_lock lock(shared->Lock);
+                shared->TrustRefused = std::move(why);
+            }
+        }
+    }
+
+    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
 }
 @end
 

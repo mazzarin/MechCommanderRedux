@@ -38,11 +38,27 @@ static const uint GapWays = 8;
 static const int2 GapSteps[GapWays] = {int2(1, 0),  int2(-1, 0), int2(0, 1),  int2(0, -1),
                                        int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)};
 
+// Port-only: the stands build (DRAW_STANDS 1: ground_stands.pshader), for the passes on a surface whose frame folds a
+// forest's index pass into its HD frame's draw, with the stands target (channels.hlsli): nothing stands on the kept
+// ground, its marks in the indices' alpha.
+#ifndef DRAW_STANDS
+#define DRAW_STANDS 0
+#endif
+
+#if DRAW_STANDS
+#include "channels.hlsli"
+#endif
+
 struct Output
 {
     float4 color : SV_Target0;
     float4 index : SV_Target1;
+#if DRAW_STANDS
+    float stands : SV_Target2;
+    float4 glint : SV_Target3;
+#else
     float4 glint : SV_Target2;
+#endif
 };
 
 // The kept colours and indices at kept pixel `kept` (in a copy `size` big).
@@ -81,6 +97,9 @@ Output main(float4 position : SV_Position)
     Output output;
     output.color = float4(0.0, 0.0, 0.0, 0.0);
     output.index = float4(0.0, 0.0, 0.0, 0.0);
+#if DRAW_STANDS
+    output.stands = NoStand;
+#endif
     output.glint = float4(0.0, 0.0, 0.0, 0.0);
 
     if (shift.z == ModeClear)

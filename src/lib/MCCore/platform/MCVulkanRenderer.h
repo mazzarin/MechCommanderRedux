@@ -269,6 +269,12 @@ public:
     /// </summary>
     std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(const MCWindow& window) const;
     std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(MCAddressKey key) const;
+    /// <summary>
+    /// Port-only: what stands in the surface of the window keyed <paramref name="key"/> (R8, its stands target:
+    /// shaders/channels.hlsli), as <see cref="Execute"/> left it; null when the last frame drew it without a fold
+    /// (nothing stands: the indices' alpha holds every mark), or there is none.
+    /// </summary>
+    std::shared_ptr<SDL_GPUTexture> SurfaceStandsTexture(MCAddressKey key) const;
 
     /// <summary>
     /// Port-only (HD weather's drops catching the light): the light the raindrops on <paramref name="window"/>'s
@@ -371,6 +377,16 @@ public:
     {
         WaitForRunning();
         return _LastFrameGlintPasses;
+    }
+
+    /// <summary>
+    /// Port-only: the render passes of the last frame <see cref="Execute"/> ran that drew into a surface's stands
+    /// (Surface::Stands), those on a surface whose draws folded a forest's index pass in.
+    /// </summary>
+    int64_t LastFrameStandsPasses() const
+    {
+        WaitForRunning();
+        return _LastFrameStandsPasses;
     }
 
     /// <summary>
@@ -479,6 +495,15 @@ public:
     /// for the original's rows (<see cref="HdShapeIndices"/>).
     /// </summary>
     int64_t HdIndexPicturesDrawn() const { return _HdIndexPicturesDrawn; }
+    /// <summary>
+    /// Port-only: the forests' version 2 HD frames drawn so far with their index passes folded in (HdMarks::Folded).
+    /// </summary>
+    int64_t HdFolds() const { return _HdFolds; }
+    /// <summary>
+    /// Port-only: whether forests' version 2 HD frames fold their index passes into their draws (on; the tests draw
+    /// them both ways to compare).
+    /// </summary>
+    void SetFoldsIndexPasses(bool folds) { _FoldsIndexPasses = folds; }
     /// <summary>
     /// Port-only: how many times a stripped shape table's rows were asked for (a version 2 pack's, drawn without its HD
     /// frame: RowsGone), each drawn as nothing.
@@ -707,6 +732,19 @@ private:
         /// </summary>
         bool CatchesLight = false;
         bool GlintsHeld = false;
+        /// <summary>
+        /// Port-only: a colour target before the glints, the mark of what stands at each pixel (R8,
+        /// shaders/channels.hlsli's stands target), so a forest's HD frame can fold its index pass in and leave the
+        /// indices' alpha the ground's. Only a frame whose draws on the surface fold (Folds) draws into it, the first
+        /// made then; the others' passes have none, and the composite reads that nothing stands.
+        /// </summary>
+        Texture Stands;
+        /// <summary>
+        /// Port-only: whether a draw recorded on the surface this frame is a fold (Record::Fold), and whether Stands
+        /// holds what the frames drawn so far left in it (not since a frame drawn without it, nor since it was made).
+        /// </summary>
+        bool Folds = false;
+        bool StandsHeld = false;
         /// <summary>The window rectangles blended draws covered in the frame being recorded, and in the last one run.</summary>
         std::vector<MCRect> Blended;
         std::vector<MCRect> LastBlended;
@@ -785,6 +823,11 @@ private:
 
     /// <summary>The draw variants.</summary>
     static constexpr size_t DrawVariants = 3;
+    /// <summary>
+    /// Port-only: the surfaces' pipeline sets (_SurfacePipelines), one for each pass's targets: without the glints and
+    /// with them, without the stands and with them.
+    /// </summary>
+    static constexpr size_t SurfaceSets = 4;
 
     /// <summary>One recorded command: a run of draws with the same target and bindings, or a surface resize.</summary>
     struct Record
@@ -804,6 +847,11 @@ private:
         /// with IndexOnly, an HD frame's mark pass: HdMarks::Standing).
         /// </summary>
         bool Marks = false;
+        /// <summary>
+        /// Port-only: whether the draws are forests' HD frames with their index passes folded in (HdMarks::Folded):
+        /// blended, writing the indices' red, green and blue where the original draws, and the stands.
+        /// </summary>
+        bool Fold = false;
         /// <summary>Port-only: the draw shader's build the draws go through.</summary>
         DrawVariant Variant = DrawVariant::Every;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
@@ -860,6 +908,7 @@ private:
         uint32_t DrawnHeight = 0;
         std::array<int32_t, 2> Offset{};
         bool CatchesLight = false;
+        bool Folds = false;
         int32_t Rank = 2;
         bool KeyClear = false;
     };
@@ -1057,7 +1106,7 @@ private:
     /// Port-only: the channels of a surface's targets that a record's pipeline writes (DrawPipelines::For's, or the
     /// shadow's), four bits a target in the targets' order, red first.
     /// </summary>
-    static uint32_t WrittenChannels(bool blend, bool indexOnly, bool shadow, bool marks);
+    static uint32_t WrittenChannels(bool blend, bool indexOnly, bool shadow, bool marks, bool fold);
     /// <summary>
     /// Port-only: whether a draw on <paramref name="surface"/> reading <paramref name="source"/> and writing
     /// <paramref name="channels"/> over <paramref name="written"/> leaves every pixel as it was when drawn before
@@ -1174,6 +1223,11 @@ private:
     {
         None,
         Standing,
+        /// <summary>
+        /// Port-only: a forest's version 2 frame with its index pass folded in: the frame's draw writes the original's
+        /// indices where the original draws (its index picture's) as that pass would, in one draw (FoldsIndex).
+        /// </summary>
+        Folded,
     };
 
     /// <summary>
@@ -1632,6 +1686,15 @@ private:
     MCGpuHandle<SDL_GPUShader> _BasicFragmentShader;
     MCGpuHandle<SDL_GPUShader> _HdFragmentShader;
     MCGpuHandle<SDL_GPUShader> _TerrainFragmentShader;
+    /// <summary>
+    /// Port-only: the stands builds of the draws' fragment shaders, the terrain layer's and the kept ground's
+    /// (shaders/*_stands.pshader), for the passes with a surface's stands (Surface::Folds).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _StandsFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _StandsBasicFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _StandsHdFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _StandsTerrainFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _StandsGroundShader;
 
     /// <summary>The draws' pipelines with one fragment shader.</summary>
     struct DrawPipelines
@@ -1649,8 +1712,13 @@ private:
         MCGpuHandle<SDL_GPUGraphicsPipeline> BlendMarks;
         /// <summary>Port-only: an HD frame's mark pass (HdMarks::Standing), writing the indices' alpha alone.</summary>
         MCGpuHandle<SDL_GPUGraphicsPipeline> IndexMarks;
-        /// <summary>Whether every pipeline was made.</summary>
-        bool Made() const;
+        /// <summary>
+        /// Port-only: a forest's version 2 HD frame with its index pass folded in (HdMarks::Folded), blended, writing
+        /// the indices' red, green and blue by its alpha there, and the stands.
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> BlendFold;
+        /// <summary>Whether every pipeline was made (BlendFold only for a set with the stands: <paramref name="folds"/>).</summary>
+        bool Made(bool folds) const;
         /// <summary>The pipeline <paramref name="record"/>'s draws go through (not a shadow's).</summary>
         SDL_GPUGraphicsPipeline* For(const Record& record) const;
     };
@@ -1678,12 +1746,15 @@ private:
         MCGpuHandle<SDL_GPUGraphicsPipeline> Ground;
         MCGpuHandle<SDL_GPUGraphicsPipeline> GroundOver;
         MCGpuHandle<SDL_GPUGraphicsPipeline> GroundIndex;
-        /// <summary>Whether every pipeline was made.</summary>
-        bool Made() const;
+        /// <summary>Whether every pipeline was made (the folds' with the stands: <paramref name="folds"/>).</summary>
+        bool Made(bool folds) const;
     };
 
-    /// <summary>The surfaces' pipelines: for passes without their glints, then for those with them.</summary>
-    std::array<SurfacePipelines, 2> _SurfacePipelines;
+    /// <summary>
+    /// The surfaces' pipelines: for passes without their glints, then for those with them; port-only, the same with
+    /// their stands (the .cpp's SurfaceLayout).
+    /// </summary>
+    std::array<SurfacePipelines, SurfaceSets> _SurfacePipelines;
     /// <summary>The terrain layer's vertex shader.</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     TerrainMeshState _TerrainMesh;
@@ -1978,6 +2049,8 @@ private:
     std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
     int64_t _HdIndexPicturesDrawn = 0;
+    int64_t _HdFolds = 0;
+    bool _FoldsIndexPasses = true;
     int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
     std::optional<AuditedDraw> _Audited;
@@ -2200,6 +2273,8 @@ private:
     /// <summary>Port-only (HD weather): the frame's passes with the glints so far, and the last frame's.</summary>
     int64_t _FrameGlintPasses = 0;
     int64_t _LastFrameGlintPasses = 0;
+    int64_t _FrameStandsPasses = 0;
+    int64_t _LastFrameStandsPasses = 0;
     UploadTally _LastFrameUploads;
     /// <summary>The span walks' state (as the software renderer keeps its own).</summary>
     MCSpanState _Spans;

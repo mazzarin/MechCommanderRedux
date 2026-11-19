@@ -3,6 +3,7 @@
 #include "main/MCUpdater.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCVulkanShaders.h"
+#include "shaders/channels.hlsli"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
@@ -261,6 +262,11 @@ namespace
     using LightTile = std::array<uint32_t, 2>;
     /// <summary>A light tile's texels side by side (composite.pshader's LightWords), a word each.</summary>
     constexpr uint32_t LightTileTexelsWide = std::tuple_size_v<LightTile>;
+    /// <summary>
+    /// Port-only: the texture bound for a world's stands (composite.pshader's standsTex) where nothing stands: a texel
+    /// of NoStand (shaders/channels.hlsli), in the stands targets' format.
+    /// </summary>
+    constexpr SDL_GPUTextureFormat NothingStandsFormat = SDL_GPU_TEXTUREFORMAT_R8_UNORM;
 
     /// <summary>A world's light tiles, LightTileTexels on a side from its top left: Across x Down of them, row by row.</summary>
     struct LightTiles
@@ -1028,7 +1034,7 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _Renderer.reset();
 
     for (Texture& texture : {std::ref(_Screen), std::ref(_Ops), std::ref(_Tables), std::ref(_Palette), std::ref(_Frame),
-                             std::ref(_NoLightTiles)})
+                             std::ref(_NoLightTiles), std::ref(_NothingStands)})
     {
         Release(texture);
     }
@@ -1514,14 +1520,19 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
     const float screenMap[4] = {originX, originY, mapX, mapY};
 
     // Port-only (HD lighting): the light tiles bound where there are none (the bloom's pass, the screen's), filled with
-    // none when made, in the light tiles' copy pass.
+    // none when made, in the light tiles' copy pass; port-only, the same for the stands where nothing stands (a world
+    // drawn without a fold, a world the CPU drew, the screen).
     const bool noLightTilesNew = _NoLightTiles.Handle == nullptr;
+    const bool nothingStandsNew = _NothingStands.Handle == nullptr;
 
-    if (auto made = Ensure(_NoLightTiles, LightTileFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, LightTileTexelsWide, 1, true);
-        !made)
+    for (auto [texture, format, wide] : {std::tuple{&_NoLightTiles, LightTileFormat, LightTileTexelsWide},
+                                         std::tuple{&_NothingStands, NothingStandsFormat, 1u}})
     {
-        SDL_Log("MCVulkanPresenter: the frame isn't composited: %s", made.error().c_str());
-        return;
+        if (auto made = Ensure(*texture, format, SDL_GPU_TEXTUREUSAGE_SAMPLER, wide, 1, true); !made)
+        {
+            SDL_Log("MCVulkanPresenter: the frame isn't composited: %s", made.error().c_str());
+            return;
+        }
     }
 
     // The screen's texture and its allocated size; the GPU's surfaces have no op plane or op tables (the screen is
@@ -1565,6 +1576,9 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
         /// <summary>Port-only (HD weather): the light the GPU world's raindrops caught, else the screen
         /// (unread).</summary>
         SDL_GPUTexture* Glints = nullptr;
+        /// <summary>Port-only: what stands in the GPU world (its stands, Surface::Stands), else a texel where nothing
+        /// does (the indices' alpha holds every mark).</summary>
+        SDL_GPUTexture* Stands = nullptr;
     };
 
     std::vector<World> worlds(planned.Worlds.size());
@@ -1575,6 +1589,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
         World& world = worlds[i];
         world.Indices = ops;
         world.Glints = screen;
+        world.Stands = _NothingStands.Handle.get();
 
         if (!plannedWorld.Shown)
         {
@@ -1616,6 +1631,12 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
             glints != nullptr)
         {
             world.Glints = glints;
+        }
+
+        if (SDL_GPUTexture* const stands = held.emplace_back(_Renderer->SurfaceStandsTexture(plannedWorld.Key)).get();
+            stands != nullptr)
+        {
+            world.Stands = stands;
         }
     }
 
@@ -1689,6 +1710,14 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
     {
         tileParts.push_back({std::as_bytes(std::span(&NoLights, 1)), *_NoLightTiles.Handle, LightTileTexelsWide, 1,
                              sizeof(uint32_t), 0});
+    }
+
+    static const auto NothingStands = static_cast<uint8_t>(MCGpuChannels::Byte(MCGpuChannels::NoStand));
+
+    if (nothingStandsNew)
+    {
+        tileParts.push_back(
+            {std::as_bytes(std::span(&NothingStands, 1)), *_NothingStands.Handle, 1, 1, sizeof(NothingStands), 0});
     }
 
     for (size_t i = 0; i < underlayDraws.size(); ++i)
@@ -1787,6 +1816,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
             {world.Texture, _Nearest.get()},
             {_NoLightTiles.Handle.get(), _Nearest.get()},
             {_NoLightTiles.Handle.get(), _Nearest.get()},
+            {world.Stands, _Nearest.get()},
         }};
         // The texels in use and the next across and down, which the world's last pixels read toward.
         const uint32_t drawnWidth = std::min(fieldWidth + 1, field.Width);
@@ -1857,6 +1887,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
             {world.Texture, _Nearest.get()},
             {_NoLightTiles.Handle.get(), _Nearest.get()},
             {_NoLightTiles.Handle.get(), _Nearest.get()},
+            {world.Stands, _Nearest.get()},
         }};
         DrawComposite(commands, *puddlePass, bindings,
                       {{0.0f, 0.0f, static_cast<float>(puddlesWidth), static_cast<float>(puddlesHeight)},
@@ -1878,7 +1909,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
 
     auto draw = [&](const std::array<float, 4>& rect, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
                     SDL_GPUTexture& indices, SDL_GPUTexture& glints, SDL_GPUTexture& lightTiles,
-                    SDL_GPUTexture& puddles, CompositeUniforms uniforms)
+                    SDL_GPUTexture& puddles, SDL_GPUTexture& stands, CompositeUniforms uniforms)
     {
         uniforms.Cycle[0] = planned.Cycle.First;
         uniforms.Cycle[1] = planned.Cycle.Step;
@@ -1900,6 +1931,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
             {&glints, _Nearest.get()},
             {&lightTiles, _Nearest.get()},
             {&puddles, _Nearest.get()},
+            {&stands, _Nearest.get()},
         }};
 
         // Port-only (HD weather): without the rain's wet look, the weather's veil (the rain's or the falling snow's),
@@ -1925,6 +1957,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
     // The screen alone, then each underlay's rectangle with its surface (the screen bound for a field it hasn't, and no
     // light tiles' texture for puddles it hasn't).
     draw({0.0f, 0.0f, width, height}, *screen, *screen, *ops, *screen, *_NoLightTiles.Handle, *_NoLightTiles.Handle,
+         *_NothingStands.Handle,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
                            {0.0f, 0.0f, 1.0f, 1.0f},
@@ -1942,7 +1975,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
         const World& world = worlds[i];
         draw(drawn.Rect, *world.Texture, drawn.Field != nullptr ? *drawn.Field : *screen, *world.Indices, *world.Glints,
              drawn.LightTileTexture != nullptr ? *drawn.LightTileTexture : *_NoLightTiles.Handle,
-             drawn.Puddles != nullptr ? *drawn.Puddles : *_NoLightTiles.Handle, drawn.Uniforms);
+             drawn.Puddles != nullptr ? *drawn.Puddles : *_NoLightTiles.Handle, *world.Stands, drawn.Uniforms);
     }
 
     SDL_EndGPURenderPass(pass);
@@ -2003,6 +2036,7 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
         {&world, _Nearest.get()},
         {_NoLightTiles.Handle.get(), _Nearest.get()},
         {_NoLightTiles.Handle.get(), _Nearest.get()},
+        {_NothingStands.Handle.get(), _Nearest.get()},
     }};
 
     DrawComposite(commands, *pass, bindings,

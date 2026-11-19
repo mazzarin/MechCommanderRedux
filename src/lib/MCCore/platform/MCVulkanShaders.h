@@ -34,7 +34,16 @@ enum class MCShader : uint8_t
     /// Port-only (KindHdSmooth): which original pixels a version 1 HD art frame covers, marked in its index picture
     /// (shaders/hdcoverage.pshader).
     /// </summary>
-    HdCoverage
+    HdCoverage,
+    /// <summary>
+    /// Port-only: the stands builds of the draws', the terrain layer's and the kept ground's (shaders/*_stands.pshader),
+    /// for the passes on a surface whose frame folds a forest's index pass into its HD frame's draw.
+    /// </summary>
+    DrawStands,
+    DrawBasicStands,
+    DrawTerrainStands,
+    DrawHdStands,
+    GroundStands
 };
 
 /// <summary>A shader the Vulkan renderer uses, and the resources its bindings declare.</summary>
@@ -72,8 +81,8 @@ namespace MCVulkanShaders
     inline constexpr char EntryPoint[] = "main";
 #endif
 
-    /// <summary>The composite shader's textures (composite.pshader's t0 to t8), in each of its builds.</summary>
-    inline constexpr uint32_t CompositeSamplers = 9;
+    /// <summary>The composite shader's textures (composite.pshader's t0 to t9), in each of its builds.</summary>
+    inline constexpr uint32_t CompositeSamplers = 10;
 
     /// <summary>The built-in shaders.</summary>
     extern const MCShaderInfo Quad;
@@ -89,6 +98,11 @@ namespace MCVulkanShaders
     extern const MCShaderInfo DrawTerrainFragment;
     extern const MCShaderInfo DrawHdFragment;
     extern const MCShaderInfo GroundFragment;
+    extern const MCShaderInfo DrawStandsFragment;
+    extern const MCShaderInfo DrawBasicStandsFragment;
+    extern const MCShaderInfo DrawTerrainStandsFragment;
+    extern const MCShaderInfo DrawHdStandsFragment;
+    extern const MCShaderInfo GroundStandsFragment;
     extern const MCShaderInfo MovieFragment;
     extern const MCShaderInfo HdCoverageFragment;
     extern const MCShaderInfo TerrainVertex;

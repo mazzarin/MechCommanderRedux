@@ -193,3 +193,39 @@ TEST_CASE("gpu channels: each mark in the index target's alpha reads as itself a
         CHECK_EQ(ground.FoggedWater, 0u);
     }
 }
+
+TEST_CASE("gpu channels: the stands and the index target's alpha merge into the mark a frame without stands holds")
+{
+    // Every pair the layout allows: a stands byte, NoStand's or a mark (a fold's, or what any draw wrote in both), over
+    // any alpha. NoStand is a byte no draw needs to tell from the alpha.
+    const uint32_t noStand = Written(Gc::NoStand);
+    CHECK_EQ(noStand, Bytes - 1);
+
+    for (uint32_t stands = 0; stands < Bytes; stands++)
+    {
+        for (uint32_t alpha = 0; alpha < Bytes; alpha++)
+        {
+            CHECK_EQ(Written(Gc::MarkOf(Read(alpha), Read(stands))), stands == noStand ? alpha : stands);
+        }
+    }
+
+    // A draw writes its mark in both (where its pipeline writes the alpha), so the merge is that mark, NoStand's byte
+    // too (HD ground's highest); a pass without stands binds NoStand, so the alpha is read as it is.
+    for (uint32_t mark = 0; mark < Bytes; mark++)
+    {
+        CHECK_EQ(Written(Gc::MarkOf(Read(mark), Read(mark))), mark);
+        CHECK_EQ(Written(Gc::MarkOf(Read(mark), Gc::NoStand)), mark);
+    }
+
+    // A fold writes its marks (what stands, a canopy) in the stands alone, over whatever alpha the ground under it left:
+    // each is told from NoStand and merges to itself, the mark the forest's index pass would have left in the alpha.
+    for (const float mark : {Gc::StandingMark, Gc::SwayMark})
+    {
+        CHECK(Written(mark) != noStand);
+
+        for (uint32_t alpha = 0; alpha < Bytes; alpha++)
+        {
+            CHECK_EQ(Written(Gc::MarkOf(Read(alpha), mark)), Written(mark));
+        }
+    }
+}

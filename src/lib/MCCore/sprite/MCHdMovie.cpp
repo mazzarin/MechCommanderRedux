@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCHdMovie.h"
 #include "lib/MCDiskFile.h"
+#include "lib/MCFirstUse.h"
 #include "main/MCTelemetry.h"
 #include "platform/MCUtf8Path.h"
 
@@ -438,6 +439,9 @@ MCHdMovie::~MCHdMovie() = default;
 
 auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::unique_ptr<MCHdMovie>, std::string>
 {
+    // Port-only (lib/MCFirstUse.h): a movie the game's thread opens in play (its file, its header, the decoder).
+    const MCFirstUseScope use(
+        MCFirstUseKind::Movie, [&] { return "opened: " + MCFileSystem::ToUtf8(path.filename()); }, 0);
     auto movie = std::unique_ptr<MCHdMovie>(new MCHdMovie());
     Impl& impl = *movie->_Impl;
     impl.Name = MCFileSystem::ToUtf8(path.filename());
@@ -514,8 +518,17 @@ auto MCHdMovie::Next(std::span<const uint8_t> original, int32_t width, int32_t h
                                            height, original.size()));
     }
 
+    // Port-only (lib/MCFirstUse.h): the first frame, waited for however long, is a first use in play.
+    std::optional<MCFirstUseScope> first;
+
+    if (impl.Taken == 0)
+    {
+        first.emplace(MCFirstUseKind::Movie, [&] { return "first frame: " + impl.Name; }, 0);
+    }
+
     std::expected<std::optional<Decoded>, std::string> decoded =
         impl.Take(impl.Taken == 0 ? std::nullopt : std::optional(wait));
+    first.reset();
     ++impl.Taken;
 
     if (!decoded)

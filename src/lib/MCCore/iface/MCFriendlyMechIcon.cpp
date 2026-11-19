@@ -27,6 +27,11 @@
 
 namespace
 {
+    /// <summary>The art file's picture (MCGuiSystem::ArtFile) of a wounded pilot's portrait.</summary>
+    constexpr int32_t WoundedPilotPicture = 3;
+    /// <summary>The art file's picture of a dead or missing pilot's portrait.</summary>
+    constexpr int32_t DeadPilotPicture = 4;
+
     /// <summary>Sets the cursor to <paramref name="cursor"/>.</summary>
     void SetCursor(MCInterfaceCursor cursor)
     {
@@ -86,6 +91,7 @@ auto MCFriendlyMechIcon::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t
     }
 
     PilotImage = std::make_unique<MCGuiPort>();
+    PilotPictureShown.clear();
     DiagramX = 6;
     DiagramY = 0x10;
     Lance = NoLance;
@@ -230,7 +236,8 @@ auto MCFriendlyMechIcon::UpdateModel() -> void
     // the pilot.)
     if (6.0f <= pilot->Wounds && !ShowingWoundedPilot)
     {
-        PilotImage->Init(3);
+        PilotImage->Init(WoundedPilotPicture);
+        PilotPictureShown.clear();
         ShowingWoundedPilot = true;
     }
 
@@ -238,7 +245,8 @@ auto MCFriendlyMechIcon::UpdateModel() -> void
 
     if ((status == 3 || status == 5 || status == 6) && !ShowingDeadPilot)
     {
-        PilotImage->Init(4);
+        PilotImage->Init(DeadPilotPicture);
+        PilotPictureShown.clear();
         ShowingDeadPilot = true;
     }
 }
@@ -424,47 +432,57 @@ auto MCFriendlyMechIcon::SetID(int32_t newPartId) -> void
     }
 
     // Port: the original loaded the background into the icon's own picture; it is kept apart, and the icon's view
-    // takes its size.
+    // takes its size. Port-only (the first-use rule): read once, when the icon is first given a mover (the bar is made
+    // at the load), not again as a script activates it in play (MCTacticalInterface::ActivateMech).
     if (IconBackground == nullptr)
     {
         IconBackground = std::make_unique<MCGuiPort>();
+        IconBackground->Init(const_cast<char*>("guiub00.tga"));
     }
 
-    IconBackground->Init(const_cast<char*>("guiub00.tga"));
     Port().InitView(IconBackground->Width(), IconBackground->Height());
 
-    MCShapeFile shapeFile;
-
-    if (shapeFile.Open(GamePath(ArtPath, shapeName, ".shp")) != 0)
-    {
-        Fatal(0, "Unable to open damage display shape file");
-    }
-
-    DamageShapes = {};
-
-    // An empty file still fails, as it did when the GUI heap's malloc(0) returned null.
-    if (shapeFile.GetLength() == 0)
-    {
-        shapeFile.Close();
-        Fatal(0, "Not enough memory for damage display shape file");
-    }
-
-    DamageShapes = MCRegisteredBlock(shapeFile.GetLength(), MCDataKind::Shapes);
-    shapeFile.Read(DamageShapes.Bytes());
-    shapeFile.Close();
-    DamageShapeName = shapeName;
-    std::ranges::transform(DamageShapeName, DamageShapeName.begin(),
+    std::string shapeKey = shapeName;
+    std::ranges::transform(shapeKey, shapeKey.begin(),
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    AttachHdArt();
+
+    // Port-only (the first-use rule): the same diagram as the icon holds (its mover again, activated) isn't read again.
+    if (DamageShapes.Bytes().empty() || DamageShapeName != shapeKey)
+    {
+        MCShapeFile shapeFile;
+
+        if (shapeFile.Open(GamePath(ArtPath, shapeName, ".shp")) != 0)
+        {
+            Fatal(0, "Unable to open damage display shape file");
+        }
+
+        DamageShapes = {};
+
+        // An empty file still fails, as it did when the GUI heap's malloc(0) returned null.
+        if (shapeFile.GetLength() == 0)
+        {
+            shapeFile.Close();
+            Fatal(0, "Not enough memory for damage display shape file");
+        }
+
+        DamageShapes = MCRegisteredBlock(shapeFile.GetLength(), MCDataKind::Shapes);
+        shapeFile.Read(DamageShapes.Bytes());
+        shapeFile.Close();
+        DamageShapeName = std::move(shapeKey);
+        AttachHdArt();
+    }
 
     auto shown = std::static_pointer_cast<MCMover>(object);
     NumParts = shown->NumBodyLocations();
     Mover = object;
     PartId = newPartId;
 
-    if (shown->GetPilot() != nullptr && !shown->GetPilot()->Picture.empty())
+    // Port-only (the first-use rule): a portrait the icon shows already isn't read again.
+    if (shown->GetPilot() != nullptr && !shown->GetPilot()->Picture.empty() &&
+        PilotPictureShown != shown->GetPilot()->Picture)
     {
         PilotImage->Init(shown->GetPilot()->Picture.data());
+        PilotPictureShown = shown->GetPilot()->Picture;
     }
 
     IsPoint = shown == shown->GetPoint();

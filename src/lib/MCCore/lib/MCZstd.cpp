@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "lib/MCZstd.h"
+#include "lib/MCFirstUse.h"
 
 // Zstandard (src/lib/zstd-1.5.7, BSD): its decompressor alone, linked statically, so its frame header reader too.
 #define ZSTD_STATIC_LINKING_ONLY
@@ -142,6 +143,9 @@ auto MCZstd::Dictionaries::Find(uint16_t number) const -> MCOptionalRef<const Di
 auto MCZstd::Unpack(std::span<const uint8_t> packed, size_t size, MCOptionalRef<const Dictionary> dictionary)
     -> std::expected<std::vector<uint8_t>, std::string>
 {
+    // Port-only (lib/MCFirstUse.h): packed bytes the game's thread unpacks in play.
+    const MCFirstUseScope use(MCFirstUseKind::Unpack, [] { return "zstd"; }, size);
+
     // One whole frame and nothing past it: a stream cut short, or with bytes after its frame, is refused here.
     const size_t frameBytes = ZSTD_findFrameCompressedSize(packed.data(), packed.size());
 

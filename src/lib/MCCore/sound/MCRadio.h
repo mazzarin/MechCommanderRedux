@@ -124,10 +124,21 @@ public:
     std::weak_ptr<MCMechWarrior> Owner;
     /// <summary>The pilot's movie name; empty for none.</summary>
     std::string MovieName;
+    /// <summary>
+    /// Port-only (the first-use rule): the pilot's videos by their message's movie code, read as the radio is made (at
+    /// the load, about 70 KB each), so a message's video opens from memory in play.
+    /// </summary>
+    std::map<char, std::vector<uint8_t>> Movies;
     /// <summary>Whether the radio plays.</summary>
     bool Enabled = true;
 
 private:
+    /// <summary>The game path of the pilot's video for movie code <paramref name="code"/>.</summary>
+    std::string VideoPath(char code) const;
+
+    /// <summary>Reads every video of the pilot the table's messages can show into <see cref="Movies"/>.</summary>
+    void ReadMovies(const MCRadioMessageTable& table);
+
     /// <summary>The sound system the radio plays through.</summary>
     MCSoundSystem& _Sound;
 };

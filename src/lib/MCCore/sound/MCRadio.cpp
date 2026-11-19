@@ -2,6 +2,7 @@
 #include "sound/MCRadio.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "lib/MCDice.h"
+#include "lib/MCDiskFile.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "lib/MCPacketFile.h"
@@ -10,6 +11,7 @@
 #include "mission/MCMission.h"
 #include "object/MCBigGameObject.h"
 #include "object/MCMechWarrior.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCSmacker.h"
 #include "sound/MCRadioMessage.h"
 #include "sound/MCSoundSystem.h"
@@ -56,6 +58,12 @@ namespace
         file.ReadPacket(packet, data);
         return data;
     }
+}
+
+namespace
+{
+    /// <summary>The movie code of a message that shows no video (radio.csv's).</summary>
+    constexpr char NoMovieCode = 'x';
 }
 
 MCRadioMessageInfo ParseRadioMessageRow(std::string_view line)
@@ -140,6 +148,10 @@ std::expected<std::unique_ptr<MCRadio>, int32_t> MCRadio::Create(MCSoundSystem& 
         return std::unexpected(result);
     }
 
+    // Port-only (the workspace's SPEC-first-use.md): the pilot's lines held as the radio is made (at the load, about
+    // 0.6 MB a pilot), so a message queued in play reads nothing from the disk.
+    radio->RadioFile->HoldAllPackets();
+
     radio->MovieName = movieName;
 
     // Faithful: a noise file that fails to open stays, unopened, for the radios after.
@@ -151,6 +163,9 @@ std::expected<std::unique_ptr<MCRadio>, int32_t> MCRadio::Create(MCSoundSystem& 
         {
             return std::unexpected(result);
         }
+
+        // Port-only: and the radio's noise, as the pilots' lines.
+        sound.NoiseFile->HoldAllPackets();
     }
 
     if (!sound.RadioMessageInfoLoaded)
@@ -166,7 +181,54 @@ std::expected<std::unique_ptr<MCRadio>, int32_t> MCRadio::Create(MCSoundSystem& 
         sound.RadioMessageInfoLoaded = true;
     }
 
+    radio->ReadMovies(sound.RadioMessageInfo);
     return radio;
+}
+
+std::string MCRadio::VideoPath(char code) const
+{
+    return GamePath(MoviePath, std::format("{}{}", MovieName, code), ".smk");
+}
+
+void MCRadio::ReadMovies(const MCRadioMessageTable& table)
+{
+    if (MovieName.empty())
+    {
+        return;
+    }
+
+    // Each code once, read or not (most messages share a few).
+    std::set<char> tried;
+
+    for (const MCRadioMessageInfo& info : table)
+    {
+        if (info.MovieCode == NoMovieCode || info.MovieCode == '\0' || !tried.insert(info.MovieCode).second)
+        {
+            continue;
+        }
+
+        // A video that can't be read is left to the message, which opens it from the disk as the original did (and
+        // shows none when that fails too).
+        const std::string path = VideoPath(info.MovieCode);
+        std::optional<MCDiskFile> file =
+            MCDiskFile::Open(MCFileSystem::Resolve(path), MCDiskFileMode::Read, MCDiskFileReads::Direct);
+
+        if (!file.has_value())
+        {
+            SDL_Log("MCRadio: the pilot's video %s isn't read ahead: it can't be opened", path.c_str());
+            continue;
+        }
+
+        std::vector<uint8_t> bytes(file->Length());
+
+        if (file->Read(bytes) != bytes.size())
+        {
+            SDL_Log("MCRadio: the pilot's video %s isn't read ahead: it reads short", path.c_str());
+            continue;
+        }
+
+        Movies.emplace(info.MovieCode, std::move(bytes));
+    }
 }
 
 int32_t MCRadio::PlayMessage(MCRadioMessageType msgType)
@@ -235,9 +297,9 @@ int32_t MCRadio::PlayMessage(MCRadioMessageType msgType)
     // The pilot's video, when the tactical map shows its video window.
     const std::shared_ptr<MCTacticalMap> tacMap = TacticalMap();
 
-    if (info.MovieCode != 'x' && !MovieName.empty() && owner->GetVehicle()->ObjectClass == MCObjectClass::BattleMech &&
-        tacMap->IsShowing() != 0 && tacMap->IsHidden() == 0 && tacMap->DisplayType == MCTacmapPage::Map &&
-        tacMap->VideoWindow != nullptr)
+    if (info.MovieCode != NoMovieCode && !MovieName.empty() &&
+        owner->GetVehicle()->ObjectClass == MCObjectClass::BattleMech && tacMap->IsShowing() != 0 &&
+        tacMap->IsHidden() == 0 && tacMap->DisplayType == MCTacmapPage::Map && tacMap->VideoWindow != nullptr)
     {
         // On the screen, hidden until the message plays (the original added it to the screen then).
         message->MovieWindow = ScreenWindow()->CreateChild<MCGuiSmackerWindow>(
@@ -247,8 +309,10 @@ int32_t MCRadio::PlayMessage(MCRadioMessageType msgType)
                 window.Init(area, {});
                 window.ShowGuiWindow(false);
             });
-        const std::string videoName = std::format("{}{}", MovieName, info.MovieCode);
-        message->Movie = SmackOpen(GamePath(MoviePath, videoName, ".smk").c_str(), 0xfe000, -1);
+        const std::string path = VideoPath(info.MovieCode);
+        const auto held = Movies.find(info.MovieCode);
+        message->Movie =
+            held != Movies.end() ? SmackOpenMemory(path, held->second) : SmackOpen(path.c_str(), 0xfe000, -1);
     }
 
     // The pilot's name first (sometimes), then the message, and the static before them.

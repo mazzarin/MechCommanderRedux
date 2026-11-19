@@ -10,6 +10,8 @@
 #include "object/MCArtilleryChunk.h"
 #include "object/MCCameraDrone.h"
 #include "object/MCCameraDroneType.h"
+#include "object/MCGroundVehicleGameSystem.h"
+#include "object/MCMasterComponent.h"
 #include "object/MCBuilding.h"
 #include "object/MCBuildingType.h"
 #include "object/MCBuildingMarines.h"
@@ -50,6 +52,17 @@ auto MCTurretType::CreateInstance() -> std::shared_ptr<MCBaseObject>
 
     newTurret->IdNumber = NextIdNumber++;
     return newTurret;
+}
+
+auto MCTurretType::MadeTypes() const -> std::vector<int32_t>
+{
+    // The weapon is read with the type (WeaponType -1 before), its effect as MCTurret's CreateWeaponFX makes it.
+    if (WeaponType < 0 || static_cast<size_t>(WeaponType) >= MasterComponentList.size())
+    {
+        return MadeTypesAnd({BlownEffectId});
+    }
+
+    return MadeTypesAnd({BlownEffectId, WeaponFXTable[MasterComponentList[WeaponType].WeaponEffect]});
 }
 
 auto MCTurretType::Init(MCFile& objFile, uint32_t fileSize) -> int32_t

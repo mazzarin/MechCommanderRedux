@@ -1,6 +1,7 @@
 #pragma once
 
 class MCBigGameObject;
+class MCFitIniFile;
 class MCMover;
 
 /// <summary>The object type marines are made from (0x28d): the ones a destroyed building lets out, and a dead vehicle's crew.</summary>
@@ -15,6 +16,27 @@ extern int32_t NumMarines;
 /// <paramref name="createFailure"/> when it can't be made, and with the profile's errors when that can't be read.
 /// </summary>
 std::shared_ptr<MCMover> MakeMarine(std::string_view createFailure);
+
+/// <summary>
+/// Port-only (the first-use rule): the marine profile, read for the mission under the loading bar (MCScenario's
+/// MarineProfile) so the marines made in play read nothing; null when it can't be opened, which the first marine made
+/// then finds as the original did.
+/// </summary>
+std::unique_ptr<MCFitIniFile> ReadMarineProfile();
+
+/// <summary>
+/// Port-only (the first-use rule): the effect object type of each weapon <paramref name="profile"/> (the marine
+/// profile) arms its marines with, so the load makes them ready: marines are made in play (a destroyed building's, a
+/// dead vehicle's crew), and no type loaded at the load names their weapons. A weapon its items don't read is left out
+/// (logged), for the marine's own load to fail on as the original did.
+/// </summary>
+std::vector<int32_t> MarineWeaponEffects(MCFitIniFile& profile);
+
+/// <summary>
+/// Loads the marine profile into <paramref name="marine"/> (the mission's, read at the load); Fatal with the profile's
+/// errors when it can't be opened or read.
+/// </summary>
+void LoadMarineProfile(MCMover& marine);
 
 /// <summary>
 /// Lets <paramref name="marinesWanted"/> marines out of the destroyed <paramref name="building"/>, one for each enemy

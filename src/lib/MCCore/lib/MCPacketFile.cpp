@@ -1,8 +1,11 @@
 #include "stdafx.h"
 #include "lib/MCPacketFile.h"
 #include "lib/MCFatal.h"
+#include "lib/MCFirstUse.h"
 #include "lib/MCLz.h"
 #include "lib/MCWorkers.h"
+
+#include <numeric>
 
 namespace
 {
@@ -242,6 +245,11 @@ int32_t MCPacketFile::ReadPacket(int32_t packet, std::span<uint8_t> buffer)
         Seek(_PacketBase + _PacketSize);
         return count == bytes.size() ? static_cast<int32_t>(count) : 0;
     }
+
+    // Port-only (lib/MCFirstUse.h): the file and packet a read or unpack below is for.
+    const auto name = [this]
+    { return std::format("{} packet {}", MCFirstUses::FileName(GetFilename()), _CurrentPacket); };
+    const MCFirstUseContext context(name);
 
     switch (_PacketType)
     {
@@ -749,6 +757,13 @@ MCPacketsHeld MCPacketFile::HoldPackets(std::span<const int32_t> packets)
     }
 
     return held;
+}
+
+MCPacketsHeld MCPacketFile::HoldAllPackets()
+{
+    std::vector<int32_t> packets(static_cast<size_t>(std::max(GetNumPackets(), 0)));
+    std::iota(packets.begin(), packets.end(), 0);
+    return HoldPackets(packets);
 }
 
 void MCPacketFile::Reserve(int32_t count, bool useCheckSum)

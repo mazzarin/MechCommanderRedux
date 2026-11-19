@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "lib/MCFastFile.h"
+#include "lib/MCFirstUse.h"
 #include "lib/MCInflate.h"
 #include "lib/MCLz.h"
 #include "lib/MCZstd.h"
@@ -915,6 +916,9 @@ int32_t MCFastFile::ReadEntry(int32_t index, std::span<uint8_t> data)
     MCDiskFile& file = *opened;
     data = data.first(std::min(data.size(), static_cast<size_t>(std::max(entry.RealSize, 0))));
     const auto offset = static_cast<uint32_t>(entry.Offset);
+    // Port-only (lib/MCFirstUse.h): the entry a read or unpack below is for.
+    const auto name = [&entry] { return std::string(entry.GetName()); };
+    const MCFirstUseContext context(name);
 
     if (entry.Size == entry.RealSize)
     {

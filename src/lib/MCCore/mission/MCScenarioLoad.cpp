@@ -300,8 +300,10 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         GameMap().ClearMines();
     }
 
-    // Port-only: the tiles the map's mines draw, which the map's vertices don't name, read with the ground.
+    // Port-only: the tiles the map's mines draw, which the map's vertices don't name, read with the ground; and those
+    // its bridges, forests and walls show once destroyed.
     MCTerrainReadMinesAhead();
+    MCTerrainReadDestroyedAhead();
 
     LoadScript(file);
     LoadWarriors(file);
@@ -349,7 +351,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCWeather::Clear();
     // Port-only: the original's packets the mission's first uses would read, read here together; then the explosions'
     // looks (HD particles) measured here, under the loading bar, rather than as each shows.
+    MarineProfile = ReadMarineProfile();
     LoadOriginalPackets();
+    LoadOverlayShapes();
     MCParticles::MeasureExplosions();
     MissionStartTime = 0;
     RunningTime = 0.0f;
@@ -982,10 +986,12 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
 auto MCScenario::LoadOriginalPackets() -> void
 {
     const auto started = std::chrono::steady_clock::now();
-    const MCPacketsHeld types = ObjectTypeManager().LoadMadeTypes();
+    const MCPacketsHeld types = ObjectTypeManager().LoadMadeTypes(
+        MarineProfile != nullptr ? MarineWeaponEffects(*MarineProfile) : std::vector<int32_t>());
 
-    // Every side's mechs: each mech type's PreloadGestures packets once, and each mech's packets drawn now; and
-    // (MechBraking) each type's art its stops are looked up by, as stored, in the same reads (MCStopsArtPackets).
+    // Every side's mechs: each mech type's packets once, every gesture's (MCSpriteTree::AllPackets: the first-use rule,
+    // none read in play; stand, walk and run were PreloadGestures'), and each mech's packets drawn now; and (MechBraking)
+    // each type's art its stops are looked up by, as stored, in the same reads (MCStopsArtPackets).
     std::vector<MCSpriteTree::MCTreePacket> mechPackets;
     std::vector<std::shared_ptr<MCSpriteTree>> stopsTrees;
     std::vector<MCStoredWanted> stopsArt;
@@ -1011,7 +1017,7 @@ auto MCScenario::LoadOriginalPackets() -> void
 
         if (!tree->GesturesPreloaded)
         {
-            std::ranges::transform(tree->PreloadPackets(), std::back_inserter(mechPackets),
+            std::ranges::transform(tree->AllPackets(), std::back_inserter(mechPackets),
                                    [&](const MCGesturePacket& where)
                                    { return MCSpriteTree::MCTreePacket{tree, where}; });
             tree->GesturesPreloaded = true;
@@ -1058,13 +1064,15 @@ auto MCScenario::LoadOriginalPackets() -> void
     MCPrepareStops(stopsTrees, stopsStored);
     stopsStored.clear();
 
-    // The kept types' appearances' shapes (the effects', the wrecks'), every packet of their PAKs, kept with them.
+    // Every loaded type's appearance's shapes, every packet of their PAKs, kept with them: the kept types' (the effects',
+    // the wrecks') and, by the first-use rule, the others' too (the map's objects, whose states each showed first in
+    // play).
     std::vector<MCShapeWanted> wanted;
     std::unordered_set<uint32_t> appearances;
 
     for (const std::shared_ptr<MCObjectType>& type : ObjectTypeManager().Types())
     {
-        if (type->KeepMe == 0 || !appearances.insert(type->AppearName).second)
+        if (!appearances.insert(type->AppearName).second)
         {
             continue;
         }

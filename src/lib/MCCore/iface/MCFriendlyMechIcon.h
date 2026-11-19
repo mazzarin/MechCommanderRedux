@@ -51,6 +51,8 @@ public:
     bool IsPoint = false;
     /// <summary>The pilot portrait.</summary>
     std::unique_ptr<MCGuiPort> PilotImage;
+    /// <summary>Port-only: the pilot's picture <see cref="PilotImage"/> holds, or empty for another (wounded, dead).</summary>
+    std::string PilotPictureShown;
     /// <summary>Set once the portrait was switched to the dead pilot image.</summary>
     bool ShowingDeadPilot = false;
     /// <summary>Set once the portrait was switched to the wounded pilot image.</summary>

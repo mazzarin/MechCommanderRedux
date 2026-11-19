@@ -203,6 +203,12 @@ public:
     /// <returns>The packets read and held (each once), the reads and their bytes.</returns>
     MCPacketsHeld HoldPackets(std::span<const int32_t> packets);
 
+    /// <summary>
+    /// Port-only (the workspace's SPEC-first-use.md): every packet of the file held (<see cref="HoldPackets"/>), so a
+    /// file whose packets are read in play (a pilot's radio lines) reads nothing from the disk then.
+    /// </summary>
+    MCPacketsHeld HoldAllPackets();
+
     /// <summary>Port-only: whether packet <paramref name="packet"/> is held (<see cref="HoldPackets"/>).</summary>
     bool Holds(int32_t packet) const { return _Held.contains(packet); }
 

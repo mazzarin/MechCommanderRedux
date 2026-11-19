@@ -12,6 +12,9 @@ class MCSensorSystem;
 /// </summary>
 inline constexpr std::array<int32_t, 8> ArtilleryTypeTable = {249, 248, 250, 516, 508, 507, 509, 516};
 
+/// <summary>Object type of the camera drone a sensor probe launches.</summary>
+inline constexpr int32_t CameraDroneType = 0x205;
+
 /// <summary>
 /// Calls an artillery strike (or a sensor probe) for commander <paramref name="commanderId"/>: spends one of the
 /// commander's strikes of that kind, creates the strike object at <paramref name="location"/> and, in a multiplayer

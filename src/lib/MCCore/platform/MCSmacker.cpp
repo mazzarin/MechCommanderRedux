@@ -1184,8 +1184,18 @@ void MCSmacker::BuildRemap(std::span<const uint8_t, 768> source, std::span<const
 std::expected<std::unique_ptr<MCSmackerPlayer>, std::string> MCSmackerPlayer::Open(const std::filesystem::path& path,
                                                                                    std::shared_ptr<MCAudio> audio)
 {
-    auto smacker = MCSmacker::Open(path);
+    return Playing(MCSmacker::Open(path), std::move(audio));
+}
 
+std::expected<std::unique_ptr<MCSmackerPlayer>, std::string> MCSmackerPlayer::OpenMemory(std::vector<uint8_t> data,
+                                                                                         std::shared_ptr<MCAudio> audio)
+{
+    return Playing(MCSmacker::OpenMemory(std::move(data)), std::move(audio));
+}
+
+std::expected<std::unique_ptr<MCSmackerPlayer>, std::string> MCSmackerPlayer::Playing(
+    std::expected<std::unique_ptr<MCSmacker>, std::string> smacker, std::shared_ptr<MCAudio> audio)
+{
     if (!smacker)
     {
         return std::unexpected(smacker.error());
@@ -1347,17 +1357,30 @@ void SmackSoundUseDirectSound(std::weak_ptr<MCAudio> audio)
     SmackerAudio() = std::move(audio);
 }
 
+namespace
+{
+    /// <summary>The movie tag of <paramref name="player"/> (null when it didn't open) for <paramref name="fileName"/>.</summary>
+    std::unique_ptr<MCSmackTag> Tagged(std::expected<std::unique_ptr<MCSmackerPlayer>, std::string> player,
+                                       std::string_view fileName)
+    {
+        if (!player)
+        {
+            return nullptr;
+        }
+
+        auto movie = std::make_unique<MCSmackTag>();
+        movie->Player = std::move(*player);
+        movie->FileName = fileName;
+        return movie;
+    }
+}
+
 std::unique_ptr<MCSmackTag> SmackOpen(std::string_view fileName, uint32_t flags, int32_t extraBuffers)
 {
-    auto player = MCSmackerPlayer::Open(MCFileSystem::Resolve(fileName), SmackerAudio().lock());
+    return Tagged(MCSmackerPlayer::Open(MCFileSystem::Resolve(fileName), SmackerAudio().lock()), fileName);
+}
 
-    if (!player)
-    {
-        return nullptr;
-    }
-
-    auto movie = std::make_unique<MCSmackTag>();
-    movie->Player = std::move(*player);
-    movie->FileName = fileName;
-    return movie;
+std::unique_ptr<MCSmackTag> SmackOpenMemory(std::string_view fileName, std::vector<uint8_t> data)
+{
+    return Tagged(MCSmackerPlayer::OpenMemory(std::move(data), SmackerAudio().lock()), fileName);
 }

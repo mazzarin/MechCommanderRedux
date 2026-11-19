@@ -60,8 +60,9 @@ bool MCTerrainAskHdGroundByName(const MCTerrain& terrain);
 
 /// <summary>
 /// Port-only (HD art): the overlay slots the map's bridges, forests and walls put on their vertices as they're destroyed
-/// (MCMiscTerrainObject::DestroyedOverlayTile), each once: drawn from then on, so read ahead and, with a version 2 pack,
-/// rebuilt with the map's (MCTerrainReadHdTiles). The terrain's objects are in once its load is done.
+/// (MCMiscTerrainObject::DestroyedOverlayTile), each once: drawn from then on, and the map's vertices don't name them, so
+/// the mission's load reads them with the mines' (MCTerrainReadDestroyedAhead) and, with a version 2 pack, rebuilds
+/// them with the map's (MCTerrainReadHdTiles). The terrain's objects are in once its load is done.
 /// </summary>
 std::vector<int32_t> MCTerrainDestroyedOverlaySlots();
 
@@ -106,13 +107,27 @@ std::vector<int32_t> MCTerrainMineSlots(const MCTerrain& terrain, MCMinesAhead c
 
 /// <summary>
 /// Port-only (PLAN.md's first-use item 10): reads the tiles the map's mines can draw (MCTerrainMineSlots of
-/// <paramref name="cells"/>) while the mission loads, the original's and, while the HD ground is drawn, their HD
-/// overlays (by name when the program knows the tile set), so a minefield's first frame on screen reads none, nor a
-/// mine a mine layer lays with EveryCell. With a version 2 pack, those the program's table names aren't read but left
-/// for MCTerrainReadHdTiles to rebuild from their HD frames. Call it once the map's mines are set (a match without
-/// mines clears them), before MCTerrainReadHdTiles; a tile read already isn't read again.
+/// <paramref name="cells"/>) with MCTerrainReadOverlaysAhead, so a minefield's first frame on screen reads none, nor a
+/// mine a mine layer lays with EveryCell. Call it once the map's mines are set (a match without mines clears them).
 /// </summary>
 void MCTerrainReadMinesAhead(MCMinesAhead cells = MCMinesAhead::Mined);
+
+/// <summary>
+/// Port-only (the workspace's SPEC-first-use.md): reads the tiles the map's bridges, forests and walls show once
+/// destroyed (MCTerrainDestroyedOverlaySlots) with MCTerrainReadOverlaysAhead, so the frame that first draws one reads
+/// none. Call it once the terrain's objects are in, before MCTerrainReadHdTiles.
+/// </summary>
+void MCTerrainReadDestroyedAhead();
+
+/// <summary>
+/// Port-only (the workspace's SPEC-first-use.md): reads tiles <paramref name="slots"/>, which the map's vertices don't
+/// name (a mine's, a destroyed bridge's), while the mission loads: the original's and, while the HD ground is drawn,
+/// their HD overlays (by name when the program knows the tile set), so the frame that first draws one reads none. With
+/// a version 2 pack, those the program's table names aren't read but left for MCTerrainReadHdTiles to rebuild from
+/// their HD frames. Call it before MCTerrainReadHdTiles; a tile read already isn't read again. The frame log names them
+/// <paramref name="what"/>.
+/// </summary>
+void MCTerrainReadOverlaysAhead(std::span<const int32_t> slots, std::string_view what);
 
 /// <summary>
 /// Port-only (PLAN.md's first-use item 10): the original ground tiles MCTerrainReadHdTiles rebuilt, the tiles and
@@ -131,8 +146,8 @@ struct MCGroundRebuilt
 /// (MCTerrainReadHdTilesAhead) waited for and kept, the rest read. For a tile set the program's table holds (PLAN.md's
 /// first-use item 10), each original tile the terrain's load left out (MCTerrainLeaveRebuiltTiles) is rebuilt from its
 /// HD frame (MCRebuildGroundTile) rather than read; one that isn't (no frame, or not the tile's bytes) is read. With a
-/// version 2 pack the overlays of the map, its .pre and its destroyed bridges, forests and walls
-/// (MCTerrainDestroyedOverlaySlots) and its mines' tiles (MCTerrainReadMinesAhead's) are rebuilt the same way
+/// version 2 pack the overlays of the map and its .pre, and the tiles MCTerrainReadOverlaysAhead left (its mines' and
+/// its destroyed bridges', forests' and walls': MCTerrainDestroyedOverlaySlots) are rebuilt the same way
 /// (MCRebuildGroundOverlay). Does nothing while HD art is off or the software renderer draws. How many original tiles
 /// and overlays it rebuilt and read.
 /// </summary>

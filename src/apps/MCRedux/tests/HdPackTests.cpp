@@ -4674,7 +4674,7 @@ TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays
     REQUIRE(MCHdArt::GuardingOriginalReads());
 
     // The terrain's load (the .pre's slots, then the map's) leaves out the overlays and the .pre's ground tiles no
-    // vertex names; the mines' read leaves theirs.
+    // vertex names; the mines' and destroyed objects' reads (as the mission's load) leave theirs.
     std::vector<int32_t> used = terrain->PreloadedSlots;
     used.insert(used.end(), mapUsed.begin(), mapUsed.end());
     MCTerrainLeaveRebuiltTiles(*terrain, used);
@@ -4683,6 +4683,7 @@ TEST_CASE_ISOLATED("game: a version 2 pack's overlays rebuild the map's overlays
         used, [&known, &mapUsed](int32_t slot)
         { return known->get().At(slot).Tile.has_value() && !std::ranges::contains(mapUsed, slot); }));
     MCTerrainReadMinesAhead();
+    MCTerrainReadDestroyedAhead();
     const auto cached = [&terrain](int32_t slot)
     {
         const MCOptionalRef<const MCTerrainTile> tile = terrain->Tiles->Slot(slot);

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "sound/MCHdAudio.h"
+#include "lib/MCFirstUse.h"
 #include "lib/MCFitIniFile.h"
 #include "platform/MCFlac.h"
 #include "platform/MCMemoryLedger.h"
@@ -464,8 +465,14 @@ std::shared_ptr<const MCHdAudio::Decoded> MCHdAudio::Sample(std::span<const uint
     State& state = Current();
     const uint64_t key = id.has_value() ? *id : IdOf(*parsed);
     std::unique_lock lock(state.Lock);
+
     // One the decoding thread is on is waited for (a decode at most); one still waiting for it is decoded here.
-    state.Changed.wait(lock, [&] { return !state.Decoding.contains(key); });
+    if (state.Decoding.contains(key))
+    {
+        // Port-only (lib/MCFirstUse.h): a sound the game's thread waits for in play.
+        const MCFirstUseScope use(MCFirstUseKind::Sound, [&] { return "waited for: " + KeyName(KeyOf(*parsed)); }, 0);
+        state.Changed.wait(lock, [&] { return !state.Decoding.contains(key); });
+    }
 
     if (const auto found = state.Samples.find(key); found != state.Samples.end())
     {
@@ -480,7 +487,14 @@ std::shared_ptr<const MCHdAudio::Decoded> MCHdAudio::Sample(std::span<const uint
     // Only this thread forgets what was found, so what is decoded here is remembered.
     state.Decoding.insert(key);
     lock.unlock();
-    std::shared_ptr<const Decoded> decoded = Decode(*parsed, MCHdArt::PackFolder());
+    std::shared_ptr<const Decoded> decoded;
+
+    {
+        // Port-only (lib/MCFirstUse.h): a sound the game's thread decodes in play.
+        const MCFirstUseScope use(MCFirstUseKind::Sound, [&] { return "decoded: " + KeyName(KeyOf(*parsed)); }, 0);
+        decoded = Decode(*parsed, MCHdArt::PackFolder());
+    }
+
     lock.lock();
     Remember(state, key, decoded, false);
     state.Decoding.erase(key);

@@ -135,7 +135,8 @@ auto MCGuiPort::Init(int32_t artPacket) -> int32_t
         Fatal(-2, "Bad child file in art.pak");
     }
 
-    // Port-only: with HD art's numbered folders drawn, the pack's copy of the packet (MCShapeFile).
+    // Port-only: the packet read whole (the original read it as a child file of the art file's): with HD art's numbered
+    // folders drawn, the pack's copy (MCShapeFile); else from the bytes held (MCGuiSystem holds them all), not the disk.
     std::vector<uint8_t> gif(static_cast<size_t>(size));
 
     if (MCShapeFile::ReadPacket(artFile, artPacket, gif) != size)

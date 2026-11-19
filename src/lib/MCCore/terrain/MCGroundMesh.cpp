@@ -579,18 +579,19 @@ namespace
     }
 
     /// <summary>
-    /// The mines' tiles MCTerrainReadMinesAhead left unread for MCTerrainReadHdTiles to rebuild from their HD frames, and
-    /// the terrain whose they are; the load's, on the game's thread.
+    /// The tiles MCTerrainReadOverlaysAhead left unread (the mines' and destroyed terrain objects') for
+    /// MCTerrainReadHdTiles to rebuild from their HD frames, and the terrain whose they are; the load's, on the game's
+    /// thread.
     /// </summary>
-    struct MinesLeft
+    struct OverlaysLeft
     {
         std::weak_ptr<const MCTerrain> Of;
         std::vector<int32_t> Slots;
     };
 
-    MinesLeft& MinesLeftToRebuild()
+    OverlaysLeft& OverlaysLeftToRebuild()
     {
-        static MinesLeft left;
+        static OverlaysLeft left;
         return left;
     }
 
@@ -849,9 +850,21 @@ void MCTerrainReadMinesAhead(MCMinesAhead cells)
         return;
     }
 
-    const std::vector<int32_t> slots = MCTerrainMineSlots(*terrain, cells);
+    MCTerrainReadOverlaysAhead(MCTerrainMineSlots(*terrain, cells), cells == MCMinesAhead::EveryCell
+                                                                        ? "mines' tiles (every cell's)"
+                                                                        : "mines' tiles (the mined cells')");
+}
 
-    if (slots.empty())
+void MCTerrainReadDestroyedAhead()
+{
+    MCTerrainReadOverlaysAhead(MCTerrainDestroyedOverlaySlots(), "destroyed terrain objects' tiles");
+}
+
+void MCTerrainReadOverlaysAhead(std::span<const int32_t> slots, std::string_view what)
+{
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (terrain == nullptr || terrain->Tiles == nullptr || slots.empty())
     {
         return;
     }
@@ -874,11 +887,11 @@ void MCTerrainReadMinesAhead(MCMinesAhead cells)
 
     if (known.has_value() && HdOverlaysRebuilt(*terrain))
     {
-        MinesLeft& mines = MinesLeftToRebuild();
+        OverlaysLeft& overlaysLeft = OverlaysLeftToRebuild();
 
-        if (mines.Of.lock() != terrain)
+        if (overlaysLeft.Of.lock() != terrain)
         {
-            mines = MinesLeft{terrain, {}};
+            overlaysLeft = OverlaysLeft{terrain, {}};
         }
 
         for (const int32_t slot : slots)
@@ -891,15 +904,15 @@ void MCTerrainReadMinesAhead(MCMinesAhead cells)
 
             ++left;
 
-            if (!std::ranges::contains(mines.Slots, slot))
+            if (!std::ranges::contains(overlaysLeft.Slots, slot))
             {
-                mines.Slots.push_back(slot);
+                overlaysLeft.Slots.push_back(slot);
             }
         }
     }
     else
     {
-        toRead = slots;
+        toRead.assign(slots.begin(), slots.end());
     }
 
     const MCTileReads read = terrain->Tiles->ReadTiles(toRead);
@@ -922,8 +935,7 @@ void MCTerrainReadMinesAhead(MCMinesAhead cells)
     if (MCFrameLog::Enabled())
     {
         MCFrameLog::Note(std::format(
-            "mines' tiles ({}): {}, {} left to rebuild from HD, {} read in {} reads, {:.1f} ms",
-            cells == MCMinesAhead::EveryCell ? "every cell's" : "the mined cells'", slots.size(), left, read.Tiles,
+            "{}: {}, {} left to rebuild from HD, {} read in {} reads, {:.1f} ms", what, slots.size(), left, read.Tiles,
             read.Reads, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
     }
 }
@@ -938,14 +950,10 @@ void MCTerrainReadHdTilesAhead()
     }
 
     // By name when the program knows the tile set (the readers pass over what the terrain's load asked for already),
-    // so no tile is hashed, and the overlays its bridges, forests and walls take as they're destroyed, their objects in
-    // now; otherwise by the tiles' own bytes.
+    // so no tile is hashed; otherwise by the tiles' own bytes. The overlays its bridges, forests and walls take as
+    // they're destroyed are the mission's load's to read, with the mines' (MCTerrainReadDestroyedAhead).
     if (MCTerrainAskHdGroundByName(*terrain))
     {
-        const MCKnownGroundNames& known = MCKnownGroundNamesOf(*terrain->Tiles)->get();
-        std::vector<int32_t> slots = OverlaySlotsAndPreloaded(*terrain, known);
-        const size_t destroyed = AddNamed(slots, MCTerrainDestroyedOverlaySlots(), known, &MCGroundSlotNames::Overlay);
-        MCHdArt::ReadOverlaysAhead(NamedAhead(known, std::span(slots).last(destroyed), &MCGroundSlotNames::Overlay));
         return;
     }
 
@@ -958,20 +966,19 @@ namespace
 {
     /// <summary>
     /// Port-only (PLAN.md's first-use item 10): with a version 2 pack (HdOverlaysRebuilt), each overlay of the map, its
-    /// .pre, its destroyed bridges, forests and walls (MCTerrainDestroyedOverlaySlots) and its mines (those
-    /// MCTerrainReadMinesAhead left) that the terrain's load left out or never read, rebuilt from its HD frame
+    /// .pre, and the tiles MCTerrainReadOverlaysAhead left (its mines' and its destroyed bridges', forests' and walls':
+    /// MCTerrainDestroyedOverlaySlots) that the terrain's load left out or never read, rebuilt from its HD frame
     /// (MCRebuildGroundOverlay) and put in the cache; one that isn't (no frame, or not the overlay's bytes) is added to
     /// <paramref name="unread"/>. How many it rebuilt.
     /// </summary>
     size_t RebuildOverlaysFromHd(MCTerrain& terrain, const MCKnownGroundNames& known, std::vector<int32_t>& unread)
     {
-        MinesLeft& mines = MinesLeftToRebuild();
+        OverlaysLeft& overlaysLeft = OverlaysLeftToRebuild();
         std::vector<int32_t> slots = OverlaySlotsAndPreloaded(terrain, known);
-        AddNamed(slots, MCTerrainDestroyedOverlaySlots(), known, &MCGroundSlotNames::Overlay);
 
-        if (mines.Of.lock().get() == &terrain)
+        if (overlaysLeft.Of.lock().get() == &terrain)
         {
-            for (const int32_t slot : mines.Slots)
+            for (const int32_t slot : overlaysLeft.Slots)
             {
                 if (!std::ranges::contains(slots, slot))
                 {
@@ -980,7 +987,7 @@ namespace
             }
         }
 
-        mines = MinesLeft{};
+        overlaysLeft = OverlaysLeft{};
 
         if (!HdOverlaysRebuilt(terrain))
         {

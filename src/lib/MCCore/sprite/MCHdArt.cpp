@@ -2,6 +2,7 @@
 #include "sprite/MCHdArt.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
+#include "lib/MCFirstUse.h"
 #include "lib/MCInflate.h"
 #include "lib/MCOptionalRef.h"
 #include "lib/MCZstd.h"
@@ -1229,7 +1230,16 @@ namespace
     {
         ReadAhead& ahead = TheState().Ahead;
         std::unique_lock lock(ahead.Lock);
-        ahead.Changed.wait(lock, [&] { return !ahead.Opening.contains(folder); });
+
+        // Port-only (lib/MCFirstUse.h): an archive the game's thread waits on the readers to open in play.
+        if (ahead.Opening.contains(folder))
+        {
+            const MCFirstUseScope use(
+                MCFirstUseKind::Wait,
+                [&] { return std::format("an archive being opened: {}", MCFileSystem::ToUtf8(folder)); }, 0);
+            ahead.Changed.wait(lock, [&] { return !ahead.Opening.contains(folder); });
+        }
+
         auto opened = ahead.Opened.extract(folder);
 
         if (opened.empty())
@@ -1436,6 +1446,15 @@ namespace
                                                          MCOptionalRef<MCDiskFile> own = std::nullopt)
     {
         const MCFileEntry& entry = archive.File->EntryAt(index);
+        // Port-only (lib/MCFirstUse.h): an HD frame the game's thread reads in play (or unpacks, below), not a reader.
+        MCFirstUseScope use(
+            MCFirstUseKind::Read,
+            [&]
+            {
+                return std::format("{} {}",
+                                   MCFileSystem::ToUtf8(archive.Path.lexically_relative(MCHdArt::PackFolder())), name);
+            },
+            static_cast<uint64_t>(std::max(entry.RealSize, 0)));
 
         // Checked before the read, so a malformed pack can't make the game read a huge entry.
         if (!FitsFrameFile(entry))
@@ -1446,12 +1465,14 @@ namespace
         // A version 2 entry whose stream is kept unpacked from an earlier read (the readers', its packet's) needs no read.
         if (const std::shared_ptr<const std::vector<uint8_t>> kept = archive.File->KeptStreamOf(index); kept != nullptr)
         {
+            use.Kind = MCFirstUseKind::Unpack;
             return MCHdArt::DecodeHdf(archive.File->EntryIn(index, *kept), width, height);
         }
 
         // Port-only: nor one whose stored bytes are held (MCHdArt::StartHold): it's unpacked from memory.
         if (const std::optional<MCFastFile::Held> held = archive.File->HeldOf(index); held.has_value())
         {
+            use.Kind = MCFirstUseKind::Unpack;
             return DecodeEntry(*archive.File, index, held->Stored, name, width, height);
         }
 
@@ -3782,6 +3803,14 @@ namespace
         }
     }
 
+    /// <summary>Port-only (lib/MCFirstUse.h): frame <paramref name="key"/>'s name, its folder's path in the pack's.</summary>
+    std::string KeyName(const FrameKey& key)
+    {
+        const FrameFolder& folder = TheState().Folders.at(key.Folder);
+        const std::string name = folder.Names == Naming::Hash ? HashName(key.Name) : NumberedName(key.Name);
+        return std::format("{}/{}", MCFileSystem::ToUtf8(folder.Path.lexically_relative(MCHdArt::PackFolder())), name);
+    }
+
     /// <summary>
     /// The frame <paramref name="key"/> if the reading thread read it ahead (waiting while it reads it), taken from it;
     /// null when it didn't, and then it never will: the game's thread looks at it now.
@@ -3790,7 +3819,15 @@ namespace
     {
         ReadAhead& ahead = TheState().Ahead;
         std::unique_lock lock(ahead.Lock);
-        ahead.Changed.wait(lock, [&] { return !ahead.Reading.contains(key); });
+
+        // Port-only (lib/MCFirstUse.h): a frame the game's thread waits on a reader for in play is late.
+        if (ahead.Reading.contains(key))
+        {
+            const MCFirstUseScope use(
+                MCFirstUseKind::Wait, [&] { return std::format("a frame being read: {}", KeyName(key)); }, 0);
+            ahead.Changed.wait(lock, [&] { return !ahead.Reading.contains(key); });
+        }
+
         ahead.Known.insert(key);
 
         // Port-only: a picture read ahead, not kept yet (MCHdArt::KeepReadAhead).

@@ -55,8 +55,11 @@ public:
     /// appearance with it), so that none is read as it's first made. A type whose packet won't make one is left to fail
     /// as the original fails, if the mission ever makes it.
     /// </summary>
+    /// <param name="alsoMade">
+    /// Types the mission makes in play that no loaded type names (the marines' weapons' effects, MarineWeaponEffects).
+    /// </param>
     /// <returns>The packets read together, their reads and their bytes.</returns>
-    MCPacketsHeld LoadMadeTypes();
+    MCPacketsHeld LoadMadeTypes(std::span<const int32_t> alsoMade = {});
 
     /// <summary>
     /// Type data the types load (shapes, hot spot and stage tables): the original's type heap, which freed whatever

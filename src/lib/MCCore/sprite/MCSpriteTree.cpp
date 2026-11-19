@@ -509,10 +509,52 @@ auto MCSpriteTree::GesturePacket(int32_t gesture, int32_t part, float rotation) 
         return std::nullopt;
     }
 
-    const bool symmetrical = PartSymmetrical(data, part);
     const ShownFacing shown = ShowsFacing(data, gesture, part, rotation);
-    const int32_t index = shown.Index;
-    const bool reverse = shown.Reverse;
+    return PacketAt(gesture, part, shown.Index, shown.Reverse);
+}
+
+auto MCSpriteTree::AllPackets() const -> std::vector<MCGesturePacket>
+{
+    std::vector<MCGesturePacket> packets;
+    std::set<std::pair<MCMechPart, uint32_t>> seen;
+    const size_t gestures = std::min(Gestures.size(), PacketFinderArray.size());
+
+    for (size_t gesture = 0; gesture < gestures; ++gesture)
+    {
+        const MCGestureData& data = Gestures[gesture];
+
+        if (data.NumFrames == 0)
+        {
+            continue;
+        }
+
+        const auto at = static_cast<int32_t>(gesture);
+        const int32_t step = EveryFourthFacing(at) ? FourthFacingStep : 1;
+
+        for (int32_t part = 0; part < MechPartCount; ++part)
+        {
+            const int32_t stored = part == 0 ? LegRotationCount : PartRotations(PartSymmetrical(data, part));
+
+            for (int32_t index = 0; index < stored; index += step)
+            {
+                if (const std::optional<MCGesturePacket> where = PacketAt(at, part, index, false);
+                    where.has_value() && FileNumbers[where->FilePart] != NoFileNumber &&
+                    seen.emplace(where->FilePart, where->Packet).second)
+                {
+                    packets.push_back(*where);
+                }
+            }
+        }
+    }
+
+    return packets;
+}
+
+auto MCSpriteTree::PacketAt(int32_t gesture, int32_t part, int32_t index, bool reverse) const
+    -> std::optional<MCGesturePacket>
+{
+    const MCGestureData& data = Gestures[gesture];
+    const bool symmetrical = PartSymmetrical(data, part);
 
     // The tree's parts 2 and 3 are the left and the right arm's sprites.
     constexpr std::array<MCMechPart, MechPartCount> filePart = {MCMechPart::Legs, MCMechPart::Torso,

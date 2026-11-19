@@ -374,8 +374,7 @@ auto MCMiscTerrainObject::SetDamage(float newDamage) -> void
             return;
         }
 
-        Terrain()->SetOverlayTile(BlockNumber, VertexNumber,
-                                  *DestroyedOverlayStep(Kind, Terrain()->GetOverlayTile(BlockNumber, VertexNumber)));
+        ShowDestroyedOverlay();
         MCTerrain::ForceRedraw = true;
         OverlayDestroyed = true;
         Destroyed = true;
@@ -423,8 +422,7 @@ auto MCMiscTerrainObject::SetDamage(float newDamage) -> void
             return;
         }
 
-        const int32_t overlayTile = Terrain()->GetOverlayTile(BlockNumber, VertexNumber);
-        Terrain()->SetOverlayTile(BlockNumber, VertexNumber, *DestroyedOverlayStep(Kind, overlayTile));
+        ShowDestroyedOverlay();
         MCTerrain::ForceRedraw = true;
         OverlayDestroyed = true;
         Destroyed = true;
@@ -443,8 +441,7 @@ auto MCMiscTerrainObject::SetDamage(float newDamage) -> void
             return;
         }
 
-        const int32_t overlayTile = Terrain()->GetOverlayTile(BlockNumber, VertexNumber);
-        Terrain()->SetOverlayTile(BlockNumber, VertexNumber, *DestroyedOverlayStep(Kind, overlayTile));
+        ShowDestroyedOverlay();
         MCTerrain::ForceRedraw = true;
         OverlayDestroyed = true;
         Destroyed = true;
@@ -461,20 +458,33 @@ auto MCMiscTerrainObject::SetDamage(float newDamage) -> void
 
 auto MCMiscTerrainObject::DestroyedOverlayTile() const -> std::optional<int32_t>
 {
-    if (OverlayDestroyed)
-    {
-        return std::nullopt;
-    }
-
     const int32_t overlayTile = Terrain()->GetOverlayTile(BlockNumber, VertexNumber);
     const std::optional<int32_t> step = DestroyedOverlayStep(Kind, overlayTile);
 
-    if (!step.has_value() || overlayTile + *step < 0)
+    if (!step.has_value())
     {
         return std::nullopt;
     }
 
-    return overlayTile + *step;
+    // As the vertex keeps it (SetOverlayTile adds to a 16-bit tile number); a negative one is no tile.
+    const int16_t tile = static_cast<int16_t>(overlayTile + *step);
+
+    if (tile < 0)
+    {
+        return std::nullopt;
+    }
+
+    return tile;
+}
+
+auto MCMiscTerrainObject::ShowDestroyedOverlay() -> void
+{
+    if (const std::optional<int32_t> step =
+            DestroyedOverlayStep(Kind, Terrain()->GetOverlayTile(BlockNumber, VertexNumber));
+        step.has_value())
+    {
+        Terrain()->SetOverlayTile(BlockNumber, VertexNumber, *step);
+    }
 }
 
 auto MCMiscTerrainObject::Init(std::shared_ptr<MCObjectType> objType) -> int32_t

@@ -153,6 +153,11 @@ namespace MCStaging
     std::shared_ptr<MCMover> NearestEnemy();
 
     /// <summary>
+    /// <paramref name="mover"/> ordered, as the player orders it, to attack <paramref name="target"/> and pursue it.
+    /// </summary>
+    void Attack(MCMover& mover, const std::shared_ptr<MCMover>& target);
+
+    /// <summary>
     /// The player's lance selected (its brackets and bars drawn) and ordered to attack <paramref name="target"/>, the
     /// camera on the player's mech.
     /// </summary>

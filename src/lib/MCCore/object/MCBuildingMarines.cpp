@@ -5,6 +5,8 @@
 #include "main/MCGamePaths.h"
 #include "mission/MCScenario.h"
 #include "object/MCForces.h"
+#include "object/MCGroundVehicleGameSystem.h"
+#include "object/MCMasterComponent.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCObjectList.h"
@@ -14,6 +16,99 @@
 
 int32_t DefaultPilotId = 0x28d;
 int32_t NumMarines = 0;
+
+namespace
+{
+    /// <summary>The marine profile opened, or the open's error.</summary>
+    std::expected<std::unique_ptr<MCFitIniFile>, int32_t> OpenMarineProfile()
+    {
+        auto profile = std::make_unique<MCFitIniFile>();
+
+        if (const int32_t result = profile->Open(GamePath(ProfilePath, MarineProfileName, ".fit")); result != 0)
+        {
+            return std::unexpected(result);
+        }
+
+        return profile;
+    }
+}
+
+std::unique_ptr<MCFitIniFile> ReadMarineProfile()
+{
+    return OpenMarineProfile().value_or(nullptr);
+}
+
+std::vector<int32_t> MarineWeaponEffects(MCFitIniFile& profile)
+{
+    std::vector<int32_t> effects;
+    MCFitReader read(profile);
+    // As MCMover keeps them (a FIT entry is found by its type too).
+    uint8_t others = 0;
+    uint8_t weapons = 0;
+
+    // The weapons follow the other equipment in the items, as MCElemental::LoadProfile reads them.
+    const bool inventory = profile.SeekBlock("InventoryInfo") == 0;
+
+    if (inventory)
+    {
+        read.Value("NumOther", others);
+        read.Value("NumWeapons", weapons);
+    }
+
+    if (!inventory || read.Failed())
+    {
+        SDL_Log("MarineWeaponEffects: %.*s's inventory can't be read; its weapons' effects are loaded as first fired",
+                static_cast<int>(MarineProfileName.size()), MarineProfileName.data());
+        return effects;
+    }
+
+    for (int32_t item = others; item < int32_t{others} + weapons; ++item)
+    {
+        uint8_t masterId = 0;
+        const bool found = profile.SeekBlock(std::format("Item:{}", item)) == 0;
+
+        if (found)
+        {
+            read.Value("MasterID", masterId);
+        }
+
+        const size_t effect = masterId < MasterComponentList.size() ? MasterComponentList[masterId].WeaponEffect
+                                                                    : std::size(WeaponFXTable);
+
+        if (!found || read.Failed() || effect >= std::size(WeaponFXTable))
+        {
+            SDL_Log("MarineWeaponEffects: %.*s's item %d isn't a weapon read; its effect is loaded as first fired",
+                    static_cast<int>(MarineProfileName.size()), MarineProfileName.data(), item);
+            return effects;
+        }
+
+        effects.push_back(static_cast<int32_t>(WeaponFXTable[effect]));
+    }
+
+    return effects;
+}
+
+void LoadMarineProfile(MCMover& marine)
+{
+    std::unique_ptr<MCFitIniFile>& profile = Scenario()->MarineProfile;
+
+    if (profile == nullptr)
+    {
+        std::expected<std::unique_ptr<MCFitIniFile>, int32_t> opened = OpenMarineProfile();
+
+        if (!opened.has_value())
+        {
+            Fatal(opened.error(), " Unable to open Vehicle Marine Profile ");
+        }
+
+        profile = std::move(*opened);
+    }
+
+    if (marine.LoadProfile(*profile) != 0)
+    {
+        Fatal(-1, " Bad Vehicle Marine Profile File ");
+    }
+}
 
 std::shared_ptr<MCMover> MakeMarine(std::string_view createFailure)
 {
@@ -25,19 +120,7 @@ std::shared_ptr<MCMover> MakeMarine(std::string_view createFailure)
     }
 
     marine->SetAwake(1);
-    MCFitIniFile profileFile;
-
-    if (const int32_t result = profileFile.Open(GamePath(ProfilePath, MarineProfileName, ".fit")); result != 0)
-    {
-        Fatal(result, " Unable to open Vehicle Marine Profile ");
-    }
-
-    if (marine->LoadProfile(profileFile) != 0)
-    {
-        Fatal(-1, " Bad Vehicle Marine Profile File ");
-    }
-
-    profileFile.Close();
+    LoadMarineProfile(*marine);
     return marine;
 }
 

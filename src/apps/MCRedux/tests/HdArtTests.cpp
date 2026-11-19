@@ -8666,7 +8666,8 @@ namespace
 /// (<c>facing_&lt;degrees&gt;</c>), and with <c>--paints &lt;first&gt;:&lt;last&gt;</c> first in each of those schemes
 /// at the first facing (<c>paint_&lt;n&gt;</c>), to find the angle and scheme of a mech in a player's screenshot.
 /// The shots wait for the mech to stand still (it powers up first) and, at each facing, for the drawn mech to have
-/// turned to it (HDTurns eases its turns).
+/// turned to it (HDTurns eases its turns). <c>--reveal 1</c> reveals the whole map first (the game's cheat), so the
+/// minimap shows all of its picture.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
 {
@@ -8684,6 +8685,11 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
     const std::filesystem::path folder(*shots);
     std::filesystem::create_directories(folder);
     const auto shoot = [&](const std::string& name) { Shoot(folder, name, original); };
+
+    if (MCTest::Option("reveal").value_or("0") == "1")
+    {
+        RevealAll();
+    }
 
     if (const std::optional<std::vector<float>> zoom = NumbersOption("zoom", 1); zoom.has_value())
     {

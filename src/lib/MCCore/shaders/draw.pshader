@@ -1009,35 +1009,57 @@ float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
     return HdAt(texel);
 }
 
-// Port-only (sun shadows): an HD frame's baked shadow at `shape` (a place in its original's pixels, their centres at
-// .5), between the four original pixels around it: x the weight of those in its shadow, y of those with an index.
-float2 BakedShadowWeights(int2 original, float2 shape)
+// Port-only: the four original pixels around a place in an HD frame's original pixels (their centres at .5), as its
+// baked shadow and its recolour read them: base the first's (the place's floor less a half), f how far past it the
+// place lies, and each one's index picture texel (entries[y * 2 + x] for base + (x, y)), nothing (0) outside the
+// picture.
+struct PixelsAround
 {
+    int2 base;
+    float2 f;
+    float4 entries[4];
+};
+
+// The four original pixels around `shape` in a picture `original` pixels in size.
+PixelsAround PixelsAroundAt(int2 original, float2 shape)
+{
+    PixelsAround around;
     const float2 at = shape - 0.5;
-    const int2 base = int2(floor(at));
-    const float2 f = at - float2(base);
+    around.base = int2(floor(at));
+    around.f = at - float2(around.base);
+
+    [unroll] for (int y = 0; y < 2; y++)
+    {
+        [unroll] for (int x = 0; x < 2; x++)
+        {
+            const int2 texel = around.base + int2(x, y);
+            const bool outside = any(texel < 0) || any(texel >= original);
+            around.entries[y * 2 + x] = outside ? float4(0.0, 0.0, 0.0, 0.0) : SourceAt(texel);
+        }
+    }
+
+    return around;
+}
+
+// Port-only (sun shadows): an HD frame's baked shadow between the four original pixels around a place: x the weight of
+// those in its shadow, y of those with an index (none outside the picture: their entries have no index).
+float2 BakedShadowWeightsOf(PixelsAround around)
+{
     float shadow = 0.0;
     float drawn = 0.0;
 
-    for (int y = 0; y < 2; y++)
+    [unroll] for (int y = 0; y < 2; y++)
     {
-        for (int x = 0; x < 2; x++)
+        [unroll] for (int x = 0; x < 2; x++)
         {
-            const int2 texel = base + int2(x, y);
-
-            if (any(texel < 0) || any(texel >= original))
-            {
-                continue;
-            }
-
-            const float4 entry = SourceAt(texel);
+            const float4 entry = around.entries[y * 2 + x];
 
             if (!HasIndexIn(entry))
             {
                 continue;
             }
 
-            const float weight = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+            const float weight = (x == 0 ? 1.0 - around.f.x : around.f.x) * (y == 0 ? 1.0 - around.f.y : around.f.y);
             drawn += weight;
             shadow += InShadowIn(entry) ? weight : 0.0;
         }
@@ -1046,12 +1068,25 @@ float2 BakedShadowWeights(int2 original, float2 shape)
     return float2(shadow, drawn);
 }
 
-// Port-only (sun shadows): how much of an HD frame's colour at `shape` is its baked shadow: of the original pixels
+// Port-only (sun shadows): an HD frame's baked shadow at `shape` (a place in its original's pixels, their centres at
+// .5), between the four original pixels around it: x the weight of those in its shadow, y of those with an index.
+float2 BakedShadowWeights(int2 original, float2 shape)
+{
+    return BakedShadowWeightsOf(PixelsAroundAt(original, shape));
+}
+
+// Port-only (sun shadows): how much of an HD frame's colour at a place is its baked shadow: of the four original pixels
 // around it with an index (so the shadow keeps its strength out to its edge, where the frame's own coverage fades it).
+float BakedShadowOf(PixelsAround around)
+{
+    const float2 weights = BakedShadowWeightsOf(around);
+    return weights.y > 0.0 ? weights.x / weights.y : 0.0;
+}
+
+// The same at `shape`, in a picture `original` pixels in size.
 float BakedShadowAt(int2 original, float2 shape)
 {
-    const float2 weights = BakedShadowWeights(original, shape);
-    return weights.y > 0.0 ? weights.x / weights.y : 0.0;
+    return BakedShadowOf(PixelsAroundAt(original, shape));
 }
 
 // Port-only (KindHdSmooth): whether an HD frame's index picture's green marks an original pixel its frame covers, its
@@ -1254,36 +1289,28 @@ float4 HdColourBetween(Input input, float2 shape, int2 original)
 // the spread of a Gaussian over their RGB distance).
 static const float RecolourLikeness = 0.08;
 
-// Port-only: HD colour `color` at `shape` (a place in the original's pixels, centres at .5) recoloured as the original
-// pixels around it show now (a paint scheme's table, today's palette: Corrected), blended between the four around it
-// that have an index: by nearness, as the colour is between its texels, and by how alike the HD colour is to each one's
-// colour as the pack was made, so a paint scheme's colours change where the HD art's edges lie, not at the original's
-// pixel steps; `nearest` (which has one) alone when none of the four counts.
-float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original, int2 nearest)
+// Port-only: HD colour `color` at a place in the original's pixels recoloured as the original pixels around it show now
+// (a paint scheme's table, today's palette: Corrected), blended between the four around it (`around`) that have an
+// index: by nearness, as the colour is between its texels, and by how alike the HD colour is to each one's colour as
+// the pack was made, so a paint scheme's colours change where the HD art's edges lie, not at the original's pixel
+// steps; the nearest pixel that has one (its entry `nearest`) alone when none of the four counts.
+float3 RecolouredBetween(Input input, float4 color, PixelsAround around, float4 nearest)
 {
     const float3 own = color.a > 0.0 ? color.rgb / color.a : color.rgb;
-    const float2 at = shape - 0.5;
-    const int2 base = int2(floor(at));
-    const float2 f = at - float2(base);
+    const float2 f = around.f;
     const bool table = (input.op.x & TableBefore) != 0;
     float3 sum = float3(0.0, 0.0, 0.0);
     float weight = 0.0;
 
-    for (int y = 0; y < 2; y++)
+    [unroll] for (int y = 0; y < 2; y++)
     {
-        for (int x = 0; x < 2; x++)
+        [unroll] for (int x = 0; x < 2; x++)
         {
-            const int2 texel = base + int2(x, y);
             const float w = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+            // None outside the picture: their entries have no index.
+            const float4 entry = around.entries[y * 2 + x];
 
-            if (w <= 0.0 || any(texel < int2(0, 0)) || any(texel >= original))
-            {
-                continue;
-            }
-
-            const float4 entry = SourceAt(texel);
-
-            if (!RecolouringIndexIn(entry, input.op.x))
+            if (w <= 0.0 || !RecolouringIndexIn(entry, input.op.x))
             {
                 continue;
             }
@@ -1301,7 +1328,7 @@ float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original,
         return sum / weight;
     }
 
-    const uint index = Byte(SourceAt(nearest).r);
+    const uint index = Byte(nearest.r);
     return Corrected(color.rgb, color.a, index, table ? Table(input.op.z, index) : index);
 }
 
@@ -1378,9 +1405,25 @@ Output HdPixelAt(Input input, float2 shape)
         discard;
     }
 
-    // How much of the colour is the frame's baked shadow, worked out once for the three below that use it.
+    // Whether the colour is recoloured below as the original pixels around it show now (not by a sun shadow's draw or a
+    // mark pass, which return first): its nearest original pixel's index says.
+    const bool returnsFirst = (input.op.x & (SunShadowDraw | IndexOnly)) != 0;
+    const float4 entry = returnsFirst ? float4(0.0, 0.0, 0.0, 0.0) : SourceAt(texel);
+    const bool recolours = RecolouringIndexIn(entry, input.op.x);
+    const bool recolouredBetween = recolours && (input.op.x & HdAsMade) == 0;
+
+    // How much of the colour is the frame's baked shadow, worked out once for the three below that use it, from the
+    // four original pixels around it that the recolour reads too.
     const bool darkens = look.y > 0.0 && (input.op.x & HdLight) == 0;
-    const float baked = (input.op.x & (Sways | SunShadowDraw)) != 0 || darkens ? BakedShadowAt(original, shape) : 0.0;
+    const bool shadowed = (input.op.x & (Sways | SunShadowDraw)) != 0 || darkens;
+    PixelsAround around = (PixelsAround)0;
+
+    if (shadowed || recolouredBetween)
+    {
+        around = PixelsAroundAt(original, shape);
+    }
+
+    const float baked = shadowed ? BakedShadowOf(around) : 0.0;
 
     // A forest's canopy marks where it is drawn, not its painted shadow (Sways).
     float swayMark = 0.0;
@@ -1418,13 +1461,9 @@ Output HdPixelAt(Input input, float2 shape)
 
     // The colour as the original pixels around it show now: through a paint scheme's table, today's palette, cycle and
     // brightness.
-    const float4 entry = SourceAt(texel);
-
-    const bool recolours = RecolouringIndexIn(entry, input.op.x);
-
-    if (recolours && (input.op.x & HdAsMade) == 0)
+    if (recolouredBetween)
     {
-        color.rgb = RecolouredBetween(input, color, shape, original, texel);
+        color.rgb = RecolouredBetween(input, color, around, entry);
     }
     else if (!recolours && (input.op.x & TableBefore) != 0)
     {

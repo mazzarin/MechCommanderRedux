@@ -1,5 +1,7 @@
 #include "stdafx.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
+#include "MCTestArchive.h"
 #include "lib/MCPacketFile.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -41,6 +43,8 @@
 #include "platform/MCFileSystem.h"
 #include "sound/MCSoundSystem.h"
 #include "gui/MCGuiGlobals.h"
+#include "sprite/MCHdArt.h"
+#include "sprite/MCHoldLists.h"
 #include "sprite/MCSceneLights.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCInput.h"
@@ -450,6 +454,139 @@ TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the dr
     CHECK(logistics->MessageDialog->ShowWindow != 0);
     CHECK(briefing.SlotBlocks[0] == nullptr);
     CHECK(pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)) != nullptr);
+}
+
+namespace
+{
+    /// <summary>
+    /// Writes the HD pack's archive of <paramref name="folder"/> in <paramref name="pack"/>: a numbered frame of each of
+    /// <paramref name="frameBytes"/>' sizes, its bytes its number.
+    /// </summary>
+    /// <returns>The bytes it stores, all of which the hold keeps.</returns>
+    size_t WriteFramesArchive(const std::filesystem::path& pack, const std::filesystem::path& folder,
+                              std::span<const size_t> frameBytes)
+    {
+        std::vector<MCTestArchive::ArchiveEntry> entries;
+        size_t stored = 0;
+
+        for (size_t frame = 0; frame < frameBytes.size(); frame++)
+        {
+            entries.push_back(
+                MCTestArchive::Raw(std::format("{}.hdf", frame),
+                                   std::vector<uint8_t>(frameBytes[frame], static_cast<uint8_t>(frame + 1))));
+            stored += frameBytes[frame];
+        }
+
+        const std::filesystem::path file = std::filesystem::path(pack / folder).concat(".hda");
+        std::filesystem::create_directories(file.parent_path());
+        MCTestArchive::WriteBytes(file, MCTestArchive::BuildArchive(entries));
+        return stored;
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "From the briefing"): a mech put in the lance on the briefing screen, in an empty slot or
+/// dropped on another's, has its HD art read from then on, behind the screen, and held for the mission
+/// (MCHdArt::HoldMechAhead); taken out before those reads are made, they're still made, and it stays held.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from then, and stays held when taken out")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCScratchFolder pack("mc_briefing_tests", "lance-hold");
+    MCTestGame::BootOptions.Started = [folder = pack.Path()]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    };
+
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    NewCampaign();
+    Settle();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    MCBriefingScreen& briefing = *logistics->BriefingScreen;
+    REQUIRE(logistics->CurrentScreen().get() == &briefing);
+    const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    REQUIRE(MCHdArt::HoldsFor(mission));
+
+    // Two mechs from the deploy pane, standing in for mechs of chassis the mission doesn't list (one bought at the store):
+    // mission 1's own force is in the mission's list, read from the briefing's start.
+    constexpr int32_t MechPartType = 1;
+    const std::shared_ptr<MCLogMech> first = FirstDeployMech(briefing);
+    REQUIRE(first != nullptr);
+    const auto other = std::ranges::find_if(briefing.DeployUnits, [&first](const auto& unit)
+                                            { return unit->PartType == MechPartType && unit != first; });
+    REQUIRE(other != briefing.DeployUnits.end());
+    const std::shared_ptr<MCLogMech> second = std::static_pointer_cast<MCLogMech>(*other);
+
+    // Two chassis with a folder each of their own (in neither the mission's list nor the other's), and in the pack an
+    // archive for each of those folders.
+    const std::vector<std::filesystem::path> missionFolders = MCHdArt::BriefingFolders(mission);
+    const auto ownFolder = [&missionFolders](uint32_t chassis, uint32_t otherChassis)
+    {
+        const std::vector<std::filesystem::path> folders = MCHdArt::ChassisFolders(chassis);
+        const std::vector<std::filesystem::path> others = MCHdArt::ChassisFolders(otherChassis);
+        const auto found = std::ranges::find_if(
+            folders, [&](const std::filesystem::path& folder)
+            { return !std::ranges::contains(missionFolders, folder) && !std::ranges::contains(others, folder); });
+        return found != folders.end() ? *found : std::filesystem::path();
+    };
+
+    std::filesystem::path firstFolder;
+    std::filesystem::path secondFolder;
+
+    for (const MCHoldLists::Chassis& a : MCHoldLists::Mechs)
+    {
+        for (const MCHoldLists::Chassis& b : MCHoldLists::Mechs)
+        {
+            if (firstFolder.empty() && a.Number != b.Number && !ownFolder(a.Number, b.Number).empty() &&
+                !ownFolder(b.Number, a.Number).empty())
+            {
+                first->Chassis = a.Number;
+                second->Chassis = b.Number;
+                firstFolder = ownFolder(a.Number, b.Number);
+                secondFolder = ownFolder(b.Number, a.Number);
+            }
+        }
+    }
+
+    REQUIRE(!firstFolder.empty());
+    constexpr std::array<size_t, 3> FirstFrameBytes{3000, 5000, 7000};
+    constexpr std::array<size_t, 2> SecondFrameBytes{4000, 6000};
+    const size_t stored = WriteFramesArchive(pack.Path(), firstFolder, FirstFrameBytes) +
+                          WriteFramesArchive(pack.Path(), secondFolder, SecondFrameBytes);
+    MCHdArt::WaitForHold();
+    const size_t before = MCHdArt::HeldBytes();
+
+    // With the readers paused (nothing read meanwhile): the first in an empty slot, the second dropped on it (the first
+    // out), then the second taken out.
+    MCHdArt::HoldReads(true);
+    MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(first->CurTonnage + second->CurTonnage);
+    const POINT slot = SlotMiddle(0);
+    DragMech(*first, slot.x, slot.y);
+    REQUIRE(first->Deployed != 0);
+    DragMech(*second, slot.x, slot.y);
+    REQUIRE(second->Deployed != 0);
+    REQUIRE(first->Deployed == 0);
+    MCListView& pane = *briefing.DeployPane;
+    DragMech(*second, pane.GlobalX() + pane.Width() / 2, pane.GlobalY() + pane.Height() / 2);
+    REQUIRE(second->Deployed == 0);
+    CHECK_EQ(MCHdArt::HeldBytes(), before);
+
+    // Let go: the reads both placings asked for are made, and what they read stays held.
+    MCHdArt::HoldReads(false);
+    MCHdArt::WaitForHold();
+    CHECK_EQ(MCHdArt::HeldBytes(), before + stored);
+    Settle();
+    CHECK_EQ(MCHdArt::HeldBytes(), before + stored);
+    CHECK(MCHdArt::HoldsFor(mission));
 }
 
 /// <summary>

@@ -1136,6 +1136,16 @@ namespace MCHdArt
     void StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders);
 
     /// <summary>
+    /// Port-only, for test runs (<c>-hdbriefinghold on|off</c>; on unless set): whether the hold may start from the
+    /// briefing (<see cref="StartBriefingHold"/>). Off, it starts at the load as before the briefing's hold, the
+    /// timing runs' comparison.
+    /// </summary>
+    void SetBriefingHold(bool on);
+
+    /// <summary>Port-only: whether the hold is wanted, and from the briefing (<see cref="SetBriefingHold"/>).</summary>
+    bool BriefingHoldWanted();
+
+    /// <summary>
     /// Port-only: whether the hold holds for <paramref name="mission"/> since its briefing (<see cref="StartBriefingHold"/>,
     /// not let go of since), which its load keeps rather than letting go of.
     /// </summary>

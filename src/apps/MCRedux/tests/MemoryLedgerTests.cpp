@@ -4,7 +4,6 @@
 #include "TestGame.h"
 #include "fakes/MCFakeMemorySystem.h"
 #include "lib/MCFastFile.h"
-#include "platform/MCFileSystem.h"
 #include "platform/MCGpuCounted.h"
 #include "platform/MCMemoryLedger.h"
 #include "platform/MCMemoryRoom.h"
@@ -29,6 +28,8 @@ namespace
     constexpr uint64_t GB = uint64_t{1} << 30;
     constexpr int64_t MB = int64_t{1} << 20;
     constexpr std::string_view DeviceName = "Test GPU";
+    /// <summary>The archive of the missions, by its game path (MCFastFile::Create finds it from the game's root).</summary>
+    constexpr std::string_view MissionArchive = "MISSION.FST";
 
     /// <summary>Figures as given (a function, so a check's macro takes them as one argument).</summary>
     MCFigures Figures(int64_t payload, int64_t allocated, int64_t retired = 0)
@@ -253,12 +254,14 @@ TEST_CASE("memory ledger: an archive's tables count while it's open, the HD art'
     }
 
     const MCFigures before = MCMemoryLedger::Of(MCHolder::ArchiveTables);
-    auto archive = MCFastFile::Create((MCFileSystem::GameRoot() / "MISSION.FST").string());
+    // Its game path, not the root joined to it: Create resolves a path from the root, so a root given as a relative
+    // --game was joined twice.
+    auto archive = MCFastFile::Create(MissionArchive);
     REQUIRE(archive.has_value());
     const MCFigures open = Since(MCHolder::ArchiveTables, before);
     const auto entries = static_cast<int64_t>((*archive)->GetEntries().size());
-    std::cout << std::format("  MISSION.FST: {} entries, {} bytes counted ({} allocated)\n", entries, open.Payload,
-                             open.Allocated);
+    std::cout << std::format("  {}: {} entries, {} bytes counted ({} allocated)\n", MissionArchive, entries,
+                             open.Payload, open.Allocated);
     CHECK(entries > 0);
     CHECK(open.Payload >= entries * static_cast<int64_t>(sizeof(MCFileEntry)));
     CHECK(open.Allocated >= open.Payload);

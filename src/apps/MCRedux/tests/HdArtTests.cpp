@@ -785,7 +785,8 @@ TEST_CASE_ISOLATED("tool: --hd-extract-terrain writes the terrain tiles for the 
 
     // The missions' palettes.
     std::map<std::string, std::vector<std::string>> palettes;
-    auto archive = MCFastFile::Create((MCFileSystem::GameRoot() / MissionArchive).string());
+    // Its game path: Create resolves it from the root (the root joined to it fails with a relative --game).
+    auto archive = MCFastFile::Create(MissionArchive);
     REQUIRE(archive.has_value());
 
     for (const MCFileEntry& entry : (*archive)->GetEntries())

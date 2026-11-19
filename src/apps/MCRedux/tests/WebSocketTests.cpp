@@ -11,8 +11,11 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <format>
+#include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -22,7 +25,8 @@
 // internet games reach their service through because it checks the service's certificate against the system's roots
 // (libdatachannel's checks none on Windows). With --websocket-service <wss address> (the fork's Windows build passes
 // the games service's list), it opens that service, and refuses hosts whose certificates are bad: badssl.com's, kept
-// broken on purpose by its maintainers, each a TLS server that a socket must leave before any WebSocket is asked for.
+// broken on purpose by its maintainers, each a TLS server that a socket must leave before any WebSocket is asked for
+// (one that can't be reached at all, by name or TCP, is skipped, said why: no handshake to judge).
 // And, on this machine's loopback, a service whose network stalls: destroying a socket whose close can't go returns at
 // once, its close finished on its own thread (Windows'), which the thread keeper joins.
 
@@ -42,6 +46,57 @@ namespace
     /// <summary>How long a socket may take to open or close: past WinHTTP's 90 s a step and NSURLSession's 60.</summary>
     constexpr std::chrono::seconds Deadline{100};
     constexpr std::chrono::milliseconds PollStep{50};
+
+    /// <summary>The scheme of a secure WebSocket's address, and the TLS port it reaches its host at.</summary>
+    constexpr std::string_view SecureScheme = "wss://";
+    constexpr uint16_t TlsPort = 443;
+    /// <summary>How long a plain TCP connection to a host may take before the host counts as unreachable.</summary>
+    constexpr int ReachWaitMs = 15000;
+
+    /// <summary>The host of a <c>wss://</c> address (up to its port or path).</summary>
+    std::string_view HostOf(std::string_view url)
+    {
+        if (url.starts_with(SecureScheme))
+        {
+            url.remove_prefix(SecureScheme.size());
+        }
+
+        return url.substr(0, url.find_first_of(":/"));
+    }
+
+    /// <summary>
+    /// Why <paramref name="url"/>'s host can't be reached at all, before any TLS: its name doesn't resolve, or no TCP
+    /// connection to its TLS port opens in <see cref="ReachWaitMs"/>; nothing when one opens, or when this machine has no
+    /// sockets to ask with (its own fault, never a reason to skip).
+    /// </summary>
+    std::optional<std::string> Unreachable(std::string_view url)
+    {
+        const std::string_view host = HostOf(url);
+
+        if (!MCSocket::Startup())
+        {
+            std::cout << std::format("  can't check {} is reachable: sockets don't start on this machine\n", host);
+            return std::nullopt;
+        }
+
+        const std::optional<uint32_t> ip = MCSocket::Resolve(host);
+
+        if (!ip.has_value())
+        {
+            return std::format("{}'s name doesn't resolve", host);
+        }
+
+        const MCSocket::Address to{.Ip = *ip, .Port = TlsPort};
+        const MCSocket::Handle connection = MCSocket::ConnectTcp(to, ReachWaitMs);
+
+        if (connection == MCSocket::InvalidHandle)
+        {
+            return std::format("no TCP connection to {} ({}) in {} ms", host, MCSocket::ToString(to), ReachWaitMs);
+        }
+
+        MCSocket::Close(connection);
+        return std::nullopt;
+    }
 
     /// <summary>What a socket did before <see cref="Deadline"/>: whether it opened, its first message, why it closed.</summary>
     struct Outcome
@@ -208,6 +263,20 @@ TEST_CASE("tool: --websocket-service <address> checks this platform's WebSocket 
     for (const std::string_view host : BadCertificateHosts)
     {
         const Outcome bad = Try(host);
+
+        // badssl.com is someone else's: when the socket neither opened nor was refused for the certificate, and the
+        // host can't be reached at all (no name, no TCP connection), there was no handshake to judge, so it's skipped,
+        // said why. A socket that opens, or one that reached the host and closed for anything but the certificate,
+        // still fails.
+        if (!bad.Opened && bad.FirstMessage.empty() && !bad.WhyClosed.starts_with(MCWebSocketUntrusted))
+        {
+            if (const std::optional<std::string> why = Unreachable(host); why.has_value())
+            {
+                std::cout << std::format("  (skipped {}: {}; the socket closed \"{}\")\n", host, *why, bad.WhyClosed);
+                continue;
+            }
+        }
+
         const MCTest::Scope badScope(std::format("{}: opened {}, closed \"{}\"", host, bad.Opened, bad.WhyClosed));
         CHECK(!bad.Opened);
         CHECK(bad.FirstMessage.empty());

@@ -149,26 +149,9 @@ auto MCTerrainObject::Render() -> void
         return;
     }
 
-    // Hazed by how many corners of its vertex square the home team sees; drawn when any is. (The original also
-    // reads each corner's seen bit and drops it.)
-    const int32_t numVisible = MCVertexCell{CellRow, CellColumn}.VisibleCorners();
-    int32_t hazeLevel = 0;
-
-    if (numVisible != 0 && numVisible != 4 && Eye()->HazeLevel != 0x7fff)
+    if (DrawAsSeen() != 0 && FireObject != nullptr)
     {
-        hazeLevel = HazeLevelFor(numVisible);
-    }
-
-    Appearance->HazeLevel = hazeLevel;
-
-    if (numVisible != 0)
-    {
-        Appearance->Render(0);
-
-        if (FireObject != nullptr)
-        {
-            FireObject->Render();
-        }
+        FireObject->Render();
     }
 
     if (DrawExtents)
@@ -276,4 +259,38 @@ auto MCTerrainObject::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMultipl
     }
 
     return 0;
+}
+
+auto MCTerrainObject::RenderAtEdge() -> void
+{
+    // Its fire waits for its block: drawing it plays its flames on.
+    if (JustCreated || Appearance == nullptr || !ShowsAtEdge(BlockNumber, VertexNumber, *Appearance))
+    {
+        return;
+    }
+
+    Appearance->Visible = true;
+    DrawAsSeen();
+}
+
+auto MCTerrainObject::DrawAsSeen() -> int32_t
+{
+    // Hazed by how many corners of its vertex square the home team sees; drawn when any is. (The original also
+    // reads each corner's seen bit and drops it.)
+    const int32_t numVisible = MCVertexCell{CellRow, CellColumn}.VisibleCorners();
+    int32_t hazeLevel = 0;
+
+    if (numVisible != 0 && numVisible != 4 && Eye()->HazeLevel != 0x7fff)
+    {
+        hazeLevel = HazeLevelFor(numVisible);
+    }
+
+    Appearance->HazeLevel = hazeLevel;
+
+    if (numVisible != 0)
+    {
+        Appearance->Render(0);
+    }
+
+    return numVisible;
 }

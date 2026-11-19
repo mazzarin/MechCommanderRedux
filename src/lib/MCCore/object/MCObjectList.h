@@ -152,6 +152,22 @@ private:
 /// <summary>Whether terrain block <paramref name="blockNumber"/> is in use this frame (always, for -1).</summary>
 int BlockInList(int32_t blockNumber);
 
+/// <summary>
+/// Port-only (tests): the draws of one object, as MCObjectList::Render renders it: the elements its last render made
+/// (from <see cref="First"/> to before <see cref="End"/> of the frame's made elements, MCElementBuffer::Made) and the
+/// turn it rendered in.
+/// </summary>
+struct MCDrawWatch
+{
+    const MCBaseObject* Object = nullptr;
+    size_t First = 0;
+    size_t End = 0;
+    int32_t RenderTurn = -1;
+};
+
+/// <summary>Port-only (tests): the object whose draws are noted (none by default).</summary>
+MCDrawWatch& DrawWatch();
+
 /// <summary>Whether MCObjectList::Update updates the non-terrain lists (1 by default).</summary>
 extern int UpdateObjects;
 /// <summary>Whether MCObjectList::Update updates the TBlk/RBlk lists.</summary>

@@ -117,6 +117,16 @@ public:
     bool BlockUsed(int32_t blockNum) const;
 
     /// <summary>
+    /// Port-only (OB-192 fixed): notes the map blocks not drawn this frame (<see cref="BlockUsed"/>) that reach, at
+    /// their lowest and highest ground, into the area near <paramref name="view"/> (MCAppearance::NearViewArea): an
+    /// object on one can reach into the view with no vertex of its block on it. Cleared with the blocks drawn.
+    /// </summary>
+    void MarkEdgeBlocks(const MCCamera& view);
+
+    /// <summary>Port-only: whether map block <paramref name="blockNum"/> is near the view, not drawn (MarkEdgeBlocks).</summary>
+    bool BlockAtEdge(int32_t blockNum) const;
+
+    /// <summary>
     /// Sets the map's geometry from the sizes in its <c>.fit</c> file and everything that follows from them: the
     /// block and map sizes in meters, the reciprocals, the map's top-left corner (at elevation 0 until
     /// <see cref="SetTopLeftElevation"/>).
@@ -202,6 +212,12 @@ private:
 
     /// <summary>The map blocks drawn this frame (no limit: the original's list held 324).</summary>
     std::vector<int32_t> _UsedBlocks;
+
+    /// <summary>Port-only: the blocks near the view this frame, not drawn (MarkEdgeBlocks).</summary>
+    std::vector<int32_t> _EdgeBlocks;
+
+    /// <summary>Port-only: each map block's lowest and highest ground in meters, once MarkEdgeBlocks asks.</summary>
+    std::vector<std::optional<std::pair<float, float>>> _BlockGround;
 };
 
 /// <summary>The scenario's terrain (null outside a mission); the caller keeps it as its pin.</summary>

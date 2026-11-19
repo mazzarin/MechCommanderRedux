@@ -29,6 +29,7 @@ public:
     int32_t Update() override;
     /// <summary>Advances the appearance (finishing a fall), then draws the tree, hazed by visibility, and its shadow.</summary>
     void Render() override;
+    void RenderAtEdge() override;
     std::shared_ptr<MCAppearance> GetAppearance() override;
     /// <summary>Selected by the mouse-over event (0x1c), deselected by 0x1d.</summary>
     int32_t HandleEvent(MCObjectEvent& event) override;
@@ -62,6 +63,12 @@ public:
     /// is on screen.
     /// </summary>
     bool IsVisible();
+
+    /// <summary>
+    /// Draws the tree (with its art's shadow, but at dusk and night), hazed by how many corners of its vertex square the
+    /// home team sees, when any is.
+    /// </summary>
+    void DrawAsSeen();
     /// <summary>A 25-point hit, and more burning time for its fire if it has one.</summary>
     void LightOnFire(float timeToBurn);
 

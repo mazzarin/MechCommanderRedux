@@ -543,6 +543,23 @@ namespace MCSceneLights
     void AddRecastShadows(std::span<const MCSunShadowPart> parts, int32_t depth, bool sortElements);
 
     /// <summary>
+    /// Port-only (sun shadows): the box (left, top, right, bottom) the sun shadow of a frame drawn over
+    /// (<paramref name="left"/>, <paramref name="top"/>)-(<paramref name="right"/>, <paramref name="bottom"/>), standing
+    /// on row <paramref name="foot"/>, covers: a point h window pixels above the foot casts its shadow
+    /// <paramref name="shadowRight"/> * h right and <paramref name="shadowUp"/> * h up of it (MCLighting's
+    /// SunShadowRight and SunShadowUp; MCVulkanRenderer's sun shadow).
+    /// </summary>
+    std::array<float, 4> CastShadowBox(float left, float top, float right, float bottom, float foot, float shadowRight,
+                                       float shadowUp);
+
+    /// <summary>
+    /// Port-only (OB-192 fixed): the box a frame's sun shadow covers (<see cref="CastShadowBox"/>, with the shown
+    /// sun's way) while the objects re-cast their sun shadows and the sun casts any (<see cref="AddRecastShadows"/>
+    /// draws them then); none otherwise.
+    /// </summary>
+    std::optional<std::array<float, 4>> RecastShadowBox(float left, float top, float right, float bottom, float foot);
+
+    /// <summary>
     /// Adds the units' shadows from the frame's lights to the draw list (MCCamera::Render, once the objects have added
     /// their lights and units, before the list is sorted): drawn after the ground and its craters and before every
     /// object, so a unit covers its shadow on the ground behind it, and one standing in another's shadow takes it.

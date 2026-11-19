@@ -2,9 +2,11 @@
 #include "object/MCVertexPlacement.h"
 #include "ai/MCMoveSystem.h"
 #include "ai/MCScenarioMap.h"
+#include "camera/MCCamera.h"
 #include "engine/MCByteFlag.h"
 #include "lib/MCFatal.h"
 #include "object/MCMoverMath.h"
+#include "object/MCObjectDrawing.h"
 #include "terrain/MCTerrain.h"
 
 namespace
@@ -103,4 +105,19 @@ MCVector3D PlaceOnVertex(MCVector3D position, int32_t blockNumber, int32_t verte
     position.Y = position.Y - alongAxis;
     position.Z = elevation;
     return position;
+}
+
+auto VertexScreenPlace(int32_t blockNumber, int32_t vertexNumber, const MCCamera& camera) -> MCVector2D
+{
+    MCVector2D place;
+
+    if (MCCamera::VertexProject(blockNumber, vertexNumber, place) != 0)
+    {
+        return place;
+    }
+
+    const MCVertexCell cell = MCVertexCell::Of(blockNumber, vertexNumber);
+    const MCVector2D screen =
+        ProjectToScreen(MCVector3D(cell.WorldX(), cell.WorldY(), cell.Elevation(" vertex off the map ")), camera);
+    return MCVector2D(std::floor(screen.X), std::floor(screen.Y));
 }

@@ -128,13 +128,21 @@ auto MCElementalActor::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     }
 
     const MCCamera& cam = view->get();
-    const MCVector2D pos = Owner.lock()->GetScreenPos(cam.CameraId - 1);
+    const std::shared_ptr<MCGameObject> obj = Owner.lock();
+    const MCVector2D pos = obj->GetScreenPos(cam.CameraId - 1);
     UpperLeft = pos;
     LowerRight = pos;
+    std::shared_ptr<MCShape> shape = CurrentShape.lock();
+
+    // OB-192 (fixed): before its first draw it has no shape, and the box below is the original's default: it showed with
+    // much of it in view already. Near the view, the shape that draw will take is measured instead.
+    if (shape == nullptr && !InView && NearView(pos, cam))
+    {
+        shape = AppearType->GetGesture(CurrentGesture, static_cast<float>(MCActorFacing(*obj)));
+    }
 
     // The shape's bounds are taken once, from the first shape seen.
-    if (const std::shared_ptr<MCShape> shape = CurrentShape.lock();
-        shape != nullptr && !shape->FrameList().empty() && !InView)
+    if (shape != nullptr && !shape->FrameList().empty() && !InView)
     {
         const std::span<const uint8_t> shapeTable = shape->FrameList();
         MCGrowBounds(MCShapeFrameBounds(shapeTable, MCClampShapeFrame(shapeTable, CurrentFrame)), ShapeMinX, ShapeMinY,

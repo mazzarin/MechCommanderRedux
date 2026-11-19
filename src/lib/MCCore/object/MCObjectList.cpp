@@ -3,6 +3,7 @@
 #include "appear/MCAppearance.h"
 #include "appear/MCAppearanceType.h"
 #include "camera/MCCamera.h"
+#include "engine/MCElementBuffer.h"
 #include "gui/MCGuiSystem.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBigGameObject.h"
@@ -17,6 +18,23 @@ int UpdateObjects = 1;
 int UpdateTerrainObjects = 0;
 int RenderObjects = 1;
 int RenderTerrainObjects = 1;
+
+namespace
+{
+    /// <summary>Notes the elements <paramref name="object"/>'s render made from <paramref name="made"/> on when it's
+    /// watched (DrawWatch).</summary>
+    void NoteDraws(const MCBaseObject& object, size_t made)
+    {
+        MCDrawWatch& watch = DrawWatch();
+
+        if (watch.Object == &object)
+        {
+            watch.First = made;
+            watch.End = ElementList().MadeCount();
+            watch.RenderTurn = Turn;
+        }
+    }
+}
 
 MCObjectList::MCObjectList(std::string_view name, int32_t blockNumber) : BlockNumber(blockNumber), _Name(name)
 {
@@ -128,12 +146,26 @@ auto MCObjectList::Render() -> void
     // The original breaks into the debugger (int 3) when "TBlk" is found other than at the start of the name.
     if (!BlockInList(BlockNumber))
     {
+        // OB-192 (fixed): a block is drawn when a vertex of it is on the screen, so an object near a block's edge came
+        // in with much of it in view already. A block near the view has its objects drawn where they reach into it.
+        if (terrain && Terrain() != nullptr && Terrain()->BlockAtEdge(BlockNumber))
+        {
+            for (std::shared_ptr<MCBaseObject> object : *this)
+            {
+                const size_t made = ElementList().MadeCount();
+                object->RenderAtEdge();
+                NoteDraws(*object, made);
+            }
+        }
+
         return;
     }
 
     for (std::shared_ptr<MCBaseObject> object : *this)
     {
+        const size_t made = ElementList().MadeCount();
         object->Render();
+        NoteDraws(*object, made);
     }
 }
 
@@ -358,6 +390,12 @@ auto MCObjectList::FindPart(int32_t partId) const -> std::shared_ptr<MCBaseObjec
     }
 
     return nullptr;
+}
+
+auto DrawWatch() -> MCDrawWatch&
+{
+    static MCDrawWatch watch;
+    return watch;
 }
 
 auto BlockInList(int32_t blockNumber) -> int

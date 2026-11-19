@@ -4912,23 +4912,8 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
                                           0.0f, 1.0f / up,         foot - foot / up - y0};
 
     // The shadow's bounds: the frame's corners cast.
-    float minX = std::numeric_limits<float>::max();
-    float minY = minX;
-    float maxX = std::numeric_limits<float>::lowest();
-    float maxY = maxX;
-
-    for (const float x : {x0, x0 + static_cast<float>(width)})
-    {
-        for (const float y : {y0, y0 + static_cast<float>(height)})
-        {
-            const float above = foot - y;
-            minX = std::min(minX, x + right * above);
-            maxX = std::max(maxX, x + right * above);
-            minY = std::min(minY, foot - up * above);
-            maxY = std::max(maxY, foot - up * above);
-        }
-    }
-
+    const auto [minX, minY, maxX, maxY] = MCSceneLights::CastShadowBox(
+        x0, y0, x0 + static_cast<float>(width), y0 + static_cast<float>(height), foot, right, up);
     const Quad bounds = clip.value_or(Quad{0, 0, target.XMax, target.YMax});
     const Quad at = {std::max(static_cast<int32_t>(std::floor(minX)), bounds[0]),
                      std::max(static_cast<int32_t>(std::floor(minY)), bounds[1]),

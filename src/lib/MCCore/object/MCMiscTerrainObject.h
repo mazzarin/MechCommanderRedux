@@ -46,6 +46,7 @@ public:
     /// or pointed at, and the forest-edge shape over a burnt forest tile.
     /// </summary>
     void Render() override;
+    void RenderAtEdge() override;
     std::shared_ptr<MCAppearance> GetAppearance() override { return nullptr; }
     /// <summary>Selected by the mouse-over event (0x1c), deselected by 0x1d.</summary>
     int32_t HandleEvent(MCObjectEvent& event) override;
@@ -87,6 +88,10 @@ public:
     MCVector2D GetScreenPos() const;
     /// <summary>Draws the damage bar (green, yellow, red) above <paramref name="screenPos"/>.</summary>
     void DrawBars(MCVector2D screenPos);
+    /// <summary>A forest's edge frame (of the type's edge shapes) matching its overlay tile; none for another kind.</summary>
+    std::optional<int32_t> ForestEdgeFrame() const;
+    /// <summary>Draws a forest's edge frame <paramref name="frame"/> at <paramref name="screenPos"/>, hazed as seen.</summary>
+    void DrawForestEdge(MCVector2D screenPos, int32_t frame);
     /// <summary>A 1-point hit, and more burning time for its fire if it has one.</summary>
     void LightOnFire(float timeToBurn);
 

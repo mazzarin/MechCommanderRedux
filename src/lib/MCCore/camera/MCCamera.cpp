@@ -745,6 +745,8 @@ auto MCCamera::Render() -> void
     {
         MCFrameLog::Scope part("draw.terrain");
         terrainWindow->Render(HazeLevel);
+        // OB-192 (fixed): the blocks whose objects can reach into the view with no vertex of theirs on it.
+        Terrain()->MarkEdgeBlocks(*this);
 
         if (DrawTerrainGrid != 0)
         {

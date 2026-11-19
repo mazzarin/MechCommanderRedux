@@ -1385,7 +1385,100 @@ auto MCMechActor::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
         return 1;
     }
 
+    // OB-192 (fixed): the bounds above are taken the first time they're asked for, before any part is drawn, so they
+    // stay the default box (25 pixels each way, its top-left counted twice) and a mech came in with much of it in view
+    // already. Near the view its parts' own frames are tested as well.
+    if (const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
+        NearView(pos, cam) && PartsShowInView(*mech, pos, cam))
+    {
+        return 1;
+    }
+
     return 0;
+}
+
+auto MCMechActor::PartsShowInView(MCBattleMech& mech, MCVector2D place, const MCCamera& view) -> bool
+{
+    MCMechParts<std::shared_ptr<MCShape>> shapes;
+    MCMechParts<int32_t> reverse = Reverse;
+
+    for (int32_t part = 0; part < MechPartCount; part++)
+    {
+        shapes[part] = PartShape[part].lock();
+    }
+
+    if (MechTree != nullptr && std::ranges::none_of(shapes, [](const auto& shape) { return shape != nullptr; }))
+    {
+        MCMechParts<float> rate = FrameRate;
+        shapes = PartShapes(mech, CurrentGesture, UpperGesture(), reverse, rate);
+    }
+
+    for (int32_t part = 0; part < MechPartCount; part++)
+    {
+        if (shapes[part] == nullptr || shapes[part]->FrameList().empty())
+        {
+            continue;
+        }
+
+        const std::span<const uint8_t> shapeTable = shapes[part]->FrameList();
+        const MCFrameBounds bounds = MCShapeFrameBounds(shapeTable, MCClampShapeFrame(shapeTable, CurrentFrame[part]));
+        // A mirrored frame is drawn flipped about the mech's place.
+        const float left = reverse[part] != 0 ? place.X - bounds.MinX - bounds.Width : place.X + bounds.MinX;
+        const float top = place.Y + bounds.MinY;
+
+        if (ShowsInView(MCVector2D(left, top), MCVector2D(left + bounds.Width, top + bounds.Height), std::nullopt,
+                        view))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+auto MCMechActor::PartShapes(MCBattleMech& mech, int32_t legsGesture, int32_t upper, MCMechParts<int32_t>& reverse,
+                             MCMechParts<float>& rate) -> MCMechParts<std::shared_ptr<MCShape>>
+{
+    // The 90-pixel part PAKs, the full size ones (the small ones were the original's zoomed-out mode's).
+    constexpr bool largeSprites = true;
+    const float facing = DrawnFacing(mech);
+    const auto [rotation2, rotation3] = ArmRotations(mech, facing);
+    MCMechParts<std::shared_ptr<MCShape>> found;
+    found[MCMechPart::Legs] =
+        MechTree->GetGesture(legsGesture, 0, facing, reverse[MCMechPart::Legs], rate[MCMechPart::Legs], largeSprites);
+    found[MCMechPart::Torso] = MechTree->GetGesture(upper, 1, facing + mech.TorsoRotation, reverse[MCMechPart::Torso],
+                                                    rate[MCMechPart::Torso], largeSprites);
+    // A mirrored arm is drawn from the other arm's sprites (ArmSwapped; OB-179 fixed).
+    const bool swapRightArm = ArmSwapped(legsGesture, upper, 3, rotation2);
+    const bool swapLeftArm = ArmSwapped(legsGesture, upper, 2, rotation3);
+
+    if (!RightArmGone)
+    {
+        found[MCMechPart::RightArm] =
+            MechTree->GetGesture(upper, swapRightArm ? 3 : 2, rotation2, reverse[MCMechPart::RightArm],
+                                 rate[MCMechPart::RightArm], largeSprites);
+    }
+
+    if (!LeftArmGone && swapLeftArm)
+    {
+        found[MCMechPart::LeftArm] = MechTree->GetGesture(upper, 2, rotation3, reverse[MCMechPart::LeftArm],
+                                                          rate[MCMechPart::LeftArm], largeSprites);
+    }
+    else if (!LeftArmGone)
+    {
+        // Faithful: asked for twice, first with the legs' gesture.
+        found[MCMechPart::LeftArm] = MechTree->GetGesture(legsGesture, 3, rotation3, reverse[MCMechPart::LeftArm],
+                                                          rate[MCMechPart::LeftArm], largeSprites);
+        found[MCMechPart::LeftArm] = MechTree->GetGesture(upper, 3, rotation3, reverse[MCMechPart::LeftArm],
+                                                          rate[MCMechPart::LeftArm], largeSprites);
+    }
+
+    if (Wrecked)
+    {
+        found[MCMechPart::Torso].reset();
+    }
+
+    return found;
 }
 
 auto MCFindJumpFrames(std::span<const float> heights) -> MCJumpFrames
@@ -1955,64 +2048,16 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     ScreenPos = mech->GetScreenPos(Eye()->CameraId - 1);
     const float x = ScreenPos.X;
     const float y = ScreenPos.Y;
-    // The 90-pixel part PAKs, the full size ones (the small ones were the original's zoomed-out mode's).
-    constexpr bool largeSprites = true;
     RenderJump();
 
     const float facing = DrawnFacing(*mech);
-    const float torso = mech->TorsoRotation;
 
     // The torso and arms play the combat gestures while the gun is up or moving.
     const bool combatAnim = InCombatMode || CombatModeRaising || CombatModeLowering;
     const int32_t upperGesture = UpperGesture();
-    const std::pair<float, float> armRotations = ArmRotations(*mech, facing);
-    const float rotation2 = armRotations.first;
-    const float rotation3 = armRotations.second;
 
-    // Each part's shape, the legs in gesture legsGesture and the upper body in upper, its mirroring and rate set in
-    // reverse and rate.
-    const auto partShapes =
-        [&](int32_t legsGesture, int32_t upper, MCMechParts<int32_t>& reverse, MCMechParts<float>& rate)
-    {
-        MCMechParts<std::shared_ptr<MCShape>> found;
-        found[MCMechPart::Legs] = MechTree->GetGesture(legsGesture, 0, facing, reverse[MCMechPart::Legs],
-                                                       rate[MCMechPart::Legs], largeSprites);
-        found[MCMechPart::Torso] = MechTree->GetGesture(upper, 1, facing + torso, reverse[MCMechPart::Torso],
-                                                        rate[MCMechPart::Torso], largeSprites);
-        // A mirrored arm is drawn from the other arm's sprites (ArmSwapped; OB-179 fixed).
-        const bool swapRightArm = ArmSwapped(legsGesture, upper, 3, rotation2);
-        const bool swapLeftArm = ArmSwapped(legsGesture, upper, 2, rotation3);
-
-        if (!RightArmGone)
-        {
-            found[MCMechPart::RightArm] =
-                MechTree->GetGesture(upper, swapRightArm ? 3 : 2, rotation2, reverse[MCMechPart::RightArm],
-                                     rate[MCMechPart::RightArm], largeSprites);
-        }
-
-        if (!LeftArmGone && swapLeftArm)
-        {
-            found[MCMechPart::LeftArm] = MechTree->GetGesture(upper, 2, rotation3, reverse[MCMechPart::LeftArm],
-                                                              rate[MCMechPart::LeftArm], largeSprites);
-        }
-        else if (!LeftArmGone)
-        {
-            // Faithful: asked for twice, first with the legs' gesture.
-            found[MCMechPart::LeftArm] = MechTree->GetGesture(legsGesture, 3, rotation3, reverse[MCMechPart::LeftArm],
-                                                              rate[MCMechPart::LeftArm], largeSprites);
-            found[MCMechPart::LeftArm] = MechTree->GetGesture(upper, 3, rotation3, reverse[MCMechPart::LeftArm],
-                                                              rate[MCMechPart::LeftArm], largeSprites);
-        }
-
-        if (Wrecked)
-        {
-            found[MCMechPart::Torso].reset();
-        }
-
-        return found;
-    };
-
-    const MCMechParts<std::shared_ptr<MCShape>> shapes = partShapes(CurrentGesture, upperGesture, Reverse, FrameRate);
+    const MCMechParts<std::shared_ptr<MCShape>> shapes =
+        PartShapes(*mech, CurrentGesture, upperGesture, Reverse, FrameRate);
 
     for (int32_t part = 0; part < MechPartCount; part++)
     {
@@ -2031,8 +2076,8 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     if (DrawnStride.has_value())
     {
         MCMechParts<float> rate = FrameRate;
-        const MCMechParts<std::shared_ptr<MCShape>> stride =
-            partShapes(DrawnStride->Gesture, combatAnim ? upperGesture : DrawnStride->Gesture, drawnReverse, rate);
+        const MCMechParts<std::shared_ptr<MCShape>> stride = PartShapes(
+            *mech, DrawnStride->Gesture, combatAnim ? upperGesture : DrawnStride->Gesture, drawnReverse, rate);
 
         for (int32_t part = 0; part < MechPartCount; part++)
         {

@@ -104,25 +104,7 @@ auto MCTreeBuilding::IsVisible() -> bool
     }
 
     // The shadow can stick out past the building: on screen when any of its box is.
-    bool shadowOnScreen = false;
-
-    if (const std::span<uint8_t> shadow = TypeAs<MCTreeBuildingType>().NormalShadow.Bytes(); !shadow.empty())
-    {
-        const int32_t minXY = VfxShapeMinxy(shadow, 0);
-        const float left = static_cast<float>(minXY >> 16) + ScreenPos.X;
-        const float top = static_cast<float>(static_cast<int16_t>(minXY)) + ScreenPos.Y;
-        const int32_t resolution = VfxShapeResolution(shadow, 0);
-
-        if (0.0f <= static_cast<float>(resolution >> 16) + left &&
-            0.0f <= static_cast<float>(static_cast<int16_t>(resolution)) + top)
-        {
-            const auto viewRight = static_cast<int16_t>(std::floor(static_cast<double>(Eye()->ViewWidth)));
-            const auto viewBottom = static_cast<int16_t>(std::floor(static_cast<double>(Eye()->ViewHeight)));
-            shadowOnScreen = left <= static_cast<float>(viewRight) && top <= static_cast<float>(viewBottom);
-        }
-    }
-
-    if (!shadowOnScreen && visible == 0)
+    if (!ArtShadowOnScreen(TypeAs<MCTreeBuildingType>().NormalShadow.Bytes()) && visible == 0)
     {
         return false;
     }
@@ -349,20 +331,7 @@ auto MCTreeBuilding::Render() -> void
         return;
     }
 
-    // Hazed by how many corners of its vertex square the home team sees; drawn (with its shadow) when any is. (The
-    // original also reads each corner's seen bit and drops it.)
-    const int32_t numVisible = MCVertexCell::Of(BlockNumber, VertexNumber).VisibleCorners();
-    int32_t hazeLevel = 0;
-
-    if (numVisible != 0 && numVisible != 4 && Eye()->HazeLevel != 0x7fff)
-    {
-        hazeLevel = HazeLevelFor(numVisible);
-    }
-
-    Appearance->HazeLevel = hazeLevel;
-    const std::optional<MCColorTable> hazePalette = GamePalette().GetHazePalette(hazeLevel);
-
-    if (numVisible == 0)
+    if (DrawAsSeen() == 0)
     {
         if (SoundHandle != 0xffffffff)
         {
@@ -370,25 +339,10 @@ auto MCTreeBuilding::Render() -> void
             SoundHandle = 0xffffffff;
         }
     }
-    else
+    else if (SoundHandle == 0xffffffff && type.NormalEffectId != 0xffffffff)
     {
-        // Standing, it sorts with the terrain; fallen or burning down, by its screen row. Port-only (sun shadows): at
-        // dusk and night it casts its own shadow (MCVfxAppearance) instead of drawing its art's.
-        const bool standing = Appearance->CurrentState == MCActorState::Normal;
-        Appearance->Render(standing ? 0 : static_cast<int32_t>(ScreenPos.Y));
-        const std::span<uint8_t> shadow = standing ? type.NormalShadow.Bytes() : type.DestroyedShadow.Bytes();
-
-        if (!shadow.empty() && !MCSceneLights::RecastsSunShadows())
-        {
-            ElementList().OpenGroup(static_cast<int32_t>(ScreenPos.Y), true);
-            ElementList().Add(ElementList().Make<MCVfxElement>(shadow, ScreenPos.X, ScreenPos.Y, 0, 0, hazePalette, 0));
-        }
-
-        if (SoundHandle == 0xffffffff && type.NormalEffectId != 0xffffffff)
-        {
-            SoundHandle =
-                static_cast<uint32_t>(SoundSystem()->PlayDigitalSample(type.NormalEffectId, 0, *this, true, false));
-        }
+        SoundHandle =
+            static_cast<uint32_t>(SoundSystem()->PlayDigitalSample(type.NormalEffectId, 0, *this, true, false));
     }
 
     if (DrawExtents)
@@ -646,4 +600,50 @@ auto MCTreeBuilding::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMultipla
     // Port-only (HD shake): its end shakes the picture.
     type.CreateExplosion(Position, ExplDamage, ExplRadius, MCBlastShake::Shakes);
     return 0;
+}
+
+auto MCTreeBuilding::RenderAtEdge() -> void
+{
+    if (JustCreated || Appearance == nullptr ||
+        !ShowsAtEdge(BlockNumber, VertexNumber, *Appearance, TypeAs<MCTreeBuildingType>().NormalShadow.Bytes()))
+    {
+        return;
+    }
+
+    Appearance->Visible = true;
+    DrawAsSeen();
+}
+
+auto MCTreeBuilding::DrawAsSeen() -> int32_t
+{
+    // Hazed by how many corners of its vertex square the home team sees; drawn (with its shadow) when any is. (The
+    // original also reads each corner's seen bit and drops it.)
+    const int32_t numVisible = MCVertexCell::Of(BlockNumber, VertexNumber).VisibleCorners();
+    int32_t hazeLevel = 0;
+
+    if (numVisible != 0 && numVisible != 4 && Eye()->HazeLevel != 0x7fff)
+    {
+        hazeLevel = HazeLevelFor(numVisible);
+    }
+
+    Appearance->HazeLevel = hazeLevel;
+    const std::optional<MCColorTable> hazePalette = GamePalette().GetHazePalette(hazeLevel);
+
+    if (numVisible != 0)
+    {
+        // Standing, it sorts with the terrain; fallen or burning down, by its screen row. Port-only (sun shadows): at
+        // dusk and night it casts its own shadow (MCVfxAppearance) instead of drawing its art's.
+        const auto& type = TypeAs<MCTreeBuildingType>();
+        const bool standing = Appearance->CurrentState == MCActorState::Normal;
+        Appearance->Render(standing ? 0 : static_cast<int32_t>(ScreenPos.Y));
+        const std::span<uint8_t> shadow = standing ? type.NormalShadow.Bytes() : type.DestroyedShadow.Bytes();
+
+        if (!shadow.empty() && !MCSceneLights::RecastsSunShadows())
+        {
+            ElementList().OpenGroup(static_cast<int32_t>(ScreenPos.Y), true);
+            ElementList().Add(ElementList().Make<MCVfxElement>(shadow, ScreenPos.X, ScreenPos.Y, 0, 0, hazePalette, 0));
+        }
+    }
+
+    return numVisible;
 }

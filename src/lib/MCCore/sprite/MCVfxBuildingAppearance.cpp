@@ -118,12 +118,12 @@ auto MCVfxBuildingAppearance::RecalcBounds(MCOptionalRef<MCCamera>) -> int
     float x = pos.X;
     float y = pos.Y;
 
-    if (building != nullptr)
-    {
-        x = static_cast<float>(building->PixelOffsetX) + x;
-        y = static_cast<float>(building->PixelOffsetY) + y;
-    }
-
+    const auto offsetX = static_cast<float>(building != nullptr ? building->PixelOffsetX : 0);
+    const auto offsetY = static_cast<float>(building != nullptr ? building->PixelOffsetY : 0);
+    const float placeX = x;
+    const float placeY = y;
+    x += offsetX;
+    y += offsetY;
     UpperLeft.X = ShapeMinX + x;
     UpperLeft.Y = ShapeMinY + y;
     LowerRight.X = ShapeMaxX + UpperLeft.X;
@@ -145,7 +145,41 @@ auto MCVfxBuildingAppearance::RecalcBounds(MCOptionalRef<MCCamera>) -> int
         return 1;
     }
 
+    // OB-192 (fixed): before its first draw it has no bounds of its own, and the box above is the original's default,
+    // 15 pixels up and left of its place: a building showed once its place came that near the view, often with half of
+    // it already in. The frames its first draw takes are measured instead.
+    if (!InView && FirstFrameShows(*Eye(), placeX, placeY, offsetX, offsetY))
+    {
+        return 1;
+    }
+
     return result;
+}
+
+auto MCVfxBuildingAppearance::FirstFrameShows(const MCCamera& view, float x, float y, float offsetX,
+                                              float offsetY) const -> bool
+{
+    if (BuildType == nullptr || !NearView(MCVector2D(x, y), view))
+    {
+        return false;
+    }
+
+    // As Render draws them: the tile at the place, the building (its animation's frame) moved by its pixel offset.
+    const auto shows = [&view](const std::shared_ptr<MCShape>& shape, int32_t frame, float atX, float atY)
+    {
+        if (shape == nullptr || shape->FrameList().empty())
+        {
+            return false;
+        }
+
+        const std::span<const uint8_t> frames = shape->FrameList();
+        const MCFrameBounds bounds = MCShapeFrameBounds(frames, MCClampShapeFrame(frames, frame));
+        return ShowsInView(MCVector2D(atX + bounds.MinX, atY + bounds.MinY),
+                           MCVector2D(atX + bounds.MinX + bounds.Width, atY + bounds.MinY + bounds.Height), atY, view);
+    };
+
+    return shows(BuildType->GetShape(DamageLevel), AnimState != -1 ? CurrentFrame : 0, x + offsetX, y + offsetY) ||
+           shows(BuildType->GetTileShape(TileNum), 0, x, y);
 }
 
 auto MCVfxBuildingAppearance::CalcCollideBounds() -> void

@@ -85,6 +85,13 @@ public:
     virtual int32_t Update() { return 0; }
     /// <summary>Draws the object.</summary>
     virtual void Render() {}
+
+    /// <summary>
+    /// Port-only (OB-192 fixed): draws a map object whose block isn't drawn this frame where it reaches into the view,
+    /// as <see cref="Render"/> draws it and nothing else (Render's burning, falling, sounds and the interface's on-screen
+    /// mark wait for its block).
+    /// </summary>
+    virtual void RenderAtEdge() {}
     virtual std::shared_ptr<MCAppearance> GetAppearance() { return nullptr; }
     virtual int32_t HandleEvent(MCObjectEvent& event) { return 0; }
     /// <summary>The world position of hot spot <paramref name="hotSpot"/> of the object's appearance.</summary>

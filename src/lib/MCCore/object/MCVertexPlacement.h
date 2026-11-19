@@ -1,6 +1,9 @@
 #pragma once
 
+#include "lib/MCVector2D.h"
 #include "lib/MCVector3D.h"
+
+class MCCamera;
 
 /// <summary>
 /// The map tile of a terrain vertex: vertices and map tiles share one grid, so a vertex's row and column are its
@@ -33,6 +36,13 @@ struct MCVertexCell
     /// <summary>Whether the home team sees any of the four corners.</summary>
     bool AnyCornerVisible() const { return VisibleCorners() != 0; }
 };
+
+/// <summary>
+/// Port-only (OB-192 fixed): the screen place in <paramref name="camera"/>'s view of terrain vertex
+/// <paramref name="vertexNumber"/> of block <paramref name="blockNumber"/>: the terrain walk's this frame
+/// (MCCamera::VertexProject), else projected as the walk projects its first vertex, to the whole pixel.
+/// </summary>
+MCVector2D VertexScreenPlace(int32_t blockNumber, int32_t vertexNumber, const MCCamera& camera);
 
 /// <summary>
 /// The world position of an object set on terrain vertex <paramref name="vertexNumber"/> of block

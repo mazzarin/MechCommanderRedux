@@ -98,7 +98,19 @@ auto MCGVAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     LowerRight.Y = y;
     LowerRight.X = x;
 
-    if (const std::shared_ptr<MCShape> body = CurrentShape[0].lock(); body != nullptr && !body->FrameList().empty())
+    std::array<std::shared_ptr<MCShape>, 2> shapes = {CurrentShape[0].lock(), CurrentShape[1].lock()};
+    const MCGVRotations rotations = DrawnRotations(*obj);
+
+    // OB-192 (fixed): before its first draw it has no bounds of its own, and the box below is the original's default, 25
+    // pixels each way of its place: a larger vehicle showed with much of it in view already. The frames its first draw
+    // takes are measured instead, near the view.
+    if (shapes[0] == nullptr && !InView && NearView(MCVector2D(x, y), cam))
+    {
+        float frameRate = 0.0f;
+        shapes = ShapesToDraw(rotations, frameRate);
+    }
+
+    if (const std::shared_ptr<MCShape>& body = shapes[0]; body != nullptr && !body->FrameList().empty())
     {
         // The bounds only ever grow: they cover every body frame drawn so far.
         const std::span<const uint8_t> shapeTable = body->FrameList();
@@ -118,7 +130,45 @@ auto MCGVAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
         return 1;
     }
 
+    // OB-192 (fixed): the bounds are the body's; the turret, drawn forward of it, can reach into the view first.
+    if (const std::shared_ptr<MCShape>& turret = shapes[1];
+        NumParts >= 2 && turret != nullptr && !turret->FrameList().empty())
+    {
+        const std::span<const uint8_t> shapeTable = turret->FrameList();
+        const MCFrameBounds bounds = MCShapeFrameBounds(shapeTable, MCClampShapeFrame(shapeTable, CurrentFrame[1]));
+        const MCVector2D shift = TurretShift(rotations.Body);
+        const MCVector2D upperLeft(x - shift.X + bounds.MinX, y - shift.Y + bounds.MinY);
+
+        if (ShowsInView(upperLeft, MCVector2D(upperLeft.X + bounds.Width, upperLeft.Y + bounds.Height), std::nullopt,
+                        cam))
+        {
+            return 1;
+        }
+    }
+
     return 0;
+}
+
+auto MCGVAppearance::ShapesToDraw(const MCGVRotations& rotations, float& frameRate) const
+    -> std::array<std::shared_ptr<MCShape>, 2>
+{
+    std::array<std::shared_ptr<MCShape>, 2> shapes;
+    shapes[0] = AppearType->GetShape(CurrentState, static_cast<int32_t>(rotations.Body), 0, frameRate);
+
+    if (static_cast<uint32_t>(NumParts) >= 2 && CurrentState != MCGVActorState::Destroyed)
+    {
+        shapes[1] = AppearType->GetShape(CurrentState, static_cast<int32_t>(rotations.Turret), 1, frameRate);
+    }
+
+    return shapes;
+}
+
+auto MCGVAppearance::TurretShift(float bodyRotation) const -> MCVector2D
+{
+    // The turret sits turretOffset meters forward of the body's centre.
+    const double distance = static_cast<double>(TurretOffset) * WorldUnitsPerMeter;
+    return MCVector2D(static_cast<float>(distance * std::sin(bodyRotation * 0x1.1df46a2526c7ap-6)),
+                      static_cast<float>(distance * std::cos(bodyRotation * 0x1.1df46a2526c7ap-6) * 0.5));
 }
 
 auto MCGVAppearance::DrawnRotations(MCGameObject& obj) const -> MCGVRotations
@@ -244,15 +294,7 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
     const MCGVRotations rotations = DrawnRotations(*obj);
     BodyRotation = rotations.Body;
     TurretRotation = rotations.Turret;
-    const MCGVActorState state = CurrentState;
-    std::array<std::shared_ptr<MCShape>, 2> shapes;
-    shapes[0] = AppearType->GetShape(state, static_cast<int32_t>(BodyRotation), 0, FrameRate);
-
-    if (static_cast<uint32_t>(NumParts) >= 2 && CurrentState != MCGVActorState::Destroyed)
-    {
-        shapes[1] = AppearType->GetShape(CurrentState, static_cast<int32_t>(TurretRotation), 1, FrameRate);
-    }
-
+    const std::array<std::shared_ptr<MCShape>, 2> shapes = ShapesToDraw(rotations, FrameRate);
     CurrentShape[0] = shapes[0];
     CurrentShape[1] = shapes[1];
 
@@ -273,16 +315,9 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
             continue;
         }
 
-        float offsetX = 0.0f;
-        float offsetY = 0.0f;
-
-        if (part == 1)
-        {
-            // The turret sits turretOffset meters forward of the body's centre.
-            const double distance = static_cast<double>(TurretOffset) * WorldUnitsPerMeter;
-            offsetX = static_cast<float>(distance * std::sin(BodyRotation * 0x1.1df46a2526c7ap-6));
-            offsetY = static_cast<float>(distance * std::cos(BodyRotation * 0x1.1df46a2526c7ap-6) * 0.5);
-        }
+        const MCVector2D shift = part == 1 ? TurretShift(BodyRotation) : MCVector2D(0.0f, 0.0f);
+        const float offsetX = shift.X;
+        const float offsetY = shift.Y;
 
         std::optional<MCColorTable> fadeTable;
 

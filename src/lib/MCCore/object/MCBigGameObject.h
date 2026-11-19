@@ -55,6 +55,21 @@ public:
     /// pinging each time it goes round. Nothing without a shape.
     /// </summary>
     void RenderSensorBlip(std::span<uint8_t> shape);
+
+    /// <summary>
+    /// Port-only (OB-192 fixed; MCBaseObject::RenderAtEdge): sets the object's screen place to that of vertex
+    /// <paramref name="vertexNumber"/> of block <paramref name="blockNumber"/> (VertexScreenPlace), and whether
+    /// <paramref name="appearance"/> shows in the view from there (its packets read ahead as the on-screen tests do), or
+    /// the art shadow <paramref name="shadow"/> does (<see cref="ArtShadowOnScreen"/>).
+    /// </summary>
+    bool ShowsAtEdge(int32_t blockNumber, int32_t vertexNumber, MCAppearance& appearance,
+                     std::span<const uint8_t> shadow = {});
+
+    /// <summary>
+    /// The trees' and tree buildings' on-screen test of their art shadow: whether <paramref name="shadow"/>'s first
+    /// frame at the object's screen place reaches into the view (none: false).
+    /// </summary>
+    bool ArtShadowOnScreen(std::span<const uint8_t> shadow) const;
     std::shared_ptr<MCTeam> GetTeam() override { return Team.lock(); }
     int IsPotentialContact() override { return PotentialContact.lock() != nullptr; }
     /// <summary>

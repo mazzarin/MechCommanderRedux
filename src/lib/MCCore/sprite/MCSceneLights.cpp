@@ -1327,6 +1327,39 @@ auto MCSceneLights::AddRecastShadows(std::span<const MCSunShadowPart> parts, int
     ElementList().OpenGroup(depth, sortElements);
 }
 
+auto MCSceneLights::CastShadowBox(float left, float top, float right, float bottom, float foot, float shadowRight,
+                                  float shadowUp) -> std::array<float, 4>
+{
+    std::array<float, 4> box = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                                std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+
+    for (const float x : {left, right})
+    {
+        for (const float y : {top, bottom})
+        {
+            const float above = foot - y;
+            box[0] = std::min(box[0], x + shadowRight * above);
+            box[2] = std::max(box[2], x + shadowRight * above);
+            box[1] = std::min(box[1], foot - shadowUp * above);
+            box[3] = std::max(box[3], foot - shadowUp * above);
+        }
+    }
+
+    return box;
+}
+
+auto MCSceneLights::RecastShadowBox(float left, float top, float right, float bottom, float foot)
+    -> std::optional<std::array<float, 4>>
+{
+    if (!RecastsSunShadows() || !SunCasts())
+    {
+        return std::nullopt;
+    }
+
+    const MCLighting lighting = ShownLighting();
+    return CastShadowBox(left, top, right, bottom, foot, lighting.SunShadowRight, lighting.SunShadowUp);
+}
+
 auto MCSceneLights::AddShadows() -> void
 {
     State& state = TheState();

@@ -2,9 +2,9 @@
 // picture's green as it goes up (MCVulkanRenderer::MarkHdCoverage), so draw.pshader's HdMaskCoverage reads them 2 x 2
 // in a gather instead of the frame's alpha one pixel at a time. Drawn with quad.vshader over the frame's place in its
 // index page, a pixel an original pixel, twice, writing the green alone, which the blend changes without reading it:
-// - where the frame's alpha at the pixel's centre is HdMaskAlpha or under, the green less Spread: the pixels its index
-//   only spread to (255 and 254 in a version 1 frame, as drawn ones) become 253 and 252, a version 2 frame's spread
-//   marks; no mark (0) stays (the blend's REVERSE_SUBTRACT);
+// - where the frame's alpha at the pixel's centre is HdMaskAlpha or under, the green less SpreadStep: the pixels its
+//   index only spread to (255 and 254 in a version 1 frame, as drawn ones) become 253 and 252, a version 2 frame's
+//   spread marks; no mark (0) stays (the blend's REVERSE_SUBTRACT);
 // - where it is over, the green at least CoveredNoIndex: a pixel without an index (an in-between's edge, whose marks
 //   count the pixels half covered) becomes 249; one with an index keeps its mark (the blend's MAX).
 //
@@ -23,12 +23,10 @@ cbuffer Coverage : register(b0, space3)
     int4 marking;
 };
 
-// An HD frame's alpha at an original pixel's centre over this, the frame covers the pixel (KindHdSmooth's mask).
-static const float HdMaskAlpha = 0.5;
-// What the green loses where the frame doesn't cover a pixel, and what it becomes at least where it does, without an
-// index (draw.pshader's SpreadShadow - BakedShadow apart, and its CoveredNoIndex).
-static const float Spread = 2.0 / 255.0;
-static const float CoveredNoIndex = 249.0 / 255.0;
+// The green's marks (channels.hlsli): an HD frame's alpha at an original pixel's centre over HdMaskAlpha, the frame
+// covers the pixel (KindHdSmooth's mask); the green loses SpreadStep where the frame doesn't, and becomes at least
+// CoveredNoIndexGreen where it does, without an index.
+#include "channels.hlsli"
 
 float4 main(float4 position : SV_Position) : SV_Target0
 {
@@ -39,6 +37,6 @@ float4 main(float4 position : SV_Position) : SV_Target0
     const int2 original = int2(position.xy) - place.xy;
     const int2 centre = place.zw + original * scale + scale / 2;
     const bool covered = hdTex.SampleLevel(hdSampler, (float2(centre) + 0.5) / float2(width, height), 0).a > HdMaskAlpha;
-    const float green = marking.y != 0 ? (covered ? CoveredNoIndex : 0.0) : (covered ? 0.0 : Spread);
+    const float green = marking.y != 0 ? (covered ? CoveredNoIndexGreen : 0.0) : (covered ? 0.0 : SpreadStep);
     return float4(0.0, green, 0.0, 0.0);
 }

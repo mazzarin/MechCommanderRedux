@@ -4001,6 +4001,35 @@ TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mis
 }
 
 /// <summary>
+/// Port-only, for test runs: -hdbriefing (TestBriefingSeconds) waits before a game segment's load with the mission's
+/// hold started as its briefing would start it, and the load keeps that hold (MCHdArt::HoldsFor); the wait is spent.
+/// </summary>
+TEST_CASE_ISOLATED("hd art: -hdbriefing holds a game segment's mission before its load, and the load keeps it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t WaitSeconds = 1;
+    const ScratchFolder pack("hdbriefing");
+    MCTestGame::BootOptions.Started = [folder = pack.Path()]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+        TestBriefingSeconds = WaitSeconds;
+    };
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    CHECK(MCHdArt::HoldsFor(mission));
+    CHECK_EQ(TestBriefingSeconds, 0);
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's fill): today's pack (version 1) is held too: an archive of a shape's numbered frames is
 /// kept as stored, its entries in the order they lie, and with its file cut to nothing every frame is drawn as made, read
 /// from the hold (none of the frames kept, MCHdArt::SetCacheBudget).

@@ -189,6 +189,12 @@ void RunMission();
 
 /// <summary>The game segment a demo/segment build starts at; 0 for the normal campaign.</summary>
 extern int32_t GlobalGameSegment;
+/// <summary>
+/// Port-only, for test runs (-hdbriefing; no player passes it): a game segment's seconds before its load, its hold started
+/// as the mission's briefing would start it (MCHdArt::StartBriefingHold), so a run times the load with a briefing's head
+/// start. 0: none.
+/// </summary>
+extern int32_t TestBriefingSeconds;
 /// <summary>The lowest skill a pilot has (gamesys <c>SkillMin</c>).</summary>
 extern float MinPilotSkill;
 /// <summary>The highest skill a pilot can reach by skill-ups (gamesys <c>SkillMax</c>).</summary>

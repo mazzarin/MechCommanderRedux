@@ -193,3 +193,29 @@ TEST_CASE("gpu channels: each mark in the index target's alpha reads as itself a
         CHECK_EQ(ground.FoggedWater, 0u);
     }
 }
+
+TEST_CASE("gpu channels: the stands target holds what stands on the ground, read as the index target's alpha was")
+{
+    // Where nothing stands (the terrain's and the kept ground's draws write NoStand), the index target's alpha is read.
+    for (uint32_t byte = 0; byte < Bytes; byte++)
+    {
+        CHECK_EQ(Written(Gc::MarkOf(Read(byte), Gc::NoStand)), byte);
+    }
+
+    // Every mark short of HD ground's highest stands a byte up, and reads back as itself over any ground.
+    for (uint32_t byte = 0; byte + 1 < Bytes; byte++)
+    {
+        const float stands = Gc::StandsOf(Read(byte));
+        CHECK(stands > Gc::NoStand);
+        CHECK_EQ(Written(stands), byte + 1);
+        CHECK_EQ(Written(Gc::MarkOf(Read(Bytes - 1), stands)), byte);
+        CHECK_EQ(Written(Gc::MarkOf(Read(0), stands)), byte);
+    }
+
+    // The marks drawn over the ground lie in that range: what stands, a canopy, a print filled all the way.
+    for (const float mark : {Gc::StandingMark, Gc::SwayMark, Gc::FilledMarkFrom + Gc::FilledMarkSpan})
+    {
+        CHECK(Written(mark) + 1 < Bytes);
+        CHECK_EQ(Written(Gc::MarkOf(Read(0), Gc::StandsOf(mark))), Written(mark));
+    }
+}

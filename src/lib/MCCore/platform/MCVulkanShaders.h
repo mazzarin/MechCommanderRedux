@@ -72,8 +72,8 @@ namespace MCVulkanShaders
     inline constexpr char EntryPoint[] = "main";
 #endif
 
-    /// <summary>The composite shader's textures (composite.pshader's t0 to t8), in each of its builds.</summary>
-    inline constexpr uint32_t CompositeSamplers = 9;
+    /// <summary>The composite shader's textures (composite.pshader's t0 to t9), in each of its builds.</summary>
+    inline constexpr uint32_t CompositeSamplers = 10;
 
     /// <summary>The built-in shaders.</summary>
     extern const MCShaderInfo Quad;

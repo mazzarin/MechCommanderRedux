@@ -38,11 +38,15 @@ static const uint GapWays = 8;
 static const int2 GapSteps[GapWays] = {int2(1, 0),  int2(-1, 0), int2(0, 1),  int2(0, -1),
                                        int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)};
 
+#include "channels.hlsli"
+
 struct Output
 {
     float4 color : SV_Target0;
     float4 index : SV_Target1;
-    float4 glint : SV_Target2;
+    // The ground's: nothing stands on it, its marks in the indices' alpha (channels.hlsli's stands target).
+    float stands : SV_Target2;
+    float4 glint : SV_Target3;
 };
 
 // The kept colours and indices at kept pixel `kept` (in a copy `size` big).
@@ -81,6 +85,7 @@ Output main(float4 position : SV_Position)
     Output output;
     output.color = float4(0.0, 0.0, 0.0, 0.0);
     output.index = float4(0.0, 0.0, 0.0, 0.0);
+    output.stands = NoStand;
     output.glint = float4(0.0, 0.0, 0.0, 0.0);
 
     if (shift.z == ModeClear)

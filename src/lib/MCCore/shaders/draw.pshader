@@ -126,9 +126,12 @@ struct Output
 {
     float4 color : SV_Target0;
     float4 index : SV_Target1;
+    // Port-only: what stands on the ground (channels.hlsli's stands target), set from the indices' alpha as a draw
+    // ends (main); written wherever a pipeline writes that alpha.
+    float stands : SV_Target2;
     // Port-only (HD weather): the light a raindrop caught (premultiplied), which the composite adds over the lit world;
     // every other draw covers what lies under it as its colour does (MCVulkanRenderer's Surface::Glints).
-    float4 glint : SV_Target2;
+    float4 glint : SV_Target3;
 };
 
 // The channels' values: the index target's marks, an HD frame's index picture's green, the palette entries the shaders
@@ -1110,6 +1113,20 @@ float HdMaskCoverage(int2 original, float2 shape, out int2 nearest)
 // HdEdges::Picture) has a hard border: nothing outside its rectangle counts as undrawn, a texel past it being the one at
 // its edge, so a picture drawn beside or into another covers its own pixels whole.
 static const uint PictureBorder = 1u;
+// Port-only: a KindHd draw's op.w bit for a forest's version 2 frame with its index pass folded in (MCVulkanRenderer's
+// HdMarks::Folded, through its BlendFold pipeline): where the original draws (its index picture's OriginalDrawsIn) it
+// writes the original's index as the pass would (DrawnOutput's KindTexture: the picture's red, through the table before
+// with its key left out when the draw has one, as an overlay's; green and blue 0), the index target's alpha 1 so the
+// pipeline blends it in, and 0 elsewhere; what stands goes in the stands target, the sway mark where the frame's colour
+// leaves the pixel, the frame's mark where it shows (HdPixelAt).
+static const uint FoldsIndex = 2u;
+
+// Whether a draw is a fold (FoldsIndex: an HD frame's draw only).
+bool FoldsIn(Input input)
+{
+    const uint kind = input.op.x & 15u;
+    return (kind == KindHd || kind == KindHdSmooth) && (input.op.w & FoldsIndex) != 0;
+}
 // Port-only: the keyed holes of a KindHd draw's picture that a later copy fills edge to edge (MCVulkanRenderer's
 // FillHoles), at most FilledHolesMost, each in two words of span and walk (hole i: low i, high i), its first original
 // pixel and the one past its last (x the low half, y the high; none when both are 0). Their edges aren't softened
@@ -1290,6 +1307,14 @@ Output HdPixelAt(Input input, float2 shape)
     const int texelScale = (int)hdScale;
     float4 color = HdColourBetween(input, shape, original);
     int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
+    // A fold's original pixel under it: the pass's texel (the draws' places agree, MCVulkanRenderer::Shape).
+    const bool folds = FoldsIn(input);
+    const int2 under = int2(floor(shape));
+    const bool inPicture = all(under >= int2(0, 0)) && all(under < original);
+    const float4 underEntry = inPicture ? SourceAt(under) : float4(0.0, 0.0, 0.0, 0.0);
+    const bool foldTable = (flags & TableBefore) != 0;
+    const uint foldedIndex = foldTable ? Table(input.op.z, Byte(underEntry.r)) : Byte(underEntry.r);
+    const bool foldsIndex = folds && inPicture && OriginalDrawsIn(underEntry) && (!foldTable || foldedIndex != 255u);
 
     // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
     if ((flags & 15u) == KindHdSmooth)
@@ -1309,7 +1334,10 @@ Output HdPixelAt(Input input, float2 shape)
         color = float4(max(color.rgb - LightFloor, 0.0), 0.0);
     }
 
-    if (color.a <= 0.0 && ((input.op.x & HdLight) == 0 || all(color.rgb <= 0.0)))
+    // A fold's original pixel is drawn whatever the frame's colour there (its index, its mark).
+    const bool shows = color.a > 0.0 || ((input.op.x & HdLight) != 0 && any(color.rgb > 0.0));
+
+    if (!shows && !foldsIndex)
     {
         discard;
     }
@@ -1366,8 +1394,15 @@ Output HdPixelAt(Input input, float2 shape)
         color.rgb = TableShift(input.op.z, color.rgb, color.a);
     }
 
-    Output output = Blended(color);
+    Output output = Blended(shows ? color : float4(0.0, 0.0, 0.0, 0.0));
     output.index.a = swayMark;
+
+    if (folds)
+    {
+        output.index = foldsIndex ? float4((float)foldedIndex / 255.0, 0.0, 0.0, 1.0) : float4(0.0, 0.0, 0.0, 0.0);
+        output.stands = StandsOf(shows ? swayMark : SwayMark);
+    }
+
     return output;
 }
 
@@ -2227,5 +2262,16 @@ Output main(Input input)
         output.index.gb = float2(feet >> BitsPerByte, feet & 255u) / 255.0;
     }
 
+    // Port-only: what stands on the ground, from the mark written: the terrain's marks are the ground's (its HD ground's
+    // reach 255, beyond what the stands target holds a byte up), the rest stand on it.
+#if DRAW_VARIANT == DRAW_TERRAIN_KINDS
+    output.stands = NoStand;
+#else
+    // A fold's are its own (HdPixelAt), its alpha there saying where its index goes.
+    if (!FoldsIn(input))
+    {
+        output.stands = StandsOf(output.index.a);
+    }
+#endif
     return output;
 }

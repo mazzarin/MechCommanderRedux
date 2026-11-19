@@ -3,7 +3,7 @@
 // Every draw that writes a channel and every one that reads it takes its values from here; GpuChannelsTests checks the
 // layout (no value means two things, each mark lies in its readers' windows).
 //
-// A surface's targets (MCVulkanRenderer's Surface; SV_Target0 to 2 in draw.pshader):
+// A surface's targets (MCVulkanRenderer's Surface; SV_Target0 to 3 in draw.pshader):
 // - 0, its colours: RGBA8, the picture as shown.
 // - 1, its indices (Surface::Index): RGBA8.
 //   - R: the original's palette index at the pixel.
@@ -11,7 +11,11 @@
 //     bits (ReliefFlat flat) and the fog of war's edge in their low bits (G's the low bit of the count, B's the high);
 //     at or under it, the window row a unit's feet stand on, FeetSteps a row and 1 more (G the high byte, B the low;
 //     0 for none).
-// - 2, its glints (Surface::Glints, HD weather): premultiplied RGBA8, only on passes whose draws catch light.
+// - 2, its stands (Surface::Stands): R8, what stands on the ground at the pixel: 0 where the index target's alpha says
+//   (the terrain's and the kept ground's draws, which write the ground's marks there), else the alpha a draw over the
+//   ground means, a byte up (StandsOf). Every other draw that writes the index target's alpha writes it, so a fold of
+//   a forest's index pass into its HD frame's draw can leave the alpha alone (MarkOf reads the two as one).
+// - 3, its glints (Surface::Glints, HD weather): premultiplied RGBA8, only on passes whose draws catch light.
 //
 // The index target's alpha, by its byte (draw.pshader writes it; composite.pshader reads it, each reader by a window):
 // - 0, StandingMark: no HD ground (the original's ground, a sprite, an HD frame's coverage past its original pixels).
@@ -80,6 +84,25 @@ MC_CHANNEL float FilledMarkFrom = 0.52f;
 MC_CHANNEL float FilledMarkSpan = 0.2f;
 MC_CHANNEL float FilledMarkTop = 0.735f;
 MC_CHANNEL float BlockedMarkSpan = 0.25f;
+
+// The stands target (target 2): 0 where the index target's alpha holds the mark; else that mark a byte up (StandsOf),
+// so a draw's mark of 0 (StandingMark) is still told from the ground's. No draw over the ground writes a mark of 255
+// (only HD ground: the terrain's, which writes 0 here).
+MC_CHANNEL float NoStand = 0.0f;
+
+// What a draw over the ground writes in the stands target for its mark (the index target's alpha) <paramref
+// name="mark"/>.
+MC_CHANNEL_DECODE float StandsOf(float mark)
+{
+    return float(Byte(mark) + 1u) / 255.0f;
+}
+
+// The index target's mark at a pixel, from its alpha <paramref name="alpha"/> and the stands target's
+// <paramref name="stands"/>: what stands there, else the ground's.
+MC_CHANNEL_DECODE float MarkOf(float alpha, float stands)
+{
+    return stands > NoStand ? float(Byte(stands) - 1u) / 255.0f : alpha;
+}
 
 // The index target's green and blue: a relief map's byte for flat ground (a byte stands for a rise of (byte - this) /
 // 127 of a pixel); a unit's feet, carried in its draw's op.y from FeetShift.

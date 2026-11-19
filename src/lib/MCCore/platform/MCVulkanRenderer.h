@@ -268,6 +268,11 @@ public:
     /// </summary>
     std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(const MCWindow& window) const;
     std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(MCAddressKey key) const;
+    /// <summary>
+    /// Port-only: what stands on the ground in the surface of the window keyed <paramref name="key"/> (R8, its
+    /// stands target: shaders/channels.hlsli's StandsOf), as <see cref="Execute"/> left it; null when it has none yet.
+    /// </summary>
+    std::shared_ptr<SDL_GPUTexture> SurfaceStandsTexture(MCAddressKey key) const;
 
     /// <summary>
     /// Port-only (HD weather's drops catching the light): the light the raindrops on <paramref name="window"/>'s
@@ -435,6 +440,15 @@ public:
     /// for the original's rows (<see cref="HdShapeIndices"/>).
     /// </summary>
     int64_t HdIndexPicturesDrawn() const { return _HdIndexPicturesDrawn; }
+    /// <summary>
+    /// Port-only: the forests' version 2 HD frames drawn so far with their index passes folded in (HdMarks::Folded).
+    /// </summary>
+    int64_t HdFolds() const { return _HdFolds; }
+    /// <summary>
+    /// Port-only: whether forests' version 2 HD frames fold their index passes into their draws (on; the tests draw
+    /// them both ways to compare).
+    /// </summary>
+    void SetFoldsIndexPasses(bool folds) { _FoldsIndexPasses = folds; }
     /// <summary>
     /// Port-only: how many times a stripped shape table's rows were asked for (a version 2 pack's, drawn without its HD
     /// frame: RowsGone), each drawn as nothing.
@@ -649,7 +663,13 @@ private:
         Texture Index;
         Texture Copy;
         /// <summary>
-        /// Port-only (HD weather): a third colour target, the light the raindrops caught (MCParticleCommand::Glint,
+        /// Port-only: what stands on the ground at each pixel (R8, shaders/channels.hlsli's stands target): written by
+        /// every draw that writes the indices' alpha, so a forest's HD frame can fold its index pass in and leave that
+        /// alpha the ground's.
+        /// </summary>
+        Texture Stands;
+        /// <summary>
+        /// Port-only (HD weather): a fourth colour target, the light the raindrops caught (MCParticleCommand::Glint,
         /// premultiplied RGBA), which the composite adds over the lit world. Every draw covers it as it covers the
         /// colours (an opaque one clears it), so a unit in front of a drop hides its light. Only a frame whose draws
         /// on the surface catch light (CatchesLight) draws into it, the first made then; the others' passes have the
@@ -750,6 +770,11 @@ private:
         /// with IndexOnly, an HD frame's mark pass: HdMarks::Standing).
         /// </summary>
         bool Marks = false;
+        /// <summary>
+        /// Port-only: whether the draws are forests' HD frames with their index passes folded in (HdMarks::Folded):
+        /// blended, writing the indices' red, green and blue where the original draws, and the stands.
+        /// </summary>
+        bool Fold = false;
         /// <summary>Port-only: the draw shader's build the draws go through.</summary>
         DrawVariant Variant = DrawVariant::Every;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
@@ -944,7 +969,7 @@ private:
     /// Port-only: the channels of a surface's targets that a record's pipeline writes (DrawPipelines::For's, or the
     /// shadow's), four bits a target in the targets' order, red first.
     /// </summary>
-    static uint32_t WrittenChannels(bool blend, bool indexOnly, bool shadow, bool marks);
+    static uint32_t WrittenChannels(bool blend, bool indexOnly, bool shadow, bool marks, bool fold);
     /// <summary>
     /// Port-only: whether a draw on <paramref name="surface"/> reading <paramref name="source"/> and writing
     /// <paramref name="channels"/> over <paramref name="written"/> leaves every pixel as it was when drawn before
@@ -1061,6 +1086,11 @@ private:
     {
         None,
         Standing,
+        /// <summary>
+        /// Port-only: a forest's version 2 frame with its index pass folded in: the frame's draw writes the original's
+        /// indices where the original draws (its index picture's) as that pass would, in one draw (FoldsIndex).
+        /// </summary>
+        Folded,
     };
 
     /// <summary>
@@ -1536,6 +1566,11 @@ private:
         MCGpuHandle<SDL_GPUGraphicsPipeline> BlendMarks;
         /// <summary>Port-only: an HD frame's mark pass (HdMarks::Standing), writing the indices' alpha alone.</summary>
         MCGpuHandle<SDL_GPUGraphicsPipeline> IndexMarks;
+        /// <summary>
+        /// Port-only: a forest's version 2 HD frame with its index pass folded in (HdMarks::Folded), blended, writing
+        /// the indices' red, green and blue by its alpha there, and the stands.
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> BlendFold;
         /// <summary>Whether every pipeline was made.</summary>
         bool Made() const;
         /// <summary>The pipeline <paramref name="record"/>'s draws go through (not a shadow's).</summary>
@@ -1567,10 +1602,14 @@ private:
         MCGpuHandle<SDL_GPUGraphicsPipeline> GroundIndex;
         /// <summary>Whether every pipeline was made.</summary>
         bool Made() const;
+        /// <summary>Whether the terrain's and the kept ground's were (the kept ground's set has those alone).</summary>
+        bool GroundMade() const;
     };
 
-    /// <summary>The surfaces' pipelines: for passes without their glints, then for those with them.</summary>
-    std::array<SurfacePipelines, 2> _SurfacePipelines;
+    /// <summary>
+    /// The surfaces' pipelines: for passes without their glints, then for those with them, then the kept ground's.
+    /// </summary>
+    std::array<SurfacePipelines, 3> _SurfacePipelines;
     /// <summary>The terrain layer's vertex shader.</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     TerrainMeshState _TerrainMesh;
@@ -1844,6 +1883,8 @@ private:
     std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
     int64_t _HdIndexPicturesDrawn = 0;
+    int64_t _HdFolds = 0;
+    bool _FoldsIndexPasses = true;
     int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
     std::optional<AuditedDraw> _Audited;

@@ -84,6 +84,10 @@ SamplerState lightTileSampler : register(s7, space2);
 // past the world each way (unused without puddles).
 Texture2D<float> puddleTex : register(t8, space2);
 SamplerState puddleSampler : register(s8, space2);
+// Port-only: over the GPU world, what stands on its ground (its stands target, channels.hlsli), which opTex's alpha
+// is read with (WorldTexelAt; unused without a GPU world).
+Texture2D<float> standsTex : register(t9, space2);
+SamplerState standsSampler : register(s9, space2);
 
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
 static const uint MaxLights = 64;
@@ -313,6 +317,15 @@ float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 si
     return tex.SampleLevel(samp, (texel + 0.5) / size, 0);
 }
 
+// The GPU world's indices at a world texel (opTex), their alpha the mark there (channels.hlsli's MarkOf: what stands
+// on the ground, else the ground's).
+float4 WorldTexelAt(float2 texel)
+{
+    const float2 uv = (texel + 0.5) / worldSize.zw;
+    const float4 drawn = opTex.SampleLevel(opSampler, uv, 0);
+    return float4(drawn.rgb, MarkOf(drawn.a, standsTex.SampleLevel(standsSampler, uv, 0)));
+}
+
 // Port-only (HD lighting's headlights): a unit's pixels in the index target hold the window row its feet stand on in
 // their green (the high byte) and blue, FeetSteps a row and 1 more (draw.pshader's FeetShift; 0: none), where the alpha
 // marks what stands. Two units' feet as near as FeetSame window rows are taken as one's. A unit is taken as UnitDepth
@@ -327,7 +340,7 @@ static const float NoFeet = -1.0;
 // it).
 float FeetAt(float2 at)
 {
-    const float4 drawn = TexelAt(opTex, opSampler, clamp(round(at - 0.5), 0.0, worldSize.xy - 1.0), worldSize.zw);
+    const float4 drawn = WorldTexelAt(clamp(round(at - 0.5), 0.0, worldSize.xy - 1.0));
     const uint code = Byte(drawn.g) << BitsPerByte | Byte(drawn.b);
     return drawn.a <= GroundMark && code != 0u ? ((float)(code - 1u) / FeetSteps + 0.5) * airBeams.z : NoFeet;
 }
@@ -852,7 +865,7 @@ float2 SlopeAt(float2 texel)
     if (mode.y != 0.0 && reliefLook.x > 0.0)
     {
         const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
-        const float4 drawn = TexelAt(opTex, opSampler, at, worldSize.zw);
+        const float4 drawn = WorldTexelAt(at);
 
         if (drawn.a > 0.5)
         {
@@ -987,7 +1000,7 @@ uint FoggedWaterAt(float2 texel)
         return 0u;
     }
 
-    const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);
+    const float4 drawn = WorldTexelAt(clamp(round(texel), 0.0, worldSize.xy - 1.0));
 
     if (drawn.a > GroundMark)
     {
@@ -1145,7 +1158,7 @@ static const float2 GustLayerApart = float2(17.3, -9.1);
 bool IsCanopy(float2 texel)
 {
     const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
-    return abs(TexelAt(opTex, opSampler, at, worldSize.zw).a - SwayMark) < SwayMarkNear;
+    return abs(WorldTexelAt(at).a - SwayMark) < SwayMarkNear;
 }
 
 // The point of crown cell `cell` (meters), and its own values (0 to 1) for its rate, beat and swell.
@@ -1482,7 +1495,7 @@ static const float FarFromPrint = 1.0e6;
 // MCHdArt's relief maps), and the index target's alpha there (above GroundMark, that ground); none elsewhere.
 float2 ReliefAt(float2 texel, out float mark, out uint edge)
 {
-    const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);
+    const float4 drawn = WorldTexelAt(clamp(round(texel), 0.0, worldSize.xy - 1.0));
     mark = drawn.a;
     edge = FogEdgeOf(drawn);
     return mark > GroundMark ? (ReliefBytes(drawn) - ReliefFlat) / ReliefSteps : float2(0.0, 0.0);
@@ -1732,7 +1745,7 @@ static const float2 PrintGroundSpans = float2(8.0, 16.0);
 // How far a footprint or a crater has filled in at a world texel (0 where there's none, or none yet).
 float FilledAt(float2 texel)
 {
-    const float mark = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw).a;
+    const float mark = WorldTexelAt(clamp(round(texel), 0.0, worldSize.xy - 1.0)).a;
     return mark > GroundMark && mark < FilledMarkTop ? saturate((mark - FilledMarkFrom) / FilledMarkSpan) : 0.0;
 }
 
@@ -1771,7 +1784,7 @@ float3 GroundRound(float3 color, float2 texel)
         for (uint way = 0; way < 4; ++way)
         {
             const float2 at = texel + ways[way] * PrintGroundSpans[ring];
-            const float mark = TexelAt(opTex, opSampler, clamp(round(at), 0.0, worldSize.xy - 1.0), worldSize.zw).a;
+            const float mark = WorldTexelAt(clamp(round(at), 0.0, worldSize.xy - 1.0)).a;
 
             if (mark >= FilledMarkTop)
             {
@@ -1948,7 +1961,7 @@ void LaySpeck(inout float4 laid, float3 colour, float strength)
 // terrain tile no one has seen, filled black (UnseenIndex: its UnseenTileIndex).
 bool StandsAt(float2 texel)
 {
-    const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);
+    const float4 drawn = WorldTexelAt(clamp(round(texel), 0.0, worldSize.xy - 1.0));
     const uint index = Byte(drawn.r);
     return speckFalls.w > 0.0 && drawn.a <= GroundMark && index != BlankIndex && index != UnseenIndex;
 }

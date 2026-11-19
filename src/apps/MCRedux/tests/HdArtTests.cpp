@@ -16140,6 +16140,111 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
 }
 
 /// <summary>
+/// A picture the HD art pack has is drawn from it on its own first draw (one never drawn before, as the results
+/// screen's background is until a mission ends), not the original's pixels for a frame; and a picture whose pixels
+/// change to another the pack has is drawn from the new one's copy at once, not the last one's for a frame: copied
+/// onto mission 1's screen (shown larger) with HD art on, its shown colours are those of a fresh copy of the same
+/// picture.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on its first draw, and a changed one's new copy at once")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // Two pictures of their own, both in the pack: upright stripes of four colours from two places in the palette.
+    constexpr int32_t Side = StripedSide;
+    constexpr uint8_t FirstColor = 0x30;
+    constexpr uint8_t SecondColor = 0x60;
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_first_draw";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const std::shared_ptr<MCWindow> first = StripedPicture(FirstColor);
+    const std::shared_ptr<MCWindow> second = StripedPicture(SecondColor);
+    WritePackPicture(pack, *first, colors);
+    WritePackPicture(pack, *second, colors);
+    WritePaletteRgb(pack, colors);
+    const MCHdArtOn on(pack);
+
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+
+    struct Copied
+    {
+        int64_t HdDrawn = 0;
+        Shown Seen;
+    };
+
+    // A frame, then the picture copied onto the screen and shown.
+    const auto copy = [&](const std::shared_ptr<MCWindow>& picture)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        Copied copied;
+        const int64_t before = renderer->HdDrawn();
+        VfxPaneCopy(MCPane::Over(picture), 0, 0, screen, left, top, VfxNoColor);
+        copied.HdDrawn = renderer->HdDrawn() - before;
+        copied.Seen = ReadShown(scratch);
+        return copied;
+    };
+
+    GamePaused = true;
+
+    // Never drawn before: a fresh texture of the first picture's pixels, then of the second's (the reference).
+    const std::shared_ptr<MCWindow> fresh = StripedPicture(FirstColor);
+    const Copied firstDraw = copy(fresh);
+    const std::shared_ptr<MCWindow> reference = StripedPicture(SecondColor);
+    const Copied secondFresh = copy(reference);
+
+    // The drawn picture's pixels changed to the second's, as the game writes a picture's memory.
+    std::ranges::copy(second->Bytes(), fresh->Bytes().begin());
+    fresh->Texture.lock()->Dirty = true;
+    const Copied changed = copy(fresh);
+    GamePaused = false;
+
+    CHECK_EQ(firstDraw.HdDrawn, 1);
+    CHECK_EQ(secondFresh.HdDrawn, 1);
+    CHECK_EQ(changed.HdDrawn, 1);
+
+    // The picture's place in the shown frame (the screen shown larger), a pixel in from its edges.
+    const int32_t width = MCInput::Display()->Width();
+    REQUIRE(width > 0);
+    const float scale = static_cast<float>(changed.Seen.Width) / static_cast<float>(width);
+    const int32_t x0 = static_cast<int32_t>(std::ceil(static_cast<float>(screen.X0 + left) * scale)) + 1;
+    const int32_t y0 = static_cast<int32_t>(std::ceil(static_cast<float>(screen.Y0 + top) * scale)) + 1;
+    const int32_t x1 = static_cast<int32_t>(static_cast<float>(screen.X0 + left + Side) * scale) - 2;
+    const int32_t y1 = static_cast<int32_t>(static_cast<float>(screen.Y0 + top + Side) * scale) - 2;
+    const MCRect inside{x0, y0, x1, y1};
+    const int32_t area = (x1 - x0 + 1) * (y1 - y0 + 1);
+
+    // The changed picture shows the second's copy, as a fresh one does, not the first's.
+    const Changed fromReference = Compare(secondFresh.Seen, changed.Seen, inside);
+    const Changed fromFirst = Compare(firstDraw.Seen, changed.Seen, inside);
+    std::cout << std::format(
+        "  changed picture: {} of {} shown pixels unlike the second's copy, {} unlike the first's\n",
+        fromReference.Count, area, fromFirst.Count);
+    CHECK(fromReference.Count < area / 20);
+    CHECK(fromFirst.Count > area * 3 / 4);
+
+    for (const std::shared_ptr<MCWindow>& picture : {first, second, fresh, reference})
+    {
+        MCRenderer::DestroyTexture(*picture);
+    }
+
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's one copy of a frame's colours): the texture keeps the picture's record, without its
 /// colours; once the GPU holds the picture the pack's cache lets them go, and the picture is drawn from the GPU's copy
 /// with nothing read even with the cache held to a byte; once the GPU lets the picture go, its colours are read again

@@ -12,6 +12,7 @@
 #include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
 #include "camera/MCCameraList.h"
+#include "camera/MCMainWindow.h"
 #include "engine/MCCraterManager.h"
 #include "engine/MCElementBuffer.h"
 #include "gui/MCGuiSystem.h"
@@ -400,7 +401,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCHdArt::WaitForReadAhead();
     MCHdArt::KeepReadAhead();
     // Port-only (SPEC-memory.md): the bar ends once the mission's art is in memory, so play reads nothing from the disk.
-    MCHdArt::FinishLoadFill([] { UpdateDisplay(false, true, 30, true, 100); });
+    MCHdArt::FinishLoadFill(ShowLoadingBar);
 
     HasOutputBlock = file.SeekBlock("Output") == 0;
     file.Close();
@@ -428,6 +429,24 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     StartUpCountdown = 100;
     _Loaded = true;
     return 0;
+}
+
+auto MCScenario::ShowLoadingBar() -> void
+{
+    const std::shared_ptr<MCMainWindow> holder = MainHolder();
+    const bool shown = holder != nullptr && holder->IsShowing();
+
+    if (shown)
+    {
+        holder->ShowGuiWindow(false);
+    }
+
+    UpdateDisplay(false, true, 30, true, 100);
+
+    if (shown)
+    {
+        holder->ShowGuiWindow(true);
+    }
 }
 
 auto MCSightAt(const std::array<int32_t, VisualRangeTableSize>& dayTable, MCTimeOfDay time)

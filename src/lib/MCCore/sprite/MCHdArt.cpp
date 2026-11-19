@@ -656,6 +656,13 @@ namespace
         std::vector<std::jthread> Readers;
     };
 
+    /// <summary>Port-only (MCHdArt::ReadMenuSetAhead): an entry of the menus' archive, its name and unpacked bytes.</summary>
+    struct MenuSetEntry
+    {
+        std::string Name;
+        size_t Bytes = 0;
+    };
+
     struct State
     {
         /// <summary>The folder set (empty: the default), and whether the folder in use exists (unknown: not looked).</summary>
@@ -774,6 +781,12 @@ namespace
         /// <summary>The pack's dicts.hdd, once read (DictionariesLooked; null: none, or it can't be read).</summary>
         bool DictionariesLooked = false;
         std::shared_ptr<const MCZstd::Dictionaries> Dictionaries;
+        /// <summary>
+        /// Port-only (MenuSetOf, the game's thread's): the menus' archive whose entries MenuSet holds, in the order they
+        /// lie in it (a version 2 archive's read from its names once, SPEC-pack-v2.md).
+        /// </summary>
+        std::weak_ptr<const MCHdArchive> MenuSetFrom;
+        std::vector<MenuSetEntry> MenuSet;
         /// <summary>This game's sprite files (MCHdArt::SetSpriteFiles; empty: not known yet).</summary>
         std::string SpriteFiles;
         /// <summary>
@@ -5505,6 +5518,67 @@ void MCHdArt::ReadPacketAhead(const std::filesystem::path& folder, std::optional
     ReadPacketsAhead(packet, ReadAs::Set);
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only (MCHdArt::ReadMenuSetAhead): the menus' archive <paramref name="set"/>'s entries, in the order they lie
+    /// in it: a version 1 archive's directory's, a version 2 archive's from its names (SPEC-pack-v2.md: it has no
+    /// directory), in its streams' order, read once and kept in <paramref name="state"/> until the archive changes;
+    /// none (logged) when it keeps no names.
+    /// </summary>
+    const std::vector<MenuSetEntry>& MenuSetOf(State& state, const std::shared_ptr<MCHdArchive>& set)
+    {
+        if (state.MenuSetFrom.lock() == set)
+        {
+            return state.MenuSet;
+        }
+
+        state.MenuSetFrom = set;
+        state.MenuSet.clear();
+        const MCFastFile& file = *set->File;
+
+        if (!file.IsVersion2())
+        {
+            for (const MCFileEntry& entry : file.GetEntries())
+            {
+                state.MenuSet.push_back(
+                    {std::string(entry.GetName()), static_cast<size_t>(std::max(entry.RealSize, 0))});
+            }
+
+            return state.MenuSet;
+        }
+
+        std::expected<std::vector<std::string>, std::string> names = file.Names();
+
+        if (!names.has_value())
+        {
+            LogOnce(set->Path, std::format("the screens' set isn't read ahead: {}", names.error()));
+            return state.MenuSet;
+        }
+
+        // Each with its stream's place, so the readers take them as they lie.
+        std::vector<std::pair<int32_t, MenuSetEntry>> placed;
+
+        for (std::string& name : *names)
+        {
+            if (const std::optional<int32_t> index = file.Find(name); index.has_value())
+            {
+                const MCFileEntry entry = file.EntryAt(*index);
+                placed.push_back({entry.Offset, {std::move(name), static_cast<size_t>(std::max(entry.RealSize, 0))}});
+            }
+        }
+
+        std::ranges::stable_sort(placed, {}, &std::pair<int32_t, MenuSetEntry>::first);
+
+        for (auto& [offset, entry] : placed)
+        {
+            state.MenuSet.push_back(std::move(entry));
+        }
+
+        return state.MenuSet;
+    }
+}
+
 size_t MCHdArt::ReadMenuSetAhead()
 {
     if (!Active())
@@ -5531,11 +5605,11 @@ size_t MCHdArt::ReadMenuSetAhead()
     ReadAhead& ahead = state.Ahead;
     std::unique_lock lock(ahead.Lock);
 
-    for (const MCFileEntry& entry : set->File->GetEntries())
+    for (const MenuSetEntry& entry : MenuSetOf(state, set))
     {
         // "<prefix><16 hex digits>.hdf" (the archive's names compared without regard to case): the picture's hash
         // (HashName), its size any, checked at its first draw.
-        const std::string_view name = entry.GetName();
+        const std::string_view name = entry.Name;
 
         if (name.size() != prefix.size() + HashNameDigits + HdfExtension.size() ||
             MCPort::StrICmp(name.substr(0, prefix.size()), prefix) != 0 ||
@@ -5553,7 +5627,7 @@ size_t MCHdArt::ReadMenuSetAhead()
             !AheadHas(ahead, FrameKey{menus, hash}))
         {
             // The readers take them in this order while they fit the room (ExpandAsks): so many bytes are asked for.
-            const auto size = static_cast<size_t>(std::max<int64_t>(entry.RealSize, 0));
+            const size_t size = entry.Bytes;
 
             if (bytes + size > room)
             {

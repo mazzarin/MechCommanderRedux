@@ -32,6 +32,7 @@
 #include "network/MCMultiPlayer.h"
 #include "object/MCObjectTypeManager.h"
 #include "vfx/MCVfxFunctions.h"
+#include "sprite/MCHdArt.h"
 
 auto MCLogistics::LoadQuickStart(MCFitIniFile& file) -> void
 {
@@ -932,6 +933,19 @@ auto MCLogistics::GetCurrentMission() -> void
     if (file.Open(GamePath(MissionPath, fileName, ".fit")) != 0)
     {
         return;
+    }
+
+    // Port-only (SPEC-memory.md's "From the briefing"): the next mission known, its HD art is read from now, behind
+    // the briefing's screens, and its load keeps it.
+    MCHdArt::StartBriefingHold(fileName, MCHdArt::BriefingFolders(fileName));
+
+    // And the lance's mechs placed already (the last mission's), as each placed later (MCMechBriefBlock::PlaceInEmptySlot).
+    for (int32_t index = 0; ForceMechList != nullptr && index < ForceMechList->GetMechCount(); ++index)
+    {
+        if (std::shared_ptr<MCLogMech> mech; ForceMechList->GetMechInfo(index, mech) == 0 && mech->Deployed)
+        {
+            MCHdArt::HoldMechAhead(mech->Chassis);
+        }
     }
 
     int32_t result = file.SeekBlock("Campaign");

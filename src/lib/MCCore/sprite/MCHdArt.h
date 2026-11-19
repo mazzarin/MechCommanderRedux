@@ -1125,6 +1125,57 @@ namespace MCHdArt
     /// <summary>Port-only: the stored bytes the hold keeps now (<see cref="StartHold"/>).</summary>
     size_t HeldBytes();
 
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): the next mission is known, <paramref name="mission"/> (its
+    /// <c>.fit</c>'s name): when the hold is wanted, it holds from now that mission's art, the archives of
+    /// <paramref name="folders"/> (the pack's, from its list) and of those handed it next (<see cref="OpenArchivesAhead"/>:
+    /// each mech of the player's lance as it's placed), reading behind the screens, a run of
+    /// <see cref="BriefingRunBytes"/> at a time, until the load (<see cref="StartLoadFill"/>). Another mission's hold is
+    /// let go of first.
+    /// </summary>
+    void StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders);
+
+    /// <summary>
+    /// Port-only: whether the hold holds for <paramref name="mission"/> since its briefing (<see cref="StartBriefingHold"/>,
+    /// not let go of since), which its load keeps rather than letting go of.
+    /// </summary>
+    bool HoldsFor(std::string_view mission);
+
+    /// <summary>
+    /// Port-only: the most bytes one of the hold's reads takes behind a briefing's screens (<see cref="StartBriefingHold"/>):
+    /// what a hard disk reads in about 10 ms, so a screen's read waits behind one for at most that.
+    /// </summary>
+    constexpr uint64_t BriefingRunBytes = uint64_t{1} << 20;
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing": a mission's list): the pack's folders the last load handed the hold
+    /// (<see cref="StartLoadFill"/> to <see cref="FinishLoadFill"/>): those of the types it made
+    /// (<see cref="OpenArchivesAhead"/>) and of the frames it drew or read ahead whose archives the hold keeps any of; each
+    /// once, in the order handed, relative to the pack.
+    /// </summary>
+    std::vector<std::filesystem::path> LoadFolders();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders <paramref name="mission"/>'s load hands the
+    /// hold, from the list the program carries for it (sprite/MCHoldLists.h, worked out from <see cref="LoadFolders"/>),
+    /// but those of the player's lance; none for a mission it has no list for (a mod's), which fills at its load.
+    /// </summary>
+    std::vector<std::filesystem::path> BriefingFolders(std::string_view mission);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders of mech chassis <paramref name="chassis"/>'s
+    /// tree (its packet in the object file), from the list the program carries (sprite/MCHoldLists.h); none for one it
+    /// has no list for.
+    /// </summary>
+    std::vector<std::filesystem::path> ChassisFolders(uint32_t chassis);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): a mech of chassis <paramref name="chassis"/> is in the player's
+    /// lance: while a briefing's mission is held (<see cref="StartBriefingHold"/>), the hold reads its tree's archives
+    /// too (<see cref="ChassisFolders"/>), and holds them until the mission ends.
+    /// </summary>
+    void HoldMechAhead(uint32_t chassis);
+
     /// <summary>Port-only: how many reads the hold has made (<see cref="StartHold"/>), for the tests.</summary>
     size_t HeldReads();
 

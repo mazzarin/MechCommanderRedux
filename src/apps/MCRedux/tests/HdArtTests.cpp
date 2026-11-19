@@ -10260,6 +10260,90 @@ namespace
 }
 
 /// <summary>
+/// Port-only (HDSmoothMotion): the view panned by fractions of a window pixel a frame, as a camera following a walking
+/// mech moves, across, down and on the diagonal: the camera keeps the fraction its place loses to the original's
+/// rounding (MCCamera::ScreenULFraction) and the world's drawn grid moves the picture by it in whole drawn pixels, so
+/// the HD ground's kept pixels are still moved, never drawn again for it (none drawn directly or whole), and in mirror
+/// mode every drawn pixel shown keeps the palette index of the software renderer's pixel it shows.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: with SMOOTH MOTION a pan by fractions of a pixel moves the kept HD ground, indices the original's")
+{
+    struct Pan
+    {
+        float Across = 0.0f;
+        float Down = 0.0f;
+    };
+
+    constexpr std::array<Pan, 6> Pans = {Pan{0.3f, 0.0f},  Pan{0.7f, 0.0f},  Pan{0.0f, 0.45f},
+                                         Pan{-0.6f, 0.0f}, Pan{1.3f, -0.2f}, Pan{0.0f, -0.85f}};
+    constexpr int32_t FramesEach = 4;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    GHdSmoothMotion = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    scene->Renderer->ResetMirror();
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+    MCVector3D position = Eye()->GetPosition();
+    std::set<int32_t> offsets;
+    int32_t frames = 0;
+    int32_t between = 0;
+
+    for (const Pan& pan : Pans)
+    {
+        for (int32_t frame = 0; frame < FramesEach; ++frame)
+        {
+            REQUIRE(PanFrame(position, pan.Across, pan.Down));
+            ++frames;
+            between += Eye()->ScreenULFraction != std::array<int32_t, 2>{} ? 1 : 0;
+            const std::optional<std::array<int32_t, 2>> offset = WorldGridOffset(*scene->Renderer);
+            REQUIRE(offset.has_value());
+            offsets.insert((*offset)[0]);
+            offsets.insert((*offset)[1]);
+        }
+    }
+
+    GHdSmoothMotion = 0;
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+    std::cout << std::format("  {} frames ({} between pixels): {} shifted, {} kept, {} whole, {} direct; the grid's "
+                             "offsets {}\n",
+                             frames, between, after.Shifted - before.Shifted, after.Kept - before.Kept,
+                             after.Whole - before.Whole, after.Direct - before.Direct, offsets.size());
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // Every frame laid from the kept ground, the camera between pixels on most.
+    CHECK_EQ(after.Shifted - before.Shifted + after.Kept - before.Kept, frames);
+    CHECK(2 * (after.Shifted - before.Shifted) > frames);
+    CHECK_EQ(after.Whole - before.Whole, 0);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+    CHECK(2 * between > frames);
+    CHECK(offsets.size() > 2);
+    CHECK_EQ(tally.Frames, frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
 /// Port-only (the kept ground): a frame of a pan that draws the HD ground whole (here a jump past the view; over water a
 /// step of the colour cycle across most of it) draws it into the kept ground, which the frames after move, none drawn
 /// directly. While the view moves and the ground's looks change from frame to frame (a palette entry stepped each

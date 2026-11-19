@@ -9768,14 +9768,21 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
                                        [&](const std::array<uint8_t, 256>& table) { return table[drawn] == cpu; });
         };
 
-        for (int32_t y = 0; y < drawnHeight; ++y)
+        // Port-only (HDSmoothCamera): only the drawn pixels that show a window pixel; the strip past the edge the
+        // camera's fraction moved the picture off is never shown (MCDrawnGrid::Showing).
+        const std::array<int64_t, 2> acrossShowing =
+            MCDrawnGrid::Showing(static_cast<uint32_t>(width), static_cast<uint32_t>(drawnWidth), compared.Offset[0]);
+        const std::array<int64_t, 2> downShowing =
+            MCDrawnGrid::Showing(static_cast<uint32_t>(height), static_cast<uint32_t>(drawnHeight), compared.Offset[1]);
+
+        for (auto y = static_cast<int32_t>(downShowing[0]); y <= downShowing[1]; ++y)
         {
             const int32_t wy =
                 std::clamp(MCDrawnGrid::WindowPixel(y, static_cast<uint32_t>(height),
                                                     static_cast<uint32_t>(drawnHeight), compared.Offset[1]),
                            0, height - 1);
 
-            for (int32_t x = 0; x < drawnWidth; ++x)
+            for (auto x = static_cast<int32_t>(acrossShowing[0]); x <= acrossShowing[1]; ++x)
             {
                 const int32_t wx =
                     std::clamp(MCDrawnGrid::WindowPixel(x, static_cast<uint32_t>(width),

@@ -41,6 +41,7 @@ public:
     /// enemy blip.
     /// </summary>
     void Render() override;
+    void RenderAtEdge() override;
     std::shared_ptr<MCAppearance> GetAppearance() override;
     /// <summary>Selected by the mouse-over event (0x1c), deselected by 0x1d.</summary>
     int32_t HandleEvent(MCObjectEvent& event) override;
@@ -77,6 +78,12 @@ public:
 
     /// <summary>Projects the building for <paramref name="cam"/>; true when on screen (stamps the render turn).</summary>
     bool IsVisible();
+
+    /// <summary>
+    /// Draws the building hazed by how many corners of its vertex square the home team sees, when any is.
+    /// </summary>
+    /// <returns>How many it sees.</returns>
+    int32_t DrawAsSeen();
     /// <summary>
     /// Sets the building on fire (making the fire object if needed) and adds burn time. Original behaviour (OB-154):
     /// that fire is never updated or drawn.

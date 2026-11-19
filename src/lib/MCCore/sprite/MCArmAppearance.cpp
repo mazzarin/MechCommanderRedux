@@ -48,11 +48,22 @@ auto MCArmAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     }
 
     const MCCamera& cam = view->get();
-    const MCVector2D pos = Owner.lock()->GetScreenPos(cam.CameraId - 1);
+    const std::shared_ptr<MCGameObject> obj = Owner.lock();
+    const MCVector2D pos = obj->GetScreenPos(cam.CameraId - 1);
     UpperLeft = pos;
     LowerRight = pos;
+    std::shared_ptr<MCShape> shape = CurrentShape.lock();
 
-    if (const std::shared_ptr<MCShape> shape = CurrentShape.lock(); shape != nullptr && !shape->FrameList().empty())
+    // OB-192 (fixed): before its first draw it has no shape, and the box below is the original's default: it showed with
+    // much of it in view already. Near the view, the shape that draw will take is measured instead.
+    if (shape == nullptr && !InView && NearView(pos, cam))
+    {
+        float frameRate = 0.0f;
+        bool reverse = false;
+        shape = AppearType->GetShape(static_cast<int32_t>(MCActorFacing(*obj)), frameRate, reverse);
+    }
+
+    if (shape != nullptr && !shape->FrameList().empty())
     {
         // The bounds only ever grow: they cover every frame drawn so far.
         const std::span<const uint8_t> shapeTable = shape->FrameList();

@@ -2,6 +2,7 @@
 #include "object/MCMiscTerrainObject.h"
 #include "ai/MCMoveSystem.h"
 #include "ai/MCScenarioMap.h"
+#include "appear/MCAppearance.h"
 #include "camera/MCCamera.h"
 #include "camera/MCViewWindow.h"
 #include "engine/MCElementBuffer.h"
@@ -16,6 +17,7 @@
 #include "object/MCVertexPlacement.h"
 #include "object/MCWeaponShotInfo.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
 #include "terrain/MCTerrainTiles.h"
 
@@ -250,48 +252,10 @@ auto MCMiscTerrainObject::Render() -> void
         DrawBars(screenPos);
     }
 
-    if (Kind != MCMiscTerrainKind::Forest)
+    if (const std::optional<int32_t> frame = ForestEdgeFrame(); frame.has_value())
     {
-        return;
+        DrawForestEdge(screenPos, *frame);
     }
-
-    // A forest draws the edge shape that matches its overlay tile, hazed by how many corners the home team sees.
-    const int32_t overlayTile = Terrain()->GetOverlayTile(BlockNumber, VertexNumber);
-    int32_t edge;
-
-    if (overlayTile < 0xd0e)
-    {
-        edge = overlayTile - 0xd0a;
-    }
-    else
-    {
-        if (0xd6d < overlayTile || overlayTile - 0xd66 < 0)
-        {
-            return;
-        }
-
-        edge = overlayTile - 0xd62;
-    }
-
-    if (edge < 0)
-    {
-        return;
-    }
-
-    const int32_t numVisible = MCVertexCell::Of(BlockNumber, VertexNumber).VisibleCorners();
-    std::optional<MCColorTable> hazePalette;
-
-    if (numVisible != 4)
-    {
-        hazePalette = HazePaletteFor(numVisible);
-    }
-
-    // Each edge has a full-size frame and, after it, a half-size one (for the original's zoomed-out mode).
-    const int32_t frame = edge * 2;
-    constexpr int32_t depthOffset = 0x3a;
-    ElementList().OpenGroup(static_cast<int32_t>(-screenPos.Y - static_cast<float>(depthOffset)), true);
-    const std::span<uint8_t> edgeShapes = TypeAs<MCMiscTerrainObjectType>().ForestEdgeShapes.Bytes();
-    ElementList().Add(ElementList().Make<MCVfxElement>(edgeShapes, screenPos.X, screenPos.Y, frame, 0, hazePalette, 1));
 }
 
 auto MCMiscTerrainObject::DrawBars(MCVector2D screenPos) -> void
@@ -638,4 +602,82 @@ auto MCMiscTerrainObject::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMul
 auto MCMiscTerrainObject::IsRevealed() -> int
 {
     return MCVertexCell::Of(BlockNumber, VertexNumber).AnyCornerVisible() ? 1 : 0;
+}
+
+auto MCMiscTerrainObject::RenderAtEdge() -> void
+{
+    const std::optional<int32_t> frame = ForestEdgeFrame();
+
+    if (!frame.has_value() || IsRevealed() == 0 || Eye() == nullptr || Eye()->Active == 0)
+    {
+        return;
+    }
+
+    const MCVector2D screenPos = VertexScreenPlace(BlockNumber, VertexNumber, *Eye());
+    const std::span<const uint8_t> edgeShapes = TypeAs<MCMiscTerrainObjectType>().ForestEdgeShapes.Bytes();
+
+    if (edgeShapes.empty())
+    {
+        return;
+    }
+
+    const MCFrameBounds bounds = MCShapeFrameBounds(edgeShapes, MCClampShapeFrame(edgeShapes, *frame));
+    const MCVector2D upperLeft(screenPos.X + bounds.MinX, screenPos.Y + bounds.MinY);
+
+    if (MCAppearance::ShowsInView(upperLeft, MCVector2D(upperLeft.X + bounds.Width, upperLeft.Y + bounds.Height),
+                                  std::nullopt, *Eye()))
+    {
+        DrawForestEdge(screenPos, *frame);
+    }
+}
+
+auto MCMiscTerrainObject::ForestEdgeFrame() const -> std::optional<int32_t>
+{
+    if (Kind != MCMiscTerrainKind::Forest)
+    {
+        return std::nullopt;
+    }
+
+    // A forest draws the edge shape that matches its overlay tile.
+    const int32_t overlayTile = Terrain()->GetOverlayTile(BlockNumber, VertexNumber);
+    int32_t edge;
+
+    if (overlayTile < 0xd0e)
+    {
+        edge = overlayTile - 0xd0a;
+    }
+    else
+    {
+        if (0xd6d < overlayTile || overlayTile - 0xd66 < 0)
+        {
+            return std::nullopt;
+        }
+
+        edge = overlayTile - 0xd62;
+    }
+
+    if (edge < 0)
+    {
+        return std::nullopt;
+    }
+
+    // Each edge has a full-size frame and, after it, a half-size one (for the original's zoomed-out mode).
+    return edge * 2;
+}
+
+auto MCMiscTerrainObject::DrawForestEdge(MCVector2D screenPos, int32_t frame) -> void
+{
+    // Hazed by how many corners the home team sees.
+    const int32_t numVisible = MCVertexCell::Of(BlockNumber, VertexNumber).VisibleCorners();
+    std::optional<MCColorTable> hazePalette;
+
+    if (numVisible != 4)
+    {
+        hazePalette = HazePaletteFor(numVisible);
+    }
+
+    constexpr int32_t depthOffset = 0x3a;
+    ElementList().OpenGroup(static_cast<int32_t>(-screenPos.Y - static_cast<float>(depthOffset)), true);
+    const std::span<uint8_t> edgeShapes = TypeAs<MCMiscTerrainObjectType>().ForestEdgeShapes.Bytes();
+    ElementList().Add(ElementList().Make<MCVfxElement>(edgeShapes, screenPos.X, screenPos.Y, frame, 0, hazePalette, 1));
 }

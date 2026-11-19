@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "object/MCBigGameObject.h"
 #include "ai/MCMoveSystem.h"
+#include "appear/MCAppearance.h"
 #include "camera/MCCamera.h"
 #include "camera/MCCameraList.h"
 #include "engine/MCElementBuffer.h"
@@ -12,6 +13,7 @@
 #include "object/MCContactSystem.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCObjectType.h"
+#include "object/MCVertexPlacement.h"
 #include "sound/MCSoundSystem.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -306,4 +308,41 @@ auto MCBigGameObject::GetVitalInfo(std::span<uint8_t> vitalInfo) -> int32_t
     }
 
     return 0x19;
+}
+
+auto MCBigGameObject::ShowsAtEdge(int32_t blockNumber, int32_t vertexNumber, MCAppearance& appearance,
+                                  std::span<const uint8_t> shadow) -> bool
+{
+    if (Eye() == nullptr || Eye()->Active == 0)
+    {
+        return false;
+    }
+
+    ScreenPos = VertexScreenPlace(blockNumber, vertexNumber, *Eye());
+    const bool shown = appearance.RecalcBounds(EyeRef()) != 0;
+    appearance.ReadAheadNear(*Eye(), shown);
+    return shown || ArtShadowOnScreen(shadow);
+}
+
+auto MCBigGameObject::ArtShadowOnScreen(std::span<const uint8_t> shadow) const -> bool
+{
+    if (shadow.empty())
+    {
+        return false;
+    }
+
+    const int32_t minXY = VfxShapeMinxy(shadow, 0);
+    const float left = static_cast<float>(minXY >> 16) + ScreenPos.X;
+    const float top = static_cast<float>(static_cast<int16_t>(minXY)) + ScreenPos.Y;
+    const int32_t resolution = VfxShapeResolution(shadow, 0);
+
+    if (!(0.0f <= static_cast<float>(resolution >> 16) + left &&
+          0.0f <= static_cast<float>(static_cast<int16_t>(resolution)) + top))
+    {
+        return false;
+    }
+
+    const auto viewRight = static_cast<int16_t>(std::floor(static_cast<double>(Eye()->ViewWidth)));
+    const auto viewBottom = static_cast<int16_t>(std::floor(static_cast<double>(Eye()->ViewHeight)));
+    return left <= static_cast<float>(viewRight) && top <= static_cast<float>(viewBottom);
 }

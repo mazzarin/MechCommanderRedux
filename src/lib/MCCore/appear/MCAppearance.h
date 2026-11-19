@@ -81,6 +81,29 @@ public:
     bool NearView(const MCCamera& view) const;
 
     /// <summary>
+    /// Port-only (OB-192 fixed): whether <paramref name="place"/> (an appearance's place on screen, before its bounds
+    /// are known) lies within half the view's size past its edges, as <see cref="NearView"/>'s bounds do: how near an
+    /// appearance not yet drawn has the frame it will draw measured.
+    /// </summary>
+    static bool NearView(MCVector2D place, const MCCamera& view);
+
+    /// <summary>
+    /// The area <see cref="NearView"/> takes as near <paramref name="view"/>: the view and half its size past each edge,
+    /// as left, top, right and bottom.
+    /// </summary>
+    static std::array<float, 4> NearViewArea(const MCCamera& view);
+
+    /// <summary>
+    /// OB-192 (fixed): whether a frame drawn over <paramref name="upperLeft"/>-<paramref name="lowerRight"/> shows in
+    /// <paramref name="view"/> (the on-screen tests' limits): it reaches into the view, or, standing on row
+    /// <paramref name="foot"/> when one is given (a map object's), the sun shadow it casts does
+    /// (MCSceneLights::RecastShadowBox). A unit's is the frame alone: what it reports on screen is what the interface
+    /// takes as the units in view (MCGameObject::GetWindowsVisible).
+    /// </summary>
+    static bool ShowsInView(MCVector2D upperLeft, MCVector2D lowerRight, std::optional<float> foot,
+                            const MCCamera& view);
+
+    /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): <see cref="ReadAhead"/> while HD art draws numbered
     /// folders and the appearance is <paramref name="shown"/> in <paramref name="view"/> (RecalcBounds found it on
     /// screen) or near it (NearView), which a pan or its move brings it into. Its object's on-screen check calls it.

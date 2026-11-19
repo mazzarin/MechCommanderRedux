@@ -363,6 +363,10 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - A mech icon part for a location without armor no longer divides by zero when it picks its colour. It shows red, as
   in the original.
 - The health bar over popup turrets and gates is green, yellow and red again instead of black.
+- Buildings, trees, mechs and vehicles scrolled into view from any edge are drawn from the first frame any of them
+  reaches the screen, instead of appearing once much of them is already on it (OB-192). The original measured an
+  object it hadn't drawn yet as a small box at its foot, and drew a stretch of map's trees and buildings only once a
+  corner of that stretch was on the screen.
 - **Redux HD.** A tree a mech knocks over no longer vanishes for a moment as it starts to fall. The expansion's trees
   fall and crumble from an empty first frame, which the original's frame lock (15 a second) steps past; the fall now
   starts as it does there at any frame rate.

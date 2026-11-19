@@ -63,6 +63,9 @@ public:
     /// <summary>The number of elements made since the last <see cref="Reset"/>.</summary>
     size_t MadeCount() const { return _Made.size(); }
 
+    /// <summary>The element made <paramref name="index"/>th since the last <see cref="Reset"/>.</summary>
+    const MCElement& Made(size_t index) const { return *_Made[index]; }
+
 private:
     /// <summary>A run of consecutive elements of the list.</summary>
     struct Group

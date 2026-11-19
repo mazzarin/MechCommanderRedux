@@ -10,6 +10,7 @@
 #include "object/MCBigGameObject.h"
 #include "platform/MCFrameLog.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 
 namespace
 {
@@ -129,14 +130,48 @@ auto MCAppearance::DrawSelectBrackets(uint8_t color) -> void
     AddSelectLine(outRight, outBottom, outRight, bottom, color);
 }
 
-auto MCAppearance::NearView(const MCCamera& view) const -> bool
+auto MCAppearance::NearViewArea(const MCCamera& view) -> std::array<float, 4>
 {
     const auto width = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewWidth)));
     const auto height = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewHeight)));
     const float marginX = width * NearViewShare;
     const float marginY = height * NearViewShare;
-    return -marginX <= LowerRight.X && -marginY <= LowerRight.Y && UpperLeft.X <= width + marginX &&
-           UpperLeft.Y <= height + marginY;
+    return {-marginX, -marginY, width + marginX, height + marginY};
+}
+
+auto MCAppearance::NearView(const MCCamera& view) const -> bool
+{
+    const auto [left, top, right, bottom] = NearViewArea(view);
+    return left <= LowerRight.X && top <= LowerRight.Y && UpperLeft.X <= right && UpperLeft.Y <= bottom;
+}
+
+auto MCAppearance::NearView(MCVector2D place, const MCCamera& view) -> bool
+{
+    const auto [left, top, right, bottom] = NearViewArea(view);
+    return left <= place.X && top <= place.Y && place.X <= right && place.Y <= bottom;
+}
+
+auto MCAppearance::ShowsInView(MCVector2D upperLeft, MCVector2D lowerRight, std::optional<float> foot,
+                               const MCCamera& view) -> bool
+{
+    const auto width = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewWidth)));
+    const auto height = static_cast<float>(static_cast<int32_t>(std::floor(view.ViewHeight)));
+    const auto reaches = [width, height](float left, float top, float right, float bottom)
+    { return 0.0f <= right && 0.0f <= bottom && left <= width && top <= height; };
+
+    if (reaches(upperLeft.X, upperLeft.Y, lowerRight.X, lowerRight.Y))
+    {
+        return true;
+    }
+
+    if (!foot.has_value())
+    {
+        return false;
+    }
+
+    const std::optional<std::array<float, 4>> shadow =
+        MCSceneLights::RecastShadowBox(upperLeft.X, upperLeft.Y, lowerRight.X, lowerRight.Y, *foot);
+    return shadow.has_value() && reaches((*shadow)[0], (*shadow)[1], (*shadow)[2], (*shadow)[3]);
 }
 
 auto MCAppearance::ReadAheadNear(const MCCamera& view, bool shown) -> void

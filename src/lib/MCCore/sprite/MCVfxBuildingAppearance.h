@@ -26,6 +26,14 @@ public:
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
     /// <summary>
+    /// OB-192 (fixed): whether the building and its tile as <see cref="Render"/> would draw them now, its place at
+    /// (<paramref name="x"/>, <paramref name="y"/>) and the building <paramref name="offsetX"/>, <paramref name="offsetY"/>
+    /// from it, or the building's sun shadow, show in <paramref name="view"/>, measured near the view only
+    /// (MCAppearance::NearView): its test before its first draw, when it has no bounds of its own.
+    /// </summary>
+    bool FirstFrameShows(const MCCamera& view, float x, float y, float offsetX, float offsetY) const;
+
+    /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): the damage level's packet and the tile's as Render takes
     /// them, and the next level's, which a hit takes it to, read ahead (MCAppearanceType::MCAskingAhead).
     /// </summary>

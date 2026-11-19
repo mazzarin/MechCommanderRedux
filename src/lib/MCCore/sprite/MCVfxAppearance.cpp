@@ -139,7 +139,47 @@ auto MCVfxAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
         return 1;
     }
 
+    // OB-192 (fixed): before its first draw it has no bounds of its own, and the box above is the original's default,
+    // 15 pixels up and left of its place: a tree or an explosion showed once its place came that near the view,
+    // however far its frame reached into it. The frame its first draw takes is measured instead.
+    if (!InView && FirstFrameShows(cam, x, y))
+    {
+        return 1;
+    }
+
     return result;
+}
+
+auto MCVfxAppearance::FirstFrameShows(const MCCamera& view, float x, float y) const -> bool
+{
+    if (AppearType == nullptr || Owner.expired() || !NearView(MCVector2D(x, y), view))
+    {
+        return false;
+    }
+
+    float frameRate = 0.0f;
+    bool reverse = false;
+    const std::shared_ptr<MCShape> shape = ShapeToDraw(frameRate, reverse);
+    const MCFrameDrawing drawing = FrameDrawing();
+
+    if (shape == nullptr || shape->FrameList().empty() || drawing == MCFrameDrawing::Nothing)
+    {
+        return false;
+    }
+
+    // A delta animation draws its first shape whole; its frames only change it.
+    const std::span<const uint8_t> frames = shape->FrameList();
+    const int32_t frame = drawing == MCFrameDrawing::Plain ? MCClampShapeFrame(frames, CurrentFrame) : 0;
+    const MCFrameBounds bounds = MCShapeFrameBounds(frames, frame);
+    return ShowsInView(MCVector2D(x + bounds.MinX, y + bounds.MinY),
+                       MCVector2D(x + bounds.MinX + bounds.Width, y + bounds.MinY + bounds.Height), y, view);
+}
+
+auto MCVfxAppearance::ShapeToDraw(float& frameRate, bool& reverse) const -> std::shared_ptr<MCShape>
+{
+    const std::shared_ptr<MCGameObject> obj = Owner.lock();
+    return AppearType->GetShape(CurrentState, CurrentSubState, static_cast<int32_t>(MCActorFacing(*obj)), frameRate,
+                                reverse);
 }
 
 auto MCVfxAppearance::FrameDrawing() const -> MCFrameDrawing
@@ -169,19 +209,16 @@ auto MCVfxAppearance::ReadAhead() -> void
     const MCAppearanceType::MCAskingAhead asking;
     float frameRate = 0.0f;
     bool reverse = false;
-    AppearType->GetShape(CurrentState, CurrentSubState, static_cast<int32_t>(MCActorFacing(*obj)), frameRate, reverse);
+    ShapeToDraw(frameRate, reverse);
 }
 
 auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
 {
     const std::shared_ptr<MCGameObject> obj = Owner.lock();
     ScreenPos = obj->GetScreenPos(Eye()->CameraId - 1);
-    const double facing = MCActorFacing(*obj);
-    const uint8_t subState = CurrentSubState;
     float frameRate = 0.0f;
     bool reverse = false;
-    const std::shared_ptr<MCShape> shape =
-        AppearType->GetShape(CurrentState, subState, static_cast<int32_t>(facing), frameRate, reverse);
+    const std::shared_ptr<MCShape> shape = ShapeToDraw(frameRate, reverse);
     CurrentShape = shape;
 
     if (obj->IsCaptured() != 0 && !Highlighted && !Highlighting)

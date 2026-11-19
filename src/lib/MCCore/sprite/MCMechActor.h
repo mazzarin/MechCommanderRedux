@@ -162,6 +162,21 @@ public:
     void ForEachPartDrawn(MCBattleMech& mech, int32_t legs, int32_t upper,
                           const std::function<void(int32_t, int32_t, float)>& part) const;
 
+    /// <summary>
+    /// Each part's shape <paramref name="mech"/> is drawn with, as Render takes them: the legs in gesture
+    /// <paramref name="legsGesture"/> and the upper body in <paramref name="upper"/>, each part's mirroring and rate set in
+    /// <paramref name="reverse"/> and <paramref name="rate"/>; a part gone (or a wreck's torso) none.
+    /// </summary>
+    MCMechParts<std::shared_ptr<MCShape>> PartShapes(MCBattleMech& mech, int32_t legsGesture, int32_t upper,
+                                                     MCMechParts<int32_t>& reverse, MCMechParts<float>& rate);
+
+    /// <summary>
+    /// OB-192 (fixed): whether any part of <paramref name="mech"/> placed at <paramref name="place"/> shows in
+    /// <paramref name="view"/> at its frame now: the parts last drawn, or before its first draw, near the view, those that
+    /// draw will take.
+    /// </summary>
+    bool PartsShowInView(MCBattleMech& mech, MCVector2D place, const MCCamera& view);
+
     /// <summary>The upper body's gesture: the combat gestures while the gun is up or moving, else the legs'.</summary>
     int32_t UpperGesture() const;
 

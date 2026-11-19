@@ -88,6 +88,15 @@ private:
     MCGVRotations DrawnRotations(MCGameObject& obj) const;
 
     /// <summary>
+    /// The body's and the turret's shapes (the turret's none with one part or when destroyed) <see cref="Render"/> draws
+    /// now at <paramref name="rotations"/>; their frame rate in <paramref name="frameRate"/>.
+    /// </summary>
+    std::array<std::shared_ptr<MCShape>, 2> ShapesToDraw(const MCGVRotations& rotations, float& frameRate) const;
+
+    /// <summary>How far the turret is drawn up and left of the body's place, the body at <paramref name="bodyRotation"/>.</summary>
+    MCVector2D TurretShift(float bodyRotation) const;
+
+    /// <summary>
     /// Port-only: the degrees at the middle of the packet next to <paramref name="rotation"/>'s on
     /// <paramref name="side"/> (-1 or 1) among <paramref name="state"/>'s rotations, as the type picks a rotation's packet
     /// (MCGVAppearanceType::GetShape); <paramref name="rotation"/> itself when it has none.

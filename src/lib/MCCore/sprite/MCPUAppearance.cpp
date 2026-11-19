@@ -119,14 +119,25 @@ auto MCPUAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     LowerRight.Y = y;
     LowerRight.X = x;
 
+    std::shared_ptr<MCShape> shape = CurrentShape.lock();
+    const bool drawn = shape != nullptr;
+
+    // OB-192 (fixed): before its first draw it has no shape, and the box below is the original's default: it showed with
+    // much of it in view already. Near the view, the shape that draw will take is measured instead.
+    if (!drawn && !InView && NearView(MCVector2D(x, y), cam))
+    {
+        float frameRate = 0.0f;
+        shape =
+            AppearType->GetShape(CurrentState, static_cast<int32_t>(DrawnRotation(*obj, CurrentState)), 0, frameRate);
+    }
+
     // The shape's bounds are taken once, from the first shape seen.
-    if (const std::shared_ptr<MCShape> shape = CurrentShape.lock();
-        shape != nullptr && !shape->FrameList().empty() && !InView)
+    if (shape != nullptr && !shape->FrameList().empty() && !InView)
     {
         const std::span<const uint8_t> shapeTable = shape->FrameList();
         const int32_t numShapeFrames = VfxShapeCount(shapeTable);
 
-        if (numShapeFrames <= CurrentFrame)
+        if (drawn && numShapeFrames <= CurrentFrame)
         {
             // Port fix: the original clamps only the object's frame and measures past the shape table.
             CurrentFrame = numShapeFrames - 1;

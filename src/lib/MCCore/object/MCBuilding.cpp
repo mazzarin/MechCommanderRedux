@@ -310,19 +310,7 @@ auto MCBuilding::Render() -> void
         return;
     }
 
-    // Hazed by how many corners of its vertex square the home team sees; drawn when any is. (The original also reads
-    // each corner's seen bit and drops it.)
-    const int32_t numVisible = MCVertexCell{CellRow, CellColumn}.VisibleCorners();
-    int32_t hazeLevel = 0;
-
-    if (numVisible != 4 && Eye()->HazeLevel != 0x7fff)
-    {
-        hazeLevel = HazeLevelFor(numVisible);
-    }
-
-    Appearance->HazeLevel = hazeLevel;
-
-    if (numVisible == 0 || JustCreated)
+    if (DrawAsSeen() == 0 || JustCreated)
     {
         if (SoundHandle != 0xffffffff)
         {
@@ -332,7 +320,6 @@ auto MCBuilding::Render() -> void
     }
     else
     {
-        Appearance->Render(0);
         const auto& type = TypeAs<MCBuildingType>();
 
         if (SoundHandle == 0xffffffff && type.NormalEffectId != 0xffffffff)
@@ -574,4 +561,42 @@ auto MCBuilding::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMultiplayChu
 
     SetDamage(newDamage);
     return 0;
+}
+
+auto MCBuilding::RenderAtEdge() -> void
+{
+    if (JustCreated || Appearance == nullptr)
+    {
+        return;
+    }
+
+    Appearance->TileNum = TileNum;
+
+    if (ShowsAtEdge(BlockNumber, VertexNumber, *Appearance))
+    {
+        Appearance->Visible = true;
+        DrawAsSeen();
+    }
+}
+
+auto MCBuilding::DrawAsSeen() -> int32_t
+{
+    // Hazed by how many corners of its vertex square the home team sees; drawn when any is. (The original also reads
+    // each corner's seen bit and drops it.)
+    const int32_t numVisible = MCVertexCell{CellRow, CellColumn}.VisibleCorners();
+    int32_t hazeLevel = 0;
+
+    if (numVisible != 4 && Eye()->HazeLevel != 0x7fff)
+    {
+        hazeLevel = HazeLevelFor(numVisible);
+    }
+
+    Appearance->HazeLevel = hazeLevel;
+
+    if (numVisible != 0)
+    {
+        Appearance->Render(0);
+    }
+
+    return numVisible;
 }

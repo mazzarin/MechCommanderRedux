@@ -31,6 +31,13 @@ public:
     int RecalcBounds(MCOptionalRef<MCCamera> view) override;
 
     /// <summary>
+    /// OB-192 (fixed): whether the frame <see cref="Render"/> would draw now at (<paramref name="x"/>,
+    /// <paramref name="y"/>), or its sun shadow, shows in <paramref name="view"/>, measured near the view only
+    /// (MCAppearance::NearView): an appearance's test before its first draw, when it has no bounds of its own.
+    /// </summary>
+    bool FirstFrameShows(const MCCamera& view, float x, float y) const;
+
+    /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): the state's packet as Render takes it, read ahead
     /// (MCAppearanceType::MCAskingAhead).
     /// </summary>
@@ -61,6 +68,12 @@ public:
 
     /// <summary>How <see cref="Render"/> draws the current state's frames.</summary>
     MCFrameDrawing FrameDrawing() const;
+
+    /// <summary>
+    /// The shape <see cref="Render"/> draws now: the state's (or sub-state's) packet for the owner's facing; its frame
+    /// rate and whether it's drawn mirrored in <paramref name="frameRate"/> and <paramref name="reverse"/>.
+    /// </summary>
+    std::shared_ptr<MCShape> ShapeToDraw(float& frameRate, bool& reverse) const;
 
     /// <summary>
     /// Port-only (HD art): the in-between of the current frame toward the next that its share of the frame shown calls

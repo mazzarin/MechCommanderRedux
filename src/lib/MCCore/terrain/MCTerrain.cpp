@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "terrain/MCTerrain.h"
 #include "ai/MCMoveSystem.h"
+#include "appear/MCAppearance.h"
 #include "camera/MCCamera.h"
 #include "engine/MCByteFlag.h"
 #include "gui/MCGuiSystem.h"
@@ -13,6 +14,8 @@
 #include "mission/MCScenario.h"
 #include "object/MCObjectBlockManager.h"
 #include "object/MCForces.h"
+#include "object/MCObjectDrawing.h"
+#include "object/MCVertexPlacement.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
@@ -555,6 +558,78 @@ auto MCTerrain::MarkBlockUsed(int32_t blockNum) -> void
 auto MCTerrain::ClearUsedBlocks() -> void
 {
     _UsedBlocks.clear();
+    _EdgeBlocks.clear();
+}
+
+auto MCTerrain::MarkEdgeBlocks(const MCCamera& view) -> void
+{
+    const auto [nearLeft, nearTop, nearRight, nearBottom] = MCAppearance::NearViewArea(view);
+    const int32_t mapSide = VerticesBlockSide * BlocksMapSide;
+    _BlockGround.resize(static_cast<size_t>(TotalBlocks));
+
+    for (int32_t block = 0; block < TotalBlocks; block++)
+    {
+        if (BlockUsed(block) || BlockAtEdge(block))
+        {
+            continue;
+        }
+
+        // The block's vertices, and the first of the next blocks' (its quads' far corners).
+        const int32_t firstRow = (block / BlocksMapSide) * VerticesBlockSide;
+        const int32_t firstCol = (block % BlocksMapSide) * VerticesBlockSide;
+        const int32_t lastRow = std::min(firstRow + VerticesBlockSide, mapSide - 1);
+        const int32_t lastCol = std::min(firstCol + VerticesBlockSide, mapSide - 1);
+        std::optional<std::pair<float, float>>& ground = _BlockGround[static_cast<size_t>(block)];
+
+        if (!ground.has_value())
+        {
+            ground = {FLT_MAX, -FLT_MAX};
+
+            for (int32_t row = firstRow; row <= lastRow; row++)
+            {
+                for (int32_t col = firstCol; col <= lastCol; col++)
+                {
+                    const float elevation = MCVertexCell{row, col}.Elevation(" block vertex off the map ");
+                    ground->first = std::min(ground->first, elevation);
+                    ground->second = std::max(ground->second, elevation);
+                }
+            }
+        }
+
+        // The block's screen box: its corners at its lowest and highest ground.
+        float left = FLT_MAX;
+        float top = FLT_MAX;
+        float right = -FLT_MAX;
+        float bottom = -FLT_MAX;
+
+        for (const int32_t row : {firstRow, lastRow})
+        {
+            for (const int32_t col : {firstCol, lastCol})
+            {
+                const MCVertexCell corner{row, col};
+
+                for (const float elevation : {ground->first, ground->second})
+                {
+                    const MCVector2D screen =
+                        ProjectToScreen(MCVector3D(corner.WorldX(), corner.WorldY(), elevation), view);
+                    left = std::min(left, screen.X);
+                    top = std::min(top, screen.Y);
+                    right = std::max(right, screen.X);
+                    bottom = std::max(bottom, screen.Y);
+                }
+            }
+        }
+
+        if (nearLeft <= right && nearTop <= bottom && left <= nearRight && top <= nearBottom)
+        {
+            _EdgeBlocks.push_back(block);
+        }
+    }
+}
+
+auto MCTerrain::BlockAtEdge(int32_t blockNum) const -> bool
+{
+    return std::ranges::contains(_EdgeBlocks, blockNum);
 }
 
 auto MCTerrain::BlockUsed(int32_t blockNum) const -> bool

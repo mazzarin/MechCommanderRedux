@@ -48,7 +48,9 @@ enum class MCShader : uint8_t
     /// Port-only: the draws of a forest's HD frames alone (shaders/draw_trees.pshader), and their stands build.
     /// </summary>
     DrawTrees,
-    DrawTreesStands
+    DrawTreesStands,
+    /// <summary>Port-only (HDSway): the forest's crowns' pass alone (shaders/composite_crowns.pshader).</summary>
+    CompositeCrowns
 };
 
 /// <summary>A shader the Vulkan renderer uses, and the resources its bindings declare.</summary>
@@ -86,8 +88,8 @@ namespace MCVulkanShaders
     inline constexpr char EntryPoint[] = "main";
 #endif
 
-    /// <summary>The composite shader's textures (composite.pshader's t0 to t9), in each of its builds.</summary>
-    inline constexpr uint32_t CompositeSamplers = 10;
+    /// <summary>The composite shader's textures (composite.pshader's t0 to t10), in each of its builds.</summary>
+    inline constexpr uint32_t CompositeSamplers = 11;
 
     /// <summary>The built-in shaders.</summary>
     extern const MCShaderInfo Quad;
@@ -109,6 +111,7 @@ namespace MCVulkanShaders
     extern const MCShaderInfo DrawHdStandsFragment;
     extern const MCShaderInfo DrawTreesFragment;
     extern const MCShaderInfo DrawTreesStandsFragment;
+    extern const MCShaderInfo CompositeCrowns;
     extern const MCShaderInfo GroundStandsFragment;
     extern const MCShaderInfo MovieFragment;
     extern const MCShaderInfo HdCoverageFragment;

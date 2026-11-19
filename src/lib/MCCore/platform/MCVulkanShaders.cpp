@@ -4,6 +4,7 @@
 #if defined(__APPLE__)
 #include "shaders/composite.msl.h"
 #include "shaders/composite_bright.msl.h"
+#include "shaders/composite_crowns.msl.h"
 #include "shaders/composite_dry.msl.h"
 #include "shaders/composite_field.msl.h"
 #include "shaders/composite_puddle.msl.h"
@@ -30,6 +31,7 @@
 #else
 #include "shaders/composite.spv.h"
 #include "shaders/composite_bright.spv.h"
+#include "shaders/composite_crowns.spv.h"
 #include "shaders/composite_dry.spv.h"
 #include "shaders/composite_field.spv.h"
 #include "shaders/composite_puddle.spv.h"
@@ -61,6 +63,7 @@ namespace MCVulkanShaders
     const MCShaderInfo Composite{MCShader::Composite, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositeBright{MCShader::CompositeBright, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositeField{MCShader::CompositeField, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
+    const MCShaderInfo CompositeCrowns{MCShader::CompositeCrowns, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositeDry{MCShader::CompositeDry, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositePuddle{MCShader::CompositePuddle, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositeUnspecked{MCShader::CompositeUnspecked, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers,
@@ -132,6 +135,8 @@ namespace MCVulkanShaders
                 return "draw_trees";
             case MCShader::DrawTreesStands:
                 return "draw_trees_stands";
+            case MCShader::CompositeCrowns:
+                return "composite_crowns";
         }
 
         return {};
@@ -187,6 +192,8 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(draw_trees);
             case MCShader::DrawTreesStands:
                 return MC_BUILT_IN_SHADER(draw_trees_stands);
+            case MCShader::CompositeCrowns:
+                return MC_BUILT_IN_SHADER(composite_crowns);
         }
 
         return {};

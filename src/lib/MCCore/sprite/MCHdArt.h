@@ -498,14 +498,16 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): a packet to read ahead whole: the pack's numbered folder
-    /// (FolderOf a key), its first <see cref="Frames"/> frames (none given: every frame its archive holds), each with its
-    /// in-betweens, and with <see cref="TurnMiddles"/> its frames' turn middles too (a legs packet's).
+    /// (FolderOf a key), its first <see cref="Frames"/> frames (none given: every frame its archive holds), or those from
+    /// frame <see cref="First"/> on, each with its in-betweens, and with <see cref="TurnMiddles"/> its frames' turn
+    /// middles too (a legs packet's).
     /// </summary>
     struct PacketAhead
     {
         std::filesystem::path Folder;
         std::optional<int32_t> Frames;
         bool TurnMiddles = false;
+        int32_t First = 0;
     };
 
     /// <summary>
@@ -983,7 +985,9 @@ namespace MCHdArt
     /// (platform/MCThreadPriority.h). The game's command line sets them (<c>-hdreaders</c>, <c>-hdsetreads</c>,
     /// <c>-hdreaderpriority level|below</c>); the defaults are to be measured on the M4 Pro and the A10. Port-only: for
     /// the tests and benchmarks, whether a mission's art is held (<see cref="StartHold"/>) whatever the machine's
-    /// memory (<c>-hdhold on|off</c>; none: the memory decides). No player sets it.
+    /// memory (<c>-hdhold on|off</c>; none: the memory decides); and whether the frames a mech's gestures to come start
+    /// on are read as soon reads, at its facings either side too (MCMechActor::ReadAhead), off only to measure it. No
+    /// player sets them.
     /// </summary>
     struct ReaderSettings
     {
@@ -991,6 +995,7 @@ namespace MCHdArt
         size_t SetReads = 0;
         bool Below = true;
         std::optional<bool> Hold;
+        bool FirstFramesSoon = true;
 
         bool operator==(const ReaderSettings&) const = default;
     };
@@ -1013,6 +1018,12 @@ namespace MCHdArt
     /// go, once what was asked for is made reads, they take them again.
     /// </summary>
     void HoldReads(bool hold);
+
+    /// <summary>
+    /// Port-only, for the tests: with <paramref name="hold"/>, the readers open none of the archives asked for ahead
+    /// (<see cref="OpenArchivesAhead"/>), so a test changes the hold while they wait; let go, they open them.
+    /// </summary>
+    void HoldOpens(bool hold);
 
     /// <summary>
     /// Port-only, for the tests: with <paramref name="hold"/>, each reader that takes a run of reads holds it before

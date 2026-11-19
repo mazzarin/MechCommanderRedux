@@ -461,8 +461,19 @@ auto MCViewWindow::UpdateWorldSurface() -> void
 
     if (WorldWindow->Pixels == nullptr || surfaceWidth != WorldWidth() || surfaceHeight != WorldHeight())
     {
-        WorldWindow->Pixels =
-            std::make_shared<uint8_t[]>(static_cast<size_t>(surfaceWidth) * static_cast<size_t>(surfaceHeight));
+        // A size's pixels start as zeros, in the pixels kept when they hold enough (WorldBytes).
+        const size_t bytes = static_cast<size_t>(surfaceWidth) * static_cast<size_t>(surfaceHeight);
+
+        if (WorldWindow->Pixels == nullptr || bytes > WorldBytes)
+        {
+            WorldWindow->Pixels = std::make_shared<uint8_t[]>(bytes);
+            WorldBytes = bytes;
+        }
+        else
+        {
+            std::fill_n(WorldWindow->Pixels.get(), bytes, uint8_t{0});
+        }
+
         WorldWindow->XMax = surfaceWidth - 1;
         WorldWindow->YMax = surfaceHeight - 1;
         WorldPane->Window = WorldWindow;

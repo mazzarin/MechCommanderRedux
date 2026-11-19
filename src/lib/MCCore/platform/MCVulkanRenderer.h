@@ -808,6 +808,11 @@ private:
         uint32_t TileColumns = 0;
         bool TilesHeld = false;
         uint64_t Stamp = 0;
+        /// <summary>
+        /// Port-only, execution: whether its next pass starts it blank, as a new surface starts (its window's size changed
+        /// while its drawn size held: a zoom easing; its textures kept).
+        /// </summary>
+        bool Blank = false;
     };
 
     /// <summary>A draw's rectangle (x0, y0, x1, y1), or where it reads from and its steps (x, y, step x, step y).</summary>

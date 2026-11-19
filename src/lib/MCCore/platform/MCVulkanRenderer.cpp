@@ -7946,6 +7946,15 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
                                                                        SDL_Color blank)
 {
     constexpr SDL_GPUTextureUsageFlags target = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    // Port-only: at the drawn size it has (its window's size changed alone: a zoom easing), its textures are kept, its
+    // next pass starting it blank and its glints and stands holding nothing, not made or cleared again.
+    const auto drawnAt = [&surface](const Texture& texture)
+    {
+        return texture.Handle != nullptr && texture.Width == surface.DrawnWidth &&
+               texture.Height == surface.DrawnHeight;
+    };
+
+    const bool kept = drawnAt(surface.Target) && drawnAt(surface.Index) && drawnAt(surface.Copy);
 
     for (auto made : {EnsureTexture(surface.Target, MCHolder::GpuTargets, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, target,
                                     surface.DrawnWidth, surface.DrawnHeight),
@@ -7960,23 +7969,33 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
         }
     }
 
-    // Port-only (HD weather): the glints go, made again at the new size by the next pass that draws into them; port-only,
-    // the stands too.
-    Release(surface.Glints);
     surface.GlintsHeld = false;
-    Release(surface.Stands);
     surface.StandsHeld = false;
-    SDL_GPUColorTargetInfo clear[PlainTargets]{};
-    clear[0].texture = surface.Target.Handle.get();
-    clear[1].texture = surface.Index.Handle.get();
-    ClearBlank(clear, blank);
 
-    for (SDL_GPUColorTargetInfo& info : clear)
+    if (kept)
     {
-        info.store_op = SDL_GPU_STOREOP_STORE;
+        surface.Blank = true;
+    }
+    else
+    {
+        // Port-only (HD weather): the glints go, made again at the new size by the next pass that draws into them;
+        // port-only, the stands too.
+        Release(surface.Glints);
+        Release(surface.Stands);
+        SDL_GPUColorTargetInfo clear[PlainTargets]{};
+        clear[0].texture = surface.Target.Handle.get();
+        clear[1].texture = surface.Index.Handle.get();
+        ClearBlank(clear, blank);
+
+        for (SDL_GPUColorTargetInfo& info : clear)
+        {
+            info.store_op = SDL_GPU_STOREOP_STORE;
+        }
+
+        SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, PlainTargets, nullptr));
+        surface.Blank = false;
     }
 
-    SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, PlainTargets, nullptr));
     surface.Copied = MCRect{0, 0, -1, -1};
     surface.DrawnSinceCopy.clear();
     // Port-only (the kept surfaces): it holds nothing a frame drew.
@@ -8979,6 +8998,13 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                                 static_cast<int32_t>(surface.MappedHeight) - 1}))
             {
                 ClearBlank(targets, run.Colors[0]);
+            }
+
+            // Port-only: nor one kept at its drawn size through a resize (MakeSurfaceTextures), which starts blank.
+            if (surface.Blank)
+            {
+                ClearBlank(targets, run.Colors[0]);
+                surface.Blank = false;
             }
 
             if (wipe.has_value())

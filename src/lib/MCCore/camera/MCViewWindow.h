@@ -119,6 +119,11 @@ public:
     /// <summary>Port: the world surface's pixels, window and pane.</summary>
     std::shared_ptr<MCWindow> WorldWindow = std::make_shared<MCWindow>();
     std::shared_ptr<MCPane> WorldPane = std::make_shared<MCPane>();
+    /// <summary>
+    /// Port: how many bytes the world surface's pixels hold: the most a size of it has needed, kept so a zoom easing
+    /// doesn't make them again each frame.
+    /// </summary>
+    size_t WorldBytes = 0;
 };
 
 /// <summary>

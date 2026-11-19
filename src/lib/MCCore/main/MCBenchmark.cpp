@@ -863,14 +863,14 @@ namespace
         {
             const MCGuiEvent event = run.Pending.front();
             run.Pending.pop_front();
-            SendMouse(event);
 
-            // Launch's wait timed from its click's release.
+            // Launch's wait timed from its click's release, which loads the mission before it returns.
             if (run.Phase == MCBriefingPhase::Launching && run.Pending.empty())
             {
                 run.StepStart = std::chrono::steady_clock::now();
             }
 
+            SendMouse(event);
             return;
         }
 

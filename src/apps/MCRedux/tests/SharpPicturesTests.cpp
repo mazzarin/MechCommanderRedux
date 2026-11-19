@@ -33,6 +33,10 @@
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
+#include <chrono>
+#include <functional>
+#include <numeric>
+
 // Port-only: the HD menus' sharp pictures made ahead (platform/MCSharpPictures) and kept by the GPU renderer.
 
 namespace
@@ -978,11 +982,29 @@ TEST_CASE_ISOLATED("tool: --hd-make-sharp writes the sharp screens' text and lin
     GHdArt = 0;
 }
 
+namespace
+{
+    /// <summary>
+    /// The most of the game's thread a unit's part diagram may take as the DATA page first shows it: a 240 Hz frame
+    /// is 4.2 ms, and the page's line art shares it with the rest of the frame.
+    /// </summary>
+    constexpr std::chrono::microseconds MostDiagramTime{1000};
+    /// <summary>The outlines the measure of the game's thread redrawing them is given for (a unit's, on a busy machine).</summary>
+    constexpr size_t MeasuredOutlines = 5;
+
+    double Milliseconds(std::chrono::nanoseconds time)
+    {
+        return std::chrono::duration<double, std::milli>(time).count();
+    }
+}
+
 /// <summary>
 /// With HD art on and a sharp screen (a player's 1920x1080 window, INTERFACE SIZE AUTO), the tactical map's DATA page
 /// draws the shown unit's part diagram (mechrep##.shp, the store's diagrams' file) as the store does: its outlines as
-/// line art, smooth strokes made ahead off the game's thread as the unit is shown and taken by the page's draws, none
-/// redrawn on the game's thread; the dark silhouette under them stays a shape.
+/// line art, smooth strokes, the dark silhouette under them a shape. As a player sees it, waiting for nothing: the page
+/// opened on the unit the interface chose at the mission's start, then another unit picked, each draws its outlines as
+/// line art from the frame after the click, whoever made them (made ahead off the game's thread or redrawn on it), and
+/// takes the game's thread under 1 ms for them. Prints what redrawing a unit's outlines on the game's thread costs.
 /// </summary>
 TEST_CASE_ISOLATED("game: the tactical map's DATA page draws a unit's part diagram as line art with HD art on")
 {
@@ -1010,35 +1032,76 @@ TEST_CASE_ISOLATED("game: the tactical map's DATA page draws a unit's part diagr
     const std::shared_ptr<MCTacticalMap> map = TacticalMap();
     REQUIRE(map != nullptr);
     const std::shared_ptr<MCFriendlyMechIcon> icon = TacticalInterface()->MechBar->GetButton(0);
-    REQUIRE(icon != nullptr);
-    const auto mover = std::dynamic_pointer_cast<MCMover>(ObjectList()->FindObjectFromPart(icon->PartId));
-    REQUIRE(mover != nullptr);
-    Settle();
-
-    const MCVulkanRenderer::SharpCounts before = renderer->SharpPictures();
-    map->SetDisplayType(MCTacmapPage::Info);
-    map->SetID(icon->PartId);
-    MCSharpPictures::WaitForMade();
-    Settle();
-    const MCVulkanRenderer::SharpCounts shown = renderer->SharpPictures();
-
-    const std::span<const uint8_t> shapes = map->PartShapes.Bytes();
-    const int32_t silhouette = MCTacticalMap::PartSilhouette(*mover);
-    REQUIRE(silhouette < VfxShapeCount(shapes));
-    CHECK(MCHdArt::LineArt(shapes, 0));
-    CHECK(MCHdArt::LineArt(shapes, silhouette - 1));
-    CHECK(!MCHdArt::LineArt(shapes, silhouette));
-    // The front view's armor and internal structure outlines drawn from drawings made ahead, none on the game's thread
-    // (the page's words are glyphs of the game's fonts, not line art).
-    CHECK(shown.TakenAhead > before.TakenAhead);
-    CHECK_EQ(shown.LinesRedrawn, before.LinesRedrawn);
-
-    // Another unit shown (its shapes read again): its outlines are line art, made ahead too.
     const std::shared_ptr<MCFriendlyMechIcon> other = TacticalInterface()->MechBar->GetButton(1);
+    REQUIRE(icon != nullptr);
     REQUIRE(other != nullptr);
-    map->SetID(other->PartId);
     Settle();
-    CHECK(MCHdArt::LineArt(map->PartShapes.Bytes(), 0));
-    CHECK_EQ(renderer->SharpPictures().LinesRedrawn, before.LinesRedrawn);
+
+    // The page's first frame after the click: every outline it shows put on the GPU as line art then, none later, in
+    // under MostDiagramTime of the game's thread.
+    const auto showsAsPlayed = [&](const std::function<void()>& click, int32_t partId, std::string_view which)
+    {
+        const MCVulkanRenderer::SharpCounts before = renderer->SharpPictures();
+        click();
+        MCTestGame::RunFrame(FrameSeconds);
+        const MCVulkanRenderer::SharpCounts first = renderer->SharpPictures();
+        Settle();
+        const MCVulkanRenderer::SharpCounts settled = renderer->SharpPictures();
+        const auto mover = std::dynamic_pointer_cast<MCMover>(ObjectList()->FindObjectFromPart(partId));
+        REQUIRE(mover != nullptr);
+        const std::span<const uint8_t> shapes = map->PartShapes.Bytes();
+        const int32_t silhouette = MCTacticalMap::PartSilhouette(*mover);
+        const size_t redrawn = first.LinesRedrawn - before.LinesRedrawn;
+        std::cout << std::format(
+            "  {}: {} outlines on its first frame, {} made ahead, {} redrawn on the game's thread, "
+            "{:.3f} ms of it; {} put later\n",
+            which, first.LinesPut - before.LinesPut, first.LinesPut - before.LinesPut - redrawn, redrawn,
+            Milliseconds(first.LinesTime - before.LinesTime), settled.LinesPut - first.LinesPut);
+        REQUIRE(silhouette < VfxShapeCount(shapes));
+        CHECK(MCHdArt::LineArt(shapes, 0));
+        CHECK(MCHdArt::LineArt(shapes, silhouette - 1));
+        CHECK(!MCHdArt::LineArt(shapes, silhouette));
+        CHECK(first.LinesPut > before.LinesPut);
+        CHECK_EQ(settled.LinesPut, first.LinesPut);
+        CHECK(first.LinesTime - before.LinesTime < MostDiagramTime);
+    };
+
+    // The DATA page opened (the unit the interface chose at the mission's start), then another unit's icon clicked in
+    // the interface's DATA mode (MCFriendlyMechIcon's MCInterfaceMode::Info).
+    showsAsPlayed([&] { map->SetDisplayType(MCTacmapPage::Info); }, icon->PartId, "the first unit");
+    showsAsPlayed([&] { map->SetID(other->PartId); }, other->PartId, "another unit");
+
+    // What the game's thread pays when none was made ahead: the shown unit's outlines redrawn there, one by one.
+    const std::span<const uint8_t> shapes = map->PartShapes.Bytes();
+    std::vector<std::chrono::nanoseconds> times;
+    size_t pixels = 0;
+
+    for (int32_t frame = 0; frame < VfxShapeCount(shapes); ++frame)
+    {
+        if (!MCHdArt::LineArt(shapes, frame))
+        {
+            continue;
+        }
+
+        const std::span<const MCSharpLines::MCDrawnLoop> drawn = MCHdArt::LineArtDrawn(shapes, frame);
+        const std::optional<MCSharpPictures::MCLineArtCut> cut = MCSharpPictures::CutLineArt(shapes, frame, drawn);
+        REQUIRE(cut.has_value());
+        pixels += static_cast<size_t>(cut->Columns) * static_cast<size_t>(cut->Rows);
+        const auto start = std::chrono::steady_clock::now();
+        const std::vector<uint8_t> redrawn =
+            MCSharpLines::Redraw(cut->Art, cut->Columns, cut->Columns, cut->Rows, drawn);
+        times.push_back(std::chrono::steady_clock::now() - start);
+        CHECK(!redrawn.empty());
+    }
+
+    REQUIRE(times.size() >= MeasuredOutlines);
+    const std::chrono::nanoseconds total = std::accumulate(times.begin(), times.end(), std::chrono::nanoseconds{0});
+    std::ranges::sort(times);
+    constexpr auto Scale = static_cast<size_t>(MCSharpText::Scale);
+    std::cout << std::format("  redrawn on the game's thread: {} outlines {:.3f} ms, {} at the median {:.3f} ms, the "
+                             "slowest {:.3f} ms; {} original pixels, {:.1f} MB as RGBA\n",
+                             times.size(), Milliseconds(total), MeasuredOutlines,
+                             Milliseconds(times[times.size() / 2] * MeasuredOutlines), Milliseconds(times.back()),
+                             pixels, static_cast<double>(pixels * Scale * Scale * 4) / (1024.0 * 1024.0));
     GHdArt = 0;
 }

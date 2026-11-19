@@ -291,6 +291,16 @@ auto MCTacticalInterface::StartScenario() -> void
 
     MechBar->ShowGuiWindow(true);
     MechBar->InitLances();
+
+    // Port-only: the player's units' part diagrams made ahead as line art, for the DATA page.
+    std::vector<int32_t> ownUnits;
+
+    for (const std::shared_ptr<MCFriendlyMechIcon>& icon : MechBar->Buttons())
+    {
+        ownUnits.push_back(icon->PartId);
+    }
+
+    MCTacticalMap::MakePartDiagramsAhead(ownUnits);
     DragTarget.reset();
     ForcingOrder = false;
     TakePlayerKeys();

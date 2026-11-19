@@ -217,6 +217,13 @@ public:
     /// </summary>
     static int32_t PartSilhouette(const MCMover& mover);
 
+    /// <summary>
+    /// Port-only: with HD art on a sharp screen, the part diagrams of the units with part ids <paramref name="partIds"/>
+    /// (the player's, at the mission's start) made ahead as line art off the game's thread, each file read once, so the
+    /// DATA page draws any of them as line art from its first frame with none redrawn on the game's thread.
+    /// </summary>
+    static void MakePartDiagramsAhead(std::span<const int32_t> partIds);
+
     /// <summary>Makes the command palette match the interface's current mode.</summary>
     void UpdateOrderPalette();
 

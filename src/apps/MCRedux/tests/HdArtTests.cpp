@@ -20268,7 +20268,8 @@ namespace
 /// <summary>
 /// Port-only: a forest's version 2 frame folds its index pass into its own draw (MCVulkanRenderer's HdMarks::Folded):
 /// swaying over mission 1 drawn by the GPU, the frame drawn with the fold shows as it does drawn without it, pixel for
-/// pixel: its canopy marked to sway and to lean brighter, its painted shadow not, through the stands target.
+/// pixel, over the middle of the screen it is drawn in (the minimap's blips blink as the clock goes): its canopy marked
+/// to sway and to lean brighter, its painted shadow not, through the stands target.
 /// </summary>
 TEST_CASE_ISOLATED("game: a forest's version 2 frame folds its index pass into its draw and shows as drawn apart")
 {
@@ -20279,15 +20280,35 @@ TEST_CASE_ISOLATED("game: a forest's version 2 frame folds its index pass into i
         return;
     }
 
-    REQUIRE(forest->Apart.size() == forest->Folded.size());
+    const int32_t width = MCInput::Display()->Width();
+    const int32_t height = MCInput::Display()->Height();
+    REQUIRE(forest->Apart.size() == static_cast<size_t>(width) * height);
+    REQUIRE(forest->Folded.size() == forest->Apart.size());
     size_t differing = 0;
+    int32_t left = width;
+    int32_t top = height;
+    int32_t right = -1;
+    int32_t bottom = -1;
 
-    for (size_t at = 0; at < forest->Apart.size(); ++at)
+    for (int32_t y = height / 4; y < height * 3 / 4; ++y)
     {
-        differing += SameColor(forest->Apart[at], forest->Folded[at]) ? 0 : 1;
+        for (int32_t x = width / 4; x < width * 3 / 4; ++x)
+        {
+            const size_t at = static_cast<size_t>(y) * width + x;
+
+            if (!SameColor(forest->Apart[at], forest->Folded[at]))
+            {
+                ++differing;
+                left = std::min(left, x);
+                top = std::min(top, y);
+                right = std::max(right, x);
+                bottom = std::max(bottom, y);
+            }
+        }
     }
 
-    std::cout << std::format("  {} of {} pixels differ\n", differing, forest->Apart.size());
+    std::cout << std::format("  {} pixels of the middle differ", differing);
+    std::cout << (differing != 0 ? std::format(", in ({}, {}) to ({}, {})\n", left, top, right, bottom) : "\n");
     CHECK_EQ(differing, 0u);
 }
 

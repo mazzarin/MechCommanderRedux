@@ -403,6 +403,11 @@ private:
     /// </summary>
     std::vector<Texture> _LightTiles;
     Texture _NoLightTiles;
+    /// <summary>
+    /// Port-only: a texel of NoStand (shaders/channels.hlsli), bound for a world's stands where nothing stands (a world
+    /// drawn without a fold or by the CPU, the passes that don't read them).
+    /// </summary>
+    Texture _NothingStands;
     /// <summary>Port-only (HD weather's snow): the underlays' specks' lattices, in the same order.</summary>
     std::vector<MCSpeckLattice> _Specks;
     /// <summary>Port-only: the GPU worlds' drawn grids of the frame presented last (<see cref="ShownGrids"/>).</summary>

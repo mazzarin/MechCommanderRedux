@@ -3,7 +3,7 @@
 // Every draw that writes a channel and every one that reads it takes its values from here; GpuChannelsTests checks the
 // layout (no value means two things, each mark lies in its readers' windows).
 //
-// A surface's targets (MCVulkanRenderer's Surface; SV_Target0 to 3 in draw.pshader):
+// A surface's targets (MCVulkanRenderer's Surface; SV_Target0 to 2 in draw.pshader, 3 in its stands build):
 // - 0, its colours: RGBA8, the picture as shown.
 // - 1, its indices (Surface::Index): RGBA8.
 //   - R: the original's palette index at the pixel.
@@ -11,11 +11,13 @@
 //     bits (ReliefFlat flat) and the fog of war's edge in their low bits (G's the low bit of the count, B's the high);
 //     at or under it, the window row a unit's feet stand on, FeetSteps a row and 1 more (G the high byte, B the low;
 //     0 for none).
-// - 2, its stands (Surface::Stands): R8, what stands on the ground at the pixel: 0 where the index target's alpha says
-//   (the terrain's and the kept ground's draws, which write the ground's marks there), else the alpha a draw over the
-//   ground means, a byte up (StandsOf). Every other draw that writes the index target's alpha writes it, so a fold of
-//   a forest's index pass into its HD frame's draw can leave the alpha alone (MarkOf reads the two as one).
-// - 3, its glints (Surface::Glints, HD weather): premultiplied RGBA8, only on passes whose draws catch light.
+// - 2, its glints (Surface::Glints, HD weather): premultiplied RGBA8, only on passes whose draws catch light.
+// - Port-only, only in a frame whose draws on the surface fold a forest's index pass into its HD frame's draw
+//   (Surface::Folds; draw.pshader's stands build, DRAW_STANDS): its stands (Surface::Stands) at 2, the glints then at 3.
+//   R8: the mark of what stands at the pixel, as the index target's alpha holds marks (below), or NoStand (255, as the
+//   target is cleared, and the kept ground's): the index target's alpha holds it. Every draw writes the mark it writes
+//   in that alpha here too (the pipelines' masks), but a fold, which writes it here alone, leaving the alpha the
+//   ground's under its tree; MarkOf reads the two as one, the mark a frame without the stands holds in that alpha.
 //
 // The index target's alpha, by its byte (draw.pshader writes it; composite.pshader reads it, each reader by a window):
 // - 0, StandingMark: no HD ground (the original's ground, a sprite, an HD frame's coverage past its original pixels).
@@ -85,23 +87,15 @@ MC_CHANNEL float FilledMarkSpan = 0.2f;
 MC_CHANNEL float FilledMarkTop = 0.735f;
 MC_CHANNEL float BlockedMarkSpan = 0.25f;
 
-// The stands target (target 2): 0 where the index target's alpha holds the mark; else that mark a byte up (StandsOf),
-// so a draw's mark of 0 (StandingMark) is still told from the ground's. No draw over the ground writes a mark of 255
-// (only HD ground: the terrain's, which writes 0 here).
-MC_CHANNEL float NoStand = 0.0f;
+// The stands target (with a fold, target 2): nothing stands, the mark is the index target's alpha's (its byte 255: a
+// draw's mark of 255 is written in both, so either reads it).
+MC_CHANNEL float NoStand = 1.0f;
 
-// What a draw over the ground writes in the stands target for its mark (the index target's alpha) <paramref
-// name="mark"/>.
-MC_CHANNEL_DECODE float StandsOf(float mark)
-{
-    return float(Byte(mark) + 1u) / 255.0f;
-}
-
-// The index target's mark at a pixel, from its alpha <paramref name="alpha"/> and the stands target's
-// <paramref name="stands"/>: what stands there, else the ground's.
+// The mark at a pixel, from the index target's alpha <paramref name="alpha"/> and the stands target's
+// <paramref name="stands"/> (NoStand without one): what stands there, else the alpha's.
 MC_CHANNEL_DECODE float MarkOf(float alpha, float stands)
 {
-    return stands > NoStand ? float(Byte(stands) - 1u) / 255.0f : alpha;
+    return Byte(stands) != Byte(NoStand) ? stands : alpha;
 }
 
 // The index target's green and blue: a relief map's byte for flat ground (a byte stands for a rise of (byte - this) /

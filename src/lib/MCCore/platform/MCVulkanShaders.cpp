@@ -10,9 +10,14 @@
 #include "shaders/composite_unspecked.msl.h"
 #include "shaders/draw.msl.h"
 #include "shaders/draw_basic.msl.h"
+#include "shaders/draw_basic_stands.msl.h"
 #include "shaders/draw_hd.msl.h"
+#include "shaders/draw_hd_stands.msl.h"
+#include "shaders/draw_stands.msl.h"
 #include "shaders/draw_terrain.msl.h"
+#include "shaders/draw_terrain_stands.msl.h"
 #include "shaders/ground.msl.h"
+#include "shaders/ground_stands.msl.h"
 #include "shaders/hdcoverage.msl.h"
 #include "shaders/instance.msl.h"
 #include "shaders/movie.msl.h"
@@ -29,9 +34,14 @@
 #include "shaders/composite_unspecked.spv.h"
 #include "shaders/draw.spv.h"
 #include "shaders/draw_basic.spv.h"
+#include "shaders/draw_basic_stands.spv.h"
 #include "shaders/draw_hd.spv.h"
+#include "shaders/draw_hd_stands.spv.h"
+#include "shaders/draw_stands.spv.h"
 #include "shaders/draw_terrain.spv.h"
+#include "shaders/draw_terrain_stands.spv.h"
 #include "shaders/ground.spv.h"
+#include "shaders/ground_stands.spv.h"
 #include "shaders/hdcoverage.spv.h"
 #include "shaders/instance.spv.h"
 #include "shaders/movie.spv.h"
@@ -57,6 +67,11 @@ namespace MCVulkanShaders
     const MCShaderInfo DrawTerrainFragment{MCShader::DrawTerrain, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawHdFragment{MCShader::DrawHd, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo GroundFragment{MCShader::Ground, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
+    const MCShaderInfo DrawStandsFragment{MCShader::DrawStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo DrawBasicStandsFragment{MCShader::DrawBasicStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo DrawTerrainStandsFragment{MCShader::DrawTerrainStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo DrawHdStandsFragment{MCShader::DrawHdStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo GroundStandsFragment{MCShader::GroundStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
     const MCShaderInfo MovieFragment{MCShader::Movie, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
     const MCShaderInfo HdCoverageFragment{MCShader::HdCoverage, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1};
     const MCShaderInfo TerrainVertex{MCShader::Terrain, SDL_GPU_SHADERSTAGE_VERTEX, 1, 1, 2};
@@ -97,6 +112,16 @@ namespace MCVulkanShaders
                 return "movie";
             case MCShader::HdCoverage:
                 return "hdcoverage";
+            case MCShader::DrawStands:
+                return "draw_stands";
+            case MCShader::DrawBasicStands:
+                return "draw_basic_stands";
+            case MCShader::DrawTerrainStands:
+                return "draw_terrain_stands";
+            case MCShader::DrawHdStands:
+                return "draw_hd_stands";
+            case MCShader::GroundStands:
+                return "ground_stands";
         }
 
         return {};
@@ -138,6 +163,16 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(movie);
             case MCShader::HdCoverage:
                 return MC_BUILT_IN_SHADER(hdcoverage);
+            case MCShader::DrawStands:
+                return MC_BUILT_IN_SHADER(draw_stands);
+            case MCShader::DrawBasicStands:
+                return MC_BUILT_IN_SHADER(draw_basic_stands);
+            case MCShader::DrawTerrainStands:
+                return MC_BUILT_IN_SHADER(draw_terrain_stands);
+            case MCShader::DrawHdStands:
+                return MC_BUILT_IN_SHADER(draw_hd_stands);
+            case MCShader::GroundStands:
+                return MC_BUILT_IN_SHADER(ground_stands);
         }
 
         return {};

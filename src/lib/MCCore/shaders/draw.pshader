@@ -54,6 +54,12 @@
 #define DRAW_VARIANT DRAW_EVERY_KIND
 #endif
 
+// Port-only: the stands build (DRAW_STANDS 1: draw_stands.pshader and the variants' own), for the passes on a surface
+// whose frame folds a forest's index pass into its HD frame's draw (FoldsIndex), with the stands target.
+#ifndef DRAW_STANDS
+#define DRAW_STANDS 0
+#endif
+
 // Whether the variant draws the port's kinds of sprites, and the terrain's HD colours and seams.
 #define DRAWS_SPRITE_KINDS (DRAW_VARIANT == DRAW_EVERY_KIND)
 #define DRAWS_TERRAIN_KINDS (DRAW_VARIANT == DRAW_EVERY_KIND || DRAW_VARIANT == DRAW_TERRAIN_KINDS)
@@ -126,12 +132,16 @@ struct Output
 {
     float4 color : SV_Target0;
     float4 index : SV_Target1;
-    // Port-only: what stands on the ground (channels.hlsli's stands target), set from the indices' alpha as a draw
-    // ends (main); written wherever a pipeline writes that alpha.
-    float stands : SV_Target2;
     // Port-only (HD weather): the light a raindrop caught (premultiplied), which the composite adds over the lit world;
-    // every other draw covers what lies under it as its colour does (MCVulkanRenderer's Surface::Glints).
+    // every other draw covers what lies under it as its colour does (MCVulkanRenderer's Surface::Glints). Port-only: the
+    // stands build has the mark of what stands at the pixel before it (channels.hlsli's stands target), the mark written
+    // in the indices' alpha (main) but a fold's (HdPixelAt).
+#if DRAW_STANDS
+    float stands : SV_Target2;
     float4 glint : SV_Target3;
+#else
+    float4 glint : SV_Target2;
+#endif
 };
 
 // The channels' values: the index target's marks, an HD frame's index picture's green, the palette entries the shaders
@@ -1113,6 +1123,7 @@ float HdMaskCoverage(int2 original, float2 shape, out int2 nearest)
 // HdEdges::Picture) has a hard border: nothing outside its rectangle counts as undrawn, a texel past it being the one at
 // its edge, so a picture drawn beside or into another covers its own pixels whole.
 static const uint PictureBorder = 1u;
+#if DRAW_STANDS
 // Port-only: a KindHd draw's op.w bit for a forest's version 2 frame with its index pass folded in (MCVulkanRenderer's
 // HdMarks::Folded, through its BlendFold pipeline): where the original draws (its index picture's OriginalDrawsIn) it
 // writes the original's index as the pass would (DrawnOutput's KindTexture: the picture's red, through the table before
@@ -1127,6 +1138,7 @@ bool FoldsIn(Input input)
     const uint kind = input.op.x & 15u;
     return (kind == KindHd || kind == KindHdSmooth) && (input.op.w & FoldsIndex) != 0;
 }
+#endif
 // Port-only: the keyed holes of a KindHd draw's picture that a later copy fills edge to edge (MCVulkanRenderer's
 // FillHoles), at most FilledHolesMost, each in two words of span and walk (hole i: low i, high i), its first original
 // pixel and the one past its last (x the low half, y the high; none when both are 0). Their edges aren't softened
@@ -1307,6 +1319,7 @@ Output HdPixelAt(Input input, float2 shape)
     const int texelScale = (int)hdScale;
     float4 color = HdColourBetween(input, shape, original);
     int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
+#if DRAW_STANDS
     // A fold's original pixel under it: the pass's texel (the draws' places agree, MCVulkanRenderer::Shape).
     const bool folds = FoldsIn(input);
     const int2 under = int2(floor(shape));
@@ -1315,6 +1328,7 @@ Output HdPixelAt(Input input, float2 shape)
     const bool foldTable = (flags & TableBefore) != 0;
     const uint foldedIndex = foldTable ? Table(input.op.z, Byte(underEntry.r)) : Byte(underEntry.r);
     const bool foldsIndex = folds && inPicture && OriginalDrawsIn(underEntry) && (!foldTable || foldedIndex != 255u);
+#endif
 
     // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
     if ((flags & 15u) == KindHdSmooth)
@@ -1334,10 +1348,14 @@ Output HdPixelAt(Input input, float2 shape)
         color = float4(max(color.rgb - LightFloor, 0.0), 0.0);
     }
 
+#if DRAW_STANDS
     // A fold's original pixel is drawn whatever the frame's colour there (its index, its mark).
     const bool shows = color.a > 0.0 || ((input.op.x & HdLight) != 0 && any(color.rgb > 0.0));
 
     if (!shows && !foldsIndex)
+#else
+    if (color.a <= 0.0 && ((input.op.x & HdLight) == 0 || all(color.rgb <= 0.0)))
+#endif
     {
         discard;
     }
@@ -1394,15 +1412,19 @@ Output HdPixelAt(Input input, float2 shape)
         color.rgb = TableShift(input.op.z, color.rgb, color.a);
     }
 
+#if DRAW_STANDS
     Output output = Blended(shows ? color : float4(0.0, 0.0, 0.0, 0.0));
     output.index.a = swayMark;
 
     if (folds)
     {
         output.index = foldsIndex ? float4((float)foldedIndex / 255.0, 0.0, 0.0, 1.0) : float4(0.0, 0.0, 0.0, 0.0);
-        output.stands = StandsOf(shows ? swayMark : SwayMark);
+        output.stands = shows ? swayMark : SwayMark;
     }
-
+#else
+    Output output = Blended(color);
+    output.index.a = swayMark;
+#endif
     return output;
 }
 
@@ -2262,15 +2284,12 @@ Output main(Input input)
         output.index.gb = float2(feet >> BitsPerByte, feet & 255u) / 255.0;
     }
 
-    // Port-only: what stands on the ground, from the mark written: the terrain's marks are the ground's (its HD ground's
-    // reach 255, beyond what the stands target holds a byte up), the rest stand on it.
-#if DRAW_VARIANT == DRAW_TERRAIN_KINDS
-    output.stands = NoStand;
-#else
-    // A fold's are its own (HdPixelAt), its alpha there saying where its index goes.
+#if DRAW_STANDS
+    // Port-only: the mark written in the indices' alpha, where the pipeline writes it, but a fold's own (HdPixelAt), its
+    // alpha saying where its index goes.
     if (!FoldsIn(input))
     {
-        output.stands = StandsOf(output.index.a);
+        output.stands = output.index.a;
     }
 #endif
     return output;

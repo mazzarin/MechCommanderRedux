@@ -20252,8 +20252,11 @@ namespace
         const int64_t foldsBefore = renderer->HdFolds();
         result.Apart = drawn(false);
         CHECK_EQ(renderer->HdFolds(), foldsBefore);
+        // A frame without a fold binds no stands, as before them; one with it binds them on the world's passes alone.
+        CHECK_EQ(renderer->LastFrameStandsPasses(), 0);
         result.Folded = drawn(true);
         CHECK(renderer->HdFolds() > foldsBefore);
+        CHECK(renderer->LastFrameStandsPasses() > 0);
         renderer->SetFoldsIndexPasses(true);
         GHdSway = 0;
         GamePaused = false;

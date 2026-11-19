@@ -1151,6 +1151,52 @@
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
+    <!-- Port-only: the stands builds (DRAW_STANDS), for passes on a surface whose frame folds a forest's index pass in. -->
+    <CustomBuild Include="shaders\draw_stands.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
+    <CustomBuild Include="shaders\draw_basic_stands.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;%(RootDir)%(Directory)draw_basic.pshader;$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
+    <CustomBuild Include="shaders\draw_hd_stands.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;%(RootDir)%(Directory)draw_hd.pshader;$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
+    <CustomBuild Include="shaders\draw_terrain_stands.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;%(RootDir)%(Directory)draw_terrain.pshader;$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
+    <CustomBuild Include="shaders\ground_stands.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)ground.pshader;$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
     <!-- Port-only (HD movies): a movie's frame turned into colours from its Y, U and V planes. -->
     <CustomBuild Include="shaders\movie.pshader">
       <FileType>Document</FileType>

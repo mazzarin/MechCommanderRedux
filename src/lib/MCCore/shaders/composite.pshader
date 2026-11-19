@@ -84,8 +84,8 @@ SamplerState lightTileSampler : register(s7, space2);
 // past the world each way (unused without puddles).
 Texture2D<float> puddleTex : register(t8, space2);
 SamplerState puddleSampler : register(s8, space2);
-// Port-only: over the GPU world, what stands on its ground (its stands target, channels.hlsli), which opTex's alpha
-// is read with (WorldTexelAt; unused without a GPU world).
+// Port-only: what stands in the world (a GPU world's stands target, channels.hlsli; a texel of NoStand when it has none,
+// or the CPU drew it), which opTex's alpha is read with (WorldTexelAt).
 Texture2D<float> standsTex : register(t9, space2);
 SamplerState standsSampler : register(s9, space2);
 
@@ -317,8 +317,8 @@ float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 si
     return tex.SampleLevel(samp, (texel + 0.5) / size, 0);
 }
 
-// The GPU world's indices at a world texel (opTex), their alpha the mark there (channels.hlsli's MarkOf: what stands
-// on the ground, else the ground's).
+// The world's indices at a world texel (opTex), their alpha the mark there (channels.hlsli's MarkOf: what stands there,
+// else the alpha's).
 float4 WorldTexelAt(float2 texel)
 {
     const float2 uv = (texel + 0.5) / worldSize.zw;

@@ -1,0 +1,5 @@
+// Port-only: draw_basic.pshader's stands build (DRAW_STANDS), for the passes on a surface whose frame folds a forest's
+// index pass into its HD frame's draw: with the stands target (channels.hlsli) before the glints.
+
+#define DRAW_STANDS 1
+#include "draw_basic.pshader"

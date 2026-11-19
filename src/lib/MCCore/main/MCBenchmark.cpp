@@ -2,10 +2,18 @@
 #include "main/MCBenchmark.h"
 #include "camera/MCCamera.h"
 #include "gui/MCGuiCallback.h"
+#include "gui/MCGuiEvent.h"
+#include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiInput.h"
 #include "gui/MCGuiSystem.h"
+#include "gui/MCUpdateDisplay.h"
 #include "lib/MCVector3D.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMechBriefBlock.h"
+#include "logistics/MCMechInventoryBlock.h"
+#include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCRepairScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCHdSettings.h"
@@ -91,27 +99,48 @@ namespace
         return instance;
     }
 
-    /// <summary>Where a briefing run is (MCBenchmark::ArmBriefing).</summary>
+    /// <summary>Where a logistics tour is (MCBenchmark::ArmBriefing).</summary>
     enum class MCBriefingPhase : uint8_t
     {
         /// <summary>The game starting, until the main menu shows.</summary>
         Menu,
         /// <summary>A new campaign asked for, until its first briefing shows.</summary>
         Opening,
-        Briefing,
-        MechLab,
+        /// <summary>The tour's steps, each up for StepSeconds.</summary>
+        Steps,
+        /// <summary>Launch pressed, until the mission's first frame.</summary>
+        Launching,
         Done,
     };
 
-    /// <summary>A briefing run: a new campaign's first briefing, then its mech lab, each for ScreenSeconds.</summary>
+    /// <summary>A step's frames, what the hold held at its end and what it found, for the summary.</summary>
+    struct MCStepResult
+    {
+        std::string_view Name;
+        MCFrameLog::MCTally Tally;
+        double HeldMb = 0.0;
+        std::string Note;
+    };
+
+    /// <summary>
+    /// A logistics tour (MCBenchmark::ArmBriefing): a new campaign's first briefing, its tabs and lance, the mech lab,
+    /// the store, back to the briefing and Launch.
+    /// </summary>
     struct MCBriefingRun
     {
-        int32_t ScreenSeconds = 0;
+        int32_t StepSeconds = 0;
         std::shared_ptr<MCGuiCallback> Callback;
         MCBriefingPhase Phase = MCBriefingPhase::Menu;
-        /// <summary>When the screen being tallied showed.</summary>
-        std::chrono::steady_clock::time_point ScreenStart;
-        MCFrameLog::MCTally BriefingTally;
+        /// <summary>The step now, an index into the tour's steps.</summary>
+        size_t Step = 0;
+        std::chrono::steady_clock::time_point StepStart;
+        /// <summary>The mouse events the step has still to send, one a frame.</summary>
+        std::deque<MCGuiEvent> Pending;
+        /// <summary>The mech the tour puts in the lance (and takes off it again).</summary>
+        std::weak_ptr<MCLogMech> Added;
+        std::vector<MCStepResult> Results;
+        /// <summary>From Launch's click to the mission's first frame (seconds).</summary>
+        double LaunchSeconds = 0.0;
         bool InputHeld = false;
         bool Stopped = false;
     };
@@ -517,31 +546,282 @@ namespace
         }
     }
 
-    /// <summary>The briefing run's name: its frame log's, and the variant its summary names.</summary>
-    constexpr std::string_view BriefingName = "briefing";
+    /// <summary>The tour's name: its frame log's (benchmark-logistics.txt).</summary>
+    constexpr std::string_view TourName = "logistics";
     constexpr double BytesPerMb = 1024.0 * 1024.0;
+    /// <summary>A part's type when it's a mech (MCLogPart::PartType).</summary>
+    constexpr int32_t MechPartType = 1;
+    /// <summary>A mouse event's left button, held.</summary>
+    constexpr uint8_t LeftHeld = 0xff;
+    /// <summary>Where on an inventory row a click lands: past its picture's left edge, as the tests click it.</summary>
+    constexpr int32_t RowClickX = 40;
+    /// <summary>The briefing screen's launch button, its middle.</summary>
+    constexpr POINT LaunchButton{0x230, 0x152};
+    /// <summary>The longest Launch may take to the mission's first frame before the run fails.</summary>
+    constexpr double MostLaunchSeconds = 120.0;
 
-    /// <summary>The seconds since the screen being tallied showed.</summary>
-    double ScreenSeconds(const MCBriefingRun& run)
+    double HeldMb()
     {
-        return std::chrono::duration<double>(std::chrono::steady_clock::now() - run.ScreenStart).count();
+        return static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb;
     }
 
-    /// <summary>The briefing run's end: its summary in the log, the frame log and benchmarks.txt, then the game's.</summary>
-    [[noreturn]] void FinishBriefing(MCBriefingRun& run)
+    double SecondsSince(std::chrono::steady_clock::time_point start)
     {
-        const MCFrameLog::MCTally lab = MCFrameLog::TakeTally();
-        MCFrameLog::MCTally whole = run.BriefingTally;
-        whole.Add(lab);
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    }
+
+    POINT Middle(MCGuiObject& object)
+    {
+        return {object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2};
+    }
+
+    MCGuiEvent MouseEvent(int32_t type, POINT at)
+    {
+        MCGuiEvent event;
+        event.Clear();
+        event.Type = static_cast<uint8_t>(type);
+        event.X = at.x;
+        event.Y = at.y;
+        event.LeftButton = type == MCGuiEventType::LeftButtonDown ? LeftHeld : 0;
+        return event;
+    }
+
+    /// <summary>
+    /// A tour's mouse event, sent as the player's input reaches the screens: the held cursor put at its place first, so
+    /// the frame's own mouse check sees no move of its own.
+    /// </summary>
+    void SendMouse(MCGuiEvent event)
+    {
+        MCInput::SetCursorPos(event.X, event.Y);
+        MouseScreenX = event.X;
+        MouseScreenY = event.Y;
+        OldMouseX = event.X;
+        OldMouseY = event.Y;
+        DispatchGuiEvent(event);
+    }
+
+    /// <summary>A click at <paramref name="at"/>, one event a frame: the mouse there, the button down, then up.</summary>
+    void QueueClick(MCBriefingRun& run, bool right, POINT at)
+    {
+        run.Pending.push_back(MouseEvent(MCGuiEventType::MouseMove, at));
+        run.Pending.push_back(MouseEvent(right ? MCGuiEventType::RightButtonDown : MCGuiEventType::LeftButtonDown, at));
+        run.Pending.push_back(MouseEvent(right ? MCGuiEventType::RightButtonUp : MCGuiEventType::LeftButtonUp, at));
+    }
+
+    MCBriefingScreen& Briefing()
+    {
+        return *GlobalLog()->BriefingScreen;
+    }
+
+    /// <summary>
+    /// The first mech of the deploy list that fits the lance, right-clicked into the first free slot (as a player puts one
+    /// in: its briefing shows, its art read from then, MCHdArt::HoldMechAhead).
+    /// </summary>
+    std::string AddMech(MCBriefingRun& run)
+    {
+        MCBriefingScreen& screen = Briefing();
+        screen.SetUpDeploy();
+
+        for (const std::shared_ptr<MCLogPart>& unit : screen.DeployUnits)
+        {
+            if (unit == nullptr || unit->PartType != MechPartType)
+            {
+                continue;
+            }
+
+            const auto mech = std::static_pointer_cast<MCLogMech>(unit);
+            const std::shared_ptr<MCMechBriefBlock> block = screen.BlockOf(*mech);
+
+            if (mech->Deployed == 0 && MCBriefingScreen::FitsTonnage(*mech) && block != nullptr)
+            {
+                run.Added = mech;
+                QueueClick(run, true, Middle(*block));
+                return {};
+            }
+        }
+
+        return "no mech in the deploy list fits the lance";
+    }
+
+    /// <summary>The mech AddMech put in, right-clicked out of its slot back to the deploy list.</summary>
+    std::string RemoveMech(MCBriefingRun& run)
+    {
+        const std::shared_ptr<MCLogMech> mech = run.Added.lock();
+        const std::shared_ptr<MCMechBriefBlock> block = mech != nullptr ? Briefing().BlockOf(*mech) : nullptr;
+
+        if (mech == nullptr || mech->Deployed == 0 || block == nullptr)
+        {
+            return "the mech put in isn't in the lance";
+        }
+
+        QueueClick(run, true, Middle(*block));
+        return {};
+    }
+
+    /// <summary>In the mech lab, a click on another mech of the force than the one shown: its first show there.</summary>
+    std::string ShowAnotherMech(MCBriefingRun& run)
+    {
+        MCRepairScreen& lab = *GlobalLog()->RepairScreen;
+        const std::shared_ptr<MCLogMech> shown = lab.SelectedMech();
+
+        for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
+        {
+            const std::shared_ptr<MCMechInventoryBlock> row =
+                mech != nullptr && mech != shown ? lab.InventoryPane->RowOf<MCMechInventoryBlock>(*mech) : nullptr;
+
+            if (row != nullptr)
+            {
+                QueueClick(run, false, POINT{row->GlobalX() + RowClickX, row->GlobalY() + row->Height() / 2});
+                return {};
+            }
+        }
+
+        return "the mech lab lists no other mech";
+    }
+
+    /// <summary>A step of the tour: its name, and what it does as it starts (what stopped it, or nothing).</summary>
+    struct MCTourStep
+    {
+        std::string_view Name;
+        std::string (*Start)(MCBriefingRun& run);
+    };
+
+    /// <summary>
+    /// The tour, as a player goes through mission 1's logistics: the briefing (shown by the new campaign), its tabs, a
+    /// mech put in the lance and taken out, the mech lab and another mech in it, its pilots, the store's tabs, the
+    /// briefing again with a mech in the lance for Launch.
+    /// </summary>
+    constexpr std::array<MCTourStep, 15> TourSteps{{
+        {"briefing", [](MCBriefingRun&) { return std::string(); }},
+        {"mission tab",
+         [](MCBriefingRun&)
+         {
+             Briefing().SetUpMission();
+             return std::string();
+         }},
+        {"operation tab",
+         [](MCBriefingRun&)
+         {
+             Briefing().SetUpOperation();
+             return std::string();
+         }},
+        {"deploy tab",
+         [](MCBriefingRun&)
+         {
+             Briefing().SetUpDeploy();
+             return std::string();
+         }},
+        {"a mech put in", AddMech},
+        {"the mech taken out", RemoveMech},
+        {"mech lab",
+         [](MCBriefingRun&)
+         {
+             GlobalLog()->SetUpRepairScreen(true);
+             return std::string();
+         }},
+        {"another mech shown", ShowAnotherMech},
+        {"mech lab's pilots",
+         [](MCBriefingRun&)
+         {
+             GlobalLog()->RepairScreen->SetUpPilotInv(true, true);
+             return std::string();
+         }},
+        {"store",
+         [](MCBriefingRun&)
+         {
+             GlobalLog()->SetUpPurchaseScreen(true);
+             return std::string();
+         }},
+        {"store's vehicles",
+         [](MCBriefingRun&)
+         {
+             GlobalLog()->PurchaseScreen->SetUpVehiclePurchase();
+             return std::string();
+         }},
+        {"store's pilots",
+         [](MCBriefingRun&)
+         {
+             GlobalLog()->PurchaseScreen->SetUpPilotPurchase();
+             return std::string();
+         }},
+        {"store's mechs",
+         [](MCBriefingRun&)
+         {
+             GlobalLog()->PurchaseScreen->SetUpMechPurchase();
+             return std::string();
+         }},
+        {"briefing again",
+         [](MCBriefingRun&)
+         {
+             GlobalLog()->SetUpBriefingScreen(true);
+             return std::string();
+         }},
+        {"a mech put in for Launch", AddMech},
+    }};
+
+    /// <summary>A step's line: "mech lab: p99 9.1 ms, worst 31.0 ms, 2 late, held 1630 MB".</summary>
+    std::string StepText(const MCStepResult& step)
+    {
+        const MCFrameLog::MCFrameTimes& frames = step.Tally.Judged();
+        return std::format("{}: p99 {:.1f} ms, worst {:.1f} ms, {} late, held {:.0f} MB{}", step.Name, frames.P99Ms(),
+                           frames.WorstMs(), frames.Slow, step.HeldMb, step.Note.empty() ? "" : ", " + step.Note);
+    }
+
+    /// <summary>The step now ended: its frames and what the hold held, and what the lance's steps found.</summary>
+    void EndStep(MCBriefingRun& run)
+    {
+        MCStepResult result{.Name = TourSteps[run.Step].Name, .Tally = MCFrameLog::TakeTally(), .HeldMb = HeldMb()};
+
+        const bool lanceStep = TourSteps[run.Step].Start == AddMech || TourSteps[run.Step].Start == RemoveMech;
+
+        if (const std::shared_ptr<MCLogMech> mech = run.Added.lock(); lanceStep && mech != nullptr)
+        {
+            result.Note =
+                std::format("chassis {} {}", mech->Chassis, mech->Deployed != 0 ? "in the lance" : "not in the lance");
+        }
+
+        MCFrameLog::Line(std::format("benchmark: {}", StepText(result)));
+        run.Results.push_back(std::move(result));
+    }
+
+    /// <summary>Step <paramref name="step"/> begun: what it does, its frames tallied from here.</summary>
+    void StartStep(MCBriefingRun& run, size_t step)
+    {
+        run.Step = step;
+
+        if (const std::string stopped = TourSteps[step].Start(run); !stopped.empty())
+        {
+            Fail(std::format("the logistics tour's {}: {}", TourSteps[step].Name, stopped));
+        }
+
+        MCFrameLog::Note(std::format("benchmark: {}", TourSteps[step].Name));
+        MCHdArt::TraceNote(std::format("benchmark: {}", TourSteps[step].Name));
+        MCFrameLog::StartTally();
+        run.StepStart = std::chrono::steady_clock::now();
+    }
+
+    /// <summary>The tour's end, at the mission's first frame: its summary in the log, the frame log and benchmarks.txt.</summary>
+    [[noreturn]] void FinishTour(MCBriefingRun& run)
+    {
+        const MCFrameLog::MCTally launch = MCFrameLog::TakeTally();
+        MCFrameLog::MCTally whole;
+        std::string steps;
+
+        for (const MCStepResult& step : run.Results)
+        {
+            whole.Add(step.Tally);
+            steps += (steps.empty() ? "" : "; ") + StepText(step);
+        }
+
         const std::string readers = ReadersText();
         const std::string line = std::format(
-            "MCRedux briefing benchmark {}, mission 1's briefing then its mech lab, {} s each, the hold {}{}, {}, {}, "
-            "{}: "
-            "{}; {}; held {:.1f} MB in {} reads. Briefing: {}; {}. Mech lab: {}; {}",
-            build(), run.ScreenSeconds, MCHdArt::HoldWanted() ? "on" : "off", readers.empty() ? "" : ", " + readers,
-            DisplayDescription(), MachineText(), TimingText(whole), FramesText(whole), HdText(whole),
-            static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb, MCHdArt::HeldReads(), FramesText(run.BriefingTally),
-            HdText(run.BriefingTally), FramesText(lab), HdText(lab));
+            "MCRedux logistics benchmark {}, mission 1's logistics, {} s a step, the briefing's hold {}{}, {}, {}: {}; "
+            "{}; {}; Launch to the mission's first frame {:.2f} s (its longest frame {:.1f} ms); held {:.1f} MB in {} "
+            "reads. Steps: {}",
+            build(), run.StepSeconds, MCHdArt::BriefingHoldWanted() ? "on" : "off",
+            readers.empty() ? "" : ", " + readers, DisplayDescription(), MachineText(), TimingText(whole),
+            FramesText(whole), HdText(whole), run.LaunchSeconds, launch.Loop.WorstMs(), HeldMb(), MCHdArt::HeldReads(),
+            steps);
         run.Phase = MCBriefingPhase::Done;
         MCInput::HoldInput(false);
         MCFrameLog::Line(line);
@@ -553,8 +833,8 @@ namespace
     }
 
     /// <summary>
-    /// The briefing run's frame: once the main menu shows, a new campaign; its first briefing's frames tallied for
-    /// ScreenSeconds from the frame it shows (its own reads and the hold's begin together), then the mech lab's.
+    /// The tour's frame: once the main menu shows, a new campaign; from its first briefing on, each step in turn for
+    /// StepSeconds (its mouse events one a frame), then Launch, until the mission's first frame.
     /// </summary>
     void BriefingFrame()
     {
@@ -574,7 +854,39 @@ namespace
                     briefing()->Stopped = true;
                 }
             },
-            BriefingName);
+            TourName);
+
+        if (!run.Pending.empty())
+        {
+            const MCGuiEvent event = run.Pending.front();
+            run.Pending.pop_front();
+            SendMouse(event);
+
+            // Launch's wait timed from its click's release.
+            if (run.Phase == MCBriefingPhase::Launching && run.Pending.empty())
+            {
+                run.StepStart = std::chrono::steady_clock::now();
+            }
+
+            return;
+        }
+
+        if (run.Phase == MCBriefingPhase::Launching)
+        {
+            if (Mission() != nullptr && Mission()->State == MCMissionState::Scenario && Scenario() != nullptr)
+            {
+                run.LaunchSeconds = SecondsSince(run.StepStart);
+                FinishTour(run);
+            }
+
+            if (SecondsSince(run.StepStart) > MostLaunchSeconds)
+            {
+                Fail("Launch didn't start the mission");
+            }
+
+            return;
+        }
+
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
         if (Mission() == nullptr || Mission()->State != MCMissionState::Logistics || logistics == nullptr ||
@@ -587,56 +899,50 @@ namespace
         {
             case MCBriefingPhase::Menu:
             {
-                if (logistics->CurrentScreen() != logistics->MainScreen)
+                if (logistics->CurrentScreen() == logistics->MainScreen)
                 {
-                    return;
+                    MCFrameLog::Note("benchmark: a new campaign");
+                    NewCampaign();
+                    run.Phase = MCBriefingPhase::Opening;
                 }
 
-                MCFrameLog::Note("benchmark: a new campaign");
-                NewCampaign();
-                run.Phase = MCBriefingPhase::Opening;
                 break;
             }
             case MCBriefingPhase::Opening:
             {
-                if (logistics->CurrentScreen() != logistics->BriefingScreen)
+                if (logistics->CurrentScreen() == logistics->BriefingScreen)
                 {
-                    return;
+                    run.Phase = MCBriefingPhase::Steps;
+                    StartStep(run, 0);
                 }
 
-                MCFrameLog::Note("benchmark: the briefing shows");
-                MCHdArt::TraceNote("benchmark: the briefing shows");
-                MCFrameLog::StartTally();
-                run.ScreenStart = std::chrono::steady_clock::now();
-                run.Phase = MCBriefingPhase::Briefing;
                 break;
             }
-            case MCBriefingPhase::Briefing:
+            case MCBriefingPhase::Steps:
             {
-                if (ScreenSeconds(run) < run.ScreenSeconds)
+                if (SecondsSince(run.StepStart) < run.StepSeconds)
                 {
-                    return;
+                    break;
                 }
 
-                run.BriefingTally = MCFrameLog::TakeTally();
-                logistics->SetUpRepairScreen(true);
-                MCFrameLog::Note(std::format("benchmark: the mech lab shows; held {:.1f} MB",
-                                             static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb));
-                MCHdArt::TraceNote("benchmark: the mech lab shows");
+                EndStep(run);
+
+                if (run.Step + 1 < TourSteps.size())
+                {
+                    StartStep(run, run.Step + 1);
+                    break;
+                }
+
+                // Launch: the button clicked, the wait timed from its click to the mission's first frame.
+                QueueClick(run, false, LaunchButton);
+                MCFrameLog::Note("benchmark: Launch");
+                MCHdArt::TraceNote("benchmark: Launch");
                 MCFrameLog::StartTally();
-                run.ScreenStart = std::chrono::steady_clock::now();
-                run.Phase = MCBriefingPhase::MechLab;
+                run.StepStart = std::chrono::steady_clock::now();
+                run.Phase = MCBriefingPhase::Launching;
                 break;
             }
-            case MCBriefingPhase::MechLab:
-            {
-                if (ScreenSeconds(run) >= run.ScreenSeconds)
-                {
-                    FinishBriefing(run);
-                }
-
-                break;
-            }
+            case MCBriefingPhase::Launching:
             case MCBriefingPhase::Done:
                 break;
         }
@@ -781,16 +1087,15 @@ namespace MCBenchmark
     {
         const int32_t seconds = std::atoi(std::string(word).c_str());
 
-        if (seconds < 1 || seconds > MostBriefingSeconds)
+        if (seconds < 1 || seconds > MostStepSeconds)
         {
-            Fail(std::format("-briefingbench: \"{}\" isn't a number of seconds from 1 to {}", word,
-                             MostBriefingSeconds));
+            Fail(std::format("-briefingbench: \"{}\" isn't a number of seconds from 1 to {}", word, MostStepSeconds));
         }
 
         // HD's looks at their defaults, as the canyon's HD variant has them.
         UseHdByDefault();
         MCHdSettings::UseDefaults();
-        briefing().emplace(MCBriefingRun{.ScreenSeconds = seconds, .Callback = std::make_shared<MCGuiCallback>()});
+        briefing().emplace(MCBriefingRun{.StepSeconds = seconds, .Callback = std::make_shared<MCGuiCallback>()});
         briefing()->Callback->SetExec(BriefingFrame);
         GuiSystem().AddCallback(briefing()->Callback);
     }

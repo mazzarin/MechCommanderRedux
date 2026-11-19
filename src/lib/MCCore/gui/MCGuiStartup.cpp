@@ -333,19 +333,33 @@ namespace
     /// for the tests and benchmarks, <c>-hdhold on|off</c> (a mission's art held whatever the machine's memory:
     /// MCHdArt::StartHold). A value it can't take is logged and left out.
     /// </summary>
+    /// <summary>Switch <paramref name="word"/>'s on or off; none (noted in the log) for anything else.</summary>
+    std::optional<bool> OnOrOff(std::string_view word, std::string_view value)
+    {
+        if (!MCIEquals(value, "on") && !MCIEquals(value, "off"))
+        {
+            SDL_Log("%.*s: \"%.*s\" isn't on or off", static_cast<int>(word.size()), word.data(),
+                    static_cast<int>(value.size()), value.data());
+            return std::nullopt;
+        }
+
+        return MCIEquals(value, "on");
+    }
+
     void SetReaderSetting(std::string_view word, std::string_view value)
     {
         MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
 
         if (MCIEquals(word, "-hdhold"))
         {
-            if (!MCIEquals(value, "on") && !MCIEquals(value, "off"))
+            const std::optional<bool> on = OnOrOff(word, value);
+
+            if (!on.has_value())
             {
-                SDL_Log("-hdhold: \"%.*s\" isn't on or off", static_cast<int>(value.size()), value.data());
                 return;
             }
 
-            settings.Hold = MCIEquals(value, "on");
+            settings.Hold = *on;
         }
         else if (MCIEquals(word, "-hdreaderpriority"))
         {
@@ -769,6 +783,20 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             // a switch.
             const bool variantGiven = hasArgument && !words[i + 1].empty() && words[i + 1][0] != '-';
             MCBenchmark::Arm(variantGiven ? std::string_view(words[++i]) : std::string_view());
+        }
+        else if (MCIEquals(word, "-hdbriefinghold"))
+        {
+            // Port-only, for test runs (no player passes it): "-hdbriefinghold on|off": whether the hold starts from the
+            // briefing (MCHdArt::SetBriefingHold); off, at the load, as before it.
+            if (hasArgument)
+            {
+                if (const std::optional<bool> on = OnOrOff(word, words[i + 1]); on.has_value())
+                {
+                    MCHdArt::SetBriefingHold(*on);
+                }
+            }
+
+            i++;
         }
         else if (MCIEquals(word, "-briefingbench"))
         {

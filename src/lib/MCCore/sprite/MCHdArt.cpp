@@ -662,6 +662,8 @@ namespace
         /// (MCHdArt::StartLoadFill to MCHdArt::FinishLoadFill), and the pack's folders it handed the hold meanwhile, each
         /// once, in the order handed (NoteLoadFolder: MCHdArt::LoadFolders), its keys in LoadFolderKeys.
         /// </summary>
+        /// <summary>Port-only, for test runs (-hdbriefinghold off): no hold from the briefing, so it starts at the load.</summary>
+        bool BriefingHoldOff = false;
         bool RecordingLoad = false;
         std::vector<std::filesystem::path> LoadFolders;
         std::unordered_set<std::string> LoadFolderKeys;
@@ -6043,9 +6045,19 @@ size_t MCHdArt::HeldBytes()
     return MCFastFile::HeldBytes();
 }
 
+void MCHdArt::SetBriefingHold(bool on)
+{
+    TheState().BriefingHoldOff = !on;
+}
+
+bool MCHdArt::BriefingHoldWanted()
+{
+    return HoldWanted() && !TheState().BriefingHoldOff;
+}
+
 void MCHdArt::StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders)
 {
-    if (!Active() || !HoldWanted() || mission.empty())
+    if (!Active() || !BriefingHoldWanted() || mission.empty())
     {
         return;
     }

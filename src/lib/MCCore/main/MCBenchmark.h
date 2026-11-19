@@ -70,15 +70,19 @@ namespace MCBenchmark
     /// </summary>
     void Arm(std::string_view words);
 
-    /// <summary>The most seconds -briefingbench keeps each screen up.</summary>
-    constexpr int32_t MostBriefingSeconds = 300;
+    /// <summary>The most seconds -briefingbench keeps each of its steps up.</summary>
+    constexpr int32_t MostStepSeconds = 60;
 
     /// <summary>
-    /// Port-only, for test runs (-briefingbench &lt;seconds&gt;; SPEC-memory.md's "From the briefing": does the hold slow a
-    /// screen?): arms the briefing run: from the main menu a new campaign, its first briefing up for
-    /// <paramref name="word"/>'s seconds (1 to MostBriefingSeconds), then its mech lab for as long, each screen's frames
-    /// tallied from the one it shows, the summary in benchmarks.txt and the frame log, then the game ends. HD's looks at
-    /// their defaults; the player's input held off, Escape stopping it. A bad number ends the game (exit code 1).
+    /// Port-only, for test runs (-briefingbench &lt;seconds&gt;; SPEC-memory.md's "From the briefing": does the hold change
+    /// what the player sees on the logistics screens?): arms the logistics tour: from the main menu a new campaign, then
+    /// as a player goes through mission 1's logistics (its briefing's tabs, a mech put in the lance and taken out, the
+    /// mech lab and another mech shown in it, the store's tabs, the briefing again and Launch), each step up for
+    /// <paramref name="word"/>'s seconds (1 to MostStepSeconds) with its frames tallied, the clicks sent as the player's
+    /// input reaches the screens; then the wait from Launch to the mission's first frame. The summary (each step's p99,
+    /// worst and late frames, what the hold held) goes to benchmarks.txt and the frame log, then the game ends. HD's
+    /// looks at their defaults; the player's input held off, Escape stopping it. A bad number, or a step it can't do,
+    /// ends the game (exit code 1).
     /// </summary>
     void ArmBriefing(std::string_view word);
 

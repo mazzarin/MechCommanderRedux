@@ -4,8 +4,12 @@
 #include "gui/MCGuiCallback.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCVector3D.h"
+#include "logistics/MCBriefingScreen.h"
+#include "logistics/MCMainMenu.h"
+#include "logistics/MCSplashScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCHdSettings.h"
+#include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCTelemetry.h"
@@ -87,6 +91,37 @@ namespace
         return instance;
     }
 
+    /// <summary>Where a briefing run is (MCBenchmark::ArmBriefing).</summary>
+    enum class MCBriefingPhase : uint8_t
+    {
+        /// <summary>The game starting, until the main menu shows.</summary>
+        Menu,
+        /// <summary>A new campaign asked for, until its first briefing shows.</summary>
+        Opening,
+        Briefing,
+        MechLab,
+        Done,
+    };
+
+    /// <summary>A briefing run: a new campaign's first briefing, then its mech lab, each for ScreenSeconds.</summary>
+    struct MCBriefingRun
+    {
+        int32_t ScreenSeconds = 0;
+        std::shared_ptr<MCGuiCallback> Callback;
+        MCBriefingPhase Phase = MCBriefingPhase::Menu;
+        /// <summary>When the screen being tallied showed.</summary>
+        std::chrono::steady_clock::time_point ScreenStart;
+        MCFrameLog::MCTally BriefingTally;
+        bool InputHeld = false;
+        bool Stopped = false;
+    };
+
+    std::optional<MCBriefingRun>& briefing()
+    {
+        static std::optional<MCBriefingRun> instance;
+        return instance;
+    }
+
     std::string& build()
     {
         static std::string instance(UnknownBuild);
@@ -128,6 +163,11 @@ namespace
         if (current().has_value())
         {
             current()->Phase = MCPhase::Done;
+        }
+
+        if (briefing().has_value())
+        {
+            briefing()->Phase = MCBriefingPhase::Done;
         }
 
         KillTheGame(1);
@@ -209,6 +249,36 @@ namespace
         {
             const SDL_Rect view = display->View();
             MCInput::SetCursorPos(view.x + view.w / 2, view.y + view.h / 2);
+        }
+    }
+
+    /// <summary>
+    /// A run's frame, from the first on (the display up): ends the game if Escape stopped it (<paramref name="stopped"/>);
+    /// once, the player's mouse and keys held off the game, so every run plays the same whoever's at the computer (the
+    /// mouse parked in the middle, where it scrolls nothing, and Escape calling <paramref name="stop"/>); and the frame
+    /// log, -framelog's or the run's own, benchmark-<paramref name="name"/>.txt in the user folder.
+    /// </summary>
+    void HoldTheGame(bool& inputHeld, bool stopped, std::function<void()> stop, std::string_view name)
+    {
+        if (stopped)
+        {
+            Fail("stopped by Escape before its end");
+        }
+
+        if (!std::exchange(inputHeld, true))
+        {
+            MCInput::HoldInput(true, std::move(stop));
+            ParkMouse();
+        }
+
+        if (!MCFrameLog::Enabled())
+        {
+            const std::filesystem::path path = MCFileSystem::UserRoot() / std::format("benchmark-{}.txt", name);
+
+            if (!MCFrameLog::Open(path))
+            {
+                Fail(std::format("can't write the frame log {}", MCFileSystem::ToUtf8(path)));
+            }
         }
     }
 
@@ -363,38 +433,16 @@ namespace
         MCFrameLog::Scope part("logic.benchmark");
         MCRun& run = *current();
 
-        if (run.Stopped)
-        {
-            Fail("stopped by Escape before its end");
-        }
-
-        // From the first frame on (the display up), the player's mouse and keys held off the game, so every run plays
-        // the same whoever's at the computer: the mouse parked in the middle, where it scrolls nothing, and Escape
-        // stopping the run.
-        if (!std::exchange(run.InputHeld, true))
-        {
-            MCInput::HoldInput(true,
-                               []
-                               {
-                                   if (current().has_value())
-                                   {
-                                       current()->Stopped = true;
-                                   }
-                               });
-            ParkMouse();
-        }
-
-        // The frame log, -framelog's or the run's own, from the first frame on.
-        if (!MCFrameLog::Enabled())
-        {
-            const std::filesystem::path path =
-                MCFileSystem::UserRoot() / std::format("benchmark-{}.txt", run.Variant.Name());
-
-            if (!MCFrameLog::Open(path))
+        HoldTheGame(
+            run.InputHeld, run.Stopped,
+            []
             {
-                Fail(std::format("can't write the frame log {}", MCFileSystem::ToUtf8(path)));
-            }
-        }
+                if (current().has_value())
+                {
+                    current()->Stopped = true;
+                }
+            },
+            run.Variant.Name());
 
         switch (run.Phase)
         {
@@ -465,6 +513,131 @@ namespace
                 break;
             }
             case MCPhase::Done:
+                break;
+        }
+    }
+
+    /// <summary>The briefing run's name: its frame log's, and the variant its summary names.</summary>
+    constexpr std::string_view BriefingName = "briefing";
+    constexpr double BytesPerMb = 1024.0 * 1024.0;
+
+    /// <summary>The seconds since the screen being tallied showed.</summary>
+    double ScreenSeconds(const MCBriefingRun& run)
+    {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - run.ScreenStart).count();
+    }
+
+    /// <summary>The briefing run's end: its summary in the log, the frame log and benchmarks.txt, then the game's.</summary>
+    [[noreturn]] void FinishBriefing(MCBriefingRun& run)
+    {
+        const MCFrameLog::MCTally lab = MCFrameLog::TakeTally();
+        MCFrameLog::MCTally whole = run.BriefingTally;
+        whole.Add(lab);
+        const std::string readers = ReadersText();
+        const std::string line = std::format(
+            "MCRedux briefing benchmark {}, mission 1's briefing then its mech lab, {} s each, the hold {}{}, {}, {}, "
+            "{}: "
+            "{}; {}; held {:.1f} MB in {} reads. Briefing: {}; {}. Mech lab: {}; {}",
+            build(), run.ScreenSeconds, MCHdArt::HoldWanted() ? "on" : "off", readers.empty() ? "" : ", " + readers,
+            DisplayDescription(), MachineText(), TimingText(whole), FramesText(whole), HdText(whole),
+            static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb, MCHdArt::HeldReads(), FramesText(run.BriefingTally),
+            HdText(run.BriefingTally), FramesText(lab), HdText(lab));
+        run.Phase = MCBriefingPhase::Done;
+        MCInput::HoldInput(false);
+        MCFrameLog::Line(line);
+        AddSummary(line);
+        SDL_Log("%s", line.c_str());
+        MCFrameLog::Close();
+        MCHdArt::CloseTrace();
+        KillTheGame(0);
+    }
+
+    /// <summary>
+    /// The briefing run's frame: once the main menu shows, a new campaign; its first briefing's frames tallied for
+    /// ScreenSeconds from the frame it shows (its own reads and the hold's begin together), then the mech lab's.
+    /// </summary>
+    void BriefingFrame()
+    {
+        if (!briefing().has_value() || briefing()->Phase == MCBriefingPhase::Done)
+        {
+            return;
+        }
+
+        MCFrameLog::Scope part("logic.benchmark");
+        MCBriefingRun& run = *briefing();
+        HoldTheGame(
+            run.InputHeld, run.Stopped,
+            []
+            {
+                if (briefing().has_value())
+                {
+                    briefing()->Stopped = true;
+                }
+            },
+            BriefingName);
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+        if (Mission() == nullptr || Mission()->State != MCMissionState::Logistics || logistics == nullptr ||
+            GuiSystem().SmackerWindow != nullptr)
+        {
+            return;
+        }
+
+        switch (run.Phase)
+        {
+            case MCBriefingPhase::Menu:
+            {
+                if (logistics->CurrentScreen() != logistics->MainScreen)
+                {
+                    return;
+                }
+
+                MCFrameLog::Note("benchmark: a new campaign");
+                NewCampaign();
+                run.Phase = MCBriefingPhase::Opening;
+                break;
+            }
+            case MCBriefingPhase::Opening:
+            {
+                if (logistics->CurrentScreen() != logistics->BriefingScreen)
+                {
+                    return;
+                }
+
+                MCFrameLog::Note("benchmark: the briefing shows");
+                MCHdArt::TraceNote("benchmark: the briefing shows");
+                MCFrameLog::StartTally();
+                run.ScreenStart = std::chrono::steady_clock::now();
+                run.Phase = MCBriefingPhase::Briefing;
+                break;
+            }
+            case MCBriefingPhase::Briefing:
+            {
+                if (ScreenSeconds(run) < run.ScreenSeconds)
+                {
+                    return;
+                }
+
+                run.BriefingTally = MCFrameLog::TakeTally();
+                logistics->SetUpRepairScreen(true);
+                MCFrameLog::Note(std::format("benchmark: the mech lab shows; held {:.1f} MB",
+                                             static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb));
+                MCHdArt::TraceNote("benchmark: the mech lab shows");
+                MCFrameLog::StartTally();
+                run.ScreenStart = std::chrono::steady_clock::now();
+                run.Phase = MCBriefingPhase::MechLab;
+                break;
+            }
+            case MCBriefingPhase::MechLab:
+            {
+                if (ScreenSeconds(run) >= run.ScreenSeconds)
+                {
+                    FinishBriefing(run);
+                }
+
+                break;
+            }
+            case MCBriefingPhase::Done:
                 break;
         }
     }
@@ -604,9 +777,28 @@ namespace MCBenchmark
         GuiSystem().AddCallback(current()->Callback);
     }
 
+    void ArmBriefing(std::string_view word)
+    {
+        const int32_t seconds = std::atoi(std::string(word).c_str());
+
+        if (seconds < 1 || seconds > MostBriefingSeconds)
+        {
+            Fail(std::format("-briefingbench: \"{}\" isn't a number of seconds from 1 to {}", word,
+                             MostBriefingSeconds));
+        }
+
+        // HD's looks at their defaults, as the canyon's HD variant has them.
+        UseHdByDefault();
+        MCHdSettings::UseDefaults();
+        briefing().emplace(MCBriefingRun{.ScreenSeconds = seconds, .Callback = std::make_shared<MCGuiCallback>()});
+        briefing()->Callback->SetExec(BriefingFrame);
+        GuiSystem().AddCallback(briefing()->Callback);
+    }
+
     bool Running()
     {
-        return current().has_value() && current()->Phase != MCPhase::Done;
+        return (current().has_value() && current()->Phase != MCPhase::Done) ||
+               (briefing().has_value() && briefing()->Phase != MCBriefingPhase::Done);
     }
 
     void Release()
@@ -615,5 +807,6 @@ namespace MCBenchmark
         // (a crash at every quit).
         MCInput::HoldInput(false);
         current().reset();
+        briefing().reset();
     }
 }

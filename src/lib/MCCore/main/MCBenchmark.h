@@ -70,6 +70,18 @@ namespace MCBenchmark
     /// </summary>
     void Arm(std::string_view words);
 
+    /// <summary>The most seconds -briefingbench keeps each screen up.</summary>
+    constexpr int32_t MostBriefingSeconds = 300;
+
+    /// <summary>
+    /// Port-only, for test runs (-briefingbench &lt;seconds&gt;; SPEC-memory.md's "From the briefing": does the hold slow a
+    /// screen?): arms the briefing run: from the main menu a new campaign, its first briefing up for
+    /// <paramref name="word"/>'s seconds (1 to MostBriefingSeconds), then its mech lab for as long, each screen's frames
+    /// tallied from the one it shows, the summary in benchmarks.txt and the frame log, then the game ends. HD's looks at
+    /// their defaults; the player's input held off, Escape stopping it. A bad number ends the game (exit code 1).
+    /// </summary>
+    void ArmBriefing(std::string_view word);
+
     /// <summary>
     /// Whether a benchmark is armed and not done: the mission plays on past its end, the updater waits, and the
     /// settings it changed aren't saved.

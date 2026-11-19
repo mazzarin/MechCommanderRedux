@@ -770,6 +770,16 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             const bool variantGiven = hasArgument && !words[i + 1].empty() && words[i + 1][0] != '-';
             MCBenchmark::Arm(variantGiven ? std::string_view(words[++i]) : std::string_view());
         }
+        else if (MCIEquals(word, "-briefingbench"))
+        {
+            // Port-only, for test runs (no player passes it): "-briefingbench <seconds>" times a new campaign's first
+            // briefing and its mech lab, that long each, with the hold reading behind them, then quits
+            // (main/MCBenchmark.h).
+            if (hasArgument)
+            {
+                MCBenchmark::ArmBriefing(words[++i]);
+            }
+        }
         else if (MCIEquals(word, "-hdmemory") || MCIEquals(word, "-hdcard"))
         {
             // Port-only: the memory planned as another machine's (SetPlannedMemory).

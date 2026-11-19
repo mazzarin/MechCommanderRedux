@@ -1378,25 +1378,28 @@ Output HdPixelAt(Input input, float2 shape)
         discard;
     }
 
+    // How much of the colour is the frame's baked shadow, worked out once for the three below that use it.
+    const bool darkens = look.y > 0.0 && (input.op.x & HdLight) == 0;
+    const float baked = (input.op.x & (Sways | SunShadowDraw)) != 0 || darkens ? BakedShadowAt(original, shape) : 0.0;
+
     // A forest's canopy marks where it is drawn, not its painted shadow (Sways).
     float swayMark = 0.0;
 
     if ((input.op.x & Sways) != 0)
     {
-        swayMark = BakedShadowAt(original, shape) < 0.5 ? SwayMark : 0.0;
+        swayMark = baked < 0.5 ? SwayMark : 0.0;
     }
 
     // A frame cast as a sun shadow casts its body, not the shadow baked beside it.
     if ((input.op.x & SunShadowDraw) != 0)
     {
-        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a * (1.0 - BakedShadowAt(original, shape))));
+        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a * (1.0 - baked)));
     }
 
     // Port-only (sun shadows): an object's baked shadow darkens what lies under it by look.y instead of covering it, or
     // (look.z) is hidden, the object casting its own.
-    if (look.y > 0.0 && (input.op.x & HdLight) == 0)
+    if (darkens)
     {
-        const float baked = BakedShadowAt(original, shape);
         color = look.z > 0.0 ? color * (1.0 - baked) : lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), baked);
     }
 

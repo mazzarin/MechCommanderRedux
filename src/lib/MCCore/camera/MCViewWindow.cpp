@@ -21,6 +21,7 @@
 
 MCOverlayTarget MCOverlay;
 float MCFixedZoomHeight = 0.0f;
+std::function<uint32_t()> MCZoomEaseClock;
 
 namespace
 {
@@ -35,6 +36,12 @@ namespace
     /// <summary>Port: how much of the way to its target the zoom eases in a millisecond (about 70 ms to settle most of
     /// the way).</summary>
     constexpr double ZoomEaseTime = 70.0;
+
+    /// <summary>Port: the zoom's clock (ms): the game's, or a staged battle's (MCZoomEaseClock).</summary>
+    uint32_t ZoomNow()
+    {
+        return MCZoomEaseClock ? MCZoomEaseClock() : MCPort::Milliseconds();
+    }
 
     /// <summary>
     /// Port: the window pixels a screen pixel covers down where the world view is shown (above 1 when the UI is drawn
@@ -421,7 +428,7 @@ auto MCViewWindow::StartZoom() -> void
     ZoomLimits(closest, furthest);
     ZoomHeight = ZoomStartsOut ? furthest : std::clamp(static_cast<float>(Height()) * ShownScale(), closest, furthest);
     ZoomTarget = ZoomHeight;
-    ZoomClock = MCPort::Milliseconds();
+    ZoomClock = ZoomNow();
 }
 
 auto MCViewWindow::UpdateWorldSurface() -> void
@@ -474,7 +481,7 @@ auto MCViewWindow::ZoomTo(float height) -> bool
 
     if (ZoomHeight == ZoomTarget)
     {
-        ZoomClock = MCPort::Milliseconds();
+        ZoomClock = ZoomNow();
     }
 
     ZoomTarget = target;
@@ -516,7 +523,7 @@ auto MCViewWindow::ToggleZoom() -> void
 auto MCViewWindow::EaseZoom() -> void
 {
     StartZoom();
-    const uint32_t now = MCPort::Milliseconds();
+    const uint32_t now = ZoomNow();
     const auto elapsed = static_cast<double>(std::min<uint32_t>(now - ZoomClock, 100));
     ZoomClock = now;
 

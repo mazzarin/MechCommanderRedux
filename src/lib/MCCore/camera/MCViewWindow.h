@@ -145,6 +145,12 @@ extern MCOverlayTarget MCOverlay;
 /// </summary>
 extern float MCFixedZoomHeight;
 
+/// <summary>
+/// Port-only (tools: a staged battle's zoom keys): when set, the clock the zoom eases by (milliseconds), in place of the
+/// game's, so a recording at its own frame rate eases as a player's zoom does in time.
+/// </summary>
+extern std::function<uint32_t()> MCZoomEaseClock;
+
 /// <summary>Port: whether an element at <paramref name="depth"/> is a unit overlay (-50000 or -40000).</summary>
 bool MCIsOverlayDepth(float depth);
 /// <summary>Port: a point of the rendering camera's world surface, in the overlays' pane.</summary>

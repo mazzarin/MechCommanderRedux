@@ -277,7 +277,11 @@ TEST_CASE("tool: --websocket-service <address> checks this platform's WebSocket 
             }
         }
 
-        const MCTest::Scope badScope(std::format("{}: opened {}, closed \"{}\"", host, bad.Opened, bad.WhyClosed));
+        const std::string said = std::format("{}: opened {}, closed \"{}\"", host, bad.Opened, bad.WhyClosed);
+        // How each closed, passing or not (the Mac's own certificate check names a refusal macOS reported as a bare TLS
+        // failure).
+        std::cout << "  " << said << "\n";
+        const MCTest::Scope badScope(said);
         CHECK(!bad.Opened);
         CHECK(bad.FirstMessage.empty());
         CHECK(bad.WhyClosed.starts_with(MCWebSocketUntrusted));

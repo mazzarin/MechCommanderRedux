@@ -11,7 +11,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMechBriefBlock.h"
-#include "logistics/MCMechInventoryBlock.h"
+#include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -553,7 +553,7 @@ namespace
     constexpr int32_t MechPartType = 1;
     /// <summary>A mouse event's left button, held.</summary>
     constexpr uint8_t LeftHeld = 0xff;
-    /// <summary>Where on an inventory row a click lands: past its picture's left edge, as the tests click it.</summary>
+    /// <summary>Where on a row a click lands: past its picture's left edge, as the tests click the inventory's.</summary>
     constexpr int32_t RowClickX = 40;
     /// <summary>The briefing screen's launch button, its middle.</summary>
     constexpr POINT LaunchButton{0x230, 0x152};
@@ -658,7 +658,10 @@ namespace
         return {};
     }
 
-    /// <summary>In the mech lab, a click on another mech of the force than the one shown: its first show there.</summary>
+    /// <summary>
+    /// In the mech lab, a click on another mech of the force than the one shown (its row in the unit pane): its first
+    /// show there.
+    /// </summary>
     std::string ShowAnotherMech(MCBriefingRun& run)
     {
         MCRepairScreen& lab = *GlobalLog()->RepairScreen;
@@ -666,8 +669,8 @@ namespace
 
         for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
         {
-            const std::shared_ptr<MCMechInventoryBlock> row =
-                mech != nullptr && mech != shown ? lab.InventoryPane->RowOf<MCMechInventoryBlock>(*mech) : nullptr;
+            const std::shared_ptr<MCMechRepairBlock> row =
+                mech != nullptr && mech != shown ? lab.RowOf(*mech) : nullptr;
 
             if (row != nullptr)
             {

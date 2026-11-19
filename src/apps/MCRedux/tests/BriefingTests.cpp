@@ -44,6 +44,7 @@
 #include "sound/MCSoundSystem.h"
 #include "gui/MCGuiGlobals.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCHoldLists.h"
 #include "sprite/MCSceneLights.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCInput.h"
@@ -515,33 +516,48 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
     REQUIRE(MCHdArt::HoldsFor(mission));
 
-    // Two mechs of different chassis from the deploy pane.
+    // Two mechs from the deploy pane, standing in for mechs of chassis the mission doesn't list (one bought at the store):
+    // mission 1's own force is in the mission's list, read from the briefing's start.
     constexpr int32_t MechPartType = 1;
     const std::shared_ptr<MCLogMech> first = FirstDeployMech(briefing);
     REQUIRE(first != nullptr);
-    const auto other =
-        std::ranges::find_if(briefing.DeployUnits, [&first](const auto& unit)
-                             { return unit->PartType == MechPartType && unit->Chassis != first->Chassis; });
+    const auto other = std::ranges::find_if(briefing.DeployUnits, [&first](const auto& unit)
+                                            { return unit->PartType == MechPartType && unit != first; });
     REQUIRE(other != briefing.DeployUnits.end());
     const std::shared_ptr<MCLogMech> second = std::static_pointer_cast<MCLogMech>(*other);
 
-    // An archive in the pack for a folder of each mech's own (in neither the mission's list nor the other's).
+    // Two chassis with a folder each of their own (in neither the mission's list nor the other's), and in the pack an
+    // archive for each of those folders.
     const std::vector<std::filesystem::path> missionFolders = MCHdArt::BriefingFolders(mission);
-    const std::vector<std::filesystem::path> firstFolders = MCHdArt::ChassisFolders(first->Chassis);
-    const std::vector<std::filesystem::path> secondFolders = MCHdArt::ChassisFolders(second->Chassis);
-    const auto ownFolder = [&missionFolders](const std::vector<std::filesystem::path>& folders,
-                                             const std::vector<std::filesystem::path>& others)
+    const auto ownFolder = [&missionFolders](uint32_t chassis, uint32_t otherChassis)
     {
+        const std::vector<std::filesystem::path> folders = MCHdArt::ChassisFolders(chassis);
+        const std::vector<std::filesystem::path> others = MCHdArt::ChassisFolders(otherChassis);
         const auto found = std::ranges::find_if(
             folders, [&](const std::filesystem::path& folder)
             { return !std::ranges::contains(missionFolders, folder) && !std::ranges::contains(others, folder); });
         return found != folders.end() ? *found : std::filesystem::path();
     };
 
-    const std::filesystem::path firstFolder = ownFolder(firstFolders, secondFolders);
-    const std::filesystem::path secondFolder = ownFolder(secondFolders, firstFolders);
+    std::filesystem::path firstFolder;
+    std::filesystem::path secondFolder;
+
+    for (const MCHoldLists::Chassis& a : MCHoldLists::Mechs)
+    {
+        for (const MCHoldLists::Chassis& b : MCHoldLists::Mechs)
+        {
+            if (firstFolder.empty() && a.Number != b.Number && !ownFolder(a.Number, b.Number).empty() &&
+                !ownFolder(b.Number, a.Number).empty())
+            {
+                first->Chassis = a.Number;
+                second->Chassis = b.Number;
+                firstFolder = ownFolder(a.Number, b.Number);
+                secondFolder = ownFolder(b.Number, a.Number);
+            }
+        }
+    }
+
     REQUIRE(!firstFolder.empty());
-    REQUIRE(!secondFolder.empty());
     constexpr std::array<size_t, 3> FirstFrameBytes{3000, 5000, 7000};
     constexpr std::array<size_t, 2> SecondFrameBytes{4000, 6000};
     const size_t stored = WriteFramesArchive(pack.Path(), firstFolder, FirstFrameBytes) +

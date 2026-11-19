@@ -5817,6 +5817,22 @@ void MCHdArt::KeepPicture(std::span<const uint8_t> pixels, int32_t width, int32_
     TheState().KeptPictures.insert_or_assign(PictureHash(pixels, width, height), std::move(kept));
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only (MCHdArt::KeepForMission, MCHdArt::KeepShapesForMission): marks the cached frame
+    /// <paramref name="key"/> kept for the mission (Cached::ForMission), once.
+    /// </summary>
+    void KeepCachedForMission(State& state, const FrameKey& key)
+    {
+        if (Cached& cached = state.Frames.at(key); !cached.ForMission)
+        {
+            cached.ForMission = true;
+            state.ForMission.push_back(key);
+        }
+    }
+}
+
 size_t MCHdArt::KeepForMission(std::span<const PictureAhead> pictures)
 {
     if (!Active())
@@ -5850,10 +5866,48 @@ size_t MCHdArt::KeepForMission(std::span<const PictureAhead> pictures)
             continue;
         }
 
-        if (Cached& cached = state.Frames.at(key); !cached.ForMission)
+        KeepCachedForMission(state, key);
+    }
+
+    return KeptForMissionBytes();
+}
+
+size_t MCHdArt::KeepShapesForMission(std::span<const std::vector<uint8_t>> tables)
+{
+    if (!Active())
+    {
+        return 0;
+    }
+
+    State& state = TheState();
+
+    for (const std::vector<uint8_t>& table : tables)
+    {
+        const MCOptionalRef<const Sequence> sequence = AttachedSequence(table);
+
+        if (!sequence.has_value())
         {
-            cached.ForMission = true;
-            state.ForMission.push_back(key);
+            continue;
+        }
+
+        const uint32_t folder = sequence->get().Folder;
+        const int32_t frames = FramesIn(table);
+
+        // Each frame found as its draw finds it (Find: checked against its bounds), none when the pack lacks it.
+        for (int32_t frame = 0; frame < frames; ++frame)
+        {
+            if (!MCVfxHasShape(table, frame))
+            {
+                continue;
+            }
+
+            const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+            const FrameKey key{folder, NumberedKey(frame, 0)};
+
+            if (Cache(key, static_cast<int32_t>(bounds.Width), static_cast<int32_t>(bounds.Height), frames) != nullptr)
+            {
+                KeepCachedForMission(state, key);
+            }
         }
     }
 

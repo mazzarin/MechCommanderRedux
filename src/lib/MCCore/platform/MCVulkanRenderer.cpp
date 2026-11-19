@@ -8804,7 +8804,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             continue;
         }
 
-        // Records that follow on with the same bindings, and need no new copy, go in the same draw call.
+        // Records that follow on with the same bindings and pipeline (DrawPipelines::For: port-only, a fold's too), and
+        // need no new copy, go in the same draw call.
         uint32_t count = record.Count;
         size_t last = k;
 
@@ -8817,7 +8818,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                 next.Source != record.Source ||
                 !SameBindings(run, record.Source, next.SourceIndex, record.SourceIndex) || next.Blend != record.Blend ||
                 next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.Marks != record.Marks ||
-                next.Variant != record.Variant || next.ReadsCopy || record.ReadsCopy ||
+                next.Fold != record.Fold || next.Variant != record.Variant || next.ReadsCopy || record.ReadsCopy ||
                 next.First != previous.First + previous.Count)
             {
                 break;

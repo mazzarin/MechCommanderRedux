@@ -842,22 +842,25 @@ TEST_CASE("sprites: the packets a mech's gestures give at the load are only thos
 TEST_CASE("sprites: a frameless arm type asks for none of its packets at the load, an arm with frames for them")
 {
     constexpr uint32_t ArmAppearance = 0x06000000;
-    const auto armFit = [](uint32_t frames)
+    // Whether an arm type of <frames> frames draws its shapes, and how many packets it asks for at the load.
+    const auto armAsks = [](uint32_t frames)
     {
-        return Fit(std::format("FITini\n[Main Info]\n[State]\nul NumFrames = {}\nf FrameRate = 10.0\n"
-                               "ul BasePacketNumber = 0\nuc NumRotations = 32\nul Symmetrical = 1\nFITend\n",
-                               frames));
+        SpriteFiles files(
+            {FortyShapes()}, {{}},
+            {Fit(std::format("FITini\n[Main Info]\n[State]\nul NumFrames = {}\nf FrameRate = 10.0\n"
+                             "ul BasePacketNumber = 0\nuc NumRotations = 32\nul Symmetrical = 1\nFITend\n",
+                             frames))});
+        const std::shared_ptr<MCAppearanceType> type = AppearanceTypeList().GetAppearance(ArmAppearance);
+        REQUIRE(type != nullptr);
+        return std::pair(type->DrawsShapes(), type->ShapesUnloaded().size());
     };
 
-    SpriteFiles files({FortyShapes(), FortyShapes()}, {{}}, {armFit(1), armFit(0)});
-    const std::shared_ptr<MCAppearanceType> drawn = AppearanceTypeList().GetAppearance(ArmAppearance);
-    const std::shared_ptr<MCAppearanceType> frameless = AppearanceTypeList().GetAppearance(ArmAppearance + 1);
-    REQUIRE(drawn != nullptr);
-    REQUIRE(frameless != nullptr);
-    CHECK(drawn->DrawsShapes());
-    CHECK(!drawn->ShapesUnloaded().empty());
-    CHECK(!frameless->DrawsShapes());
-    CHECK(frameless->ShapesUnloaded().empty());
+    const auto [drawn, drawnAsks] = armAsks(1);
+    CHECK(drawn);
+    CHECK(drawnAsks > 0u);
+    const auto [frameless, framelessAsks] = armAsks(0);
+    CHECK(!frameless);
+    CHECK_EQ(framelessAsks, 0u);
 }
 
 TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrored where the gesture is symmetrical")

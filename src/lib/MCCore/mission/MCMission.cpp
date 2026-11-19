@@ -1037,6 +1037,14 @@ auto MCMission::StartInterface() -> void
     MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs::Load);
     MCHdArt::WaitForLoadReads();
     MCHdArt::KeepReadAhead();
+
+    // Port-only (SPEC-memory.md's cache budget): the results screen's pictures, which it first draws the frame the
+    // mission's end is decided, kept from here (the load's reads kept) until the hold lets go.
+    if (const std::shared_ptr<MCMission> mission = Mission(); mission != nullptr && mission->ResultsScreen != nullptr)
+    {
+        mission->ResultsScreen->KeepPicturesForEnd();
+    }
+
     // Port-only (SPEC-memory.md's fill): the mission's art was held under the loading bar (MCHdArt::StartLoadFill); the
     // hold goes on holding the archives the mission opens in play.
 }

@@ -24,6 +24,7 @@
 #include "main/MCGameStrings.h"
 #include "mission/MCMission.h"
 #include "mission/MCRematchLetters.h"
+#include "sprite/MCHdArt.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCRoomEnd.h"
@@ -192,6 +193,15 @@ namespace
     /// <summary>Port-only (Redux HD): the move-on button's faces, which REMATCH is made from.</summary>
     constexpr std::string_view MoveOnUpFace = "mr_ms01.tga";
     constexpr std::string_view MoveOnDownFace = "mr_ms02.tga";
+    /// <summary>The move-on label and faces a lost mission shows, and a multiplayer win's label (Activate picks them).</summary>
+    constexpr std::string_view LostLabel = "mr_mf00.tga";
+    constexpr std::string_view LostUpFace = "mr_mf01.tga";
+    constexpr std::string_view LostDownFace = "mr_mf02.tga";
+    constexpr std::string_view WonLabel = "mrm_ms00.tga";
+    /// <summary>Port-only: the pictures Activate may load at a mission's end (KeepPicturesForEnd), solo and in a match.</summary>
+    constexpr std::array SoloEndPictures{LostLabel, LostUpFace, LostDownFace};
+    constexpr std::array MatchEndPictures{LostLabel, WonLabel};
+    constexpr double BytesPerMb = 1024.0 * 1024.0;
     /// <summary>The move-on button's place and size, and REMATCH's left of it.</summary>
     constexpr int16_t MoveOnX = 0x1bc;
     constexpr int16_t MoveOnY = 6;
@@ -1189,6 +1199,67 @@ auto MCMissionResultsScreen::DrawMPObjectives() -> void
     }
 }
 
+auto MCMissionResultsScreen::KeepPicturesForEnd() -> size_t
+{
+    if (!MCHdArt::Active())
+    {
+        return 0;
+    }
+
+    // The pictures Activate may load at the end, made now for their pixels (their textures go with them).
+    std::vector<std::unique_ptr<MCGuiPort>> ends;
+
+    for (const std::string_view file : MultiPlayer() == nullptr ? std::span<const std::string_view>(SoloEndPictures)
+                                                                : std::span<const std::string_view>(MatchEndPictures))
+    {
+        auto port = std::make_unique<MCGuiPort>();
+
+        if (const int32_t result = port->Init(file); result != 0)
+        {
+            SDL_Log("Results: %.*s didn't load (%d); its HD copy isn't kept for the mission's end",
+                    static_cast<int>(file.size()), file.data(), result);
+            continue;
+        }
+
+        ends.push_back(std::move(port));
+    }
+
+    std::vector<MCHdArt::PictureAhead> pictures;
+    const auto add = [&pictures](const auto& port)
+    {
+        if (port != nullptr && !port->Pixels().empty())
+        {
+            pictures.push_back({port->Pixels(), port->Width(), port->Height()});
+        }
+    };
+
+    const auto addFaces = [&add](const MCGuiHandle<MCGuiButton>& button)
+    {
+        if (button != nullptr)
+        {
+            add(button->GetUpPicture());
+            add(button->GetDownPicture());
+        }
+    };
+
+    add(BackgroundPort);
+    add(_MoveOnPort);
+    add(_SuccessPort);
+    add(_FailurePort);
+    addFaces(_MoveOnButton);
+    addFaces(_PilotSwitchButton);
+
+    for (const std::unique_ptr<MCGuiPort>& port : ends)
+    {
+        add(port);
+    }
+
+    const size_t kept = MCHdArt::KeepForMission(pictures);
+    SDL_Log("Results: %zu pictures' HD copies kept for the mission's end, %.2f MB", pictures.size(),
+            static_cast<double>(kept) / BytesPerMb);
+    return kept;
+}
+
 auto MCMissionResultsScreen::Activate() -> int32_t
 {
     EventsToMissionResultsScreen = 1;
@@ -1212,16 +1283,15 @@ auto MCMissionResultsScreen::Activate() -> int32_t
         if (ScenarioResult < 3)
         {
             _MoveOnPort = std::make_unique<MCGuiPort>();
-            _MoveOnPort->Init(const_cast<char*>("mr_mf00.tga"));
-            _MoveOnButton->SetUpPicture(const_cast<char*>("mr_mf01.tga"));
-            _MoveOnButton->SetDownPicture(const_cast<char*>("mr_mf02.tga"));
+            _MoveOnPort->Init(LostLabel);
+            _MoveOnButton->SetUpPicture(LostUpFace);
+            _MoveOnButton->SetDownPicture(LostDownFace);
         }
     }
     else
     {
         _MoveOnPort = std::make_unique<MCGuiPort>();
-        _MoveOnPort->Init(
-            const_cast<char*>(HomeSideLost(ScenarioResult, HomeTeam()->Alignment) ? "mr_mf00.tga" : "mrm_ms00.tga"));
+        _MoveOnPort->Init(HomeSideLost(ScenarioResult, HomeTeam()->Alignment) ? LostLabel : WonLabel);
     }
 
     // (The original copied the label onto the window here and freed it; Draw shows it.)

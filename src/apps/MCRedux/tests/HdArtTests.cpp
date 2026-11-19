@@ -20233,6 +20233,40 @@ namespace
             MCTestGame::RunFrame(FrameSeconds);
         }
     }
+
+    /// <summary>
+    /// Writes an HD copy of every picture the game has made (MCRenderer::Textures) into <paramref name="pack"/>'s
+    /// pictures, under its name there, at the test pack's scale, in <paramref name="colors"/>; the names written.
+    /// </summary>
+    std::set<std::string> WriteMadePictures(const std::filesystem::path& pack, const std::array<SDL_Color, 256>& colors)
+    {
+        std::filesystem::create_directories(PictureFolderOf(pack));
+        std::set<std::string> pictures;
+
+        for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
+        {
+            if (texture == nullptr || texture->CpuStale || texture->Pixels.empty() || texture->Width <= 0 ||
+                texture->Height <= 0)
+            {
+                continue;
+            }
+
+            const std::string name =
+                MCHdArt::PictureName(MCHdArt::PictureHash(texture->Pixels, texture->Width, texture->Height));
+
+            if (pictures.insert(name).second)
+            {
+                DecodedFrame picture;
+                picture.Width = texture->Width;
+                picture.Height = texture->Height;
+                picture.Index.assign(texture->Pixels.begin(), texture->Pixels.end());
+                picture.Drawn.assign(picture.Index.size(), 1);
+                WriteFramePngs(PictureFolderOf(pack) / name, picture, colors, TestPackScale, Inverted, false);
+            }
+        }
+
+        return pictures;
+    }
 }
 
 /// <summary>
@@ -20298,32 +20332,8 @@ TEST_CASE_ISOLATED(
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_interface_ahead";
     std::filesystem::remove_all(scratch);
     const std::filesystem::path pack = scratch / "pack";
-    std::filesystem::create_directories(PictureFolderOf(pack));
-    std::set<std::string> pictures;
-
     // Every picture the interface has made, under its name in the pack.
-    for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
-    {
-        if (texture == nullptr || texture->CpuStale || texture->Pixels.empty() || texture->Width <= 0 ||
-            texture->Height <= 0)
-        {
-            continue;
-        }
-
-        const std::string name =
-            MCHdArt::PictureName(MCHdArt::PictureHash(texture->Pixels, texture->Width, texture->Height));
-
-        if (pictures.insert(name).second)
-        {
-            DecodedFrame picture;
-            picture.Width = texture->Width;
-            picture.Height = texture->Height;
-            picture.Index.assign(texture->Pixels.begin(), texture->Pixels.end());
-            picture.Drawn.assign(picture.Index.size(), 1);
-            WriteFramePngs(PictureFolderOf(pack) / name, picture, colors, TestPackScale, Inverted, false);
-        }
-    }
-
+    const std::set<std::string> pictures = WriteMadePictures(pack, colors);
     size_t translucent = 0;
     const std::vector<Sequence> icons = IconSequences(translucent);
     REQUIRE(!pictures.empty());
@@ -20366,6 +20376,82 @@ TEST_CASE_ISOLATED(
     std::cout << std::format(
         "  {} pictures and diagrams kept as the interface started; {} read by its frames without\n", kept, unasked);
     CHECK(unasked > 0);
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's cache budget): the results screen's HD pictures, kept as the mission's interface starts
+/// (MCMissionResultsScreen::KeepPicturesForEnd), stay in the cache while the mission's frames overfill a budget that
+/// keeps nothing else, so the screen finds them at the mission's end with no read; let go of with the hold
+/// (MCHdArt::LetGoHold), the same frames trim them, and finding them reads them again.
+/// </summary>
+TEST_CASE_ISOLATED("game: the results screen's HD pictures are kept from the interface's start to the mission's end")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    const MCGuiHandle<MCMissionResultsScreen> screen = Mission()->ResultsScreen;
+    REQUIRE(screen != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_results_kept";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    REQUIRE(!WriteMadePictures(pack, colors).empty());
+    WritePaletteRgb(pack, colors);
+    ArchiveFolderPngs(PictureFolderOf(pack), TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // The screen's background and the move-on button's faces, as its first draw at the end finds them.
+    std::vector<std::shared_ptr<MCGuiPort>> shown{screen->BackgroundPort};
+    // The move-on button: the screen's only button in single player.
+    std::shared_ptr<MCGuiButton> moveOn;
+
+    for (const std::shared_ptr<MCGuiObject>& child : screen->Children())
+    {
+        moveOn = moveOn != nullptr ? moveOn : std::dynamic_pointer_cast<MCGuiButton>(child);
+    }
+
+    REQUIRE(moveOn != nullptr);
+    shown.push_back(moveOn->GetUpPicture());
+    shown.push_back(moveOn->GetDownPicture());
+    const auto findAll = [&shown]
+    {
+        size_t found = 0;
+
+        for (const std::shared_ptr<MCGuiPort>& port : shown)
+        {
+            found += port != nullptr && MCHdArt::FindPicture(port->Pixels(), port->Width(), port->Height()) != nullptr;
+        }
+
+        return found;
+    };
+
+    // The interface started as a mission's start starts it; then a budget that keeps nothing else, and its frames.
+    TacticalInterface()->EndScenario();
+    HomeCommander()->AddToGui(1);
+    MCMission::StartInterface();
+    const size_t kept = MCHdArt::KeptForMissionBytes();
+    MCHdArt::SetCacheBudget(1);
+    RunFirstFrames();
+    const size_t before = FramesReadOnTheGamesThread();
+    CHECK(kept > 0);
+    CHECK_EQ(findAll(), shown.size());
+    CHECK_EQ(FramesReadOnTheGamesThread(), before);
+
+    // Let go of with the hold: the same frames trim them, and finding them reads them.
+    MCHdArt::LetGoHold();
+    RunFirstFrames();
+    const size_t trimmed = FramesReadOnTheGamesThread();
+    CHECK_EQ(MCHdArt::KeptForMissionBytes(), 0);
+    CHECK_EQ(findAll(), shown.size());
+    std::cout << std::format("  {:.2f} MB kept for the end; {} read again once let go of\n",
+                             static_cast<double>(kept) / (1024.0 * 1024.0), FramesReadOnTheGamesThread() - trimmed);
+    CHECK(FramesReadOnTheGamesThread() > trimmed);
+    MCHdArt::SetCacheBudget(0);
     hdArt.reset();
     std::filesystem::remove_all(scratch);
 }

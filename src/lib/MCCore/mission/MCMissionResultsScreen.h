@@ -114,6 +114,14 @@ public:
     /// </summary>
     int32_t Activate();
 
+    /// <summary>
+    /// Port-only (SPEC-memory.md's cache budget): keeps the HD copies of the pictures this screen shows at the mission's
+    /// end in the HD art's cache until the hold lets go (MCHdArt::KeepForMission): its own, made at Init, and those
+    /// <see cref="Activate"/> may load then; it comes up the frame the end is decided, with no lead for a read. Called
+    /// as the mission's interface starts (MCMission::StartInterface). The bytes kept.
+    /// </summary>
+    size_t KeepPicturesForEnd();
+
     /// <summary>Port-only: whether every step is shown (the debriefing text is up).</summary>
     bool Finished() const { return _Step == MCResultsStep::Done; }
 

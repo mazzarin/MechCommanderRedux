@@ -342,6 +342,12 @@ namespace
         /// is never let go of: a draw of it reads nothing.
         /// </summary>
         bool OnGpu = false;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's cache budget): kept for the mission's end (MCHdArt::KeepForMission), its record and
+        /// colours never let go of, as a frame on the GPU keeps its record, until the hold lets go
+        /// (MCHdArt::LetGoHold) or the pack changes.
+        /// </summary>
+        bool ForMission = false;
     };
 
     /// <summary>
@@ -829,6 +835,8 @@ namespace
             LineArtFrames;
         /// <summary>The pictures the game made of the pack's (MCHdArt::KeepPicture), by their pixels' hash.</summary>
         std::unordered_map<uint64_t, std::shared_ptr<const MCHdArt::Frame>> KeptPictures;
+        /// <summary>Port-only: the frames kept for the mission's end (Cached::ForMission, MCHdArt::KeepForMission).</summary>
+        std::vector<FrameKey> ForMission;
         /// <summary>
         /// Port-only: a folder's neighbours in a turn (MCHdArt::SetNeighbours), nearest first, by their indices in
         /// Folders, whose frames the reading thread reads when one of its own is drawn the first time.
@@ -2001,7 +2009,8 @@ namespace
     /// GPU holds, until the kept ones fit the budget set (MCHdArt::SetCacheBudget). Port-only (SPEC-memory.md's plan):
     /// with none set, until they fit the art's room whole (MCMemoryRoom::ArtRoom), a bound for a frame's reads; the
     /// frames' share of that room is kept to frame by frame (MCHdArt::NextFrame), MCMemoryRoom::TrimmedBytesPerFrame at
-    /// a time and never a frame being drawn, so no read drops a pile at once.
+    /// a time and never a frame being drawn, so no read drops a pile at once. Nor one kept for the mission's end
+    /// (Cached::ForMission): the loop passes them, so it ends at the last frame even when they alone overfill the budget.
     /// </summary>
     void Trim()
     {
@@ -2010,7 +2019,7 @@ namespace
         auto next = state.Order.begin();
 
         // Port-only: past a frame whose picture the GPU holds (its record stays while the picture does), letting go of
-        // any colours read again for it (MCHdArt::ColorsOf), which the GPU has.
+        // any colours read again for it (MCHdArt::ColorsOf), which the GPU has; past one kept for the mission's end.
         while (state.Bytes > budget && next != state.Order.end() && std::next(next) != state.Order.end())
         {
             const auto oldest = state.Frames.find(*next);
@@ -2022,6 +2031,10 @@ namespace
             else if (oldest->second.OnGpu)
             {
                 LetGoColors(state, oldest->second);
+                ++next;
+            }
+            else if (oldest->second.ForMission)
+            {
                 ++next;
             }
             else
@@ -4513,6 +4526,8 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
 
     state.Archives.clear();
     state.KeptPictures.clear();
+    // Port-only: their frames went with the cache's (MCHdArt::KeepForMission).
+    state.ForMission.clear();
     state.Neighbours.clear();
     ++state.Version;
 
@@ -5763,6 +5778,81 @@ void MCHdArt::KeepPicture(std::span<const uint8_t> pixels, int32_t width, int32_
     TheState().KeptPictures.insert_or_assign(PictureHash(pixels, width, height), std::move(kept));
 }
 
+size_t MCHdArt::KeepForMission(std::span<const PictureAhead> pictures)
+{
+    if (!Active())
+    {
+        return 0;
+    }
+
+    State& state = TheState();
+
+    for (const PictureAhead& picture : pictures)
+    {
+        if (picture.Width <= 0 || picture.Height <= 0)
+        {
+            continue;
+        }
+
+        // One the game made (KeptPictures) is kept apart from the cache already.
+        const uint64_t hash = PictureHash(picture.Pixels, picture.Width, picture.Height);
+
+        if (state.KeptPictures.contains(hash))
+        {
+            continue;
+        }
+
+        // Found as its draw finds it (checked against its size, as a first draw checks one kept as read ahead), read
+        // now if the load's reads left it out; none when the pack lacks it.
+        const FrameKey key{PictureFolderOf(hash), hash};
+
+        if (Cache(key, picture.Width, picture.Height) == nullptr)
+        {
+            continue;
+        }
+
+        if (Cached& cached = state.Frames.at(key); !cached.ForMission)
+        {
+            cached.ForMission = true;
+            state.ForMission.push_back(key);
+        }
+    }
+
+    return KeptForMissionBytes();
+}
+
+size_t MCHdArt::KeptForMissionBytes()
+{
+    const State& state = TheState();
+    size_t bytes = 0;
+
+    for (const FrameKey& key : state.ForMission)
+    {
+        if (const auto found = state.Frames.find(key); found != state.Frames.end() && found->second.Frame != nullptr)
+        {
+            bytes += found->second.Frame->Bytes() + found->second.Colors.size();
+        }
+    }
+
+    return bytes;
+}
+
+void MCHdArt::LetGoKeptForMission()
+{
+    State& state = TheState();
+
+    for (const FrameKey& key : state.ForMission)
+    {
+        if (const auto found = state.Frames.find(key); found != state.Frames.end())
+        {
+            found->second.ForMission = false;
+        }
+    }
+
+    // Trimmed from the next frame on as any others are (NextFrame), not all at once here.
+    state.ForMission.clear();
+}
+
 namespace
 {
     /// <summary>
@@ -6494,6 +6584,7 @@ int32_t MCHdArt::LoadBarPercent(int32_t progress)
 
 void MCHdArt::LetGoHold()
 {
+    LetGoKeptForMission();
     ReadAhead& ahead = TheState().Ahead;
 
     {
@@ -6718,7 +6809,8 @@ namespace
     /// are drawn, and would only be read again). A frame something else still holds (a texture's picture, asked for once)
     /// leaves the cache too, so its memory goes once that lets go of it, but it frees nothing now: it isn't counted, or
     /// the frames only the cache holds would wait for later frames. A frame whose picture the GPU holds keeps its record
-    /// (MCHdArt::ColorsUploaded), and lets go of any colours read again for it.
+    /// (MCHdArt::ColorsUploaded), and lets go of any colours read again for it; one kept for the mission's end
+    /// (Cached::ForMission) keeps both.
     /// </summary>
     /// <returns>The bytes freed.</returns>
     size_t TrimFrames(State& state, size_t budget)
@@ -6747,6 +6839,11 @@ namespace
             {
                 freed += oldest->second.Colors.size();
                 LetGoColors(state, oldest->second);
+                continue;
+            }
+
+            if (oldest->second.ForMission)
+            {
                 continue;
             }
 

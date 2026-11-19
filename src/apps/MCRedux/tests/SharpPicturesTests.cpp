@@ -5,6 +5,9 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
+#include "iface/MCMechBar.h"
+#include "iface/MCMechIcon.h"
+#include "iface/MCTacticalInterface.h"
 #include "logistics/MCBriefingScreen.h"
 #include "lib/MCFilesAhead.h"
 #include "lib/MCFnvHash.h"
@@ -15,6 +18,9 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
+#include "object/MCMover.h"
+#include "object/MCObjectQueue.h"
+#include "object/MCObjectSystem.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
@@ -23,6 +29,8 @@
 #include "platform/MCSoftwareRenderer.h"
 #include "platform/MCVulkanRenderer.h"
 #include "sprite/MCHdArt.h"
+#include "terrain/MCTacticalMap.h"
+#include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
 // Port-only: the HD menus' sharp pictures made ahead (platform/MCSharpPictures) and kept by the GPU renderer.
@@ -967,5 +975,70 @@ TEST_CASE_ISOLATED("tool: --hd-make-sharp writes the sharp screens' text and lin
                              bytes - glyphBytes, again);
     CHECK(glyphPictures > 0);
     CHECK(drawings > 0);
+    GHdArt = 0;
+}
+
+/// <summary>
+/// With HD art on and a sharp screen (a player's 1920x1080 window, INTERFACE SIZE AUTO), the tactical map's DATA page
+/// draws the shown unit's part diagram (mechrep##.shp, the store's diagrams' file) as the store does: its outlines as
+/// line art, smooth strokes made ahead off the game's thread as the unit is shown and taken by the page's draws, none
+/// redrawn on the game's thread; the dark silhouette under them stays a shape.
+/// </summary>
+TEST_CASE_ISOLATED("game: the tactical map's DATA page draws a unit's part diagram as line art with HD art on")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t PlayerWidth = 1920;
+    constexpr int32_t PlayerHeight = 1080;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    MCTestGame::BootOptions.WindowWidth = PlayerWidth;
+    MCTestGame::BootOptions.WindowHeight = PlayerHeight;
+    MCTestGame::BootOptions.Started = []
+    {
+        GInterfaceSize = AutoInterfaceSize;
+        GHdArt = 1;
+    };
+
+    REQUIRE(MCTestGame::StartMission(1));
+    REQUIRE(MCInput::Display()->SharpScreen());
+    const std::shared_ptr<MCVulkanRenderer> renderer =
+        std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    REQUIRE(renderer != nullptr);
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+    const std::shared_ptr<MCFriendlyMechIcon> icon = TacticalInterface()->MechBar->GetButton(0);
+    REQUIRE(icon != nullptr);
+    const auto mover = std::dynamic_pointer_cast<MCMover>(ObjectList()->FindObjectFromPart(icon->PartId));
+    REQUIRE(mover != nullptr);
+    Settle();
+
+    const MCVulkanRenderer::SharpCounts before = renderer->SharpPictures();
+    map->SetDisplayType(MCTacmapPage::Info);
+    map->SetID(icon->PartId);
+    MCSharpPictures::WaitForMade();
+    Settle();
+    const MCVulkanRenderer::SharpCounts shown = renderer->SharpPictures();
+
+    const std::span<const uint8_t> shapes = map->PartShapes.Bytes();
+    const int32_t silhouette = MCTacticalMap::PartSilhouette(*mover);
+    REQUIRE(silhouette < VfxShapeCount(shapes));
+    CHECK(MCHdArt::LineArt(shapes, 0));
+    CHECK(MCHdArt::LineArt(shapes, silhouette - 1));
+    CHECK(!MCHdArt::LineArt(shapes, silhouette));
+    // The front view's armor and internal structure outlines drawn from drawings made ahead, none on the game's thread
+    // (the page's words are glyphs of the game's fonts, not line art).
+    CHECK(shown.TakenAhead > before.TakenAhead);
+    CHECK_EQ(shown.LinesRedrawn, before.LinesRedrawn);
+
+    // Another unit shown (its shapes read again): its outlines are line art, made ahead too.
+    const std::shared_ptr<MCFriendlyMechIcon> other = TacticalInterface()->MechBar->GetButton(1);
+    REQUIRE(other != nullptr);
+    map->SetID(other->PartId);
+    Settle();
+    CHECK(MCHdArt::LineArt(map->PartShapes.Bytes(), 0));
+    CHECK_EQ(renderer->SharpPictures().LinesRedrawn, before.LinesRedrawn);
     GHdArt = 0;
 }

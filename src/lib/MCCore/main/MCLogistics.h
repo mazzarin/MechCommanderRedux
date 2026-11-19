@@ -176,6 +176,12 @@ public:
     /// <summary>The frame of a vehicle's repair shapes drawn as its sold-out outline.</summary>
     static constexpr int32_t VehicleSoldOutShape = 6;
 
+    /// <summary>
+    /// Port-only: the parts of frame <paramref name="frame"/> of mech <paramref name="mech"/>'s repair shapes
+    /// (<c>mechrep##.shp</c>) that line art draws by hand (the Atlas's eyes); none for the rest.
+    /// </summary>
+    static std::vector<MCSharpLines::MCDrawnLoop> RepairShapesDrawn(size_t mech, int32_t frame);
+
     /// <summary>Draws the damage state of location <paramref name="location"/> of a mech into <paramref name="port"/>.</summary>
     static void DrawMechBodyLoc(MCLogMech& mech, int32_t location, MCLogPort& port, int32_t xPos, int32_t yPos);
 

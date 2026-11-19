@@ -15,6 +15,7 @@ class MCGuiPort;
 class MCGuiScrollTextObject;
 class MCGameObject;
 class MCMechWarrior;
+class MCMover;
 class MCVector3D;
 
 /// <summary>What the tactical map's MFD shows (<see cref="MCTacticalMap::SetDisplayType"/>).</summary>
@@ -210,6 +211,12 @@ public:
     /// <summary>Shows the unit with part id <paramref name="partId"/> on the info page.</summary>
     void SetID(int32_t partId);
 
+    /// <summary>
+    /// The frame of <paramref name="mover"/>'s part diagram drawn under its parts: its dark silhouette (a mech's after
+    /// its armor, internal structure and rear outline frames; another unit's after its armor frames).
+    /// </summary>
+    static int32_t PartSilhouette(const MCMover& mover);
+
     /// <summary>Makes the command palette match the interface's current mode.</summary>
     void UpdateOrderPalette();
 
@@ -327,8 +334,18 @@ public:
     bool ChatPending = false;
     /// <summary>The current page.</summary>
     MCTacmapPage DisplayType = MCTacmapPage::Map;
-    /// <summary>The part diagram shapes of the info page.</summary>
+    /// <summary>
+    /// The part diagram shapes of the info page. Port-only: their frames but the silhouette are line art
+    /// (MCHdArt::LineArtSet::PartDiagram, SetPartShapes), cleared before the block goes.
+    /// </summary>
     MCRegisteredBlock PartShapes;
+    /// <summary>
+    /// Port-only: makes <paramref name="shapes"/> (<paramref name="mover"/>'s) the part diagram shapes. With HD art on,
+    /// their frames but the silhouette are drawn as line art, smooth strokes at the screen's resolution as the store's
+    /// diagrams are (the same files), made ahead off the game's thread on a sharp screen; the shapes shown before have
+    /// their frames taken out of the line art first.
+    /// </summary>
+    void SetPartShapes(MCRegisteredBlock shapes, MCMover& mover);
     /// <summary>The part diagram's colour of each armor location (GetColors).</summary>
     std::array<uint8_t, 11> ArmorColors{};
     /// <summary>The part diagram's colour of each internal structure (body) location (GetColors).</summary>

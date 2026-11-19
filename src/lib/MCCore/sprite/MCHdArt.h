@@ -917,12 +917,22 @@ namespace MCHdArt
         std::vector<MCSharpLines::MCDrawnLoop> Drawn;
     };
 
+    /// <summary>Port-only: who set a line art frame (<see cref="SetLineArtFrames"/>): each one's are set apart.</summary>
+    enum class LineArtSet : uint8_t
+    {
+        /// <summary>Logistics' lists: the store's and the mech bay's diagrams and sold-out outlines.</summary>
+        Logistics,
+        /// <summary>The tactical map's DATA page: the part diagram of the unit it shows (MCTacticalMap::SetID).</summary>
+        PartDiagram,
+    };
+
     /// <summary>
-    /// Sets the shape frames that are line art (one-pixel outlines: the mechs' and vehicles' diagrams in the store and
-    /// the mech bay, and the store's sold-out outlines), redrawn as smooth strokes (platform/MCSharpLines) in place of
-    /// any pack's copy on a screen drawn at the size it's shown while HD art is on; none needs a pack.
+    /// Sets the shape frames that are line art (one-pixel outlines: the mechs' and vehicles' diagrams in the store, the
+    /// mech bay and the tactical map's DATA page, and the store's sold-out outlines), redrawn as smooth strokes
+    /// (platform/MCSharpLines) in place of any pack's copy on a screen drawn at the size it's shown while HD art is on;
+    /// none needs a pack. Replaces <paramref name="set"/>'s frames only; a table's frames must go before its memory does.
     /// </summary>
-    void SetLineArtFrames(std::span<const LineArtFrame> frames);
+    void SetLineArtFrames(std::span<const LineArtFrame> frames, LineArtSet set);
 
     /// <summary>Whether HD art is on and frame <paramref name="frame"/> of <paramref name="table"/> is line art.</summary>
     bool LineArt(std::span<const uint8_t> table, int32_t frame);

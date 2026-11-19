@@ -1035,6 +1035,16 @@ public:
     /// <summary>Writes <paramref name="pixels"/> as they are from (x, y) (the image decoders' rows).</summary>
     virtual void Write(MCWindow& target, int32_t x, int32_t y, std::span<const uint8_t> pixels) = 0;
 
+    /// <summary>
+    /// Port-only: writes a row of noise (the loading screen's static, colours 0 to 0x1f) as <see cref="Write"/> does; a
+    /// renderer drawing a sharp screen with HD art on shows finer noise of the same colours over it, a pixel of noise to
+    /// each pixel of the screen.
+    /// </summary>
+    virtual void Noise(MCWindow& target, int32_t x, int32_t y, std::span<const uint8_t> pixels)
+    {
+        Write(target, x, y, pixels);
+    }
+
     /// <summary>One pixel.</summary>
     virtual void Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t color) = 0;
 

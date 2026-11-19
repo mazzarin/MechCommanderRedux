@@ -55,6 +55,16 @@ public:
     static std::expected<std::unique_ptr<MCFastFile>, std::string> Create(
         std::string_view fileName, std::shared_ptr<const MCZstd::Dictionaries> dictionaries = nullptr);
 
+    /// <summary>
+    /// Opens the archive at the file system's <paramref name="path"/> (not a game path: a network share's too), named
+    /// <paramref name="fileName"/> in what's said of it, and reads its directory, its streams unpacking against
+    /// <paramref name="dictionaries"/> as <see cref="Create"/>'s do.
+    /// </summary>
+    /// <returns>The archive, or why it couldn't be opened.</returns>
+    static std::expected<std::unique_ptr<MCFastFile>, std::string> CreateAt(
+        const std::filesystem::path& path, std::string_view fileName,
+        std::shared_ptr<const MCZstd::Dictionaries> dictionaries = nullptr);
+
     MCFastFile(const MCFastFile&) = delete;
     MCFastFile& operator=(const MCFastFile&) = delete;
 

@@ -28,6 +28,7 @@
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
 #include "object/MCBattleMech.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCSpriteTree.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCLogMech.h"
@@ -462,6 +463,25 @@ namespace MCTestGame
 
         std::cout << "  the scenario never started (mission state " << std::to_underlying(Mission()->State) << ")\n";
         return false;
+    }
+
+    size_t PrintGuardedReads(std::string_view label)
+    {
+        const std::optional<std::vector<MCHdArt::GuardedRead>> reads = MCHdArt::GuardedReads();
+        size_t total = 0;
+
+        for (const MCHdArt::GuardedRead& read : reads.value_or(std::vector<MCHdArt::GuardedRead>{}))
+        {
+            total += read.Count;
+            std::cout << std::format("  {}: {} x {}\n", label, read.Count, read.Kind);
+
+            for (const std::string& example : read.Examples)
+            {
+                std::cout << std::format("    {}\n", example);
+            }
+        }
+
+        return total;
     }
 
     bool StartLogistics(const std::function<void()>& afterBoot)

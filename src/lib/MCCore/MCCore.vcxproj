@@ -162,6 +162,7 @@
     <ClCompile Include="lib\MCFatal.cpp" />
     <ClCompile Include="lib\MCFile.cpp" />
     <ClCompile Include="lib\MCFilePatch.cpp" />
+    <ClCompile Include="lib\MCFilesAhead.cpp" />
     <ClCompile Include="lib\MCFirstUse.cpp" />
     <ClCompile Include="lib\MCFitIniFile.cpp" />
     <ClCompile Include="lib\MCInflate.cpp" />
@@ -169,6 +170,7 @@
     <ClCompile Include="lib\MCLzDecompress.cpp" />
     <ClCompile Include="lib\MCPacketFile.cpp" />
     <ClCompile Include="lib\MCPriorityQueue.cpp" />
+    <ClCompile Include="lib\MCReleaseData.cpp" />
     <ClCompile Include="lib\MCSha256.cpp" />
     <ClCompile Include="lib\MCThreadKeeper.cpp" />
     <ClCompile Include="lib\MCWorkers.cpp" />
@@ -524,6 +526,7 @@
     <ClCompile Include="update\MCHttpSource.cpp" />
     <ClCompile Include="update\MCInstalled.cpp" />
     <ClCompile Include="update\MCProgramSwap.cpp" />
+    <ClCompile Include="update\MCReleaseCopy.cpp" />
     <ClCompile Include="update\MCReleaseFile.cpp" />
     <ClCompile Include="update\MCSetupBackend.cpp" />
     <ClCompile Include="update\MCSignedFile.cpp" />
@@ -667,6 +670,7 @@
     <ClInclude Include="lib\MCFatal.h" />
     <ClInclude Include="lib\MCFile.h" />
     <ClInclude Include="lib\MCFilePatch.h" />
+    <ClInclude Include="lib\MCFilesAhead.h" />
     <ClInclude Include="lib\MCFirstUse.h" />
     <ClInclude Include="lib\MCFitIniFile.h" />
     <ClInclude Include="lib\MCFnvHash.h" />
@@ -679,6 +683,7 @@
     <ClInclude Include="lib\MCPacketFile.h" />
     <ClInclude Include="lib\MCPriorityQueue.h" />
     <ClInclude Include="lib\MCRandomId.h" />
+    <ClInclude Include="lib\MCReleaseData.h" />
     <ClInclude Include="lib\MCRetryDelay.h" />
     <ClInclude Include="lib\MCSha256.h" />
     <ClInclude Include="lib\MCThreadKeeper.h" />
@@ -978,6 +983,7 @@
     <ClInclude Include="sprite\MCGVAppearanceType.h" />
     <ClInclude Include="sprite\MCHdArt.h" />
     <ClInclude Include="sprite\MCHdMovie.h" />
+    <ClInclude Include="sprite\MCHoldLists.h" />
     <ClInclude Include="sprite\MCInBetween.h" />
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCMechStops.h" />
@@ -1027,6 +1033,7 @@
     <ClInclude Include="update\MCInstalled.h" />
     <ClInclude Include="update\MCInstalledJson.h" />
     <ClInclude Include="update\MCProgramSwap.h" />
+    <ClInclude Include="update\MCReleaseCopy.h" />
     <ClInclude Include="update\MCReleaseFile.h" />
     <ClInclude Include="update\MCSetupBackend.h" />
     <ClInclude Include="update\MCSignedFile.h" />
@@ -1051,7 +1058,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1061,7 +1068,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1070,7 +1077,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1079,7 +1086,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1088,7 +1095,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1097,7 +1104,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1106,7 +1113,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1116,7 +1123,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1125,7 +1132,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1134,7 +1141,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1154,6 +1161,16 @@
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
+    <!-- Port-only (KindHdSmooth): which original pixels a version 1 HD art frame covers, marked in its index picture. -->
+    <CustomBuild Include="shaders\hdcoverage.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -1186,6 +1203,8 @@
     </CustomBuild>
     <!-- Port-only: the pixel rule the draw shaders and their vertex shaders include. -->
     <None Include="shaders\pixels.hlsli" />
+    <!-- Port-only: the GPU's channels, which the draw, composite and coverage shaders and the C++ include. -->
+    <None Include="shaders\channels.hlsli" />
   </ItemGroup>
   <!-- mimalloc (src\lib\mimalloc-3.3.1): static.c compiles the whole allocator in one unit. It lives outside MCCore,
        so it has its own ItemGroup, which sync_projects.py leaves alone. platform\MCAllocator.cpp wires it in. -->

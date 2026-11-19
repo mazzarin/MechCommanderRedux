@@ -172,13 +172,14 @@ namespace
 
     /// <summary>
     /// Shows <paramref name="source"/> in the store with tab <paramref name="tab"/>'s layout, from the top, if the
-    /// purchase screen is the one shown (the original filled the store only then).
+    /// purchase screen is the one shown (the original filled the store only then) or <paramref name="ahead"/>
+    /// (MCLogInvScreen::SetUpMechPurchase).
     /// </summary>
-    template <typename Item> void ShowStore(MCStoreTab tab, const MCListSource<Item>& source)
+    template <typename Item> void ShowStore(MCStoreTab tab, const MCListSource<Item>& source, bool ahead)
     {
         MCPurchaseScreen& screen = *GlobalLog()->PurchaseScreen;
 
-        if (GlobalLog()->CurrentScreen().get() != &screen)
+        if (GlobalLog()->CurrentScreen().get() != &screen && !ahead)
         {
             return;
         }
@@ -449,9 +450,9 @@ auto MCLogInvScreen::SetUpMechInv(bool resetScroll, bool redrawTabs) -> void
     ShowInvSource(MechSource(), resetScroll);
 }
 
-auto MCLogInvScreen::SetUpMechPurchase() const -> void
+auto MCLogInvScreen::SetUpMechPurchase(bool ahead) const -> void
 {
-    if (GlobalLog()->CurrentScreen() != GlobalLog()->PurchaseScreen)
+    if (GlobalLog()->CurrentScreen() != GlobalLog()->PurchaseScreen && !ahead)
     {
         return;
     }
@@ -476,7 +477,7 @@ auto MCLogInvScreen::SetUpMechPurchase() const -> void
         purMech->CurVariant = variant;
     }
 
-    ShowStore(MCStoreTab::Mechs, MechStoreSource());
+    ShowStore(MCStoreTab::Mechs, MechStoreSource(), ahead);
 }
 
 auto MCLogInvScreen::SetUpPilotInv(bool resetScroll, bool redrawTabs) -> void
@@ -502,19 +503,19 @@ auto MCLogInvScreen::SetUpVhclInv(bool resetScroll, bool redrawTabs) -> void
     ShowInvSource(VehicleSource(), resetScroll);
 }
 
-auto MCLogInvScreen::SetUpVehiclePurchase() const -> void
+auto MCLogInvScreen::SetUpVehiclePurchase(bool ahead) const -> void
 {
-    ShowStore(MCStoreTab::Vehicles, VehicleStoreSource());
+    ShowStore(MCStoreTab::Vehicles, VehicleStoreSource(), ahead);
 }
 
-auto MCLogInvScreen::SetUpPilotPurchase() const -> void
+auto MCLogInvScreen::SetUpPilotPurchase(bool ahead) const -> void
 {
-    ShowStore(MCStoreTab::Pilots, PilotStoreSource());
+    ShowStore(MCStoreTab::Pilots, PilotStoreSource(), ahead);
 }
 
-auto MCLogInvScreen::SetUpCompPurchase() const -> void
+auto MCLogInvScreen::SetUpCompPurchase(bool ahead) const -> void
 {
-    ShowStore(MCStoreTab::Components, CompStoreSource());
+    ShowStore(MCStoreTab::Components, CompStoreSource(), ahead);
 }
 
 auto MCLogInvScreen::RemovePilot() -> void

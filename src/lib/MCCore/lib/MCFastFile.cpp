@@ -200,9 +200,16 @@ namespace
 std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(
     std::string_view fileName, std::shared_ptr<const MCZstd::Dictionaries> dictionaries)
 {
+    return CreateAt(MCFileSystem::Resolve(fileName), fileName, std::move(dictionaries));
+}
+
+std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::CreateAt(
+    const std::filesystem::path& path, std::string_view fileName,
+    std::shared_ptr<const MCZstd::Dictionaries> dictionaries)
+{
     auto fastFile = std::make_unique<MCFastFile>(Key());
     fastFile->_Dictionaries = std::move(dictionaries);
-    fastFile->_Path = MCFileSystem::Resolve(fileName);
+    fastFile->_Path = path;
     fastFile->_Handle = MCDiskFile::Open(fastFile->_Path, MCDiskFileMode::Read, MCDiskFileReads::Direct);
 
     if (!fastFile->_Handle.has_value())

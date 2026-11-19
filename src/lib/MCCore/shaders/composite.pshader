@@ -245,15 +245,12 @@ static const float LightSoftness = 0.3;
 static const float SpotFull = 0.5;
 static const float SpotMost = 1.5;
 
-uint Byte(float value)
-{
-    return (uint)round(value * 255.0);
-}
+// The channels' values: the index target's marks, the palette entries the shaders know (draw.pshader's).
+#include "channels.hlsli"
 
 // The lights' bits come in words of LightWordBits (lightTileTex, spotLights): the first word's for lights 0 to 31.
 static const uint LightWords = 2;
 static const uint LightWordBits = 32;
-static const uint BitsPerByte = 8;
 
 // The lights shown (lighting.x of them), a bit a light; with the light tiles, by light index, in index order.
 uint2 LightsShown()
@@ -316,16 +313,11 @@ float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 si
     return tex.SampleLevel(samp, (texel + 0.5) / size, 0);
 }
 
-// The index target's alpha above GroundMark: HD ground where its relief map drew; below it, what stands on the ground:
-// above CanopyMark a forest's canopy (its sway mark), else 0.
-static const float GroundMark = 0.5;
-static const float CanopyMark = 0.125;
 // Port-only (HD lighting's headlights): a unit's pixels in the index target hold the window row its feet stand on in
 // their green (the high byte) and blue, FeetSteps a row and 1 more (draw.pshader's FeetShift; 0: none), where the alpha
 // marks what stands. Two units' feet as near as FeetSame window rows are taken as one's. A unit is taken as UnitDepth
 // window rows deep: a point whose ground is further up the screen than its feet is hidden behind its pixels more and
 // more over that, wholly past it (UnitHides).
-static const float FeetSteps = 4.0;
 static const float FeetSame = 0.5;
 static const float UnitDepth = 4.0;
 static const float NoFeet = -1.0;
@@ -836,8 +828,7 @@ float HeightAt(float2 texel, float centre)
     return lerp(dot(color, Luma), centre, SelfLit(color));
 }
 
-// A relief map's byte for flat ground, and the bytes a rise of a texel takes (MCHdArt::ReliefFlat).
-static const float ReliefFlat = 128.0;
+// The bytes a rise of a texel takes in a relief map, from its flat ground's (ReliefFlat; MCHdArt's).
 static const float ReliefSteps = 127.0;
 
 // The HD ground's slopes' bytes at a texel of the index target (`drawn`), the fog of war's edge kept in their low bits
@@ -885,12 +876,8 @@ float2 SlopeAt(float2 texel)
 // one of the cycle's steps to the next instead of ticking; waves roll over it before a wind (laid on the ground in
 // meters, so they move with it as the view scrolls); the art's own sparkles twinkle as they pass, glinting the sun's light
 // and the lights'; it is paler in the shallows and foam rides along its shores.
-static const uint FirstWaterBlue = 0x58;
-static const uint WaterBlues = 6;
 // The commonest of them: the water's own colour, the art's sparkles brighter than it.
 static const uint CommonWaterBlue = 0x59;
-static const uint FirstWaterColor = 0xd8;
-static const uint WaterColors = 8;
 // A water colour's component is taken as at least this when the flow scales the drawn colour by its change, which
 // brightens it this many times at most.
 static const float WaterFlowFloor = 0.02;
@@ -993,9 +980,6 @@ float3 FogEdgeShade(uint edge)
 // where all are): the GPU world's index target keeps such water's own index (draw.pshader's HazedWater), with the
 // count in the HD ground's slopes (FogEdgeOf) or, without a relief map, in its alpha (FoggedWaterMark each, under
 // CanopyMark). The software renderer's world keeps none (its water there is the haze's entries).
-static const float FoggedWaterMark = 8.0 / 255.0;
-static const uint MostFogEdge = 3;
-
 uint FoggedWaterAt(float2 texel)
 {
     if (mode.y == 0.0)
@@ -1141,8 +1125,6 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
 // gusts). Neighbouring crowns blend over SwayCrownEdge meters, so none tears from the next. Leaning downwind, a crown
 // shows up to sway.y brighter, its leaves turned up to the wind. Where the place read from is no canopy (at the
 // forest's edge) it holds still.
-static const float SwayMark = 64.0 / 255.0;
-static const float SwayMarkNear = 16.0 / 255.0;
 static const float SwayCrownSize = 25.0;
 static const float SwayCrownJitter = 0.8;
 static const float SwayCrownEdge = 3.0;
@@ -1467,7 +1449,6 @@ static const float PuddleNear = 0.08;
 // share in the index target's alpha, BlockedMarkSpan below 1 where none can: draw.pshader's BlockedAt, its map tile's
 // blended toward its neighbours', so no seam shows), as the cliffs between high and low ground can't (the map's heights
 // tell them poorly from rolling ground).
-static const float BlockedMarkSpan = 0.25;
 static const float BlockedDryFrom = 0.4;
 static const float BlockedDryTo = 0.7;
 static const float CliffDry = 1.0;
@@ -1747,9 +1728,6 @@ static const float CanopySnow = 0.6;
 // each way, where it isn't a print nor something standing on it) and its shade from its own pixels is eased out, and
 // the snow lies over it that much.
 static const float2 PrintGroundSpans = float2(8.0, 16.0);
-static const float FilledMarkFrom = 0.52;
-static const float FilledMarkSpan = 0.2;
-static const float FilledMarkTop = 0.735;
 
 // How far a footprint or a crater has filled in at a world texel (0 where there's none, or none yet).
 float FilledAt(float2 texel)
@@ -1964,13 +1942,10 @@ void LaySpeck(inout float4 laid, float3 colour, float strength)
     laid = float4(lerp(laid.rgb, colour, shown), laid.a * (1.0 - shown));
 }
 
-// The indices of ground the HD ground isn't drawn on, which nothing stands on: the void past the map's edge, left blank
-// (MCVulkanRenderer's ClearBlank), and a terrain tile no one has seen, filled black (its UnseenTileIndex).
-static const uint BlankIndex = 0;
-static const uint UnseenIndex = 0x10;
-
 // Whether world texel `texel` shows what stands on the ground (a unit, a building, a forest's canopy) by the index
-// target's alpha, where it tells them apart (speckFalls.w); else none does.
+// target's alpha, where it tells them apart (speckFalls.w); else none does. Ground the HD ground isn't drawn on has
+// nothing standing on it: the void past the map's edge, left blank (BlankIndex: MCVulkanRenderer's ClearBlank), and a
+// terrain tile no one has seen, filled black (UnseenIndex: its UnseenTileIndex).
 bool StandsAt(float2 texel)
 {
     const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);

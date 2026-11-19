@@ -6,6 +6,8 @@
 
 #include <array>
 #include <cstddef>
+#include <map>
+#include <set>
 #include <vector>
 
 /// <summary>
@@ -25,9 +27,13 @@ namespace MCContentList
     /// <summary>The format this game reads; a list of a higher one needs a newer program.</summary>
     constexpr uint64_t KnownFormat = 1;
 
-    /// <summary>The sets, as the list names them: the original's data, and the HD pack.</summary>
+    /// <summary>
+    /// The sets, as the list names them: the original's data, the HD pack, and the HD pack's 2x art, which goes only
+    /// with the HD set (<see cref="MCList::Variants"/>: the HD set with its 2x files in place).
+    /// </summary>
     constexpr std::string_view GameSet = "game";
     constexpr std::string_view HdSet = "hd";
+    constexpr std::string_view Hd2xSet = "hd2x";
 
     /// <summary>
     /// The folders in the game folder updates keep for themselves, never content. Every path in the update folder is
@@ -130,7 +136,26 @@ namespace MCContentList
         uint64_t LowestProgram = 0;
         std::vector<MCZip> Zips;
         std::vector<MCFile> Files;
+        /// <summary>
+        /// Other sets' copies of the files (the 2x set's, <see cref="Hd2xSet"/>): a copy with a variant's set takes it in
+        /// place of the file at its path, so a file with no variant (HD's sound and movies) is the same in both and comes
+        /// once. A variant at a path no file has is its set's alone. Each variant's set is one the files don't have.
+        /// Added in format 1 (<c>variants</c>): a game before it reads the files alone, its sets as ever.
+        /// </summary>
+        std::vector<MCFile> Variants;
     };
+
+    /// <summary>
+    /// <paramref name="list"/>'s files a copy with <paramref name="sets"/> holds: each file of those sets, or its
+    /// variant of one of them in its place, then the variants of their own paths; in the list's order.
+    /// </summary>
+    std::vector<MCFile> ForSets(const MCList& list, const std::set<std::string, std::less<>>& sets);
+
+    /// <summary>
+    /// Each set's bytes: the files' by their sets; a variant set's, those of the sets it varies with its variants in
+    /// place (the HD set with its 2x art), what HD OPTIONS shows for it.
+    /// </summary>
+    std::map<std::string, uint64_t, std::less<>> SetBytes(const MCList& list);
 
     /// <summary>The list <paramref name="payload"/> holds, every rule checked.</summary>
     std::expected<MCList, std::string> Read(std::string_view payload);

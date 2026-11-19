@@ -11,6 +11,7 @@
 
 #include <bitset>
 #include <list>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace MCHdArt
@@ -214,6 +215,8 @@ public:
         /// <summary>The part of its window the drawn size covers, from its corner.</summary>
         uint32_t MappedWidth = 0;
         uint32_t MappedHeight = 0;
+        /// <summary>Its drawn grid's offset across and down (MCDrawnGrid).</summary>
+        std::array<int32_t, 2> Offset{};
     };
 
     /// <summary>
@@ -227,6 +230,13 @@ public:
     /// finish them: before a read of the surfaces ahead of the frame's present, or for a frame that isn't shown.
     /// </summary>
     std::expected<void, std::string> Flush(std::span<const MCUnderlay> underlays);
+
+    /// <summary>
+    /// Port-only: the bytes the frame being recorded has queued to go up (its uploads' staging), and whether it holds
+    /// draws: what MCVulkanPresenter::RunRecorded weighs for a rehearsal (which records no draws).
+    /// </summary>
+    size_t QueuedUploadBytes() const;
+    bool HoldsDraws() const;
 
     /// <summary>The frames whose commands have run (<see cref="Execute"/>), shown or not.</summary>
     uint64_t FramesRun() const { return _Frame; }
@@ -369,8 +379,71 @@ public:
     /// </summary>
     static inline bool GlintsEveryFrame = false;
 
+    /// <summary>
+    /// Port-only (the kept surfaces, KeptPlan), for the tests: the frames run so far that drew a surface they wipe whole,
+    /// drew only its tiles whose draws changed (and how many tiles), or left it as it was (nothing changed).
+    /// </summary>
+    struct KeptCounts
+    {
+        int64_t Whole = 0;
+        int64_t Tiled = 0;
+        int64_t TilesDrawn = 0;
+        int64_t Unchanged = 0;
+    };
+
+    /// <summary>The kept surfaces' counts (<see cref="KeptCounts"/>), once a frame running has run.</summary>
+    KeptCounts KeptSurfaceCounts() const
+    {
+        WaitForRunning();
+        return _KeptCounts;
+    }
+
+    /// <summary>
+    /// Port-only (the kept surfaces), for the tests: whether a surface a frame wipes keeps what its tiles held from the
+    /// frame before (else every one is drawn whole, as before); and whether each surface drawn from its tiles is drawn
+    /// whole too, apart, for <see cref="CompareKept"/>.
+    /// </summary>
+    static inline bool KeepSurfaces = true;
+    static inline bool CheckKeptSurfaces = false;
+
+    /// <summary>The result of <see cref="CompareKept"/>.</summary>
+    struct KeptComparison
+    {
+        /// <summary>The surfaces compared, and their pixels whose colours or indices differ from those drawn whole.</summary>
+        int64_t Surfaces = 0;
+        int64_t Pixels = 0;
+        int64_t DifferentColors = 0;
+        int64_t DifferentIndices = 0;
+    };
+
+    /// <summary>
+    /// Port-only, for the tests (<see cref="CheckKeptSurfaces"/>): downloads each surface the last frame run drew from its
+    /// tiles, and the same surface it drew whole apart, waiting for the GPU, and compares them pixel for pixel.
+    /// </summary>
+    std::expected<KeptComparison, std::string> CompareKept();
+
     /// <summary>The terrain layers drawn from the mesh so far.</summary>
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
+
+    /// <summary>
+    /// Port-only (the kept ground), for the tests: the terrain layers run so far drawn directly, and those laid from the
+    /// kept ground as it was drawn whole, moved (shifted, the strips the view moved onto drawn), or kept in place (only
+    /// what changed drawn again, if anything).
+    /// </summary>
+    struct GroundCounts
+    {
+        int64_t Direct = 0;
+        int64_t Whole = 0;
+        int64_t Shifted = 0;
+        int64_t Kept = 0;
+    };
+
+    /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
+    GroundCounts KeptGroundCounts() const
+    {
+        WaitForRunning();
+        return _GroundCounts;
+    }
 
     /// <summary>
     /// The ground meshes put on the GPU so far, and the times their tiles went up with them (a mesh of the tiles
@@ -396,10 +469,16 @@ public:
     int64_t HdDrawn() const { return _HdDrawn; }
 
     /// <summary>
-    /// Port-only: the shapes' images made from version 2 HD frames' index pictures so far, standing for the
-    /// original's rows (<see cref="HdIndexImage"/>).
+    /// Port-only, for the tests: lets go of the GPU's copy of HD frame <paramref name="id"/> between frames, as the
+    /// pictures' trim does with one unused a while.
     /// </summary>
-    int64_t HdIndexImagesMade() const { return _HdIndexImagesMade; }
+    void ForgetHdPictureForTests(uint64_t id) { ForgetHdPicture(id); }
+
+    /// <summary>
+    /// Port-only: the shapes drawn so far whose index passes read their version 2 HD frame's own index picture, standing
+    /// for the original's rows (<see cref="HdShapeIndices"/>).
+    /// </summary>
+    int64_t HdIndexPicturesDrawn() const { return _HdIndexPicturesDrawn; }
     /// <summary>
     /// Port-only: how many times a stripped shape table's rows were asked for (a version 2 pack's, drawn without its HD
     /// frame: RowsGone), each drawn as nothing.
@@ -412,6 +491,13 @@ public:
     /// must have been drawn, and its frame run, and be its movie's latest.
     /// </summary>
     std::expected<std::vector<uint8_t>, std::string> MovieColors(const MCHdArt::Frame& frame);
+
+    /// <summary>
+    /// Port-only (KindHdSmooth), for the tests: HD art frame <paramref name="frame"/>'s index picture as the GPU holds it
+    /// (R8G8 rows, its original's size: the marks MarkHdCoverage made), read back, waiting for the GPU. The frame must
+    /// have been drawn, and its frame run.
+    /// </summary>
+    std::expected<std::vector<uint8_t>, std::string> HdIndices(const MCHdArt::Frame& frame);
 
     /// <summary>Whether the ground is drawn with the HD art pack's colours (it has an HD terrain atlas).</summary>
     bool HdTerrain() const { return _TerrainMesh.HdAtlas.Handle != nullptr; }
@@ -522,6 +608,25 @@ private:
     };
 
     /// <summary>
+    /// Port-only (SPEC-memory.md's pages): a picture's size in a shared page's places: in its texture's pixels, and in
+    /// its HD colours' units (the layout's blocks; none without them). Frames of two scales may share a layout.
+    /// </summary>
+    struct PlaceSize
+    {
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        uint32_t HdWidth = 0;
+        uint32_t HdHeight = 0;
+
+        /// <summary>Whether it's at least as big as <paramref name="other"/> in both textures.</summary>
+        bool AtLeast(const PlaceSize& other) const
+        {
+            return Width >= other.Width && Height >= other.Height && HdWidth >= other.HdWidth &&
+                   HdHeight >= other.HdHeight;
+        }
+    };
+
+    /// <summary>
     /// Port-only: a page pictures share (HD art frames, or sharp glyphs), so the draws of any of them share their
     /// bindings (<see cref="SameBindings"/>): its layout, its texture (the HD frames' indices, or the glyphs' pixels) and
     /// the HD frames' colours, each packed by smol-atlas (the colours in whole BC7 blocks when they're BC7), and how many
@@ -537,6 +642,11 @@ private:
         std::unique_ptr<smol_atlas_t, DestroyPlaces> Places;
         std::unique_ptr<smol_atlas_t, DestroyPlaces> HdPlaces;
         uint32_t Pictures = 0;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's pages): the smallest picture its places refused since one last left it (none
+        /// when not): one at least as big in both of its textures wouldn't fit either, so it isn't tried.
+        /// </summary>
+        std::optional<PlaceSize> Refused;
     };
 
     /// <summary>Port-only: the pages a picture may share (none: a picture with textures of its own).</summary>
@@ -545,6 +655,17 @@ private:
         None,
         Hd,
         Sharp,
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the page of each kind and layout a picture was placed in last, tried first
+    /// for the next picture of that layout.
+    /// </summary>
+    struct OpenPage
+    {
+        PageKind Kind = PageKind::None;
+        SharedLayout Layout;
+        uint32_t Page = 0;
     };
 
     /// <summary>Port-only: a shared page's place let go, freed once the frame that let it go has run.</summary>
@@ -605,9 +726,31 @@ private:
         /// </summary>
         uint32_t DrawnWidth = 0;
         uint32_t DrawnHeight = 0;
+        /// <summary>
+        /// Port-only (MCDrawnGrid): the window point of map vertex (0, 0) the surface's terrain layer was last drawn at
+        /// (none: none drawn on it yet), and whether the frame being recorded drew one (its first places the grid).
+        /// </summary>
+        std::optional<std::array<int32_t, 2>> GridOrigin;
+        bool GridPlaced = false;
+        /// <summary>
+        /// Port-only: the offset of the surface's drawn grid across and down (MCDrawnGrid::Offset) from GridOrigin
+        /// and its sizes as the frame was sealed, which every drawn &lt;-&gt; window mapping on it takes (0 without
+        /// one). A frame without a terrain layer keeps the last one's, so what it draws lines up with what it keeps.
+        /// </summary>
+        std::array<int32_t, 2> Offset{};
         /// <summary>Execution: the part of the surface the copy holds, and what was drawn since it was taken.</summary>
         MCRect Copied{0, 0, -1, -1};
         std::vector<MCRect> DrawnSinceCopy;
+        /// <summary>
+        /// Port-only (the kept surfaces, KeptPlan), execution: for a surface whose frames start by wiping all of it (the
+        /// screen's wipe to its key), a hash a tile (KeptTile window pixels square, TileColumns a row) of the draws the
+        /// frame run last laid on it in their order, while it holds what they drew (TilesHeld). And a stamp of what it
+        /// holds, new with each of a frame's records on it, for the draws that read it.
+        /// </summary>
+        std::vector<uint64_t> Tiles;
+        uint32_t TileColumns = 0;
+        bool TilesHeld = false;
+        uint64_t Stamp = 0;
     };
 
     /// <summary>A draw's rectangle (x0, y0, x1, y1), or where it reads from and its steps (x, y, step x, step y).</summary>
@@ -701,7 +844,8 @@ private:
 
     /// <summary>
     /// Port-only: a surface as a frame was sealed (<see cref="Seal"/>): its window's address (none: let go, its textures
-    /// go once the frame has run), the sizes its commands saw and it is drawn at, whether its draws catch light, where
+    /// go once the frame has run), the sizes its commands saw and it is drawn at, its drawn grid's offset
+    /// (MCDrawnGrid), whether its draws catch light, where
     /// it is drawn among the surfaces (0 kept, 1 shown as an underlay, 2 the rest), and whether its key is drawn
     /// transparent (it lies over an underlay).
     /// </summary>
@@ -714,6 +858,7 @@ private:
         uint32_t MappedHeight = 0;
         uint32_t DrawnWidth = 0;
         uint32_t DrawnHeight = 0;
+        std::array<int32_t, 2> Offset{};
         bool CatchesLight = false;
         int32_t Rank = 2;
         bool KeyClear = false;
@@ -804,10 +949,12 @@ private:
         int32_t FogColumns = 0;
         int32_t CycleStep = 0;
         /// <summary>
-        /// The camera's place the frame before (the origin of the last terrain layer drawn, kept or not): a view moving
-        /// so its pixels can't be kept moved draws its terrain directly until it holds still.
+        /// The camera's place and the looks (as Looks) the frame before, of the last terrain layer drawn, kept or not:
+        /// a view moving while its looks change from frame to frame (a zoom easing) draws its terrain directly until
+        /// they hold.
         /// </summary>
         std::array<int32_t, 2> LastOrigin{INT32_MIN, INT32_MIN};
+        std::vector<uint8_t> LastLooks;
         /// <summary>
         /// The rest it was drawn with, as bytes (GroundLooks): the sizes, the terrain's steps and clip, the haze's
         /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).
@@ -834,6 +981,65 @@ private:
         /// <summary>The parts drawn again (drawn pixels), when not whole.</summary>
         std::vector<MCRect> Redrawn;
     };
+
+    /// <summary>
+    /// Port-only (the kept surfaces): how a frame draws a surface. A surface the frame starts by wiping all of (the
+    /// screen's wipe to its key, every frame) holds nothing the frame before drew, so its pixels follow from the
+    /// frame's draws alone; a tile of it is the same as the frame before's wherever the draws over the tile are, in the
+    /// same order, from the same pictures (a draw covers the drawn pixels of its window rectangle alone:
+    /// shaders/pixels.hlsli's DrawnCorner). Only the tiles whose draws changed are drawn again, over what it held.
+    /// </summary>
+    enum class KeptMode : uint8_t
+    {
+        /// <summary>Drawn as recorded: not wiped first, or its draws read what the tiles can't follow (KeptPlan).</summary>
+        Drawn,
+        /// <summary>Drawn whole, its tiles kept for the next frame.</summary>
+        Whole,
+        /// <summary>Its tiles whose draws changed drawn again (KeptPlan::Scissors), the rest kept.</summary>
+        Tiled,
+        /// <summary>No tile's draws changed: left as it was.</summary>
+        Unchanged
+    };
+
+    /// <summary>Port-only (the kept surfaces): how a frame draws a surface, and its tiles' hashes for the next frame.</summary>
+    struct KeptPlan
+    {
+        KeptMode Mode = KeptMode::Drawn;
+        std::vector<uint64_t> Tiles;
+        uint32_t Columns = 0;
+        /// <summary>Tiled: the drawn pixels drawn again (the changed tiles', merged into rectangles), with their window pixels.</summary>
+        std::vector<SDL_Rect> Scissors;
+        std::vector<MCRect> Rects;
+        /// <summary>
+        /// The tiles that changed, and whether a draw reads another surface drawn on after it (which the kept check,
+        /// drawing it again once the frame's draws are done, can't).
+        /// </summary>
+        int64_t Changed = 0;
+        bool ReadsChanging = false;
+    };
+
+    /// <summary>
+    /// Port-only (the kept surfaces): a texture a draw reads, kept by its address while it lives (the control block
+    /// tells a texture made at a freed one's address apart), and a stamp new with each write to it.
+    /// </summary>
+    struct TextureStamp
+    {
+        std::weak_ptr<SDL_GPUTexture> Texture;
+        uint64_t Stamp = 0;
+    };
+
+    /// <summary>Port-only (the kept surfaces): the stamp of what <paramref name="texture"/> holds (none: 0).</summary>
+    uint64_t StampOf(const std::shared_ptr<SDL_GPUTexture>& texture);
+    /// <summary>Port-only (the kept surfaces): notes a write to <paramref name="texture"/> (a new stamp).</summary>
+    void Restamp(const std::shared_ptr<SDL_GPUTexture>& texture);
+    /// <summary>
+    /// Port-only (the kept surfaces): how frame <paramref name="run"/> draws each surface (<see cref="KeptMode"/>), its
+    /// records run in <paramref name="order"/>; <paramref name="recordUniforms"/> gives a hash of the fragment uniforms a
+    /// record's draws on a surface are drawn with.
+    /// </summary>
+    std::vector<KeptPlan> PlanKept(
+        const FrameRun& run, std::span<const uint32_t> order,
+        const std::function<uint64_t(uint16_t surface, const Record& record)>& recordUniforms);
 
     /// <summary>The surface for <paramref name="window"/> (made on first use); records a resize when its size changed.</summary>
     uint16_t SurfaceFor(const MCWindow& window);
@@ -924,7 +1130,8 @@ private:
     /// </summary>
     void BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                      std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
-                     bool smoothEdges = false, BlitPixels pixels = BlitPixels::All);
+                     bool smoothEdges = false, BlitPixels pixels = BlitPixels::All,
+                     const std::optional<MCColorTable>& table = std::nullopt);
     /// <summary>
     /// Where a blit of a picture <paramref name="width"/> x <paramref name="height"/> goes (its rectangle) and reads
     /// from (its first pixel and steps); none when it draws nothing, or reads outside the picture (then
@@ -1152,6 +1359,15 @@ private:
     /// </summary>
     void ConvertMovies(SDL_GPUCommandBuffer& commands, FrameRun& run);
     /// <summary>
+    /// Port-only (KindHdSmooth): marks in the index picture's green of each version 1 HD art frame gone up in
+    /// <paramref name="run"/> (FrameRun::CoverageMarks) which original pixels its frame covers, its alpha at their centre
+    /// over half (shaders/hdcoverage.pshader), a render pass for each index texture, after the frame's uploads and before
+    /// its draws: the pixels its index only spread to (marked 255 and 254, as drawn ones) become 253 and 252, a version 2
+    /// frame's spread marks; one it covers without an index, 249. shaders/draw.pshader's HdMaskCoverage then reads them
+    /// 2 x 2 in a gather, not the frame's alpha a pixel at a time. A version 2 frame's marks are the pack's.
+    /// </summary>
+    void MarkHdCoverage(SDL_GPUCommandBuffer& commands, const FrameRun& run);
+    /// <summary>
     /// Port-only: how HD art frame <paramref name="frame"/> of shape table <paramref name="table"/> draws its edges: its
     /// own when it holds its blended pixels (an effect's) or its table keeps them (MCHdArt::KeepsFrameEdges), else
     /// smooth.
@@ -1268,16 +1484,34 @@ private:
                                           const std::function<Extent()>& measure,
                                           const std::function<void(std::span<uint8_t>, const Extent&)>& decode);
     /// <summary>
-    /// Port-only: the image of a shape drawn from a version 2 HD frame (<see cref="MCHdArt::Frame::Marked"/>, with
-    /// <paramref name="seed"/>), its index picture standing for the original's rows, which a pack's shape table may
-    /// leave out (SPEC-pack-v2.md's record 1): the frame's original size, found by the frame's number.
+    /// Where a shape's draws read its indices (Shape): an atlas page's place (<see cref="AtlasShapeIndices"/>), or
+    /// port-only (SPEC-memory.md's indices) a version 2 HD frame's own index picture on the GPU
+    /// (<see cref="HdShapeIndices"/>, read as its marks: Picture::HdMarks); its width, and the colours of the pixels
+    /// it draws (a translucent shape with none a translucent draw shows opaque has no index pass).
     /// </summary>
-    DataImage& HdIndexImage(const MCHdArt::Frame& frame, uint64_t seed);
+    struct ShapeIndices
+    {
+        SourceKind Source = SourceKind::None;
+        uint32_t Index = 0;
+        int32_t X = 0;
+        int32_t Y = 0;
+        int32_t Width = 0;
+        std::bitset<256> Colors;
+    };
+
     /// <summary>
-    /// <see cref="HdIndexImage"/>, in the atlas as the original's rows decode (MCShapeRows::Decode): each pixel the
-    /// original draws (MCHdArt::OriginalDrawsMark) its index, drawn; nothing elsewhere.
+    /// The atlas's image of frame <paramref name="shapeNum"/> of <paramref name="table"/> (its rows
+    /// <paramref name="data"/>, <paramref name="rows"/> of them, with <paramref name="seed"/>), decoded the first time;
+    /// none for an empty one or one larger than an atlas page.
     /// </summary>
-    DataImage& AtlasForHdIndices(const MCHdArt::Frame& frame, uint64_t seed);
+    std::optional<ShapeIndices> AtlasShapeIndices(std::span<const uint8_t> table, int32_t shapeNum,
+                                                  std::span<const uint8_t> data, uint64_t seed, int32_t rows);
+    /// <summary>
+    /// Port-only: a version 2 HD frame's (<see cref="MCHdArt::Frame::Marked"/>) own index picture standing for the
+    /// original's rows, which a pack's shape table may leave out (SPEC-pack-v2.md's record 1): the frame's original
+    /// size; none when the GPU hasn't its picture.
+    /// </summary>
+    std::optional<ShapeIndices> HdShapeIndices(const MCHdArt::Frame& frame);
 
     /// <summary>
     /// Port-only: whether <paramref name="table"/> is a stripped shape table (sprite/MCHdArt.h's Stripped), with no rows
@@ -1465,9 +1699,39 @@ private:
     /// </summary>
     MCGpuHandle<SDL_GPUShader> _MovieShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _MoviePipeline;
+    /// <summary>
+    /// Port-only (KindHdSmooth): <see cref="MarkHdCoverage"/>'s shader and pipelines (quad.vshader and
+    /// shaders/hdcoverage.pshader, onto an R8G8 index texture, its green alone): the pass marking the pixels a frame
+    /// doesn't cover (its green less, REVERSE_SUBTRACT), then the one marking those it does (at least, MAX).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _HdCoverageShader;
+    std::array<MCGpuHandle<SDL_GPUGraphicsPipeline>, 2> _HdCoveragePipelines;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
+    /// <summary>Port-only: how the terrain layers run were drawn (the run's side).</summary>
+    GroundCounts _GroundCounts;
+    /// <summary>
+    /// Port-only (the kept surfaces), the run's side: how surfaces were drawn; the textures draws read, by address, with
+    /// the stamps of what they hold (pruned of those gone once twice as many as after the last pruning); the last stamp
+    /// given.
+    /// </summary>
+    KeptCounts _KeptCounts;
+    std::unordered_map<const SDL_GPUTexture*, TextureStamp> _TextureStamps;
+    size_t _StampsPruned = 0;
+    uint64_t _LastStamp = 0;
+    /// <summary>
+    /// Port-only, for the tests (CheckKeptSurfaces): the surfaces the last frame run drew from their tiles, each drawn
+    /// whole apart too (its colours and indices).
+    /// </summary>
+    struct KeptCheck
+    {
+        uint16_t Surface = 0;
+        Texture Colors;
+        Texture Indices;
+    };
+
+    std::vector<KeptCheck> _KeptChecks;
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;
@@ -1585,11 +1849,6 @@ private:
     /// <summary>The images made from registered data, by the address they're read from and their seed.</summary>
     std::map<std::pair<MCAddressKey, uint64_t>, DataImage> _DataImages;
     /// <summary>
-    /// Port-only: the images made from version 2 HD frames' index pictures (<see cref="HdIndexImage"/>), by the frame's
-    /// number and their seed; let go with the atlas.
-    /// </summary>
-    std::map<std::pair<uint64_t, uint64_t>, DataImage> _HdIndexImages;
-    /// <summary>
     /// Port-only: the hashes of the shape tables nothing attached (<see cref="HdShape"/>), by the table's address, until
     /// its bytes change; none for a table outside the registered blocks.
     /// </summary>
@@ -1619,6 +1878,13 @@ private:
         smol_atlas_item_t* HdItem = nullptr;
         /// <summary>Port-only: an HD art frame's place in _HdOrder.</summary>
         std::list<uint64_t>::iterator InOrder;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's indices): a version 2 HD frame's, whose index picture stands for the original's
+        /// rows: shape draws read its green as the frame's marks (shaders/draw.pshader's HdMarksSource), and the colours
+        /// of the pixels the original draws, found once as it goes up (the CPU's copy of its indices may go after).
+        /// </summary>
+        bool HdMarks = false;
+        std::bitset<256> DrawnColors;
     };
 
     std::unordered_map<uint64_t, Picture> _Pictures;
@@ -1685,6 +1951,21 @@ private:
     /// <summary>Port-only (HD movies): <see cref="ConvertMovies"/> for one picture.</summary>
     void ConvertMovie(SDL_GPUCommandBuffer& commands, const MovieConversion& movie);
     /// <summary>
+    /// Port-only (KindHdSmooth): a version 1 HD art frame gone up as a frame runs, whose index picture's green
+    /// <see cref="MarkHdCoverage"/> marks: the textures of its indices and colours (a shared page's, or its own), its
+    /// place in them, its original's size and its scale.
+    /// </summary>
+    struct HdCoverageMark
+    {
+        Texture Indices;
+        Texture Colors;
+        PicturePlace Place;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        uint32_t Scale = 1;
+    };
+
+    /// <summary>
     /// Port-only (HD movies): lets movie <paramref name="movie"/>'s picture go, kept till the frame runs when its draws
     /// wait for its colours.
     /// </summary>
@@ -1696,7 +1977,7 @@ private:
     /// <summary>Port-only: how each font's two-tone glyphs are layered, by the font's address, until its bytes change.</summary>
     std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
-    int64_t _HdIndexImagesMade = 0;
+    int64_t _HdIndexPicturesDrawn = 0;
     int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
     std::optional<AuditedDraw> _Audited;
@@ -1797,6 +2078,8 @@ private:
         std::shared_ptr<SDL_GPUTexture> Texture;
         std::shared_ptr<SDL_GPUTexture> HdColors;
         PicturePlace Place;
+        /// <summary>Port-only: Picture::HdMarks.</summary>
+        bool HdMarks = false;
     };
 
     /// <summary>
@@ -1806,11 +2089,27 @@ private:
     std::vector<SharedPage> _HdPages;
     std::vector<SharedPage> _SharpPages;
     std::vector<RetiredPlace> _RetiredPlaces;
+    std::vector<OpenPage> _OpenPages;
+    /// <summary>Port-only (SPEC-memory.md's pages): the HD pages made ahead (KeepSparePages), at most one a layout.</summary>
+    std::vector<SharedPage> _SparePages;
+    /// <summary>Port-only (SPEC-memory.md's pages): the frame from which a spare page is tried again.</summary>
+    uint64_t _SpareRetryFrame = 0;
     /// <summary>Port-only: the shared pages of kind <paramref name="kind"/>.</summary>
     std::vector<SharedPage>& PagesOf(PageKind kind);
     /// <summary>
+    /// Port-only: a page of <paramref name="layout"/>, empty (its textures, counted under HD pictures when it's for HD
+    /// art frames, and its places); none when its textures couldn't be made (logged).
+    /// </summary>
+    std::optional<SharedPage> MakePage(const SharedLayout& layout);
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): as each frame's recording starts, a page made ahead for each layout of HD art
+    /// frames' pages in use, which PlaceShared takes before it makes one, so no page is made while a frame draws (but
+    /// for a frame needing several); let go once the layout's pages are.
+    /// </summary>
+    void KeepSparePages();
+    /// <summary>
     /// Port-only: puts <paramref name="picture"/> in a page of kind <paramref name="kind"/> (<paramref name="layout"/>'s;
-    /// one made when none has room): <paramref name="width"/> x <paramref name="height"/> of its texture's pixels, and an
+    /// one made when none has room, or the spare one: KeepSparePages): <paramref name="width"/> x <paramref name="height"/> of its texture's pixels, and an
     /// HD art frame's colours <paramref name="hdWidth"/> x <paramref name="hdHeight"/> (0 x 0: none); its page's textures
     /// become its own. False, leaving it as it was, for a picture over half a page or when no page could be made.
     /// </summary>
@@ -1853,7 +2152,9 @@ private:
         std::vector<uint8_t> Stream;
         /// <summary>
         /// Port-only: the HD art pack's copy of the pixels as last uploaded (<see cref="MCHdArt::FindPicture"/>), and
-        /// whether it was looked for since, in the pack then set (<see cref="MCHdArt::PackVersion"/>).
+        /// whether it was looked for since, in the pack then set (<see cref="MCHdArt::PackVersion"/>). It is the frame's
+        /// record, without its colours: the pack's cache alone holds them, letting them go once the GPU holds the
+        /// picture and reading them again if the GPU lets it go (<see cref="MCHdArt::ColorsOf"/>).
         /// </summary>
         std::shared_ptr<const MCHdArt::Frame> Hd;
         bool HdLooked = false;
@@ -1964,4 +2265,6 @@ struct MCVulkanRenderer::FrameRun
     std::array<float, 3> Look{};
     /// <summary>Port-only (HD movies): the movie pictures whose colours the frame makes from their planes.</summary>
     std::vector<MovieConversion> Conversions;
+    /// <summary>Port-only (KindHdSmooth): the version 1 HD art frames gone up whose coverage the frame marks.</summary>
+    std::vector<HdCoverageMark> CoverageMarks;
 };

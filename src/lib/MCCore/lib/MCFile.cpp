@@ -1,7 +1,9 @@
 #include "stdafx.h"
 #include "lib/MCFile.h"
 #include "lib/MCFastFileSet.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCPacketFile.h"
+#include "lib/MCReleaseData.h"
 #include "main/MCGameContext.h"
 #include "platform/MCFileSystem.h"
 
@@ -92,21 +94,55 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
     _FileName = fileName;
     _FileMode = mode;
 
+    // Read whole into memory: a file like this takes no children.
+    const auto inRam = [this](std::vector<uint8_t>&& image)
+    {
+        _FileImage = std::move(image);
+        _InRam = true;
+        _Length = static_cast<uint32_t>(_FileImage.size());
+        _LogicalPosition = 0;
+        return NO_ERR;
+    };
+
+    // Port-only: a file read ahead (lib/MCFilesAhead.h) was looked for already, as below: an archive's entry, or none.
+    if (mode == MCFileMode::Read)
+    {
+        if (std::optional<MCFilesAhead::MCAheadFile> ahead = MCFilesAhead::Take(_FileName); ahead.has_value())
+        {
+            MCFilesAhead::Looked(_FileName);
+            _State.reset();
+
+            if (!ahead->Found)
+            {
+                _FileName.clear();
+                return FILE_NOT_FOUND;
+            }
+
+            return inRam(std::move(ahead->Bytes));
+        }
+    }
+
     // Port-only: a file the game made for itself (MCFileSystem::PutImage) reads as a FastFile entry does, whatever
     // the folders hold.
     std::optional<std::vector<uint8_t>> put =
         mode == MCFileMode::Read ? MCFileSystem::PutImageAt(_FileName) : std::nullopt;
 
-    // Port: files opened to write live in the user folder.
+    // Port-only (Redux HD): in a match, a file the release's own copy holds is read only from it (lib/MCReleaseData.h).
+    const MCReleaseData::MCHeld held =
+        mode == MCFileMode::Read && !put.has_value() ? MCReleaseData::Find(_FileName) : MCReleaseData::MCHeld{};
+
+    // Port: files opened to write live in the user folder; a file the release's copy holds loose is read from there.
     std::filesystem::path path;
 
     if (!put.has_value())
     {
-        path = mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName) : MCFileSystem::ResolveWrite(_FileName);
+        path = held.Loose.has_value()     ? *held.Loose
+               : mode == MCFileMode::Read ? MCFileSystem::Resolve(_FileName)
+                                          : MCFileSystem::ResolveWrite(_FileName);
     }
 
     std::optional<MCDiskFile> disk =
-        put.has_value()
+        put.has_value() || held.InArchive
             ? std::nullopt
             : MCDiskFile::Open(path, mode == MCFileMode::Create ? MCDiskFileMode::Create : MCDiskFileMode::Read,
                                MCDiskFileReads::Buffered);
@@ -119,30 +155,41 @@ int32_t MCFile::Open(std::string_view fileName, MCFileMode mode)
             return FILE_NOT_FOUND;
         }
 
-        // Port: a file the context's source holds in memory (a test's) reads as a FastFile entry does.
-        if (put.has_value())
+        if (held)
         {
-            _FileImage = std::move(*put);
-        }
-        else if (const auto image = MCFileSystem::FindImage(_FileName); image.has_value())
-        {
-            _FileImage.assign(image->begin(), image->end());
-        }
-        else if (auto entry = MCGameContext::Current().FastFiles().Read(_FileName); entry.has_value())
-        {
-            _FileImage = std::move(*entry);
-        }
-        else
-        {
+            if (auto entry = held.InArchive ? MCReleaseData::ReadArchived(_FileName) : std::nullopt; entry.has_value())
+            {
+                return inRam(std::move(*entry));
+            }
+
             _FileName.clear();
             return FILE_NOT_FOUND;
         }
 
-        // Read whole into memory: a file like this takes no children.
-        _InRam = true;
-        _Length = static_cast<uint32_t>(_FileImage.size());
-        _LogicalPosition = 0;
-        return NO_ERR;
+        // Port: a file the context's source holds in memory (a test's) reads as a FastFile entry does.
+        if (put.has_value())
+        {
+            return inRam(std::move(*put));
+        }
+
+        if (const auto image = MCFileSystem::FindImage(_FileName); image.has_value())
+        {
+            return inRam(std::vector<uint8_t>(image->begin(), image->end()));
+        }
+
+        // Port-only: a file looked for in the archives, found or not, may be read ahead next time (lib/MCFilesAhead.h).
+        if (mode == MCFileMode::Read)
+        {
+            MCFilesAhead::Looked(_FileName);
+        }
+
+        if (auto entry = MCGameContext::Current().FastFiles().Read(_FileName); entry.has_value())
+        {
+            return inRam(std::move(*entry));
+        }
+
+        _FileName.clear();
+        return FILE_NOT_FOUND;
     }
 
     _LogicalPosition = 0;

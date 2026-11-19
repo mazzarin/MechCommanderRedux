@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCFileSystem.h"
+#include "lib/MCFilesAhead.h"
 #include "main/MCGameContext.h"
 
 namespace
@@ -223,12 +224,27 @@ namespace
         return result;
     }
 
+    /// <summary>The original's five archives, which a launcher's folder never gives (MCFileSystem::IsLauncherContent).</summary>
+    constexpr std::array<std::string_view, 5> BaseArchives = {"ART.FST", "MISC.FST", "MISSION.FST", "SHAPES.FST",
+                                                              "TERRAIN.FST"};
+
+    /// <summary>A launcher's maps' and mods' kinds, and the folder its missions are in.</summary>
+    constexpr std::string_view ArchiveKind = ".fst";
+    constexpr std::string_view MissionKind = ".mpk";
+    constexpr std::array<std::string_view, 2> MissionFolder = {"data", "savegame"};
+
+    /// <summary>Whether <paramref name="name"/> ends with <paramref name="kind"/>, case ignored.</summary>
+    bool IsKind(std::string_view name, std::string_view kind)
+    {
+        return name.size() > kind.size() && MCIEquals(name.substr(name.size() - kind.size()), kind);
+    }
+
     /// <summary>
-    /// Adds the files in <paramref name="folder"/> that match <paramref name="pattern"/> to <paramref name="files"/>
-    /// (once each, case ignored), marked as found in the user folder or the install by <paramref name="userFolder"/>.
+    /// Adds the files in <paramref name="folder"/> that match <paramref name="pattern"/> (and <paramref name="wanted"/>,
+    /// when given) to <paramref name="files"/> (once each, case ignored), marked as found by <paramref name="found"/>.
     /// </summary>
     void AddMatches(const std::filesystem::path& folder, const std::string& pattern, std::vector<MCFoundFile>& files,
-                    bool userFolder)
+                    bool MCFoundFile::* found, const std::function<bool(std::string_view)>& wanted = {})
     {
         std::error_code error;
 
@@ -246,7 +262,7 @@ namespace
 
             const std::string name = MCFileSystem::ToUtf8(entry.path().filename());
 
-            if (!MCFileSystem::WildcardMatch(pattern, name))
+            if (!MCFileSystem::WildcardMatch(pattern, name) || (wanted && !wanted(name)))
             {
                 continue;
             }
@@ -254,7 +270,7 @@ namespace
             const auto listed = std::ranges::find_if(files, [&](const MCFoundFile& other)
                                                      { return MCPort::StrICmp(other.Name, name) == 0; });
             MCFoundFile& file = listed != files.end() ? *listed : files.emplace_back(MCFoundFile{.Name = name});
-            (userFolder ? file.InUserFolder : file.InGameFolder) = true;
+            file.*found = true;
         }
     }
 }
@@ -294,6 +310,28 @@ const std::filesystem::path& MCDiskFileSource::UserRoot() const
     return _UserRoot.empty() ? _Root : _UserRoot;
 }
 
+void MCDiskFileSource::SetLauncherRoot(const std::filesystem::path& root)
+{
+    _LauncherRoot = root;
+}
+
+const std::filesystem::path& MCDiskFileSource::LauncherRoot() const
+{
+    return _LauncherRoot;
+}
+
+std::optional<std::filesystem::path> MCDiskFileSource::InLauncherFolder(std::string_view gamePath) const
+{
+    if (_LauncherRoot.empty() || IsAbsoluteGamePath(gamePath) || !MCFileSystem::IsLauncherContent(gamePath))
+    {
+        return std::nullopt;
+    }
+
+    std::filesystem::path launcher = ResolveFrom(_LauncherRoot, gamePath);
+    std::error_code error;
+    return std::filesystem::is_regular_file(launcher, error) ? std::optional(std::move(launcher)) : std::nullopt;
+}
+
 std::filesystem::path MCDiskFileSource::Resolve(std::string_view gamePath)
 {
     if (HasOverlay(gamePath))
@@ -305,6 +343,11 @@ std::filesystem::path MCDiskFileSource::Resolve(std::string_view gamePath)
         {
             return user;
         }
+    }
+
+    if (std::optional<std::filesystem::path> launcher = InLauncherFolder(gamePath))
+    {
+        return std::move(*launcher);
     }
 
     return ResolveFrom(_Root, gamePath);
@@ -323,7 +366,8 @@ std::filesystem::path MCDiskFileSource::ResolveWrite(std::string_view gamePath, 
 
     if (copyExisting && !std::filesystem::exists(user, error))
     {
-        const std::filesystem::path installed = ResolveFrom(_Root, gamePath);
+        // The copy the game reads: a launcher's map or mod, else the install's (the launcher's folder is never written).
+        const std::filesystem::path installed = InLauncherFolder(gamePath).value_or(ResolveFrom(_Root, gamePath));
 
         if (std::filesystem::is_regular_file(installed, error))
         {
@@ -387,10 +431,21 @@ std::vector<MCFoundFile> MCDiskFileSource::FindFileSources(std::string_view game
 
     if (HasOverlay(gamePattern))
     {
-        AddMatches(ResolveFrom(_UserRoot, folder), pattern, files, true);
+        AddMatches(ResolveFrom(_UserRoot, folder), pattern, files, &MCFoundFile::InUserFolder);
     }
 
-    AddMatches(ResolveFrom(_Root, folder), pattern, files, false);
+    // A launcher's folder lists only its maps and mods.
+    if (!_LauncherRoot.empty() && !IsAbsoluteGamePath(gamePattern))
+    {
+        AddMatches(ResolveFrom(_LauncherRoot, folder), pattern, files, &MCFoundFile::InLauncherFolder,
+                   [&folder](std::string_view name)
+                   {
+                       return MCFileSystem::IsLauncherContent(folder.empty() ? std::string(name)
+                                                                             : std::format("{}\\{}", folder, name));
+                   });
+    }
+
+    AddMatches(ResolveFrom(_Root, folder), pattern, files, &MCFoundFile::InGameFolder);
     std::ranges::sort(files, MCFileSystem::NameLess, &MCFoundFile::Name);
     return files;
 }
@@ -517,6 +572,38 @@ namespace MCFileSystem
         return Files().UserRoot();
     }
 
+    void SetLauncherRoot(const std::filesystem::path& root)
+    {
+        Files().SetLauncherRoot(root);
+    }
+
+    const std::filesystem::path& LauncherRoot()
+    {
+        return Files().LauncherRoot();
+    }
+
+    bool IsLauncherContent(std::string_view gamePath)
+    {
+        if (IsAbsoluteGamePath(gamePath))
+        {
+            return false;
+        }
+
+        std::vector<std::string> parts = SplitGamePath(gamePath);
+        std::erase(parts, ".");
+
+        // An archive in the folder's root, but the original's five.
+        if (parts.size() == 1)
+        {
+            return IsKind(parts[0], ArchiveKind) &&
+                   std::ranges::none_of(BaseArchives, [&](std::string_view base) { return MCIEquals(parts[0], base); });
+        }
+
+        // A mission in data\savegame.
+        return parts.size() == MissionFolder.size() + 1 && IsKind(parts.back(), MissionKind) &&
+               std::ranges::equal(std::span(parts).first(MissionFolder.size()), MissionFolder, MCIEquals);
+    }
+
     bool SetSettingsRoot(const std::filesystem::path& root)
     {
         SettingsFolder().clear();
@@ -581,6 +668,8 @@ namespace MCFileSystem
 
     std::filesystem::path ResolveWrite(std::string_view gamePath, bool copyExisting)
     {
+        // Port-only: a file about to be written is looked for again by its next open (lib/MCFilesAhead.h).
+        MCFilesAhead::Drop(gamePath);
         return Files().ResolveWrite(gamePath, copyExisting);
     }
 
@@ -611,6 +700,7 @@ namespace MCFileSystem
 
     void PutImage(std::string_view gamePath, MCImageMaker make)
     {
+        MCFilesAhead::Drop(gamePath);
         MCPutImages& images = PutImages();
         const std::scoped_lock lock(images.Lock);
         images.Files.insert_or_assign(PutKey(gamePath), MCPutImage{.Make = std::move(make)});
@@ -642,6 +732,19 @@ namespace MCFileSystem
         return *found->second.Made;
     }
 
+    bool PutsImage(std::string_view gamePath)
+    {
+        MCPutImages& images = PutImages();
+
+        if (!images.Any)
+        {
+            return false;
+        }
+
+        const std::scoped_lock lock(images.Lock);
+        return images.Files.contains(PutKey(gamePath));
+    }
+
     void ClearPutImages()
     {
         MCPutImages& images = PutImages();
@@ -657,21 +760,26 @@ namespace MCFileSystem
 
     bool RemoveFile(std::string_view gamePath)
     {
+        MCFilesAhead::Drop(gamePath);
         return Files().RemoveFile(gamePath);
     }
 
     bool RemoveSave(std::string_view gamePath)
     {
+        MCFilesAhead::Drop(gamePath);
         return Files().RemoveSave(gamePath);
     }
 
     bool RenameFile(std::string_view fromGamePath, std::string_view toGamePath)
     {
+        MCFilesAhead::Drop(fromGamePath);
+        MCFilesAhead::Drop(toGamePath);
         return Files().RenameFile(fromGamePath, toGamePath);
     }
 
     bool CopyFile(std::string_view fromGamePath, std::string_view toGamePath)
     {
+        MCFilesAhead::Drop(toGamePath);
         return Files().CopyFile(fromGamePath, toGamePath);
     }
 }

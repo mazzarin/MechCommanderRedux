@@ -197,13 +197,13 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(MCHdSettings::Default(MCHdSettings::Find("MechBraking")), 1);
     CHECK_EQ(MCHdSettings::Default(MCHdSettings::Find("MoreUnits")), 1);
 
-    // PREFS without MoreUnits: the personal build's player may own 100 units, and the setting at its default isn't
+    // PREFS without MoreUnits: the personal build's player may own 200 units, and the setting at its default isn't
     // written.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "mc_personal_gameplay_prefs.cfg";
     WriteHdPrefs(path, [](MCFitIniFile&) {});
     ReadHdPrefs(path);
     CHECK_EQ(GMoreUnits, 1);
-    CHECK_EQ(MaxUnits(), 100);
+    CHECK_EQ(MaxUnits(), 200);
     WriteHdPrefs(path, [](MCFitIniFile& prefs) { MCHdSettings::Write(prefs); });
     CHECK(!SavedSetting(path, "MoreUnits").has_value());
     std::filesystem::remove(path);
@@ -263,11 +263,11 @@ TEST_CASE("hd settings: PREFS keeps every HD setting and reads it back")
 }
 
 /// <summary>
-/// Port-only (MoreUnits): PREFS's MoreUnits raises the unit limit: read as on, a player outside a match may own 100
+/// Port-only (MoreUnits): PREFS's MoreUnits raises the unit limit: read as on, a player outside a match may own 200
 /// mechs and vehicles; written only while it differs from its default (off, in the tests), so PREFS without it reads
 /// off, the original's 50.
 /// </summary>
-TEST_CASE("hd settings: PREFS keeps MoreUnits, which raises the unit limit to 100")
+TEST_CASE("hd settings: PREFS keeps MoreUnits, which raises the unit limit to 200")
 {
     const std::vector<int32_t> was = MCHdSettings::Now();
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "mc_more_units_prefs.cfg";
@@ -275,7 +275,7 @@ TEST_CASE("hd settings: PREFS keeps MoreUnits, which raises the unit limit to 10
     WriteHdPrefs(path, [](MCFitIniFile& prefs) { prefs.WriteIdBoolean("MoreUnits", true); });
     ReadHdPrefs(path);
     CHECK_EQ(GMoreUnits, 1);
-    CHECK_EQ(MaxUnits(), 100);
+    CHECK_EQ(MaxUnits(), 200);
     WriteHdPrefs(path, [](MCFitIniFile& prefs) { MCHdSettings::Write(prefs); });
     CHECK_EQ(SavedSetting(path, "MoreUnits"), std::optional<int32_t>(1));
 

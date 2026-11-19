@@ -1,2 +1,2 @@
-level=1
-sha256=aac97503c32fcef18ebad11ebdcb8995a2e9bd2e8eed6829c810f1033b725bbd
+level=2
+sha256=ada8973507e95a8c326797eb00a8bed5a84d644b5f1d9fcdafe27d75edc236f0

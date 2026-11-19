@@ -7,6 +7,16 @@ namespace
     /// <summary>A shape header's first and last rows (VFX's: 0x0c and 0x14).</summary>
     constexpr size_t HeaderTopAt = 0x0c;
     constexpr size_t HeaderBottomAt = 0x14;
+
+    /// <summary>
+    /// Byte <paramref name="at"/> of a shape's rows, 0 (a row's end) past them: a shape's rows may end before its
+    /// header's do (the game's vr134.shp, its sold-out outline: a header and no rows), and nothing past them is the
+    /// shape's.
+    /// </summary>
+    uint8_t RowByte(std::span<const uint8_t> bytes, size_t at)
+    {
+        return at < bytes.size() ? bytes[at] : 0;
+    }
 }
 
 size_t MCShapeRows::Extent(std::span<const uint8_t> bytes, int32_t rows, int32_t& width)
@@ -20,7 +30,7 @@ size_t MCShapeRows::Extent(std::span<const uint8_t> bytes, int32_t rows, int32_t
 
         for (;;)
         {
-            const uint8_t token = bytes[data++];
+            const uint8_t token = RowByte(bytes, data++);
             const int32_t count = token >> 1;
 
             if (count == 0)
@@ -30,7 +40,7 @@ size_t MCShapeRows::Extent(std::span<const uint8_t> bytes, int32_t rows, int32_t
                     break;
                 }
 
-                x += bytes[data++];
+                x += RowByte(bytes, data++);
                 continue;
             }
 
@@ -41,7 +51,7 @@ size_t MCShapeRows::Extent(std::span<const uint8_t> bytes, int32_t rows, int32_t
         width = std::max(width, x);
     }
 
-    return data;
+    return std::min(data, bytes.size());
 }
 
 void MCShapeRows::Decode(std::span<const uint8_t> bytes, int32_t rows, int32_t width, std::span<uint8_t> out)
@@ -56,7 +66,7 @@ void MCShapeRows::Decode(std::span<const uint8_t> bytes, int32_t rows, int32_t w
 
         for (;;)
         {
-            const uint8_t token = bytes[data++];
+            const uint8_t token = RowByte(bytes, data++);
             const int32_t count = token >> 1;
 
             if (count == 0)
@@ -66,7 +76,7 @@ void MCShapeRows::Decode(std::span<const uint8_t> bytes, int32_t rows, int32_t w
                     break;
                 }
 
-                const int32_t skip = bytes[data++];
+                const int32_t skip = RowByte(bytes, data++);
 
                 for (int32_t i = 0; i < skip; ++i)
                 {
@@ -79,7 +89,7 @@ void MCShapeRows::Decode(std::span<const uint8_t> bytes, int32_t rows, int32_t w
 
             for (int32_t i = 0; i < count; ++i)
             {
-                line[(x + i) * DecodedBytes] = (token & 1) ? bytes[data + i] : bytes[data];
+                line[(x + i) * DecodedBytes] = RowByte(bytes, (token & 1) ? data + i : data);
                 line[(x + i) * DecodedBytes + 1] = Drawn;
             }
 

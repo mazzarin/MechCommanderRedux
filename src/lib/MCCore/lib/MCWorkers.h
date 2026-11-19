@@ -13,6 +13,8 @@
 #include <thread>
 #include <vector>
 
+#include "platform/MCThreadPriority.h"
+
 /// <summary>
 /// Port-only: a few threads that help one thread (the game's) through work split into parts, such as the HD weather's
 /// marks. <see cref="Run"/> hands the parts out one at a time, first come first served, to its helpers and the calling
@@ -25,8 +27,25 @@
 class MCWorkers
 {
 public:
-    /// <summary>Workers with <paramref name="helpers"/> threads of their own (0: the calling thread does it all).</summary>
-    explicit MCWorkers(size_t helpers);
+    /// <summary>How the helpers' threads run beside the game's.</summary>
+    enum class Priority : uint8_t
+    {
+        /// <summary>As the game's threads (work the game's thread waits for).</summary>
+        Normal,
+        /// <summary>
+        /// Below them (work done ahead, which nothing waits for yet): a step below the thread they were made for, as HD
+        /// art's readers run (see <see cref="LowerThisThread"/>).
+        /// </summary>
+        Low,
+    };
+
+    /// <summary>
+    /// Workers with <paramref name="helpers"/> threads of their own (0: the calling thread does it all), running at
+    /// <paramref name="priority"/>; <see cref="Priority::Low"/>'s a step below <paramref name="like"/> (by default the
+    /// calling thread's priority).
+    /// </summary>
+    explicit MCWorkers(size_t helpers, Priority priority = Priority::Normal,
+                       MCThreadPriority like = MCCurrentThreadPriority());
     ~MCWorkers();
     MCWorkers(const MCWorkers&) = delete;
     MCWorkers& operator=(const MCWorkers&) = delete;
@@ -47,6 +66,14 @@ public:
     /// </summary>
     static size_t HelpersFor(size_t most);
 
+    /// <summary>
+    /// Runs the calling thread a step below <paramref name="like"/> (the game's thread's priority), for work done ahead,
+    /// as HD art's readers run: MCSetCurrentThreadPriority's step below, on macOS the default class and on Windows the
+    /// next priority down; not SDL's low priority, which on Windows is the lowest, two steps down. Logged when the system
+    /// refuses.
+    /// </summary>
+    static void LowerThisThread(MCThreadPriority like);
+
 private:
     /// <summary>A helper: waits for each batch of parts and takes its share of it, until asked to stop.</summary>
     void Help(std::stop_token stop);
@@ -58,6 +85,9 @@ private:
     void TakeParts(const std::function<void(size_t)>& work, size_t parts);
 
     size_t _HelperCount = 0;
+    Priority _Priority = Priority::Normal;
+    /// <summary>The thread's priority a step below which Priority::Low's helpers run.</summary>
+    MCThreadPriority _Like;
     /// <summary>Guards what follows, but for the counts the parts take and finish by.</summary>
     std::mutex _Lock;
     /// <summary>Told of every batch handed out, and of the workers' end.</summary>

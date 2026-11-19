@@ -389,6 +389,12 @@ public:
     bool CompositesOnGpu() const { return _Presenter->CompositesOnGpu(); }
 
     /// <summary>
+    /// Port-only: what the GPU renderer has recorded since the last frame (a rehearsal's uploads) run now, nothing shown
+    /// and no frame taken (MCPresenter::RunRecorded).
+    /// </summary>
+    std::expected<void, std::string> RunRecorded();
+
+    /// <summary>
     /// Draws the frame as <see cref="Present"/> would, at the screen's size, into an offscreen texture and reads it
     /// back as RGBA (tests compare it with <see cref="ComposeScreen"/>).
     /// </summary>
@@ -406,6 +412,14 @@ public:
     /// <summary>Maps an output point through a viewport to the logical screen (the pure form of <see cref="WindowToLogical"/>).</summary>
     static bool MapToLogical(const MCViewport& viewport, int logicalWidth, int logicalHeight, float x, float y,
                              float& logicalX, float& logicalY);
+
+    /// <summary>
+    /// Port-only: moves a point of the logical screen over a world drawn on a grid of its own (<paramref name="grids"/>,
+    /// the last over it: MCPresenter::ShownGrids) to the place of its window the picture shows there (MCDrawnGrid), so
+    /// what the player points at is what they see (by less than half a drawn pixel); kept in the world's rectangle. The
+    /// rest of <see cref="WindowToLogical"/>'s mapping.
+    /// </summary>
+    static void OnShownGrids(std::span<const MCShownGrid> grids, float& logicalX, float& logicalY);
 
     /// <summary>
     /// Tests: called at the start of each <see cref="Present"/>, with the screen as it is about to be shown (frames

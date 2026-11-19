@@ -66,6 +66,8 @@ cbuffer Terrain : register(b0, space1)
     uint4 haze;
     // The pane's corner in the window (xy); z: 1 in the seam pass; w: the relief atlases' scale (0: none).
     int4 pane;
+    // Port-only: the target's drawn grid's offset across and down (pixels.hlsli); zw unused.
+    int4 offset;
 };
 
 struct Output
@@ -233,7 +235,7 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
 
     // The drawn pixels showing the rectangle (instance.vshader's rule).
     Output output;
-    output.position = float4(DrawnCorner(cut, max(int4(targetSize), 1), quad[vertex]), 0.0, 1.0);
+    output.position = float4(DrawnCorner(cut, max(int4(targetSize), 1), offset.xy, quad[vertex]), 0.0, 1.0);
     output.rect = cut;
     output.source = int4(image.atlas.xy + cut.xy - at, 1, 1);
     output.op = uint4(flags, color, before, 0);

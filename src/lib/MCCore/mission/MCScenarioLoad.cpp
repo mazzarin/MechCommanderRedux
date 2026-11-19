@@ -40,7 +40,6 @@
 #include "object/MCMasterComponent.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
-#include "object/MCMiscTerrainObject.h"
 #include "object/MCMoverGameSystem.h"
 #include "object/MCMoverGroup.h"
 #include "object/MCObjectSystem.h"
@@ -304,7 +303,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     // Port-only: the tiles the map's mines draw, which the map's vertices don't name, read with the ground; and those
     // its bridges, forests and walls show once destroyed.
     MCTerrainReadMinesAhead();
-    MCTerrainReadOverlaysAhead(MCDestroyedTerrainTiles(), "destroyed terrain objects' tiles");
+    MCTerrainReadOverlaysAhead(MCTerrainDestroyedOverlaySlots(), "destroyed terrain objects' tiles");
 
     LoadScript(file);
     LoadWarriors(file);
@@ -502,13 +501,7 @@ auto MCScenario::LoadGameSystem() -> std::pair<int32_t, float>
 
     UpdateDisplay(false, true, 30, true, 2);
 
-    if (MasterComponentList.empty())
-    {
-        std::string componentName = GamePath(ObjectPath, "compbas", ".csv");
-        const int32_t loaded =
-            InitMasterComponentListExcel(componentName.data(), 0xff, MaxVisualRange / MaxWeaponRange, BaseSensorRange);
-        Assert(loaded == 0, static_cast<uint32_t>(loaded), " Could not load compBas.csv ");
-    }
+    LoadComponentListIfSwitched();
 
     AlwaysRevealed = RequireFit<uint8_t>(file, "AlwaysRevealed", " Could not find AlwaysRevealed in GameSys ");
     GodMode = OptionalFit<uint8_t>(file, "GodMode", 0);

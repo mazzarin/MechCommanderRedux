@@ -12,8 +12,8 @@
 class MCPacketFile;
 
 /// <summary>
-/// Port-only: a shape file opened for its loader to read whole (an effect's, a marker's, a shadow's, a damage
-/// diagram's). With HD art's numbered folders drawn, it's the HD pack's copy of the original's bytes
+/// Port-only: a shape file or picture opened for its loader to read whole (an effect's, a marker's, a shadow's, a damage
+/// diagram's, a menu's TGA or ART.PAK picture). With HD art's numbered folders drawn, it's the HD pack's copy of the original's bytes
 /// (MCHdArt::PackShapeFile), so the loader reads nothing of the original's; else the game's file as MCFile opens it, a
 /// read the HD guard notes. It opens, sizes and reads as MCFile does.
 /// </summary>
@@ -21,9 +21,9 @@ class MCShapeFile
 {
 public:
     /// <summary>The HD guard's kind of read for a shape file read from the game's files.</summary>
-    static constexpr std::string_view FileRead = "a shape file read from the game's files";
+    static constexpr std::string_view FileRead = "a shape file or picture read from the game's files";
     /// <summary>The HD guard's kind of read for a PAK's shape packet read from the game's files.</summary>
-    static constexpr std::string_view PacketRead = "a PAK's shape packet read from the game's files";
+    static constexpr std::string_view PacketRead = "a PAK's shape packet or picture read from the game's files";
 
     MCShapeFile() = default;
     MCShapeFile(const MCShapeFile&) = delete;

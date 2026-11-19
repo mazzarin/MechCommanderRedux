@@ -124,6 +124,9 @@
     <ClCompile Include="tests\GameSessionTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\GpuChannelsTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\GpuDrawingTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -185,6 +188,9 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\InternetScreenTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\LauncherFolderTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\LibTests.cpp">
@@ -260,6 +266,9 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\PurchaseTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\ReleaseCopyTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\RoomEndTests.cpp">
@@ -408,6 +417,9 @@
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCFakeUpdaterBackend.h">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\MCFastFileFixture.h">
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCFilePatchFixture.h">

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "mission/MCMission.h"
+#include "lib/MCReleaseData.h"
 #include "ai/MCMoveGeometry.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFirstUse.h"
@@ -26,6 +27,7 @@
 #include "gui/MCUpdateDisplay.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFile.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCControlsPanel.h"
@@ -62,6 +64,7 @@
 #include "logistics/MCBriefingScreen.h"
 
 int32_t GlobalGameSegment = 0;
+int32_t TestBriefingSeconds = 0;
 float MinPilotSkill = 0.0f;
 float MaxPilotSkill = 0.0f;
 uint32_t ScenarioResult = 0;
@@ -152,6 +155,72 @@ namespace
 
             callback.reset();
         }
+    }
+
+    /// <summary>
+    /// Port-only, for test runs (-hdbriefing): reads ahead each of the player's mechs in the scenario's file, as its
+    /// briefing reads each lance mech as it's placed (MCHdArt::HoldMechAhead).
+    /// </summary>
+    void HoldPlayersMechs(const std::string& scenarioName)
+    {
+        MCFitIniFile file;
+
+        if (file.Open(GamePath(MissionPath, scenarioName, ".fit")) != 0 || file.SeekBlock("Parts") != 0)
+        {
+            SDL_Log("-hdbriefing: no parts in %s's file; its mechs are read at the load", scenarioName.c_str());
+            return;
+        }
+
+        const uint32_t parts = file.Read<uint32_t>("NumParts").value_or(0);
+
+        // Part n is the file's Part<n> block.
+        for (uint32_t part = 1; part <= parts; ++part)
+        {
+            if (file.SeekBlock(std::format("Part{}", part)) == 0 && file.Read<bool>("PlayerPart").value_or(false))
+            {
+                if (const MCFitResult<uint32_t> chassis = file.Read<uint32_t>("ObjectNumber"); chassis.has_value())
+                {
+                    MCHdArt::HoldMechAhead(*chassis);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Port-only, for test runs (-hdbriefing): whether a game segment's load still waits for its TestBriefingSeconds,
+    /// its hold started on the first call as the mission's briefing would start it (its list, then the player's mechs).
+    /// </summary>
+    bool WaitingAtBriefing(const std::string& scenarioName)
+    {
+        using Clock = std::chrono::steady_clock;
+        static std::optional<Clock::time_point> started;
+
+        if (GlobalGameSegment == 0 || TestBriefingSeconds <= 0)
+        {
+            return false;
+        }
+
+        if (!started.has_value())
+        {
+            started = Clock::now();
+            MCHdArt::StartBriefingHold(scenarioName, MCHdArt::BriefingFolders(scenarioName));
+            HoldPlayersMechs(scenarioName);
+            MCFrameLog::Note(std::format("briefing: the hold starts, {} s before the load", TestBriefingSeconds));
+            MCHdArt::TraceNote("briefing: the hold starts");
+        }
+
+        if (Clock::now() - *started < std::chrono::seconds(TestBriefingSeconds))
+        {
+            return true;
+        }
+
+        // Once: a later scenario of the run loads at once.
+        constexpr double BytesPerMb = 1024.0 * 1024.0;
+        TestBriefingSeconds = 0;
+        MCFrameLog::Note(std::format("briefing: Launch, {:.1f} MB held, {} reads",
+                                     static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb, MCHdArt::HeldReads()));
+        MCHdArt::TraceNote("briefing: Launch");
+        return false;
     }
 }
 
@@ -280,6 +349,45 @@ auto MCMission::ReadLists(MCFitIniFile& file, bool campaign, bool readInDemo) ->
     return ReadNameList(file, "Scenario", numScenarios, Scenarios);
 }
 
+namespace
+{
+    /// <summary>The count of MCReleaseData::Switches the component list was read at.</summary>
+    uint32_t ComponentListSwitches = 0;
+}
+
+auto LoadComponentListIfSwitched() -> void
+{
+    // Port-only (Redux HD): read again when what's read has changed since (a match begun or ended), so a match plays
+    // the release's weapons and single player the game folder's.
+    if (!MasterComponentList.empty() && ComponentListSwitches == MCReleaseData::Switches())
+    {
+        return;
+    }
+
+    ComponentListSwitches = MCReleaseData::Switches();
+    // MCX.EXE allocates this FIT (Fatal " Game System File " when out of memory) and never frees it.
+    MCFitIniFile gameSystemFile;
+    uint32_t readResult = static_cast<uint32_t>(gameSystemFile.Open(GamePath(MissionPath, "gamesys", ".fit")));
+    Assert(readResult == 0, readResult, " Could not open GameSys.Fit file ");
+    readResult = static_cast<uint32_t>(gameSystemFile.SeekBlock("General"));
+    Assert(readResult == 0, readResult, " Could not find General Block in GameSys ");
+    float maxVisualRange = 0.0f;
+    float maxWeaponRange = 0.0f;
+    float baseSensorRange = 0.0f;
+    readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "MaxVisualRange", maxVisualRange));
+    Assert(readResult == 0, readResult, " Could not find MaxVisualRange in GameSys ");
+    readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "MaxWeaponRange", maxWeaponRange));
+    Assert(readResult == 0, readResult, " Could not find MaxWeaponRange in GameSys ");
+    readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "BaseSensorRange", baseSensorRange));
+    Assert(readResult == 0, readResult, " Could not find BaseSensorRange in GameSys ");
+    gameSystemFile.Close();
+
+    std::string componentName = GamePath(ObjectPath, "compbas", ".csv");
+    const int32_t loadResult =
+        InitMasterComponentListExcel(componentName.data(), 0xff, maxVisualRange / maxWeaponRange, baseSensorRange);
+    Assert(loadResult == 0, static_cast<uint32_t>(loadResult), " Could not load compBas.csv ");
+}
+
 auto MCMission::Load(std::string_view missionName) -> int32_t
 {
     if (GlobalGameSegment != 0)
@@ -353,30 +461,7 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
     }
 
     // The component list, which logistics needs before any scenario has loaded it.
-    if (MasterComponentList.empty())
-    {
-        // MCX.EXE allocates this FIT (Fatal " Game System File " when out of memory) and never frees it.
-        MCFitIniFile gameSystemFile;
-        uint32_t readResult = static_cast<uint32_t>(gameSystemFile.Open(GamePath(MissionPath, "gamesys", ".fit")));
-        Assert(readResult == 0, readResult, " Could not open GameSys.Fit file ");
-        readResult = static_cast<uint32_t>(gameSystemFile.SeekBlock("General"));
-        Assert(readResult == 0, readResult, " Could not find General Block in GameSys ");
-        float maxVisualRange = 0.0f;
-        float maxWeaponRange = 0.0f;
-        float baseSensorRange = 0.0f;
-        readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "MaxVisualRange", maxVisualRange));
-        Assert(readResult == 0, readResult, " Could not find MaxVisualRange in GameSys ");
-        readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "MaxWeaponRange", maxWeaponRange));
-        Assert(readResult == 0, readResult, " Could not find MaxWeaponRange in GameSys ");
-        readResult = static_cast<uint32_t>(ReadLegacy(gameSystemFile, "BaseSensorRange", baseSensorRange));
-        Assert(readResult == 0, readResult, " Could not find BaseSensorRange in GameSys ");
-        gameSystemFile.Close();
-
-        std::string componentName = GamePath(ObjectPath, "compbas", ".csv");
-        const int32_t loadResult =
-            InitMasterComponentListExcel(componentName.data(), 0xff, maxVisualRange / maxWeaponRange, baseSensorRange);
-        Assert(loadResult == 0, static_cast<uint32_t>(loadResult), " Could not load compBas.csv ");
-    }
+    LoadComponentListIfSwitched();
 
     // Logistics.
     Logistics = std::make_shared<MCLogistics>();
@@ -686,14 +771,21 @@ auto MCMission::Run() -> int32_t
         {
             if (CurrentScenario != -1)
             {
+                const std::string scenarioName = (MultiPlayer() == nullptr || GlobalLog() == nullptr)
+                                                     ? Scenarios[static_cast<size_t>(CurrentScenario)]
+                                                     : std::string(GlobalLog()->MpMissionName);
+
+                // Port-only, for test runs: -hdbriefing's head start before a game segment's load.
+                if (WaitingAtBriefing(scenarioName))
+                {
+                    break;
+                }
+
                 if (SoundSystem() != nullptr)
                 {
                     SoundSystem()->StopDigitalMusic();
                 }
 
-                const std::string scenarioName = (MultiPlayer() == nullptr || GlobalLog() == nullptr)
-                                                     ? Scenarios[static_cast<size_t>(CurrentScenario)]
-                                                     : std::string(GlobalLog()->MpMissionName);
                 StartScenario(scenarioName);
                 GuiSystem().SetCursorVisible(true);
             }
@@ -853,8 +945,14 @@ auto MCMission::StartScenario(std::string_view name) -> void
 {
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
-    // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold).
-    MCHdArt::LetGoHold();
+
+    // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold); this one's,
+    // held since its briefing (SPEC-memory.md's "From the briefing", MCHdArt::StartBriefingHold), kept for its load.
+    if (!MCHdArt::HoldsFor(scenarioName))
+    {
+        MCHdArt::LetGoHold();
+    }
+
     // Port (personal): the reports measure the load, then the play (main/MCTelemetry.h).
     MCTelemetry::PlayLoading(scenarioName, MultiPlayer() != nullptr);
 
@@ -974,32 +1072,105 @@ auto MCMission::CloseResultsScreen() -> void
         return;
     }
 
-    EndScenario();
-
-    if (GlobalGameSegment == 0)
+    const auto nextState = [this]
     {
-        if (!GameOver)
+        if (GlobalGameSegment == 0)
         {
-            GamePaused = false;
-            State = MCMissionState::Logistics;
-            return;
+            if (!GameOver)
+            {
+                GamePaused = false;
+                State = MCMissionState::Logistics;
+                return;
+            }
+
+            if (InDemo != 0)
+            {
+                GamePaused = false;
+                CurrentMovie = 2;
+                State = MCMissionState::FeatureScreen;
+                NextState = MCMissionState::FeatureScreen;
+                return;
+            }
+
+            CurrentMovie = 3;
+            State = MCMissionState::PlayMovie;
+            NextState = MCMissionState::PlayMovie;
         }
 
-        if (InDemo != 0)
-        {
-            GamePaused = false;
-            CurrentMovie = 2;
-            State = MCMissionState::FeatureScreen;
-            NextState = MCMissionState::FeatureScreen;
-            return;
-        }
+        GamePaused = false;
+    };
 
-        CurrentMovie = 3;
-        State = MCMissionState::PlayMovie;
-        NextState = MCMissionState::PlayMovie;
+    // Port-only: the way back to logistics from the results (the screens made again, the campaign loaded, the briefing
+    // set up, or a match's room: 75-100 ms on the M4 Pro, two-thirds of it looking for and reading files) is done in
+    // the fade into logistics once the screen is nearly black, then what the fade into the screen it shows does
+    // (FadeOutWhile), where the results screen sat frozen for it before its fade began. From the click the files it
+    // will look for are read ahead on threads of their own (MCFilesAhead: those looked for in the archives while
+    // logistics was up before, its screens made of the same files every time), and the next briefing's map with the
+    // HD pictures; near black the game's thread makes the screens from them. A launcher's match ends at its results
+    // (KillTheGame), at once as the original's.
+    const std::function<void()> wayBack = EndScenarioLeavingWayBack();
+
+    if (wayBack == nullptr)
+    {
+        nextState();
+        return;
     }
 
-    GamePaused = false;
+    const auto back = [&wayBack, &nextState]
+    {
+        wayBack();
+        nextState();
+    };
+
+    // A launcher's match ends there (BackToLogistics: KillTheGame).
+    const std::shared_ptr<MCMultiPlayer> match = MultiPlayer();
+
+    if (match != nullptr && !MCRoomEnd::TakesOnAfterMatch() && match->InMission && IsMPlayerGame)
+    {
+        back();
+        return;
+    }
+
+    // What was read ahead and not taken goes once the screen is up, whatever happens on the way.
+    struct MCForget
+    {
+        MCForget() = default;
+        MCForget(const MCForget&) = delete;
+        MCForget& operator=(const MCForget&) = delete;
+        ~MCForget() { MCFilesAhead::Forget(); }
+    } forget;
+
+    MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles());
+
+    if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
+    {
+        MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+    }
+
+    FadeOutWhile(back);
+}
+
+auto MCMission::BriefedAfterResults() const -> std::optional<size_t>
+{
+    // The way back's own choice (EndScenarioLeavingWayBack, BackToLogistics): a solo mission lost goes back to its
+    // campaign's start, won to the main screen.
+    constexpr uint32_t LostBelow = 3;
+    const bool won = ScenarioResult > LostBelow;
+
+    if (MultiPlayer() != nullptr || GlobalGameSegment != 0 || GameOver || (won && Solo))
+    {
+        return std::nullopt;
+    }
+
+    const size_t briefed =
+        Solo && ScenarioResult < LostBelow ? 0 : static_cast<size_t>(std::max(CurrentScenario, 0)) + (won ? 1 : 0);
+
+    if (briefed >= Scenarios.size())
+    {
+        return std::nullopt;
+    }
+
+    return briefed;
 }
 
 auto MCMission::StartLogistics() -> MCLogistics&
@@ -1011,6 +1182,14 @@ auto MCMission::StartLogistics() -> MCLogistics&
 }
 
 auto MCMission::EndScenario() -> void
+{
+    if (const std::function<void()> wayBack = EndScenarioLeavingWayBack(); wayBack != nullptr)
+    {
+        wayBack();
+    }
+}
+
+auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
 {
     // The play's end, if the results screen didn't mark it (twice is harmless).
     MCTelemetry::PlayEnded();
@@ -1048,20 +1227,23 @@ auto MCMission::EndScenario() -> void
     // Port-only: the mission's held art let go of (MCHdArt::StartHold).
     MCHdArt::LetGoHold();
 
+    // Port-only: each way back to logistics is returned to be done by the caller (EndScenario at once).
     if (ScenarioResult > 3)
     {
         if (Solo != 0)
         {
             // A won solo (quick-start) mission: back to the main screen.
-            MCLogistics& logistics = StartLogistics();
-            LastLogisticsMissionState = 0;
-            State = MCMissionState::Logistics;
-            logistics.CurrentScreen()->ShowGuiWindow(false);
-            logistics.SetCurrentScreen(logistics.MainScreen);
-            logistics.LogisticsState = 1;
-            logistics.ShowLogScreen(true, true);
-            Solo = false;
-            return;
+            return [this]
+            {
+                MCLogistics& logistics = StartLogistics();
+                LastLogisticsMissionState = 0;
+                State = MCMissionState::Logistics;
+                logistics.CurrentScreen()->ShowGuiWindow(false);
+                logistics.SetCurrentScreen(logistics.MainScreen);
+                logistics.LogisticsState = 1;
+                logistics.ShowLogScreen(true, true);
+                Solo = false;
+            };
         }
 
         if (static_cast<uint32_t>(CurrentScenario) == LastScenario)
@@ -1073,82 +1255,88 @@ auto MCMission::EndScenario() -> void
     if (ScenarioResult < 3 && Solo != 0)
     {
         // A lost solo mission: restart the campaign at its first briefing.
-        MCLogistics& logistics = StartLogistics();
-        LastLogisticsMissionState = 0;
-        State = MCMissionState::Logistics;
-        Solo = true;
-        logistics.CurrentMission = 0;
-        CurrentScenario = 0;
-        CurrentMovie = 1;
-        char startName[] = "start1";
+        return [this]
+        {
+            MCLogistics& logistics = StartLogistics();
+            LastLogisticsMissionState = 0;
+            State = MCMissionState::Logistics;
+            Solo = true;
+            logistics.CurrentMission = 0;
+            CurrentScenario = 0;
+            CurrentMovie = 1;
+            char startName[] = "start1";
+            char extension[] = ".pkk";
+            logistics.LoadCampaign(startName, extension, true, false);
+            logistics.SetUpBriefingScreen(false);
+            logistics.ShowLogScreen(true, false);
+        };
+    }
+
+    if (GlobalGameSegment == 0 && !GameOver)
+    {
+        return [this] { BackToLogistics(); };
+    }
+
+    State = MCMissionState::Quit;
+    WaitTimer = WaitTime;
+    CurrentScenario = -1;
+    return {};
+}
+
+auto MCMission::BackToLogistics() -> void
+{
+    MCLogistics& logistics = StartLogistics();
+
+    if (MultiPlayer() == nullptr)
+    {
+        // The campaign: a win moves on to the next mission, anything else replays this one.
+        int32_t missionId = CurrentScenario;
+
+        if (ScenarioResult < 4)
+        {
+            logistics.CurrentMission = missionId;
+        }
+        else
+        {
+            missionId++;
+            logistics.CurrentMission = missionId;
+            CurrentScenario = missionId;
+        }
+
+        CurrentMovie = missionId + 1;
+        logistics.GetCurrentMission();
+        const bool replay = ScenarioResult < 4;
+        std::string startName =
+            std::format("start{}", replay ? logistics.CurrentMission + 1 : logistics.CurrentMission);
         char extension[] = ".pkk";
-        logistics.LoadCampaign(startName, extension, true, false);
+        logistics.LoadCampaign(startName, extension, replay, false);
         logistics.SetUpBriefingScreen(false);
         logistics.ShowLogScreen(true, false);
         return;
     }
 
-    if (GlobalGameSegment == 0 && !GameOver)
+    LastLogisticsMissionState = 0;
+    MultiPlayer()->ChatCallback = LogisticsChatCallback;
+    State = MCMissionState::Logistics;
+    logistics.CurrentScreen()->ShowGuiWindow(false);
+    logistics.SetCurrentScreen(logistics.MainScreen);
+    logistics.LogisticsState = 1;
+    logistics.ShowLogScreen(true, true);
+
+    // Port-only (Redux HD): a game the menus took to its room goes back to its games screen (network/MCRoomEnd.h).
+    if (MCRoomEnd::AfterMatch())
     {
-        MCLogistics& logistics = StartLogistics();
-
-        if (MultiPlayer() == nullptr)
-        {
-            // The campaign: a win moves on to the next mission, anything else replays this one.
-            int32_t missionId = CurrentScenario;
-
-            if (ScenarioResult < 4)
-            {
-                logistics.CurrentMission = missionId;
-            }
-            else
-            {
-                missionId++;
-                logistics.CurrentMission = missionId;
-                CurrentScenario = missionId;
-            }
-
-            CurrentMovie = missionId + 1;
-            logistics.GetCurrentMission();
-            const bool replay = ScenarioResult < 4;
-            std::string startName =
-                std::format("start{}", replay ? logistics.CurrentMission + 1 : logistics.CurrentMission);
-            char extension[] = ".pkk";
-            logistics.LoadCampaign(startName, extension, replay, false);
-            logistics.SetUpBriefingScreen(false);
-            logistics.ShowLogScreen(true, false);
-            return;
-        }
-
-        LastLogisticsMissionState = 0;
-        MultiPlayer()->ChatCallback = LogisticsChatCallback;
-        State = MCMissionState::Logistics;
-        logistics.CurrentScreen()->ShowGuiWindow(false);
-        logistics.SetCurrentScreen(logistics.MainScreen);
-        logistics.LogisticsState = 1;
-        logistics.ShowLogScreen(true, true);
-
-        // Port-only (Redux HD): a game the menus took to its room goes back to its games screen (network/MCRoomEnd.h).
-        if (MCRoomEnd::AfterMatch())
-        {
-            return;
-        }
-
-        if (MultiPlayer()->InMission != 0)
-        {
-            if (IsMPlayerGame != 0)
-            {
-                KillTheGame();
-            }
-
-            MCGameContext::Current().SetMultiPlayer(nullptr);
-        }
+        return;
     }
-    else
+
+    if (MultiPlayer()->InMission != 0)
     {
-        State = MCMissionState::Quit;
-        WaitTimer = WaitTime;
-        CurrentScenario = -1;
+        if (IsMPlayerGame != 0)
+        {
+            KillTheGame();
+        }
+
+        MCGameContext::Current().SetMultiPlayer(nullptr);
     }
 }
 

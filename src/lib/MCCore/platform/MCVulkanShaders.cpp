@@ -13,6 +13,7 @@
 #include "shaders/draw_hd.msl.h"
 #include "shaders/draw_terrain.msl.h"
 #include "shaders/ground.msl.h"
+#include "shaders/hdcoverage.msl.h"
 #include "shaders/instance.msl.h"
 #include "shaders/movie.msl.h"
 #include "shaders/quad.msl.h"
@@ -31,6 +32,7 @@
 #include "shaders/draw_hd.spv.h"
 #include "shaders/draw_terrain.spv.h"
 #include "shaders/ground.spv.h"
+#include "shaders/hdcoverage.spv.h"
 #include "shaders/instance.spv.h"
 #include "shaders/movie.spv.h"
 #include "shaders/quad.spv.h"
@@ -56,6 +58,7 @@ namespace MCVulkanShaders
     const MCShaderInfo DrawHdFragment{MCShader::DrawHd, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo GroundFragment{MCShader::Ground, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
     const MCShaderInfo MovieFragment{MCShader::Movie, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
+    const MCShaderInfo HdCoverageFragment{MCShader::HdCoverage, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1};
     const MCShaderInfo TerrainVertex{MCShader::Terrain, SDL_GPU_SHADERSTAGE_VERTEX, 1, 1, 2};
 
     std::string_view Name(MCShader shader)
@@ -92,6 +95,8 @@ namespace MCVulkanShaders
                 return "composite_unspecked";
             case MCShader::Movie:
                 return "movie";
+            case MCShader::HdCoverage:
+                return "hdcoverage";
         }
 
         return {};
@@ -131,6 +136,8 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(composite_unspecked);
             case MCShader::Movie:
                 return MC_BUILT_IN_SHADER(movie);
+            case MCShader::HdCoverage:
+                return MC_BUILT_IN_SHADER(hdcoverage);
         }
 
         return {};

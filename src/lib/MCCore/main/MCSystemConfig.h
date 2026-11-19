@@ -65,6 +65,14 @@ inline constexpr int32_t PrefsVersion = 1;
 void SystemInit();
 
 /// <summary>
+/// Opens every FastFile into the context's set (MCFastFileSet): each <c>*.fst</c> the game's folders list
+/// (MCFileSystem::FindFiles: the user folder, a launcher's maps and mods, the install), searched in name order; one
+/// that doesn't open is left out, as in the original. SYSTEM.CFG's [FastFiles] list isn't read: the original's
+/// <c>MCX.EXE</c> opened every <c>*.fst</c> in its folder too, in the folder's order (NTFS's name order).
+/// </summary>
+void OpenGameFastFiles();
+
+/// <summary>
 /// Reads SYSTEM.CFG's settings from <paramref name="file"/>: whether sound and music play (empty "UseSound" and
 /// "UseMusic" blocks switch them on), "DebugGameSystem", the ABL block, and the data paths (making this process's
 /// temporary folder under the save path). A missing ABL entry or path is fatal.

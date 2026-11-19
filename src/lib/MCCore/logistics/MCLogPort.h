@@ -22,6 +22,21 @@ public:
     void Load(std::string_view fileName);
 };
 
+/// <summary>Port-only: a TGA file's 8-bit picture as <see cref="MCLogPort::Load"/> reads it (<see cref="ReadLogTga"/>).</summary>
+struct MCLogTga
+{
+    int16_t Width = 0;
+    int16_t Height = 0;
+    /// <summary>The picture's pixels, row by row; empty when the file is too short for them.</summary>
+    std::span<const uint8_t> Pixels;
+};
+
+/// <summary>
+/// Port-only: the picture of TGA file <paramref name="data"/> as <see cref="MCLogPort::Load"/> reads one: its 16-bit
+/// width and height at +0x0c and +0x0e, its 8-bit pixels after the 18-byte header and a 256-entry palette.
+/// </summary>
+MCLogTga ReadLogTga(std::span<const uint8_t> data);
+
 /// <summary>
 /// Port: a block of another port drawn in place: a view whose pixel (0, 0) lies at (xPos, yPos) of the destination,
 /// cut to its size. It stands where the original painted a scratch picture and copied it there, so the drawing goes
@@ -51,3 +66,6 @@ std::shared_ptr<MCLogPort> LogScreenArt(std::string_view name);
 
 /// <summary>Port: frees the art <see cref="LogArt"/> loaded.</summary>
 void ClearLogArt();
+
+/// <summary>Port-only, for the tests: the art files <see cref="LogArt"/> holds loaded.</summary>
+size_t LogArtLoaded();

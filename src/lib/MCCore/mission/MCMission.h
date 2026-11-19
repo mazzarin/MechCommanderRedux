@@ -104,12 +104,26 @@ public:
     /// the next movie / game over).
     /// </summary>
     void EndScenario();
+    /// <summary>
+    /// Port-only: <see cref="EndScenario"/> but for the way back to logistics, which it returns for the caller to do (the
+    /// results screen's close does it in the fade into logistics: FadeOutWhile); none when the game doesn't go back
+    /// there (on to the next movie or the game's end, a game's second segment).
+    /// </summary>
+    [[nodiscard]] std::function<void()> EndScenarioLeavingWayBack();
 
     /// <summary>Unhooks and frees the scenario's per-frame callbacks (the results screen is up).</summary>
     void StopScenarioCallbacks();
 
     /// <summary>Closes the results screen (which ends the scenario the first time).</summary>
     void CloseResultsScreen();
+
+    /// <summary>
+    /// Port-only: the campaign mission whose briefing the way back from the results shows, once the scenario has ended
+    /// (EndScenarioLeavingWayBack): the next on a win, this one again otherwise (BackToLogistics), a lost solo mission's
+    /// campaign's first (its start); none where the way back goes elsewhere (a won solo mission's main screen, a match,
+    /// the campaign's end).
+    /// </summary>
+    std::optional<size_t> BriefedAfterResults() const;
 
     /// <summary>Writes the interface window states (zoom, tac map, palette) to <c>windows.fit</c>.</summary>
     static void SaveWindowStatus();
@@ -153,6 +167,11 @@ public:
 private:
     /// <summary>Starts a new logistics phase after a scenario.</summary>
     MCLogistics& StartLogistics();
+    /// <summary>
+    /// The way back to logistics after a campaign's mission (its next briefing, or the same one's again) or a match's
+    /// (the main screen; a launcher's game ends there): <see cref="EndScenarioLeavingWayBack"/>'s last.
+    /// </summary>
+    void BackToLogistics();
     /// <summary>The demo's feature screen (state 20).</summary>
     /// <returns>False when its picture is missing (the frame ends there).</returns>
     bool RunFeatureScreen();
@@ -187,8 +206,20 @@ void PlayScenario();
 /// <summary>The mission callback: runs the mission one frame (and keeps <c>FrameLength</c> between scenarios).</summary>
 void RunMission();
 
+/// <summary>
+/// Reads the component list (<c>compbas.csv</c>, its ranges scaled by <c>gamesys.fit</c>'s) when it hasn't been, or
+/// when what's read has changed since (a match begun or ended: lib/MCReleaseData.h).
+/// </summary>
+void LoadComponentListIfSwitched();
+
 /// <summary>The game segment a demo/segment build starts at; 0 for the normal campaign.</summary>
 extern int32_t GlobalGameSegment;
+/// <summary>
+/// Port-only, for test runs (-hdbriefing; no player passes it): a game segment's seconds before its load, its hold started
+/// as the mission's briefing would start it (MCHdArt::StartBriefingHold), so a run times the load with a briefing's head
+/// start. 0: none.
+/// </summary>
+extern int32_t TestBriefingSeconds;
 /// <summary>The lowest skill a pilot has (gamesys <c>SkillMin</c>).</summary>
 extern float MinPilotSkill;
 /// <summary>The highest skill a pilot can reach by skill-ups (gamesys <c>SkillMax</c>).</summary>

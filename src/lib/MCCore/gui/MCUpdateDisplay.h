@@ -9,6 +9,8 @@
 
 #include "platform/MCRegisteredBlock.h"
 
+class MCGuiObject;
+
 /// <summary>Counts the mouse timer's ticks (20 a second).</summary>
 extern uint32_t MouseTicks;
 /// <summary>The cursor on the screen, updated by <see cref="UpdateDisplay"/>.</summary>
@@ -64,6 +66,32 @@ private:
 /// <param name="staticNoise">Each row turns to static with 1-in-<paramref name="noiseChance"/> odds.</param>
 /// <param name="showProgress">Draw the connect shape and the progress bar.</param>
 int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bool showProgress, int32_t progress);
+/// <summary>
+/// Port-only: the screen as it stands drawn once as a rehearsal (MCRenderer::RehearsalScope): what its first frame
+/// would do first (its art loaded, its HD pictures read, its textures made, its pictures, sharp text and line art taken
+/// and queued to go up) done now, nothing shown, and what it queued sent up (MCDisplay::RunRecorded). For a screen set
+/// up in a fade, where nothing is redrawn for a while, so its first frames shown don't do it. Only with the GPU's
+/// surfaces shown and logistics up; nothing otherwise.
+/// </summary>
+void RehearseScreen();
+/// <summary>
+/// Port-only: hidden <paramref name="screen"/> rehearsed as it will be shown (see <see cref="RehearseScreen"/>), after
+/// <paramref name="setUp"/> fills it as its set-up will: for a screen a slide may bring in, readied in a fade, so the
+/// slide's first steps find what it shows ready. Nothing when a rehearsal can't run or the screen is shown (the screen
+/// window's: <see cref="RehearseScreen"/>). Whether it ran (<paramref name="setUp"/> with it).
+/// </summary>
+bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp);
+/// <summary>Port-only, for the tests: the rehearsals run so far (RehearseScreen's and RehearseHidden's).</summary>
+size_t RehearsalsRun();
+/// <summary>
+/// Port-only: <paramref name="work"/> done in a fade of the screen shown (MCGuiSystem::FadeDownCurrentPalette) once it's
+/// nearly black (MCGuiSystem::FadeNearBlack), then what a fade into a screen does (the screen rehearsed, the screens a
+/// slide from it may bring in readied): for work that sets up the next screen where the one shown would sit frozen
+/// until its fade begins (the way back from a mission's results, NEW CAMPAIGN's click). With no fade (the screen black already, the display
+/// not up, the GUI stopping), only <paramref name="work"/>, as before.
+/// </summary>
+void FadeOutWhile(const std::function<void()>& work);
+
 /// <summary>Starts the mouse timer.</summary>
 void MouseTimerInit();
 /// <summary>Stops the mouse timer.</summary>

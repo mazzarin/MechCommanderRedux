@@ -1,11 +1,13 @@
 #include "stdafx.h"
 #include "main/MCLogistics.h"
+#include "lib/MCReleaseData.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScrollPane.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCFitIniFile.h"
 #include "ai/MCMoveGeometry.h"
 #include "logistics/MCBriefingBox.h"
@@ -19,6 +21,7 @@
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogMenus.h"
+#include "logistics/MCLogPort.h"
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCMainMenu.h"
@@ -68,6 +71,7 @@
 #include "platform/MCSharpPictures.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCShapeFile.h"
 #include "vfx/MCVfxFunctions.h"
 
 std::type_identity_t<std::array<bool, 7>> LogCheatActive{};
@@ -144,8 +148,11 @@ namespace
         return port;
     }
 
-    /// <summary>Loads the whole of an opened shape file into a block registered as shapes (the repair and icon shapes).</summary>
-    MCRegisteredBlock ReadShapeFile(MCFile& file, std::string_view sizeError)
+    /// <summary>
+    /// Loads the whole of an opened shape file into a block registered as shapes (the repair and icon shapes): with HD
+    /// art's numbered folders drawn, the pack's copy (MCShapeFile).
+    /// </summary>
+    MCRegisteredBlock ReadShapeFile(MCShapeFile& file, std::string_view sizeError)
     {
         const uint32_t length = file.GetLength();
         MCRegisteredBlock shapes(length, MCDataKind::Shapes);
@@ -156,7 +163,7 @@ namespace
     }
 
     /// <summary>Opens shape file <paramref name="fileName"/> (asserting it exists) and loads it (<see cref="ReadShapeFile"/>).</summary>
-    MCRegisteredBlock LoadShapeFile(MCFile& file, std::string_view fileName, std::string_view openError,
+    MCRegisteredBlock LoadShapeFile(MCShapeFile& file, std::string_view fileName, std::string_view openError,
                                     std::string_view sizeError)
     {
         const int32_t result = file.Open(fileName);
@@ -199,6 +206,81 @@ namespace
     }
 }
 
+auto MCLogistics::ReadSortTables() -> void
+{
+    char line[256];
+    MCFile file;
+    int32_t result = file.Open(ArtPath + "logart\\comp.rsp");
+    Assert(result == 0, 0, " could not open componant name file ");
+    // The table has one entry more than the file has lines; every entry is read from a line (the last from the end
+    // of the file).
+    int32_t numRangeSorted = 1;
+
+    while (true)
+    {
+        file.ReadLine(line, 0x28);
+
+        if (file.Eof())
+        {
+            break;
+        }
+
+        ++numRangeSorted;
+    }
+
+    RangeSortList.assign(static_cast<size_t>(numRangeSorted), 0);
+    file.Seek(0, 0);
+
+    for (uint32_t& entry : RangeSortList)
+    {
+        file.ReadLine(line, 0x28);
+        entry = static_cast<uint32_t>(std::atol(line));
+    }
+
+    file.Close();
+    result = file.Open(GamePath(ObjectPath, "objsort.rsp"));
+    Assert(result == 0, 0, " could not open object sort file ");
+
+    for (int32_t& sortOrder : ComponentSort)
+    {
+        file.ReadLine(line, 0xfe);
+        sortOrder = static_cast<int32_t>(std::atol(line));
+    }
+
+    file.Close();
+}
+
+auto MCLogistics::ReadGameSystemValues() -> void
+{
+    MCFitIniFile gameSystemFile;
+    int32_t result = gameSystemFile.Open(GamePath(MissionPath, "gamesys.fit"));
+    Assert(result == 0, static_cast<uint32_t>(result), " Couldn't open gamesys.fit");
+    result = gameSystemFile.SeekBlock("Warrior");
+    Assert(result == 0, static_cast<uint32_t>(result), " Couldn't find Warrior block ");
+    MaxPilotSkill = ReadRequired<float>(gameSystemFile, "SkillMax",
+                                        " Couldn't find SkillMax variable in Warrior block of gamesys.fit ");
+    MinPilotSkill = ReadRequired<float>(gameSystemFile, "SkillMin",
+                                        " Couldn't find SkillMin variable in Warrior block of gamesys.fit ");
+    static_cast<void>(gameSystemFile.ReadArray("SkillWeightings", std::span<float>(SkillWeightings)));
+    Assert(gameSystemFile.ReadArray("WarriorRankScale", std::span<float>(WarriorRankScale)).has_value(), 0,
+           " Couldn't find WarriorRankScale variable in Warrior block of gamesys.fit ");
+    result = gameSystemFile.SeekBlock("MultiPlayerColors");
+    Assert(result == 0, static_cast<uint32_t>(result), " Could not find Multiplayer Colors block ");
+    Assert(gameSystemFile.ReadArray("mPlayerColors", std::span<int32_t>(MultiPlayerColors)).has_value(), 0,
+           " Could not find multiplayer colors data ");
+}
+
+auto MCLogistics::ReadKeptTablesIfSwitched() -> void
+{
+    // Port-only (Redux HD): read again from the files a match plays, or single player's, since what's read changed.
+    if (KeptTablesSwitches != MCReleaseData::Switches())
+    {
+        KeptTablesSwitches = MCReleaseData::Switches();
+        ReadSortTables();
+        ReadGameSystemValues();
+    }
+}
+
 auto MCLogistics::Start() -> void
 {
     if (EmptyFile.empty())
@@ -208,6 +290,9 @@ auto MCLogistics::Start() -> void
 
     _Started = true;
     SetGlobalLog(weak_from_this());
+    // Port-only: what the screens look for in the archives is noted while they're up, to be read ahead when they're
+    // made again (MCMission::CloseResultsScreen).
+    MCFilesAhead::StartNoting();
     AutoPlayMovie = false;
     SetCurrentScreen({});
     DragIcon = nullptr;
@@ -406,46 +491,9 @@ auto MCLogistics::Start() -> void
     // Port fix (OB-094): the original allocated a File here, and a FitIniFile after the sort tables, and never used or
     // freed either.
 
-    char line[256];
+    KeptTablesSwitches = MCReleaseData::Switches();
+    ReadSortTables();
     MCFile file;
-    int32_t result = file.Open(ArtPath + "logart\\comp.rsp");
-    Assert(result == 0, 0, " could not open componant name file ");
-    // The table has one entry more than the file has lines; every entry is read from a line (the last from the end
-    // of the file).
-    int32_t numRangeSorted = 1;
-
-    while (true)
-    {
-        file.ReadLine(line, 0x28);
-
-        if (file.Eof())
-        {
-            break;
-        }
-
-        ++numRangeSorted;
-    }
-
-    RangeSortList.assign(static_cast<size_t>(numRangeSorted), 0);
-    file.Seek(0, 0);
-
-    for (uint32_t& entry : RangeSortList)
-    {
-        file.ReadLine(line, 0x28);
-        entry = static_cast<uint32_t>(std::atol(line));
-    }
-
-    file.Close();
-    result = file.Open(GamePath(ObjectPath, "objsort.rsp"));
-    Assert(result == 0, 0, " could not open object sort file ");
-
-    for (int32_t& sortOrder : ComponentSort)
-    {
-        file.ReadLine(line, 0xfe);
-        sortOrder = static_cast<int32_t>(std::atol(line));
-    }
-
-    file.Close();
     InvBlockPort = NewArtPort("logart\\invblock.tga");
 
     // The ticker, and a line for it on each screen that shows it; it starts on the screen shown now.
@@ -524,27 +572,29 @@ auto MCLogistics::Start() -> void
     VfxPaneWipe(ClockBackPort->Frame(), 0x10);
     RepairBackPort = NewArtPort("logart\\lsrupm00.tga");
 
+    MCShapeFile shapeFile;
+
     for (size_t i = 0; i < MechRepShapes.size(); ++i)
     {
-        MechRepShapes[i] = LoadShapeFile(file, std::format("{}mechrep{:02}.shp", ArtPath, i),
+        MechRepShapes[i] = LoadShapeFile(shapeFile, std::format("{}mechrep{:02}.shp", ArtPath, i),
                                          "could not open mechrep shape file", "unexpected mechrep size");
-        MechIconShapes[i] = LoadShapeFile(file, std::format("{}mi{:02}.shp", ArtPath, i),
+        MechIconShapes[i] = LoadShapeFile(shapeFile, std::format("{}mi{:02}.shp", ArtPath, i),
                                           "could not open mechicon shape file", "unexpected mechicon size");
     }
 
     // A vehicle without a repair picture has no icon either.
     for (size_t i = 0; i < VehicleRepShapes.size(); ++i)
     {
-        if (file.Open(std::format("{}vr1{:02}.shp", ArtPath, i)) != 0)
+        if (shapeFile.Open(std::format("{}vr1{:02}.shp", ArtPath, i)) != 0)
         {
             continue;
         }
 
-        VehicleRepShapes[i] = ReadShapeFile(file, "unexpected vhclrep size");
+        VehicleRepShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
 
-        if (file.Open(std::format("{}vi1{:02}.shp", ArtPath, i)) == 0)
+        if (shapeFile.Open(std::format("{}vi1{:02}.shp", ArtPath, i)) == 0)
         {
-            VehicleIconShapes[i] = ReadShapeFile(file, "unexpected vhclrep size");
+            VehicleIconShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
         }
     }
 
@@ -592,24 +642,7 @@ auto MCLogistics::Start() -> void
         }
     }
 
-    {
-        MCFitIniFile gameSystemFile;
-        result = gameSystemFile.Open(GamePath(MissionPath, "gamesys.fit"));
-        Assert(result == 0, static_cast<uint32_t>(result), " Couldn't open gamesys.fit");
-        result = gameSystemFile.SeekBlock("Warrior");
-        Assert(result == 0, static_cast<uint32_t>(result), " Couldn't find Warrior block ");
-        MaxPilotSkill = ReadRequired<float>(gameSystemFile, "SkillMax",
-                                            " Couldn't find SkillMax variable in Warrior block of gamesys.fit ");
-        MinPilotSkill = ReadRequired<float>(gameSystemFile, "SkillMin",
-                                            " Couldn't find SkillMin variable in Warrior block of gamesys.fit ");
-        static_cast<void>(gameSystemFile.ReadArray("SkillWeightings", std::span<float>(SkillWeightings)));
-        Assert(gameSystemFile.ReadArray("WarriorRankScale", std::span<float>(WarriorRankScale)).has_value(), 0,
-               " Couldn't find WarriorRankScale variable in Warrior block of gamesys.fit ");
-        result = gameSystemFile.SeekBlock("MultiPlayerColors");
-        Assert(result == 0, static_cast<uint32_t>(result), " Could not find Multiplayer Colors block ");
-        Assert(gameSystemFile.ReadArray("mPlayerColors", std::span<int32_t>(MultiPlayerColors)).has_value(), 0,
-               " Could not find multiplayer colors data ");
-    }
+    ReadGameSystemValues();
 
     ReadyRoomTicks = 0;
 
@@ -675,7 +708,6 @@ auto MCLogistics::AttachHdArt() -> void
             if (!icons[i].Empty())
             {
                 const MCHdArt::IconShapeKey key{std::format("{}{:02}", prefix, i)};
-                MCHdArt::NoteOriginalRead("an icon read from its shape file", key.File);
                 MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, key);
             }
 
@@ -737,23 +769,14 @@ auto MCLogistics::MakeAhead() const -> void
         return;
     }
 
-    // Each font once (the drop fonts serve two sizes).
-    std::set<const MCGuiFont*> fonts;
-
-    for (const std::array<std::shared_ptr<MCGuiFont>, 3>& sizes : Fonts)
-    {
-        for (const std::shared_ptr<MCGuiFont>& font : sizes)
-        {
-            if (font != nullptr && !font->FontData.Empty() && fonts.insert(font.get()).second)
-            {
-                MCSharpPictures::MakeFont(font->FontData.Bytes());
-            }
-        }
-    }
+    // The fonts' glyphs (made since the display opened, with HD art on then: only those not made are made).
+    GuiSystem().MakeFontsAhead();
 
     // The HD copies of the pictures the screens are made of (their art, loaded by Start, the screens' backgrounds
-    // with it: MCLogInvScreen::InitLive), read ahead by the pack's reading thread.
+    // with it: MCLogInvScreen::InitLive), read ahead by the pack's reading thread; then (those first, the soonest
+    // needed) the rest of the screens' set, as the display's opening asked.
     ReadTexturesAhead();
+    GuiSystem().ReadMenuSetAhead();
 }
 
 auto MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs as) -> void
@@ -774,6 +797,53 @@ auto MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs as) -> void
     }
 
     MCHdArt::ReadPicturesAhead(pictures, as);
+}
+
+auto MCLogistics::BriefingMapOf(std::string_view scenario) -> std::optional<MCPicturePixels>
+{
+    // The longest map name GetCurrentMission reads.
+    constexpr size_t MapFileChars = 0xff;
+    MCFitIniFile missionFile;
+    std::string map;
+
+    if (missionFile.Open(GamePath(MissionPath, scenario, ".fit")) != 0 || missionFile.SeekBlock("Campaign") != 0 ||
+        !ReadText(missionFile, "MapFile", MapFileChars, map))
+    {
+        return std::nullopt;
+    }
+
+    MCFile file;
+
+    if (file.Open(GamePath(TerrainPath, map, ".log.tga")) != 0 || file.FileSize() == 0)
+    {
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> data(file.FileSize());
+    file.Read(data);
+    file.Close();
+    const MCLogTga tga = ReadLogTga(data);
+
+    if (tga.Pixels.empty())
+    {
+        return std::nullopt;
+    }
+
+    return MCPicturePixels{{tga.Pixels.begin(), tga.Pixels.end()}, tga.Width, tga.Height};
+}
+
+auto MCLogistics::ReadBriefingMapAhead(std::string_view scenario) -> void
+{
+    if (!DrawsSharp())
+    {
+        return;
+    }
+
+    if (const std::optional<MCPicturePixels> map = BriefingMapOf(scenario); map.has_value())
+    {
+        const std::array pictures = {MCHdArt::PictureAhead{map->Pixels, map->Width, map->Height}};
+        MCHdArt::ReadPicturesAhead(pictures);
+    }
 }
 
 auto MCLogistics::MakeLineArtAhead() const -> void
@@ -860,6 +930,7 @@ MCLogistics::~MCLogistics()
         return;
     }
 
+    MCFilesAhead::StopNoting();
     // Port-only: the line art made ahead for this logistics' lists goes with them.
     MCSharpPictures::ForgetLineArt();
     MCHdArt::SetLineArtFrames({});
@@ -1109,6 +1180,95 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>
+    /// The purchase screen's inventory list and store set up for inventory tab <paramref name="tab"/>, the store
+    /// filled though the screen is hidden when <paramref name="ahead"/> (MCLogistics::ReadyForSlide).
+    /// </summary>
+    void SetUpPurchaseLists(MCPurchaseScreen& screen, int32_t tab, bool ahead)
+    {
+        switch (tab)
+        {
+            case 0:
+            {
+                screen.SetUpMechInv(true, true);
+                screen.SetUpMechPurchase(ahead);
+                break;
+            }
+            case 1:
+            {
+                screen.SetUpPilotInv(true, true);
+                screen.SetUpPilotPurchase(ahead);
+                break;
+            }
+            case 2:
+            {
+                screen.SetUpCompInv(true, true);
+                screen.SetUpCompPurchase(ahead);
+                break;
+            }
+            case 3:
+            {
+                screen.SetUpVhclInv(true, true);
+                screen.SetUpVehiclePurchase(ahead);
+                break;
+            }
+        }
+    }
+
+    /// <summary>The repair screen's inventory list set up for inventory tab <paramref name="tab"/>.</summary>
+    void SetUpRepairLists(MCRepairScreen& repair, int32_t tab)
+    {
+        switch (tab)
+        {
+            case 0:
+                repair.SetUpMechInv(true, true);
+                break;
+            case 1:
+                repair.SetUpPilotInv(true, true);
+                break;
+            case 2:
+                repair.SetUpCompInv(true, true);
+                break;
+            case 3:
+                repair.SetUpVhclInv(true, true);
+                break;
+        }
+    }
+}
+
+auto MCLogistics::ScreensSlidIn() const -> std::vector<MCGuiHandle<MCLogInvScreen>>
+{
+    if (CurrentScreen() == nullptr || CurrentScreen() != BriefingScreen)
+    {
+        return {};
+    }
+
+    return {PurchaseScreen, RepairScreen};
+}
+
+auto MCLogistics::ReadyForSlide(MCLogInvScreen& screen, int32_t tab) const -> void
+{
+    // The lists the set-ups read (gone with logistics' end).
+    if (MechList == nullptr || WarriorList == nullptr || VehicleList == nullptr || ComponentInventory == nullptr ||
+        PurMechList == nullptr || PurPilotList == nullptr || PurVehicleList == nullptr || PurchaseComponents == nullptr)
+    {
+        return;
+    }
+
+    if (const std::shared_ptr<MCPurchaseScreen> purchase = PurchaseScreen.Lock(); purchase.get() == &screen)
+    {
+        purchase->DrawBackground();
+        SetUpPurchaseLists(*purchase, tab, true);
+    }
+    else if (const std::shared_ptr<MCRepairScreen> repair = RepairScreen.Lock(); repair.get() == &screen)
+    {
+        repair->DrawBackground();
+        SetUpRepairLists(*repair, tab);
+    }
+}
+
 auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 {
     NoteScreen("purchase");
@@ -1150,33 +1310,7 @@ auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
     screen.DrawBackground();
     DrawScreenButtons();
 
-    switch (CurrentInvTab)
-    {
-        case 0:
-        {
-            screen.SetUpMechInv(true, true);
-            screen.SetUpMechPurchase();
-            break;
-        }
-        case 1:
-        {
-            screen.SetUpPilotInv(true, true);
-            screen.SetUpPilotPurchase();
-            break;
-        }
-        case 2:
-        {
-            screen.SetUpCompInv(true, true);
-            screen.SetUpCompPurchase();
-            break;
-        }
-        case 3:
-        {
-            screen.SetUpVhclInv(true, true);
-            screen.SetUpVehiclePurchase();
-            break;
-        }
-    }
+    SetUpPurchaseLists(screen, CurrentInvTab, false);
 
     if (MultiPlayer() != nullptr)
     {
@@ -1578,21 +1712,7 @@ auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
     repair.DrawBackground();
     DrawScreenButtons();
 
-    switch (CurrentInvTab)
-    {
-        case 0:
-            repair.SetUpMechInv(true, true);
-            break;
-        case 1:
-            repair.SetUpPilotInv(true, true);
-            break;
-        case 2:
-            repair.SetUpCompInv(true, true);
-            break;
-        case 3:
-            repair.SetUpVhclInv(true, true);
-            break;
-    }
+    SetUpRepairLists(repair, CurrentInvTab);
 
     // Nothing selected yet: the force's first mech (a null one when the force has none).
     if (repair.SelectedMech() == nullptr && repair.SelectedVehicle() == nullptr)
@@ -1739,6 +1859,8 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
         });
     wipe->ShowGuiWindow(true);
     wipe->SetDepth(100);
+    // Port-only: the screen arriving was readied at every tab in the fade into the briefing (ScreensSlidIn), so the
+    // slide's steps find what it shows loaded and sent up.
     SoundSystem()->PlayInterfaceSample(0x36);
     const int64_t frequency = MCPort::PerformanceFrequency();
     float elapsed = 0.0f;

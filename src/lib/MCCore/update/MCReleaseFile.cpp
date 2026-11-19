@@ -39,6 +39,10 @@ namespace
     constexpr std::string_view NameKey = "name";
     constexpr std::string_view ZipKey = "zip";
     constexpr std::string_view SetupLevelKey = "setupLevel";
+    constexpr std::string_view RequiredKey = "required";
+    constexpr std::string_view BuildsKey = "builds";
+    /// <summary>The most platforms <c>required</c> may name (there are two).</summary>
+    constexpr size_t MaxRequiredPlatforms = 8;
     /// <summary>A rollout's share runs from none to every copy.</summary>
     constexpr double NoShare = 0.0;
     constexpr double WholeShare = 100.0;
@@ -214,6 +218,35 @@ namespace
         return mirrors;
     }
 
+    /// <summary>
+    /// <c>release.json</c>'s lowest release a copy may stay on (<paramref name="json"/>): a release no newer than the
+    /// current one (<paramref name="current"/>), and each platform's build, at most MaxRequiredPlatforms.
+    /// </summary>
+    MCRequired ReadRequired(const MCJson& json, uint64_t current)
+    {
+        MCRequired required{.Release = Count(json, ReleaseKey)};
+
+        if (required.Release > current)
+        {
+            Fail("the lowest release a copy may stay on ({}) is newer than the current one ({})", required.Release,
+                 current);
+        }
+
+        const MCJson& builds = Child(json, BuildsKey);
+
+        if (builds.size() > MaxRequiredPlatforms)
+        {
+            Fail("\"{}\" names {} platforms (at most {})", RequiredKey, builds.size(), MaxRequiredPlatforms);
+        }
+
+        for (const auto& item : builds.items())
+        {
+            required.Builds.emplace(item.key(), Count(builds, item.key()));
+        }
+
+        return required;
+    }
+
     MCJson WriteRelease(const MCRelease& release)
     {
         MCJson programs = MCJson::object();
@@ -356,8 +389,25 @@ std::expected<MCReleases, std::string> MCReleaseFile::ReadReleases(std::string_v
                     }
 
                     releases.Mirrors = MirrorsOf(json, "release.json");
+
+                    if (json.contains(RequiredKey))
+                    {
+                        releases.Required = ReadRequired(Child(json, RequiredKey), releases.Current.Number);
+                    }
+
                     return releases;
                 });
+}
+
+bool MCReleaseFile::BelowRequired(const MCReleases& releases, std::string_view platform, uint64_t runningBuild)
+{
+    if (!releases.Required)
+    {
+        return false;
+    }
+
+    const auto build = releases.Required->Builds.find(platform);
+    return build != releases.Required->Builds.end() && runningBuild < build->second;
 }
 
 std::expected<MCTrusted, std::string> MCReleaseFile::Check(std::string_view keyList, std::string_view releases,
@@ -601,6 +651,12 @@ std::string MCReleaseFile::ReleasesPayload(const MCReleases& releases)
     if (!releases.Mirrors.empty())
     {
         json[std::string(MirrorsKey)] = releases.Mirrors;
+    }
+
+    if (releases.Required)
+    {
+        json[std::string(RequiredKey)] =
+            MCJson{{ReleaseKey, releases.Required->Release}, {BuildsKey, MCJson(releases.Required->Builds)}};
     }
 
     return json.dump(2);

@@ -1273,7 +1273,7 @@ void HandleAppFileInquiry(uint32_t fromID, std::span<const uint8_t> msg)
         Dropped("an inquiry about a file outside the game", fromID);
     }
 
-    // Port: the hash of the mission's and the shared gameplay data (MCMatchRule::DataHash; 0 still none), where the
+    // Port: the hash of the mission's and the shared gameplay data (MCMatchRule::DataHashV2; 0 still none), where the
     // original sent the file's first four bytes, which told little more than that it was there.
     report.Value = missionFile ? static_cast<int32_t>(MCMissionDataHash(fileName)) : 0;
     game.PutMessage(report);

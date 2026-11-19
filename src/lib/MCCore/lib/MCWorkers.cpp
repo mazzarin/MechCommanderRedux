@@ -1,7 +1,8 @@
 #include "stdafx.h"
 #include "lib/MCWorkers.h"
 
-MCWorkers::MCWorkers(size_t helpers) : _HelperCount(helpers)
+MCWorkers::MCWorkers(size_t helpers, Priority priority, MCThreadPriority like)
+    : _HelperCount(helpers), _Priority(priority), _Like(like)
 {
 }
 
@@ -75,8 +76,21 @@ auto MCWorkers::Run(size_t parts, const std::function<void(size_t)>& work) -> vo
     }
 }
 
+auto MCWorkers::LowerThisThread(MCThreadPriority like) -> void
+{
+    if (constexpr bool Below = true; !MCSetCurrentThreadPriority(like, Below))
+    {
+        SDL_Log("MCWorkers: could not lower a thread's priority (as %d) a step; it runs as it was", like.Value);
+    }
+}
+
 auto MCWorkers::Help(std::stop_token stop) -> void
 {
+    if (_Priority == Priority::Low)
+    {
+        LowerThisThread(_Like);
+    }
+
     uint64_t seen = 0;
     std::unique_lock lock(_Lock);
 

@@ -205,6 +205,66 @@ namespace
         }
     }
 
+    /// <summary>HD ART SIZE's choices: the full art, or the 2x art.</summary>
+    constexpr int32_t FullArt = 0;
+    constexpr int32_t TwoXArt = 1;
+    constexpr std::array HdArtSizeChoices = {Choice{"FULL", FullArt}, Choice{"2X", TwoXArt}};
+
+    /// <summary>What HD ART SIZE says, and what its line starts with while the size is the machine's.</summary>
+    constexpr std::string_view HdArtSizeDescription = "2X NEEDS HALF THE MEMORY AND LOOKS A TOUCH SOFTER ZOOMED IN.";
+    constexpr std::string_view MachinePicked = "PICKED FOR THIS COMPUTER.";
+
+    /// <summary>HD ART SIZE's setting as the list edits it, the updater's art chosen read into it each time.</summary>
+    int HdArtSize = FullArt;
+
+    /// <summary>The art chosen, the player's pick or else the machine's.</summary>
+    int32_t HdArtSizeNow()
+    {
+        return MCUpdater::HdPack().TwoXChosen ? TwoXArt : FullArt;
+    }
+
+    /// <summary>A click on HD ART SIZE: the player's pick, planned as GET's change is.</summary>
+    void HdArtSizeChanged(int32_t size)
+    {
+        MCUpdater::ChooseHdArt(size == TwoXArt);
+    }
+
+    /// <summary>HD ART SIZE's line: whose pick it is, and both sizes where the release says them.</summary>
+    std::string HdArtSizeLine()
+    {
+        const MCUpdater::MCHdPack& pack = MCUpdater::HdPack();
+
+        if (pack.FullBytes == 0 || pack.TwoXBytes == 0)
+        {
+            return pack.PlayerPicked ? std::string(HdArtSizeDescription)
+                                     : std::format("{} 2X NEEDS HALF THE MEMORY.", MachinePicked);
+        }
+
+        const std::string full = MCUpdateWork::SizeText(pack.FullBytes);
+        const std::string twoX = MCUpdateWork::SizeText(pack.TwoXBytes);
+        return pack.PlayerPicked
+                   ? std::format("FULL: {}. 2X: {}, HALF THE MEMORY, A TOUCH SOFTER ZOOMED IN.", full, twoX)
+                   : std::format("{} FULL: {}. 2X: {}, HALF THE MEMORY.", MachinePicked, full, twoX);
+    }
+
+    /// <summary>Why HD ART SIZE can't change now: HD PACK's reason, no HD pack chosen, or a release with one size.</summary>
+    std::string HdArtSizeHeld()
+    {
+        if (std::string held = HdPackHeld(); !held.empty())
+        {
+            return held;
+        }
+
+        const MCUpdater::MCHdPack& pack = MCUpdater::HdPack();
+
+        if (!pack.Chosen)
+        {
+            return "GET THE HD PACK FIRST.";
+        }
+
+        return pack.TwoXBytes == 0 ? "THIS RELEASE HAS ONE SIZE OF HD ART." : std::string();
+    }
+
     /// <summary>Whether the HD audio pack has orchestral music (HD AUDIO offers ORCHESTRAL only then).</summary>
     bool OrchestralOffered()
     {
@@ -270,8 +330,9 @@ namespace
     /// weather. The CPU keeps the rest: HD audio, the footprints and craters kept, the turns eased (not their legs' HD
     /// middles), the held strides, braking and the reports.
     /// </summary>
-    /// <summary>HD PACK's place: under the PACKS heading, first.</summary>
+    /// <summary>HD PACK's place, under the PACKS heading, first; HD ART SIZE's under it, the rows a managed game adds.</summary>
     constexpr size_t HdPackRow = 1;
+    constexpr size_t ManagedRows = 2;
 
     constexpr std::array RowsWithPack = {
         Row{.Label = "PACKS"},
@@ -280,6 +341,14 @@ namespace
             .Line = HdPackLine,
             .HeldNow = HdPackHeld,
             .Place = PlaceHdPackButton},
+        Row{.Label = "HD ART SIZE",
+            .Description = HdArtSizeDescription,
+            .Value = HdArtSize,
+            .Current = HdArtSizeNow,
+            .Choices = HdArtSizeChoices,
+            .Changed = HdArtSizeChanged,
+            .Line = HdArtSizeLine,
+            .HeldNow = HdArtSizeHeld},
         Row{.Label = HdArtLabel,
             .Description = "THE HD PACK'S PICTURES: UNITS, BUILDINGS, GROUND, EFFECTS, MENUS AND MOVIES.",
             .Key = HdArtKey,
@@ -371,15 +440,15 @@ namespace
             .Changed = ReportsChanged},
     };
 
-    /// <summary><paramref name="rows"/> without row <paramref name="left"/>.</summary>
-    template <size_t Count>
-    constexpr std::array<Row, Count - 1> Without(const std::array<Row, Count>& rows, size_t left)
+    /// <summary><paramref name="rows"/> without the <typeparamref name="Left"/> rows from row <paramref name="first"/> on.</summary>
+    template <size_t Left, size_t Count>
+    constexpr std::array<Row, Count - Left> Without(const std::array<Row, Count>& rows, size_t first)
     {
-        std::array<Row, Count - 1> kept{};
+        std::array<Row, Count - Left> kept{};
 
         for (size_t from = 0, to = 0; from < Count; from++)
         {
-            if (from != left)
+            if (from < first || from >= first + Left)
             {
                 kept[to++] = rows[from];
             }
@@ -388,8 +457,8 @@ namespace
         return kept;
     }
 
-    /// <summary>The rows in a game that doesn't manage its content: no HD PACK.</summary>
-    constexpr std::array Rows = Without(RowsWithPack, HdPackRow);
+    /// <summary>The rows in a game that doesn't manage its content: no HD PACK or HD ART SIZE.</summary>
+    constexpr std::array Rows = Without<ManagedRows>(RowsWithPack, HdPackRow);
 
     /// <summary>The panels.</summary>
     MCGuiHandle<MCGuiObject> PrefsPanel;

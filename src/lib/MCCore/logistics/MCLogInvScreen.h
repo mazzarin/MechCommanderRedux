@@ -151,9 +151,10 @@ public:
 
     /// <summary>
     /// Shows the mechs for sale in the store (on the purchase screen only), each showing its first variant still on
-    /// sale.
+    /// sale. Port-only: <paramref name="ahead"/> fills the store though the purchase screen is hidden, as
+    /// MCLogistics::ReadyForSlide readies it (the original filled it only with the screen shown).
     /// </summary>
-    void SetUpMechPurchase() const;
+    void SetUpMechPurchase(bool ahead = false) const;
 
     /// <summary>
     /// Shows the pilot tab in both screens' inventory lists: a row per pilot of the pilot list (an assigned pilot is in
@@ -167,17 +168,17 @@ public:
     /// <summary>Shows the vehicle tab in both screens' inventory lists: a row per vehicle of the vehicle list.</summary>
     void SetUpVhclInv(bool resetScroll, bool redrawTabs);
 
-    /// <summary>Shows the vehicles for sale in the store (on the purchase screen only).</summary>
-    void SetUpVehiclePurchase() const;
+    /// <summary>Shows the vehicles for sale in the store (on the purchase screen only; <paramref name="ahead"/> as above).</summary>
+    void SetUpVehiclePurchase(bool ahead = false) const;
 
-    /// <summary>Shows the pilots for hire in the store (on the purchase screen only).</summary>
-    void SetUpPilotPurchase() const;
+    /// <summary>Shows the pilots for hire in the store (on the purchase screen only; <paramref name="ahead"/> as above).</summary>
+    void SetUpPilotPurchase(bool ahead = false) const;
 
     /// <summary>
     /// Shows the components for sale in the store (on the purchase screen only), in their sort order (a row each
-    /// for sort orders 0..49).
+    /// for sort orders 0..49; <paramref name="ahead"/> as above).
     /// </summary>
-    void SetUpCompPurchase() const;
+    void SetUpCompPurchase(bool ahead = false) const;
 
     /// <summary>
     /// A pilot was hired (no longer for hire): the store shows the pilots for hire again, the rows below the hired

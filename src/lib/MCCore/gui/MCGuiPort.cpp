@@ -8,6 +8,7 @@
 #include "ai/MCMoveGeometry.h"
 #include "vfx/MCVfxFunctions.h"
 #include "platform/MCBlockStore.h"
+#include "sprite/MCShapeFile.h"
 
 namespace
 {
@@ -127,20 +128,20 @@ auto MCGuiPort::Init(int32_t artPacket) -> int32_t
         Fatal(0, "Art packet not found");
     }
 
-    const auto size = static_cast<size_t>(artFile.GetPacketSize());
+    const int32_t size = artFile.GetPacketSize();
 
-    if (size == 0)
+    if (size <= 0)
     {
         Fatal(-2, "Bad child file in art.pak");
     }
 
-    // Port-only: the packet read whole (the original read it as a child file of the art file's), from the bytes held
-    // (MCGuiSystem holds them all) rather than the disk.
-    std::vector<uint8_t> gif(size);
+    // Port-only: the packet read whole (the original read it as a child file of the art file's): with HD art's numbered
+    // folders drawn, the pack's copy (MCShapeFile); else from the bytes held (MCGuiSystem holds them all), not the disk.
+    std::vector<uint8_t> gif(static_cast<size_t>(size));
 
-    if (artFile.ReadPacket(artPacket, gif) == 0)
+    if (MCShapeFile::ReadPacket(artFile, artPacket, gif) != size)
     {
-        Fatal(-2, std::format("Bad child file in art.pak: packet {} can't be read", artPacket));
+        Fatal(0, "Cant open child file.");
     }
 
     // The game's own art: a picture it can't draw means a damaged install, which it can't run without.
@@ -167,7 +168,8 @@ auto MCGuiPort::Init(int32_t artPacket) -> int32_t
 auto MCGuiPort::Init(std::string_view fileName, MCOptionalRef<MCTgaColors> colors) -> int32_t
 {
     std::string path;
-    MCFile file;
+    // Port-only: with HD art's numbered folders drawn, the pack's copy of the picture (MCShapeFile).
+    MCShapeFile file;
     bool opened = false;
 
     if (CurPlanet == 1)

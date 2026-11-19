@@ -3,6 +3,7 @@
 #include "lib/MCDiskFile.h"
 #include "platform/MCAddressKey.h"
 #include "platform/MCSharpLines.h"
+#include "shaders/channels.hlsli"
 #include "sprite/MCBc7.h"
 
 class MCShape;
@@ -26,7 +27,9 @@ class MCShape;
 /// way to the next frame, LegsInBetweenSteps) as <c>&lt;frame&gt;_&lt;step&gt;</c>, over a turn middle
 /// <c>&lt;frame&gt;_turn_&lt;step&gt;</c> (TurnBetweenStep), each over both frames' bounds.</para>
 /// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.hdf</c> (or a PNG pair) likewise, named by
-/// their pixels' hash (<see cref="PictureHash"/>).</para>
+/// their pixels' hash (<see cref="PictureHash"/>). Port-only: the briefing maps and their tactical maps are
+/// <c>maps/&lt;hash&gt;.hdf</c>, named the same way, so that the menus' archive holds only what the screens show; a
+/// picture is looked for in <c>menus</c>, then <c>maps</c> (a pack made before keeps its maps in <c>menus</c>).</para>
 /// <para>Every other appearance's shapes (vehicles, Elementals, buildings, trees, terrain objects...) come from its own
 /// PAK, a packet of the shape PAK (<c>shapes90.pak</c>, or <c>shapes.pak</c> for an appearance that one leaves
 /// empty); their frames are <c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;/&lt;frame&gt;</c>, the
@@ -141,30 +144,31 @@ namespace MCHdArt
 
     /// <summary>The bytes an index picture's pixel takes (R8G8), and the green of a pixel with an index.</summary>
     inline constexpr size_t IndexBytes = 2;
-    inline constexpr uint8_t HasIndex = 255;
+    inline constexpr auto HasIndex = static_cast<uint8_t>(MCGpuChannels::HasIndex);
     /// <summary>
     /// Port-only: an index picture's green for a pixel with an index that is part of an object's baked shadow
     /// (<see cref="MarkBakedShadows"/>, or marked by the pack's generator in art the game doesn't mark, a forest's);
     /// otherwise it is as HasIndex's.
     /// </summary>
-    inline constexpr uint8_t BakedShadow = 254;
+    inline constexpr auto BakedShadow = static_cast<uint8_t>(MCGpuChannels::BakedShadow);
     /// <summary>
     /// Port-only (a version 2 frame's green, <see cref="Frame::Marked"/>): a pixel the original doesn't draw, its index
     /// spread from the nearest drawn one (the HD edge reaches past the original's), outside a baked shadow or in one; a
     /// pixel the original draws and blends (a translucent shape's, through AlphaPal.ini), outside a baked shadow or in
-    /// one. A version 1 frame has only HasIndex, BakedShadow and 0.
+    /// one. A version 1 frame has only HasIndex, BakedShadow and 0, until the GPU marks its copy
+    /// (shaders/channels.hlsli).
     /// </summary>
-    inline constexpr uint8_t Spread = 253;
-    inline constexpr uint8_t SpreadShadow = 252;
-    inline constexpr uint8_t DrawnBlended = 251;
-    inline constexpr uint8_t DrawnBlendedShadow = 250;
+    inline constexpr auto Spread = static_cast<uint8_t>(MCGpuChannels::Spread);
+    inline constexpr auto SpreadShadow = static_cast<uint8_t>(MCGpuChannels::SpreadShadow);
+    inline constexpr auto DrawnBlended = static_cast<uint8_t>(MCGpuChannels::DrawnBlended);
+    inline constexpr auto DrawnBlendedShadow = static_cast<uint8_t>(MCGpuChannels::DrawnBlendedShadow);
 
     /// <summary>
     /// Whether an index picture's <paramref name="green"/> gives its pixel an index (draw.pshader's HasIndexIn).
     /// </summary>
     constexpr bool HasIndexMark(uint8_t green)
     {
-        return green >= DrawnBlendedShadow;
+        return MCGpuChannels::HasIndexGreen(green);
     }
 
     /// <summary>
@@ -173,7 +177,7 @@ namespace MCHdArt
     /// </summary>
     constexpr bool InShadowMark(uint8_t green)
     {
-        return green == BakedShadow || green == SpreadShadow || green == DrawnBlendedShadow;
+        return MCGpuChannels::InShadowGreen(green);
     }
 
     /// <summary>
@@ -183,7 +187,7 @@ namespace MCHdArt
     /// </summary>
     constexpr bool OriginalDrawsMark(uint8_t green)
     {
-        return green == HasIndex || green == BakedShadow || green == DrawnBlended || green == DrawnBlendedShadow;
+        return MCGpuChannels::OriginalDrawsGreen(green);
     }
 
     /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>
@@ -423,6 +427,14 @@ namespace MCHdArt
     bool Active();
 
     /// <summary>
+    /// Port-only: the pack's archive of the pictures a sharp screen draws its text and line art with
+    /// (<c>sharp.hda</c>, platform/MCSharpPictures's, each named by its key), when the pack folder exists, its
+    /// <c>pack.cfg</c> is of a format this code reads and it has one (looked for once a pack); none otherwise. HD art
+    /// needn't be on: the pictures are the same whatever the pack's art.
+    /// </summary>
+    std::optional<std::filesystem::path> SharpArchive();
+
+    /// <summary>
     /// Whether the pack's mech and object folders, named by the game's sprite files' numbers, are drawn: <see
     /// cref="Active"/>, and the pack was made from this game's sprite files (<c>pack.cfg</c>'s Sprites, when it says).
     /// A pack made from other files would put another mech's frames in a mech's place; its ground and menu pictures,
@@ -537,13 +549,17 @@ namespace MCHdArt
     /// <summary>Port-only: adds a note to the HD trace, if one is open (OpenTrace): <c>N time text</c>.</summary>
     void TraceNote(std::string_view text);
 
+    /// <summary>Port-only: the examples the guard keeps of each kind of read it notes (GuardOriginalReads).</summary>
+    inline constexpr size_t GuardExamples = 4;
+
     /// <summary>
     /// Port-only, for test runs alone (the tests; <c>-hdguard</c>, which no player passes): while on, each read of the
     /// original's art that a version 2 pack is drawn in place of (a shape table, a ground tile or overlay) is noted by its
     /// kind, so the run can fail on it (SPEC-pack-v2.md's done: no original art read). Setting it clears what it noted.
     /// The game reads the art as without the guard: a mod's art, which the pack lacks, still comes from its files.
+    /// Each kind keeps its first <paramref name="examples"/> examples (a survey of every screen's pictures keeps all).
     /// </summary>
-    void GuardOriginalReads(bool on);
+    void GuardOriginalReads(bool on, size_t examples = GuardExamples);
 
     /// <summary>Port-only: whether the guard is on (GuardOriginalReads) with a version 2 pack drawn.</summary>
     bool GuardingOriginalReads();
@@ -641,6 +657,34 @@ namespace MCHdArt
     /// <summary>Port-only (the tests): how many times the cache read a frame again for its colours (ColorsOf).</summary>
     size_t ColorsReadAgain();
 
+    /// <summary>Port-only (SPEC-memory.md's indices): who asks for a frame's indices (<see cref="IndicesOf"/>).</summary>
+    enum class MCIndicesUse : uint8_t
+    {
+        /// <summary>Code on the CPU reading them: the frame's folder keeps its frames' indices from then on.</summary>
+        Read,
+        /// <summary>The GPU's upload of the frame's picture, which holds them after.</summary>
+        Upload
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): <paramref name="frame"/>'s indices: its own when it holds them, else its
+    /// cached record's, read again when the record let go of them (once the GPU had its picture, a couple of frames
+    /// after, unless code on the CPU had read its folder's: as a first draw reads a frame, on this thread). Valid until
+    /// the cache next changes.
+    /// </summary>
+    std::span<const uint8_t> IndicesOf(const Frame& frame, MCIndicesUse use = MCIndicesUse::Read);
+
+    /// <summary>Port-only (the tests, the frame log): how many times the cache read a frame again for its indices.</summary>
+    size_t IndicesReadAgain();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): while <paramref name="marked"/>, version 2 frames (Frame::Marked: a pack
+    /// whose shape tables are stripped, so code on the CPU reads their indices for the original's pixels) keep their
+    /// indices once the GPU has their pictures, whatever their folder: the weather, shown, measures every unit's frames
+    /// as they're drawn (MCWeather's columns), the loading bar's among them, before it has read any.
+    /// </summary>
+    void KeepIndices(bool marked);
+
     /// <summary>
     /// Whether the frames of the shape table starting at <paramref name="table"/> are drawn with their own alpha's edges
     /// (the mech bar's damage diagrams: the interface's pixel art), not the original's pixels' smoothed (the renderer's
@@ -679,8 +723,8 @@ namespace MCHdArt
     std::string PictureName(uint64_t hash);
 
     /// <summary>
-    /// The HD copy of the picture with <paramref name="pixels"/> (<c>menus/&lt;hash&gt;</c> in the pack, kept as a
-    /// frame's), read the first time; null when HD art is off or the pack has none.
+    /// The HD copy of the picture with <paramref name="pixels"/> (<c>menus/&lt;hash&gt;</c> in the pack, or a map's
+    /// <c>maps/&lt;hash&gt;</c>, kept as a frame's), read the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height);
 
@@ -694,11 +738,22 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only: has the reading thread read the HD copies of <paramref name="pictures"/> ahead of their first draw, those
-    /// the pack's archive has that aren't kept, looked at or asked for already, in order, as <paramref name="as"/>: as
-    /// sets while they and the frames kept take at most half the cache's budget, or as a load's (a mission's interface)
-    /// within the whole budget; <see cref="KeepReadAhead"/> keeps them as drawn ones are kept.
+    /// the pack's archives have (the menus', the maps') that aren't kept, looked at or asked for already, in order, as
+    /// <paramref name="as"/>: as sets while they and the frames kept take at most half the cache's budget, or as a load's
+    /// (a mission's interface) within the whole budget; <see cref="KeepReadAhead"/> keeps them as drawn ones are kept.
     /// </summary>
     void ReadPicturesAhead(std::span<const PictureAhead> pictures, ReadAs as = ReadAs::Set);
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): has the readers read the screens' whole set ahead, every picture in the pack's
+    /// menus archive (a set's reads, the lowest kind, in the archive's order), while they and the frames kept take at
+    /// most half the cache's budget, as <see cref="ReadPicturesAhead"/>'s do: a screen's, a tab's or a dialog's first
+    /// draw then finds its pictures without a read, whichever it is. Only where the briefing maps lie apart, in an
+    /// archive of their own (<c>maps.hda</c>): in a pack made before, they fill the menus' (370 of its 554 MB
+    /// unpacked), and the screens' pictures are read ahead as logistics loads them. A picture read this way is checked
+    /// against the size its first draw asks for, as any frame kept as read ahead is. The bytes asked for.
+    /// </summary>
+    size_t ReadMenuSetAhead();
 
     /// <summary>
     /// Port-only: keeps the frames and pictures the reading thread has read ahead (<see cref="ReadPicturesAhead"/>) as a
@@ -755,7 +810,7 @@ namespace MCHdArt
     std::shared_ptr<const Frame> FindTerrainTileByKey(uint64_t key, int32_t width, int32_t height);
 
     /// <summary>A relief map's byte for flat ground; a byte stands for a rise of (byte - this) / 127 of a pixel.</summary>
-    inline constexpr int32_t ReliefFlat = 128;
+    inline constexpr auto ReliefFlat = static_cast<int32_t>(MCGpuChannels::ReliefFlat);
 
     /// <summary>
     /// Terrain tile <paramref name="tile"/>'s relief map (its bounds <paramref name="width"/> x
@@ -1069,6 +1124,57 @@ namespace MCHdArt
 
     /// <summary>Port-only: the stored bytes the hold keeps now (<see cref="StartHold"/>).</summary>
     size_t HeldBytes();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): the next mission is known, <paramref name="mission"/> (its
+    /// <c>.fit</c>'s name): when the hold is wanted, it holds from now that mission's art, the archives of
+    /// <paramref name="folders"/> (the pack's, from its list) and of those handed it next (<see cref="OpenArchivesAhead"/>:
+    /// each mech of the player's lance as it's placed), reading behind the screens, a run of
+    /// <see cref="BriefingRunBytes"/> at a time, until the load (<see cref="StartLoadFill"/>). Another mission's hold is
+    /// let go of first.
+    /// </summary>
+    void StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders);
+
+    /// <summary>
+    /// Port-only: whether the hold holds for <paramref name="mission"/> since its briefing (<see cref="StartBriefingHold"/>,
+    /// not let go of since), which its load keeps rather than letting go of.
+    /// </summary>
+    bool HoldsFor(std::string_view mission);
+
+    /// <summary>
+    /// Port-only: the most bytes one of the hold's reads takes behind a briefing's screens (<see cref="StartBriefingHold"/>):
+    /// what a hard disk reads in about 10 ms, so a screen's read waits behind one for at most that.
+    /// </summary>
+    constexpr uint64_t BriefingRunBytes = uint64_t{1} << 20;
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing": a mission's list): the pack's folders the last load handed the hold
+    /// (<see cref="StartLoadFill"/> to <see cref="FinishLoadFill"/>): those of the types it made
+    /// (<see cref="OpenArchivesAhead"/>) and of the frames it drew or read ahead whose archives the hold keeps any of; each
+    /// once, in the order handed, relative to the pack.
+    /// </summary>
+    std::vector<std::filesystem::path> LoadFolders();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders <paramref name="mission"/>'s load hands the
+    /// hold, from the list the program carries for it (sprite/MCHoldLists.h, worked out from <see cref="LoadFolders"/>),
+    /// but those of the player's lance; none for a mission it has no list for (a mod's), which fills at its load.
+    /// </summary>
+    std::vector<std::filesystem::path> BriefingFolders(std::string_view mission);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders of mech chassis <paramref name="chassis"/>'s
+    /// tree (its packet in the object file), from the list the program carries (sprite/MCHoldLists.h); none for one it
+    /// has no list for.
+    /// </summary>
+    std::vector<std::filesystem::path> ChassisFolders(uint32_t chassis);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): a mech of chassis <paramref name="chassis"/> is in the player's
+    /// lance: while a briefing's mission is held (<see cref="StartBriefingHold"/>), the hold reads its tree's archives
+    /// too (<see cref="ChassisFolders"/>), and holds them until the mission ends.
+    /// </summary>
+    void HoldMechAhead(uint32_t chassis);
 
     /// <summary>Port-only: how many reads the hold has made (<see cref="StartHold"/>), for the tests.</summary>
     size_t HeldReads();

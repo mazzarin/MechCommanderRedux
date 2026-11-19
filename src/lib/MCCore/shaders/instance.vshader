@@ -3,7 +3,8 @@
 // Draw), passed on to draw.pshader unchanged, which works out every pixel from it.
 //
 // Draws are in the window's pixels. A surface shown scaled (the world view, drawn at the size it's shown) is drawn at
-// another size: the quad covers the drawn pixels whose window pixel lies in the rectangle (pixels.hlsli's DrawnCorner).
+// another size: the quad covers the drawn pixels whose window pixel lies in the rectangle (pixels.hlsli's DrawnCorner,
+// on the surface's drawn grid).
 //
 // Bindings (SDL GPU, SPIR-V): the draws as a storage buffer in space0, vertex uniforms in space1.
 
@@ -34,6 +35,8 @@ cbuffer Batch : register(b0, space1)
     float4 targetSize;
     // x: the batch's first draw in the buffer.
     uint4 batch;
+    // Port-only: the target's drawn grid's offset across and down (pixels.hlsli); zw unused.
+    int4 offset;
 };
 
 struct Output
@@ -59,7 +62,7 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     const Draw draw = draws[batch.x + instance];
 
     Output output;
-    output.position = float4(DrawnCorner(draw.rect, max(int4(targetSize), 1), corners[vertex]), 0.0, 1.0);
+    output.position = float4(DrawnCorner(draw.rect, max(int4(targetSize), 1), offset.xy, corners[vertex]), 0.0, 1.0);
     output.rect = draw.rect;
     output.source = draw.source;
     output.op = draw.op;

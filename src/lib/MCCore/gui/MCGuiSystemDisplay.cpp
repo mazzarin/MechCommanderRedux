@@ -5,12 +5,12 @@
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFatal.h"
-#include "lib/MCFile.h"
 #include "main/MCGamePaths.h"
 #include "vfx/MCVfxFunctions.h"
 #include "platform/MCCursor.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
+#include "sprite/MCShapeFile.h"
 
 namespace
 {
@@ -350,9 +350,14 @@ auto MCGuiSystem::GammaCorrectCurrentPalette(int32_t level) -> void
     ShowPalette(FirstGameColor, EndGameColor - FirstGameColor);
 }
 
-auto MCGuiSystem::FadeDownCurrentPalette() -> void
+auto MCGuiSystem::CanFade() const -> bool
 {
-    if (!_DisplayReady || CurrentPalette[FirstGameColor].R == 0)
+    return _DisplayReady && !_Stopping && CurrentPalette[FirstGameColor].R != 0;
+}
+
+auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading, int32_t workFrom) -> void
+{
+    if (!CanFade())
     {
         return;
     }
@@ -364,6 +369,7 @@ auto MCGuiSystem::FadeDownCurrentPalette() -> void
     int32_t step = 1;
     int32_t faded = 0;
     const double frequency = static_cast<double>(CountsPerSecond);
+    size_t piece = 0;
 
     do
     {
@@ -371,6 +377,13 @@ auto MCGuiSystem::FadeDownCurrentPalette() -> void
         faded += step;
         _Display->SetFade(faded);
         std::ignore = _Display->Present();
+
+        // Port-only: a piece of the work given each step once it's shown, in the step's time, from its level on.
+        if (piece < whileFading.size() && faded >= workFrom)
+        {
+            whileFading[piece++]();
+        }
+
         float elapsed;
 
         do
@@ -379,7 +392,13 @@ auto MCGuiSystem::FadeDownCurrentPalette() -> void
         } while (elapsed < 0.00390625f);
 
         step = static_cast<int32_t>(elapsed * 256.0f);
-    } while (faded < 0x100);
+    } while (faded < FadeLevels);
+
+    // Port-only: what the fade had no steps left for, the screen black.
+    while (piece < whileFading.size())
+    {
+        whileFading[piece++]();
+    }
 
     // Where the original ends: entries 10..245 black until the next palette is set. The fade comes off with them, so
     // the screen stays black.
@@ -412,7 +431,8 @@ auto MCGuiSystem::ActivatePalette(std::span<const uint8_t> colors, int32_t first
 auto MCGuiSystem::ActivatePaletteFromTga(std::string_view fileName) -> void
 {
     std::string path = std::format("{}{}", std::string_view(ArtPath), fileName);
-    MCFile tgaFile;
+    // Port: through MCShapeFile, so with a version 2 pack its colours come from the pack's copy.
+    MCShapeFile tgaFile;
 
     if (tgaFile.Open(path) != 0)
     {

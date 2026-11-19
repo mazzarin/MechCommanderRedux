@@ -134,6 +134,21 @@ namespace MCReleaseFile
     /// <summary>The most mirrors <c>release.json</c> may name.</summary>
     constexpr size_t MaxMirrors = 16;
 
+    /// <summary>
+    /// The lowest release a copy may stay on (SPEC-install-and-updates.md's Forced program updates): a copy whose program
+    /// is older than that release's for its platform downloads the program of the release it takes by itself, and puts
+    /// it in at its next start; its content is left as it is, for the player to update.
+    /// </summary>
+    struct MCRequired
+    {
+        /// <summary>The release's number.</summary>
+        uint64_t Release = 0;
+        /// <summary>Its program's build on each platform ("mac", "windows"): a copy running an older one is below it.</summary>
+        std::map<std::string, uint64_t, std::less<>> Builds;
+
+        bool operator==(const MCRequired&) const = default;
+    };
+
     /// <summary><c>release.json</c>.</summary>
     struct MCReleases
     {
@@ -152,7 +167,15 @@ namespace MCReleaseFile
         /// releases still supported (<c>supported</c>), which the mirrors' sync reads and the game doesn't.
         /// </summary>
         std::vector<std::string> Mirrors;
+        /// <summary>The lowest release a copy may stay on (none: every copy may stay where it is).</summary>
+        std::optional<MCRequired> Required;
     };
+
+    /// <summary>
+    /// Whether a copy running build <paramref name="runningBuild"/> on <paramref name="platform"/> is below
+    /// <paramref name="releases"/>' lowest release (<see cref="MCReleases::Required"/>), so its program updates by itself.
+    /// </summary>
+    bool BelowRequired(const MCReleases& releases, std::string_view platform, uint64_t runningBuild);
 
     /// <summary>What the game keeps of the files it has read, and of the copy (the user folder's <c>update.json</c>).</summary>
     struct MCKept

@@ -137,6 +137,7 @@ void MCSoundChannel::ApplyControls()
 {
     _Buffer->SetVolume(BufferVolume(Volume));
     _Buffer->SetPan(BufferPan(Panning));
+    _Buffer->SetVoice(Voice);
 }
 
 void MCSoundChannel::CreateAndLoadBuffer(std::shared_ptr<MCSoundResource> newResource)

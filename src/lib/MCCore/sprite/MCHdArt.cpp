@@ -14,6 +14,7 @@
 #include "platform/MCSdlHandle.h"
 #include "platform/MCThreadPriority.h"
 #include "sprite/MCBc7.h"
+#include "sprite/MCHoldLists.h"
 #include "sprite/MCInBetween.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
@@ -43,6 +44,15 @@ namespace
     constexpr std::string_view ShapeFolder = "shapes";
     /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
     constexpr std::string_view PictureFolder = "menus";
+    /// <summary>
+    /// Port-only: the pack's folder of the briefing maps and their tactical maps, pictures named as the menus' are, kept
+    /// apart (<c>maps.hda</c>) so that the menus' archive holds only what the screens show (MCHdArt.h).
+    /// </summary>
+    constexpr std::string_view MapFolder = "maps";
+    /// <summary>Port-only: the pack's archive of the sharp screens' pictures (MCHdArt::SharpArchive).</summary>
+    constexpr std::string_view SharpArchiveName = "sharp.hda";
+    /// <summary>The folders a picture is looked for in, in order.</summary>
+    constexpr std::array<std::string_view, 2> PictureFolders = {PictureFolder, MapFolder};
     constexpr std::string_view PaletteFile = "palette.rgb";
     /// <summary>The pack's folder of movies' HD frames, and their extension (MCHdArt::FindMovie).</summary>
     constexpr std::string_view MovieFolder = "movies";
@@ -100,6 +110,12 @@ namespace
     /// ahead, when some of it was dropped or left out for want of room since (a quarter of a second at 120 Hz).
     /// </summary>
     constexpr uint64_t AskAgainFrames = 30;
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): the frames a frame's record keeps its indices after the GPU took its
+    /// picture, so that code on the CPU reading them in the same frame (the weather's measure of a unit just drawn, HD
+    /// lighting's glow of an effect) finds them, and its folder keeps its frames' from then on.
+    /// </summary>
+    constexpr uint64_t IndicesKeptFrames = 2;
     /// <summary>The most reads of the frames drawn next waiting (the oldest left out past it: the game has drawn on).</summary>
     constexpr size_t MaxNextReads = 4096;
     /// <summary>The readers' handles kept open for their next reads, for each reader (MCHdArt::SetReaderSettings).</summary>
@@ -178,8 +194,12 @@ namespace
     /// <summary>What a turn middle's name has in place of a step (sprite/MCInBetween.h's TurnStep, TurnMirroredStep).</summary>
     constexpr std::string_view TurnName = "turn";
     constexpr std::string_view TurnMirroredName = "turnm";
+    /// <summary>What a loop's wrap in-between's name has before its step (sprite/MCInBetween.h's WrapStep).</summary>
+    constexpr std::string_view WrapName = "wrap";
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
+    /// <summary>A loose frame's pictures' extension, as the generator writes them.</summary>
+    constexpr std::string_view PngExtension = ".png";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
     constexpr std::string_view HdfExtension = ".hdf";
     /// <summary>
@@ -229,6 +249,12 @@ namespace
         std::optional<bool> Loose;
         /// <summary>Whether its frames are objects', whose baked shadows are marked (MCHdArt::MarkBakedShadows).</summary>
         bool BakedShadows = false;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's indices): whether code on the CPU read its frames' indices (MCHdArt::IndicesOf:
+        /// HD lighting's glows and outlines, the weather's measures, braking's stops, the ground's overlays, a menu
+        /// picture's keyed test), so they keep them once the GPU has their pictures; others' go.
+        /// </summary>
+        bool IndicesRead = false;
 
         /// <summary>An archive holding a folder's frames, and the start of their entries' names in it.</summary>
         struct InArchive
@@ -510,6 +536,17 @@ namespace
         /// </summary>
         bool Loading = false;
         /// <summary>
+        /// Port-only (SPEC-memory.md's "From the briefing"): the mission the hold holds for since its briefing
+        /// (MCHdArt::StartBriefingHold), which that mission's load keeps (MCHdArt::HoldsFor); empty when it holds for a
+        /// load alone.
+        /// </summary>
+        std::string Mission;
+        /// <summary>
+        /// Port-only: the hold reads behind a briefing's screens (MCHdArt::StartBriefingHold to MCHdArt::StartLoadFill),
+        /// in runs of MCHdArt::BriefingRunBytes, so a screen's read waits behind one for little.
+        /// </summary>
+        bool Briefing = false;
+        /// <summary>
         /// Port-only (MCHdArt::LoadBarPercent): the most of the loading bar shown since the load began: the fill's share
         /// falls as the load hands the hold more archives, and the bar never goes back.
         /// </summary>
@@ -625,6 +662,8 @@ namespace
         /// <summary>The folder set (empty: the default), and whether the folder in use exists (unknown: not looked).</summary>
         std::filesystem::path Folder;
         std::optional<bool> FolderExists;
+        /// <summary>The pack's sharp.hda, once looked for (MCHdArt::SharpArchive).</summary>
+        std::optional<std::optional<std::filesystem::path>> Sharp;
         std::unordered_map<MCAddressKey, Sequence> Sequences;
         size_t Attached = 0;
         /// <summary>The folders frames were looked up in, and each one's index there.</summary>
@@ -646,6 +685,14 @@ namespace
         /// MCHdArt::ReadLoadedShapesAhead, in the order read, for it to read their frames ahead.
         /// </summary>
         std::vector<uint64_t> ShapeHashesToRead;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's "From the briefing": a mission's list): whether a load's fill runs
+        /// (MCHdArt::StartLoadFill to MCHdArt::FinishLoadFill), and the pack's folders it handed the hold meanwhile, each
+        /// once, in the order handed (NoteLoadFolder: MCHdArt::LoadFolders), its keys in LoadFolderKeys.
+        /// </summary>
+        bool RecordingLoad = false;
+        std::vector<std::filesystem::path> LoadFolders;
+        std::unordered_set<std::string> LoadFolderKeys;
         std::unordered_map<FrameKey, Cached, FrameKeyHash> Frames;
         /// <summary>The keys of the frames held (those in Frames with one), least recently used first.</summary>
         std::list<FrameKey> Order;
@@ -666,6 +713,18 @@ namespace
         std::unordered_map<uint64_t, FrameKey> ById;
         /// <summary>Port-only (MCHdArt::ColorsReadAgain): the times a frame was read again for its colours.</summary>
         size_t ColorsReadAgain = 0;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's indices): the frames whose pictures the GPU took (MCHdArt::ColorsUploaded) and the
+        /// frame it took each in; IndicesKeptFrames after, each record lets go of its indices unless its folder's are
+        /// read on the CPU (FrameFolder::IndicesRead). The times a frame was read again for them (MCHdArt::IndicesOf).
+        /// </summary>
+        std::vector<std::pair<FrameKey, uint64_t>> Uploaded;
+        size_t IndicesReadAgain = 0;
+        /// <summary>
+        /// Port-only (MCHdArt::KeepIndices): whether version 2 frames keep their indices whatever their folder (the
+        /// weather shown, which measures every unit's frames as they're drawn).
+        /// </summary>
+        bool KeepMarkedIndices = false;
         /// <summary>
         /// Port-only (the ledger): the frames the cache let go of while something else held them (a texture's picture,
         /// a draw's), until they go, and their bytes in the ledger, set each frame (MCHdArt::NextFrame).
@@ -1192,6 +1251,21 @@ namespace
     }
 
     void QueueHold(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive);
+    bool HoldsArchive(const MCHdArchive& archive);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing": a mission's list): notes <paramref name="folder"/> (one of the
+    /// pack's, relative to it) among those the load handed the hold (MCHdArt::LoadFolders), while a load's fill runs.
+    /// </summary>
+    void NoteLoadFolder(const std::filesystem::path& folder)
+    {
+        State& state = TheState();
+
+        if (state.RecordingLoad && state.LoadFolderKeys.insert(folder.generic_string()).second)
+        {
+            state.LoadFolders.push_back(folder);
+        }
+    }
 
     /// <summary>
     /// The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once (by the readers when asked
@@ -1264,6 +1338,12 @@ namespace
         {
             if (std::shared_ptr<MCHdArchive> archive = ArchiveFor(at); archive != nullptr)
             {
+                // Port-only (MCHdArt::LoadFolders): a folder of frames the load draws or reads ahead, its archive held.
+                if (HoldsArchive(*archive))
+                {
+                    NoteLoadFolder(folder.Path.lexically_relative(pack));
+                }
+
                 found.Archive = std::move(archive);
 
                 if (at != folder.Path)
@@ -1446,6 +1526,33 @@ namespace
         return std::optional<MCHdArt::Frame>();
     }
 
+    /// <summary>
+    /// Port-only: whether <paramref name="folder"/> holds frame <paramref name="frame"/> (its frame file or PNG pair, else
+    /// its archive's entry), looked for by name, without a read.
+    /// </summary>
+    bool HoldsFrame(FrameFolder& folder, std::string_view frame)
+    {
+        std::error_code error;
+
+        if (!folder.Loose.has_value())
+        {
+            folder.Loose = std::filesystem::is_directory(folder.Path, error);
+        }
+
+        if (const std::filesystem::path path = folder.Path / frame;
+            *folder.Loose &&
+            (std::filesystem::is_regular_file(std::filesystem::path(path).concat(HdfExtension), error) ||
+             std::filesystem::is_regular_file(std::filesystem::path(path).concat(PngExtension), error)))
+        {
+            return true;
+        }
+
+        const FrameFolder::InArchive& archived = ArchiveOf(folder);
+        return archived.Archive != nullptr &&
+               archived.Archive->File->Find(archived.Prefix + std::string(frame) + std::string(HdfExtension))
+                   .has_value();
+    }
+
     /// <summary>Whether the pack has <paramref name="folder"/>'s frames: the folder, or an archive holding it.</summary>
     bool HasFolder(const std::filesystem::path& folder)
     {
@@ -1484,8 +1591,9 @@ namespace
 
     /// <summary>
     /// The steps a numbered frame's step goes with (sprite/MCInBetween.h): the frame's own and its in-betweens toward
-    /// the next frame (an effect's, a walk's), or (HDTurns) a legs frame's turn middle and its in-betweens. Its members
-    /// are numbered from the frame's own (or the turn middle's), 0.
+    /// the next frame (an effect's, a walk's), or (HDTurns) a legs frame's turn middle and its in-betweens; or a walk's
+    /// in-betweens round its loop's wrap (WrapStep), its turn middle's too. Its members are numbered from the frame's own
+    /// (or the turn middle's), 0.
     /// </summary>
     struct StepFamily
     {
@@ -1494,22 +1602,37 @@ namespace
         /// <summary>The member a step is, and how many members there may be.</summary>
         int32_t Member = 0;
         int32_t Members = MaxInBetweenSteps;
+        /// <summary>Whether its in-betweens are toward the loop's first frame (WrapStep), not the art's next.</summary>
+        bool Wrap = false;
 
-        /// <summary>The step that names member <paramref name="member"/>.</summary>
-        int32_t StepOf(int32_t member) const { return Turn == 0 ? member : TurnBetweenStep(Turn, member); }
+        /// <summary>
+        /// The step that names member <paramref name="member"/>: a wrap's member 0 is the frame's own (or its turn
+        /// middle), which has no wrap of its own.
+        /// </summary>
+        int32_t StepOf(int32_t member) const
+        {
+            const int32_t step = Turn == 0 ? member : TurnBetweenStep(Turn, member);
+            return Wrap && member > 0 ? WrapBetweenStep(step) : step;
+        }
+
+        /// <summary>The family of the frames after: the art's next frames have their own in-betweens, not a wrap's.</summary>
+        StepFamily Unwrapped() const { return {Turn, 0, Members, false}; }
     };
 
     /// <summary>The family <paramref name="step"/> (a numbered frame key's, NumberedKey) is of, and its member.</summary>
     StepFamily FamilyOf(uint64_t step)
     {
+        const bool wrap = (step & static_cast<uint64_t>(WrapStep)) != 0;
+        step &= ~static_cast<uint64_t>(WrapStep);
+
         if (step < static_cast<uint64_t>(TurnStep))
         {
-            return {0, static_cast<int32_t>(step), MaxInBetweenSteps};
+            return {0, static_cast<int32_t>(step), wrap ? LegsInBetweenSteps : MaxInBetweenSteps, wrap};
         }
 
         constexpr uint64_t BetweenMask = (uint64_t{1} << TurnBetweenShift) - 1;
         return {static_cast<int32_t>(step & ~(BetweenMask << TurnBetweenShift)),
-                static_cast<int32_t>(step >> TurnBetweenShift & BetweenMask), LegsInBetweenSteps};
+                static_cast<int32_t>(step >> TurnBetweenShift & BetweenMask), LegsInBetweenSteps, wrap};
     }
 
     /// <summary>
@@ -1526,17 +1649,25 @@ namespace
             return frame;
         }
 
-        // A turn middle, or (HD art's walk in-betweens) a turn middle's in-between toward the next frame's.
-        if (const StepFamily family = FamilyOf(step); family.Turn != 0)
+        // A turn middle, or (HD art's walk in-betweens) a turn middle's in-between toward the next frame's, or round
+        // the loop's wrap (<frame>_turn_wrap_<step>).
+        const StepFamily family = FamilyOf(step);
+        const std::string wrap = family.Wrap ? std::format("{}{}", WrapName, InBetweenSeparator) : std::string();
+
+        if (family.Turn != 0)
         {
             const std::string_view turnName = family.Turn == TurnMirroredStep ? TurnMirroredName : TurnName;
             return family.Member == 0 ? std::format("{}{}{}", frame, InBetweenSeparator, turnName)
-                                      : std::format("{}{}{}{}{}", frame, InBetweenSeparator, turnName,
-                                                    InBetweenSeparator, family.Member);
+                                      : std::format("{}{}{}{}{}{}", frame, InBetweenSeparator, turnName,
+                                                    InBetweenSeparator, wrap, family.Member);
         }
 
-        return std::format("{}{}{}", frame, InBetweenSeparator, step);
+        return std::format("{}{}{}{}", frame, InBetweenSeparator, wrap, family.Member);
     }
+
+    /// <summary>The digits of the name a hash gives a frame (HashName), and their base.</summary>
+    constexpr size_t HashNameDigits = 16;
+    constexpr int HashNameBase = 16;
 
     /// <summary>The name a hash gives a frame: 16 hex digits.</summary>
     std::string HashName(uint64_t hash)
@@ -1559,6 +1690,27 @@ namespace
         }
 
         return found->second;
+    }
+
+    /// <summary>
+    /// Port-only: the folder (State::Folders' index) of PictureFolders that holds picture <paramref name="hash"/>, else the
+    /// menus', where its lack is noted as any frame's.
+    /// </summary>
+    uint32_t PictureFolderOf(uint64_t hash)
+    {
+        const std::string name = HashName(hash);
+
+        for (const std::string_view folder : PictureFolders)
+        {
+            const uint32_t index = FolderIndex(MCHdArt::PackFolder() / folder, Naming::Hash);
+
+            if (HoldsFrame(TheState().Folders.at(index), name))
+            {
+                return index;
+            }
+        }
+
+        return FolderIndex(MCHdArt::PackFolder() / PictureFolder, Naming::Hash);
     }
 
     /// <summary>
@@ -1625,7 +1777,7 @@ namespace
         }
         else
         {
-            const std::filesystem::path colorPath = std::filesystem::path(path).concat(".png");
+            const std::filesystem::path colorPath = std::filesystem::path(path).concat(PngExtension);
 
             if (!loose || !std::filesystem::is_regular_file(colorPath, error))
             {
@@ -1646,7 +1798,7 @@ namespace
 
             // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
             const std::filesystem::path indexPath =
-                std::filesystem::path(path).concat(std::format("{}.png", IndexSuffix));
+                std::filesystem::path(path).concat(std::format("{}{}", IndexSuffix, PngExtension));
             const std::optional<std::pair<int32_t, int32_t>> declared = PngSize(colorPath);
 
             if (!declared.has_value() || PngSize(indexPath) != declared)
@@ -1719,6 +1871,66 @@ namespace
         state.ColorBytes += cached.Colors.size();
         state.AllocatedBytes += allocated;
         state.ColorAllocatedBytes += allocated;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): <paramref name="cached"/>'s record in place of the one it holds, out of the
+    /// cache's bytes and into them; the one it held counted as let go while something else holds it.
+    /// </summary>
+    void ReplaceRecord(State& state, Cached& cached, std::shared_ptr<const MCHdArt::Frame> record)
+    {
+        state.Bytes -= cached.Frame->Bytes();
+        state.AllocatedBytes -= cached.Frame->AllocatedBytes();
+        CountLetGo(state, cached.Frame);
+        cached.Frame = std::move(record);
+        state.Bytes += cached.Frame->Bytes();
+        state.AllocatedBytes += cached.Frame->AllocatedBytes();
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): a record as <paramref name="record"/> is, with <paramref name="indices"/>
+    /// as its indices: its own never copied (a record has no colours: they're kept beside it).
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> RecordWith(const MCHdArt::Frame& record, std::vector<uint8_t> indices)
+    {
+        // Every field but the pixels: a field added to MCHdArt::Frame is copied here too.
+        return std::make_shared<const MCHdArt::Frame>(MCHdArt::Frame{.Id = record.Id,
+                                                                     .Width = record.Width,
+                                                                     .Height = record.Height,
+                                                                     .Scale = record.Scale,
+                                                                     .Format = record.Format,
+                                                                     .Indices = std::move(indices),
+                                                                     .Blended = record.Blended,
+                                                                     .PaintedShadow = record.PaintedShadow,
+                                                                     .Marked = record.Marked,
+                                                                     .Colorspace = record.Colorspace,
+                                                                     .Movie = record.Movie});
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): <paramref name="cached"/>'s record without its indices, which the GPU's
+    /// picture holds.
+    /// </summary>
+    void LetGoIndices(State& state, Cached& cached)
+    {
+        if (!cached.Frame->Indices.empty())
+        {
+            ReplaceRecord(state, cached, RecordWith(*cached.Frame, {}));
+        }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): <paramref name="indices"/>, read again, back in <paramref name="cached"/>'s
+    /// record; let go again as after an upload while the GPU has its picture.
+    /// </summary>
+    void IndicesBack(State& state, const FrameKey& key, Cached& cached, std::vector<uint8_t> indices)
+    {
+        ReplaceRecord(state, cached, RecordWith(*cached.Frame, std::move(indices)));
+
+        if (cached.OnGpu)
+        {
+            state.Uploaded.emplace_back(key, state.Frame);
+        }
     }
 
     /// <summary>
@@ -1919,12 +2131,12 @@ namespace
         const StepFamily family = FamilyOf(follow.Key.Name >> InBetweenNameShift);
         std::vector<AheadEntry> next;
 
-        // Frame at's family from member from on, up to the first member the archive lacks.
-        const auto addFamily = [&](int32_t at, int32_t from)
+        // Frame at's family of steps (of) from member from on, up to the first member the archive lacks.
+        const auto addFamily = [&](int32_t at, const StepFamily& of, int32_t from)
         {
-            for (int32_t member = from; member < family.Members; ++member)
+            for (int32_t member = from; member < of.Members; ++member)
             {
-                const uint64_t name = NumberedKey(at, family.StepOf(member));
+                const uint64_t name = NumberedKey(at, of.StepOf(member));
                 std::string entry = follow.Prefix + NumberedName(name) + std::string(HdfExtension);
                 const std::optional<int32_t> index = follow.Archive->File->Find(entry);
 
@@ -1940,15 +2152,15 @@ namespace
         // Port-only: a neighbour's in a turn, its own frame.
         if (follow.Itself)
         {
-            addFamily(frame, 0);
+            addFamily(frame, family, 0);
             return next;
         }
 
-        addFamily(frame, family.Member + 1);
+        addFamily(frame, family, family.Member + 1);
 
         for (int32_t on = 1; on <= FramesAhead && on < follow.Frames; ++on)
         {
-            addFamily((frame + on) % follow.Frames, 0);
+            addFamily((frame + on) % follow.Frames, family.Unwrapped(), 0);
         }
 
         return next;
@@ -2817,12 +3029,15 @@ namespace
     /// <summary>
     /// Port-only (HoldRun): takes the hold's next run: the first archive's pieces it keeps from its next one on, in the
     /// order they lie, none further than MCHdArt::ReaderRunGap past the bytes before, while they lie in
-    /// MCHdArt::HoldRunBytes (a larger one alone; a version 1 entry stored once for two names within the run); an archive
-    /// leaves the queue with its last one. None when none is left. Call with ReadAhead::Lock held: an archive's table
-    /// never changes once read.
+    /// MCHdArt::HoldRunBytes, or MCHdArt::BriefingRunBytes behind a briefing (a larger one alone; a version 1 entry stored
+    /// once for two names within the run); an archive leaves the queue with its last one. None when none is left. Call
+    /// with ReadAhead::Lock held: an archive's table never changes once read.
     /// </summary>
     std::optional<HoldSpan> TakeHoldRun(HoldQueue& holding)
     {
+        // Port-only (SPEC-memory.md's "From the briefing"): behind a briefing's screens, shorter runs.
+        const uint64_t most = holding.Briefing ? MCHdArt::BriefingRunBytes : MCHdArt::HoldRunBytes;
+
         while (!holding.Archives.empty())
         {
             const std::shared_ptr<MCHdArchive> archive = holding.Archives.front();
@@ -2845,8 +3060,7 @@ namespace
                     const uint64_t nextEnd = next.At + next.Stored;
 
                     // In the order they lie, so none starts before the run.
-                    if (!next.Kept || next.At > end + MCHdArt::ReaderRunGap ||
-                        std::max(end, nextEnd) - start > MCHdArt::HoldRunBytes)
+                    if (!next.Kept || next.At > end + MCHdArt::ReaderRunGap || std::max(end, nextEnd) - start > most)
                     {
                         break;
                     }
@@ -3161,6 +3375,8 @@ namespace
         holding.ReadBytes = 0;
         holding.Loading = false;
         holding.Full = false;
+        holding.Mission.clear();
+        holding.Briefing = false;
         ++holding.Generation;
         ahead.Changed.notify_all();
     }
@@ -3216,6 +3432,16 @@ namespace
         {
             ahead.Opening.erase(folder);
         }
+    }
+
+    /// <summary>
+    /// Whether the read-ahead has frame <paramref name="key"/> already: looked at by the game's thread, read ahead, read
+    /// now or asked for (under ReadAhead::Lock).
+    /// </summary>
+    bool AheadHas(const ReadAhead& ahead, const FrameKey& key)
+    {
+        return ahead.Known.contains(key) || ahead.Ready.contains(key) || ahead.Pictures.contains(key) ||
+               ahead.PicturesAsked.contains(key) || ahead.Reading.contains(key);
     }
 
     void ExpandAsks(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, AskBatch&& batch);
@@ -3383,7 +3609,7 @@ namespace
         {
             if (!ask.Steps)
             {
-                if (ask.Width > 0 && ask.Height > 0)
+                if ((ask.Width > 0 && ask.Height > 0) || (ask.Width == 0 && ask.Height == 0))
                 {
                     look(ask, ask.Name);
                 }
@@ -3397,11 +3623,24 @@ namespace
             {
             }
 
-            // Each turn middle, then its in-betweens, up to the first the archive lacks.
+            // A walk's loop's wrap (the last frame a tree plays, where its art draws more): its in-betweens toward the
+            // first frame, up to the first the archive lacks.
+            for (int32_t step = 1; step < LegsInBetweenSteps && look(ask, NumberedKey(frame, WrapBetweenStep(step)));
+                 ++step)
+            {
+            }
+
+            // Each turn middle, then its in-betweens (and its wrap's), up to the first the archive lacks.
             for (const int32_t turn : {TurnStep, TurnMirroredStep})
             {
                 for (int32_t step = 0; ask.TurnMiddles && step < LegsInBetweenSteps &&
                                        look(ask, NumberedKey(frame, step == 0 ? turn : TurnBetweenStep(turn, step)));
+                     ++step)
+                {
+                }
+
+                for (int32_t step = 1; ask.TurnMiddles && step < LegsInBetweenSteps &&
+                                       look(ask, NumberedKey(frame, WrapBetweenStep(TurnBetweenStep(turn, step))));
                      ++step)
                 {
                 }
@@ -3431,8 +3670,7 @@ namespace
                 const std::shared_ptr<const Follow>& from = batch.Follows[next.From];
                 const FrameKey key{from->Key.Folder, next.Entry.Name};
 
-                if (!named.insert(key).second || ahead.Known.contains(key) || ahead.Ready.contains(key) ||
-                    ahead.Pictures.contains(key) || ahead.PicturesAsked.contains(key) || ahead.Reading.contains(key))
+                if (!named.insert(key).second || AheadHas(ahead, key))
                 {
                     continue;
                 }
@@ -3878,7 +4116,87 @@ namespace
         {
             HoldColors(state, cached, std::move((*read)->Colors));
             ++state.ColorsReadAgain;
+
+            // Port-only (SPEC-memory.md's indices): the indices too, if its record let go of them.
+            if (cached.Frame->Indices.empty() && !(*read)->Indices.empty())
+            {
+                IndicesBack(state, key, cached, std::move((*read)->Indices));
+            }
         }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): <paramref name="cached"/>'s indices read again, its record kept with them:
+    /// it let go of them once the GPU had its picture, before code on the CPU read its folder's. As a first draw reads a
+    /// frame, on this thread, and counted with the frame log's reads.
+    /// </summary>
+    void ReadIndicesAgain(State& state, const FrameKey& key, Cached& cached)
+    {
+        const auto started = std::chrono::steady_clock::now();
+        MCFrameLog::Count(FrameLogReads);
+        auto read = [&]
+        {
+            const MCFrameLog::Scope part(FrameLogRead);
+            return ReadOrTake(key, cached.Frame->OriginalWidth(), cached.Frame->OriginalHeight(), cached.Id);
+        }();
+        const std::chrono::nanoseconds spent = std::chrono::steady_clock::now() - started;
+        state.ReadTime += spent;
+        TraceUse(key, "indices", std::chrono::duration_cast<std::chrono::microseconds>(spent).count());
+
+        if (!read)
+        {
+            LogOnce(state.Folders.at(key.Folder).Path, read.error());
+        }
+        else if (*read != nullptr && !(*read)->Indices.empty())
+        {
+            IndicesBack(state, key, cached, std::move((*read)->Indices));
+            ++state.IndicesReadAgain;
+        }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): the cache's record holding <paramref name="frame"/>'s indices, read again
+    /// if it let go of them, for a caller to hold while it reads them; null when <paramref name="frame"/>'s own are
+    /// its indices. Read (MCHdArt::MCIndicesUse) marks its folder's as read on the CPU.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> IndexedRecord(const MCHdArt::Frame& frame, MCHdArt::MCIndicesUse use)
+    {
+        State& state = TheState();
+        const auto numbered = state.ById.find(frame.Id);
+
+        if (numbered == state.ById.end())
+        {
+            return nullptr;
+        }
+
+        const FrameKey key = numbered->second;
+
+        if (use == MCHdArt::MCIndicesUse::Read)
+        {
+            state.Folders.at(key.Folder).IndicesRead = true;
+        }
+
+        const auto found = frame.Indices.empty() ? state.Frames.find(key) : state.Frames.end();
+
+        if (found == state.Frames.end())
+        {
+            return nullptr;
+        }
+
+        Cached& cached = found->second;
+
+        // Let go of whole since: read again, as a first draw reads it.
+        if (cached.Frame == nullptr)
+        {
+            return Cache(key, frame.OriginalWidth(), frame.OriginalHeight());
+        }
+
+        if (cached.Frame->Indices.empty())
+        {
+            ReadIndicesAgain(state, key, cached);
+        }
+
+        return cached.Frame;
     }
 }
 
@@ -4139,6 +4457,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Folder = folder;
     state.FoundFolder.reset();
     state.FolderExists.reset();
+    state.Sharp.reset();
     state.PackFileLooked = false;
     state.PackFormatReadable = true;
     state.PackFormatRead = 1;
@@ -4156,6 +4475,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
 
     state.Frames.clear();
     state.Order.clear();
+    state.Uploaded.clear();
     state.Folders.clear();
     state.FolderIndices.clear();
     state.ShapeTableFolders.clear();
@@ -4322,28 +4642,48 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>Whether the pack folder exists and its pack.cfg (if it has one) is of a format this code reads.</summary>
+    bool PackReadable()
+    {
+        State& state = TheState();
+
+        if (!state.FolderExists.has_value())
+        {
+            std::error_code error;
+            state.FolderExists = std::filesystem::is_directory(MCHdArt::PackFolder(), error);
+        }
+
+        if (!*state.FolderExists)
+        {
+            return false;
+        }
+
+        ReadPackFile();
+        return state.PackFormatReadable;
+    }
+}
+
 bool MCHdArt::Active()
 {
-    if (GHdArt == 0)
-    {
-        return false;
-    }
+    return GHdArt != 0 && PackReadable();
+}
 
+std::optional<std::filesystem::path> MCHdArt::SharpArchive()
+{
     State& state = TheState();
 
-    if (!state.FolderExists.has_value())
+    if (!state.Sharp.has_value())
     {
+        const std::filesystem::path path = PackFolder() / SharpArchiveName;
         std::error_code error;
-        state.FolderExists = std::filesystem::is_directory(PackFolder(), error);
+        state.Sharp = PackReadable() && std::filesystem::is_regular_file(path, error)
+                          ? std::optional<std::filesystem::path>(path)
+                          : std::nullopt;
     }
 
-    if (!*state.FolderExists)
-    {
-        return false;
-    }
-
-    ReadPackFile();
-    return state.PackFormatReadable;
+    return *state.Sharp;
 }
 
 bool MCHdArt::NumberedFolders()
@@ -4742,6 +5082,10 @@ void MCHdArt::VisitShape(std::span<const uint8_t> table, int32_t frame,
     const auto height = static_cast<int32_t>(bounds.Height);
     const auto minX = static_cast<int32_t>(bounds.MinX);
     const auto minY = static_cast<int32_t>(bounds.MinY);
+    // Port-only (SPEC-memory.md's indices): its folder's frames keep their indices from now on; the record held while
+    // the visits run, whatever they read.
+    const std::shared_ptr<const Frame> record = IndexedRecord(*hd, MCIndicesUse::Read);
+    const std::span<const uint8_t> indices = record != nullptr ? record->Indices : hd->Indices;
 
     for (int32_t y = 0; y < height; ++y)
     {
@@ -4750,9 +5094,9 @@ void MCHdArt::VisitShape(std::span<const uint8_t> table, int32_t frame,
             const size_t at =
                 (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * IndexBytes;
 
-            if (at + 1 < hd->Indices.size() && OriginalDrawsMark(hd->Indices[at + 1]))
+            if (at + 1 < indices.size() && OriginalDrawsMark(indices[at + 1]))
             {
-                pixel(minX + x, minY + y, hd->Indices[at]);
+                pixel(minX + x, minY + y, indices[at]);
             }
         }
     }
@@ -4810,6 +5154,13 @@ void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
     }
 
     State& state = TheState();
+
+    // Port-only (MCHdArt::LoadFolders): the folders of the types a load makes, among those it hands the hold.
+    for (const std::filesystem::path& folder : folders)
+    {
+        NoteLoadFolder(folder);
+    }
+
     const std::filesystem::path pack = PackFolder();
     // Read before the readers' lock: the first time, it reads the file.
     const std::shared_ptr<const MCZstd::Dictionaries> dictionaries = PackDictionaries();
@@ -5011,15 +5362,16 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8
         return kept->second;
     }
 
-    return Cache(FrameKey{FolderIndex(PackFolder() / PictureFolder, Naming::Hash), hash}, width, height);
+    return Cache(FrameKey{PictureFolderOf(hash), hash}, width, height);
 }
 
 namespace
 {
     /// <summary>
-    /// A frame to read ahead (AskAhead): its folder (FolderIndex), its key there and its draw's size; or (Steps) a
-    /// numbered folder's frame with its in-betweens, from the first up to the first its archive lacks (and with
-    /// TurnMiddles its turn middles'), of any size (each checked at its first draw, as a follow's is).
+    /// A frame to read ahead (AskAhead): its folder (FolderIndex), its key there and its draw's size (0 x 0: any, as
+    /// DecodeHdf takes it); or (Steps) a numbered folder's frame with its in-betweens, from the first up to the first its
+    /// archive lacks (and with TurnMiddles its turn middles'), of any size (each checked at its first draw, as a
+    /// follow's is).
     /// </summary>
     struct FrameAsk
     {
@@ -5139,9 +5491,9 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures, ReadAs a
         return;
     }
 
-    // As sets, while they and the frames kept fit the share of the budget (they're kept as drawn ones are, and mustn't
-    // push those out).
-    const uint32_t folder = FolderIndex(PackFolder() / PictureFolder, Naming::Hash);
+    // As <as> asks: a load's within the whole budget, else while they and the frames kept fit the sets' share (they're
+    // kept as drawn ones are, and mustn't push those out); each from the first of PictureFolders holding it
+    // (PictureFolderOf, as its draw finds it).
     std::vector<FrameAsk> asks;
     asks.reserve(pictures.size());
 
@@ -5153,7 +5505,7 @@ void MCHdArt::ReadPicturesAhead(std::span<const PictureAhead> pictures, ReadAs a
 
             if (!TheState().KeptPictures.contains(hash))
             {
-                asks.push_back(FrameAsk{folder, hash, picture.Width, picture.Height});
+                asks.push_back(FrameAsk{PictureFolderOf(hash), hash, picture.Width, picture.Height});
             }
         }
     }
@@ -5188,6 +5540,71 @@ void MCHdArt::ReadPacketAhead(const std::filesystem::path& folder, std::optional
 {
     const std::array<PacketAhead, 1> packet{{{folder, frames, false}}};
     ReadPacketsAhead(packet, ReadAs::Set);
+}
+
+size_t MCHdArt::ReadMenuSetAhead()
+{
+    if (!Active())
+    {
+        return 0;
+    }
+
+    State& state = TheState();
+    // Both indices first: finding a folder may add one, and moves the others.
+    const uint32_t menus = FolderIndex(PackFolder() / PictureFolder, Naming::Hash);
+    const uint32_t maps = FolderIndex(PackFolder() / MapFolder, Naming::Hash);
+    const std::shared_ptr<MCHdArchive> set = ArchiveOf(state.Folders.at(menus)).Archive;
+    const std::shared_ptr<MCHdArchive> apart = ArchiveOf(state.Folders.at(maps)).Archive;
+
+    if (set == nullptr || apart == nullptr || apart == set)
+    {
+        return 0;
+    }
+
+    const std::string& prefix = ArchiveOf(state.Folders.at(menus)).Prefix;
+    const size_t room = RoomIn(RoomFor(ReadAs::Set));
+    std::vector<FrameAsk> asks;
+    size_t bytes = 0;
+    ReadAhead& ahead = state.Ahead;
+    std::unique_lock lock(ahead.Lock);
+
+    for (const MCFileEntry& entry : set->File->GetEntries())
+    {
+        // "<prefix><16 hex digits>.hdf" (the archive's names compared without regard to case): the picture's hash
+        // (HashName), its size any, checked at its first draw.
+        const std::string_view name = entry.GetName();
+
+        if (name.size() != prefix.size() + HashNameDigits + HdfExtension.size() ||
+            MCPort::StrICmp(name.substr(0, prefix.size()), prefix) != 0 ||
+            MCPort::StrICmp(name.substr(name.size() - HdfExtension.size()), HdfExtension) != 0)
+        {
+            continue;
+        }
+
+        const std::string_view hex = name.substr(prefix.size(), HashNameDigits);
+        uint64_t hash = 0;
+
+        if (const std::from_chars_result parsed =
+                std::from_chars(hex.data(), hex.data() + hex.size(), hash, HashNameBase);
+            parsed.ec == std::errc() && parsed.ptr == hex.data() + hex.size() &&
+            !AheadHas(ahead, FrameKey{menus, hash}))
+        {
+            // The readers take them in this order while they fit the room (ExpandAsks): so many bytes are asked for.
+            const auto size = static_cast<size_t>(std::max<int64_t>(entry.RealSize, 0));
+
+            if (bytes + size > room)
+            {
+                break;
+            }
+
+            bytes += size;
+            asks.push_back(FrameAsk{menus, hash, 0, 0});
+        }
+    }
+
+    lock.unlock();
+    AskAhead(asks, AheadKind::Set, room);
+    return bytes;
 }
 
 void MCHdArt::KeepReadAhead()
@@ -5656,6 +6073,7 @@ namespace
         std::mutex Lock;
         std::atomic<bool> On = false;
         std::map<std::string, MCHdArt::GuardedRead, std::less<>> Reads;
+        size_t Examples = MCHdArt::GuardExamples;
     };
 
     Guard& TheGuard()
@@ -5663,16 +6081,14 @@ namespace
         static Guard guard;
         return guard;
     }
-
-    /// <summary>The examples kept of each kind of read the guard notes.</summary>
-    constexpr size_t GuardExamples = 4;
 } // namespace
 
-void MCHdArt::GuardOriginalReads(bool on)
+void MCHdArt::GuardOriginalReads(bool on, size_t examples)
 {
     Guard& guard = TheGuard();
     std::scoped_lock lock(guard.Lock);
     guard.Reads.clear();
+    guard.Examples = examples;
     guard.On = on;
 }
 
@@ -5697,7 +6113,7 @@ void MCHdArt::NoteOriginalRead(std::string_view kind, std::string_view what)
         found = guard.Reads.emplace(std::string(kind), GuardedRead{.Kind = std::string(kind)}).first;
     }
 
-    if (found->second.Examples.size() < GuardExamples)
+    if (found->second.Examples.size() < guard.Examples)
     {
         found->second.Examples.emplace_back(what);
     }
@@ -5920,20 +6336,28 @@ void MCHdArt::StartLoadFill()
         return;
     }
 
-    ReadAhead& ahead = TheState().Ahead;
+    State& state = TheState();
+    state.RecordingLoad = true;
+    state.LoadFolders.clear();
+    state.LoadFolderKeys.clear();
+    ReadAhead& ahead = state.Ahead;
     std::scoped_lock lock(ahead.Lock);
     HoldQueue& holding = ahead.Holding;
 
-    // A hold already on (a load begun without the last mission's let go) holds what it holds and takes this load's too.
+    // A hold already on (its briefing's, MCHdArt::StartBriefingHold; a load begun without the last mission's let go)
+    // holds what it holds and takes this load's too, its reads now as many at once as the readers are free.
     BeginHolding(holding);
     holding.Loading = true;
+    holding.Briefing = false;
     holding.BarShown = 0;
     ahead.Changed.notify_all();
 }
 
 void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
 {
-    ReadAhead& ahead = TheState().Ahead;
+    State& state = TheState();
+    state.RecordingLoad = false;
+    ReadAhead& ahead = state.Ahead;
     std::unique_lock lock(ahead.Lock);
     const auto done = [&ahead]
     { return !HoldPending(ahead) && ahead.InFlight[std::to_underlying(AheadKind::Hold)] == 0; };
@@ -6018,6 +6442,97 @@ void MCHdArt::LetGoHold()
 size_t MCHdArt::HeldBytes()
 {
     return MCFastFile::HeldBytes();
+}
+
+void MCHdArt::StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders)
+{
+    if (!Active() || !HoldWanted() || mission.empty())
+    {
+        return;
+    }
+
+    // Another mission's (a save loaded at a briefing, the match changed) let go of first, as its load would.
+    if (!HoldsFor(mission))
+    {
+        LetGoHold();
+    }
+
+    {
+        ReadAhead& ahead = TheState().Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        HoldQueue& holding = ahead.Holding;
+        BeginHolding(holding);
+        holding.Mission = mission;
+        holding.Briefing = !holding.Loading;
+    }
+
+    // Their archives held as the readers open them (QueueHold), or at once when open already.
+    OpenArchivesAhead(folders);
+}
+
+bool MCHdArt::HoldsFor(std::string_view mission)
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    const HoldQueue& holding = ahead.Holding;
+    return holding.On && !holding.Mission.empty() && MCIEquals(holding.Mission, mission);
+}
+
+std::vector<std::filesystem::path> MCHdArt::LoadFolders()
+{
+    return TheState().LoadFolders;
+}
+
+namespace
+{
+    /// <summary>Port-only (sprite/MCHoldLists.h): the pack's folders a list of the program's names.</summary>
+    std::vector<std::filesystem::path> HoldListFolders(std::span<const uint16_t> indices)
+    {
+        std::vector<std::filesystem::path> folders;
+        folders.reserve(indices.size());
+
+        for (const uint16_t index : indices)
+        {
+            folders.push_back(MCFileSystem::FromUtf8(MCHoldLists::Folders[index]));
+        }
+
+        return folders;
+    }
+}
+
+std::vector<std::filesystem::path> MCHdArt::BriefingFolders(std::string_view mission)
+{
+    const auto found = std::ranges::find_if(MCHoldLists::Missions, [mission](const MCHoldLists::Mission& listed)
+                                            { return MCIEquals(listed.Name, mission); });
+    return found != MCHoldLists::Missions.end() ? HoldListFolders(found->Folders)
+                                                : std::vector<std::filesystem::path>();
+}
+
+std::vector<std::filesystem::path> MCHdArt::ChassisFolders(uint32_t chassis)
+{
+    const auto found = std::ranges::find(MCHoldLists::Mechs, chassis, &MCHoldLists::Chassis::Number);
+    return found != MCHoldLists::Mechs.end() ? HoldListFolders(found->Folders) : std::vector<std::filesystem::path>();
+}
+
+void MCHdArt::HoldMechAhead(uint32_t chassis)
+{
+    if (!Active() || !HoldWanted())
+    {
+        return;
+    }
+
+    {
+        ReadAhead& ahead = TheState().Ahead;
+        std::scoped_lock lock(ahead.Lock);
+
+        // Only while a briefing's mission is held (StartBriefingHold): a lance changed otherwise reads nothing.
+        if (!ahead.Holding.On || ahead.Holding.Mission.empty())
+        {
+            return;
+        }
+    }
+
+    OpenArchivesAhead(ChassisFolders(chassis));
 }
 
 size_t MCHdArt::HeldReads()
@@ -6257,6 +6772,28 @@ std::optional<uint64_t> MCHdArt::NextFrame(bool memoryShort)
     State& state = TheState();
     ++state.Frame;
 
+    // Port-only (SPEC-memory.md's indices): the frames whose pictures the GPU took a while ago let go of their indices,
+    // but those of folders code on the CPU reads.
+    std::erase_if(state.Uploaded,
+                  [&state](const std::pair<FrameKey, uint64_t>& uploaded)
+                  {
+                      if (uploaded.second + IndicesKeptFrames > state.Frame)
+                      {
+                          return false;
+                      }
+
+                      const auto found = state.Frames.find(uploaded.first);
+
+                      if (found != state.Frames.end() && found->second.OnGpu && found->second.Frame != nullptr &&
+                          !state.Folders.at(uploaded.first.Folder).IndicesRead &&
+                          !(state.KeepMarkedIndices && found->second.Frame->Marked))
+                      {
+                          LetGoIndices(state, found->second);
+                      }
+
+                      return true;
+                  });
+
     // Port-only (SPEC-memory.md's ledger): the frames kept, those let go that live on, and those read ahead, as the
     // frame starts.
     state.Ledger.Set({.Payload = static_cast<int64_t>(state.Bytes - state.ColorBytes),
@@ -6412,6 +6949,7 @@ void MCHdArt::ColorsUploaded(const Frame& frame)
     {
         found->second.OnGpu = true;
         LetGoColors(state, found->second);
+        state.Uploaded.emplace_back(numbered->second, state.Frame);
     }
 }
 
@@ -6431,4 +6969,21 @@ void MCHdArt::PictureDropped(uint64_t id)
 size_t MCHdArt::ColorsReadAgain()
 {
     return TheState().ColorsReadAgain;
+}
+
+std::span<const uint8_t> MCHdArt::IndicesOf(const Frame& frame, MCIndicesUse use)
+{
+    // The cache holds the record until its next trim.
+    const std::shared_ptr<const Frame> record = IndexedRecord(frame, use);
+    return record != nullptr ? std::span<const uint8_t>(record->Indices) : frame.Indices;
+}
+
+size_t MCHdArt::IndicesReadAgain()
+{
+    return TheState().IndicesReadAgain;
+}
+
+void MCHdArt::KeepIndices(bool marked)
+{
+    TheState().KeepMarkedIndices = marked;
 }

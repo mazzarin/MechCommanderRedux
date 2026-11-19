@@ -18,7 +18,8 @@
 // being only that scale): each drawn pixel takes the window pixel under its centre, (2 * drawn + 1) * window /
 // (2 * size drawn), the composite's rule, and is worked out as that window pixel. So the scaled surface holds what
 // scaling the window's pixels would show. Reading such a surface as a source takes the drawn pixel holding a window
-// pixel's centre.
+// pixel's centre. Port-only: both on the surface's drawn grid (pixels.hlsli, MCDrawnGrid), which puts the world view's
+// map on whole drawn pixels, so a pan moves its whole picture by whole drawn pixels.
 //
 // An HD art frame (port-only, sprite/MCHdArt.h) is drawn over the original shape's place: each drawn pixel takes the
 // frame's colour at its centre, filtered between the frame's pixels, so the shape shows at the output's resolution.
@@ -103,6 +104,8 @@ cbuffer Frame : register(b0, space3)
     // on (GHdSunShadows), how much of the light under it an object's baked shadow takes away (0: off, solid black); z 1
     // when the objects' baked shadows are hidden, each casting its own (MCSceneLights::RecastsSunShadows).
     float4 look;
+    // Port-only: the drawn grids' offsets (pixels.hlsli): xy the target's, zw the source's when it is a surface.
+    int4 offset;
 };
 
 struct Input
@@ -127,6 +130,10 @@ struct Output
     // every other draw covers what lies under it as its colour does (MCVulkanRenderer's Surface::Glints).
     float4 glint : SV_Target2;
 };
+
+// The channels' values: the index target's marks, an HD frame's index picture's green, the palette entries the shaders
+// know.
+#include "channels.hlsli"
 
 // Kinds (op.x bits 0-3).
 static const uint KindFill = 0;
@@ -183,7 +190,6 @@ static const uint ReliefPlaceMask = 0xfffu;
 // span.w (terrain.vshader): the relief map's atlas; the index target's alpha where none of the ground can be entered is
 // BlockedMarkSpan below 1 (the composite's).
 static const int ReliefAtlasMask = 0xff;
-static const float BlockedMarkSpan = 0.25;
 // A terrain tile's ground (terrain.vshader's, BlockedAt): the step across in z's bits from GroundStepShift, how many of
 // its corners the fog of war leaves seen from GroundFogShift (1 to 3 at its edge, 0 elsewhere; every terrain tile's,
 // with a relief map or not; 0 for any other draw), the tile's count of movement cells that can't be entered from
@@ -196,17 +202,6 @@ static const uint GroundOwnShift = 28;
 static const uint BlockedRoundBits = 4;
 static const uint BlockedRoundMask = 15u;
 static const float MovementCells = 9.0;
-// Port-only (HD lighting's living water): the water's palette entries, its blues and its colour-cycled ones (the
-// composite's IsWater, which finds the water by them in the index target). The haze's tables at the fog of war's edge
-// map most of them to other ramps' entries (greys, greens) and a few to water blues, so a water pixel there keeps its
-// own index (HazedWater), and the composite finds the water whole, not a speckle of it. Without a relief map, its alpha
-// in the index target is FoggedWaterMark for each of its tile's corners the fog leaves seen (the composite's
-// FoggedWaterAt; under the canopy's mark); with one, the slopes' low bits hold them, as for all the ground.
-static const uint FirstWaterBlue = 0x58;
-static const uint WaterBlues = 6;
-static const uint FirstWaterColor = 0xd8;
-static const uint WaterColors = 8;
-static const float FoggedWaterMark = 8.0 / 255.0;
 // The least the quadratic BlockedAt solves may divide by (a cell squashed flat on the window: its middle's taken).
 static const float LeastCellSpan = 1e-3;
 static const int BlockSide = 4;
@@ -233,7 +228,6 @@ static const uint Particle = 1u << 23;
 // pass, StandingMark).
 static const uint Sways = 1u << 24;
 static const uint IndexOnly = 1u << 15;
-static const float SwayMark = 64.0 / 255.0;
 // Port-only (HD weather's snow): a footprint's or a crater's draw under the snow (MCVulkanRenderer's GroundFill), filled
 // in as far as op.x's bits from GroundFillShift say (of GroundFillMost): its pixels in the index target are marked as
 // flat ground (ReliefFlat, both slopes), their alpha FilledMarkFrom to FilledMarkFrom + FilledMarkSpan as far as it has
@@ -242,17 +236,12 @@ static const float SwayMark = 64.0 / 255.0;
 static const uint GroundFill = 1u << 25;
 static const uint GroundFillShift = 26;
 static const uint GroundFillMost = 63;
-static const float FilledMarkFrom = 0.52;
-static const float FilledMarkSpan = 0.2;
 // Port-only (HD lighting's headlights): a unit's draw (MCRenderer::StandingScope) carries the window row its feet stand
 // on in op.y's bits from FeetShift (MCVulkanRenderer's FeetBits: a quarter row a step, 1 more; 0 none), which its
 // pixels write in the index target's green (the high byte) and blue, as its HD frame's mark pass does (its pipeline
 // writing those too); everything else writes 0 there. The composite lights the unit's pixels where it stands, and
 // knows them in a beam's way (composite.pshader's FeetAt). Ground's green and blue are its slopes, told by the alpha.
-static const uint FeetShift = 16;
-static const uint BitsPerByte = 8;
-// A relief map's flat slope, as stored (the composite's ReliefFlat).
-static const float ReliefFlat = 128.0;
+
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
@@ -260,13 +249,10 @@ static const float EdgeHigh = 0.7;
 // lower, so a thin line or a lone pixel of the original (a lamp's shadow, a palm's trunk) keeps most of its strength.
 static const float SpriteEdgeLow = 0.2;
 static const float SpriteEdgeHigh = 0.6;
-// An HD frame's alpha at an original pixel's centre over this, the original draws the pixel (KindHdSmooth).
-static const float HdMaskAlpha = 0.5;
 // Port-only: a unit's or an object's HD frame's mark pass (the renderer's IndexOnly on an HD frame's draw, through a
 // pipeline writing the indices' alpha alone) sets the alpha to StandingMark (the composite's: something stands on the
 // ground, as the original's pixels' indices have it) wherever the frame covers at least StandingCoverage of a pixel, so
 // that its smooth edge past the original's pixels, whose indices stay the ground's, reads as the frame's too.
-static const float StandingMark = 0.0;
 static const float StandingCoverage = 0.1;
 // A shadow is full across this much of its width, softening to nothing at its edge (KindShadow).
 static const float ShadowCore = 0.35;
@@ -301,6 +287,12 @@ static int2 sourceCorner;
 static int2 hdCorner;
 static int2 placeSize;
 
+// Port-only (SPEC-memory.md's indices): place.w's bit for a draw of a shape's indices from its version 2 HD frame's own
+// index picture (MCVulkanRenderer's Picture::HdMarks), in place of the original's rows: its green is the frame's marks,
+// not an atlas page's state, from main.
+static const uint HdMarksSource = 1u;
+static bool sourceMarks;
+
 // A texel of the draw's source, in its picture.
 float4 SourceAt(int2 texel)
 {
@@ -327,9 +319,24 @@ int2 SourceSize()
     return int2((int)width, (int)height);
 }
 
-uint Byte(float value)
+// Port-only: whether a version 2 HD frame's index picture's texel is a pixel the original draws, its red the original's
+// index (MCHdArt::OriginalDrawsMark): drawn, drawn and blended, in a baked shadow or not; not one its index only spread
+// to.
+bool OriginalDrawsIn(float4 entry)
 {
-    return (uint)round(value * 255.0);
+    return OriginalDrawsGreen(Byte(entry.g));
+}
+
+// Whether a shape's source texel is drawn: an HD frame's index picture's by its marks (sourceMarks), an atlas page's by
+// its state (green: 0 empty, 2 skipped).
+uint SourceState(float4 sample, uint flags)
+{
+    if (sourceMarks)
+    {
+        return OriginalDrawsIn(sample) ? 1u : 0u;
+    }
+
+    return (flags & OpaqueSource) != 0 ? 1u : Byte(sample.g);
 }
 
 uint Table(uint row, uint index)
@@ -376,7 +383,20 @@ Output Blended(float4 color)
 
 float4 FetchSource(int2 texel)
 {
-    return SourceAt(DrawnPixel(texel, sourceScale));
+    return SourceAt(DrawnPixel(texel, sourceScale, offset.zw));
+}
+
+// The window place drawn pixel `target`'s centre shows (pixels.hlsli's WindowPixel, unrounded).
+float2 WindowPlace(int2 target)
+{
+    return ((float2(target) + 0.5) * float2(scale.xy) - float2(offset.xy)) / float2(scale.zw);
+}
+
+// Port-only: how far the target's drawn grid moves its picture (drawn pixels, under half of one): a window place lies at
+// drawn place window * drawn / window plus this.
+float2 GridShift()
+{
+    return float2(offset.xy) / float2(scale.xy);
 }
 
 // The colour the HD art pack's pictures were made from for an index.
@@ -447,11 +467,16 @@ float3 HdAtlasTexel(int2 texel, int2 low, int2 high, int atlas)
 // Where drawn pixel `target` lies in its terrain tile (terrain.vshader): in the tile's original pixels.
 float2 TileLocal(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     return float2(input.source.xy) + (window - float2(input.rect.xy)) - float2(input.walk.zw);
 }
 
-// Whether palette entry `index` is the water's (FirstWaterBlue's, FirstWaterColor's).
+// Port-only (HD lighting's living water): whether palette entry `index` is the water's, its blues or its colour-cycled
+// ones (the composite's IsWater, which finds the water by them in the index target). The haze's tables at the fog of
+// war's edge map most of them to other ramps' entries (greys, greens) and a few to water blues, so a water pixel there
+// keeps its own index (HazedWater), and the composite finds the water whole, not a speckle of it. Without a relief map,
+// its alpha in the index target is FoggedWaterMark for each of its tile's corners the fog leaves seen (the composite's
+// FoggedWaterAt; under the canopy's mark); with one, the slopes' low bits hold them, as for all the ground.
 bool IsWaterEntry(uint index)
 {
     return index - FirstWaterBlue < WaterBlues || index - FirstWaterColor < WaterColors;
@@ -590,7 +615,7 @@ float BlockedCount(uint4 ground, int dr, int dc)
 float BlockedAt(Input input, int2 target)
 {
     const uint4 ground = input.ground;
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 top = float2(LowHalf(ground.x), HighHalf(ground.x));
     const float right = LowHalf(ground.y);
     const float left = HighHalf(ground.y);
@@ -650,13 +675,15 @@ bool DrawnTexel(Input input, int2 texel, out uint value)
     const float4 sample = SourceAt(texel);
     value = Byte(sample.r);
 
-    // A picture of indices (an opaque source): colours 0 and 255 draw nothing. An atlas page: the state says.
+    // A picture of indices (an opaque source): colours 0 and 255 draw nothing, as its table makes them (an HD frame's
+    // index picture is read through it). An atlas page: the state says.
     if ((input.op.x & OpaqueSource) != 0)
     {
-        return value != 0 && value != 255;
+        const uint shown = sourceMarks && (input.op.x & TableBefore) != 0 ? Table(input.op.z, value) : value;
+        return (!sourceMarks || OriginalDrawsIn(sample)) && shown != 0 && shown != 255;
     }
 
-    const uint state = Byte(sample.g);
+    const uint state = SourceState(sample, input.op.x);
     return state != 0 && state != 2;
 }
 
@@ -730,7 +757,7 @@ float SmoothCoverage(Input input, float2 at, inout uint value)
 // Where drawn pixel `target`'s centre lies in a smooth-edged shape's source, less half a texel (SmoothCoverage's `at`).
 float2 ShapePlace(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
     return float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
 }
@@ -791,7 +818,7 @@ Output TerrainSeamPixel(Input input, int2 target)
 {
     const int2 low = int2(input.walk.zw);
     const int2 high = low + input.span.xy - 1;
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 at = float2(input.source.xy) + (window - float2(input.rect.xy)) - 0.5;
     const int2 base = int2(floor(at));
     const uint drawn = PatchMask(base, low, high);
@@ -924,18 +951,10 @@ Output SmoothBlendedPixel(Input input, int2 target)
     return Blended(blend * share);
 }
 
-// An HD frame's index picture's green (MCHdArt.h): 255 for a pixel with an index, 254 for one that is also part of an
-// object's baked shadow (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's); in a version 2 frame also 253 and
-// 252 spread past the original's pixels (outside a shadow and in one), 251 and 250 drawn and blended (outside a shadow
-// and in one).
-static const uint BakedShadow = 254u;
-static const uint SpreadShadow = 252u;
-static const uint DrawnBlendedShadow = 250u;
-
 // Whether an HD frame's index picture's texel has an index (MCHdArt::HasIndexMark).
 bool HasIndexIn(float4 entry)
 {
-    return Byte(entry.g) >= DrawnBlendedShadow;
+    return HasIndexGreen(Byte(entry.g));
 }
 
 // Whether an HD frame's index picture's texel has an index its colour is recoloured by. In a frame holding its blended
@@ -945,14 +964,13 @@ bool HasIndexIn(float4 entry)
 // the effect took their colours, dark and in the original's dither.
 bool RecolouringIndexIn(float4 entry, uint flags)
 {
-    return (flags & HdLight) != 0 ? Byte(entry.g) >= BakedShadow : HasIndexIn(entry);
+    return RecolouringGreen(Byte(entry.g), (flags & HdLight) != 0);
 }
 
 // Whether an HD frame's index picture's texel is in a baked shadow (MCHdArt::InShadowMark).
 bool InShadowIn(float4 entry)
 {
-    const uint green = Byte(entry.g);
-    return green == BakedShadow || green == SpreadShadow || green == DrawnBlendedShadow;
+    return InShadowGreen(Byte(entry.g));
 }
 
 // An HD art frame's colour at a texel, transparent outside its size, and where a keyed copy (port-only: an HD picture
@@ -1023,29 +1041,52 @@ float BakedShadowAt(int2 original, float2 shape)
     return weights.y > 0.0 ? weights.x / weights.y : 0.0;
 }
 
+// Port-only (KindHdSmooth): whether an HD frame's index picture's green marks an original pixel its frame covers, its
+// alpha at the pixel's centre over half (channels.hlsli's HdMaskAlpha): drawn opaque, in a baked shadow or not, or
+// covered without an index (MCVulkanRenderer::MarkHdCoverage marks a version 1 frame's so as it goes up).
+bool CoversIn(float green)
+{
+    return CoversGreen(Byte(green));
+}
+
 // Port-only: an HD frame's coverage at `shape` (a place in its original's pixels, their centres at .5) for
-// KindHdSmooth: the original's pixels (`original` its size) that it draws, where the frame's alpha at their centre is
-// over HdMaskAlpha, smoothed as a smooth-edged shape's are (SmoothCoverage), so its edges are curves at the output's
-// resolution instead of its mask's steps. `nearest` becomes the drawn pixel nearest the place.
-float HdMaskCoverage(int2 original, int hdScale, float2 shape, out int2 nearest)
+// KindHdSmooth: the original's pixels (`original` its size) that its frame covers (CoversIn), smoothed as a smooth-edged
+// shape's are (SmoothCoverage), so its edges are curves at the output's resolution instead of its mask's steps.
+// `nearest` becomes the covered pixel nearest the place. The 4 x 4 pixels' marks are read 2 x 2 at a time, each by one
+// gather at the four's shared corner in the index picture, whose x, y, z, w are the four's bottom left, bottom right,
+// top right and top left; those outside the picture are not covered.
+float HdMaskCoverage(int2 original, float2 shape, out int2 nearest)
 {
     const float2 at = shape - 0.5;
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
     const float4 wx = BSplineWeights(f.x);
     const float4 wy = BSplineWeights(f.y);
+    uint width;
+    uint height;
+    sourceTex.GetDimensions(width, height);
+    const float2 sourceSize = float2((float)width, (float)height);
+    float4 marks[4];
+
+    [unroll] for (int quad = 0; quad < 4; quad++)
+    {
+        const int2 corner = sourceCorner + base + int2((quad & 1) * 2, (quad >> 1) * 2);
+        marks[quad] = sourceTex.GatherGreen(sourceSampler, float2(corner) / sourceSize);
+    }
+
     float coverage = 0.0;
     float nearestDistance = 1e9;
     nearest = int2(0, 0);
 
-    for (int y = 0; y < 4; y++)
+    [unroll] for (int y = 0; y < 4; y++)
     {
-        for (int x = 0; x < 4; x++)
+        [unroll] for (int x = 0; x < 4; x++)
         {
             const int2 texel = base + int2(x - 1, y - 1);
+            const float4 four = marks[(y >> 1) * 2 + (x >> 1)];
+            const float mark = (y & 1) == 0 ? ((x & 1) == 0 ? four.w : four.z) : ((x & 1) == 0 ? four.x : four.y);
 
-            if (any(texel < 0) || any(texel >= original) ||
-                HdAt(texel * hdScale + hdScale / 2).a <= HdMaskAlpha)
+            if (any(texel < 0) || any(texel >= original) || !CoversIn(mark))
             {
                 continue;
             }
@@ -1254,7 +1295,7 @@ Output HdPixelAt(Input input, float2 shape)
     if ((flags & 15u) == KindHdSmooth)
     {
         int2 nearest;
-        const float coverage = HdMaskCoverage(original, texelScale, shape, nearest);
+        const float coverage = HdMaskCoverage(original, shape, nearest);
         texel = nearest;
         const float4 inside = HdTexel(nearest * texelScale + texelScale / 2, size, texelScale, flags, key);
         const float3 own = color.a > 0.0 ? color.rgb / color.a : float3(0.0, 0.0, 0.0);
@@ -1335,7 +1376,7 @@ Output HdPixelAt(Input input, float2 shape)
 Output HdPixel(Input input, int2 target)
 {
     // The drawn pixel's centre in window pixels, and in the shape's bounds (a mirrored step reads from the right).
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
     return HdPixelAt(input, float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw));
 }
@@ -1344,7 +1385,7 @@ Output HdPixel(Input input, int2 target)
 // affine map of the window (u from span.xyz, v from span.w and walk.xy: floats; texel centres at .5).
 float2 MappedPlace(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float4 u = asfloat(input.span);
     const float2 v = asfloat(input.walk.xy);
     return float2(u.x * window.x + u.y * window.y + u.z, u.w * window.x + v.x * window.y + v.y);
@@ -1469,7 +1510,7 @@ float4 GlyphTexel(int2 texel, int2 size, bool runsOn)
 // glyph's scale (and SharpGlyphRunsOn), op.z the glyph's table.
 Output SharpGlyphPixel(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 glyph = float2(input.source.xy) + (window - float2(input.rect.xy));
     const float glyphScale = (float)(input.op.y & 255u);
     const int2 size = SourceSize();
@@ -1530,7 +1571,7 @@ static const float LineHalfWidth = 0.5;
 // ramped over a drawn pixel. Premultiplied, through the blend pipeline.
 Output SmoothShapePixel(Input input, int2 target, uint kind)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
     float distance;
 
@@ -1603,8 +1644,8 @@ float3 CaughtLight(Input input)
 Output RainStreakPixel(Input input, int2 target, float4 color)
 {
     const float2 drawn = float2(scale.zw) / float2(scale.xy);
-    const float2 tail = asfloat(input.span.xy) * drawn;
-    const float2 head = asfloat(input.span.zw) * drawn;
+    const float2 tail = asfloat(input.span.xy) * drawn + GridShift();
+    const float2 head = asfloat(input.span.zw) * drawn + GridShift();
     const float2 at = float2(target) + 0.5;
     const float height = head.y - tail.y;
 
@@ -1657,7 +1698,7 @@ Output HardParticlePixel(Input input, int2 target, float4 color)
 
     if (asfloat(input.walk.w) > 0.0)
     {
-        const float2 middle = floor(asfloat(input.span.xy) * drawn) + 0.5;
+        const float2 middle = floor(asfloat(input.span.xy) * drawn + GridShift()) + 0.5;
         const float2 radii = max(float2(size, size * asfloat(input.walk.y)), 0.5);
         const float2 p = (at - middle) / radii;
         // The implicit ellipse's value over its gradient's length: about the distance from it.
@@ -1668,8 +1709,8 @@ Output HardParticlePixel(Input input, int2 target, float4 color)
         const float side = max(round(2.0 * size), 1.0);
         // An odd square's middle on a pixel's centre, an even one's on a corner.
         const float grid = fmod(side, 2.0) == 1.0 ? 0.5 : 0.0;
-        const float2 a = floor(asfloat(input.span.xy) * drawn - grid + 0.5) + grid;
-        const float2 b = floor(asfloat(input.span.zw) * drawn - grid + 0.5) + grid;
+        const float2 a = floor(asfloat(input.span.xy) * drawn + GridShift() - grid + 0.5) + grid;
+        const float2 b = floor(asfloat(input.span.zw) * drawn + GridShift() - grid + 0.5) + grid;
         const float2 ab = b - a;
         const float length2 = dot(ab, ab);
         const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
@@ -1707,7 +1748,7 @@ Output ParticlePixel(Input input, int2 target)
         return HardParticlePixel(input, target, color);
     }
 
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
     // Distances down the screen as the ground's across.
     const float2 squash = float2(1.0, 1.0 / max(asfloat(input.walk.y), 1e-3));
@@ -1808,7 +1849,7 @@ float PolygonIndex(Input input, float2 window, uint corners)
 // pipeline.
 Output SmoothPolygonPixel(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
     const uint corners = input.walk.x;
     const float turn = (float)asint(input.walk.y);
@@ -1865,7 +1906,7 @@ Output SmoothPolygonPixel(Input input, int2 target)
 // it, the drawn pixel the edge crosses covered in part. Premultiplied, through the blend pipeline.
 Output SmoothBarPixel(Input input, int2 target)
 {
-    const float right = asfloat(input.span.x) * (float)scale.z / (float)scale.x;
+    const float right = asfloat(input.span.x) * (float)scale.z / (float)scale.x + GridShift().x;
     const float coverage = saturate(right - (float)target.x);
 
     if (coverage <= 0.0)
@@ -1883,7 +1924,7 @@ Output SmoothBarPixel(Input input, int2 target)
 // composite lights the world that much less.
 Output ShadowPixel(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 window = WindowPlace(target);
     const float2 ground = float2(1.0, 1.0 / max(asfloat(input.walk.w), 1e-3));
     const float2 a = asfloat(input.span.xy) * ground;
     const float2 ab = asfloat(input.span.zw) * ground - a;
@@ -1983,7 +2024,7 @@ Output DrawnOutput(Input input)
 #endif
 
     // The window pixel it shows, which the original's kinds work from.
-    const int2 pixel = WindowPixel(target, scale);
+    const int2 pixel = WindowPixel(target, scale, offset.xy);
     const uint color = input.op.y & 255u;
     uint value = color;
     uint state = 1;
@@ -2006,7 +2047,7 @@ Output DrawnOutput(Input input)
         const int2 texel = input.source.xy + (pixel - input.rect.xy) * input.source.zw;
         const float4 sample = FetchSource(texel);
         value = Byte(sample.r);
-        state = (flags & OpaqueSource) != 0 ? 1 : Byte(sample.g);
+        state = SourceState(sample, flags);
 
 #if DRAWS_SPRITE_KINDS
         if ((flags & SmoothEdges) != 0)
@@ -2155,6 +2196,7 @@ Output main(Input input)
     sourceCorner = int2(input.place.x & 0xffffu, input.place.x >> 16);
     hdCorner = int2(input.place.y & 0xffffu, input.place.y >> 16);
     placeSize = int2(input.place.z & 0xffffu, input.place.z >> 16);
+    sourceMarks = (input.place.w & HdMarksSource) != 0;
     Output output = DrawnOutput(input);
 
     // Port-only (HD lighting): a light's glow, premultiplied through the blend pipeline, fainter as look.x.

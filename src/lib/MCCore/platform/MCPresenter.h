@@ -198,6 +198,13 @@ public:
     virtual std::expected<void, std::string> Discard(const MCFrame&) { return {}; }
 
     /// <summary>
+    /// Port-only: what a GPU renderer has recorded since the last frame run now, showing nothing and taking no frame
+    /// (a rehearsal's uploads: gui/MCUpdateDisplay.h's RehearseScreen), <paramref name="underlays"/> the last frame's;
+    /// waited for. Nothing without one, or when nothing was recorded.
+    /// </summary>
+    virtual std::expected<void, std::string> RunRecorded(std::span<const MCUnderlay> /*underlays*/) { return {}; }
+
+    /// <summary>
     /// Where a view of <paramref name="viewWidth"/> x <paramref name="viewHeight"/> lands in the window now, in
     /// window pixels (not points).
     /// </summary>
@@ -222,6 +229,12 @@ public:
     /// <see cref="ShowFinished"/>.
     /// </summary>
     virtual void ShowBeforeInput() {}
+
+    /// <summary>
+    /// Port-only: the worlds drawn on a grid of their own (MCDrawnGrid) under the screen of the frame presented last,
+    /// in the order they're drawn (a later one over an earlier); none without a GPU renderer's.
+    /// </summary>
+    virtual std::span<const MCShownGrid> ShownGrids() const { return {}; }
 };
 
 /// <summary>

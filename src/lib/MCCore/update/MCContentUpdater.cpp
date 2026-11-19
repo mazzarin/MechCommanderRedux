@@ -40,6 +40,9 @@ namespace
     /// <summary>The chosen sets' file: its format, and its sets.</summary>
     constexpr std::string_view FormatKey = "format";
     constexpr std::string_view SetsKey = "sets";
+    constexpr std::string_view PickedKey = "picked";
+    constexpr std::string_view MachinePicked = "machine";
+    constexpr std::string_view PlayerPicked = "player";
     constexpr uint64_t ChosenFormat = 1;
 
     std::filesystem::path KeptPath(const MCSetup& setup)
@@ -340,6 +343,8 @@ namespace
     {
         MCReleaseFile::MCRelease Release;
         MCReleaseFile::MCKept Kept;
+        /// <summary>Whether the program running is below release.json's lowest release (MCReleaseFile::BelowRequired).</summary>
+        bool BelowRequired = false;
     };
 
     /// <summary>
@@ -398,7 +403,8 @@ namespace
         }
 
         source.UseMirrors(kept.Mirrors);
-        return MCReleaseFor{MCReleaseFile::For(trusted->Releases, *kept.RolloutNumber), kept};
+        return MCReleaseFor{MCReleaseFile::For(trusted->Releases, *kept.RolloutNumber), kept,
+                            MCReleaseFile::BelowRequired(trusted->Releases, setup.Platform, setup.RunningBuild)};
     }
 
     /// <summary>Where the release <paramref name="installed"/> records comes in the order releases are taken.</summary>
@@ -457,7 +463,8 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
 
     const MCReleaseFile::MCRelease& release = chosen->Release;
 
-    if (release.Number == chosen->Kept.Skipped)
+    // Below the lowest release a copy may stay on, the program comes whatever the player skipped.
+    if (release.Number == chosen->Kept.Skipped && !chosen->BelowRequired)
     {
         SDL_Log("Updates: release %llu was skipped", static_cast<unsigned long long>(release.Number));
         return std::nullopt;
@@ -516,10 +523,21 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         return std::unexpected(writable.error());
     }
 
+    // Below the lowest release a copy may stay on: the program comes by itself, alone, and the content is left as it
+    // is for the player (the new program's updater offers it).
+    if (chosen->BelowRequired && offer.ProgramBuild)
+    {
+        SDL_Log("Updates: build %llu is below the lowest release a copy may stay on (%llu): build %llu comes by itself",
+                static_cast<unsigned long long>(setup.RunningBuild), static_cast<unsigned long long>(release.Number),
+                static_cast<unsigned long long>(*offer.ProgramBuild));
+        offer.Forced = true;
+        return offer;
+    }
+
     if (newContent)
     {
         auto content = PlanContent(setup, disk, source, {release.List, release.ListSize, release.Number, release.Epoch},
-                                   *installed, Wanted(disk, setup.GameFolder, *installed),
+                                   *installed, Wanted(setup, disk, *installed, MCFor::Downloading),
                                    offer.ProgramBuild.value_or(setup.RunningBuild), goOn);
 
         if (!content)
@@ -555,7 +573,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return std::unexpected(installed.error());
     }
 
-    const MCSets sets = Wanted(disk, setup.GameFolder, *installed);
+    const MCSets sets = Wanted(setup, disk, *installed);
 
     if (sets == installed->Sets)
     {
@@ -580,7 +598,11 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
     MCOffer offer{.Release = {.Number = installed->Release, .List = installed->List, .Epoch = installed->Epoch}};
 
     // Sets taken out alone (HD OPTIONS' REMOVE): planned from the record, so neither the host nor a list is needed.
-    if (std::ranges::includes(installed->Sets, sets))
+    // The 2x art taken out with HD kept isn't: the full art comes in its place.
+    const bool fullForTwoX = installed->Sets.contains(MCContentList::Hd2xSet) &&
+                             !sets.contains(MCContentList::Hd2xSet) && sets.contains(MCContentList::HdSet);
+
+    if (std::ranges::includes(installed->Sets, sets) && !fullForTwoX)
     {
         MCContentFolder folder(setup.GameFolder);
         auto removal = MCContentPlan::Removal(folder, *installed, sets, ReadHashes(setup, disk), setup.Platform, goOn);
@@ -697,8 +719,8 @@ namespace
             return std::unexpected(OtherFailure(installed.error()));
         }
 
-        if (const auto planned =
-                PlanFor(setup, disk, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed), goOn);
+        if (const auto planned = PlanFor(setup, disk, **content, list, *installed,
+                                         Wanted(setup, disk, *installed, MCFor::Downloading), goOn);
             !planned)
         {
             return std::unexpected(OtherFailure(planned.error()));
@@ -843,7 +865,8 @@ std::expected<void, std::string> MCContentUpdater::Arm(const MCSetup& setup, MCU
 {
     if (offer.Content == nullptr)
     {
-        if (!offer.ProgramBuild)
+        // The program alone by itself: the content stays as it is, the new program's updater offering it.
+        if (!offer.ProgramBuild || offer.Forced)
         {
             return {};
         }
@@ -885,40 +908,61 @@ MCContentUpdater::MCSets MCContentUpdater::SetsFound(const std::filesystem::path
     return sets;
 }
 
-std::optional<MCContentUpdater::MCSets> MCContentUpdater::Chosen(MCUpdateDisk& disk,
-                                                                 const std::filesystem::path& gameFolder)
+std::optional<MCContentUpdater::MCChoice> MCContentUpdater::Choice(MCUpdateDisk& disk,
+                                                                   const std::filesystem::path& gameFolder)
 {
-    const auto sets = MCUpdateJson::ReadFile(disk, ChosenPath(gameFolder),
-                                             [](std::string_view text)
-                                             {
-                                                 return MCUpdateJson::Read(
-                                                     ChosenFile,
-                                                     [&]()
-                                                     {
-                                                         const std::vector<std::string> chosen =
-                                                             MCUpdateJson::Strings(MCUpdateJson::Object(text), SetsKey);
-                                                         MCSets read(chosen.begin(), chosen.end());
-                                                         read.emplace(MCContentList::GameSet);
-                                                         return read;
-                                                     });
-                                             });
+    const auto choice = MCUpdateJson::ReadFile(
+        disk, ChosenPath(gameFolder),
+        [](std::string_view text)
+        {
+            return MCUpdateJson::Read(ChosenFile,
+                                      [&]()
+                                      {
+                                          const MCUpdateJson::MCJson json = MCUpdateJson::Object(text);
+                                          const std::vector<std::string> chosen = MCUpdateJson::Strings(json, SetsKey);
+                                          MCChoice read{.Sets = MCSets(chosen.begin(), chosen.end())};
+                                          read.Sets.emplace(MCContentList::GameSet);
+                                          const std::string picked =
+                                              MCUpdateJson::TextOr(json, PickedKey, MachinePicked);
 
-    if (!sets)
+                                          if (picked != MachinePicked && picked != PlayerPicked)
+                                          {
+                                              MCUpdateJson::Fail("\"{}\" is \"{}\" (\"{}\" or \"{}\")", PickedKey,
+                                                                 picked, MachinePicked, PlayerPicked);
+                                          }
+
+                                          read.Picked = picked == PlayerPicked ? MCPicked::Player : MCPicked::Machine;
+                                          return read;
+                                      });
+        });
+
+    if (!choice)
     {
-        SDL_Log("Updates: the sets chosen can't be read (%s): the copy keeps those it has", sets.error().c_str());
+        SDL_Log("Updates: the sets chosen can't be read (%s): the copy keeps those it has", choice.error().c_str());
         return std::nullopt;
     }
 
-    return *sets;
+    return *choice;
+}
+
+std::optional<MCContentUpdater::MCSets> MCContentUpdater::Chosen(MCUpdateDisk& disk,
+                                                                 const std::filesystem::path& gameFolder)
+{
+    std::optional<MCChoice> choice = Choice(disk, gameFolder);
+    return choice ? std::optional(std::move(choice->Sets)) : std::nullopt;
 }
 
 std::expected<void, std::string> MCContentUpdater::Choose(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
-                                                          const MCSets& sets)
+                                                          const MCSets& sets, MCPicked picked)
 {
     MCSets kept = sets;
     kept.emplace(MCContentList::GameSet);
     const std::filesystem::path path = ChosenPath(gameFolder);
-    const std::string text = MCUpdateJson::MCJson{{FormatKey, ChosenFormat}, {SetsKey, kept}}.dump();
+    const std::string text =
+        MCUpdateJson::MCJson{{FormatKey, ChosenFormat},
+                             {SetsKey, kept},
+                             {PickedKey, picked == MCPicked::Player ? PlayerPicked : MachinePicked}}
+            .dump();
 
     if (!WriteDurably(disk, gameFolder, path, text))
     {
@@ -928,11 +972,51 @@ std::expected<void, std::string> MCContentUpdater::Choose(MCUpdateDisk& disk, co
     return {};
 }
 
-MCContentUpdater::MCSets MCContentUpdater::Wanted(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
-                                                  const MCInstalled::MCRecord& installed)
+bool MCContentUpdater::Takes2x(const MCMachine& machine)
 {
-    MCSets sets = Chosen(disk, gameFolder).value_or(installed.Sets.empty() ? SetsFound(gameFolder) : installed.Sets);
+    return (machine.MemoryBytes != 0 && machine.MemoryBytes < FullArtMemory) ||
+           (machine.CardBytes && *machine.CardBytes < FullArtCard) || !machine.SamplesBc7;
+}
+
+MCContentUpdater::MCSets MCContentUpdater::Wanted(const MCSetup& setup, MCUpdateDisk& disk,
+                                                  const MCInstalled::MCRecord& installed, MCFor purpose)
+{
+    MCChoice choice =
+        Choice(disk, setup.GameFolder)
+            .value_or(MCChoice{.Sets = installed.Sets.empty() ? SetsFound(setup.GameFolder) : installed.Sets});
+    MCSets& sets = choice.Sets;
     sets.emplace(MCContentList::GameSet);
+
+    if (sets.contains(MCContentList::Hd2xSet))
+    {
+        sets.emplace(MCContentList::HdSet);
+    }
+
+    if (!sets.contains(MCContentList::HdSet))
+    {
+        sets.erase(std::string(MCContentList::Hd2xSet));
+        return sets;
+    }
+
+    if (choice.Picked == MCPicked::Player)
+    {
+        return sets;
+    }
+
+    // The machine's size: a download of HD takes the machine's default; a copy keeping its sets keeps the size it has.
+    const bool hasHd = installed.Sets.contains(MCContentList::HdSet);
+    const bool twoX = purpose == MCFor::Downloading || !hasHd ? Takes2x(setup.Machine)
+                                                              : installed.Sets.contains(MCContentList::Hd2xSet);
+
+    if (twoX)
+    {
+        sets.emplace(MCContentList::Hd2xSet);
+    }
+    else
+    {
+        sets.erase(std::string(MCContentList::Hd2xSet));
+    }
+
     return sets;
 }
 

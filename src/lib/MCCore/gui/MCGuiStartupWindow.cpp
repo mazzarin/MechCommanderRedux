@@ -1,12 +1,14 @@
 #include "stdafx.h"
 #include "gui/MCGuiStartupWindow.h"
 #include "engine/MCFont.h"
+#include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCDice.h"
 #include "lib/MCFile.h"
 #include "lib/MCPacketFile.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCShapeFile.h"
 #include "vfx/MCVfxFunctions.h"
 
 auto MCGuiStartupWindow::FreeImages() -> void
@@ -428,23 +430,18 @@ auto MCGuiStartupWindow::Setup() -> int32_t
 
     for (int32_t i = 0; i < static_cast<int32_t>(StaticImages.size()); i++)
     {
-        if (const int32_t result = art.SeekPacket(0x2d + i); result != 0)
+        const int32_t packet = 0x2d + i;
+
+        if (const int32_t result = art.SeekPacket(packet); result != 0)
         {
             return result;
         }
 
-        MCFile file;
-
-        if (const int32_t result = file.Open(art, static_cast<uint32_t>(art.GetPacketSize())); result != 0)
-        {
-            return result;
-        }
-
+        // Port-only: with HD art's numbered folders drawn, the pack's copy of the packet (MCShapeFile).
         std::vector<uint8_t>& image = StaticImages[i];
-        image.resize(file.FileSize());
-        file.Read(image);
+        image.resize(static_cast<size_t>(std::max(art.GetPacketSize(), 0)));
+        MCShapeFile::ReadPacket(art, packet, image);
         MCRenderer::RegisterData(std::span(image.data(), image.size()), MCDataKind::Shapes);
-        file.Close();
     }
 
     StaticPort = std::make_unique<MCGuiPort>();

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCVulkanPresenter.h"
+#include "main/MCUpdater.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCVulkanShaders.h"
 #include "sprite/MCParticles.h"
@@ -15,11 +16,6 @@ namespace
         return std::format("{}: {}", what, SDL_GetError());
     }
 
-    /// <summary>
-    /// Port-only: the frames presented the game may still have on the GPU as it shows another (as many as SDL's two
-    /// swapchain images hold), whatever the swapchain's images (MCVulkanPresenter::_FramesInFlight).
-    /// </summary>
-    constexpr size_t FramesHeldOnGpu = MCVulkanPresenter::TwoImageFrames;
     /// <summary>Port-only: SDL's name for its Vulkan driver (SDL_GetGPUDeviceDriver).</summary>
     constexpr std::string_view VulkanDriver = "vulkan";
 
@@ -482,17 +478,21 @@ namespace
     /// <summary>
     /// Sets <paramref name="uniforms"/>' lighting (sprite/MCSceneLights.h) to the lights world window
     /// <paramref name="world"/> shows, its pixels scaled to its texture's (<paramref name="width"/> by
-    /// <paramref name="height"/>), and distances in the texture's pixels across, with the snow's specks moved on in
-    /// <paramref name="specks"/>; returns how many lights it set (their tiles: <see cref="TileLights"/>). Reads the
-    /// game's lights and weather: the game's thread, as the frame is presented.
+    /// <paramref name="height"/>) and moved by its drawn grid (<paramref name="shift"/> of the texture's pixels across
+    /// and down, MCDrawnGrid, as the world drawn there is), and distances in the texture's pixels across, with the
+    /// snow's specks moved on in <paramref name="specks"/>; returns how many lights it set (their tiles:
+    /// <see cref="TileLights"/>). Reads the game's lights and weather: the game's thread, as the frame is presented.
     /// </summary>
     size_t SetLighting(CompositeUniforms& uniforms, MCSpeckLattice& specks, const MCWindow& world, float width,
-                       float height)
+                       float height, std::array<float, 2> shift)
     {
         const std::span<const MCSceneLight> lights = MCSceneLights::Shown(world);
         const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
         const float across = width / static_cast<float>(world.XMax + 1);
         const float down = height / static_cast<float>(world.YMax + 1);
+        // A window place's place in the texture.
+        const auto placeX = [across, shift](float x) { return x * across + shift[0]; };
+        const auto placeY = [down, shift](float y) { return y * down + shift[1]; };
         const size_t count = std::min(lights.size(), MCSceneLights::MaxLights);
         uniforms.Lighting[0] = static_cast<float>(count);
         uniforms.Lighting[1] = lighting.Strength;
@@ -550,8 +550,8 @@ namespace
         const bool flat = std::abs(determinant) < MinGroundDeterminant;
         uniforms.Water[0] = !flat && GHdLighting != HdLightingOff ? lighting.Water : 0.0f;
         uniforms.Water[1] = MCSceneLights::ShownWaterPhase();
-        uniforms.Ground[0] = ground.OriginX * across;
-        uniforms.Ground[1] = ground.OriginY * down;
+        uniforms.Ground[0] = placeX(ground.OriginX);
+        uniforms.Ground[1] = placeY(ground.OriginY);
 
         {
             // The fog of war's edge's shades, for the weather and the living water (composite.pshader's FogEdgeShade).
@@ -643,8 +643,8 @@ namespace
 
         for (size_t i = 0; i < fires; ++i)
         {
-            uniforms.Heat[i][0] = (heat[i].X + 0.5f) * across;
-            uniforms.Heat[i][1] = (heat[i].Y + 0.5f) * down;
+            uniforms.Heat[i][0] = placeX(heat[i].X + 0.5f);
+            uniforms.Heat[i][1] = placeY(heat[i].Y + 0.5f);
             uniforms.Heat[i][2] = std::max(heat[i].HalfWidth * across, 1.0f);
             uniforms.Heat[i][3] = std::max(heat[i].Rise * down, 1.0f);
         }
@@ -654,10 +654,10 @@ namespace
             // A light's point is a pixel's: its centre.
             const MCSceneLight& light = lights[i];
             const std::span<float, 4> ends = uniforms.Lights[i * 3];
-            ends[0] = (light.X0 + 0.5f) * across;
-            ends[1] = (light.Y0 + 0.5f) * down;
-            ends[2] = (light.X1 + 0.5f) * across;
-            ends[3] = (light.Y1 + 0.5f) * down;
+            ends[0] = placeX(light.X0 + 0.5f);
+            ends[1] = placeY(light.Y0 + 0.5f);
+            ends[2] = placeX(light.X1 + 0.5f);
+            ends[3] = placeY(light.Y1 + 0.5f);
             uniforms.Lights[i * 3 + 1][0] = light.Height * across;
             uniforms.Lights[i * 3 + 1][1] = light.Reach * across;
             uniforms.Lights[i * 3 + 1][2] = light.SpotX * across;
@@ -671,8 +671,8 @@ namespace
             {
                 const MCSceneUnitBox& unit = light.Units[k];
                 const std::span<float, 4> shown = uniforms.LightUnits[i * MCSceneLights::LightUnits + k];
-                shown[0] = (unit.X + 0.5f) * across;
-                shown[1] = (unit.Y + 0.5f) * down;
+                shown[0] = placeX(unit.X + 0.5f);
+                shown[1] = placeY(unit.Y + 0.5f);
                 shown[2] = unit.HalfWidth * across;
                 shown[3] = unit.Height * down;
             }
@@ -750,6 +750,8 @@ namespace
         MCRect Rect{};
         /// <summary>Its picture's size in use: its GPU surface's as sealed, else its window's.</summary>
         std::array<uint32_t, 2> Size{};
+        /// <summary>Port-only: its GPU surface's drawn grid as sealed (MCDrawnGrid; none drawn by the CPU).</summary>
+        std::optional<MCShownGrid> Grid;
         /// <summary>Its uniforms' lighting (<see cref="SetLighting"/>), and the lights it set.</summary>
         CompositeUniforms Uniforms{};
         size_t Lights = 0;
@@ -824,6 +826,9 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     }
 
     presenter->_Device = std::shared_ptr<SDL_GPUDevice>(device, MCSdlDeleter{});
+    // Port-only: a GPU that can't sample BC7 takes the 2x HD art by default (main/MCUpdater.h).
+    MCUpdater::SetGpuSamplesBc7(SDL_GPUTextureSupportsFormat(device, SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM,
+                                                             SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER));
 
     // Port-only: the third swapchain image, asked for the vsync the presenter starts with before the window is claimed,
     // so its swapchain is made once, with the images it keeps (two without vsync).
@@ -1000,9 +1005,9 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _Unshown.reset();
     SDL_WaitForGPUIdle(_Device.get());
 
-    for (SDL_GPUFence* const fence : _Sent)
+    for (const SentFrame& sent : _Sent)
     {
-        SDL_ReleaseGPUFence(_Device.get(), fence);
+        SDL_ReleaseGPUFence(_Device.get(), sent.Fence);
     }
 
     _Sent.clear();
@@ -1119,6 +1124,13 @@ void MCVulkanPresenter::AskFramesInFlight(bool vsync)
     }
 
     _FramesInFlight = frames;
+
+    // The frames held follow the count from now (FramesHeldOnGpu), not from the next frame shown: SDL waited for the
+    // GPU as it took the count, so this lets go of the frames past it without a wait.
+    if (auto held = HoldFramesOnGpu(); !held)
+    {
+        KeepLate(held.error());
+    }
 }
 
 void MCVulkanPresenter::Release(Texture& texture)
@@ -1217,6 +1229,21 @@ auto MCVulkanPresenter::Plan(const MCFrame& frame, bool read)
     planned->GpuSurfaces = ShowsGpuSurfaces(frame);
     planned->ScreenKey = MCVulkanRenderer::SurfaceKey(frame.Screen.get());
     PlanComposite(frame, *planned);
+
+    // Port-only: the world's drawn grids of the frame now shown, for the mouse (ShownGrids).
+    if (!read)
+    {
+        _ShownGrids.clear();
+
+        for (const PlannedWorld& world : planned->Worlds)
+        {
+            if (world.Shown && world.Grid.has_value())
+            {
+                _ShownGrids.push_back(*world.Grid);
+            }
+        }
+    }
+
     return planned;
 }
 
@@ -1245,6 +1272,10 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
             continue;
         }
 
+        // Port-only: the world's drawn grid (MCDrawnGrid; none but on the GPU's surfaces), and how far it moves the
+        // world drawn in the texture.
+        std::array<float, 2> shift{};
+
         if (planned.GpuSurfaces)
         {
             // The GPU's surface as the frame sealed it: its textures that size once the frame has run.
@@ -1257,6 +1288,10 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
             }
 
             world.Size = {place->Width, place->Height};
+            world.Grid =
+                MCShownGrid{underlay.Rect, {place->MappedWidth, place->MappedHeight}, world.Size, place->Offset};
+            shift = {static_cast<float>(place->Offset[0]) / static_cast<float>(std::max(place->MappedWidth, 1u)),
+                     static_cast<float>(place->Offset[1]) / static_cast<float>(std::max(place->MappedHeight, 1u))};
         }
         else
         {
@@ -1265,7 +1300,7 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
 
         world.Shown = true;
         world.Lights = SetLighting(world.Uniforms, _Specks[i], *source, static_cast<float>(world.Size[0]),
-                                   static_cast<float>(world.Size[1]));
+                                   static_cast<float>(world.Size[1]), shift);
     }
 }
 
@@ -1981,20 +2016,22 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
 
 std::expected<void, std::string> MCVulkanPresenter::HoldFramesOnGpu()
 {
-    // With three images SDL lets three frames be on the GPU (ThirdImageFrames): the game waits as two let it, so what
-    // it shows is no older than with two. With two (vsync off) SDL's own wait as it takes the image is for the same
-    // frame, which it then finds done.
-    while (_Sent.size() >= FramesHeldOnGpu)
+    // With three images SDL lets three frames be on the GPU (ThirdImageFrames): the game holds one, so what it shows is
+    // no older than the frame before. With two (vsync off) the game holds two, and SDL's own wait as it takes the image
+    // is for the same frame, which it then finds done.
+    while (_Sent.size() >= FramesHeldOnGpu(_FramesInFlight))
     {
-        SDL_GPUFence* const oldest = _Sent.front();
-        const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &oldest, 1);
-        SDL_ReleaseGPUFence(_Device.get(), oldest);
+        const SentFrame oldest = _Sent.front();
+        const bool waited = SDL_WaitForGPUFences(_Device.get(), true, &oldest.Fence, 1);
+        SDL_ReleaseGPUFence(_Device.get(), oldest.Fence);
         _Sent.erase(_Sent.begin());
 
         if (!waited)
         {
-            return std::unexpected(SdlError("SDL_WaitForGPUFences (the frame before last's)"));
+            return std::unexpected(SdlError("SDL_WaitForGPUFences (a frame held on the GPU)"));
         }
+
+        _LastFrameWaitedFor = oldest.Number;
     }
 
     return {};
@@ -2139,7 +2176,8 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
 
     if (MCFrameLog::Scope part("present.submit"); _ThirdImage)
     {
-        // Its fence, for the frame after next to wait on (HoldFramesOnGpu): the work submitted before it is done too.
+        // Its fence, for a later frame to wait on (HoldFramesOnGpu): the next with three images, the one after with two.
+        // The work submitted before it is done too.
         SDL_GPUFence* const fence = SDL_SubmitGPUCommandBufferAndAcquireFence(&commands);
 
         if (fence == nullptr)
@@ -2147,7 +2185,7 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
             return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence"));
         }
 
-        _Sent.push_back(fence);
+        _Sent.push_back({fence, ++_FramesSent});
     }
     else if (!SDL_SubmitGPUCommandBuffer(&commands))
     {
@@ -2410,6 +2448,29 @@ std::expected<std::vector<uint8_t>, std::string> MCVulkanPresenter::ReadScreen(c
 std::expected<void, std::string> MCVulkanPresenter::Discard(const MCFrame& frame)
 {
     // Port-only: the frame run ahead before this one goes first (to no swapchain image, as the window's minimised).
+    return RunUnshown(frame.Underlays,
+                      [&]
+                      {
+                          _Renderer->SetColors(frame.PaletteColors, frame.Cycle);
+                          PlaceUnderlays(frame);
+                      });
+}
+
+std::expected<void, std::string> MCVulkanPresenter::RunRecorded(std::span<const MCUnderlay> underlays)
+{
+    // Nothing recorded: nothing to run.
+    if (_Renderer == nullptr || (!_Renderer->HoldsDraws() && _Renderer->QueuedUploadBytes() == 0))
+    {
+        return {};
+    }
+
+    // As a frame not shown, the colours and underlays left as the last frame set them.
+    return RunUnshown(underlays, {});
+}
+
+std::expected<void, std::string> MCVulkanPresenter::RunUnshown(std::span<const MCUnderlay> underlays,
+                                                               const std::function<void()>& before)
+{
     std::string errors;
 
     if (auto finished = FinishFrames(); !finished)
@@ -2422,10 +2483,12 @@ std::expected<void, std::string> MCVulkanPresenter::Discard(const MCFrame& frame
         return Outcome(std::move(errors));
     }
 
-    _Renderer->SetColors(frame.PaletteColors, frame.Cycle);
-    PlaceUnderlays(frame);
+    if (before)
+    {
+        before();
+    }
 
-    if (auto flushed = _Renderer->Flush(frame.Underlays); !flushed)
+    if (auto flushed = _Renderer->Flush(underlays); !flushed)
     {
         return std::unexpected(Joined(std::move(errors), flushed.error()));
     }

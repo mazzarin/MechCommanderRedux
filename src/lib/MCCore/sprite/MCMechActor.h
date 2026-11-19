@@ -44,13 +44,20 @@ struct MCLegsDrawn
 
 /// <summary>
 /// Port-only (HD art): the in-between of a mech's legs on their way between two frames: from frame
-/// <see cref="From"/> toward <see cref="To"/>, step <see cref="Step"/> of <see cref="LegsInBetweenSteps"/>.
+/// <see cref="From"/> toward <see cref="To"/>, step <see cref="Step"/> of <see cref="LegsInBetweenSteps"/>;
+/// <see cref="Wrap"/> where it is the loop's last frame played toward its first while the art draws more frames (the
+/// Mad Cat's walk plays 27 of legs90/10's 28), whose in-between the pack keeps apart from the art's next frame's
+/// (sprite/MCInBetween.h's WrapStep).
 /// </summary>
 struct MCLegsStep
 {
     int32_t From = 0;
     int32_t To = 0;
     int32_t Step = 0;
+    bool Wrap = false;
+
+    /// <summary>The step that names its in-between in the pack (<see cref="Step"/>, or its wrap's).</summary>
+    int32_t Named(int32_t step) const { return Wrap ? WrapBetweenStep(step) : step; }
 
     bool operator==(const MCLegsStep&) const = default;
 };
@@ -62,18 +69,11 @@ struct MCLegsStep
 /// rest of the way. Past either end, round to the other end when the gesture <paramref name="loops"/>, else none (the
 /// next gesture's frame comes next). None in a frame's first step. The art draws <paramref name="drawn"/> frames, which
 /// may be fewer than the gesture plays (a frame past its last shows its last, as MCClampShapeFrame has it): the step
-/// is between the frames shown, and none where both show the same one.
+/// is between the frames shown, and none where both show the same one. Or more: then the loop's step round from the
+/// last frame played to the first is its wrap (<see cref="MCLegsStep::Wrap"/>).
 /// </summary>
 std::optional<MCLegsStep> MCLegsStepOf(int32_t frame, int32_t frames, int32_t drawn, float share, bool backwards,
                                        bool loops);
-
-/// <summary>
-/// Port-only (HD art): the HD art pack's in-between of a mech part's frame on its way to the next (<paramref name="step"/>:
-/// from frame From of <paramref name="table"/> toward frame To, as the legs step), drawn over both frames' boxes round
-/// the hot spot, as the legs' is (<c>&lt;frame&gt;_&lt;step&gt;</c>, MCHdArt.h), with where it lies round frame From;
-/// none where the pack lacks it at that size, or either frame is not the table's.
-/// </summary>
-std::optional<MCInBetween> MCPartInBetween(std::span<const uint8_t> table, const MCLegsStep& step);
 
 /// <summary>
 /// Port-only (HDStops): a stride drawn on while its mech stands with its move held up: each part's frame as last drawn,
@@ -318,15 +318,6 @@ public:
     /// on stays put while the mech moves between frames. Each with where it lies round its frame.
     /// </summary>
     MCLegsDrawn LegsInBetween(int32_t gesture, int32_t frame, float facing, const MCShape& legs, bool asPlayed);
-
-    /// <summary>
-    /// Port-only (HD art): the HD art pack's in-between to draw the torso or an arm (shape <paramref name="part"/>, at
-    /// frame <paramref name="frame"/>) as, drawn as it plays (<paramref name="asPlayed"/>): the way toward its next frame
-    /// at the legs' step (<see cref="LegsStepNow"/>), so it moves as smoothly as the legs (MCPartInBetween); none while
-    /// the upper body plays the gun change or holds its guns up, while the legs are on no way to a next frame of their
-    /// gesture, or where the pack lacks it.
-    /// </summary>
-    std::optional<MCInBetween> UpperInBetween(const MCShape& part, int32_t frame, bool asPlayed) const;
 
     /// <summary>
     /// Port-only (HD art): playing <paramref name="frames"/> frames, at frame <paramref name="frame"/>, the step of the

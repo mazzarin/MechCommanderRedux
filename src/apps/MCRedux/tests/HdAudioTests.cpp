@@ -16,6 +16,8 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCWeather.h"
 
+#include <numbers>
+
 namespace
 {
     // libFLAC 1.4.3: 960 stereo frames at 48000 Hz, signed PCM16 (1000 left, -2000 right).
@@ -110,6 +112,33 @@ namespace
         }
 
         return wave;
+    }
+
+    /// <summary>
+    /// Signed 16-bit stereo PCM at the mixer's rate: <paramref name="frames"/> frames of a 1 kHz tone at
+    /// <paramref name="amplitude"/> of full scale, alike on both sides (whole periods in every 48 frames).
+    /// </summary>
+    std::vector<uint8_t> Tone(size_t frames, float amplitude)
+    {
+        constexpr double ToneHz = 1000.0;
+        constexpr double FullScale = 32767.0;
+        std::vector<uint8_t> pcm;
+        pcm.reserve(4 * frames);
+
+        for (size_t frame = 0; frame < frames; ++frame)
+        {
+            const double phase = 2.0 * std::numbers::pi * ToneHz * static_cast<double>(frame) / RampRate;
+            const auto sample =
+                static_cast<uint16_t>(static_cast<int16_t>(std::lround(amplitude * FullScale * std::sin(phase))));
+
+            for (int side = 0; side < 2; ++side)
+            {
+                pcm.push_back(static_cast<uint8_t>(sample));
+                pcm.push_back(static_cast<uint8_t>(sample >> 8));
+            }
+        }
+
+        return pcm;
     }
 
     /// <summary>
@@ -1021,6 +1050,139 @@ TEST_CASE(
     CHECK_EQ(MCWeather::HeardLook().ThunderHeard, 0.0f);
     GHdWeather = savedWeather;
     FrameLength = savedFrame;
+}
+
+/// <summary>
+/// Voice priority (with HD audio): a voice plays 6 dB louder, and while one speaks the rest is turned down as far as it
+/// takes to keep the voice 6 dB over it, never more than 12 dB, staying down through the gaps between words and coming
+/// back once it ends. Off, the mix is the plain sum.
+/// </summary>
+TEST_CASE("HD audio: the voices are kept over the rest: the rest turned down while one speaks, as far as it takes")
+{
+    const MCSoundFormat format{RampRate, 2, 16};
+    constexpr size_t Second = RampRate;
+    constexpr float RestAmplitude = 0.5f;
+    constexpr float VoiceAmplitude = 0.25f;
+    // A voice at half the rest's level, lifted 6 dB, is as loud as it: the rest goes down 6 dB to keep the margin.
+    constexpr float HalfDown = 0.5f;
+    constexpr float MostDown = 0.25118864f;
+    constexpr float VoiceLift = 1.99526231f;
+    constexpr float Near = 0.02f;
+    std::vector<float> out(2 * Second);
+    const auto play = [&](MCAudio& mixer, float amplitude, bool voice, bool looping)
+    {
+        auto buffer = mixer.CreateBuffer(format, std::span<const uint8_t>(Tone(Second, amplitude)));
+        REQUIRE(buffer.has_value());
+        (*buffer)->SetVoice(voice);
+        (*buffer)->Play(looping);
+        return *buffer;
+    };
+
+    // Off, a voice mixes as everything else does.
+    {
+        const auto both = MCAudio::CreateSilent();
+        const auto voiceAlone = MCAudio::CreateSilent();
+        const auto restAlone = MCAudio::CreateSilent();
+        const std::array voices{play(*both, VoiceAmplitude, true, true), play(*voiceAlone, VoiceAmplitude, true, true)};
+        const std::array rests{play(*both, RestAmplitude, false, true), play(*restAlone, RestAmplitude, false, true)};
+        std::vector<float> voiceOut(out.size());
+        std::vector<float> restOut(out.size());
+        both->Render(out);
+        voiceAlone->Render(voiceOut);
+        restAlone->Render(restOut);
+        CHECK(!both->VoicePriority());
+        CHECK_EQ(both->VoiceDuck(), 1.0f);
+        size_t summed = 0;
+
+        for (size_t i = 0; i < out.size(); ++i)
+        {
+            summed += std::abs(out[i] - (voiceOut[i] + restOut[i])) <= 1e-6f;
+        }
+
+        CHECK_EQ(summed, out.size());
+    }
+
+    // A voice alone plays 6 dB louder, nothing turned down.
+    {
+        const auto mixer = MCAudio::CreateSilent();
+        const auto voice = play(*mixer, VoiceAmplitude, true, true);
+        std::vector<float> plain(out.size());
+        mixer->Render(plain);
+        mixer->SetVoicePriority(true);
+        mixer->Render(out);
+        CHECK_EQ(mixer->VoiceDuck(), 1.0f);
+        size_t lifted = 0;
+
+        for (size_t i = 0; i < out.size(); ++i)
+        {
+            lifted += std::abs(out[i] - plain[i] * VoiceLift) <= 1e-5f;
+        }
+
+        CHECK_EQ(lifted, out.size());
+    }
+
+    // The rest is turned down as far as it takes, and comes back once the voice ends.
+    {
+        const auto mixer = MCAudio::CreateSilent();
+        mixer->SetVoicePriority(true);
+        const auto rest = play(*mixer, RestAmplitude, false, true);
+        mixer->Render(out);
+        CHECK_EQ(mixer->VoiceDuck(), 1.0f);
+        const auto voice = play(*mixer, VoiceAmplitude, true, false);
+        mixer->Render(out);
+        CHECK(std::abs(mixer->VoiceDuck() - HalfDown) <= Near);
+        // Through a gap between words (a fifth of a second) the rest stays down.
+        std::vector<float> gap(out.size() / 5);
+        mixer->Render(gap);
+        CHECK(std::abs(mixer->VoiceDuck() - HalfDown) <= Near);
+
+        for (int second = 0; second < 3; ++second)
+        {
+            mixer->Render(out);
+        }
+
+        CHECK(!voice->IsPlaying());
+        CHECK(mixer->VoiceDuck() >= 1.0f - Near);
+    }
+
+    // A faint voice turns the rest down no more than 12 dB.
+    {
+        constexpr float FaintVoice = 0.05f;
+        const auto mixer = MCAudio::CreateSilent();
+        mixer->SetVoicePriority(true);
+        const std::array sounds{play(*mixer, RestAmplitude, false, true), play(*mixer, FaintVoice, true, true)};
+        mixer->Render(out);
+        CHECK(std::abs(mixer->VoiceDuck() - MostDown) <= Near);
+        mixer->SetVoicePriority(false);
+        CHECK_EQ(mixer->VoiceDuck(), 1.0f);
+    }
+}
+
+/// <summary>The pilots' radio and Betty are the voices, kept over the rest while HD audio is on (set at the update).
+/// </summary>
+TEST_CASE("HD audio: the radio and Betty are kept over the rest while HD audio is on")
+{
+    Fixture fixture;
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    scope.Context().SetSoundSystem(std::make_unique<MCSoundSystem>());
+    const std::shared_ptr<MCSoundSystem> sound = SoundSystem();
+    const std::shared_ptr<MCSoundRenderer> renderer = SoundRenderer();
+    REQUIRE(renderer != nullptr);
+
+    for (int32_t channel = 0; channel < renderer->ChannelCount(); ++channel)
+    {
+        CHECK_EQ(renderer->ChannelVoice(channel), channel == PILOT_SPEECH_CHANNEL || channel == BETTY_CHANNEL);
+    }
+
+    for (const int setting : {HdAudioOff, HdAudioOn, HdAudioOrchestral, HdAudioOff})
+    {
+        GHdAudio = setting;
+        sound->Update();
+        CHECK_EQ(renderer->Mixer().VoicePriority(), setting != HdAudioOff);
+    }
+
+    sound->PurgeSoundSystem();
 }
 
 TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voice against the game's reader")

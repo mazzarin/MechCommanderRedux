@@ -629,6 +629,8 @@ namespace
 
     /// <summary>Whether a <see cref="MCRenderer::GlowScope"/> is drawing a glow.</summary>
     bool GlowDrawn = false;
+    /// <summary>Port-only: set while a frame is drawn as a rehearsal (MCRenderer::RehearsalScope).</summary>
+    bool RehearsalDrawn = false;
 
     /// <summary>The in-between a <see cref="MCRenderer::InBetweenScope"/> is drawing, none outside one.</summary>
     std::optional<MCInBetween> InBetweenDrawn;
@@ -838,6 +840,21 @@ bool MCRenderer::DrawingGlow()
     return GlowDrawn;
 }
 
+MCRenderer::RehearsalScope::RehearsalScope() : _Was(RehearsalDrawn)
+{
+    RehearsalDrawn = true;
+}
+
+MCRenderer::RehearsalScope::~RehearsalScope()
+{
+    RehearsalDrawn = _Was;
+}
+
+bool MCRenderer::Rehearsing()
+{
+    return RehearsalDrawn;
+}
+
 MCRenderer::InBetweenScope::InBetweenScope(const std::optional<MCInBetween>& inBetween) : _Was(InBetweenDrawn)
 {
     InBetweenDrawn = inBetween;
@@ -1038,6 +1055,68 @@ std::optional<MCGpuDrawing> MCGpuDrawingFromName(std::string_view name)
     }
 
     return std::nullopt;
+}
+
+namespace
+{
+    /// <summary><paramref name="n"/> / <paramref name="d"/> rounded down, for d &gt; 0.</summary>
+    int64_t FloorDivide(int64_t n, int64_t d)
+    {
+        return n >= 0 ? n / d : -((-n + d - 1) / d);
+    }
+}
+
+int32_t MCDrawnGrid::Offset(int32_t origin, uint32_t window, uint32_t drawn)
+{
+    if (window == 0 || drawn == 0 || window == drawn)
+    {
+        return 0;
+    }
+
+    return static_cast<int32_t>(Whole(origin, window, drawn) * window - static_cast<int64_t>(origin) * drawn);
+}
+
+int64_t MCDrawnGrid::Whole(int32_t origin, uint32_t window, uint32_t drawn)
+{
+    if (window == 0 || drawn == 0 || window == drawn)
+    {
+        return origin;
+    }
+
+    const int64_t w = window;
+    return FloorDivide(2 * static_cast<int64_t>(origin) * drawn + w, 2 * w);
+}
+
+int32_t MCDrawnGrid::WindowPixel(int64_t drawnPixel, uint32_t window, uint32_t drawn, int32_t offset)
+{
+    if (window == drawn || drawn == 0)
+    {
+        return static_cast<int32_t>(drawnPixel);
+    }
+
+    return static_cast<int32_t>(
+        FloorDivide((2 * drawnPixel + 1) * window - 2 * static_cast<int64_t>(offset), 2 * static_cast<int64_t>(drawn)));
+}
+
+int32_t MCDrawnGrid::DrawnPixel(int64_t windowPixel, uint32_t window, uint32_t drawn, int32_t offset)
+{
+    if (window == drawn || window == 0)
+    {
+        return static_cast<int32_t>(windowPixel);
+    }
+
+    return static_cast<int32_t>(FloorDivide((2 * windowPixel + 1) * drawn + 2 * static_cast<int64_t>(offset),
+                                            2 * static_cast<int64_t>(window)));
+}
+
+double MCDrawnGrid::WindowPlace(double drawnPlace, uint32_t window, uint32_t drawn, int32_t offset)
+{
+    if (window == drawn || drawn == 0)
+    {
+        return drawnPlace;
+    }
+
+    return (drawnPlace * window - offset) / drawn;
 }
 
 namespace

@@ -19,9 +19,13 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
+#include "sprite/MCWeather.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
+// xxHash, header-only: its functions inline in this file alone (the kept surfaces' tiles).
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 
 using MCMemoryLedger::MCHolder;
 
@@ -185,6 +189,13 @@ namespace
     /// </summary>
     constexpr uint32_t PictureBorder = 1u;
     /// <summary>
+    /// Port-only (SPEC-memory.md's indices): a draw's place.w bit for a source that is a version 2 HD frame's own index
+    /// picture, read as its marks (Picture::HdMarks; shaders/draw.pshader's HdMarksSource).
+    /// </summary>
+    constexpr uint32_t HdMarksSource = 1u;
+    /// <summary>The draw field carrying place.w (shaders/instance.vshader's <c>Draw::place</c>).</summary>
+    constexpr size_t PlaceFlagsField = 23;
+    /// <summary>
     /// Port-only: the most keyed holes a KindHd draw carries that later copies fill (FillHoles), in its draw's span and
     /// walk from FilledHolesSlot, two words a hole: its first original pixel and the one past its last, x in the low
     /// half and y in the high (shaders/draw.pshader's FilledHolesMost).
@@ -195,11 +206,11 @@ namespace
     /// <summary>
     /// Port-only (HD lighting's headlights): a unit's draw (MCRenderer::StandingScope) carries the window row its feet
     /// stand on in its colour's bits from FeetShift, FeetSteps a row and 1 more (0: none, so at most FeetMost), which
-    /// its pixels write with their indices (shaders/draw.pshader's FeetShift). Only the kinds whose colour leaves those
-    /// bits free (CarriesFeet) carry it.
+    /// its pixels write with their indices (shaders/channels.hlsli's FeetShift). Only the kinds whose colour leaves
+    /// those bits free (CarriesFeet) carry it.
     /// </summary>
-    constexpr uint32_t FeetShift = 16;
-    constexpr float FeetSteps = 4.0f;
+    using MCGpuChannels::FeetShift;
+    using MCGpuChannels::FeetSteps;
     constexpr int32_t FeetMost = 0xffff;
 
     /// <summary>Whether a draw of op <paramref name="op"/> carries a unit's feet (FeetShift): a shape's or an HD frame's.</summary>
@@ -261,6 +272,25 @@ namespace
     /// </summary>
     constexpr uint32_t HdPageSide = 2048;
     constexpr uint32_t HdIndexPageSide = 1024;
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the side of an HD page's indices for frames of <paramref name="scale"/> HD
+    /// pixels an original pixel: the colours' side over the scale where that's less than HdIndexPageSide (683 at 3x,
+    /// so the two fill together: at 1024, 55% of the indices' page stayed empty), else HdIndexPageSide (2x already
+    /// matches). Frames of a scale with another side take pages of their own (SharedLayout): 1x and 2x share theirs.
+    /// </summary>
+    constexpr uint32_t HdIndexSideFor(int32_t scale)
+    {
+        const auto pixels = static_cast<uint32_t>(std::max(scale, 1));
+        return pixels * HdIndexPageSide > HdPageSide ? (HdPageSide + pixels - 1) / pixels : HdIndexPageSide;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's pages): the frames before a spare page the GPU had no room for is tried again (each
+    /// try that fails logs).
+    /// </summary>
+    constexpr uint64_t SpareRetryFrames = 60;
+
     /// <summary>Port-only: the pages sharp glyphs share (RGBA8, 4 MB; the interface's take 0.1 MB).</summary>
     constexpr uint32_t SharpPageSide = 1024;
     /// <summary>A place's corner or size packed as a draw's field: x in bits 0-15, y in 16-31.</summary>
@@ -280,6 +310,11 @@ namespace
     constexpr uint32_t IndexPixelBytes = 4;
     /// <summary>Port-only (HD weather): the surfaces' glint targets (Surface::Glints), premultiplied RGBA8.</summary>
     constexpr SDL_GPUTextureFormat GlintFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    /// <summary>
+    /// Port-only (KindHdSmooth): an HD art frame's index texture (a shared page's or its own) is read, and drawn into as
+    /// its frames' coverage is marked (MCVulkanRenderer::MarkHdCoverage).
+    /// </summary>
+    constexpr SDL_GPUTextureUsageFlags HdIndexUsage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
     /// <summary>
     /// A surface's colour targets: its colours, its indices and (port-only) its glints, which a pass has only when the
     /// frame's draws on the surface catch light (Surface::CatchesLight).
@@ -310,7 +345,7 @@ namespace
     /// </summary>
     constexpr size_t JoinReach = 16;
     /// <summary>The black a terrain tile no one has seen is filled with (composite.pshader's UnseenIndex).</summary>
-    constexpr uint32_t UnseenTileIndex = 0x10;
+    constexpr uint32_t UnseenTileIndex = MCGpuChannels::UnseenIndex;
 
     /// <summary>
     /// Clears <paramref name="targets"/> (a surface's, with its glints or without) as a window's new pixels start:
@@ -391,6 +426,8 @@ namespace
     {
         float TargetSize[4];
         uint32_t Batch[4];
+        /// <summary>Port-only: the target's drawn grid's offset across and down (MCDrawnGrid); zw unused.</summary>
+        int32_t Offset[4];
     };
 
     /// <summary>The draw shader's fragment uniforms (shaders/draw.pshader, cbuffer Frame).</summary>
@@ -405,6 +442,11 @@ namespace
         /// shadows on, how much of the light under it an object's baked shadow takes away (0: off, solid black).
         /// </summary>
         float Look[4];
+        /// <summary>
+        /// Port-only: the drawn grids' offsets across and down (MCDrawnGrid): xy the target's, zw the source's when it
+        /// is a surface.
+        /// </summary>
+        int32_t Offset[4];
     };
 
     /// <summary>shaders/draw.pshader's alpha colour kinds.</summary>
@@ -490,10 +532,12 @@ namespace
 
     /// <summary>
     /// The drawn pixels whose window pixels (draw.pshader's WindowPixel) lie in <paramref name="window"/>, on a surface
-    /// of <paramref name="windowSize"/> window pixels drawn at <paramref name="drawnSize"/>: shaders/pixels.hlsli's
-    /// DrawnCorner, those t with 2 * x0 * drawn &lt;= (2t + 1) * size &lt; 2 * (x1 + 1) * drawn. Empty when none.
+    /// of <paramref name="windowSize"/> window pixels drawn at <paramref name="drawnSize"/> on a grid offset by
+    /// <paramref name="offset"/> (MCDrawnGrid): shaders/pixels.hlsli's DrawnCorner, those t with
+    /// 2 * x0 * drawn &lt;= (2t + 1) * size - 2r &lt; 2 * (x1 + 1) * drawn. Empty when none.
     /// </summary>
-    MCRect DrawnPixels(const MCRect& window, std::array<uint32_t, 2> windowSize, std::array<uint32_t, 2> drawnSize)
+    MCRect DrawnPixels(const MCRect& window, std::array<uint32_t, 2> windowSize, std::array<uint32_t, 2> drawnSize,
+                       std::array<int32_t, 2> offset)
     {
         const auto floorDivide = [](int64_t n, int64_t d) { return n >= 0 ? n / d : -((-n + d - 1) / d); };
         std::array<int32_t, 2> first{};
@@ -505,8 +549,9 @@ namespace
             const int64_t drawn = std::max(drawnSize[i], 1u);
             const int64_t from = i == 0 ? window.X0 : window.Y0;
             const int64_t to = i == 0 ? window.X1 : window.Y1;
-            first[i] = static_cast<int32_t>(-floorDivide(size - 2 * from * drawn, 2 * size));
-            last[i] = static_cast<int32_t>(floorDivide(2 * (to + 1) * drawn - 1 - size, 2 * size));
+            const int64_t r = offset[i];
+            first[i] = static_cast<int32_t>(-floorDivide(size - 2 * from * drawn - 2 * r, 2 * size));
+            last[i] = static_cast<int32_t>(floorDivide(2 * (to + 1) * drawn - 1 - size + 2 * r, 2 * size));
         }
 
         return MCRect{first[0], first[1], last[0], last[1]};
@@ -515,6 +560,85 @@ namespace
     int64_t Area(const MCRect& rect)
     {
         return Empty(rect) ? 0 : static_cast<int64_t>(rect.X1 - rect.X0 + 1) * (rect.Y1 - rect.Y0 + 1);
+    }
+
+    /// <summary>Port-only (the kept surfaces): a tile's side, in window pixels (KeptPlan).</summary>
+    constexpr int32_t KeptTile = 16;
+    /// <summary>
+    /// Port-only (the kept surfaces): past this share of a surface's tiles changed, it's drawn whole (a pass that clears
+    /// costs less than one that loads what it held to draw most of it again).
+    /// </summary>
+    constexpr int64_t KeptMostPercent = 60;
+    /// <summary>
+    /// Port-only (the kept surfaces): past this many rectangles of changed tiles, their bounding box is drawn instead
+    /// (each rectangle is a draw call for each batch over it).
+    /// </summary>
+    constexpr size_t KeptMostRects = 16;
+    /// <summary>Port-only (the kept surfaces): a tile's hash before the draws over it.</summary>
+    constexpr uint64_t KeptTileSeed = 0x6b65707474696c65ull;
+
+    /// <summary>Port-only (the kept surfaces): <paramref name="hash"/> followed by <paramref name="value"/>.</summary>
+    uint64_t HashOn(uint64_t hash, uint64_t value)
+    {
+        return XXH3_64bits_withSeed(&value, sizeof(value), hash);
+    }
+
+    /// <summary>
+    /// Port-only (the kept surfaces): the tiles whose hashes in <paramref name="now"/> differ from
+    /// <paramref name="before"/>'s (<paramref name="columns"/> a row), merged into rectangles of tiles: each row's runs,
+    /// joined with the run of the same columns in the row above.
+    /// </summary>
+    std::vector<MCRect> ChangedTiles(std::span<const uint64_t> now, std::span<const uint64_t> before, uint32_t columns)
+    {
+        std::vector<MCRect> rects;
+        // The rectangles that reach the row above, by index.
+        std::vector<size_t> open;
+        std::vector<size_t> reaching;
+        const auto rows = static_cast<int32_t>(now.size() / std::max(columns, 1u));
+
+        for (int32_t y = 0; y < rows; ++y)
+        {
+            reaching.clear();
+
+            for (int32_t x = 0; x < static_cast<int32_t>(columns);)
+            {
+                const size_t at = static_cast<size_t>(y) * columns + static_cast<size_t>(x);
+
+                if (now[at] == before[at])
+                {
+                    ++x;
+                    continue;
+                }
+
+                int32_t end = x;
+
+                while (end + 1 < static_cast<int32_t>(columns) &&
+                       now[at + static_cast<size_t>(end + 1 - x)] != before[at + static_cast<size_t>(end + 1 - x)])
+                {
+                    ++end;
+                }
+
+                const auto above =
+                    std::ranges::find_if(open, [&](size_t i) { return rects[i].X0 == x && rects[i].X1 == end; });
+
+                if (above != open.end())
+                {
+                    rects[*above].Y1 = y;
+                    reaching.push_back(*above);
+                }
+                else
+                {
+                    rects.push_back(MCRect{x, y, end, y});
+                    reaching.push_back(rects.size() - 1);
+                }
+
+                x = end + 1;
+            }
+
+            std::swap(open, reaching);
+        }
+
+        return rects;
     }
 
     MCRect Union(const MCRect& a, const MCRect& b)
@@ -577,47 +701,22 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: the original's index at pixel <paramref name="at"/> of a version 2 HD frame (its index picture's
-    /// red where its green says the original draws there: MCHdArt::OriginalDrawsMark), or none where it doesn't.
+    /// Port-only: the colours of the pixels the original draws in a version 2 HD frame's index picture
+    /// <paramref name="indices"/> (MCHdArt::OriginalDrawsMark), as DrawnColors gives an atlas image's.
     /// </summary>
-    std::optional<uint8_t> OriginalIndexAt(const MCHdArt::Frame& frame, size_t at)
+    std::bitset<256> HdDrawnColors(std::span<const uint8_t> indices)
     {
-        const size_t texel = at * MCHdArt::IndexBytes;
+        std::bitset<256> colors;
 
-        if (texel + 1 >= frame.Indices.size() || !MCHdArt::OriginalDrawsMark(frame.Indices[texel + 1]))
+        for (size_t at = 0; at + MCHdArt::IndexBytes <= indices.size(); at += MCHdArt::IndexBytes)
         {
-            return std::nullopt;
+            if (MCHdArt::OriginalDrawsMark(indices[at + 1]))
+            {
+                colors.set(indices[at]);
+            }
         }
 
-        return frame.Indices[texel];
-    }
-
-    /// <summary>
-    /// Port-only: a version 2 HD frame's index picture as MCShapeRows::Decode decodes the original's rows into
-    /// <paramref name="out"/> (the frame's original size): each pixel the original draws its index, drawn; nothing
-    /// elsewhere.
-    /// </summary>
-    void DecodeHdIndices(const MCHdArt::Frame& frame, std::span<uint8_t> out)
-    {
-        for (size_t at = 0; at * DecodedBytes < out.size(); ++at)
-        {
-            const std::optional<uint8_t> index = OriginalIndexAt(frame, at);
-            out[at * DecodedBytes] = index.value_or(0);
-            out[at * DecodedBytes + 1] = index.has_value() ? MCShapeRows::Drawn : MCShapeRows::Empty;
-        }
-    }
-
-    /// <summary>
-    /// Port-only: FillShape's picture of a version 2 HD frame in <paramref name="out"/> (the frame's original size):
-    /// each pixel the original draws its index (through <paramref name="xlat"/> when there is one), colour 0 elsewhere.
-    /// </summary>
-    void FillHdIndices(const MCHdArt::Frame& frame, const std::optional<MCColorTable>& xlat, std::span<uint8_t> out)
-    {
-        for (size_t at = 0; at < out.size(); ++at)
-        {
-            const std::optional<uint8_t> index = OriginalIndexAt(frame, at);
-            out[at] = !index.has_value() ? 0 : xlat.has_value() ? (*xlat)[*index] : *index;
-        }
+        return colors;
     }
 
     // Fast shapes (fastshp.cpp's format): rows of packets covering width + 1 pixels; c < 0x80 is a run of c pixels of
@@ -787,6 +886,23 @@ namespace
         int32_t Sizes[4];
     };
 
+    /// <summary>
+    /// Port-only (KindHdSmooth): the coverage marks' uniforms (shaders/hdcoverage.pshader, cbuffer Coverage): the frame's
+    /// places, then its scale and which pass.
+    /// </summary>
+    struct CoverageUniforms
+    {
+        int32_t Place[4];
+        int32_t Marking[4];
+    };
+
+    /// <summary>
+    /// Port-only (KindHdSmooth): MarkHdCoverage's passes (_HdCoveragePipelines), in their order: the pixels a frame
+    /// doesn't cover, then those it does.
+    /// </summary>
+    constexpr size_t HdCoverageSpread = 0;
+    constexpr size_t HdCoverageCovered = 1;
+
     /// <summary>Port-only (HD movies): the textures a movie's frame takes: its three planes, colours and indices.</summary>
     constexpr size_t MovieTextures = 5;
 
@@ -802,6 +918,8 @@ namespace
         int32_t Clip[4];
         uint32_t Haze[4];
         int32_t Pane[4];
+        /// <summary>Port-only: the target's drawn grid's offset across and down (MCDrawnGrid); zw unused.</summary>
+        int32_t Offset[4];
     };
 
     /// <summary>The address of the frame surface <paramref name="window"/> is (or lies over), or none.</summary>
@@ -832,20 +950,31 @@ namespace
     /// The index shown at (<paramref name="x"/>, <paramref name="y"/>) of the GPU's screen (index
     /// <paramref name="pixel"/>) over an underlay shown in <paramref name="shown"/>: the index; at the key, the world
     /// pixel under the pixel's centre (<paramref name="world"/>'s indices, <paramref name="worldWidth"/> x
-    /// <paramref name="worldHeight"/>). The composite shader's rule.
+    /// <paramref name="worldHeight"/>, of a window <paramref name="window"/> big on a grid offset by
+    /// <paramref name="offset"/>, MCDrawnGrid: the drawn pixel holding that place of the window). The composite
+    /// shader's rule.
     /// </summary>
     uint8_t ShownIndex(uint8_t pixel, int32_t x, int32_t y, const MCRect& shown, std::span<const uint8_t> world,
-                       int64_t worldWidth, int64_t worldHeight)
+                       int64_t worldWidth, int64_t worldHeight, std::array<uint32_t, 2> window,
+                       std::array<int32_t, 2> offset)
     {
         if (pixel != MCRenderer::UnderlayKey)
         {
             return pixel;
         }
 
-        const int64_t shownWidth = shown.X1 - shown.X0 + 1;
-        const int64_t shownHeight = shown.Y1 - shown.Y0 + 1;
-        const auto wx = static_cast<size_t>((2 * (x - shown.X0) + 1) * worldWidth / (2 * shownWidth));
-        const auto wy = static_cast<size_t>((2 * (y - shown.Y0) + 1) * worldHeight / (2 * shownHeight));
+        // (2 * at + 1) * drawn / (2 * shown) + r / window, rounded down, in [0, drawn).
+        const auto drawnAt = [](int64_t at, int64_t shownSize, int64_t drawn, int64_t windowSize, int64_t r)
+        {
+            const int64_t size = std::max<int64_t>(windowSize, 1);
+            const int64_t n = (2 * at + 1) * drawn * size + 2 * r * shownSize;
+            const int64_t d = 2 * shownSize * size;
+            const int64_t place = n >= 0 ? n / d : -((-n + d - 1) / d);
+            return static_cast<size_t>(std::clamp<int64_t>(place, 0, drawn - 1));
+        };
+
+        const size_t wx = drawnAt(x - shown.X0, shown.X1 - shown.X0 + 1, worldWidth, window[0], offset[0]);
+        const size_t wy = drawnAt(y - shown.Y0, shown.Y1 - shown.Y0 + 1, worldHeight, window[1], offset[1]);
         return world[wy * static_cast<size_t>(worldWidth) + wx];
     }
 
@@ -1005,7 +1134,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     // (HD movies) the movie conversion, the same way.
     for (auto [info, shader] : {std::pair{&MCVulkanShaders::Quad, &renderer->_QuadShader},
                                 std::pair{&MCVulkanShaders::GroundFragment, &renderer->_GroundShader},
-                                std::pair{&MCVulkanShaders::MovieFragment, &renderer->_MovieShader}})
+                                std::pair{&MCVulkanShaders::MovieFragment, &renderer->_MovieShader},
+                                std::pair{&MCVulkanShaders::HdCoverageFragment, &renderer->_HdCoverageShader}})
     {
         auto loaded = MCVulkanShaders::Load(device, *info);
 
@@ -1075,7 +1205,7 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
         // Port-only: a forest's HD frame (HDSway) writes the sway mark (the indices' alpha) alone, as an HD frame's
         // mark pass (indexOnly too) writes what stands on the ground, with the feet of the unit it is (green and blue,
-        // shaders/draw.pshader's FeetShift; none for anything else).
+        // shaders/channels.hlsli's FeetShift; none for anything else).
         if (marks)
         {
             targets[1].blend_state.enable_color_write_mask = true;
@@ -1193,6 +1323,38 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                                                         MCGpuRelease{device});
         });
 
+    // Port-only (KindHdSmooth): MarkHdCoverage's passes write an HD index texture's green alone, blended so its marks
+    // change without being read: less where a frame doesn't cover a pixel, at least where it does.
+    for (const auto [pass, op] : {std::pair{HdCoverageSpread, SDL_GPU_BLENDOP_REVERSE_SUBTRACT},
+                                  std::pair{HdCoverageCovered, SDL_GPU_BLENDOP_MAX}})
+    {
+        job(std::format("hd coverage {}", pass), false, renderer->_HdCoveragePipelines[pass],
+            [&, op]
+            {
+                SDL_GPUColorTargetDescription indices{};
+                indices.format = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM;
+                indices.blend_state.enable_blend = true;
+                indices.blend_state.color_blend_op = op;
+                indices.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                indices.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                indices.blend_state.alpha_blend_op = op;
+                indices.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                indices.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                indices.blend_state.enable_color_write_mask = true;
+                indices.blend_state.color_write_mask = SDL_GPU_COLORCOMPONENT_G;
+                SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+                pipeline.vertex_shader = renderer->_QuadShader.get();
+                pipeline.fragment_shader = renderer->_HdCoverageShader.get();
+                pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+                pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+                pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+                pipeline.target_info.num_color_targets = 1;
+                pipeline.target_info.color_target_descriptions = &indices;
+                return MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline),
+                                                            MCGpuRelease{device});
+            });
+    }
+
     std::ranges::move(moreJobs, std::back_inserter(jobs));
     moreJobs.clear();
     MakePipelines(jobs);
@@ -1205,6 +1367,11 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     if (renderer->_MoviePipeline == nullptr)
     {
         return std::unexpected(std::string("SDL_CreateGPUGraphicsPipeline(movie) failed"));
+    }
+
+    if (!std::ranges::all_of(renderer->_HdCoveragePipelines, [](const auto& made) { return made != nullptr; }))
+    {
+        return std::unexpected(std::string("SDL_CreateGPUGraphicsPipeline(hd coverage) failed"));
     }
 
     SDL_GPUSamplerCreateInfo sampler{};
@@ -1280,7 +1447,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(picture.Texture);
     }
 
-    for (std::vector<SharedPage>* pages : {&_HdPages, &_SharpPages})
+    for (std::vector<SharedPage>* pages : {&_HdPages, &_SharpPages, &_SparePages})
     {
         for (SharedPage& page : *pages)
         {
@@ -1316,6 +1483,8 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _SurfacePipelines = {};
     _MoviePipeline.reset();
     _MovieShader.reset();
+    _HdCoveragePipelines = {};
+    _HdCoverageShader.reset();
     _VertexShader.reset();
     _FragmentShader.reset();
     _BasicFragmentShader.reset();
@@ -1418,7 +1587,6 @@ void MCVulkanRenderer::BeginRecording()
 
         _Pages.clear();
         _DataImages.clear();
-        _HdIndexImages.clear();
     }
 
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
@@ -1440,9 +1608,12 @@ void MCVulkanRenderer::BeginRecording()
 
     const MCMemoryRoom::MCFrameRoom room =
         _Room.has_value() ? _Room->Frame(_HdPictureBytes) : MCMemoryRoom::MCFrameRoom{};
+    // Port-only (SPEC-memory.md's indices): the weather, shown, reads every unit's indices on the CPU.
+    MCHdArt::KeepIndices(MCWeather::Shown() != MCWeatherKind::Clear);
     // Port-only (SPEC-memory.md's plan): on shared memory, the pictures' share of the art's room too.
     const std::optional<uint64_t> planned = MCHdArt::NextFrame(room.MemoryShort);
     TrimHdPictures(static_cast<size_t>(std::min(room.PictureBytes, planned.value_or(room.PictureBytes))));
+    KeepSparePages();
     _HdPicturePayload.Set({.Payload = static_cast<int64_t>(_HdPictureBytes)});
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
@@ -1793,6 +1964,13 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
                            const std::optional<Quad>& sourceAt, uint32_t op, uint32_t color, uint32_t before,
                            uint32_t after, bool join)
 {
+    // Port-only: a rehearsal's draws are left out; what they needed done first (their pictures found and queued to
+    // go up) is done (MCRenderer::RehearsalScope).
+    if (MCRenderer::Rehearsing())
+    {
+        return false;
+    }
+
     // Port-only: a frame that ran meanwhile on another thread is shown now (the presenter's).
     if (Checkpoint && ++_DrawsSinceCheckpoint >= CheckpointDraws)
     {
@@ -1867,10 +2045,12 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     // Port-only: where its picture lies in the textures it reads (a shared page's).
     if (source == SourceKind::Picture)
     {
-        const PicturePlace& place = _Run->Pictures[sourceIndex].Place;
+        const FramePicture& picture = _Run->Pictures[sourceIndex];
+        const PicturePlace& place = picture.Place;
         draw[20] = PackedPair(place.X, place.Y);
         draw[21] = PackedPair(place.HdX, place.HdY);
         draw[22] = PackedPair(place.Width, place.Height);
+        draw[PlaceFlagsField] = picture.HdMarks ? static_cast<int32_t>(HdMarksSource) : 0;
     }
 
     const bool indexOnly = (op & IndexOnly) != 0;
@@ -2345,36 +2525,57 @@ auto MCVulkanRenderer::RowsGone(std::span<const uint8_t> table, int32_t shapeNum
     return true;
 }
 
-auto MCVulkanRenderer::HdIndexImage(const MCHdArt::Frame& frame, uint64_t seed) -> DataImage&
+auto MCVulkanRenderer::AtlasShapeIndices(std::span<const uint8_t> table, int32_t shapeNum,
+                                         std::span<const uint8_t> data, uint64_t seed, int32_t rows)
+    -> std::optional<ShapeIndices>
 {
-    BeginRecording();
-    const auto [found, fresh] = _HdIndexImages.try_emplace({frame.Id, seed});
+    const MCOptionalRef<DataImage> found = AtlasForData(
+        data, seed, "a shape",
+        [&]
+        {
+            Extent extent;
 
-    if (fresh)
+            // Port-only: a stripped table's frame without its HD frame has nothing to draw it from.
+            if (RowsGone(table, shapeNum))
+            {
+                return extent;
+            }
+
+            extent.Height = rows;
+            extent.Size = MCShapeRows::Extent(data, rows, extent.Width);
+            return extent;
+        },
+        [&](std::span<uint8_t> out, const Extent& extent) { MCShapeRows::Decode(data, rows, extent.Width, out); });
+
+    if (!found.has_value() || found->get().Measured.Width == 0)
     {
-        found->second.Measured = Extent{frame.Indices.size(), frame.OriginalWidth(), frame.OriginalHeight()};
-        ++_HdIndexImagesMade;
+        return std::nullopt;
     }
 
-    return found->second;
+    const DataImage& image = found->get();
+
+    if (!image.Place)
+    {
+        NotSupported("Shape larger than an atlas page");
+        return std::nullopt;
+    }
+
+    return ShapeIndices{SourceKind::Atlas, image.Place->Page,    image.Place->X,
+                        image.Place->Y,    image.Measured.Width, image.Colors};
 }
 
-auto MCVulkanRenderer::AtlasForHdIndices(const MCHdArt::Frame& frame, uint64_t seed) -> DataImage&
+auto MCVulkanRenderer::HdShapeIndices(const MCHdArt::Frame& frame) -> std::optional<ShapeIndices>
 {
-    DataImage& image = HdIndexImage(frame, seed);
-    const Extent& extent = image.Measured;
+    const std::optional<uint32_t> picture = HdPictureOf(frame);
+    const auto found = _HdPictures.find(frame.Id);
 
-    if (!image.Place && extent.Width > 0 && extent.Height > 0)
+    if (!picture.has_value() || found == _HdPictures.end() || frame.OriginalWidth() <= 0)
     {
-        image.Place = AtlasFor(extent.Width, extent.Height,
-                               [&](std::span<uint8_t> out)
-                               {
-                                   DecodeHdIndices(frame, out);
-                                   image.Colors = DrawnColors(out);
-                               });
+        return std::nullopt;
     }
 
-    return image;
+    ++_HdIndexPicturesDrawn;
+    return ShapeIndices{SourceKind::Picture, *picture, 0, 0, frame.OriginalWidth(), found->second.DrawnColors};
 }
 
 void MCVulkanRenderer::OnDataChanged(MCAddressKey first, size_t size)
@@ -2646,7 +2847,8 @@ uint32_t MCVulkanRenderer::UsePicture(Picture& picture)
 
     const auto index = static_cast<uint32_t>(_Run->Pictures.size());
     picture.FrameIndex = index;
-    _Run->Pictures.push_back(FramePicture{picture.Texture.Handle, picture.HdColors.Handle, picture.Place});
+    _Run->Pictures.push_back(
+        FramePicture{picture.Texture.Handle, picture.HdColors.Handle, picture.Place, picture.HdMarks});
     return index;
 }
 
@@ -2718,36 +2920,78 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         return true;
     };
 
-    // Only a page of the picture's own layout: its formats and its places' unit are the page's.
+    // Port-only (SPEC-memory.md's pages): the page of the layout placed in last.
+    auto open = std::ranges::find_if(_OpenPages,
+                                     [&](const OpenPage& page) { return page.Kind == kind && page.Layout == layout; });
+
+    if (open == _OpenPages.end())
+    {
+        open = _OpenPages.insert(_OpenPages.end(), OpenPage{kind, layout, 0});
+    }
+
+    // Only a page of the picture's own layout: its formats and its places' unit are the page's; not one that refused a
+    // picture no bigger. A refusal is kept as the page's smallest.
+    const PlaceSize size{width, height, hd ? static_cast<uint32_t>(blocks(hdWidth)) : 0,
+                         hd ? static_cast<uint32_t>(blocks(hdHeight)) : 0};
+    const auto tryIn = [&](uint32_t at)
+    {
+        SharedPage& page = pages[at];
+
+        if (page.Places == nullptr || page.Layout != layout ||
+            (page.Refused.has_value() && size.AtLeast(*page.Refused)))
+        {
+            return false;
+        }
+
+        if (placeIn(at))
+        {
+            open->Page = at;
+            return true;
+        }
+
+        if (!page.Refused.has_value() || page.Refused->AtLeast(size))
+        {
+            page.Refused = size;
+        }
+
+        return false;
+    };
+
+    // The open page first, then the others.
+    if (open->Page < pages.size() && tryIn(open->Page))
+    {
+        return true;
+    }
+
     for (uint32_t at = 0; at < pages.size(); ++at)
     {
-        if (pages[at].Places != nullptr && pages[at].Layout == layout && placeIn(at))
+        if (at != open->Page && tryIn(at))
         {
             return true;
         }
     }
 
-    // A new page, in an emptied one's slot when there is one.
-    SharedPage page;
-    page.Layout = layout;
-    auto made = EnsureTexture(page.Texture, (hd ? MCHolder::GpuHdPictures : MCHolder::GpuPictures), layout.Format,
-                              SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
+    // A new page (the one made ahead, when there is one: KeepSparePages), in an emptied one's slot when there is one.
+    std::optional<SharedPage> made;
 
-    if (made && hd)
+    if (const auto spare =
+            std::ranges::find_if(_SparePages, [&](const SharedPage& one) { return one.Layout == layout; });
+        kind == PageKind::Hd && spare != _SparePages.end())
     {
-        made = EnsureTexture(page.HdColors, MCHolder::GpuHdPictures, layout.HdFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                             layout.HdSide, layout.HdSide);
+        made = std::move(*spare);
+        _SparePages.erase(spare);
+    }
+    else
+    {
+        made = MakePage(layout);
     }
 
-    if (!made)
+    if (!made.has_value())
     {
-        SDL_Log("MCVulkanRenderer: a shared page %ux%u: %s", layout.Side, layout.Side, made.error().c_str());
         return false;
     }
 
-    page.Places.reset(sma_atlas_create(static_cast<int>(layout.Side), static_cast<int>(layout.Side)));
-    const auto hdBlocks = static_cast<int>(layout.HdSide / layout.HdBlock);
-    page.HdPlaces.reset(hd ? sma_atlas_create(hdBlocks, hdBlocks) : nullptr);
+    SharedPage& page = *made;
     const auto empty = std::ranges::find_if(pages, [](const SharedPage& one) { return one.Places == nullptr; });
     const auto at = static_cast<uint32_t>(std::distance(pages.begin(), empty));
 
@@ -2760,7 +3004,69 @@ bool MCVulkanRenderer::PlaceShared(PageKind kind, const SharedLayout& layout, Pi
         *empty = std::move(page);
     }
 
+    open->Page = at;
     return placeIn(at);
+}
+
+auto MCVulkanRenderer::MakePage(const SharedLayout& layout) -> std::optional<SharedPage>
+{
+    const bool hd = layout.HdFormat != SDL_GPU_TEXTUREFORMAT_INVALID;
+    SharedPage page;
+    page.Layout = layout;
+    // Port-only (KindHdSmooth): an HD page's indices are drawn into too, its frames' coverage marked (MarkHdCoverage).
+    auto made = EnsureTexture(page.Texture, (hd ? MCHolder::GpuHdPictures : MCHolder::GpuPictures), layout.Format,
+                              hd ? HdIndexUsage : SDL_GPU_TEXTUREUSAGE_SAMPLER, layout.Side, layout.Side);
+
+    if (made && hd)
+    {
+        made = EnsureTexture(page.HdColors, MCHolder::GpuHdPictures, layout.HdFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                             layout.HdSide, layout.HdSide);
+    }
+
+    if (!made)
+    {
+        SDL_Log("MCVulkanRenderer: a shared page %ux%u: %s", layout.Side, layout.Side, made.error().c_str());
+        return std::nullopt;
+    }
+
+    page.Places.reset(sma_atlas_create(static_cast<int>(layout.Side), static_cast<int>(layout.Side)));
+    const auto hdBlocks = static_cast<int>(layout.HdSide / layout.HdBlock);
+    page.HdPlaces.reset(hd ? sma_atlas_create(hdBlocks, hdBlocks) : nullptr);
+    return page;
+}
+
+void MCVulkanRenderer::KeepSparePages()
+{
+    for (const OpenPage& open : _OpenPages)
+    {
+        if (open.Kind != PageKind::Hd)
+        {
+            continue;
+        }
+
+        const auto ofLayout = [&](const SharedPage& page) { return page.Layout == open.Layout; };
+        const bool inUse = std::ranges::any_of(_HdPages, [&](const SharedPage& page)
+                                               { return page.Places != nullptr && ofLayout(page); });
+        const auto spare = std::ranges::find_if(_SparePages, ofLayout);
+
+        if (!inUse && spare != _SparePages.end())
+        {
+            Release(spare->Texture);
+            Release(spare->HdColors);
+            _SparePages.erase(spare);
+        }
+        else if (inUse && spare == _SparePages.end() && _Frame >= _SpareRetryFrame)
+        {
+            if (std::optional<SharedPage> made = MakePage(open.Layout); made.has_value())
+            {
+                _SparePages.push_back(std::move(*made));
+            }
+            else
+            {
+                _SpareRetryFrame = _Frame + SpareRetryFrames;
+            }
+        }
+    }
 }
 
 void MCVulkanRenderer::FreeShared(Picture& picture)
@@ -2784,15 +3090,20 @@ void MCVulkanRenderer::FreeRetiredPlaces()
     {
         SharedPage& page = PagesOf(retired.Kind)[retired.Page];
         sma_item_remove(page.Places.get(), retired.Item);
+        // Port-only (SPEC-memory.md's pages): room again, for any picture.
+        page.Refused.reset();
 
         if (retired.HdItem != nullptr)
         {
             sma_item_remove(page.HdPlaces.get(), retired.HdItem);
         }
 
-        // An emptied page goes (its textures once the frames that read them have run).
+        // An emptied page goes (its textures once the frames that read them have run, counted as retired till then:
+        // SPEC-memory.md's pages).
         if (--page.Pictures == 0)
         {
+            MCGpuCounted::Retire(page.Texture.Handle);
+            MCGpuCounted::Retire(page.HdColors.Handle);
             Release(page.Texture);
             Release(page.HdColors);
             page = SharedPage{};
@@ -3021,8 +3332,15 @@ bool MCVulkanRenderer::KeyedThroughout(const MCHdArt::Frame& frame, const Quad& 
     const int32_t width = frame.OriginalWidth();
     const int32_t height = frame.OriginalHeight();
 
-    if (rect[0] < 0 || rect[1] < 0 || rect[2] >= width || rect[3] >= height || rect[2] < rect[0] || rect[3] < rect[1] ||
-        frame.Indices.size() != static_cast<size_t>(width) * height * MCHdArt::IndexBytes)
+    if (rect[0] < 0 || rect[1] < 0 || rect[2] >= width || rect[3] >= height || rect[2] < rect[0] || rect[3] < rect[1])
+    {
+        return false;
+    }
+
+    // Port-only (SPEC-memory.md's indices): read on the CPU, so the menu pictures keep their indices.
+    const std::span<const uint8_t> indices = MCHdArt::IndicesOf(frame);
+
+    if (indices.size() != static_cast<size_t>(width) * height * MCHdArt::IndexBytes)
     {
         return false;
     }
@@ -3035,7 +3353,7 @@ bool MCVulkanRenderer::KeyedThroughout(const MCHdArt::Frame& frame, const Quad& 
 
             // As the draw shader's HdTexel leaves the key out: a pixel with an index (shaders/draw.pshader's
             // HasIndexIn) of the key.
-            if (!MCHdArt::HasIndexMark(frame.Indices[at + 1]) || frame.Indices[at] != key)
+            if (!MCHdArt::HasIndexMark(indices[at + 1]) || indices[at] != key)
             {
                 return false;
             }
@@ -3237,7 +3555,7 @@ auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, 
 
 void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                                    std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
-                                   bool smoothEdges, BlitPixels pixels)
+                                   bool smoothEdges, BlitPixels pixels, const std::optional<MCColorTable>& table)
 {
     const std::optional<std::pair<Quad, Quad>> place = BlitPlace(blit, width, height, command);
 
@@ -3256,10 +3574,12 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
     const uint16_t surface = SurfaceFor(target);
     const uint32_t op = KindTexture | OpaqueSource | AlphaBlend | (smoothEdges ? SmoothEdges : 0u) |
                         (pixels == BlitPixels::Blended ? BlendedOnly : 0u) |
-                        (pixels == BlitPixels::OpaqueIndices ? IndexOnly | OpaqueOnly : 0u);
+                        (pixels == BlitPixels::OpaqueIndices ? IndexOnly | OpaqueOnly : 0u) |
+                        (table.has_value() ? TableBefore : 0u);
+    const uint32_t before = table.has_value() ? TableRow(*table) : 0u;
 
     // A smooth-edged picture's place in the source is the whole picture.
-    if (Add(surface, SourceKind::Picture, *index, place->first, place->second, op, 0, 0, 0) && smoothEdges)
+    if (Add(surface, SourceKind::Picture, *index, place->first, place->second, op, 0, before, 0) && smoothEdges)
     {
         DrawFields& draw = _Run->Draws.back();
         draw[16] = 0;
@@ -3389,8 +3709,12 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
     // The shape's opaque pixels' indices, as the original's transform writes them (its colours' blit, blended, leaves
     // the indices): the composite tells what stands on the ground by them (the water, the relief's light, the rain's
     // wet look).
-    const auto indices = [&](const std::function<std::optional<uint32_t>()>& source)
-    { BlitPicture(target, command.Blit, width, height, ReadsOutside, source, false, BlitPixels::OpaqueIndices); };
+    const auto indices = [&](const std::function<std::optional<uint32_t>()>& source,
+                             const std::optional<MCColorTable>& through = std::nullopt)
+    {
+        BlitPicture(target, command.Blit, width, height, ReadsOutside, source, false, BlitPixels::OpaqueIndices,
+                    through);
+    };
 
     // Port-only: the HD art pack's frame instead, where it has one, its edges smooth unless it holds its blended pixels
     // (an effect's). A translucent shape's blended pixels that its frame leaves out are blended first, with smooth
@@ -3399,16 +3723,13 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         hd != nullptr && HdPictureOf(*hd).has_value())
     {
         // A version 2 frame's index picture stands for the original's rows, which a pack's shape table may leave out
-        // (SPEC-pack-v2.md's record 1): its indices where the original draws.
+        // (SPEC-pack-v2.md's record 1): its indices where the original draws, read from its own picture on the GPU
+        // through the blit's table (SPEC-memory.md's indices).
+        const bool fromHd = hd->Marked && hd->OriginalWidth() == width && hd->OriginalHeight() == height;
         const std::function<std::optional<uint32_t>()> shape =
-            hd->Marked
-                ? std::function<std::optional<uint32_t>()>(
-                      [&]
-                      {
-                          return pictureOf(HdIndexImage(*hd, Seed(ImageKind::ShapeFill, width, height)),
-                                           [&](std::span<uint8_t> out) { FillHdIndices(*hd, command.Table, out); });
-                      })
-                : std::function<std::optional<uint32_t>()>(picture);
+            fromHd ? std::function<std::optional<uint32_t>()>([&] { return HdPictureOf(*hd); })
+                   : std::function<std::optional<uint32_t>()>(picture);
+        const std::optional<MCColorTable> shapeTable = fromHd ? command.Table : std::nullopt;
         const std::optional<std::pair<Quad, Quad>> place = BlitPlace(command.Blit, width, height, ReadsOutside);
 
         if (!place)
@@ -3422,7 +3743,8 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
 
         if (blendsOwn && smooth)
         {
-            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, true, BlitPixels::Blended);
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, true, BlitPixels::Blended,
+                        shapeTable);
         }
 
         // A frame part of the way to its next (an effect's, a tree's, a building's, or a mech's legs turning) shows the pack's in-between
@@ -3456,10 +3778,11 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
         if (blendsOwn && !smooth)
         {
-            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, false, BlitPixels::Blended);
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, shape, false, BlitPixels::Blended,
+                        shapeTable);
         }
 
-        indices(shape);
+        indices(shape, shapeTable);
         return;
     }
 
@@ -3497,8 +3820,10 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         const bool bc7 = frame.Format == MCHdArt::ColorFormat::Bc7;
         uint32_t colorWidth = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Width)) : width;
         uint32_t colorHeight = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Height)) : height;
-        // Port-only (SPEC-memory.md's one copy of a frame's colours): the cache's, which go once they're here.
+        // Port-only (SPEC-memory.md's one copy of a frame's colours): the cache's, which go once they're here, and the
+        // indices, which go after too unless code on the CPU reads them (SPEC-memory.md's indices).
         const std::span<const uint8_t> source = MCHdArt::ColorsOf(frame);
+        const std::span<const uint8_t> indices = MCHdArt::IndicesOf(frame, MCHdArt::MCIndicesUse::Upload);
 
         if (source.empty())
         {
@@ -3506,7 +3831,7 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
             return std::nullopt;
         }
 
-        if (frame.Indices.size() != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes ||
+        if (indices.size() != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes ||
             source.size() != static_cast<size_t>(colorWidth) * colorHeight * (bc7 ? HdBc7Bytes : HdRgbaBytes))
         {
             NotSupported("an HD art frame whose pixels don't match its size");
@@ -3536,14 +3861,14 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         // one, in textures of its own.
         const SDL_GPUTextureFormat colorFormat =
             sendBc7 ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexPageSide, colorFormat, HdPageSide,
-                                  sendBc7 ? Bc7Block : 1};
+        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexSideFor(frame.Scale), colorFormat,
+                                  HdPageSide, sendBc7 ? Bc7Block : 1};
         Picture picture;
 
         if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))
         {
             auto made = EnsureTexture(picture.Texture, MCHolder::GpuHdPictures, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
-                                      SDL_GPU_TEXTUREUSAGE_SAMPLER, originalWidth, originalHeight);
+                                      HdIndexUsage, originalWidth, originalHeight);
 
             if (made)
             {
@@ -3562,13 +3887,26 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
         }
 
         const PicturePlace& place = picture.Place;
-        std::ranges::copy(frame.Indices, QueueUpload(picture.Texture.Handle, place.X, place.Y, originalWidth,
-                                                     originalHeight, static_cast<uint32_t>(MCHdArt::IndexBytes))
-                                             .begin());
+        std::ranges::copy(indices, QueueUpload(picture.Texture.Handle, place.X, place.Y, originalWidth, originalHeight,
+                                               static_cast<uint32_t>(MCHdArt::IndexBytes))
+                                       .begin());
         std::ranges::copy(colors, QueueUpload(picture.HdColors.Handle, place.HdX, place.HdY, colorWidth, colorHeight,
                                               sendBc7 ? HdBc7Bytes : HdRgbaBytes)
                                       .begin());
-        picture.Bytes = frame.Indices.size() + colors.size();
+        picture.Bytes = indices.size() + colors.size();
+
+        // Port-only (KindHdSmooth): a version 1 frame's marks say which pixels have an index, its spread ones too; which
+        // its frame covers is marked on the GPU (MarkHdCoverage). A frame holding its blended pixels draws its own
+        // edges.
+        if (!frame.Marked && !frame.Blended)
+        {
+            _Run->CoverageMarks.push_back(HdCoverageMark{picture.Texture, picture.HdColors, place, originalWidth,
+                                                         originalHeight, static_cast<uint32_t>(frame.Scale)});
+        }
+
+        // Port-only (SPEC-memory.md's indices): a version 2 frame's index passes read this picture, not the CPU's copy.
+        picture.HdMarks = frame.Marked;
+        picture.DrawnColors = frame.Marked ? HdDrawnColors(indices) : std::bitset<256>{};
         MCHdArt::ColorsUploaded(frame);
         found = _HdPictures.emplace(frame.Id, picture).first;
         found->second.InOrder = _HdOrder.insert(_HdOrder.end(), frame.Id);
@@ -3692,6 +4030,58 @@ void MCVulkanRenderer::ConvertMovie(SDL_GPUCommandBuffer& commands, const MovieC
     SDL_EndGPURenderPass(pass);
 }
 
+void MCVulkanRenderer::MarkHdCoverage(SDL_GPUCommandBuffer& commands, const FrameRun& run)
+{
+    // A render pass for each index texture the frames went up into, each pass's frames drawn in turn.
+    std::vector<SDL_GPUTexture*> marked;
+
+    for (const HdCoverageMark& first : run.CoverageMarks)
+    {
+        SDL_GPUTexture* const indices = first.Indices.Handle.get();
+
+        if (std::ranges::contains(marked, indices))
+        {
+            continue;
+        }
+
+        marked.push_back(indices);
+        // The other frames in the texture keep their marks.
+        SDL_GPUColorTargetInfo target{};
+        target.texture = indices;
+        target.load_op = SDL_GPU_LOADOP_LOAD;
+        target.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* const pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
+
+        for (const size_t which : {HdCoverageSpread, HdCoverageCovered})
+        {
+            SDL_BindGPUGraphicsPipeline(pass, _HdCoveragePipelines[which].get());
+
+            for (const HdCoverageMark& mark : run.CoverageMarks)
+            {
+                if (mark.Indices.Handle.get() != indices)
+                {
+                    continue;
+                }
+
+                const PicturePlace& place = mark.Place;
+                const QuadUniforms quad{
+                    {static_cast<float>(place.X), static_cast<float>(place.Y), static_cast<float>(mark.Width),
+                     static_cast<float>(mark.Height)},
+                    {static_cast<float>(mark.Indices.Width), static_cast<float>(mark.Indices.Height), 0.0f, 0.0f}};
+                const CoverageUniforms uniforms{{place.X, place.Y, place.HdX, place.HdY},
+                                                {static_cast<int32_t>(mark.Scale), static_cast<int32_t>(which), 0, 0}};
+                const SDL_GPUTextureSamplerBinding colors{mark.Colors.Handle.get(), _Nearest.get()};
+                SDL_BindGPUFragmentSamplers(pass, 0, &colors, 1);
+                SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
+                SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
+                SDL_DrawGPUPrimitives(pass, QuadVertices, 1, 0, 0);
+            }
+        }
+
+        SDL_EndGPURenderPass(pass);
+    }
+}
+
 bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> font, std::span<const uint8_t> glyph,
                                      int32_t columns, int32_t rows, const Quad& at, int32_t sourceX, int32_t sourceY,
                                      const MCColorTable& table)
@@ -3760,8 +4150,8 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
 
     if (found == _SharpGlyphs.end())
     {
-        // Port-only: made ahead (platform/MCSharpPictures), else redrawn now.
-        const std::optional<MCSharpPictures::MCMadePicture> made = MCSharpPictures::Take(key);
+        // Port-only: made ahead or the HD art pack's (platform/MCSharpPictures), else redrawn now.
+        const std::optional<MCSharpPictures::MCMadePicture> made = MCSharpPictures::Take(key, columns, rows);
         const std::vector<uint8_t> redrawn = made.has_value() ? std::vector<uint8_t>{} : redraw();
         const size_t bytes = made.has_value() ? made->RgbaBytes() : redrawn.size();
         const auto width = static_cast<uint32_t>(columns * MCSharpText::Scale);
@@ -3980,46 +4370,22 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
     // The whole shape when its header covers the rows drawn (so a shape scrolling past an edge keeps one atlas place).
     const int32_t rows = fromHd ? hd->OriginalHeight() : std::max(command.SkipRows + command.Rows, headerRows);
-    const MCOptionalRef<DataImage> found =
-        fromHd ? MCOptionalRef<DataImage>(AtlasForHdIndices(*hd, Seed(ImageKind::Shape, 0, rows)))
-               : AtlasForData(
-                     data, Seed(ImageKind::Shape, 0, rows), "a shape",
-                     [&]
-                     {
-                         Extent extent;
+    // Port-only (SPEC-memory.md's indices): a version 2 frame's index passes read its own index picture on the GPU.
+    const std::optional<ShapeIndices> indices =
+        fromHd ? HdShapeIndices(*hd)
+               : AtlasShapeIndices(command.ShapeTable, command.ShapeNum, data, Seed(ImageKind::Shape, 0, rows), rows);
 
-                         // Port-only: a stripped table's frame without its HD frame has nothing to draw it from.
-                         if (RowsGone(command.ShapeTable, command.ShapeNum))
-                         {
-                             return extent;
-                         }
-
-                         extent.Height = rows;
-                         extent.Size = MCShapeRows::Extent(data, rows, extent.Width);
-                         return extent;
-                     },
-                     [&](std::span<uint8_t> out, const Extent& extent)
-                     { MCShapeRows::Decode(data, rows, extent.Width, out); });
-
-    if (!found.has_value() || found->get().Measured.Width == 0)
+    if (!indices.has_value())
     {
         return;
     }
 
-    const DataImage& image = found->get();
-    const int32_t width = image.Measured.Width;
-    const std::optional<AtlasPlace>& place = image.Place;
-
-    if (!place)
-    {
-        NotSupported("Shape larger than an atlas page");
-        return;
-    }
+    const int32_t width = indices->Width;
 
     // The rows drawn, within the image's (a version 2 frame's may be fewer than a malformed header's rows drawn).
     const Quad at = {std::max(command.Left, command.Lo), command.Top, std::min(command.Left + width - 1, command.Hi),
                      std::min(command.Top + command.Rows, command.Top - command.SkipRows + rows) - 1};
-    const Quad from = {place->X + at[0] - command.Left, place->Y + command.SkipRows, 1, 1};
+    const Quad from = {indices->X + at[0] - command.Left, indices->Y + command.SkipRows, 1, 1};
 
     if (at[2] < at[0])
     {
@@ -4101,13 +4467,13 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     // atlas).
     const auto addSmooth = [&](const Quad& rect, const Quad& source, uint32_t smoothOp)
     {
-        if (Add(surface, SourceKind::Atlas, place->Page, rect, source, smoothOp, 0, before, after))
+        if (Add(surface, indices->Source, indices->Index, rect, source, smoothOp, 0, before, after))
         {
             DrawFields& draw = _Run->Draws.back();
-            draw[16] = place->X;
-            draw[17] = place->Y;
-            draw[18] = place->X + width - 1;
-            draw[19] = place->Y + rows - 1;
+            draw[16] = indices->X;
+            draw[17] = indices->Y;
+            draw[18] = indices->X + width - 1;
+            draw[19] = indices->Y + rows - 1;
         }
     };
 
@@ -4147,7 +4513,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
             if ((indexOp & Sways) != 0)
             {
-                Add(surface, SourceKind::Atlas, place->Page, at, from, indexOp, 0, before, after);
+                Add(surface, indices->Source, indices->Index, at, from, indexOp, 0, before, after);
             }
 
             // A frame part of the way to its next (an effect's, a tree's, a building's, or a mech's legs turning) shows the pack's in-between
@@ -4181,19 +4547,19 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             }
 
             // A translucent shape with no colour it shows opaque keeps no indices: its index pass would draw nothing.
-            if ((indexOp & Sways) == 0 && translucent && !AnyOpaqueAlphaColor(image.Colors))
+            if ((indexOp & Sways) == 0 && translucent && !AnyOpaqueAlphaColor(indices->Colors))
             {
                 NoteBlended(surface, at);
             }
             else if ((indexOp & Sways) == 0)
             {
-                Add(surface, SourceKind::Atlas, place->Page, at, from, indexOp, 0, before, after);
+                Add(surface, indices->Source, indices->Index, at, from, indexOp, 0, before, after);
             }
 
             // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
             if (blendsOwn && !smooth)
             {
-                Add(surface, SourceKind::Atlas, place->Page, at, from, op | BlendedOnly, 0, before, after);
+                Add(surface, indices->Source, indices->Index, at, from, op | BlendedOnly, 0, before, after);
             }
 
             return;
@@ -4204,12 +4570,12 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     // colour through the blend pipeline with its coverage taken between its own pixels.
     if (command.Op == MCShapeOp::Draw && MCHdArt::SmoothEdges(command.ShapeTable))
     {
-        Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly, 0, before, after);
+        Add(surface, indices->Source, indices->Index, at, from, op | IndexOnly, 0, before, after);
         addSmooth(at, from, op | SmoothEdges);
         return;
     }
 
-    Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, after);
+    Add(surface, indices->Source, indices->Index, at, from, op, 0, before, after);
 }
 
 void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& command)
@@ -5825,8 +6191,17 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     draw.Frame.Fog.reset();
     draw.Frame.Haze = {};
 
+    // Port-only: the frame's first terrain layer on the surface places its drawn grid (MCDrawnGrid) at the window
+    // point of map vertex (0, 0).
+    Surface& drawn = _Surfaces[surface];
+
+    if (!drawn.GridPlaced)
+    {
+        drawn.GridOrigin = std::array{frame.PaneX + frame.OriginX, frame.PaneY + frame.OriginY};
+        drawn.GridPlaced = true;
+    }
+
     // The pane's clip, within the surface.
-    const Surface& drawn = _Surfaces[surface];
     draw.Frame.Clip = MCRect{std::max(frame.Clip.X0, 0), std::max(frame.Clip.Y0, 0),
                              std::min(frame.Clip.X1, static_cast<int32_t>(drawn.RecordedWidth) - 1),
                              std::min(frame.Clip.Y1, static_cast<int32_t>(drawn.RecordedHeight) - 1)};
@@ -5852,7 +6227,7 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     const int32_t firstCol = std::max(frame.FirstCol, _TerrainMesh.FirstCol);
     const int32_t lastCol = std::min(frame.LastCol, _TerrainMesh.FirstCol + _TerrainMesh.Cols - 1);
 
-    if (lastRow >= firstRow && lastCol >= firstCol && !Empty(draw.Frame.Clip))
+    if (lastRow >= firstRow && lastCol >= firstCol && !Empty(draw.Frame.Clip) && !MCRenderer::Rehearsing())
     {
         draw.CellCount = static_cast<uint32_t>((lastRow - firstRow + 1) * (lastCol - firstCol + 1));
         Record record;
@@ -6422,6 +6797,8 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     uniforms.Pane[0] = frame.PaneX;
     uniforms.Pane[1] = frame.PaneY;
     uniforms.Pane[3] = _TerrainMesh.ReliefAtlas.Handle != nullptr ? _TerrainMesh.ReliefScale : 0;
+    uniforms.Offset[0] = surface.Offset[0];
+    uniforms.Offset[1] = surface.Offset[1];
 
     SDL_BindGPUGraphicsPipeline(&pass, pipelines.Terrain.get());
     const SDL_GPUTextureSamplerBinding fogBinding{fog.Index.Handle.get(), _Nearest.get()};
@@ -6538,25 +6915,25 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
         return plan;
     }
 
-    // The view's move (window pixels). The kept pixels move with it when that is a whole number of drawn pixels: the
-    // pixels showing a window pixel then move with it (draw.pshader's WindowPixel is in whole numbers), and the
-    // shaders' sums there come out the same but for rounding (exactly, when a window pixel is a power of two drawn).
+    // The view's move (window pixels). The kept pixels move with it by whole drawn pixels: the surface's drawn grid
+    // (MCDrawnGrid) puts the window point of map vertex (0, 0) on a whole drawn pixel, so every pixel showing a place
+    // on the map moves with it by the difference (the window places drawn pixels show move by the view's move
+    // exactly), and the shaders' sums there come out the same but for rounding (exactly, when a window pixel is a
+    // power of two drawn).
     const int32_t moveX = now.OriginX - then.OriginX;
     const int32_t moveY = now.OriginY - then.OriginY;
     const bool moved = moveX != 0 || moveY != 0;
     const MCRect& clip = now.Clip;
-    const auto drawnMove = [](int32_t move, uint32_t window, uint32_t drawn) -> std::optional<int32_t>
+    const auto drawnMove = [](int32_t pane, int32_t from, int32_t to, uint32_t window, uint32_t drawn)
     {
-        const int64_t scaled = static_cast<int64_t>(move) * drawn;
-        return window != 0 && scaled % window == 0 ? std::optional(static_cast<int32_t>(scaled / window))
-                                                   : std::nullopt;
+        return static_cast<int32_t>(MCDrawnGrid::Whole(pane + to, window, drawn) -
+                                    MCDrawnGrid::Whole(pane + from, window, drawn));
     };
 
-    const std::optional<int32_t> shiftX = drawnMove(moveX, surface.MappedWidth, surface.Target.Width);
-    const std::optional<int32_t> shiftY = drawnMove(moveY, surface.MappedHeight, surface.Target.Height);
+    const int32_t shiftX = drawnMove(now.PaneX, then.OriginX, now.OriginX, surface.MappedWidth, surface.Target.Width);
+    const int32_t shiftY = drawnMove(now.PaneY, then.OriginY, now.OriginY, surface.MappedHeight, surface.Target.Height);
 
-    if (!shiftX.has_value() || !shiftY.has_value() ||
-        (moved && (std::abs(moveX) > clip.X1 - clip.X0 || std::abs(moveY) > clip.Y1 - clip.Y0)))
+    if (moved && (std::abs(moveX) > clip.X1 - clip.X0 || std::abs(moveY) > clip.Y1 - clip.Y0))
     {
         return plan;
     }
@@ -6564,7 +6941,7 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     const bool fogChanged = !std::ranges::equal(seen, kept.Seen);
     const bool cycled = cycleStep != kept.CycleStep;
     plan.Whole = false;
-    plan.Shift = {*shiftX, *shiftY};
+    plan.Shift = {shiftX, shiftY};
 
     if (!moved && !fogChanged && !cycled)
     {
@@ -6711,12 +7088,10 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
         }
     }
 
-    // In drawn pixels, a pixel wider each way (one near a window pixel's edge may show either; drawing more again
-    // changes nothing), in the clip.
+    // In drawn pixels (on the surface's drawn grid), a pixel wider each way (drawing more again changes nothing), in
+    // the surface.
     const auto width = static_cast<int64_t>(surface.Target.Width);
     const auto height = static_cast<int64_t>(surface.Target.Height);
-    const auto windowWidth = static_cast<int64_t>(std::max(surface.MappedWidth, 1u));
-    const auto windowHeight = static_cast<int64_t>(std::max(surface.MappedHeight, 1u));
 
     for (const MCRect& part : parts)
     {
@@ -6727,11 +7102,17 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
             continue;
         }
 
-        plan.Redrawn.push_back(
-            MCRect{static_cast<int32_t>(std::max<int64_t>(cut.X0 * width / windowWidth - 1, 0)),
-                   static_cast<int32_t>(std::max<int64_t>(cut.Y0 * height / windowHeight - 1, 0)),
-                   static_cast<int32_t>(std::min<int64_t>((cut.X1 + 1) * width / windowWidth + 1, width - 1)),
-                   static_cast<int32_t>(std::min<int64_t>((cut.Y1 + 1) * height / windowHeight + 1, height - 1))});
+        const MCRect drawn = DrawnPixels(cut, {surface.MappedWidth, surface.MappedHeight},
+                                         {surface.Target.Width, surface.Target.Height}, surface.Offset);
+
+        if (Empty(drawn))
+        {
+            continue;
+        }
+
+        plan.Redrawn.push_back(MCRect{std::max(drawn.X0 - 1, 0), std::max(drawn.Y0 - 1, 0),
+                                      static_cast<int32_t>(std::min<int64_t>(drawn.X1 + 1, width - 1)),
+                                      static_cast<int32_t>(std::min<int64_t>(drawn.Y1 + 1, height - 1))});
     }
 
     // Parts drawn as one where their bounds add little, then as few as MostGroundParts (as their bounds). Past
@@ -6798,8 +7179,8 @@ void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURen
                                       KeptGroundMode mode, std::optional<size_t> from, std::array<int32_t, 2> shift)
 {
     // The drawn pixels showing the clip's window pixels, every one of which the ground's shader draws.
-    const MCRect drawn =
-        DrawnPixels(clip, {surface.MappedWidth, surface.MappedHeight}, {surface.Target.Width, surface.Target.Height});
+    const MCRect drawn = DrawnPixels(clip, {surface.MappedWidth, surface.MappedHeight},
+                                     {surface.Target.Width, surface.Target.Height}, surface.Offset);
     const QuadUniforms quad{
         {static_cast<float>(drawn.X0), static_cast<float>(drawn.Y0),
          static_cast<float>(std::max(drawn.X1 - drawn.X0 + 1, 0)),
@@ -6831,6 +7212,303 @@ void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURen
 }
 
 // The frame ----------------------------------------------------------------------------------------------------------
+
+uint64_t MCVulkanRenderer::StampOf(const std::shared_ptr<SDL_GPUTexture>& texture)
+{
+    if (texture == nullptr)
+    {
+        return 0;
+    }
+
+    TextureStamp& stamp = _TextureStamps[texture.get()];
+
+    // A texture made where one let go was has a stamp of its own.
+    if (stamp.Stamp == 0 || stamp.Texture.owner_before(texture) || texture.owner_before(stamp.Texture))
+    {
+        stamp.Texture = texture;
+        stamp.Stamp = ++_LastStamp;
+    }
+
+    return stamp.Stamp;
+}
+
+void MCVulkanRenderer::Restamp(const std::shared_ptr<SDL_GPUTexture>& texture)
+{
+    if (texture != nullptr)
+    {
+        TextureStamp& stamp = _TextureStamps[texture.get()];
+        stamp.Texture = texture;
+        stamp.Stamp = ++_LastStamp;
+    }
+}
+
+auto MCVulkanRenderer::PlanKept(const FrameRun& run, std::span<const uint32_t> order,
+                                const std::function<uint64_t(uint16_t surface, const Record& record)>& recordUniforms)
+    -> std::vector<KeptPlan>
+{
+    // The textures' stamps a while: those gone go once there are twice as many as after the last pruning.
+    constexpr size_t FewestPruned = 1024;
+
+    if (_TextureStamps.size() > 2 * std::max(_StampsPruned, FewestPruned))
+    {
+        std::erase_if(_TextureStamps, [](const auto& entry) { return entry.second.Texture.expired(); });
+        _StampsPruned = _TextureStamps.size();
+    }
+
+    // Which surfaces the frame draws on, and those it wipes first whose draws read only what the tiles follow: not
+    // the target's copy (pixels of other tiles), a terrain layer, or glints (kept apart from the tiles).
+    std::vector<KeptPlan> plans(_RunSurfaces.size());
+    std::vector<bool> drawn(_RunSurfaces.size(), false);
+    std::vector<bool> keepable(_RunSurfaces.size(), KeepSurfaces);
+
+    for (const uint32_t at : order)
+    {
+        const Record& record = run.Records[at];
+        const uint16_t index = record.SurfaceIndex;
+        const Surface& surface = _RunSurfaces[index];
+
+        // A surface made this frame starts again (drawn whole).
+        if (record.Resize)
+        {
+            keepable[index] = false;
+            continue;
+        }
+
+        if (!drawn[index])
+        {
+            drawn[index] = true;
+            keepable[index] = keepable[index] && surface.Target.Handle != nullptr && !surface.CatchesLight &&
+                              WipeColor(run, record, surface).has_value();
+        }
+
+        if (record.TerrainDraw >= 0 || record.ReadsCopy || record.Source == SourceKind::TargetCopy)
+        {
+            keepable[index] = false;
+        }
+    }
+
+    for (size_t i = 0; i < plans.size(); ++i)
+    {
+        if (keepable[i] && drawn[i])
+        {
+            const Surface& surface = _RunSurfaces[i];
+            plans[i].Columns = (surface.MappedWidth + KeptTile - 1) / KeptTile;
+            const uint32_t rows = (surface.MappedHeight + KeptTile - 1) / KeptTile;
+            plans[i].Tiles.assign(static_cast<size_t>(plans[i].Columns) * rows, KeptTileSeed);
+        }
+    }
+
+    // What every draw reads besides its source: the colour tables, the alpha colours, the tables' fits and the palette.
+    const uint64_t bound =
+        HashOn(HashOn(HashOn(HashOn(KeptTileSeed, StampOf(run.Tables)), StampOf(run.Alpha)), StampOf(run.Fits)),
+               StampOf(run.Palette));
+
+    // Each tile's hash: the hashes of the draws over it in turn, each of what it reads and how it draws. And where in
+    // the order each surface is last drawn on, and where a kept surface's draws read another (for the kept check).
+    struct SurfaceRead
+    {
+        uint16_t Reader = 0;
+        uint16_t Read = 0;
+        size_t Position = 0;
+    };
+
+    std::vector<size_t> lastDrawn(_RunSurfaces.size(), 0);
+    std::vector<SurfaceRead> surfaceReads;
+
+    for (size_t position = 0; position < order.size(); ++position)
+    {
+        const Record& record = run.Records[order[position]];
+        lastDrawn[record.SurfaceIndex] = position;
+        const uint16_t index = record.SurfaceIndex;
+        Surface& surface = _RunSurfaces[index];
+        KeptPlan& plan = plans[index];
+
+        if (!record.Resize && keepable[index])
+        {
+            uint64_t source = 0;
+
+            if (record.Source == SourceKind::Atlas)
+            {
+                source = StampOf(run.Pages[record.SourceIndex]);
+            }
+            else if (record.Source == SourceKind::Picture)
+            {
+                const FramePicture& picture = run.Pictures[record.SourceIndex];
+                source = HashOn(StampOf(picture.Texture), StampOf(picture.HdColors));
+            }
+            else if (record.Source == SourceKind::Surface)
+            {
+                source = _RunSurfaces[record.SourceIndex].Stamp;
+                surfaceReads.push_back(SurfaceRead{index, static_cast<uint16_t>(record.SourceIndex), position});
+            }
+
+            const uint64_t how =
+                static_cast<uint64_t>(record.Source) | static_cast<uint64_t>(record.Blend) << 8 |
+                static_cast<uint64_t>(record.IndexOnly) << 9 | static_cast<uint64_t>(record.Shadow) << 10 |
+                static_cast<uint64_t>(record.Marks) << 11 | static_cast<uint64_t>(record.Variant) << 12;
+            const uint64_t reads = HashOn(HashOn(HashOn(bound, source), how), recordUniforms(index, record));
+            const MCRect shown{0, 0, static_cast<int32_t>(surface.MappedWidth) - 1,
+                               static_cast<int32_t>(surface.MappedHeight) - 1};
+
+            for (uint32_t d = record.First; d < record.First + record.Count; ++d)
+            {
+                DrawFields draw = run.Draws[d];
+                uint64_t hash = reads;
+
+                // Written pixels are read from the frame's strip: their row's pixels, not its place.
+                if (record.Source == SourceKind::Strip)
+                {
+                    hash = XXH3_64bits_withSeed(&run.StripPixels[static_cast<size_t>(draw[5]) * StripWidth], StripWidth,
+                                                hash);
+                    draw[5] = 0;
+                }
+
+                hash = XXH3_64bits_withSeed(draw.data(), sizeof(draw), hash);
+                const MCRect covered = Intersection(MCRect{draw[0], draw[1], draw[2], draw[3]}, shown);
+
+                if (Empty(covered))
+                {
+                    continue;
+                }
+
+                for (int32_t y = covered.Y0 / KeptTile; y <= covered.Y1 / KeptTile; ++y)
+                {
+                    for (int32_t x = covered.X0 / KeptTile; x <= covered.X1 / KeptTile; ++x)
+                    {
+                        uint64_t& tile = plan.Tiles[static_cast<size_t>(y) * plan.Columns + static_cast<size_t>(x)];
+                        tile = HashOn(tile, hash);
+                    }
+                }
+            }
+        }
+
+        // What it holds once the record has drawn: new, for the draws that read it after.
+        surface.Stamp = ++_LastStamp;
+    }
+
+    // A kept surface whose draws read another drawn on after them.
+    for (const SurfaceRead& read : surfaceReads)
+    {
+        plans[read.Reader].ReadsChanging = plans[read.Reader].ReadsChanging || lastDrawn[read.Read] > read.Position;
+    }
+
+    // How each surface drawn on is drawn: as recorded; whole, its tiles new; only the tiles that changed; or not.
+    for (size_t i = 0; i < plans.size(); ++i)
+    {
+        Surface& surface = _RunSurfaces[i];
+        KeptPlan& plan = plans[i];
+
+        if (!drawn[i])
+        {
+            continue;
+        }
+
+        const bool held =
+            surface.TilesHeld && surface.TileColumns == plan.Columns && surface.Tiles.size() == plan.Tiles.size();
+        // Not held until the frame has run.
+        surface.TilesHeld = false;
+
+        if (!keepable[i])
+        {
+            continue;
+        }
+
+        if (!held)
+        {
+            plan.Mode = KeptMode::Whole;
+            continue;
+        }
+
+        std::vector<MCRect> changed = ChangedTiles(plan.Tiles, surface.Tiles, plan.Columns);
+        plan.Changed = std::ranges::fold_left(changed | std::views::transform(Area), int64_t{0}, std::plus{});
+
+        if (plan.Changed == 0)
+        {
+            plan.Mode = KeptMode::Unchanged;
+            continue;
+        }
+
+        if (plan.Changed * 100 > static_cast<int64_t>(plan.Tiles.size()) * KeptMostPercent)
+        {
+            plan.Mode = KeptMode::Whole;
+            continue;
+        }
+
+        if (changed.size() > KeptMostRects)
+        {
+            changed.assign(1, std::ranges::fold_left(changed, MCRect{0, 0, -1, -1}, Union));
+        }
+
+        plan.Mode = KeptMode::Tiled;
+        const MCRect shown{0, 0, static_cast<int32_t>(surface.MappedWidth) - 1,
+                           static_cast<int32_t>(surface.MappedHeight) - 1};
+        const MCRect target{0, 0, static_cast<int32_t>(surface.Target.Width) - 1,
+                            static_cast<int32_t>(surface.Target.Height) - 1};
+
+        for (const MCRect& tiles : changed)
+        {
+            const MCRect window = Intersection(MCRect{tiles.X0 * KeptTile, tiles.Y0 * KeptTile,
+                                                      (tiles.X1 + 1) * KeptTile - 1, (tiles.Y1 + 1) * KeptTile - 1},
+                                               shown);
+            const MCRect scissor =
+                Intersection(DrawnPixels(window, {surface.MappedWidth, surface.MappedHeight},
+                                         {surface.Target.Width, surface.Target.Height}, surface.Offset),
+                             target);
+
+            if (!Empty(scissor))
+            {
+                plan.Rects.push_back(window);
+                plan.Scissors.push_back(
+                    SDL_Rect{scissor.X0, scissor.Y0, scissor.X1 - scissor.X0 + 1, scissor.Y1 - scissor.Y0 + 1});
+            }
+        }
+    }
+
+    return plans;
+}
+
+auto MCVulkanRenderer::CompareKept() -> std::expected<KeptComparison, std::string>
+{
+    WaitForRunning();
+    KeptComparison comparison;
+    constexpr uint32_t BytesPerPixel = 4;
+
+    for (const KeptCheck& check : _KeptChecks)
+    {
+        const Surface& surface = _RunSurfaces[check.Surface];
+
+        if (surface.Target.Handle == nullptr || surface.Target.Width != check.Colors.Width ||
+            surface.Target.Height != check.Colors.Height)
+        {
+            continue;
+        }
+
+        const std::array<std::reference_wrapper<const Texture>, 4> textures{surface.Target, surface.Index, check.Colors,
+                                                                            check.Indices};
+        auto downloaded = DownloadTextures(textures, BytesPerPixel);
+
+        if (!downloaded)
+        {
+            return std::unexpected(std::format("MCVulkanRenderer: surface {}'s kept pixels aren't read back: {}",
+                                               check.Surface, downloaded.error()));
+        }
+
+        const std::vector<std::vector<uint8_t>>& pixels = *downloaded;
+        const size_t count = pixels[0].size() / BytesPerPixel;
+        ++comparison.Surfaces;
+        comparison.Pixels += static_cast<int64_t>(count);
+
+        for (size_t p = 0; p < count; ++p)
+        {
+            const size_t at = p * BytesPerPixel;
+            comparison.DifferentColors += std::memcmp(&pixels[0][at], &pixels[2][at], BytesPerPixel) != 0 ? 1 : 0;
+            comparison.DifferentIndices += std::memcmp(&pixels[1][at], &pixels[3][at], BytesPerPixel) != 0 ? 1 : 0;
+        }
+    }
+
+    _KeptChecks.clear();
+    return comparison;
+}
 
 void MCVulkanRenderer::TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface, const MCRect& rect)
 {
@@ -6958,6 +7636,9 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
     SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, TargetsWithoutGlints, nullptr));
     surface.Copied = MCRect{0, 0, -1, -1};
     surface.DrawnSinceCopy.clear();
+    // Port-only (the kept surfaces): it holds nothing a frame drew.
+    surface.TilesHeld = false;
+    surface.Stamp = ++_LastStamp;
     return {};
 }
 
@@ -7005,6 +7686,20 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
 
     BeginRecording();
     PlaceSurfaces(underlays);
+
+    // Port-only: each surface's drawn grid, from the last terrain layer drawn on it at its sizes now (MCDrawnGrid).
+    for (Surface& surface : _Surfaces)
+    {
+        surface.Offset = {};
+
+        if (surface.GridOrigin.has_value())
+        {
+            surface.Offset = {MCDrawnGrid::Offset((*surface.GridOrigin)[0], surface.MappedWidth, surface.DrawnWidth),
+                              MCDrawnGrid::Offset((*surface.GridOrigin)[1], surface.MappedHeight, surface.DrawnHeight)};
+        }
+
+        surface.GridPlaced = false;
+    }
 
     // Port-only (HD weather), for the tests: every surface drawn as one whose draws catch light.
     if (GlintsEveryFrame)
@@ -7077,6 +7772,7 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
         sealed.MappedHeight = surface.MappedHeight;
         sealed.DrawnWidth = surface.DrawnWidth;
         sealed.DrawnHeight = surface.DrawnHeight;
+        sealed.Offset = surface.Offset;
         sealed.CatchesLight = surface.CatchesLight;
 
         // The kept surfaces are drawn first (the fog of war, which the terrain layer reads), then those shown as
@@ -7228,6 +7924,7 @@ void MCVulkanRenderer::EmptyRun(FrameRun& run)
     run.RetiredTransfers.clear();
     run.RetiredMovies.clear();
     run.Conversions.clear();
+    run.CoverageMarks.clear();
     run.Pages.clear();
     run.Tables.reset();
     run.Alpha.reset();
@@ -7263,6 +7960,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         surface.MappedHeight = sealed.MappedHeight;
         surface.DrawnWidth = sealed.DrawnWidth;
         surface.DrawnHeight = sealed.DrawnHeight;
+        surface.Offset = sealed.Offset;
         surface.CatchesLight = sealed.CatchesLight;
     }
 
@@ -7379,6 +8077,12 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                         upload.Y, upload.Width, upload.Height);
     }
 
+    // Port-only (the kept surfaces): what the uploads wrote is new to the draws that read it.
+    for (const Upload& upload : run.Uploads)
+    {
+        Restamp(upload.Texture);
+    }
+
     if (drawBytes > 0)
     {
         SDL_GPUTransferBufferLocation source{transfer.get(), static_cast<uint32_t>(drawOffset)};
@@ -7403,6 +8107,13 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
     // Port-only (HD movies): the movies' new frames' colours, from the planes just uploaded, before any draw reads them.
     ConvertMovies(commands, run);
+    // Port-only (KindHdSmooth): the new HD art frames' coverage, from their colours just uploaded, likewise.
+    MarkHdCoverage(commands, run);
+
+    for (const MovieConversion& movie : run.Conversions)
+    {
+        Restamp(movie.Colors.Handle);
+    }
 
     // The kept surfaces first (the fog of war, which the terrain layer reads), then those shown as underlays (the
     // screen's see-through draws read them finished), then the rest.
@@ -7463,6 +8174,19 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         return frame;
     };
 
+    // The clear a pass starting with a fill of all of a surface (its wipe, WipeColor) starts with instead of the fill:
+    // what draw.pshader's Opaque writes for the fill's colour, none for the key on a surface shown over another (with
+    // the pass's frame uniforms set).
+    const auto clearToWipe = [&](std::span<SDL_GPUColorTargetInfo> targets, uint8_t wipe)
+    {
+        const SDL_Color shown = run.Colors[run.Cycle.Remap(wipe)];
+        constexpr float Unit = 255.0f;
+        targets[0].clear_color = passFrame.Cycle[2] != 0 && wipe == UINT8_MAX
+                                     ? SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f}
+                                     : SDL_FColor{shown.r / Unit, shown.g / Unit, shown.b / Unit, 1.0f};
+        targets[1].clear_color = SDL_FColor{wipe / Unit, 0.0f, 0.0f, 0.0f};
+    };
+
     // The target's scale, and the source's when it is a surface.
     const auto scaleOf = [](const Surface& of, std::span<int32_t, 4> out)
     {
@@ -7472,20 +8196,28 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         out[3] = static_cast<int32_t>(std::max(of.Target.Height, 1u));
     };
 
-    // A record's frame uniforms on a surface: the pass's, with the target's scale and the source's.
-    const auto recordFrame = [&](const Surface& surface, const Record& record)
+    // A record's frame uniforms on a surface: the pass's, with the target's scale and the source's, and their drawn
+    // grids' offsets (MCDrawnGrid).
+    const auto recordFrame = [&](const Surface& surface, const Record& record, const FrameUniforms& pass)
     {
-        FrameUniforms frame = passFrame;
+        FrameUniforms frame = pass;
         scaleOf(surface, frame.Scale);
         std::ranges::fill(frame.SourceScale, 1);
+        frame.Offset[0] = surface.Offset[0];
+        frame.Offset[1] = surface.Offset[1];
 
         if (record.Source == SourceKind::Surface && _RunSurfaces[record.SourceIndex].Index.Handle != nullptr)
         {
-            scaleOf(_RunSurfaces[record.SourceIndex], frame.SourceScale);
+            const Surface& source = _RunSurfaces[record.SourceIndex];
+            scaleOf(source, frame.SourceScale);
+            frame.Offset[2] = source.Offset[0];
+            frame.Offset[3] = source.Offset[1];
         }
         else if (record.Source == SourceKind::TargetCopy)
         {
             scaleOf(surface, frame.SourceScale);
+            frame.Offset[2] = surface.Offset[0];
+            frame.Offset[3] = surface.Offset[1];
         }
 
         return frame;
@@ -7570,10 +8302,11 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
         const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
                                    static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},
-                                  {first, 0, 0, 0}};
+                                  {first, 0, 0, 0},
+                                  {surface.Offset[0], surface.Offset[1], 0, 0}};
         SDL_PushGPUVertexUniformData(&commands, 0, &batch, sizeof(batch));
 
-        if (const FrameUniforms frame = recordFrame(surface, record);
+        if (const FrameUniforms frame = recordFrame(surface, record, passFrame);
             !pushedFrame.has_value() || std::memcmp(&*pushedFrame, &frame, sizeof(frame)) != 0)
         {
             SDL_PushGPUFragmentUniformData(&commands, 0, &frame, sizeof(frame));
@@ -7619,26 +8352,34 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         std::vector<uint8_t> seen = draw.Seen;
         const int32_t fogColumns = draw.FogColumns;
         // The terrain's frame uniforms (a record with no source's).
-        const FrameUniforms frame = recordFrame(surface, Record{});
+        const FrameUniforms frame = recordFrame(surface, Record{}, passFrame);
         // What the ground depends on of them: not the cycle's step (PlanGround follows it), nor the looks, which only
-        // glows and shapes read (they change as the light does).
+        // glows and shapes read (they change as the light does), nor the drawn grid's offset, which follows the view
+        // (PlanGround's shift).
         FrameUniforms unstepped = frame;
         unstepped.Cycle[1] = 0;
         std::ranges::fill(unstepped.Look, 0.0f);
+        std::ranges::fill(unstepped.Offset, 0);
         std::vector<uint8_t> looks = GroundLooks(run, surface, draw, std::as_bytes(std::span(&unstepped, 1)));
         const GroundPlan plan = PlanGround(surfaceIndex, draw, looks, seen, fogColumns, run.Cycle);
         KeptGround& kept = _KeptGround;
         const std::array<int32_t, 2> origin{draw.Frame.OriginX, draw.Frame.OriginY};
         const bool moving = origin != kept.LastOrigin;
+        const bool changing = looks != kept.LastLooks;
         kept.LastOrigin = origin;
+        kept.LastLooks = looks;
 
-        // Drawn whole while the view moves, the next frame would draw it whole again: drawn directly instead.
-        if (plan.Whole && moving)
+        // Drawn whole once while the view moves (a step of the colour cycle over much of it, a jump), it's kept: the
+        // frames after move it by whole drawn pixels (the drawn grid), and draw again only what changed. Drawn whole
+        // while the view moves and what it's drawn from changes from frame to frame (a zoom easing), the next frame
+        // would draw it whole again: drawn directly instead.
+        if (plan.Whole && moving && changing)
         {
             return false;
         }
 
         const bool shifted = !plan.Whole && (plan.Shift[0] != 0 || plan.Shift[1] != 0);
+        ++(plan.Whole ? _GroundCounts.Whole : shifted ? _GroundCounts.Shifted : _GroundCounts.Kept);
 
         if (plan.Whole || shifted || !plan.Redrawn.empty())
         {
@@ -7724,10 +8465,25 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         return true;
     };
 
+    // Port-only (the kept surfaces): how each surface is drawn (KeptMode), and whether its draws are checked.
+    std::vector<KeptPlan> plans = PlanKept(run, order,
+                                           [&](uint16_t surfaceIndex, const Record& record)
+                                           {
+                                               const FrameUniforms frame = recordFrame(_RunSurfaces[surfaceIndex],
+                                                                                       record, framePass(surfaceIndex));
+                                               return XXH3_64bits(&frame, sizeof(frame));
+                                           });
+
+    if (CheckKeptSurfaces)
+    {
+        _KeptChecks.clear();
+    }
+
     for (size_t k = 0; k < order.size(); ++k)
     {
         const Record& record = run.Records[order[k]];
         Surface& surface = _RunSurfaces[record.SurfaceIndex];
+        const KeptPlan& plan = plans[record.SurfaceIndex];
 
         if (record.Resize)
         {
@@ -7742,7 +8498,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             continue;
         }
 
-        if (surface.Target.Handle == nullptr)
+        // Port-only (the kept surfaces): a surface whose draws changed nowhere keeps what it held.
+        if (surface.Target.Handle == nullptr || plan.Mode == KeptMode::Unchanged)
         {
             continue;
         }
@@ -7817,8 +8574,11 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             // its key, shown over the world) needn't load what the surface held, every texel of which the fill
             // writes: it starts cleared to what the fill writes instead, and the fill isn't drawn (a clear costs a
             // tile-based GPU nothing; the fill ran the draw shader for each pixel).
+            // Port-only (the kept surfaces): nor one drawn from its tiles, whose fill (the wipe) is drawn over the tiles
+            // that changed alone.
             const bool firstPass = !begun[record.SurfaceIndex];
-            const std::optional<uint8_t> wipe = firstPass ? WipeColor(run, record, surface) : std::nullopt;
+            const std::optional<uint8_t> wipe =
+                firstPass && plan.Mode != KeptMode::Tiled ? WipeColor(run, record, surface) : std::nullopt;
             begun[record.SurfaceIndex] = true;
             passFrame = framePass(record.SurfaceIndex);
 
@@ -7852,14 +8612,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             if (wipe.has_value())
             {
-                // What draw.pshader's Opaque writes for the fill's colour: none for the key on a surface shown over
-                // another.
-                const SDL_Color shown = run.Colors[run.Cycle.Remap(*wipe)];
-                constexpr float Unit = 255.0f;
-                targets[0].clear_color = passFrame.Cycle[2] != 0 && *wipe == UINT8_MAX
-                                             ? SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f}
-                                             : SDL_FColor{shown.r / Unit, shown.g / Unit, shown.b / Unit, 1.0f};
-                targets[1].clear_color = SDL_FColor{*wipe / Unit, 0.0f, 0.0f, 0.0f};
+                clearToWipe(targets, *wipe);
                 wiped = 1;
             }
 
@@ -7894,8 +8647,9 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             }
             else
             {
-                const FrameUniforms frame = recordFrame(surface, record);
+                const FrameUniforms frame = recordFrame(surface, record, passFrame);
                 DrawTerrain(commands, *pass, pipelines, run, surface, draw, std::as_bytes(std::span(&frame, 1)));
+                ++_GroundCounts.Direct;
             }
 
             // The terrain binds and pushes its own.
@@ -7927,7 +8681,26 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             ++last;
         }
 
-        if (count > wiped)
+        if (count > wiped && plan.Mode == KeptMode::Tiled)
+        {
+            // Port-only (the kept surfaces): over the tiles that changed alone.
+            MCRect writes{0, 0, -1, -1};
+
+            for (size_t i = k; i <= last; ++i)
+            {
+                writes = Union(writes, run.Records[order[i]].Writes);
+            }
+
+            for (size_t r = 0; r < plan.Rects.size(); ++r)
+            {
+                if (Overlaps(plan.Rects[r], writes))
+                {
+                    SDL_SetGPUScissor(pass, &plan.Scissors[r]);
+                    drawBatch(pass, surface, record, record.First + wiped, count - wiped);
+                }
+            }
+        }
+        else if (count > wiped)
         {
             drawBatch(pass, surface, record, record.First + wiped, count - wiped);
         }
@@ -7954,6 +8727,103 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
     endPass();
 
+    // Port-only, for the tests (CheckKeptSurfaces): each surface drawn from its tiles drawn whole too, apart, as a frame
+    // that doesn't keep it draws it (not one whose draws read another surface drawn on after them, which has since
+    // changed).
+    for (size_t i = 0; CheckKeptSurfaces && i < plans.size(); ++i)
+    {
+        const KeptPlan& plan = plans[i];
+
+        if ((plan.Mode != KeptMode::Tiled && plan.Mode != KeptMode::Unchanged) || plan.ReadsChanging)
+        {
+            continue;
+        }
+
+        const Surface& kept = _RunSurfaces[i];
+        KeptCheck& check = _KeptChecks.emplace_back();
+        check.Surface = static_cast<uint16_t>(i);
+        constexpr SDL_GPUTextureUsageFlags usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+
+        for (auto made : {EnsureTexture(check.Colors, MCHolder::GpuTargets, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, usage,
+                                        kept.Target.Width, kept.Target.Height),
+                          EnsureTexture(check.Indices, MCHolder::GpuTargets, IndexFormat, usage, kept.Target.Width,
+                                        kept.Target.Height)})
+        {
+            if (!made)
+            {
+                return made;
+            }
+        }
+
+        Surface whole;
+        whole.MappedWidth = kept.MappedWidth;
+        whole.MappedHeight = kept.MappedHeight;
+        whole.Offset = kept.Offset;
+        whole.Target = check.Colors;
+        whole.Index = check.Indices;
+        passFrame = framePass(static_cast<uint16_t>(i));
+        bool first = true;
+
+        for (const uint32_t at : order)
+        {
+            const Record& record = run.Records[at];
+
+            if (record.Resize || record.SurfaceIndex != i)
+            {
+                continue;
+            }
+
+            if (first)
+            {
+                SDL_GPUColorTargetInfo targets[TargetsWithoutGlints]{};
+                targets[0].texture = whole.Target.Handle.get();
+                targets[1].texture = whole.Index.Handle.get();
+
+                for (SDL_GPUColorTargetInfo& target : targets)
+                {
+                    target.load_op = SDL_GPU_LOADOP_CLEAR;
+                    target.store_op = SDL_GPU_STOREOP_STORE;
+                }
+
+                clearToWipe(targets, WipeColor(run, record, kept).value_or(0));
+                pass = SDL_BeginGPURenderPass(&commands, targets, TargetsWithoutGlints, nullptr);
+                startPass(pass, whole);
+            }
+
+            const uint32_t skipped = first ? 1 : 0;
+
+            if (record.Count > skipped)
+            {
+                drawBatch(pass, whole, record, record.First + skipped, record.Count - skipped);
+            }
+
+            first = false;
+        }
+
+        endPass();
+        forgetBound();
+    }
+
+    // Port-only (the kept surfaces): the frame has run, so what it drew is held, with its tiles.
+    for (size_t i = 0; i < plans.size(); ++i)
+    {
+        KeptPlan& plan = plans[i];
+        Surface& surface = _RunSurfaces[i];
+
+        if (plan.Mode == KeptMode::Drawn)
+        {
+            continue;
+        }
+
+        ++(plan.Mode == KeptMode::Whole   ? _KeptCounts.Whole
+           : plan.Mode == KeptMode::Tiled ? _KeptCounts.Tiled
+                                          : _KeptCounts.Unchanged);
+        _KeptCounts.TilesDrawn += plan.Changed;
+        surface.Tiles = std::move(plan.Tiles);
+        surface.TileColumns = plan.Columns;
+        surface.TilesHeld = true;
+    }
+
     for (size_t i = 0; i < run.Surfaces.size(); ++i)
     {
         Surface& surface = _RunSurfaces[i];
@@ -7972,6 +8842,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             Release(surface.Copy);
             Release(surface.Glints);
             surface.GlintsHeld = false;
+            surface.TilesHeld = false;
         }
     }
 
@@ -8128,7 +8999,8 @@ auto MCVulkanRenderer::SealedSize(MCAddressKey key) const -> std::optional<Seale
     {
         if (key && surface.Key == key && surface.DrawnWidth > 0 && surface.DrawnHeight > 0)
         {
-            return SealedPlace{surface.DrawnWidth, surface.DrawnHeight, surface.MappedWidth, surface.MappedHeight};
+            return SealedPlace{surface.DrawnWidth, surface.DrawnHeight, surface.MappedWidth, surface.MappedHeight,
+                               surface.Offset};
         }
     }
 
@@ -8139,6 +9011,16 @@ size_t MCVulkanRenderer::UploadBytesKept() const
 {
     WaitForRunning();
     return _Run->Staging.capacity() + (_SpareRun != nullptr ? _SpareRun->Staging.capacity() : 0) + _TransferSize;
+}
+
+size_t MCVulkanRenderer::QueuedUploadBytes() const
+{
+    return _Run->Staging.size();
+}
+
+bool MCVulkanRenderer::HoldsDraws() const
+{
+    return !_Run->Records.empty() || !_Run->TerrainDraws.empty();
 }
 
 std::expected<void, std::string> MCVulkanRenderer::Flush(std::span<const MCUnderlay> underlays)
@@ -8333,6 +9215,42 @@ auto MCVulkanRenderer::MovieColors(const MCHdArt::Frame& frame) -> std::expected
     return std::move(downloaded->front());
 }
 
+auto MCVulkanRenderer::HdIndices(const MCHdArt::Frame& frame) -> std::expected<std::vector<uint8_t>, std::string>
+{
+    WaitForRunning();
+    const auto found = _HdPictures.find(frame.Id);
+
+    if (found == _HdPictures.end())
+    {
+        return std::unexpected(std::format("HD frame {} isn't on the GPU", frame.Id));
+    }
+
+    const Picture& picture = found->second;
+    const std::array<std::reference_wrapper<const Texture>, 1> indices{picture.Texture};
+    auto downloaded = DownloadTextures(indices, static_cast<uint32_t>(MCHdArt::IndexBytes));
+
+    if (!downloaded)
+    {
+        return std::unexpected(downloaded.error());
+    }
+
+    // Its place in the page (a texture of its own: all of it).
+    const auto width = static_cast<size_t>(frame.OriginalWidth());
+    const auto height = static_cast<size_t>(frame.OriginalHeight());
+    const std::vector<uint8_t>& whole = downloaded->front();
+    const size_t row = width * MCHdArt::IndexBytes;
+    std::vector<uint8_t> pixels(row * height);
+
+    for (size_t y = 0; y < height; ++y)
+    {
+        const size_t from = ((picture.Place.Y + y) * picture.Texture.Width + picture.Place.X) * MCHdArt::IndexBytes;
+        std::copy_n(whole.begin() + static_cast<ptrdiff_t>(from), row,
+                    pixels.begin() + static_cast<ptrdiff_t>(y * row));
+    }
+
+    return pixels;
+}
+
 auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnderlay> underlays)
     -> std::expected<std::vector<uint8_t>, std::string>
 {
@@ -8453,7 +9371,8 @@ auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnder
             for (int32_t x = std::max(over.Rect.X0, 0); x <= std::min(over.Rect.X1, width - 1); ++x)
             {
                 const size_t at = static_cast<size_t>(y) * width + x;
-                pixels[at] = ShownIndex(gpu[at], x, y, over.Rect, worldPixels, world.Index.Width, world.Index.Height);
+                pixels[at] = ShownIndex(gpu[at], x, y, over.Rect, worldPixels, world.Index.Width, world.Index.Height,
+                                        {world.MappedWidth, world.MappedHeight}, world.Offset);
             }
         }
     }
@@ -8510,7 +9429,8 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
         const std::vector<uint8_t>& gpu = (*downloaded)[surfaceIndex];
         const int32_t width = window.XMax + 1;
         const int32_t height = window.YMax + 1;
-        // A surface drawn scaled is compared drawn pixel by drawn pixel with the window pixel each one shows.
+        // A surface drawn scaled is compared drawn pixel by drawn pixel with the window pixel each one shows (on its
+        // drawn grid, MCDrawnGrid).
         const auto drawnWidth = static_cast<int32_t>(compared.Index.Width);
         const auto drawnHeight = static_cast<int32_t>(compared.Index.Height);
         // The software renderer maps what blended draws covered through AlphaTable; the GPU blended colours there.
@@ -8542,11 +9462,17 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
 
         for (int32_t y = 0; y < drawnHeight; ++y)
         {
-            const auto wy = static_cast<int32_t>((2 * static_cast<int64_t>(y) + 1) * height / (2 * drawnHeight));
+            const int32_t wy =
+                std::clamp(MCDrawnGrid::WindowPixel(y, static_cast<uint32_t>(height),
+                                                    static_cast<uint32_t>(drawnHeight), compared.Offset[1]),
+                           0, height - 1);
 
             for (int32_t x = 0; x < drawnWidth; ++x)
             {
-                const auto wx = static_cast<int32_t>((2 * static_cast<int64_t>(x) + 1) * width / (2 * drawnWidth));
+                const int32_t wx =
+                    std::clamp(MCDrawnGrid::WindowPixel(x, static_cast<uint32_t>(width),
+                                                        static_cast<uint32_t>(drawnWidth), compared.Offset[0]),
+                               0, width - 1);
                 const uint8_t cpu = window.Pixels[static_cast<size_t>(wy) * width + wx];
                 const uint8_t drawn = gpu[static_cast<size_t>(y) * drawnWidth + x];
 

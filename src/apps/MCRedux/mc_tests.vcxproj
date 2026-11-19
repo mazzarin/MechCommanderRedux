@@ -115,6 +115,7 @@
     <ClCompile Include="tests\FrameHashTests.cpp" />
     <ClCompile Include="tests\GameFolderTests.cpp" />
     <ClCompile Include="tests\GameSessionTests.cpp" />
+    <ClCompile Include="tests\GpuChannelsTests.cpp" />
     <ClCompile Include="tests\GpuDrawingTests.cpp" />
     <ClCompile Include="tests\GroundNamesTests.cpp" />
     <ClCompile Include="tests\GroundVehicleTests.cpp" />
@@ -138,6 +139,7 @@
     <ClCompile Include="tests\InternetGameTests.cpp" />
     <ClCompile Include="tests\InternetLobbyTests.cpp" />
     <ClCompile Include="tests\InternetScreenTests.cpp" />
+    <ClCompile Include="tests\LauncherFolderTests.cpp" />
     <ClCompile Include="tests\LibTests.cpp" />
     <ClCompile Include="tests\LinkupTests.cpp" />
     <ClCompile Include="tests\LobbyUpdateTests.cpp" />
@@ -165,6 +167,7 @@
     <ClCompile Include="tests\PresenterTests.cpp" />
     <ClCompile Include="tests\ProgramSwapTests.cpp" />
     <ClCompile Include="tests\PurchaseTests.cpp" />
+    <ClCompile Include="tests\ReleaseCopyTests.cpp" />
     <ClCompile Include="tests\RoomEndTests.cpp" />
     <ClCompile Include="tests\ScenarioTests.cpp" />
     <ClCompile Include="tests\ScreenInput.cpp" />
@@ -221,6 +224,7 @@
     <ClInclude Include="tests\GuiTree.h" />
     <ClInclude Include="tests\MCContentFixture.h" />
     <ClInclude Include="tests\MCFakeUpdaterBackend.h" />
+    <ClInclude Include="tests\MCFastFileFixture.h" />
     <ClInclude Include="tests\MCFilePatchFixture.h" />
     <ClInclude Include="tests\MCHdMovieFixture.h" />
     <ClInclude Include="tests\MCInternetSpots.h" />

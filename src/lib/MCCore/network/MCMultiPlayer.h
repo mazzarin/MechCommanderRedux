@@ -116,6 +116,13 @@ namespace MCMatchRule
     /// </summary>
     inline constexpr uint32_t DataHash = 1u << 23;
     /// <summary>
+    /// Not a rule the match plays by: Port-only (Redux HD): the file report's hash at version 2, which covers the shop's
+    /// lists (ispur, clanpur) and, in a match, the release's own copy of the data (lib/MCReleaseData.h). A host compares
+    /// it only with a build that says so: an earlier build's (<see cref="DataHash"/> alone) is another hash of the same
+    /// data, so its player plays unchecked, told to upgrade, rather than refused as different.
+    /// </summary>
+    inline constexpr uint32_t DataHashV2 = 1u << 29;
+    /// <summary>
     /// Not a rule the match plays by: the build takes a host's MCMPMessageType::Updating (network/MCLobbyUpdate.h),
     /// waits for the host's game to come back and joins it again. The host tells only the guests whose builds say so;
     /// the others drop as the host leaves.
@@ -138,9 +145,12 @@ namespace MCMatchRule
     /// host's PREFS say (MCWantedRules), with the other rules chosen.
     /// </summary>
     inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
-    /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
+    /// <summary>
+    /// Every rule this build plays by, and what its file report carries (<see cref="DataHashV2"/>; no longer
+    /// <see cref="DataHash"/>, whose hash an earlier build compares with its own).
+    /// </summary>
     inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
-                                          NoMines | NoProbes | PilotRanks | WeaponBans | DataHash | RejoinsHost |
+                                          NoMines | NoProbes | PilotRanks | WeaponBans | DataHashV2 | RejoinsHost |
                                           NightLights | MechHandover | Rematch | BrakingV2;
 } // namespace MCMatchRule
 
@@ -665,7 +675,7 @@ public:
 
     /// <summary>
     /// Port, the host: what player <paramref name="playerId"/>'s file report (<paramref name="value"/>) says of the file
-    /// last asked about: 0 none; from a build that hashes its data (its rules message has MCMatchRule::DataHash) the
+    /// last asked about: 0 none; from a build that hashes its data (its rules message has MCMatchRule::DataHashV2) the
     /// same data only as <see cref="AskedFileHash"/>; from any other, the file is there, unchecked.
     /// </summary>
     [[nodiscard]] MCFileCheck CheckFileReport(uint32_t playerId, uint32_t value) const;

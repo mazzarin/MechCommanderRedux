@@ -18,6 +18,7 @@
 #include "camera/MCCameraList.h"
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
+#include "color/MCWaterCycle.h"
 #include "engine/MCByteFlag.h"
 #include "engine/MCCraterManager.h"
 #include "fakes/MCFakeMemorySystem.h"
@@ -53,6 +54,7 @@
 #include "platform/MCAudio.h"
 #include "gameos/MCSoundRenderer.h"
 #include "main/MCGamePaths.h"
+#include "main/MCHdSettings.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCStagedBattle.h"
@@ -2395,7 +2397,8 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
 
 /// <summary>
 /// Port-only: a version 2 pack's frame stands for the original's rows (SPEC-pack-v2.md's record 1, which leaves them
-/// out): the shape's index pass is drawn from the frame's index picture where its green says the original draws, and
+/// out): the shape's index pass is drawn from the frame's own index picture on the GPU (SPEC-memory.md's indices: no
+/// copy in the shape atlas) where its green says the original draws, and
 /// nowhere it says spread (the HD edge past the original's pixels), so in mirror mode the GPU's palette indices are
 /// still the software renderer's. A pixel spread at an index the mech never draws would differ (taken as drawn, the
 /// first frame differs).
@@ -2412,10 +2415,10 @@ TEST_CASE_ISOLATED("game: HD art from a version 2 pack keeps the original's pale
     // Index 0xd8 is the water's colour cycle, which no mech draws.
     constexpr uint8_t NeverDrawn = 0xd8;
     REQUIRE(MarkPackVersion2(scene->Pack, NeverDrawn) > 0);
-    const int64_t madeBefore = scene->Renderer->HdIndexImagesMade();
+    const int64_t drawnBefore = scene->Renderer->HdIndexPicturesDrawn();
 
     CheckIndicesKept(*scene);
-    CHECK(scene->Renderer->HdIndexImagesMade() > madeBefore);
+    CHECK(scene->Renderer->HdIndexPicturesDrawn() > drawnBefore);
     std::filesystem::remove_all(scene->Scratch);
 }
 
@@ -3846,7 +3849,8 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
     };
 
     // The bytes a picture takes, and what the frames kept in memory take with every one read: their records alone, the
-    // colours gone once on the GPU (SPEC-memory.md's one copy of a frame's colours).
+    // colours gone once on the GPU (SPEC-memory.md's one copy of a frame's colours), and their indices too a couple of
+    // frames after (SPEC-memory.md's indices: nothing on the CPU reads these frames').
     const size_t one = drawn(1);
     REQUIRE(one > 0);
     CHECK_EQ(drawn(Frames), Frames * one);
@@ -3921,13 +3925,20 @@ TEST_CASE_ISOLATED("game: the GPU keeps HD frames while the card has room, never
         drawn(Drawn);
     }
 
-    CHECK_EQ(MCHdArt::CachedBytes(), kept - (Frames - Drawn) * record);
+    // The frames drawn keep their records, which have let go of their indices; the rest are gone.
+    CHECK_EQ(MCHdArt::CachedBytes(), 0);
 
-    // No longer short: both keep every frame drawn again.
+    // No longer short: both keep every frame drawn again, the records read again letting go of their indices once
+    // their pictures are up, none read again for them.
     system->IsShort = false;
+    const size_t indicesReadAgain = MCHdArt::IndicesReadAgain();
     drawn(Frames);
     CHECK_EQ(drawn(Frames), Frames * one);
-    CHECK_EQ(MCHdArt::CachedBytes(), kept);
+    CHECK(MCHdArt::CachedBytes() <= kept);
+    drawn(Frames);
+    drawn(Frames);
+    CHECK_EQ(MCHdArt::CachedBytes(), 0);
+    CHECK_EQ(MCHdArt::IndicesReadAgain(), indicesReadAgain);
 
     hdArt.reset();
     std::filesystem::remove_all(scratch);
@@ -7815,6 +7826,133 @@ TEST_CASE_ISOLATED("game: HD art draws a sprite's HD frame with its original's e
 }
 
 /// <summary>
+/// A version 1 HD frame's index picture says which original pixels have an index, its spread ones too; on the GPU it
+/// says which its frame covers (MCVulkanRenderer::MarkHdCoverage), marked once as it goes up. A staircase's frame, its
+/// alpha the staircase and every other row's pixel past it, its index picture the staircase spread two pixels without
+/// those, drawn three frames running, then let go and drawn again: its green on the GPU each time 255 where both say
+/// drawn, 253 where its index only spread to, 249 where its frame covers a pixel without an index, 0 elsewhere; its
+/// red as the pack's.
+/// </summary>
+TEST_CASE_ISOLATED("game: an HD frame's coverage is marked in its index picture on the GPU, once as it goes up")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+    const uint8_t plain = ContrastingIndex(colors, opaque);
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < StairRows; ++row)
+    {
+        rows.push_back(RunOf(row + 1));
+        rows.insert(rows.end(), static_cast<size_t>(row + 1), opaque);
+        rows.push_back(RowEnd);
+    }
+
+    const StairShape stairs = MakeStairShape("mc_tests_hd_coverage_marks", StairRows, rows);
+    constexpr int32_t Scale = 3;
+    constexpr uint8_t Spread = 253;
+    constexpr uint8_t CoveredNoIndex = 249;
+    const auto coveredAt = [](int32_t x, int32_t y) { return x <= y || (x == y + 1 && y % 2 == 0); };
+    const auto indexedAt = [](int32_t x, int32_t y) { return x <= y + 2 && !(x == y + 1 && y % 2 == 0); };
+    std::vector<uint8_t> picture(static_cast<size_t>(StairRows * Scale) * StairRows * Scale * BytesPerPixel);
+    std::vector<uint8_t> index(picture.size());
+
+    for (int32_t y = 0; y < StairRows * Scale; ++y)
+    {
+        for (int32_t x = 0; x < StairRows * Scale; ++x)
+        {
+            const size_t at = (static_cast<size_t>(y) * StairRows * Scale + x) * BytesPerPixel;
+            const bool indexed = indexedAt(x / Scale, y / Scale);
+            const SDL_Color& color = colors[opaque];
+            std::ranges::copy(
+                std::array{color.r, color.g, color.b, coveredAt(x / Scale, y / Scale) ? HasIndex : uint8_t{0}},
+                picture.begin() + static_cast<ptrdiff_t>(at));
+            std::ranges::copy(
+                std::array<uint8_t, 4>{indexed ? opaque : uint8_t{0}, indexed ? HasIndex : uint8_t{0}, 0, HasIndex},
+                index.begin() + static_cast<ptrdiff_t>(at));
+        }
+    }
+
+    const std::filesystem::path stem = stairs.Pack / MCHdArt::FolderOf(stairs.Key) / "0";
+    SavePng(std::filesystem::path(stem).concat(".png"), StairRows * Scale, StairRows * Scale, picture);
+    SavePng(std::filesystem::path(stem).concat("_idx.png"), StairRows * Scale, StairRows * Scale, index);
+    WritePaletteRgb(stairs.Pack, colors);
+
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    GamePaused = true;
+    const MCHdArtOn on(stairs.Pack);
+    std::shared_ptr<const MCHdArt::Frame> frame;
+
+    // The frame drawn and its frame run: the pixels whose marks on the GPU aren't as said.
+    const auto wrongMarks = [&]
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        VfxPaneWipe(pane, plain);
+        MCHdArt::Attach(stairs.Shape, stairs.Key);
+        AGShapeDraw(pane, stairs.Shape->FrameList(), 0, x, y);
+        ReadShown(stairs.Scratch);
+        frame = MCHdArt::Find(stairs.Shape->FrameList(), 0, StairRows, StairRows);
+        REQUIRE(frame != nullptr);
+        REQUIRE(!frame->Marked);
+        const std::expected<std::vector<uint8_t>, std::string> gpu = renderer->HdIndices(*frame);
+
+        if (!gpu)
+        {
+            FAIL(std::format("no index picture read back: {}", gpu.error()));
+        }
+
+        int32_t wrong = 0;
+
+        for (int32_t row = 0; row < StairRows; ++row)
+        {
+            for (int32_t column = 0; column < StairRows; ++column)
+            {
+                const bool covered = coveredAt(column, row);
+                const bool indexed = indexedAt(column, row);
+                const uint8_t green = covered && indexed ? HasIndex
+                                      : covered          ? CoveredNoIndex
+                                      : indexed          ? Spread
+                                                         : uint8_t{0};
+                const size_t at = (static_cast<size_t>(row) * StairRows + column) * MCHdArt::IndexBytes;
+                wrong += (*gpu)[at] != (indexed ? opaque : 0) || (*gpu)[at + 1] != green ? 1 : 0;
+            }
+        }
+
+        return wrong;
+    };
+
+    for (int32_t drawn = 0; drawn < 3; ++drawn)
+    {
+        CHECK_EQ(wrongMarks(), 0);
+    }
+
+    // Let go, then up again: marked again, once.
+    MCTestGame::RunFrame(FrameSeconds);
+    renderer->ForgetHdPictureForTests(frame->Id);
+    frame.reset();
+    CHECK_EQ(wrongMarks(), 0);
+    CHECK_EQ(wrongMarks(), 0);
+
+    frame.reset();
+    GamePaused = false;
+    std::filesystem::remove_all(stairs.Scratch);
+}
+
+/// <summary>
 /// A translucent shape's blended pixels that its HD frame leaves out (a shadow) are drawn with smooth edges: a shape
 /// whose rows hold two opaque pixels and then a halving staircase (a pixel longer each row), drawn as the frame test's,
 /// shows the shadow's edge with HD art off stepping about the screen's scale every few shown rows, and with it on
@@ -8430,6 +8568,87 @@ namespace
         std::cout << std::format("  {}: {} HD frames read so far ({:.2f} ms each), {} MB kept\n", name, read,
                                  read > 0 ? readTime / static_cast<double>(read) : 0.0, MCHdArt::CachedBytes() >> 20);
     }
+
+    /// <summary>
+    /// The frames a mech's drawn facing takes to reach a new facing: with HDTurns it eases there at TurnEaseRate, never
+    /// more than TurnLagMost behind (7.5 frames at most), and is drawn there a frame later. Without HDTurns it is there
+    /// at once.
+    /// </summary>
+    constexpr int32_t TurnSettleFrames = static_cast<int32_t>(TurnLagMost / (TurnEaseRate * FrameSeconds)) + 2;
+
+    /// <summary>
+    /// The most frames a picture tool's mech is given to stand still after it is given a tree (it plays its power-up,
+    /// gesture 1, backwards first: 13 frames for the Masakari), and how many frames in a row it must stay the same.
+    /// </summary>
+    constexpr int32_t StillWaitFrames = 150;
+    constexpr int32_t StillFrames = 3;
+
+    /// <summary>
+    /// Runs frames until <paramref name="actor"/>'s gesture and parts' frames have stayed the same for StillFrames
+    /// frames, and says how long that took (or that it never did, as a mech whose standing gesture loops).
+    /// </summary>
+    void WaitStill(const MCMechActor& actor)
+    {
+        const auto pose = [&] { return std::pair(actor.CurrentGesture, actor.CurrentFrame); };
+        auto last = pose();
+        int32_t same = 0;
+        int32_t frame = 0;
+
+        for (; frame < StillWaitFrames && same < StillFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            const auto now = pose();
+            same = now == last ? same + 1 : 0;
+            last = now;
+        }
+
+        std::cout << (same >= StillFrames
+                          ? std::format("  the mech stands still in gesture {} after {} frames\n", last.first, frame)
+                          : std::format("  the mech still moves after {} frames (gesture {})\n", frame, last.first));
+    }
+
+    /// <summary>Faces <paramref name="mech"/> <paramref name="facing"/> degrees and runs frames until it is drawn so.</summary>
+    void FaceSettled(MCBattleMech& mech, float facing)
+    {
+        MCTestGame::FaceMech(mech, facing);
+
+        for (int32_t frame = 0; frame < TurnSettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    }
+
+    /// <summary>
+    /// Option <paramref name="name"/>'s numbers, <paramref name="count"/> of them separated by colons (as "-180:180:2.5"),
+    /// or nothing when the option isn't given; a malformed one fails the test.
+    /// </summary>
+    std::optional<std::vector<float>> NumbersOption(std::string_view name, size_t count)
+    {
+        const std::optional<std::string_view> given = MCTest::Option(name);
+
+        if (!given.has_value())
+        {
+            return std::nullopt;
+        }
+
+        MCTest::Scope scope(std::format("--{} {}", name, *given));
+        std::vector<float> numbers;
+
+        for (const auto part : std::views::split(*given, ':'))
+        {
+            const std::string text(std::string_view(part.begin(), part.end()));
+            char* end = nullptr;
+            // strtof: libc++ has floating-point from_chars only from macOS 26.
+            numbers.push_back(std::strtof(text.c_str(), &end));
+            REQUIRE((!text.empty() && end == text.c_str() + text.size()));
+            // A number a sweep counts or a scheme casts to a whole number: no infinity or NaN, and within int32_t.
+            constexpr float WholeMost = 1e9f;
+            REQUIRE((std::isfinite(numbers.back()) && std::fabs(numbers.back()) < WholeMost));
+        }
+
+        REQUIRE_EQ(numbers.size(), count);
+        return numbers;
+    }
 }
 
 /// <summary>
@@ -8438,6 +8657,13 @@ namespace
 /// (<c>&lt;name&gt;_hd.png</c>), or with <c>--hd-original 1</c> without it (<c>&lt;name&gt;_original.png</c>). A run plays
 /// out the same every time, so the two runs' pictures differ only in how the mech is drawn. The window is
 /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall.
+/// <c>--zoom &lt;lines&gt;</c> shows the world that many lines tall (the game's own zoom otherwise; the zoomed shot is
+/// always 300), and <c>--paint &lt;n&gt;</c> paints the mech in scheme n (the actors' fade tables; its own otherwise).
+/// <c>--facings &lt;from&gt;:&lt;to&gt;:&lt;step&gt;</c> makes the run a sweep instead: the mech standing at each facing
+/// (<c>facing_&lt;degrees&gt;</c>), and with <c>--paints &lt;first&gt;:&lt;last&gt;</c> first in each of those schemes
+/// at the first facing (<c>paint_&lt;n&gt;</c>), to find the angle and scheme of a mech in a player's screenshot.
+/// The shots wait for the mech to stand still (it powers up first) and, at each facing, for the drawn mech to have
+/// turned to it (HDTurns eases its turns).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
 {
@@ -8456,11 +8682,63 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
     std::filesystem::create_directories(folder);
     const auto shoot = [&](const std::string& name) { Shoot(folder, name, original); };
 
+    if (const std::optional<std::vector<float>> zoom = NumbersOption("zoom", 1); zoom.has_value())
+    {
+        REQUIRE(zoom->front() > 0.0f);
+        MCFixedZoomHeight = zoom->front();
+    }
+
+    if (const std::optional<std::vector<float>> paint = NumbersOption("paint", 1); paint.has_value())
+    {
+        player.Actor->FadeTableIndex = static_cast<int32_t>(paint->front());
+    }
+
+    WaitStill(*player.Actor);
+
+    // A sweep: the schemes --paints asks for at the first facing, then the mech standing at each facing.
+    if (const std::optional<std::vector<float>> facings = NumbersOption("facings", 3); facings.has_value())
+    {
+        const float from = (*facings)[0];
+        const float to = (*facings)[1];
+        const float step = (*facings)[2];
+        REQUIRE((step > 0.0f && to >= from));
+        FaceSettled(*player.Mech, from);
+
+        if (const std::optional<std::vector<float>> paints = NumbersOption("paints", 2); paints.has_value())
+        {
+            const int32_t own = player.Actor->FadeTableIndex;
+            const auto first = static_cast<int32_t>((*paints)[0]);
+            const auto last = static_cast<int32_t>((*paints)[1]);
+            REQUIRE(first <= last);
+
+            for (int32_t scheme = first; scheme <= last; ++scheme)
+            {
+                player.Actor->FadeTableIndex = scheme;
+                MCTestGame::RunFrame(FrameSeconds);
+                shoot(std::format("paint_{:03}", scheme));
+            }
+
+            player.Actor->FadeTableIndex = own;
+        }
+
+        // Each facing counted from the first, so a long sweep doesn't drift; `to` is shot when it falls on a step (a
+        // little past, for the float rounding).
+        constexpr float StepSlack = 1e-3f;
+        const auto steps = static_cast<int32_t>(std::floor((to - from) / step + StepSlack));
+
+        for (int32_t i = 0; i <= steps; ++i)
+        {
+            const float facing = from + step * static_cast<float>(i);
+            FaceSettled(*player.Mech, facing);
+            shoot(std::format("facing_{:+08.3f}", facing));
+        }
+
+        return;
+    }
+
     for (const float facing : {0.0f, 45.0f, 90.0f, 135.0f, 180.0f, -45.0f, -90.0f, -135.0f})
     {
-        MCTestGame::FaceMech(*player.Mech, facing);
-        MCTestGame::RunFrame(FrameSeconds);
-        MCTestGame::RunFrame(FrameSeconds);
+        FaceSettled(*player.Mech, facing);
         shoot(std::format("stand_{:+04.0f}", facing));
     }
 
@@ -9834,6 +10112,587 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
 
 namespace
 {
+    /// <summary>The world view's surface as the last frame sealed it (MCDrawnGrid): its drawn grid's offset.</summary>
+    std::optional<std::array<int32_t, 2>> WorldGridOffset(const MCVulkanRenderer& renderer)
+    {
+        const std::span<const MCUnderlay> underlays = MCRenderer::Underlays();
+        const std::shared_ptr<const MCWindow> world = underlays.empty() ? nullptr : underlays[0].Source.lock();
+
+        if (world == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        const std::optional<MCVulkanRenderer::SealedPlace> place =
+            renderer.SealedSize(MCVulkanRenderer::SurfaceKey(*world));
+        return place.has_value() ? std::optional(place->Offset) : std::nullopt;
+    }
+}
+
+/// <summary>
+/// Port-only (MCDrawnGrid): the world drawn 2.5 drawn pixels a window pixel (the tests' scaled-up view), panned a few
+/// window pixels a frame across, down and on the diagonal: the world lies on a grid whose offset changes as it goes, so
+/// every pan moves its picture by whole drawn pixels and the HD ground's kept pixels are moved, not drawn again (none
+/// drawn directly or whole), and in mirror mode every drawn pixel's palette index is still the software renderer's pixel's that
+/// it shows.
+/// </summary>
+TEST_CASE_ISOLATED("game: a pan moves the kept HD ground by whole drawn pixels, every index the original's")
+{
+    struct Pan
+    {
+        float Across = 0.0f;
+        float Down = 0.0f;
+    };
+
+    constexpr std::array<Pan, 6> Pans = {Pan{1.0f, 0.0f},  Pan{3.0f, 0.0f},  Pan{0.0f, 2.0f},
+                                         Pan{-2.0f, 0.0f}, Pan{2.0f, -1.0f}, Pan{0.0f, -3.0f}};
+    constexpr int32_t FramesEach = 4;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    scene->Renderer->ResetMirror();
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+
+    // East and north alike move the view straight across, east alone and south alike straight down
+    // (MCTerrain::ProjectTerrain): a window pixel's worth of each.
+    const float across = 1.0f / (2.0f * MCTerrain::ProjectionCos);
+    const float down = 1.0f / (2.0f * MCTerrain::ProjectionSin);
+    MCVector3D position = Eye()->GetPosition();
+    std::set<int32_t> offsets;
+    int32_t frames = 0;
+
+    for (const Pan& pan : Pans)
+    {
+        for (int32_t frame = 0; frame < FramesEach; ++frame)
+        {
+            position.X += pan.Across * across + pan.Down * down;
+            position.Y += pan.Across * across - pan.Down * down;
+            Eye()->SetPosition(position);
+            MCTestGame::RunFrame(FrameSeconds);
+            ++frames;
+            const std::optional<std::array<int32_t, 2>> offset = WorldGridOffset(*scene->Renderer);
+            REQUIRE(offset.has_value());
+            offsets.insert((*offset)[0]);
+            offsets.insert((*offset)[1]);
+        }
+    }
+
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+    std::cout << std::format("  {} frames: {} shifted, {} kept, {} whole, {} direct; the grid's offsets {}\n", frames,
+                             after.Shifted - before.Shifted, after.Kept - before.Kept, after.Whole - before.Whole,
+                             after.Direct - before.Direct, offsets.size());
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // Every frame laid from the kept ground: moved, or kept in place where the camera's step rounded to no move.
+    CHECK_EQ(after.Shifted - before.Shifted + after.Kept - before.Kept, frames);
+    CHECK(2 * (after.Shifted - before.Shifted) > frames);
+    CHECK_EQ(after.Whole - before.Whole, 0);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+    CHECK(offsets.size() > 2);
+    CHECK_EQ(tally.Frames, frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// Moves the camera <paramref name="across"/> and <paramref name="down"/> window pixels and runs a frame: east and
+    /// north alike move the view straight across, east alone and south alike straight down (MCTerrain::ProjectTerrain).
+    /// The camera's place is kept in <paramref name="position"/>. Whether it went all the way (the map's edges stop it:
+    /// MCCamera::SetPosition).
+    /// </summary>
+    bool PanFrame(MCVector3D& position, float across, float down)
+    {
+        constexpr float Near = 1e-3f;
+        const float east = 1.0f / (2.0f * MCTerrain::ProjectionCos);
+        const float south = 1.0f / (2.0f * MCTerrain::ProjectionSin);
+        position.X += across * east + down * south;
+        position.Y += across * east - down * south;
+        Eye()->SetPosition(position);
+        const MCVector3D now = Eye()->GetPosition();
+        MCTestGame::RunFrame(FrameSeconds);
+        return std::fabs(now.X - position.X) < Near && std::fabs(now.Y - position.Y) < Near;
+    }
+}
+
+/// <summary>
+/// Port-only (the kept ground): a frame of a pan that draws the HD ground whole (here a jump past the view; over water a
+/// step of the colour cycle across most of it) draws it into the kept ground, which the frames after move, none drawn
+/// directly. While the view moves and the ground's looks change from frame to frame (a palette entry stepped each
+/// frame, as a zoom easing changes them), it's drawn directly, and kept again, whole, the first frame they hold. In
+/// mirror mode every index stays the software renderer's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a pan keeps the HD ground it draws whole, but not while its looks change each frame")
+{
+    constexpr int32_t FramesEach = 4;
+    constexpr int32_t ChangingFrames = 3;
+    // The jump: twice the view's width across, toward the map's middle (east and north alike: across).
+    constexpr float JumpViews = 2.0f;
+    // A pan's step a frame (window pixels).
+    constexpr float StepAcross = 2.0f;
+    constexpr float StepDown = 1.0f;
+    // A palette entry past the water's (the colour cycle shows those, and setting one ends it).
+    constexpr int SteppedEntry = FirstWaterColor + static_cast<int>(WaterMagicColors.size());
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // The water's colour cycle held, so only the test's own changes draw the ground whole.
+    GuiSystem().PaletteCycle = 0;
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    display->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    const std::span<const MCUnderlay> underlays = MCRenderer::Underlays();
+    REQUIRE(!underlays.empty());
+    const auto viewWidth = static_cast<float>(underlays[0].Rect.X1 - underlays[0].Rect.X0 + 1);
+    scene->Renderer->ResetMirror();
+    // A camera of its own place (none followed), which a jump moves as far as it's told.
+    Eye()->ChangeTarget(nullptr, false);
+    MCVector3D position = Eye()->GetPosition();
+    int32_t frames = 0;
+    int32_t stopped = 0;
+    const auto pan = [&position, &frames, &stopped](int32_t count)
+    {
+        for (int32_t frame = 0; frame < count; ++frame)
+        {
+            stopped += PanFrame(position, StepAcross, StepDown) ? 0 : 1;
+            ++frames;
+        }
+    };
+
+    const auto laid = [](const MCVulkanRenderer::GroundCounts& to, const MCVulkanRenderer::GroundCounts& from)
+    { return to.Shifted - from.Shifted + to.Kept - from.Kept; };
+
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+    pan(FramesEach);
+    REQUIRE(PanFrame(position, (position.X + position.Y > 0.0f ? -JumpViews : JumpViews) * viewWidth, 0.0f));
+    ++frames;
+    pan(FramesEach);
+    const MCVulkanRenderer::GroundCounts jumped = scene->Renderer->KeptGroundCounts();
+    std::array<MCVfxRgb, 1> entry{};
+    display->GetPalette(SteppedEntry, entry);
+
+    for (int32_t frame = 0; frame < ChangingFrames; ++frame)
+    {
+        // A new colour each frame (not back to one the kept ground was drawn with).
+        entry[0].R = static_cast<uint8_t>(entry[0].R + 1u);
+        display->SetPalette(SteppedEntry, std::span<const MCVfxRgb>(entry));
+        pan(1);
+    }
+
+    pan(FramesEach);
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+    std::cout << std::format("  the jump: {} laid, {} whole, {} direct; the looks changing: {} laid, {} whole, {} "
+                             "direct\n",
+                             laid(jumped, before), jumped.Whole - before.Whole, jumped.Direct - before.Direct,
+                             laid(after, jumped), after.Whole - jumped.Whole, after.Direct - jumped.Direct);
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // The jump drawn whole into the kept ground, which every frame before and after it moved.
+    CHECK_EQ(stopped, 0);
+    CHECK_EQ(jumped.Whole - before.Whole, 1);
+    CHECK_EQ(jumped.Direct - before.Direct, 0);
+    CHECK_EQ(laid(jumped, before), 2 * FramesEach);
+    // The looks changing, drawn directly; then whole once they hold, and moved.
+    CHECK_EQ(after.Direct - jumped.Direct, ChangingFrames);
+    CHECK_EQ(after.Whole - jumped.Whole, 1);
+    CHECK_EQ(laid(after, jumped), FramesEach - 1);
+    CHECK_EQ(tally.Frames, frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
+    /// <summary>Port-only (the kept surfaces): the frames a kept screen's test ran, and what they did.</summary>
+    struct KeptScreenRun
+    {
+        MCVulkanRenderer::KeptCounts Before;
+        MCVulkanRenderer::KeptCounts Panned;
+        MCVulkanRenderer::KeptCounts After;
+        MCVulkanRenderer::KeptComparison Compared;
+        int32_t Frames = 0;
+        int32_t Stopped = 0;
+    };
+
+    /// <summary>
+    /// Port-only (the kept surfaces): <paramref name="panFrames"/> frames of a pan, then <paramref name="stillFrames"/>
+    /// still, with each frame's screen drawn whole too, apart, and compared with it (MCVulkanRenderer::CompareKept),
+    /// in <paramref name="scene"/>.
+    /// </summary>
+    KeptScreenRun RunKeptScreen(HdScene& scene, int32_t panFrames, int32_t stillFrames)
+    {
+        // A pan's step a frame (window pixels).
+        constexpr float StepAcross = 2.0f;
+        constexpr float StepDown = 1.0f;
+        KeptScreenRun run;
+        // A camera of its own place (none followed).
+        Eye()->ChangeTarget(nullptr, false);
+        MCVector3D position = Eye()->GetPosition();
+        run.Before = scene.Renderer->KeptSurfaceCounts();
+        const auto frame = [&](float across, float down)
+        {
+            run.Stopped += PanFrame(position, across, down) ? 0 : 1;
+            ++run.Frames;
+            const std::expected<MCVulkanRenderer::KeptComparison, std::string> kept = scene.Renderer->CompareKept();
+
+            if (!kept.has_value())
+            {
+                FAIL(kept.error());
+            }
+
+            run.Compared.Surfaces += kept->Surfaces;
+            run.Compared.Pixels += kept->Pixels;
+            run.Compared.DifferentColors += kept->DifferentColors;
+            run.Compared.DifferentIndices += kept->DifferentIndices;
+        };
+
+        for (int32_t step = 0; step < panFrames; ++step)
+        {
+            frame(StepAcross, StepDown);
+        }
+
+        run.Panned = scene.Renderer->KeptSurfaceCounts();
+
+        for (int32_t step = 0; step < stillFrames; ++step)
+        {
+            frame(0.0f, 0.0f);
+        }
+
+        run.After = scene.Renderer->KeptSurfaceCounts();
+        std::cout << std::format(
+            "  panning: {} whole, {} tiled ({} tiles), {} unchanged; still: {} whole, {} tiled ({} "
+            "tiles), {} unchanged; {} surfaces compared, {} pixels\n",
+            run.Panned.Whole - run.Before.Whole, run.Panned.Tiled - run.Before.Tiled,
+            run.Panned.TilesDrawn - run.Before.TilesDrawn, run.Panned.Unchanged - run.Before.Unchanged,
+            run.After.Whole - run.Panned.Whole, run.After.Tiled - run.Panned.Tiled,
+            run.After.TilesDrawn - run.Panned.TilesDrawn, run.After.Unchanged - run.Panned.Unchanged,
+            run.Compared.Surfaces, run.Compared.Pixels);
+        return run;
+    }
+
+    /// <summary>
+    /// Port-only (the kept surfaces): what every kept screen's test checks of <paramref name="run"/>: each pan frame
+    /// drew only the screen's tiles whose draws changed, the still ones fewer or none, and each frame's screen is the one
+    /// drawn whole, pixel for pixel (<paramref name="pixels"/> a frame, its colours and indices).
+    /// </summary>
+    void CheckKeptScreen(const KeptScreenRun& run, int32_t panFrames, int64_t pixels)
+    {
+        CHECK_EQ(run.Stopped, 0);
+        CHECK_EQ(run.Panned.Tiled - run.Before.Tiled, panFrames);
+        CHECK_EQ(run.Panned.Whole - run.Before.Whole, 0);
+        CHECK_EQ(run.After.Whole - run.Panned.Whole, 0);
+        CHECK(run.After.TilesDrawn - run.Panned.TilesDrawn < run.Panned.TilesDrawn - run.Before.TilesDrawn);
+        CHECK_EQ(run.Compared.Surfaces, run.Frames);
+        CHECK_EQ(run.Compared.Pixels, pixels * run.Frames);
+        CHECK_EQ(run.Compared.DifferentColors, 0);
+        CHECK_EQ(run.Compared.DifferentIndices, 0);
+    }
+
+    /// <summary>
+    /// Port-only (the kept surfaces): sets every surface a frame draws from its tiles drawn whole too, apart, while it
+    /// lives (MCVulkanRenderer::CheckKeptSurfaces), and the water's colour cycle held (each of its steps draws the
+    /// screen whole).
+    /// </summary>
+    class MCKeptChecked
+    {
+    public:
+        MCKeptChecked()
+        {
+            GuiSystem().PaletteCycle = 0;
+            SingleStepMode = 1;
+            MCVulkanRenderer::CheckKeptSurfaces = true;
+        }
+
+        ~MCKeptChecked() { MCVulkanRenderer::CheckKeptSurfaces = false; }
+
+        MCKeptChecked(const MCKeptChecked&) = delete;
+        MCKeptChecked& operator=(const MCKeptChecked&) = delete;
+    };
+}
+
+/// <summary>
+/// Port-only (the kept surfaces): the screen, which every frame starts by wiping to its key, keeps the tiles whose draws
+/// didn't change from the frame before and draws only the others again (as the view pans, the minimap's view box), or
+/// none. Each frame's screen is the one drawn whole, pixel for pixel (its colours and indices), and in mirror mode every
+/// index is the software renderer's.
+/// </summary>
+TEST_CASE_ISOLATED("game: the screen draws again only the tiles whose draws changed, the pixels those drawn whole")
+{
+    constexpr int32_t PanFrames = 6;
+    constexpr int32_t StillFrames = 4;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCHdArtOn hdArt(scene->Pack);
+    const MCKeptChecked checked;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    scene->Renderer->ResetMirror();
+    const MCWindow& screen = MCInput::Display()->Screen();
+    const KeptScreenRun run = RunKeptScreen(*scene, PanFrames, StillFrames);
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // Mirror mode draws the screen at its window's size.
+    CheckKeptScreen(run, PanFrames, static_cast<int64_t>(screen.XMax + 1) * (screen.YMax + 1));
+    CHECK_EQ(tally.Frames, run.Frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (the kept surfaces): on a screen drawn sharp, at the size it's shown (here 2.5 drawn pixels a window
+/// pixel, so a tile's edges fall within drawn pixels), the tiles drawn again are those the draws over them cover
+/// (shaders/pixels.hlsli's DrawnCorner), and each frame's screen is the one drawn whole, pixel for pixel.
+/// </summary>
+TEST_CASE_ISOLATED("game: a screen drawn sharp draws again only the tiles whose draws changed, the pixels drawn whole")
+{
+    constexpr int32_t PanFrames = 6;
+    constexpr int32_t StillFrames = 4;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCHdArtOn hdArt(scene->Pack);
+    const MCKeptChecked checked;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(MCInput::Display()->SharpScreen());
+    const MCWindow& screen = MCInput::Display()->Screen();
+    uint32_t width = 0;
+    uint32_t height = 0;
+    REQUIRE(scene->Renderer->SurfaceTexture(screen, width, height) != nullptr);
+    const auto [scaleX, scaleY] = scene->Renderer->SurfaceScale(screen);
+    std::cout << std::format("  the screen: {}x{} drawn at {}x{} ({:.2f}x{:.2f})\n", screen.XMax + 1, screen.YMax + 1,
+                             width, height, scaleX, scaleY);
+    // Drawn larger than its window, by a part of a pixel.
+    CHECK(width > static_cast<uint32_t>(screen.XMax + 1));
+    CHECK(width % static_cast<uint32_t>(screen.XMax + 1) != 0);
+    const KeptScreenRun run = RunKeptScreen(*scene, PanFrames, StillFrames);
+    CheckKeptScreen(run, PanFrames, static_cast<int64_t>(width) * height);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (the kept surfaces): a pilot's movie playing in its window on a sharp screen (as the radio plays one over
+/// the map) is drawn by the same draw each frame while its picture changes under it. Each new movie frame draws its
+/// window's tiles again (the picture's new stamp), never leaves the screen as it was, and each frame's screen is the one
+/// drawn whole, pixel for pixel.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a movie on a kept screen draws its window's tiles again with each new frame, the pixels drawn "
+    "whole")
+{
+    constexpr std::string_view Name = "PILOT00A";
+    constexpr int32_t MaxDisplays = 120;
+    constexpr int32_t MovieFrames = 24;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCHdArtOn hdArt(scene->Pack);
+    const MCKeptChecked checked;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(MCInput::Display()->SharpScreen());
+    std::unique_ptr<MCSmackTag> movie = SmackOpen(std::format("data\\movies\\{}.smk", Name), 0xfe000, -1);
+    REQUIRE(movie != nullptr);
+    // A window of its own on the screen, as the radio's movie has.
+    const MCPane& frame = ScreenPort()->Frame();
+    const RECT area{(frame.X1 - frame.X0) / 2, (frame.Y1 - frame.Y0) / 2, movie->Player->Width(),
+                    movie->Player->Height()};
+    // The tiles wholly inside the movie's window (window pixels).
+    constexpr int32_t Tile = 16;
+    const int64_t inside =
+        static_cast<int64_t>(movie->Player->Width() / Tile - 1) * (movie->Player->Height() / Tile - 1);
+    const MCGuiHandle<MCGuiSmackerWindow> made = ScreenWindow()->CreateChild<MCGuiSmackerWindow>(
+        [&area](MCGuiSmackerWindow& smacker) { smacker.Init(area, {}); });
+    const std::shared_ptr<MCGuiSmackerWindow> window = made.Lock();
+    REQUIRE_EQ(window->StartSmackerMovie(std::move(movie), false), 0);
+
+    int32_t displays = 0;
+    int32_t advanced = 0;
+    int32_t advancedUnchanged = 0;
+    int64_t leastTiles = std::numeric_limits<int64_t>::max();
+    MCVulkanRenderer::KeptComparison compared;
+    GamePaused = true;
+    // The window's first frame drawn.
+    MCTestGame::RunFrame(FrameSeconds);
+
+    for (; displays < MaxDisplays && advanced < MovieFrames && MovieOver == 0; ++displays)
+    {
+        const uint32_t before = window->Movie->Player->FrameNum();
+        const MCVulkanRenderer::KeptCounts counts = scene->Renderer->KeptSurfaceCounts();
+        MCTestGame::RunFrame(FrameSeconds);
+        const std::expected<MCVulkanRenderer::KeptComparison, std::string> kept = scene->Renderer->CompareKept();
+
+        if (!kept.has_value())
+        {
+            FAIL(kept.error());
+        }
+
+        compared.Surfaces += kept->Surfaces;
+        compared.DifferentColors += kept->DifferentColors;
+        compared.DifferentIndices += kept->DifferentIndices;
+
+        if (window->Movie->Player->FrameNum() == before)
+        {
+            continue;
+        }
+
+        const MCVulkanRenderer::KeptCounts now = scene->Renderer->KeptSurfaceCounts();
+        ++advanced;
+        advancedUnchanged += now.Unchanged > counts.Unchanged ? 1 : 0;
+        leastTiles = std::min(leastTiles, now.Tiled > counts.Tiled ? now.TilesDrawn - counts.TilesDrawn : 0);
+    }
+
+    GamePaused = false;
+    window->EndSmackerMovie();
+    CloseGuiObject(made);
+    std::cout << std::format("  {}: {} new frames in {} displays, at least {} tiles drawn again each ({} inside its "
+                             "window); {} screens compared\n",
+                             Name, advanced, displays, leastTiles, inside, compared.Surfaces);
+
+    CHECK_EQ(advanced, MovieFrames);
+    CHECK_EQ(advancedUnchanged, 0);
+    CHECK(leastTiles >= inside);
+    CHECK_EQ(compared.Surfaces, displays);
+    CHECK_EQ(compared.DifferentColors, 0);
+    CHECK_EQ(compared.DifferentIndices, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (MCDrawnGrid): with the GPU drawing the world 2.5 drawn pixels a window pixel, once a pan puts it on a
+/// grid offset across, the frame presented gives the mouse that grid (MCPresenter::ShownGrids: the world's rectangle,
+/// sizes and offset as sealed), and a window point over the world maps to the place its picture shows there: the
+/// logical point it came from less the offset's share of a drawn pixel (MCDisplay::OnShownGrids).
+/// </summary>
+TEST_CASE_ISOLATED("game: the mouse over the GPU's world maps through the drawn grid of the frame presented")
+{
+    constexpr int32_t MostFrames = 8;
+    constexpr float Inside = 0.37f;
+    constexpr float Near = 1e-3f;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const float across = 1.0f / (2.0f * MCTerrain::ProjectionCos);
+    MCVector3D position = Eye()->GetPosition();
+    MCTestGame::RunFrame(FrameSeconds);
+
+    for (int32_t frame = 0; frame < MostFrames && WorldGridOffset(*renderer).value_or(std::array{0, 0})[0] == 0;
+         ++frame)
+    {
+        position.X += across;
+        position.Y += across;
+        Eye()->SetPosition(position);
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    const std::optional<std::array<int32_t, 2>> offset = WorldGridOffset(*renderer);
+    REQUIRE(offset.has_value());
+    REQUIRE((*offset)[0] != 0);
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    const std::span<const MCShownGrid> grids = display->Presenter().ShownGrids();
+    REQUIRE_EQ(grids.size(), 1u);
+    const MCShownGrid& grid = grids[0];
+    const std::span<const MCUnderlay> underlays = MCRenderer::Underlays();
+    REQUIRE(!underlays.empty());
+    CHECK(grid.Offset == *offset);
+    CHECK_EQ(grid.Rect.X0, underlays[0].Rect.X0);
+    CHECK_EQ(grid.Rect.Y1, underlays[0].Rect.Y1);
+    REQUIRE(grid.Drawn[0] > grid.Window[0]);
+
+    // A point a little into a window pixel in the world's middle, there and back.
+    const float logicalX = static_cast<float>((grid.Rect.X0 + grid.Rect.X1) / 2) + Inside;
+    const float logicalY = static_cast<float>((grid.Rect.Y0 + grid.Rect.Y1) / 2) + Inside;
+    float windowX = 0.0f;
+    float windowY = 0.0f;
+    display->LogicalToWindow(logicalX, logicalY, windowX, windowY);
+    float mappedX = 0.0f;
+    float mappedY = 0.0f;
+    CHECK(display->WindowToLogical(windowX, windowY, mappedX, mappedY));
+    const auto shown = [](const MCRect& rect, size_t axis)
+    { return static_cast<float>(axis == 0 ? rect.X1 - rect.X0 + 1 : rect.Y1 - rect.Y0 + 1); };
+    const auto moved = [&](size_t axis)
+    {
+        return static_cast<float>(grid.Offset[axis]) * shown(grid.Rect, axis) /
+               (static_cast<float>(grid.Drawn[axis]) * static_cast<float>(grid.Window[axis]));
+    };
+
+    std::cout << std::format("  offset {}, {}: ({:.4f}, {:.4f}) mapped to ({:.4f}, {:.4f})\n", grid.Offset[0],
+                             grid.Offset[1], logicalX, logicalY, mappedX, mappedY);
+    CHECK(std::fabs(mappedX - (logicalX - moved(0))) < Near);
+    CHECK(std::fabs(mappedY - (logicalY - moved(1))) < Near);
+}
+
+namespace
+{
     /// <summary>
     /// A colour pressed into the middle (MutedFloor and MutedShare of it): ground bright enough to measure, and dim
     /// enough that none of it counts as a light's own pixels (composite.pshader's SelfLit, above 55%).
@@ -11142,6 +12001,18 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     const std::filesystem::path pack = packOption.has_value()
                                            ? std::filesystem::absolute(std::filesystem::path(*packOption))
                                            : std::filesystem::path();
+    // With --sharp-menus-guard 1, HD art on from the boot with the pack, as a player's app has it, and the guard of test
+    // runs on keeping every example: each of the original's pictures the screens read is listed at the end.
+    const bool guard = MCTest::Option("sharp-menus-guard").has_value();
+
+    if (guard)
+    {
+        UseHdByDefault();
+        MCHdArt::SetPackFolder(pack);
+        MCHdArt::GuardOriginalReads(true, std::numeric_limits<size_t>::max());
+        MCTestGame::BootOptions.Started = [] { GHdArt = 1; };
+    }
+
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
@@ -11284,6 +12155,13 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
         AuditLabel.clear();
         ReportAudit(tally, folder / "audit", audited);
         WriteAuditTables(tally, detail, folder / "audit", audited);
+    }
+
+    if (guard)
+    {
+        std::cout << std::format("  the screens: {} reads of the original's art\n",
+                                 MCTestGame::PrintGuardedReads("the screens"));
+        MCHdArt::GuardOriginalReads(false);
     }
 
     GHdArt = 0;
@@ -13850,9 +14728,12 @@ namespace
 /// pictures are (<c>--window</c>), the player's mechs (up to 12) sent at the nearest enemy as --hd-audit plays it. Each of
 /// <c>--showcase-frames &lt;n&gt;</c> frames (default 900: 30 seconds at 30 a second) from frame
 /// <c>--showcase-from &lt;n&gt;</c> on (default 0; the earlier ones are played, their sound mixed and dropped) is saved
-/// as <c>frames/NNNNN.png</c>, or with <c>--showcase-video 1</c> into <c>video.mp4</c>, and its share of the mix
-/// appended to <c>sound.f32</c> (48 kHz stereo, 32-bit float), with HD art on from the pack, or with
-/// <c>--hd-original 1</c> off; <c>--showcase-frames 0</c> scouts two minutes, saving only a look every
+/// as <c>frames/NNNNN.png</c>, or with <c>--showcase-video 1</c> into <c>video.mp4</c>, or not at all with
+/// <c>--showcase-pictures 0</c>, and its share of the mix appended to <c>sound.f32</c> (48 kHz stereo, 32-bit float),
+/// with HD art on from the pack, or with <c>--hd-original 1</c> off; the sound is the original's, or the pack's with
+/// <c>--showcase-hd-audio &lt;n&gt;</c> (PREFS HDAudio), at the preferences' levels or
+/// <c>--showcase-volumes &lt;music&gt;,&lt;radio&gt;,&lt;effects&gt;</c>; <c>--showcase-frames 0</c> scouts two
+/// minutes, saving only a look every
 /// <c>--showcase-peek &lt;n&gt;</c> frames (<c>peek/NNNNN.png</c>). Staging, all optional, a mech named by its place
 /// in the player's force (0 the first; <c>frame:mech</c>, or <c>frame:mech:what</c>, comma-separated):
 /// <c>--showcase-zoom &lt;lines&gt;</c> zooms the view to that many game lines (480 the closest a player gets, fewer
@@ -13963,12 +14844,35 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     MCTestContextScope scope;
     scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
     MCTestGame::BootOptions.Sound = true;
-    // The original's sound in both runs: the radio's lines last as long in each, so when the next one starts, and the
-    // dice it takes, match (HD audio's lines differ by a few samples, enough to part the runs within minutes).
+    // The original's sound unless --showcase-hd-audio <n> (PREFS HDAudio) says otherwise: the radio's lines last as long
+    // in each run, so when the next one starts, and the dice it takes, match (HD audio's lines differ by a few samples,
+    // enough to part an HD audio run from an original one within minutes; HD audio runs keep in step with each other).
+    const int32_t hdAudio = ShowcaseOption("hd-audio", HdAudioOff);
+    // --showcase-volumes <music>,<radio>,<effects> (PREFS' 0-127 levels; the preferences' defaults otherwise): two runs
+    // differing only by one kind's level at 0 differ by that kind's own sound.
+    const std::vector<int32_t> volumes = ShowcaseFrames("volumes");
+    constexpr size_t VolumeKinds = 3;
+    constexpr int32_t MostVolume = 127;
+    REQUIRE((volumes.empty() || volumes.size() == VolumeKinds));
     MCTestGame::BootOptions.Started = [&]
     {
-        GHdAudio = HdAudioOff;
+        GHdAudio = hdAudio;
         MCHdArt::SetPackFolder(original ? std::filesystem::path() : packFolder);
+
+        if (!volumes.empty())
+        {
+            // The settings' levels, and the sound system's copies of them if it has read them already.
+            MusicVolume = std::clamp(volumes[0], 0, MostVolume);
+            RadioVolume = std::clamp(volumes[1], 0, MostVolume);
+            SfxVolume = std::clamp(volumes[2], 0, MostVolume);
+
+            if (const std::shared_ptr<MCSoundSystem> sounds = SoundSystem(); sounds != nullptr)
+            {
+                sounds->MusicLevel = static_cast<uint8_t>(MusicVolume);
+                sounds->RadioLevel = static_cast<uint8_t>(RadioVolume);
+                sounds->DigitalMasterVolume = static_cast<uint8_t>(SfxVolume);
+            }
+        }
     };
 
     std::optional<MCHdArtOn> hdArt;
@@ -13993,6 +14897,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     const int32_t peek = ShowcaseOption("peek", 0);
     const int32_t hud = ShowcaseOption("hud", 0);
     const bool video = ShowcaseOption("video", 0) != 0;
+    // --showcase-pictures 0 records the sound alone (a mix's measures need no pictures).
+    const bool pictures = ShowcaseOption("pictures", 1) != 0;
 
     if (hud > 0)
     {
@@ -14070,6 +14976,11 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         soundFile.write(reinterpret_cast<const char*>(mix.data()),
                         static_cast<std::streamsize>(mix.size() * sizeof(float)));
+
+        if (!pictures)
+        {
+            continue;
+        }
 
         if (!video)
         {
@@ -15083,6 +15994,45 @@ TEST_CASE_ISOLATED("game: HD art outlines the tactical map's objective numbers, 
     std::filesystem::remove_all(pack.parent_path());
 }
 
+namespace
+{
+    /// <summary>The pictures of their own the HD picture tests copy: upright stripes, each a colour on from the first.</summary>
+    constexpr int32_t StripedSide = 32;
+    constexpr int32_t StripeWidth = 8;
+
+    /// <summary>A striped picture (<see cref="StripedSide"/>) from palette index <paramref name="first"/> on, a texture.</summary>
+    std::shared_ptr<MCWindow> StripedPicture(uint8_t first)
+    {
+        const std::shared_ptr<MCWindow> picture = MCWindow::Make(StripedSide, StripedSide);
+
+        for (int32_t y = 0; y < StripedSide; ++y)
+        {
+            for (int32_t x = 0; x < StripedSide; ++x)
+            {
+                picture->Pixels[static_cast<size_t>(y) * StripedSide + x] =
+                    static_cast<uint8_t>(first + x / StripeWidth);
+            }
+        }
+
+        MCRenderer::CreateTexture(*picture, MCTextureUse::Static);
+        return picture;
+    }
+
+    /// <summary>Writes <paramref name="picture"/>'s HD copy into <paramref name="pack"/>'s pictures, in its colours shown.</summary>
+    void WritePackPicture(const std::filesystem::path& pack, const MCWindow& picture,
+                          const std::array<SDL_Color, 256>& colors)
+    {
+        std::filesystem::create_directories(PictureFolderOf(pack));
+        DecodedFrame frame;
+        frame.Width = picture.XMax + 1;
+        frame.Height = picture.YMax + 1;
+        frame.Index.assign(picture.Bytes().begin(), picture.Bytes().end());
+        frame.Drawn.assign(frame.Index.size(), 1);
+        const std::string name = MCHdArt::PictureName(MCHdArt::PictureHash(picture.Bytes(), frame.Width, frame.Height));
+        WriteFramePngs(PictureFolderOf(pack) / name, frame, colors, TestPackScale, Inverted, false);
+    }
+}
+
 /// <summary>
 /// A picture the HD art pack has is drawn from it from the first frame the screen is sharp (HD art just turned on, the
 /// game's first frame), not one frame on: copied onto mission 1's screen (shown larger) right after a frame shown with
@@ -15104,33 +16054,15 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
     }
 
     // A picture of its own: upright stripes of four colours.
-    constexpr int32_t Side = 32;
-    constexpr int32_t Stripe = 8;
+    constexpr int32_t Side = StripedSide;
     constexpr uint8_t FirstColor = 0x30;
-    const std::shared_ptr<MCWindow> picture = MCWindow::Make(Side, Side);
-
-    for (int32_t y = 0; y < Side; ++y)
-    {
-        for (int32_t x = 0; x < Side; ++x)
-        {
-            picture->Pixels[static_cast<size_t>(y) * Side + x] = static_cast<uint8_t>(FirstColor + x / Stripe);
-        }
-    }
-
-    MCRenderer::CreateTexture(*picture, MCTextureUse::Static);
+    const std::shared_ptr<MCWindow> picture = StripedPicture(FirstColor);
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_first_frame";
     std::filesystem::remove_all(scratch);
     const std::filesystem::path pack = scratch / "pack";
-    std::filesystem::create_directories(PictureFolderOf(pack));
-    DecodedFrame frame;
-    frame.Width = Side;
-    frame.Height = Side;
-    frame.Index.assign(picture->Bytes().begin(), picture->Bytes().end());
-    frame.Drawn.assign(frame.Index.size(), 1);
-    const std::string name = MCHdArt::PictureName(MCHdArt::PictureHash(picture->Bytes(), Side, Side));
-    WriteFramePngs(PictureFolderOf(pack) / name, frame, colors, TestPackScale, Inverted, false);
+    WritePackPicture(pack, *picture, colors);
     WritePaletteRgb(pack, colors);
 
     MCPane& screen = ScreenPort()->Frame();
@@ -15202,6 +16134,96 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
 
     CHECK_EQ(kept, Side * Side);
     MCRenderer::DestroyTexture(*picture);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's one copy of a frame's colours): the texture keeps the picture's record, without its
+/// colours; once the GPU holds the picture the pack's cache lets them go, and the picture is drawn from the GPU's copy
+/// with nothing read even with the cache held to a byte; once the GPU lets the picture go, its colours are read again
+/// (the same Id) and the picture drawn from the pack as before.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: an HD picture's colours are the cache's alone once on the GPU, and read again when it lets go")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // Two pictures of their own, both in the pack: the one copied, and one read to have the cache trim it.
+    constexpr uint8_t CopiedColor = 0x30;
+    constexpr uint8_t OtherColor = 0x40;
+    const std::shared_ptr<MCWindow> copied = StripedPicture(CopiedColor);
+    const std::shared_ptr<MCWindow> other = StripedPicture(OtherColor);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_picture_colours";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    WritePackPicture(pack, *copied, colors);
+    WritePackPicture(pack, *other, colors);
+    WritePaletteRgb(pack, colors);
+
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+    const auto find = [](const MCWindow& picture)
+    { return MCHdArt::FindPicture(picture.Bytes(), StripedSide, StripedSide); };
+    GamePaused = true;
+    const MCHdArtOn on(pack);
+
+    // The pictures from the pack copied onto the screen this frame.
+    const auto copy = [&]
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        const int64_t before = renderer->HdDrawn();
+        VfxPaneCopy(MCPane::Over(copied), 0, 0, screen, left, top, VfxNoColor);
+        return renderer->HdDrawn() - before;
+    };
+
+    // The reads of a frame's colours: a frame read, or its colours read again.
+    const auto reads = [] { return MCHdArt::FramesRead() + MCHdArt::ColorsReadAgain(); };
+
+    // Up with its first copy; the record the texture draws by has no colours.
+    CHECK_EQ(copy(), 1);
+    CHECK_EQ(copy(), 1);
+    std::shared_ptr<const MCHdArt::Frame> found = find(*copied);
+    REQUIRE(found != nullptr);
+    const uint64_t id = found->Id;
+    CHECK(found->Colors.empty());
+    found.reset();
+
+    // The other read, then the cache held to a byte: drawn from the GPU's copy, nothing read.
+    REQUIRE(find(*other) != nullptr);
+    MCHdArt::SetCacheBudget(1);
+    size_t read = reads();
+    CHECK_EQ(copy(), 1);
+    CHECK_EQ(reads(), read);
+
+    // The GPU lets it go: its colours read again as it's copied, with its Id, and drawn from the pack.
+    MCTestGame::RunFrame(FrameSeconds);
+    renderer->ForgetHdPictureForTests(id);
+    read = reads();
+    CHECK_EQ(copy(), 1);
+    CHECK_EQ(reads(), read + 1);
+    found = find(*copied);
+    REQUIRE(found != nullptr);
+    CHECK_EQ(found->Id, id);
+    CHECK(!renderer->Unsupported().contains("an HD art frame whose pixels don't match its size"));
+
+    found.reset();
+    MCHdArt::SetCacheBudget(0);
+    GamePaused = false;
+    MCRenderer::DestroyTexture(*copied);
+    MCRenderer::DestroyTexture(*other);
     std::filesystem::remove_all(scratch);
 }
 
@@ -17758,7 +18780,8 @@ TEST_CASE_ISOLATED("tool: --hd-map-shots pictures the ground across a map")
 /// Tool: <c>--hd-map-mosaic &lt;pack&gt; --shots &lt;folder&gt;</c> pictures a whole map (<c>--mission</c>, default 1)
 /// for a mosaic, the map revealed and the view zoomed out as far as it goes: the camera stepped along the screen's own
 /// axes by half a view, so each shot's middle half meets its neighbours', <c>tile_&lt;row&gt;_&lt;column&gt;_hd.png</c>
-/// (or _original.png with <c>--hd-original 1</c>) over the map's diamond, each tile's world point printed.
+/// (or _original.png with <c>--hd-original 1</c>) over the map's diamond, each tile's world point printed. The game is
+/// paused while it shoots, so the mission's script and battles don't move the camera or end the mission.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-map-mosaic pictures a whole map in tiles")
 {
@@ -17786,6 +18809,10 @@ TEST_CASE_ISOLATED("tool: --hd-map-mosaic pictures a whole map in tiles")
     {
         MCTestGame::RunFrame(FrameSeconds);
     }
+
+    // The game paused while the camera steps: a big map's 12,000 shots are half an hour of game time, in which the
+    // mission would play on (its script taking the camera, or the parked lance lost and the results screen shown).
+    GamePaused = true;
 
     // How a world step projects on screen, from the map's middle and two points a probe's length from it.
     constexpr float Probe = 1000.0f;
@@ -17850,6 +18877,8 @@ TEST_CASE_ISOLATED("tool: --hd-map-mosaic pictures a whole map in tiles")
             Shoot(folder, name, original);
         }
     }
+
+    GamePaused = false;
 }
 
 /// <summary>
@@ -17922,6 +18951,89 @@ TEST_CASE_ISOLATED("tool: --hd-terrain-layout writes how a map lays its ground t
     std::cout << std::format("  mission {}: {} cells, {} tiles, steps {} {} {}\n", mission, cells, names.size(),
                              steps->Across, steps->Down, steps->Up);
     CHECK(cells > 0);
+}
+
+/// <summary>
+/// Tool (the briefing maps drawn from the map, tools/briefing-maps): <c>--hd-map-objects &lt;folder&gt;</c> writes
+/// mission <c>--mission</c>'s (default 1) objects and movement map: <c>objects_&lt;n&gt;.tsv</c>, a line an object (its
+/// class, type number, alignment, its point in tiles across and down, its extent radius in tiles) and
+/// <c>cells_&lt;n&gt;.tsv</c>, a line a tile (row, column, its nine cells' passable bits by cell row then column, overlay
+/// type, terrain type).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-map-objects writes a map's objects and movement map")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-map-objects");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    int32_t mission = 1;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("mission"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), mission);
+    }
+
+    REQUIRE(MCTestGame::StartMission(mission));
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::filesystem::path folder(*out);
+    std::filesystem::create_directories(folder);
+    std::ofstream objects(folder / std::format("objects_{}.tsv", mission));
+    const double half = MetersMapSideDivTwo();
+    const double perTile = MCTerrain::MetersPerVertex;
+    size_t written = 0;
+
+    const auto write = [&](const std::shared_ptr<MCBaseObject>& object)
+    {
+        const std::shared_ptr<MCGameObject> game = std::dynamic_pointer_cast<MCGameObject>(object);
+
+        if (game == nullptr)
+        {
+            return;
+        }
+
+        const MCVector3D at = game->GetPosition();
+        const std::shared_ptr<MCObjectType> type = game->GetObjectType();
+        objects << std::format("{}\t{}\t{}\t{:.4f}\t{:.4f}\t{:.4f}\n", static_cast<int32_t>(game->ObjectClass),
+                               type != nullptr ? type->ObjTypeNum : -1, game->GetAlignment(), (at.X + half) / perTile,
+                               (half - at.Y) / perTile, game->GetExtentRadius() / perTile);
+        ++written;
+    };
+
+    for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
+    {
+        for (const std::shared_ptr<MCBaseObject> object : *list)
+        {
+            write(object);
+        }
+    }
+
+    std::ofstream cells(folder / std::format("cells_{}.tsv", mission));
+    const MCScenarioMap& map = GameMap();
+
+    for (int32_t r = 0; r < map.Height; ++r)
+    {
+        for (int32_t c = 0; c < map.Width; ++c)
+        {
+            const MCMapTile& tile = map.Map[static_cast<size_t>(r) * map.Width + c];
+            uint32_t passable = 0;
+
+            for (int32_t cellR = 0; cellR < MapCellDim; ++cellR)
+            {
+                for (int32_t cellC = 0; cellC < MapCellDim; ++cellC)
+                {
+                    passable |= tile.GetCellPassable(cellR, cellC) << (cellR * MapCellDim + cellC);
+                }
+            }
+
+            cells << std::format("{}\t{}\t{}\t{}\t{}\n", r, c, passable, tile.OverlayType(), tile.TerrainType());
+        }
+    }
+
+    std::cout << std::format("  mission {}: {} objects, {} x {} tiles\n", mission, written, map.Height, map.Width);
+    CHECK(written > 0);
 }
 
 namespace

@@ -149,6 +149,16 @@ void MCSoundRenderer::SetChannelLooping(int32_t channel, bool looping)
     _Channels[channel]->Looping = looping;
 }
 
+void MCSoundRenderer::SetChannelVoice(int32_t channel, bool voice)
+{
+    _Channels[channel]->Voice = voice;
+}
+
+bool MCSoundRenderer::ChannelVoice(int32_t channel) const
+{
+    return _Channels[channel]->Voice;
+}
+
 std::shared_ptr<MCSoundResource> MCSoundRenderer::ChannelResource(int32_t channel) const
 {
     return _Channels[channel]->Resource.lock();

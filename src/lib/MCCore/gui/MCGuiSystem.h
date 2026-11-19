@@ -150,8 +150,39 @@ public:
     /// <summary>Steps the gamma level (0..3) and re-applies the palette.</summary>
     void GammaCorrectCurrentPalette();
     void GammaCorrectCurrentPalette(int32_t level);
-    /// <summary>Fades the screen to black, then blacks out palette entries 10..245.</summary>
-    void FadeDownCurrentPalette();
+    /// <summary>
+    /// Port-only: on a sharp screen (HD art, the GPU drawing), every font's glyphs made ahead off the game's thread
+    /// (platform/MCSharpPictures), each font once; nothing otherwise. Start does it as the display opens, so the boot is
+    /// its time (a launcher's game shows its room soon after), and logistics when HD art comes on.
+    /// </summary>
+    void MakeFontsAhead() const;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md): with the screen drawn sharp (HD art on the GPU), has HD art's readers read the
+    /// screens' whole set of pictures ahead (MCHdArt::ReadMenuSetAhead), the lowest of their reads; nothing otherwise.
+    /// Start does it once the cursors' own reads are in, logistics as it starts and when HD art comes on.
+    /// </summary>
+    void ReadMenuSetAhead() const;
+
+    /// <summary>
+    /// Fades the screen to black, then blacks out palette entries 10..245. Port-only: <paramref name="whileFading"/>'s
+    /// pieces of work are done in order, one after each step once the fade has reached <paramref name="workFrom"/> of
+    /// its <see cref="FadeLevels"/>, any still left once the screen is black; the fade keeps its pace (it follows the
+    /// time, so a piece's step darkens by more). Nothing is done when it can't fade (<see cref="CanFade"/>).
+    /// </summary>
+    void FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading = {}, int32_t workFrom = 0);
+    /// <summary>
+    /// Port-only: whether <see cref="FadeDownCurrentPalette"/> fades: the display up, the screen not black already, and
+    /// the GUI not stopping.
+    /// </summary>
+    bool CanFade() const;
+    /// <summary>The fade's levels, a second's worth (the original's palette steps).</summary>
+    static constexpr int32_t FadeLevels = 0x100;
+    /// <summary>
+    /// Port-only: the level of the fade (of <see cref="FadeLevels"/>) long work given it waits for, an eighth of the
+    /// light left: a piece's time darkens the step after it by as much (256 levels a second), which can't be seen there.
+    /// </summary>
+    static constexpr int32_t FadeNearBlack = FadeLevels - FadeLevels / 8;
     /// <summary>
     /// Sets the palette's entries from <paramref name="first"/> on, or, with <paramref name="first"/> 0, keeps
     /// <paramref name="count"/> entries in <see cref="PendingPalette"/> for the next frame to fade to.
@@ -267,6 +298,8 @@ private:
     std::shared_ptr<MCDisplay> _Display;
     /// <summary>Set once the display is up: palette changes and repaints wait for it.</summary>
     bool _DisplayReady = false;
+    /// <summary>Port-only: set while <see cref="Stop"/> closes a results screen still up: nothing fades then.</summary>
+    bool _Stopping = false;
     /// <summary>The palette as shown: <see cref="CurrentPalette"/> through the gamma table.</summary>
     std::array<MCVfxRgb, 256> _LogicalPalette = {};
     /// <summary>The frame callbacks (their holders keep them).</summary>

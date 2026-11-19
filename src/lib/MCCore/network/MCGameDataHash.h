@@ -11,10 +11,13 @@
 //   brains) and the units' profiles (data\missions\profiles\); the game system (data\missions\gamesys.fit) and the ABL
 //   libraries (data\missions\*.abx); the mechs' shape data their types read (data\sprites\*.hsp, *.inf, *.out, *.jmp:
 //   where their weapons fire from, how high they jump), not their pictures.
-// - The mission's: its file (data\savegame\<name>.mpk), the purchase list it names, its scenario
+// - The mission's: its file (data\savegame\<name>.mpk), the purchase list it names (the pilots' prices), the shop's
+//   lists (data\missions\ispur.fit, clanpur.fit: a team's by its tech base), its scenario
 //   (data\missions\<scenario>.fit), the scenario's script, and every file named after its map in data\terrain\ but the
 //   map's pictures (.tga, .gif).
 // - With every script among them (.abl, .abx, .abi), the files it includes (#include, #include_), as ABL opens them.
+// In a match with the release's own copy of the data (lib/MCReleaseData.h), every match's files are those the copy
+// holds, read from it; a file the game folder adds beside them (a mod's new pilot) counts only as a mission's own.
 // Editors' backups (.bak) are left out. The art, sounds, movies, fonts, palettes, the HD pack and the player's own
 // settings never count: they change what a player sees and hears, not what the game does.
 

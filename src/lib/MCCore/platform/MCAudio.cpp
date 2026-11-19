@@ -3,6 +3,155 @@
 #include "platform/MCServices.h"
 
 /// <summary>
+/// The voice priority's mix (<see cref="MCAudio::SetVoicePriority"/>): the voices lifted, and the rest turned down
+/// while they speak, as far as it takes to keep them on top. Both are measured as heard (BS.1770's K-weighting, its
+/// 48 kHz coefficients), every <see cref="StepFrames"/>. The voices' level is followed only while they speak (louder
+/// than a floor), so it stays through the gaps between words; the rest stays down through those gaps too, and once a
+/// voice has been quiet a moment its gain eases back up.
+/// </summary>
+class MCVoiceDuck
+{
+public:
+    /// <summary>Mixes <paramref name="voices"/> (stereo) over <paramref name="rest"/>, in place.</summary>
+    void Apply(std::span<const float> voices, std::span<float> rest);
+
+    /// <summary>The rest's gain now (1: not turned down).</summary>
+    float Gain() const { return _Gain; }
+
+private:
+    /// <summary>A biquad (direct form I).</summary>
+    struct MCBiquad
+    {
+        double B0, B1, B2, A1, A2;
+        double X1 = 0.0, X2 = 0.0, Y1 = 0.0, Y2 = 0.0;
+
+        double Run(double x)
+        {
+            const double y = B0 * x + B1 * X1 + B2 * X2 - A1 * Y1 - A2 * Y2;
+            X2 = X1;
+            X1 = x;
+            Y2 = Y1;
+            Y1 = y;
+            return y;
+        }
+    };
+
+    /// <summary>BS.1770's K-weighting at 48 kHz: its high shelf, then its high-pass.</summary>
+    struct MCKWeighting
+    {
+        MCBiquad Shelf{1.53512485958697, -2.69169618940638, 1.19839281085285, -1.69065929318241, 0.73248077421585};
+        MCBiquad HighPass{1.0, -2.0, 1.0, -1.99004745483398, 0.99007225036621};
+
+        double Run(double x) { return HighPass.Run(Shelf.Run(x)); }
+    };
+
+    /// <summary>The frames measured at once: 10 ms.</summary>
+    static constexpr size_t StepFrames = 480;
+
+    MCKWeighting _VoiceWeighting;
+    MCKWeighting _RestWeighting;
+    /// <summary>The voices' weighted mean square while they speak, and the rest's, followed.</summary>
+    double _VoiceLevel = 0.0;
+    double _RestLevel = 0.0;
+    /// <summary>How many seconds more the rest stays down with no voice speaking (0: a voice is done).</summary>
+    double _HoldLeft = 0.0;
+    float _Gain = 1.0f;
+};
+
+namespace
+{
+    static_assert(MCAudio::OutputRate == 48000, "the voice priority's K-weighting coefficients are for 48 kHz");
+
+    /// <summary>How much louder the voices play with the voice priority on (6 dB).</summary>
+    constexpr float VoiceLift = 1.99526231f;
+    /// <summary>How far over the rest the voices are kept, as a ratio of mean squares (6 dB).</summary>
+    constexpr double VoiceMargin = 3.98107171;
+    /// <summary>The furthest the rest is turned down (12 dB).</summary>
+    constexpr float DuckFloor = 0.25118864f;
+    /// <summary>
+    /// Over this weighted mean square (-50 dB) a voice speaks: under it are the gaps between words and the end of a
+    /// line. The radio's speech is far over it even turned well down, the HD voices' gaps far under.
+    /// </summary>
+    constexpr double SpeechFloor = 1e-5;
+    /// <summary>How long the rest stays down after a voice last spoke, in seconds: over the gaps between words.</summary>
+    constexpr double VoiceHoldSeconds = 0.3;
+    /// <summary>The followers' time constants in seconds: the voices' level up and down, the rest's up and down.</summary>
+    constexpr double VoiceRiseSeconds = 0.005;
+    constexpr double VoiceFallSeconds = 0.3;
+    constexpr double RestRiseSeconds = 0.01;
+    constexpr double RestFallSeconds = 0.1;
+    /// <summary>How fast the rest's gain goes down as a voice starts, and back up after it ends.</summary>
+    constexpr double DuckDownSeconds = 0.04;
+    constexpr double DuckUpSeconds = 0.4;
+
+    /// <summary><paramref name="level"/> moved toward <paramref name="target"/> over <paramref name="seconds"/>, one
+    /// time constant <paramref name="rise"/> going up and <paramref name="fall"/> going down.</summary>
+    double Follow(double level, double target, double seconds, double rise, double fall)
+    {
+        const double keep = std::exp(-seconds / (target > level ? rise : fall));
+        return keep * level + (1.0 - keep) * target;
+    }
+}
+
+void MCVoiceDuck::Apply(std::span<const float> voices, std::span<float> rest)
+{
+    const size_t frames = std::min(voices.size(), rest.size()) / 2;
+
+    for (size_t first = 0; first < frames; first += StepFrames)
+    {
+        const size_t count = std::min(StepFrames, frames - first);
+        double voiceSquares = 0.0;
+        double restSquares = 0.0;
+
+        for (size_t i = first; i < first + count; ++i)
+        {
+            const double voice = _VoiceWeighting.Run(0.5 * VoiceLift * (voices[i * 2] + voices[i * 2 + 1]));
+            const double other = _RestWeighting.Run(0.5 * (rest[i * 2] + rest[i * 2 + 1]));
+            voiceSquares += voice * voice;
+            restSquares += other * other;
+        }
+
+        const double seconds = static_cast<double>(count) / MCAudio::OutputRate;
+        const double voiceNow = voiceSquares / static_cast<double>(count);
+        _RestLevel =
+            Follow(_RestLevel, restSquares / static_cast<double>(count), seconds, RestRiseSeconds, RestFallSeconds);
+
+        if (voiceNow > SpeechFloor)
+        {
+            _VoiceLevel = Follow(_VoiceLevel, voiceNow, seconds, VoiceRiseSeconds, VoiceFallSeconds);
+            _HoldLeft = VoiceHoldSeconds;
+        }
+        else
+        {
+            _HoldLeft = std::max(_HoldLeft - seconds, 0.0);
+            // A voice done: the next is measured afresh.
+            _VoiceLevel = _HoldLeft > 0.0 ? _VoiceLevel : 0.0;
+        }
+
+        // The gain that keeps the voices VoiceMargin over the rest, no lower than DuckFloor; 1 once they're done.
+        double wanted = 1.0;
+
+        if (_HoldLeft > 0.0 && _RestLevel > 0.0)
+        {
+            wanted = std::clamp(std::sqrt(_VoiceLevel / (_RestLevel * VoiceMargin)), double{DuckFloor}, 1.0);
+        }
+
+        // Down fast as a voice starts, back up slowly after: eased across the step, so no step is heard.
+        const float from = _Gain;
+        _Gain = static_cast<float>(Follow(_Gain, wanted, seconds, DuckUpSeconds, DuckDownSeconds));
+        const float slope = (_Gain - from) / static_cast<float>(count);
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            const size_t frame = first + i;
+            const float gain = from + slope * static_cast<float>(i + 1);
+            rest[frame * 2] = rest[frame * 2] * gain + voices[frame * 2] * VoiceLift;
+            rest[frame * 2 + 1] = rest[frame * 2 + 1] * gain + voices[frame * 2 + 1] * VoiceLift;
+        }
+    }
+}
+
+/// <summary>
 /// What the mixer and every buffer share: the lock, the registered buffers and streams, and the master volume. It
 /// outlives the <see cref="MCAudio"/> while any buffer still holds it.
 /// </summary>
@@ -14,6 +163,10 @@ struct MCAudioCore
     std::vector<std::weak_ptr<MCAudioStream>> Streams;
     float Master = 1.0f;
     std::vector<float> Block;
+    /// <summary>Whether the voices are kept over the rest (MCAudio::SetVoicePriority), their mix apart meanwhile.</summary>
+    bool VoicePriority = false;
+    std::vector<float> Voices;
+    MCVoiceDuck Duck;
     /// <summary>Told of every buffer's play and stop (the device that opened the mixer), or empty.</summary>
     MCAtomicPtr<std::weak_ptr<MCAudioDevice>> Listener;
 
@@ -257,12 +410,25 @@ void MCAudioCore::Render(std::span<float> out)
         // Expired entries are skipped here and swept out as buffers and streams are made, so the mixer frees
         // nothing under the lock.
         std::scoped_lock lock(Lock);
+        // With the voice priority on, the voices are mixed apart, then over the rest.
+        std::span<float> voices = out;
+
+        if (VoicePriority)
+        {
+            if (Voices.size() < out.size())
+            {
+                Voices.resize(out.size());
+            }
+
+            voices = std::span(Voices).first(out.size());
+            std::ranges::fill(voices, 0.0f);
+        }
 
         for (const std::weak_ptr<MCSoundBuffer>& entry : Buffers)
         {
             if (const std::shared_ptr<MCSoundBuffer> buffer = entry.lock())
             {
-                MixBuffer(*buffer, out);
+                MixBuffer(*buffer, buffer->_Voice ? voices : out);
             }
         }
 
@@ -272,6 +438,11 @@ void MCAudioCore::Render(std::span<float> out)
             {
                 MixStream(*stream, out);
             }
+        }
+
+        if (VoicePriority)
+        {
+            Duck.Apply(voices, out);
         }
     }
 
@@ -435,6 +606,12 @@ int32_t MCSoundBuffer::GetVolume() const
 {
     std::scoped_lock lock(_Core->Lock);
     return _Volume;
+}
+
+void MCSoundBuffer::SetVoice(bool voice)
+{
+    std::scoped_lock lock(_Core->Lock);
+    _Voice = voice;
 }
 
 void MCSoundBuffer::SetPan(int32_t pan)
@@ -740,6 +917,30 @@ void MCAudio::SetMasterVolume(float volume)
 {
     std::scoped_lock lock(_Core->Lock);
     _Core->Master = std::clamp(volume, 0.0f, 1.0f);
+}
+
+void MCAudio::SetVoicePriority(bool on)
+{
+    std::scoped_lock lock(_Core->Lock);
+
+    if (_Core->VoicePriority != on)
+    {
+        // Each time on, from nothing turned down.
+        _Core->VoicePriority = on;
+        _Core->Duck = {};
+    }
+}
+
+bool MCAudio::VoicePriority() const
+{
+    std::scoped_lock lock(_Core->Lock);
+    return _Core->VoicePriority;
+}
+
+float MCAudio::VoiceDuck() const
+{
+    std::scoped_lock lock(_Core->Lock);
+    return _Core->VoicePriority ? _Core->Duck.Gain() : 1.0f;
 }
 
 void MCAudio::PauseDevice(bool paused)

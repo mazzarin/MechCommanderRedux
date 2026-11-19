@@ -25,6 +25,7 @@
 #include "network/MCMultiPlayer.h"
 #include "platform/MCInput.h"
 #include "platform/MCSmacker.h"
+#include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -297,7 +298,9 @@ auto MCBriefingScreen::ShowSlots() -> void
         const std::shared_ptr<MCLogPart> unit = SlotUnit(i);
         const std::shared_ptr<MCMechBriefBlock> block = SlotBlocks[i].Lock();
 
-        if (block != nullptr && block->Part() == unit)
+        // Port fix: a block whose unit is gone (taken out of the force, then sold, on another screen) is replaced too;
+        // compared as is, the empty slot matched it, and the block was drawn without a unit.
+        if (block != nullptr && unit != nullptr && block->Part() == unit)
         {
             continue;
         }
@@ -574,6 +577,12 @@ auto MCBriefingScreen::Display() -> void
     }
 
     MCLogObject::Display();
+
+    // Port-only: a rehearsal only draws (MCRenderer::RehearsalScope); the movie's steps wait for a frame shown.
+    if (MCRenderer::Rehearsing())
+    {
+        return;
+    }
 
     if (MovieOver == 0)
     {

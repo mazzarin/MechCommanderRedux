@@ -249,7 +249,20 @@ auto MCLogOptionList::Status() const -> std::string_view
 auto MCLogOptionList::Setting(int32_t row) const -> int&
 {
     const Row& option = _Rows[static_cast<size_t>(row)];
-    return option.Value ? option.Value->get() : MCHdSettings::Find(option.Key).Value.get();
+
+    if (!option.Value)
+    {
+        return MCHdSettings::Find(option.Key).Value.get();
+    }
+
+    int& value = option.Value->get();
+
+    if (option.Current != nullptr)
+    {
+        value = option.Current();
+    }
+
+    return value;
 }
 
 auto MCLogOptionList::RowOf(std::string_view key) const -> std::optional<int32_t>

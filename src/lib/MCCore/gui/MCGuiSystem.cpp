@@ -29,10 +29,12 @@
 #include "network/MCMultiPlayer.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCSharpPictures.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSmacker.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCWeather.h"
 #include "sprite/MCWeatherPace.h"
 #include "vfx/MCVfxFunctions.h"
@@ -223,6 +225,36 @@ auto MCGuiSystem::LoadFonts() -> void
     SystemFont = GreyFont;
 }
 
+auto MCGuiSystem::MakeFontsAhead() const -> void
+{
+    if (_Display == nullptr || !_Display->SharpScreen())
+    {
+        return;
+    }
+
+    // Each font once (the drop fonts serve two sizes).
+    std::set<const MCGuiFont*> fonts;
+
+    for (const std::array<std::shared_ptr<MCGuiFont>, 3>& sizes : Fonts)
+    {
+        for (const std::shared_ptr<MCGuiFont>& font : sizes)
+        {
+            if (font != nullptr && !font->FontData.Empty() && fonts.insert(font.get()).second)
+            {
+                MCSharpPictures::MakeFont(font->FontData.Bytes());
+            }
+        }
+    }
+}
+
+auto MCGuiSystem::ReadMenuSetAhead() const -> void
+{
+    if (_Display != nullptr && _Display->SharpScreen())
+    {
+        MCHdArt::ReadMenuSetAhead();
+    }
+}
+
 auto MCGuiSystem::FreeFonts() -> void
 {
     for (std::shared_ptr<MCGuiFont>& global :
@@ -331,7 +363,11 @@ auto MCGuiSystem::Start(std::string_view commandLine, int16_t screenWidth, int16
     ArtFile->HoldAllPackets();
 
     OpenDisplay();
+    // Port-only: the fonts' sharp glyphs made from now, the boot their time.
+    MakeFontsAhead();
     LoadCursors();
+    // Port-only: the screens' HD pictures read from now, after the cursors' (which the boot waits for).
+    ReadMenuSetAhead();
     MCInput::ShowCursor(false);
     CursorShape = -1;
     MouseTimerInit();
@@ -368,6 +404,9 @@ auto MCGuiSystem::Stop() -> void
         // Port fix: a results screen still up ends its scenario as it closes, which ends a launcher's game still in
         // its match (KillTheGame). The original's KillTheGame left the process there; the port's throw would find no
         // catch past RunGame's run (std::terminate). The game is ending already: the rest of the stop goes on.
+        // Port-only: with no fade into the logistics it goes back to (CanFade).
+        _Stopping = true;
+
         try
         {
             Mission()->CloseResultsScreen();
@@ -376,6 +415,8 @@ auto MCGuiSystem::Stop() -> void
         {
             SDL_Log("GuiSystem: the results screen's close ended the game (code %d) as it stopped", quit.ExitCode);
         }
+
+        _Stopping = false;
     }
 
     Session.reset();

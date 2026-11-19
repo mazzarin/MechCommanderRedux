@@ -76,8 +76,31 @@ public:
     static constexpr uint32_t TwoImageFrames = 2;
     static constexpr uint32_t ThirdImageFrames = 3;
 
-    /// <summary>Port-only: the frames presented whose GPU work may not be done yet (_Sent), for the tests.</summary>
-    size_t FramesOnGpu() const { return _Sent.size(); }
+    /// <summary>
+    /// Port-only: the frames presented the game may still have on the GPU as it shows another (_Sent): two, as SDL's two
+    /// swapchain images hold them, or one with the third.
+    /// </summary>
+    static constexpr size_t HeldWithTwoImages = 2;
+    static constexpr size_t HeldWithThirdImage = 1;
+
+    /// <summary>
+    /// Port-only: the frames held on the GPU with SDL's frames in flight <paramref name="framesInFlight"/>
+    /// (HeldWithTwoImages, HeldWithThirdImage). With three images and two held, a run could fall into a backlog it kept
+    /// to its end, its waits for the next image coming in pairs (two refreshes, then none), and then miss refreshes
+    /// wherever a frame's GPU work ran long (the A10's canyon pan, 18 Nov). Held to one, each frame waits for the one
+    /// before it to be drawn, and the third image is the slack for a frame that runs past a refresh.
+    /// </summary>
+    static constexpr size_t FramesHeldOnGpu(uint32_t framesInFlight)
+    {
+        return framesInFlight == ThirdImageFrames ? HeldWithThirdImage : HeldWithTwoImages;
+    }
+
+    /// <summary>
+    /// Port-only, for the tests: the frames presented with a fence (the third image's), and the number of the last of
+    /// them whose drawing a frame waited for (HoldFramesOnGpu; 0 before any wait).
+    /// </summary>
+    uint64_t FramesSent() const { return _FramesSent; }
+    uint64_t LastFrameWaitedFor() const { return _LastFrameWaitedFor; }
 
     /// <summary>Port-only: SDL's frames in flight as last asked (_FramesInFlight), for the tests.</summary>
     uint32_t FramesInFlight() const { return _FramesInFlight; }
@@ -91,12 +114,22 @@ public:
     std::expected<std::vector<SDL_Color>, std::string> ReadFrame(const MCFrame& frame) override;
     std::expected<std::vector<uint8_t>, std::string> ReadScreen(const MCFrame& frame) override;
     std::expected<void, std::string> Discard(const MCFrame& frame) override;
+    std::expected<void, std::string> RunRecorded(std::span<const MCUnderlay> underlays) override;
     MCViewport Viewport(int viewWidth, int viewHeight) const override;
     void ShowFinished() override;
     void ShowPresented() override;
     void ShowBeforeInput() override;
+    std::span<const MCShownGrid> ShownGrids() const override { return _ShownGrids; }
 
 private:
+    /// <summary>
+    /// What the renderer recorded run now on this thread, shown nowhere and waited for (Discard, RunRecorded): the frame
+    /// running ahead finished first, then <paramref name="before"/> (with the GPU drawing; none: nothing), then the
+    /// commands with <paramref name="underlays"/>.
+    /// </summary>
+    std::expected<void, std::string> RunUnshown(std::span<const MCUnderlay> underlays,
+                                                const std::function<void()>& before);
+
     /// <summary>
     /// Port-only: what a frame's run reads (the renderer's sealed frame, the composite's plan, the frame's layout and
     /// colours), taken as it's presented (<see cref="Plan"/>). Defined in the .cpp; shared by the game's thread and the
@@ -276,8 +309,8 @@ private:
     /// refresh alone, where with two the next frame waits too and the rate falls in steps (240, 120, 80 fps on a 240 Hz
     /// screen). Without vsync it keeps two: on Windows a third image often leaves the desktop's compositor holding the
     /// game's frames for good after anything brings it in for a moment (a screenshot, an overlay, a notification), at
-    /// 60 fps and some 60 ms late, where with two the game gets the screen back. In either count the game is held to
-    /// two frames on the GPU, as two images held it (_Sent).
+    /// 60 fps and some 60 ms late, where with two the game gets the screen back. The game holds two frames on the GPU
+    /// with two images and one with three (FramesHeldOnGpu, _Sent).
     /// </summary>
     bool _ThirdImage = false;
     /// <summary>
@@ -285,16 +318,31 @@ private:
     /// SDL's two until the third image is asked for.
     /// </summary>
     uint32_t _FramesInFlight = TwoImageFrames;
-    /// <summary>Port-only (with the third image): the fences of the frames presented last, oldest first.</summary>
-    std::vector<SDL_GPUFence*> _Sent;
+    /// <summary>Port-only (with the third image): a frame presented, its fence and its number (_FramesSent).</summary>
+    struct SentFrame
+    {
+        SDL_GPUFence* Fence = nullptr;
+        uint64_t Number = 0;
+    };
+
+    /// <summary>Port-only (with the third image): the frames presented last, oldest first.</summary>
+    std::vector<SentFrame> _Sent;
     /// <summary>
-    /// Port-only (with the third image): waits for the frame before last's GPU work (_Sent); an error when the wait
-    /// fails (a lost device).
+    /// Port-only (with the third image): the frames presented, and the number of the last whose drawing a frame waited
+    /// for (HoldFramesOnGpu), for the tests (FramesSent, LastFrameWaitedFor).
+    /// </summary>
+    uint64_t _FramesSent = 0;
+    uint64_t _LastFrameWaitedFor = 0;
+    /// <summary>
+    /// Port-only (with the third image): waits for the GPU work of the frames presented past those held
+    /// (FramesHeldOnGpu, _Sent): the last frame's with three images, the frame before last's with two; an error when
+    /// the wait fails (a lost device).
     /// </summary>
     std::expected<void, std::string> HoldFramesOnGpu();
     /// <summary>
     /// Port-only: asks SDL for the frames in flight vsync <paramref name="vsync"/> takes (_ThirdImage), when they
-    /// differ from those last asked: each change makes the claimed window's swapchain again.
+    /// differ from those last asked: each change makes the claimed window's swapchain again, and holds the frames on
+    /// the GPU to the new count (FramesHeldOnGpu).
     /// </summary>
     void AskFramesInFlight(bool vsync);
     MCPresentation _Presentation;
@@ -357,6 +405,8 @@ private:
     Texture _NoLightTiles;
     /// <summary>Port-only (HD weather's snow): the underlays' specks' lattices, in the same order.</summary>
     std::vector<MCSpeckLattice> _Specks;
+    /// <summary>Port-only: the GPU worlds' drawn grids of the frame presented last (<see cref="ShownGrids"/>).</summary>
+    std::vector<MCShownGrid> _ShownGrids;
     /// <summary>The upload buffer, and its size; the light tiles' (uploaded after the frame's textures), and its.</summary>
     MCCountedGpuHandle<SDL_GPUTransferBuffer> _Upload;
     uint32_t _UploadSize = 0;

@@ -23,6 +23,11 @@ public:
     /// <returns>Nothing, or why it couldn't be opened (the set is then unchanged).</returns>
     std::expected<void, std::string> Open(std::string_view fileName);
 
+    /// <summary>
+    /// As <see cref="Open"/>, the archive at the file system's <paramref name="path"/> (not a game path).
+    /// </summary>
+    std::expected<void, std::string> OpenAt(const std::filesystem::path& path);
+
     /// <summary>Closes every archive.</summary>
     void Clear()
     {
@@ -46,6 +51,10 @@ public:
     const std::vector<std::unique_ptr<MCFastFile>>& Files() const { return _Files; }
 
 private:
+    /// <summary>Adds <paramref name="fastFile"/> as opened, named <paramref name="name"/> (no folders), in its place.</summary>
+    std::expected<void, std::string> Add(std::expected<std::unique_ptr<MCFastFile>, std::string> fastFile,
+                                         std::string_view name);
+
     /// <summary>The open archives, in search order.</summary>
     std::vector<std::unique_ptr<MCFastFile>> _Files;
     /// <summary>Their file names (without folders), in the same order.</summary>

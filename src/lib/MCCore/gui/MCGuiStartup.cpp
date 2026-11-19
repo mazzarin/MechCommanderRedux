@@ -231,6 +231,24 @@ namespace
         return segment >= 1 && segment <= last ? segment : 0;
     }
 
+    /// <summary>The longest -hdbriefing wait: a long briefing and loadout.</summary>
+    constexpr int32_t MostBriefingSeconds = 600;
+
+    /// <summary>-hdbriefing's seconds (1 to MostBriefingSeconds), or 0 (none, noted) for anything else.</summary>
+    int32_t BriefingSeconds(std::string_view word)
+    {
+        const int32_t seconds = std::atoi(std::string(word).c_str());
+
+        if (seconds < 1 || seconds > MostBriefingSeconds)
+        {
+            SDL_Log("-hdbriefing: %s isn't a number of seconds from 1 to %d; no wait", std::string(word).c_str(),
+                    MostBriefingSeconds);
+            return 0;
+        }
+
+        return seconds;
+    }
+
     /// <summary>The lobby's switches that take the word after them, as ParseCommandLine reads them.</summary>
     constexpr std::array<std::string_view, 13> LobbyValueSwitches{
         "-player", "--player",  "-session", "--session", "-maxplayers", "--maxplayers", "-port",
@@ -722,6 +740,18 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             if (hasArgument && !MCHdArt::OpenTrace(MCFileSystem::FromUtf8(words[i + 1])))
             {
                 SDL_Log("-hdtrace: can't write %s", std::string(words[i + 1]).c_str());
+            }
+
+            i++;
+        }
+        else if (MCIEquals(word, "-hdbriefing"))
+        {
+            // Port-only, for test runs (no player passes it): "-hdbriefing <seconds>" waits that long before a game
+            // segment's load (-mission's, -benchmark's), its hold started as the mission's briefing would start it
+            // (TestBriefingSeconds), so a run times the load with a briefing's head start.
+            if (hasArgument)
+            {
+                TestBriefingSeconds = BriefingSeconds(words[i + 1]);
             }
 
             i++;

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "MCFastFileFixture.h"
 #include "MCFilePatchFixture.h"
 #include "MCScratchFolder.h"
 #include "TestGame.h"
@@ -10,6 +11,7 @@
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFilePatch.h"
 #include "lib/MCFile.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCFrameOfRef.h"
 #include "lib/MCIDString.h"
@@ -18,8 +20,10 @@
 #include "lib/MCPriorityQueue.h"
 #include "lib/MCRetryDelay.h"
 #include "lib/MCThreadKeeper.h"
+#include "lib/MCWorkers.h"
 #include "main/MCGameContext.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCThreadPriority.h"
 
 namespace
 {
@@ -61,50 +65,9 @@ namespace
         return unpacked;
     }
 
-    void Put32(std::vector<uint8_t>& out, int32_t value)
-    {
-        const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(value);
-        out.insert(out.end(), bytes.begin(), bytes.end());
-    }
-
     int32_t Get32(const std::vector<uint8_t>& bytes, size_t at)
     {
         return std::bit_cast<int32_t>(std::array{bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]});
-    }
-
-    /// <summary>One entry of a FastFile built by <see cref="BuildFastFile"/>.</summary>
-    struct FastEntry
-    {
-        std::string Name;
-        std::vector<uint8_t> Data;
-        bool Packed = false;
-    };
-
-    /// <summary>
-    /// A FastFile as the format lays it out: the entry count, a 262-byte directory record per entry (offset, stored
-    /// size, real size, name), then the data, each entry raw or LZ-packed.
-    /// </summary>
-    std::vector<uint8_t> BuildFastFile(const std::vector<FastEntry>& entries)
-    {
-        std::vector<uint8_t> out;
-        Put32(out, static_cast<int32_t>(entries.size()));
-        std::vector<uint8_t> data;
-        const size_t dataStart = 4 + entries.size() * 262;
-
-        for (const FastEntry& entry : entries)
-        {
-            const std::vector<uint8_t> stored = entry.Packed ? LZCompress(entry.Data) : entry.Data;
-            Put32(out, static_cast<int32_t>(dataStart + data.size()));
-            Put32(out, static_cast<int32_t>(stored.size()));
-            Put32(out, static_cast<int32_t>(entry.Data.size()));
-            std::array<char, 250> name{};
-            std::ranges::copy(entry.Name, name.begin());
-            out.insert(out.end(), name.begin(), name.end());
-            data.insert(data.end(), stored.begin(), stored.end());
-        }
-
-        out.insert(out.end(), data.begin(), data.end());
-        return out;
     }
 
     /// <summary>Text that packs well.</summary>
@@ -134,6 +97,7 @@ namespace
         return data;
     }
 
+    using namespace MCFastFileFixture;
     using namespace MCFilePatchFixture;
 }
 
@@ -1465,6 +1429,51 @@ TEST_CASE("packet file: a packet file inside one closes with its parent")
 }
 
 /// <summary>
+/// Port-only: low-priority workers' helpers (the sharp pictures' maker's) run a step below the thread they were made
+/// for, as HD art's readers do (MCSetCurrentThreadPriority's step below), not at SDL's low priority (Windows' lowest).
+/// </summary>
+TEST_CASE("workers: low-priority helpers run a step below the thread they were made for, as HD art's readers")
+{
+    constexpr size_t Helpers = 2;
+    constexpr size_t Parts = 8;
+    constexpr auto PartTime = std::chrono::milliseconds(20);
+    constexpr bool Below = true;
+    const MCThreadPriority like = MCCurrentThreadPriority();
+    // What a thread a step below it gets by the readers' rule.
+    MCThreadPriority below;
+    std::thread(
+        [&]
+        {
+            MCSetCurrentThreadPriority(like, Below);
+            below = MCCurrentThreadPriority();
+        })
+        .join();
+    MCWorkers workers(Helpers, MCWorkers::Priority::Low, like);
+    const std::thread::id caller = std::this_thread::get_id();
+    std::vector<std::optional<MCThreadPriority>> onHelpers(Parts);
+    workers.Run(Parts,
+                [&](size_t part)
+                {
+                    std::this_thread::sleep_for(PartTime);
+
+                    if (std::this_thread::get_id() != caller)
+                    {
+                        onHelpers[part] = MCCurrentThreadPriority();
+                    }
+                });
+
+    REQUIRE(std::ranges::any_of(onHelpers, [](const auto& priority) { return priority.has_value(); }));
+
+    for (const std::optional<MCThreadPriority>& priority : onHelpers)
+    {
+        if (priority.has_value())
+        {
+            CHECK(*priority == below);
+        }
+    }
+}
+
+/// <summary>
 /// The open list pops the smallest key first. Equal keys come out last in, first out (an insert climbs past equal
 /// parents), which decides between equally good path steps (rule R5).
 /// </summary>
@@ -1623,6 +1632,94 @@ TEST_CASE("game: File falls back to the FastFiles")
     CHECK(imageType == 1 || imageType == 2 || imageType == 9 || imageType == 10);
     file.Close();
     CHECK(!file.IsOpen());
+}
+
+TEST_CASE(
+    "game: files read ahead open as the archives and the folders give them until let go, and one written is looked for "
+    "again")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::OpenFastFiles();
+    MCFastFileSet& archives = MCGameContext::Current().FastFiles();
+    REQUIRE(!archives.Files().empty());
+
+    // An entry stored packed and one stored as is, a name no archive or folder holds, a loose file, one dropped.
+    std::optional<std::string> packed;
+    std::optional<std::string> raw;
+
+    for (const std::unique_ptr<MCFastFile>& archive : archives.Files())
+    {
+        for (const MCFileEntry& entry : archive->GetEntries())
+        {
+            std::optional<std::string>& kind = entry.Size != entry.RealSize ? packed : raw;
+
+            if (!kind.has_value() && entry.RealSize > 0 && !MCFileSystem::Exists(entry.GetName()))
+            {
+                kind = std::string(entry.GetName());
+            }
+        }
+    }
+
+    REQUIRE(packed.has_value());
+    REQUIRE(raw.has_value());
+    const std::string missing = "data\\art\\no such picture.tga";
+    const std::string loose = "system.cfg";
+    REQUIRE(MCFileSystem::Exists(loose));
+    const std::string dropped = *raw;
+    const auto read = [](const std::string& name)
+    {
+        MCFile file;
+        const int32_t opened = file.Open(name);
+        std::vector<uint8_t> bytes(file.IsOpen() ? file.GetLength() : 0);
+        file.Read(bytes);
+        return std::pair(opened, bytes);
+    };
+
+    const auto [packedOpened, packedBytes] = read(*packed);
+    REQUIRE_EQ(packedOpened, 0);
+    const size_t taken = MCFilesAhead::TakenCount();
+    MCFilesAhead::ReadAhead({*packed, missing, loose, dropped}, archives);
+    MCFilesAhead::Drop(dropped);
+    const auto [aheadOpened, aheadBytes] = read(*packed);
+    CHECK_EQ(aheadOpened, 0);
+    CHECK(aheadBytes == packedBytes);
+    CHECK(read(*packed).second == packedBytes);
+    CHECK_EQ(read(missing).first, FILE_NOT_FOUND);
+    CHECK_EQ(MCFilesAhead::TakenCount() - taken, 3u);
+
+    // The loose file and the one dropped were left to their opens.
+    CHECK(!MCFilesAhead::Take(loose).has_value());
+    CHECK(!MCFilesAhead::Take(dropped).has_value());
+    CHECK_EQ(read(loose).first, 0);
+
+    // A write to any spelling of a path drops it; a spelling the archives don't hold (they match slashes as spelled) is
+    // not found as spelled, not in another's place.
+    std::string slashed = *packed;
+    std::ranges::replace(slashed, '\\', '/');
+    REQUIRE(slashed != *packed);
+    MCFilesAhead::Drop(slashed);
+    CHECK(!MCFilesAhead::Take(*packed).has_value());
+    MCFilesAhead::ReadAhead({slashed}, archives);
+    CHECK_EQ(read(slashed).first, FILE_NOT_FOUND);
+    CHECK(read(*packed).second == packedBytes);
+    MCFilesAhead::Forget();
+    CHECK_EQ(MCFilesAhead::HeldCount(), 0u);
+    CHECK(!MCFilesAhead::Take(slashed).has_value());
+
+    // What's noted: the files looked for in the archives, found or not; not a loose file.
+    MCFilesAhead::StartNoting();
+    std::ignore = read(*raw);
+    std::ignore = read(missing);
+    std::ignore = read(loose);
+    MCFilesAhead::StopNoting();
+    const std::vector<std::string> noted = MCFilesAhead::Noted();
+    CHECK(std::ranges::find(noted, *raw) != noted.end());
+    CHECK(std::ranges::find(noted, missing) != noted.end());
+    CHECK(std::ranges::find(noted, loose) == noted.end());
 }
 
 TEST_CASE("game: packet files open and read")

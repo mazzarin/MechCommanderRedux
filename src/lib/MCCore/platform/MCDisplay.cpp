@@ -634,6 +634,11 @@ std::expected<void, std::string> MCDisplay::Present(bool ahead)
     return _Presenter->Present(frame);
 }
 
+std::expected<void, std::string> MCDisplay::RunRecorded()
+{
+    return _Presenter->RunRecorded(_FrameUnderlays);
+}
+
 void MCDisplay::ShowFinished()
 {
     _Presenter->ShowFinished();
@@ -851,7 +856,52 @@ bool MCDisplay::WindowToLogical(float windowX, float windowY, float& logicalX, f
         MapToLogical(ShownViewport(), _View.w, _View.h, windowX * density, windowY * density, logicalX, logicalY);
     logicalX += static_cast<float>(_View.x);
     logicalY += static_cast<float>(_View.y);
+    OnShownGrids(_Presenter->ShownGrids(), logicalX, logicalY);
     return inside;
+}
+
+void MCDisplay::OnShownGrids(std::span<const MCShownGrid> grids, float& logicalX, float& logicalY)
+{
+    // The last drawn over the point.
+    std::optional<size_t> over;
+
+    for (size_t i = 0; i < grids.size(); ++i)
+    {
+        const MCRect& rect = grids[i].Rect;
+
+        if (logicalX >= static_cast<float>(rect.X0) && logicalY >= static_cast<float>(rect.Y0) &&
+            logicalX < static_cast<float>(rect.X1 + 1) && logicalY < static_cast<float>(rect.Y1 + 1))
+        {
+            over = i;
+        }
+    }
+
+    if (!over.has_value())
+    {
+        return;
+    }
+
+    // On each axis: the point's place in the world's window, the drawn place it lands on, the window place the
+    // picture shows there, back on the screen.
+    const auto moved = [](float at, int32_t first, int32_t last, uint32_t window, uint32_t drawn, int32_t offset)
+    {
+        const double shown = static_cast<double>(last) - first + 1;
+
+        if (offset == 0 || window == 0 || drawn == 0 || shown <= 0.0)
+        {
+            return at;
+        }
+
+        const double place = (static_cast<double>(at) - first) * window / shown;
+        const double seen = MCDrawnGrid::WindowPlace(place * drawn / window, window, drawn, offset);
+        const auto back = static_cast<float>(first + seen * shown / window);
+        return std::clamp(back, static_cast<float>(first),
+                          std::nextafter(static_cast<float>(last + 1), static_cast<float>(first)));
+    };
+
+    const MCShownGrid& grid = grids[*over];
+    logicalX = moved(logicalX, grid.Rect.X0, grid.Rect.X1, grid.Window[0], grid.Drawn[0], grid.Offset[0]);
+    logicalY = moved(logicalY, grid.Rect.Y0, grid.Rect.Y1, grid.Window[1], grid.Drawn[1], grid.Offset[1]);
 }
 
 void MCDisplay::LogicalToWindow(float logicalX, float logicalY, float& windowX, float& windowY) const

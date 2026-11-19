@@ -69,6 +69,13 @@ public:
     /// made passable or blocked, and (for a bridge) the global move-map area closed.
     /// </summary>
     void SetDamage(float newDamage) override;
+    /// <summary>
+    /// Port-only (the workspace's SPEC-first-use.md): the overlay tile its vertex shows once it's destroyed
+    /// (<see cref="SetDamage"/> adds its kind's step to the vertex's overlay), so the mission's load can have it in hand;
+    /// none for a kind that changes none. Even one the map shows broken: its first update forgets that, so a hit steps
+    /// it again.
+    /// </summary>
+    std::optional<int32_t> DestroyedOverlayTile() const;
     int IsBuilding() override { return 1; }
     /// <summary>Whether any of the four vertices around it is visible to the home team.</summary>
     int IsRevealed() override;
@@ -84,11 +91,6 @@ public:
     void DrawBars(MCVector2D screenPos);
     /// <summary>A 1-point hit, and more burning time for its fire if it has one.</summary>
     void LightOnFire(float timeToBurn);
-    /// <summary>
-    /// Port-only (the workspace's SPEC-first-use.md): the overlay tile its vertex shows once it is destroyed (SetDamage
-    /// adds its kind's step to the vertex's overlay), or none for a kind that changes none.
-    /// </summary>
-    std::optional<int32_t> DestroyedOverlayTile() const;
 
     /// <summary>The line-of-fire bits of the nine cells of the tile, saved by <see cref="ClearLineOfFire"/>.</summary>
     static std::array<int32_t, 9> CellArray;
@@ -114,10 +116,3 @@ private:
     /// <summary>Adds its kind's step to its vertex's overlay tile, which then shows it destroyed.</summary>
     void ShowDestroyedOverlay();
 };
-
-/// <summary>
-/// Port-only (the workspace's SPEC-first-use.md): the overlay tiles the map's bridges, forests and walls show once
-/// destroyed (DestroyedOverlayTile), each once. The map's vertices don't name them, so the mission's load reads them
-/// with the mines' (MCTerrainReadOverlaysAhead) and the frame that first draws one reads none.
-/// </summary>
-std::vector<int32_t> MCDestroyedTerrainTiles();

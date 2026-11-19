@@ -343,10 +343,11 @@ namespace
     }
 
     /// <summary>
-    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): the frames of play the opening's check
-    /// plays: the first shown and the next, whose draws the load prepared.
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): the frames counted from play's start
+    /// (MCFirstUse::Frame) whose draws the load prepared: the one play starts in and the two after it, the first drawn
+    /// among them (the test game's start-up turns then run on, a mech's next gestures read ahead as in play).
     /// </summary>
-    constexpr int32_t OpeningFrames = 2;
+    constexpr int32_t OpeningFrames = 3;
 
     /// <summary>
     /// The interface's HD line art and glyphs taken from the pack as each is first shown (MCSharpPictures::Take), its
@@ -357,25 +358,29 @@ namespace
     constexpr std::string_view Craters = "craters.hda ";
 
     /// <summary>
-    /// Whether <paramref name="use"/> is one the opening's check passes: the music's start, the interface's line art or a
-    /// crater made in play (each its own item), not the opening view's.
+    /// Whether <paramref name="use"/> is one the opening's check passes: the music's start, an HD movie's (a pilot's
+    /// video the mission opens with), the interface's line art or a crater made in play (each its own item), not the
+    /// opening view's.
     /// </summary>
     bool OpeningPasses(const MCFirstUse& use)
     {
         const bool music = (use.Kind == MCFirstUseKind::Open || use.Kind == MCFirstUseKind::Read) &&
                            (use.What.contains(MusicFiles) || use.What.contains(StereoMusicFiles));
         const bool made = use.What.starts_with(SharpPictures) || use.What.contains(Craters);
-        return music || (use.Kind == MCFirstUseKind::Unpack && made);
+        return music || use.Kind == MCFirstUseKind::Movie || (use.Kind == MCFirstUseKind::Unpack && made);
     }
 
     /// <summary>
     /// The opening's check: nothing in play's first frames read, unpacked, waited on, decoded or opened for the first
     /// time on the game's thread, not even of the kinds still open in play (HD art's held entries unpacked among them),
-    /// the music's start, the interface's line art and craters made in play aside (OpeningPasses); else the first ListedUses, each a line.
+    /// the music's and HD movies' starts, the interface's line art and craters made in play aside (OpeningPasses); else
+    /// the first ListedUses, each a line.
     /// </summary>
     void RequireOpeningUsesNothing(const std::vector<MCFirstUse>& uses)
     {
-        RequireNoGaps(uses, OpeningPasses, "in play's first frames, not the music's, the line art's or craters'");
+        RequireNoGaps(
+            uses, [](const MCFirstUse& use) { return use.Frame >= OpeningFrames || OpeningPasses(use); },
+            "in play's first frames, not the music's, movies', line art's or craters'");
     }
 
     /// <summary>The pack the guard plays with: --hd-pack's (absolute: the game works in the install's folder), else none.</summary>
@@ -434,11 +439,17 @@ TEST_CASE_ISOLATED("game: in the canyon's battle the game's thread reads and unp
 }
 
 /// <summary>
-/// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): play's first frames in mission 1, as a
+/// Port-only (the opening view's test): the campaign mission it plays, whose opening view holds map objects release 9
+/// drew from the pack in play's first frame (waited on: 6.9 ms, 19 Nov).
+/// </summary>
+constexpr int32_t OpeningMission = 3;
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): play's first frames in mission 3, as a
 /// player's, with the guard's pack (--hd-pack), read, unpack and wait on nothing on the game's thread: the load read and
 /// unpacked what its view and the ring around it draw, and put it on the GPU.
 /// </summary>
-TEST_CASE_ISOLATED("game: play's first frames in mission 1 read and unpack nothing on the game's thread")
+TEST_CASE_ISOLATED("game: play's first frames in mission 3 read and unpack nothing on the game's thread")
 {
     if (!MCTestGame::Available())
     {
@@ -446,13 +457,17 @@ TEST_CASE_ISOLATED("game: play's first frames in mission 1 read and unpack nothi
     }
 
     MCTestContextScope scope;
-    StartAsPlayer(scope, 1, GuardPack());
+    StartAsPlayer(scope, OpeningMission, GuardPack());
     HdMemory memory;
     PlayBattle(OpeningFrames, memory);
     RequireOpeningUsesNothing(MCFirstUses::Take());
 }
 
-/// <summary>Port-only (the opening view): the same for the canyon's battle, its staged force as the benchmark plays it.</summary>
+/// <summary>
+/// Port-only (the opening view): the same for the canyon's battle, its staged force as the benchmark plays it, at the
+/// zoom play opens at: the battle's own zoom from its first frame (540 lines, eased) is the zoom's read-ahead's, as a
+/// player's is.
+/// </summary>
 TEST_CASE_ISOLATED("game: play's first frames in the canyon read and unpack nothing on the game's thread")
 {
     if (!MCTestGame::Available())
@@ -460,7 +475,8 @@ TEST_CASE_ISOLATED("game: play's first frames in the canyon read and unpack noth
         return;
     }
 
-    const MCBattleSpec spec = CanyonSpec(OpeningFrames);
+    MCBattleSpec spec = CanyonSpec(OpeningFrames);
+    spec.Zoom = 0;
     const std::expected<void, std::string> put = MCTrailerMission::Put(spec.Force);
     REQUIRE(put.has_value());
     MCTestContextScope scope;

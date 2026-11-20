@@ -201,6 +201,25 @@ namespace
     /// <summary>The draw field carrying place.w (shaders/instance.vshader's <c>Draw::place</c>).</summary>
     constexpr size_t PlaceFlagsField = 23;
     /// <summary>
+    /// Port-only (HDSmoothPlace): place.w's bit for a draw placed past its whole window pixel
+    /// (MCRenderer::SubPixelScope), by SubPixelSteps-ths of one across (from SubPixelXShift) and down (SubPixelYShift):
+    /// the shaders move it by that on the target's drawn grid (shaders/pixels.hlsli's SubPixelOffset).
+    /// </summary>
+    constexpr uint32_t SubPixelPlaced = 2u;
+    constexpr uint32_t SubPixelXShift = 8;
+    constexpr uint32_t SubPixelYShift = 16;
+
+    constexpr float SubPixelSteps = 256.0f;
+    constexpr int32_t SubPixelMost = 255;
+
+    /// <summary>A fraction of a window pixel (0 to 1) as place.w's steps.</summary>
+    uint32_t SubPixelBits(float fraction)
+    {
+        return static_cast<uint32_t>(
+            std::clamp(static_cast<int32_t>(std::lround(fraction * SubPixelSteps)), 0, SubPixelMost));
+    }
+
+    /// <summary>
     /// Port-only: the most keyed holes a KindHd draw carries that later copies fill (FillHoles), in its draw's span and
     /// walk from FilledHolesSlot, two words a hole: its first original pixel and the one past its last, x in the low
     /// half and y in the high (shaders/draw.pshader's FilledHolesMost).
@@ -1016,14 +1035,17 @@ namespace
             return pixel;
         }
 
-        // (2 * at + 1) * drawn / (2 * shown) + r / window, rounded down, in [0, drawn).
+        // (2 * at + 1) * drawn / (2 * shown) + r / window, rounded down, within the drawn pixels that show a window
+        // pixel (MCDrawnGrid::Showing: past them, the edge's).
         const auto drawnAt = [](int64_t at, int64_t shownSize, int64_t drawn, int64_t windowSize, int64_t r)
         {
             const int64_t size = std::max<int64_t>(windowSize, 1);
             const int64_t n = (2 * at + 1) * drawn * size + 2 * r * shownSize;
             const int64_t d = 2 * shownSize * size;
             const int64_t place = n >= 0 ? n / d : -((-n + d - 1) / d);
-            return static_cast<size_t>(std::clamp<int64_t>(place, 0, drawn - 1));
+            const std::array<int64_t, 2> showing = MCDrawnGrid::Showing(
+                static_cast<uint32_t>(windowSize), static_cast<uint32_t>(drawn), static_cast<int32_t>(r));
+            return static_cast<size_t>(std::clamp<int64_t>(place, showing[0], showing[1]));
         };
 
         const size_t wx = drawnAt(x - shown.X0, shown.X1 - shown.X0 + 1, worldWidth, window[0], offset[0]);
@@ -2163,6 +2185,13 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         draw[21] = PackedPair(place.HdX, place.HdY);
         draw[22] = PackedPair(place.Width, place.Height);
         draw[PlaceFlagsField] = picture.HdMarks ? static_cast<int32_t>(HdMarksSource) : 0;
+    }
+
+    // Port-only (HDSmoothPlace): placed past its whole window pixel by the scope's fraction.
+    if (const std::optional<std::array<float, 2>> fraction = MCRenderer::DrawingSubPixel(); fraction.has_value())
+    {
+        draw[PlaceFlagsField] |= static_cast<int32_t>(SubPixelPlaced | SubPixelBits((*fraction)[0]) << SubPixelXShift |
+                                                      SubPixelBits((*fraction)[1]) << SubPixelYShift);
     }
 
     const bool indexOnly = (op & IndexOnly) != 0;
@@ -6427,6 +6456,7 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     if (!drawn.GridPlaced)
     {
         drawn.GridOrigin = std::array{frame.PaneX + frame.OriginX, frame.PaneY + frame.OriginY};
+        drawn.GridFraction = frame.OriginFraction;
         drawn.GridPlaced = true;
     }
 
@@ -7153,26 +7183,52 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     const int32_t moveY = now.OriginY - then.OriginY;
     const bool moved = moveX != 0 || moveY != 0;
     const MCRect& clip = now.Clip;
-    const auto drawnMove = [](int32_t pane, int32_t from, int32_t to, uint32_t window, uint32_t drawn)
+    // Port-only (HDSmoothCamera): each with the camera's fraction of a pixel it was drawn at, which moves the grid too.
+    const auto drawnMove = [&now, &then](size_t axis, uint32_t window, uint32_t drawn)
     {
-        return static_cast<int32_t>(MCDrawnGrid::Whole(pane + to, window, drawn) -
-                                    MCDrawnGrid::Whole(pane + from, window, drawn));
+        const int32_t pane = axis == 0 ? now.PaneX : now.PaneY;
+        const int32_t from = pane + (axis == 0 ? then.OriginX : then.OriginY);
+        const int32_t to = pane + (axis == 0 ? now.OriginX : now.OriginY);
+        return static_cast<int32_t>(MCDrawnGrid::Whole(to, window, drawn, now.OriginFraction[axis]) -
+                                    MCDrawnGrid::Whole(from, window, drawn, then.OriginFraction[axis]));
     };
 
-    const int32_t shiftX = drawnMove(now.PaneX, then.OriginX, now.OriginX, surface.MappedWidth, surface.Target.Width);
-    const int32_t shiftY = drawnMove(now.PaneY, then.OriginY, now.OriginY, surface.MappedHeight, surface.Target.Height);
+    const int32_t shiftX = drawnMove(0, surface.MappedWidth, surface.Target.Width);
+    const int32_t shiftY = drawnMove(1, surface.MappedHeight, surface.Target.Height);
 
     if (moved && (std::abs(moveX) > clip.X1 - clip.X0 || std::abs(moveY) > clip.Y1 - clip.Y0))
     {
         return plan;
     }
 
+    // Port-only (HDSmoothCamera): the window pixels the kept pixels' move uncovers at the edge they move away from: the
+    // view's move, but where the camera's fraction moved the picture by more drawn pixels than that (or by some, the
+    // view not moving), as many window pixels as cover the drawn move and the one it starts inside. Without a fraction
+    // the kept pixels move by the view's move exactly, as before.
+    const auto uncovered = [&now, &then](size_t axis, int32_t move, int32_t shift, uint32_t window, uint32_t drawn)
+    {
+        if (shift == 0 || (now.OriginFraction[axis] == 0 && then.OriginFraction[axis] == 0))
+        {
+            return move;
+        }
+
+        const int64_t w = std::max(window, 1u);
+        const int64_t d = std::max(drawn, 1u);
+        const auto reach = static_cast<int32_t>((std::abs(int64_t{shift}) * w + d - 1) / d + 1);
+        const int32_t along = (move > 0) == (shift > 0) ? std::abs(move) : 0;
+        return (shift > 0 ? 1 : -1) * std::max(along, reach);
+    };
+
+    const int32_t openX = uncovered(0, moveX, shiftX, surface.MappedWidth, surface.Target.Width);
+    const int32_t openY = uncovered(1, moveY, shiftY, surface.MappedHeight, surface.Target.Height);
+    const bool opened = openX != 0 || openY != 0;
+
     const bool fogChanged = !std::ranges::equal(seen, kept.Seen);
     const bool cycled = cycleStep != kept.CycleStep;
     plan.Whole = false;
     plan.Shift = {shiftX, shiftY};
 
-    if (!moved && !fogChanged && !cycled)
+    if (!opened && !fogChanged && !cycled)
     {
         return plan;
     }
@@ -7180,16 +7236,16 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     // What the view moved onto (window pixels).
     std::vector<MCRect> parts;
 
-    if (moveX != 0)
+    if (openX != 0)
     {
-        parts.push_back(moveX > 0 ? MCRect{clip.X0, clip.Y0, clip.X0 + moveX - 1, clip.Y1}
-                                  : MCRect{clip.X1 + moveX + 1, clip.Y0, clip.X1, clip.Y1});
+        parts.push_back(openX > 0 ? MCRect{clip.X0, clip.Y0, std::min(clip.X0 + openX - 1, clip.X1), clip.Y1}
+                                  : MCRect{std::max(clip.X1 + openX + 1, clip.X0), clip.Y0, clip.X1, clip.Y1});
     }
 
-    if (moveY != 0)
+    if (openY != 0)
     {
-        parts.push_back(moveY > 0 ? MCRect{clip.X0, clip.Y0, clip.X1, clip.Y0 + moveY - 1}
-                                  : MCRect{clip.X0, clip.Y1 + moveY + 1, clip.X1, clip.Y1});
+        parts.push_back(openY > 0 ? MCRect{clip.X0, clip.Y0, clip.X1, std::min(clip.Y0 + openY - 1, clip.Y1)}
+                                  : MCRect{clip.X0, std::max(clip.Y1 + openY + 1, clip.Y0), clip.X1, clip.Y1});
     }
 
     // The indices showing a cycled colour, themselves or through the haze's tables.
@@ -7926,8 +7982,10 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
 
         if (surface.GridOrigin.has_value())
         {
-            surface.Offset = {MCDrawnGrid::Offset((*surface.GridOrigin)[0], surface.MappedWidth, surface.DrawnWidth),
-                              MCDrawnGrid::Offset((*surface.GridOrigin)[1], surface.MappedHeight, surface.DrawnHeight)};
+            surface.Offset = {MCDrawnGrid::Offset((*surface.GridOrigin)[0], surface.MappedWidth, surface.DrawnWidth,
+                                                  surface.GridFraction[0]),
+                              MCDrawnGrid::Offset((*surface.GridOrigin)[1], surface.MappedHeight, surface.DrawnHeight,
+                                                  surface.GridFraction[1])};
         }
 
         surface.GridPlaced = false;
@@ -9733,14 +9791,21 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
                                        [&](const std::array<uint8_t, 256>& table) { return table[drawn] == cpu; });
         };
 
-        for (int32_t y = 0; y < drawnHeight; ++y)
+        // Port-only (HDSmoothCamera): only the drawn pixels that show a window pixel; the strip past the edge the
+        // camera's fraction moved the picture off is never shown (MCDrawnGrid::Showing).
+        const std::array<int64_t, 2> acrossShowing =
+            MCDrawnGrid::Showing(static_cast<uint32_t>(width), static_cast<uint32_t>(drawnWidth), compared.Offset[0]);
+        const std::array<int64_t, 2> downShowing =
+            MCDrawnGrid::Showing(static_cast<uint32_t>(height), static_cast<uint32_t>(drawnHeight), compared.Offset[1]);
+
+        for (auto y = static_cast<int32_t>(downShowing[0]); y <= downShowing[1]; ++y)
         {
             const int32_t wy =
                 std::clamp(MCDrawnGrid::WindowPixel(y, static_cast<uint32_t>(height),
                                                     static_cast<uint32_t>(drawnHeight), compared.Offset[1]),
                            0, height - 1);
 
-            for (int32_t x = 0; x < drawnWidth; ++x)
+            for (auto x = static_cast<int32_t>(acrossShowing[0]); x <= acrossShowing[1]; ++x)
             {
                 const int32_t wx =
                     std::clamp(MCDrawnGrid::WindowPixel(x, static_cast<uint32_t>(width),

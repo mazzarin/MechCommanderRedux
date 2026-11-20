@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiTitleWindow.h"
 #include "lib/MCVector2D.h"
@@ -134,6 +136,12 @@ struct MCOverlayTarget
     /// <summary>Screen pixels per world surface pixel.</summary>
     float ScaleX = 1.0f;
     float ScaleY = 1.0f;
+    /// <summary>
+    /// Port-only (HDSmoothCamera): how far the world's picture is moved on its surface, world surface pixels across and
+    /// down (the camera's fraction past MCCamera::ScreenUL, taken off; 0 with it off). <see cref="MCOverlayPoint"/> adds
+    /// it, so an overlay placed from a unit's place on the surface follows the picture.
+    /// </summary>
+    std::array<float, 2> Shift{};
 };
 
 /// <summary>Port: where the overlays of the camera rendering go.</summary>

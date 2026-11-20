@@ -399,17 +399,21 @@ float4 FetchSource(int2 texel)
     return SourceAt(DrawnPixel(texel, sourceScale, offset.zw));
 }
 
+// The target's drawn grid's offset for this draw: the frame's, and a draw placed past its whole window pixel moved on
+// by it (pixels.hlsli's SubPixelOffset; set in main).
+static int2 targetOffset;
+
 // The window place drawn pixel `target`'s centre shows (pixels.hlsli's WindowPixel, unrounded).
 float2 WindowPlace(int2 target)
 {
-    return ((float2(target) + 0.5) * float2(scale.xy) - float2(offset.xy)) / float2(scale.zw);
+    return ((float2(target) + 0.5) * float2(scale.xy) - float2(targetOffset)) / float2(scale.zw);
 }
 
 // Port-only: how far the target's drawn grid moves its picture (drawn pixels, under half of one): a window place lies at
 // drawn place window * drawn / window plus this.
 float2 GridShift()
 {
-    return float2(offset.xy) / float2(scale.xy);
+    return float2(targetOffset) / float2(scale.xy);
 }
 
 // The colour the HD art pack's pictures were made from for an index.
@@ -2081,7 +2085,7 @@ Output DrawnOutput(Input input)
 #endif
 
     // The window pixel it shows, which the original's kinds work from.
-    const int2 pixel = WindowPixel(target, scale, offset.xy);
+    const int2 pixel = WindowPixel(target, scale, targetOffset);
     const uint color = input.op.y & 255u;
     uint value = color;
     uint state = 1;
@@ -2254,6 +2258,7 @@ Output main(Input input)
     hdCorner = int2(input.place.y & 0xffffu, input.place.y >> 16);
     placeSize = int2(input.place.z & 0xffffu, input.place.z >> 16);
     sourceMarks = (input.place.w & HdMarksSource) != 0;
+    targetOffset = offset.xy + SubPixelOffset(input.place.w, scale.zw);
     Output output = DrawnOutput(input);
 
     // Port-only (HD lighting): a light's glow, premultiplied through the blend pipeline, fainter as look.x.

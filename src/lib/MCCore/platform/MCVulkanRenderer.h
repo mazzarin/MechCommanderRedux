@@ -783,6 +783,11 @@ private:
         /// (none: none drawn on it yet), and whether the frame being recorded drew one (its first places the grid).
         /// </summary>
         std::optional<std::array<int32_t, 2>> GridOrigin;
+        /// <summary>
+        /// Port-only (HDSmoothCamera): the camera's fraction of a pixel past GridOrigin's place
+        /// (MCTerrainFrame::OriginFraction), which moves the grid too.
+        /// </summary>
+        std::array<int32_t, 2> GridFraction{};
         bool GridPlaced = false;
         /// <summary>
         /// Port-only: the offset of the surface's drawn grid across and down (MCDrawnGrid::Offset) from GridOrigin

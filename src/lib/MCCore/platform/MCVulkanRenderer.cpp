@@ -9150,12 +9150,28 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         const uint32_t height = surface.Target.Height;
         const bool whole = plan.Whole || !held || kept.ViewColors[kept.ViewCurrent].Width != width ||
                            kept.ViewColors[kept.ViewCurrent].Height != height;
+        const MCRect drawnAll{0, 0, static_cast<int32_t>(width) - 1, static_cast<int32_t>(height) - 1};
         std::vector<MCRect> parts;
+
+        // The drawn pixels a draw over `from` (its window rectangle from `origin`, as its key holds it) can reach: a pixel
+        // more on each side, in the view's; empty when none.
+        const auto reach = [&](const MCRect& from)
+        {
+            const MCRect at = Intersection(
+                MCRect{from.X0 + origin[0], from.Y0 + origin[1], from.X1 + origin[0], from.Y1 + origin[1]}, shown);
+
+            if (Empty(at))
+            {
+                return MCRect{0, 0, -1, -1};
+            }
+
+            const MCRect drawn =
+                DrawnPixels(at, {surface.MappedWidth, surface.MappedHeight}, {width, height}, surface.Offset);
+            return Intersection(MCRect{drawn.X0 - 1, drawn.Y0 - 1, drawn.X1 + 1, drawn.Y1 + 1}, drawnAll);
+        };
 
         if (!whole)
         {
-            const MCRect drawnAll{0, 0, static_cast<int32_t>(width) - 1, static_cast<int32_t>(height) - 1};
-
             // The ground's parts drawn again and, at a step of the colour cycle, its cells showing a cycled colour (the
             // lay takes the kept ground to the frame's step), and the pixels round them whose gaps' fill reads them.
             for (const std::vector<MCRect>* drawnAgain : {&plan.Redrawn, &plan.Cycled})
@@ -9180,18 +9196,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             for (const auto& [key, from] : changed)
             {
-                const MCRect at = Intersection(
-                    MCRect{from.X0 + origin[0], from.Y0 + origin[1], from.X1 + origin[0], from.Y1 + origin[1]}, shown);
-
-                if (Empty(at))
-                {
-                    continue;
-                }
-
-                const MCRect drawn =
-                    DrawnPixels(at, {surface.MappedWidth, surface.MappedHeight}, {width, height}, surface.Offset);
-                const MCRect part =
-                    Intersection(MCRect{drawn.X0 - 1, drawn.Y0 - 1, drawn.X1 + 1, drawn.Y1 + 1}, drawnAll);
+                const MCRect part = reach(from);
 
                 if (!Empty(part))
                 {
@@ -9279,8 +9284,39 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             viewed.Index = kept.ViewIndices[into];
             viewed.Folds = true;
 
+            // Drawn again in parts: each overlay's draws' reach (in the keys' order, each record's draws in turn) and
+            // each record's, for a part to record only the draws reaching it, not every record once a part.
+            std::vector<MCRect> drawReach;
+            std::vector<MCRect> recordReach;
+
+            if (!whole && !parts.empty())
+            {
+                drawReach.reserve(keys.size());
+
+                for (const auto& [key, from] : keys)
+                {
+                    drawReach.push_back(reach(from));
+                }
+
+                size_t at = 0;
+
+                for (const uint32_t index : overlays)
+                {
+                    MCRect bounds{0, 0, -1, -1};
+
+                    for (uint32_t d = 0; d < run.Records[index].Count; ++d)
+                    {
+                        bounds = Union(bounds, drawReach[at + d]);
+                    }
+
+                    recordReach.push_back(bounds);
+                    at += run.Records[index].Count;
+                }
+            }
+
             // A part (all of it, drawn whole): the ground laid as the surface's pass lays it, over its blank, then the
-            // overlays.
+            // overlays: in a part, each record's draws from the first to the last reaching it (the others draw none of
+            // its pixels), in order.
             const auto drawPart = [&](std::optional<MCRect> part)
             {
                 if (part.has_value())
@@ -9297,11 +9333,40 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                                kept.Current);
                 forgetBound();
 
-                for (const uint32_t at : overlays)
+                size_t at = 0;
+
+                for (size_t r = 0; r < overlays.size(); ++r)
                 {
-                    const Record& record = run.Records[at];
-                    drawBatch(viewing, viewed, record, record.First, record.Count);
-                    _GroundCounts.OverlaysDrawn += record.Count;
+                    const Record& record = run.Records[overlays[r]];
+                    uint32_t from = 0;
+                    uint32_t to = record.Count;
+
+                    if (part.has_value() && Empty(Intersection(recordReach[r], *part)))
+                    {
+                        to = 0;
+                    }
+                    else if (part.has_value())
+                    {
+                        const auto reaches = [&](uint32_t d) { return !Empty(Intersection(drawReach[at + d], *part)); };
+
+                        while (from < to && !reaches(from))
+                        {
+                            ++from;
+                        }
+
+                        while (to > from && !reaches(to - 1))
+                        {
+                            --to;
+                        }
+                    }
+
+                    at += record.Count;
+
+                    if (from < to)
+                    {
+                        drawBatch(viewing, viewed, record, record.First + from, to - from);
+                        _GroundCounts.OverlaysDrawn += to - from;
+                    }
                 }
             };
 

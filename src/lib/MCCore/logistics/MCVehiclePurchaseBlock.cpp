@@ -241,11 +241,12 @@ auto MCVehiclePurchaseBlock::DrawRow(MCLogPort& port, int32_t top) -> void
         // The picture.
         MCLogBlockPort picture(work->Frame(), 0xed, 6, 0x4b, 100, true);
         VfxPaneWipe(picture.Frame(), 0x10);
-        VfxShapeLookaside(GlobalLog()->ShapeLookaside[0]);
 
+        // Port: drawn through the table itself, never a copy set as the lookaside (VfxShapeTranslateDraw).
         for (int32_t shape = 0; shape < 5; ++shape)
         {
-            VfxShapeTranslateDraw(picture.Frame(), GlobalLog()->VehicleRepShapes[index].Bytes(), shape, 0, 0);
+            VfxShapeTranslateDraw(picture.Frame(), GlobalLog()->VehicleRepShapes[index].Bytes(), shape, 0, 0,
+                                  GlobalLog()->ShapeLookaside[0]);
         }
 
         for (int32_t location = 0; location < 5; ++location)

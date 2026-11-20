@@ -353,18 +353,17 @@ auto MCMechPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) -> void
         const std::span<const uint8_t> shapes = GlobalLog()->MechRepShapes[static_cast<size_t>(*PictureIndex)].Bytes();
         MCLogBlockPort picture(row->Frame(), PictureX, PictureY, PictureWidth, PictureHeight, true);
         VfxPaneWipe(picture.Frame(), PictureBack);
-        VfxShapeLookaside(GlobalLog()->ShapeLookaside[ShadowLookaside]);
 
+        // Port: drawn through the tables themselves, never copies set as the lookaside (VfxShapeTranslateDraw).
         for (int32_t shape = 0; shape < PictureShapes; ++shape)
         {
-            VfxShapeTranslateDraw(picture.Frame(), shapes, shape + ShadowShapes, 0, 0);
+            VfxShapeTranslateDraw(picture.Frame(), shapes, shape + ShadowShapes, 0, 0,
+                                  GlobalLog()->ShapeLookaside[ShadowLookaside]);
         }
 
-        VfxShapeLookaside(GlobalLog()->ShapeLookaside[MechLookaside]);
-
         for (int32_t shape = 0; shape < PictureShapes; ++shape)
         {
-            VfxShapeTranslateDraw(picture.Frame(), shapes, shape, 0, 0);
+            VfxShapeTranslateDraw(picture.Frame(), shapes, shape, 0, 0, GlobalLog()->ShapeLookaside[MechLookaside]);
         }
     }
 

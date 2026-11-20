@@ -9698,10 +9698,26 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             std::vector<uint32_t> trees;
             // Each draw after the terrain on the surface: its place in order, its rectangle, whether a tree's.
             std::vector<std::tuple<size_t, MCRect, bool>> draws;
+            // The forests' swaying HD frames' draws (the tree build's) and area: the overlays', the rest's, and those
+            // of the rest marked a tree's.
+            std::array<int64_t, 3> swayDraws{};
+            std::array<int64_t, 3> swayArea{};
 
             for (size_t k = static_cast<size_t>(terrainAt) + 1; k < order.size(); ++k)
             {
                 const Record& record = run.Records[order[k]];
+
+                if (!record.Resize && record.SurfaceIndex == world && record.Variant == DrawVariant::Trees)
+                {
+                    const size_t kind = record.Overlay ? 0 : record.ProbeTree ? 2 : 1;
+
+                    for (uint32_t d = record.First; d < record.First + record.Count; ++d)
+                    {
+                        const DrawFields& f = run.Draws[d];
+                        ++swayDraws[kind];
+                        swayArea[kind] += Area(Intersection(MCRect{f[0], f[1], f[2], f[3]}, shown));
+                    }
+                }
 
                 if (record.Resize || record.SurfaceIndex != world || record.Overlay)
                 {
@@ -9784,10 +9800,15 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             const auto cells = static_cast<int64_t>(std::ranges::count(patched, uint8_t{1}));
             const double window = static_cast<double>(Area(shown));
-            std::fprintf(probeCounts, "%lld trees %zu draws %zu changed %zu area %.4f patches %lld share %.4f\n",
+            std::fprintf(probeCounts,
+                         "%lld trees %zu draws %zu changed %zu area %.4f patches %lld share %.4f sway %lld %lld %lld "
+                         "swayarea %.4f %.4f %.4f\n",
                          static_cast<long long>(probeFrame), trees.size(), keys.size(), changed.size(),
                          static_cast<double>(changedArea) / window, static_cast<long long>(patchDraws),
-                         static_cast<double>(cells * Cell * Cell) / window);
+                         static_cast<double>(cells * Cell * Cell) / window, static_cast<long long>(swayDraws[0]),
+                         static_cast<long long>(swayDraws[1]), static_cast<long long>(swayDraws[2]),
+                         static_cast<double>(swayArea[0]) / window, static_cast<double>(swayArea[1]) / window,
+                         static_cast<double>(swayArea[2]) / window);
             std::fflush(probeCounts);
         }
     }

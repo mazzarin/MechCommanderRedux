@@ -103,7 +103,9 @@ cbuffer Frame : register(b0, space3)
     // The same for the source when it is a surface; else 1, 1, 1, 1.
     int4 sourceScale;
     // The colour cycle (the water's, MCColorCycle): x the first index cycled, y the step (-1: none), z 1 when the key
-    // colour is transparent on this surface. Index x + i shows the colour of cycleSources[(i + y) & 7].
+    // colour is transparent on this surface. Index x + i shows the colour of cycleSources[(i + y) & 7]. Port-only
+    // (SPEC-pan-water.md): w 1 in the kept ground's pass (KeptPass), whose glints target holds the terrain's cycled share
+    // and stands target the entry it follows (channels.hlsli's kept ground) in place of the glints and the stands.
     int4 cycle;
     uint4 cycleSources[2];
     // Port-only (HD lighting): x how strong a light's glow (Glow) shows, 1 as the original drew it; y with sun shadows
@@ -272,8 +274,6 @@ static const float ShadowCore = 0.35;
 // An HD frame's colour where its alpha is under this is drawn more and more as its nearest drawn pixel's (KindHdSmooth:
 // past its mask, the frame keeps no colour).
 static const float HdOwnColourAlpha = 0.5;
-// The most an HD colour channel is scaled by when today's colour differs from the pack's.
-static const float MaxCorrection = 4.0;
 // An effect's frame (HdLight) holds faint error in its empty parts (the network's and BC7's: up to about 5/255 of light
 // and 4/255 of coverage), which the copies of an effect the game stacks on one place (a dying mech's critical hits,
 // each with its own) would add up into a lit box. Coverage below its floor is none, and light loses its floor.
@@ -357,19 +357,37 @@ uint Table(uint row, uint index)
     return Byte(Fetch(tableTex, tableSampler, int2(index, row)).r);
 }
 
+// Whether `index` is one of the colour cycle's entries, which show their sources' colours.
+bool CycledEntry(uint index)
+{
+    return cycle.y >= 0 && index - (uint)cycle.x < WaterColors;
+}
+
 // The colour index shows, through the colour cycle.
 float3 Shown(uint index)
 {
-    const uint cycled = index - (uint)cycle.x;
-
-    if (cycle.y >= 0 && cycled < 8u)
+    if (CycledEntry(index))
     {
-        const uint source = (cycled + (uint)cycle.y) & 7u;
+        const uint source = (index - (uint)cycle.x + (uint)cycle.y) & 7u;
         index = cycleSources[source >> 2][source & 3u];
     }
 
     return Fetch(paletteTex, paletteSampler, int2(index, 0)).rgb;
 }
+
+// Port-only (SPEC-pan-water.md): whether this is the kept ground's pass (cycle.w), whose glints target holds the weights.
+bool KeptPass()
+{
+    return cycle.w != 0;
+}
+
+// Port-only (SPEC-pan-water.md): in the kept ground's pass, the share of the terrain pixel's colour that follows the
+// cycled entry its index shows (channels.hlsli's kept ground's weights): set by the terrain's paths as they work its
+// colour out (0 where none shows), written by main.
+static float3 cycledShare;
+// Port-only (SPEC-pan-water.md): in the kept ground's pass, the entry the seam pass shows at a terrain tile's pixel
+// (SeamShown), which the first pass writes in the stands target (channels.hlsli's kept ground).
+static uint keptSlot;
 
 // An opaque pixel: its colour (none for the key on a surface shown over another) and its index.
 Output Opaque(uint index)
@@ -418,6 +436,13 @@ float3 MadeWith(uint index)
     return Fetch(paletteTex, paletteSampler, int2(index, 1)).rgb;
 }
 
+// Port-only (SPEC-pan-water.md): the share of the colour Shown gives `index` that follows a cycled entry, as the
+// colour it was made from (channels.hlsli's kept ground's weights): the entry's pack colour.
+float3 ShownShare(uint index)
+{
+    return CycledEntry(index) ? max(MadeWith(index), MadeWithFloor) : float3(0.0, 0.0, 0.0);
+}
+
 // An HD colour (premultiplied by a) made from original index `index`'s colour, as it shows now as index `shown` (the
 // same, or a table's): the same index takes each channel's change between the pack's colour and today's; another (a
 // paint scheme, the haze) takes its colour at the HD colour's brightness.
@@ -427,12 +452,32 @@ float3 Corrected(float3 color, float a, uint index, uint shown)
 
     if (shown == index)
     {
-        return color * clamp(Shown(index) / max(then, 1.0 / 255.0), 0.0, MaxCorrection);
+        return color * clamp(Shown(index) / max(then, MadeWithFloor), 0.0, MaxCorrection);
     }
 
     const float3 luma = float3(0.299, 0.587, 0.114);
     const float brightness = dot(color, luma) / max(a * dot(then, luma), 1.0 / 255.0);
     return saturate(Shown(shown) * brightness) * a;
+}
+
+// Port-only (SPEC-pan-water.md): the share of Corrected's colour that follows `shown` where that is a cycled entry, as
+// the colour it was made from (channels.hlsli's kept ground's weights; 0 elsewhere): the HD colour for the same index,
+// its brightness on the entry's pack colour for another.
+float3 CorrectedShare(float3 color, float a, uint index, uint shown)
+{
+    if (!CycledEntry(shown))
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    if (shown == index)
+    {
+        return color;
+    }
+
+    const float3 luma = float3(0.299, 0.587, 0.114);
+    const float brightness = dot(color, luma) / max(a * dot(MadeWith(index), luma), 1.0 / 255.0);
+    return saturate(brightness * a * max(MadeWith(shown), MadeWithFloor));
 }
 
 // The palette indices TableShift fits a table's change of colour over: every 16th, from the 8th.
@@ -531,7 +576,8 @@ float3 WaterHaze(uint row)
 // A terrain tile's HD colour at drawn pixel `target` (terrain.vshader): op.w the HD scale, walk.xy the tile's HD place
 // and walk.zw its place in the atlas (the source's), span.xy its size and span.z its HD atlas; the index is `value`
 // (original, through the haze's table), the HD colour the one made from `original`'s (water the haze's table draws,
-// darkened by WaterHaze).
+// darkened by WaterHaze). Port-only (SPEC-pan-water.md): in the kept ground's pass, cycledShare its share that follows
+// `value` (none of the hazed water's, which doesn't cycle).
 float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
 {
     const int hdScale = (int)(input.op.w & HdScaleMask);
@@ -550,7 +596,13 @@ float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
 
     if (HazedWater(input, original))
     {
+        cycledShare = float3(0.0, 0.0, 0.0);
         return saturate(hd * WaterHaze(input.op.z));
+    }
+
+    if (KeptPass())
+    {
+        cycledShare = CorrectedShare(hd, 1.0, original, value);
     }
 
     return Corrected(hd, 1.0, original, value);
@@ -883,14 +935,48 @@ Output TerrainSeamPixel(Input input, int2 target)
     if ((flags & UseColor) != 0)
     {
         colour = Shown(input.op.y & 255u);
+        cycledShare = ShownShare(input.op.y & 255u);
+    }
+    else if ((flags & HdColors) != 0)
+    {
+        const uint shown = (flags & TableBefore) != 0 ? Table(input.op.z, original) : original;
+        colour = HdTerrainColour(input, target, original, shown);
     }
     else
     {
         const uint shown = (flags & TableBefore) != 0 ? Table(input.op.z, original) : original;
-        colour = (flags & HdColors) != 0 ? HdTerrainColour(input, target, original, shown) : Shown(shown);
+        colour = Shown(shown);
+        cycledShare = ShownShare(shown);
     }
 
     return Blended(float4(colour, 1.0) * coverage);
+}
+
+// Port-only (SPEC-pan-water.md): the index a terrain tile's seam pass shows at drawn pixel `target`, which its first pass
+// draws as `own`: TerrainSeamPixel's nearest texel (the lower of two as near, as its search finds them), through the
+// haze's table; `own` where that texel isn't the tile's (where the seam pass picks another, at its edge).
+uint SeamShown(Input input, int2 target, uint own)
+{
+    const uint flags = input.op.x;
+
+    if ((flags & UseColor) != 0)
+    {
+        return input.op.y & 255u;
+    }
+
+    const float2 at = float2(input.source.xy) + (WindowPlace(target) - float2(input.rect.xy)) - 0.5;
+    const float2 base = floor(at);
+    const int2 nearest = int2(base) + int2(at - base > float2(0.5, 0.5));
+    const float4 sample = FetchSource(nearest);
+    const uint state = SourceState(sample, flags);
+
+    if (state == 0 || state == 2)
+    {
+        return own;
+    }
+
+    const uint original = Byte(sample.r);
+    return (flags & TableBefore) != 0 ? Table(input.op.z, original) : original;
 }
 
 // A translucent colour (premultiplied) drawn through table `row` after the draw (TableAfter: the haze, fades): over
@@ -2167,6 +2253,12 @@ Output DrawnOutput(Input input)
     }
 
 #if DRAWS_TERRAIN_KINDS
+    // Port-only (SPEC-pan-water.md): in the kept ground's pass, the entry its colour will follow.
+    if (KeptPass())
+    {
+        keptSlot = SeamShown(input, target, value);
+    }
+
     if ((flags & HdColors) != 0 && (flags & UseColor) == 0 && !(cycle.z != 0 && value == 255))
     {
         return HdTerrainPixel(input, target, original, value);
@@ -2178,8 +2270,13 @@ Output DrawnOutput(Input input)
     {
         Output output = Opaque(value);
         output.index = TerrainIndex(input, original, value);
+        // Port-only (SPEC-pan-water.md): a share only where the colour is the index's own.
+        cycledShare = value == original ? ShownShare(value) : float3(0.0, 0.0, 0.0);
         return output;
     }
+
+    // Port-only (SPEC-pan-water.md): an original tile's pixel shows its index's colour (Opaque's).
+    cycledShare = ShownShare(value);
 #endif
 
 #if DRAWS_SPRITE_KINDS
@@ -2254,7 +2351,18 @@ Output main(Input input)
     hdCorner = int2(input.place.y & 0xffffu, input.place.y >> 16);
     placeSize = int2(input.place.z & 0xffffu, input.place.z >> 16);
     sourceMarks = (input.place.w & HdMarksSource) != 0;
+    cycledShare = float3(0.0, 0.0, 0.0);
+    keptSlot = 0;
     Output output = DrawnOutput(input);
+
+#if DRAWS_TERRAIN_KINDS
+    // Port-only (SPEC-pan-water.md): in the kept ground's pass, the terrain's cycled share in the glints target,
+    // premultiplied as the colours are, so the seam pass's blend mixes it as it mixes the colours.
+    if (KeptPass())
+    {
+        output.glint = float4(cycledShare * output.color.a, output.color.a);
+    }
+#endif
 
     // Port-only (HD lighting): a light's glow, premultiplied through the blend pipeline, fainter as look.x.
     if ((input.op.x & Glow) != 0)
@@ -2291,6 +2399,15 @@ Output main(Input input)
     {
         output.stands = output.index.a;
     }
+
+#if DRAWS_TERRAIN_KINDS
+    // Port-only (SPEC-pan-water.md): in the kept ground's pass, the stands hold the entry its colour follows (written by
+    // the first pass, which writes the indices; the seam pass leaves them).
+    if (KeptPass())
+    {
+        output.stands = (float)keptSlot / 255.0;
+    }
+#endif
 #endif
     return output;
 }

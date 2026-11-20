@@ -464,6 +464,8 @@ public:
         int64_t Whole = 0;
         int64_t Shifted = 0;
         int64_t Kept = 0;
+        /// <summary>Port-only (SPEC-pan-water.md): the parts drawn again into it, moved or kept in place.</summary>
+        int64_t Parts = 0;
     };
 
     /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
@@ -472,6 +474,39 @@ public:
         WaitForRunning();
         return _GroundCounts;
     }
+
+    /// <summary>
+    /// Port-only (SPEC-pan-water.md), for the tests: whether a frame laying its terrain from the kept ground also lays
+    /// it over nothing, apart, and draws the terrain whole at the frame's colour cycle step over nothing beside it, for
+    /// <see cref="CompareKeptGround"/>.
+    /// </summary>
+    static inline bool CheckKeptGround = false;
+
+    /// <summary>The result of <see cref="CompareKeptGround"/>.</summary>
+    struct GroundComparison
+    {
+        /// <summary>The pixels compared: those the terrain's first pass drew; of them, those showing a cycled entry.</summary>
+        int64_t Pixels = 0;
+        int64_t Cycled = 0;
+        /// <summary>Those whose indices differ.</summary>
+        int64_t DifferentIndices = 0;
+        /// <summary>
+        /// Those whose colours differ by more than a byte in a channel, and by how much at most (bytes): apart from the
+        /// seam's (Seam: those the seam pass changes, where it may mix another index's colour in, and those near them),
+        /// and the seam's.
+        /// </summary>
+        int64_t DifferentColors = 0;
+        int32_t MostDifference = 0;
+        int64_t Seam = 0;
+        int64_t DifferentSeamColors = 0;
+        int32_t MostSeamDifference = 0;
+    };
+
+    /// <summary>
+    /// Port-only, for the tests (<see cref="CheckKeptGround"/>): reads back the last frame's kept ground laid and its
+    /// terrain drawn whole, waiting for the GPU, and compares them (none: nothing was laid since the last comparison).
+    /// </summary>
+    std::expected<std::optional<GroundComparison>, std::string> CompareKeptGround();
 
     /// <summary>
     /// The ground meshes put on the GPU so far, and the times their tiles went up with them (a mesh of the tiles
@@ -927,7 +962,7 @@ private:
 
     /// <summary>
     /// Port-only (the kept ground, KeepGround): a terrain tile as a cell draws it (terrain.vshader's Image): its box's
-    /// size, its hot spot and the width its header gives; and the palette indices its pixels hold.
+    /// size, its hot spot and the width its header gives.
     /// </summary>
     struct TerrainTileShape
     {
@@ -936,7 +971,6 @@ private:
         int32_t HotX = 0;
         int32_t HotY = 0;
         int32_t HeaderWidth = 0;
-        std::bitset<256> Colors;
     };
 
     /// <summary>The terrain mesh on the GPU: its tiles' atlas, its cells and images (shaders/terrain.vshader).</summary>
@@ -985,17 +1019,23 @@ private:
     /// <summary>
     /// Port-only: the ground (the terrain layer drawn over nothing) kept from frame to frame for the surface the
     /// terrain draws on first, so a frame redraws only the ground that changed: what the view scrolled onto, and the
-    /// cells whose draw changed (fog of war, the water's colour cycle, a tile now dropped or drawn at the view's edges).
-    /// It is in one of two pairs of textures the surface's size (colours, indices); when the view moved, the next
-    /// frame's is made in the other from this one, shifted. A frame then lays it over the surface where the terrain
-    /// layer would be drawn (shaders/ground.pshader): the same pixels wherever the terrain's first pass draws (all but
-    /// the void past the map's ring of off-map cells, where its seams' blends over the surface may round apart). Only
-    /// with HD ground, whose two passes are most of a frame's drawing.
+    /// cells whose draw changed (fog of war, a tile now dropped or drawn at the view's edges). It is in one of two pairs
+    /// of textures the surface's size (colours, indices; port-only, SPEC-pan-water.md, the share of the colours that
+    /// follows the colour cycle and the entries it follows, shaders/channels.hlsli's kept ground); when the view moved,
+    /// the next frame's is made in the other
+    /// from this one, shifted. A frame then lays it over the surface where the terrain layer would be drawn
+    /// (shaders/ground.pshader): the same pixels wherever the terrain's first pass draws (all but the void past the
+    /// map's ring of off-map cells, where its seams' blends over the surface may round apart). It holds the colour
+    /// cycle at one step (CycleStep, the step it was last drawn whole at: every part drawn into it since is drawn at
+    /// that step), which the lay takes to the frame's by the weights, so a step of the cycle draws none of it again.
+    /// Only with HD ground, whose two passes are most of a frame's drawing.
     /// </summary>
     struct KeptGround
     {
         std::array<Texture, 2> Colors;
         std::array<Texture, 2> Indices;
+        std::array<Texture, 2> Weights;
+        std::array<Texture, 2> Slots;
         /// <summary>The pair holding the ground, and whether one does.</summary>
         size_t Current = 0;
         bool Held = false;
@@ -1004,7 +1044,7 @@ private:
         MCAddressKey SurfaceKey;
         uint64_t Upload = 0;
         /// <summary>The terrain layer drawn (the camera's place, the grid), the fog's flags (1: the home side sees the
-        /// vertex; FogColumns a row) and the colour cycle's step.</summary>
+        /// vertex; FogColumns a row) and the colour cycle's step its pixels hold.</summary>
         MCTerrainFrame Frame;
         std::vector<uint8_t> Seen;
         int32_t FogColumns = 0;
@@ -1648,11 +1688,12 @@ private:
     const SurfacePipelines& PipelinesFor(const Surface& surface) const;
     /// <summary>
     /// Execution: draws a terrain layer of <paramref name="run"/> in the render pass under way, through
-    /// <paramref name="pipelines"/>.
+    /// <paramref name="pipelines"/>; with HD ground, its seam pass too, but where <paramref name="seams"/> is false
+    /// (port-only: CheckKeptGround's picture of what that pass changes).
     /// </summary>
     void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
                      const FrameRun& run, const Surface& surface, const TerrainDraw& draw,
-                     std::span<const std::byte> frameUniforms);
+                     std::span<const std::byte> frameUniforms, bool seams = true);
     /// <summary>
     /// Port-only (KeepGround): what the kept ground depends on for <paramref name="draw"/> of <paramref name="run"/>
     /// on <paramref name="surface"/> but the camera, the fog and the colour cycle's step, as bytes:
@@ -1664,7 +1705,8 @@ private:
     /// Port-only (KeepGround): how to bring the kept ground up to date for <paramref name="draw"/> on surface
     /// <paramref name="surfaceIndex"/>, drawn with <paramref name="looks"/>, the fog's flags <paramref name="seen"/>
     /// (<paramref name="fogColumns"/> a row) and colour cycle <paramref name="cycle"/> (the frame's, as sealed): drawn
-    /// whole, or shifted and the parts that changed drawn again.
+    /// whole, or shifted and the parts that changed drawn again. Port-only (SPEC-pan-water.md): a step of the cycle
+    /// draws nothing again (the lay shows it); the cycle starting or stopping draws it whole.
     /// </summary>
     GroundPlan PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw, std::span<const uint8_t> looks,
                           std::span<const uint8_t> seen, int32_t fogColumns, const MCColorCycle& cycle) const;
@@ -1672,10 +1714,10 @@ private:
     /// Port-only (KeepGround): draws kept pair <paramref name="from"/> (none for Clear) as <paramref name="mode"/>
     /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), at the drawn pixels showing
     /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size, through
-    /// <paramref name="pipelines"/>.
+    /// <paramref name="pipelines"/>; Over at <paramref name="run"/>'s colour cycle step (SPEC-pan-water.md).
     /// </summary>
     void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
-                        const Surface& surface, const MCRect& clip, KeptGroundMode mode,
+                        const FrameRun& run, const Surface& surface, const MCRect& clip, KeptGroundMode mode,
                         std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {});
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
@@ -1815,6 +1857,23 @@ private:
     };
 
     std::vector<KeptCheck> _KeptChecks;
+
+    /// <summary>
+    /// Port-only, for the tests (CheckKeptGround): the last frame's kept ground laid over nothing, its terrain drawn
+    /// whole over nothing, and drawn so without the seam pass (colours and indices each).
+    /// </summary>
+    struct GroundCheck
+    {
+        bool Taken = false;
+        Texture LaidColors;
+        Texture LaidIndices;
+        Texture DrawnColors;
+        Texture DrawnIndices;
+        Texture FirstColors;
+        Texture FirstIndices;
+    };
+
+    GroundCheck _GroundCheck;
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;

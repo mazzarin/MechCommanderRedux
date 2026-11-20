@@ -83,6 +83,11 @@ namespace MCVulkanShaders
 
     /// <summary>The composite shader's textures (composite.pshader's t0 to t9), in each of its builds.</summary>
     inline constexpr uint32_t CompositeSamplers = 10;
+    /// <summary>
+    /// The kept ground's shader's textures (ground.pshader's t0 to t4: the kept colours and indices; port-only,
+    /// SPEC-pan-water.md, the kept weights, the palette and the kept weights' entries), in each of its builds.
+    /// </summary>
+    inline constexpr uint32_t GroundSamplers = 5;
 
     /// <summary>The built-in shaders.</summary>
     extern const MCShaderInfo Quad;

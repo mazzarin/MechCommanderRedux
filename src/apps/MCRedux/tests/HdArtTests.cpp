@@ -77,6 +77,8 @@
 #include "object/MCMoverMath.h"
 #include "object/MCObjectDrawing.h"
 #include "object/MCPotentialContact.h"
+#include "object/MCObjectList.h"
+#include "object/MCObjectQueue.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCProjectileLaser.h"
 #include "object/MCSensorSystem.h"
@@ -10405,6 +10407,205 @@ TEST_CASE_ISOLATED("game: the kept view's overlays show as a frame drawing them,
     CHECK(after.OverlaysLeft - before.OverlaysLeft > 0);
     CHECK(viewArea > 0);
     CHECK(MostViewRedrawn * viewPixels < viewArea * frames);
+    CHECK_EQ(differing, 0);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only (SPEC-kept-forest.md, part 2): mission 1's world over the HD ground with every terrain overlay from a pack,
+/// the game paused and the view still, the player's mech set down in turn round the forest's edge nearest it: each
+/// frame, its standing trees copied from the kept view and drawn again only in the patches where the mech's draws come
+/// before a tree's, shows as the same frame shown again drawing its trees itself, pixel for pixel.
+/// </summary>
+TEST_CASE_ISOLATED("game: the kept view's trees show as a frame drawing them, a mech set down round a forest's edge")
+{
+    // The mech's places round the edge: this many tiles each way, across and down.
+    constexpr int32_t Reach = 2;
+    // The frames a jump of the view may take to keep it again (its ground's mesh and HD tiles made for it), most, and
+    // the frames shown after, the view kept, before the first is compared.
+    constexpr int32_t MostSettling = 60;
+    constexpr int32_t Settled = 3;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    // (The fog of war hides a forest unseen: its tiles and trees aren't drawn.)
+    RevealAll();
+
+    // The player's mech, and the forest's edge nearest the map's middle (the view round it all on the map).
+    const std::shared_ptr<MCMover> mech = GetMoverFromPartId(PlayerMechPartId);
+    REQUIRE(mech != nullptr);
+    const float middleX = TileColToWorld(GameMap().Width / 2);
+    const float middleY = TileRowToWorld(GameMap().Height / 2);
+    int32_t edges = 0;
+    std::shared_ptr<MCMiscTerrainObject> edge;
+    float nearest = std::numeric_limits<float>::max();
+
+    for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
+    {
+        for (const std::shared_ptr<MCBaseObject> object : *list)
+        {
+            if (object->ObjectClass != MCObjectClass::MiscTerrainObject)
+            {
+                continue;
+            }
+
+            const auto forest = std::static_pointer_cast<MCMiscTerrainObject>(object);
+
+            if (forest->Kind != MCMiscTerrainKind::Forest || !forest->ForestEdgeFrame().has_value())
+            {
+                continue;
+            }
+
+            ++edges;
+            const MCVector3D where = forest->GetPosition();
+            const float distance = std::hypot(where.X - middleX, where.Y - middleY);
+
+            if (distance < nearest)
+            {
+                nearest = distance;
+                edge = forest;
+            }
+        }
+    }
+
+    REQUIRE(edge != nullptr);
+
+    // The view on it, and the pack's HD ground made from the mesh in use there.
+    Eye()->SetPosition(edge->GetPosition());
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_view_trees";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    REQUIRE(WriteTerrainPack(pack, *inUse, colors) > 0);
+    REQUIRE(WriteOverlays(OverlayFolderOf(pack), colors, TestPackScale, Inverted).Written > 0);
+    WritePaletteRgb(pack, colors);
+    const MCHdArtOn hdArt(pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(renderer->HdTerrain());
+
+    // Paused, with the colour cycle and the tactical map's markers held, a frame shown again shows the same.
+    GamePaused = true;
+    const int32_t paletteCycle = GuiSystem().PaletteCycle;
+    GuiSystem().PaletteCycle = 0;
+    const auto show = []
+    {
+        MCTacticalMap::MarkersLit = true;
+        MCTacticalMap::MarkerBlinkTime = 0.0f;
+        MCTestGame::RunFrame(FrameSeconds);
+    };
+
+    // The view kept.
+    const MCVector3D centre = edge->GetPosition();
+    const MCVulkanRenderer::GroundCounts settled = renderer->KeptGroundCounts();
+    int32_t settling = 0;
+
+    for (int64_t viewed = renderer->KeptGroundCounts().Viewed;
+         settling < MostSettling && renderer->KeptGroundCounts().Viewed == viewed; ++settling)
+    {
+        show();
+    }
+
+    for (int32_t frame = 0; frame < Settled; ++frame)
+    {
+        show();
+    }
+
+    const MCVulkanRenderer::GroundCounts before = renderer->KeptGroundCounts();
+    const MCVector3D eye = Eye()->GetPosition();
+    const MCVector2D shown = edge->GetScreenPos();
+    std::cout << std::format("  {} forest edges; the view on the one nearest the map's middle kept after {} frames "
+                             "(the ground then {} direct, {} whole, {} kept, {} shifted, {} viewed; HD ground {}); "
+                             "the camera at {:.0f},{:.0f}, the edge at {:.0f},{:.0f}, shown at {:.0f},{:.0f}\n",
+                             edges, settling, before.Direct - settled.Direct, before.Whole - settled.Whole,
+                             before.Kept - settled.Kept, before.Shifted - settled.Shifted,
+                             before.Viewed - settled.Viewed, renderer->HdTerrain(), eye.X, eye.Y, centre.X, centre.Y,
+                             shown.X, shown.Y);
+    REQUIRE(settling < MostSettling);
+    const float tile = TileColToWorld(1) - TileColToWorld(0);
+    const int32_t width = MCInput::Display()->Width();
+    int32_t frames = 0;
+    int64_t differing = 0;
+    std::string first;
+
+    for (int32_t down = -Reach; down <= Reach; ++down)
+    {
+        for (int32_t across = -Reach; across <= Reach; ++across)
+        {
+            MCVector3D place(centre.X + static_cast<float>(across) * tile, centre.Y + static_cast<float>(down) * tile,
+                             0.0f);
+            place.Z = MCTerrain::GetTerrainElevation(place);
+            mech->SetPosition(place);
+            show();
+            ++frames;
+            auto viewed = MCInput::Display()->ReadFrame();
+            REQUIRE(viewed.has_value());
+            renderer->SetKeepsTrees(false);
+            show();
+            auto drawn = MCInput::Display()->ReadFrame();
+            renderer->SetKeepsTrees(true);
+            REQUIRE(drawn.has_value());
+            REQUIRE_EQ(viewed->size(), drawn->size());
+
+            for (size_t i = 0; i < viewed->size(); ++i)
+            {
+                const SDL_Color a = (*viewed)[i];
+                const SDL_Color b = (*drawn)[i];
+
+                if (a.r == b.r && a.g == b.g && a.b == b.b)
+                {
+                    continue;
+                }
+
+                if (differing++ == 0)
+                {
+                    first =
+                        std::format("frame {}, pixel {},{}: {},{},{} kept, {},{},{} drawn", frames,
+                                    static_cast<int64_t>(i % static_cast<size_t>(width)),
+                                    static_cast<int64_t>(i / static_cast<size_t>(width)), a.r, a.g, a.b, b.r, b.g, b.b);
+                }
+            }
+        }
+    }
+
+    const MCVulkanRenderer::GroundCounts after = renderer->KeptGroundCounts();
+    std::cout << std::format("  {} frames: the kept view copied {} times, {} tree draws left out, {} drawn again in {} "
+                             "patches ({} drawn pixels); {} pixels differ\n",
+                             frames, after.Viewed - before.Viewed, after.TreesLeft - before.TreesLeft,
+                             after.TreesPatched - before.TreesPatched, after.Patches - before.Patches,
+                             after.PatchPixels - before.PatchPixels, differing);
+
+    if (differing != 0)
+    {
+        std::cout << std::format("  first difference: {}\n", first);
+    }
+
+    GamePaused = false;
+    GuiSystem().PaletteCycle = paletteCycle;
+    CHECK(after.Viewed - before.Viewed >= frames);
+    CHECK(after.TreesLeft - before.TreesLeft > 0);
+    CHECK(after.Patches - before.Patches > 0);
+    CHECK(after.TreesPatched - before.TreesPatched > 0);
     CHECK_EQ(differing, 0);
     std::filesystem::remove_all(scratch);
 }

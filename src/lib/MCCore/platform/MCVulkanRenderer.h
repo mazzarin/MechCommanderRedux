@@ -484,6 +484,15 @@ public:
         int64_t OverlaysLeft = 0;
         int64_t OverlaysDrawn = 0;
         int64_t ViewPixels = 0;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md, part 2): the trees' draws those frames left out (drawn into the view, whole or
+        /// again, are in OverlaysDrawn), those drawn again in the frames' patches (a draw once for each patch), and the
+        /// patches and their drawn pixels.
+        /// </summary>
+        int64_t TreesLeft = 0;
+        int64_t TreesPatched = 0;
+        int64_t Patches = 0;
+        int64_t PatchPixels = 0;
     };
 
     /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
@@ -574,6 +583,11 @@ public:
     /// tests draw a frame both ways to compare). Off, a frame draws its overlays itself and leaves the view as it was.
     /// </summary>
     void SetKeepsOverlays(bool keeps) { _KeepsOverlays = keeps; }
+    /// <summary>
+    /// Port-only (SPEC-kept-forest.md, part 2): whether the kept view holds the standing trees too (on; the tests draw a
+    /// frame both ways to compare). Off, the frame draws them itself.
+    /// </summary>
+    void SetKeepsTrees(bool keeps) { _KeepsTrees = keeps; }
     /// <summary>
     /// Port-only: how many times a stripped shape table's rows were asked for (a version 2 pack's, drawn without its HD
     /// frame: RowsGone), each drawn as nothing.
@@ -942,7 +956,12 @@ private:
         /// </summary>
         bool Overlay = false;
         /// <summary>
-        /// Port-only (SPEC-kept-forest.md): for an overlay's draws, whether they may show a colour the colour cycle steps
+        /// Port-only (SPEC-kept-forest.md, part 2): whether the draws are a standing tree's (MCRenderer::StandingTreeScope),
+        /// which the kept view holds over the overlays when it holds the frame's ground and they read no copy.
+        /// </summary>
+        bool Tree = false;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): for an overlay's or a tree's draws, whether they may show a colour the colour cycle steps
         /// (their original pixels hold one, or a colour table's), and the content of the colour tables they read: what
         /// they draw with besides their source, fields and uniforms (KeptGround::ViewOverlays' keys).
         /// </summary>
@@ -2273,7 +2292,13 @@ private:
     bool _DrawingOverlay = false;
     /// <summary>Port-only (SPEC-kept-forest.md): the colours of the original's pixels the overlay being recorded draws.</summary>
     std::bitset<256> _OverlayColours;
+    /// <summary>
+    /// Port-only (SPEC-kept-forest.md, part 2): the colours of the original's pixels the standing tree's shape being
+    /// recorded draws (Shape); none outside one, its draws then taken as able to show a cycled colour.
+    /// </summary>
+    std::optional<std::bitset<256>> _TreeColours;
     bool _KeepsOverlays = true;
+    bool _KeepsTrees = true;
     bool _FoldsIndexPasses = true;
     int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>

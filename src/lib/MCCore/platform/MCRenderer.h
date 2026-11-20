@@ -865,6 +865,30 @@ public:
     static bool DrawingSunShadow();
 
     /// <summary>
+    /// Port-only (SPEC-kept-forest.md, part 2): while one made with <c>true</c> lives, the elements made and the draws
+    /// made are a standing tree's (a forest's edges, a tree, a tree building), which the hardware renderer keeps with
+    /// the ground. One made with <c>false</c> changes nothing.
+    /// </summary>
+    class StandingTreeScope
+    {
+    public:
+        /// <summary>Marks what's made as a standing tree's when <paramref name="tree"/>.</summary>
+        explicit StandingTreeScope(bool tree);
+
+        /// <summary>Marks as before the scope.</summary>
+        ~StandingTreeScope();
+
+        StandingTreeScope(const StandingTreeScope&) = delete;
+        StandingTreeScope& operator=(const StandingTreeScope&) = delete;
+
+    private:
+        bool _Was = false;
+    };
+
+    /// <summary>Whether what's made now is a standing tree's (<see cref="StandingTreeScope"/>).</summary>
+    static bool DrawingStandingTree();
+
+    /// <summary>
     /// Port-only (HD art): while one lives, the shape draws are drawn turned as it says (the hardware renderer draws their
     /// HD art pack frames so, nothing without one; the software renderer draws them as they are). One made with none
     /// draws them as they are.

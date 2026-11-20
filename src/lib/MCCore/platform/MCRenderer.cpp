@@ -638,6 +638,9 @@ namespace
     /// <summary>Whether a <see cref="MCRenderer::SunShadowScope"/> is drawing a unit's sun shadow.</summary>
     bool SunShadowDrawn = false;
 
+    /// <summary>Whether a <see cref="MCRenderer::StandingTreeScope"/> marks what's made as a standing tree's.</summary>
+    bool StandingTreeDrawn = false;
+
     /// <summary>The turn a <see cref="MCRenderer::TurnScope"/> is drawing by, none outside one.</summary>
     std::optional<MCSpriteTurn> TurnDrawn;
 
@@ -886,6 +889,21 @@ MCRenderer::SunShadowScope::~SunShadowScope()
 bool MCRenderer::DrawingSunShadow()
 {
     return SunShadowDrawn;
+}
+
+MCRenderer::StandingTreeScope::StandingTreeScope(bool tree) : _Was(StandingTreeDrawn)
+{
+    StandingTreeDrawn = _Was || tree;
+}
+
+MCRenderer::StandingTreeScope::~StandingTreeScope()
+{
+    StandingTreeDrawn = _Was;
+}
+
+bool MCRenderer::DrawingStandingTree()
+{
+    return StandingTreeDrawn;
 }
 
 MCRenderer::TurnScope::TurnScope(const std::optional<MCSpriteTurn>& turn) : _Was(TurnDrawn)

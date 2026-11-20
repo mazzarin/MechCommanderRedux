@@ -877,6 +877,11 @@ struct MCVulkanPresenter::PlannedFrame
     std::vector<PlannedWorld> Worlds;
     /// <summary>What went wrong running it ahead (empty: nothing).</summary>
     std::string Error;
+    /// <summary>
+    /// Port-only: whether it's composited as it's shown (a frame run ahead: ShowFrame, into its swapchain image when it
+    /// can), not as it runs (RunPlanned).
+    /// </summary>
+    bool CompositesAtShow = false;
 };
 
 namespace
@@ -926,6 +931,16 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     presenter->_Claimed = true;
     presenter->SetVSync(vsync);
 
+    // Port-only: the composited frame in the swapchain's format when that holds RGBA's bytes (in their order or with
+    // red and blue swapped), so a frame run ahead is composited straight into its swapchain image as it would be into
+    // the frame (ShowFrame); else RGBA, blitted into the image.
+    if (const SDL_GPUTextureFormat shown = SDL_GetGPUSwapchainTextureFormat(device, presenter->_Window.get());
+        shown == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM || shown == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM)
+    {
+        presenter->_FrameFormat = shown;
+        presenter->_ShowsStraight = true;
+    }
+
     auto quad = MCVulkanShaders::Load(presenter->_Device, MCVulkanShaders::Quad);
 
     if (!quad)
@@ -937,15 +952,17 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     // The composite, with the weather (and the snow's specks, or not) and without, and the GPU world's passes before
     // it, each composite.pshader built for it alone, with the format each draws, and whether it's slow to make
     // (MCVulkanRenderer::PipelineJob): the composite's full builds, which NVIDIA's driver took 0.35-0.66 s each to
-    // compile with its cache empty (the A10, 13 Nov; the GPU world's passes 0.03 s or less).
+    // compile with its cache empty (the A10, 13 Nov; the GPU world's passes 0.03 s or less). The composite draws the
+    // frame (_FrameFormat).
     constexpr SDL_GPUTextureFormat Rgba = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     constexpr bool Slow = true;
+    const SDL_GPUTextureFormat frame = presenter->_FrameFormat;
     const std::array composites{
-        std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline, Rgba,
+        std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline, frame,
                    Slow},
-        std::tuple{&MCVulkanShaders::CompositeDry, &presenter->_DryShader, &presenter->_DryPipeline, Rgba, Slow},
+        std::tuple{&MCVulkanShaders::CompositeDry, &presenter->_DryShader, &presenter->_DryPipeline, frame, Slow},
         std::tuple{&MCVulkanShaders::CompositeUnspecked, &presenter->_UnspeckedShader, &presenter->_UnspeckedPipeline,
-                   Rgba, Slow},
+                   frame, Slow},
         std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline, Rgba,
                    !Slow},
         std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline, Rgba, !Slow},
@@ -1408,28 +1425,40 @@ std::expected<void, std::string> MCVulkanPresenter::RunPlanned(SDL_GPUCommandBuf
         }
     }
 
+    // Port-only: a frame composited as it's shown is composited then (ShowFrame).
+    if (planned.CompositesAtShow)
+    {
+        return {};
+    }
+
     if (MCFrameLog::Scope part(ahead ? CompositeAheadPart : CompositePart); true)
     {
-        Composite(commands, planned);
+        Composite(commands, planned, *_Frame.Handle);
     }
 
     return {};
+}
+
+auto MCVulkanPresenter::CompositeSize(const PlannedFrame& planned) -> std::pair<uint32_t, uint32_t>
+{
+    const ShownLayout& layout = planned.Layout;
+    return layout.Scaled()
+               ? std::pair{static_cast<uint32_t>(layout.OutputWidth), static_cast<uint32_t>(layout.OutputHeight)}
+               : std::pair{static_cast<uint32_t>(planned.Width), static_cast<uint32_t>(planned.Height)};
 }
 
 std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer& commands, const PlannedFrame& planned)
 {
     const uint32_t width = static_cast<uint32_t>(planned.Width);
     const uint32_t height = static_cast<uint32_t>(planned.Height);
-    const bool scaled = planned.Layout.Scaled();
-    const uint32_t frameWidth = scaled ? static_cast<uint32_t>(planned.Layout.OutputWidth) : width;
-    const uint32_t frameHeight = scaled ? static_cast<uint32_t>(planned.Layout.OutputHeight) : height;
+    const auto [frameWidth, frameHeight] = CompositeSize(planned);
     constexpr SDL_GPUTextureFormat R8 = SDL_GPU_TEXTUREFORMAT_R8_UNORM;
     constexpr SDL_GPUTextureFormat Rgba = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     bool paletteNew = _Palette.Handle == nullptr;
 
     for (auto made : {Ensure(_Palette, Rgba, SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, 1, true),
-                      Ensure(_Frame, Rgba, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, frameWidth,
-                             frameHeight, true)})
+                      Ensure(_Frame, _FrameFormat, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                             frameWidth, frameHeight, true)})
     {
         if (!made)
         {
@@ -1581,15 +1610,16 @@ std::expected<void, std::string> MCVulkanPresenter::UploadParts(SDL_GPUCommandBu
     return {};
 }
 
-void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& planned)
+void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& planned, SDL_GPUTexture& into)
 {
     // The target: the screen's size, or the window pixels a scaled-up view covers. Screen pixels per target pixel, and
     // the screen pixel at the target's corner.
     const ShownLayout& layout = planned.Layout;
     const bool scaled = layout.Scaled();
     const bool gpuSurfaces = planned.GpuSurfaces;
-    const float width = static_cast<float>(scaled ? layout.OutputWidth : planned.Width);
-    const float height = static_cast<float>(scaled ? layout.OutputHeight : planned.Height);
+    const auto [compositeWidth, compositeHeight] = CompositeSize(planned);
+    const auto width = static_cast<float>(compositeWidth);
+    const auto height = static_cast<float>(compositeHeight);
     const float mapX = scaled ? static_cast<float>(layout.View.w) / width : 1.0f;
     const float mapY = scaled ? static_cast<float>(layout.View.h) / height : 1.0f;
     const float originX = scaled ? static_cast<float>(layout.View.x) : 0.0f;
@@ -2053,7 +2083,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
     }
 
     SDL_GPUColorTargetInfo target{};
-    target.texture = _Frame.Handle.get();
+    target.texture = &into;
     // The first quad covers every pixel.
     target.load_op = SDL_GPU_LOADOP_DONT_CARE;
     target.store_op = SDL_GPU_STOREOP_STORE;
@@ -2254,8 +2284,9 @@ std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame
     if (frame.Ahead && planned.GpuSurfaces)
     {
         planned.Frame = nullptr;
-        _Unshown = planned.Layout;
+        planned.CompositesAtShow = _ShowsStraight;
         _Running = std::move(*plan);
+        _Unshown = UnshownFrame{planned.Layout, planned.CompositesAtShow ? _Running : nullptr};
         _Thread.Post([this, running = _Running] { RunAhead(*running); });
         return Outcome(std::move(errors));
     }
@@ -2293,7 +2324,8 @@ std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame
     return Outcome(std::move(errors));
 }
 
-std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuffer& commands, const ShownLayout& layout)
+std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuffer& commands, const ShownLayout& layout,
+                                                              MCOptionalRef<PlannedFrame> composited)
 {
     SDL_GPUTexture* swapchain = nullptr;
     uint32_t swapchainWidth = 0;
@@ -2330,40 +2362,27 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
     }
 
     // No swapchain image (a minimised or hidden window): the frame is composited but not shown.
-    if (swapchain != nullptr)
+    const std::optional<SDL_GPUBlitInfo> blit =
+        swapchain != nullptr ? std::optional(BlitOf(layout, *swapchain, swapchainWidth, swapchainHeight))
+                             : std::nullopt;
+    // Port-only: a frame run ahead is composited now, as it's shown: straight into its swapchain image when it covers
+    // the image whole from its corner, a pixel each (the frame's format is the image's: _ShowsStraight), so the image
+    // takes the bytes the blit would give it; else into the frame, blitted.
+    const auto whole = [&](const SDL_GPUBlitRegion& region)
+    { return region.x == 0 && region.y == 0 && region.w == swapchainWidth && region.h == swapchainHeight; };
+    const bool straight = composited.has_value() && blit.has_value() && whole(blit->source) &&
+                          whole(blit->destination) &&
+                          CompositeSize(composited->get()) == std::pair{swapchainWidth, swapchainHeight};
+
+    if (composited.has_value())
     {
-        const MCViewport shown = MCPresentViewport(static_cast<int>(swapchainWidth), static_cast<int>(swapchainHeight),
-                                                   layout.View.w, layout.View.h, _Presentation);
-        SDL_GPUBlitInfo blit{};
-        blit.source.texture = _Frame.Handle.get();
+        MCFrameLog::Scope part(CompositePart);
+        Composite(commands, composited->get(), straight ? *swapchain : *_Frame.Handle);
+    }
 
-        // A frame composited at the output's size is shown whole.
-        if (layout.Scaled())
-        {
-            blit.source.w = static_cast<uint32_t>(layout.OutputWidth);
-            blit.source.h = static_cast<uint32_t>(layout.OutputHeight);
-        }
-        else
-        {
-            blit.source.x = static_cast<uint32_t>(layout.View.x);
-            blit.source.y = static_cast<uint32_t>(layout.View.y);
-            blit.source.w = static_cast<uint32_t>(layout.View.w);
-            blit.source.h = static_cast<uint32_t>(layout.View.h);
-        }
-
-        blit.destination.texture = swapchain;
-        blit.destination.x = static_cast<uint32_t>(std::lround(std::max(shown.X, 0.0f)));
-        blit.destination.y = static_cast<uint32_t>(std::lround(std::max(shown.Y, 0.0f)));
-        blit.destination.w = static_cast<uint32_t>(std::lround(shown.W));
-        blit.destination.h = static_cast<uint32_t>(std::lround(shown.H));
-        blit.load_op = SDL_GPU_LOADOP_CLEAR;
-        blit.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 1.0f};
-        blit.filter = _Presentation.Linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;
-
-        if (blit.destination.w != 0 && blit.destination.h != 0)
-        {
-            SDL_BlitGPUTexture(&commands, &blit);
-        }
+    if (blit.has_value() && !straight && blit->destination.w != 0 && blit->destination.h != 0)
+    {
+        SDL_BlitGPUTexture(&commands, &*blit);
     }
 
     if (MCFrameLog::Scope part("present.submit"); _ThirdImage)
@@ -2387,6 +2406,39 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
     // The frame handed to the screen: the frame log's time between these is the screen's (a benchmark's hitches).
     MCFrameLog::Presented();
     return {};
+}
+
+SDL_GPUBlitInfo MCVulkanPresenter::BlitOf(const ShownLayout& layout, SDL_GPUTexture& swapchain, uint32_t swapchainWidth,
+                                          uint32_t swapchainHeight) const
+{
+    const MCViewport shown = MCPresentViewport(static_cast<int>(swapchainWidth), static_cast<int>(swapchainHeight),
+                                               layout.View.w, layout.View.h, _Presentation);
+    SDL_GPUBlitInfo blit{};
+    blit.source.texture = _Frame.Handle.get();
+
+    // A frame composited at the output's size is shown whole.
+    if (layout.Scaled())
+    {
+        blit.source.w = static_cast<uint32_t>(layout.OutputWidth);
+        blit.source.h = static_cast<uint32_t>(layout.OutputHeight);
+    }
+    else
+    {
+        blit.source.x = static_cast<uint32_t>(layout.View.x);
+        blit.source.y = static_cast<uint32_t>(layout.View.y);
+        blit.source.w = static_cast<uint32_t>(layout.View.w);
+        blit.source.h = static_cast<uint32_t>(layout.View.h);
+    }
+
+    blit.destination.texture = &swapchain;
+    blit.destination.x = static_cast<uint32_t>(std::lround(std::max(shown.X, 0.0f)));
+    blit.destination.y = static_cast<uint32_t>(std::lround(std::max(shown.Y, 0.0f)));
+    blit.destination.w = static_cast<uint32_t>(std::lround(shown.W));
+    blit.destination.h = static_cast<uint32_t>(std::lround(shown.H));
+    blit.load_op = SDL_GPU_LOADOP_CLEAR;
+    blit.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 1.0f};
+    blit.filter = _Presentation.Linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;
+    return blit;
 }
 
 void MCVulkanPresenter::RunAhead(PlannedFrame& planned)
@@ -2429,7 +2481,7 @@ std::expected<void, std::string> MCVulkanPresenter::Show()
         return {};
     }
 
-    const ShownLayout layout = *_Unshown;
+    const UnshownFrame unshown = std::move(*_Unshown);
     _Unshown.reset();
     MCFrameLog::Scope part("present.show");
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(_Device.get());
@@ -2439,7 +2491,7 @@ std::expected<void, std::string> MCVulkanPresenter::Show()
         return std::unexpected(SdlError("SDL_AcquireGPUCommandBuffer (showing a frame run ahead)"));
     }
 
-    auto shown = ShowFrame(*commands, layout);
+    auto shown = ShowFrame(*commands, unshown.Layout, MCOptionalOf(unshown.Composited));
     _ImageWaitMs += (_LastImageWaitMs - _ImageWaitMs) * ImageWaitSmoothing;
     return shown;
 }
@@ -2607,9 +2659,18 @@ std::expected<std::vector<SDL_Color>, std::string> MCVulkanPresenter::ReadFrame(
         return std::unexpected(SdlError("SDL_MapGPUTransferBuffer(download)"));
     }
 
-    // R8G8B8A8 is SDL_Color's byte order.
+    // R8G8B8A8 is SDL_Color's byte order; B8G8R8A8 (_FrameFormat, the swapchain's) has red and blue swapped.
     std::memcpy(pixels.data(), mapped, size);
     SDL_UnmapGPUTransferBuffer(_Device.get(), download);
+
+    if (_FrameFormat == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM)
+    {
+        for (SDL_Color& pixel : pixels)
+        {
+            std::swap(pixel.r, pixel.b);
+        }
+    }
+
     SDL_ReleaseGPUTransferBuffer(_Device.get(), download);
     return pixels;
 }

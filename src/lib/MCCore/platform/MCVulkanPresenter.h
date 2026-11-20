@@ -198,6 +198,8 @@ private:
     /// uploads, the composite into _Frame. On the render thread, or on the game's with none running.
     /// </summary>
     std::expected<void, std::string> RunPlanned(SDL_GPUCommandBuffer& commands, PlannedFrame& planned);
+    /// <summary>The size <paramref name="planned"/> is composited at: the output's when scaled, else the screen's.</summary>
+    static std::pair<uint32_t, uint32_t> CompositeSize(const PlannedFrame& planned);
     /// <summary>Port-only: the render thread's job: <paramref name="planned"/> run and submitted on a command buffer of its own.</summary>
     void RunAhead(PlannedFrame& planned);
     /// <summary>Port-only: gives <paramref name="planned"/>'s renderer frame back to the renderer, once it has run.</summary>
@@ -207,9 +209,19 @@ private:
     /// <summary>
     /// Port-only: blits _Frame (laid out as <paramref name="layout"/>) into a swapchain image taken on
     /// <paramref name="commands"/>, and submits it, waiting for the image as vsync has it (and for the frames held on
-    /// the GPU), the wait's length kept in _LastImageWaitMs; the game's thread.
+    /// the GPU), the wait's length kept in _LastImageWaitMs; the game's thread. A frame run ahead,
+    /// <paramref name="composited"/>, is composited first, as it's shown (PlannedFrame::CompositesAtShow): straight
+    /// into the image when it covers it whole from its corner, a pixel each, with no blit.
     /// </summary>
-    std::expected<void, std::string> ShowFrame(SDL_GPUCommandBuffer& commands, const ShownLayout& layout);
+    std::expected<void, std::string> ShowFrame(SDL_GPUCommandBuffer& commands, const ShownLayout& layout,
+                                               MCOptionalRef<PlannedFrame> composited = std::nullopt);
+    /// <summary>
+    /// Port-only: the blit of _Frame laid out as <paramref name="layout"/> into <paramref name="swapchain"/>
+    /// (<paramref name="swapchainWidth"/> x <paramref name="swapchainHeight"/>): the part shown, where it lands, and the
+    /// letterbox's black round it.
+    /// </summary>
+    SDL_GPUBlitInfo BlitOf(const ShownLayout& layout, SDL_GPUTexture& swapchain, uint32_t swapchainWidth,
+                           uint32_t swapchainHeight) const;
     /// <summary>Port-only: shows the frame run ahead (_Unshown), which has run, on a command buffer of its own.</summary>
     std::expected<void, std::string> Show();
     /// <summary>
@@ -283,9 +295,10 @@ private:
                                                  MCCountedGpuHandle<SDL_GPUTransferBuffer>& buffer,
                                                  uint32_t& bufferSize);
     /// <summary>
-    /// Composites the frame planned into the frame texture, from the uploaded textures or the GPU's surfaces.
+    /// Composites the frame planned into <paramref name="into"/> (the frame texture, or port-only a swapchain image of
+    /// its size and format: ShowFrame), from the uploaded textures or the GPU's surfaces.
     /// </summary>
-    void Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& planned);
+    void Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& planned, SDL_GPUTexture& into);
     /// <summary>
     /// Port-only (HD lighting): the bloom of underlay <paramref name="index"/>'s GPU world <paramref name="world"/>
     /// (<paramref name="width"/> x <paramref name="height"/>): its bright pass from brightness <paramref name="from"/>
@@ -388,8 +401,14 @@ private:
     Texture _Ops;
     Texture _Tables;
     Texture _Palette;
-    /// <summary>The composited frame, RGBA at the screen's size.</summary>
+    /// <summary>The composited frame, at its size (CompositeSize), in _FrameFormat.</summary>
     Texture _Frame;
+    /// <summary>
+    /// Port-only: the composited frame's format: the swapchain's when that holds RGBA's bytes (B8G8R8A8 too), so a
+    /// frame run ahead may be composited straight into its image as it's shown (_ShowsStraight: ShowFrame); else RGBA.
+    /// </summary>
+    SDL_GPUTextureFormat _FrameFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    bool _ShowsStraight = false;
     /// <summary>The underlays' surfaces, in the order of the frame's underlays.</summary>
     std::vector<Texture> _Underlays;
     /// <summary>Port-only (HD lighting): the underlays' blooms (Bloom), in the same order.</summary>
@@ -435,7 +454,17 @@ private:
     /// the frame run ahead and not shown yet, and the errors of frames run or shown since the last present.
     /// </summary>
     std::shared_ptr<PlannedFrame> _Running;
-    std::optional<ShownLayout> _Unshown;
+    /// <summary>
+    /// Port-only: a frame run ahead and not shown yet: where it's shown from, and the frame while its composite waits
+    /// to be shown (PlannedFrame::CompositesAtShow; none when it was composited as it ran).
+    /// </summary>
+    struct UnshownFrame
+    {
+        ShownLayout Layout;
+        std::shared_ptr<PlannedFrame> Composited;
+    };
+
+    std::optional<UnshownFrame> _Unshown;
     std::string _LateError;
     /// <summary>
     /// Port-only: how long the last frame shown waited for its swapchain image (ms; ShowFrame), and the frames run

@@ -26,7 +26,8 @@
 // (libdatachannel's checks none on Windows). With --websocket-service <wss address> (the fork's Windows build passes
 // the games service's list), it opens that service, and refuses hosts whose certificates are bad: badssl.com's, kept
 // broken on purpose by its maintainers, each a TLS server that a socket must leave before any WebSocket is asked for
-// (one that can't be reached at all, by name or TCP, is skipped, said why: no handshake to judge).
+// (one left unjudged is tried once more; then one that can't be reached at all, by name or TCP, or that timed out
+// again, is skipped, said why: no handshake to judge).
 // And, on this machine's loopback, a service whose network stalls: destroying a socket whose close can't go returns at
 // once, its close finished on its own thread (Windows'), which the thread keeper joins.
 
@@ -124,6 +125,34 @@ namespace
         static_cast<void>(outcome);
         return false;
 #endif
+    }
+
+    /// <summary>
+    /// How the platform's socket closes when its host never answered in its time: WinHTTP's ERROR_WINHTTP_TIMEOUT,
+    /// NSURLErrorTimedOut (what MCWebSocketWin's and MCWebSocketMac's closes end with).
+    /// </summary>
+#if defined(_WIN32)
+    constexpr std::string_view TimedOutEnding = "(WinHTTP error 12002)";
+#elif defined(__APPLE__)
+    constexpr std::string_view TimedOutEnding = "NSURLErrorDomain error -1001";
+#else
+    constexpr std::string_view TimedOutEnding{};
+#endif
+
+    /// <summary>
+    /// Whether <paramref name="outcome"/> left its host's certificate unjudged: never open, no message, neither refused
+    /// for the certificate nor before it.
+    /// </summary>
+    bool Unjudged(const Outcome& outcome)
+    {
+        return !outcome.Opened && outcome.FirstMessage.empty() &&
+               !outcome.WhyClosed.starts_with(MCWebSocketUntrusted) && !RefusedBeforeCertificate(outcome);
+    }
+
+    /// <summary>Whether <paramref name="outcome"/>'s socket closed waiting for its host (<see cref="TimedOutEnding"/>).</summary>
+    bool TimedOut(const Outcome& outcome)
+    {
+        return !TimedOutEnding.empty() && outcome.WhyClosed.ends_with(TimedOutEnding);
     }
 
     /// <summary>
@@ -282,22 +311,37 @@ TEST_CASE("tool: --websocket-service <address> checks this platform's WebSocket 
 
     for (const std::string_view host : BadCertificateHosts)
     {
-        const Outcome bad = Try(host);
-        const bool beforeCertificate = RefusedBeforeCertificate(bad);
+        Outcome bad = Try(host);
 
-        // badssl.com is someone else's: when the socket neither opened nor was refused for the certificate, and the
-        // host can't be reached at all (no name, no TCP connection), there was no handshake to judge, so it's skipped,
-        // said why. A socket that opens, or one that reached the host and closed for anything but the certificate,
-        // still fails.
-        if (!bad.Opened && bad.FirstMessage.empty() && !bad.WhyClosed.starts_with(MCWebSocketUntrusted) &&
-            !beforeCertificate)
+        // badssl.com is someone else's: a socket that neither opened nor was refused for the certificate may have met
+        // the host's bad moment (WinHTTP timed out on GitHub's runners, 20 Nov, a plain TCP connection opening at once
+        // after), so it's tried once more. Still unjudged, when the host can't be reached at all (no name, no TCP
+        // connection) or the socket timed out waiting for it again, there was no handshake to judge, so it's skipped,
+        // said why. A socket that opens, or one that reached the host and closed for anything but the certificate or
+        // the time, still fails.
+        if (Unjudged(bad))
         {
-            if (const std::optional<std::string> why = Unreachable(host); why.has_value())
+            std::cout << std::format("  {}: closed \"{}\", tried again\n", host, bad.WhyClosed);
+            bad = Try(host);
+        }
+
+        if (Unjudged(bad))
+        {
+            std::optional<std::string> why = Unreachable(host);
+
+            if (!why.has_value() && TimedOut(bad))
+            {
+                why = "its socket timed out waiting for it twice";
+            }
+
+            if (why.has_value())
             {
                 std::cout << std::format("  (skipped {}: {}; the socket closed \"{}\")\n", host, *why, bad.WhyClosed);
                 continue;
             }
         }
+
+        const bool beforeCertificate = RefusedBeforeCertificate(bad);
 
         const std::string said = std::format("{}: opened {}, closed \"{}\"", host, bad.Opened, bad.WhyClosed);
         // How each closed, passing or not.

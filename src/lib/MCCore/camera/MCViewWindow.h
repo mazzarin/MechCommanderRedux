@@ -121,6 +121,11 @@ public:
     /// <summary>Port: the world surface's pixels, window and pane.</summary>
     std::shared_ptr<MCWindow> WorldWindow = std::make_shared<MCWindow>();
     std::shared_ptr<MCPane> WorldPane = std::make_shared<MCPane>();
+    /// <summary>
+    /// Port: how many bytes the world surface's pixels hold: the most a size of it has needed, kept so a zoom easing
+    /// doesn't make them again each frame.
+    /// </summary>
+    size_t WorldBytes = 0;
 };
 
 /// <summary>
@@ -152,6 +157,12 @@ extern MCOverlayTarget MCOverlay;
 /// shows, and updates, the same area whatever the window.
 /// </summary>
 extern float MCFixedZoomHeight;
+
+/// <summary>
+/// Port-only (tools: a staged battle's zoom keys): when set, the clock the zoom eases by (milliseconds), in place of the
+/// game's, so a recording at its own frame rate eases as a player's zoom does in time.
+/// </summary>
+extern std::function<uint32_t()> MCZoomEaseClock;
 
 /// <summary>Port: whether an element at <paramref name="depth"/> is a unit overlay (-50000 or -40000).</summary>
 bool MCIsOverlayDepth(float depth);

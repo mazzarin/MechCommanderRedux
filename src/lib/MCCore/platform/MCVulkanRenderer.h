@@ -436,6 +436,12 @@ public:
     static inline bool KeepSurfaces = true;
     static inline bool CheckKeptSurfaces = false;
 
+    /// <summary>
+    /// Port-only (the kept ground), for the tests: whether a zoom easing lays the kept HD ground scaled to the view
+    /// (else it's drawn each frame, as before).
+    /// </summary>
+    static inline bool ScaleGroundWhileZooming = true;
+
     /// <summary>The result of <see cref="CompareKept"/>.</summary>
     struct KeptComparison
     {
@@ -457,8 +463,8 @@ public:
 
     /// <summary>
     /// Port-only (the kept ground), for the tests: the terrain layers run so far drawn directly, and those laid from the
-    /// kept ground as it was drawn whole, moved (shifted, the strips the view moved onto drawn), or kept in place (only
-    /// what changed drawn again, if anything).
+    /// kept ground as it was drawn whole, moved (shifted, the strips the view moved onto drawn), kept in place (only
+    /// what changed drawn again, if anything), or scaled to the view while a zoom eases (KeepGround's scaled lay).
     /// </summary>
     struct GroundCounts
     {
@@ -466,6 +472,7 @@ public:
         int64_t Whole = 0;
         int64_t Shifted = 0;
         int64_t Kept = 0;
+        int64_t Scaled = 0;
     };
 
     /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
@@ -808,6 +815,11 @@ private:
         uint32_t TileColumns = 0;
         bool TilesHeld = false;
         uint64_t Stamp = 0;
+        /// <summary>
+        /// Port-only, execution: whether its next pass starts it blank, as a new surface starts (its window's size changed
+        /// while its drawn size held: a zoom easing; its textures kept).
+        /// </summary>
+        bool Blank = false;
     };
 
     /// <summary>A draw's rectangle (x0, y0, x1, y1), or where it reads from and its steps (x, y, step x, step y).</summary>
@@ -1024,6 +1036,15 @@ private:
         std::array<int32_t, 2> LastOrigin{INT32_MIN, INT32_MIN};
         std::vector<uint8_t> LastLooks;
         /// <summary>
+        /// Port-only (a zoom easing): the part of the surface's window its drawn size covered (MappedWidth, MappedHeight)
+        /// and its drawn grid's offset when the kept ground was drawn, which place its pixels on the map; and the part
+        /// covered the frame before, of the last terrain layer drawn, kept or not (a size that changed since is a zoom
+        /// easing).
+        /// </summary>
+        std::array<uint32_t, 2> Mapped{};
+        std::array<int32_t, 2> Offset{};
+        std::array<uint32_t, 2> LastMapped{};
+        /// <summary>
         /// The rest it was drawn with, as bytes (GroundLooks): the sizes, the terrain's steps and clip, the haze's
         /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).
         /// </summary>
@@ -1048,6 +1069,19 @@ private:
         std::array<int32_t, 2> Shift{};
         /// <summary>The parts drawn again (drawn pixels), when not whole.</summary>
         std::vector<MCRect> Redrawn;
+    };
+
+    /// <summary>
+    /// Port-only (KeepGround, a zoom easing): the kept ground laid scaled to a frame's view, drawn at the size it was
+    /// kept at: where each drawn pixel's centre lies in the kept ground (kept drawn places: x and y per drawn pixel,
+    /// then the place of drawn place 0 across and down), the drawn pixels it covers, and the rest of the terrain's clip
+    /// (a view zoomed out past it), whose terrain is drawn directly.
+    /// </summary>
+    struct GroundScale
+    {
+        std::array<float, 4> Scale{};
+        SDL_Rect Covered{};
+        std::vector<SDL_Rect> Uncovered;
     };
 
     /// <summary>
@@ -1676,14 +1710,31 @@ private:
     GroundPlan PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw, std::span<const uint8_t> looks,
                           std::span<const uint8_t> seen, int32_t fogColumns, const MCColorCycle& cycle) const;
     /// <summary>
+    /// Port-only (KeepGround): while a zoom eases (<paramref name="surface"/>'s drawn size covering another part of
+    /// its window than the frame before), how the kept ground, drawn at another part, is laid scaled to
+    /// <paramref name="draw"/>'s view on surface <paramref name="surfaceIndex"/> (<see cref="GroundScale"/>); none
+    /// when it isn't: no zoom easing, no kept ground for this surface and mesh at its drawn size, magnified past
+    /// MostGroundMagnification or covering less than LeastScaledCoverPercent of the view, or in mirror mode (whose
+    /// indices are the software renderer's).
+    /// </summary>
+    std::optional<GroundScale> ScaleGround(uint16_t surfaceIndex, const Surface& surface, const TerrainDraw& draw,
+                                           int32_t fogColumns) const;
+    /// <summary>
+    /// Port-only (KeepGround): whether a zoom easing lays the kept ground scaled (ScaleGroundWhileZooming; not in mirror
+    /// mode, whose indices are the software renderer's).
+    /// </summary>
+    static bool ScalesGround();
+    /// <summary>
     /// Port-only (KeepGround): draws kept pair <paramref name="from"/> (none for Clear) as <paramref name="mode"/>
-    /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), at the drawn pixels showing
-    /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size, through
-    /// <paramref name="pipelines"/>.
+    /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), or with
+    /// <paramref name="scale"/> from where it lies in the kept ground (GroundScale::Scale, the colours read between the
+    /// kept pixels round it), at the drawn pixels showing the terrain's clip in the render pass under way on
+    /// <paramref name="surface"/>'s size, through <paramref name="pipelines"/>.
     /// </summary>
     void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
                         const Surface& surface, const MCRect& clip, KeptGroundMode mode,
-                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {});
+                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {},
+                        const std::optional<std::array<float, 4>>& scale = std::nullopt);
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
         std::span<const std::reference_wrapper<const Surface>> surfaces);
@@ -1825,6 +1876,8 @@ private:
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;
+    /// <summary>Port-only (KeepGround's scaled lay): reads between texels, clamped to the edges.</summary>
+    MCGpuHandle<SDL_GPUSampler> _Linear;
     /// <summary>A 1x1 texture bound where a draw has no source or no world.</summary>
     Texture _Blank;
 

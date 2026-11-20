@@ -922,6 +922,13 @@ namespace
     constexpr size_t MostMergedParts = 64;
     constexpr int64_t WholeGroundPercent = 60;
     constexpr int64_t GroundMergeSlack = 64 * 64;
+    /// <summary>
+    /// Port-only (the kept ground, a zoom easing): the most a kept ground is magnified laid scaled to the view (a zoom
+    /// key's step, 1.5x, and a little), past which it's drawn again; the least share of the terrain's clip it must
+    /// cover (zoomed out past it, the rest is drawn directly: a zoom key's step out leaves it 44%).
+    /// </summary>
+    constexpr double MostGroundMagnification = 1.6;
+    constexpr int64_t LeastScaledCoverPercent = 40;
     /// <summary>Port-only (the kept ground): a cell's draw in the terrain's first pass and its seam pass, and its haze.</summary>
     struct GroundCellDraw
     {
@@ -948,6 +955,7 @@ namespace
     struct GroundUniforms
     {
         int32_t Shift[4];
+        float Scale[4];
     };
 
     /// <summary>Port-only (HD movies): the movie conversion's uniforms (shaders/movie.pshader, cbuffer Movie).</summary>
@@ -1508,6 +1516,15 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
         return std::unexpected(SdlError("SDL_CreateGPUSampler"));
     }
 
+    sampler.min_filter = SDL_GPU_FILTER_LINEAR;
+    sampler.mag_filter = SDL_GPU_FILTER_LINEAR;
+    renderer->_Linear = MCGpuHandle<SDL_GPUSampler>(SDL_CreateGPUSampler(device.get(), &sampler), MCGpuRelease{device});
+
+    if (renderer->_Linear == nullptr)
+    {
+        return std::unexpected(SdlError("SDL_CreateGPUSampler(linear)"));
+    }
+
     for (auto made :
          {renderer->EnsureTexture(renderer->_Blank, MCHolder::GpuOther, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
                                   SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, 1),
@@ -1599,6 +1616,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _Transfer.reset();
     _DrawBuffer.reset();
     _Nearest.reset();
+    _Linear.reset();
     ReleaseTerrainMesh();
     _SurfacePipelines = {};
     _MoviePipeline.reset();
@@ -7459,9 +7477,99 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     return plan;
 }
 
+bool MCVulkanRenderer::ScalesGround()
+{
+    return ScaleGroundWhileZooming && MCRenderer::GpuDrawing() != MCGpuDrawing::Mirror;
+}
+
+auto MCVulkanRenderer::ScaleGround(uint16_t surfaceIndex, const Surface& surface, const TerrainDraw& draw,
+                                   int32_t fogColumns) const -> std::optional<GroundScale>
+{
+    const KeptGround& kept = _KeptGround;
+    const std::array<uint32_t, 2> mapped{surface.MappedWidth, surface.MappedHeight};
+    const std::array<uint32_t, 2> drawn{surface.Target.Width, surface.Target.Height};
+    const Texture& colors = kept.Colors[kept.Current];
+
+    // A zoom easing: the drawn size covers another part of the window than the frame before, and than the kept
+    // ground's, drawn for this surface and mesh at this drawn size. Not in mirror mode, whose indices are checked.
+    if (!ScalesGround() || !kept.Held || kept.SurfaceIndex != surfaceIndex || kept.SurfaceKey != surface.Key ||
+        kept.Upload != _TerrainMesh.Upload || kept.FogColumns != fogColumns || mapped == kept.LastMapped ||
+        mapped == kept.Mapped || colors.Handle == nullptr || colors.Width != drawn[0] || colors.Height != drawn[1] ||
+        kept.Mapped[0] == 0 || kept.Mapped[1] == 0 || mapped[0] == 0 || mapped[1] == 0)
+    {
+        return std::nullopt;
+    }
+
+    // A drawn place d now shows window place (d W - r) / D (MCDrawnGrid::WindowPlace), the map's place that less the
+    // window point of map vertex (0, 0); the kept ground shows that map place at kept drawn place
+    // ((map place + its point) D + its r) / its W: d W / its W + ((its point - the point) D + its r - r) / its W.
+    GroundScale scale;
+    const MCTerrainFrame& now = draw.Frame;
+    const MCTerrainFrame& then = kept.Frame;
+    const std::array<int64_t, 2> pointNow{static_cast<int64_t>(now.PaneX) + now.OriginX,
+                                          static_cast<int64_t>(now.PaneY) + now.OriginY};
+    const std::array<int64_t, 2> pointThen{static_cast<int64_t>(then.PaneX) + then.OriginX,
+                                           static_cast<int64_t>(then.PaneY) + then.OriginY};
+    const MCRect keptDrawn = DrawnPixels(then.Clip, kept.Mapped, drawn, kept.Offset);
+    const MCRect clipDrawn = DrawnPixels(now.Clip, mapped, drawn, surface.Offset);
+    std::array<int32_t, 2> first{};
+    std::array<int32_t, 2> last{};
+
+    for (size_t i = 0; i < 2; ++i)
+    {
+        const double keptMapped = kept.Mapped[i];
+        const double per = static_cast<double>(mapped[i]) / keptMapped;
+
+        if (1.0 / per > MostGroundMagnification)
+        {
+            return std::nullopt;
+        }
+
+        const double at =
+            (static_cast<double>(pointThen[i] - pointNow[i]) * drawn[i] + kept.Offset[i] - surface.Offset[i]) /
+            keptMapped;
+        scale.Scale[i] = static_cast<float>(per);
+        scale.Scale[2 + i] = static_cast<float>(at);
+
+        // The drawn pixels p whose centres lie in the kept clip's drawn pixels' centres: its first k0 + 1/2 <=
+        // (p + 1/2) per + at <= its last k1 + 1/2.
+        const double from = (i == 0 ? keptDrawn.X0 : keptDrawn.Y0) + 0.5;
+        const double to = (i == 0 ? keptDrawn.X1 : keptDrawn.Y1) + 0.5;
+        first[i] = static_cast<int32_t>(std::ceil((from - at) / per - 0.5));
+        last[i] = static_cast<int32_t>(std::floor((to - at) / per - 0.5));
+    }
+
+    const MCRect covered = Intersection(MCRect{first[0], first[1], last[0], last[1]}, clipDrawn);
+
+    if (Empty(covered) || Area(covered) * 100 < Area(clipDrawn) * LeastScaledCoverPercent)
+    {
+        return std::nullopt;
+    }
+
+    const auto toScissor = [](const MCRect& rect)
+    { return SDL_Rect{rect.X0, rect.Y0, rect.X1 - rect.X0 + 1, rect.Y1 - rect.Y0 + 1}; };
+
+    scale.Covered = toScissor(covered);
+
+    // The clip's drawn pixels past it: the rows above and below, then the columns either side of it between them.
+    for (const MCRect& part : {MCRect{clipDrawn.X0, clipDrawn.Y0, clipDrawn.X1, covered.Y0 - 1},
+                               MCRect{clipDrawn.X0, covered.Y1 + 1, clipDrawn.X1, clipDrawn.Y1},
+                               MCRect{clipDrawn.X0, covered.Y0, covered.X0 - 1, covered.Y1},
+                               MCRect{covered.X1 + 1, covered.Y0, clipDrawn.X1, covered.Y1}})
+    {
+        if (!Empty(part))
+        {
+            scale.Uncovered.push_back(toScissor(part));
+        }
+    }
+
+    return scale;
+}
+
 void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass,
                                       const SurfacePipelines& pipelines, const Surface& surface, const MCRect& clip,
-                                      KeptGroundMode mode, std::optional<size_t> from, std::array<int32_t, 2> shift)
+                                      KeptGroundMode mode, std::optional<size_t> from, std::array<int32_t, 2> shift,
+                                      const std::optional<std::array<float, 4>>& scale)
 {
     // The drawn pixels showing the clip's window pixels, every one of which the ground's shader draws.
     const MCRect drawn = DrawnPixels(clip, {surface.MappedWidth, surface.MappedHeight},
@@ -7471,9 +7579,13 @@ void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURen
          static_cast<float>(std::max(drawn.X1 - drawn.X0 + 1, 0)),
          static_cast<float>(std::max(drawn.Y1 - drawn.Y0 + 1, 0))},
         {static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height), 0.0f, 0.0f}};
-    const GroundUniforms ground{{shift[0], shift[1], static_cast<int32_t>(mode), 0}};
+    // (Scale 0: not scaled.)
+    const std::array<float, 4> scaled = scale.value_or(std::array<float, 4>{});
+    const GroundUniforms ground{{shift[0], shift[1], static_cast<int32_t>(mode), 0},
+                                {scaled[0], scaled[1], scaled[2], scaled[3]}};
     const SDL_GPUTextureSamplerBinding bindings[2] = {
-        {from.has_value() ? _KeptGround.Colors[*from].Handle.get() : _Blank.Handle.get(), _Nearest.get()},
+        {from.has_value() ? _KeptGround.Colors[*from].Handle.get() : _Blank.Handle.get(),
+         scale.has_value() ? _Linear.get() : _Nearest.get()},
         {from.has_value() ? _KeptGround.Indices[*from].Handle.get() : _Blank.Handle.get(), _Nearest.get()},
     };
 
@@ -7891,6 +8003,15 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
                                                                        SDL_Color blank)
 {
     constexpr SDL_GPUTextureUsageFlags target = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    // Port-only: at the drawn size it has (its window's size changed alone: a zoom easing), its textures are kept, its
+    // next pass starting it blank and its glints and stands holding nothing, not made or cleared again.
+    const auto drawnAt = [&surface](const Texture& texture)
+    {
+        return texture.Handle != nullptr && texture.Width == surface.DrawnWidth &&
+               texture.Height == surface.DrawnHeight;
+    };
+
+    const bool kept = drawnAt(surface.Target) && drawnAt(surface.Index) && drawnAt(surface.Copy);
 
     for (auto made : {EnsureTexture(surface.Target, MCHolder::GpuTargets, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, target,
                                     surface.DrawnWidth, surface.DrawnHeight),
@@ -7905,23 +8026,33 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
         }
     }
 
-    // Port-only (HD weather): the glints go, made again at the new size by the next pass that draws into them; port-only,
-    // the stands too.
-    Release(surface.Glints);
     surface.GlintsHeld = false;
-    Release(surface.Stands);
     surface.StandsHeld = false;
-    SDL_GPUColorTargetInfo clear[PlainTargets]{};
-    clear[0].texture = surface.Target.Handle.get();
-    clear[1].texture = surface.Index.Handle.get();
-    ClearBlank(clear, blank);
 
-    for (SDL_GPUColorTargetInfo& info : clear)
+    if (kept)
     {
-        info.store_op = SDL_GPU_STOREOP_STORE;
+        surface.Blank = true;
+    }
+    else
+    {
+        // Port-only (HD weather): the glints go, made again at the new size by the next pass that draws into them;
+        // port-only, the stands too.
+        Release(surface.Glints);
+        Release(surface.Stands);
+        SDL_GPUColorTargetInfo clear[PlainTargets]{};
+        clear[0].texture = surface.Target.Handle.get();
+        clear[1].texture = surface.Index.Handle.get();
+        ClearBlank(clear, blank);
+
+        for (SDL_GPUColorTargetInfo& info : clear)
+        {
+            info.store_op = SDL_GPU_STOREOP_STORE;
+        }
+
+        SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, PlainTargets, nullptr));
+        surface.Blank = false;
     }
 
-    SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, PlainTargets, nullptr));
     surface.Copied = MCRect{0, 0, -1, -1};
     surface.DrawnSinceCopy.clear();
     // Port-only (the kept surfaces): it holds nothing a frame drew.
@@ -8626,6 +8757,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
     // surface whose kept ground holds the frame's, for its terrain layer to copy in.
     std::vector<uint32_t> terrainLayers(_RunSurfaces.size(), 0);
     int32_t keptSurface = -1;
+    // Port-only (a zoom easing): how the kept ground is laid scaled to the view, when it is (ScaleGround).
+    std::optional<GroundScale> scaledGround;
 
     for (const Record& record : run.Records)
     {
@@ -8654,19 +8787,34 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         std::ranges::fill(unstepped.Look, 0.0f);
         std::ranges::fill(unstepped.Offset, 0);
         std::vector<uint8_t> looks = GroundLooks(run, surface, draw, std::as_bytes(std::span(&unstepped, 1)));
-        const GroundPlan plan = PlanGround(surfaceIndex, draw, looks, seen, fogColumns, run.Cycle);
         KeptGround& kept = _KeptGround;
         const std::array<int32_t, 2> origin{draw.Frame.OriginX, draw.Frame.OriginY};
         const bool moving = origin != kept.LastOrigin;
         const bool changing = looks != kept.LastLooks;
+        // While a zoom eases, the view's size changing from frame to frame, the kept ground is laid scaled to it (at
+        // most MostGroundMagnification, so a little soft zooming in; zoomed out past it, the rest drawn directly), not
+        // drawn again: it's drawn whole the first frame the size holds.
+        const bool zooming = ScalesGround() && std::array{surface.MappedWidth, surface.MappedHeight} != kept.LastMapped;
+        scaledGround = ScaleGround(surfaceIndex, surface, draw, fogColumns);
         kept.LastOrigin = origin;
         kept.LastLooks = looks;
+        kept.LastMapped = {surface.MappedWidth, surface.MappedHeight};
+
+        if (scaledGround.has_value())
+        {
+            ++_GroundCounts.Scaled;
+            return true;
+        }
+
+        const GroundPlan plan = PlanGround(surfaceIndex, draw, looks, seen, fogColumns, run.Cycle);
 
         // Drawn whole once while the view moves (a step of the colour cycle over much of it, a jump), it's kept: the
         // frames after move it by whole drawn pixels (the drawn grid), and draw again only what changed. Drawn whole
-        // while the view moves and what it's drawn from changes from frame to frame (a zoom easing), the next frame
-        // would draw it whole again: drawn directly instead.
-        if (plan.Whole && moving && changing)
+        // while the view moves and what it's drawn from changes from frame to frame, the next frame would draw it whole
+        // again: drawn directly instead; but for a zoom easing past what the kept ground can be scaled to (further
+        // than MostGroundMagnification, or zoomed out past LeastScaledCoverPercent), whose frames after are laid
+        // scaled from it.
+        if (plan.Whole && moving && changing && !zooming)
         {
             return false;
         }
@@ -8750,6 +8898,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         kept.SurfaceKey = surface.Key;
         kept.Upload = _TerrainMesh.Upload;
         kept.Frame = draw.Frame;
+        kept.Mapped = {surface.MappedWidth, surface.MappedHeight};
+        kept.Offset = surface.Offset;
         kept.Seen = std::move(seen);
         kept.FogColumns = fogColumns;
         kept.CycleStep = run.Cycle.Step;
@@ -8909,6 +9059,13 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                 ClearBlank(targets, run.Colors[0]);
             }
 
+            // Port-only: nor one kept at its drawn size through a resize (MakeSurfaceTextures), which starts blank.
+            if (surface.Blank)
+            {
+                ClearBlank(targets, run.Colors[0]);
+                surface.Blank = false;
+            }
+
             if (wipe.has_value())
             {
                 clearToWipe(targets, *wipe);
@@ -8948,7 +9105,35 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             const TerrainDraw& draw = run.TerrainDraws[static_cast<size_t>(record.TerrainDraw)];
             const SurfacePipelines& pipelines = PipelinesFor(surface);
 
-            if (keptSurface == record.SurfaceIndex)
+            if (keptSurface == record.SurfaceIndex && scaledGround.has_value())
+            {
+                // Port-only (a zoom easing): the kept ground scaled to the view where it covers it, the terrain drawn
+                // directly past it; then the whole surface's scissor again.
+                const SDL_Rect whole{0, 0, static_cast<int>(surface.Target.Width),
+                                     static_cast<int>(surface.Target.Height)};
+                SDL_SetGPUScissor(pass, &scaledGround->Covered);
+                DrawKeptGround(commands, *pass, pipelines, surface, draw.Frame.Clip, KeptGroundMode::Over,
+                               _KeptGround.Current, {}, scaledGround->Scale);
+                DrawKeptGround(commands, *pass, pipelines, surface, draw.Frame.Clip, KeptGroundMode::Indices,
+                               _KeptGround.Current, {}, scaledGround->Scale);
+
+                if (!scaledGround->Uncovered.empty())
+                {
+                    const FrameUniforms frame = recordFrame(surface, record, passFrame);
+
+                    for (const SDL_Rect& part : scaledGround->Uncovered)
+                    {
+                        SDL_SetGPUScissor(pass, &part);
+                        DrawTerrain(commands, *pass, pipelines, run, surface, draw,
+                                    std::as_bytes(std::span(&frame, 1)));
+                    }
+                }
+
+                SDL_SetGPUScissor(pass, &whole);
+                scaledGround.reset();
+                keptSurface = -1;
+            }
+            else if (keptSurface == record.SurfaceIndex)
             {
                 DrawKeptGround(commands, *pass, pipelines, surface, draw.Frame.Clip, KeptGroundMode::Over,
                                _KeptGround.Current);

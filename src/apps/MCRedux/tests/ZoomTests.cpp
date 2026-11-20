@@ -4,6 +4,7 @@
 #include "appear/MCAppearance.h"
 #include "camera/MCCamera.h"
 #include "gui/MCGuiSystem.h"
+#include "iface/MCTacticalInterface.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
 #include "platform/MCDisplay.h"
@@ -45,6 +46,66 @@ TEST_CASE_ISOLATED("game: units keep their place on the ground while the zoom ea
     // The zoom took several frames to get there, and got there.
     CHECK(easedFrames > 2);
     CHECK_EQ(view->ZoomHeight, 800.0f);
+}
+
+/// <summary>
+/// Port: a zoom key's step (1.5x) eases at 120 frames a second as it started (its first frame's step within a few
+/// percent of easing toward the target alone), and ends on time: in about 0.3 s, its last frames moving about a line
+/// each, not creeping through its last lines for 0.2 s more.
+/// </summary>
+TEST_CASE_ISOLATED("game: a zoom key's step eases in about 0.3 s and ends without creeping")
+{
+    constexpr double FrameMilliseconds = 1000.0 / 120.0;
+    constexpr double EaseTime = 70.0;
+    constexpr int32_t MostFrames = 120;
+    // A third of a second at 120 frames a second, and the last frame's step at least this many lines.
+    constexpr int32_t OnTimeFrames = 40;
+    constexpr float LeastLastStep = 0.4f;
+    // The ease aims 8 lines past its target: a 240-line step's first frame goes 3.3% further than easing to it alone.
+    constexpr double FirstStepShare = 0.05;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCViewWindow> view = MCMainView();
+    REQUIRE(view != nullptr);
+    MCFixedZoomHeight = 0.0f;
+    double now = 0.0;
+    MCZoomEaseClock = [&now] { return static_cast<uint32_t>(now); };
+    view->ZoomHeight = 0.0f;
+    view->StartZoom();
+    const float from = view->ZoomHeight;
+    REQUIRE(view->ZoomBy(MCTacticalInterface::ZoomKeyStep));
+    const float to = view->ZoomTarget;
+    REQUIRE(to > from);
+    int32_t frames = 0;
+    float last = from;
+    float lastStep = 0.0f;
+    float firstStep = 0.0f;
+
+    while (view->ZoomHeight != view->ZoomTarget && frames < MostFrames)
+    {
+        now += FrameMilliseconds;
+        view->EaseZoom();
+        lastStep = view->ZoomHeight - last;
+        firstStep = frames == 0 ? lastStep : firstStep;
+        last = view->ZoomHeight;
+        ++frames;
+    }
+
+    MCZoomEaseClock = nullptr;
+    // The first frame's step as easing toward the target alone (at the clock's whole milliseconds).
+    const double plain = (to - from) * (1.0 - std::exp(-std::floor(FrameMilliseconds) / EaseTime));
+    std::cout << std::format("  {:.0f} to {:.0f} lines in {} frames; the first step {:.2f} lines ({:.2f} toward the "
+                             "target alone), the last {:.2f}\n",
+                             from, to, frames, firstStep, plain, lastStep);
+    CHECK_EQ(view->ZoomHeight, to);
+    CHECK(frames <= OnTimeFrames);
+    CHECK(std::fabs(firstStep - plain) <= plain * FirstStepShare);
+    CHECK(lastStep >= LeastLastStep);
 }
 
 namespace

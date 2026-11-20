@@ -10460,6 +10460,150 @@ TEST_CASE_ISOLATED("game: a pan keeps the HD ground it draws whole, but not whil
 
 namespace
 {
+    /// <summary>
+    /// Port-only (the kept ground, a zoom easing): the mean difference of <paramref name="a"/>'s and
+    /// <paramref name="b"/>'s colours over <paramref name="within"/> (levels a channel), and the share of its pixels
+    /// (percent) a channel of which differs by more than <paramref name="far"/>.
+    /// </summary>
+    std::pair<double, double> ColourDifference(const Shown& a, const Shown& b, const MCRect& within, int32_t far)
+    {
+        REQUIRE_EQ(a.Width, b.Width);
+        REQUIRE_EQ(a.Height, b.Height);
+        constexpr int32_t Channels = 3;
+        constexpr double Percent = 100.0;
+        int64_t sum = 0;
+        int64_t farPixels = 0;
+        int64_t pixels = 0;
+
+        for (int32_t y = within.Y0; y <= within.Y1; ++y)
+        {
+            for (int32_t x = within.X0; x <= within.X1; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * a.Width + x) * BytesPerPixel;
+                int32_t most = 0;
+
+                for (int32_t c = 0; c < Channels; ++c)
+                {
+                    const int32_t difference = std::abs(a.Pixels[at + c] - b.Pixels[at + c]);
+                    sum += difference;
+                    most = std::max(most, difference);
+                }
+
+                farPixels += most > far ? 1 : 0;
+                ++pixels;
+            }
+        }
+
+        return {static_cast<double>(sum) / static_cast<double>(std::max<int64_t>(pixels * Channels, 1)),
+                Percent * static_cast<double>(farPixels) / static_cast<double>(std::max<int64_t>(pixels, 1))};
+    }
+}
+
+/// <summary>
+/// Port-only (the kept ground): while a zoom eases (the view's lines changing from frame to frame), the HD ground is
+/// laid from the kept ground scaled to the view, the rest past it drawn directly zooming out, and none drawn whole or
+/// directly over all of it; the first frame the zoom holds draws it whole, then keeps it. Each scaled frame shows
+/// nearly what drawing the ground shows: compared with the same frames drawn so (the game paused, so only the ground's
+/// drawing differs), its colours a few levels apart on the whole, few pixels far apart (the scaled ground is a little
+/// soft).
+/// </summary>
+TEST_CASE_ISOLATED("game: a zoom easing lays the kept HD ground scaled to the view, then draws it whole once it holds")
+{
+    // The zoom out and back in: the lines a frame (a zoom key's step is 1.5x), then frames held.
+    constexpr std::array<float, 6> Steps = {1.08f, 1.16f, 1.24f, 1.32f, 1.38f, 1.42f};
+    constexpr int32_t HeldFrames = 3;
+    // The frame compared: one in the zoom out's middle, and one in the zoom in's.
+    constexpr size_t ComparedStep = 2;
+    // Colours more than this far apart in a channel count as far apart.
+    constexpr int32_t FarLevels = 48;
+    // On the M4 Pro: 0.4 levels zooming out, 0.7 zooming in (the magnified ground a little soft), none far apart.
+    constexpr double MostMeanLevels = 2.0;
+    constexpr double MostFarPercent = 0.5;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // The water's colour cycle held, so only the zoom draws the ground again.
+    GuiSystem().PaletteCycle = 0;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    GamePaused = true;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    const float lines = MCFixedZoomHeight;
+    REQUIRE(lines > 0.0f);
+
+    // The zoom out and in, its compared frames shown; then held at the start's lines.
+    const auto zoom = [&](std::vector<Shown>& compared)
+    {
+        for (const bool out : {true, false})
+        {
+            for (size_t step = 0; step < Steps.size(); ++step)
+            {
+                const size_t at = out ? step : Steps.size() - 1 - step;
+                MCFixedZoomHeight = lines * (out ? Steps[at] : (at == 0 ? 1.0f : Steps[at - 1]));
+                MCTestGame::RunFrame(FrameSeconds);
+
+                if (step == ComparedStep)
+                {
+                    compared.push_back(ReadShown(scene->Scratch));
+                }
+            }
+
+            for (int32_t frame = 0; frame < HeldFrames; ++frame)
+            {
+                MCTestGame::RunFrame(FrameSeconds);
+            }
+        }
+    };
+
+    std::vector<Shown> drawn;
+    MCVulkanRenderer::ScaleGroundWhileZooming = false;
+    zoom(drawn);
+    MCVulkanRenderer::ScaleGroundWhileZooming = true;
+    std::vector<Shown> scaled;
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+    zoom(scaled);
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    GamePaused = false;
+    MCFixedZoomHeight = lines;
+
+    const auto frames = static_cast<int64_t>(2 * Steps.size());
+    std::cout << std::format("  {} frames easing: {} scaled, {} whole, {} direct, {} laid kept\n", frames,
+                             after.Scaled - before.Scaled, after.Whole - before.Whole, after.Direct - before.Direct,
+                             after.Kept - before.Kept + after.Shifted - before.Shifted);
+    CHECK_EQ(after.Scaled - before.Scaled, frames);
+    CHECK_EQ(after.Whole - before.Whole, 2);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+
+    REQUIRE_EQ(drawn.size(), scaled.size());
+
+    for (size_t i = 0; i < drawn.size(); ++i)
+    {
+        // The view's middle (the tactical map's blips blink).
+        const MCRect middle{drawn[i].Width / 4, drawn[i].Height / 4, drawn[i].Width * 3 / 4, drawn[i].Height * 3 / 4};
+        const auto [mean, far] = ColourDifference(drawn[i], scaled[i], middle, FarLevels);
+        std::cout << std::format(
+            "  zooming {}: colours {:.2f} levels apart on the whole, {:.2f}% of the pixels far apart\n",
+            i == 0 ? "out" : "in", mean, far);
+        CHECK(mean < MostMeanLevels);
+        CHECK(far < MostFarPercent);
+    }
+
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
     /// <summary>Port-only (the kept surfaces): the frames a kept screen's test ran, and what they did.</summary>
     struct KeptScreenRun
     {

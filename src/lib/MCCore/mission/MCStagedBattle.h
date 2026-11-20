@@ -62,6 +62,11 @@ struct MCBattleSpec
     int32_t Answer = -1;
     int32_t WatchZoom = 0;
     int32_t ZoomEase = 1;
+    /// <summary>
+    /// Port-only (tools): the frames the zoom keys are pressed at, out then in in turn (a key's step each, eased as a
+    /// player's zoom eases in time at the battle's frame rate); none: none pressed.
+    /// </summary>
+    std::vector<int32_t> ZoomKeys;
     std::vector<MCBattleEvent> Incoming;
     std::vector<MCBattleEvent> Cameras;
     std::vector<MCBattleEvent> Dfas;

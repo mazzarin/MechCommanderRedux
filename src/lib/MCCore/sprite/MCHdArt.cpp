@@ -210,6 +210,11 @@ namespace
     /// pack's packets hold at most 151).
     /// </summary>
     constexpr int32_t MostArchivedFrames = 1024;
+    /// <summary>
+    /// The most packets a type's archive is taken to hold (TypePackets): a number past it is a damaged archive's (the
+    /// pack's highest is 735).
+    /// </summary>
+    constexpr int32_t MostArchivedPackets = 1024;
     constexpr std::array<uint8_t, 4> HdfMagic = {'M', 'C', 'H', 'D'};
     constexpr uint32_t HdfVersion = 1;
     /// <summary>
@@ -1667,6 +1672,52 @@ namespace
         const auto found = archived.Archive->FrameCounts.find(Upper(archived.Prefix));
         archived.Frames = found == archived.Archive->FrameCounts.end() ? 0 : found->second;
         return *archived.Frames;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): the folders of the packets of <paramref name="folder"/>'s
+    /// archive but its own, each named from <paramref name="name"/> (its folder, relative to the pack), when the folder
+    /// names a type as the lists do (MCScenario::HoldList: its packet 0's, which opens its archive whether or not the type
+    /// has a packet 0) and its archive is opened already and holds the type's packets at its top (a mech's part's, an
+    /// object's); none otherwise. A type's packets may skip numbers: they are looked for by number, up to as many as the
+    /// archive has folders.
+    /// </summary>
+    std::vector<std::filesystem::path> TypePackets(const FrameFolder& folder, const std::filesystem::path& name)
+    {
+        constexpr std::string_view FirstPacket = "0";
+        std::vector<std::filesystem::path> packets;
+
+        if (!folder.Archived.has_value() || folder.Archived->Archive == nullptr || name.filename() != FirstPacket ||
+            folder.Archived->Prefix != std::format("{}{}", FirstPacket, ArchiveSeparator))
+        {
+            return packets;
+        }
+
+        const MCHdArchive& archive = *folder.Archived->Archive;
+        const bool version2 = archive.File->IsVersion2();
+        // Version 2's rows: each packet's and the archive's own folder's (the empty path); version 1's first folders: each
+        // packet's.
+        const size_t rows = archive.File->FolderCount();
+        const size_t count = version2 ? rows - (rows > 0 && archive.File->HasFolder(std::string_view()) ? 1 : 0)
+                                      : archive.Folders.size();
+        size_t found = 0;
+
+        for (int32_t packet = 0; packet < MostArchivedPackets && found < count; ++packet)
+        {
+            const std::string number = std::to_string(packet);
+
+            if (version2 ? archive.File->HasFolder(number) : archive.Folders.contains(number))
+            {
+                ++found;
+
+                if (number != FirstPacket)
+                {
+                    packets.push_back(name.parent_path() / number);
+                }
+            }
+        }
+
+        return packets;
     }
 
     /// <summary>Whether <paramref name="entry"/> unpacks to no more than a frame file may be (MaxHdfBytes).</summary>
@@ -7247,6 +7298,20 @@ void MCHdArt::WaitForReadAhead()
                        });
 }
 
+void MCHdArt::WaitForGpuReads()
+{
+    ReadAhead& ahead = TheState().Ahead;
+    std::unique_lock lock(ahead.Lock);
+    constexpr size_t gpu = std::to_underlying(AheadKind::Gpu);
+    ahead.Changed.wait_for(lock, GpuReadsWaitMost,
+                           [&]
+                           {
+                               return ahead.GpuAsks == 0 &&
+                                      (!ahead.Staged.empty() || (ahead.WaitingOfKind[gpu] == 0 &&
+                                                                 ahead.InFlight[gpu] == 0 && ahead.GpuReading.empty()));
+                           });
+}
+
 void MCHdArt::SetReaderSettings(const ReaderSettings& settings)
 {
     ReadAhead& ahead = TheState().Ahead;
@@ -7629,9 +7694,10 @@ namespace
         };
 
         std::vector<MCHdArt::PacketAhead> packets;
+        std::vector<std::filesystem::path> typePackets;
         // Each in its order from where it was left (packetAt: its packet at an index), up to the first whose archive the
-        // hold reads still.
-        const auto walk = [&](size_t count, size_t& asked, const auto& packetAt)
+        // hold reads still. With types, a folder naming a type (TypePackets) brings its archive's other packets after.
+        const auto walk = [&](size_t count, size_t& asked, const auto& packetAt, bool types)
         {
             for (; asked < count; ++asked)
             {
@@ -7642,6 +7708,12 @@ namespace
                 if (next == Next::Wait)
                 {
                     return false;
+                }
+
+                if (types)
+                {
+                    std::ranges::move(TypePackets(state.Folders.at(index), packet.Folder),
+                                      std::back_inserter(typePackets));
                 }
 
                 if (next == Next::Ask && state.GpuAsked.insert(index).second)
@@ -7658,11 +7730,16 @@ namespace
         { return [folders](size_t at) { return MCHdArt::PacketAhead{folders[at], std::nullopt, true, 0}; }; };
 
         // FillGpu's order, then the briefing's folders (SPEC-memory.md's "The GPU from the briefing"), then the load's.
-        if (walk(state.GpuOrder.size(), state.GpuOrderAsked, [&state](size_t at) { return state.GpuOrder[at]; }) &&
-            walk(state.BriefingFillFolders.size(), state.BriefingFillAsked, folderAt(state.BriefingFillFolders)))
+        const auto orderAt = [&state](size_t at) { return state.GpuOrder[at]; };
+
+        if (walk(state.GpuOrder.size(), state.GpuOrderAsked, orderAt, false) &&
+            walk(state.BriefingFillFolders.size(), state.BriefingFillAsked, folderAt(state.BriefingFillFolders), true))
         {
-            walk(state.LoadFolders.size(), state.LoadFoldersAsked, folderAt(state.LoadFolders));
+            walk(state.LoadFolders.size(), state.LoadFoldersAsked, folderAt(state.LoadFolders), false);
         }
+
+        // Walked from the next frame on: the walk's list stays as it was while walked.
+        NoteBriefingFillFolders(state, typePackets);
 
         if (!packets.empty())
         {
@@ -7777,6 +7854,15 @@ void MCHdArt::FinishLoadFill(const std::function<void()>& shown, bool waitForGpu
                         static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb,
                         static_cast<double>(ahead.Holding.QueuedBytes) / BytesPerMb,
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - ahead.Holding.Began).count()));
+    }
+
+    // Port-only (SPEC-memory.md's "The GPU from the briefing", a match): what's left asked for while the load's archives
+    // are its to look up, all held now; in play none is opened for it (UpdateGpuFill).
+    if (!waitForGpu && ahead.Holding.Loading && state.GpuFits && !GpuFillDone(state))
+    {
+        lock.unlock();
+        UpdateGpuFill(state);
+        lock.lock();
     }
 
     const bool filled = ahead.Holding.Loading;

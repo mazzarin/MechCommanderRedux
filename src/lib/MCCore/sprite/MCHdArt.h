@@ -1126,6 +1126,15 @@ namespace MCHdArt
     void WaitForReadAhead();
 
     /// <summary>
+    /// Port-only (the tests: MCHdArt::FillGpu): waits until the readers have made the fill's asks reads and read them, or
+    /// put pictures in the slots for the renderer to take, or until <see cref="GpuReadsWaitMost"/> passes (a reader
+    /// waiting for room only the renderer frees): the readers run below the game's thread, so a test's frames, which take
+    /// no time of their own, may otherwise pass before they have read anything.
+    /// </summary>
+    void WaitForGpuReads();
+    constexpr std::chrono::seconds GpuReadsWaitMost{5};
+
+    /// <summary>
     /// Port-only: waits until the readers have read what a load waits for (<see cref="ReadGroundAhead"/>), not the rest
     /// they were handed.
     /// </summary>

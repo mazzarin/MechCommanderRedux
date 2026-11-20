@@ -4244,7 +4244,8 @@ namespace
 
     /// <summary>
     /// Port-only: play's frames (or a briefing's) for the fill, at most <paramref name="most"/>, until
-    /// <paramref name="until"/> pictures are up: each after the readers' work, its pictures taken (TakeEveryPicture).
+    /// <paramref name="until"/> pictures are up: each after the readers' work, the fill's too (MCHdArt::WaitForGpuReads),
+    /// its pictures taken (TakeEveryPicture).
     /// </summary>
     void FramesUntilUp(uint64_t until, size_t most, std::vector<MCHdArt::StagedPicture>& up)
     {
@@ -4254,6 +4255,7 @@ namespace
             MCHdArt::WaitForHold();
             MCHdArt::NextFrame(false);
             MCHdArt::WaitForReadAhead();
+            MCHdArt::WaitForGpuReads();
             TakeEveryPicture(up);
         }
     }
@@ -4959,6 +4961,49 @@ TEST_CASE("hd art: a mission that fits goes on the GPU from its briefing, and it
     pack.CheckStaged(up);
     MCHdArt::LetGoHold();
     CHECK(!MCHdArt::GpuFillNow().Fits);
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing"): a mission's list names a type by its packet 0's folder, which
+/// opens the type's archive; the briefing puts up every packet the archive holds, though the type has no packet 0 and its
+/// numbers skip more than the pack's types do.
+/// </summary>
+TEST_CASE("hd art: the briefing puts up every packet of a type its list names by one folder")
+{
+    constexpr size_t MostFrames = 64;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view Type = "objects/shapes90/7";
+    constexpr std::array<int32_t, 3> Packets{3, 4, 140};
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const ScratchFolder pack("briefing-type-packets");
+    std::vector<Version2Stream> streams;
+
+    for (const int32_t packet : Packets)
+    {
+        Version2Stream& stream = streams.emplace_back();
+        stream.Entries.push_back(
+            Raw(std::format("{}\\0.hdf", packet), FrameFile(RunArchive::Side, RunArchive::Side, packet)));
+    }
+
+    // A row for the archive's own folder, as the pack's archives have.
+    const std::filesystem::path archive = pack.Path() / std::filesystem::path(Type).concat(".hda");
+    std::filesystem::create_directories(archive.parent_path());
+    WriteBytes(archive, BuildVersion2Streams(streams, {{std::string(), {}}}));
+    MCHdArt::SetPackFolder(pack.Path());
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::StagedPicture> up;
+    const std::array<std::filesystem::path, 1> list{std::filesystem::path(Type) / "0"};
+    MCHdArt::StartBriefingHold(Mission, list, false);
+    FramesUntilUp(before + Packets.size(), MostFrames, up);
+    CHECK(MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before + Packets.size());
+    CHECK_EQ(up.size(), Packets.size());
+    MCHdArt::LetGoHold();
+    MCHdArt::SetPackFolder({});
     GHdArt = previous;
 }
 

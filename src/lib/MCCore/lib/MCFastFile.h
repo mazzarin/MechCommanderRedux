@@ -174,6 +174,12 @@ public:
     bool HasFolder(std::string_view path) const;
 
     /// <summary>
+    /// Port-only (version 2): how many folders the archive has a row for, its own (the empty path) among them; 0 in an
+    /// archive of version 1.
+    /// </summary>
+    size_t FolderCount() const { return _FolderKeys.size(); }
+
+    /// <summary>
     /// Port-only (version 2): folder <paramref name="path"/>'s facts records, each its type and data, in order; none for
     /// a folder without facts or an archive of version 1.
     /// </summary>

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCVulkanRenderer.h"
+#include "engine/MCElement.h"
 #include "color/MCPalette.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
@@ -2334,7 +2335,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
                SameBindings(*_Run, source, last.SourceIndex, sourceIndex) && last.Blend == blend &&
                last.IndexOnly == indexOnly && last.Shadow == shadow && last.Marks == marks && last.Fold == fold &&
                last.Variant == variant && last.Overlay == overlay && last.OverlayCycles == overlayCycles &&
-               last.OverlayTables == overlayTables;
+               last.OverlayTables == overlayTables && last.ProbeTree == MCProbeTreeDrawing;
     };
 
     std::optional<size_t> into;
@@ -2390,6 +2391,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         fresh.Fold = fold;
         fresh.Variant = variant;
         fresh.Overlay = overlay;
+        fresh.ProbeTree = MCProbeTreeDrawing;
         fresh.OverlayCycles = overlayCycles;
         fresh.OverlayTables = overlayTables;
         fresh.Channels = channels;
@@ -9662,6 +9664,134 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         return true;
     };
 
+    // SCRATCH PROBE (MC_TREE_COUNTS=<file>): a line a frame for the surface with the terrain layer: its trees' records
+    // and draws, the tree draws whose key (as an overlay's) is new or gone since the frame before and their area (old
+    // and new, window pixels, a share of the window), and the other draws on it after the terrain with a later tree
+    // meeting them (a patch's) and the share of the window they cover (on 8 x 8 cells).
+    static FILE* const probeCounts = []
+    {
+        const char* const path = std::getenv("MC_TREE_COUNTS");
+        return path != nullptr ? std::fopen(path, "w") : nullptr;
+    }();
+
+    if (probeCounts != nullptr)
+    {
+        static int64_t probeFrame = 0;
+        static std::vector<uint64_t> probeLastKeys;
+        ++probeFrame;
+        int32_t terrainAt = -1;
+
+        for (size_t k = 0; k < order.size() && terrainAt < 0; ++k)
+        {
+            terrainAt = run.Records[order[k]].TerrainDraw >= 0 ? static_cast<int32_t>(k) : -1;
+        }
+
+        if (terrainAt >= 0)
+        {
+            const Record& terrainRecord = run.Records[order[static_cast<size_t>(terrainAt)]];
+            const uint16_t world = terrainRecord.SurfaceIndex;
+            Surface& surface = _RunSurfaces[world];
+            const TerrainDraw& draw = run.TerrainDraws[static_cast<size_t>(terrainRecord.TerrainDraw)];
+            const std::array<int32_t, 2> origin{draw.Frame.OriginX, draw.Frame.OriginY};
+            const MCRect shown{0, 0, static_cast<int32_t>(surface.MappedWidth) - 1,
+                               static_cast<int32_t>(surface.MappedHeight) - 1};
+            std::vector<uint32_t> trees;
+            // Each draw after the terrain on the surface: its place in order, its rectangle, whether a tree's.
+            std::vector<std::tuple<size_t, MCRect, bool>> draws;
+
+            for (size_t k = static_cast<size_t>(terrainAt) + 1; k < order.size(); ++k)
+            {
+                const Record& record = run.Records[order[k]];
+
+                if (record.Resize || record.SurfaceIndex != world || record.Overlay)
+                {
+                    continue;
+                }
+
+                if (record.ProbeTree)
+                {
+                    trees.push_back(order[k]);
+                }
+
+                for (uint32_t d = record.First; d < record.First + record.Count; ++d)
+                {
+                    const DrawFields& f = run.Draws[d];
+                    draws.emplace_back(k, Intersection(MCRect{f[0], f[1], f[2], f[3]}, shown), record.ProbeTree);
+                }
+            }
+
+            const std::vector<std::pair<uint64_t, MCRect>> keys =
+                overlayKeys(surface, trees, origin, Intersection(draw.Frame.Clip, shown));
+            std::vector<uint64_t> now;
+            now.reserve(keys.size());
+
+            for (const auto& [key, rect] : keys)
+            {
+                now.push_back(key);
+            }
+
+            std::ranges::sort(now);
+            std::vector<uint64_t> changed;
+            std::ranges::set_symmetric_difference(now, probeLastKeys, std::back_inserter(changed));
+            int64_t changedArea = 0;
+
+            for (const auto& [key, rect] : keys)
+            {
+                changedArea += std::ranges::binary_search(probeLastKeys, key) ? 0 : Area(rect);
+            }
+
+            // (Gone draws' areas aren't kept: counted as the new ones', twice for the changes.)
+            changedArea *= 2;
+            probeLastKeys = std::move(now);
+            constexpr int32_t Cell = 8;
+            const int32_t columns = (shown.X1 + Cell) / Cell;
+            const int32_t rows = (shown.Y1 + Cell) / Cell;
+            std::vector<uint8_t> patched(static_cast<size_t>(std::max(columns * rows, 0)));
+            int64_t patchDraws = 0;
+
+            for (size_t i = 0; i < draws.size(); ++i)
+            {
+                const auto& [at, rect, tree] = draws[i];
+
+                if (tree || Empty(rect))
+                {
+                    continue;
+                }
+
+                bool met = false;
+
+                for (size_t j = i + 1; j < draws.size() && !met; ++j)
+                {
+                    const auto& [laterAt, later, laterTree] = draws[j];
+                    met = laterTree && laterAt > at && !Empty(Intersection(rect, later));
+                }
+
+                if (!met)
+                {
+                    continue;
+                }
+
+                ++patchDraws;
+
+                for (int32_t y = rect.Y0 / Cell; y <= rect.Y1 / Cell && y < rows; ++y)
+                {
+                    for (int32_t x = rect.X0 / Cell; x <= rect.X1 / Cell && x < columns; ++x)
+                    {
+                        patched[static_cast<size_t>(y) * static_cast<size_t>(columns) + static_cast<size_t>(x)] = 1;
+                    }
+                }
+            }
+
+            const auto cells = static_cast<int64_t>(std::ranges::count(patched, uint8_t{1}));
+            const double window = static_cast<double>(Area(shown));
+            std::fprintf(probeCounts, "%lld trees %zu draws %zu changed %zu area %.4f patches %lld share %.4f\n",
+                         static_cast<long long>(probeFrame), trees.size(), keys.size(), changed.size(),
+                         static_cast<double>(changedArea) / window, static_cast<long long>(patchDraws),
+                         static_cast<double>(cells * Cell * Cell) / window);
+            std::fflush(probeCounts);
+        }
+    }
+
     // Port-only (the kept surfaces): how each surface is drawn (KeptMode), and whether its draws are checked.
     std::vector<KeptPlan> plans = PlanKept(run, order,
                                            [&](uint16_t surfaceIndex, const Record& record)
@@ -9699,6 +9829,14 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         if (record.Overlay && static_cast<int32_t>(record.SurfaceIndex) == viewSurface)
         {
             _GroundCounts.OverlaysLeft += record.Count;
+            continue;
+        }
+
+        // SCRATCH PROBE (MC_NO_TREES): the standing trees' draws left out, the ceiling of keeping them.
+        static const bool probeNoTrees = std::getenv("MC_NO_TREES") != nullptr;
+
+        if (probeNoTrees && record.ProbeTree)
+        {
             continue;
         }
 

@@ -502,10 +502,11 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
     std::cout << std::format(
         "  mission {}: up in {:.1f} s, {} frames played ({} of the player's and {} enemies left), "
         "{} first uses in play ({:.1f} ms), {} past the list; the HD art's memory at most "
-        "{:.1f} MB (on average {:.1f}), {} mechs up at most; the mission on the GPU {} ({:.1f} MB)\n",
+        "{:.1f} MB (on average {:.1f}), {} mechs up at most; the mission on the GPU {} ({:.1f} MB; the fill asked {} "
+        "frames and put {} up)\n",
         mission, loadSeconds, played, players.size(), enemies.size(), uses.size(), ms, MCFirstUses::Dropped(),
         static_cast<double>(memory.Peak) / BytesPerMb, memory.Mean() / BytesPerMb, memory.Mechs,
-        fill.Fits ? "whole" : "not whole", static_cast<double>(fill.MissionBytes) / BytesPerMb);
+        fill.Fits ? "whole" : "not whole", static_cast<double>(fill.MissionBytes) / BytesPerMb, fill.Asked, fill.Up);
     MCFrameLog::Close();
     MCHdArt::CloseTrace();
     MCMemoryRoom::SetMachineBytes(std::nullopt);

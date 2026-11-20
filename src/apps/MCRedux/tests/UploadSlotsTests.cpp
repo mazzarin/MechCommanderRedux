@@ -31,13 +31,14 @@ namespace
             std::vector<uintptr_t> Released;
         };
 
-        MCTestBacking(size_t slots, std::shared_ptr<MCFences> fences)
-            : _Memory(slots * MCUploadSlots::SlotBytes), _Fences(std::move(fences))
+        /// <summary><paramref name="slots"/> slots' memory; its buffer stands for <paramref name="buffer"/> (none: 0).</summary>
+        MCTestBacking(size_t slots, std::shared_ptr<MCFences> fences, uintptr_t buffer = 0)
+            : _Memory(slots * MCUploadSlots::SlotBytes), _Fences(std::move(fences)), _Buffer(buffer)
         {
         }
 
         std::span<uint8_t> Memory() override { return _Memory; }
-        SDL_GPUTransferBuffer* Buffer() override { return nullptr; }
+        SDL_GPUTransferBuffer* Buffer() override { return reinterpret_cast<SDL_GPUTransferBuffer*>(_Buffer); }
 
         bool Done(SDL_GPUFence* fence) override
         {
@@ -66,7 +67,12 @@ namespace
     private:
         std::vector<uint8_t> _Memory;
         std::shared_ptr<MCFences> _Fences;
+        uintptr_t _Buffer = 0;
     };
+
+    /// <summary>The buffer the slots made at the start stand for, and the grown ones' (MCUploadSlots::Grow).</summary>
+    constexpr uintptr_t StartBuffer = 1;
+    constexpr uintptr_t GrownBuffer = 2;
 
     /// <summary>Slots of the test's, <paramref name="slots"/> of them, and their fences.</summary>
     struct MCTestSlots
@@ -78,6 +84,24 @@ namespace
         {
             Slots = MCUploadSlots::MakeWith(std::make_unique<MCTestBacking>(slots, Fences));
         }
+
+        /// <summary>Slots that grow (MCUploadSlots::Grow), each growth's memory counted in <see cref="Grown"/>.</summary>
+        MCTestSlots(size_t slots, bool grows)
+        {
+            Slots = MCUploadSlots::MakeWith(
+                std::make_unique<MCTestBacking>(slots, Fences, StartBuffer),
+                grows ? MCUploadSlots::MCMakeBacking(
+                            [fences = Fences, grown = Grown](
+                                size_t bytes) -> std::expected<std::unique_ptr<MCUploadSlots::MCBacking>, std::string>
+                            {
+                                ++*grown;
+                                return std::make_unique<MCTestBacking>(bytes / Slot, fences, GrownBuffer);
+                            })
+                      : MCUploadSlots::MCMakeBacking{});
+        }
+
+        /// <summary>How often the slots' memory was made to grow.</summary>
+        std::shared_ptr<int32_t> Grown = std::make_shared<int32_t>(0);
 
         /// <summary>Signals fence <paramref name="number"/>, as the GPU does once the copies before it have run.</summary>
         void Signal(uintptr_t number)
@@ -99,23 +123,99 @@ namespace
     };
 }
 
-TEST_CASE("upload slots: 128 MB at the least, 256 MB from 24 GB, or as set")
+TEST_CASE("upload slots: 128 MB kept, 256 MB while a load's fill runs, or as set throughout")
 {
-    constexpr uint64_t GB = uint64_t{1} << 30;
     constexpr size_t MB = size_t{1} << 20;
     MCUploadSlots::SetBytes(std::nullopt);
-    CHECK_EQ(MCUploadSlots::BytesFor(8 * GB), 128 * MB);
-    CHECK_EQ(MCUploadSlots::BytesFor(16 * GB), 128 * MB);
-    // A 24 GB PC reports a little less (the firmware's).
-    CHECK_EQ(MCUploadSlots::BytesFor(24 * GB - 512 * MB), 256 * MB);
-    CHECK_EQ(MCUploadSlots::BytesFor(64 * GB), 256 * MB);
+    CHECK_EQ(MCUploadSlots::StartBytes(), 128 * MB);
+    CHECK_EQ(MCUploadSlots::LoadBytesNow(), 256 * MB);
     MCUploadSlots::SetBytes(512 * MB);
-    CHECK_EQ(MCUploadSlots::BytesFor(8 * GB), 512 * MB);
+    CHECK_EQ(MCUploadSlots::StartBytes(), 512 * MB);
+    CHECK_EQ(MCUploadSlots::LoadBytesNow(), 512 * MB);
     // Never fewer slots than the near ones and one more, nor more than a transfer buffer holds.
     MCUploadSlots::SetBytes(1);
-    CHECK_EQ(MCUploadSlots::BytesFor(8 * GB), (MCUploadSlots::NearSlots + 1) * Slot);
+    CHECK_EQ(MCUploadSlots::StartBytes(), (MCUploadSlots::NearSlots + 1) * Slot);
     MCUploadSlots::SetBytes(std::nullopt);
-    CHECK_EQ(MCUploadSlots::BytesFor(8 * GB), 128 * MB);
+    CHECK_EQ(MCUploadSlots::StartBytes(), 128 * MB);
+}
+
+TEST_CASE("upload slots: grown for a load in a buffer of their own, let go once their copies have run")
+{
+    constexpr size_t StartSlots = MCUploadSlots::NearSlots + 4;
+    constexpr size_t GrownSlots = 6;
+    MCTestSlots test(StartSlots, true);
+    MCUploadSlots& slots = *test.Slots;
+    const size_t fillAtStart = slots.MostFor(MCKind::Fill);
+
+    // Grown: the fill's share grows with them, and a lease past those made at the start is in the grown buffer, its
+    // offsets from that buffer's start.
+    REQUIRE(slots.Grow((StartSlots + GrownSlots) * Slot).has_value());
+    CHECK_EQ(slots.Slots(), StartSlots + GrownSlots);
+    CHECK(slots.MostFor(MCKind::Fill) > fillAtStart);
+
+    // A run never spans the two buffers: with the last start slot free, a lease of two slots comes from the grown ones.
+    std::optional<MCUploadSlots::MCLease> most = slots.TryTake(MCKind::Frame, (StartSlots - 1) * Slot);
+    REQUIRE(most.has_value());
+    std::optional<MCUploadSlots::MCLease> pair = slots.TryTake(MCKind::Frame, 2 * Slot);
+    REQUIRE(pair.has_value());
+    CHECK_EQ(pair->First(), static_cast<uint32_t>(StartSlots));
+    pair.reset();
+    most.reset();
+
+    std::optional<MCUploadSlots::MCLease> start = slots.TryTake(MCKind::Frame, StartSlots * Slot);
+    REQUIRE(start.has_value());
+    CHECK_EQ(start->Buffer(), reinterpret_cast<SDL_GPUTransferBuffer*>(StartBuffer));
+    CHECK_EQ(start->Offset(), size_t{0});
+    std::optional<MCUploadSlots::MCLease> grown = slots.TryTake(MCKind::Frame, 2 * Slot);
+    REQUIRE(grown.has_value());
+    CHECK_EQ(grown->First(), static_cast<uint32_t>(StartSlots));
+    CHECK_EQ(grown->Buffer(), reinterpret_cast<SDL_GPUTransferBuffer*>(GrownBuffer));
+    CHECK_EQ(grown->Offset(), size_t{0});
+    const std::optional<size_t> placed = grown->Place(Slot + 1);
+    REQUIRE(placed.has_value());
+    CHECK_EQ(grown->At(*placed, Slot + 1).size(), Slot + 1);
+
+    start.reset();
+
+    // Shrunk while a grown lease is out, sent: nothing past the start slots is taken, and their buffer stays until the
+    // copies have run.
+    test.Send(*grown, 1);
+    slots.Shrink();
+    CHECK_EQ(slots.MostFor(MCKind::Fill), fillAtStart);
+    CHECK(!slots.TryTake(MCKind::Frame, (StartSlots + 1) * Slot).has_value());
+    CHECK_EQ(slots.Reclaim(), size_t{0});
+    CHECK_EQ(slots.Slots(), StartSlots + GrownSlots);
+    test.Signal(1);
+    slots.Reclaim();
+    CHECK_EQ(slots.Slots(), StartSlots);
+    CHECK_EQ(slots.Tally().InUse, size_t{0});
+    std::optional<MCUploadSlots::MCLease> all = slots.TryTake(MCKind::Frame, StartSlots * Slot);
+    REQUIRE(all.has_value());
+    CHECK_EQ(all->Buffer(), reinterpret_cast<SDL_GPUTransferBuffer*>(StartBuffer));
+    all.reset();
+
+    // Grown again for the next load; let go before it's gone, and grown again: taken again, not made again.
+    REQUIRE(slots.Grow((StartSlots + GrownSlots) * Slot).has_value());
+    CHECK_EQ(*test.Grown, 2);
+    std::optional<MCUploadSlots::MCLease> held = slots.TryTake(MCKind::Frame, (StartSlots + 1) * Slot);
+    CHECK(!held.has_value());
+    std::optional<MCUploadSlots::MCLease> startHeld = slots.TryTake(MCKind::Frame, StartSlots * Slot);
+    REQUIRE(startHeld.has_value());
+    held = slots.TryTake(MCKind::Frame, GrownSlots * Slot);
+    REQUIRE(held.has_value());
+    CHECK_EQ(held->Buffer(), reinterpret_cast<SDL_GPUTransferBuffer*>(GrownBuffer));
+    slots.Shrink();
+    REQUIRE(slots.Grow((StartSlots + GrownSlots) * Slot).has_value());
+    CHECK_EQ(*test.Grown, 2);
+    held.reset();
+    startHeld.reset();
+    slots.Reclaim();
+    CHECK_EQ(slots.Slots(), StartSlots + GrownSlots);
+
+    // Slots that don't grow say so, and stay as they are.
+    MCTestSlots fixed(StartSlots);
+    CHECK(!fixed.Slots->Grow((StartSlots + GrownSlots) * Slot).has_value());
+    CHECK_EQ(fixed.Slots->Slots(), StartSlots);
 }
 
 TEST_CASE("upload slots: a slot is never used again before its copy's fence has signalled")

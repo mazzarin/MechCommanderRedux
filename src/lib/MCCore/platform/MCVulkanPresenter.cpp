@@ -821,8 +821,9 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
 
     presenter->_Device = std::shared_ptr<SDL_GPUDevice>(device, MCSdlDeleter{});
 
-    // Port-only (SPEC-memory.md's upload slots): every upload's memory, made now and kept for the session.
-    auto slots = MCUploadSlots::Make(presenter->_Device, MCUploadSlots::BytesFor(MCMemoryRoom::TotalBytes()));
+    // Port-only (SPEC-memory.md's upload slots): every upload's memory, made now and kept for the session (more while a
+    // load's fill runs: MCVulkanRenderer::PlaceStagedPictures).
+    auto slots = MCUploadSlots::Make(presenter->_Device, MCUploadSlots::StartBytes());
 
     if (!slots)
     {

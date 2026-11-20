@@ -7146,6 +7146,7 @@ namespace
         uint64_t handed = 0;
         bool loading = false;
         bool opening = false;
+        bool fillDone = false;
 
         {
             std::scoped_lock lock(ahead.Lock);
@@ -7162,6 +7163,7 @@ namespace
             opening = std::ranges::any_of(ahead.Opening, [&ahead](const auto& open)
                                           { return open.second == ahead.Holding.Generation; });
             mission = ahead.Holding.HandedGpuBytes;
+            fillDone = GpuFillDone(state);
         }
 
         state.GpuMissionBytes = mission;
@@ -7181,16 +7183,25 @@ namespace
         const double share = PagesShare(state);
         const auto atShare = [share](uint64_t bytes)
         { return static_cast<uint64_t>(static_cast<double>(bytes) * share); };
+        // A mission up whole once the load's fill is done: nothing more of it goes up, so what's up is all of it (the
+        // estimate counts bytes of its archives the GPU never takes: on the A10 a whole mission's ended 66-175 MB over
+        // what went up, and two were counted out in play). Entering counts it all.
         const uint64_t up = std::min(mission, picturesUp);
-        const uint64_t onCard = up + atShare(mission - up);
-        const uint64_t inPages = atShare(mission);
+        const bool done = state.GpuFits && !loading && fillDone;
+        const uint64_t onCard = done ? up : up + atShare(mission - up);
+        const uint64_t inPages = done ? atShare(up) : atShare(mission);
 
         // On shared memory the mission and the hold beside it within the art's room past the rest and the floor; on any
         // GPU the mission within the room the renderer's card gives its pictures (MCHdArt::NoteGpuRoom).
         const ArtParts parts = ArtPartsNow();
         constexpr uint64_t Unbounded = std::numeric_limits<uint64_t>::max();
         const uint64_t space = parts.Room.Shared ? Less(parts.Room.Bytes, parts.Rest + parts.Floor) : Unbounded;
-        const uint64_t card = state.GpuCardRoom.value_or(Unbounded);
+        // The card's room as last read, never more than what the ledger has on it now: a read before the load's ground
+        // was made left it out (the A10: 2478 MB of room at every decision, about 450 MB less at the next read).
+        const uint64_t card =
+            std::min(state.GpuCardRoom.value_or(Unbounded),
+                     MCMemoryRoom::CardRoomNow(static_cast<uint64_t>(std::max<int64_t>(pictures.Allocated, 0)))
+                         .value_or(Unbounded));
         const uint64_t held = parts.Room.Shared ? std::max<uint64_t>(parts.Held, handed) : 0;
         const auto within = [&state](uint64_t need, uint64_t room)
         { return state.GpuFits ? need <= room : need + need / FitsMarginDivisor <= room; };

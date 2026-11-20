@@ -7511,7 +7511,11 @@ auto MCVulkanRenderer::ScaleGround(uint16_t surfaceIndex, const Surface& surface
     const std::array<int64_t, 2> pointThen{static_cast<int64_t>(then.PaneX) + then.OriginX,
                                            static_cast<int64_t>(then.PaneY) + then.OriginY};
     const MCRect keptDrawn = DrawnPixels(then.Clip, kept.Mapped, drawn, kept.Offset);
-    const MCRect clipDrawn = DrawnPixels(now.Clip, mapped, drawn, surface.Offset);
+    // The clip's drawn pixels within the target: the smooth camera's fraction can put them a pixel or two past its edge
+    // (MCDrawnGrid::Offset), and the scissors made of them must lie in it (Vulkan's rule; on Metal a draw under one
+    // past it draws nothing, the ground left blank).
+    const MCRect target{0, 0, static_cast<int32_t>(drawn[0]) - 1, static_cast<int32_t>(drawn[1]) - 1};
+    const MCRect clipDrawn = Intersection(DrawnPixels(now.Clip, mapped, drawn, surface.Offset), target);
     std::array<int32_t, 2> first{};
     std::array<int32_t, 2> last{};
 

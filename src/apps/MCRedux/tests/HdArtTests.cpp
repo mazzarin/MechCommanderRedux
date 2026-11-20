@@ -10602,6 +10602,130 @@ TEST_CASE_ISOLATED("game: a zoom easing lays the kept HD ground scaled to the vi
     std::filesystem::remove_all(scene->Scratch);
 }
 
+/// <summary>
+/// Port-only (the kept ground, HDSmoothCamera): a zoom easing while the view moves by fractions of a window pixel a
+/// frame, as the camera following a walking mech does. The camera's fraction can put the view's drawn pixels a pixel or
+/// two past the surface's edge, and the scaled ground's scissors keep within it, so every eased frame shows all its
+/// ground: compared over the view (all but the control panel on its left) with the same frames drawn (the game paused,
+/// the same camera path), each frame's colours a few levels apart on the whole, few pixels far apart.
+/// </summary>
+TEST_CASE_ISOLATED("game: with the smooth camera a zoom easing as the view moves lays the scaled HD ground over all of "
+                   "the view")
+{
+    // The zoom out and back in: the lines a frame, then frames held.
+    constexpr std::array<float, 6> Steps = {1.08f, 1.16f, 1.24f, 1.32f, 1.38f, 1.42f};
+    constexpr int32_t HeldFrames = 3;
+    // The view's move a frame (window pixels).
+    constexpr float StepAcross = 0.37f;
+    constexpr float StepDown = 0.23f;
+    // How near the camera stays to where it was put, world units.
+    constexpr float MovedNear = 1e-3f;
+    // Colours more than this far apart in a channel count as far apart.
+    constexpr int32_t FarLevels = 48;
+    // On the M4 Pro: 0.2 levels zooming out, 0.6 zooming in, none far apart. With the scissors past the edge, 11 of the
+    // 12 frames failed: 105-108 levels zooming in (the ground blank), 9-26 zooming out (the strips past it blank).
+    constexpr double MostMeanLevels = 2.0;
+    constexpr double MostFarPercent = 0.5;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // The water's colour cycle held, so only the zoom draws the ground again.
+    GuiSystem().PaletteCycle = 0;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    GHdSmoothCamera = 1;
+    // A camera of its own place, the cursor in the screen's middle (as the smooth camera's pan test).
+    Eye()->ChangeTarget(nullptr, false);
+    MCScreenInput::RealMove(GuiSystem().Width() / 2, GuiSystem().Height() / 2);
+    GamePaused = true;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    const float lines = MCFixedZoomHeight;
+    REQUIRE(lines > 0.0f);
+    const MCVector3D start = Eye()->GetPosition();
+    int32_t moved = 0;
+    int32_t between = 0;
+
+    // From the start's place and lines: the zoom out and in, the view moving each frame, each eased frame shown; then
+    // held.
+    const auto zoom = [&](std::vector<Shown>& shown)
+    {
+        MCVector3D position = start;
+        Eye()->SetPosition(position);
+        MCFixedZoomHeight = lines;
+        MCTestGame::RunFrame(FrameSeconds);
+        MCTestGame::RunFrame(FrameSeconds);
+
+        for (const bool out : {true, false})
+        {
+            for (size_t step = 0; step < Steps.size(); ++step)
+            {
+                const size_t at = out ? step : Steps.size() - 1 - step;
+                MCFixedZoomHeight = lines * (out ? Steps[at] : (at == 0 ? 1.0f : Steps[at - 1]));
+                const bool stayed = PanFrame(position, StepAcross, StepDown);
+                const MCVector3D now = Eye()->GetPosition();
+                const bool near =
+                    std::fabs(now.X - position.X) < MovedNear && std::fabs(now.Y - position.Y) < MovedNear;
+                moved += stayed && near ? 1 : 0;
+                between += Eye()->ScreenULFraction != std::array<int32_t, 2>{} ? 1 : 0;
+                shown.push_back(ReadShown(scene->Scratch));
+            }
+
+            for (int32_t frame = 0; frame < HeldFrames; ++frame)
+            {
+                MCTestGame::RunFrame(FrameSeconds);
+            }
+        }
+    };
+
+    std::vector<Shown> drawn;
+    MCVulkanRenderer::ScaleGroundWhileZooming = false;
+    zoom(drawn);
+    MCVulkanRenderer::ScaleGroundWhileZooming = true;
+    std::vector<Shown> scaled;
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+    zoom(scaled);
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    GHdSmoothCamera = 0;
+    GamePaused = false;
+    MCFixedZoomHeight = lines;
+
+    const auto frames = static_cast<int64_t>(2 * Steps.size());
+    std::cout << std::format("  {} frames easing: {} scaled, {} whole, {} direct; {} of {} frames between pixels\n",
+                             frames, after.Scaled - before.Scaled, after.Whole - before.Whole,
+                             after.Direct - before.Direct, between, 2 * frames);
+    CHECK_EQ(after.Scaled - before.Scaled, frames);
+    CHECK_EQ(after.Whole - before.Whole, 2);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+    CHECK_EQ(moved, 2 * frames);
+    CHECK(between > frames);
+    REQUIRE_EQ(drawn.size(), scaled.size());
+
+    for (size_t i = 0; i < drawn.size(); ++i)
+    {
+        // The view right of the control panel (whose tactical map's blips blink), to its edges.
+        const MCRect view{drawn[i].Width / 4, 0, drawn[i].Width - 1, drawn[i].Height - 1};
+        const auto [mean, far] = ColourDifference(drawn[i], scaled[i], view, FarLevels);
+        std::cout << std::format("  frame {} zooming {}: colours {:.2f} levels apart on the whole, {:.2f}% of the "
+                                 "pixels far apart\n",
+                                 i, i < Steps.size() ? "out" : "in", mean, far);
+        CHECK(mean < MostMeanLevels);
+        CHECK(far < MostFarPercent);
+    }
+
+    std::filesystem::remove_all(scene->Scratch);
+}
+
 namespace
 {
     /// <summary>Port-only (the kept surfaces): the frames a kept screen's test ran, and what they did.</summary>

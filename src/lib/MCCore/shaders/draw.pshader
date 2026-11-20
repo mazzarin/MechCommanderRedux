@@ -1198,6 +1198,26 @@ bool FoldsShapeIn(Input input)
     return (kind == KindHd || kind == KindHdSmooth) && (input.op.w & FoldsShape) != 0;
 }
 #endif
+
+#if DRAW_STANDS || DRAWS_SHAPE_FOLDS
+// Whether a draw folds in an index pass, a forest's or a unit's or an object's.
+bool FoldsAnyIn(Input input)
+{
+#if DRAW_STANDS
+    if (FoldsIn(input))
+    {
+        return true;
+    }
+#endif
+#if DRAWS_SHAPE_FOLDS
+    if (FoldsShapeIn(input))
+    {
+        return true;
+    }
+#endif
+    return false;
+}
+#endif
 // Port-only: the keyed holes of a KindHd draw's picture that a later copy fills edge to edge (MCVulkanRenderer's
 // FillHoles), at most FilledHolesMost, each in two words of span and walk (hole i: low i, high i), its first original
 // pixel and the one past its last (x the low half, y the high; none when both are 0). Their edges aren't softened
@@ -1359,8 +1379,8 @@ float3 RecolouredBetween(Input input, float4 color, PixelsAround around, float4 
 // An HD art frame's colour at `shape`, a place in the original's pixels (their centres at .5): between the four HD
 // texels around it, recoloured as the original pixel under it shows now. A smooth-edged one's (KindHdSmooth) is that
 // colour, unpremultiplied, at HdMaskCoverage's coverage; past the frame's own coverage, where it keeps no colour, the
-// colour at its nearest drawn pixel's centre.
-Output HdPixelAt(Input input, float2 shape)
+// colour at its nearest drawn pixel's centre. A fold's original pixel is `under` (HdPixel's).
+Output HdPixelAt(Input input, float2 shape, int2 under)
 {
     const uint hdScale = input.op.y & 255u;
     const int2 original = SourceSize();
@@ -1383,7 +1403,6 @@ Output HdPixelAt(Input input, float2 shape)
 #else
     const bool foldsShape = false;
 #endif
-    const int2 under = int2(floor(shape));
 #if DRAWS_SHAPE_FOLDS
     // Read for a fold alone, a branch rather than a select: the HD build's other draws are most of its pixels.
     const bool inPicture = (folds || foldsShape) && all(under >= int2(0, 0)) && all(under < original);
@@ -1550,7 +1569,18 @@ Output HdPixel(Input input, int2 target)
     // The drawn pixel's centre in window pixels, and in the shape's bounds (a mirrored step reads from the right).
     const float2 window = WindowPlace(target);
     const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
-    return HdPixelAt(input, float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw));
+    const float2 shape = float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw);
+    int2 under = int2(floor(shape));
+#if DRAW_STANDS || DRAWS_SHAPE_FOLDS
+    // A fold's original pixel is its window pixel's by the whole-number rule its index pass reads by (WindowPixel): the
+    // place above, divided on the GPU, can fall a hair short where a drawn pixel's centre lies on a window pixel's edge
+    // (drawn 2.5 times larger, one drawn column and row in five while the grid isn't shifted), a pixel off.
+    [branch] if (FoldsAnyIn(input))
+    {
+        under = input.source.xy + (WindowPixel(target, scale, offset.xy) - input.rect.xy) * input.source.zw;
+    }
+#endif
+    return HdPixelAt(input, shape, under);
 }
 
 // Where drawn pixel `target`'s centre lies in a textured polygon's texture (KindHdMap, KindSmoothMap): the polygon's
@@ -1638,7 +1668,7 @@ Output HdMapPixel(Input input, int2 target)
         }
     }
 
-    return HdPixelAt(input, picture);
+    return HdPixelAt(input, picture, int2(floor(picture)));
 }
 
 // Port-only: a game-drawn picture mapped with its key transparent (the fog of war, KindSmoothMap), its colour pass at

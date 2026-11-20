@@ -422,8 +422,9 @@ namespace
     /// </summary>
     constexpr double PagesShareFirst = 1.3;
     /// <summary>
-    /// Port-only: the pictures' bytes on the GPU from which, while a fill puts a mission up, what their pages take is
-    /// measured for it (a few pages part full make a small set's share no guide).
+    /// Port-only: the pictures' bytes on the GPU from which, once a fill has put a mission up whole, what their pages take
+    /// is measured (a few pages part full make a small set's share no guide). Never part way: the share moves with the
+    /// part of the mission going up (20 Nov, the A10: 2x 19's 1.58 near its load's end, 1.29 whole).
     /// </summary>
     constexpr uint64_t PagesMeasuredFromBytes = uint64_t{256} << 20;
     /// <summary>
@@ -759,6 +760,13 @@ namespace
         uint64_t GpuReads = 0;
         uint64_t GpuStaged = 0;
         /// <summary>
+        /// Port-only (DropGpuReads): how many times the fill was left. A reader making reads of the fill's asks
+        /// (ExpandAsks) or reading its frames (ReadRun) since before the last leave stops, its pictures dropped (20 Nov, the
+        /// A10: 2x missions 22 and 24, left at the reading after they entered, went up whole in play from the ask a reader
+        /// was making reads of).
+        /// </summary>
+        uint64_t GpuLeaves = 0;
+        /// <summary>
         /// Port-only: a fill reader's room, at least this (a frame that found the slots full needed it), and what stops
         /// its wait for it (StopGpuRoomWaits): the fill dropped, the read-ahead forgotten, or other work for the readers.
         /// </summary>
@@ -871,10 +879,11 @@ namespace
         /// </summary>
         GroundState GpuGround = GroundState::InRoom;
         /// <summary>
-        /// Port-only (PagesShare): how many times their own bytes the HD pictures' pages took, as last measured while a
-        /// fill put a mission up (none yet: PagesShareFirst).
+        /// Port-only (PagesShare): how many times their own bytes the HD pictures' pages took, as last measured once a
+        /// fill had put a mission up whole (none yet: PagesShareFirst), and whether this load's fill has measured it.
         /// </summary>
         std::optional<double> GpuPagesShare;
+        bool GpuPagesMeasured = false;
         uint64_t GpuMissionBytes = 0;
         std::optional<uint64_t> GpuCardRoom;
         std::unordered_set<uint32_t> GpuAsked;
@@ -3091,6 +3100,7 @@ namespace
                  std::shared_ptr<MCUploadSlots::MCLease> lease = nullptr)
     {
         const uint64_t generation = ahead.Generation;
+        const uint64_t leaves = ahead.GpuLeaves;
         const std::shared_ptr<MCUploadSlots> slots = ahead.Slots;
         const bool bc7 = ahead.Bc7;
         const std::shared_ptr<MCHdArchive> archive = run.front().From->Archive;
@@ -3205,9 +3215,10 @@ namespace
             ahead.Reading.erase(key);
             ahead.GpuReading.erase(key);
 
-            // Port-only: a picture put in slots the renderer has let go of since (made again: another pool) is dropped,
-            // its frame with it (its colours are in the picture alone); the game's thread reads it again when drawn.
-            if (picture.has_value() && ahead.Slots != slots)
+            // Port-only: a picture put in slots the renderer has let go of since (made again: another pool), or of a fill
+            // left since, is dropped, its frame with it (its colours are in the picture alone); the game's thread reads it
+            // again when drawn.
+            if (picture.has_value() && (ahead.Slots != slots || ahead.GpuLeaves != leaves))
             {
                 picture.reset();
                 frame.reset();
@@ -3382,7 +3393,7 @@ namespace
         }
 
         // Port-only (MCHdArt::FillGpu): the fill's frames the full slots left, read again in a later run of its.
-        if (!requeue.empty() && ahead.Generation == generation && ahead.Slots == slots)
+        if (!requeue.empty() && ahead.Generation == generation && ahead.Slots == slots && ahead.GpuLeaves == leaves)
         {
             // The next reader's room takes the largest of them (it waits for that much rather than miss it again).
             ahead.GpuRoomNeed = std::max(ahead.GpuRoomNeed, roomNeed);
@@ -4060,6 +4071,7 @@ namespace
     /// </summary>
     void ExpandAsks(ReadAhead& ahead, std::unique_lock<std::mutex>& lock, AskBatch&& batch)
     {
+        const uint64_t leaves = ahead.GpuLeaves;
         lock.unlock();
 
         struct Found
@@ -4137,8 +4149,9 @@ namespace
         {
             lock.lock();
 
-            // The pack set meanwhile: what was looked up is the old one's.
-            if (ahead.Generation != batch.Generation)
+            // The pack set meanwhile: what was looked up is the old one's. Port-only: the fill left meanwhile, its asks
+            // dropped.
+            if (ahead.Generation != batch.Generation || (batch.Kind == AheadKind::Gpu && ahead.GpuLeaves != leaves))
             {
                 break;
             }
@@ -7059,6 +7072,7 @@ namespace
         }
 
         queue.clear();
+        ++ahead.GpuLeaves;
         const size_t asks = static_cast<size_t>(
             std::erase_if(ahead.Asks, [](const AskBatch& batch) { return batch.Kind == AheadKind::Gpu; }));
         ahead.GpuAsks -= std::min(ahead.GpuAsks, asks);
@@ -7084,19 +7098,34 @@ namespace
 
     /// <summary>
     /// Port-only (SPEC-memory.md: "the plan's own error, which the ledger measures"): how many times their own bytes the HD
-    /// pictures take on the GPU, in the pages they share: measured while a fill puts a mission up, once
-    /// PagesMeasuredFromBytes of <paramref name="upBytes"/> are there (the ledger's allocations over the pictures' bytes),
-    /// and kept for the next mission's; until the first, PagesShareFirst. Never under 1.
+    /// pictures take on the GPU, in the pages they share: as last measured (MeasurePagesShare); until the first,
+    /// PagesShareFirst.
     /// </summary>
-    double PagesShare(State& state, uint64_t upBytes)
+    double PagesShare(const State& state)
     {
-        if (state.GpuFits && upBytes >= PagesMeasuredFromBytes)
+        return state.GpuPagesShare.value_or(PagesShareFirst);
+    }
+
+    /// <summary>
+    /// Port-only (PagesShare): once this load's fill has put its mission up whole, what the pictures' pages take: the
+    /// ledger's allocations over the pictures' bytes, once PagesMeasuredFromBytes of them are there, kept for the next
+    /// mission's. Never under 1; once a load. Call with ReadAhead::Lock held.
+    /// </summary>
+    void MeasurePagesShare(State& state)
+    {
+        if (!state.GpuFits || state.GpuPagesMeasured || state.GpuUp == state.GpuUpAtLoad || !GpuFillDone(state))
         {
-            const uint64_t taken = AllocatedOf(MCMemoryLedger::MCHolder::GpuHdPictures);
-            state.GpuPagesShare = std::max(1.0, static_cast<double>(taken) / static_cast<double>(upBytes));
+            return;
         }
 
-        return state.GpuPagesShare.value_or(PagesShareFirst);
+        state.GpuPagesMeasured = true;
+        const MCMemoryLedger::MCFigures pictures = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuHdPictures);
+
+        if (pictures.Payload >= static_cast<int64_t>(PagesMeasuredFromBytes))
+        {
+            state.GpuPagesShare =
+                std::max(1.0, static_cast<double>(pictures.Allocated) / static_cast<double>(pictures.Payload));
+        }
     }
 
     /// <summary>
@@ -7120,6 +7149,7 @@ namespace
 
         {
             std::scoped_lock lock(ahead.Lock);
+            MeasurePagesShare(state);
 
             if (!state.GpuFillOn || ahead.Slots == nullptr)
             {
@@ -7148,7 +7178,7 @@ namespace
         // art's room on shared memory leaves the pictures out, so there all of them are.
         const MCMemoryLedger::MCFigures pictures = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuHdPictures);
         const auto picturesUp = static_cast<uint64_t>(std::max<int64_t>(pictures.Payload, 0));
-        const double share = PagesShare(state, picturesUp);
+        const double share = PagesShare(state);
         const auto atShare = [share](uint64_t bytes)
         { return static_cast<uint64_t>(static_cast<double>(bytes) * share); };
         const uint64_t up = std::min(mission, picturesUp);
@@ -7283,6 +7313,7 @@ void MCHdArt::StartLoadFill(std::string_view mission)
     state.GpuMissionKnown = briefed;
     state.GpuGround = GroundState::Waiting;
     state.GpuUpAtLoad = state.GpuUp;
+    state.GpuPagesMeasured = false;
 
     {
         ReadAhead& ahead = state.Ahead;

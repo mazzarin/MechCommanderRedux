@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "TestGame.h"
 #include "fakes/MCNullAudioDevice.h"
+#include "MCScratchFolder.h"
 #include "camera/MCCamera.h"
 #include "lib/MCFirstUse.h"
 #include "main/MCGameContext.h"
@@ -12,7 +13,9 @@
 #include "object/MCCommander.h"
 #include "object/MCForces.h"
 #include "object/MCMover.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCInput.h"
 #include "platform/MCMemoryLedger.h"
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCRenderer.h"
@@ -396,6 +399,56 @@ TEST_CASE_ISOLATED("game: in the canyon's battle the game's thread reads and unp
 /// gestures to come read without the frames they start on sooner (MCHdArt::ReaderSettings::FirstFramesSoon), to
 /// measure them.
 /// </summary>
+/// <summary>
+/// Port-only (20 Nov, the A10: play's first two or three frames came one or two refreshes late, making the screen's
+/// targets with the GPU still busy with the load): a mission's load draws play's first frames as its last, until one
+/// makes none of the screen's targets, and waits for the GPU (MCMission's DrawPlaysFirstFrames), so play's frames make
+/// no target of the screen's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's load draws play's first frames, so play's frames make no target of the screen's")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view DrawnNote = "play's first frames drawn under the bar: ";
+    constexpr std::string_view StartedNote = "mission started";
+    constexpr std::string_view MadeNote = "GPU texture made, ";
+    constexpr int32_t FirstFramesMost = 4;
+    const MCScratchFolder folder("mc_first_use_tests", "first-frames");
+    const std::filesystem::path log = folder.Path() / "load.framelog";
+    REQUIRE(MCFrameLog::Open(log));
+    REQUIRE(MCTestGame::StartMission(1));
+    // The test game's frames don't move the log's on: its first frame, which the notes so far go to, then written.
+    MCFrameLog::NextFrame();
+    MCFrameLog::NextFrame();
+    MCFrameLog::Close();
+    std::ifstream in(log);
+    const std::string text((std::istreambuf_iterator<char>(in)), {});
+    const size_t drawn = text.find(DrawnNote);
+    const size_t started = text.find(StartedNote);
+    REQUIRE(drawn != std::string::npos);
+    REQUIRE(started != std::string::npos);
+    CHECK(drawn < started);
+    int32_t frames = 0;
+    REQUIRE_EQ(std::sscanf(text.c_str() + drawn + DrawnNote.size(), "%d", &frames), 1);
+    CHECK(frames >= 1);
+    CHECK(frames <= FirstFramesMost);
+    std::cout << "  " << text.substr(drawn, text.find('\n', drawn) - drawn) << "\n";
+
+    // The screen's targets (the window's pixels): made under the bar, none made once play shows its frames.
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    int width = 0;
+    int height = 0;
+    REQUIRE(SDL_GetWindowSizeInPixels(&display->Window(), &width, &height));
+    const std::string screen = std::format("{}{}x{}\n", MadeNote, width, height);
+    const size_t made = text.find(screen);
+    CHECK(made < drawn);
+    CHECK(text.find(screen, started) == std::string::npos);
+}
+
 TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists the game's thread's first uses")
 {
     const std::optional<std::string_view> out = MCTest::Option("first-uses");

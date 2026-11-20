@@ -649,6 +649,11 @@ void MCDisplay::ShowPresented()
     _Presenter->ShowPresented();
 }
 
+void MCDisplay::WaitForGpu()
+{
+    _Presenter->WaitForGpu();
+}
+
 void MCDisplay::ShowBeforeInput()
 {
     _Presenter->ShowBeforeInput();

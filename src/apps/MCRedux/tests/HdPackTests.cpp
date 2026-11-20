@@ -4485,6 +4485,99 @@ TEST_CASE("hd art: the fill decides beside the load's ground, the mission's fram
 }
 
 /// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): what the HD pictures' pages take is measured once the fill has put the
+/// mission up whole, never part way, and kept for the next mission's (20 Nov, the A10's 4 GB card: measured part way it
+/// moved with the part going up, 2x 19's 1.58 near its load's end against 1.29 whole, and three missions that fit left
+/// the fill).
+/// </summary>
+TEST_CASE("hd art: the fill measures what its pictures' pages take once the mission is up whole, not part way")
+{
+    constexpr int64_t PagesBytes = int64_t{512} << 20;
+    constexpr uint64_t PlentyTimes = 4;
+    constexpr double ShareTolerance = 1e-9;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-share", pieces);
+    const FillSlotsScope slots;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NextFrame(false);
+    const MCHdArt::GpuFill known = MCHdArt::GpuFillNow();
+    REQUIRE(known.MissionBytes > 0);
+
+    // Part way, the pages part full: twice their pictures' bytes, past the bytes the share is measured from.
+    MCMemoryLedger::MCShare pages{MCMemoryLedger::MCHolder::GpuHdPictures};
+    pages.Set({.Payload = PagesBytes, .Allocated = 2 * PagesBytes});
+    MCHdArt::NoteGpuRoom(PlentyTimes * known.MissionBytes);
+    MCHdArt::NextFrame(false);
+    REQUIRE(MCHdArt::GpuFillNow().Fits);
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCHdArt::GpuFillNow().PagesShare, known.PagesShare);
+
+    // Up whole: measured.
+    CHECK_EQ(FinishTakingEveryPicture().size(), pieces.size());
+    MCHdArt::NextFrame(false);
+    const MCMemoryLedger::MCFigures whole = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuHdPictures);
+    const double measured = static_cast<double>(whole.Allocated) / static_cast<double>(whole.Payload);
+    CHECK(std::abs(MCHdArt::GpuFillNow().PagesShare - measured) < ShareTolerance);
+    pages.Set({});
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): a fill left once the mission no longer fits puts nothing more up, the
+/// frames a reader had taken to read included (20 Nov, the A10's 4 GB card: 2x missions 22 and 24, left at the card's
+/// reading after they entered, went up whole in play, 64 pictures a frame, the game's thread waiting for slots).
+/// </summary>
+TEST_CASE("hd art: a fill left puts nothing more up, the frames a reader had taken included")
+{
+    constexpr uint64_t PlentyTimes = 4;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-left", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NextFrame(false);
+    const uint64_t mission = MCHdArt::GpuFillNow().MissionBytes;
+    REQUIRE(mission > 0);
+
+    // In, the readers holding the runs they take.
+    MCHdArt::HoldTakenRuns(true);
+    MCHdArt::NoteGpuRoom(PlentyTimes * mission);
+    MCHdArt::NextFrame(false);
+    REQUIRE(MCHdArt::GpuFillNow().Fits);
+    MCHdArt::WaitForHeldRun();
+
+    // Out before they're read.
+    MCHdArt::NoteGpuRoom(0);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    MCHdArt::HoldTakenRuns(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()).empty());
+    CHECK_EQ(MCHdArt::GpuFillNow().Waiting, 0);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's upload slots: a fill reader waits for its room before it takes any read): with the fill's
 /// share of the slots held (as pictures staged and not yet recorded hold it), its reader waits and the bar is shown
 /// meanwhile, the game's thread never waiting; once the share is given back the mission goes up whole.

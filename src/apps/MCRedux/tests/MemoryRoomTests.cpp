@@ -124,6 +124,37 @@ TEST_CASE("hd caches: the frames in memory take the plan's share, on the GPU 90%
 }
 
 /// <summary>
+/// Port-only (20 Nov, the A10's 4 GB card): a card of its own holds at least what the ledger counts on the GPU, its own
+/// figure late or not (DXGI's usage counted a 2x mission's ground and the upload slots a reading after the game had made
+/// them, 512 MB short, and the fill decided on the room it gave). A card sharing the machine's memory keeps its own.
+/// </summary>
+TEST_CASE("hd caches: a card of its own holds at least what the ledger counts on the GPU, its own figure late or not")
+{
+    constexpr uint64_t Budget = 3584 * MB;
+    constexpr uint64_t Late = 200 * MB;
+    constexpr int64_t Ground = int64_t{600} << 20;
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    system->Budget = Budget;
+    system->Rest = Late;
+    system->Held = [] { return uint64_t{0}; };
+    MCFakeMemoryScope scope(system);
+    MCMemoryLedger::MCShare ground{MCMemoryLedger::MCHolder::GpuHdGround};
+    ground.Set({.Payload = Ground, .Allocated = Ground});
+    const MCMemoryLedger::MCFigures gpu = MCMemoryLedger::OfSide(MCMemoryLedger::MCSide::Gpu);
+    const auto counted = static_cast<uint64_t>(gpu.Allocated + gpu.Retired);
+    REQUIRE(counted > Late);
+
+    for (const bool shares : {false, true})
+    {
+        MCTest::Scope where(shares ? "a card sharing the machine's memory" : "a card of its own");
+        system->SharesMemory = shares;
+        MCTestClock clock;
+        MCMemoryRoom::MCReader reader(std::string(DeviceName), clock.Reads());
+        CHECK_EQ(reader.Frame(0).PictureBytes, shares ? Budget - Late : Budget * 9 / 10 - counted);
+    }
+}
+
+/// <summary>
 /// The card is asked again every two seconds (MCMemoryRoom::CardReadInterval), its room holding between; a card over
 /// its budget (other programs took some) trims the HD pictures to what's left and, sharing the machine's memory, the
 /// frames kept in memory too. The system short of memory trims the frames kept in memory, and the HD pictures on a

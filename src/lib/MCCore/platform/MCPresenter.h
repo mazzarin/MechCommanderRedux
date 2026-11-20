@@ -223,6 +223,12 @@ public:
     virtual void ShowPresented() {}
 
     /// <summary>
+    /// Port-only: shows a frame presented ahead, waiting for its drawing, then waits until the GPU has done all it was
+    /// given: a mission's load, once play's first frame is drawn (MCMission::StartScenario).
+    /// </summary>
+    virtual void WaitForGpu() { ShowPresented(); }
+
+    /// <summary>
     /// Port-only: a check before the game reads the next frame's input (the window's events). When the display paces
     /// the frames, a frame presented ahead is shown now, waiting for its drawing (as <see cref="ShowPresented"/>), so
     /// the wait for the display comes before the input is read rather than after it; else as

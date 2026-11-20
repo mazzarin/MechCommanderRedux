@@ -328,6 +328,12 @@ public:
     void ShowPresented();
 
     /// <summary>
+    /// Port-only: shows a frame presented ahead, then waits until the GPU has done all it was given
+    /// (<see cref="MCPresenter::WaitForGpu"/>).
+    /// </summary>
+    void WaitForGpu();
+
+    /// <summary>
     /// Port-only: a check for a frame presented ahead before the next frame's input is read
     /// (<see cref="MCPresenter::ShowBeforeInput"/>).
     /// </summary>

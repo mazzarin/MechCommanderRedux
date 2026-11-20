@@ -99,6 +99,9 @@ namespace MCMemoryLedger
     /// <summary>The holder's figures now (any thread).</summary>
     MCFigures Of(MCHolder holder);
 
+    /// <summary>The figures of every holder of <paramref name="side"/> now, summed (any thread).</summary>
+    MCFigures OfSide(MCSide side);
+
     /// <summary>
     /// A part of a holder's figures, counted from Set until Set again (replacing them) or its end (taking them away).
     /// Owned by one thread at a time; moved, never copied.

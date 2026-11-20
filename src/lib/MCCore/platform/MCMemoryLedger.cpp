@@ -144,6 +144,26 @@ MCMemoryLedger::MCFigures MCMemoryLedger::Of(MCHolder holder)
             .Retired = counted.Retired.load(std::memory_order_relaxed)};
 }
 
+MCMemoryLedger::MCFigures MCMemoryLedger::OfSide(MCSide side)
+{
+    MCFigures sum;
+
+    for (size_t at = 0; at < HolderCount; at++)
+    {
+        const auto holder = static_cast<MCHolder>(at);
+
+        if (SideOf(holder) == side)
+        {
+            const MCFigures figures = Of(holder);
+            sum.Payload += figures.Payload;
+            sum.Allocated += figures.Allocated;
+            sum.Retired += figures.Retired;
+        }
+    }
+
+    return sum;
+}
+
 MCMemoryLedger::MCShare::~MCShare()
 {
     Set({});

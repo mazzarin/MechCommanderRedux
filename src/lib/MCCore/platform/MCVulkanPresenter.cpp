@@ -2347,6 +2347,16 @@ void MCVulkanPresenter::ShowPresented()
     }
 }
 
+void MCVulkanPresenter::WaitForGpu()
+{
+    ShowPresented();
+
+    if (_Device != nullptr)
+    {
+        SDL_WaitForGPUIdle(_Device.get());
+    }
+}
+
 std::expected<std::vector<SDL_Color>, std::string> MCVulkanPresenter::ReadFrame(const MCFrame& frame)
 {
     // Port-only: nothing running or waiting to be shown as the frame is read (their errors come with the next present).

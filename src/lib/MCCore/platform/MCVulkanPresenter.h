@@ -118,6 +118,7 @@ public:
     MCViewport Viewport(int viewWidth, int viewHeight) const override;
     void ShowFinished() override;
     void ShowPresented() override;
+    void WaitForGpu() override;
     void ShowBeforeInput() override;
     std::span<const MCShownGrid> ShownGrids() const override { return _ShownGrids; }
 

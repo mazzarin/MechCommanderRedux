@@ -9150,7 +9150,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             overlayKeys(surface, overlays, origin, Intersection(draw.Frame.Clip, shown));
         const uint32_t width = surface.Target.Width;
         const uint32_t height = surface.Target.Height;
-        const bool whole = plan.Whole || !held || kept.ViewColors[kept.ViewCurrent].Width != width ||
+        static const bool probeWhole = std::getenv("MC_VIEW_WHOLE") != nullptr;
+        const bool whole = probeWhole || plan.Whole || !held || kept.ViewColors[kept.ViewCurrent].Width != width ||
                            kept.ViewColors[kept.ViewCurrent].Height != height;
         std::vector<MCRect> parts;
 

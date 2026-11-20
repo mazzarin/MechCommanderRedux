@@ -10260,14 +10260,15 @@ namespace
 }
 
 /// <summary>
-/// Port-only (HDSmoothMotion): the view panned by fractions of a window pixel a frame, as a camera following a walking
-/// mech moves, across, down and on the diagonal: the camera keeps the fraction its place loses to the original's
-/// rounding (MCCamera::ScreenULFraction) and the world's drawn grid moves the picture by it in whole drawn pixels, so
-/// the HD ground's kept pixels are still moved, never drawn again for it (none drawn directly or whole), and in mirror
-/// mode every drawn pixel shown keeps the palette index of the software renderer's pixel it shows.
+/// Port-only (HDSmoothMotion's view, HDSmoothCamera alone: its mechs, drawn between pixels, aren't the software
+/// renderer's): the view panned by fractions of a window pixel a frame, as a camera following a walking mech moves,
+/// across, down and on the diagonal: the camera keeps the fraction its place loses to the original's rounding
+/// (MCCamera::ScreenULFraction) and the world's drawn grid moves the picture by it in whole drawn pixels, so the HD
+/// ground's kept pixels are still moved, never drawn again for it (none drawn directly or whole), and in mirror mode
+/// every drawn pixel shown keeps the palette index of the software renderer's pixel it shows.
 /// </summary>
-TEST_CASE_ISOLATED(
-    "game: with SMOOTH MOTION a pan by fractions of a pixel moves the kept HD ground, indices the original's")
+TEST_CASE_ISOLATED("game: with the smooth camera a pan by fractions of a pixel moves the kept HD ground, indices the "
+                   "original's")
 {
     struct Pan
     {
@@ -10275,6 +10276,8 @@ TEST_CASE_ISOLATED(
         float Down = 0.0f;
     };
 
+    // How near the camera stays to where it was put, world units (a window pixel across is 1/(2 cos) of them).
+    constexpr float MovedNear = 1e-3f;
     constexpr std::array<Pan, 6> Pans = {Pan{0.3f, 0.0f},  Pan{0.7f, 0.0f},  Pan{0.0f, 0.45f},
                                          Pan{-0.6f, 0.0f}, Pan{1.3f, -0.2f}, Pan{0.0f, -0.85f}};
     constexpr int32_t FramesEach = 4;
@@ -10293,7 +10296,12 @@ TEST_CASE_ISOLATED(
     MCInput::Display()->GetShownColors(colors);
     REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
     const MCHdArtOn hdArt(scene->Pack);
-    GHdSmoothMotion = 1;
+    GHdSmoothCamera = 1;
+    // The camera lets go of the unit it follows, as a scroll does (MCCamera::ScrollCamera): else it closes in on it
+    // again each frame, taking back a step under a pixel. The cursor in the screen's middle: at its corner, the edge's
+    // scroll moves the camera too.
+    Eye()->ChangeTarget(nullptr, false);
+    MCScreenInput::RealMove(GuiSystem().Width() / 2, GuiSystem().Height() / 2);
     MCTestGame::RunFrame(FrameSeconds);
     MCTestGame::RunFrame(FrameSeconds);
     REQUIRE(scene->Renderer->HdTerrain());
@@ -10309,6 +10317,8 @@ TEST_CASE_ISOLATED(
         for (int32_t frame = 0; frame < FramesEach; ++frame)
         {
             REQUIRE(PanFrame(position, pan.Across, pan.Down));
+            REQUIRE(std::fabs(Eye()->GetPosition().X - position.X) < MovedNear);
+            REQUIRE(std::fabs(Eye()->GetPosition().Y - position.Y) < MovedNear);
             ++frames;
             between += Eye()->ScreenULFraction != std::array<int32_t, 2>{} ? 1 : 0;
             const std::optional<std::array<int32_t, 2>> offset = WorldGridOffset(*scene->Renderer);
@@ -10318,7 +10328,7 @@ TEST_CASE_ISOLATED(
         }
     }
 
-    GHdSmoothMotion = 0;
+    GHdSmoothCamera = 0;
     const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
     const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
     std::cout << std::format("  {} frames ({} between pixels): {} shifted, {} kept, {} whole, {} direct; the grid's "

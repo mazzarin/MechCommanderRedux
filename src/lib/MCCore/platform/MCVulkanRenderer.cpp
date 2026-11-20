@@ -7200,12 +7200,34 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
         return plan;
     }
 
+    // Port-only (HDSmoothCamera): the window pixels the kept pixels' move uncovers at the edge they move away from: the
+    // view's move, but where the camera's fraction moved the picture by more drawn pixels than that (or by some, the
+    // view not moving), as many window pixels as cover the drawn move and the one it starts inside. Without a fraction
+    // the kept pixels move by the view's move exactly, as before.
+    const auto uncovered = [&now, &then](size_t axis, int32_t move, int32_t shift, uint32_t window, uint32_t drawn)
+    {
+        if (shift == 0 || (now.OriginFraction[axis] == 0 && then.OriginFraction[axis] == 0))
+        {
+            return move;
+        }
+
+        const int64_t w = std::max(window, 1u);
+        const int64_t d = std::max(drawn, 1u);
+        const auto reach = static_cast<int32_t>((std::abs(int64_t{shift}) * w + d - 1) / d + 1);
+        const int32_t along = (move > 0) == (shift > 0) ? std::abs(move) : 0;
+        return (shift > 0 ? 1 : -1) * std::max(along, reach);
+    };
+
+    const int32_t openX = uncovered(0, moveX, shiftX, surface.MappedWidth, surface.Target.Width);
+    const int32_t openY = uncovered(1, moveY, shiftY, surface.MappedHeight, surface.Target.Height);
+    const bool opened = openX != 0 || openY != 0;
+
     const bool fogChanged = !std::ranges::equal(seen, kept.Seen);
     const bool cycled = cycleStep != kept.CycleStep;
     plan.Whole = false;
     plan.Shift = {shiftX, shiftY};
 
-    if (!moved && !fogChanged && !cycled)
+    if (!opened && !fogChanged && !cycled)
     {
         return plan;
     }
@@ -7213,16 +7235,16 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     // What the view moved onto (window pixels).
     std::vector<MCRect> parts;
 
-    if (moveX != 0)
+    if (openX != 0)
     {
-        parts.push_back(moveX > 0 ? MCRect{clip.X0, clip.Y0, clip.X0 + moveX - 1, clip.Y1}
-                                  : MCRect{clip.X1 + moveX + 1, clip.Y0, clip.X1, clip.Y1});
+        parts.push_back(openX > 0 ? MCRect{clip.X0, clip.Y0, std::min(clip.X0 + openX - 1, clip.X1), clip.Y1}
+                                  : MCRect{std::max(clip.X1 + openX + 1, clip.X0), clip.Y0, clip.X1, clip.Y1});
     }
 
-    if (moveY != 0)
+    if (openY != 0)
     {
-        parts.push_back(moveY > 0 ? MCRect{clip.X0, clip.Y0, clip.X1, clip.Y0 + moveY - 1}
-                                  : MCRect{clip.X0, clip.Y1 + moveY + 1, clip.X1, clip.Y1});
+        parts.push_back(openY > 0 ? MCRect{clip.X0, clip.Y0, clip.X1, std::min(clip.Y0 + openY - 1, clip.Y1)}
+                                  : MCRect{clip.X0, std::max(clip.Y1 + openY + 1, clip.Y0), clip.X1, clip.Y1});
     }
 
     // The indices showing a cycled colour, themselves or through the haze's tables.

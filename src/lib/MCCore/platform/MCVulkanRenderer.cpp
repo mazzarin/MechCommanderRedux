@@ -4166,6 +4166,16 @@ void MCVulkanRenderer::PlaceStagedPictures()
                    std::clamp(interval, FillLeastPeriod, FillMostPeriod) * FillPeriodWeight;
     const bool loading = MCHdArt::LoadFilling();
 
+    // Port-only (SPEC-memory.md's upload slots): more of them while a load's fill runs; without them it goes on in those
+    // kept.
+    if (loading && !_WasLoadFilling)
+    {
+        if (const std::expected<void, std::string> grown = _Slots->Grow(MCUploadSlots::LoadBytesNow()); !grown)
+        {
+            SDL_Log("MCVulkanRenderer: the upload slots not grown for the load (%s)", grown.error().c_str());
+        }
+    }
+
     // The slots at a load's end in the frame log: the copy speed measured (a copy's GPU time is its bytes over it), the
     // most in use, and the waits and refusals by kind.
     if (_WasLoadFilling && !loading && MCFrameLog::Enabled())
@@ -4185,6 +4195,12 @@ void MCVulkanRenderer::PlaceStagedPictures()
                                      "slots in use; {}",
                                      _Slots->Bytes() >> 20, _Slots->CopyBytesPerSecond() / BytesPerGb, tally.PeakInUse,
                                      _Slots->Slots(), kinds));
+    }
+
+    // The load's own slots go once their copies have run (MCUploadSlots::Reclaim).
+    if (_WasLoadFilling && !loading)
+    {
+        _Slots->Shrink();
     }
 
     _WasLoadFilling = loading;

@@ -59,6 +59,44 @@ namespace
     {
         return (offset + MCUploadSlots::Alignment - 1) & ~(MCUploadSlots::Alignment - 1);
     }
+
+    constexpr size_t BytesPerMb = size_t{1} << 20;
+
+    /// <summary>SDL's transfer buffer of <paramref name="bytes"/> (whole slots) on <paramref name="device"/>, mapped for good.</summary>
+    std::expected<std::unique_ptr<MCUploadSlots::MCBacking>, std::string> MakeSdlBacking(
+        const std::shared_ptr<SDL_GPUDevice>& device, size_t bytes)
+    {
+        const size_t size = bytes / MCUploadSlots::SlotBytes * MCUploadSlots::SlotBytes;
+
+        if (size > std::numeric_limits<uint32_t>::max())
+        {
+            return std::unexpected(
+                std::format("the upload slots: {} bytes are more than a transfer buffer holds", size));
+        }
+
+        SDL_GPUTransferBufferCreateInfo info{};
+        info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        info.size = static_cast<uint32_t>(size);
+        MCCountedGpuHandle<SDL_GPUTransferBuffer> buffer =
+            MCGpuCounted::MakeTransferBuffer(device, info, MCMemoryLedger::MCHolder::GpuTransfers);
+
+        if (buffer == nullptr)
+        {
+            return std::unexpected(
+                std::format("SDL_CreateGPUTransferBuffer(the upload slots, {} bytes): {}", size, SDL_GetError()));
+        }
+
+        // Mapped for good: never cycled, so it names the buffer's own memory, which a dedicated allocation keeps in place.
+        void* const memory = SDL_MapGPUTransferBuffer(device.get(), buffer.get(), false);
+
+        if (memory == nullptr)
+        {
+            return std::unexpected(std::format("SDL_MapGPUTransferBuffer(the upload slots): {}", SDL_GetError()));
+        }
+
+        return std::make_unique<MCSdlBacking>(device, std::move(buffer),
+                                              std::span(static_cast<uint8_t*>(memory), size));
+    }
 }
 
 std::string_view MCUploadSlots::KindName(MCKind kind)
@@ -118,7 +156,9 @@ void MCUploadSlots::MCLease::Drop()
 
 size_t MCUploadSlots::MCLease::Offset() const
 {
-    return static_cast<size_t>(_First) * SlotBytes;
+    // A grown slot's offset is in the grown slots' own buffer (MCUploadSlots::Grow).
+    const size_t start = _Pool != nullptr && _First >= _Pool->_StartSlots ? _Pool->_StartSlots : 0;
+    return (static_cast<size_t>(_First) - start) * SlotBytes;
 }
 
 size_t MCUploadSlots::MCLease::Size() const
@@ -128,7 +168,13 @@ size_t MCUploadSlots::MCLease::Size() const
 
 SDL_GPUTransferBuffer* MCUploadSlots::MCLease::Buffer() const
 {
-    return _Pool != nullptr ? _Pool->_Buffer : nullptr;
+    // The grown slots' buffer stays while a lease holds any of them (MCUploadSlots::TakeLetGoLocked).
+    if (_Pool == nullptr)
+    {
+        return nullptr;
+    }
+
+    return _First >= _Pool->_StartSlots ? _Pool->_MoreBuffer : _Pool->_Buffer;
 }
 
 std::optional<size_t> MCUploadSlots::MCLease::Place(size_t bytes)
@@ -151,58 +197,39 @@ std::span<uint8_t> MCUploadSlots::MCLease::At(size_t offset, size_t bytes) const
         return {};
     }
 
-    return _Pool->_Memory.subspan(offset, bytes);
+    return (_First >= _Pool->_StartSlots ? _Pool->_MoreMemory : _Pool->_Memory).subspan(offset, bytes);
 }
 
 std::expected<std::shared_ptr<MCUploadSlots>, std::string> MCUploadSlots::Make(
     const std::shared_ptr<SDL_GPUDevice>& device, size_t bytes)
 {
     const size_t slots = std::max<size_t>(bytes / SlotBytes, NearSlots + 1);
-    const size_t size = slots * SlotBytes;
+    std::expected<std::unique_ptr<MCBacking>, std::string> backing = MakeSdlBacking(device, slots * SlotBytes);
 
-    if (size > std::numeric_limits<uint32_t>::max())
+    if (!backing)
     {
-        return std::unexpected(std::format("the upload slots: {} bytes are more than a transfer buffer holds", size));
+        return std::unexpected(backing.error());
     }
 
-    SDL_GPUTransferBufferCreateInfo info{};
-    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-    info.size = static_cast<uint32_t>(size);
-    MCCountedGpuHandle<SDL_GPUTransferBuffer> buffer =
-        MCGpuCounted::MakeTransferBuffer(device, info, MCMemoryLedger::MCHolder::GpuTransfers);
-
-    if (buffer == nullptr)
-    {
-        return std::unexpected(
-            std::format("SDL_CreateGPUTransferBuffer(the upload slots, {} bytes): {}", size, SDL_GetError()));
-    }
-
-    // Mapped for good: never cycled, so it names the buffer's own memory, which a dedicated allocation keeps in place.
-    void* const memory = SDL_MapGPUTransferBuffer(device.get(), buffer.get(), false);
-
-    if (memory == nullptr)
-    {
-        return std::unexpected(std::format("SDL_MapGPUTransferBuffer(the upload slots): {}", SDL_GetError()));
-    }
-
-    SDL_Log("MCUploadSlots: %zu MB in %zu slots of %zu MB", size >> 20, slots, SlotBytes >> 20);
-    return MakeWith(
-        std::make_unique<MCSdlBacking>(device, std::move(buffer), std::span(static_cast<uint8_t*>(memory), size)));
+    SDL_Log("MCUploadSlots: %zu MB in %zu slots of %zu MB", (slots * SlotBytes) >> 20, slots, SlotBytes >> 20);
+    return MakeWith(std::move(*backing), [device](size_t more) { return MakeSdlBacking(device, more); });
 }
 
-std::shared_ptr<MCUploadSlots> MCUploadSlots::MakeWith(std::unique_ptr<MCBacking> backing)
+std::shared_ptr<MCUploadSlots> MCUploadSlots::MakeWith(std::unique_ptr<MCBacking> backing, MCMakeBacking more)
 {
-    return std::shared_ptr<MCUploadSlots>(new MCUploadSlots(std::move(backing)));
+    return std::shared_ptr<MCUploadSlots>(new MCUploadSlots(std::move(backing), std::move(more)));
 }
 
-size_t MCUploadSlots::BytesFor(uint64_t machineBytes)
+size_t MCUploadSlots::StartBytes()
 {
-    if (const size_t set = SetSlotBytes.load(); set != 0)
-    {
-        return set;
-    }
+    const size_t set = SetSlotBytes.load();
+    return set != 0 ? set : KeptBytes;
+}
 
-    return machineBytes >= LargeFromMachineBytes ? LargeBytes : LeastBytes;
+size_t MCUploadSlots::LoadBytesNow()
+{
+    const size_t set = SetSlotBytes.load();
+    return set != 0 ? set : LoadBytes;
 }
 
 void MCUploadSlots::SetBytes(std::optional<size_t> bytes)
@@ -210,12 +237,124 @@ void MCUploadSlots::SetBytes(std::optional<size_t> bytes)
     SetSlotBytes.store(bytes.has_value() ? std::clamp(*bytes, (NearSlots + 1) * SlotBytes, MostBytes) : 0);
 }
 
-MCUploadSlots::MCUploadSlots(std::unique_ptr<MCBacking> backing) : _Backing(std::move(backing))
+MCUploadSlots::MCUploadSlots(std::unique_ptr<MCBacking> backing, MCMakeBacking more)
+    : _Backing(std::move(backing)), _MakeMore(std::move(more))
 {
     _Buffer = _Backing->Buffer();
     _Memory = _Backing->Memory();
     _States.assign(_Memory.size() / SlotBytes, MCSlot{});
+    _StartSlots = _States.size();
+    _Takeable = _StartSlots;
     _FreeSlots = _States.size();
+}
+
+size_t MCUploadSlots::Slots() const
+{
+    std::scoped_lock lock(_Lock);
+    return _States.size();
+}
+
+std::expected<void, std::string> MCUploadSlots::Grow(size_t bytes)
+{
+    const size_t slots = bytes / SlotBytes;
+
+    {
+        std::scoped_lock lock(_Lock);
+
+        // Grown already, or let go and not yet gone: those let go are taken again.
+        if (_More != nullptr)
+        {
+            for (auto at = static_cast<uint32_t>(_Takeable); at < _States.size(); ++at)
+            {
+                _FreeSlots += Free(at) ? 1 : 0;
+            }
+
+            _Takeable = _States.size();
+            Recount();
+            _Freed.notify_all();
+            return {};
+        }
+
+        if (slots <= _StartSlots)
+        {
+            return {};
+        }
+
+        if (!_MakeMore)
+        {
+            return std::unexpected("the upload slots: these don't grow");
+        }
+    }
+
+    // Made outside the lock (the GPU's driver takes a while), as only the game's thread grows them.
+    std::expected<std::unique_ptr<MCBacking>, std::string> more = _MakeMore((slots - _StartSlots) * SlotBytes);
+
+    if (!more)
+    {
+        return std::unexpected(more.error());
+    }
+
+    {
+        std::scoped_lock lock(_Lock);
+        _More = std::move(*more);
+        _MoreBuffer = _More->Buffer();
+        _MoreMemory = _More->Memory();
+        const size_t added = _MoreMemory.size() / SlotBytes;
+        _States.resize(_StartSlots + added);
+        _Takeable = _States.size();
+        _FreeSlots += added;
+        Recount();
+    }
+
+    _Freed.notify_all();
+    MCFrameLog::Note(std::format("upload slots: {} MB for the load", Bytes() / BytesPerMb));
+    return {};
+}
+
+void MCUploadSlots::Shrink()
+{
+    std::unique_ptr<MCBacking> gone;
+
+    {
+        std::scoped_lock lock(_Lock);
+
+        if (_More == nullptr || _Takeable == _StartSlots)
+        {
+            return;
+        }
+
+        for (auto at = static_cast<uint32_t>(_StartSlots); at < _Takeable; ++at)
+        {
+            _FreeSlots -= Free(at) ? 1 : 0;
+        }
+
+        _Takeable = _StartSlots;
+        Recount();
+        gone = TakeLetGoLocked();
+    }
+}
+
+std::unique_ptr<MCUploadSlots::MCBacking> MCUploadSlots::TakeLetGoLocked()
+{
+    if (_More == nullptr || _Takeable != _StartSlots)
+    {
+        return nullptr;
+    }
+
+    for (auto at = static_cast<uint32_t>(_StartSlots); at < _States.size(); ++at)
+    {
+        if (!Free(at))
+        {
+            return nullptr;
+        }
+    }
+
+    _States.resize(_StartSlots);
+    _MoreBuffer = nullptr;
+    _MoreMemory = {};
+    MCFrameLog::Note(
+        std::format("upload slots: back to {} MB, the load's own let go", _States.size() * SlotBytes / BytesPerMb));
+    return std::move(_More);
 }
 
 MCUploadSlots::~MCUploadSlots()
@@ -231,9 +370,15 @@ uint32_t MCUploadSlots::SlotsFor(size_t bytes)
 
 size_t MCUploadSlots::MostFor(MCKind kind) const
 {
+    std::scoped_lock lock(_Lock);
+    return MostForLocked(kind);
+}
+
+size_t MCUploadSlots::MostForLocked(MCKind kind) const
+{
     // A kind kept off the near slots still takes one at least: slots made fewer than NearSlots (a test's) aren't shut.
     constexpr size_t LeastSlots = 1;
-    const size_t past = _States.size() > NearSlots ? _States.size() - NearSlots : 0;
+    const size_t past = _Takeable > NearSlots ? _Takeable - NearSlots : 0;
 
     switch (kind)
     {
@@ -246,12 +391,12 @@ size_t MCUploadSlots::MostFor(MCKind kind) const
             break;
     }
 
-    return _States.size();
+    return _Takeable;
 }
 
 void MCUploadSlots::Recount()
 {
-    _Tally.InUse = _States.size() - _FreeSlots;
+    _Tally.InUse = _Takeable - _FreeSlots;
     _Tally.PeakInUse = std::max(_Tally.PeakInUse, _Tally.InUse);
     _Tally.InFlight = _Sent.size();
 }
@@ -264,7 +409,7 @@ std::optional<MCUploadSlots::MCLease> MCUploadSlots::TakeLocked(MCKind kind, siz
     // The fill and the ground leave the last NearSlots free slots free, and the fill holds no more than its share.
     const size_t kept = kind == MCKind::Fill || kind == MCKind::Ground ? NearSlots : 0;
 
-    if (count > _FreeSlots || _FreeSlots - count < kept || tally.Held + count > MostFor(kind))
+    if (count > _FreeSlots || _FreeSlots - count < kept || tally.Held + count > MostForLocked(kind))
     {
         return std::nullopt;
     }
@@ -272,8 +417,14 @@ std::optional<MCUploadSlots::MCLease> MCUploadSlots::TakeLocked(MCKind kind, siz
     // The first run of free neighbours long enough.
     uint32_t run = 0;
 
-    for (uint32_t i = 0; i < _States.size(); ++i)
+    for (uint32_t i = 0; i < _Takeable; ++i)
     {
+        // A run never spans the slots made at the start and the grown ones: they're in buffers of their own.
+        if (i == _StartSlots)
+        {
+            run = 0;
+        }
+
         run = Free(i) ? run + 1 : 0;
 
         if (run == count)
@@ -305,7 +456,7 @@ std::optional<MCUploadSlots::MCLease> MCUploadSlots::TryTake(MCKind kind, size_t
 {
     std::scoped_lock lock(_Lock);
 
-    if (SlotsFor(bytes) <= MostFor(kind))
+    if (SlotsFor(bytes) <= MostForLocked(kind))
     {
         if (std::optional<MCLease> lease = TakeLocked(kind, bytes); lease.has_value())
         {
@@ -331,7 +482,7 @@ std::optional<MCUploadSlots::MCLease> MCUploadSlots::Take(MCKind kind, size_t by
     std::unique_lock lock(_Lock);
     MCKindTally& tally = _Tally.Kinds[static_cast<size_t>(kind)];
 
-    if (SlotsFor(bytes) > MostFor(kind))
+    if (SlotsFor(bytes) > MostForLocked(kind))
     {
         ++tally.Refused;
         MCFrameLog::Count(RefusedCounts[static_cast<size_t>(kind)]);
@@ -399,7 +550,7 @@ void MCUploadSlots::GiveBack(MCLease& lease)
         for (uint32_t at = lease._First; at < lease._First + lease._Count; ++at)
         {
             _States[at].Leased = false;
-            freed += Free(at) ? 1 : 0;
+            freed += FreeToTake(at) ? 1 : 0;
         }
 
         _FreeSlots += freed;
@@ -472,7 +623,7 @@ void MCUploadSlots::Send(std::span<MCLease> leases, std::span<const std::shared_
                 for (uint32_t at = lease._First; at < lease._First + lease._Count; ++at)
                 {
                     _States[at].Leased = false;
-                    freed += Free(at) ? 1 : 0;
+                    freed += FreeToTake(at) ? 1 : 0;
                 }
 
                 _Tally.Kinds[static_cast<size_t>(lease._Kind)].Held -= lease._Count;
@@ -515,7 +666,7 @@ size_t MCUploadSlots::ReclaimLocked()
                           for (uint32_t at = first; at < first + count; ++at)
                           {
                               --_States[at].Sends;
-                              freed += Free(at) ? 1 : 0;
+                              freed += FreeToTake(at) ? 1 : 0;
                           }
                       }
 
@@ -545,10 +696,13 @@ size_t MCUploadSlots::ReclaimLocked()
 size_t MCUploadSlots::Reclaim()
 {
     size_t freed = 0;
+    // Let go outside the lock, on the game's thread.
+    std::unique_ptr<MCBacking> gone;
 
     {
         std::scoped_lock lock(_Lock);
         freed = ReclaimLocked();
+        gone = TakeLetGoLocked();
     }
 
     if (freed != 0)
@@ -586,7 +740,13 @@ bool MCUploadSlots::WaitForAll()
 
 void MCUploadSlots::Flush()
 {
+    std::scoped_lock lock(_Lock);
     _Backing->Flush();
+
+    if (_More != nullptr)
+    {
+        _More->Flush();
+    }
 }
 
 double MCUploadSlots::CopyBytesPerSecond() const
@@ -623,7 +783,7 @@ MCUploadBatch::MCStaged MCUploadBatch::Stage(size_t bytes, size_t leaseBytes, bo
     {
         if (const std::optional<size_t> at = _Leases.back().Place(bytes); at.has_value())
         {
-            return {_Leases.back().At(*at, bytes), _Slots->Buffer(), static_cast<uint32_t>(*at)};
+            return {_Leases.back().At(*at, bytes), _Leases.back().Buffer(), static_cast<uint32_t>(*at)};
         }
     }
 
@@ -637,7 +797,7 @@ MCUploadBatch::MCStaged MCUploadBatch::Stage(size_t bytes, size_t leaseBytes, bo
         {
             _Leases.push_back(std::move(*taken));
             const std::optional<size_t> at = _Leases.back().Place(bytes);
-            return {_Leases.back().At(*at, bytes), _Slots->Buffer(), static_cast<uint32_t>(*at)};
+            return {_Leases.back().At(*at, bytes), _Leases.back().Buffer(), static_cast<uint32_t>(*at)};
         }
     }
 

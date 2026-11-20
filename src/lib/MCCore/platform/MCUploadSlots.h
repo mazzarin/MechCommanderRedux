@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -18,7 +19,8 @@
 
 /// <summary>
 /// Port-only (SPEC-memory.md's "A frame's path", row 5: the upload slots): the memory every upload to the GPU goes up
-/// through, made at the start and kept for the session, in slots of <see cref="SlotBytes"/>. A writer takes a run of
+/// through, made at the start and kept for the session, in slots of <see cref="SlotBytes"/>; while a load's fill runs,
+/// more slots in a buffer of their own (<see cref="Grow"/>), let go once it's done and their copies have run. A writer takes a run of
 /// slots (a lease), writes its uploads into it, records their copies on a command buffer and sends the lease with that
 /// command buffer's fence; the slots are free again only once every fence sent with them has signalled and the lease is
 /// gone, never sooner (SDL's cycling, which can make new backing buffers, isn't used). A reader waits for free slots
@@ -37,16 +39,16 @@ class MCUploadSlots : public std::enable_shared_from_this<MCUploadSlots>
 public:
     /// <summary>A slot's bytes: an upload bigger than one takes a run of neighbours.</summary>
     static constexpr size_t SlotBytes = size_t{2} << 20;
-    /// <summary>The slots' bytes in all on a machine of less than <see cref="LargeFromMachineBytes"/> (you, 17 Nov: "the
-    /// floor needs to be 128").</summary>
-    static constexpr size_t LeastBytes = size_t{128} << 20;
-    /// <summary>The slots' bytes in all from <see cref="LargeFromMachineBytes"/>, where every mission fits on the GPU.</summary>
-    static constexpr size_t LargeBytes = size_t{256} << 20;
     /// <summary>
-    /// A machine of 24 GB, as its system reports it (a little under what it's sold as on Windows, where the firmware
-    /// keeps some).
+    /// The slots' bytes in all, kept for the session (you, 17 Nov: "the floor needs to be 128"): play needs no more (20
+    /// Nov, the A10's 4 GB card: no waits for a slot in play at 128, 256 or 512 MB).
     /// </summary>
-    static constexpr uint64_t LargeFromMachineBytes = uint64_t{23} << 30;
+    static constexpr size_t KeptBytes = size_t{128} << 20;
+    /// <summary>
+    /// The slots' bytes in all while a load's fill runs (<see cref="Grow"/>): the A10's loads came out 0.45 s shorter than
+    /// at <see cref="KeptBytes"/>, and 512 MB gave only 0.19 s more.
+    /// </summary>
+    static constexpr size_t LoadBytes = size_t{256} << 20;
     /// <summary>The most bytes <see cref="SetBytes"/> takes (a transfer buffer is at most 4 GB).</summary>
     static constexpr size_t MostBytes = size_t{2048} << 20;
     /// <summary>The slots kept from the fill and the ground (<see cref="MCKind"/>).</summary>
@@ -173,22 +175,32 @@ public:
         MCKind _Kind = MCKind::Frame;
     };
 
+    /// <summary>Makes the memory for more slots, <c>size_t</c> bytes of them (whole slots), or says why not.</summary>
+    using MCMakeBacking = std::function<std::expected<std::unique_ptr<MCBacking>, std::string>(size_t)>;
+
     /// <summary>The slots of <paramref name="bytes"/> in all (whole slots) on <paramref name="device"/>, or why not.</summary>
     static std::expected<std::shared_ptr<MCUploadSlots>, std::string> Make(const std::shared_ptr<SDL_GPUDevice>& device,
                                                                            size_t bytes);
 
-    /// <summary>The slots over <paramref name="backing"/>'s memory (the tests').</summary>
-    static std::shared_ptr<MCUploadSlots> MakeWith(std::unique_ptr<MCBacking> backing);
+    /// <summary>
+    /// The slots over <paramref name="backing"/>'s memory (the tests'), growing with memory <paramref name="more"/> makes
+    /// (none: they don't grow).
+    /// </summary>
+    static std::shared_ptr<MCUploadSlots> MakeWith(std::unique_ptr<MCBacking> backing, MCMakeBacking more = {});
+
+    /// <summary>The slots' bytes made at the start: <see cref="SetBytes"/>'s when set, else <see cref="KeptBytes"/>.</summary>
+    static size_t StartBytes();
 
     /// <summary>
-    /// The slots' bytes for a machine of <paramref name="machineBytes"/>: <see cref="SetBytes"/>'s when set, else
-    /// <see cref="LeastBytes"/>, or <see cref="LargeBytes"/> from <see cref="LargeFromMachineBytes"/>.
+    /// The slots' bytes while a load's fill runs: <see cref="SetBytes"/>'s when set (a timing run's size holds
+    /// throughout), else <see cref="LoadBytes"/>.
     /// </summary>
-    static size_t BytesFor(uint64_t machineBytes);
+    static size_t LoadBytesNow();
 
     /// <summary>
     /// Port-only, for timing runs (<c>-hdslots &lt;MB&gt;</c>; SPEC-memory.md: timed at 128, 256 and 512 MB): the slots'
-    /// bytes whatever the machine (none: by the machine's memory). Read as the GPU starts.
+    /// bytes, loading or not (none: <see cref="KeptBytes"/>, and <see cref="LoadBytes"/> while loading). Read as the GPU
+    /// starts.
     /// </summary>
     static void SetBytes(std::optional<size_t> bytes);
 
@@ -198,11 +210,23 @@ public:
     MCUploadSlots(const MCUploadSlots&) = delete;
     MCUploadSlots& operator=(const MCUploadSlots&) = delete;
 
-    /// <summary>The transfer buffer the leases' copies read from.</summary>
-    SDL_GPUTransferBuffer* Buffer() const { return _Buffer; }
-    /// <summary>How many slots there are, and their bytes in all.</summary>
-    size_t Slots() const { return _States.size(); }
-    size_t Bytes() const { return _States.size() * SlotBytes; }
+    /// <summary>How many slots there are (those let go once their copies have run among them), and their bytes in all.</summary>
+    size_t Slots() const;
+    size_t Bytes() const { return Slots() * SlotBytes; }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's upload slots, under the loading bar): the slots grown to <paramref name="bytes"/> in
+    /// all (whole slots), the ones past those made at the start in a buffer of their own; those let go and not yet gone
+    /// (<see cref="Shrink"/>) are taken again. Why not, when that memory can't be made (the slots stay as they were).
+    /// The game's thread's.
+    /// </summary>
+    std::expected<void, std::string> Grow(size_t bytes);
+
+    /// <summary>
+    /// The slots past those made at the start (<see cref="Grow"/>) taken no more; their buffer goes once their copies
+    /// have run and no lease holds them (<see cref="Reclaim"/>). The game's thread's.
+    /// </summary>
+    void Shrink();
     /// <summary>The most slots <paramref name="kind"/> may hold at once (unsent, for the fill).</summary>
     size_t MostFor(MCKind kind) const;
 
@@ -231,7 +255,10 @@ public:
               size_t bytes = 0);
     void Send(std::span<MCLease> leases, SDL_GPUFence* fence) { Send(leases, {}, fence); }
 
-    /// <summary>Frees the slots of every lease sent whose fence has signalled; how many slots it freed.</summary>
+    /// <summary>
+    /// Frees the slots of every lease sent whose fence has signalled, and lets go of the buffer of slots let go
+    /// (<see cref="Shrink"/>) once they're all free; how many slots it freed. The game's thread's.
+    /// </summary>
     size_t Reclaim();
 
     /// <summary>Waits for every lease sent to be done, and frees their slots; false if a fence can't be waited for.</summary>
@@ -295,7 +322,7 @@ private:
         size_t Bytes = 0;
     };
 
-    explicit MCUploadSlots(std::unique_ptr<MCBacking> backing);
+    MCUploadSlots(std::unique_ptr<MCBacking> backing, MCMakeBacking more);
 
     /// <summary>The lease's slots no longer its (free once no batch sent with them is in flight).</summary>
     void GiveBack(MCLease& lease);
@@ -304,19 +331,35 @@ private:
     std::optional<MCLease> TakeLocked(MCKind kind, size_t bytes);
     /// <summary><see cref="Reclaim"/> with the lock held.</summary>
     size_t ReclaimLocked();
+    /// <summary><see cref="MostFor"/> with the lock held.</summary>
+    size_t MostForLocked(MCKind kind) const;
     /// <summary>The slots a lease of <paramref name="bytes"/> takes.</summary>
     static uint32_t SlotsFor(size_t bytes);
     /// <summary>Whether slot <paramref name="at"/> is free.</summary>
     bool Free(uint32_t at) const { return !_States[at].Leased && _States[at].Sends == 0; }
+    /// <summary>Whether slot <paramref name="at"/> is free and may be taken (not let go: <see cref="Shrink"/>).</summary>
+    bool FreeToTake(uint32_t at) const { return at < _Takeable && Free(at); }
     /// <summary>Counts the slots' states again into the tally (the lock held).</summary>
     void Recount();
+    /// <summary>The buffer of slots let go, once none of them is held or in flight (the lock held): its slots gone.</summary>
+    std::unique_ptr<MCBacking> TakeLetGoLocked();
 
     std::unique_ptr<MCBacking> _Backing;
     SDL_GPUTransferBuffer* _Buffer = nullptr;
     std::span<uint8_t> _Memory;
+    /// <summary>How many slots are made at the start, in the first buffer (fixed): those past it are the grown ones.</summary>
+    size_t _StartSlots = 0;
+    /// <summary>Makes memory for grown slots (none: they don't grow); the grown slots' memory and their buffer.</summary>
+    MCMakeBacking _MakeMore;
+    std::unique_ptr<MCBacking> _More;
+    SDL_GPUTransferBuffer* _MoreBuffer = nullptr;
+    std::span<uint8_t> _MoreMemory;
     mutable std::mutex _Lock;
     std::condition_variable _Freed;
     std::vector<MCSlot> _States;
+    /// <summary>The slots that may be taken: all, or those made at the start once the grown ones are let go.</summary>
+    size_t _Takeable = 0;
+    /// <summary>The slots free to take (FreeToTake).</summary>
     size_t _FreeSlots = 0;
     std::vector<MCBatch> _Sent;
     MCTally _Tally;

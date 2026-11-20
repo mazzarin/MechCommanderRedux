@@ -106,7 +106,7 @@ namespace MCMemoryRoom
 
     /// <summary>
     /// Sets the system asked (none: nothing is short and the pictures keep up to MostHdBytes); every reader asks the card
-    /// again at its next frame.
+    /// again at its next frame, and none is read until then.
     /// </summary>
     void SetSystem(std::shared_ptr<MCSystem> system);
 
@@ -119,6 +119,13 @@ namespace MCMemoryRoom
     /// MCMemoryLedger::CardCeiling) less what the rest of the game holds (0 when the rest takes it all).
     /// </summary>
     uint64_t CardRoom(const MCCard& card, uint64_t held);
+
+    /// <summary>
+    /// Port-only (MCHdArt::FillGpu): the room the card last read (<see cref="MCReader::Frame"/>) gives the HD pictures,
+    /// with what the ledger has on the GPU now, the pictures <paramref name="held"/> of it: what the game has made since
+    /// the read (a load's ground) counted. None when the card shares the machine's memory or none was read. Any thread.
+    /// </summary>
+    std::optional<uint64_t> CardRoomNow(uint64_t held);
 
     /// <summary>
     /// Port-only (SPEC-memory.md's plan, "The art's room"): the game itself, which no holder of the ledger names (its

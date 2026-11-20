@@ -49,6 +49,12 @@ enum class MCShader : uint8_t
     /// </summary>
     DrawTrees,
     DrawTreesStands,
+    /// <summary>
+    /// Port-only: the draws of the HD frames that hold their blended pixels alone (an effect's:
+    /// shaders/draw_effects.pshader), and their stands build.
+    /// </summary>
+    DrawEffects,
+    DrawEffectsStands,
     /// <summary>Port-only (HDSway): the forest's crowns' pass alone (shaders/composite_crowns.pshader).</summary>
     CompositeCrowns
 };
@@ -111,6 +117,8 @@ namespace MCVulkanShaders
     extern const MCShaderInfo DrawHdStandsFragment;
     extern const MCShaderInfo DrawTreesFragment;
     extern const MCShaderInfo DrawTreesStandsFragment;
+    extern const MCShaderInfo DrawEffectsFragment;
+    extern const MCShaderInfo DrawEffectsStandsFragment;
     extern const MCShaderInfo CompositeCrowns;
     extern const MCShaderInfo GroundStandsFragment;
     extern const MCShaderInfo MovieFragment;

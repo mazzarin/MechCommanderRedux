@@ -824,19 +824,37 @@ private:
 
     /// <summary>
     /// Port-only: the draw shader's build a draw goes through (VariantOf): the one for every kind, or the one for the
-    /// original's own kinds alone (shaders/draw_basic.pshader), for HD art frames alone (draw_hd.pshader) or for a
-    /// forest's HD frames alone (draw_trees.pshader: its pipelines only the blend marks' and the blend fold's).
+    /// original's own kinds alone (shaders/draw_basic.pshader), for HD art frames alone (draw_hd.pshader), for a
+    /// forest's HD frames alone (draw_trees.pshader: its pipelines only the blend marks' and the blend fold's) or for
+    /// the HD frames holding their blended pixels alone (draw_effects.pshader, an effect's: its pipeline only the
+    /// blend's).
     /// </summary>
     enum class DrawVariant : uint8_t
     {
         Every,
         Basic,
         Hd,
-        Trees
+        Trees,
+        Effects
     };
 
     /// <summary>The draw variants.</summary>
-    static constexpr size_t DrawVariants = 4;
+    static constexpr size_t DrawVariants = 5;
+
+    /// <summary>
+    /// Port-only: the draw pipelines (DrawPipelines') a variant's draws go through, which are all a set makes for it
+    /// (UsesOf).
+    /// </summary>
+    struct DrawUses
+    {
+        bool Opaque = false;
+        bool Blend = false;
+        bool IndexOnly = false;
+        bool IndexMarks = false;
+        bool BlendMarks = false;
+        bool BlendFold = false;
+    };
+
     /// <summary>
     /// Port-only: the surfaces' pipeline sets (_SurfacePipelines), one for each pass's targets: without the glints and
     /// with them, without the stands and with them.
@@ -1135,9 +1153,15 @@ private:
     /// <summary>
     /// Port-only: the draw shader's build a draw with <paramref name="op"/> goes through: the basic one for the
     /// original's own kinds (a fill, hash, texture, Gouraud span or texel walk, without smooth edges), the HD one for an
-    /// HD art frame (KindHd, KindHdSmooth), else the one for every kind.
+    /// HD art frame (KindHd, KindHdSmooth; a forest's and an effect's their own, <paramref name="last"/> the draw's
+    /// last field), else the one for every kind.
     /// </summary>
-    static DrawVariant VariantOf(uint32_t op);
+    static DrawVariant VariantOf(uint32_t op, uint32_t last);
+    /// <summary>
+    /// Port-only: the pipelines <paramref name="variant"/>'s draws go through: every one, but a forest's (blended with
+    /// their marks, and their fold) and an effect's (blended).
+    /// </summary>
+    static DrawUses UsesOf(DrawVariant variant);
     /// <summary>
     /// Port-only: the colour <paramref name="record"/>'s first draw (of <paramref name="run"/>'s) wipes every texel
     /// of <paramref name="surface"/> with (an opaque fill of all of its window), if it does, so a pass starting with it
@@ -1710,6 +1734,11 @@ private:
     /// <summary>Port-only: the tree build of the draws' fragment shader (shaders/draw_trees.pshader), and its stands build.</summary>
     MCGpuHandle<SDL_GPUShader> _TreesFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsTreesFragmentShader;
+    /// <summary>
+    /// Port-only: the effect build of the draws' fragment shader (shaders/draw_effects.pshader), and its stands build.
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _EffectsFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _StandsEffectsFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsTerrainFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsGroundShader;
 
@@ -1735,10 +1764,10 @@ private:
         /// </summary>
         MCGpuHandle<SDL_GPUGraphicsPipeline> BlendFold;
         /// <summary>
-        /// Whether every pipeline was made (BlendFold only for a set with the stands: <paramref name="folds"/>; only
-        /// BlendMarks and BlendFold for the tree build's: <paramref name="trees"/>).
+        /// Whether every pipeline its variant's draws go through was made (<paramref name="uses"/>; BlendFold only for
+        /// a set with the stands: <paramref name="folds"/>).
         /// </summary>
-        bool Made(bool folds, bool trees) const;
+        bool Made(bool folds, const DrawUses& uses) const;
         /// <summary>The pipeline <paramref name="record"/>'s draws go through (not a shadow's).</summary>
         SDL_GPUGraphicsPipeline* For(const Record& record) const;
     };

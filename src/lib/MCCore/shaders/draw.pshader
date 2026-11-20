@@ -42,7 +42,8 @@
 // registers the other kinds take: draw_basic.pshader for the original's own kinds (fills, hashes, textures, Gouraud
 // spans and texel walks, without smooth edges; MCVulkanRenderer's BasicDraw), draw_terrain.pshader for the terrain's
 // (terrain.vshader's: those, with HD colours, and the seam pass), draw_hd.pshader for HD art frames' (KindHd and
-// KindHdSmooth), and draw_trees.pshader for a forest's HD frames alone (TreeDraw below).
+// KindHdSmooth), draw_trees.pshader for a forest's HD frames alone (TreeDraw below), and draw_effects.pshader for the HD
+// frames that hold their blended pixels alone (an effect's: EffectDraw below).
 //
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3.
 
@@ -51,6 +52,7 @@
 #define DRAW_TERRAIN_KINDS 2
 #define DRAW_HD_KINDS 3
 #define DRAW_TREE_KINDS 4
+#define DRAW_EFFECT_KINDS 5
 
 #ifndef DRAW_VARIANT
 #define DRAW_VARIANT DRAW_EVERY_KIND
@@ -2073,7 +2075,7 @@ Output DrawnOutput(Input input)
     // The drawn pixel, one whose window pixel lies in the rectangle (the vertex shaders draw no other).
     const int2 target = int2(floor(input.position.xy));
 
-#if DRAW_VARIANT == DRAW_HD_KINDS || DRAW_VARIANT == DRAW_TREE_KINDS
+#if DRAW_VARIANT == DRAW_HD_KINDS || DRAW_VARIANT == DRAW_TREE_KINDS || DRAW_VARIANT == DRAW_EFFECT_KINDS
     return HdPixel(input, target);
 #else
     const uint flags = input.op.x;
@@ -2319,10 +2321,26 @@ static const uint TreeKnown = 15u | ColorKey | Glow | AlphaBlend | IndexOnly | H
 static const uint TreeFlags = KindHdSmooth | AlphaBlend | Sways;
 #endif
 
+#if DRAW_VARIANT == DRAW_EFFECT_KINDS
+// Port-only: an HD frame's draw that holds its blended pixels (MCVulkanRenderer's EffectDraw: an effect's, smoke, a PPC's
+// bolt: its frame's own edges, blended, adding light, with no key, sway, sun shadow, mark pass, ground fill, colours as
+// made, picture border or fold). The effect build knows those flags and the last field's (none), so its pixels skip
+// the paths no such draw takes; a table's (TableBefore), a glow's and a unit's feet stay the draw's. The filled holes'
+// test stays (a keyed picture's alone): without it Metal's compiler builds the colour between the texels otherwise,
+// and a few pixels round a level apart from the HD build's.
+static const uint EffectKnown =
+    15u | ColorKey | AlphaBlend | IndexOnly | HdAsMade | HdLight | SunShadowDraw | Sways | GroundFill;
+static const uint EffectFlags = KindHd | AlphaBlend | HdLight;
+#endif
+
 Output main(Input input)
 {
 #if DRAW_VARIANT == DRAW_TREE_KINDS
     input.op.x = (input.op.x & ~TreeKnown) | TreeFlags;
+#endif
+#if DRAW_VARIANT == DRAW_EFFECT_KINDS
+    input.op.x = (input.op.x & ~EffectKnown) | EffectFlags;
+    input.op.w = 0u;
 #endif
     sourceCorner = int2(input.place.x & 0xffffu, input.place.x >> 16);
     hdCorner = int2(input.place.y & 0xffffu, input.place.y >> 16);

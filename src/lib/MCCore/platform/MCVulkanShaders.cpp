@@ -12,6 +12,8 @@
 #include "shaders/draw.msl.h"
 #include "shaders/draw_basic.msl.h"
 #include "shaders/draw_basic_stands.msl.h"
+#include "shaders/draw_effects.msl.h"
+#include "shaders/draw_effects_stands.msl.h"
 #include "shaders/draw_hd.msl.h"
 #include "shaders/draw_hd_stands.msl.h"
 #include "shaders/draw_stands.msl.h"
@@ -39,6 +41,8 @@
 #include "shaders/draw.spv.h"
 #include "shaders/draw_basic.spv.h"
 #include "shaders/draw_basic_stands.spv.h"
+#include "shaders/draw_effects.spv.h"
+#include "shaders/draw_effects_stands.spv.h"
 #include "shaders/draw_hd.spv.h"
 #include "shaders/draw_hd_stands.spv.h"
 #include "shaders/draw_stands.spv.h"
@@ -80,6 +84,8 @@ namespace MCVulkanShaders
     const MCShaderInfo DrawHdStandsFragment{MCShader::DrawHdStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTreesFragment{MCShader::DrawTrees, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTreesStandsFragment{MCShader::DrawTreesStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo DrawEffectsFragment{MCShader::DrawEffects, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo DrawEffectsStandsFragment{MCShader::DrawEffectsStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo GroundStandsFragment{MCShader::GroundStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
     const MCShaderInfo MovieFragment{MCShader::Movie, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
     const MCShaderInfo HdCoverageFragment{MCShader::HdCoverage, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1};
@@ -135,6 +141,10 @@ namespace MCVulkanShaders
                 return "draw_trees";
             case MCShader::DrawTreesStands:
                 return "draw_trees_stands";
+            case MCShader::DrawEffects:
+                return "draw_effects";
+            case MCShader::DrawEffectsStands:
+                return "draw_effects_stands";
             case MCShader::CompositeCrowns:
                 return "composite_crowns";
         }
@@ -192,6 +202,10 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(draw_trees);
             case MCShader::DrawTreesStands:
                 return MC_BUILT_IN_SHADER(draw_trees_stands);
+            case MCShader::DrawEffects:
+                return MC_BUILT_IN_SHADER(draw_effects);
+            case MCShader::DrawEffectsStands:
+                return MC_BUILT_IN_SHADER(draw_effects_stands);
             case MCShader::CompositeCrowns:
                 return MC_BUILT_IN_SHADER(composite_crowns);
         }

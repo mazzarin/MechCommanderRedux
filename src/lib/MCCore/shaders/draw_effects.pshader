@@ -1,0 +1,7 @@
+// Port-only: the Vulkan renderer's draws of the HD frames that hold their blended pixels alone (MCVulkanRenderer's
+// EffectDraw: an effect's, smoke, a PPC's bolt: KindHd, adding light). It is draw.pshader with the other kinds left out
+// and the flags such a draw has fixed (draw.pshader's EffectKnown), so these pixels, the many of an explosion's stacked
+// frames, don't pay for the paths they never take.
+
+#define DRAW_VARIANT DRAW_EFFECT_KINDS
+#include "draw.pshader"

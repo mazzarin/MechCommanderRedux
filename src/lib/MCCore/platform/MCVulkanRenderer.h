@@ -475,6 +475,8 @@ public:
         int64_t Scaled = 0;
         /// <summary>Port-only (SPEC-pan-water.md): the parts drawn again into it, moved or kept in place.</summary>
         int64_t Parts = 0;
+        /// <summary>Port-only (SPEC-kept-wrap.md): the pieces they were drawn in, split at its textures' edges.</summary>
+        int64_t Pieces = 0;
     };
 
     /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
@@ -1038,11 +1040,12 @@ private:
     /// <summary>
     /// Port-only: the ground (the terrain layer drawn over nothing) kept from frame to frame for the surface the
     /// terrain draws on first, so a frame redraws only the ground that changed: what the view scrolled onto, and the
-    /// cells whose draw changed (fog of war, a tile now dropped or drawn at the view's edges). It is in one of two pairs
-    /// of textures the surface's size (colours, indices; port-only, SPEC-pan-water.md, the share of the colours that
-    /// follows the colour cycle and the entries it follows, shaders/channels.hlsli's kept ground); when the view moved,
-    /// the next frame's is made in the other
-    /// from this one, shifted. A frame then lays it over the surface where the terrain layer would be drawn
+    /// cells whose draw changed (fog of war, a tile now dropped or drawn at the view's edges). It is in textures the
+    /// surface's size (colours, indices; port-only, SPEC-pan-water.md, the share of the colours that follows the colour
+    /// cycle and the entries it follows, shaders/channels.hlsli's kept ground), which wrap at their edges
+    /// (SPEC-kept-wrap.md): a drawn pixel's kept pixel lies Origin on from it, so when the view moved, the origin moves
+    /// with it and only what the view moved onto is drawn, in place. A frame then lays it over the surface where the
+    /// terrain layer would be drawn
     /// (shaders/ground.pshader): the same pixels wherever the terrain's first pass draws (all but the void past the
     /// map's ring of off-map cells, where its seams' blends over the surface may round apart). It holds the colour
     /// cycle at one step (CycleStep, the step it was last drawn whole at: every part drawn into it since is drawn at
@@ -1051,13 +1054,17 @@ private:
     /// </summary>
     struct KeptGround
     {
-        std::array<Texture, 2> Colors;
-        std::array<Texture, 2> Indices;
-        std::array<Texture, 2> Weights;
-        std::array<Texture, 2> Slots;
-        /// <summary>The pair holding the ground, and whether one does.</summary>
-        size_t Current = 0;
+        Texture Colors;
+        Texture Indices;
+        Texture Weights;
+        Texture Slots;
+        /// <summary>Whether they hold the ground.</summary>
         bool Held = false;
+        /// <summary>
+        /// Port-only (SPEC-kept-wrap.md): where drawn pixel (0, 0)'s kept pixel lies in the textures, each 0 up to their
+        /// size; drawn pixel p's at p + Origin, wrapped at their edges.
+        /// </summary>
+        std::array<int32_t, 2> Origin{};
         /// <summary>The surface (its index and window) and the terrain mesh's upload it was drawn for.</summary>
         int32_t SurfaceIndex = -1;
         MCAddressKey SurfaceKey;
@@ -1094,7 +1101,6 @@ private:
     /// <summary>Port-only: what shaders/ground.pshader draws of the kept ground (its modes).</summary>
     enum class KeptGroundMode : int32_t
     {
-        Copy,
         Clear,
         Over,
         Indices
@@ -1730,11 +1736,13 @@ private:
     /// <summary>
     /// Execution: draws a terrain layer of <paramref name="run"/> in the render pass under way, through
     /// <paramref name="pipelines"/>; with HD ground, its seam pass too, but where <paramref name="seams"/> is false
-    /// (port-only: CheckKeptGround's picture of what that pass changes).
+    /// (port-only: CheckKeptGround's picture of what that pass changes). Port-only (SPEC-kept-wrap.md): its tiles
+    /// <paramref name="moved"/> on the target (drawn pixels), each pixel drawn as at its own place, for the kept
+    /// ground's wrapped textures; <paramref name="frameUniforms"/>' Moved the same.
     /// </summary>
     void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
                      const FrameRun& run, const Surface& surface, const TerrainDraw& draw,
-                     std::span<const std::byte> frameUniforms, bool seams = true);
+                     std::span<const std::byte> frameUniforms, bool seams = true, std::array<int32_t, 2> moved = {});
     /// <summary>
     /// Port-only (KeepGround): what the kept ground depends on for <paramref name="draw"/> of <paramref name="run"/>
     /// on <paramref name="surface"/> but the camera, the fog and the colour cycle's step, as bytes:
@@ -1767,16 +1775,14 @@ private:
     /// </summary>
     static bool ScalesGround();
     /// <summary>
-    /// Port-only (KeepGround): draws kept pair <paramref name="from"/> (none for Clear) as <paramref name="mode"/>
-    /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), or with
-    /// <paramref name="scale"/> from where it lies in the kept ground (GroundScale::Scale, the colours read between the
-    /// kept pixels round it), at the drawn pixels showing the terrain's clip in the render pass under way on
-    /// <paramref name="surface"/>'s size, through <paramref name="pipelines"/>; Over at <paramref name="run"/>'s colour
-    /// cycle step (SPEC-pan-water.md).
+    /// Port-only (KeepGround): draws the kept ground as <paramref name="mode"/> says (Clear reads none of it), each pixel
+    /// from its own kept pixel, or with <paramref name="scale"/> from where it lies in the kept ground
+    /// (GroundScale::Scale, the colours read between the kept pixels round it), at the drawn pixels showing the
+    /// terrain's clip in the render pass under way on <paramref name="surface"/>'s size, through
+    /// <paramref name="pipelines"/>; Over at <paramref name="run"/>'s colour cycle step (SPEC-pan-water.md).
     /// </summary>
     void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
                         const FrameRun& run, const Surface& surface, const MCRect& clip, KeptGroundMode mode,
-                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {},
                         const std::optional<std::array<float, 4>>& scale = std::nullopt);
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
@@ -1936,7 +1942,10 @@ private:
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;
-    /// <summary>Port-only (KeepGround's scaled lay): reads between texels, clamped to the edges.</summary>
+    /// <summary>
+    /// Port-only (KeepGround's scaled lay): reads between texels, repeating past the edges (SPEC-kept-wrap.md: the kept
+    /// ground's textures wrap).
+    /// </summary>
     MCGpuHandle<SDL_GPUSampler> _Linear;
     /// <summary>A 1x1 texture bound where a draw has no source or no world.</summary>
     Texture _Blank;

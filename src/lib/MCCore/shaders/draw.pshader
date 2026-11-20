@@ -114,6 +114,9 @@ cbuffer Frame : register(b0, space3)
     float4 look;
     // Port-only: the drawn grids' offsets (pixels.hlsli): xy the target's, zw the source's when it is a surface.
     int4 offset;
+    // Port-only (SPEC-kept-wrap.md): xy, in the kept ground's pass, how far the tiles are moved on the target (drawn
+    // pixels; terrain.vshader's offset.zw), taken back from each pixel's place so it draws as there; zw unused.
+    int4 moved;
 };
 
 struct Input
@@ -2099,7 +2102,7 @@ Output ShadowPixel(Input input, int2 target)
 Output DrawnOutput(Input input)
 {
     // The drawn pixel, one whose window pixel lies in the rectangle (the vertex shaders draw no other).
-    const int2 target = int2(floor(input.position.xy));
+    const int2 target = int2(floor(input.position.xy)) - moved.xy;
 
 #if DRAW_VARIANT == DRAW_HD_KINDS
     return HdPixel(input, target);

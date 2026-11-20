@@ -10815,6 +10815,118 @@ TEST_CASE_ISOLATED("game: a step of the water's colour cycle draws none of the k
     std::filesystem::remove_all(scene->Scratch);
 }
 
+/// <summary>
+/// Port-only (SPEC-kept-wrap.md): a pan moves the kept HD ground's origin, its textures wrapping at their edges, and
+/// draws the strips the view moved onto where they lie in them, in pieces split at those edges: panning out and back
+/// on both diagonals, so the origin crosses both edges both ways, every frame lays from the kept ground, some strips
+/// in pieces, and in mirror mode every index stays the software renderer's and each frame's laid ground has the
+/// colours of its terrain drawn whole, within a byte, but at the few seam pixels SPEC-pan-water.md's check allows (the
+/// colour cycle held, so none come from a step).
+/// </summary>
+TEST_CASE_ISOLATED("game: a pan wraps the kept HD ground at its textures' edges, laying what a whole draw draws")
+{
+    struct Leg
+    {
+        float Across = 0.0f;
+        float Down = 0.0f;
+    };
+
+    // A frame's step on each leg (window pixels).
+    constexpr std::array<Leg, 4> Legs = {Leg{2.0f, 1.0f}, Leg{-2.0f, -1.0f}, Leg{-2.0f, 1.0f}, Leg{2.0f, -1.0f}};
+    constexpr int32_t FramesEach = 5;
+    // The UI's lines that draw the scaled-up window 2 drawn pixels a window pixel.
+    constexpr int ExactLines = ScaledUpHeight / 2;
+    // At most one seam pixel in this many may differ (where two tiles' colours mix).
+    constexpr int64_t SeamPixelsADifference = 20;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // The world drawn 2 drawn pixels a window pixel: a pan moves the kept ground exactly (MCDrawnGrid). The colour
+    // cycle held, all of the map shown (no fog's change drawn again), a camera of its own place.
+    ScaleUp(ScaledUpWidth, ScaledUpHeight, ExactLines);
+    GuiSystem().PaletteCycle = 0;
+    SingleStepMode = 1;
+    RevealAll();
+    Eye()->ChangeTarget(nullptr, false);
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    scene->Renderer->ResetMirror();
+    const MCKeptGroundChecked checked;
+    MCVulkanRenderer::GroundComparison compared;
+    MCVector3D position = Eye()->GetPosition();
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+    int32_t frames = 0;
+    int32_t laid = 0;
+    int32_t stopped = 0;
+
+    for (const Leg& leg : Legs)
+    {
+        for (int32_t frame = 0; frame < FramesEach; ++frame)
+        {
+            stopped += PanFrame(position, leg.Across, leg.Down) ? 0 : 1;
+            ++frames;
+            const auto comparison = scene->Renderer->CompareKeptGround();
+
+            if (!comparison.has_value())
+            {
+                FAIL(comparison.error());
+            }
+
+            if (comparison->has_value())
+            {
+                AddGroundComparison(compared, **comparison);
+                ++laid;
+            }
+        }
+    }
+
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+    std::cout << std::format("  {} frames: {} shifted, {} kept, {} whole, {} direct; {} parts in {} pieces\n", frames,
+                             after.Shifted - before.Shifted, after.Kept - before.Kept, after.Whole - before.Whole,
+                             after.Direct - before.Direct, after.Parts - before.Parts, after.Pieces - before.Pieces);
+    std::cout << std::format("  laid against drawn whole, {} frames: {} pixels; {} indices differ; off the seams {} "
+                             "colours over a byte, at most {}; {} seam pixels, {} over a byte, at most {}\n",
+                             laid, compared.Pixels, compared.DifferentIndices, compared.DifferentColors,
+                             compared.MostDifference, compared.Seam, compared.DifferentSeamColors,
+                             compared.MostSeamDifference);
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // Every frame moved (or kept where a step rounded to no move), none drawn whole or directly; some strips crossed
+    // the textures' edges, drawn in pieces.
+    CHECK_EQ(stopped, 0);
+    CHECK_EQ(after.Shifted - before.Shifted + after.Kept - before.Kept, frames);
+    CHECK(2 * (after.Shifted - before.Shifted) > frames);
+    CHECK_EQ(after.Whole - before.Whole, 0);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+    CHECK(after.Pieces - before.Pieces > after.Parts - before.Parts);
+    // Each frame's laid ground the terrain drawn whole.
+    CHECK_EQ(laid, frames);
+    CHECK(compared.Pixels > 0);
+    CHECK_EQ(compared.DifferentIndices, 0);
+    CHECK_EQ(compared.DifferentColors, 0);
+    CHECK(compared.DifferentSeamColors * SeamPixelsADifference <= compared.Seam);
+    CHECK_EQ(tally.Frames, frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
 namespace
 {
     /// <summary>Port-only (the kept surfaces): the frames a kept screen's test ran, and what they did.</summary>

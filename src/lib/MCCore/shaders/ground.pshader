@@ -2,14 +2,14 @@
 // window pixels lie in the terrain's clip (MCVulkanRenderer's DrawnPixels). The kept ground is the terrain layer drawn
 // over nothing (transparent): its colours (premultiplied; alpha 1 where the terrain's first pass drew, partly where
 // only its seam pass reached), indices and (SPEC-pan-water.md) weights, the share of its colours that follows the
-// colour cycle, and the entries they follow (channels.hlsli's kept ground). Each pixel reads the kept pixel `shift`
-// before it (drawn pixels, clamped to the copy), or, while a zoom eases (`scale`, MCVulkanRenderer's GroundScale), the
-// kept place its centre shows: the colours between the kept pixels round it (KeptBetween), the indices, weights and
-// entries the one it lies in.
+// colour cycle, and the entries they follow (channels.hlsli's kept ground). Port-only (SPEC-kept-wrap.md): its
+// textures wrap at their edges, a drawn pixel's kept pixel lying `origin` on from it (Wrapped), so a pan moves the
+// origin, not the pixels. Each pixel reads its own kept pixel, or, while a zoom eases (`scale`, MCVulkanRenderer's
+// GroundScale), the kept place its centre shows: the colours between the kept pixels round it (KeptBetween), the
+// indices, weights and entries the one it lies in.
 // By mode:
-// - Copy (opaque pipeline): the kept colours, indices, weights and entries as they are; to move the kept ground (in its
-//   pass, whose glints and stands targets hold the weights and the entries).
-// - Clear (opaque pipeline): nothing (transparent, index 0, no weight), to draw a part of it again.
+// - Clear (opaque pipeline): nothing (transparent, index 0, no weight), to draw a part of it again (in its pass, whose
+//   glints and stands targets hold the weights and the entries).
 // - Over (blend pipeline, indices left): the colours over the target's, as the terrain's draws over it leave them,
 //   and the glints under them covered as the colours cover them. Port-only (SPEC-pan-water.md): the kept ground holds
 //   the colour cycle at its own step (cycle.z), so where the kept index is a cycled entry its share takes that
@@ -38,8 +38,9 @@ SamplerState slotsSampler : register(s4, space2);
 
 cbuffer Ground : register(b0, space3)
 {
-    // xy: how far before the drawn pixel its kept pixel lies (drawn pixels); z: the mode; w unused.
-    int4 shift;
+    // xy (SPEC-kept-wrap.md): where drawn pixel (0, 0)'s kept pixel lies in the kept textures, each 0 up to their
+    // size; z: the mode; w unused.
+    int4 origin;
     // Port-only (a zoom easing): the kept place a drawn place shows, xy a drawn pixel across and down, zw the place
     // drawn place 0 shows; x 0 when the kept ground isn't scaled.
     float4 scale;
@@ -49,10 +50,9 @@ cbuffer Ground : register(b0, space3)
     uint4 cycleSources[2];
 };
 
-static const int ModeCopy = 0;
-static const int ModeClear = 1;
-static const int ModeOver = 2;
-static const int ModeIndices = 3;
+static const int ModeClear = 0;
+static const int ModeOver = 1;
+static const int ModeIndices = 2;
 
 // The ground's gaps: where the original's tiles' diamonds don't quite meet (a few pixels a screen, at fixed places on
 // the map) only the seam pass reaches, partly. Under it there the nearest pixel the first pass drew shows, looked for
@@ -83,18 +83,34 @@ struct Output
     float stands : SV_Target2;
     float4 glint : SV_Target3;
 #else
-    // The glints on a surface's passes; port-only (SPEC-pan-water.md), the weights on the kept ground's (Copy, Clear).
+    // The glints on a surface's passes; port-only (SPEC-pan-water.md), the weights on the kept ground's (Clear).
     float4 glint : SV_Target2;
 #endif
 };
 
-// Where kept pixel `kept` lies in a copy `size` big, as a texture coordinate.
-float2 KeptPlace(int2 kept, int2 size)
+// Port-only (SPEC-kept-wrap.md): where kept pixel `kept` (a drawn pixel's, in a ground `size` big) lies in the kept
+// textures: `origin` on, wrapped at their edges.
+int2 Wrapped(int2 kept, int2 size)
 {
-    return (float2(kept) + 0.5) / float2(size);
+    const int2 at = kept + origin.xy;
+    return at - size * int2(at >= size);
 }
 
-// The kept colours and indices at kept pixel `kept` (in a copy `size` big).
+// Where kept pixel `kept` lies in the kept textures (`size` big), as a texture coordinate.
+float2 KeptPlace(int2 kept, int2 size)
+{
+    return (float2(Wrapped(kept, size)) + 0.5) / float2(size);
+}
+
+// Port-only (SPEC-kept-wrap.md): kept place `place` (kept pixels; a pixel's centre at .5) as a texture coordinate in
+// the kept textures, held to the ground's own pixels as clamping to its edges would, and read past the textures' edges
+// by the repeating sampler (MCVulkanRenderer's _Linear), so a bilinear tap mixes only pixels side by side in the view.
+float2 KeptTap(float2 place, int2 size)
+{
+    return (clamp(place, 0.5, float2(size) - 0.5) + float2(origin.xy)) / float2(size);
+}
+
+// The kept colours and indices at kept pixel `kept` (in a ground `size` big).
 void KeptAt(int2 kept, int2 size, out float4 color, out float4 index)
 {
     const float2 at = KeptPlace(kept, size);
@@ -119,7 +135,6 @@ float SlotAt(int2 kept, int2 size)
 // colours (premultiplied) kept within it, so it rings neither past the ground's edges nor into its gaps.
 float4 KeptBetween(float2 place, int2 size)
 {
-    const float2 texel = 1.0 / float2(size);
     const float2 centre = floor(place - 0.5) + 0.5;
     const float2 f = place - centre;
     const float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
@@ -127,7 +142,7 @@ float4 KeptBetween(float2 place, int2 size)
     const float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
     const float2 w3 = f * f * (-0.5 + 0.5 * f);
     const float2 w12 = w1 + w2;
-    const float2 at[3] = {(centre - 1.0) * texel, (centre + w2 / w12) * texel, (centre + 2.0) * texel};
+    const float2 at[3] = {KeptTap(centre - 1.0, size), KeptTap(centre + w2 / w12, size), KeptTap(centre + 2.0, size)};
     const float2 weights[3] = {w0, w12, w3};
     float3 sharp = float3(0.0, 0.0, 0.0);
 
@@ -140,7 +155,7 @@ float4 KeptBetween(float2 place, int2 size)
         }
     }
 
-    const float alpha = colorsTex.SampleLevel(colorsSampler, place * texel, 0).a;
+    const float alpha = colorsTex.SampleLevel(colorsSampler, KeptTap(place, size), 0).a;
     return float4(clamp(sharp, float3(0.0, 0.0, 0.0), alpha.xxx), alpha);
 }
 
@@ -221,7 +236,9 @@ Output main(float4 position : SV_Position)
 #endif
     output.glint = float4(0.0, 0.0, 0.0, 0.0);
 
-    if (shift.z == ModeClear)
+    const int mode = origin.z;
+
+    if (mode == ModeClear)
     {
         return output;
     }
@@ -230,14 +247,14 @@ Output main(float4 position : SV_Position)
     uint height;
     colorsTex.GetDimensions(width, height);
     const int2 size = int2(width, height);
-    int2 kept = clamp(target - shift.xy, int2(0, 0), size - 1);
+    int2 kept = clamp(target, int2(0, 0), size - 1);
 
     if (scale.x != 0.0)
     {
         const float2 place = (float2(target) + 0.5) * scale.xy + scale.zw;
         kept = clamp(int2(floor(place)), int2(0, 0), size - 1);
         output.color = KeptBetween(place, size);
-        output.index = indicesTex.SampleLevel(indicesSampler, (float2(kept) + 0.5) / float2(size), 0);
+        output.index = indicesTex.SampleLevel(indicesSampler, KeptPlace(kept, size), 0);
     }
     else
     {
@@ -247,24 +264,17 @@ Output main(float4 position : SV_Position)
     const float covered = output.color.a;
     int2 under = NoPixel;
 
-    if (shift.z != ModeCopy && covered > 0.0 && covered < 1.0)
+    if (covered > 0.0 && covered < 1.0)
     {
         under = GapFill(output, kept, size);
     }
 
-    if (shift.z == ModeOver)
+    if (mode == ModeOver)
     {
         StepCycle(output, kept, size, covered, under);
         output.glint = float4(0.0, 0.0, 0.0, output.color.a);
     }
-    else if (shift.z == ModeCopy)
-    {
-        output.glint = WeightsAt(kept, size);
-#if DRAW_STANDS
-        output.stands = SlotAt(kept, size);
-#endif
-    }
-    else if (shift.z == ModeIndices && output.color.a < 1.0)
+    else if (mode == ModeIndices && output.color.a < 1.0)
     {
         discard;
     }

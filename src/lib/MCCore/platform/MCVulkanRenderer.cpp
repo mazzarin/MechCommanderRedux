@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCVulkanRenderer.h"
 #include "engine/MCElement.h"
+#include <filesystem>
 #include "color/MCPalette.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
@@ -9860,7 +9861,14 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         }
 
         // SCRATCH PROBE (MC_NO_TREES): the standing trees' draws left out, the ceiling of keeping them.
-        static const bool probeNoTrees = std::getenv("MC_NO_TREES") != nullptr;
+        // (Or a file probe-no-trees beside the program, for the A10's rounds, which can't set a build's environment.)
+        static const bool probeNoTrees = []
+        {
+            const char* const base = SDL_GetBasePath();
+            std::error_code failed;
+            return std::getenv("MC_NO_TREES") != nullptr ||
+                   (base != nullptr && std::filesystem::exists(MCFileSystem::FromUtf8(base) / "probe-no-trees", failed));
+        }();
 
         if (probeNoTrees && record.ProbeStanding())
         {

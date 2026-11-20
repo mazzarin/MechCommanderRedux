@@ -943,6 +943,9 @@ private:
         bool Overlay = false;
         /// SCRATCH PROBE: a standing tree's draws.
         bool ProbeTree = false;
+        /// SCRATCH PROBE: a swaying draw not an overlay's.
+        bool ProbeSways = false;
+        bool ProbeStanding() const { return ProbeTree || ProbeSways; }
         /// <summary>
         /// Port-only (SPEC-kept-forest.md): for an overlay's draws, whether they may show a colour the colour cycle steps
         /// (their original pixels hold one, or a colour table's), and the content of the colour tables they read: what

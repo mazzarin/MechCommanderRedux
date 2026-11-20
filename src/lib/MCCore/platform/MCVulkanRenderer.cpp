@@ -2328,6 +2328,11 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         }
     }
 
+    // SCRATCH PROBE: a standing tree's draws, made while its DrawAsSeen runs (drawn at once) or its element draws; and
+    // every swaying draw not an overlay's (a forest's standing trees, however they're drawn).
+    const bool probeTree = MCProbeTreeDrawing || MCProbeTreeOpen;
+    const bool probeSways = !overlay && (op & Sways) != 0;
+
     // A run of draws with the same target, bindings and pipeline.
     const auto sameRun = [&](const Record& last)
     {
@@ -2335,7 +2340,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
                SameBindings(*_Run, source, last.SourceIndex, sourceIndex) && last.Blend == blend &&
                last.IndexOnly == indexOnly && last.Shadow == shadow && last.Marks == marks && last.Fold == fold &&
                last.Variant == variant && last.Overlay == overlay && last.OverlayCycles == overlayCycles &&
-               last.OverlayTables == overlayTables && last.ProbeTree == MCProbeTreeDrawing;
+               last.OverlayTables == overlayTables && last.ProbeTree == probeTree && last.ProbeSways == probeSways;
     };
 
     std::optional<size_t> into;
@@ -2391,7 +2396,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         fresh.Fold = fold;
         fresh.Variant = variant;
         fresh.Overlay = overlay;
-        fresh.ProbeTree = MCProbeTreeDrawing;
+        fresh.ProbeTree = probeTree;
+        fresh.ProbeSways = probeSways;
         fresh.OverlayCycles = overlayCycles;
         fresh.OverlayTables = overlayTables;
         fresh.Channels = channels;
@@ -9724,7 +9730,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                     continue;
                 }
 
-                if (record.ProbeTree)
+                if (record.ProbeStanding())
                 {
                     trees.push_back(order[k]);
                 }
@@ -9732,7 +9738,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                 for (uint32_t d = record.First; d < record.First + record.Count; ++d)
                 {
                     const DrawFields& f = run.Draws[d];
-                    draws.emplace_back(k, Intersection(MCRect{f[0], f[1], f[2], f[3]}, shown), record.ProbeTree);
+                    draws.emplace_back(k, Intersection(MCRect{f[0], f[1], f[2], f[3]}, shown), record.ProbeStanding());
                 }
             }
 
@@ -9856,7 +9862,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         // SCRATCH PROBE (MC_NO_TREES): the standing trees' draws left out, the ceiling of keeping them.
         static const bool probeNoTrees = std::getenv("MC_NO_TREES") != nullptr;
 
-        if (probeNoTrees && record.ProbeTree)
+        if (probeNoTrees && record.ProbeStanding())
         {
             continue;
         }

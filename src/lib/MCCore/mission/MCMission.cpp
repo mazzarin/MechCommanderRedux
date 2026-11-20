@@ -952,6 +952,8 @@ auto MCMission::StartScenario(std::string_view name) -> void
 {
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
+    // The mission's own name, kept: a campaign's load reads its logistics' copy of the file ("bridge").
+    const std::string missionName = scenarioName;
 
     // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold); this one's,
     // held since its briefing (SPEC-memory.md's "From the briefing", MCHdArt::StartBriefingHold), kept for its load.
@@ -1014,6 +1016,14 @@ auto MCMission::StartScenario(std::string_view name) -> void
     if (const int32_t result = Scenario()->Load(scenarioName); result != 0)
     {
         Fatal(result, " Couldnt init scenario ");
+    }
+
+    // Port-only (SPEC-memory.md's "The mission's manifest"): what this load handed the hold, kept as the mission's
+    // list for its next briefing, so a mission the program has no list for (a mod's, a multiplayer map, one made in the
+    // editor) is held from its second play on.
+    if (MCHdArt::NumberedFolders())
+    {
+        MCHdArt::KeepHoldList(missionName, Scenario()->HoldList(scenarioName).Folders);
     }
 
     StartInterface();

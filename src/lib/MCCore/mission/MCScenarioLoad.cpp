@@ -1528,3 +1528,88 @@ auto MCScenario::CreatePartObject(int32_t partNumber) -> void
 
     GameObjectMap().AddObject(*object);
 }
+
+auto MCScenario::HoldList(std::string_view fitName) const -> MCHoldList
+{
+    MCHoldList list;
+    MCFitIniFile file;
+    const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+
+    if (sprites == nullptr || file.Open(GamePath(MissionPath, fitName, ".fit")) != 0)
+    {
+        return list;
+    }
+
+    // Each mech's trees' folders, the player's parts' (PlayerPart in the mission's file, part n its Part<n>) apart.
+    std::set<std::string> players;
+    std::set<std::string> others;
+
+    // Part n is the file's Part<n> block (Parts[0] is none).
+    for (size_t index = 1; index < Parts.size(); ++index)
+    {
+        const auto object = std::dynamic_pointer_cast<MCGameObject>(Parts[index].Object.lock());
+        const auto actor = object != nullptr && object->ObjectClass == MCObjectClass::BattleMech
+                               ? std::static_pointer_cast<MCMechActor>(object->GetAppearance())
+                               : nullptr;
+        const auto tree =
+            actor != nullptr ? std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType()) : nullptr;
+
+        if (tree == nullptr || file.SeekBlock(std::format("Part{}", index)) != 0)
+        {
+            continue;
+        }
+
+        std::set<std::string>& into = file.Read<bool>("PlayerPart").value_or(false) ? players : others;
+
+        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+        {
+            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
+            {
+                into.insert(MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber).generic_string());
+            }
+        }
+    }
+
+    const auto playersOnly = [&](const std::string& folder)
+    {
+        const auto under = [&folder](const std::string& tree)
+        { return folder == tree || (folder.starts_with(tree) && folder[tree.size()] == '/'); };
+        return std::ranges::any_of(players, under) && !std::ranges::any_of(others, under);
+    };
+
+    // A type's folder (the first three of a deeper folder's names) by its packet 0's.
+    constexpr ptrdiff_t TypeDepth = 3;
+    const auto typeFolder = [](const std::filesystem::path& folder)
+    {
+        if (std::distance(folder.begin(), folder.end()) <= TypeDepth)
+        {
+            return folder.generic_string();
+        }
+
+        std::filesystem::path type;
+        auto name = folder.begin();
+
+        for (ptrdiff_t depth = 0; depth < TypeDepth; ++depth, ++name)
+        {
+            type /= *name;
+        }
+
+        return (type / "0").generic_string();
+    };
+
+    std::set<std::string> listed;
+
+    for (const std::filesystem::path& folder : MCHdArt::LoadFolders())
+    {
+        if (playersOnly(folder.generic_string()))
+        {
+            ++list.PlayersLeft;
+        }
+        else if (std::string type = typeFolder(folder); listed.insert(type).second)
+        {
+            list.Folders.push_back(std::move(type));
+        }
+    }
+
+    return list;
+}

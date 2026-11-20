@@ -1240,11 +1240,19 @@ namespace MCHdArt
     std::vector<std::filesystem::path> LoadFolders();
 
     /// <summary>
-    /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders <paramref name="mission"/>'s load hands the
-    /// hold, from the list the program carries for it (sprite/MCHoldLists.h, worked out from <see cref="LoadFolders"/>),
-    /// but those of the player's lance; none for a mission it has no list for (a mod's), which fills at its load.
+    /// Port-only (SPEC-memory.md's "From the briefing" and "The mission's manifest"): the pack's folders
+    /// <paramref name="mission"/>'s load hands the hold, but those of the player's lance: the list its last load learned
+    /// (<see cref="KeepHoldList"/>, in the user folder), else the program's (sprite/MCHoldLists.h, worked out from
+    /// <see cref="LoadFolders"/>); none for a mission with neither (a mod's first play), which fills at its load.
     /// </summary>
     std::vector<std::filesystem::path> BriefingFolders(std::string_view mission);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The mission's manifest"): keeps <paramref name="folders"/> (MCScenario::HoldList) as
+    /// the hold list <paramref name="mission"/>'s load learned, in the user folder, for its next briefing
+    /// (<see cref="BriefingFolders"/>). Each load writes its own, so a list follows the mission's files and settings.
+    /// </summary>
+    void KeepHoldList(std::string_view mission, std::span<const std::string> folders);
 
     /// <summary>
     /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders of mech chassis <paramref name="chassis"/>'s

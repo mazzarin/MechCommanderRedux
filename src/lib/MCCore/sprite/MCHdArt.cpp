@@ -6829,12 +6829,109 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The mission's manifest"): the user folder's folder of the hold lists the missions'
+    /// loads learned (MCHdArt::KeepHoldList), a file each, named by the mission in lower case.
+    /// </summary>
+    constexpr std::string_view LearnedListsFolder = "hold-lists";
+    constexpr std::string_view LearnedListSuffix = ".txt";
+
+    std::filesystem::path LearnedListPath(std::string_view mission)
+    {
+        std::string name(mission);
+        std::ranges::transform(name, name.begin(),
+                               [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+        return MCFileSystem::UserRoot() / LearnedListsFolder /
+               MCFileSystem::FromUtf8(name + std::string(LearnedListSuffix));
+    }
+
+    /// <summary>The list <paramref name="mission"/>'s last load learned, a folder a line; none when it has none.</summary>
+    std::vector<std::filesystem::path> LearnedFolders(std::string_view mission)
+    {
+        std::vector<std::filesystem::path> folders;
+        std::ifstream file(LearnedListPath(mission), std::ios::binary);
+
+        for (std::string line; std::getline(file, line);)
+        {
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.pop_back();
+            }
+
+            // A list from another program's file (a user's edit) names only folders under the pack.
+            if (const std::filesystem::path folder = MCFileSystem::FromUtf8(line);
+                !line.empty() && folder.is_relative() && !line.contains(".."))
+            {
+                folders.push_back(folder);
+            }
+        }
+
+        return folders;
+    }
+}
+
 std::vector<std::filesystem::path> MCHdArt::BriefingFolders(std::string_view mission)
 {
+    // The mission's last load's list first: a mod's or another mission without a list in the program's table, or a
+    // stock one a mod changed.
+    if (std::vector<std::filesystem::path> learned = LearnedFolders(mission); !learned.empty())
+    {
+        return learned;
+    }
+
     const auto found = std::ranges::find_if(MCHoldLists::Missions, [mission](const MCHoldLists::Mission& listed)
                                             { return MCIEquals(listed.Name, mission); });
     return found != MCHoldLists::Missions.end() ? HoldListFolders(found->Folders)
                                                 : std::vector<std::filesystem::path>();
+}
+
+void MCHdArt::KeepHoldList(std::string_view mission, std::span<const std::string> folders)
+{
+    if (mission.empty() || folders.empty())
+    {
+        return;
+    }
+
+    const std::filesystem::path path = LearnedListPath(mission);
+    std::filesystem::path written = path;
+    written += ".new";
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+
+    if (error)
+    {
+        SDL_Log("HD art: the hold list of %s not kept: its folder %s couldn't be made (%s)",
+                std::string(mission).c_str(), MCFileSystem::ToUtf8(path.parent_path()).c_str(),
+                error.message().c_str());
+        return;
+    }
+
+    {
+        std::ofstream out(written, std::ios::binary | std::ios::trunc);
+
+        for (const std::string& folder : folders)
+        {
+            out << folder << '\n';
+        }
+
+        if (!out.flush())
+        {
+            SDL_Log("HD art: the hold list of %s not kept: %s couldn't be written", std::string(mission).c_str(),
+                    MCFileSystem::ToUtf8(written).c_str());
+            return;
+        }
+    }
+
+    // Written whole, then put in place, so a list is never read half written.
+    std::filesystem::rename(written, path, error);
+
+    if (error)
+    {
+        SDL_Log("HD art: the hold list of %s not kept: %s couldn't replace %s (%s)", std::string(mission).c_str(),
+                MCFileSystem::ToUtf8(written).c_str(), MCFileSystem::ToUtf8(path).c_str(), error.message().c_str());
+    }
 }
 
 std::vector<std::filesystem::path> MCHdArt::ChassisFolders(uint32_t chassis)

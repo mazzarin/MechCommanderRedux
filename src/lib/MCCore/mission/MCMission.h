@@ -90,6 +90,16 @@ public:
     static void StartInterface();
 
     /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): what play's first frames draw, read and
+    /// unpacked by HD art's readers as the load's own reads, waited for, and put on the GPU before play, rather than on
+    /// the game's thread as each is first drawn: every object and unit whose place lies in the camera's starting view
+    /// (at the zoom play starts at: after LoadWindowStatus) or the ring around it the camera's surroundings read ahead
+    /// (MCAppearance::NearView), each appearance's packets drawn now (MCAppearance::ReadAhead under
+    /// MCHdArt::MCOpeningViewAsks). A unit's sets to come are read behind it, as in play.
+    /// </summary>
+    static void PrepareOpeningView();
+
+    /// <summary>
     /// Asks for scenario <paramref name="scenarioName"/> to start: <see cref="Run"/> starts it after its frame's work,
     /// once the click or network handler that asked has returned.
     /// </summary>

@@ -21,6 +21,11 @@
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "camera/MCCamera.h"
 #include "camera/MCMainWindow.h"
+#include "camera/MCViewWindow.h"
+#include "appear/MCAppearance.h"
+#include "object/MCObjectSystem.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCRenderer.h"
 #include "color/MCPalette.h"
 #include "engine/MCCraterManager.h"
 #include "gui/MCGuiButton.h"
@@ -81,6 +86,8 @@ namespace
     constexpr int32_t LogisticsTrack = 0x17;
     /// <summary>The briefing music.</summary>
     constexpr int32_t BriefingTrack = 0x16;
+    /// <summary>Bytes in a megabyte, for the frame log's notes.</summary>
+    constexpr double BytesPerMb = 1024.0 * 1024.0;
 
     /// <summary>
     /// Reads the names <c>&lt;prefix&gt;0</c> .. <c>&lt;prefix&gt;(count-1)</c> of the current block into
@@ -216,7 +223,6 @@ namespace
         }
 
         // Once: a later scenario of the run loads at once.
-        constexpr double BytesPerMb = 1024.0 * 1024.0;
         TestBriefingSeconds = 0;
         MCFrameLog::Note(std::format("briefing: Launch, {:.1f} MB held, {} reads",
                                      static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb, MCHdArt::HeldReads()));
@@ -1012,6 +1018,7 @@ auto MCMission::StartScenario(std::string_view name) -> void
 
     StartInterface();
     LoadWindowStatus();
+    PrepareOpeningView();
     ScenarioResult = 0;
     State = MCMissionState::Scenario;
     WaitTimer = WaitTime;
@@ -1054,6 +1061,69 @@ auto MCMission::StartInterface() -> void
 
     // Port-only (SPEC-memory.md's fill): the mission's art was held under the loading bar (MCHdArt::StartLoadFill); the
     // hold goes on holding the archives the mission opens in play.
+}
+
+auto MCMission::PrepareOpeningView() -> void
+{
+    const std::shared_ptr<MCCamera> eye = Eye();
+
+    if (eye == nullptr || !MCHdArt::NumberedFolders())
+    {
+        return;
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    eye->FollowViewSize();
+
+    {
+        const MCHdArt::MCOpeningViewAsks asking;
+
+        // Every object looked at (FindIf finds none).
+        ObjectList()->FindIf(
+            [&eye](MCBaseObject& object)
+            {
+                if (const std::shared_ptr<MCAppearance> appearance = object.GetAppearance();
+                    appearance != nullptr && !appearance->Owner.expired() &&
+                    MCAppearance::NearView(appearance->GetScreenPos(*eye), *eye))
+                {
+                    appearance->ReadAhead();
+                }
+
+                return false;
+            });
+    }
+
+    MCHdArt::WaitForLoadReads();
+    const std::vector<std::shared_ptr<const MCHdArt::Frame>> frames = MCHdArt::KeepOpeningView();
+    size_t bytes = 0;
+
+    for (const std::shared_ptr<const MCHdArt::Frame>& frame : frames)
+    {
+        bytes += MCHdArt::ColorsOf(*frame).size() + frame->Indices.size();
+    }
+
+    // Their pictures made and sent up now, shown nowhere, rather than in play's first frame.
+    size_t onGpu = 0;
+
+    if (const std::shared_ptr<MCRenderer> hardware = MCRenderer::Hardware();
+        hardware != nullptr && MCRenderer::GpuDrawing() == MCGpuDrawing::On)
+    {
+        onGpu = hardware->PrepareHdPictures(frames);
+
+        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr && onGpu > 0)
+        {
+            if (const std::expected<void, std::string> ran = display->RunRecorded(); !ran)
+            {
+                SDL_Log("MCMission: the opening view's %zu HD pictures didn't go up before play: %s", onGpu,
+                        ran.error().c_str());
+            }
+        }
+    }
+
+    MCFrameLog::Note(
+        std::format("the opening view: {} HD frames read ({:.1f} MB), {} on the GPU, {:.1f} ms", frames.size(),
+                    static_cast<double>(bytes) / BytesPerMb, onGpu,
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()));
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void

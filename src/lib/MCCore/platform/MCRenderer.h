@@ -1154,6 +1154,13 @@ public:
     /// </summary>
     virtual std::expected<void, std::string> PrepareTerrain(const MCTerrainMesh& mesh);
 
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): puts <paramref name="frames"/>' pictures
+    /// on the GPU now, as their first draws would, their copies going with the next frame shown (a mission's load: its
+    /// bar's last); a renderer that draws no HD pictures does nothing. How many of them are on the GPU.
+    /// </summary>
+    virtual size_t PrepareHdPictures(std::span<const std::shared_ptr<const MCHdArt::Frame>> frames);
+
     // Shared state ----------------------------------------------------------------------------------------------
 
     /// <summary>Tells every renderer the alpha table changed (InitAlphaLookup).</summary>

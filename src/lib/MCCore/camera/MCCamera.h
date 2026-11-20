@@ -104,6 +104,12 @@ public:
     /// <summary>Sets the view's size and the projection's sine and cosine.</summary>
     void SetViewSize(float width, float height);
 
+    /// <summary>
+    /// Port: the view's size as its pane's world surface has it now (the zoom eased or set), as each Update takes it
+    /// before the objects place themselves on screen; nothing for a camera with no window.
+    /// </summary>
+    void FollowViewSize();
+
     /// <summary>The pane the camera renders into (null for a camera with no window).</summary>
     std::shared_ptr<MCViewWindow> View() const { return _View.Lock(); }
 

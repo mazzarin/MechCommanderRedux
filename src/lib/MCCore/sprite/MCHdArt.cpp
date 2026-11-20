@@ -713,6 +713,12 @@ namespace
         /// </summary>
         std::vector<uint64_t> ShapeHashesToRead;
         /// <summary>
+        /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): whether an MCHdArt::MCOpeningViewAsks
+        /// lives, and the folders asked for under it as the load's reads (MCHdArt::KeepOpeningView gives their frames).
+        /// </summary>
+        bool OpeningView = false;
+        std::unordered_set<uint32_t> OpeningFolders;
+        /// <summary>
         /// Port-only (SPEC-memory.md's "From the briefing": a mission's list): whether a load's fill runs
         /// (MCHdArt::StartLoadFill to MCHdArt::FinishLoadFill), and the pack's folders it handed the hold meanwhile, each
         /// once, in the order handed (NoteLoadFolder: MCHdArt::LoadFolders), its keys in LoadFolderKeys.
@@ -5591,12 +5597,21 @@ void MCHdArt::ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as)
         return;
     }
 
+    State& state = TheState();
+    // Port-only (the opening view, MCOpeningViewAsks): what's drawn now is the load's, its folders noted.
+    const ReadAs asked = state.OpeningView && as == ReadAs::Soon ? ReadAs::Load : as;
+    const bool opening = state.OpeningView && asked == ReadAs::Load;
     std::vector<FrameAsk> asks;
 
     for (const PacketAhead& packet : packets)
     {
         const uint32_t index = FolderIndex(PackFolder() / packet.Folder, Naming::Number);
-        const int32_t count = packet.Frames.has_value() ? *packet.Frames : ArchivedFrames(TheState().Folders.at(index));
+        const int32_t count = packet.Frames.has_value() ? *packet.Frames : ArchivedFrames(state.Folders.at(index));
+
+        if (opening)
+        {
+            state.OpeningFolders.insert(index);
+        }
 
         for (int32_t frame = packet.First; frame < packet.First + count; ++frame)
         {
@@ -5604,13 +5619,14 @@ void MCHdArt::ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as)
         }
     }
 
-    AskAhead(asks, KindOf(as), RoomIn(RoomFor(as)));
+    AskAhead(asks, KindOf(asked), RoomIn(RoomFor(asked)));
 }
 
 void MCHdArt::ReadPacketAhead(const std::filesystem::path& folder, std::optional<int32_t> frames)
 {
     const std::array<PacketAhead, 1> packet{{{folder, frames, false}}};
-    ReadPacketsAhead(packet, ReadAs::Set);
+    // Port-only (the opening view, MCOpeningViewAsks): an object's packet the first frames draw is the load's.
+    ReadPacketsAhead(packet, TheState().OpeningView ? ReadAs::Load : ReadAs::Set);
 }
 
 namespace
@@ -5808,6 +5824,37 @@ void MCHdArt::KeepReadAhead()
     {
         Trim();
     }
+}
+
+MCHdArt::MCOpeningViewAsks::MCOpeningViewAsks()
+{
+    // A pass that never reached KeepOpeningView (an earlier mission's, cut short) leaves no folders to this one.
+    State& state = TheState();
+    state.OpeningFolders.clear();
+    state.OpeningView = true;
+}
+
+MCHdArt::MCOpeningViewAsks::~MCOpeningViewAsks()
+{
+    TheState().OpeningView = false;
+}
+
+std::vector<std::shared_ptr<const MCHdArt::Frame>> MCHdArt::KeepOpeningView()
+{
+    KeepReadAhead();
+    State& state = TheState();
+    std::vector<std::shared_ptr<const Frame>> frames;
+
+    for (const auto& [key, cached] : state.Frames)
+    {
+        if (cached.Frame != nullptr && cached.Undrawn && state.OpeningFolders.contains(key.Folder))
+        {
+            frames.push_back(cached.Frame);
+        }
+    }
+
+    state.OpeningFolders.clear();
+    return frames;
 }
 
 void MCHdArt::KeepPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height, Frame&& frame)

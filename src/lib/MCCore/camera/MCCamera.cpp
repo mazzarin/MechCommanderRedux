@@ -163,6 +163,23 @@ auto MCCamera::GetPosition() const -> MCVector3D
     return Position;
 }
 
+auto MCCamera::FollowViewSize() -> void
+{
+    if (_View == nullptr)
+    {
+        return;
+    }
+
+    const MCPane& surface = _View->WorldFrame();
+    const auto surfaceWidth = static_cast<float>(surface.X1 - surface.X0);
+    const auto surfaceHeight = static_cast<float>(surface.Y1 - surface.Y0);
+
+    if (surfaceWidth != ViewWidth || surfaceHeight != ViewHeight)
+    {
+        SetViewSize(surfaceWidth, surfaceHeight);
+    }
+}
+
 auto MCCamera::SetViewSize(float width, float height) -> void
 {
     ViewWidth = width;
@@ -538,14 +555,7 @@ auto MCCamera::Update() -> void
     if (_View != nullptr)
     {
         _View->EaseZoom();
-        const MCPane& surface = _View->WorldFrame();
-        const auto surfaceWidth = static_cast<float>(surface.X1 - surface.X0);
-        const auto surfaceHeight = static_cast<float>(surface.Y1 - surface.Y0);
-
-        if (surfaceWidth != ViewWidth || surfaceHeight != ViewHeight)
-        {
-            SetViewSize(surfaceWidth, surfaceHeight);
-        }
+        FollowViewSize();
     }
 
     MCVector3D newPosition = Position;

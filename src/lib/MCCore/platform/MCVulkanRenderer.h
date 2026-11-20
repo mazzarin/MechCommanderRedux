@@ -117,6 +117,11 @@ public:
     /// art pack and relief maps); the uploads go straight to the GPU, ahead of the frame being recorded.
     /// </summary>
     std::expected<void, std::string> PrepareTerrain(const MCTerrainMesh& mesh) override;
+    /// <summary>
+    /// Each of <paramref name="frames"/>' pictures as its first draw makes it (<see cref="HdPictureOf"/>): placed, its
+    /// copies queued with the frame being recorded.
+    /// </summary>
+    size_t PrepareHdPictures(std::span<const std::shared_ptr<const MCHdArt::Frame>> frames) override;
 
     /// <summary>
     /// The colours the next <see cref="Execute"/> draws with: the palette as shown (gamma applied, 256 entries; empty

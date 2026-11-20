@@ -6566,6 +6566,12 @@ std::expected<void, std::string> MCVulkanRenderer::PrepareTerrain(const MCTerrai
     return UploadTerrainMesh(mesh);
 }
 
+size_t MCVulkanRenderer::PrepareHdPictures(std::span<const std::shared_ptr<const MCHdArt::Frame>> frames)
+{
+    return static_cast<size_t>(std::ranges::count_if(frames, [this](const std::shared_ptr<const MCHdArt::Frame>& frame)
+                                                     { return frame != nullptr && HdPictureOf(*frame).has_value(); }));
+}
+
 std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target, const MCTerrainFrame& frame)
 {
     if (!frame.Mesh.has_value() || frame.Mesh->get().Cols <= 0 || frame.Mesh->get().Rows <= 0)

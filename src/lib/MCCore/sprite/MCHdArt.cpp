@@ -428,11 +428,6 @@ namespace
     /// </summary>
     constexpr uint64_t PagesMeasuredFromBytes = uint64_t{256} << 20;
     /// <summary>
-    /// Port-only (MCHdArt::FinishLoadFill): the loading bar stops waiting for the fill on the GPU once none of its frames
-    /// went up for this long (a renderer that draws no frame meanwhile, a GPU gone).
-    /// </summary>
-    constexpr std::chrono::seconds GpuFillStall{2};
-    /// <summary>
     /// Port-only (MCHdArt::TakeStagedPicture): the frames a draw's picture taken from the slots waits for the renderer to
     /// ask for it as it draws the frame, before it goes up as the fill's do (MCHdArt::TakeStagedPictures: a frame read for
     /// the CPU alone, whose colours are in the picture alone).
@@ -610,6 +605,11 @@ namespace
         /// open, by the archive's path (KeyOfPath), queued as it opens (QueueHold).
         /// </summary>
         std::unordered_map<PathKey, std::vector<uint64_t>> GroundAsked;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's "The GPU from the briefing"): the pieces queued by name (PiecesQueued: the
+        /// ground's), unpacked: the ground's share of the GPU until the load puts it up (UpdateGpuFill).
+        /// </summary>
+        uint64_t GroundGpuBytes = 0;
         uint32_t NextStream = 0;
         uint64_t Generation = 0;
         size_t Reads = 0;
@@ -849,13 +849,24 @@ namespace
         /// </summary>
         bool OpeningView = false;
         std::unordered_set<uint32_t> OpeningFolders;
+        /// <summary>Port-only, for test runs (-hdbriefinghold off): no hold from the briefing, so it starts at the load.</summary>
+        bool BriefingHoldOff = false;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's "The GPU from the briefing"): no fill on the GPU from the briefing, for test runs
+        /// (-hdbriefingfill off); whether the briefing's fill runs (from MCHdArt::StartBriefingHold to the load); the
+        /// folders the briefing's hold was handed, each once, in turn (its list's but the ground's, then each mech's as
+        /// placed: MCHdArt::HoldMechAhead), their keys in BriefingFillKeys; and how far through them the fill has asked.
+        /// </summary>
+        bool BriefingFillOff = false;
+        bool BriefingFill = false;
+        std::vector<std::filesystem::path> BriefingFillFolders;
+        std::unordered_set<std::string> BriefingFillKeys;
+        size_t BriefingFillAsked = 0;
         /// <summary>
         /// Port-only (SPEC-memory.md's "From the briefing": a mission's list): whether a load's fill runs
         /// (MCHdArt::StartLoadFill to MCHdArt::FinishLoadFill), and the pack's folders it handed the hold meanwhile, each
         /// once, in the order handed (NoteLoadFolder: MCHdArt::LoadFolders), its keys in LoadFolderKeys.
         /// </summary>
-        /// <summary>Port-only, for test runs (-hdbriefinghold off): no hold from the briefing, so it starts at the load.</summary>
-        bool BriefingHoldOff = false;
         bool RecordingLoad = false;
         std::vector<std::filesystem::path> LoadFolders;
         std::unordered_set<std::string> LoadFolderKeys;
@@ -1499,6 +1510,21 @@ namespace
         if (state.RecordingLoad && state.LoadFolderKeys.insert(folder.generic_string()).second)
         {
             state.LoadFolders.push_back(folder);
+        }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): notes <paramref name="folders"/> (the pack's, relative to
+    /// it) among those the briefing's hold was handed, each once, for the fill on the GPU (State::BriefingFillFolders).
+    /// </summary>
+    void NoteBriefingFillFolders(State& state, std::span<const std::filesystem::path> folders)
+    {
+        for (const std::filesystem::path& folder : folders)
+        {
+            if (state.BriefingFillKeys.insert(folder.generic_string()).second)
+            {
+                state.BriefingFillFolders.push_back(folder);
+            }
         }
     }
 
@@ -2685,6 +2711,24 @@ namespace
     {
         ahead.GpuRoomStop.request_stop();
         ahead.GpuRoomStop = std::stop_source();
+    }
+
+    /// <summary>
+    /// Port-only (UpdateGpuFill, the briefing's fill): whether a reader opens the archive standing for
+    /// <paramref name="path"/>'s folders now (any of them up to <paramref name="pack"/>, as ArchiveOf looks). Call with
+    /// ReadAhead::Lock held.
+    /// </summary>
+    bool OpensFor(const ReadAhead& ahead, const std::filesystem::path& path, const std::filesystem::path& pack)
+    {
+        for (std::filesystem::path at = path; at.has_relative_path() && at != pack; at = at.parent_path())
+        {
+            if (ahead.Opening.contains(at))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -3946,7 +3990,9 @@ namespace
 
         for (const uint32_t piece : item.Pieces)
         {
-            holding.QueuedBytes += file.HoldPieceAt(piece).Stored;
+            const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
+            holding.QueuedBytes += facts.Stored;
+            holding.GroundGpuBytes += facts.Unpacked;
         }
 
         holding.Archives.push_back(std::move(item));
@@ -3965,6 +4011,7 @@ namespace
         holding.PiecesQueued.clear();
         holding.Taken.clear();
         holding.GroundAsked.clear();
+        holding.GroundGpuBytes = 0;
         holding.NextStream = 0;
         holding.QueuedBytes = 0;
         holding.ReadBytes = 0;
@@ -7446,6 +7493,7 @@ namespace
         ReadAhead& ahead = state.Ahead;
         uint64_t mission = 0;
         uint64_t handed = 0;
+        uint64_t ground = 0;
         bool loading = false;
         bool opening = false;
 
@@ -7464,13 +7512,15 @@ namespace
             opening = std::ranges::any_of(ahead.Opening, [&ahead](const auto& open)
                                           { return open.second == ahead.Holding.Generation; });
             mission = ahead.Holding.HandedGpuBytes;
+            ground = ahead.Holding.GroundGpuBytes;
         }
 
         state.GpuMissionBytes = mission;
 
-        // Not entered on part of the mission (one that doesn't fit whole puts none of it up), nor before the room holds
-        // the load's ground.
-        if (!state.GpuFits && (opening || !state.GpuMissionKnown || state.GpuGround != GroundState::InRoom))
+        // Not entered on part of the mission (one that doesn't fit whole puts none of it up), nor under the load before
+        // the room holds its ground. From the briefing the ground is counted ahead (below).
+        if (!state.GpuFits &&
+            (opening || !state.GpuMissionKnown || (loading && state.GpuGround != GroundState::InRoom)))
         {
             return;
         }
@@ -7486,13 +7536,17 @@ namespace
         const uint64_t up = std::min(mission, picturesUp);
         const uint64_t onCard = up + atShare(mission - up);
         const uint64_t inPages = atShare(mission);
+        // Port-only (SPEC-memory.md's "The GPU from the briefing"): the ground before the room holds it (the briefing's,
+        // and a load's until it's up), as its pieces held take unpacked, at the pages' share (est.).
+        const uint64_t groundAhead = state.GpuGround == GroundState::InRoom ? 0 : atShare(ground);
 
         // On shared memory the mission and the hold beside it within the art's room past the rest and the floor; on any
         // GPU the mission within the room the renderer's card gives its pictures (MCHdArt::NoteGpuRoom).
         const ArtParts parts = ArtPartsNow();
         constexpr uint64_t Unbounded = std::numeric_limits<uint64_t>::max();
-        const uint64_t space = parts.Room.Shared ? Less(parts.Room.Bytes, parts.Rest + parts.Floor) : Unbounded;
-        const uint64_t card = state.GpuCardRoom.value_or(Unbounded);
+        const uint64_t space =
+            parts.Room.Shared ? Less(parts.Room.Bytes, parts.Rest + parts.Floor + groundAhead) : Unbounded;
+        const uint64_t card = state.GpuCardRoom.has_value() ? Less(*state.GpuCardRoom, groundAhead) : Unbounded;
         const uint64_t held = parts.Room.Shared ? std::max<uint64_t>(parts.Held, handed) : 0;
         const auto within = [&state](uint64_t need, uint64_t room)
         { return state.GpuFits ? need <= room : need + need / FitsMarginDivisor <= room; };
@@ -7502,12 +7556,13 @@ namespace
         {
             MCFrameLog::Note(std::format(
                 "HD fill on the GPU: {} ({:.1f} MB for the mission, {:.1f} MB as its pages take it at {:.2f} times its "
-                "bytes, {:.1f} MB held, {:.1f} MB of room)",
+                "bytes, {:.1f} MB held, {:.1f} MB for the ground ahead, {:.1f} MB of room{})",
                 fits ? "the whole mission fits" : "the mission no longer fits",
                 static_cast<double>(mission) / BytesPerMb,
                 static_cast<double>(parts.Room.Shared ? inPages : onCard) / BytesPerMb, share,
-                static_cast<double>(held) / BytesPerMb,
-                static_cast<double>(std::min(space - std::min(space, held), card)) / BytesPerMb));
+                static_cast<double>(held) / BytesPerMb, static_cast<double>(groundAhead) / BytesPerMb,
+                static_cast<double>(std::min(space - std::min(space, held), card)) / BytesPerMb,
+                state.BriefingFill ? ", from the briefing" : ""));
         }
 
         if (!fits && state.GpuFits)
@@ -7530,14 +7585,32 @@ namespace
             Skip,
         };
 
+        const std::filesystem::path pack = MCHdArt::PackFolder();
         const auto look = [&](const std::filesystem::path& folder, uint32_t& index)
         {
-            index = FolderIndex(MCHdArt::PackFolder() / folder, Naming::Number);
+            index = FolderIndex(pack / folder, Naming::Number);
             FrameFolder& frames = state.Folders.at(index);
 
-            if (state.GpuAsked.contains(index) || (!frames.Archived.has_value() && !loading))
+            if (state.GpuAsked.contains(index))
             {
                 return Next::Skip;
+            }
+
+            // In play no archive is opened for it. From the briefing (SPEC-memory.md's "The GPU from the briefing") its
+            // folders' archives are opened ahead: one a reader opens still is waited for, never opened here.
+            if (!frames.Archived.has_value() && !loading)
+            {
+                if (!state.BriefingFill)
+                {
+                    return Next::Skip;
+                }
+
+                std::scoped_lock lock(ahead.Lock);
+
+                if (OpensFor(ahead, frames.Path, pack))
+                {
+                    return Next::Wait;
+                }
             }
 
             const std::shared_ptr<MCHdArchive> archive = ArchiveOf(frames).Archive;
@@ -7549,19 +7622,22 @@ namespace
 
             std::scoped_lock lock(ahead.Lock);
             const HoldQueue& holding = ahead.Holding;
-            const bool held = !holding.On || holding.Full || !holding.Queued.contains(archive) ||
-                              std::ranges::find(holding.Archives, archive, &HoldItem::Archive) == holding.Archives.end();
+            const bool held =
+                !holding.On || holding.Full || !holding.Queued.contains(archive) ||
+                std::ranges::find(holding.Archives, archive, &HoldItem::Archive) == holding.Archives.end();
             return held ? Next::Ask : Next::Wait;
         };
 
         std::vector<MCHdArt::PacketAhead> packets;
-        // Each in its order, up to the first whose archive the hold reads still.
-        const auto walk = [&](std::span<const MCHdArt::PacketAhead> order, size_t& asked)
+        // Each in its order from where it was left (packetAt: its packet at an index), up to the first whose archive the
+        // hold reads still.
+        const auto walk = [&](size_t count, size_t& asked, const auto& packetAt)
         {
-            for (; asked < order.size(); ++asked)
+            for (; asked < count; ++asked)
             {
+                const MCHdArt::PacketAhead packet = packetAt(asked);
                 uint32_t index = 0;
-                const Next next = look(order[asked].Folder, index);
+                const Next next = look(packet.Folder, index);
 
                 if (next == Next::Wait)
                 {
@@ -7570,25 +7646,22 @@ namespace
 
                 if (next == Next::Ask && state.GpuAsked.insert(index).second)
                 {
-                    packets.push_back(order[asked]);
+                    packets.push_back(packet);
                 }
             }
 
             return true;
         };
 
-        if (walk(state.GpuOrder, state.GpuOrderAsked))
+        // A list of folders, each one's frames whole.
+        const auto folderAt = [](std::span<const std::filesystem::path> folders)
+        { return [folders](size_t at) { return MCHdArt::PacketAhead{folders[at], std::nullopt, true, 0}; }; };
+
+        // FillGpu's order, then the briefing's folders (SPEC-memory.md's "The GPU from the briefing"), then the load's.
+        if (walk(state.GpuOrder.size(), state.GpuOrderAsked, [&state](size_t at) { return state.GpuOrder[at]; }) &&
+            walk(state.BriefingFillFolders.size(), state.BriefingFillAsked, folderAt(state.BriefingFillFolders)))
         {
-            std::vector<MCHdArt::PacketAhead> load;
-
-            for (size_t at = state.LoadFoldersAsked; at < state.LoadFolders.size(); ++at)
-            {
-                load.push_back(MCHdArt::PacketAhead{state.LoadFolders[at], std::nullopt, true, 0});
-            }
-
-            size_t asked = 0;
-            walk(load, asked);
-            state.LoadFoldersAsked += asked;
+            walk(state.LoadFolders.size(), state.LoadFoldersAsked, folderAt(state.LoadFolders));
         }
 
         if (!packets.empty())
@@ -7611,11 +7684,20 @@ void MCHdArt::StartLoadFill(std::string_view mission)
     state.LoadFolders.clear();
     state.LoadFolderKeys.clear();
     state.LoadFoldersAsked = 0;
+    // Port-only (SPEC-memory.md's "The GPU from the briefing"): a fill begun at the briefing goes on, what it put up
+    // counted from there.
+    const bool fromBriefing = state.BriefingFill;
+    state.BriefingFill = false;
     state.GpuFillOn = true;
     state.GpuMissionKnown = briefed;
     state.GpuGround = GroundState::Waiting;
-    state.GpuUpAtLoad = state.GpuUp;
-    state.GpuPagesMeasured = false;
+
+    if (!fromBriefing)
+    {
+        state.GpuUpAtLoad = state.GpuUp;
+        state.GpuPagesMeasured = false;
+    }
+
     // Every player's mechs are in once the load begins (MCHdArt::Manifest).
     state.ManifestFinal = true;
     ++state.ManifestGeneration;
@@ -7631,7 +7713,12 @@ void MCHdArt::StartLoadFill(std::string_view mission)
         holding.Loading = true;
         holding.Briefing = false;
         holding.BarShown = 0;
-        state.GpuReadsAtLoad = ahead.GpuReads;
+
+        if (!fromBriefing)
+        {
+            state.GpuReadsAtLoad = ahead.GpuReads;
+        }
+
         ahead.Changed.notify_all();
     }
 
@@ -7644,7 +7731,7 @@ void MCHdArt::StartLoadFill(std::string_view mission)
     state.RecordingLoad = true;
 }
 
-void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
+void MCHdArt::FinishLoadFill(const std::function<void()>& shown, bool waitForGpu)
 {
     State& state = TheState();
     state.RecordingLoad = false;
@@ -7660,7 +7747,7 @@ void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
     const auto done = [&]
     {
         return !HoldPending(ahead) && ahead.InFlight[std::to_underlying(AheadKind::Hold)] == 0 &&
-               (!state.GpuFits || GpuFillDone(state) ||
+               (!waitForGpu || !state.GpuFits || GpuFillDone(state) ||
                 std::chrono::steady_clock::now() - state.GpuUpAt > GpuFillStall);
     };
 
@@ -7759,9 +7846,14 @@ void MCHdArt::LetGoHold()
     State& state = TheState();
     ReadAhead& ahead = state.Ahead;
 
-    // Port-only (MCHdArt::FillGpu): the mission's fill on the GPU ends with it.
+    // Port-only (MCHdArt::FillGpu): the mission's fill on the GPU ends with it, the briefing's too.
     state.GpuFillOn = false;
     state.GpuFits = false;
+    state.GpuGround = GroundState::InRoom;
+    state.BriefingFill = false;
+    state.BriefingFillFolders.clear();
+    state.BriefingFillKeys.clear();
+    state.BriefingFillAsked = 0;
     state.GpuOrder.clear();
     state.GpuOrderAsked = 0;
     state.LoadFoldersAsked = 0;
@@ -7814,6 +7906,16 @@ void MCHdArt::SetBriefingHold(bool on)
 bool MCHdArt::BriefingHoldWanted()
 {
     return HoldWanted() && !TheState().BriefingHoldOff;
+}
+
+void MCHdArt::SetBriefingFill(bool on)
+{
+    TheState().BriefingFillOff = !on;
+}
+
+bool MCHdArt::BriefingFillWanted()
+{
+    return BriefingHoldWanted() && !TheState().BriefingFillOff;
 }
 
 namespace
@@ -7897,17 +7999,28 @@ void MCHdArt::StartBriefingHold(std::string_view mission, std::span<const std::f
         LetGoHold();
     }
 
+    // Port-only (SPEC-memory.md's "The GPU from the briefing"): the fill on the GPU from here, not under a load (its own
+    // fill runs then).
+    State& state = TheState();
+    const bool fillWanted = BriefingFillWanted();
+    bool fill = false;
+
     {
-        ReadAhead& ahead = TheState().Ahead;
+        ReadAhead& ahead = state.Ahead;
         std::scoped_lock lock(ahead.Lock);
         HoldQueue& holding = ahead.Holding;
         BeginHolding(holding);
         holding.Mission = mission;
         holding.Briefing = !holding.Loading;
+        fill = holding.Briefing && fillWanted;
+
+        if (fill && !state.BriefingFill)
+        {
+            state.GpuReadsAtLoad = ahead.GpuReads;
+        }
     }
 
     // The manifest's mission part (MCHdArt::Manifest): the players' kept for the same mission, gone with another's.
-    State& state = TheState();
     ++state.ManifestGeneration;
     state.ManifestFolders.clear();
 
@@ -7936,6 +8049,24 @@ void MCHdArt::StartBriefingHold(std::string_view mission, std::span<const std::f
         {
             archives.push_back(folder);
         }
+    }
+
+    // Port-only (SPEC-memory.md's "The GPU from the briefing"): the mission goes up at play's pace (one reader, the
+    // renderer's share of each frame) while it fits, its archives once held, its ground counted ahead until the load puts
+    // it up; each mech's after it as placed (MCHdArt::HoldMechAhead).
+    if (fill)
+    {
+        if (!state.BriefingFill)
+        {
+            state.GpuUpAtLoad = state.GpuUp;
+            state.GpuPagesMeasured = false;
+        }
+
+        NoteBriefingFillFolders(state, archives);
+        state.BriefingFill = true;
+        state.GpuFillOn = true;
+        state.GpuMissionKnown = true;
+        state.GpuGround = GroundState::Waiting;
     }
 
     // Their archives held as the readers open them (QueueHold), or at once when open already.
@@ -8204,6 +8335,12 @@ void MCHdArt::HoldMechAhead(std::span<const std::filesystem::path> folders)
             state.ManifestPlayers.push_back(folder);
             ++state.ManifestGeneration;
         }
+    }
+
+    // Port-only (SPEC-memory.md's "The GPU from the briefing"): after the mission's, as placed.
+    if (state.BriefingFill)
+    {
+        NoteBriefingFillFolders(state, folders);
     }
 
     OpenArchivesAhead(folders);

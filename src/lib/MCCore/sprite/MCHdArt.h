@@ -1274,12 +1274,19 @@ namespace MCHdArt
     /// Port-only (the loading bar's last stretch): waits until the hold has read every archive the load handed it (or
     /// was let go of, or is full), calling <paramref name="shown"/> every <see cref="LoadFillShowEvery"/> meanwhile so the
     /// bar moves and the screen stays live, and once more after, the bar whole; from then on the hold reads below
-    /// everything else, a run at a time.
+    /// everything else, a run at a time. With <paramref name="waitForGpu"/> off (a match: SPEC-memory.md's "The GPU from
+    /// the briefing") it ends once the art is in memory, and what's left goes up as the others load, then in play.
     /// </summary>
-    void FinishLoadFill(const std::function<void()>& shown);
+    void FinishLoadFill(const std::function<void()>& shown, bool waitForGpu = true);
 
     /// <summary>Port-only: how often <see cref="FinishLoadFill"/> shows the bar while it waits.</summary>
     constexpr std::chrono::milliseconds LoadFillShowEvery{33};
+
+    /// <summary>
+    /// Port-only (<see cref="FinishLoadFill"/>): the loading bar stops waiting for the fill on the GPU once none of its
+    /// frames went up for this long (a renderer that draws no frame meanwhile, a GPU gone).
+    /// </summary>
+    constexpr std::chrono::seconds GpuFillStall{2};
 
     /// <summary>
     /// Port-only: the share of the load's fill read (<see cref="StartLoadFill"/>): the bytes the hold has read over those
@@ -1330,6 +1337,16 @@ namespace MCHdArt
 
     /// <summary>Port-only: whether the hold is wanted, and from the briefing (<see cref="SetBriefingHold"/>).</summary>
     bool BriefingHoldWanted();
+
+    /// <summary>
+    /// Port-only, for test runs (<c>-hdbriefingfill on|off</c>; on unless set; SPEC-memory.md's "The GPU from the
+    /// briefing"): whether the fill on the GPU may start from the briefing (<see cref="StartBriefingHold"/>). Off, it
+    /// starts at the load, the timing runs' comparison.
+    /// </summary>
+    void SetBriefingFill(bool on);
+
+    /// <summary>Port-only: whether the fill on the GPU starts from the briefing (<see cref="SetBriefingFill"/>).</summary>
+    bool BriefingFillWanted();
 
     /// <summary>
     /// Port-only: whether the hold holds for <paramref name="mission"/> since its briefing (<see cref="StartBriefingHold"/>,

@@ -4218,23 +4218,57 @@ namespace
     };
 
     /// <summary>
-    /// Port-only: a load's end (MCHdArt::FinishLoadFill), the renderer's part done as each frame of the bar is shown (the
-    /// pictures the readers put in the slots taken, all of them, their copies recorded): the pictures taken.
+    /// Port-only: the renderer's part of a frame for the fill: the pictures the readers put in the slots taken, all of
+    /// them, their copies recorded, added to <paramref name="up"/>.
+    /// </summary>
+    void TakeEveryPicture(std::vector<MCHdArt::StagedPicture>& up)
+    {
+        for (MCHdArt::StagedPicture& picture :
+             MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+        {
+            MCHdArt::ColorsUploaded(*picture.Record);
+            up.push_back(std::move(picture));
+        }
+    }
+
+    /// <summary>
+    /// Port-only: a load's end (MCHdArt::FinishLoadFill), the renderer's part done as each frame of the bar is shown
+    /// (TakeEveryPicture): the pictures taken.
     /// </summary>
     std::vector<MCHdArt::StagedPicture> FinishTakingEveryPicture()
     {
         std::vector<MCHdArt::StagedPicture> up;
-        MCHdArt::FinishLoadFill(
-            [&up]
-            {
-                for (MCHdArt::StagedPicture& picture : MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(),
-                                                                                   std::numeric_limits<size_t>::max()))
-                {
-                    MCHdArt::ColorsUploaded(*picture.Record);
-                    up.push_back(std::move(picture));
-                }
-            });
+        MCHdArt::FinishLoadFill([&up] { TakeEveryPicture(up); });
         return up;
+    }
+
+    /// <summary>
+    /// Port-only: play's frames (or a briefing's) for the fill, at most <paramref name="most"/>, until
+    /// <paramref name="until"/> pictures are up: each after the readers' work, its pictures taken (TakeEveryPicture).
+    /// </summary>
+    void FramesUntilUp(uint64_t until, size_t most, std::vector<MCHdArt::StagedPicture>& up)
+    {
+        for (size_t frame = 0; frame < most && MCHdArt::GpuFillNow().Up < until; ++frame)
+        {
+            MCHdArt::WaitForReadAhead();
+            MCHdArt::WaitForHold();
+            MCHdArt::NextFrame(false);
+            MCHdArt::WaitForReadAhead();
+            TakeEveryPicture(up);
+        }
+    }
+
+    /// <summary>Port-only: the folders of <paramref name="pack"/>'s packets, as a mission's list names them.</summary>
+    std::vector<std::filesystem::path> PacketFolders(const HoldPack& pack)
+    {
+        std::vector<std::filesystem::path> folders;
+
+        for (const MCHdArt::PacketAhead& packet : pack.Packets())
+        {
+            folders.push_back(packet.Folder);
+        }
+
+        return folders;
     }
 
     /// <summary>Port-only: a load's fill of <paramref name="pack"/>, to its end (FinishTakingEveryPicture).</summary>
@@ -4881,6 +4915,115 @@ TEST_CASE("hd art: a briefing holds the ground its list names, only those frames
 /// in, let go of with it (MCHdArt::LetGoHold), the archive the game's thread's to take. A later mission asking for
 /// them again holds them, past a folder found to have no archive of its own.
 /// </summary>
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing"): a mission that fits goes on the GPU from its briefing, at
+/// play's pace (the readers' work and the renderer's take each frame), before Launch; its load then asks for nothing more
+/// and its bar waits for nothing on the GPU.
+/// </summary>
+TEST_CASE("hd art: a mission that fits goes on the GPU from its briefing, and its load adds nothing")
+{
+    constexpr size_t MostFrames = 64;
+    constexpr std::string_view Mission = "mis0101";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}, {StreamKind::Packet, 1000}};
+    const HoldPack pack("briefing-fill", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::StagedPicture> up;
+
+    {
+        MCTest::Scope scope("the briefing");
+        MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+        FramesUntilUp(before + pieces.size(), MostFrames, up);
+        const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+        CHECK(fill.Fits);
+        CHECK(fill.MissionBytes > 0);
+        CHECK_EQ(fill.Up, before + pieces.size());
+        CHECK(!MCHdArt::LoadFilling());
+    }
+
+    {
+        MCTest::Scope scope("its load");
+        const uint64_t asked = MCHdArt::GpuFillNow().Asked;
+        MCHdArt::StartLoadFill(Mission);
+        MCHdArt::WaitForReadAhead();
+        CHECK(FinishTakingEveryPicture().empty());
+        CHECK_EQ(MCHdArt::GpuFillNow().Asked, asked);
+        CHECK_EQ(MCHdArt::GpuFillNow().Up, before + pieces.size());
+        CHECK(MCHdArt::GpuFillNow().Fits);
+    }
+
+    pack.CutShapes();
+    pack.CheckStaged(up);
+    MCHdArt::LetGoHold();
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing", for the timing runs' comparison): with -hdbriefingfill off the
+/// briefing holds its mission's art and puts none of it on the GPU, as before it.
+/// </summary>
+TEST_CASE("hd art: with the briefing's fill off, a briefing puts nothing on the GPU")
+{
+    constexpr size_t Frames = 8;
+    constexpr std::string_view Mission = "mis0101";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("briefing-fill-off", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::SetBriefingFill(false);
+    CHECK(!MCHdArt::BriefingFillWanted());
+    MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+    FramesUntilUp(before + pieces.size(), Frames, up);
+    CHECK(up.empty());
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    MCHdArt::SetBriefingFill(true);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing", a match): a match's load ends once its art is in memory (the
+/// player checks in then), not once it's all on the GPU; what's left goes up in the frames after, so no player's fill
+/// holds up the room.
+/// </summary>
+TEST_CASE("hd art: a match's load ends with its art in memory, what's left going up after it")
+{
+    constexpr size_t MostFrames = 64;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("match-fill", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    // The renderer takes nothing meanwhile: a load that waited for the GPU would wait out its stall.
+    const auto began = std::chrono::steady_clock::now();
+    MCHdArt::FinishLoadFill([] {}, false);
+    CHECK(std::chrono::steady_clock::now() - began < MCHdArt::GpuFillStall);
+    CHECK(!MCHdArt::LoadFilling());
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    CHECK(MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    std::vector<MCHdArt::StagedPicture> up;
+    FramesUntilUp(before + pieces.size(), MostFrames, up);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before + pieces.size());
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
 TEST_CASE("hd art: a briefing left before its archives open hands them to no other mission's hold")
 {
     constexpr std::string_view Mission = "mis0101";

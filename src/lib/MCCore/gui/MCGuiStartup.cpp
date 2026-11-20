@@ -823,6 +823,20 @@ auto ParseCommandLine(std::string_view commandLine) -> void
 
             i++;
         }
+        else if (MCIEquals(word, "-hdbriefingfill"))
+        {
+            // Port-only, for test runs (no player passes it): "-hdbriefingfill on|off": whether the fill on the GPU starts
+            // from the briefing (MCHdArt::SetBriefingFill); off, at the load, as before it.
+            if (hasArgument)
+            {
+                if (const std::optional<bool> on = OnOrOff(word, words[i + 1]); on.has_value())
+                {
+                    MCHdArt::SetBriefingFill(*on);
+                }
+            }
+
+            i++;
+        }
         else if (MCIEquals(word, "-briefingbench"))
         {
             // Port-only, for test runs (no player passes it): "-briefingbench <seconds>" times a new campaign's first

@@ -119,6 +119,8 @@ namespace
         std::string_view Name;
         MCFrameLog::MCTally Tally;
         double HeldMb = 0.0;
+        /// <summary>Port-only (SPEC-memory.md's "The GPU from the briefing"): the fill on the GPU at the step's end.</summary>
+        MCHdArt::GpuFill Fill;
         std::string Note;
     };
 
@@ -762,18 +764,29 @@ namespace
         {"a mech put in for Launch", AddMech},
     }};
 
-    /// <summary>A step's line: "mech lab: p99 9.1 ms, worst 31.0 ms, 2 late, held 1630 MB".</summary>
+    /// <summary>
+    /// A step's line: "mech lab: p99 9.1 ms, worst 31.0 ms, 2 late, held 1630 MB, on the GPU 812 of 1490 MB (fits)".
+    /// </summary>
     std::string StepText(const MCStepResult& step)
     {
         const MCFrameLog::MCFrameTimes& frames = step.Tally.Judged();
-        return std::format("{}: p99 {:.1f} ms, worst {:.1f} ms, {} late, held {:.0f} MB{}", step.Name, frames.P99Ms(),
-                           frames.WorstMs(), frames.Slow, step.HeldMb, step.Note.empty() ? "" : ", " + step.Note);
+        const MCHdArt::GpuFill& fill = step.Fill;
+        const std::string gpu =
+            fill.MissionBytes == 0
+                ? std::string()
+                : std::format(", on the GPU {:.0f} of {:.0f} MB ({})", static_cast<double>(fill.UpBytes) / BytesPerMb,
+                              static_cast<double>(fill.MissionBytes) / BytesPerMb, fill.Fits ? "fits" : "doesn't fit");
+        return std::format("{}: p99 {:.1f} ms, worst {:.1f} ms, {} late, held {:.0f} MB{}{}", step.Name, frames.P99Ms(),
+                           frames.WorstMs(), frames.Slow, step.HeldMb, gpu, step.Note.empty() ? "" : ", " + step.Note);
     }
 
     /// <summary>The step now ended: its frames and what the hold held, and what the lance's steps found.</summary>
     void EndStep(MCBriefingRun& run)
     {
-        MCStepResult result{.Name = TourSteps[run.Step].Name, .Tally = MCFrameLog::TakeTally(), .HeldMb = HeldMb()};
+        MCStepResult result{.Name = TourSteps[run.Step].Name,
+                            .Tally = MCFrameLog::TakeTally(),
+                            .HeldMb = HeldMb(),
+                            .Fill = MCHdArt::GpuFillNow()};
 
         const bool lanceStep = TourSteps[run.Step].Start == AddMech || TourSteps[run.Step].Start == RemoveMech;
 
@@ -818,13 +831,15 @@ namespace
 
         const std::string readers = ReadersText();
         const std::string line = std::format(
-            "MCRedux logistics benchmark {}, mission 1's logistics, {} s a step, the briefing's hold {}{}, {}, {}: {}; "
+            "MCRedux logistics benchmark {}, mission 1's logistics, {} s a step, the briefing's hold {}, its fill on "
+            "the "
+            "GPU {}{}, {}, {}: {}; "
             "{}; {}; Launch to the mission's first frame {:.2f} s (its longest frame {:.1f} ms); held {:.1f} MB in {} "
             "reads. Steps: {}",
             build(), run.StepSeconds, MCHdArt::BriefingHoldWanted() ? "on" : "off",
-            readers.empty() ? "" : ", " + readers, DisplayDescription(), MachineText(), TimingText(whole),
-            FramesText(whole), HdText(whole), run.LaunchSeconds, launch.Loop.WorstMs(), HeldMb(), MCHdArt::HeldReads(),
-            steps);
+            MCHdArt::BriefingFillWanted() ? "on" : "off", readers.empty() ? "" : ", " + readers, DisplayDescription(),
+            MachineText(), TimingText(whole), FramesText(whole), HdText(whole), run.LaunchSeconds,
+            launch.Loop.WorstMs(), HeldMb(), MCHdArt::HeldReads(), steps);
         run.Phase = MCBriefingPhase::Done;
         MCInput::HoldInput(false);
         MCFrameLog::Line(line);

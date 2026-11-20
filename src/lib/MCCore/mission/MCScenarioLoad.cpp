@@ -404,7 +404,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCHdArt::WaitForReadAhead();
     MCHdArt::KeepReadAhead();
     // Port-only (SPEC-memory.md): the bar ends once the mission's art is in memory, so play reads nothing from the disk.
-    MCHdArt::FinishLoadFill(ShowLoadingBar);
+    // In a match it doesn't wait for the GPU (SPEC-memory.md's "The GPU from the briefing"): the player checks in, and
+    // what's left goes up while the others load, so no player's fill holds up the room.
+    MCHdArt::FinishLoadFill(ShowLoadingBar, MultiPlayer() == nullptr);
 
     HasOutputBlock = file.SeekBlock("Output") == 0;
     file.Close();

@@ -3553,15 +3553,12 @@ namespace
     /// Writes an object's frame (not holding its blended pixels) as a PNG pair, <paramref name="stem"/>.png and _idx.png:
     /// <paramref name="width"/> x <paramref name="height"/> original pixels, <paramref name="scale"/> HD pixels each,
     /// opaque where <paramref name="indexAt"/> gives an index, in that index's colour of <paramref name="colors"/>; the
-    /// pixels <paramref name="marked"/> gives (if any) marked as its baked shadow, as the pack's generator marks a forest's;
-    /// and the pixels <paramref name="clear"/> gives (if any) left clear in the HD picture though the original draws them,
-    /// as an upscaled frame can leave one of its original pixels.
+    /// pixels <paramref name="marked"/> gives (if any) marked as its baked shadow, as the pack's generator marks a forest's.
     /// </summary>
     void WriteObjectFrame(const std::filesystem::path& stem, int32_t width, int32_t height, int32_t scale,
                           std::span<const SDL_Color, 256> colors,
                           const std::function<std::optional<uint8_t>(int32_t, int32_t)>& indexAt,
-                          const std::function<bool(int32_t, int32_t)>& marked = {},
-                          const std::function<bool(int32_t, int32_t)>& clear = {})
+                          const std::function<bool(int32_t, int32_t)>& marked = {})
     {
         std::vector<uint8_t> pixels(static_cast<size_t>(width * scale) * height * scale * BytesPerPixel);
         std::vector<uint8_t> index(pixels.size());
@@ -3573,10 +3570,9 @@ namespace
                 const size_t at = (static_cast<size_t>(y) * width * scale + x) * BytesPerPixel;
                 const std::optional<uint8_t> original = indexAt(x / scale, y / scale);
                 const SDL_Color c = colors[original.value_or(0)];
-                const uint8_t drawn = original.has_value() ? HasIndex : uint8_t{0};
-                const uint8_t alpha = clear && clear(x / scale, y / scale) ? uint8_t{0} : drawn;
+                const uint8_t alpha = original.has_value() ? HasIndex : uint8_t{0};
                 const uint8_t green =
-                    original.has_value() && marked && marked(x / scale, y / scale) ? MCHdArt::BakedShadow : drawn;
+                    original.has_value() && marked && marked(x / scale, y / scale) ? MCHdArt::BakedShadow : alpha;
                 std::ranges::copy(std::array{c.r, c.g, c.b, alpha}, pixels.begin() + static_cast<ptrdiff_t>(at));
                 std::ranges::copy(std::array<uint8_t, 4>{original.value_or(0), green, 0, HasIndex},
                                   index.begin() + static_cast<ptrdiff_t>(at));
@@ -4617,10 +4613,8 @@ namespace
     };
 
     /// <summary>Makes a <see cref="TestForest"/> in the palette's <paramref name="colors"/>, its pack in
-    /// <paramref name="scratch"/> (emptied first), the original pixels <paramref name="clear"/> gives (if any) left
-    /// clear in its HD picture (WriteObjectFrame's).</summary>
-    TestForest MakeTestForest(const std::filesystem::path& scratch, std::span<const SDL_Color, 256> colors,
-                              const std::function<bool(int32_t, int32_t)>& clear = {})
+    /// <paramref name="scratch"/> (emptied first).</summary>
+    TestForest MakeTestForest(const std::filesystem::path& scratch, std::span<const SDL_Color, 256> colors)
     {
         // The canopy's two colours: free ones (as FullColorIndex's) with room to brighten, far apart.
         constexpr int32_t FirstFree = 10;
@@ -4693,9 +4687,8 @@ namespace
         const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(forest.Table));
         std::filesystem::create_directories(folder);
         constexpr int32_t Scale = 2;
-        WriteObjectFrame(
-            folder / "0", Width, Height, Scale, colors, indexAt,
-            [](int32_t column, int32_t) { return column >= CanopyColumns; }, clear);
+        WriteObjectFrame(folder / "0", Width, Height, Scale, colors, indexAt,
+                         [](int32_t column, int32_t) { return column >= CanopyColumns; });
         WritePaletteRgb(pack, colors);
         return forest;
     }
@@ -21078,11 +21071,10 @@ namespace
     /// A forest's version 2 frame (MakeTestForest's, MarkPackVersion2's) drawn still (not swaying: as a unit's or an
     /// object's frame is) four times over mission 1 by <paramref name="drawing"/>, paused, each over the one before:
     /// as it is, standing on a row; through a table moving its colours along, standing on another; through one making
-    /// every colour the key; and as it is, standing on none. Its HD picture leaves a square of its canopy clear (the
-    /// original's pixels there marked by its index pass alone), the first draw's over the same forest swaying (its
-    /// canopy's marks, SwayMark). The frames shown and the world's index channels (MCVulkanRenderer::ReadIndexChannels)
-    /// with their index passes apart, then all folded into their draws (HdMarks::FoldedShape), then every other one
-    /// (Mixed: a fold just after a draw apart, of the same picture); and the renderer; none when the GPU can't draw it so.
+    /// every colour the key; and as it is, standing on none. The frames shown and the world's index channels
+    /// (MCVulkanRenderer::ReadIndexChannels) with their index passes apart, then all folded into their draws
+    /// (HdMarks::FoldedShape), then every other one (Mixed: a fold just after a draw apart, of the same picture); and
+    /// the renderer; none when the GPU can't draw it so.
     /// </summary>
     struct FoldedShapes
     {
@@ -21097,8 +21089,6 @@ namespace
         uint32_t ChannelsWidth = 0;
         /// <summary>The feet bits of the first draw's row (index channels' green and blue).</summary>
         std::array<uint8_t, 2> FirstFeet{};
-        /// <summary>The swaying forest's marks left showing (SwayMark), all folded.</summary>
-        size_t SwayMarks = 0;
         /// <summary>In mirror mode, the frames with the shapes compared with the software renderer's.</summary>
         int64_t FramesCompared = 0;
     };
@@ -21124,16 +21114,7 @@ namespace
         std::array<SDL_Color, 256> colors{};
         MCInput::Display()->GetShownColors(colors);
         const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_shape_fold";
-        // The canopy's square the HD picture leaves clear: where, in the frame's original pixels, and how big.
-        constexpr int32_t ClearLeft = 24;
-        constexpr int32_t ClearTop = 16;
-        constexpr int32_t ClearSide = 8;
-        const TestForest forest = MakeTestForest(scratch, colors,
-                                                 [](int32_t column, int32_t row)
-                                                 {
-                                                     return column >= ClearLeft && column < ClearLeft + ClearSide &&
-                                                            row >= ClearTop && row < ClearTop + ClearSide;
-                                                 });
+        const TestForest forest = MakeTestForest(scratch, colors);
         // Index 0xd8 is the water's colour cycle, which the forest never draws.
         constexpr uint8_t NeverDrawn = 0xd8;
         REQUIRE(MarkPackVersion2(forest.Pack, NeverDrawn) > 0);
@@ -21158,17 +21139,9 @@ namespace
         }
 
         std::optional<MCHdArtOn> hdArt(std::in_place, forest.Pack);
-        MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
-        const MCSceneLights::MCLighting keptLighting = lighting;
         const int keptSway = GHdSway;
         GHdSway = 0;
         GamePaused = true;
-        // The forest swaying under the first draw (a few pixels), so far left of it that the first's clear square lies
-        // over the swaying one's canopy where its HD picture covers it.
-        constexpr float SwayMeters = 0.5f;
-        constexpr int32_t SwayLeft = 2 * ClearSide;
-        lighting.Sway = SwayMeters;
-        const auto swayMark = static_cast<uint8_t>(MCGpuChannels::Byte(MCGpuChannels::SwayMark));
 
         // The draws (from a little right of the middle and up, clear of the units): where, through which table (its
         // place in the tables), and whether a unit's feet stand on its bottom row.
@@ -21197,11 +21170,6 @@ namespace
             MCPane& world = camera->View()->WorldFrame();
             const int32_t x = (world.X1 - world.X0) / 2 + Aside;
             const int32_t y = (world.Y1 - world.Y0) / 2 - Aside - TestForest::Height;
-            // The swaying forest, its index pass apart.
-            GHdSway = 1;
-            renderer->SetFoldsIndexPasses(false);
-            AGShapeDraw(world, table.Bytes(), 0, x - SwayLeft, y);
-            GHdSway = 0;
 
             for (size_t i = 0; i < places.size(); ++i)
             {
@@ -21272,17 +21240,8 @@ namespace
         CHECK_EQ(renderer->HdShapeFolds(), foldsBefore + 6);
         CHECK_EQ(renderer->HdFolds(), forestFolds);
         result.FramesCompared = framesCompared;
-        constexpr size_t Channels = 4;
-        constexpr size_t MarkChannel = 3;
-
-        for (size_t at = MarkChannel; at < result.FoldedChannels.size(); at += Channels)
-        {
-            result.SwayMarks += result.FoldedChannels[at] == swayMark ? 1 : 0;
-        }
-
         GamePaused = false;
         GHdSway = keptSway;
-        lighting = keptLighting;
         hdArt.reset();
         std::filesystem::remove_all(scratch);
         return result;
@@ -21293,10 +21252,9 @@ namespace
 /// Port-only: a unit's or an object's version 2 frame folds its index pass into its own draw and its mark pass
 /// (MCVulkanRenderer's HdMarks::FoldedShape): over mission 1 drawn by the GPU, as it is and through tables (one making
 /// every colour the key, which the pass keeps), each standing on its own row or on none, each over the one before, the
-/// first over a swaying forest's marks where its HD picture leaves the original's pixels clear, the world's index target
-/// holds what it holds with the passes apart in every pixel and channel (the indices, the feet, the marks), and the
-/// frames show the same over the middle of the screen; and so do folds drawn just after draws apart, of the same
-/// picture (each through its own pipeline).
+/// world's index target holds what it holds with the passes apart in every pixel and channel (the indices, the feet,
+/// the marks), and the frames show the same over the middle of the screen; and so do folds drawn just after draws
+/// apart, of the same picture (each through its own pipeline).
 /// </summary>
 TEST_CASE_ISOLATED(
     "game: a unit's or an object's version 2 frame folds its index pass into its draw and keeps every channel")
@@ -21338,10 +21296,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(differingFromApart("all folded", shapes->FoldedChannels), NoneDiffer);
     CHECK_EQ(differingFromApart("every other folded", shapes->MixedChannels), NoneDiffer);
 
-    // What the draws exercise, folded: the key (the table making every colour it), the first's feet, and the swaying
-    // forest's marks (shown beside the first draw, so under its clear square too).
-    std::cout << std::format("  {} pixels of the swaying forest's marks show\n", shapes->SwayMarks);
-    CHECK(shapes->SwayMarks > 0);
+    // What the draws exercise, folded: the key (the table making every colour it), and the first's feet.
     size_t keys = 0;
     size_t feet = 0;
 

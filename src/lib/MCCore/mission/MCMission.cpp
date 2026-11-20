@@ -14,6 +14,7 @@
 #include "logistics/MCLogRows.h"
 #include "main/MCBenchmark.h"
 #include "main/MCGamePaths.h"
+#include "main/MCLogMechList.h"
 #include "main/MCTelemetry.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCIdleCheck.h"
@@ -21,7 +22,13 @@
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "camera/MCCamera.h"
 #include "camera/MCMainWindow.h"
+#include "camera/MCViewWindow.h"
+#include "appear/MCAppearance.h"
+#include "object/MCObjectSystem.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCRenderer.h"
 #include "color/MCPalette.h"
+#include "engine/MCCraterManager.h"
 #include "gui/MCGuiButton.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCUpdateDisplay.h"
@@ -54,6 +61,7 @@
 #include "object/MCObjectTypeManager.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "terrain/MCTacticalMap.h"
 #include "vfx/MCVfxFunctions.h"
 #include "platform/MCFileSystem.h"
@@ -106,6 +114,8 @@ namespace
     constexpr int32_t LogisticsTrack = 0x17;
     /// <summary>The briefing music.</summary>
     constexpr int32_t BriefingTrack = 0x16;
+    /// <summary>Bytes in a megabyte, for the frame log's notes.</summary>
+    constexpr double BytesPerMb = 1024.0 * 1024.0;
 
     /// <summary>
     /// Reads the names <c>&lt;prefix&gt;0</c> .. <c>&lt;prefix&gt;(count-1)</c> of the current block into
@@ -206,7 +216,7 @@ namespace
             {
                 if (const MCFitResult<uint32_t> chassis = file.Read<uint32_t>("ObjectNumber"); chassis.has_value())
                 {
-                    MCHdArt::HoldMechAhead(*chassis);
+                    MCHdArt::HoldMechAhead(MechTreeFolders(*chassis));
                 }
             }
         }
@@ -229,7 +239,7 @@ namespace
         if (!started.has_value())
         {
             started = Clock::now();
-            MCHdArt::StartBriefingHold(scenarioName, MCHdArt::BriefingFolders(scenarioName));
+            StartMissionHold(scenarioName);
             HoldPlayersMechs(scenarioName);
             MCFrameLog::Note(std::format("briefing: the hold starts, {} s before the load", TestBriefingSeconds));
             MCHdArt::TraceNote("briefing: the hold starts");
@@ -241,7 +251,6 @@ namespace
         }
 
         // Once: a later scenario of the run loads at once.
-        constexpr double BytesPerMb = 1024.0 * 1024.0;
         TestBriefingSeconds = 0;
         MCFrameLog::Note(std::format("briefing: Launch, {:.1f} MB held, {} reads",
                                      static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb, MCHdArt::HeldReads()));
@@ -373,6 +382,12 @@ auto MCMission::ReadLists(MCFitIniFile& file, bool campaign, bool readInDemo) ->
     }
 
     return ReadNameList(file, "Scenario", numScenarios, Scenarios);
+}
+
+auto StartMissionHold(const std::string& mission) -> void
+{
+    MCHdArt::StartBriefingHold(mission, MCHdArt::BriefingFolders(mission), MCSceneLights::ReliefMapsOn());
+    MCFilesAhead::ReadPiecesAhead(MCHdArt::MissionFilePieces(mission));
 }
 
 namespace
@@ -971,6 +986,8 @@ auto MCMission::StartScenario(std::string_view name) -> void
 {
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
+    // The mission's own name, kept: a campaign's load reads its logistics' copy of the file ("bridge").
+    const std::string missionName = scenarioName;
 
     // Port-only: the last mission's held art let go of before this one's load reads (MCHdArt::StartHold); this one's,
     // held since its briefing (SPEC-memory.md's "From the briefing", MCHdArt::StartBriefingHold), kept for its load.
@@ -1030,13 +1047,39 @@ auto MCMission::StartScenario(std::string_view name) -> void
     // Port: the scenario's windows are made at the window's size.
     MCFollowWindowSize();
 
-    if (const int32_t result = Scenario()->Load(scenarioName); result != 0)
     {
-        Fatal(result, " Couldnt init scenario ");
+        // Port-only (SPEC-memory.md's "From the briefing"): the pieces of the game folder's files this load reads.
+        struct MCNotePieces
+        {
+            MCNotePieces() { MCFilesAhead::StartNotingPieces(); }
+            ~MCNotePieces() { MCFilesAhead::StopNotingPieces(); }
+            MCNotePieces(const MCNotePieces&) = delete;
+            MCNotePieces& operator=(const MCNotePieces&) = delete;
+        };
+
+        const MCNotePieces noting;
+
+        if (const int32_t result = Scenario()->Load(scenarioName); result != 0)
+        {
+            Fatal(result, " Couldnt init scenario ");
+        }
     }
+
+    // Port-only (SPEC-memory.md's "The mission's manifest"): what this load handed the hold, kept as the mission's
+    // list for its next briefing, so a mission the program has no list for (a mod's, a multiplayer map, one made in the
+    // editor) is held from its second play on; and the pieces of the game's files it read, which its briefing reads
+    // ahead from then on (what's still being read ahead of this load is of no more use).
+    if (MCHdArt::NumberedFolders())
+    {
+        MCHdArt::KeepHoldList(missionName, Scenario()->HoldList(scenarioName).Folders);
+    }
+
+    MCFilesAhead::ForgetPieces();
+    MCHdArt::KeepFilePieces(missionName, MCFilesAhead::NotedPieces());
 
     StartInterface();
     LoadWindowStatus();
+    PrepareOpeningView();
     ScenarioResult = 0;
     State = MCMissionState::Scenario;
     WaitTimer = WaitTime;
@@ -1072,8 +1115,77 @@ auto MCMission::StartInterface() -> void
         mission->ResultsScreen->KeepPicturesForEnd();
     }
 
+    // Port-only (SPEC-first-use.md: HD craters and footprints): theirs, read at the load, kept from here too.
+    if (MCGameContext::Current().HasCraterManager())
+    {
+        CraterManager().KeepHdArtForMission();
+    }
+
     // Port-only (SPEC-memory.md's fill): the mission's art was held under the loading bar (MCHdArt::StartLoadFill); the
     // hold goes on holding the archives the mission opens in play.
+}
+
+auto MCMission::PrepareOpeningView() -> void
+{
+    const std::shared_ptr<MCCamera> eye = Eye();
+
+    if (eye == nullptr || !MCHdArt::NumberedFolders())
+    {
+        return;
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    eye->FollowViewSize();
+
+    {
+        const MCHdArt::MCOpeningViewAsks asking;
+
+        // Every object looked at (FindIf finds none).
+        ObjectList()->FindIf(
+            [&eye](MCBaseObject& object)
+            {
+                if (const std::shared_ptr<MCAppearance> appearance = object.GetAppearance();
+                    appearance != nullptr && !appearance->Owner.expired() &&
+                    MCAppearance::NearView(appearance->GetScreenPos(*eye), *eye))
+                {
+                    appearance->ReadAhead();
+                }
+
+                return false;
+            });
+    }
+
+    MCHdArt::WaitForLoadReads();
+    const std::vector<std::shared_ptr<const MCHdArt::Frame>> frames = MCHdArt::KeepOpeningView();
+    size_t bytes = 0;
+
+    for (const std::shared_ptr<const MCHdArt::Frame>& frame : frames)
+    {
+        bytes += MCHdArt::ColorsOf(*frame).size() + frame->Indices.size();
+    }
+
+    // Their pictures made and sent up now, shown nowhere, rather than in play's first frame.
+    size_t onGpu = 0;
+
+    if (const std::shared_ptr<MCRenderer> hardware = MCRenderer::Hardware();
+        hardware != nullptr && MCRenderer::GpuDrawing() == MCGpuDrawing::On)
+    {
+        onGpu = hardware->PrepareHdPictures(frames);
+
+        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr && onGpu > 0)
+        {
+            if (const std::expected<void, std::string> ran = display->RunRecorded(); !ran)
+            {
+                SDL_Log("MCMission: the opening view's %zu HD pictures didn't go up before play: %s", onGpu,
+                        ran.error().c_str());
+            }
+        }
+    }
+
+    MCFrameLog::Note(
+        std::format("the opening view: {} HD frames read ({:.1f} MB), {} on the GPU, {:.1f} ms", frames.size(),
+                    static_cast<double>(bytes) / BytesPerMb, onGpu,
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()));
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void
@@ -1144,6 +1256,7 @@ auto MCMission::CloseResultsScreen() -> void
     // HD pictures; near black the game's thread makes the screens from them. A launcher's match ends at its results
     // (KillTheGame), at once as the original's.
     const std::function<void()> wayBack = EndScenarioLeavingWayBack();
+    LetGoHoldUnlessKept();
 
     if (wayBack == nullptr)
     {
@@ -1180,7 +1293,15 @@ auto MCMission::CloseResultsScreen() -> void
     if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
     {
         MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+        // Port-only (SPEC-memory.md's "From the briefing": between missions): the next mission's hold from now, as its
+        // briefing would start it: a loss's replay keeps what's held, a win's next lets go of the last mission's first.
+        StartMissionHold(Scenarios[*briefed]);
     }
+
+    // Port-only (SPEC-first-use.md's "Between missions"): the screens' whole set of HD pictures read ahead from the click
+    // too, after the briefing's map: the briefing, or a match's games screen and its room (the rematch's, or the next
+    // one made), finds its own at its first draw. Logistics' start asks again (MCLogistics::MakeAhead), for nothing.
+    GuiSystem().ReadMenuSetAhead();
 
     FadeOutWhile(back);
 }
@@ -1208,6 +1329,19 @@ auto MCMission::BriefedAfterResults() const -> std::optional<size_t>
     return briefed;
 }
 
+auto MCMission::KeepsHoldPastEnd() const -> bool
+{
+    return MultiPlayer() != nullptr ? MCRoomEnd::RematchAfterMatch() : BriefedAfterResults().has_value();
+}
+
+auto MCMission::LetGoHoldUnlessKept() const -> void
+{
+    if (!KeepsHoldPastEnd())
+    {
+        MCHdArt::LetGoHold();
+    }
+}
+
 auto MCMission::StartLogistics() -> MCLogistics&
 {
     MCPort::GetSystemTime(_LogisticsStart);
@@ -1218,7 +1352,10 @@ auto MCMission::StartLogistics() -> MCLogistics&
 
 auto MCMission::EndScenario() -> void
 {
-    if (const std::function<void()> wayBack = EndScenarioLeavingWayBack(); wayBack != nullptr)
+    const std::function<void()> wayBack = EndScenarioLeavingWayBack();
+    LetGoHoldUnlessKept();
+
+    if (wayBack != nullptr)
     {
         wayBack();
     }
@@ -1259,8 +1396,9 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
         MCGameContext::Current().SetScenario(nullptr);
     }
 
-    // Port-only: the mission's held art let go of (MCHdArt::StartHold).
-    MCHdArt::LetGoHold();
+    // Port-only (SPEC-memory.md's "Between missions"): the mission's held art isn't let go of here; the caller lets go of
+    // it unless a mission plays next whose briefing or room takes it (KeepsHoldPastEnd; MCHdArt::StartBriefingHold lets
+    // go of another mission's): a loss replays the same mission, a rematch the same map.
 
     // Port-only: each way back to logistics is returned to be done by the caller (EndScenario at once).
     if (ScenarioResult > 3)

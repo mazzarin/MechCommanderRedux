@@ -255,6 +255,7 @@ namespace
                 _Looked = true;
                 _DeviceName = std::string(deviceName);
                 ComPtr<IDXGIAdapter3> found = AdapterNamed(deviceName);
+                _OwnBytes = OwnBytesOf(found.Get());
                 std::scoped_lock lock(_AdapterLock);
                 _Adapter = std::move(found);
             }
@@ -284,8 +285,10 @@ namespace
                 return std::nullopt;
             }
 
-            return MCMemoryRoom::MCCard{
-                .Budget = local.Budget, .Used = local.CurrentUsage, .SharesMemory = borrowed.Budget == 0};
+            return MCMemoryRoom::MCCard{.Budget = local.Budget,
+                                        .Used = local.CurrentUsage,
+                                        .SharesMemory = borrowed.Budget == 0,
+                                        .OwnBytes = _OwnBytes};
         }
 
         std::optional<MCMemoryLedger::MCProcessFigures> Process() override
@@ -329,6 +332,30 @@ namespace
         {
             std::scoped_lock lock(_AdapterLock);
             return _Adapter;
+        }
+
+        /// <summary>
+        /// The memory of <paramref name="adapter"/>'s own, as DXGI describes it (its dedicated video memory); none for no
+        /// adapter, one that can't be described, or none of its own.
+        /// </summary>
+        std::optional<uint64_t> OwnBytesOf(IDXGIAdapter1* adapter)
+        {
+            DXGI_ADAPTER_DESC1 description{};
+
+            if (adapter == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            if (const HRESULT described = adapter->GetDesc1(&description); FAILED(described))
+            {
+                LogOnce(_DescriptionLogged, std::format("HD caches: DXGI can't describe \"{}\"'s adapter (0x{:08x})",
+                                                        _DeviceName, static_cast<uint32_t>(described)));
+                return std::nullopt;
+            }
+
+            return description.DedicatedVideoMemory > 0 ? std::optional<uint64_t>(description.DedicatedVideoMemory)
+                                                        : std::nullopt;
         }
 
         /// <summary>Logs <paramref name="text"/> unless <paramref name="logged"/> says it was, which it then does.</summary>
@@ -479,9 +506,10 @@ namespace
         MCKernelHandle _Low;
         MCKernelHandle _High;
         bool _Short = false;
-        /// <summary>The device looked for (once a name), and its adapter (null: none).</summary>
+        /// <summary>The device looked for (once a name), its adapter's own memory, and its adapter (null: none).</summary>
         bool _Looked = false;
         std::string _DeviceName;
+        std::optional<uint64_t> _OwnBytes;
         /// <summary>
         /// The adapter found, under its lock: Card (the renderer's reader) sets it, Process (the frame log's line) reads
         /// it, on threads that needn't be one.
@@ -489,6 +517,7 @@ namespace
         std::mutex _AdapterLock;
         ComPtr<IDXGIAdapter3> _Adapter;
         bool _QueryLogged = false;
+        bool _DescriptionLogged = false;
         bool _NotificationLogged = false;
         bool _ProcessLogged = false;
         /// <summary>

@@ -4,6 +4,7 @@
 #if defined(__APPLE__)
 #include "shaders/composite.msl.h"
 #include "shaders/composite_bright.msl.h"
+#include "shaders/composite_crowns.msl.h"
 #include "shaders/composite_dry.msl.h"
 #include "shaders/composite_field.msl.h"
 #include "shaders/composite_puddle.msl.h"
@@ -16,6 +17,8 @@
 #include "shaders/draw_stands.msl.h"
 #include "shaders/draw_terrain.msl.h"
 #include "shaders/draw_terrain_stands.msl.h"
+#include "shaders/draw_trees.msl.h"
+#include "shaders/draw_trees_stands.msl.h"
 #include "shaders/ground.msl.h"
 #include "shaders/ground_stands.msl.h"
 #include "shaders/hdcoverage.msl.h"
@@ -28,6 +31,7 @@
 #else
 #include "shaders/composite.spv.h"
 #include "shaders/composite_bright.spv.h"
+#include "shaders/composite_crowns.spv.h"
 #include "shaders/composite_dry.spv.h"
 #include "shaders/composite_field.spv.h"
 #include "shaders/composite_puddle.spv.h"
@@ -40,6 +44,8 @@
 #include "shaders/draw_stands.spv.h"
 #include "shaders/draw_terrain.spv.h"
 #include "shaders/draw_terrain_stands.spv.h"
+#include "shaders/draw_trees.spv.h"
+#include "shaders/draw_trees_stands.spv.h"
 #include "shaders/ground.spv.h"
 #include "shaders/ground_stands.spv.h"
 #include "shaders/hdcoverage.spv.h"
@@ -57,6 +63,7 @@ namespace MCVulkanShaders
     const MCShaderInfo Composite{MCShader::Composite, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositeBright{MCShader::CompositeBright, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositeField{MCShader::CompositeField, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
+    const MCShaderInfo CompositeCrowns{MCShader::CompositeCrowns, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositeDry{MCShader::CompositeDry, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositePuddle{MCShader::CompositePuddle, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo CompositeUnspecked{MCShader::CompositeUnspecked, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers,
@@ -66,12 +73,14 @@ namespace MCVulkanShaders
     const MCShaderInfo DrawBasicFragment{MCShader::DrawBasic, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTerrainFragment{MCShader::DrawTerrain, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawHdFragment{MCShader::DrawHd, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
-    const MCShaderInfo GroundFragment{MCShader::Ground, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
+    const MCShaderInfo GroundFragment{MCShader::Ground, SDL_GPU_SHADERSTAGE_FRAGMENT, GroundSamplers, 1};
     const MCShaderInfo DrawStandsFragment{MCShader::DrawStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawBasicStandsFragment{MCShader::DrawBasicStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTerrainStandsFragment{MCShader::DrawTerrainStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawHdStandsFragment{MCShader::DrawHdStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
-    const MCShaderInfo GroundStandsFragment{MCShader::GroundStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
+    const MCShaderInfo DrawTreesFragment{MCShader::DrawTrees, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo DrawTreesStandsFragment{MCShader::DrawTreesStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo GroundStandsFragment{MCShader::GroundStands, SDL_GPU_SHADERSTAGE_FRAGMENT, GroundSamplers, 1};
     const MCShaderInfo MovieFragment{MCShader::Movie, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
     const MCShaderInfo HdCoverageFragment{MCShader::HdCoverage, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1};
     const MCShaderInfo TerrainVertex{MCShader::Terrain, SDL_GPU_SHADERSTAGE_VERTEX, 1, 1, 2};
@@ -122,6 +131,12 @@ namespace MCVulkanShaders
                 return "draw_hd_stands";
             case MCShader::GroundStands:
                 return "ground_stands";
+            case MCShader::DrawTrees:
+                return "draw_trees";
+            case MCShader::DrawTreesStands:
+                return "draw_trees_stands";
+            case MCShader::CompositeCrowns:
+                return "composite_crowns";
         }
 
         return {};
@@ -173,6 +188,12 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(draw_hd_stands);
             case MCShader::GroundStands:
                 return MC_BUILT_IN_SHADER(ground_stands);
+            case MCShader::DrawTrees:
+                return MC_BUILT_IN_SHADER(draw_trees);
+            case MCShader::DrawTreesStands:
+                return MC_BUILT_IN_SHADER(draw_trees_stands);
+            case MCShader::CompositeCrowns:
+                return MC_BUILT_IN_SHADER(composite_crowns);
         }
 
         return {};

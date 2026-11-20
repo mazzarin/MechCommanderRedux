@@ -127,7 +127,7 @@ namespace MCTest
         std::vector<std::reference_wrapper<ExpectAssert>>& open = State().ExpectedAsserts;
         std::erase_if(open, [this](const ExpectAssert& expected) { return &expected == this; });
 
-        if (_Seen == _Count)
+        if (_Count == AnyCount || _Seen == _Count)
         {
             ReportPass();
         }

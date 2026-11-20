@@ -1430,16 +1430,15 @@ auto MCMechRepairBlock::PaintDiagram(MCLogPort& port, int32_t top, int32_t xPos)
             RepairShade(PercentLeft(mech->Internals[location].CurArmor, mech->Internals[location].MaxArmor));
     }
 
+    // Port: drawn through each table itself, never a copy set as the lookaside (VfxShapeTranslateDraw).
     for (int32_t table = 0; table < 5; ++table)
     {
-        VfxShapeLookaside(InternalShadeTable(table));
-
         for (int32_t location = 0; location < 8; ++location)
         {
             if (shade[static_cast<size_t>(location)] == table)
             {
                 VfxShapeTranslateDraw(port.Frame(), GlobalLog()->MechRepShapes[mech->NameIndex].Bytes(), location + 0xb,
-                                      xPos, top + 8);
+                                      xPos, top + 8, InternalShadeTable(table));
             }
         }
     }
@@ -1451,14 +1450,12 @@ auto MCMechRepairBlock::PaintDiagram(MCLogPort& port, int32_t top, int32_t xPos)
 
     for (int32_t table = 0; table < 5; ++table)
     {
-        VfxShapeLookaside(ArmorShadeTable(table));
-
         for (int32_t location = 0; location < 8; ++location)
         {
             if (shade[static_cast<size_t>(location)] == table)
             {
                 VfxShapeTranslateDraw(port.Frame(), GlobalLog()->MechRepShapes[mech->NameIndex].Bytes(), location, xPos,
-                                      top + 8);
+                                      top + 8, ArmorShadeTable(table));
             }
         }
     }

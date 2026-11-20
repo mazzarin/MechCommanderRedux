@@ -21,6 +21,7 @@
 #include "network/MCRejoinNote.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCFileSystem.h"
+#include "sprite/MCHdArt.h"
 
 namespace
 {
@@ -449,6 +450,17 @@ namespace
     }
 
     /// <summary>
+    /// The guest's wait for its host's room is over without it (ShowJoinFailed's <paramref name="text"/>). Port-only
+    /// (SPEC-memory.md's "Between missions"): no match plays next, so a rematch's held art is let go of.
+    /// </summary>
+    void GiveUpHostWait(std::string_view text)
+    {
+        HostWait.reset();
+        MCHdArt::LetGoHold();
+        ShowJoinFailed(text);
+    }
+
+    /// <summary>
     /// Port (Redux HD): an internet guest's try at its host's code: the service's answer and the link, across frames,
     /// before the room is looked for over it. Whether the link is open; otherwise the next try is set.
     /// </summary>
@@ -494,8 +506,7 @@ namespace
             {
                 SDL_Log("Lobby updates: the host's game didn't come back");
                 manager.EndInternet();
-                HostWait.reset();
-                ShowJoinFailed(MCLobbyUpdate::RejoinFailedText(MCRoomRefusal::Gone));
+                GiveUpHostWait(MCLobbyUpdate::RejoinFailedText(MCRoomRefusal::Gone));
             }
 
             return;
@@ -542,8 +553,7 @@ namespace
         if (tried == MCLobbyJoin::Refused && manager.LastRoomRefusal == MCRoomRefusal::Lacks)
         {
             SDL_Log("Lobby updates: the host's room refused this game: it lacks %s", manager.RefusalReason().c_str());
-            HostWait.reset();
-            ShowJoinFailed(MCLobbyUpdate::RejoinFailedText(MCRoomRefusal::Lacks));
+            GiveUpHostWait(MCLobbyUpdate::RejoinFailedText(MCRoomRefusal::Lacks));
             return;
         }
 
@@ -563,8 +573,7 @@ namespace
         const MCRoomRefusal refusal = manager.LobbyRoomRefusal();
         SDL_Log("Lobby updates: the host's room didn't come back");
         manager.EndInternet();
-        HostWait.reset();
-        ShowJoinFailed(MCLobbyUpdate::RejoinFailedText(refusal));
+        GiveUpHostWait(MCLobbyUpdate::RejoinFailedText(refusal));
     }
 
     /// <summary>

@@ -6,7 +6,8 @@ namespace
 {
     /// <summary>
     /// The system asked (none: nothing reported), and the generation of AskAgain readers compare; the machine and card
-    /// planned as (-hdmemory, -hdcard; none: the machine's own); the card a reader last read, for the ledger's line.
+    /// planned as (-hdmemory, -hdcard; none: the machine's own); the card a reader last read, for the ledger's line; the
+    /// readers made, and the newest living one's number (0: none) and device, for DrawnCard.
     /// </summary>
     struct MCRoomState
     {
@@ -16,6 +17,9 @@ namespace
         std::optional<uint64_t> MachineBytes;
         std::optional<uint64_t> CardBytes;
         std::optional<MCMemoryRoom::MCCard> LastCard;
+        uint64_t Readers = 0;
+        uint64_t DrawnReader = 0;
+        std::string DrawnDevice;
     };
 
     MCRoomState& TheState()
@@ -37,6 +41,15 @@ namespace
         MCRoomState& state = TheState();
         std::scoped_lock lock(state.Lock);
         return state.System;
+    }
+
+    /// <summary>
+    /// <paramref name="card"/>, unless it says it gives the game nothing (DXGI's local budget can read 0): a card the
+    /// system can't speak for.
+    /// </summary>
+    std::optional<MCMemoryRoom::MCCard> Spoken(std::optional<MCMemoryRoom::MCCard> card)
+    {
+        return card.has_value() && card->Budget > 0 ? card : std::nullopt;
     }
 }
 
@@ -164,9 +177,47 @@ uint64_t MCMemoryRoom::CardRoom(const MCCard& card, uint64_t held)
     return given > card.Used ? given - card.Used : 0;
 }
 
+std::optional<MCMemoryRoom::MCCard> MCMemoryRoom::DrawnCard()
+{
+    MCRoomState& state = TheState();
+    std::shared_ptr<MCSystem> system;
+    std::string device;
+
+    {
+        std::scoped_lock lock(state.Lock);
+
+        if (state.DrawnReader == 0)
+        {
+            return std::nullopt;
+        }
+
+        system = state.System;
+        device = state.DrawnDevice;
+    }
+
+    return system != nullptr ? Spoken(system->Card(device)) : std::nullopt;
+}
+
 MCMemoryRoom::MCReader::MCReader(std::string deviceName, MCClock now)
     : _DeviceName(std::move(deviceName)), _Now(std::move(now))
 {
+    MCRoomState& state = TheState();
+    std::scoped_lock lock(state.Lock);
+    _Number = ++state.Readers;
+    state.DrawnReader = _Number;
+    state.DrawnDevice = _DeviceName;
+}
+
+MCMemoryRoom::MCReader::~MCReader()
+{
+    MCRoomState& state = TheState();
+    std::scoped_lock lock(state.Lock);
+
+    if (state.DrawnReader == _Number)
+    {
+        state.DrawnReader = 0;
+        state.DrawnDevice.clear();
+    }
 }
 
 MCMemoryRoom::MCFrameRoom MCMemoryRoom::MCReader::Frame(uint64_t held)
@@ -180,14 +231,9 @@ MCMemoryRoom::MCFrameRoom MCMemoryRoom::MCReader::Frame(uint64_t held)
     {
         _Asked = asked;
         _NextRead = now + CardReadInterval;
-        _Card = system != nullptr ? system->Card(_DeviceName) : std::nullopt;
-
-        // A card that says it gives the game nothing (DXGI's local budget can read 0) is one the system can't speak for:
-        // taken as over its budget, every frame would be short and the hold given back.
-        if (_Card.has_value() && _Card->Budget == 0)
-        {
-            _Card = std::nullopt;
-        }
+        // A card that says it gives the game nothing is one the system can't speak for: taken as over its budget, every
+        // frame would be short and the hold given back.
+        _Card = system != nullptr ? Spoken(system->Card(_DeviceName)) : std::nullopt;
 
         MCRoomState& state = TheState();
         std::scoped_lock lock(state.Lock);

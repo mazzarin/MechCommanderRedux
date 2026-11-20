@@ -36,6 +36,8 @@
 #include "sprite/MCShapeFile.h"
 
 bool LeaveSwoopyOff = false;
+int GHdSmoothCamera = 0;
+int GHdSmoothMotion = 0;
 auto PauseShape() -> MCRegisteredBlock&
 {
     static MCNeverDestroyed<MCRegisteredBlock> shape;
@@ -159,6 +161,23 @@ MCCamera::~MCCamera()
 auto MCCamera::GetPosition() const -> MCVector3D
 {
     return Position;
+}
+
+auto MCCamera::FollowViewSize() -> void
+{
+    if (_View == nullptr)
+    {
+        return;
+    }
+
+    const MCPane& surface = _View->WorldFrame();
+    const auto surfaceWidth = static_cast<float>(surface.X1 - surface.X0);
+    const auto surfaceHeight = static_cast<float>(surface.Y1 - surface.Y0);
+
+    if (surfaceWidth != ViewWidth || surfaceHeight != ViewHeight)
+    {
+        SetViewSize(surfaceWidth, surfaceHeight);
+    }
 }
 
 auto MCCamera::SetViewSize(float width, float height) -> void
@@ -536,14 +555,7 @@ auto MCCamera::Update() -> void
     if (_View != nullptr)
     {
         _View->EaseZoom();
-        const MCPane& surface = _View->WorldFrame();
-        const auto surfaceWidth = static_cast<float>(surface.X1 - surface.X0);
-        const auto surfaceHeight = static_cast<float>(surface.Y1 - surface.Y0);
-
-        if (surfaceWidth != ViewWidth || surfaceHeight != ViewHeight)
-        {
-            SetViewSize(surfaceWidth, surfaceHeight);
-        }
+        FollowViewSize();
     }
 
     MCVector3D newPosition = Position;
@@ -721,6 +733,20 @@ auto MCCamera::Update() -> void
     if (Terrain() != nullptr)
     {
         ScreenUL = MCTerrain::ProjectTerrain(Position);
+        ScreenULFraction = {};
+
+        if (MCSmoothCamera())
+        {
+            const MCVector2D exact = MCTerrain::ProjectTerrainUnrounded(Position);
+            const auto steps = [](float past)
+            {
+                constexpr int32_t Most = MCDrawnGrid::FractionSteps - 1;
+                const auto rounded = static_cast<int32_t>(std::lround(past * MCDrawnGrid::FractionSteps));
+                return std::clamp(rounded, -Most, Most);
+            };
+
+            ScreenULFraction = {steps(exact.X - ScreenUL.X), steps(exact.Y - ScreenUL.Y)};
+        }
     }
 
     TargetChanged = false;
@@ -739,7 +765,13 @@ auto MCCamera::Render() -> void
     if (_View != nullptr)
     {
         GlobalPane = _View->SharedWorldFrame();
-        MCOverlay = MCOverlayTarget{_View->FramePane, _View->WorldScaleX(), _View->WorldScaleY()};
+        // Port-only (HDSmoothCamera): the world's picture moved by the camera's fraction past ScreenUL, taken off.
+        constexpr auto steps = static_cast<float>(MCDrawnGrid::FractionSteps);
+        MCOverlay = MCOverlayTarget{
+            _View->FramePane,
+            _View->WorldScaleX(),
+            _View->WorldScaleY(),
+            {static_cast<float>(-ScreenULFraction[0]) / steps, static_cast<float>(-ScreenULFraction[1]) / steps}};
     }
 
     const std::shared_ptr<MCTerrainWindow> terrainWindow = TerrainWindow.lock();

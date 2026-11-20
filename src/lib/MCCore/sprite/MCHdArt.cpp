@@ -573,15 +573,28 @@ namespace
     };
 
     /// <summary>
+    /// Port-only (MCHdArt::StartHold): an archive for the hold to read, and the pieces of it to keep, in the order they
+    /// lie: the ground's frames asked for by name (HoldGround: terrain.hda's, relief.hda's and overlays.hda's, whose own
+    /// pieces the hold keeps none of, as they hold every map's); none for the pieces the archive keeps
+    /// (MCFastFile::HoldPiece::Kept).
+    /// </summary>
+    struct HoldItem
+    {
+        std::shared_ptr<MCHdArchive> Archive;
+        std::vector<uint32_t> Pieces;
+    };
+
+    /// <summary>
     /// Port-only (MCHdArt::StartHold, SPEC-pack-v2.md's Memory): the hold: whether it holds now (a mission's, until let
-    /// go), the archives it reads in turn (each it keeps any of once while it holds, MCHdArchive::HoldBytes: Queued), the
-    /// first one's next piece to look at, its generation (a run read across a let-go keeps nothing), how many reads it
-    /// made, and when it began.
+    /// go), the archives it reads in turn (each it keeps any of once while it holds, MCHdArchive::HoldBytes: Queued; the
+    /// ground's pieces by name once each, PiecesQueued), the first one's next piece to look at (an index into its Pieces
+    /// when it names them), its generation (a run read across a let-go keeps nothing), how many reads it made, and when it
+    /// began.
     /// </summary>
     struct HoldQueue
     {
         bool On = false;
-        std::deque<std::shared_ptr<MCHdArchive>> Archives;
+        std::deque<HoldItem> Archives;
         std::unordered_set<std::shared_ptr<MCHdArchive>> Queued;
         /// <summary>
         /// Port-only (MCHdArt::FillGpu): every archive handed it while it holds, kept or not (Full, none of it kept), and
@@ -589,6 +602,14 @@ namespace
         /// </summary>
         std::unordered_set<std::shared_ptr<MCHdArchive>> Handed;
         uint64_t HandedGpuBytes = 0;
+        std::unordered_map<std::shared_ptr<MCHdArchive>, std::unordered_set<uint32_t>> PiecesQueued;
+        /// <summary>Port-only (MCHdArt::Manifest): each archive queued, whole or its pieces, once, in turn.</summary>
+        std::vector<std::shared_ptr<MCHdArchive>> Taken;
+        /// <summary>
+        /// Port-only (SPEC-memory.md's ground, HoldGround): the ground's frames asked for by name while their archives
+        /// open, by the archive's path (KeyOfPath), queued as it opens (QueueHold).
+        /// </summary>
+        std::unordered_map<PathKey, std::vector<uint64_t>> GroundAsked;
         uint32_t NextStream = 0;
         uint64_t Generation = 0;
         size_t Reads = 0;
@@ -823,6 +844,12 @@ namespace
         /// </summary>
         std::vector<uint64_t> ShapeHashesToRead;
         /// <summary>
+        /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): whether an MCHdArt::MCOpeningViewAsks
+        /// lives, and the folders asked for under it as the load's reads (MCHdArt::KeepOpeningView gives their frames).
+        /// </summary>
+        bool OpeningView = false;
+        std::unordered_set<uint32_t> OpeningFolders;
+        /// <summary>
         /// Port-only (SPEC-memory.md's "From the briefing": a mission's list): whether a load's fill runs
         /// (MCHdArt::StartLoadFill to MCHdArt::FinishLoadFill), and the pack's folders it handed the hold meanwhile, each
         /// once, in the order handed (NoteLoadFolder: MCHdArt::LoadFolders), its keys in LoadFolderKeys.
@@ -832,6 +859,17 @@ namespace
         bool RecordingLoad = false;
         std::vector<std::filesystem::path> LoadFolders;
         std::unordered_set<std::string> LoadFolderKeys;
+        /// <summary>
+        /// Port-only (MCHdArt::Manifest): the players' mechs' folders the hold was handed for its mission
+        /// (MCHdArt::HoldMechAhead), each once; whether the players' part is final (the load began); and the manifest's
+        /// changes. The game's thread's.
+        /// </summary>
+        std::vector<std::filesystem::path> ManifestPlayers;
+        std::unordered_set<std::string> ManifestPlayerKeys;
+        /// <summary>Port-only (MCHdArt::Manifest): the mission's own folders its briefing's hold was handed.</summary>
+        std::vector<std::string> ManifestFolders;
+        bool ManifestFinal = false;
+        uint64_t ManifestGeneration = 0;
         std::unordered_map<FrameKey, Cached, FrameKeyHash> Frames;
         /// <summary>The keys of the frames held (those in Frames with one), least recently used first.</summary>
         std::list<FrameKey> Order;
@@ -1448,6 +1486,7 @@ namespace
 
     void QueueHold(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive);
     bool HoldsArchive(const MCHdArchive& archive);
+    bool IsHashName(std::string_view name);
 
     /// <summary>
     /// Port-only (SPEC-memory.md's "From the briefing": a mission's list): notes <paramref name="folder"/> (one of the
@@ -1504,9 +1543,10 @@ namespace
 
         found->second = std::move(*archive);
 
-        // Port-only: one opened while a mission's art is held is held too (MCHdArt::StartHold).
+        // Port-only: one opened while a mission's art is held is held too (MCHdArt::StartHold), and is the manifest's.
         if (found->second != nullptr)
         {
+            ++TheState().ManifestGeneration;
             ReadAhead& ahead = TheState().Ahead;
             std::scoped_lock lock(ahead.Lock);
             QueueHold(ahead, found->second);
@@ -1534,10 +1574,13 @@ namespace
         {
             if (std::shared_ptr<MCHdArchive> archive = ArchiveFor(at); archive != nullptr)
             {
-                // Port-only (MCHdArt::LoadFolders): a folder of frames the load draws or reads ahead, its archive held.
+                // Port-only (MCHdArt::LoadFolders): a folder of frames the load draws or reads ahead, its archive held; one
+                // named by a hash as its archive's folder, which any of them opens (each shape's hash names one of
+                // shapes').
                 if (HoldsArchive(*archive))
                 {
-                    NoteLoadFolder(folder.Path.lexically_relative(pack));
+                    const bool hashed = at != folder.Path && IsHashName(folder.Path.filename().generic_string());
+                    NoteLoadFolder((hashed ? at : folder.Path).lexically_relative(pack));
                 }
 
                 found.Archive = std::move(archive);
@@ -1869,6 +1912,27 @@ namespace
     std::string HashName(uint64_t hash)
     {
         return std::format("{:016x}", hash);
+    }
+
+    /// <summary>Port-only: <paramref name="name"/>'s hash when it's one a hash gives (HashName); none otherwise.</summary>
+    std::optional<uint64_t> HashOfName(std::string_view name)
+    {
+        uint64_t hash = 0;
+
+        if (name.size() != HashNameDigits)
+        {
+            return std::nullopt;
+        }
+
+        const std::from_chars_result parsed =
+            std::from_chars(name.data(), name.data() + name.size(), hash, HashNameBase);
+        return parsed.ec == std::errc() && parsed.ptr == name.data() + name.size() ? std::optional(hash) : std::nullopt;
+    }
+
+    /// <summary>Port-only: whether <paramref name="name"/> is one a hash gives (HashName).</summary>
+    bool IsHashName(std::string_view name)
+    {
+        return HashOfName(name).has_value();
     }
 
     /// <summary>The index of the folder at <paramref name="path"/> in State::Folders (added the first time).</summary>
@@ -3409,7 +3473,7 @@ namespace
 
     /// <summary>
     /// Port-only (HoldRun): a run of an archive's pieces (MCFastFile::HoldPiece) for the hold to read: the first, one past
-    /// the last, and the bytes they span.
+    /// the last, the bytes they span, and the stored bytes of those it keeps (the bar counts them: MCHdArt::LoadFillShare).
     /// </summary>
     struct HoldSpan
     {
@@ -3418,6 +3482,7 @@ namespace
         uint32_t End = 0;
         uint64_t Start = 0;
         uint64_t Stop = 0;
+        uint64_t Kept = 0;
     };
 
     /// <summary>
@@ -3443,6 +3508,77 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (MCHdArt::Manifest, MCHdArt::FillGpu): the bytes <paramref name="file"/>'s pieces the hold keeps take
+    /// unpacked: its frames' pictures as the GPU takes them (BC7 colours and indices).
+    /// </summary>
+    uint64_t UnpackedKept(const MCFastFile& file)
+    {
+        uint64_t bytes = 0;
+
+        for (uint32_t piece = 0; piece < file.HoldPieceCount(); ++piece)
+        {
+            const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
+            bytes += facts.Kept ? facts.Unpacked : 0;
+        }
+
+        return bytes;
+    }
+
+    /// <summary>Port-only (MCHdArt::StartHold): the stored bytes of the pieces the hold keeps from first to end.</summary>
+    uint64_t KeptBytes(const MCFastFile& file, uint32_t first, uint32_t end)
+    {
+        uint64_t bytes = 0;
+
+        for (uint32_t piece = first; piece < end; ++piece)
+        {
+            const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
+            bytes += facts.Kept ? facts.Stored : 0;
+        }
+
+        return bytes;
+    }
+
+    /// <summary>
+    /// Port-only (TakeHoldRun, SPEC-memory.md's ground): takes the hold's next run of the first archive's pieces named
+    /// (HoldItem::Pieces), from its next one on: those lying no further than MCHdArt::ReaderRunGap past the bytes
+    /// before, while they lie in <paramref name="most"/> bytes (a larger one alone), and what lies between them; the
+    /// archive leaves the queue with its last one. Call with ReadAhead::Lock held, the first archive's pieces named.
+    /// </summary>
+    HoldSpan TakeNamedRun(HoldQueue& holding, uint64_t most)
+    {
+        const HoldItem& item = holding.Archives.front();
+        const MCFastFile& file = *item.Archive->File;
+        size_t at = holding.NextStream;
+        const MCFastFile::HoldPiece head = file.HoldPieceAt(item.Pieces[at]);
+        HoldSpan span{item.Archive, item.Pieces[at], item.Pieces[at] + 1, head.At, head.At + head.Stored, head.Stored};
+
+        for (++at; at < item.Pieces.size(); ++at)
+        {
+            const MCFastFile::HoldPiece next = file.HoldPieceAt(item.Pieces[at]);
+            const uint64_t nextEnd = next.At + next.Stored;
+
+            if (next.At > span.Stop + MCHdArt::ReaderRunGap || std::max(span.Stop, nextEnd) - span.Start > most)
+            {
+                break;
+            }
+
+            span.End = item.Pieces[at] + 1;
+            span.Stop = std::max(span.Stop, nextEnd);
+            span.Kept += next.Stored;
+        }
+
+        holding.NextStream = static_cast<uint32_t>(at);
+
+        if (at == item.Pieces.size())
+        {
+            holding.Archives.pop_front();
+            holding.NextStream = 0;
+        }
+
+        return span;
+    }
+
+    /// <summary>
     /// Port-only (HoldRun): takes the hold's next run: the first archive's pieces it keeps from its next one on, in the
     /// order they lie, none further than MCHdArt::ReaderRunGap past the bytes before, while they lie in
     /// MCHdArt::HoldRunBytes, or MCHdArt::BriefingRunBytes behind a briefing (a larger one alone; a version 1 entry stored
@@ -3456,7 +3592,13 @@ namespace
 
         while (!holding.Archives.empty())
         {
-            const std::shared_ptr<MCHdArchive> archive = holding.Archives.front();
+            // Port-only (SPEC-memory.md's ground): an archive's pieces named (HoldItem::Pieces), read as its own are.
+            if (!holding.Archives.front().Pieces.empty())
+            {
+                return TakeNamedRun(holding, most);
+            }
+
+            const std::shared_ptr<MCHdArchive> archive = holding.Archives.front().Archive;
             const MCFastFile& file = *archive->File;
             const uint32_t count = file.HoldPieceCount();
             const uint32_t first = NextHeldPiece(file, holding.NextStream);
@@ -3497,25 +3639,11 @@ namespace
 
             if (first < count)
             {
-                return HoldSpan{archive, first, last, start, end};
+                return HoldSpan{archive, first, last, start, end, KeptBytes(file, first, last)};
             }
         }
 
         return std::nullopt;
-    }
-
-    /// <summary>Port-only (MCHdArt::StartHold): the stored bytes of the pieces the hold keeps from first to end.</summary>
-    uint64_t KeptBytes(const MCFastFile& file, uint32_t first, uint32_t end)
-    {
-        uint64_t bytes = 0;
-
-        for (uint32_t piece = first; piece < end; ++piece)
-        {
-            const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
-            bytes += facts.Kept ? facts.Stored : 0;
-        }
-
-        return bytes;
     }
 
     /// <summary>
@@ -3708,7 +3836,7 @@ namespace
         // The bar's share (MCHdArt::LoadFillShare) counts the run's pieces as read, held or not, so it ends.
         if (holding.Generation == holdGeneration)
         {
-            holding.ReadBytes += KeptBytes(file, run->First, run->End);
+            holding.ReadBytes += run->Kept;
         }
 
         if (readWhole && ahead.Generation == generation && holding.On && holding.Generation == holdGeneration)
@@ -3726,32 +3854,18 @@ namespace
 
         // Kept only for the hold's next run of the same archive: the hold reads every archive once, so its handles kept
         // among the idle would close the readers' (GiveBack's least recently given back), which they read again.
-        const bool again = !holding.Archives.empty() && holding.Archives.front() == run->Archive;
+        const bool again = !holding.Archives.empty() && holding.Archives.front().Archive == run->Archive;
         GiveBack(ahead, lock, std::move(handle), readWhole && again, generation);
     }
 
     void StartReaders(ReadAhead& ahead);
 
-    /// <summary>
-    /// Port-only (MCHdArt::FillGpu): the bytes <paramref name="file"/>'s pieces the hold keeps take unpacked: its frames'
-    /// pictures as the GPU takes them (BC7 colours and indices), the mission's share of the GPU's room.
-    /// </summary>
-    uint64_t UnpackedKept(const MCFastFile& file)
-    {
-        uint64_t bytes = 0;
-
-        for (uint32_t piece = 0; piece < file.HoldPieceCount(); ++piece)
-        {
-            const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
-            bytes += facts.Kept ? facts.Unpacked : 0;
-        }
-
-        return bytes;
-    }
+    void QueueHoldPieces(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive, std::span<const uint64_t> keys);
 
     /// <summary>
     /// Port-only (MCHdArt::StartHold): has the hold read <paramref name="archive"/>, while it holds, once, if it keeps
-    /// any of it (HoldsArchive). Call with ReadAhead::Lock held.
+    /// any of it (HoldsArchive), and the ground's frames asked for of it by name (HoldGround). Call with ReadAhead::Lock
+    /// held.
     /// </summary>
     void QueueHold(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive)
     {
@@ -3767,17 +3881,93 @@ namespace
             holding.HandedGpuBytes += UnpackedKept(*archive->File);
         }
 
-        if (holding.Full || !HoldsArchive(*archive) || !holding.Queued.insert(archive).second)
+        if (holding.Full)
+        {
+            return;
+        }
+
+        // Port-only (SPEC-memory.md's ground): the ground's frames asked for by name while it opened (HoldGround).
+        if (auto asked = holding.GroundAsked.extract(KeyOfPath(archive->Path)); !asked.empty())
+        {
+            QueueHoldPieces(ahead, archive, asked.mapped());
+        }
+
+        if (!HoldsArchive(*archive) || !holding.Queued.insert(archive).second)
         {
             return;
         }
 
         // Port-only (SPEC-memory.md's fill): its bytes counted to read, for the loading bar (MCHdArt::LoadFillShare).
         holding.QueuedBytes += archive->HoldBytes;
-        holding.Archives.push_back(archive);
+        holding.Archives.push_back(HoldItem{archive, {}});
+        holding.Taken.push_back(archive);
         StopGpuRoomWaits(ahead);
         StartReaders(ahead);
         ahead.Changed.notify_all();
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's ground, HoldGround): has the hold read the pieces of <paramref name="archive"/> that
+    /// hold the frames <paramref name="keys"/> names (a hashed folder's, MCHdArt::TerrainTileKey's), those it hasn't
+    /// queued already while it holds, while it holds; a name the archive lacks is passed by. Call with ReadAhead::Lock
+    /// held: an archive's table never changes once read.
+    /// </summary>
+    void QueueHoldPieces(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive, std::span<const uint64_t> keys)
+    {
+        HoldQueue& holding = ahead.Holding;
+        const MCFastFile& file = *archive->File;
+        const auto [at, fresh] = holding.PiecesQueued.try_emplace(archive);
+        std::unordered_set<uint32_t>& queued = at->second;
+        HoldItem item{archive, {}};
+
+        if (fresh)
+        {
+            holding.Taken.push_back(archive);
+        }
+
+        for (const uint64_t key : keys)
+        {
+            const std::optional<int32_t> index = file.Find(HashName(key) + std::string(HdfExtension));
+            const std::optional<uint32_t> piece = index.has_value() ? file.PieceOf(*index) : std::nullopt;
+
+            if (piece.has_value() && queued.insert(*piece).second)
+            {
+                item.Pieces.push_back(*piece);
+            }
+        }
+
+        if (item.Pieces.empty())
+        {
+            return;
+        }
+
+        // In the order they lie, so a run reads neighbours together (TakeHoldRun).
+        std::ranges::sort(item.Pieces);
+
+        for (const uint32_t piece : item.Pieces)
+        {
+            holding.QueuedBytes += file.HoldPieceAt(piece).Stored;
+        }
+
+        holding.Archives.push_back(std::move(item));
+        StartReaders(ahead);
+        ahead.Changed.notify_all();
+    }
+
+    /// <summary>
+    /// Port-only (BeginHolding, StopHolding): the hold forgets what it was to read and what it was handed: its archives
+    /// to read, those queued, the ground asked for, and the bytes counted for the bar. Call with ReadAhead::Lock held.
+    /// </summary>
+    void ForgetHoldQueue(HoldQueue& holding)
+    {
+        holding.Archives.clear();
+        holding.Queued.clear();
+        holding.PiecesQueued.clear();
+        holding.Taken.clear();
+        holding.GroundAsked.clear();
+        holding.NextStream = 0;
+        holding.QueuedBytes = 0;
+        holding.ReadBytes = 0;
     }
 
     /// <summary>
@@ -3794,11 +3984,7 @@ namespace
 
         holding.On = true;
         holding.Full = false;
-        holding.Archives.clear();
-        holding.Queued.clear();
-        holding.NextStream = 0;
-        holding.QueuedBytes = 0;
-        holding.ReadBytes = 0;
+        ForgetHoldQueue(holding);
         holding.Began = std::chrono::steady_clock::now();
     }
 
@@ -3811,13 +3997,9 @@ namespace
     {
         HoldQueue& holding = ahead.Holding;
         holding.On = false;
-        holding.Archives.clear();
-        holding.Queued.clear();
+        ForgetHoldQueue(holding);
         holding.Handed.clear();
         holding.HandedGpuBytes = 0;
-        holding.NextStream = 0;
-        holding.QueuedBytes = 0;
-        holding.ReadBytes = 0;
         holding.Loading = false;
         holding.Full = false;
         holding.Mission.clear();
@@ -5692,10 +5874,11 @@ void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
 
     State& state = TheState();
 
-    // Port-only (MCHdArt::LoadFolders): the folders of the types a load makes, among those it hands the hold.
+    // Port-only (MCHdArt::LoadFolders): the folders of the types a load makes, among those it hands the hold; a hashed
+    // one (a shape table's) as its parent, whose archive any of them opens.
     for (const std::filesystem::path& folder : folders)
     {
-        NoteLoadFolder(folder);
+        NoteLoadFolder(IsHashName(folder.filename().generic_string()) ? folder.parent_path() : folder);
     }
 
     const std::filesystem::path pack = PackFolder();
@@ -6102,13 +6285,26 @@ void MCHdArt::ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as)
         return;
     }
 
-    AskAhead(PacketAsks(packets), KindOf(as), RoomIn(RoomFor(as)));
+    State& state = TheState();
+    // Port-only (the opening view, MCOpeningViewAsks): what's drawn now is the load's, its folders noted.
+    const ReadAs asked = state.OpeningView && as == ReadAs::Soon ? ReadAs::Load : as;
+
+    if (state.OpeningView && asked == ReadAs::Load)
+    {
+        for (const PacketAhead& packet : packets)
+        {
+            state.OpeningFolders.insert(FolderIndex(PackFolder() / packet.Folder, Naming::Number));
+        }
+    }
+
+    AskAhead(PacketAsks(packets), KindOf(asked), RoomIn(RoomFor(asked)));
 }
 
 void MCHdArt::ReadPacketAhead(const std::filesystem::path& folder, std::optional<int32_t> frames)
 {
     const std::array<PacketAhead, 1> packet{{{folder, frames, false}}};
-    ReadPacketsAhead(packet, ReadAs::Set);
+    // Port-only (the opening view, MCOpeningViewAsks): an object's packet the first frames draw is the load's.
+    ReadPacketsAhead(packet, TheState().OpeningView ? ReadAs::Load : ReadAs::Set);
 }
 
 namespace
@@ -6211,13 +6407,8 @@ size_t MCHdArt::ReadMenuSetAhead()
             continue;
         }
 
-        const std::string_view hex = name.substr(prefix.size(), HashNameDigits);
-        uint64_t hash = 0;
-
-        if (const std::from_chars_result parsed =
-                std::from_chars(hex.data(), hex.data() + hex.size(), hash, HashNameBase);
-            parsed.ec == std::errc() && parsed.ptr == hex.data() + hex.size() &&
-            !AheadHas(ahead, FrameKey{menus, hash}))
+        if (const std::optional<uint64_t> hash = HashOfName(name.substr(prefix.size(), HashNameDigits));
+            hash.has_value() && !AheadHas(ahead, FrameKey{menus, *hash}))
         {
             // The readers take them in this order while they fit the room (ExpandAsks): so many bytes are asked for.
             const size_t size = entry.Bytes;
@@ -6228,7 +6419,7 @@ size_t MCHdArt::ReadMenuSetAhead()
             }
 
             bytes += size;
-            asks.push_back(FrameAsk{menus, hash, 0, 0});
+            asks.push_back(FrameAsk{menus, *hash, 0, 0});
         }
     }
 
@@ -6308,11 +6499,58 @@ void MCHdArt::KeepReadAhead()
     }
 }
 
+MCHdArt::MCOpeningViewAsks::MCOpeningViewAsks()
+{
+    // A pass that never reached KeepOpeningView (an earlier mission's, cut short) leaves no folders to this one.
+    State& state = TheState();
+    state.OpeningFolders.clear();
+    state.OpeningView = true;
+}
+
+MCHdArt::MCOpeningViewAsks::~MCOpeningViewAsks()
+{
+    TheState().OpeningView = false;
+}
+
+std::vector<std::shared_ptr<const MCHdArt::Frame>> MCHdArt::KeepOpeningView()
+{
+    KeepReadAhead();
+    State& state = TheState();
+    std::vector<std::shared_ptr<const Frame>> frames;
+
+    for (const auto& [key, cached] : state.Frames)
+    {
+        if (cached.Frame != nullptr && cached.Undrawn && state.OpeningFolders.contains(key.Folder))
+        {
+            frames.push_back(cached.Frame);
+        }
+    }
+
+    state.OpeningFolders.clear();
+    return frames;
+}
+
 void MCHdArt::KeepPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height, Frame&& frame)
 {
     auto kept = std::make_shared<Frame>(std::move(frame));
     kept->Id = NewFrameId();
     TheState().KeptPictures.insert_or_assign(PictureHash(pixels, width, height), std::move(kept));
+}
+
+namespace
+{
+    /// <summary>
+    /// Port-only (MCHdArt::KeepForMission, MCHdArt::KeepShapesForMission): marks the cached frame
+    /// <paramref name="key"/> kept for the mission (Cached::ForMission), once.
+    /// </summary>
+    void KeepCachedForMission(State& state, const FrameKey& key)
+    {
+        if (Cached& cached = state.Frames.at(key); !cached.ForMission)
+        {
+            cached.ForMission = true;
+            state.ForMission.push_back(key);
+        }
+    }
 }
 
 size_t MCHdArt::KeepForMission(std::span<const PictureAhead> pictures)
@@ -6348,10 +6586,48 @@ size_t MCHdArt::KeepForMission(std::span<const PictureAhead> pictures)
             continue;
         }
 
-        if (Cached& cached = state.Frames.at(key); !cached.ForMission)
+        KeepCachedForMission(state, key);
+    }
+
+    return KeptForMissionBytes();
+}
+
+size_t MCHdArt::KeepShapesForMission(std::span<const std::vector<uint8_t>> tables)
+{
+    if (!Active())
+    {
+        return 0;
+    }
+
+    State& state = TheState();
+
+    for (const std::vector<uint8_t>& table : tables)
+    {
+        const MCOptionalRef<const Sequence> sequence = AttachedSequence(table);
+
+        if (!sequence.has_value())
         {
-            cached.ForMission = true;
-            state.ForMission.push_back(key);
+            continue;
+        }
+
+        const uint32_t folder = sequence->get().Folder;
+        const int32_t frames = FramesIn(table);
+
+        // Each frame found as its draw finds it (Find: checked against its bounds), none when the pack lacks it.
+        for (int32_t frame = 0; frame < frames; ++frame)
+        {
+            if (!MCVfxHasShape(table, frame))
+            {
+                continue;
+            }
+
+            const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+            const FrameKey key{folder, NumberedKey(frame, 0)};
+
+            if (Cache(key, static_cast<int32_t>(bounds.Width), static_cast<int32_t>(bounds.Height), frames) != nullptr)
+            {
+                KeepCachedForMission(state, key);
+            }
         }
     }
 
@@ -6577,12 +6853,36 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainReliefByKey(uint64_t k
     return FindKeyed(ReliefFolder, key, width, height);
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only (SPEC-memory.md's ground by name): notes the ground's frames <paramref name="frames"/> of
+    /// <paramref name="folder"/> (TerrainFolder's, OverlayFolder's) among the pack's folders the load handed the hold
+    /// (MCHdArt::LoadFolders), each as its folder and name (<c>terrain/&lt;hash&gt;</c>), which a briefing holds by
+    /// name (MCHdArt::StartBriefingHold).
+    /// </summary>
+    void NoteLoadGround(std::string_view folder, std::span<const MCHdArt::GroundAhead> frames)
+    {
+        if (!TheState().RecordingLoad)
+        {
+            return;
+        }
+
+        for (const MCHdArt::GroundAhead& frame : frames)
+        {
+            NoteLoadFolder(std::filesystem::path(folder) / HashName(GroundKeyOf(frame)));
+        }
+    }
+}
+
 void MCHdArt::ReadGroundAhead(std::span<const GroundAhead> tiles, bool relief)
 {
     if (!Active() || tiles.empty())
     {
         return;
     }
+
+    NoteLoadGround(TerrainFolder, tiles);
 
     // Each tile's relief map after the tiles (another archive), within the cache's budget: a load reads the ground
     // whole, and the frames past it are read as the load finds them.
@@ -6611,6 +6911,8 @@ void MCHdArt::ReadOverlaysAhead(std::span<const GroundAhead> overlays)
     {
         return;
     }
+
+    NoteLoadGround(OverlayFolder, overlays);
 
     const uint32_t folder = FolderIndex(PackFolder() / OverlayFolder, Naming::Hash);
     std::vector<FrameAsk> asks;
@@ -7248,7 +7550,7 @@ namespace
             std::scoped_lock lock(ahead.Lock);
             const HoldQueue& holding = ahead.Holding;
             const bool held = !holding.On || holding.Full || !holding.Queued.contains(archive) ||
-                              std::ranges::find(holding.Archives, archive) == holding.Archives.end();
+                              std::ranges::find(holding.Archives, archive, &HoldItem::Archive) == holding.Archives.end();
             return held ? Next::Ask : Next::Wait;
         };
 
@@ -7314,6 +7616,9 @@ void MCHdArt::StartLoadFill(std::string_view mission)
     state.GpuGround = GroundState::Waiting;
     state.GpuUpAtLoad = state.GpuUp;
     state.GpuPagesMeasured = false;
+    // Every player's mechs are in once the load begins (MCHdArt::Manifest).
+    state.ManifestFinal = true;
+    ++state.ManifestGeneration;
 
     {
         ReadAhead& ahead = state.Ahead;
@@ -7468,6 +7773,13 @@ void MCHdArt::LetGoHold()
         DropGpuReads(ahead);
     }
 
+    // The manifest goes with the hold (MCHdArt::Manifest).
+    state.ManifestPlayers.clear();
+    state.ManifestPlayerKeys.clear();
+    state.ManifestFolders.clear();
+    state.ManifestFinal = false;
+    ++state.ManifestGeneration;
+
     {
         std::scoped_lock lock(ahead.Lock);
 
@@ -7504,7 +7816,75 @@ bool MCHdArt::BriefingHoldWanted()
     return HoldWanted() && !TheState().BriefingHoldOff;
 }
 
-void MCHdArt::StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders)
+namespace
+{
+    /// <summary>
+    /// Port-only (SPEC-memory.md's ground): the ground's frame a list's line names (a hold list's
+    /// <c>terrain/&lt;hash&gt;</c> or <c>overlays/&lt;hash&gt;</c>: NoteLoadGround), its archive's folder and its key;
+    /// none for any other folder.
+    /// </summary>
+    std::optional<std::pair<std::string_view, uint64_t>> GroundNameOf(const std::filesystem::path& folder)
+    {
+        constexpr size_t GroundNameParts = 2;
+        const std::vector<std::filesystem::path> parts(folder.begin(), folder.end());
+
+        if (parts.size() != GroundNameParts)
+        {
+            return std::nullopt;
+        }
+
+        const std::string kind = parts[0].generic_string();
+        const std::optional<uint64_t> key = HashOfName(parts[1].generic_string());
+
+        if ((kind != MCHdArt::TerrainFolder && kind != MCHdArt::OverlayFolder) || !key.has_value())
+        {
+            return std::nullopt;
+        }
+
+        return std::pair{kind == MCHdArt::TerrainFolder ? MCHdArt::TerrainFolder : MCHdArt::OverlayFolder, *key};
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's ground): has the hold read the ground's frames <paramref name="names"/> (keys by the
+    /// folder of their archive: terrain.hda's, relief.hda's, overlays.hda's), the pieces of those archives that hold
+    /// them and no others: at once for an archive open already, else as the readers open it (QueueHold).
+    /// </summary>
+    void HoldGround(const std::map<std::string_view, std::vector<uint64_t>>& names)
+    {
+        const std::filesystem::path pack = MCHdArt::PackFolder();
+        State& state = TheState();
+        std::vector<std::filesystem::path> toOpen;
+
+        {
+            ReadAhead& ahead = state.Ahead;
+            std::scoped_lock lock(ahead.Lock);
+
+            for (const auto& [folder, keys] : names)
+            {
+                const std::filesystem::path at = pack / folder;
+
+                if (const auto known = state.Archives.find(KeyOfPath(at)); known != state.Archives.end())
+                {
+                    if (known->second != nullptr)
+                    {
+                        QueueHoldPieces(ahead, known->second, keys);
+                    }
+
+                    continue;
+                }
+
+                std::vector<uint64_t>& asked =
+                    ahead.Holding.GroundAsked[KeyOfPath(std::filesystem::path(at).concat(ArchiveExtension))];
+                asked.insert(asked.end(), keys.begin(), keys.end());
+                toOpen.emplace_back(folder);
+            }
+        }
+
+        MCHdArt::OpenArchivesAhead(toOpen);
+    }
+}
+
+void MCHdArt::StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders, bool relief)
 {
     if (!Active() || !BriefingHoldWanted() || mission.empty())
     {
@@ -7526,8 +7906,41 @@ void MCHdArt::StartBriefingHold(std::string_view mission, std::span<const std::f
         holding.Briefing = !holding.Loading;
     }
 
+    // The manifest's mission part (MCHdArt::Manifest): the players' kept for the same mission, gone with another's.
+    State& state = TheState();
+    ++state.ManifestGeneration;
+    state.ManifestFolders.clear();
+
+    for (const std::filesystem::path& folder : folders)
+    {
+        state.ManifestFolders.push_back(folder.generic_string());
+    }
+
+    // Port-only (SPEC-memory.md's ground): the ground's frames by name, only their pieces of the ground's archives, and
+    // with relief maps each tile's beside it; the other folders' archives whole.
+    std::map<std::string_view, std::vector<uint64_t>> ground;
+    std::vector<std::filesystem::path> archives;
+
+    for (const std::filesystem::path& folder : folders)
+    {
+        if (const auto name = GroundNameOf(folder); name.has_value())
+        {
+            ground[name->first].push_back(name->second);
+
+            if (relief && name->first == TerrainFolder)
+            {
+                ground[ReliefFolder].push_back(name->second);
+            }
+        }
+        else
+        {
+            archives.push_back(folder);
+        }
+    }
+
     // Their archives held as the readers open them (QueueHold), or at once when open already.
-    OpenArchivesAhead(folders);
+    OpenArchivesAhead(archives);
+    HoldGround(ground);
 }
 
 bool MCHdArt::HoldsFor(std::string_view mission)
@@ -7545,6 +7958,44 @@ std::vector<std::filesystem::path> MCHdArt::LoadFolders()
 
 namespace
 {
+    /// <summary>
+    /// Port-only (sprite/MCHoldLists.h, SPEC-memory.md's ground by name): adds to <paramref name="folders"/> the ground's
+    /// frames <paramref name="listed"/>'s load asked for, as a learned list names them (<c>terrain/&lt;hash&gt;</c>,
+    /// <c>overlays/&lt;hash&gt;</c>: NoteLoadGround), from the slots of its tile set the table marks; none when the set
+    /// isn't among those in use (MCGroundNamesInUse), whose ground the load reads.
+    /// </summary>
+    void HoldListGround(const MCHoldLists::Mission& listed, std::vector<std::filesystem::path>& folders)
+    {
+        const std::span<const MCKnownGroundNames> sets = MCGroundNamesInUse();
+        const auto set = std::ranges::find(sets, listed.GroundSet, &MCKnownGroundNames::FilesHash);
+
+        if (listed.GroundSet == 0 || set == sets.end())
+        {
+            return;
+        }
+
+        constexpr int32_t BitsAWord = 64;
+        const auto add = [&](std::span<const uint64_t> marked, std::string_view folder,
+                             std::optional<MCGroundName> MCGroundSlotNames::* name)
+        {
+            for (int32_t slot = 0; slot < set->Slots && slot / BitsAWord < std::ssize(marked); ++slot)
+            {
+                if (((marked[static_cast<size_t>(slot / BitsAWord)] >> (slot % BitsAWord)) & 1) == 0)
+                {
+                    continue;
+                }
+
+                if (const std::optional<MCGroundName> named = set->At(slot).*name; named.has_value())
+                {
+                    folders.push_back(std::filesystem::path(folder) / HashName(named->Key));
+                }
+            }
+        };
+
+        add(listed.Tiles, MCHdArt::TerrainFolder, &MCGroundSlotNames::Tile);
+        add(listed.Overlays, MCHdArt::OverlayFolder, &MCGroundSlotNames::Overlay);
+    }
+
     /// <summary>Port-only (sprite/MCHoldLists.h): the pack's folders a list of the program's names.</summary>
     std::vector<std::filesystem::path> HoldListFolders(std::span<const uint16_t> indices)
     {
@@ -7560,21 +8011,172 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The mission's manifest"): the user folder's folder of the hold lists the missions'
+    /// loads learned (MCHdArt::KeepHoldList), a file each, named by the mission in lower case.
+    /// </summary>
+    constexpr std::string_view LearnedListsFolder = "hold-lists";
+    constexpr std::string_view LearnedListSuffix = ".txt";
+    /// <summary>The pieces of the game folder's files the load read (MCHdArt::KeepFilePieces), beside its list.</summary>
+    constexpr std::string_view LearnedPiecesSuffix = ".files.txt";
+
+    std::filesystem::path LearnedListPath(std::string_view mission, std::string_view suffix = LearnedListSuffix)
+    {
+        std::string name(mission);
+        std::ranges::transform(name, name.begin(),
+                               [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+        return MCFileSystem::UserRoot() / LearnedListsFolder / MCFileSystem::FromUtf8(name + std::string(suffix));
+    }
+
+    /// <summary>
+    /// Writes <paramref name="text"/> as <paramref name="mission"/>'s learned <paramref name="what"/> at
+    /// <paramref name="path"/>: written whole, then put in place, so a list is never read half written.
+    /// </summary>
+    void KeepLearned(std::string_view mission, std::string_view what, const std::filesystem::path& path,
+                     std::string_view text)
+    {
+        std::filesystem::path written = path;
+        written += ".new";
+        std::error_code error;
+        std::filesystem::create_directories(path.parent_path(), error);
+
+        if (error)
+        {
+            SDL_Log("HD art: the %s of %s not kept: its folder %s couldn't be made (%s)", std::string(what).c_str(),
+                    std::string(mission).c_str(), MCFileSystem::ToUtf8(path.parent_path()).c_str(),
+                    error.message().c_str());
+            return;
+        }
+
+        {
+            std::ofstream out(written, std::ios::binary | std::ios::trunc);
+            out << text;
+
+            if (!out.flush())
+            {
+                SDL_Log("HD art: the %s of %s not kept: %s couldn't be written", std::string(what).c_str(),
+                        std::string(mission).c_str(), MCFileSystem::ToUtf8(written).c_str());
+                return;
+            }
+        }
+
+        std::filesystem::rename(written, path, error);
+
+        if (error)
+        {
+            SDL_Log("HD art: the %s of %s not kept: %s couldn't replace %s (%s)", std::string(what).c_str(),
+                    std::string(mission).c_str(), MCFileSystem::ToUtf8(written).c_str(),
+                    MCFileSystem::ToUtf8(path).c_str(), error.message().c_str());
+        }
+    }
+
+    /// <summary>The list <paramref name="mission"/>'s last load learned, a folder a line; none when it has none.</summary>
+    std::vector<std::filesystem::path> LearnedFolders(std::string_view mission)
+    {
+        std::vector<std::filesystem::path> folders;
+        std::ifstream file(LearnedListPath(mission), std::ios::binary);
+
+        for (std::string line; std::getline(file, line);)
+        {
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.pop_back();
+            }
+
+            // A list from another program's file (a user's edit) names only folders under the pack.
+            if (const std::filesystem::path folder = MCFileSystem::FromUtf8(line);
+                !line.empty() && folder.is_relative() && !line.contains(".."))
+            {
+                folders.push_back(folder);
+            }
+        }
+
+        return folders;
+    }
+}
+
 std::vector<std::filesystem::path> MCHdArt::BriefingFolders(std::string_view mission)
 {
+    // The mission's last load's list first: a mod's or another mission without a list in the program's table, or a
+    // stock one a mod changed.
+    if (std::vector<std::filesystem::path> learned = LearnedFolders(mission); !learned.empty())
+    {
+        return learned;
+    }
+
     const auto found = std::ranges::find_if(MCHoldLists::Missions, [mission](const MCHoldLists::Mission& listed)
                                             { return MCIEquals(listed.Name, mission); });
-    return found != MCHoldLists::Missions.end() ? HoldListFolders(found->Folders)
-                                                : std::vector<std::filesystem::path>();
+
+    if (found == MCHoldLists::Missions.end())
+    {
+        return {};
+    }
+
+    std::vector<std::filesystem::path> folders = HoldListFolders(found->Folders);
+    HoldListGround(*found, folders);
+    return folders;
 }
 
-std::vector<std::filesystem::path> MCHdArt::ChassisFolders(uint32_t chassis)
+void MCHdArt::KeepHoldList(std::string_view mission, std::span<const std::string> folders)
 {
-    const auto found = std::ranges::find(MCHoldLists::Mechs, chassis, &MCHoldLists::Chassis::Number);
-    return found != MCHoldLists::Mechs.end() ? HoldListFolders(found->Folders) : std::vector<std::filesystem::path>();
+    if (mission.empty() || folders.empty())
+    {
+        return;
+    }
+
+    std::string text;
+
+    for (const std::string& folder : folders)
+    {
+        text += folder + '\n';
+    }
+
+    KeepLearned(mission, "hold list", LearnedListPath(mission), text);
 }
 
-void MCHdArt::HoldMechAhead(uint32_t chassis)
+std::vector<MCFilesAhead::MCFilePiece> MCHdArt::MissionFilePieces(std::string_view mission)
+{
+    // The mission's last load's first, as its list's (BriefingFolders).
+    if (std::ifstream file(LearnedListPath(mission, LearnedPiecesSuffix), std::ios::binary); file)
+    {
+        const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+
+        if (std::vector<MCFilesAhead::MCFilePiece> learned = MCFilesAhead::PiecesOfText(text); !learned.empty())
+        {
+            return learned;
+        }
+    }
+
+    const auto found = std::ranges::find_if(MCHoldLists::Missions, [mission](const MCHoldLists::Mission& listed)
+                                            { return MCIEquals(listed.Name, mission); });
+    std::vector<MCFilesAhead::MCFilePiece> pieces;
+
+    if (found == MCHoldLists::Missions.end())
+    {
+        return pieces;
+    }
+
+    for (const MCHoldLists::Piece& piece : found->Pieces)
+    {
+        pieces.push_back(MCFilesAhead::MCFilePiece{
+            .File = std::string(MCHoldLists::Files[piece.File]), .Offset = piece.Offset, .Bytes = piece.Bytes});
+    }
+
+    return pieces;
+}
+
+void MCHdArt::KeepFilePieces(std::string_view mission, const std::vector<MCFilesAhead::MCFilePiece>& pieces)
+{
+    if (!mission.empty() && !pieces.empty())
+    {
+        KeepLearned(mission, "files' pieces", LearnedListPath(mission, LearnedPiecesSuffix),
+                    MCFilesAhead::PiecesText(pieces));
+    }
+}
+
+void MCHdArt::HoldMechAhead(std::span<const std::filesystem::path> folders)
 {
     if (!Active() || !HoldWanted())
     {
@@ -7592,7 +8194,104 @@ void MCHdArt::HoldMechAhead(uint32_t chassis)
         }
     }
 
-    OpenArchivesAhead(ChassisFolders(chassis));
+    // The manifest's players' part (MCHdArt::Manifest).
+    State& state = TheState();
+
+    for (const std::filesystem::path& folder : folders)
+    {
+        if (state.ManifestPlayerKeys.insert(folder.generic_string()).second)
+        {
+            state.ManifestPlayers.push_back(folder);
+            ++state.ManifestGeneration;
+        }
+    }
+
+    OpenArchivesAhead(folders);
+}
+
+namespace
+{
+    /// <summary>Whether <paramref name="folder"/> is <paramref name="archive"/>'s folder or lies under it.</summary>
+    bool Under(std::string_view folder, std::string_view archive)
+    {
+        return folder == archive ||
+               (folder.size() > archive.size() && folder.starts_with(archive) && folder[archive.size()] == '/');
+    }
+}
+
+MCHdArt::MissionManifest MCHdArt::Manifest()
+{
+    State& state = TheState();
+    MissionManifest manifest{.Generation = state.ManifestGeneration};
+    // Each archive the hold took: whole (no pieces), or the pieces its list names.
+    std::vector<std::pair<std::shared_ptr<MCHdArchive>, std::vector<uint32_t>>> taken;
+    bool opening = false;
+
+    {
+        ReadAhead& ahead = state.Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        const HoldQueue& holding = ahead.Holding;
+
+        if (!holding.On)
+        {
+            return manifest;
+        }
+
+        manifest.Mission = holding.Mission;
+        opening = !ahead.Opens.empty() || !ahead.Opening.empty() || !holding.GroundAsked.empty();
+
+        for (const std::shared_ptr<MCHdArchive>& archive : holding.Taken)
+        {
+            std::vector<uint32_t> pieces;
+
+            if (const auto named = holding.PiecesQueued.find(archive);
+                named != holding.PiecesQueued.end() && !holding.Queued.contains(archive))
+            {
+                pieces.assign(named->second.begin(), named->second.end());
+            }
+
+            taken.emplace_back(archive, std::move(pieces));
+        }
+    }
+
+    const std::filesystem::path pack = PackFolder();
+
+    for (const auto& [archive, pieces] : taken)
+    {
+        const MCFastFile& file = *archive->File;
+        std::filesystem::path folder = archive->Path.lexically_relative(pack);
+        folder.replace_extension();
+        ManifestEntry entry{.Folder = folder};
+
+        if (pieces.empty())
+        {
+            entry.Bytes = archive->HoldBytes;
+            entry.GpuBytes = UnpackedKept(file);
+            entry.Frames = static_cast<uint32_t>(file.GetEntries().size());
+        }
+        else
+        {
+            for (const uint32_t piece : pieces)
+            {
+                const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
+                entry.Bytes += facts.Stored;
+                entry.GpuBytes += facts.Unpacked;
+            }
+
+            entry.Frames = static_cast<uint32_t>(pieces.size());
+        }
+
+        // The players' part: an archive that only their mechs' folders lie under.
+        const std::string name = folder.generic_string();
+        const auto named = [&name](std::string_view listed) { return Under(listed, name); };
+        const bool players = std::ranges::any_of(state.ManifestPlayers, [&named](const std::filesystem::path& listed)
+                                                 { return named(listed.generic_string()); }) &&
+                             !std::ranges::any_of(state.ManifestFolders, named);
+        (players ? manifest.Players : manifest.Entries).push_back(std::move(entry));
+    }
+
+    manifest.Complete = state.ManifestFinal && !opening;
+    return manifest;
 }
 
 size_t MCHdArt::HeldReads()

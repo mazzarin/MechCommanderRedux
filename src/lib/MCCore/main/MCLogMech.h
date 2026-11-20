@@ -146,6 +146,11 @@ public:
     std::array<uint8_t, NumBodyLocations> HotSpotNumber{};
     /// <summary>The chassis battle rating.</summary>
     int32_t ChassisBR = 0;
+    /// <summary>
+    /// Port-only (SPEC-memory.md's manifest: the players' part): the HD pack's folders of the chassis's tree
+    /// (MechTreeFolders), worked out as the mech joins the list, which the briefing holds as it's placed.
+    /// </summary>
+    std::vector<std::filesystem::path> HdFolders;
     int32_t PilotModifier = 0;
     /// <summary>The condition from <see cref="CalcStatus"/>.</summary>
     float StatusValue = 0;

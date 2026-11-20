@@ -702,7 +702,9 @@ auto ScrollScreen() -> void
         // at 144 frames a second, and not at all past 360); the rest now carries into the next frame's step. Port: SCROLL
         // SPEED multiplies it.
         const float pace = FrameLength * 0x1.dffffep+3f * static_cast<float>(speed) * ScrollSpeedFactor() + ScrollCarry;
-        float step = std::trunc(pace);
+        // Port-only (HDSmoothCamera): the step keeps its fraction, so the view scrolls as far every frame (whole steps
+        // alternate, three and four at 120 frames a second), the camera's place between pixels shown.
+        float step = MCSmoothCamera() ? pace : std::trunc(pace);
         const float carry = pace - step;
 
         // Port: the same speed on the screen at any zoom (the world surface's pixels per screen pixel). The step

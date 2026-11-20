@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "main/MCLogMechList.h"
+#include "appear/MCAppearanceTypeList.h"
 #include "gui/MCScrollPane.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCMechInventoryBlock.h"
@@ -13,6 +14,7 @@
 #include "object/MCBattleMech.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCObjectTypeManager.h"
+#include "sprite/MCSpriteTree.h"
 
 MCLogMechList::~MCLogMechList()
 {
@@ -294,6 +296,7 @@ auto MCLogMechList::AddMech(MCFitIniFile& file, bool required, bool sorted, bool
     ReadKey(file, "Chassis", mech->Chassis, 7);
     mech->ChassisBR = file.Read<int32_t>("ChassisBR").value_or(100);
     ReadChassisInternals(*mech);
+    mech->HdFolders = MechTreeFolders(mech->Chassis);
     mech->Assigned = file.Read<bool>("Assigned").value_or(false);
     mech->Deployed = file.Read<bool>("Deployed").value_or(false);
     mech->Required = file.Read<bool>("Required").value_or(false);
@@ -568,4 +571,53 @@ auto MCLogMechList::SaveMechText(std::string_view fileName, int32_t index) const
     }
 
     return MCMissionLogisticsBridge::LogisticsMechProfileWriter(fileName, *mech, false);
+}
+
+auto MechTreeFolders(uint32_t chassis) -> std::vector<std::filesystem::path>
+{
+    // A mech chassis's packet: "ObjectClass"'s "ObjectTypeNum" (the original's BattleMech type class).
+    constexpr int32_t MechTypeClass = 2;
+    // A part's first packet's folder, as a mission's hold list names a mech's.
+    constexpr std::string_view FirstPacketFolder = "0";
+    MCPacketFile objects;
+    MCFitIniFile packet;
+
+    if (objects.Open(GamePath(ObjectPath, ObjectPakName)) != 0 ||
+        objects.SeekPacket(static_cast<int32_t>(chassis)) != 0 || objects.GetPacketSize() == 0 ||
+        packet.Open(objects, static_cast<uint32_t>(objects.GetPacketSize())) != 0 ||
+        packet.SeekBlock("ObjectClass") != 0 || packet.Read<int32_t>("ObjectTypeNum").value_or(-1) != MechTypeClass)
+    {
+        return {};
+    }
+
+    // The appearance its type would draw, read without making the type (a packet that won't make one stops the game).
+    const int32_t appearance =
+        packet.SeekBlock("ObjectType") == 0 ? packet.Read<int32_t>("Appearance").value_or(-1) : -1;
+    std::expected<std::unique_ptr<MCAppearanceTypeList>, std::string> appearances =
+        appearance >= 0 ? MCAppearanceTypeList::Create(MechSpriteFile)
+                        : std::unexpected(std::format("chassis {} has no appearance", chassis));
+
+    if (!appearances.has_value())
+    {
+        SDL_Log("Mech trees: chassis %u's HD folders not worked out: %s", chassis, appearances.error().c_str());
+        return {};
+    }
+
+    const auto tree =
+        std::dynamic_pointer_cast<MCSpriteTree>((*appearances)->GetAppearance(static_cast<uint32_t>(appearance)));
+
+    if (tree == nullptr)
+    {
+        SDL_Log("Mech trees: chassis %u's appearance %d isn't a mech's tree", chassis, appearance);
+        return {};
+    }
+
+    std::vector<std::filesystem::path> folders = tree->HdFolders(Use90PixelSprite != 0);
+
+    for (std::filesystem::path& folder : folders)
+    {
+        folder /= FirstPacketFolder;
+    }
+
+    return folders;
 }

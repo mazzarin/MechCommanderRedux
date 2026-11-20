@@ -470,6 +470,12 @@ struct MCTerrainFrame
     /// StepX, OriginY + (row + col) * StepY - e * ElevStep.</summary>
     int32_t OriginX = 0;
     int32_t OriginY = 0;
+    /// <summary>
+    /// Port-only (HDSmoothCamera): how far past the whole pixel the camera's place lies across and down
+    /// (MCCamera::ScreenULFraction, MCDrawnGrid::FractionSteps of a pixel), the window point of map vertex (0, 0)
+    /// unrounded being OriginX and OriginY less it; the surface's drawn grid moves the picture by it (MCDrawnGrid).
+    /// </summary>
+    std::array<int32_t, 2> OriginFraction{};
     int32_t StepX = 0;
     int32_t StepY = 0;
     int32_t ElevStep = 0;
@@ -599,14 +605,23 @@ struct MCUnderlay
 /// </summary>
 struct MCDrawnGrid
 {
+    /// <summary>Port-only (HDSmoothCamera): the steps a window pixel's fraction is counted in.</summary>
+    static constexpr int32_t FractionSteps = 256;
+
     /// <summary>
     /// The offset that puts window place <paramref name="origin"/> on a whole drawn pixel, G = round(origin D / W)
     /// (halves down): r = G W - origin D, in (-W/2, W/2], so every drawn pixel still shows a window pixel in [0, W).
     /// 0 where a window pixel is a whole number of drawn pixels.
+    /// <para>
+    /// Port-only (HDSmoothCamera): with a <paramref name="fraction"/> f (FractionSteps of a window pixel),
+    /// the place the camera puts the point at unrounded is origin - f, and G = round((origin - f) D / W): the picture,
+    /// drawn with the point at origin, moves by the camera's fraction rounded to whole drawn pixels, r in
+    /// (-W/2 - f D, W/2 - f D]. Past the window's edge it moves onto, the drawn pixels show no window pixel.
+    /// </para>
     /// </summary>
-    static int32_t Offset(int32_t origin, uint32_t window, uint32_t drawn);
+    static int32_t Offset(int32_t origin, uint32_t window, uint32_t drawn, int32_t fraction = 0);
     /// <summary>The whole drawn place G that <see cref="Offset"/> puts window place <paramref name="origin"/> on.</summary>
-    static int64_t Whole(int32_t origin, uint32_t window, uint32_t drawn);
+    static int64_t Whole(int32_t origin, uint32_t window, uint32_t drawn, int32_t fraction = 0);
     /// <summary>The window pixel drawn pixel <paramref name="drawnPixel"/>'s centre shows.</summary>
     static int32_t WindowPixel(int64_t drawnPixel, uint32_t window, uint32_t drawn, int32_t offset);
     /// <summary>The drawn pixel holding window pixel <paramref name="windowPixel"/>'s centre.</summary>
@@ -616,6 +631,12 @@ struct MCDrawnGrid
     /// (drawnPlace W - r) / D.
     /// </summary>
     static double WindowPlace(double drawnPlace, uint32_t window, uint32_t drawn, int32_t offset);
+    /// <summary>
+    /// The first and last drawn pixels that show a window pixel (one in [0, W)), within [0, D): every drawn pixel but
+    /// for a camera's fraction (<see cref="Offset"/>), which moves the picture off the window's edge, leaving a strip
+    /// past it that shows none. The world is shown there as its edge (shaders/composite.pshader's worldShowing).
+    /// </summary>
+    static std::array<int64_t, 2> Showing(uint32_t window, uint32_t drawn, int32_t offset);
 };
 
 /// <summary>
@@ -918,6 +939,30 @@ public:
     static std::optional<float> DrawingStanding();
 
     /// <summary>
+    /// Port-only (HDSmoothPlace): while one made with a fraction lives, the draws are placed that far past
+    /// the whole window pixel they are given (0 to 1, across and down): the hardware renderer moves them by it on a
+    /// surface drawn larger than its window (nothing in software, nor at 1:1). One made with none changes nothing.
+    /// </summary>
+    class SubPixelScope
+    {
+    public:
+        /// <summary>Starts drawing <paramref name="fraction"/> past the whole pixels (none: on them).</summary>
+        explicit SubPixelScope(std::optional<std::array<float, 2>> fraction);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~SubPixelScope();
+
+        SubPixelScope(const SubPixelScope&) = delete;
+        SubPixelScope& operator=(const SubPixelScope&) = delete;
+
+    private:
+        std::optional<std::array<float, 2>> _Was;
+    };
+
+    /// <summary>How far past their whole window pixels the draws now are placed (<see cref="SubPixelScope"/>).</summary>
+    static std::optional<std::array<float, 2>> DrawingSubPixel();
+
+    /// <summary>
     /// Port-only: while one lives, a frame is drawn as a rehearsal: the hardware renderer does everything a draw needs
     /// done first (its HD pictures found and read, its textures made, its pictures and sharp text and line art taken
     /// and queued to go up) and records no draw, so nothing it draws shows (the screen is drawn again before it's
@@ -1108,6 +1153,13 @@ public:
     /// (while a mission loads, MCTerrainUploadGround); a renderer that draws no terrain layer does nothing.
     /// </summary>
     virtual std::expected<void, std::string> PrepareTerrain(const MCTerrainMesh& mesh);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): puts <paramref name="frames"/>' pictures
+    /// on the GPU now, as their first draws would, their copies going with the next frame shown (a mission's load: its
+    /// bar's last); a renderer that draws no HD pictures does nothing. How many of them are on the GPU.
+    /// </summary>
+    virtual size_t PrepareHdPictures(std::span<const std::shared_ptr<const MCHdArt::Frame>> frames);
 
     // Shared state ----------------------------------------------------------------------------------------------
 

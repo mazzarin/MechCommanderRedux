@@ -35,16 +35,24 @@
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"
+#include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
+#include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "logistics/MCUnitLimits.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
+#include "network/MCMultiPlayer.h"
+#include "object/MCBattleMech.h"
+#include "object/MCObjectType.h"
+#include "network/MCRoomEnd.h"
 #include "platform/MCFileSystem.h"
 #include "sound/MCSoundSystem.h"
 #include "gui/MCGuiGlobals.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCHoldLists.h"
+#include "sprite/MCMechActor.h"
+#include "sprite/MCSpriteTree.h"
 #include "sprite/MCSceneLights.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCInput.h"
@@ -527,12 +535,26 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     const std::shared_ptr<MCLogMech> second = std::static_pointer_cast<MCLogMech>(*other);
 
     // Two chassis with a folder each of their own (in neither the mission's list nor the other's), and in the pack an
-    // archive for each of those folders.
-    const std::vector<std::filesystem::path> missionFolders = MCHdArt::BriefingFolders(mission);
-    const auto ownFolder = [&missionFolders](uint32_t chassis, uint32_t otherChassis)
+    // archive for each of those folders: every mech chassis in the object file, its folders worked out as a picked
+    // mech's are (MechTreeFolders).
+    std::map<uint32_t, std::vector<std::filesystem::path>> chassisFolders;
+    MCPacketFile objects;
+    REQUIRE_EQ(objects.Open(GamePath(ObjectPath, ObjectPakName)), 0);
+
+    for (int32_t number = 1; number < objects.GetNumPackets(); ++number)
     {
-        const std::vector<std::filesystem::path> folders = MCHdArt::ChassisFolders(chassis);
-        const std::vector<std::filesystem::path> others = MCHdArt::ChassisFolders(otherChassis);
+        if (std::vector<std::filesystem::path> folders = MechTreeFolders(static_cast<uint32_t>(number));
+            !folders.empty())
+        {
+            chassisFolders.emplace(static_cast<uint32_t>(number), std::move(folders));
+        }
+    }
+
+    const std::vector<std::filesystem::path> missionFolders = MCHdArt::BriefingFolders(mission);
+    const auto ownFolder = [&](uint32_t chassis, uint32_t otherChassis)
+    {
+        const std::vector<std::filesystem::path>& folders = chassisFolders.at(chassis);
+        const std::vector<std::filesystem::path>& others = chassisFolders.at(otherChassis);
         const auto found = std::ranges::find_if(
             folders, [&](const std::filesystem::path& folder)
             { return !std::ranges::contains(missionFolders, folder) && !std::ranges::contains(others, folder); });
@@ -542,17 +564,18 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     std::filesystem::path firstFolder;
     std::filesystem::path secondFolder;
 
-    for (const MCHoldLists::Chassis& a : MCHoldLists::Mechs)
+    for (const uint32_t a : std::views::keys(chassisFolders))
     {
-        for (const MCHoldLists::Chassis& b : MCHoldLists::Mechs)
+        for (const uint32_t b : std::views::keys(chassisFolders))
         {
-            if (firstFolder.empty() && a.Number != b.Number && !ownFolder(a.Number, b.Number).empty() &&
-                !ownFolder(b.Number, a.Number).empty())
+            if (firstFolder.empty() && a != b && !ownFolder(a, b).empty() && !ownFolder(b, a).empty())
             {
-                first->Chassis = a.Number;
-                second->Chassis = b.Number;
-                firstFolder = ownFolder(a.Number, b.Number);
-                secondFolder = ownFolder(b.Number, a.Number);
+                first->Chassis = a;
+                first->HdFolders = chassisFolders.at(a);
+                second->Chassis = b;
+                second->HdFolders = chassisFolders.at(b);
+                firstFolder = ownFolder(a, b);
+                secondFolder = ownFolder(b, a);
             }
         }
     }
@@ -587,6 +610,154 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     Settle();
     CHECK_EQ(MCHdArt::HeldBytes(), before + stored);
     CHECK(MCHdArt::HoldsFor(mission));
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's manifest: the players' part, worked out as each mech is picked): a mech's HD folders
+/// worked out from its chassis with no mission loaded (MechTreeFolders, as a mech joining the force has them) are
+/// those its mission's load draws it from, for every mech in the campaign's first mission, player's and enemy's; and
+/// every stock mission names the sprite file the work-out reads (MechSpriteFile).
+/// </summary>
+TEST_CASE_ISOLATED("game: a picked mech's HD folders are worked out as its mission's load draws it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // Booted first: the missions' files lie in the game's archives.
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+
+    for (const MCHoldLists::Mission& listed : MCHoldLists::Missions)
+    {
+        MCTest::Scope scope{std::string(listed.Name)};
+        MCFitIniFile file;
+        REQUIRE_EQ(file.Open(GamePath(MissionPath, listed.Name, ".fit")), 0);
+        REQUIRE_EQ(file.SeekBlock("SpriteSystem"), 0);
+        CHECK(MCIEquals(file.Read<std::string>("SpriteFileName").value_or(""), MechSpriteFile));
+    }
+
+    const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+    REQUIRE(sprites != nullptr);
+    size_t mechs = 0;
+
+    for (const MCPart& part : Scenario()->Parts)
+    {
+        const auto object = std::dynamic_pointer_cast<MCGameObject>(part.Object.lock());
+
+        if (object == nullptr || object->ObjectClass != MCObjectClass::BattleMech)
+        {
+            continue;
+        }
+
+        const auto actor = std::static_pointer_cast<MCMechActor>(object->GetAppearance());
+        const auto tree = std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType());
+        REQUIRE(tree != nullptr);
+        const uint32_t chassis = static_cast<uint32_t>(object->GetObjectType()->ObjTypeNum);
+        MCTest::Scope scope{std::format("chassis {}", chassis)};
+        std::vector<std::filesystem::path> drawn = tree->HdFolders(sprites->Uses90PixelParts());
+
+        for (std::filesystem::path& folder : drawn)
+        {
+            folder /= "0";
+        }
+
+        CHECK(MechTreeFolders(chassis) == drawn);
+        ++mechs;
+    }
+
+    CHECK(mechs > 1);
+}
+
+namespace
+{
+    /// <summary>The most frames a mission ended at once takes to bring its results up.</summary>
+    constexpr int32_t MostFramesToResults = 300;
+
+    /// <summary>
+    /// The campaign's first mission started (MCTestGame::StartCampaignMission), ended as <paramref name="result"/> (as a
+    /// quick-start mission's when <paramref name="solo"/>), and its results closed: the way back done.
+    /// </summary>
+    void PlayToResultsAndBack(uint32_t result, bool solo)
+    {
+        REQUIRE(MCTestGame::StartCampaignMission());
+        Solo = solo;
+        ScenarioResult = result;
+        Mission()->EndScenarioRequested = -1;
+
+        for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+
+        REQUIRE(Mission()->State == MCMissionState::Results);
+        Mission()->CloseResultsScreen();
+        Settle();
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "Between missions"): a mission's held art is kept past its end only where a mission plays
+/// next. A campaign mission's win holds the next one from its results' close, a loss keeps its own; a won quick-start
+/// mission, back to the main screen, lets go of it, as a match does unless its rematch follows.
+/// </summary>
+TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mission plays next")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCScratchFolder pack("mc_briefing_tests", "between-missions");
+    MCTestGame::BootOptions.Started = [folder = pack.Path()]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    };
+
+    REQUIRE(MCTestGame::StartLogistics());
+    constexpr uint32_t Lost = 0;
+    constexpr uint32_t Won = 4;
+
+    // The campaign's win: its next mission held from the results' close, its own let go of.
+    PlayToResultsAndBack(Won, false);
+    const std::vector<std::string>& missions = Mission()->Scenarios;
+    REQUIRE(missions.size() > 1);
+    CHECK(MCHdArt::HoldsFor(missions[1]));
+    CHECK(!MCHdArt::HoldsFor(missions[0]));
+
+    // What the way back keeps, by where it goes: a loss replays the mission; a quick-start win goes to the main
+    // screen; a match keeps it for its rematch alone.
+    const auto keeps = [](uint32_t result, bool solo)
+    {
+        const uint32_t wasResult = ScenarioResult;
+        const bool wasSolo = Solo;
+        ScenarioResult = result;
+        Solo = solo;
+        const bool kept = Mission()->KeepsHoldPastEnd();
+        ScenarioResult = wasResult;
+        Solo = wasSolo;
+        return kept;
+    };
+
+    CHECK(keeps(Lost, false));
+    CHECK(keeps(Won, false));
+    CHECK(!keeps(Won, true));
+    MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
+    CHECK(!MCRoomEnd::RematchAfterMatch());
+    CHECK(!keeps(Won, false));
+    MCGameContext::Current().SetMultiPlayer(nullptr);
+
+    // A quick-start mission won: the main screen, and nothing held.
+    PlayToResultsAndBack(Won, true);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(!MCHdArt::HoldsFor(missions[0]));
+    CHECK(!MCHdArt::HoldsFor(missions[1]));
+    CHECK_EQ(MCHdArt::HeldBytes(), 0u);
 }
 
 /// <summary>

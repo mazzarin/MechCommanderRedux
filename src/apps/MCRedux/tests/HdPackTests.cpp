@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
+#include "MCTestGuest.h"
 #include "MCTestShapes.h"
 #include "TestGame.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -20,6 +21,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCHdSettings.h"
+#include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
@@ -4710,7 +4712,7 @@ TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mis
 
     {
         MCTest::Scope scope("the briefing");
-        MCHdArt::StartBriefingHold(Mission, shapes);
+        MCHdArt::StartBriefingHold(Mission, shapes, false);
         // Its archive opened by the readers, then held.
         MCHdArt::WaitForReadAhead();
         MCHdArt::WaitForHold();
@@ -4739,7 +4741,7 @@ TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mis
 
     {
         MCTest::Scope scope("another mission's briefing");
-        MCHdArt::StartBriefingHold(Other, {});
+        MCHdArt::StartBriefingHold(Other, {}, false);
         CHECK_EQ(MCHdArt::HeldBytes(), 0u);
         CHECK(MCHdArt::HoldsFor(Other));
         CHECK(!MCHdArt::HoldsFor(Mission));
@@ -4747,6 +4749,129 @@ TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mis
         CHECK(!MCHdArt::HoldsFor(Other));
     }
 
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's ground by name): a load notes the ground's frames it asks for among the folders it hands
+/// the hold (MCHdArt::LoadFolders: <c>terrain/&lt;hash&gt;</c>, <c>overlays/&lt;hash&gt;</c>), and a briefing given them
+/// holds those frames' streams of the ground's archives alone (MCHdArt::StartBriefingHold), each tile's relief map beside
+/// it with relief maps: never the rest of an archive that keeps every map's ground, nor a stream twice.
+/// </summary>
+TEST_CASE("hd art: a briefing holds the ground its list names, only those frames of the ground's archives")
+{
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view ReliefFolder = "relief";
+    constexpr int32_t Side = RunArchive::Side;
+    // Each stream a frame and a filler past the gap a run reads across, so no run takes a stream not asked for.
+    constexpr size_t Filler = MCHdArt::ReaderRunGap + 1;
+    constexpr std::array<uint64_t, 4> Keys{0x1111, 0x2222, 0x3333, 0x4444};
+    constexpr size_t TerrainRuns = 2;
+    constexpr size_t ReliefRuns = 2;
+    constexpr size_t OverlayRuns = 1;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const ScratchFolder pack("ground-hold");
+    const auto name = [](uint64_t key) { return std::format("{:016x}", key); };
+    std::vector<size_t> stored;
+    std::vector<Version2Stream> streams;
+
+    for (size_t at = 0; at < Keys.size(); ++at)
+    {
+        Version2Stream& stream = streams.emplace_back(Version2Stream{{}, MCFastFile::StreamKind::Tiles});
+        const std::vector<uint8_t> frame = FrameFile(Side, Side, static_cast<int32_t>(at) + 1);
+        stream.Entries.push_back(Raw(name(Keys[at]) + ".hdf", frame));
+        stream.Entries.push_back(Raw(std::format("filler{}.bin", at), std::vector<uint8_t>(Filler)));
+        stored.push_back(frame.size() + Filler);
+    }
+
+    const std::vector<uint8_t> archive = BuildVersion2Streams(streams);
+
+    for (const std::string_view folder : {MCHdArt::TerrainFolder, ReliefFolder, MCHdArt::OverlayFolder})
+    {
+        WriteBytes(pack.Path() / std::filesystem::path(folder).concat(".hda"), archive);
+    }
+
+    MCHdArt::SetPackFolder(pack.Path());
+
+    {
+        MCTest::Scope scope("a load's names");
+        const std::array<MCHdArt::GroundAhead, 1> tile{{{.Width = Side, .Height = Side, .Key = Keys[0]}}};
+        const std::array<MCHdArt::GroundAhead, 1> overlay{{{.Width = Side, .Height = Side, .Key = Keys[3]}}};
+        MCHdArt::StartLoadFill();
+        MCHdArt::ReadGroundAhead(tile, true);
+        MCHdArt::ReadOverlaysAhead(overlay);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::FinishLoadFill([] {});
+        const std::vector<std::filesystem::path> folders = MCHdArt::LoadFolders();
+        CHECK(std::ranges::contains(folders, std::filesystem::path(MCHdArt::TerrainFolder) / name(Keys[0])));
+        CHECK(std::ranges::contains(folders, std::filesystem::path(MCHdArt::OverlayFolder) / name(Keys[3])));
+        // Read for the load, not held: the ground's archives keep every map's.
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        MCHdArt::LetGoHold();
+    }
+
+    const std::vector<std::filesystem::path> list{std::filesystem::path(MCHdArt::TerrainFolder) / name(Keys[0]),
+                                                  std::filesystem::path(MCHdArt::TerrainFolder) / name(Keys[2]),
+                                                  std::filesystem::path(MCHdArt::OverlayFolder) / name(Keys[3])};
+    const size_t reads = MCHdArt::HeldReads();
+
+    {
+        MCTest::Scope scope("the briefing");
+        MCHdArt::StartBriefingHold(Mission, list, true);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::WaitForHold();
+        // The two tiles, their relief maps and the overlay: never the streams between.
+        CHECK_EQ(MCHdArt::HeldBytes(), 2 * (stored[0] + stored[2]) + stored[3]);
+        CHECK_EQ(MCHdArt::HeldReads(), reads + TerrainRuns + ReliefRuns + OverlayRuns);
+
+        // Its manifest (MCHdArt::Manifest): each ground archive once, with the frames its list names; not complete
+        // before the load, when the players' mechs may still change.
+        const MCHdArt::MissionManifest manifest = MCHdArt::Manifest();
+        CHECK(manifest.Mission == Mission);
+        CHECK(manifest.Players.empty());
+        CHECK(!manifest.Complete);
+        REQUIRE_EQ(manifest.Entries.size(), 3u);
+        uint64_t bytes = 0;
+        uint32_t frames = 0;
+
+        for (const MCHdArt::ManifestEntry& entry : manifest.Entries)
+        {
+            bytes += entry.Bytes;
+            frames += entry.Frames;
+            CHECK(entry.GpuBytes > 0);
+        }
+
+        CHECK_EQ(bytes, 2 * (stored[0] + stored[2]) + stored[3]);
+        CHECK_EQ(frames, 5u);
+    }
+
+    {
+        MCTest::Scope scope("the same list again");
+        MCHdArt::StartBriefingHold(Mission, list, true);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 2 * (stored[0] + stored[2]) + stored[3]);
+        CHECK_EQ(MCHdArt::HeldReads(), reads + TerrainRuns + ReliefRuns + OverlayRuns);
+    }
+
+    {
+        // Complete once the load begins, a change of its own.
+        MCTest::Scope scope("the load");
+        const uint64_t generation = MCHdArt::Manifest().Generation;
+        MCHdArt::StartLoadFill();
+        const MCHdArt::MissionManifest loading = MCHdArt::Manifest();
+        CHECK(loading.Complete);
+        CHECK(loading.Generation > generation);
+        CHECK_EQ(loading.Entries.size(), 3u);
+        MCHdArt::FinishLoadFill([] {});
+    }
+
+    MCHdArt::LetGoHold();
+    CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    CHECK(MCHdArt::Manifest().Entries.empty());
+    MCHdArt::SetPackFolder({});
     GHdArt = previous;
 }
 
@@ -4772,8 +4897,8 @@ TEST_CASE("hd art: a briefing left before its archives open hands them to no oth
 
     // The first briefing's archive waits to be opened while the player goes on to another mission's briefing.
     MCHdArt::HoldOpens(true);
-    MCHdArt::StartBriefingHold(Mission, shapes);
-    MCHdArt::StartBriefingHold(Other, more);
+    MCHdArt::StartBriefingHold(Mission, shapes, false);
+    MCHdArt::StartBriefingHold(Other, more, false);
     MCHdArt::HoldOpens(false);
     MCHdArt::WaitForReadAhead();
     MCHdArt::WaitForHold();
@@ -4784,7 +4909,7 @@ TEST_CASE("hd art: a briefing left before its archives open hands them to no oth
     MCHdArt::WaitForHold();
     CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
     // A third mission's briefing asks for the first's folder: the shapes' archive opened for it is held now.
-    MCHdArt::StartBriefingHold(Third, shapes);
+    MCHdArt::StartBriefingHold(Third, shapes, false);
     MCHdArt::WaitForReadAhead();
     MCHdArt::WaitForHold();
     CHECK(MCHdArt::HoldsFor(Third));
@@ -4820,6 +4945,72 @@ TEST_CASE_ISOLATED("hd art: -hdbriefing holds a game segment's mission before it
     const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
     CHECK(MCHdArt::HoldsFor(mission));
     CHECK_EQ(TestBriefingSeconds, 0);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The mission's manifest"): a mission's load keeps what it handed the hold as the
+/// mission's list in the user folder (MCHdArt::KeepHoldList), the list the load works out (MCScenario::HoldList: the
+/// player's mechs' folders left out), and its next briefing holds from it (MCHdArt::BriefingFolders) before the
+/// program's table: a mod's mission, a multiplayer map or one made in the editor is held from its second play on. Beside
+/// it, the pieces of the game folder's files the load read (MCHdArt::KeepFilePieces), which the mission's next pick reads
+/// ahead (StartMissionHold).
+/// </summary>
+TEST_CASE_ISOLATED("hd art: a mission's load keeps its hold list, and its next briefing holds from it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const ScratchFolder pack("learned-hold-list");
+    MCTestGame::BootOptions.Started = [folder = pack.Path()]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    };
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    const MCScenario::MCHoldList list = Scenario()->HoldList(mission);
+    REQUIRE(!list.Folders.empty());
+    CHECK(list.PlayersLeft > 0);
+    const std::vector<std::filesystem::path> briefing = MCHdArt::BriefingFolders(mission);
+    REQUIRE_EQ(briefing.size(), list.Folders.size());
+
+    for (size_t index = 0; index < briefing.size(); ++index)
+    {
+        CHECK_EQ(briefing[index].generic_string(), list.Folders[index]);
+    }
+
+    // The original's packet files and archives among the files' pieces, all read ahead at the mission's next pick.
+    const std::vector<MCFilesAhead::MCFilePiece> pieces = MCHdArt::MissionFilePieces(mission);
+    REQUIRE(!pieces.empty());
+    CHECK(pieces == MCFilesAhead::NotedPieces());
+    const auto ofKind = [&pieces](std::string_view extension)
+    {
+        return std::ranges::any_of(
+            pieces, [extension](const MCFilesAhead::MCFilePiece& piece)
+            { return MCIEquals(std::filesystem::path(piece.File).extension().string(), extension); });
+    };
+
+    CHECK(ofKind(".pak"));
+    CHECK(ofKind(".fst"));
+    const uint64_t listed = std::ranges::fold_left(pieces | std::views::transform(&MCFilesAhead::MCFilePiece::Bytes),
+                                                   uint64_t{0}, std::plus<>());
+    const uint64_t from = MCFilesAhead::PiecesReadBytes();
+    StartMissionHold(mission);
+    constexpr int32_t WaitMs = 20000;
+
+    for (int32_t waited = 0; waited < WaitMs && MCFilesAhead::PiecesReadBytes() - from < listed; ++waited)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    CHECK_EQ(MCFilesAhead::PiecesReadBytes() - from, listed);
+    MCFilesAhead::ForgetPieces();
 }
 
 /// <summary>
@@ -6723,6 +6914,25 @@ TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's 
     CHECK_EQ(total, size_t{0});
 }
 
+namespace
+{
+    /// <summary>The stem's end of a list of the pieces of the game folder's files a load read, beside its list.</summary>
+    constexpr std::string_view PiecesListStem = ".files";
+
+    /// <summary>
+    /// Writes the pieces of the game folder's files the last load read (MCFilesAhead::NotedPieces) to
+    /// <paramref name="out"/>/&lt;mission&gt;.files.txt, beside its list.
+    /// </summary>
+    /// <returns>How many.</returns>
+    size_t WriteLoadPieces(const std::filesystem::path& out, std::string_view mission)
+    {
+        const std::vector<MCFilesAhead::MCFilePiece> pieces = MCFilesAhead::NotedPieces();
+        std::ofstream(out / MCFileSystem::FromUtf8(std::format("{}{}.txt", mission, PiecesListStem)), std::ios::binary)
+            << MCFilesAhead::PiecesText(pieces);
+        return pieces.size();
+    }
+}
+
 /// <summary>
 /// Tool (SPEC-memory.md's "From the briefing": a mission's list): <c>--hold-list &lt;pack&gt;</c> loads mission
 /// <c>--hold-list-mission &lt;n&gt;</c> (1 by default) with the pack and its hold on, as a player's load is, and writes the
@@ -6730,7 +6940,8 @@ TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's 
 /// <c>&lt;--hold-list-out&gt;/&lt;mission&gt;.txt</c> (the working folder by default): all but those of the player's mechs
 /// that no other unit's tree shares, which a briefing reads as each is placed in the lance. A type's packets' folders
 /// (<c>objects/shapes90/&lt;n&gt;/&lt;packet&gt;</c>) are listed once, by its packet 0's, as the game hands a type's art
-/// ahead (MCAppearanceType's MCHdArt::OpenArchivesAhead): any of them opens the same archive.
+/// ahead (MCAppearanceType's MCHdArt::OpenArchivesAhead): any of them opens the same archive. Beside it,
+/// <c>&lt;mission&gt;.files.txt</c>: the pieces of the game folder's files the load read (MCFilesAhead::NotedPieces).
 /// </summary>
 TEST_CASE_ISOLATED(
     "tool: --hold-list writes the pack's folders a mission's load hands the hold, the player's mechs' out")
@@ -6765,99 +6976,34 @@ TEST_CASE_ISOLATED(
     const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
     REQUIRE(sprites != nullptr);
 
-    // Each mech's trees' folders, the player's parts' (PlayerPart in the mission's file, part n its Part<n + 1>) apart.
-    MCFitIniFile file;
-    REQUIRE_EQ(file.Open(GamePath(MissionPath, mission, ".fit")), 0);
-    std::set<std::string> players;
-    std::set<std::string> others;
-    const std::vector<MCPart>& parts = Scenario()->Parts;
-
-    // Part n is the file's Part<n> block (Parts[0] is none).
-    for (size_t index = 1; index < parts.size(); ++index)
-    {
-        const auto object = std::dynamic_pointer_cast<MCGameObject>(parts[index].Object.lock());
-        const auto actor = object != nullptr && object->ObjectClass == MCObjectClass::BattleMech
-                               ? std::static_pointer_cast<MCMechActor>(object->GetAppearance())
-                               : nullptr;
-        const auto tree =
-            actor != nullptr ? std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType()) : nullptr;
-
-        if (tree == nullptr)
-        {
-            continue;
-        }
-
-        REQUIRE_EQ(file.SeekBlock(std::format("Part{}", index)), 0);
-        std::set<std::string>& into = file.Read<bool>("PlayerPart").value_or(false) ? players : others;
-
-        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
-        {
-            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
-            {
-                into.insert(MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber).generic_string());
-            }
-        }
-    }
-
-    REQUIRE(!players.empty());
-    const auto playersOnly = [&](const std::filesystem::path& folder)
-    {
-        const std::string text = folder.generic_string();
-        const auto under = [&text](const std::string& tree)
-        { return text == tree || (text.starts_with(tree) && text[tree.size()] == '/'); };
-        return std::ranges::any_of(players, under) && !std::ranges::any_of(others, under);
-    };
-
-    // A type's folder (the first three of a deeper folder's names) by its packet 0's.
-    constexpr size_t TypeDepth = 3;
-    const auto typeFolder = [](const std::filesystem::path& folder)
-    {
-        std::filesystem::path type;
-        size_t depth = 0;
-
-        for (auto name = folder.begin(); name != folder.end() && depth < TypeDepth; ++name, ++depth)
-        {
-            type /= *name;
-        }
-
-        return std::distance(folder.begin(), folder.end()) > static_cast<ptrdiff_t>(TypeDepth) ? type / "0" : folder;
-    };
-
-    size_t left = 0;
+    // The load's list as a player's game keeps it (MCScenario::HoldList): the player's mechs' folders left out.
+    const MCScenario::MCHoldList list = Scenario()->HoldList(mission);
     std::string lines;
-    std::set<std::string> listed;
 
-    for (const std::filesystem::path& folder : MCHdArt::LoadFolders())
+    for (const std::string& folder : list.Folders)
     {
-        if (playersOnly(folder))
-        {
-            ++left;
-            continue;
-        }
-
-        if (std::string type = typeFolder(folder).generic_string(); listed.insert(type).second)
-        {
-            lines += type + '\n';
-        }
+        lines += folder + '\n';
     }
 
     std::filesystem::create_directories(out);
     const std::filesystem::path written = out / MCFileSystem::FromUtf8(mission + ".txt");
     std::ofstream(written, std::ios::binary) << lines;
+    const size_t pieces = WriteLoadPieces(out, mission);
     std::cout << std::format(
-        "  mission {} ({}): {} folders handed, {} of the player's mechs' left out, {} types' listed, "
-        "to {}\n",
-        segment, mission, MCHdArt::LoadFolders().size(), left, listed.size(), MCFileSystem::ToUtf8(written));
+        "  mission {} ({}): {} folders handed, {} of the player's mechs' left out, {} types' listed, {} files' "
+        "pieces, to {}\n",
+        segment, mission, MCHdArt::LoadFolders().size(), list.PlayersLeft, list.Folders.size(), pieces,
+        MCFileSystem::ToUtf8(written));
     CHECK(!lines.empty());
+    CHECK(pieces > 0);
 
-    // With --hold-list-chassis, every mech chassis in the object file (an "ObjectClass" of 2) and its tree's folders,
-    // a line each to <out>/chassis.txt, for a briefing to read a lance's mechs as they're placed.
+    // With --hold-list-chassis, every mech chassis in the object file and its tree's folders (MechTreeFolders, as a
+    // briefing works a lance's mech out as it's placed), a line each to <out>/chassis.txt, to check against.
     if (!MCTest::Option("hold-list-chassis").has_value())
     {
         return;
     }
 
-    constexpr int32_t MechClass = 2;
     MCPacketFile objects;
     REQUIRE_EQ(objects.Open(GamePath(ObjectPath, ObjectPakName)), 0);
     std::string chassisLines;
@@ -6865,38 +7011,18 @@ TEST_CASE_ISOLATED(
 
     for (int32_t number = 1; number < objects.GetNumPackets(); ++number)
     {
-        MCFitIniFile packet;
+        const std::vector<std::filesystem::path> folders = MechTreeFolders(static_cast<uint32_t>(number));
 
-        if (objects.SeekPacket(number) != 0 || objects.GetPacketSize() == 0 ||
-            packet.Open(objects, static_cast<uint32_t>(objects.GetPacketSize())) != 0 ||
-            packet.SeekBlock("ObjectClass") != 0 || packet.Read<int32_t>("ObjectTypeNum").value_or(-1) != MechClass)
-        {
-            continue;
-        }
-
-        // The appearance its type would draw ("ObjectType"'s "Appearance"), read without making the type: a packet that
-        // won't make one would stop the game (Fatal).
-        const int32_t appearance =
-            packet.SeekBlock("ObjectType") == 0 ? packet.Read<int32_t>("Appearance").value_or(-1) : -1;
-        const auto tree = appearance >= 0 ? std::dynamic_pointer_cast<MCSpriteTree>(
-                                                AppearanceTypeList().GetAppearance(static_cast<uint32_t>(appearance)))
-                                          : nullptr;
-
-        if (tree == nullptr)
+        if (folders.empty())
         {
             continue;
         }
 
         std::string row = std::to_string(number);
 
-        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+        for (const std::filesystem::path& folder : folders)
         {
-            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
-            {
-                row +=
-                    ' ' +
-                    (MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber) / "0").generic_string();
-            }
+            row += ' ' + folder.generic_string();
         }
 
         chassisLines += row + '\n';
@@ -6909,11 +7035,82 @@ TEST_CASE_ISOLATED(
 }
 
 /// <summary>
+/// Tool (SPEC-memory.md's manifest: multiplayer maps): <c>--hold-list-map &lt;pack&gt;</c> loads the mission of match
+/// map <c>--hold-list-map-name &lt;map&gt;</c> (its <c>.mpk</c>'s name) with the pack and its hold on, as single player
+/// loads a campaign's, and writes the pack's folders the load handed the hold as <c>--hold-list</c> does, to
+/// <c>&lt;--hold-list-out&gt;/&lt;mission&gt;.txt</c> (the mission its file names), and its files' pieces beside it. A
+/// match's players' mechs are no part of a list (the players' part is worked out as each is picked), so a load with none
+/// leaves out nothing of the map's.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hold-list-map writes the pack's folders a match map's load hands the hold")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hold-list-map");
+    const std::optional<std::string_view> map = MCTest::Option("hold-list-map-name");
+
+    if (!pack.has_value() || !map.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::filesystem::path out = MCFileSystem::FromUtf8(MCTest::Option("hold-list-out").value_or("."));
+    MCTestGame::BootOptions.Started = [folder = MCFileSystem::FromUtf8(*pack)]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    };
+
+    // A match's file has none of the campaign's lists (its warriors, parts and place in the master mission file): their
+    // reads assert, at its load and wherever the logistics' screens list a save of it.
+    const MCTest::ExpectAssert campaignOnly("", MCTest::ExpectAssert::AnyCount);
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // The map's mission: its file's first packet's.
+    MCPacketFile packets;
+    MCFitIniFile file;
+    REQUIRE_EQ(packets.Open(GamePath(SavePath, *map, ".mpk")), 0);
+    REQUIRE_EQ(packets.SeekPacket(0), 0);
+    REQUIRE_EQ(file.Open(packets, static_cast<uint32_t>(packets.GetPacketSize())), 0);
+    REQUIRE_EQ(file.SeekBlock("Multiplayer"), 0);
+    const MCFitResult<std::string> named = file.Read<std::string>("MissionName");
+    REQUIRE(named.has_value());
+    const std::string mission = *named;
+    file.Close();
+
+    // Its load as a campaign mission's.
+    Mission()->StartScenario(mission);
+    REQUIRE(MCTestGuest::SettleUntil([] { return Scenario() != nullptr && Scenario()->StartingUp; }));
+
+    REQUIRE(MCHdArt::Active());
+
+    const MCScenario::MCHoldList list = Scenario()->HoldList(mission);
+    std::string lines;
+
+    for (const std::string& folder : list.Folders)
+    {
+        lines += folder + '\n';
+    }
+
+    std::filesystem::create_directories(out);
+    const std::filesystem::path written = out / MCFileSystem::FromUtf8(mission + ".txt");
+    std::ofstream(written, std::ios::binary) << lines;
+    const size_t pieces = WriteLoadPieces(out, mission);
+    std::cout << std::format("  map {} ({}): {} folders handed, {} listed, {} files' pieces, to {}\n", *map, mission,
+                             MCHdArt::LoadFolders().size(), list.Folders.size(), pieces, MCFileSystem::ToUtf8(written));
+    CHECK(!lines.empty());
+    CHECK(pieces > 0);
+}
+
+/// <summary>
 /// Tool (SPEC-memory.md's "From the briefing"): <c>--hold-lists-table &lt;folder&gt;</c> reads the lists
 /// <c>--hold-list</c> wrote there (<c>&lt;mission&gt;.txt</c> each, and <c>chassis.txt</c>) and writes
 /// sprite/MCHoldLists.h, the lists the program carries, to <c>--hold-lists-out &lt;file&gt;</c>
-/// (<c>&lt;folder&gt;/MCHoldLists.h</c> by default): each folder once, each mission's and each mech chassis's as indices
-/// into them, the missions by name and the chassis by number.
+/// (<c>&lt;folder&gt;/MCHoldLists.h</c> by default): each folder once, each mission's as indices into them, the missions
+/// by name; each mission's ground by name (<c>terrain/&lt;hash&gt;</c>, <c>overlays/&lt;hash&gt;</c>) as its tile set
+/// and the slots of it named, a bit each (MCKnownGroundNames: the program's table); and the pieces of the game
+/// folder's files its load read (<c>&lt;mission&gt;.files.txt</c>), each file named once.
 /// </summary>
 TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table the program carries")
 {
@@ -6924,6 +7121,7 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
         return;
     }
 
+    // --hold-list-chassis's check file, which the table leaves out: a mech's are worked out as it's picked.
     constexpr std::string_view ChassisFile = "chassis";
     constexpr size_t RowLength = 16;
     const std::filesystem::path folder = MCFileSystem::FromUtf8(*in);
@@ -6931,7 +7129,7 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
                                           ? MCFileSystem::FromUtf8(*MCTest::Option("hold-lists-out"))
                                           : folder / "MCHoldLists.h";
     std::map<std::string, std::vector<std::string>> missions;
-    std::map<uint32_t, std::vector<std::string>> chassis;
+    std::map<std::string, std::vector<MCFilesAhead::MCFilePiece>> missionPieces;
 
     for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(folder))
     {
@@ -6942,39 +7140,120 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
 
         std::string name = MCFileSystem::ToUtf8(entry.path().stem());
         std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        if (name == ChassisFile)
+        {
+            continue;
+        }
+
+        if (name.ends_with(PiecesListStem))
+        {
+            std::ifstream file(entry.path(), std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+            missionPieces[name.substr(0, name.size() - PiecesListStem.size())] = MCFilesAhead::PiecesOfText(text);
+            continue;
+        }
+
         std::ifstream file(entry.path());
 
         for (std::string line; std::getline(file, line);)
         {
-            if (line.empty())
-            {
-                continue;
-            }
-
-            if (name != ChassisFile)
+            if (!line.empty())
             {
                 missions[name].push_back(line);
-                continue;
-            }
-
-            // "<number> <folder> <folder>...".
-            std::istringstream row(line);
-            uint32_t number = 0;
-            REQUIRE(static_cast<bool>(row >> number));
-            std::vector<std::string>& folders = chassis[number];
-
-            for (std::string word; row >> word;)
-            {
-                folders.push_back(word);
             }
         }
     }
 
     REQUIRE(!missions.empty());
-    REQUIRE(!chassis.empty());
     std::vector<std::string> folders;
     std::unordered_map<std::string, size_t> indices;
     std::string lists;
+
+    // A mission's ground by name, as the tile set whose slots name it all and a bitset of those slots, each kind's.
+    constexpr size_t BitsAWord = 64;
+    constexpr size_t WordsARow = 4;
+    const std::span<const MCKnownGroundNames> sets = MCGroundNamesInUse();
+    const auto groundOf = [&](const std::string& name, std::vector<std::string>& lines)
+    {
+        std::map<std::string, std::vector<uint64_t>> asked;
+        std::erase_if(lines,
+                      [&asked](const std::string& line)
+                      {
+                          const size_t slash = line.find('/');
+                          const std::string kind = line.substr(0, slash);
+
+                          if (slash == std::string::npos ||
+                              (kind != MCHdArt::TerrainFolder && kind != MCHdArt::OverlayFolder))
+                          {
+                              return false;
+                          }
+
+                          asked[kind].push_back(std::stoull(line.substr(slash + 1), nullptr, 16));
+                          return true;
+                      });
+
+        if (asked.empty())
+        {
+            return std::string("0, {}, {}");
+        }
+
+        const auto slotsIn = [](std::span<const MCGroundNameRow> rows, std::span<const uint64_t> keys)
+        {
+            std::vector<int32_t> slots;
+
+            for (const uint64_t key : keys)
+            {
+                if (const auto row = std::ranges::find(rows, key, &MCGroundNameRow::Key); row != rows.end())
+                {
+                    slots.push_back(row->Slot);
+                }
+            }
+
+            return slots;
+        };
+
+        for (const MCKnownGroundNames& set : sets)
+        {
+            const std::vector<int32_t> tiles = slotsIn(set.Tiles, asked[std::string(MCHdArt::TerrainFolder)]);
+            const std::vector<int32_t> overlays = slotsIn(set.Overlays, asked[std::string(MCHdArt::OverlayFolder)]);
+
+            if (tiles.size() != asked[std::string(MCHdArt::TerrainFolder)].size() ||
+                overlays.size() != asked[std::string(MCHdArt::OverlayFolder)].size())
+            {
+                continue;
+            }
+
+            const auto bits = [&](std::string identifier, const std::vector<int32_t>& slots)
+            {
+                std::ranges::replace_if(identifier, [](unsigned char c) { return std::isalnum(c) == 0; }, '_');
+                std::vector<uint64_t> words((static_cast<size_t>(set.Slots) + BitsAWord - 1) / BitsAWord);
+
+                for (const int32_t slot : slots)
+                {
+                    words[static_cast<size_t>(slot) / BitsAWord] |= uint64_t{1}
+                                                                    << (static_cast<size_t>(slot) % BitsAWord);
+                }
+
+                std::string numbers;
+
+                for (size_t at = 0; at < words.size(); ++at)
+                {
+                    numbers += std::format("{}0x{:016x},", at % WordsARow == 0 ? "\n    " : " ", words[at]);
+                }
+
+                lists += std::format("inline constexpr std::array<uint64_t, {}> {}{{{{{}\n}}}};\n", words.size(),
+                                     identifier, numbers);
+                return identifier;
+            };
+
+            return std::format("0x{:016x}, {}, {}", set.FilesHash, bits("Tiles_" + name, tiles),
+                               bits("Overlays_" + name, overlays));
+        }
+
+        FAIL_CHECK(std::format("{}: no tile set the program knows names all its ground", name));
+        return std::string("0, {}, {}");
+    };
 
     // An array of indices into Folders named <identifier>, of <lines>' folders (each added to Folders the first time).
     const auto listOf = [&](std::string identifier, const std::vector<std::string>& lines)
@@ -6999,17 +7278,57 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
         return identifier;
     };
 
-    std::string missionRows;
-    std::string chassisRows;
-
-    for (const auto& [name, lines] : missions)
+    // An array of the mission's pieces named Pieces_<name>, each file an index into Files (added the first time).
+    std::vector<std::string> files;
+    std::unordered_map<std::string, size_t> fileIndices;
+    size_t pieceCount = 0;
+    const auto piecesOf = [&](const std::string& name)
     {
-        missionRows += std::format("    {{\"{}\", {}}},\n", name, listOf("Mission_" + name, lines));
+        const auto found = missionPieces.find(name);
+
+        if (found == missionPieces.end() || found->second.empty())
+        {
+            return std::string("{}");
+        }
+
+        std::string identifier = "Pieces_" + name;
+        std::ranges::replace_if(identifier, [](unsigned char c) { return std::isalnum(c) == 0; }, '_');
+        std::string rows;
+
+        for (const MCFilesAhead::MCFilePiece& piece : found->second)
+        {
+            const auto [file, fresh] = fileIndices.try_emplace(piece.File, files.size());
+
+            if (fresh)
+            {
+                files.push_back(piece.File);
+            }
+
+            REQUIRE(piece.Offset + piece.Bytes <= std::numeric_limits<uint32_t>::max());
+            ++pieceCount;
+            rows += std::format("\n    {{{}, {}, {}}},", file->second, piece.Offset, piece.Bytes);
+        }
+
+        lists += std::format("inline constexpr std::array<Piece, {}> {}{{{{{}\n}}}};\n", found->second.size(),
+                             identifier, rows);
+        return identifier;
+    };
+
+    std::string missionRows;
+
+    for (auto& [name, lines] : missions)
+    {
+        const std::string ground = groundOf(name, lines);
+        const std::string folderList = listOf("Mission_" + name, lines);
+        missionRows += std::format("    {{\"{}\", {}, {}, {}}},\n", name, folderList, ground, piecesOf(name));
     }
 
-    for (const auto& [number, lines] : chassis)
+    REQUIRE(files.size() <= std::numeric_limits<uint16_t>::max());
+    std::string fileNames;
+
+    for (const std::string& name : files)
     {
-        chassisRows += std::format("    {{{}, {}}},\n", number, listOf(std::format("Chassis_{}", number), lines));
+        fileNames += std::format("    \"{}\",\n", name);
     }
 
     REQUIRE(folders.size() <= std::numeric_limits<uint16_t>::max());
@@ -7024,23 +7343,33 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
         "#pragma once\n\n"
         "// Port-only (SPEC-memory.md's \"From the briefing\"): the HD pack's folders each mission's load hands the "
         "hold,\n"
-        "// which its briefing reads ahead (MCHdArt::BriefingFolders), and each mech chassis's, read as it's placed in "
-        "the\n"
-        "// lance (MCHdArt::ChassisFolders): worked out by loading each mission with mc_tests --hold-list and written "
-        "by\n"
-        "// mc_tests --hold-lists-table (tests/HdPackTests.cpp). Don't edit it.\n\n"
+        "// and the ground's frames it asks for, which its briefing reads ahead (MCHdArt::BriefingFolders), and the "
+        "pieces of\n"
+        "// the game folder's files it reads (MCHdArt::MissionFilePieces); a lance's mechs' are worked out as each is "
+        "picked\n"
+        "// (MechTreeFolders). Worked out by loading each mission with mc_tests --hold-list (a match map's with\n"
+        "// --hold-list-map) and written by mc_tests --hold-lists-table (tests/HdPackTests.cpp). Don't edit it.\n\n"
         "#include <array>\n#include <cstdint>\n#include <span>\n#include <string_view>\n\n"
         "// clang-format off\n"
         "namespace MCHoldLists\n{{\n"
-        "/// <summary>A mission (its file's name, lower case) and its folders, as indices into Folders.</summary>\n"
-        "struct Mission\n{{\n    std::string_view Name;\n    std::span<const uint16_t> Folders;\n}};\n\n"
-        "/// <summary>A mech chassis (its packet in the object file) and its tree's folders, as indices into "
-        "Folders.</summary>\n"
-        "struct Chassis\n{{\n    uint32_t Number;\n    std::span<const uint16_t> Folders;\n}};\n\n"
-        "inline constexpr std::array<std::string_view, {}> Folders{{{{\n{}}}}};\n\n{}\n"
-        "inline constexpr std::array<Mission, {}> Missions{{{{\n{}}}}};\n\n"
-        "inline constexpr std::array<Chassis, {}> Mechs{{{{\n{}}}}};\n}}\n\n// clang-format on\n",
-        folders.size(), names, lists, missions.size(), missionRows, chassis.size(), chassisRows);
-    std::cout << std::format("  {} missions, {} chassis, {} folders, to {}\n", missions.size(), chassis.size(),
-                             folders.size(), MCFileSystem::ToUtf8(out));
+        "/// <summary>A piece of a file of the game folder's a load reads: the file, as an index into Files, and "
+        "where its\n"
+        "/// bytes lie.</summary>\n"
+        "struct Piece\n{{\n    uint16_t File = 0;\n    uint32_t Offset = 0;\n    uint32_t Bytes = 0;\n}};\n\n"
+        "/// <summary>\n"
+        "/// A mission (its file's name, lower case), its folders, as indices into Folders, the ground its load "
+        "asks for:\n"
+        "/// its tile set (MCKnownGroundNames::FilesHash; 0: none) and the slots of it asked for as ground tiles and "
+        "as\n"
+        "/// overlays, a bit each, from slot 0's lowest; and the pieces of the game folder's files it reads.\n"
+        "/// </summary>\n"
+        "struct Mission\n{{\n    std::string_view Name;\n    std::span<const uint16_t> Folders;\n"
+        "    uint64_t GroundSet = 0;\n    std::span<const uint64_t> Tiles;\n    std::span<const uint64_t> "
+        "Overlays;\n    std::span<const Piece> Pieces;\n}};\n\n"
+        "inline constexpr std::array<std::string_view, {}> Folders{{{{\n{}}}}};\n\n"
+        "inline constexpr std::array<std::string_view, {}> Files{{{{\n{}}}}};\n\n{}\n"
+        "inline constexpr std::array<Mission, {}> Missions{{{{\n{}}}}};\n}}\n\n// clang-format on\n",
+        folders.size(), names, files.size(), fileNames, lists, missions.size(), missionRows);
+    std::cout << std::format("  {} missions, {} folders, {} files' pieces of {} files, to {}\n", missions.size(),
+                             folders.size(), pieceCount, files.size(), MCFileSystem::ToUtf8(out));
 }

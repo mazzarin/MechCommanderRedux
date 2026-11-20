@@ -195,6 +195,13 @@ public:
     void PrepareHdArt() const;
 
     /// <summary>
+    /// Port-only (SPEC-memory.md's manifest): the HD pack's folders of the mech's parts as their large art is drawn
+    /// (MCHdArt::MechArchiveFolder), from the 90-pixel part PAKs with <paramref name="use90"/>
+    /// (MCSpriteManager::PartFileOf); a part without a packet has none.
+    /// </summary>
+    std::vector<std::filesystem::path> HdFolders(bool use90) const;
+
+    /// <summary>
     /// Port-only (HD art's read-ahead, MCHdArt::SetNeighbours): the packets at the facings within
     /// <paramref name="reach"/> of <paramref name="where"/>'s on each side, nearest first, the one toward straight ahead
     /// first: round the turn where the part's facings go all the way round, else stopping at straight ahead and back.

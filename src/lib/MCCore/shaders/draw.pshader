@@ -41,7 +41,8 @@
 // Port-only: this shader is also built for some draws alone (DRAW_VARIANT), whose pixels then don't pay for the
 // registers the other kinds take: draw_basic.pshader for the original's own kinds (fills, hashes, textures, Gouraud
 // spans and texel walks, without smooth edges; MCVulkanRenderer's BasicDraw), draw_terrain.pshader for the terrain's
-// (terrain.vshader's: those, with HD colours, and the seam pass).
+// (terrain.vshader's: those, with HD colours, and the seam pass), draw_hd.pshader for HD art frames' (KindHd and
+// KindHdSmooth), and draw_trees.pshader for a forest's HD frames alone (TreeDraw below).
 //
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3.
 
@@ -49,6 +50,7 @@
 #define DRAW_BASIC_KINDS 1
 #define DRAW_TERRAIN_KINDS 2
 #define DRAW_HD_KINDS 3
+#define DRAW_TREE_KINDS 4
 
 #ifndef DRAW_VARIANT
 #define DRAW_VARIANT DRAW_EVERY_KIND
@@ -103,7 +105,9 @@ cbuffer Frame : register(b0, space3)
     // The same for the source when it is a surface; else 1, 1, 1, 1.
     int4 sourceScale;
     // The colour cycle (the water's, MCColorCycle): x the first index cycled, y the step (-1: none), z 1 when the key
-    // colour is transparent on this surface. Index x + i shows the colour of cycleSources[(i + y) & 7].
+    // colour is transparent on this surface. Index x + i shows the colour of cycleSources[(i + y) & 7]. Port-only
+    // (SPEC-pan-water.md): w 1 in the kept ground's pass (KeptPass), whose glints target holds the terrain's cycled share
+    // and stands target the entry it follows (channels.hlsli's kept ground) in place of the glints and the stands.
     int4 cycle;
     uint4 cycleSources[2];
     // Port-only (HD lighting): x how strong a light's glow (Glow) shows, 1 as the original drew it; y with sun shadows
@@ -272,8 +276,6 @@ static const float ShadowCore = 0.35;
 // An HD frame's colour where its alpha is under this is drawn more and more as its nearest drawn pixel's (KindHdSmooth:
 // past its mask, the frame keeps no colour).
 static const float HdOwnColourAlpha = 0.5;
-// The most an HD colour channel is scaled by when today's colour differs from the pack's.
-static const float MaxCorrection = 4.0;
 // An effect's frame (HdLight) holds faint error in its empty parts (the network's and BC7's: up to about 5/255 of light
 // and 4/255 of coverage), which the copies of an effect the game stacks on one place (a dying mech's critical hits,
 // each with its own) would add up into a lit box. Coverage below its floor is none, and light loses its floor.
@@ -357,19 +359,37 @@ uint Table(uint row, uint index)
     return Byte(Fetch(tableTex, tableSampler, int2(index, row)).r);
 }
 
+// Whether `index` is one of the colour cycle's entries, which show their sources' colours.
+bool CycledEntry(uint index)
+{
+    return cycle.y >= 0 && index - (uint)cycle.x < WaterColors;
+}
+
 // The colour index shows, through the colour cycle.
 float3 Shown(uint index)
 {
-    const uint cycled = index - (uint)cycle.x;
-
-    if (cycle.y >= 0 && cycled < 8u)
+    if (CycledEntry(index))
     {
-        const uint source = (cycled + (uint)cycle.y) & 7u;
+        const uint source = (index - (uint)cycle.x + (uint)cycle.y) & 7u;
         index = cycleSources[source >> 2][source & 3u];
     }
 
     return Fetch(paletteTex, paletteSampler, int2(index, 0)).rgb;
 }
+
+// Port-only (SPEC-pan-water.md): whether this is the kept ground's pass (cycle.w), whose glints target holds the weights.
+bool KeptPass()
+{
+    return cycle.w != 0;
+}
+
+// Port-only (SPEC-pan-water.md): in the kept ground's pass, the share of the terrain pixel's colour that follows the
+// cycled entry its index shows (channels.hlsli's kept ground's weights): set by the terrain's paths as they work its
+// colour out (0 where none shows), written by main.
+static float3 cycledShare;
+// Port-only (SPEC-pan-water.md): in the kept ground's pass, the entry the seam pass shows at a terrain tile's pixel
+// (SeamShown), which the first pass writes in the stands target (channels.hlsli's kept ground).
+static uint keptSlot;
 
 // An opaque pixel: its colour (none for the key on a surface shown over another) and its index.
 Output Opaque(uint index)
@@ -399,23 +419,34 @@ float4 FetchSource(int2 texel)
     return SourceAt(DrawnPixel(texel, sourceScale, offset.zw));
 }
 
+// The target's drawn grid's offset for this draw: the frame's, and a draw placed past its whole window pixel moved on
+// by it (pixels.hlsli's SubPixelOffset; set in main).
+static int2 targetOffset;
+
 // The window place drawn pixel `target`'s centre shows (pixels.hlsli's WindowPixel, unrounded).
 float2 WindowPlace(int2 target)
 {
-    return ((float2(target) + 0.5) * float2(scale.xy) - float2(offset.xy)) / float2(scale.zw);
+    return ((float2(target) + 0.5) * float2(scale.xy) - float2(targetOffset)) / float2(scale.zw);
 }
 
 // Port-only: how far the target's drawn grid moves its picture (drawn pixels, under half of one): a window place lies at
 // drawn place window * drawn / window plus this.
 float2 GridShift()
 {
-    return float2(offset.xy) / float2(scale.xy);
+    return float2(targetOffset) / float2(scale.xy);
 }
 
 // The colour the HD art pack's pictures were made from for an index.
 float3 MadeWith(uint index)
 {
     return Fetch(paletteTex, paletteSampler, int2(index, 1)).rgb;
+}
+
+// Port-only (SPEC-pan-water.md): the share of the colour Shown gives `index` that follows a cycled entry, as the
+// colour it was made from (channels.hlsli's kept ground's weights): the entry's pack colour.
+float3 ShownShare(uint index)
+{
+    return CycledEntry(index) ? max(MadeWith(index), MadeWithFloor) : float3(0.0, 0.0, 0.0);
 }
 
 // An HD colour (premultiplied by a) made from original index `index`'s colour, as it shows now as index `shown` (the
@@ -427,12 +458,32 @@ float3 Corrected(float3 color, float a, uint index, uint shown)
 
     if (shown == index)
     {
-        return color * clamp(Shown(index) / max(then, 1.0 / 255.0), 0.0, MaxCorrection);
+        return color * clamp(Shown(index) / max(then, MadeWithFloor), 0.0, MaxCorrection);
     }
 
     const float3 luma = float3(0.299, 0.587, 0.114);
     const float brightness = dot(color, luma) / max(a * dot(then, luma), 1.0 / 255.0);
     return saturate(Shown(shown) * brightness) * a;
+}
+
+// Port-only (SPEC-pan-water.md): the share of Corrected's colour that follows `shown` where that is a cycled entry, as
+// the colour it was made from (channels.hlsli's kept ground's weights; 0 elsewhere): the HD colour for the same index,
+// its brightness on the entry's pack colour for another.
+float3 CorrectedShare(float3 color, float a, uint index, uint shown)
+{
+    if (!CycledEntry(shown))
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    if (shown == index)
+    {
+        return color;
+    }
+
+    const float3 luma = float3(0.299, 0.587, 0.114);
+    const float brightness = dot(color, luma) / max(a * dot(MadeWith(index), luma), 1.0 / 255.0);
+    return saturate(brightness * a * max(MadeWith(shown), MadeWithFloor));
 }
 
 // The palette indices TableShift fits a table's change of colour over: every 16th, from the 8th.
@@ -531,7 +582,8 @@ float3 WaterHaze(uint row)
 // A terrain tile's HD colour at drawn pixel `target` (terrain.vshader): op.w the HD scale, walk.xy the tile's HD place
 // and walk.zw its place in the atlas (the source's), span.xy its size and span.z its HD atlas; the index is `value`
 // (original, through the haze's table), the HD colour the one made from `original`'s (water the haze's table draws,
-// darkened by WaterHaze).
+// darkened by WaterHaze). Port-only (SPEC-pan-water.md): in the kept ground's pass, cycledShare its share that follows
+// `value` (none of the hazed water's, which doesn't cycle).
 float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
 {
     const int hdScale = (int)(input.op.w & HdScaleMask);
@@ -550,7 +602,13 @@ float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
 
     if (HazedWater(input, original))
     {
+        cycledShare = float3(0.0, 0.0, 0.0);
         return saturate(hd * WaterHaze(input.op.z));
+    }
+
+    if (KeptPass())
+    {
+        cycledShare = CorrectedShare(hd, 1.0, original, value);
     }
 
     return Corrected(hd, 1.0, original, value);
@@ -767,12 +825,30 @@ float SmoothCoverage(Input input, float2 at, inout uint value)
     return smoothstep(EdgeLow, EdgeHigh, coverage);
 }
 
+// Port-only (SPEC-kept-forest.md): where drawn pixel `target`'s centre lies in a draw's source: source.xy, plus how far
+// its window place (pixels.hlsli's) lies past the rectangle's corner in source.zw steps, a mirrored step reading from
+// the right. Worked out in whole numbers (window places times 2D) up to one division, whose numerator stays the same
+// wherever the view moves the draw (its corner, the drawn pixel and the grid's offset move together by whole pixels)
+// and wherever the clip cuts it (its corner and source move together): so a draw's pixels do too, and the kept view's
+// moved pixels are the ones a frame drawing them draws. A window place exactly between two of the source's (a window
+// pixel two drawn pixels wide or tall puts every place a quarter from one) counts as a little past it, right and down,
+// as the float division the draws took before mostly left it, where the place's float can hold the nudge (a source
+// place under 16 or so); past that the nudge rounds away. Either way a place's bits are the same wherever it's drawn.
+static const float2 SourceTieNudge = float2(1.0, 1.0) / 1048576.0;
+
+float2 SourcePlace(Input input, int2 target)
+{
+    const int2 twice = 2 * scale.zw;
+    const int2 place = twice * (input.source.xy - input.rect.xy * input.source.zw) +
+                       input.source.zw * ((2 * target + 1) * scale.xy - 2 * offset.xy);
+    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
+    return float2(place) / float2(twice) + flip + SourceTieNudge * float2(input.source.zw);
+}
+
 // Where drawn pixel `target`'s centre lies in a smooth-edged shape's source, less half a texel (SmoothCoverage's `at`).
 float2 ShapePlace(Input input, int2 target)
 {
-    const float2 window = WindowPlace(target);
-    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
-    return float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
+    return SourcePlace(input, target) - 0.5;
 }
 
 // A smooth-edged shape's coverage at drawn pixel `target` (SmoothCoverage of its source pixels). `value` becomes a
@@ -883,14 +959,48 @@ Output TerrainSeamPixel(Input input, int2 target)
     if ((flags & UseColor) != 0)
     {
         colour = Shown(input.op.y & 255u);
+        cycledShare = ShownShare(input.op.y & 255u);
+    }
+    else if ((flags & HdColors) != 0)
+    {
+        const uint shown = (flags & TableBefore) != 0 ? Table(input.op.z, original) : original;
+        colour = HdTerrainColour(input, target, original, shown);
     }
     else
     {
         const uint shown = (flags & TableBefore) != 0 ? Table(input.op.z, original) : original;
-        colour = (flags & HdColors) != 0 ? HdTerrainColour(input, target, original, shown) : Shown(shown);
+        colour = Shown(shown);
+        cycledShare = ShownShare(shown);
     }
 
     return Blended(float4(colour, 1.0) * coverage);
+}
+
+// Port-only (SPEC-pan-water.md): the index a terrain tile's seam pass shows at drawn pixel `target`, which its first pass
+// draws as `own`: TerrainSeamPixel's nearest texel (the lower of two as near, as its search finds them), through the
+// haze's table; `own` where that texel isn't the tile's (where the seam pass picks another, at its edge).
+uint SeamShown(Input input, int2 target, uint own)
+{
+    const uint flags = input.op.x;
+
+    if ((flags & UseColor) != 0)
+    {
+        return input.op.y & 255u;
+    }
+
+    const float2 at = float2(input.source.xy) + (WindowPlace(target) - float2(input.rect.xy)) - 0.5;
+    const float2 base = floor(at);
+    const int2 nearest = int2(base) + int2(at - base > float2(0.5, 0.5));
+    const float4 sample = FetchSource(nearest);
+    const uint state = SourceState(sample, flags);
+
+    if (state == 0 || state == 2)
+    {
+        return own;
+    }
+
+    const uint original = Byte(sample.r);
+    return (flags & TableBefore) != 0 ? Table(input.op.z, original) : original;
 }
 
 // A translucent colour (premultiplied) drawn through table `row` after the draw (TableAfter: the haze, fades): over
@@ -1009,35 +1119,57 @@ float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
     return HdAt(texel);
 }
 
-// Port-only (sun shadows): an HD frame's baked shadow at `shape` (a place in its original's pixels, their centres at
-// .5), between the four original pixels around it: x the weight of those in its shadow, y of those with an index.
-float2 BakedShadowWeights(int2 original, float2 shape)
+// Port-only: the four original pixels around a place in an HD frame's original pixels (their centres at .5), as its
+// baked shadow and its recolour read them: base the first's (the place's floor less a half), f how far past it the
+// place lies, and each one's index picture texel (entries[y * 2 + x] for base + (x, y)), nothing (0) outside the
+// picture.
+struct PixelsAround
 {
+    int2 base;
+    float2 f;
+    float4 entries[4];
+};
+
+// The four original pixels around `shape` in a picture `original` pixels in size.
+PixelsAround PixelsAroundAt(int2 original, float2 shape)
+{
+    PixelsAround around;
     const float2 at = shape - 0.5;
-    const int2 base = int2(floor(at));
-    const float2 f = at - float2(base);
+    around.base = int2(floor(at));
+    around.f = at - float2(around.base);
+
+    [unroll] for (int y = 0; y < 2; y++)
+    {
+        [unroll] for (int x = 0; x < 2; x++)
+        {
+            const int2 texel = around.base + int2(x, y);
+            const bool outside = any(texel < 0) || any(texel >= original);
+            around.entries[y * 2 + x] = outside ? float4(0.0, 0.0, 0.0, 0.0) : SourceAt(texel);
+        }
+    }
+
+    return around;
+}
+
+// Port-only (sun shadows): an HD frame's baked shadow between the four original pixels around a place: x the weight of
+// those in its shadow, y of those with an index (none outside the picture: their entries have no index).
+float2 BakedShadowWeightsOf(PixelsAround around)
+{
     float shadow = 0.0;
     float drawn = 0.0;
 
-    for (int y = 0; y < 2; y++)
+    [unroll] for (int y = 0; y < 2; y++)
     {
-        for (int x = 0; x < 2; x++)
+        [unroll] for (int x = 0; x < 2; x++)
         {
-            const int2 texel = base + int2(x, y);
-
-            if (any(texel < 0) || any(texel >= original))
-            {
-                continue;
-            }
-
-            const float4 entry = SourceAt(texel);
+            const float4 entry = around.entries[y * 2 + x];
 
             if (!HasIndexIn(entry))
             {
                 continue;
             }
 
-            const float weight = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+            const float weight = (x == 0 ? 1.0 - around.f.x : around.f.x) * (y == 0 ? 1.0 - around.f.y : around.f.y);
             drawn += weight;
             shadow += InShadowIn(entry) ? weight : 0.0;
         }
@@ -1046,12 +1178,25 @@ float2 BakedShadowWeights(int2 original, float2 shape)
     return float2(shadow, drawn);
 }
 
-// Port-only (sun shadows): how much of an HD frame's colour at `shape` is its baked shadow: of the original pixels
+// Port-only (sun shadows): an HD frame's baked shadow at `shape` (a place in its original's pixels, their centres at
+// .5), between the four original pixels around it: x the weight of those in its shadow, y of those with an index.
+float2 BakedShadowWeights(int2 original, float2 shape)
+{
+    return BakedShadowWeightsOf(PixelsAroundAt(original, shape));
+}
+
+// Port-only (sun shadows): how much of an HD frame's colour at a place is its baked shadow: of the four original pixels
 // around it with an index (so the shadow keeps its strength out to its edge, where the frame's own coverage fades it).
+float BakedShadowOf(PixelsAround around)
+{
+    const float2 weights = BakedShadowWeightsOf(around);
+    return weights.y > 0.0 ? weights.x / weights.y : 0.0;
+}
+
+// The same at `shape`, in a picture `original` pixels in size.
 float BakedShadowAt(int2 original, float2 shape)
 {
-    const float2 weights = BakedShadowWeights(original, shape);
-    return weights.y > 0.0 ? weights.x / weights.y : 0.0;
+    return BakedShadowOf(PixelsAroundAt(original, shape));
 }
 
 // Port-only (KindHdSmooth): whether an HD frame's index picture's green marks an original pixel its frame covers, its
@@ -1254,36 +1399,28 @@ float4 HdColourBetween(Input input, float2 shape, int2 original)
 // the spread of a Gaussian over their RGB distance).
 static const float RecolourLikeness = 0.08;
 
-// Port-only: HD colour `color` at `shape` (a place in the original's pixels, centres at .5) recoloured as the original
-// pixels around it show now (a paint scheme's table, today's palette: Corrected), blended between the four around it
-// that have an index: by nearness, as the colour is between its texels, and by how alike the HD colour is to each one's
-// colour as the pack was made, so a paint scheme's colours change where the HD art's edges lie, not at the original's
-// pixel steps; `nearest` (which has one) alone when none of the four counts.
-float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original, int2 nearest)
+// Port-only: HD colour `color` at a place in the original's pixels recoloured as the original pixels around it show now
+// (a paint scheme's table, today's palette: Corrected), blended between the four around it (`around`) that have an
+// index: by nearness, as the colour is between its texels, and by how alike the HD colour is to each one's colour as
+// the pack was made, so a paint scheme's colours change where the HD art's edges lie, not at the original's pixel
+// steps; the nearest pixel that has one (its entry `nearest`) alone when none of the four counts.
+float3 RecolouredBetween(Input input, float4 color, PixelsAround around, float4 nearest)
 {
     const float3 own = color.a > 0.0 ? color.rgb / color.a : color.rgb;
-    const float2 at = shape - 0.5;
-    const int2 base = int2(floor(at));
-    const float2 f = at - float2(base);
+    const float2 f = around.f;
     const bool table = (input.op.x & TableBefore) != 0;
     float3 sum = float3(0.0, 0.0, 0.0);
     float weight = 0.0;
 
-    for (int y = 0; y < 2; y++)
+    [unroll] for (int y = 0; y < 2; y++)
     {
-        for (int x = 0; x < 2; x++)
+        [unroll] for (int x = 0; x < 2; x++)
         {
-            const int2 texel = base + int2(x, y);
             const float w = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+            // None outside the picture: their entries have no index.
+            const float4 entry = around.entries[y * 2 + x];
 
-            if (w <= 0.0 || any(texel < int2(0, 0)) || any(texel >= original))
-            {
-                continue;
-            }
-
-            const float4 entry = SourceAt(texel);
-
-            if (!RecolouringIndexIn(entry, input.op.x))
+            if (w <= 0.0 || !RecolouringIndexIn(entry, input.op.x))
             {
                 continue;
             }
@@ -1301,7 +1438,7 @@ float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original,
         return sum / weight;
     }
 
-    const uint index = Byte(SourceAt(nearest).r);
+    const uint index = Byte(nearest.r);
     return Corrected(color.rgb, color.a, index, table ? Table(input.op.z, index) : index);
 }
 
@@ -1317,7 +1454,6 @@ Output HdPixelAt(Input input, float2 shape)
     const uint flags = input.op.x;
     const uint key = (input.op.y >> 8) & 255u;
     const int texelScale = (int)hdScale;
-    float4 color = HdColourBetween(input, shape, original);
     int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
 #if DRAW_STANDS
     // A fold's original pixel under it: the pass's texel (the draws' places agree, MCVulkanRenderer::Shape).
@@ -1328,15 +1464,34 @@ Output HdPixelAt(Input input, float2 shape)
     const bool foldTable = (flags & TableBefore) != 0;
     const uint foldedIndex = foldTable ? Table(input.op.z, Byte(underEntry.r)) : Byte(underEntry.r);
     const bool foldsIndex = folds && inPicture && OriginalDrawsIn(underEntry) && (!foldTable || foldedIndex != 255u);
+#else
+    const bool foldsIndex = false;
 #endif
 
-    // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
-    if ((flags & 15u) == KindHdSmooth)
+    // A smooth-edged frame's coverage comes first: where it covers nothing its pixel is transparent whatever its colour
+    // (a light's too: no colour without coverage), so it is left (but a fold's original pixel) before its colour is read.
+    // Most of a tree's rectangle is so.
+    const bool smooth = (flags & 15u) == KindHdSmooth;
+    float coverage = 0.0;
+
+    if (smooth)
     {
         int2 nearest;
-        const float coverage = HdMaskCoverage(original, shape, nearest);
+        coverage = HdMaskCoverage(original, shape, nearest);
         texel = nearest;
-        const float4 inside = HdTexel(nearest * texelScale + texelScale / 2, size, texelScale, flags, key);
+
+        if (coverage <= 0.0 && !foldsIndex)
+        {
+            discard;
+        }
+    }
+
+    float4 color = HdColourBetween(input, shape, original);
+
+    // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
+    if (smooth)
+    {
+        const float4 inside = HdTexel(texel * texelScale + texelScale / 2, size, texelScale, flags, key);
         const float3 own = color.a > 0.0 ? color.rgb / color.a : float3(0.0, 0.0, 0.0);
         const float3 near = inside.a > 0.0 ? inside.rgb / inside.a : own;
         color = float4(lerp(near, own, saturate(color.a / HdOwnColourAlpha)) * coverage, coverage);
@@ -1360,25 +1515,44 @@ Output HdPixelAt(Input input, float2 shape)
         discard;
     }
 
+    // Whether the colour is recoloured below as the original pixels around it show now (not by a sun shadow's draw or a
+    // mark pass, which return first): its nearest original pixel's index says.
+    const bool returnsFirst = (input.op.x & (SunShadowDraw | IndexOnly)) != 0;
+    const float4 entry = returnsFirst ? float4(0.0, 0.0, 0.0, 0.0) : SourceAt(texel);
+    const bool recolours = RecolouringIndexIn(entry, input.op.x);
+    const bool recolouredBetween = recolours && (input.op.x & HdAsMade) == 0;
+
+    // How much of the colour is the frame's baked shadow, worked out once for the three below that use it, from the
+    // four original pixels around it that the recolour reads too.
+    const bool darkens = look.y > 0.0 && (input.op.x & HdLight) == 0;
+    const bool shadowed = (input.op.x & (Sways | SunShadowDraw)) != 0 || darkens;
+    PixelsAround around = (PixelsAround)0;
+
+    if (shadowed || recolouredBetween)
+    {
+        around = PixelsAroundAt(original, shape);
+    }
+
+    const float baked = shadowed ? BakedShadowOf(around) : 0.0;
+
     // A forest's canopy marks where it is drawn, not its painted shadow (Sways).
     float swayMark = 0.0;
 
     if ((input.op.x & Sways) != 0)
     {
-        swayMark = BakedShadowAt(original, shape) < 0.5 ? SwayMark : 0.0;
+        swayMark = baked < 0.5 ? SwayMark : 0.0;
     }
 
     // A frame cast as a sun shadow casts its body, not the shadow baked beside it.
     if ((input.op.x & SunShadowDraw) != 0)
     {
-        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a * (1.0 - BakedShadowAt(original, shape))));
+        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a * (1.0 - baked)));
     }
 
     // Port-only (sun shadows): an object's baked shadow darkens what lies under it by look.y instead of covering it, or
     // (look.z) is hidden, the object casting its own.
-    if (look.y > 0.0 && (input.op.x & HdLight) == 0)
+    if (darkens)
     {
-        const float baked = BakedShadowAt(original, shape);
         color = look.z > 0.0 ? color * (1.0 - baked) : lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), baked);
     }
 
@@ -1397,13 +1571,9 @@ Output HdPixelAt(Input input, float2 shape)
 
     // The colour as the original pixels around it show now: through a paint scheme's table, today's palette, cycle and
     // brightness.
-    const float4 entry = SourceAt(texel);
-
-    const bool recolours = RecolouringIndexIn(entry, input.op.x);
-
-    if (recolours && (input.op.x & HdAsMade) == 0)
+    if (recolouredBetween)
     {
-        color.rgb = RecolouredBetween(input, color, shape, original, texel);
+        color.rgb = RecolouredBetween(input, color, around, entry);
     }
     else if (!recolours && (input.op.x & TableBefore) != 0)
     {
@@ -1432,10 +1602,8 @@ Output HdPixelAt(Input input, float2 shape)
 // the steps per window pixel (negative: mirrored), op.y the frame's scale.
 Output HdPixel(Input input, int2 target)
 {
-    // The drawn pixel's centre in window pixels, and in the shape's bounds (a mirrored step reads from the right).
-    const float2 window = WindowPlace(target);
-    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
-    return HdPixelAt(input, float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw));
+    // The drawn pixel's centre in the shape's bounds.
+    return HdPixelAt(input, SourcePlace(input, target));
 }
 
 // Where drawn pixel `target`'s centre lies in a textured polygon's texture (KindHdMap, KindSmoothMap): the polygon's
@@ -2011,7 +2179,7 @@ Output DrawnOutput(Input input)
     // The drawn pixel, one whose window pixel lies in the rectangle (the vertex shaders draw no other).
     const int2 target = int2(floor(input.position.xy));
 
-#if DRAW_VARIANT == DRAW_HD_KINDS
+#if DRAW_VARIANT == DRAW_HD_KINDS || DRAW_VARIANT == DRAW_TREE_KINDS
     return HdPixel(input, target);
 #else
     const uint flags = input.op.x;
@@ -2081,7 +2249,7 @@ Output DrawnOutput(Input input)
 #endif
 
     // The window pixel it shows, which the original's kinds work from.
-    const int2 pixel = WindowPixel(target, scale, offset.xy);
+    const int2 pixel = WindowPixel(target, scale, targetOffset);
     const uint color = input.op.y & 255u;
     uint value = color;
     uint state = 1;
@@ -2167,6 +2335,12 @@ Output DrawnOutput(Input input)
     }
 
 #if DRAWS_TERRAIN_KINDS
+    // Port-only (SPEC-pan-water.md): in the kept ground's pass, the entry its colour will follow.
+    if (KeptPass())
+    {
+        keptSlot = SeamShown(input, target, value);
+    }
+
     if ((flags & HdColors) != 0 && (flags & UseColor) == 0 && !(cycle.z != 0 && value == 255))
     {
         return HdTerrainPixel(input, target, original, value);
@@ -2178,8 +2352,13 @@ Output DrawnOutput(Input input)
     {
         Output output = Opaque(value);
         output.index = TerrainIndex(input, original, value);
+        // Port-only (SPEC-pan-water.md): a share only where the colour is the index's own.
+        cycledShare = value == original ? ShownShare(value) : float3(0.0, 0.0, 0.0);
         return output;
     }
+
+    // Port-only (SPEC-pan-water.md): an original tile's pixel shows its index's colour (Opaque's).
+    cycledShare = ShownShare(value);
 #endif
 
 #if DRAWS_SPRITE_KINDS
@@ -2248,13 +2427,37 @@ Output DrawnOutput(Input input)
 #endif
 }
 
+#if DRAW_VARIANT == DRAW_TREE_KINDS
+// Port-only: a forest's HD frame's draw (MCVulkanRenderer's TreeDraw: a smooth-edged frame, blended, that sways, with no
+// key, light, glow, sun shadow, mark pass, ground fill or colours as made). The tree build knows those flags, so its
+// pixels skip the paths no such draw takes; a table's (TableBefore) and the rest stay the draw's.
+static const uint TreeKnown = 15u | ColorKey | Glow | AlphaBlend | IndexOnly | HdAsMade | HdLight | SunShadowDraw |
+                              Sways | GroundFill;
+static const uint TreeFlags = KindHdSmooth | AlphaBlend | Sways;
+#endif
+
 Output main(Input input)
 {
+#if DRAW_VARIANT == DRAW_TREE_KINDS
+    input.op.x = (input.op.x & ~TreeKnown) | TreeFlags;
+#endif
     sourceCorner = int2(input.place.x & 0xffffu, input.place.x >> 16);
     hdCorner = int2(input.place.y & 0xffffu, input.place.y >> 16);
     placeSize = int2(input.place.z & 0xffffu, input.place.z >> 16);
     sourceMarks = (input.place.w & HdMarksSource) != 0;
+    targetOffset = offset.xy + SubPixelOffset(input.place.w, scale.zw);
+    cycledShare = float3(0.0, 0.0, 0.0);
+    keptSlot = 0;
     Output output = DrawnOutput(input);
+
+#if DRAWS_TERRAIN_KINDS
+    // Port-only (SPEC-pan-water.md): in the kept ground's pass, the terrain's cycled share in the glints target,
+    // premultiplied as the colours are, so the seam pass's blend mixes it as it mixes the colours.
+    if (KeptPass())
+    {
+        output.glint = float4(cycledShare * output.color.a, output.color.a);
+    }
+#endif
 
     // Port-only (HD lighting): a light's glow, premultiplied through the blend pipeline, fainter as look.x.
     if ((input.op.x & Glow) != 0)
@@ -2291,6 +2494,15 @@ Output main(Input input)
     {
         output.stands = output.index.a;
     }
+
+#if DRAWS_TERRAIN_KINDS
+    // Port-only (SPEC-pan-water.md): in the kept ground's pass, the stands hold the entry its colour follows (written by
+    // the first pass, which writes the indices; the seam pass leaves them).
+    if (KeptPass())
+    {
+        output.stands = (float)keptSlot / 255.0;
+    }
+#endif
 #endif
     return output;
 }

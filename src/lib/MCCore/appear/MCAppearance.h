@@ -149,4 +149,9 @@ public:
     MCVector2D UpperLeft;
     /// <summary>The screen bounds' bottom-right corner.</summary>
     MCVector2D LowerRight;
+    /// <summary>
+    /// Port-only (HDSmoothPlace): how far past <see cref="ScreenPos"/> the unit is drawn, where it is rather than on the
+    /// original's whole pixels (0 for one drawn on them); its overlays (bars, selection marks) follow it.
+    /// </summary>
+    MCVector2D DrawnShift;
 };

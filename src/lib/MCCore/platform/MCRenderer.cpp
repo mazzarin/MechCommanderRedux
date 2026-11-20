@@ -561,6 +561,11 @@ std::expected<void, std::string> MCRenderer::PrepareTerrain(const MCTerrainMesh&
     return {};
 }
 
+size_t MCRenderer::PrepareHdPictures(std::span<const std::shared_ptr<const MCHdArt::Frame>> /*frames*/)
+{
+    return 0;
+}
+
 void MCRenderer::Shadow(MCWindow& /*target*/, const MCShadowCommand& /*command*/)
 {
 }
@@ -646,6 +651,9 @@ namespace
 
     /// <summary>The row a <see cref="MCRenderer::StandingScope"/>'s unit stands on, none outside one.</summary>
     std::optional<float> StandingDrawn;
+
+    /// <summary>How far past their whole pixels a <see cref="MCRenderer::SubPixelScope"/>'s draws lie, none outside one.</summary>
+    std::optional<std::array<float, 2>> SubPixelDrawn;
 
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
@@ -930,6 +938,21 @@ std::optional<float> MCRenderer::DrawingStanding()
     return StandingDrawn;
 }
 
+MCRenderer::SubPixelScope::SubPixelScope(std::optional<std::array<float, 2>> fraction) : _Was(SubPixelDrawn)
+{
+    SubPixelDrawn = fraction;
+}
+
+MCRenderer::SubPixelScope::~SubPixelScope()
+{
+    SubPixelDrawn = _Was;
+}
+
+std::optional<std::array<float, 2>> MCRenderer::DrawingSubPixel()
+{
+    return SubPixelDrawn;
+}
+
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)
 {
     auto& surfaces = FrameSurfaces();
@@ -1066,25 +1089,28 @@ namespace
     }
 }
 
-int32_t MCDrawnGrid::Offset(int32_t origin, uint32_t window, uint32_t drawn)
+int32_t MCDrawnGrid::Offset(int32_t origin, uint32_t window, uint32_t drawn, int32_t fraction)
 {
     if (window == 0 || drawn == 0 || window == drawn)
     {
         return 0;
     }
 
-    return static_cast<int32_t>(Whole(origin, window, drawn) * window - static_cast<int64_t>(origin) * drawn);
+    return static_cast<int32_t>(Whole(origin, window, drawn, fraction) * window - static_cast<int64_t>(origin) * drawn);
 }
 
-int64_t MCDrawnGrid::Whole(int32_t origin, uint32_t window, uint32_t drawn)
+int64_t MCDrawnGrid::Whole(int32_t origin, uint32_t window, uint32_t drawn, int32_t fraction)
 {
     if (window == 0 || drawn == 0 || window == drawn)
     {
         return origin;
     }
 
+    // round((origin - fraction / F) D / W), halves down, in whole numbers: floor((2 (origin F - fraction) D + F W) /
+    // 2 F W).
     const int64_t w = window;
-    return FloorDivide(2 * static_cast<int64_t>(origin) * drawn + w, 2 * w);
+    const int64_t place = static_cast<int64_t>(origin) * FractionSteps - fraction;
+    return FloorDivide(2 * place * drawn + FractionSteps * w, 2 * FractionSteps * w);
 }
 
 int32_t MCDrawnGrid::WindowPixel(int64_t drawnPixel, uint32_t window, uint32_t drawn, int32_t offset)
@@ -1117,6 +1143,24 @@ double MCDrawnGrid::WindowPlace(double drawnPlace, uint32_t window, uint32_t dra
     }
 
     return (drawnPlace * window - offset) / drawn;
+}
+
+std::array<int64_t, 2> MCDrawnGrid::Showing(uint32_t window, uint32_t drawn, int32_t offset)
+{
+    const int64_t last = std::max<int64_t>(static_cast<int64_t>(drawn) - 1, 0);
+
+    if (window == drawn || window == 0 || drawn == 0)
+    {
+        return {0, last};
+    }
+
+    // Drawn pixel p shows window pixel floor(((2p + 1) W - 2r) / 2D): at least 0 from p = ceil((2r - W) / 2W), and
+    // under W while (2p + 1) W - 2r < 2 D W, so up to floor((2 D W + 2r - W - 1) / 2W).
+    const int64_t w = window;
+    const int64_t r = offset;
+    const int64_t first = -FloorDivide(w - 2 * r, 2 * w);
+    const int64_t end = FloorDivide(2 * static_cast<int64_t>(drawn) * w + 2 * r - w - 1, 2 * w);
+    return {std::clamp<int64_t>(first, 0, last), std::clamp<int64_t>(end, 0, last)};
 }
 
 namespace

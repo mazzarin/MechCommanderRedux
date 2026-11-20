@@ -29,6 +29,8 @@ namespace
     constexpr int32_t BridgeTiles[] = {0xd64, 0xd65};
     /// <summary>The draw-list depth of the crater group: under everything else.</summary>
     constexpr int32_t CraterDepth = 30000000;
+    /// <summary>Port-only: bytes in a megabyte, for the log.</summary>
+    constexpr double BytesPerMb = 1024.0 * 1024.0;
 }
 
 int GHdFootprints = 0;
@@ -113,11 +115,35 @@ void MCCraterManager::AttachHdArt() const
         return;
     }
 
+    std::vector<MCHdArt::PacketAhead> packets;
+
     for (size_t packet = 0; packet < static_cast<size_t>(_ShapeCount); ++packet)
     {
-        MCHdArt::Attach(_Shapes[packet], _HdArtOwner,
-                        MCHdArt::CraterShapeKey{_FileName, static_cast<uint32_t>(packet)});
+        const MCHdArt::CraterShapeKey key{_FileName, static_cast<uint32_t>(packet)};
+        MCHdArt::Attach(_Shapes[packet], _HdArtOwner, key);
+
+        if (!_Shapes[packet].empty())
+        {
+            packets.push_back(MCHdArt::PacketAhead{MCHdArt::FolderOf(key), std::nullopt, false});
+        }
     }
+
+    // Port-only (SPEC-first-use.md: HD craters and footprints): every frame of them read by HD art's readers as the
+    // load's reads, for KeepHdArtForMission to keep: a blast or a step makes one at no unit's lead.
+    MCHdArt::ReadPacketsAhead(packets, MCHdArt::ReadAs::Load);
+}
+
+void MCCraterManager::KeepHdArtForMission() const
+{
+    if (!MCHdArt::Active())
+    {
+        return;
+    }
+
+    const size_t before = MCHdArt::KeptForMissionBytes();
+    const size_t kept = MCHdArt::KeepShapesForMission(std::span(_Shapes).first(static_cast<size_t>(_ShapeCount)));
+    SDL_Log("Craters: %s's HD frames kept for the mission, %.2f MB", _FileName.c_str(),
+            static_cast<double>(kept - before) / BytesPerMb);
 }
 
 auto MCCraterManager::AddCrater(int32_t craterType, const MCVector3D& position, int32_t rotation) -> void

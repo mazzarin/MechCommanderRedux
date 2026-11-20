@@ -239,6 +239,13 @@ public:
     HoldPiece HoldPieceAt(uint32_t piece) const;
 
     /// <summary>
+    /// Port-only (the hold, SPEC-memory.md's ground): the piece (<see cref="HoldPieceAt"/>) holding entry
+    /// <paramref name="index"/>'s stored bytes: a version 2 entry's stream, a version 1 entry's own (or the one its bytes
+    /// are stored once with); none for an index out of range.
+    /// </summary>
+    std::optional<uint32_t> PieceOf(int32_t index) const;
+
+    /// <summary>
     /// Port-only (the hold): keeps pieces <paramref name="first"/> to <paramref name="end"/> (one past the last) as stored,
     /// read together as <paramref name="run"/> from <paramref name="start"/>, in memory, where
     /// <see cref="ReadStored(int32_t)"/> and HD art's readers take them in place of the disk, until <see cref="LetGoHeld"/>:

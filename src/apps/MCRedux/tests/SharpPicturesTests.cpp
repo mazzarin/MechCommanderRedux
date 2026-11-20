@@ -103,6 +103,23 @@ namespace
 
         return renderer.SharpPictures();
     }
+
+    /// <summary>
+    /// NEW CAMPAIGN clicked as a player clicks it, waiting for nothing: its fade sets the briefing up, then rehearses
+    /// it and the screens a slide brings in, at its darkest steps, where a redraw of line art the maker hasn't reached
+    /// yet only holds the black longer (the fade keeps its pace): printed, never checked.
+    /// </summary>
+    void ClickNewCampaign(MCVulkanRenderer& renderer)
+    {
+        const MCVulkanRenderer::SharpCounts clicked = SharpCountsNow(renderer);
+        NewCampaign();
+        const MCVulkanRenderer::SharpCounts faded = SharpCountsNow(renderer);
+        std::cout << std::format(
+            "  the click's fade: {} sharp pictures taken made ahead, {} redrawn ({:.3f} ms of it), "
+            "{:.3f} ms in all, at its darkest steps\n",
+            faded.TakenAhead - clicked.TakenAhead, faded.Redrawn - clicked.Redrawn,
+            Milliseconds(faded.RedrawnTime - clicked.RedrawnTime), Milliseconds(faded.PutTime - clicked.PutTime));
+    }
 }
 
 /// <summary>
@@ -308,15 +325,7 @@ TEST_CASE_ISOLATED("game: a sharp screen's text and line art are made ahead, and
     Settle();
     REQUIRE(MCInput::Display()->SharpScreen());
 
-    // NEW CAMPAIGN clicked: its fade sets the briefing up, then rehearses it and the screens a slide brings in.
-    const MCVulkanRenderer::SharpCounts clicked = SharpCountsNow(*renderer);
-    NewCampaign();
-    const MCVulkanRenderer::SharpCounts faded = SharpCountsNow(*renderer);
-    std::cout << std::format("  the click's fade: {} sharp pictures taken made ahead, {} redrawn ({:.3f} ms of it), "
-                             "{:.3f} ms in all, at its darkest steps\n",
-                             faded.TakenAhead - clicked.TakenAhead, faded.Redrawn - clicked.Redrawn,
-                             Milliseconds(faded.RedrawnTime - clicked.RedrawnTime),
-                             Milliseconds(faded.PutTime - clicked.PutTime));
+    ClickNewCampaign(*renderer);
 
     // A screen shown after <paramref name="click"/>, frame by frame: what its frames redrew, its worst frame printed.
     const auto shows = [&renderer](std::string_view which, const std::function<void()>& click) -> size_t
@@ -458,8 +467,7 @@ TEST_CASE_ISOLATED("game: a slide to a tab the briefing's fade left unshown take
     }
 
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
-    NewCampaign();
-    MCSharpPictures::WaitForMade();
+    ClickNewCampaign(*renderer);
     Settle();
 
     // The shop opened on another tab than the briefing's fade left shown (the pilots'; it left the mechs'): the fade
@@ -488,15 +496,16 @@ TEST_CASE_ISOLATED(
     }
 
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
-    NewCampaign();
-    MCSharpPictures::WaitForMade();
+    ClickNewCampaign(*renderer);
     Settle();
 
     // The slides to the purchase screen and on to the repair screen take nothing, their rehearsals included: what
-    // they show was the fade's. All they take is the clock's new digits (the screens show the time to the second).
+    // they show was the fade's. All they take is the clock's new digits (the screens show the time to the second),
+    // none redrawn.
     constexpr size_t ClockDigits = 2;
     std::vector<size_t> taken;
     MCTestGame::OnPresent = [&] { taken.push_back(SharpTaken(*renderer)); };
+    const MCVulkanRenderer::SharpCounts settled = SharpCountsNow(*renderer);
     const size_t before = SharpTaken(*renderer);
     GlobalLog()->SetUpPurchaseScreen(true);
     const size_t purchaseSteps = taken.size();
@@ -505,7 +514,7 @@ TEST_CASE_ISOLATED(
     REQUIRE(purchaseSteps > 2);
     REQUIRE(taken.size() > purchaseSteps + 2);
     CHECK(taken.back() - before <= ClockDigits);
-    CHECK_EQ(renderer->SharpPictures().Redrawn, 0u);
+    CHECK_EQ(SharpCountsNow(*renderer).Redrawn - settled.Redrawn, 0u);
     GHdArt = 0;
 }
 
@@ -524,8 +533,7 @@ TEST_CASE_ISOLATED(
     }
 
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
-    NewCampaign();
-    MCSharpPictures::WaitForMade();
+    ClickNewCampaign(*renderer);
     Settle();
     GlobalLog()->SetUpPurchaseScreen(true);
     Settle();

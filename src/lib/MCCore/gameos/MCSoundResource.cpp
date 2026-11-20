@@ -6,6 +6,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCFlac.h"
 #include "sound/MCHdAudio.h"
+#include "sound/MCSoundReplacements.h"
 
 namespace
 {
@@ -102,7 +103,19 @@ void MCSoundResource::LoadFile()
 
 bool MCSoundResource::TryHdSample(std::span<const uint8_t> image, std::optional<uint64_t> id)
 {
-    std::shared_ptr<const MCHdAudio::Decoded> decoded = MCHdAudio::Sample(image, id);
+    // Port-only: a file of the player's in the sound replacements folder comes first (any length, HD audio on or off),
+    // then the pack's. Its identity is worked out once for both.
+    if (MCSoundReplacements::Active() && !id.has_value())
+    {
+        id = MCHdAudio::SampleId(image);
+    }
+
+    std::shared_ptr<const MCHdAudio::Decoded> decoded = MCSoundReplacements::Sample(image, id);
+
+    if (decoded == nullptr)
+    {
+        decoded = MCHdAudio::Sample(image, id);
+    }
 
     if (decoded == nullptr)
     {
@@ -195,6 +208,12 @@ uint32_t MCSoundResource::Read(std::span<uint8_t> buffer, bool loop, int32_t dep
         return static_cast<uint32_t>(buffer.size());
     }
 
+    if (_Replaced != nullptr)
+    {
+        ReadReplaced(buffer, loop);
+        return static_cast<uint32_t>(buffer.size());
+    }
+
     const auto bytes = static_cast<uint32_t>(buffer.size());
 
     if (depth > 3)
@@ -253,9 +272,31 @@ void MCSoundResource::ReadFlac(std::span<uint8_t> buffer, bool loop)
     std::ranges::fill(buffer.subspan(done), uint8_t{0});
 }
 
+void MCSoundResource::ReadReplaced(std::span<uint8_t> buffer, bool loop)
+{
+    const std::span<const uint8_t> pcm(_Replaced->Pcm);
+    size_t done = 0;
+
+    while (done < buffer.size() && _ReplacedAt < pcm.size())
+    {
+        const size_t count = std::min(buffer.size() - done, pcm.size() - _ReplacedAt);
+        std::ranges::copy(pcm.subspan(_ReplacedAt, count), buffer.begin() + static_cast<ptrdiff_t>(done));
+        done += count;
+        _ReplacedAt += count;
+
+        if (_ReplacedAt == pcm.size() && loop)
+        {
+            _ReplacedAt = 0;
+        }
+    }
+
+    std::ranges::fill(buffer.subspan(done), uint8_t{0});
+}
+
 void MCSoundResource::Rewind()
 {
     const std::unique_lock stream = LockStream();
+    _ReplacedAt = 0;
 
     if (_Flac != nullptr)
     {
@@ -348,5 +389,28 @@ void MCSoundResource::OpenStream()
     DurationMs = Format.nAvgBytesPerSec == 0
                      ? 0
                      : static_cast<uint32_t>(static_cast<int64_t>(dataSize) * 1000 / Format.nAvgBytesPerSec);
-    TryHdStream(frameBytes <= 0 ? 0 : dataSize / static_cast<uint32_t>(frameBytes));
+
+    if (!TryReplacedStream())
+    {
+        TryHdStream(frameBytes <= 0 ? 0 : dataSize / static_cast<uint32_t>(frameBytes));
+    }
+}
+
+bool MCSoundResource::TryReplacedStream()
+{
+    std::shared_ptr<const MCHdAudio::Decoded> decoded = MCSoundReplacements::Music(_FileName);
+
+    if (decoded == nullptr)
+    {
+        return false;
+    }
+
+    // Any length: the track ends (or loops) with the replacement, whose length the channel stops a stream by.
+    Format = WaveFormatOf(decoded->Format);
+    DurationMs = static_cast<uint32_t>(static_cast<uint64_t>(decoded->Pcm.size()) * 1000 / Format.nAvgBytesPerSec);
+    _Replaced = std::move(decoded);
+    _ReplacedAt = 0;
+    _Stream->Close();
+    _Stream.reset();
+    return true;
 }

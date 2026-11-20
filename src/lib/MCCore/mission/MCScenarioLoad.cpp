@@ -50,6 +50,7 @@
 #include "object/MCTrainCar.h"
 #include "object/MCTrainManager.h"
 #include "sound/MCHdAudio.h"
+#include "sound/MCSoundReplacements.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCElementalActor.h"
 #include "sprite/MCHdArt.h"
@@ -363,6 +364,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCTerrainReadHdTiles();
     SoundSystem()->PrepareThunder();
     MCHdAudio::FinishPreparing();
+    // Port-only: a sound replacements folder made or removed since the game started.
+    MCSoundReplacements::Look();
     UpdateDisplay(false, true, 30, true, 100);
 
     CameraList()->SetEye(CameraList()->ActivateAllReady());

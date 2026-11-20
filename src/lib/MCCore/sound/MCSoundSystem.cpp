@@ -22,6 +22,7 @@
 #include "platform/MCFlac.h"
 #include "platform/MCSmacker.h"
 #include "sound/MCHdAudio.h"
+#include "sound/MCSoundReplacements.h"
 #include "sprite/MCWeather.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
@@ -282,6 +283,8 @@ void MCSoundSystem::Load(std::string_view soundFileName)
     // 1.7 MB, BETTY.PAK 3.4 MB), so a sound or an announcement first played in a mission reads nothing from the disk.
     _SoundDataFile->HoldAllPackets();
     _BettyDataFile->HoldAllPackets();
+    // Port-only: the player's sound replacements folder, when there is one (looked at again each mission).
+    MCSoundReplacements::Look();
     SeekSoundBlock(soundFile, "SoundBites", " Couldn't find a variable in betty file ");
     uint32_t numBites = 0;
     ReadSetting(soundFile, "numBites", numBites, " Couldn't find a variable in betty file ");

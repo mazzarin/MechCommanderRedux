@@ -472,6 +472,7 @@
     <ClCompile Include="sound\MCHdAudio.cpp" />
     <ClCompile Include="sound\MCRadio.cpp" />
     <ClCompile Include="sound\MCRadioMessage.cpp" />
+    <ClCompile Include="sound\MCSoundReplacements.cpp" />
     <ClCompile Include="sound\MCSoundSystem.cpp" />
     <ClCompile Include="sprite\MCArmAppearance.cpp" />
     <ClCompile Include="sprite\MCArmAppearanceType.cpp" />
@@ -973,6 +974,7 @@
     <ClInclude Include="sound\MCHdAudio.h" />
     <ClInclude Include="sound\MCRadio.h" />
     <ClInclude Include="sound\MCRadioMessage.h" />
+    <ClInclude Include="sound\MCSoundReplacements.h" />
     <ClInclude Include="sound\MCSoundSystem.h" />
     <ClInclude Include="sprite\MCArmAppearance.h" />
     <ClInclude Include="sprite\MCArmAppearanceType.h" />

@@ -108,6 +108,14 @@ private:
     void TryHdStream(uint64_t sourceFrames);
     /// <summary>Read for the HD music: as the wave's, silence past the end unless it loops.</summary>
     void ReadFlac(std::span<uint8_t> buffer, bool loop);
+    /// <summary>
+    /// Port-only: plays the player's replacement for the music file (<see cref="MCSoundReplacements::Music"/>), of any
+    /// length, in place of the stream's file, which is closed then.
+    /// </summary>
+    /// <returns>Whether there is one.</returns>
+    bool TryReplacedStream();
+    /// <summary>Read for a replaced stream: from memory, silence past the end unless it loops.</summary>
+    void ReadReplaced(std::span<uint8_t> buffer, bool loop);
 
     /// <summary>The file name, for a file or stream.</summary>
     std::string _FileName;
@@ -123,6 +131,10 @@ private:
     int32_t _DataStart = 0;
     /// <summary>The HD music's decoder, when it plays in place of the stream's file.</summary>
     std::unique_ptr<MCFlac> _Flac;
+    /// <summary>The player's replacement music, decoded, when it plays in place of the stream's file.</summary>
+    std::shared_ptr<const MCHdAudio::Decoded> _Replaced;
+    /// <summary>Where the replacement music is read from next.</summary>
+    size_t _ReplacedAt = 0;
     /// <summary>Held while the stream is read or rewound (<see cref="LockStream"/>).</summary>
     mutable std::recursive_mutex _StreamLock;
 };

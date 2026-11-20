@@ -22,6 +22,7 @@
 #include "camera/MCCamera.h"
 #include "camera/MCMainWindow.h"
 #include "color/MCPalette.h"
+#include "engine/MCCraterManager.h"
 #include "gui/MCGuiButton.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCUpdateDisplay.h"
@@ -1043,6 +1044,12 @@ auto MCMission::StartInterface() -> void
     if (const std::shared_ptr<MCMission> mission = Mission(); mission != nullptr && mission->ResultsScreen != nullptr)
     {
         mission->ResultsScreen->KeepPicturesForEnd();
+    }
+
+    // Port-only (SPEC-first-use.md: HD craters and footprints): theirs, read at the load, kept from here too.
+    if (MCGameContext::Current().HasCraterManager())
+    {
+        CraterManager().KeepHdArtForMission();
     }
 
     // Port-only (SPEC-memory.md's fill): the mission's art was held under the loading bar (MCHdArt::StartLoadFill); the

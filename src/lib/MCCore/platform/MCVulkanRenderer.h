@@ -360,6 +360,8 @@ public:
         int64_t PictureBytes = 0;
         int64_t AtlasImages = 0;
         int64_t AtlasBytes = 0;
+        /// <summary>Colour tables given a row on the GPU (each one's 256 bytes sent up).</summary>
+        int64_t TableRows = 0;
     };
 
     /// <summary>The uploads of the last frame <see cref="Execute"/> ran.</summary>
@@ -434,6 +436,12 @@ public:
     static inline bool KeepSurfaces = true;
     static inline bool CheckKeptSurfaces = false;
 
+    /// <summary>
+    /// Port-only (the kept ground), for the tests: whether a zoom easing lays the kept HD ground scaled to the view
+    /// (else it's drawn each frame, as before).
+    /// </summary>
+    static inline bool ScaleGroundWhileZooming = true;
+
     /// <summary>The result of <see cref="CompareKept"/>.</summary>
     struct KeptComparison
     {
@@ -455,8 +463,8 @@ public:
 
     /// <summary>
     /// Port-only (the kept ground), for the tests: the terrain layers run so far drawn directly, and those laid from the
-    /// kept ground as it was drawn whole, moved (shifted, the strips the view moved onto drawn), or kept in place (only
-    /// what changed drawn again, if anything).
+    /// kept ground as it was drawn whole, moved (shifted, the strips the view moved onto drawn), kept in place (only
+    /// what changed drawn again, if anything), or scaled to the view while a zoom eases (KeepGround's scaled lay).
     /// </summary>
     struct GroundCounts
     {
@@ -464,6 +472,9 @@ public:
         int64_t Whole = 0;
         int64_t Shifted = 0;
         int64_t Kept = 0;
+        int64_t Scaled = 0;
+        /// <summary>Port-only (SPEC-pan-water.md): the parts drawn again into it, moved or kept in place.</summary>
+        int64_t Parts = 0;
         /// <summary>
         /// Port-only (SPEC-kept-forest.md): the frames whose ground and overlays were copied from the kept view, the
         /// overlays' draws those frames left out, the overlays' draws drawn into the view (whole or again, a draw once
@@ -481,6 +492,39 @@ public:
         WaitForRunning();
         return _GroundCounts;
     }
+
+    /// <summary>
+    /// Port-only (SPEC-pan-water.md), for the tests: whether a frame laying its terrain from the kept ground also lays
+    /// it over nothing, apart, and draws the terrain whole at the frame's colour cycle step over nothing beside it, for
+    /// <see cref="CompareKeptGround"/>.
+    /// </summary>
+    static inline bool CheckKeptGround = false;
+
+    /// <summary>The result of <see cref="CompareKeptGround"/>.</summary>
+    struct GroundComparison
+    {
+        /// <summary>The pixels compared: those the terrain's first pass drew; of them, those showing a cycled entry.</summary>
+        int64_t Pixels = 0;
+        int64_t Cycled = 0;
+        /// <summary>Those whose indices differ.</summary>
+        int64_t DifferentIndices = 0;
+        /// <summary>
+        /// Those whose colours differ by more than a byte in a channel, and by how much at most (bytes): apart from the
+        /// seam's (Seam: those the seam pass changes, where it may mix another index's colour in, and those near them),
+        /// and the seam's.
+        /// </summary>
+        int64_t DifferentColors = 0;
+        int32_t MostDifference = 0;
+        int64_t Seam = 0;
+        int64_t DifferentSeamColors = 0;
+        int32_t MostSeamDifference = 0;
+    };
+
+    /// <summary>
+    /// Port-only, for the tests (<see cref="CheckKeptGround"/>): reads back the last frame's kept ground laid and its
+    /// terrain drawn whole, waiting for the GPU, and compares them (none: nothing was laid since the last comparison).
+    /// </summary>
+    std::expected<std::optional<GroundComparison>, std::string> CompareKeptGround();
 
     /// <summary>
     /// The ground meshes put on the GPU so far, and the times their tiles went up with them (a mesh of the tiles
@@ -795,6 +839,11 @@ private:
         /// (none: none drawn on it yet), and whether the frame being recorded drew one (its first places the grid).
         /// </summary>
         std::optional<std::array<int32_t, 2>> GridOrigin;
+        /// <summary>
+        /// Port-only (HDSmoothCamera): the camera's fraction of a pixel past GridOrigin's place
+        /// (MCTerrainFrame::OriginFraction), which moves the grid too.
+        /// </summary>
+        std::array<int32_t, 2> GridFraction{};
         bool GridPlaced = false;
         /// <summary>
         /// Port-only: the offset of the surface's drawn grid across and down (MCDrawnGrid::Offset) from GridOrigin
@@ -815,6 +864,11 @@ private:
         uint32_t TileColumns = 0;
         bool TilesHeld = false;
         uint64_t Stamp = 0;
+        /// <summary>
+        /// Port-only, execution: whether its next pass starts it blank, as a new surface starts (its window's size changed
+        /// while its drawn size held: a zoom easing; its textures kept).
+        /// </summary>
+        bool Blank = false;
     };
 
     /// <summary>A draw's rectangle (x0, y0, x1, y1), or where it reads from and its steps (x, y, step x, step y).</summary>
@@ -955,7 +1009,7 @@ private:
 
     /// <summary>
     /// Port-only (the kept ground, KeepGround): a terrain tile as a cell draws it (terrain.vshader's Image): its box's
-    /// size, its hot spot and the width its header gives; and the palette indices its pixels hold.
+    /// size, its hot spot and the width its header gives.
     /// </summary>
     struct TerrainTileShape
     {
@@ -964,6 +1018,10 @@ private:
         int32_t HotX = 0;
         int32_t HotY = 0;
         int32_t HeaderWidth = 0;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): the palette indices its pixels hold, for the cells the kept view draws again
+        /// at a step of the colour cycle (GroundPlan::Cycled).
+        /// </summary>
         std::bitset<256> Colors;
     };
 
@@ -1013,17 +1071,23 @@ private:
     /// <summary>
     /// Port-only: the ground (the terrain layer drawn over nothing) kept from frame to frame for the surface the
     /// terrain draws on first, so a frame redraws only the ground that changed: what the view scrolled onto, and the
-    /// cells whose draw changed (fog of war, the water's colour cycle, a tile now dropped or drawn at the view's edges).
-    /// It is in one of two pairs of textures the surface's size (colours, indices); when the view moved, the next
-    /// frame's is made in the other from this one, shifted. A frame then lays it over the surface where the terrain
-    /// layer would be drawn (shaders/ground.pshader): the same pixels wherever the terrain's first pass draws (all but
-    /// the void past the map's ring of off-map cells, where its seams' blends over the surface may round apart). Only
-    /// with HD ground, whose two passes are most of a frame's drawing.
+    /// cells whose draw changed (fog of war, a tile now dropped or drawn at the view's edges). It is in one of two pairs
+    /// of textures the surface's size (colours, indices; port-only, SPEC-pan-water.md, the share of the colours that
+    /// follows the colour cycle and the entries it follows, shaders/channels.hlsli's kept ground); when the view moved,
+    /// the next frame's is made in the other
+    /// from this one, shifted. A frame then lays it over the surface where the terrain layer would be drawn
+    /// (shaders/ground.pshader): the same pixels wherever the terrain's first pass draws (all but the void past the
+    /// map's ring of off-map cells, where its seams' blends over the surface may round apart). It holds the colour
+    /// cycle at one step (CycleStep, the step it was last drawn whole at: every part drawn into it since is drawn at
+    /// that step), which the lay takes to the frame's by the weights, so a step of the cycle draws none of it again.
+    /// Only with HD ground, whose two passes are most of a frame's drawing.
     /// </summary>
     struct KeptGround
     {
         std::array<Texture, 2> Colors;
         std::array<Texture, 2> Indices;
+        std::array<Texture, 2> Weights;
+        std::array<Texture, 2> Slots;
         /// <summary>The pair holding the ground, and whether one does.</summary>
         size_t Current = 0;
         bool Held = false;
@@ -1032,7 +1096,7 @@ private:
         MCAddressKey SurfaceKey;
         uint64_t Upload = 0;
         /// <summary>The terrain layer drawn (the camera's place, the grid), the fog's flags (1: the home side sees the
-        /// vertex; FogColumns a row) and the colour cycle's step.</summary>
+        /// vertex; FogColumns a row) and the colour cycle's step its pixels hold.</summary>
         MCTerrainFrame Frame;
         std::vector<uint8_t> Seen;
         int32_t FogColumns = 0;
@@ -1045,6 +1109,15 @@ private:
         std::array<int32_t, 2> LastOrigin{INT32_MIN, INT32_MIN};
         std::vector<uint8_t> LastLooks;
         /// <summary>
+        /// Port-only (a zoom easing): the part of the surface's window its drawn size covered (MappedWidth, MappedHeight)
+        /// and its drawn grid's offset when the kept ground was drawn, which place its pixels on the map; and the part
+        /// covered the frame before, of the last terrain layer drawn, kept or not (a size that changed since is a zoom
+        /// easing).
+        /// </summary>
+        std::array<uint32_t, 2> Mapped{};
+        std::array<int32_t, 2> Offset{};
+        std::array<uint32_t, 2> LastMapped{};
+        /// <summary>
         /// The rest it was drawn with, as bytes (GroundLooks): the sizes, the terrain's steps and clip, the haze's
         /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).
         /// </summary>
@@ -1054,13 +1127,15 @@ private:
         /// holds them once its ground is laid and its overlays drawn (FastShape: the forests' tiles), so a frame
         /// copies it in and draws neither. Two of them, as the ground's pairs, a moved view's made from the last one
         /// shifted; then drawn again where the ground was or an overlay's draw changed. Only while the terrain's clip
-        /// covers the surface.
+        /// covers the surface. Its ground is laid at the colour cycle's step it was last brought up to date at
+        /// (ViewCycleStep): the cells that show a cycled colour are drawn again in it at the next (GroundPlan::Cycled).
         /// </summary>
         std::array<Texture, 2> ViewColors;
         std::array<Texture, 2> ViewIndices;
         std::array<Texture, 2> ViewStands;
         size_t ViewCurrent = 0;
         bool ViewHeld = false;
+        int32_t ViewCycleStep = 0;
         /// <summary>The overlays' draws it holds: each one's key (OverlayKeys) and its window rectangle from the origin.</summary>
         std::vector<std::pair<uint64_t, MCRect>> ViewOverlays;
     };
@@ -1085,6 +1160,25 @@ private:
         std::array<int32_t, 2> Shift{};
         /// <summary>The parts drawn again (drawn pixels), when not whole.</summary>
         std::vector<MCRect> Redrawn;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): the cells that show a cycled colour (drawn pixels, as Redrawn's parts), when
+        /// the kept view holds another step of the colour cycle than the frame's: drawn again in the view, not in the
+        /// kept ground, which the lay takes to the frame's step.
+        /// </summary>
+        std::vector<MCRect> Cycled;
+    };
+
+    /// <summary>
+    /// Port-only (KeepGround, a zoom easing): the kept ground laid scaled to a frame's view, drawn at the size it was
+    /// kept at: where each drawn pixel's centre lies in the kept ground (kept drawn places: x and y per drawn pixel,
+    /// then the place of drawn place 0 across and down), the drawn pixels it covers, and the rest of the terrain's clip
+    /// (a view zoomed out past it), whose terrain is drawn directly.
+    /// </summary>
+    struct GroundScale
+    {
+        std::array<float, 4> Scale{};
+        SDL_Rect Covered{};
+        std::vector<SDL_Rect> Uncovered;
     };
 
     /// <summary>
@@ -1692,11 +1786,12 @@ private:
     const SurfacePipelines& PipelinesFor(const Surface& surface) const;
     /// <summary>
     /// Execution: draws a terrain layer of <paramref name="run"/> in the render pass under way, through
-    /// <paramref name="pipelines"/>.
+    /// <paramref name="pipelines"/>; with HD ground, its seam pass too, but where <paramref name="seams"/> is false
+    /// (port-only: CheckKeptGround's picture of what that pass changes).
     /// </summary>
     void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
                      const FrameRun& run, const Surface& surface, const TerrainDraw& draw,
-                     std::span<const std::byte> frameUniforms);
+                     std::span<const std::byte> frameUniforms, bool seams = true);
     /// <summary>
     /// Port-only (KeepGround): what the kept ground depends on for <paramref name="draw"/> of <paramref name="run"/>
     /// on <paramref name="surface"/> but the camera, the fog and the colour cycle's step, as bytes:
@@ -1708,19 +1803,42 @@ private:
     /// Port-only (KeepGround): how to bring the kept ground up to date for <paramref name="draw"/> on surface
     /// <paramref name="surfaceIndex"/>, drawn with <paramref name="looks"/>, the fog's flags <paramref name="seen"/>
     /// (<paramref name="fogColumns"/> a row) and colour cycle <paramref name="cycle"/> (the frame's, as sealed): drawn
-    /// whole, or shifted and the parts that changed drawn again.
+    /// whole, or shifted and the parts that changed drawn again. Port-only (SPEC-pan-water.md): a step of the cycle
+    /// draws nothing again (the lay shows it); the cycle starting or stopping draws it whole. Port-only
+    /// (SPEC-kept-forest.md): with <paramref name="viewStep"/>, the step the kept view holds, other than the frame's,
+    /// the cells that show a cycled colour too (GroundPlan::Cycled).
     /// </summary>
     GroundPlan PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw, std::span<const uint8_t> looks,
-                          std::span<const uint8_t> seen, int32_t fogColumns, const MCColorCycle& cycle) const;
+                          std::span<const uint8_t> seen, int32_t fogColumns, const MCColorCycle& cycle,
+                          std::optional<int32_t> viewStep = std::nullopt) const;
+    /// <summary>
+    /// Port-only (KeepGround): while a zoom eases (<paramref name="surface"/>'s drawn size covering another part of
+    /// its window than the frame before), how the kept ground, drawn at another part, is laid scaled to
+    /// <paramref name="draw"/>'s view on surface <paramref name="surfaceIndex"/> (<see cref="GroundScale"/>); none
+    /// when it isn't: no zoom easing, no kept ground for this surface and mesh at its drawn size, magnified past
+    /// MostGroundMagnification or covering less than LeastScaledCoverPercent of the view, or in mirror mode (whose
+    /// indices are the software renderer's).
+    /// </summary>
+    std::optional<GroundScale> ScaleGround(uint16_t surfaceIndex, const Surface& surface, const TerrainDraw& draw,
+                                           int32_t fogColumns) const;
+    /// <summary>
+    /// Port-only (KeepGround): whether a zoom easing lays the kept ground scaled (ScaleGroundWhileZooming; not in mirror
+    /// mode, whose indices are the software renderer's).
+    /// </summary>
+    static bool ScalesGround();
     /// <summary>
     /// Port-only (KeepGround): draws kept pair <paramref name="from"/> (none for Clear) as <paramref name="mode"/>
-    /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), at the drawn pixels showing
-    /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size, through
-    /// <paramref name="pipelines"/>.
+    /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), or with
+    /// <paramref name="scale"/> from where it lies in the kept ground (GroundScale::Scale, the colours read between the
+    /// kept pixels round it), at the drawn pixels showing the terrain's clip in the render pass under way on
+    /// <paramref name="surface"/>'s size, through <paramref name="pipelines"/>; Over at <paramref name="run"/>'s colour
+    /// cycle step (SPEC-pan-water.md). Port-only (SPEC-kept-forest.md): with <paramref name="view"/>, the kept view's
+    /// pair, its stands in the entries' place; Blank in <paramref name="blank"/>.
     /// </summary>
     void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
-                        const Surface& surface, const MCRect& clip, KeptGroundMode mode,
-                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {}, bool view = false,
+                        const FrameRun& run, const Surface& surface, const MCRect& clip, KeptGroundMode mode,
+                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {},
+                        const std::optional<std::array<float, 4>>& scale = std::nullopt, bool view = false,
                         SDL_Color blank = {});
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
@@ -1866,9 +1984,28 @@ private:
     };
 
     std::vector<KeptCheck> _KeptChecks;
+
+    /// <summary>
+    /// Port-only, for the tests (CheckKeptGround): the last frame's kept ground laid over nothing, its terrain drawn
+    /// whole over nothing, and drawn so without the seam pass (colours and indices each).
+    /// </summary>
+    struct GroundCheck
+    {
+        bool Taken = false;
+        Texture LaidColors;
+        Texture LaidIndices;
+        Texture DrawnColors;
+        Texture DrawnIndices;
+        Texture FirstColors;
+        Texture FirstIndices;
+    };
+
+    GroundCheck _GroundCheck;
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;
+    /// <summary>Port-only (KeepGround's scaled lay): reads between texels, clamped to the edges.</summary>
+    MCGpuHandle<SDL_GPUSampler> _Linear;
     /// <summary>A 1x1 texture bound where a draw has no source or no world.</summary>
     Texture _Blank;
 

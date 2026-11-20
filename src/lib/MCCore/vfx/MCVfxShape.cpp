@@ -122,7 +122,13 @@ void VfxShapeLookaside(MCColorTable table)
 int32_t VfxShapeTranslateDraw(const MCPane& pane, std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t hotX,
                               int32_t hotY)
 {
-    return DrawShape(pane, shapeTable, shapeNum, hotX, hotY, MCColorTable(VfxShapeLookasideTable));
+    return VfxShapeTranslateDraw(pane, shapeTable, shapeNum, hotX, hotY, MCColorTable(VfxShapeLookasideTable));
+}
+
+int32_t VfxShapeTranslateDraw(const MCPane& pane, std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t hotX,
+                              int32_t hotY, MCColorTable table)
+{
+    return DrawShape(pane, shapeTable, shapeNum, hotX, hotY, table);
 }
 
 int32_t VfxShapeRemapColors(std::span<uint8_t> shapeTable, int32_t shapeNum)

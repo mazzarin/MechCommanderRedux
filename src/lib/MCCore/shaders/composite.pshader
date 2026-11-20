@@ -163,6 +163,10 @@ cbuffer Composite : register(b0, space3)
     float4 clouds;
     // Port-only (HD particles' shake, MCParticles::ShownShake): xy, the world's texels the world shown is moved by.
     float4 shake;
+    // Port-only (HDSmoothCamera): the world's texels that show a pixel of its window, the first (xy) and last (zw)
+    // (MCDrawnGrid::Showing): past them, where the camera's fraction moved the picture off its window's edge, the world
+    // is shown as its edge.
+    float4 worldShowing;
     // Port-only (HD lighting's time of day, MCLighting::AmbientTint and AmbientGrey): the world's own light's colour
     // (rgb, times lighting.z; white by day, the moon's blue at night) and how much of their colour the world's own
     // colours lose in it (w: 0 by day).
@@ -2297,8 +2301,8 @@ float4 Composed(float2 pixel)
     const float4 screen = TexelAt(screenTex, screenSampler, screenTexel, screenSize.zw);
     // The world pixel under this pixel's centre: (2 * offset + 1) * surface / (2 * shown), as the CPU picks it.
     const float2 offset = pixel - shown.xy;
-    const float2 world =
-        clamp(floor((2.0 * offset + 1.0) * worldSize.xy / (2.0 * shown.zw)) - shake.xy, 0.0, worldSize.xy - 1.0);
+    const float2 world = clamp(floor((2.0 * offset + 1.0) * worldSize.xy / (2.0 * shown.zw)) - shake.xy,
+                               worldShowing.xy, min(worldShowing.zw, worldSize.xy - 1.0));
 
     if (mode.y != 0.0)
     {

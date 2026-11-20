@@ -37,11 +37,11 @@ namespace
     using MCStaging::SendLanceAt;
 
     /// <summary>The names a battle's spec has (MCBattleSpec::Read's).</summary>
-    constexpr std::array<std::string_view, 30> SpecNames = {
+    constexpr std::array<std::string_view, 31> SpecNames = {
         "mission", "force",   "frames",       "zoom",   "jump",     "strike",      "snow-least", "incoming",
         "walk",    "contact", "contact-step", "answer", "kill",     "watch",       "watch-zoom", "zoom-ease",
         "jump-at", "camera",  "dfa",          "mines",  "alpha",    "destroy",     "run",        "close",
-        "volley",  "loss",    "smoke",        "wear",   "converge", "close-names",
+        "volley",  "loss",    "smoke",        "wear",   "converge", "close-names", "zoom-keys",
     };
 
     /// <summary>
@@ -1195,6 +1195,7 @@ auto MCBattleSpec::Read(const MCLookup& value) -> std::expected<MCBattleSpec, st
     Number("watch-zoom", spec.WatchZoom);
     Number("zoom-ease", spec.ZoomEase);
     spec.ZoomEase = std::max(spec.ZoomEase, 1);
+    Numbers("zoom-keys", spec.ZoomKeys);
     Numbers("jump-at", spec.JumpAt);
     Events("camera", spec.Cameras);
     Events("dfa", spec.Dfas);
@@ -1321,6 +1322,18 @@ struct MCStagedBattle::MCState
         }
     }
 
+    MCState(const MCState&) = delete;
+    MCState& operator=(const MCState&) = delete;
+
+    // The zoom's own clock again once the battle's done.
+    ~MCState()
+    {
+        if (!zoomKeys.empty())
+        {
+            MCZoomEaseClock = nullptr;
+        }
+    }
+
     void Say(std::string_view line) const { Log(MCBattleLine::Event, line); }
 
     void SaySecond(std::string_view line) const { Log(MCBattleLine::Second, line); }
@@ -1340,6 +1353,7 @@ struct MCStagedBattle::MCState
     const std::vector<int32_t>& watch = spec.Watch;
     const int32_t watchZoom = spec.WatchZoom;
     const int32_t zoomEase = spec.ZoomEase;
+    const std::vector<int32_t>& zoomKeys = spec.ZoomKeys;
     const std::vector<int32_t>& jumpFrames = spec.JumpAt;
     const std::vector<MCBattleEvent>& cameras = spec.Cameras;
     const std::vector<MCBattleEvent>& dfas = spec.Dfas;
@@ -2099,6 +2113,23 @@ struct MCStagedBattle::MCState
 
     void Stage(int32_t frame)
     {
+        // Port-only: the zoom keys, out then in in turn, the zoom easing on the battle's clock (MCZoomEaseClock).
+        if (!zoomKeys.empty())
+        {
+            constexpr int64_t MillisecondsPerSecond = 1000;
+            MCZoomEaseClock = [frame]
+            { return static_cast<uint32_t>(frame * MillisecondsPerSecond / MCBattleSpec::FramesPerSecond); };
+
+            if (const auto key = std::ranges::find(zoomKeys, frame); key != zoomKeys.end())
+            {
+                const bool out = (key - zoomKeys.begin()) % 2 == 0;
+                (out ? MCTacticalInterface::ZoomOut : MCTacticalInterface::ZoomIn)(MCTacticalInterface::ZoomKeyStep,
+                                                                                   false);
+                Say(std::format("zoom key {}: {:.0f} lines", out ? "out" : "in",
+                                MCMainView() != nullptr ? MCMainView()->ZoomTarget : 0.0f));
+            }
+        }
+
         if (!snowLeast.empty() && frame == snowLeast.front())
         {
             MCWeatherPacing::Hold(MCWeatherPace::LeastShare);

@@ -62,7 +62,9 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     const Draw draw = draws[batch.x + instance];
 
     Output output;
-    output.position = float4(DrawnCorner(draw.rect, max(int4(targetSize), 1), offset.xy, corners[vertex]), 0.0, 1.0);
+    const int4 sizes = max(int4(targetSize), 1);
+    const int2 grid = offset.xy + SubPixelOffset(draw.place.w, sizes.zw);
+    output.position = float4(DrawnCorner(draw.rect, sizes, grid, corners[vertex]), 0.0, 1.0);
     output.rect = draw.rect;
     output.source = draw.source;
     output.op = draw.op;

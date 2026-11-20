@@ -214,9 +214,10 @@ namespace MCSceneLights
         /// <summary>
         /// With relief on: how steeply the HD art pack's relief maps (MCHdArt::FindTerrainRelief) stand the HD ground's
         /// bumps for the lights and the sun, where it has them: its slopes times this (0: the ground is lit by its
-        /// brightness, as the rest; 3 about matches the brightness relief's strength).
+        /// brightness, as the rest; 3 about matches the brightness relief's strength). 1.5 keeps the cracks the SD
+        /// ground paints as soft as painted: steeper, the sun draws every crack as a raised line with a bright rim.
         /// </summary>
-        float ReliefMaps = 3.0f;
+        float ReliefMaps = 1.5f;
         /// <summary>
         /// With cloud shadows on (<see cref="GHdClouds"/>): how much of the world's own light a cloud's shadow takes
         /// away, 0 to 1 (a light's own bright pixels and the lights' light keep theirs).

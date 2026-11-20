@@ -73,14 +73,14 @@ namespace MCVulkanShaders
     const MCShaderInfo DrawBasicFragment{MCShader::DrawBasic, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTerrainFragment{MCShader::DrawTerrain, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawHdFragment{MCShader::DrawHd, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
-    const MCShaderInfo GroundFragment{MCShader::Ground, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
+    const MCShaderInfo GroundFragment{MCShader::Ground, SDL_GPU_SHADERSTAGE_FRAGMENT, GroundSamplers, 1};
     const MCShaderInfo DrawStandsFragment{MCShader::DrawStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawBasicStandsFragment{MCShader::DrawBasicStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTerrainStandsFragment{MCShader::DrawTerrainStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawHdStandsFragment{MCShader::DrawHdStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTreesFragment{MCShader::DrawTrees, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTreesStandsFragment{MCShader::DrawTreesStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
-    const MCShaderInfo GroundStandsFragment{MCShader::GroundStands, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
+    const MCShaderInfo GroundStandsFragment{MCShader::GroundStands, SDL_GPU_SHADERSTAGE_FRAGMENT, GroundSamplers, 1};
     const MCShaderInfo MovieFragment{MCShader::Movie, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
     const MCShaderInfo HdCoverageFragment{MCShader::HdCoverage, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1};
     const MCShaderInfo TerrainVertex{MCShader::Terrain, SDL_GPU_SHADERSTAGE_VERTEX, 1, 1, 2};

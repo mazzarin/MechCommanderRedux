@@ -403,6 +403,16 @@ auto MCTerrain::ProjectTerrain(const MCVector3D& pos) -> MCVector2D
     return screen;
 }
 
+auto MCTerrain::ProjectTerrainUnrounded(const MCVector3D& pos) -> MCVector2D
+{
+    const float fromTop = MapTopLeft3d100.Y - pos.Y;
+    const float fromLeft = pos.X - MapTopLeft3d100.X;
+    MCVector2D screen;
+    screen.X = (fromLeft - fromTop) * ProjectionCos + MapTopLeft2d100.X;
+    screen.Y = MapTopLeft2d100.Y - pos.Z + (fromLeft + fromTop) * ProjectionSin;
+    return screen;
+}
+
 auto MCTerrain::Render(int32_t hazeFactor, const MCCamera& cam) -> void
 {
     for (const std::shared_ptr<MCTerrainWindow>& window : Windows)

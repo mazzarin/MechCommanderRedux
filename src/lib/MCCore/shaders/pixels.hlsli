@@ -36,6 +36,23 @@ int2 DrawnPixel(int2 t, int4 s, int2 r)
     return int2(uint2(max((2 * t + 1) * s.zw + 2 * r, 0)) / (2u * uint2(s.xy)));
 }
 
+// Port-only (HDSmoothPlace): place.w's bit for a draw placed past its whole window pixel by 256ths of one
+// (bits 8-15 across, 16-23 down; MCVulkanRenderer's SubPixelPlaced), and the grid offset that moves it there on a
+// target drawn at sizes s.zw: drawn pixel p shows window place ((2p + 1) W - 2r) / 2D, so r + f D moves what it shows f
+// window pixels right (and down). Only a surface drawn larger than its window moves it (WindowPixel ignores r at 1:1).
+static const uint SubPixelPlaced = 2u;
+
+int2 SubPixelOffset(uint flags, int2 drawn)
+{
+    if ((flags & SubPixelPlaced) == 0u)
+    {
+        return int2(0, 0);
+    }
+
+    const int2 steps = int2((flags >> 8) & 255u, (flags >> 16) & 255u);
+    return (steps * drawn + 128) / 256;
+}
+
 // n / d rounded down, for d > 0 (integer division rounds toward zero).
 int2 FloorDivide(int2 n, int2 d)
 {

@@ -75,9 +75,17 @@ public:
 
     /// <summary>
     /// Port-only: ties the shapes to the HD art pack's frames of them (sprite/MCHdArt.h's craters/) when HD art is on;
-    /// done at mission load, and again by whoever turns HD art on during one.
+    /// done at mission load, and again by whoever turns HD art on during one; their frames read ahead by its readers,
+    /// as the load's reads.
     /// </summary>
     void AttachHdArt() const;
+
+    /// <summary>
+    /// Port-only (SPEC-first-use.md: HD craters and footprints): keeps the HD frames of every shape in the cache for the
+    /// mission (MCHdArt::KeepShapesForMission), so a crater or footprint first made in play is unpacked by no one on
+    /// the game's thread; called once the load's reads are kept (MCMission::StartInterface).
+    /// </summary>
+    void KeepHdArtForMission() const;
 
 private:
     /// <summary>The slots.</summary>

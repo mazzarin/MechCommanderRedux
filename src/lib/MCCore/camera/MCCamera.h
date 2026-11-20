@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "camera/MCViewWindow.h"
 #include "gui/MCGuiRef.h"
 #include "lib/MCOptionalRef.h"
@@ -126,6 +128,13 @@ public:
     MCVector2D ScreenUL;
     /// <summary><see cref="ScreenUL"/> before the last update (the terrain's render takes the scroll from it).</summary>
     MCVector2D LastScreenUL;
+    /// <summary>
+    /// Port-only (HDSmoothCamera): how far the camera's place lies past <see cref="ScreenUL"/> unrounded
+    /// (MCTerrain::ProjectTerrainUnrounded less ProjectTerrain), in MCDrawnGrid::FractionSteps of a pixel across and
+    /// down: 0 up to a pixel across, within a pixel either way down (the height rounds apart); 0 with it off. The
+    /// world's drawn grid moves the picture by it (MCTerrainFrame::OriginFraction); the game never sees it.
+    /// </summary>
+    std::array<int32_t, 2> ScreenULFraction{};
     /// <summary>What the camera looks at.</summary>
     MCCameraClass CameraClass = MCCameraClass::None;
     /// <summary>"HazeLevel" (4 by default).</summary>
@@ -208,6 +217,27 @@ MCOptionalRef<MCCamera> EyeRef();
 
 /// <summary>"SwoopyCamOff": when set, cameras don't swoop to their target.</summary>
 extern bool LeaveSwoopyOff;
+/// <summary>
+/// Port-only (HDSmoothMotion's view; alone, the tool flag --hd-smooth-camera): 1 moves the world view by the camera's
+/// place past the whole pixel the original rounds it down to (MCCamera::ScreenULFraction), in whole drawn pixels, and
+/// lets the scroll's step keep its fraction, so a view following a walking mech or scrolling slides instead of stepping
+/// a pixel at a time; 0 as the original. Read through <see cref="MCSmoothCamera"/>.
+/// </summary>
+extern int GHdSmoothCamera;
+/// <summary>
+/// Port-only (HDSmoothMotion; PREFS, off by default, on in the personal build): 1 has walking mechs and the view glide
+/// between the original's pixels instead of stepping a pixel at a time, <see cref="GHdSmoothCamera"/> and
+/// GHdSmoothPlace (sprite/MCMechActor.h) both on. Only what's shown: the game, the camera's rounded place and what a
+/// match sends never see it. It shows on a world drawn larger than its window (the GPU renderer's).
+/// </summary>
+extern int GHdSmoothMotion;
+
+/// <summary>Port-only: whether the view moves between the original's pixels (HDSmoothMotion, or HDSmoothCamera alone).</summary>
+inline bool MCSmoothCamera()
+{
+    return GHdSmoothMotion != 0 || GHdSmoothCamera != 0;
+}
+
 /// <summary>The pause shape (loaded on the first pause; cleared with the camera list).</summary>
 MCRegisteredBlock& PauseShape();
 /// <summary>The "asked" shape, drawn while the game waits on a question (cleared with the camera list).</summary>

@@ -122,6 +122,30 @@ namespace
         CHECK(presenter.FramesSent() >= settled);
         CHECK(MCInput::Display()->ReadFrame().has_value());
     }
+
+    /// <summary>
+    /// Every mech of the force with its left arm (5) shot off, no armor and no internals, and its right arm (4) and
+    /// torsos at the other damage states, so its diagrams use every damage table.
+    /// </summary>
+    /// <returns>The mechs damaged.</returns>
+    int32_t DamageEveryMech()
+    {
+        int32_t mechs = 0;
+
+        for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
+        {
+            mechs++;
+            mech->Armor[5].CurArmor = 0;
+            mech->Internals[5].CurArmor = 0;
+            mech->Armor[4].CurArmor = 0;
+            mech->Armor[1].CurArmor = static_cast<uint8_t>(mech->Armor[1].MaxArmor / 5);
+            mech->Armor[2].CurArmor = static_cast<uint8_t>(mech->Armor[2].MaxArmor * 2 / 5);
+            mech->Armor[3].CurArmor = static_cast<uint8_t>(mech->Armor[3].MaxArmor * 3 / 5);
+            mech->CalcStatus();
+        }
+
+        return mechs;
+    }
 }
 
 /// <summary>
@@ -1000,22 +1024,7 @@ TEST_CASE_ISOLATED("game: the GPU draws damaged mechs' diagrams as the software 
     }
 
     NewCampaign();
-    int32_t mechs = 0;
-
-    for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
-    {
-        mechs++;
-        // Left arm (5) gone: no armor, no internals. Right arm (4) and the torsos at the other damage states.
-        mech->Armor[5].CurArmor = 0;
-        mech->Internals[5].CurArmor = 0;
-        mech->Armor[4].CurArmor = 0;
-        mech->Armor[1].CurArmor = static_cast<uint8_t>(mech->Armor[1].MaxArmor / 5);
-        mech->Armor[2].CurArmor = static_cast<uint8_t>(mech->Armor[2].MaxArmor * 2 / 5);
-        mech->Armor[3].CurArmor = static_cast<uint8_t>(mech->Armor[3].MaxArmor * 3 / 5);
-        mech->CalcStatus();
-    }
-
-    REQUIRE(mechs > 0);
+    REQUIRE(DamageEveryMech() > 0);
     const auto run = []
     {
         for (int32_t frame = 0; frame < 20; frame++)
@@ -1031,6 +1040,53 @@ TEST_CASE_ISOLATED("game: the GPU draws damaged mechs' diagrams as the software 
     GlobalLog()->SetUpRepairScreen(true);
     run();
     CheckMirror(*renderer);
+}
+
+/// <summary>
+/// Port-only: the repair screen's damage diagrams and the store's mech rows are drawn again every frame, each piece
+/// through its damage's or shadow's colour table, and once a screen has settled its frames give no table a new row on
+/// the GPU. Each table set as the lookaside used to be registered again, which took its row away: the next draw sent
+/// it up again, and every kept tile was drawn again, every frame (HISTORY.md, 19 Nov, the menus' whole redraws).
+/// </summary>
+TEST_CASE_ISOLATED("game: settled logistics screens send the GPU no colour table again, damage diagrams included")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::Mirror);
+    REQUIRE(MCTestGame::StartLogistics());
+    const std::shared_ptr<MCVulkanRenderer> renderer = MirrorRenderer();
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    NewCampaign();
+    REQUIRE(DamageEveryMech() > 0);
+
+    // The rows the last 10 of 30 frames gave tables, once the screen's own tables went up.
+    const auto newRows = [renderer]
+    {
+        constexpr int32_t Frames = 30;
+        constexpr int32_t Settling = 20;
+        int64_t rows = 0;
+
+        for (int32_t frame = 0; frame < Frames; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+            rows += frame >= Settling ? renderer->LastFrameUploads().TableRows : 0;
+        }
+
+        return rows;
+    };
+
+    GlobalLog()->SetUpPurchaseScreen(true);
+    CHECK_EQ(newRows(), 0);
+    GlobalLog()->SetUpRepairScreen(true);
+    CHECK_EQ(newRows(), 0);
 }
 
 /// <summary>

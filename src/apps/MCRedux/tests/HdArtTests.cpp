@@ -8194,6 +8194,20 @@ namespace
             GHdTurns = 1;
             std::cout << "  turns: eased, legs between facings\n";
         }
+
+        // HDSmoothPlace: mechs drawn where they are, past the original's whole pixels.
+        if (MCTest::Option("hd-smooth-place").has_value())
+        {
+            GHdSmoothPlace = 1;
+            std::cout << "  smooth place: mechs drawn between the original's pixels\n";
+        }
+
+        // HDSmoothCamera: the world view moved by the camera's place between the original's pixels.
+        if (MCTest::Option("hd-smooth-camera").has_value())
+        {
+            GHdSmoothCamera = 1;
+            std::cout << "  smooth camera: the view moved between the original's pixels, by whole drawn pixels\n";
+        }
     }
 
     /// <summary>
@@ -10248,6 +10262,100 @@ namespace
 }
 
 /// <summary>
+/// Port-only (HDSmoothMotion's view, HDSmoothCamera alone: its mechs, drawn between pixels, aren't the software
+/// renderer's): the view panned by fractions of a window pixel a frame, as a camera following a walking mech moves,
+/// across, down and on the diagonal: the camera keeps the fraction its place loses to the original's rounding
+/// (MCCamera::ScreenULFraction) and the world's drawn grid moves the picture by it in whole drawn pixels, so the HD
+/// ground's kept pixels are still moved, never drawn again for it (none drawn directly or whole), and in mirror mode
+/// every drawn pixel shown keeps the palette index of the software renderer's pixel it shows.
+/// </summary>
+TEST_CASE_ISOLATED("game: with the smooth camera a pan by fractions of a pixel moves the kept HD ground, indices the "
+                   "original's")
+{
+    struct Pan
+    {
+        float Across = 0.0f;
+        float Down = 0.0f;
+    };
+
+    // How near the camera stays to where it was put, world units (a window pixel across is 1/(2 cos) of them).
+    constexpr float MovedNear = 1e-3f;
+    constexpr std::array<Pan, 6> Pans = {Pan{0.3f, 0.0f},  Pan{0.7f, 0.0f},  Pan{0.0f, 0.45f},
+                                         Pan{-0.6f, 0.0f}, Pan{1.3f, -0.2f}, Pan{0.0f, -0.85f}};
+    constexpr int32_t FramesEach = 4;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    GHdSmoothCamera = 1;
+    // The camera lets go of the unit it follows, as a scroll does (MCCamera::ScrollCamera): else it closes in on it
+    // again each frame, taking back a step under a pixel. The cursor in the screen's middle: at its corner, the edge's
+    // scroll moves the camera too.
+    Eye()->ChangeTarget(nullptr, false);
+    MCScreenInput::RealMove(GuiSystem().Width() / 2, GuiSystem().Height() / 2);
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    scene->Renderer->ResetMirror();
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+    MCVector3D position = Eye()->GetPosition();
+    std::set<int32_t> offsets;
+    int32_t frames = 0;
+    int32_t between = 0;
+
+    for (const Pan& pan : Pans)
+    {
+        for (int32_t frame = 0; frame < FramesEach; ++frame)
+        {
+            REQUIRE(PanFrame(position, pan.Across, pan.Down));
+            REQUIRE(std::fabs(Eye()->GetPosition().X - position.X) < MovedNear);
+            REQUIRE(std::fabs(Eye()->GetPosition().Y - position.Y) < MovedNear);
+            ++frames;
+            between += Eye()->ScreenULFraction != std::array<int32_t, 2>{} ? 1 : 0;
+            const std::optional<std::array<int32_t, 2>> offset = WorldGridOffset(*scene->Renderer);
+            REQUIRE(offset.has_value());
+            offsets.insert((*offset)[0]);
+            offsets.insert((*offset)[1]);
+        }
+    }
+
+    GHdSmoothCamera = 0;
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+    std::cout << std::format("  {} frames ({} between pixels): {} shifted, {} kept, {} whole, {} direct; the grid's "
+                             "offsets {}\n",
+                             frames, between, after.Shifted - before.Shifted, after.Kept - before.Kept,
+                             after.Whole - before.Whole, after.Direct - before.Direct, offsets.size());
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // Every frame laid from the kept ground, the camera between pixels on most.
+    CHECK_EQ(after.Shifted - before.Shifted + after.Kept - before.Kept, frames);
+    CHECK(2 * (after.Shifted - before.Shifted) > frames);
+    CHECK_EQ(after.Whole - before.Whole, 0);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+    CHECK(2 * between > frames);
+    CHECK(offsets.size() > 2);
+    CHECK_EQ(tally.Frames, frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
 /// Port-only (the kept ground): a frame of a pan that draws the HD ground whole (here a jump past the view) draws it into
 /// the kept ground, which the frames after move, none drawn directly. While the view moves and the ground's looks change from frame to frame (a palette entry stepped each
 /// frame, as a zoom easing changes them), it's drawn directly, and kept again, whole, the first frame they hold. In
@@ -10348,6 +10456,150 @@ TEST_CASE_ISOLATED("game: a pan keeps the HD ground it draws whole, but not whil
     CHECK_EQ(laid(after, jumped), FramesEach - 1);
     CHECK_EQ(tally.Frames, frames);
     CHECK_EQ(tally.DifferentFrames, 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// Port-only (the kept ground, a zoom easing): the mean difference of <paramref name="a"/>'s and
+    /// <paramref name="b"/>'s colours over <paramref name="within"/> (levels a channel), and the share of its pixels
+    /// (percent) a channel of which differs by more than <paramref name="far"/>.
+    /// </summary>
+    std::pair<double, double> ColourDifference(const Shown& a, const Shown& b, const MCRect& within, int32_t far)
+    {
+        REQUIRE_EQ(a.Width, b.Width);
+        REQUIRE_EQ(a.Height, b.Height);
+        constexpr int32_t Channels = 3;
+        constexpr double Percent = 100.0;
+        int64_t sum = 0;
+        int64_t farPixels = 0;
+        int64_t pixels = 0;
+
+        for (int32_t y = within.Y0; y <= within.Y1; ++y)
+        {
+            for (int32_t x = within.X0; x <= within.X1; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * a.Width + x) * BytesPerPixel;
+                int32_t most = 0;
+
+                for (int32_t c = 0; c < Channels; ++c)
+                {
+                    const int32_t difference = std::abs(a.Pixels[at + c] - b.Pixels[at + c]);
+                    sum += difference;
+                    most = std::max(most, difference);
+                }
+
+                farPixels += most > far ? 1 : 0;
+                ++pixels;
+            }
+        }
+
+        return {static_cast<double>(sum) / static_cast<double>(std::max<int64_t>(pixels * Channels, 1)),
+                Percent * static_cast<double>(farPixels) / static_cast<double>(std::max<int64_t>(pixels, 1))};
+    }
+}
+
+/// <summary>
+/// Port-only (the kept ground): while a zoom eases (the view's lines changing from frame to frame), the HD ground is
+/// laid from the kept ground scaled to the view, the rest past it drawn directly zooming out, and none drawn whole or
+/// directly over all of it; the first frame the zoom holds draws it whole, then keeps it. Each scaled frame shows
+/// nearly what drawing the ground shows: compared with the same frames drawn so (the game paused, so only the ground's
+/// drawing differs), its colours a few levels apart on the whole, few pixels far apart (the scaled ground is a little
+/// soft).
+/// </summary>
+TEST_CASE_ISOLATED("game: a zoom easing lays the kept HD ground scaled to the view, then draws it whole once it holds")
+{
+    // The zoom out and back in: the lines a frame (a zoom key's step is 1.5x), then frames held.
+    constexpr std::array<float, 6> Steps = {1.08f, 1.16f, 1.24f, 1.32f, 1.38f, 1.42f};
+    constexpr int32_t HeldFrames = 3;
+    // The frame compared: one in the zoom out's middle, and one in the zoom in's.
+    constexpr size_t ComparedStep = 2;
+    // Colours more than this far apart in a channel count as far apart.
+    constexpr int32_t FarLevels = 48;
+    // On the M4 Pro: 0.4 levels zooming out, 0.7 zooming in (the magnified ground a little soft), none far apart.
+    constexpr double MostMeanLevels = 2.0;
+    constexpr double MostFarPercent = 0.5;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // The water's colour cycle held, so only the zoom draws the ground again.
+    GuiSystem().PaletteCycle = 0;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    GamePaused = true;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    const float lines = MCFixedZoomHeight;
+    REQUIRE(lines > 0.0f);
+
+    // The zoom out and in, its compared frames shown; then held at the start's lines.
+    const auto zoom = [&](std::vector<Shown>& compared)
+    {
+        for (const bool out : {true, false})
+        {
+            for (size_t step = 0; step < Steps.size(); ++step)
+            {
+                const size_t at = out ? step : Steps.size() - 1 - step;
+                MCFixedZoomHeight = lines * (out ? Steps[at] : (at == 0 ? 1.0f : Steps[at - 1]));
+                MCTestGame::RunFrame(FrameSeconds);
+
+                if (step == ComparedStep)
+                {
+                    compared.push_back(ReadShown(scene->Scratch));
+                }
+            }
+
+            for (int32_t frame = 0; frame < HeldFrames; ++frame)
+            {
+                MCTestGame::RunFrame(FrameSeconds);
+            }
+        }
+    };
+
+    std::vector<Shown> drawn;
+    MCVulkanRenderer::ScaleGroundWhileZooming = false;
+    zoom(drawn);
+    MCVulkanRenderer::ScaleGroundWhileZooming = true;
+    std::vector<Shown> scaled;
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+    zoom(scaled);
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    GamePaused = false;
+    MCFixedZoomHeight = lines;
+
+    const auto frames = static_cast<int64_t>(2 * Steps.size());
+    std::cout << std::format("  {} frames easing: {} scaled, {} whole, {} direct, {} laid kept\n", frames,
+                             after.Scaled - before.Scaled, after.Whole - before.Whole, after.Direct - before.Direct,
+                             after.Kept - before.Kept + after.Shifted - before.Shifted);
+    CHECK_EQ(after.Scaled - before.Scaled, frames);
+    CHECK_EQ(after.Whole - before.Whole, 2);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+
+    REQUIRE_EQ(drawn.size(), scaled.size());
+
+    for (size_t i = 0; i < drawn.size(); ++i)
+    {
+        // The view's middle (the tactical map's blips blink).
+        const MCRect middle{drawn[i].Width / 4, drawn[i].Height / 4, drawn[i].Width * 3 / 4, drawn[i].Height * 3 / 4};
+        const auto [mean, far] = ColourDifference(drawn[i], scaled[i], middle, FarLevels);
+        std::cout << std::format(
+            "  zooming {}: colours {:.2f} levels apart on the whole, {:.2f}% of the pixels far apart\n",
+            i == 0 ? "out" : "in", mean, far);
+        CHECK(mean < MostMeanLevels);
+        CHECK(far < MostFarPercent);
+    }
+
     std::filesystem::remove_all(scene->Scratch);
 }
 
@@ -20587,6 +20839,86 @@ TEST_CASE_ISOLATED("game: the results screen's HD pictures are kept from the int
     CHECK_EQ(findAll(), shown.size());
     std::cout << std::format("  {:.2f} MB kept for the end; {} read again once let go of\n",
                              static_cast<double>(kept) / (1024.0 * 1024.0), FramesReadOnTheGamesThread() - trimmed);
+    CHECK(FramesReadOnTheGamesThread() > trimmed);
+    MCHdArt::SetCacheBudget(0);
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Port-only (SPEC-first-use.md: HD craters and footprints): a mission's crater and footprint frames are read by HD
+/// art's readers at its load (MCCraterManager::AttachHdArt) and kept for the mission as its interface starts
+/// (MCCraterManager::KeepHdArtForMission), so its first crater and footprint find theirs with no read on the game's
+/// thread (none unpacked there), while the mission's frames overfill a budget that keeps nothing else; let go of with
+/// the hold (MCHdArt::LetGoHold), the same frames trim them, and finding them reads them again.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission's first crater and footprint need no unpack on the game's thread")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    size_t translucent = 0;
+    const std::vector<Sequence> sequences = CraterSequences(translucent);
+    REQUIRE(!sequences.empty());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_craters_kept";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    WritePack(pack, sequences, colors, TestPackScale, Inverted);
+    // In craters.hda, as the shipped pack has them.
+    ArchiveFolderPngs(pack / "craters", TestPackScale);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // As a mission's load: HD art turned on ties the craters to the pack as the load does (MCCraterManager::AttachHdArt,
+    // its frames asked of the readers), the load's reads waited for and kept, then the interface started.
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::KeepReadAhead();
+    TacticalInterface()->EndScenario();
+    HomeCommander()->AddToGui(1);
+    MCMission::StartInterface();
+    const MCCraterManager& craters = CraterManager();
+    const auto findAll = [&craters]
+    {
+        size_t found = 0;
+
+        for (const std::vector<uint8_t>& table : craters.Shapes().first(static_cast<size_t>(craters.ShapeCount())))
+        {
+            for (int32_t frame = 0; frame < (table.empty() ? 0 : VfxShapeCount(table)); ++frame)
+            {
+                if (MCVfxHasShape(table, frame))
+                {
+                    const MCFrameBounds bounds = MCShapeFrameBounds(table, frame);
+                    found += MCHdArt::Find(table, frame, static_cast<int32_t>(bounds.Width),
+                                           static_cast<int32_t>(bounds.Height)) != nullptr;
+                }
+            }
+        }
+
+        return found;
+    };
+
+    const size_t kept = MCHdArt::KeptForMissionBytes();
+    MCHdArt::SetCacheBudget(1);
+    RunFirstFrames();
+    const size_t before = FramesReadOnTheGamesThread();
+    const size_t found = findAll();
+    CHECK(kept > 0);
+    CHECK(found > 0);
+    CHECK_EQ(FramesReadOnTheGamesThread(), before);
+
+    // Let go of with the hold: the same frames trim them, and finding them reads them.
+    MCHdArt::LetGoHold();
+    RunFirstFrames();
+    const size_t trimmed = FramesReadOnTheGamesThread();
+    CHECK_EQ(MCHdArt::KeptForMissionBytes(), 0);
+    CHECK_EQ(findAll(), found);
+    std::cout << std::format("  {} crater and footprint frames kept ({:.2f} MB with the rest kept); {} read again once "
+                             "let go of\n",
+                             found, static_cast<double>(kept) / (1024.0 * 1024.0),
+                             FramesReadOnTheGamesThread() - trimmed);
     CHECK(FramesReadOnTheGamesThread() > trimmed);
     MCHdArt::SetCacheBudget(0);
     hdArt.reset();

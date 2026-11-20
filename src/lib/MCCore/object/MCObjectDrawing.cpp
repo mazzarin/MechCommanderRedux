@@ -34,8 +34,10 @@ void DrawExtentEllipse(const MCVector3D& position, MCVector2D size)
     center.X = sx * Eye()->CosAngle + sy * Eye()->CosAngle + Eye()->HalfWidth;
     center.Y = ((sx * Eye()->SinAngle + Eye()->HalfHeight) - sy * Eye()->SinAngle) - (position.Z - Eye()->Position.Z);
     ElementList().OpenGroup(-50000, true);
-    // Port: an overlay, on the screen over the view: it follows the object through the zoom.
-    center = MCOverlayPoint(center);
+    // Port: an overlay, on the screen over the view: it follows the object through the zoom. Port-only
+    // (HDSmoothCamera): placed from the camera's place unrounded, which the world's picture already follows, so without
+    // the overlays' shift.
+    center = MCOverlayPoint(MCVector2D(center.X - MCOverlay.Shift[0], center.Y - MCOverlay.Shift[1]));
     size.X *= MCOverlay.ScaleX;
     size.Y *= MCOverlay.ScaleY;
     ElementList().Add(ElementList().Make<MCEllipseElement>(center, size, 0xfe, -50000));

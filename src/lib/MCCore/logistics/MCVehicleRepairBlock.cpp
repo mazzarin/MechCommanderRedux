@@ -225,16 +225,15 @@ auto MCVehicleRepairBlock::DrawDamageDiagram(MCLogPort& port) const -> void
             RepairShade(PercentLeft(vehicle->CurArmorPoints[location], vehicle->MaxArmorPoints[location]));
     }
 
+    // Port: drawn through each table itself, never a copy set as the lookaside (VfxShapeTranslateDraw).
     for (int32_t pass = 0; pass < 5; ++pass)
     {
-        VfxShapeLookaside(ArmorShadeTable(pass));
-
         for (int32_t location = 0; location < 5; ++location)
         {
             if (shade[location] == pass)
             {
                 VfxShapeTranslateDraw(port.Frame(), GlobalLog()->VehicleRepShapes[vehicle->NameIndex].Bytes(), location,
-                                      0, 0);
+                                      0, 0, ArmorShadeTable(pass));
             }
         }
     }

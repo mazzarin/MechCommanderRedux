@@ -21,6 +21,7 @@
 
 MCOverlayTarget MCOverlay;
 float MCFixedZoomHeight = 0.0f;
+std::function<uint32_t()> MCZoomEaseClock;
 
 namespace
 {
@@ -35,6 +36,21 @@ namespace
     /// <summary>Port: how much of the way to its target the zoom eases in a millisecond (about 70 ms to settle most of
     /// the way).</summary>
     constexpr double ZoomEaseTime = 70.0;
+
+    /// <summary>
+    /// Port: the lines past its target the zoom eases toward, stopping at the target: it starts as it would toward the
+    /// target, and ends on time at about a line a frame at 120 Hz instead of creeping through its last lines (a zoom
+    /// key's step takes 0.3 s, not 0.5).
+    /// </summary>
+    constexpr double ZoomFinishLines = 8.0;
+    /// <summary>Port: how near its target (lines) the zoom counts as there.</summary>
+    constexpr double ZoomThereLines = 0.5;
+
+    /// <summary>Port: the zoom's clock (ms): the game's, or a staged battle's (MCZoomEaseClock).</summary>
+    uint32_t ZoomNow()
+    {
+        return MCZoomEaseClock ? MCZoomEaseClock() : MCPort::Milliseconds();
+    }
 
     /// <summary>
     /// Port: the window pixels a screen pixel covers down where the world view is shown (above 1 when the UI is drawn
@@ -421,7 +437,7 @@ auto MCViewWindow::StartZoom() -> void
     ZoomLimits(closest, furthest);
     ZoomHeight = ZoomStartsOut ? furthest : std::clamp(static_cast<float>(Height()) * ShownScale(), closest, furthest);
     ZoomTarget = ZoomHeight;
-    ZoomClock = MCPort::Milliseconds();
+    ZoomClock = ZoomNow();
 }
 
 auto MCViewWindow::UpdateWorldSurface() -> void
@@ -445,8 +461,19 @@ auto MCViewWindow::UpdateWorldSurface() -> void
 
     if (WorldWindow->Pixels == nullptr || surfaceWidth != WorldWidth() || surfaceHeight != WorldHeight())
     {
-        WorldWindow->Pixels =
-            std::make_shared<uint8_t[]>(static_cast<size_t>(surfaceWidth) * static_cast<size_t>(surfaceHeight));
+        // A size's pixels start as zeros, in the pixels kept when they hold enough (WorldBytes).
+        const size_t bytes = static_cast<size_t>(surfaceWidth) * static_cast<size_t>(surfaceHeight);
+
+        if (WorldWindow->Pixels == nullptr || bytes > WorldBytes)
+        {
+            WorldWindow->Pixels = std::make_shared<uint8_t[]>(bytes);
+            WorldBytes = bytes;
+        }
+        else
+        {
+            std::fill_n(WorldWindow->Pixels.get(), bytes, uint8_t{0});
+        }
+
         WorldWindow->XMax = surfaceWidth - 1;
         WorldWindow->YMax = surfaceHeight - 1;
         WorldPane->Window = WorldWindow;
@@ -474,7 +501,7 @@ auto MCViewWindow::ZoomTo(float height) -> bool
 
     if (ZoomHeight == ZoomTarget)
     {
-        ZoomClock = MCPort::Milliseconds();
+        ZoomClock = ZoomNow();
     }
 
     ZoomTarget = target;
@@ -516,7 +543,7 @@ auto MCViewWindow::ToggleZoom() -> void
 auto MCViewWindow::EaseZoom() -> void
 {
     StartZoom();
-    const uint32_t now = MCPort::Milliseconds();
+    const uint32_t now = ZoomNow();
     const auto elapsed = static_cast<double>(std::min<uint32_t>(now - ZoomClock, 100));
     ZoomClock = now;
 
@@ -525,11 +552,20 @@ auto MCViewWindow::EaseZoom() -> void
         return;
     }
 
-    ZoomHeight += static_cast<float>((ZoomTarget - ZoomHeight) * (1.0 - std::exp(-elapsed / ZoomEaseTime)));
+    const double left = static_cast<double>(ZoomTarget) - static_cast<double>(ZoomHeight);
+    const double aim = static_cast<double>(ZoomTarget) + std::copysign(ZoomFinishLines, left);
+    const double eased = static_cast<double>(ZoomHeight) +
+                         (aim - static_cast<double>(ZoomHeight)) * (1.0 - std::exp(-elapsed / ZoomEaseTime));
 
-    if (std::fabs(ZoomTarget - ZoomHeight) < 0.5f)
+    // At the target once it reaches it (or is within half a line).
+    if ((static_cast<double>(ZoomTarget) - eased) * left <= 0.0 ||
+        std::fabs(static_cast<double>(ZoomTarget) - eased) < ZoomThereLines)
     {
         ZoomHeight = ZoomTarget;
+    }
+    else
+    {
+        ZoomHeight = static_cast<float>(eased);
     }
 }
 
@@ -594,12 +630,12 @@ auto MCOverlayPoint(MCVector2D point) -> MCVector2D
 
 auto MCOverlayX(float x) -> float
 {
-    return x * MCOverlay.ScaleX;
+    return (x + MCOverlay.Shift[0]) * MCOverlay.ScaleX;
 }
 
 auto MCOverlayY(float y) -> float
 {
-    return y * MCOverlay.ScaleY;
+    return (y + MCOverlay.Shift[1]) * MCOverlay.ScaleY;
 }
 
 auto MCMainView() -> std::shared_ptr<MCViewWindow>

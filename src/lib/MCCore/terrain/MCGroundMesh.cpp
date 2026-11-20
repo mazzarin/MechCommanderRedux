@@ -421,6 +421,15 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
     frame.Mesh = GroundMesh->Mesh;
     frame.OriginX = originX;
     frame.OriginY = originY;
+    // Port-only (HDSmoothCamera): the fraction of a pixel the camera that projected the vertices (ScreenFromCamera's)
+    // lies past its whole place.
+    frame.OriginFraction = {};
+
+    if (const MCOptionalRef<MCCamera> eye = EyeRef(); eye.has_value())
+    {
+        frame.OriginFraction = eye->get().ScreenULFraction;
+    }
+
     frame.StepX = stepX;
     frame.StepY = stepY;
     frame.ElevStep = elevStep;

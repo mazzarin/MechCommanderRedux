@@ -18,6 +18,8 @@ public:
     uint64_t Budget = 0;
     uint64_t Rest = 0;
     bool SharesMemory = false;
+    /// <summary>The card's own memory, where the system says it (Windows').</summary>
+    std::optional<uint64_t> OwnBytes;
     std::function<uint64_t()> Held = [] { return uint64_t{0}; };
     /// <summary>How many times the card was asked, and the name it was asked by last.</summary>
     int CardReads = 0;
@@ -39,7 +41,8 @@ public:
             return std::nullopt;
         }
 
-        return MCMemoryRoom::MCCard{.Budget = Budget, .Used = Rest + Held(), .SharesMemory = SharesMemory};
+        return MCMemoryRoom::MCCard{
+            .Budget = Budget, .Used = Rest + Held(), .SharesMemory = SharesMemory, .OwnBytes = OwnBytes};
     }
 };
 

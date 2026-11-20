@@ -62,10 +62,10 @@ namespace
             bottom = static_cast<float>(type->BoundsLowerRightY) + appearance.ScreenPos.Y;
         }
 
-        left = MCOverlayX(left);
-        top = MCOverlayY(top);
-        right = MCOverlayX(right);
-        bottom = MCOverlayY(bottom);
+        left = MCOverlayX(left + appearance.DrawnShift.X);
+        top = MCOverlayY(top + appearance.DrawnShift.Y);
+        right = MCOverlayX(right + appearance.DrawnShift.X);
+        bottom = MCOverlayY(bottom + appearance.DrawnShift.Y);
     }
 
     /// <summary>The marks' distance from the box, in pixels.</summary>

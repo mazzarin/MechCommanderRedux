@@ -23,6 +23,8 @@
 #include "shaders/movie.msl.h"
 #include "shaders/quad.msl.h"
 #include "shaders/terrain.msl.h"
+#include "shaders/ui.msl.h"
+#include "shaders/ui_picture.msl.h"
 // A built-in shader's code in Format: the Mac build's MSL.
 #define MC_BUILT_IN_SHADER(name) MC_##name##_msl
 #else
@@ -47,6 +49,8 @@
 #include "shaders/movie.spv.h"
 #include "shaders/quad.spv.h"
 #include "shaders/terrain.spv.h"
+#include "shaders/ui.spv.h"
+#include "shaders/ui_picture.spv.h"
 // A built-in shader's code in Format: dxc's SPIR-V.
 #define MC_BUILT_IN_SHADER(name) MC_##name##_spirv
 #endif
@@ -75,6 +79,8 @@ namespace MCVulkanShaders
     const MCShaderInfo MovieFragment{MCShader::Movie, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
     const MCShaderInfo HdCoverageFragment{MCShader::HdCoverage, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1};
     const MCShaderInfo TerrainVertex{MCShader::Terrain, SDL_GPU_SHADERSTAGE_VERTEX, 1, 1, 2};
+    const MCShaderInfo UiVertex{MCShader::Ui, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 1};
+    const MCShaderInfo UiFragment{MCShader::UiPicture, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0};
 
     std::string_view Name(MCShader shader)
     {
@@ -122,6 +128,10 @@ namespace MCVulkanShaders
                 return "draw_hd_stands";
             case MCShader::GroundStands:
                 return "ground_stands";
+            case MCShader::Ui:
+                return "ui";
+            case MCShader::UiPicture:
+                return "ui_picture";
         }
 
         return {};
@@ -173,6 +183,10 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(draw_hd_stands);
             case MCShader::GroundStands:
                 return MC_BUILT_IN_SHADER(ground_stands);
+            case MCShader::Ui:
+                return MC_BUILT_IN_SHADER(ui);
+            case MCShader::UiPicture:
+                return MC_BUILT_IN_SHADER(ui_picture);
         }
 
         return {};

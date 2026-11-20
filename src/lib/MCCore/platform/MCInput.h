@@ -193,6 +193,13 @@ namespace MCInput
     /// </summary>
     void HoldInput(bool held, std::function<void()> escape = {});
 
+    /// <summary>
+    /// Port-only (SPEC-menus.md): a layer over the game that sees the mouse's and keys' events first (the remade menus,
+    /// while they show): when it takes one (returns true), the game doesn't see it. None: the game sees them all.
+    /// Window events (closing, resizing, focus) always reach the game too.
+    /// </summary>
+    void SetEventLayer(std::function<bool(const SDL_Event&)> layer);
+
     /// <summary>The VK code Windows gives the key at <paramref name="scancode"/> (US layout for the symbol keys; letters follow <paramref name="key"/>).</summary>
     /// <param name="scancode">The physical key.</param>
     /// <param name="key">SDL's keycode for it in the current layout, or SDLK_UNKNOWN.</param>

@@ -466,6 +466,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="platform\MCTlsThreading.cpp" />
+    <ClCompile Include="platform\MCUiDraws.cpp" />
+    <ClCompile Include="platform\MCUiGpu.cpp" />
+    <ClCompile Include="platform\MCUiSoftware.cpp" />
     <ClCompile Include="platform\MCVulkanPresenter.cpp" />
     <ClCompile Include="platform\MCVulkanRenderer.cpp" />
     <ClCompile Include="platform\MCVulkanShaders.cpp" />
@@ -516,6 +519,11 @@
     <ClCompile Include="terrain\MCTerrainWindow.cpp" />
     <ClCompile Include="terrain\MCToolPalButton.cpp" />
     <ClCompile Include="terrain\MCVideoWindow.cpp" />
+    <ClCompile Include="ui\MCRmlArt.cpp" />
+    <ClCompile Include="ui\MCRmlFonts.cpp" />
+    <ClCompile Include="ui\MCRmlMenus.cpp" />
+    <ClCompile Include="ui\MCRmlRecorder.cpp" />
+    <ClCompile Include="ui\MCRmlSystem.cpp" />
     <ClCompile Include="update\MCContentFolder.cpp" />
     <ClCompile Include="update\MCContentList.cpp" />
     <ClCompile Include="update\MCContentPlan.cpp" />
@@ -964,6 +972,9 @@
     <ClInclude Include="platform\MCStringTable.h" />
     <ClInclude Include="platform\MCThreadPriority.h" />
     <ClInclude Include="platform\MCTlsThreading.h" />
+    <ClInclude Include="platform\MCUiDraws.h" />
+    <ClInclude Include="platform\MCUiGpu.h" />
+    <ClInclude Include="platform\MCUiSoftware.h" />
     <ClInclude Include="platform\MCUtf8Path.h" />
     <ClInclude Include="platform\MCVulkanPresenter.h" />
     <ClInclude Include="platform\MCVulkanRenderer.h" />
@@ -1021,6 +1032,11 @@
     <ClInclude Include="terrain\MCToolPalButton.h" />
     <ClInclude Include="terrain\MCVertex.h" />
     <ClInclude Include="terrain\MCVideoWindow.h" />
+    <ClInclude Include="ui\MCRmlArt.h" />
+    <ClInclude Include="ui\MCRmlFonts.h" />
+    <ClInclude Include="ui\MCRmlMenus.h" />
+    <ClInclude Include="ui\MCRmlRecorder.h" />
+    <ClInclude Include="ui\MCRmlSystem.h" />
     <ClInclude Include="update\MCContentFolder.h" />
     <ClInclude Include="update\MCContentList.h" />
     <ClInclude Include="update\MCContentPlan.h" />
@@ -1245,6 +1261,25 @@
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL vertex shader %(Filename).vshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
+    <!-- Port-only (SPEC-menus.md): the remade menus' triangles and their pictures (platform\MCUiGpu). -->
+    <CustomBuild Include="shaders\ui.vshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T vs_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL vertex shader %(Filename).vshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
+    <CustomBuild Include="shaders\ui_picture.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
     <!-- Port-only: the pixel rule the draw shaders and their vertex shaders include. -->
@@ -2694,6 +2729,1302 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+  <!-- RmlUi 6.3 (src\lib\RmlUi-6.3, MIT): the remade menus' layout, styling and input (ui\ in MCCore). Its
+       core's every C++ file, as its own CMake builds a static library with no font engine of its own
+       (RMLUI_FONT_ENGINE none: no FreeType; RMLUI_STATIC_LIB, which its headers read, MechCommander.props), in
+       C++17 as there. Outside MCCore, so its own ItemGroup, which sync_projects.py leaves alone;
+       src\mac\CMakeLists.txt reads the list from here. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\BaseXMLParser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Box.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\BoxShadowCache.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\CallbackTexture.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Clock.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\CompiledFilterShader.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ComputedValues.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ComputeProperty.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Context.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ContextInstancer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ContextInstancerDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ConvolutionFilter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Core.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+      <PreprocessorDefinitions>RMLUI_VERSION="6.3";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataController.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataControllerDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataExpression.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataModel.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataModelHandle.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataTypeRegister.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataVariable.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataView.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataViewDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Decorator.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorGradient.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorNinePatch.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorShader.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorText.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorTiled.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorTiledBox.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorTiledHorizontal.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorTiledImage.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorTiledVertical.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DecoratorUtilities.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DocumentHeader.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\EffectSpecification.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Element.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementAnimation.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementBackgroundBorder.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementDefinition.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementDocument.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementEffects.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementHandle.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementInstancer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementMeta.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementForm.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementFormControl.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementFormControlInput.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementFormControlSelect.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementFormControlTextArea.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementImage.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementLabel.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementProgress.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementTabSet.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\ElementTextSelection.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\InputType.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\InputTypeButton.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\InputTypeCheckbox.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\InputTypeRadio.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\InputTypeRange.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\InputTypeSubmit.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\InputTypeText.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\WidgetDropDown.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\WidgetSlider.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\WidgetTextInput.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\WidgetTextInputMultiLine.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\WidgetTextInputSingleLine.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\WidgetTextInputSingleLinePassword.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\XMLNodeHandlerSelect.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\XMLNodeHandlerTabSet.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Elements\XMLNodeHandlerTextArea.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Elements\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementScroll.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementStyle.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementText.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ElementUtilities.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Event.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\EventDispatcher.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\EventInstancer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\EventInstancerDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\EventListenerInstancer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\EventSpecification.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Factory.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FileInterface.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FileInterfaceDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Filter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FilterBasic.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FilterBlur.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FilterDropShadow.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEffect.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEffectBlur.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEffectGlow.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEffectInstancer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEffectOutline.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEffectShadow.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineInterface.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Geometry.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\GeometryBackgroundBorder.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\GeometryBoxShadow.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\BlockContainer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\BlockFormattingContext.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\ContainerBox.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\FlexFormattingContext.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\FloatedBoxSpace.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\FormattingContext.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\InlineBox.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\InlineContainer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\InlineLevelBox.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\LayoutBox.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\LayoutDetails.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\LayoutEngine.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\LayoutPools.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\LineBox.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\ReplacedFormattingContext.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\TableFormattingContext.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Layout\TableFormattingDetails.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\Layout\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Log.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\LogDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Math.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Memory.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\MeshUtilities.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ObserverPtr.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Plugin.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PluginRegistry.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Profiling.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertiesIteratorView.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Property.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyDefinition.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyDictionary.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserAnimation.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserBoxShadow.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserColorStopList.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserColour.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserDecorator.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserFilter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserFontEffect.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserKeyword.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserNumber.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserRatio.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserString.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertyParserTransform.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\PropertySpecification.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\RenderInterface.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\RenderInterfaceCompatibility.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\RenderManager.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\RenderManagerAccess.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ScriptInterface.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\ScrollController.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Spritesheet.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Stream.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StreamFile.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StreamMemory.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StringUtilities.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StyleSheet.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StyleSheetContainer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StyleSheetFactory.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StyleSheetNode.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StyleSheetParser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StyleSheetSelector.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\StyleSheetSpecification.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\SystemInterface.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Template.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TemplateCache.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Texture.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TextureDatabase.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TextureLayout.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TextureLayoutRectangle.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TextureLayoutRow.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TextureLayoutTexture.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Traits.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Transform.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TransformPrimitive.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TransformState.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TransformUtilities.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Tween.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\TypeConverter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\URL.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\Variant.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\WidgetScroll.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\XMLNodeHandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\XMLNodeHandlerBody.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\XMLNodeHandlerDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\XMLNodeHandlerHead.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\XMLNodeHandlerTemplate.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\XMLParser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\XMLParseTools.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
     </ClCompile>
   </ItemGroup>
   <!-- Begin: the internet games' networking (tools/vendor/ice_itemgroups.py writes this block). -->

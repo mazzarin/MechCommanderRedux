@@ -233,6 +233,21 @@ target_link_libraries(mc_datachannel PUBLIC mc_mbedtls PRIVATE mc_usrsctp mc_jui
 target_link_libraries(MCCore PUBLIC mc_datachannel)
 # JSON for Modern C++ (update/'s files), header-only; the tests write and read updates' files too.
 target_include_directories(MCCore PUBLIC ${MC_SRC}/lib/nlohmann-json-3.12.0/single_include)
+# RmlUi (the remade menus' layout, styling and input; MCCore's ui/ is ours over it): its core, the files MCCore.vcxproj
+# lists, built as its own CMake builds a static library with no font engine of its own (src/lib/RmlUi-6.3/README-MC.md).
+# Without fused multiply-adds, as MCCore, so its layout's sums are Windows' too.
+set(MC_RMLUI_DIR ${MC_SRC}/lib/RmlUi-6.3)
+mc_vendored_items(MC_RMLUI_ITEMS RmlUi-6.3 cpp)
+add_library(mc_rmlui STATIC ${MC_RMLUI_ITEMS})
+set_target_properties(mc_rmlui PROPERTIES CXX_STANDARD 17)
+target_compile_definitions(mc_rmlui PUBLIC RMLUI_STATIC_LIB)
+# Its version for Core.cpp alone, as its CMake gives it (so without the precompiled header, made without it).
+set_source_files_properties(${MC_RMLUI_DIR}/Source/Core/Core.cpp PROPERTIES COMPILE_DEFINITIONS "RMLUI_VERSION=\"6.3\""
+                                                                      SKIP_PRECOMPILE_HEADERS ON)
+target_compile_options(mc_rmlui PRIVATE -w -ffp-contract=off)
+target_precompile_headers(mc_rmlui PRIVATE ${MC_RMLUI_DIR}/Source/Core/precompiled.h)
+target_include_directories(mc_rmlui PUBLIC ${MC_RMLUI_DIR}/Include)
+target_link_libraries(MCCore PUBLIC mc_rmlui)
 # dr_flac: one portable C decoder, outside MCCore's precompiled C++ header, as on Windows.
 add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
 target_compile_options(mc_flac PRIVATE -w)
@@ -283,6 +298,10 @@ set_source_files_properties(${MC_APP_NO_PCH} PROPERTIES SKIP_PRECOMPILE_HEADERS 
 # to run it at all.
 set(MC_ICON ${MC_SRC}/res/MCRedux.icns)
 set_source_files_properties(${MC_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+# Port-only (SPEC-menus.md): the remade menus' documents and style sheets (src/res/ui), in the app's resources' ui
+# folder, where SDL's base path finds them (ui/MCRmlSystem.h); the tests' beside mc_tests.
+file(GLOB MC_UI_FILES CONFIGURE_DEPENDS ${MC_SRC}/res/ui/*.rml ${MC_SRC}/res/ui/*.rcss)
+set_source_files_properties(${MC_UI_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/ui)
 #
 # Personal build: the app updates itself through Sparkle (src/lib/Sparkle-2.10.1, its framework as released), which the
 # Mac-only MCSparkleUpdater.mm drives; the framework is copied into Contents/Frameworks before the app is signed.
@@ -296,7 +315,8 @@ set_source_files_properties(${MC_SPARKLE_UPDATER} PROPERTIES SKIP_PRECOMPILE_HEA
 set(MC_TELEMETRY_BACKEND ${MC_SRC}/apps/MCRedux/MCTelemetryMac.mm ${MC_SRC}/apps/MCRedux/MCHttpGetMac.mm
                          ${MC_SRC}/apps/MCRedux/MCWebSocketMac.mm ${MC_SRC}/apps/MCRedux/MCMemorySystemMac.mm)
 set_source_files_properties(${MC_TELEMETRY_BACKEND} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -fobjc-arc)
-add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_SPARKLE_UPDATER} ${MC_TELEMETRY_BACKEND} ${MC_ICON})
+add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_SPARKLE_UPDATER} ${MC_TELEMETRY_BACKEND} ${MC_ICON}
+                       ${MC_UI_FILES})
 # The Info.plist is a link dependency, so a changed one (a new version, an edited template) relinks, which copies it.
 set_target_properties(MCRedux PROPERTIES OUTPUT_NAME "MechCommander Redux" LINK_DEPENDS ${MC_GENERATED_DIR}/Info.plist)
 target_include_directories(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux)
@@ -321,3 +341,8 @@ target_include_directories(mc_tests PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
 target_precompile_headers(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
 target_link_libraries(mc_tests PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework IOKit"
                       "-framework Metal")
+add_custom_command(TARGET mc_tests POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:mc_tests>/ui
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MC_UI_FILES} $<TARGET_FILE_DIR:mc_tests>/ui
+  COMMENT "Copying the menus' documents beside mc_tests"
+  VERBATIM)

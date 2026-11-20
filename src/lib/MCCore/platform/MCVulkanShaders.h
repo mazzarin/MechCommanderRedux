@@ -43,7 +43,9 @@ enum class MCShader : uint8_t
     DrawBasicStands,
     DrawTerrainStands,
     DrawHdStands,
-    GroundStands
+    GroundStands,
+    Ui,
+    UiPicture
 };
 
 /// <summary>A shader the Vulkan renderer uses, and the resources its bindings declare.</summary>
@@ -106,6 +108,9 @@ namespace MCVulkanShaders
     extern const MCShaderInfo MovieFragment;
     extern const MCShaderInfo HdCoverageFragment;
     extern const MCShaderInfo TerrainVertex;
+    /// <summary>Port-only (SPEC-menus.md): the remade menus' triangles and their pictures (platform/MCUiGpu).</summary>
+    extern const MCShaderInfo UiVertex;
+    extern const MCShaderInfo UiFragment;
 
     /// <summary>
     /// The shader's name: its source is <c>shaders/&lt;name&gt;.vshader</c> or <c>.pshader</c>, and a replacement is

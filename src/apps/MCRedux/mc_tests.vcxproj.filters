@@ -232,6 +232,9 @@
     <ClCompile Include="tests\MemoryRoomTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\MenuUiTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\MissionTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

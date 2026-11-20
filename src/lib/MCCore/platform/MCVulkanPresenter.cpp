@@ -1050,6 +1050,7 @@ MCVulkanPresenter::~MCVulkanPresenter()
 
     _Upload.reset();
     _LightTileUpload.reset();
+    _Ui.reset();
     _Nearest.reset();
     _Linear.reset();
     _CompositePipeline.reset();
@@ -1217,7 +1218,7 @@ auto MCVulkanPresenter::Plan(const MCFrame& frame, bool read)
     planned->Width = frame.Width;
     planned->Height = frame.Height;
     planned->Layout = ShownLayout{frame.View, frame.ScaledOutput() ? frame.OutputWidth : 0,
-                                  frame.ScaledOutput() ? frame.OutputHeight : 0};
+                                  frame.ScaledOutput() ? frame.OutputHeight : 0, frame.Overlay};
     planned->Cycle = frame.Cycle;
     planned->Fade = frame.Fade;
     std::ranges::copy(frame.PaletteColors.first(std::min(frame.PaletteColors.size(), planned->Palette.size())),
@@ -2206,6 +2207,22 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
         {
             SDL_BlitGPUTexture(&commands, &blit);
         }
+
+        // Port-only (SPEC-menus.md): the menus' draws over the whole window, last. A frame without them is shown alone.
+        if (layout.Overlay != nullptr && !layout.Overlay->Draws.empty())
+        {
+            MCFrameLog::Scope part("present.menus");
+            auto ui = Ui();
+            auto drawn = ui ? ui->get().Draw(commands, *swapchain,
+                                             SDL_GetGPUSwapchainTextureFormat(_Device.get(), _Window.get()),
+                                             swapchainWidth, swapchainHeight, *layout.Overlay, false)
+                            : std::expected<void, std::string>(std::unexpected(ui.error()));
+
+            if (!drawn)
+            {
+                SDL_Log("MCVulkanPresenter: the menus aren't drawn: %s", drawn.error().c_str());
+            }
+        }
     }
 
     if (MCFrameLog::Scope part("present.submit"); _ThirdImage)
@@ -2453,6 +2470,103 @@ std::expected<std::vector<SDL_Color>, std::string> MCVulkanPresenter::ReadFrame(
     std::memcpy(pixels.data(), mapped, size);
     SDL_UnmapGPUTransferBuffer(_Device.get(), download);
     SDL_ReleaseGPUTransferBuffer(_Device.get(), download);
+    return pixels;
+}
+
+auto MCVulkanPresenter::Ui() -> std::expected<std::reference_wrapper<MCUiGpu>, std::string>
+{
+    if (_Ui == nullptr)
+    {
+        auto made = MCUiGpu::Create(_Device);
+
+        if (!made)
+        {
+            return std::unexpected(made.error());
+        }
+
+        _Ui = std::move(*made);
+    }
+
+    return std::ref(*_Ui);
+}
+
+std::expected<std::vector<SDL_Color>, std::string> MCVulkanPresenter::ReadOverlay(const MCUiDraws& overlay)
+{
+    auto ui = Ui();
+
+    if (!ui)
+    {
+        return std::unexpected(ui.error());
+    }
+
+    const auto width = static_cast<uint32_t>(std::max(overlay.Width, 1));
+    const auto height = static_cast<uint32_t>(std::max(overlay.Height, 1));
+    constexpr SDL_GPUTextureFormat Format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = Format;
+    info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    info.width = width;
+    info.height = height;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    const MCGpuHandle<SDL_GPUTexture> target(SDL_CreateGPUTexture(_Device.get(), &info), MCGpuRelease{_Device});
+    const uint32_t size = width * height * 4;
+    SDL_GPUTransferBufferCreateInfo transfer{};
+    transfer.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    transfer.size = size;
+    const MCGpuHandle<SDL_GPUTransferBuffer> download(SDL_CreateGPUTransferBuffer(_Device.get(), &transfer),
+                                                      MCGpuRelease{_Device});
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(_Device.get());
+
+    if (target == nullptr || download == nullptr || commands == nullptr)
+    {
+        if (commands != nullptr)
+        {
+            SDL_CancelGPUCommandBuffer(commands);
+        }
+
+        return std::unexpected(SdlError(std::format("reading the menus' {}x{} draws", width, height)));
+    }
+
+    if (auto drawn = ui->get().Draw(*commands, *target, Format, width, height, overlay, true); !drawn)
+    {
+        SDL_CancelGPUCommandBuffer(commands);
+        return std::unexpected(drawn.error());
+    }
+
+    SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(commands);
+    SDL_GPUTextureRegion source{};
+    source.texture = target.get();
+    source.w = width;
+    source.h = height;
+    source.d = 1;
+    SDL_GPUTextureTransferInfo destination{};
+    destination.transfer_buffer = download.get();
+    destination.pixels_per_row = width;
+    destination.rows_per_layer = height;
+    SDL_DownloadFromGPUTexture(pass, &source, &destination);
+    SDL_EndGPUCopyPass(pass);
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+
+    if (fence == nullptr)
+    {
+        return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence(the menus' draws)"));
+    }
+
+    SDL_WaitForGPUFences(_Device.get(), true, &fence, 1);
+    SDL_ReleaseGPUFence(_Device.get(), fence);
+    const void* mapped = SDL_MapGPUTransferBuffer(_Device.get(), download.get(), false);
+
+    if (mapped == nullptr)
+    {
+        return std::unexpected(SdlError("SDL_MapGPUTransferBuffer(the menus' draws)"));
+    }
+
+    // R8G8B8A8 is SDL_Color's byte order.
+    std::vector<SDL_Color> pixels(static_cast<size_t>(width) * height);
+    std::memcpy(pixels.data(), mapped, size);
+    SDL_UnmapGPUTransferBuffer(_Device.get(), download.get());
     return pixels;
 }
 

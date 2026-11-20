@@ -61,6 +61,9 @@
     <Filter Include="terrain">
       <UniqueIdentifier>{a510aa55-db34-52a4-a81b-85f831f72367}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ui">
+      <UniqueIdentifier>{7e9bf7c1-bc3e-51b3-ac75-94e8de4e83e3}</UniqueIdentifier>
+    </Filter>
     <Filter Include="update">
       <UniqueIdentifier>{dff06fbe-53a7-5437-91d2-5d74ce819bec}</UniqueIdentifier>
     </Filter>
@@ -1288,6 +1291,15 @@
     <ClCompile Include="platform\MCTlsThreading.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCUiDraws.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCUiGpu.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCUiSoftware.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCVulkanPresenter.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -1429,6 +1441,21 @@
     </ClCompile>
     <ClCompile Include="terrain\MCVideoWindow.cpp">
       <Filter>terrain</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlArt.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlFonts.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlMenus.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlRecorder.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlSystem.cpp">
+      <Filter>ui</Filter>
     </ClCompile>
     <ClCompile Include="update\MCContentFolder.cpp">
       <Filter>update</Filter>
@@ -2736,6 +2763,15 @@
     <ClInclude Include="platform\MCTlsThreading.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCUiDraws.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCUiGpu.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCUiSoftware.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCUtf8Path.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2902,6 +2938,21 @@
     </ClInclude>
     <ClInclude Include="terrain\MCVideoWindow.h">
       <Filter>terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlArt.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlFonts.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlMenus.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlRecorder.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlSystem.h">
+      <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="update\MCContentFolder.h">
       <Filter>update</Filter>

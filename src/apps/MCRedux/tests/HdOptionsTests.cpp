@@ -177,7 +177,7 @@ TEST_CASE("hd settings: each HD setting has its own key and global, off in the o
         CHECK_EQ(setting.Gameplay, setting.Key == "MechBraking" || setting.Key == "MoreUnits");
     }
 
-    CHECK_EQ(keys.size(), size_t{17});
+    CHECK_EQ(keys.size(), size_t{18});
 }
 
 /// <summary>

@@ -33,6 +33,7 @@
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <numeric>
@@ -75,6 +76,32 @@ namespace
         {
             MCTestGame::RunFrame(FrameSeconds);
         }
+    }
+
+    /// <summary>
+    /// The soft benchmark's bar for a screen's frames as shown: the most a frame's sharp pictures should take of the
+    /// renderer (a 240 Hz frame is 4.2 ms, shared with the rest of the frame). Printed every run, never failed: the
+    /// suite's parallel runs stretch it (you, 19 Nov: "why not have the 1ms soft benchmark?").
+    /// </summary>
+    constexpr std::chrono::microseconds MostSharpFrameTime{1000};
+
+    double Milliseconds(std::chrono::nanoseconds time)
+    {
+        return std::chrono::duration<double, std::milli>(time).count();
+    }
+
+    /// <summary>
+    /// The renderer's sharp counts once the frame running is done (a frame may run on the presenter's thread, which
+    /// puts its pictures).
+    /// </summary>
+    MCVulkanRenderer::SharpCounts SharpCountsNow(MCVulkanRenderer& renderer)
+    {
+        if (renderer.WaitForRun)
+        {
+            renderer.WaitForRun();
+        }
+
+        return renderer.SharpPictures();
     }
 }
 
@@ -249,9 +276,13 @@ TEST_CASE_ISOLATED("sharp pictures: line art made ahead is what its draw redraws
 }
 
 /// <summary>
-/// On a sharp screen, the purchase screen's text and line art are taken made ahead (the fonts' at logistics' start,
-/// the units' as the briefing is set up), none redrawn as drawn; and they stay on the GPU while away from the screen,
-/// unused for longer than the renderer keeps other pictures, so the next visit makes nothing again.
+/// On a sharp screen, as a player sees it, waiting for nothing: after NEW CAMPAIGN the briefing and the purchase screen
+/// put their text and line art with none redrawn on the frames shown (the fonts' made ahead at logistics' start, the
+/// units' line art as the briefing is set up, both put on the GPU by the click's fade as it rehearses the screens). A
+/// soft benchmark prints each screen's worst frame for them against MostSharpFrameTime, and what the fade redrew: unseen,
+/// at its darkest steps, where the fade keeps its pace and the work only holds the black longer. The pictures stay on
+/// the GPU while away from the screen, unused for longer than the renderer keeps other pictures, so the next visit
+/// makes nothing again.
 /// </summary>
 TEST_CASE_ISOLATED("game: a sharp screen's text and line art are made ahead, and its next visit makes none again")
 {
@@ -276,18 +307,49 @@ TEST_CASE_ISOLATED("game: a sharp screen's text and line art are made ahead, and
     MCSharpPictures::WaitForMade();
     Settle();
     REQUIRE(MCInput::Display()->SharpScreen());
-    NewCampaign();
-    MCSharpPictures::WaitForMade();
-    Settle();
-    GlobalLog()->SetUpPurchaseScreen(false);
-    Settle();
 
-    const MCVulkanRenderer::SharpCounts shown = renderer->SharpPictures();
+    // NEW CAMPAIGN clicked: its fade sets the briefing up, then rehearses it and the screens a slide brings in.
+    const MCVulkanRenderer::SharpCounts clicked = SharpCountsNow(*renderer);
+    NewCampaign();
+    const MCVulkanRenderer::SharpCounts faded = SharpCountsNow(*renderer);
+    std::cout << std::format("  the click's fade: {} sharp pictures taken made ahead, {} redrawn ({:.3f} ms of it), "
+                             "{:.3f} ms in all, at its darkest steps\n",
+                             faded.TakenAhead - clicked.TakenAhead, faded.Redrawn - clicked.Redrawn,
+                             Milliseconds(faded.RedrawnTime - clicked.RedrawnTime),
+                             Milliseconds(faded.PutTime - clicked.PutTime));
+
+    // A screen shown after <paramref name="click"/>, frame by frame: what its frames redrew, its worst frame printed.
+    const auto shows = [&renderer](std::string_view which, const std::function<void()>& click) -> size_t
+    {
+        const MCVulkanRenderer::SharpCounts start = SharpCountsNow(*renderer);
+        click();
+        MCVulkanRenderer::SharpCounts last = start;
+        std::chrono::nanoseconds worst{0};
+
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            const MCVulkanRenderer::SharpCounts now = SharpCountsNow(*renderer);
+            worst = std::max(worst, now.PutTime - last.PutTime);
+            last = now;
+        }
+
+        std::cout << std::format("  soft benchmark, {}: {} sharp pictures taken made ahead on its frames, {} redrawn; "
+                                 "its worst frame {:.3f} ms for them (bar {:.0f} ms){}\n",
+                                 which, last.TakenAhead - start.TakenAhead, last.Redrawn - start.Redrawn,
+                                 Milliseconds(worst), Milliseconds(MostSharpFrameTime),
+                                 worst < MostSharpFrameTime ? "" : ": over the bar");
+        return last.Redrawn - start.Redrawn;
+    };
+
+    CHECK_EQ(shows("the briefing", [] {}), 0u);
+    CHECK_EQ(shows("the purchase screen", [] { GlobalLog()->SetUpPurchaseScreen(false); }), 0u);
+
+    const MCVulkanRenderer::SharpCounts shown = SharpCountsNow(*renderer);
     const MCSharpPictures::MCMadeTally tally = MCSharpPictures::Tally();
     CHECK(tally.Glyphs > 0);
     CHECK(tally.Drawings > 0);
     CHECK(shown.TakenAhead > 0);
-    CHECK_EQ(shown.Redrawn, 0u);
 
     // Away for longer than an unused picture is kept (300 frames), then back.
     constexpr int32_t AwayFrames = 400;
@@ -298,10 +360,10 @@ TEST_CASE_ISOLATED("game: a sharp screen's text and line art are made ahead, and
         MCTestGame::RunFrame(FrameSeconds);
     }
 
-    const MCVulkanRenderer::SharpCounts away = renderer->SharpPictures();
+    const MCVulkanRenderer::SharpCounts away = SharpCountsNow(*renderer);
     GlobalLog()->SetUpPurchaseScreen(false);
     Settle();
-    const MCVulkanRenderer::SharpCounts back = renderer->SharpPictures();
+    const MCVulkanRenderer::SharpCounts back = SharpCountsNow(*renderer);
     CHECK_EQ(back.Redrawn, away.Redrawn);
     CHECK_EQ(back.TakenAhead, away.TakenAhead);
     GHdArt = 0;
@@ -992,11 +1054,6 @@ namespace
     constexpr std::chrono::microseconds MostDiagramTime{1000};
     /// <summary>The outlines the measure of the game's thread redrawing them is given for (a unit's, on a busy machine).</summary>
     constexpr size_t MeasuredOutlines = 5;
-
-    double Milliseconds(std::chrono::nanoseconds time)
-    {
-        return std::chrono::duration<double, std::milli>(time).count();
-    }
 }
 
 /// <summary>

@@ -248,9 +248,12 @@ public:
     /// ahead (platform/MCSharpPictures); and the bytes they take there now. Of those redrawn, the line art's
     /// (MCSharpLines: a shape's frame, not a font's glyph). The line art put there, however made, and the game's
     /// thread's time for it: waiting for a picture being made ahead, taking it or redrawing it, and its upload's copy.
+    /// Every sharp picture's first put the same way (PutTime: text and line art), and of it the redraws' (RedrawnTime).
     /// </summary>
     struct SharpCounts
     {
+        std::chrono::nanoseconds PutTime{0};
+        std::chrono::nanoseconds RedrawnTime{0};
         size_t Redrawn = 0;
         size_t TakenAhead = 0;
         size_t Bytes = 0;

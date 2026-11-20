@@ -110,6 +110,15 @@ int32_t VfxShapeTranslateDraw(const MCPane& pane, std::span<const uint8_t> shape
                               int32_t hotY);
 
 /// <summary>
+/// Port-only: draws a shape like <c>VFX_shape_translate_draw</c>, mapping each pixel through
+/// <paramref name="table"/> itself, a table its owner registered once (<see cref="MCDataKind::Tables"/>). Setting the
+/// lookaside copies the table into one shared buffer and registers that again, which takes the copy's colour table
+/// off the GPU, and every kept tile is drawn again the next frame.
+/// </summary>
+int32_t VfxShapeTranslateDraw(const MCPane& pane, std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t hotX,
+                              int32_t hotY, MCColorTable table);
+
+/// <summary>
 /// Draws a shape rotated by <paramref name="rot"/> (tenths of a degree) and scaled by x_scale/y_scale (16.16) about
 /// its hot spot (clockwise on screen for positive angles). The shape is drawn upright into the work
 /// <paramref name="buffer"/> (width * height bytes, cleared to 255 first), which is then texture-mapped onto the

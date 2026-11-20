@@ -360,6 +360,8 @@ public:
         int64_t PictureBytes = 0;
         int64_t AtlasImages = 0;
         int64_t AtlasBytes = 0;
+        /// <summary>Colour tables given a row on the GPU (each one's 256 bytes sent up).</summary>
+        int64_t TableRows = 0;
     };
 
     /// <summary>The uploads of the last frame <see cref="Execute"/> ran.</summary>

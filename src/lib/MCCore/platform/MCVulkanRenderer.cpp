@@ -2365,6 +2365,7 @@ auto MCVulkanRenderer::TableSlotOf(MCColorTable table) -> std::optional<TableSlo
 
     std::ranges::copy(table, _Tables.begin() + static_cast<ptrdiff_t>(row) * 256);
     _NewRows.push_back(row);
+    ++_FrameUploads.TableRows;
     return _TableSlots.emplace(key, TableSlot{row, ++_LastTableId}).first->second;
 }
 

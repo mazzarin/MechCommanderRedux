@@ -390,7 +390,9 @@ TEST_CASE_ISOLATED("game: in the canyon's battle the game's thread reads and unp
 /// mission, the frame, the kind, its milliseconds, its bytes and what. Its count and cost go to the output, with the HD
 /// art's memory at most and on average (HdMemory's) and the most mechs up at once. With
 /// <c>--first-uses-framelog</c>, <c>--first-uses-trace</c> and <c>--first-uses-memory &lt;GB&gt;</c>: the run's frame log,
-/// its HD trace, and its plan as a machine with that much memory; with <c>--first-uses-first-frames off</c>, a mech's
+/// its HD trace, and its plan as a machine with that much memory; with <c>--first-uses-card &lt;MB&gt;</c>, drawn on a
+/// card of its own whose driver gives the game that much (MCMemoryRoom::SetCardBytes: the GPU's use there the pictures'
+/// alone, so they may take 90% of it), the output saying whether the whole mission went on the GPU; with <c>--first-uses-first-frames off</c>, a mech's
 /// gestures to come read without the frames they start on sooner (MCHdArt::ReaderSettings::FirstFramesSoon), to
 /// measure them.
 /// </summary>
@@ -448,6 +450,16 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
         MCMemoryRoom::SetMachineBytes(planned << BytesPerGbShift);
     }
 
+    // --first-uses-card <MB>: drawn on a card of its own whose driver gives the game that much.
+    if (const std::optional<std::string_view> mb = MCTest::Option("first-uses-card"); mb.has_value())
+    {
+        constexpr int BytesPerMbShift = 20;
+        uint64_t card = 0;
+        std::from_chars(mb->data(), mb->data() + mb->size(), card);
+        REQUIRE(card > 0);
+        MCMemoryRoom::SetCardBytes(card << BytesPerMbShift);
+    }
+
     // --first-uses-first-frames off: a mech's gestures to come read without the frames they start on sooner, to measure
     // them.
     if (MCTest::Option("first-uses-first-frames") == std::optional<std::string_view>("off"))
@@ -486,13 +498,16 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
     }
 
     const auto [players, enemies] = Sides();
-    std::cout << std::format("  mission {}: up in {:.1f} s, {} frames played ({} of the player's and {} enemies left), "
-                             "{} first uses in play ({:.1f} ms), {} past the list; the HD art's memory at most "
-                             "{:.1f} MB (on average {:.1f}), {} mechs up at most\n",
-                             mission, loadSeconds, played, players.size(), enemies.size(), uses.size(), ms,
-                             MCFirstUses::Dropped(), static_cast<double>(memory.Peak) / BytesPerMb,
-                             memory.Mean() / BytesPerMb, memory.Mechs);
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    std::cout << std::format(
+        "  mission {}: up in {:.1f} s, {} frames played ({} of the player's and {} enemies left), "
+        "{} first uses in play ({:.1f} ms), {} past the list; the HD art's memory at most "
+        "{:.1f} MB (on average {:.1f}), {} mechs up at most; the mission on the GPU {} ({:.1f} MB)\n",
+        mission, loadSeconds, played, players.size(), enemies.size(), uses.size(), ms, MCFirstUses::Dropped(),
+        static_cast<double>(memory.Peak) / BytesPerMb, memory.Mean() / BytesPerMb, memory.Mechs,
+        fill.Fits ? "whole" : "not whole", static_cast<double>(fill.MissionBytes) / BytesPerMb);
     MCFrameLog::Close();
     MCHdArt::CloseTrace();
     MCMemoryRoom::SetMachineBytes(std::nullopt);
+    MCMemoryRoom::SetCardBytes(std::nullopt);
 }

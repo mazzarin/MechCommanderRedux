@@ -16,6 +16,7 @@
 #include "object/MCObjectSystem.h"
 #include "object/MCVertexPlacement.h"
 #include "object/MCWeaponShotInfo.h"
+#include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
@@ -677,6 +678,8 @@ auto MCMiscTerrainObject::DrawForestEdge(MCVector2D screenPos, int32_t frame) ->
     }
 
     constexpr int32_t depthOffset = 0x3a;
+    // Port-only (SPEC-kept-forest.md, part 2): a forest's edge a standing tree's, kept with the ground.
+    const MCRenderer::StandingTreeScope tree(true);
     ElementList().OpenGroup(static_cast<int32_t>(-screenPos.Y - static_cast<float>(depthOffset)), true);
     const std::span<uint8_t> edgeShapes = TypeAs<MCMiscTerrainObjectType>().ForestEdgeShapes.Bytes();
     ElementList().Add(ElementList().Make<MCVfxElement>(edgeShapes, screenPos.X, screenPos.Y, frame, 0, hazePalette, 1));

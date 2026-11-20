@@ -24,6 +24,7 @@
 #include "object/MCTreeBuildingType.h"
 #include "object/MCVertexPlacement.h"
 #include "object/MCWeaponShotInfo.h"
+#include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCVfxAppearance.h"
@@ -616,6 +617,8 @@ auto MCTreeBuilding::RenderAtEdge() -> void
 
 auto MCTreeBuilding::DrawAsSeen() -> int32_t
 {
+    // Port-only (SPEC-kept-forest.md, part 2): its draws a standing tree's, kept with the ground.
+    const MCRenderer::StandingTreeScope tree(true);
     // Hazed by how many corners of its vertex square the home team sees; drawn (with its shadow) when any is. (The
     // original also reads each corner's seen bit and drops it.)
     const int32_t numVisible = MCVertexCell::Of(BlockNumber, VertexNumber).VisibleCorners();

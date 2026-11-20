@@ -773,6 +773,78 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (SPEC-kept-forest.md, part 2): <paramref name="seeds"/> joined into rectangles none of which overlaps
+    /// another, each the bounds of the seeds it took; past <paramref name="most"/> of them, the two whose bounds add the
+    /// least area joined, until no more are left.
+    /// </summary>
+    std::vector<MCRect> JoinedPatches(const std::vector<MCRect>& seeds, size_t most)
+    {
+        const auto area = [](const MCRect& rect)
+        { return Empty(rect) ? int64_t{0} : static_cast<int64_t>(rect.X1 - rect.X0 + 1) * (rect.Y1 - rect.Y0 + 1); };
+        std::vector<MCRect> joined;
+
+        // `rect` added, joined with each one it overlaps, until it overlaps none.
+        const auto add = [&](MCRect rect)
+        {
+            for (bool grew = true; grew;)
+            {
+                grew = false;
+
+                for (size_t i = 0; i < joined.size(); ++i)
+                {
+                    if (Overlaps(joined[i], rect))
+                    {
+                        rect = Union(rect, joined[i]);
+                        joined[i] = joined.back();
+                        joined.pop_back();
+                        grew = true;
+                        break;
+                    }
+                }
+            }
+
+            joined.push_back(rect);
+        };
+
+        for (const MCRect& seed : seeds)
+        {
+            if (!Empty(seed))
+            {
+                add(seed);
+            }
+        }
+
+        while (joined.size() > most)
+        {
+            size_t first = 0;
+            size_t second = 1;
+            int64_t least = std::numeric_limits<int64_t>::max();
+
+            for (size_t i = 0; i < joined.size(); ++i)
+            {
+                for (size_t j = i + 1; j < joined.size(); ++j)
+                {
+                    const int64_t added = area(Union(joined[i], joined[j])) - area(joined[i]) - area(joined[j]);
+
+                    if (added < least)
+                    {
+                        least = added;
+                        first = i;
+                        second = j;
+                    }
+                }
+            }
+
+            const MCRect both = Union(joined[first], joined[second]);
+            joined.erase(joined.begin() + static_cast<std::ptrdiff_t>(second));
+            joined.erase(joined.begin() + static_cast<std::ptrdiff_t>(first));
+            add(both);
+        }
+
+        return joined;
+    }
+
+    /// <summary>
     /// The picture AG_shape_fill makes of a shape in a buffer of its bounds: <paramref name="rows"/> rows of
     /// <paramref name="width"/> bytes, drawn pixels as stored (through <paramref name="table"/> when there is one),
     /// everything else colour 0, each row cut at the buffer's width.
@@ -2387,14 +2459,20 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     // drawing a colour read it), or through a colour table (whose fits sample the cycled entries); its key takes the
     // content of the tables it reads (a row let go is another table's).
     const bool overlay = _DrawingOverlay;
+    // Port-only (SPEC-kept-forest.md, part 2): a standing tree's draws too, keyed as an overlay's by its shape's colours
+    // (a sun shadow shows none); one whose shape's colours aren't known taken as able to show a cycled colour.
+    const bool tree = !overlay && MCRenderer::DrawingStandingTree();
     static const std::bitset<256> cycledColours = CycledColours();
-    const bool overlayCycles = overlay && ((_OverlayColours & cycledColours).any() ||
-                                           cycledColours.test(color & 0xffu) || (op & (TableBefore | TableAfter)) != 0);
+    const bool cyclesBy = cycledColours.test(color & 0xffu) || (op & (TableBefore | TableAfter)) != 0;
+    const bool treeColoursKnown = _TreeColours.has_value() || (op & SunShadowDraw) != 0;
+    const bool overlayCycles =
+        (overlay && ((_OverlayColours & cycledColours).any() || cyclesBy)) ||
+        (tree && (!treeColoursKnown || (_TreeColours.value_or(std::bitset<256>{}) & cycledColours).any() || cyclesBy));
     uint64_t overlayTables = 0;
 
     for (const auto& [flag, row] : {std::pair{TableBefore, before}, std::pair{TableAfter, after}})
     {
-        if (overlay && (op & flag) != 0 && (static_cast<size_t>(row) + 1) * 256 <= _Tables.size())
+        if ((overlay || tree) && (op & flag) != 0 && (static_cast<size_t>(row) + 1) * 256 <= _Tables.size())
         {
             overlayTables = XXH3_64bits_withSeed(&_Tables[static_cast<size_t>(row) * 256], 256, overlayTables ^ flag);
         }
@@ -2406,8 +2484,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         return !last.Resize && last.TerrainDraw < 0 && last.SurfaceIndex == surfaceIndex && last.Source == source &&
                SameBindings(*_Run, source, last.SourceIndex, sourceIndex) && last.Blend == blend &&
                last.IndexOnly == indexOnly && last.Shadow == shadow && last.Marks == marks && last.Fold == fold &&
-               last.Variant == variant && last.Overlay == overlay && last.OverlayCycles == overlayCycles &&
-               last.OverlayTables == overlayTables;
+               last.Variant == variant && last.Overlay == overlay && last.Tree == tree &&
+               last.OverlayCycles == overlayCycles && last.OverlayTables == overlayTables;
     };
 
     std::optional<size_t> into;
@@ -2463,6 +2541,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         fresh.Fold = fold;
         fresh.Variant = variant;
         fresh.Overlay = overlay;
+        fresh.Tree = tree;
         fresh.OverlayCycles = overlayCycles;
         fresh.OverlayTables = overlayTables;
         fresh.Channels = channels;
@@ -4850,6 +4929,27 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     if (!indices.has_value())
     {
         return;
+    }
+
+    // Port-only (SPEC-kept-forest.md, part 2): a standing tree's draws keyed by its pixels' colours (Add).
+    struct TreeColoursScope
+    {
+        std::optional<std::bitset<256>>& Colours;
+        TreeColoursScope(std::optional<std::bitset<256>>& colours, const std::bitset<256>& shape) : Colours(colours)
+        {
+            Colours = shape;
+        }
+
+        ~TreeColoursScope() { Colours.reset(); }
+        TreeColoursScope(const TreeColoursScope&) = delete;
+        TreeColoursScope& operator=(const TreeColoursScope&) = delete;
+    };
+
+    std::optional<TreeColoursScope> treeColours;
+
+    if (MCRenderer::DrawingStandingTree())
+    {
+        treeColours.emplace(_TreeColours, indices->Colors);
     }
 
     const int32_t width = indices->Width;
@@ -9141,6 +9241,60 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
     // Port-only (SPEC-kept-forest.md): the surface whose kept view holds the frame's ground and overlays, copied in for
     // its terrain layer, its overlays' records left out.
     int32_t viewSurface = -1;
+    // Port-only (SPEC-kept-forest.md, part 2): the standing trees' records the view holds (by record), and the frame's
+    // patches on the view's surface (drawn pixels): where a draw it doesn't hold comes before a tree it does.
+    std::vector<uint8_t> treeInView;
+    std::vector<MCRect> patches;
+    // Port-only (SPEC-kept-forest.md): the drawn pixels each draw of the records the view holds can reach (each record's
+    // draws in turn, from its first's, heldFirst), and each record's (heldBounds), for a part of it or a patch to draw
+    // only the draws reaching it, not every record once a part.
+    std::vector<MCRect> heldReach;
+    std::vector<MCRect> heldBounds;
+    std::vector<size_t> heldFirst;
+
+    // Draws held record `index` (an overlay's or a tree's the view holds) into `pass` on `target`: in `part`, its draws
+    // from the first to the last reaching it (the others draw none of its pixels), held to it when `scissor`; all of
+    // them without a part. How many it drew.
+    const auto drawHeld = [&](SDL_GPURenderPass* pass, Surface& target, uint32_t index,
+                              const std::optional<MCRect>& part, bool scissor) -> uint32_t
+    {
+        const Record& record = run.Records[index];
+        uint32_t from = 0;
+        uint32_t to = record.Count;
+
+        if (part.has_value())
+        {
+            const size_t at = heldFirst[index];
+
+            if (!Overlaps(heldBounds[index], *part))
+            {
+                return 0;
+            }
+
+            while (from < to && !Overlaps(heldReach[at + from], *part))
+            {
+                ++from;
+            }
+
+            while (to > from && !Overlaps(heldReach[at + to - 1], *part))
+            {
+                --to;
+            }
+
+            if (from < to && scissor)
+            {
+                const SDL_Rect held{part->X0, part->Y0, part->X1 - part->X0 + 1, part->Y1 - part->Y0 + 1};
+                SDL_SetGPUScissor(pass, &held);
+            }
+        }
+
+        if (from < to)
+        {
+            drawBatch(pass, target, record, record.First + from, to - from);
+        }
+
+        return to - from;
+    };
 
     // Port-only (SPEC-kept-forest.md): each draw of `overlays` (records on `surface`, in order) with its key, everything
     // it draws with: the palette as shown and the HD art pack's colours, its source, how and with what uniforms (but the
@@ -9185,7 +9339,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                                  static_cast<uint64_t>(record.IndexOnly) << 9 |
                                  static_cast<uint64_t>(record.Shadow) << 10 |
                                  static_cast<uint64_t>(record.Marks) << 11 | static_cast<uint64_t>(record.Fold) << 12 |
-                                 static_cast<uint64_t>(record.Variant) << 16;
+                                 static_cast<uint64_t>(record.Tree) << 13 | static_cast<uint64_t>(record.Variant) << 16;
             const uint64_t reads = HashOn(
                 HashOn(HashOn(HashOn(bound, source), how), XXH3_64bits(&frame, sizeof(frame))), record.OverlayTables);
 
@@ -9212,21 +9366,30 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
     // Port-only (SPEC-kept-forest.md, part 1): brings the kept view up to date for terrain layer `draw` on `surface`,
     // once its kept ground is (`plan`; `held`: whether the view held the last frame's), in a render pass of its own:
-    // the ground laid as the surface's pass lays it, its overlays drawn over it. Only while the terrain's clip covers
-    // the surface (the void past the map keeps what the surface held) and it has overlays.
+    // the ground laid as the surface's pass lays it, its overlays drawn over it, then (part 2) its standing trees, in
+    // order. Only while the terrain's clip covers the surface (the void past the map keeps what the surface held) and it
+    // has overlays or trees.
     const auto keepView =
         [&](Surface& surface, uint16_t surfaceIndex, const TerrainDraw& draw, const GroundPlan& plan, bool held)
     {
         KeptGround& kept = _KeptGround;
         const MCRect shown{0, 0, static_cast<int32_t>(surface.MappedWidth) - 1,
                            static_cast<int32_t>(surface.MappedHeight) - 1};
+        // The records the view holds, in order: the overlays', and the trees' that read no copy.
         std::vector<uint32_t> overlays;
+        std::vector<uint8_t> trees(run.Records.size(), 0);
+        bool anyTree = false;
 
         for (const uint32_t at : order)
         {
             const Record& record = run.Records[at];
 
-            if (!record.Resize && record.Overlay && record.SurfaceIndex == surfaceIndex)
+            if (record.Resize || record.SurfaceIndex != surfaceIndex)
+            {
+                continue;
+            }
+
+            if (record.Overlay)
             {
                 // One reading the surface's copy would read the view's, made before the frame's: none kept.
                 if (record.ReadsCopy || record.Source == SourceKind::TargetCopy)
@@ -9235,6 +9398,12 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                 }
 
                 overlays.push_back(at);
+            }
+            else if (record.Tree && _KeepsTrees && !record.ReadsCopy && record.Source != SourceKind::TargetCopy)
+            {
+                overlays.push_back(at);
+                trees[at] = 1;
+                anyTree = true;
             }
         }
 
@@ -9249,12 +9418,45 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         const uint32_t width = surface.Target.Width;
         const uint32_t height = surface.Target.Height;
         const bool whole = plan.Whole || !held || kept.ViewColors.Width != width || kept.ViewColors.Height != height;
+        const MCRect drawnAll{0, 0, static_cast<int32_t>(width) - 1, static_cast<int32_t>(height) - 1};
         std::vector<MCRect> parts;
+
+        // The drawn pixels a draw over `from` (its window rectangle from `origin`, as its key holds it) can reach: a pixel
+        // more on each side, in the view's; empty when none.
+        const auto reach = [&](const MCRect& from)
+        {
+            const MCRect at = Intersection(
+                MCRect{from.X0 + origin[0], from.Y0 + origin[1], from.X1 + origin[0], from.Y1 + origin[1]}, shown);
+
+            if (Empty(at))
+            {
+                return MCRect{0, 0, -1, -1};
+            }
+
+            const MCRect drawn =
+                DrawnPixels(at, {surface.MappedWidth, surface.MappedHeight}, {width, height}, surface.Offset);
+            return Intersection(MCRect{drawn.X0 - 1, drawn.Y0 - 1, drawn.X1 + 1, drawn.Y1 + 1}, drawnAll);
+        };
+
+        // Each held draw's reach (in the keys' order, each record's draws in turn) and each record's.
+        heldReach.clear();
+        heldReach.reserve(keys.size());
+        heldBounds.assign(run.Records.size(), MCRect{0, 0, -1, -1});
+        heldFirst.assign(run.Records.size(), 0);
+
+        for (const uint32_t index : overlays)
+        {
+            heldFirst[index] = heldReach.size();
+
+            for (uint32_t d = 0; d < run.Records[index].Count; ++d)
+            {
+                heldReach.push_back(reach(keys[heldReach.size()].second));
+                heldBounds[index] = Union(heldBounds[index], heldReach.back());
+            }
+        }
 
         if (!whole)
         {
-            const MCRect drawnAll{0, 0, static_cast<int32_t>(width) - 1, static_cast<int32_t>(height) - 1};
-
             // The ground's parts drawn again and, at a step of the colour cycle, its cells showing a cycled colour (the
             // lay takes the kept ground to the frame's step), and the pixels round them whose gaps' fill reads them.
             for (const std::vector<MCRect>* drawnAgain : {&plan.Redrawn, &plan.Cycled})
@@ -9279,18 +9481,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             for (const auto& [key, from] : changed)
             {
-                const MCRect at = Intersection(
-                    MCRect{from.X0 + origin[0], from.Y0 + origin[1], from.X1 + origin[0], from.Y1 + origin[1]}, shown);
-
-                if (Empty(at))
-                {
-                    continue;
-                }
-
-                const MCRect drawn =
-                    DrawnPixels(at, {surface.MappedWidth, surface.MappedHeight}, {width, height}, surface.Offset);
-                const MCRect part =
-                    Intersection(MCRect{drawn.X0 - 1, drawn.Y0 - 1, drawn.X1 + 1, drawn.Y1 + 1}, drawnAll);
+                const MCRect part = reach(from);
 
                 if (!Empty(part))
                 {
@@ -9367,17 +9558,19 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             const std::array<uint32_t, 2> size{width, height};
 
             // A part (drawn pixels; all of them, drawn whole): the ground laid as the surface's pass lays it, over its
-            // blank (cleared already when whole), then the overlays. Port-only (SPEC-kept-wrap.md): where it lies in
-            // the wrapped textures, in pieces split at their edges, everything drawn moved onto each.
-            const auto drawPart = [&](const MCRect& part, bool blanked)
+            // blank (cleared already when whole), then the overlays and the trees: in a part, each record's draws from
+            // the first to the last reaching it, in order. Port-only (SPEC-kept-wrap.md): where it lies in the wrapped
+            // textures, in pieces split at their edges, everything drawn moved onto each, and in each piece the draws
+            // reaching it.
+            const auto drawPart = [&](std::optional<MCRect> part)
             {
-                for (const KeptPiece& piece : KeptPieces(part, kept.Origin, size))
+                for (const KeptPiece& piece : KeptPieces(part.value_or(drawnAll), kept.Origin, size))
                 {
                     const SDL_Rect scissor{piece.Texels.X0, piece.Texels.Y0, piece.Texels.X1 - piece.Texels.X0 + 1,
                                            piece.Texels.Y1 - piece.Texels.Y0 + 1};
                     SDL_SetGPUScissor(viewing, &scissor);
 
-                    if (!blanked)
+                    if (part.has_value())
                     {
                         DrawKeptGround(commands, *viewing, pipelines, run, surface, draw.Frame.Clip,
                                        KeptGroundMode::Blank, std::nullopt, false, run.Colors[0]);
@@ -9389,31 +9582,31 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                                    KeptGroundMode::Indices, std::nullopt, false, {}, piece.Moved);
                     forgetBound();
                     batchMoved = piece.Moved;
+                    // (The piece's drawn pixels; all of them when whole, each record's draws all drawn.)
+                    const std::optional<MCRect> reached =
+                        part.has_value() ? std::optional<MCRect>(MCRect{
+                                               piece.Texels.X0 - piece.Moved[0], piece.Texels.Y0 - piece.Moved[1],
+                                               piece.Texels.X1 - piece.Moved[0], piece.Texels.Y1 - piece.Moved[1]})
+                                         : std::nullopt;
 
-                    for (const uint32_t at : overlays)
+                    for (const uint32_t index : overlays)
                     {
-                        const Record& record = run.Records[at];
-                        drawBatch(viewing, viewed, record, record.First, record.Count);
+                        _GroundCounts.OverlaysDrawn += drawHeld(viewing, viewed, index, reached, false);
                     }
 
                     batchMoved = {};
-                }
-
-                for (const uint32_t at : overlays)
-                {
-                    _GroundCounts.OverlaysDrawn += run.Records[at].Count;
                 }
             };
 
             if (whole)
             {
-                drawPart(MCRect{0, 0, static_cast<int32_t>(width) - 1, static_cast<int32_t>(height) - 1}, true);
+                drawPart(std::nullopt);
                 _GroundCounts.ViewPixels += static_cast<int64_t>(width) * height;
             }
 
             for (const MCRect& part : parts)
             {
-                drawPart(part, false);
+                drawPart(part);
                 _GroundCounts.ViewPixels += static_cast<int64_t>(part.X1 - part.X0 + 1) * (part.Y1 - part.Y0 + 1);
             }
 
@@ -9421,10 +9614,103 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             forgetBound();
         }
 
+        // Part 2: the frame's patches, where a draw the view doesn't hold comes before a tree it does in the painter's
+        // order (the run's, which keeps each pixel's): the pixels both can reach, and for a draw reading the surface's
+        // copy, the part it reads and a later tree's.
+        patches.clear();
+
+        if (anyTree)
+        {
+            const auto windowReach = [&](const MCRect& window)
+            {
+                return reach(
+                    MCRect{window.X0 - origin[0], window.Y0 - origin[1], window.X1 - origin[0], window.Y1 - origin[1]});
+            };
+
+            // The trees' draws later in the run than the one looked at, by the cells of the view they reach.
+            constexpr int32_t Cell = 128;
+            const int32_t columns = static_cast<int32_t>(width + Cell - 1) / Cell;
+            const int32_t rows = static_cast<int32_t>(height + Cell - 1) / Cell;
+            std::vector<std::vector<MCRect>> later(static_cast<size_t>(columns) * rows);
+            std::vector<MCRect> seeds;
+
+            for (size_t k = order.size(); k-- > 0;)
+            {
+                const Record& record = run.Records[order[k]];
+
+                if (record.Resize || record.SurfaceIndex != surfaceIndex || record.Overlay)
+                {
+                    continue;
+                }
+
+                // (What's drawn before the terrain layer is under the ground's lay.)
+                if (record.TerrainDraw >= 0)
+                {
+                    break;
+                }
+
+                for (uint32_t d = record.First; d < record.First + record.Count; ++d)
+                {
+                    const DrawFields& f = run.Draws[d];
+                    const MCRect at = windowReach(MCRect{f[0], f[1], f[2], f[3]});
+
+                    if (Empty(at))
+                    {
+                        continue;
+                    }
+
+                    for (int32_t row = at.Y0 / Cell; row <= at.Y1 / Cell; ++row)
+                    {
+                        for (int32_t column = at.X0 / Cell; column <= at.X1 / Cell; ++column)
+                        {
+                            std::vector<MCRect>& cell = later[static_cast<size_t>(row) * columns + column];
+
+                            if (trees[order[k]] != 0)
+                            {
+                                cell.push_back(at);
+                                continue;
+                            }
+
+                            MCRect seed{0, 0, -1, -1};
+
+                            for (const MCRect& tree : cell)
+                            {
+                                seed = Union(seed, Intersection(at, tree));
+                            }
+
+                            if (!Empty(seed))
+                            {
+                                seeds.push_back(seed);
+                            }
+                        }
+                    }
+                }
+
+                if (trees[order[k]] == 0 && record.ReadsCopy)
+                {
+                    const MCRect reads = windowReach(record.Reads);
+
+                    for (int32_t row = std::max(reads.Y0, 0) / Cell; !Empty(reads) && row <= reads.Y1 / Cell; ++row)
+                    {
+                        for (int32_t column = std::max(reads.X0, 0) / Cell; column <= reads.X1 / Cell; ++column)
+                        {
+                            for (const MCRect& tree : later[static_cast<size_t>(row) * columns + column])
+                            {
+                                seeds.push_back(Intersection(reads, tree));
+                            }
+                        }
+                    }
+                }
+            }
+
+            patches = JoinedPatches(seeds, MostViewParts);
+        }
+
         kept.ViewHeld = true;
         kept.ViewCycleStep = run.Cycle.Step;
         kept.ViewOverlays = std::move(keys);
         viewSurface = surfaceIndex;
+        treeInView = std::move(trees);
     };
 
     // Port-only (a zoom easing): how the kept ground is laid scaled to the view, when it is (ScaleGround).
@@ -9925,11 +10211,46 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             }
             else if (keptSurface == record.SurfaceIndex && viewSurface == record.SurfaceIndex)
             {
-                // Port-only (SPEC-kept-forest.md): the ground laid and the overlays drawn, as the kept view holds them.
+                // Port-only (SPEC-kept-forest.md): the ground laid and the overlays drawn, as the kept view holds them,
+                // with its trees (part 2). In each patch, the ground laid and the overlays drawn again, without them:
+                // the frame's draws there, the trees' too, go over it in order (below).
                 DrawKeptGround(commands, *pass, pipelines, run, surface, draw.Frame.Clip, KeptGroundMode::Copy,
                                std::nullopt, true);
                 ++_GroundCounts.Viewed;
                 keptSurface = -1;
+
+                if (!patches.empty())
+                {
+                    const SDL_Rect whole{0, 0, static_cast<int>(surface.Target.Width),
+                                         static_cast<int>(surface.Target.Height)};
+
+                    for (const MCRect& patch : patches)
+                    {
+                        const SDL_Rect scissor{patch.X0, patch.Y0, patch.X1 - patch.X0 + 1, patch.Y1 - patch.Y0 + 1};
+                        SDL_SetGPUScissor(pass, &scissor);
+                        forgetBound();
+                        DrawKeptGround(commands, *pass, pipelines, run, surface, draw.Frame.Clip, KeptGroundMode::Blank,
+                                       std::nullopt, false, run.Colors[0]);
+                        DrawKeptGround(commands, *pass, pipelines, run, surface, draw.Frame.Clip, KeptGroundMode::Over);
+                        DrawKeptGround(commands, *pass, pipelines, run, surface, draw.Frame.Clip,
+                                       KeptGroundMode::Indices);
+                        forgetBound();
+
+                        for (const uint32_t index : order)
+                        {
+                            if (run.Records[index].Overlay && run.Records[index].SurfaceIndex == record.SurfaceIndex)
+                            {
+                                drawHeld(pass, surface, index, patch, false);
+                            }
+                        }
+
+                        ++_GroundCounts.Patches;
+                        _GroundCounts.PatchPixels +=
+                            static_cast<int64_t>(patch.X1 - patch.X0 + 1) * (patch.Y1 - patch.Y0 + 1);
+                    }
+
+                    SDL_SetGPUScissor(pass, &whole);
+                }
             }
             else if (keptSurface == record.SurfaceIndex)
             {
@@ -9950,6 +10271,31 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             continue;
         }
 
+        // Port-only (SPEC-kept-forest.md, part 2): a tree's draws the kept view holds, copied in with the ground: drawn
+        // again only in the patches, held to each.
+        if (record.Tree && static_cast<int32_t>(record.SurfaceIndex) == viewSurface && order[k] < treeInView.size() &&
+            treeInView[order[k]] != 0)
+        {
+            _GroundCounts.TreesLeft += record.Count;
+            uint32_t patched = 0;
+
+            for (const MCRect& patch : patches)
+            {
+                patched += drawHeld(pass, surface, order[k], patch, true);
+            }
+
+            if (patched != 0)
+            {
+                const SDL_Rect whole{0, 0, static_cast<int>(surface.Target.Width),
+                                     static_cast<int>(surface.Target.Height)};
+                SDL_SetGPUScissor(pass, &whole);
+                surface.DrawnSinceCopy.push_back(record.Writes);
+                _GroundCounts.TreesPatched += patched;
+            }
+
+            continue;
+        }
+
         // Records that follow on with the same bindings and pipeline (DrawPipelines::For: port-only, a fold's too), and
         // need no new copy, go in the same draw call.
         uint32_t count = record.Count;
@@ -9965,7 +10311,8 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                 !SameBindings(run, record.Source, next.SourceIndex, record.SourceIndex) || next.Blend != record.Blend ||
                 next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.Marks != record.Marks ||
                 next.Fold != record.Fold || next.Variant != record.Variant || next.Overlay != record.Overlay ||
-                next.ReadsCopy || record.ReadsCopy || next.First != previous.First + previous.Count)
+                next.Tree != record.Tree || next.ReadsCopy || record.ReadsCopy ||
+                next.First != previous.First + previous.Count)
             {
                 break;
             }

@@ -53,4 +53,9 @@ public:
     /// shown where it is, not on the original's pixel grid. None: on the grid, as the original.
     /// </summary>
     std::optional<std::array<float, 2>> SubPixel;
+    /// <summary>
+    /// Port-only (SPEC-kept-forest.md, part 2): the element is a standing tree's, made in a
+    /// <see cref="MCRenderer::StandingTreeScope"/> and drawn in one.
+    /// </summary>
+    bool StandingTree = false;
 };

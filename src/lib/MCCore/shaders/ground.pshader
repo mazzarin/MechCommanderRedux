@@ -1,23 +1,40 @@
 // Port-only: the kept ground (MCVulkanRenderer's KeptGround), drawn with quad.vshader over the drawn pixels whose
 // window pixels lie in the terrain's clip (MCVulkanRenderer's DrawnPixels). The kept ground is the terrain layer drawn
 // over nothing (transparent): its colours (premultiplied; alpha 1 where the terrain's first pass drew, partly where
-// only its seam pass reached) and indices. Each pixel reads the kept pixel `shift` before it (drawn pixels, clamped to
-// the copy), or, while a zoom eases (`scale`, MCVulkanRenderer's GroundScale), the kept place its centre shows: the
-// colours between the kept pixels round it (KeptBetween), the indices the one it lies in.
+// only its seam pass reached), indices and (SPEC-pan-water.md) weights, the share of its colours that follows the
+// colour cycle, and the entries they follow (channels.hlsli's kept ground). Each pixel reads the kept pixel `shift`
+// before it (drawn pixels, clamped to the copy), or, while a zoom eases (`scale`, MCVulkanRenderer's GroundScale), the
+// kept place its centre shows: the colours between the kept pixels round it (KeptBetween), the indices, weights and
+// entries the one it lies in.
 // By mode:
-// - Copy (opaque pipeline): the kept colours and indices as they are, no glints; to move the kept ground.
-// - Clear (opaque pipeline): nothing (transparent, index 0), to draw a part of it again.
+// - Copy (opaque pipeline): the kept colours, indices, weights and entries as they are; to move the kept ground (in its
+//   pass, whose glints and stands targets hold the weights and the entries).
+// - Clear (opaque pipeline): nothing (transparent, index 0, no weight), to draw a part of it again.
 // - Over (blend pipeline, indices left): the colours over the target's, as the terrain's draws over it leave them,
-//   and the glints under them covered as the colours cover them.
+//   and the glints under them covered as the colours cover them. Port-only (SPEC-pan-water.md): the kept ground holds
+//   the colour cycle at its own step (cycle.z), so where the kept index is a cycled entry its share takes that
+//   entry's colour from then to now (cycle.y), as draw.pshader's Corrected scales it: a step of the cycle draws none of
+//   it again.
 // - Indices (index-only pipeline): the indices where the first pass drew, which wrote them.
 // Over and Indices fill the ground's gaps (GapFill), so they cover all the target but the void past the map.
 //
 // Bindings (SDL GPU, SPIR-V): fragment samplers in space2, fragment uniforms in space3.
 
+#include "channels.hlsli"
+
 Texture2D<float4> colorsTex : register(t0, space2);
 SamplerState colorsSampler : register(s0, space2);
 Texture2D<float4> indicesTex : register(t1, space2);
 SamplerState indicesSampler : register(s1, space2);
+// Port-only (SPEC-pan-water.md): the kept weights; the palette, 256 x 2 (draw.pshader's: row 0 as shown, row 1 the
+// HD pack's colours).
+Texture2D<float4> weightsTex : register(t2, space2);
+SamplerState weightsSampler : register(s2, space2);
+Texture2D<float4> paletteTex : register(t3, space2);
+SamplerState paletteSampler : register(s3, space2);
+// Port-only (SPEC-pan-water.md): the entries the kept weights follow (R8: an entry's index).
+Texture2D<float4> slotsTex : register(t4, space2);
+SamplerState slotsSampler : register(s4, space2);
 
 cbuffer Ground : register(b0, space3)
 {
@@ -26,6 +43,10 @@ cbuffer Ground : register(b0, space3)
     // Port-only (a zoom easing): the kept place a drawn place shows, xy a drawn pixel across and down, zw the place
     // drawn place 0 shows; x 0 when the kept ground isn't scaled.
     float4 scale;
+    // Port-only (SPEC-pan-water.md), for Over: the colour cycle (draw.pshader's): x the first index cycled, y the step
+    // now and z the kept ground's (-1: none); w unused. Index x + i shows the colour of cycleSources[(i + step) & 7].
+    int4 cycle;
+    uint4 cycleSources[2];
 };
 
 static const int ModeCopy = 0;
@@ -41,16 +62,17 @@ static const int GapReach = 3;
 static const uint GapWays = 8;
 static const int2 GapSteps[GapWays] = {int2(1, 0),  int2(-1, 0), int2(0, 1),  int2(0, -1),
                                        int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)};
+// No pixel under a gap (GapFill).
+static const int2 NoPixel = int2(-1, -1);
+// The palette's rows (draw.pshader's Shown and MadeWith).
+static const uint ShownRow = 0;
+static const uint MadeWithRow = 1;
 
 // Port-only: the stands build (DRAW_STANDS 1: ground_stands.pshader), for the passes on a surface whose frame folds a
 // forest's index pass into its HD frame's draw, with the stands target (channels.hlsli): nothing stands on the kept
 // ground, its marks in the indices' alpha.
 #ifndef DRAW_STANDS
 #define DRAW_STANDS 0
-#endif
-
-#if DRAW_STANDS
-#include "channels.hlsli"
 #endif
 
 struct Output
@@ -61,16 +83,34 @@ struct Output
     float stands : SV_Target2;
     float4 glint : SV_Target3;
 #else
+    // The glints on a surface's passes; port-only (SPEC-pan-water.md), the weights on the kept ground's (Copy, Clear).
     float4 glint : SV_Target2;
 #endif
 };
 
+// Where kept pixel `kept` lies in a copy `size` big, as a texture coordinate.
+float2 KeptPlace(int2 kept, int2 size)
+{
+    return (float2(kept) + 0.5) / float2(size);
+}
+
 // The kept colours and indices at kept pixel `kept` (in a copy `size` big).
 void KeptAt(int2 kept, int2 size, out float4 color, out float4 index)
 {
-    const float2 at = (float2(kept) + 0.5) / float2(size);
+    const float2 at = KeptPlace(kept, size);
     color = colorsTex.SampleLevel(colorsSampler, at, 0);
     index = indicesTex.SampleLevel(indicesSampler, at, 0);
+}
+
+// Port-only (SPEC-pan-water.md): the kept weights at kept pixel `kept`, and the entry they follow.
+float4 WeightsAt(int2 kept, int2 size)
+{
+    return weightsTex.SampleLevel(weightsSampler, KeptPlace(kept, size), 0);
+}
+
+float SlotAt(int2 kept, int2 size)
+{
+    return slotsTex.SampleLevel(slotsSampler, KeptPlace(kept, size), 0).r;
 }
 
 // Port-only (a zoom easing): the kept colours at kept place `place` (kept pixels; a pixel's centre at .5), as sharp as
@@ -104,8 +144,9 @@ float4 KeptBetween(float2 place, int2 size)
     return float4(clamp(sharp, float3(0.0, 0.0, 0.0), alpha.xxx), alpha);
 }
 
-// `output` at a kept pixel `kept` in a gap of the ground: over the nearest pixel the first pass drew, if any.
-void GapFill(inout Output output, int2 kept, int2 size)
+// `output` at a kept pixel `kept` in a gap of the ground: over the nearest pixel the first pass drew, if any; that
+// pixel, or NoPixel.
+int2 GapFill(inout Output output, int2 kept, int2 size)
 {
     for (int reach = 1; reach <= GapReach; ++reach)
     {
@@ -113,16 +154,59 @@ void GapFill(inout Output output, int2 kept, int2 size)
         {
             float4 color;
             float4 index;
-            KeptAt(clamp(kept + reach * GapSteps[way], int2(0, 0), size - 1), size, color, index);
+            const int2 under = clamp(kept + reach * GapSteps[way], int2(0, 0), size - 1);
+            KeptAt(under, size, color, index);
 
             if (color.a >= 1.0)
             {
                 output.color = float4(output.color.rgb + (1.0 - output.color.a) * color.rgb, 1.0);
                 output.index = index;
-                return;
+                return under;
             }
         }
     }
+
+    return NoPixel;
+}
+
+// Port-only (SPEC-pan-water.md): palette entry `index`'s colour in row `row`.
+float3 PaletteAt(uint index, uint row)
+{
+    uint width;
+    uint height;
+    paletteTex.GetDimensions(width, height);
+    return paletteTex.SampleLevel(paletteSampler, (float2(index, row) + 0.5) / float2(width, height), 0).rgb;
+}
+
+// Port-only (SPEC-pan-water.md): what kept share `share` of cycled entry `index` shows at step `step`: draw.pshader's
+// Corrected's scaling of the colour it was made from (channels.hlsli's kept ground), clipped as the target clips it.
+float3 CycledPart(float3 share, uint index, int step)
+{
+    const uint source = (index - (uint)cycle.x + (uint)step) & 7u;
+    const float3 now = PaletteAt(cycleSources[source >> 2][source & 3u], ShownRow);
+    const float3 then = max(PaletteAt(index, MadeWithRow), MadeWithFloor);
+    return min(share * clamp(now / then, 0.0, MaxCorrection), 1.0);
+}
+
+// Port-only (SPEC-pan-water.md): `output`'s colours at kept pixel `kept` (its coverage as kept `covered`; `under` the
+// pixel a gap fill put under it, or NoPixel) at the cycle's step now, where they follow a cycled entry.
+void StepCycle(inout Output output, int2 kept, int2 size, float covered, int2 under)
+{
+    const uint slot = Byte(SlotAt(under.x >= 0 ? under : kept, size));
+
+    if (cycle.y < 0 || cycle.z < 0 || cycle.y == cycle.z || slot - (uint)cycle.x >= WaterColors)
+    {
+        return;
+    }
+
+    float3 share = WeightsAt(kept, size).rgb;
+
+    if (under.x >= 0)
+    {
+        share += (1.0 - covered) * WeightsAt(under, size).rgb;
+    }
+
+    output.color.rgb = saturate(output.color.rgb + CycledPart(share, slot, cycle.y) - CycledPart(share, slot, cycle.z));
 }
 
 Output main(float4 position : SV_Position)
@@ -160,14 +244,25 @@ Output main(float4 position : SV_Position)
         KeptAt(kept, size, output.color, output.index);
     }
 
-    if (shift.z != ModeCopy && output.color.a > 0.0 && output.color.a < 1.0)
+    const float covered = output.color.a;
+    int2 under = NoPixel;
+
+    if (shift.z != ModeCopy && covered > 0.0 && covered < 1.0)
     {
-        GapFill(output, kept, size);
+        under = GapFill(output, kept, size);
     }
 
     if (shift.z == ModeOver)
     {
+        StepCycle(output, kept, size, covered, under);
         output.glint = float4(0.0, 0.0, 0.0, output.color.a);
+    }
+    else if (shift.z == ModeCopy)
+    {
+        output.glint = WeightsAt(kept, size);
+#if DRAW_STANDS
+        output.stands = SlotAt(kept, size);
+#endif
     }
     else if (shift.z == ModeIndices && output.color.a < 1.0)
     {

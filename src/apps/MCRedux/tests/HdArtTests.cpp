@@ -2120,6 +2120,11 @@ namespace
                          static_cast<uint8_t>(255 - color.b), 255};
     }
 
+    /// <summary>StartScaledUp's window, and its UI's lines (2.5 drawn pixels a window pixel).</summary>
+    constexpr int32_t ScaledUpWidth = 1600;
+    constexpr int32_t ScaledUpHeight = 1200;
+    constexpr int ScaledUpLines = 480;
+
     /// <summary>
     /// Mission <paramref name="mission"/> drawn by <paramref name="drawing"/>, its world view shown larger than the
     /// screen; null (noted) when the GPU can't draw it so.
@@ -2136,10 +2141,7 @@ namespace
             return nullptr;
         }
 
-        constexpr int32_t WindowWidth = 1600;
-        constexpr int32_t WindowHeight = 1200;
-        constexpr int UiLines = 480;
-        ScaleUp(WindowWidth, WindowHeight, UiLines);
+        ScaleUp(ScaledUpWidth, ScaledUpHeight, ScaledUpLines);
         return renderer;
     }
 
@@ -10354,9 +10356,8 @@ TEST_CASE_ISOLATED("game: with the smooth camera a pan by fractions of a pixel m
 }
 
 /// <summary>
-/// Port-only (the kept ground): a frame of a pan that draws the HD ground whole (here a jump past the view; over water a
-/// step of the colour cycle across most of it) draws it into the kept ground, which the frames after move, none drawn
-/// directly. While the view moves and the ground's looks change from frame to frame (a palette entry stepped each
+/// Port-only (the kept ground): a frame of a pan that draws the HD ground whole (here a jump past the view) draws it into
+/// the kept ground, which the frames after move, none drawn directly. While the view moves and the ground's looks change from frame to frame (a palette entry stepped each
 /// frame, as a zoom easing changes them), it's drawn directly, and kept again, whole, the first frame they hold. In
 /// mirror mode every index stays the software renderer's.
 /// </summary>
@@ -10723,6 +10724,218 @@ TEST_CASE_ISOLATED("game: with the smooth camera a zoom easing as the view moves
         CHECK(far < MostFarPercent);
     }
 
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// The middle of the map's tile with the most water within <paramref name="round"/> tiles each way (none without
+    /// water).
+    /// </summary>
+    std::optional<MCVector3D> MostWaterMiddle(int32_t round)
+    {
+        const MCScenarioMap& map = GameMap();
+        int32_t most = 0;
+        std::optional<MCVector3D> middle;
+
+        for (int32_t row = round; row < map.Height - round; ++row)
+        {
+            for (int32_t column = round; column < map.Width - round; ++column)
+            {
+                int32_t water = 0;
+
+                for (int32_t r = row - round; r <= row + round; ++r)
+                {
+                    for (int32_t c = column - round; c <= column + round; ++c)
+                    {
+                        water +=
+                            map.Map[static_cast<size_t>(r) * map.Width + c].TerrainType() >= FirstWaterTerrain ? 1 : 0;
+                    }
+                }
+
+                if (water > most)
+                {
+                    most = water;
+                    middle = MCVector3D(TileColToWorld(column), TileRowToWorld(row), 0.0f);
+                }
+            }
+        }
+
+        return middle;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-pan-water.md): each frame laying the kept ground lays it apart and draws its terrain whole beside
+    /// it too, for MCVulkanRenderer::CompareKeptGround, while it lives.
+    /// </summary>
+    class MCKeptGroundChecked
+    {
+    public:
+        MCKeptGroundChecked() { MCVulkanRenderer::CheckKeptGround = true; }
+        ~MCKeptGroundChecked() { MCVulkanRenderer::CheckKeptGround = false; }
+
+        MCKeptGroundChecked(const MCKeptGroundChecked&) = delete;
+        MCKeptGroundChecked& operator=(const MCKeptGroundChecked&) = delete;
+    };
+
+    /// <summary>Port-only (SPEC-pan-water.md): <paramref name="more"/>'s pixels added to <paramref name="into"/>'s.</summary>
+    void AddGroundComparison(MCVulkanRenderer::GroundComparison& into, const MCVulkanRenderer::GroundComparison& more)
+    {
+        into.Pixels += more.Pixels;
+        into.Cycled += more.Cycled;
+        into.DifferentIndices += more.DifferentIndices;
+        into.DifferentColors += more.DifferentColors;
+        into.MostDifference = std::max(into.MostDifference, more.MostDifference);
+        into.Seam += more.Seam;
+        into.DifferentSeamColors += more.DifferentSeamColors;
+        into.MostSeamDifference = std::max(into.MostSeamDifference, more.MostSeamDifference);
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-pan-water.md): over water, a step of the colour cycle draws none of the kept HD ground again, with
+/// the view still (the plan draws no part of it again: PlanGround) or panning (only the strips it moved onto): each
+/// frame lays it, at the cycle's step now. In mirror mode every index stays the software renderer's, and each frame's
+/// laid ground has the colours of its terrain drawn whole at that step, within a byte, but where the seam pass mixes
+/// two tiles' colours (SPEC-pan-water.md's seam pixels: reported, few of them apart).
+/// </summary>
+TEST_CASE_ISOLATED("game: a step of the water's colour cycle draws none of the kept HD ground again, still or panning")
+{
+    constexpr int32_t StillSteps = 3;
+    constexpr int32_t PanFrames = 8;
+    // A step of the cycle every other frame of the pan.
+    constexpr int32_t StepEvery = 2;
+    constexpr int32_t WaterRound = 2;
+    // A pan's step a frame (window pixels).
+    constexpr float StepAcross = 2.0f;
+    constexpr float StepDown = 1.0f;
+    // The UI's lines that draw the scaled-up window 2 drawn pixels a window pixel.
+    constexpr int ExactLines = ScaledUpHeight / 2;
+    // At most one seam pixel in this many may differ (where two tiles' colours mix).
+    constexpr int64_t SeamPixelsADifference = 20;
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::Mirror);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // The world drawn 2 drawn pixels a window pixel: a pan moves the kept ground exactly (MCDrawnGrid), so only the
+    // cycle can part the laid ground from the drawn.
+    ScaleUp(ScaledUpWidth, ScaledUpHeight, ExactLines);
+
+    // The water's colour cycle held: the test steps it. A camera of its own place, over the map's water, all of the
+    // map shown (no fog over it).
+    GuiSystem().PaletteCycle = 0;
+    SingleStepMode = 1;
+    RevealAll();
+    const std::optional<MCVector3D> water = MostWaterMiddle(WaterRound);
+    REQUIRE(water.has_value());
+    Eye()->ChangeTarget(nullptr, false);
+    Eye()->SetPosition(*water);
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    REQUIRE(WriteTerrainPack(scene->Pack, *inUse, colors) > 0);
+    const MCHdArtOn hdArt(scene->Pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    scene->Renderer->ResetMirror();
+    const MCKeptGroundChecked checked;
+    MCVulkanRenderer::GroundComparison compared;
+    int32_t frames = 0;
+    int32_t laid = 0;
+    int32_t stopped = 0;
+
+    // A frame run (a pan's, or still), compared.
+    const auto run = [&](bool step, std::optional<std::array<float, 2>> pan)
+    {
+        if (step)
+        {
+            StepWaterColors(GamePalette(), MCInput::Display());
+        }
+
+        if (pan.has_value())
+        {
+            MCVector3D position = Eye()->GetPosition();
+            stopped += PanFrame(position, (*pan)[0], (*pan)[1]) ? 0 : 1;
+        }
+        else
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        ++frames;
+        const auto comparison = scene->Renderer->CompareKeptGround();
+
+        if (!comparison.has_value())
+        {
+            FAIL(comparison.error());
+        }
+
+        if (comparison->has_value())
+        {
+            AddGroundComparison(compared, **comparison);
+            ++laid;
+        }
+    };
+
+    const MCVulkanRenderer::GroundCounts before = scene->Renderer->KeptGroundCounts();
+
+    for (int32_t frame = 0; frame < StillSteps; ++frame)
+    {
+        run(true, std::nullopt);
+    }
+
+    const MCVulkanRenderer::GroundCounts still = scene->Renderer->KeptGroundCounts();
+
+    for (int32_t frame = 0; frame < PanFrames; ++frame)
+    {
+        run(frame % StepEvery == 0, std::array{StepAcross, StepDown});
+    }
+
+    const MCVulkanRenderer::GroundCounts after = scene->Renderer->KeptGroundCounts();
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+    std::cout << std::format(
+        "  still, {} steps: {} kept, {} parts, {} whole, {} direct; panning, {} frames: {} shifted, "
+        "{} kept, {} parts, {} whole, {} direct\n",
+        StillSteps, still.Kept - before.Kept, still.Parts - before.Parts, still.Whole - before.Whole,
+        still.Direct - before.Direct, PanFrames, after.Shifted - still.Shifted, after.Kept - still.Kept,
+        after.Parts - still.Parts, after.Whole - still.Whole, after.Direct - still.Direct);
+    std::cout << std::format("  laid against drawn whole, {} frames: {} pixels, {} cycled; {} indices differ; off the "
+                             "seams {} colours over a byte, at most {}; {} seam pixels, {} over a byte, at most {}\n",
+                             laid, compared.Pixels, compared.Cycled, compared.DifferentIndices,
+                             compared.DifferentColors, compared.MostDifference, compared.Seam,
+                             compared.DifferentSeamColors, compared.MostSeamDifference);
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    // The view still: each step laid from the kept ground, nothing of it drawn again.
+    CHECK_EQ(still.Kept - before.Kept, StillSteps);
+    CHECK_EQ(still.Parts - before.Parts, 0);
+    CHECK_EQ(still.Whole - before.Whole, 0);
+    CHECK_EQ(still.Shifted - before.Shifted, 0);
+    CHECK_EQ(still.Direct - before.Direct, 0);
+    // Panning: every frame moved or kept, none drawn whole or directly.
+    CHECK_EQ(stopped, 0);
+    CHECK_EQ(after.Shifted - still.Shifted + after.Kept - still.Kept, PanFrames);
+    CHECK_EQ(after.Whole - still.Whole, 0);
+    CHECK_EQ(after.Direct - still.Direct, 0);
+    // Each frame's laid ground the terrain drawn whole at its step, over water.
+    CHECK_EQ(laid, frames);
+    CHECK(compared.Cycled > 0);
+    CHECK_EQ(compared.DifferentIndices, 0);
+    CHECK_EQ(compared.DifferentColors, 0);
+    CHECK(compared.DifferentSeamColors * SeamPixelsADifference <= compared.Seam);
+    CHECK_EQ(tally.Frames, frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
     std::filesystem::remove_all(scene->Scratch);
 }
 

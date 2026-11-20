@@ -34,7 +34,20 @@
 // An HD art frame's index picture (MCHdArt::Frame::Indices, R8G8): R the original's index; G its marks (HasIndex and
 // the values after it, below; 0 none), read as bytes through the predicates below.
 //
-// The surfaces' kept ground (MCVulkanRenderer's KeptGround) keeps a colours and an indices target as a surface's.
+// The surfaces' kept ground (MCVulkanRenderer's KeptGround) keeps a colours and an indices target as a surface's, and
+// port-only (SPEC-pan-water.md) its weights (KeptGround::Weights), written in target slot 2 of the kept ground's pass,
+// the slot a surface's own passes put its glints in (the two never meet in one pass): RGBA8, premultiplied. RGB the
+// share of the colour that follows the cycled entry the kept index's red shows (the water's colour cycle:
+// FirstWaterColor and the seven after it), a channel at a time, as the colour it was made from: the colour is that
+// share times the entry's colour over the HD pack's colour of the entry (at least MadeWithFloor), no more than
+// MaxCorrection times (draw.pshader's Corrected). So an HD tile's own index holds its HD colour; another index its HD
+// colour's brightness on the entry's pack colour (the haze's tables); an original tile the entry's pack colour. A the
+// colour's coverage, which the seam pass's blend takes as it takes the colours'. 0 where no cycled entry shows.
+// ground.pshader's Over takes the share from the entry's colour at the kept ground's step to its colour now, clipped as
+// the target clips, so a step of the cycle draws none of the kept ground again. Which entry the share follows is in its
+// stands (KeptGround::Slots, the kept ground's pass's stands target: R8, the entry's index): the seam pass's
+// (draw.pshader's TerrainSeamPixel), which draws the colour over the first pass's and may take a neighbouring pixel's
+// index, so not always the kept index's red.
 #ifndef MC_GPU_CHANNELS_HLSLI
 #define MC_GPU_CHANNELS_HLSLI
 
@@ -73,6 +86,11 @@ MC_CHANNEL uint FirstWaterColor = 0xd8;
 MC_CHANNEL uint WaterColors = 8;
 MC_CHANNEL uint BlankIndex = 0;
 MC_CHANNEL uint UnseenIndex = 0x10;
+
+// The most draw.pshader's Corrected scales an HD colour's channel by where today's colour differs from the pack's, and
+// the least pack colour it divides by: the kept ground's lay (ground.pshader) scales its weights (above) as it does.
+MC_CHANNEL float MaxCorrection = 4.0f;
+MC_CHANNEL float MadeWithFloor = 1.0f / 255.0f;
 
 // The index target's alpha (the table above): its readers' thresholds, then the marks.
 MC_CHANNEL float GroundMark = 0.5f;

@@ -1,10 +1,29 @@
 #include "stdafx.h"
 #include "main/MCLogistics.h"
+#include "logistics/MCCompInventoryBlock.h"
+#include "logistics/MCLogRows.h"
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCVehicleInventoryBlock.h"
 #include "network/MCMultiPlayer.h"
+#include "object/MCMasterComponent.h"
+
+namespace
+{
+    /// <summary>The points <paramref name="locations"/> are missing (their maximum less what they have).</summary>
+    int32_t MissingPoints(std::span<const MCLogMech::ArmorPoints> locations)
+    {
+        int32_t missing = 0;
+
+        for (const MCLogMech::ArmorPoints& location : locations)
+        {
+            missing += location.MaxArmor - location.CurArmor;
+        }
+
+        return missing;
+    }
+}
 
 auto MCLogistics::SetPilot(int32_t mechIndex, int32_t pilotIndex) const -> void
 {
@@ -289,4 +308,129 @@ auto MCLogistics::RequiredAssigned() const -> bool
                                }) &&
            std::ranges::none_of(forceVehicles, [](const std::shared_ptr<MCLogVehicle>& vehicle)
                                 { return vehicle->Required && !vehicle->Deployed; });
+}
+
+auto MCLogistics::MountComponent(MCLogMech& mech, uint8_t masterID) -> bool
+{
+    if (mech.Deployed != 0)
+    {
+        UndeployMech(mech);
+    }
+
+    const MCMasterComponent& component = MasterComponentList[masterID];
+    const bool withAmmo = UsesAmmo(masterID);
+    double tons = component.Tonnage;
+
+    if (withAmmo)
+    {
+        tons += MasterComponentList[component.AmmoMasterId].Tonnage;
+    }
+
+    if (tons > static_cast<double>(mech.CurTonnage) - mech.UsedTonnage)
+    {
+        return false;
+    }
+
+    MCInventoryList& inventory = *mech.Inventory;
+    inventory.AddItem(masterID, inventory.CreateStat(masterID, 0, 1, 1, 0xff), false);
+
+    if (withAmmo)
+    {
+        inventory.AddItem(component.AmmoMasterId, inventory.CreateStat(masterID, 0, 0, -1, 0xff), false);
+    }
+
+    const auto added = static_cast<float>(tons);
+    mech.UsedTonnage += added;
+    mech.WeaponTonnage += added;
+    mech.CalcBR();
+    return true;
+}
+
+auto MCLogistics::UnmountComponent(MCLogMech& mech, uint8_t masterID, uint8_t itemNum) -> std::optional<uint8_t>
+{
+    MCInventoryList& inventory = *mech.Inventory;
+    float tonnage = MasterComponentList[masterID].Tonnage;
+
+    if (UsesAmmo(masterID))
+    {
+        const uint8_t ammo = MasterComponentList[masterID].AmmoMasterId;
+        tonnage = MasterComponentList[ammo].Tonnage + tonnage;
+        inventory.RemoveItem(ammo, -1);
+    }
+
+    mech.UsedTonnage -= tonnage;
+    mech.WeaponTonnage -= tonnage;
+    const std::shared_ptr<MCLogInventoryItem> item = inventory.GetItemInfo(inventory.GetIndexFromMasterID(masterID));
+
+    if (item == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    for (const std::shared_ptr<MCLogInventoryStat>& stat : item->Stats)
+    {
+        if (static_cast<uint32_t>(stat->ItemNum) != itemNum)
+        {
+            continue;
+        }
+
+        const uint8_t hits = stat->Hits;
+        inventory.RemoveItem(masterID, stat->StatID);
+        mech.CalcBR();
+        return hits;
+    }
+
+    return std::nullopt;
+}
+
+auto MCLogistics::ReturnSpare(uint8_t masterID) -> std::shared_ptr<MCLogInventoryItem>
+{
+    MCInventoryList& spares = *ComponentInventory;
+    std::shared_ptr<MCLogInventoryItem> item = spares.GetItemInfo(spares.GetIndexFromMasterID(masterID));
+
+    if (item == nullptr)
+    {
+        item = MCCompInventoryBlock::AddSpare(masterID);
+    }
+
+    ++item->Count;
+    return item;
+}
+
+auto MCLogistics::RepairCost(const MCLogMech& mech) const -> int32_t
+{
+    // The engine's damage is its first copy's hits (as the repair panel reads it).
+    int32_t engineHits = 0;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : mech.Inventory->Items)
+    {
+        if (ComponentForm(item->MasterID) == MCComponentForm::Engine && !item->Stats.empty())
+        {
+            engineHits = item->Stats.front()->Hits;
+            break;
+        }
+    }
+
+    return engineHits * EngineCost + MissingPoints(mech.Internals) * InternalCost +
+           MissingPoints(mech.Armor) * ArmorCost;
+}
+
+auto MCLogistics::DamagedComponents(const MCLogMech& mech) -> int32_t
+{
+    int32_t damaged = 0;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : mech.Inventory->Items)
+    {
+        const MCComponentForm form = ComponentForm(item->MasterID);
+
+        if (!IsWeapon(form) && !IsEquipment(form) && form != MCComponentForm::Jammer)
+        {
+            continue;
+        }
+
+        damaged += static_cast<int32_t>(std::ranges::count_if(
+            item->Stats, [](const std::shared_ptr<MCLogInventoryStat>& stat) { return stat->Hits != 0; }));
+    }
+
+    return damaged;
 }

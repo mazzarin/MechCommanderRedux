@@ -50,8 +50,6 @@ namespace
         bool RepairButtonDown = false;
         /// <summary>The dragged item copy's damage.</summary>
         int32_t ItemHits = 0;
-        /// <summary>The dragged item's inventory position, -1 when none.</summary>
-        int32_t ItemIndex = -1;
     };
 
     MCRepairDrag Drag;
@@ -785,23 +783,15 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
 
         if (Drag.ItemHits == 0)
         {
-            MCInventoryList& components = *GlobalLog()->ComponentInventory;
-            std::shared_ptr<MCLogInventoryItem> item =
-                components.GetItemInfo(components.GetIndexFromMasterID(Drag.MasterID));
+            // Its row is made when the spares had none of it.
+            const std::shared_ptr<MCLogInventoryItem> item = GlobalLog()->ReturnSpare(Drag.MasterID);
 
-            if (item == nullptr)
+            if (item->Count != 1)
             {
-                item = MCCompInventoryBlock::AddSpare(Drag.MasterID);
-            }
-
-            if (item->Count != 0)
-            {
-                ++item->Count;
                 MCLogInvScreen::RefreshComponentRows(*item);
             }
             else
             {
-                item->Count = 1;
                 MCRepairScreen::CreateCompInvBlock();
                 RepairScreen().SetUpCompInv(false, true);
             }
@@ -838,7 +828,6 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
         RepairScreen().SetUpCompInv(false, true);
     }
 
-    Drag.ItemIndex = -1;
     DrawButtons(std::nullopt);
 }
 
@@ -1347,25 +1336,7 @@ auto MCMechRepairBlock::DrawButtons(MCOptionalRef<MCLogPort> port) -> void
 auto MCMechRepairBlock::ItemsDamaged() const -> bool
 {
     // Any weapon or equipment copy damaged.
-    for (const std::shared_ptr<MCLogInventoryItem>& item : Mech()->Inventory->Items)
-    {
-        MCComponentForm form = ComponentForm(item->MasterID);
-
-        if (!IsWeapon(form) && !IsEquipment(form) && form != MCComponentForm::Jammer)
-        {
-            continue;
-        }
-
-        for (const std::shared_ptr<MCLogInventoryStat>& stat : item->Stats)
-        {
-            if (stat->Hits != 0)
-            {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return MCLogistics::DamagedComponents(*Mech()) != 0;
 }
 
 auto MCMechRepairBlock::StructureDamaged() const -> bool
@@ -1417,7 +1388,11 @@ auto MCMechRepairBlock::DrawDamageDiagram(MCOptionalRef<MCLogPort> port) -> void
 
 auto MCMechRepairBlock::PaintDiagram(MCLogPort& port, int32_t top, int32_t xPos) const -> void
 {
-    const std::shared_ptr<MCLogMech> mech = Mech();
+    PaintDiagram(*Mech(), port, top, xPos);
+}
+
+auto MCMechRepairBlock::PaintDiagram(const MCLogMech& mech, MCLogPort& port, int32_t top, int32_t xPos) -> void
+{
     MCLogBlockPort blank(port.Frame(), xPos, top + 8, 0x4b, 100, true);
     VfxPaneWipe(blank.Frame(), 0x10);
 
@@ -1427,7 +1402,7 @@ auto MCMechRepairBlock::PaintDiagram(MCLogPort& port, int32_t top, int32_t xPos)
     for (size_t location = 0; location < shade.size(); ++location)
     {
         shade[location] =
-            RepairShade(PercentLeft(mech->Internals[location].CurArmor, mech->Internals[location].MaxArmor));
+            RepairShade(PercentLeft(mech.Internals[location].CurArmor, mech.Internals[location].MaxArmor));
     }
 
     for (int32_t table = 0; table < 5; ++table)
@@ -1438,7 +1413,7 @@ auto MCMechRepairBlock::PaintDiagram(MCLogPort& port, int32_t top, int32_t xPos)
         {
             if (shade[static_cast<size_t>(location)] == table)
             {
-                VfxShapeTranslateDraw(port.Frame(), GlobalLog()->MechRepShapes[mech->NameIndex].Bytes(), location + 0xb,
+                VfxShapeTranslateDraw(port.Frame(), GlobalLog()->MechRepShapes[mech.NameIndex].Bytes(), location + 0xb,
                                       xPos, top + 8);
             }
         }
@@ -1446,7 +1421,7 @@ auto MCMechRepairBlock::PaintDiagram(MCLogPort& port, int32_t top, int32_t xPos)
 
     for (size_t location = 0; location < shade.size(); ++location)
     {
-        shade[location] = RepairShade(PercentLeft(mech->Armor[location].CurArmor, mech->Armor[location].MaxArmor));
+        shade[location] = RepairShade(PercentLeft(mech.Armor[location].CurArmor, mech.Armor[location].MaxArmor));
     }
 
     for (int32_t table = 0; table < 5; ++table)
@@ -1457,7 +1432,7 @@ auto MCMechRepairBlock::PaintDiagram(MCLogPort& port, int32_t top, int32_t xPos)
         {
             if (shade[static_cast<size_t>(location)] == table)
             {
-                VfxShapeTranslateDraw(port.Frame(), GlobalLog()->MechRepShapes[mech->NameIndex].Bytes(), location, xPos,
+                VfxShapeTranslateDraw(port.Frame(), GlobalLog()->MechRepShapes[mech.NameIndex].Bytes(), location, xPos,
                                       top + 8);
             }
         }
@@ -1952,17 +1927,27 @@ auto MCMechRepairBlock::SetPilotHealth(MCOptionalRef<MCLogPort>) -> void
 
 auto MCMechRepairBlock::SetWeaponLists() -> void
 {
-    ShortRangeWeapons.clear();
-    MediumRangeWeapons.clear();
-    LongRangeWeapons.clear();
-    Equipment.clear();
+    MCPayloadLists lists = PayloadLists(*Mech());
+    ShortRangeWeapons = std::move(lists.Entries[0]);
+    MediumRangeWeapons = std::move(lists.Entries[1]);
+    LongRangeWeapons = std::move(lists.Entries[2]);
+    Equipment = std::move(lists.Entries[3]);
+    ItemHits.clear();
 
+    for (const std::vector<int32_t>& listHits : lists.Hits)
+    {
+        ItemHits.insert(ItemHits.end(), listHits.begin(), listHits.end());
+    }
+}
+
+auto MCMechRepairBlock::PayloadLists(MCLogMech& mech) -> MCPayloadLists
+{
     // One entry per copy, the item's position in the inventory; weapons go by long range: under 76 short, under 151
     // medium, else long. The copies' damage, by list.
-    std::array<std::vector<int32_t>, 4> hits;
+    MCPayloadLists lists;
     int32_t index = 0;
 
-    for (const std::shared_ptr<MCLogInventoryItem>& item : Mech()->Inventory->Items)
+    for (const std::shared_ptr<MCLogInventoryItem>& item : mech.Inventory->Items)
     {
         const int32_t position = index++;
         const MCMasterComponent& component = MasterComponentList[item->MasterID];
@@ -1981,30 +1966,21 @@ auto MCMechRepairBlock::SetWeaponLists() -> void
             continue;
         }
 
-        std::vector<int32_t>& entries =
-            std::array{&ShortRangeWeapons, &MediumRangeWeapons, &LongRangeWeapons, &Equipment}[list][0];
-
         // Port fix: a count above the copies (AddCountToItem) read past them; the missing copies count as undamaged.
         for (int32_t copy = 0; copy < item->Count; ++copy)
         {
-            entries.push_back(position);
-            hits[list].push_back(
+            lists.Entries[list].push_back(position);
+            lists.Hits[list].push_back(
                 static_cast<size_t>(copy) < item->Stats.size() ? item->Stats[static_cast<size_t>(copy)]->Hits : 0);
         }
     }
 
     for (size_t list = 0; list < 3; ++list)
     {
-        std::vector<int32_t>& entries = std::array{&ShortRangeWeapons, &MediumRangeWeapons, &LongRangeWeapons}[list][0];
-        SortByDamage(entries, hits[list], *Mech()->Inventory);
+        SortByDamage(lists.Entries[list], lists.Hits[list], *mech.Inventory);
     }
 
-    ItemHits.clear();
-
-    for (const std::vector<int32_t>& listHits : hits)
-    {
-        ItemHits.insert(ItemHits.end(), listHits.begin(), listHits.end());
-    }
+    return lists;
 }
 
 auto MCMechRepairBlock::SortByDamage(std::span<int32_t> entries, std::span<int32_t> hits, MCInventoryList& inventory)
@@ -2030,6 +2006,12 @@ auto MCMechRepairBlock::SortByDamage(std::span<int32_t> entries, std::span<int32
 auto MCMechRepairBlock::GetInvItem(const std::vector<int32_t>& list, int32_t index, uint8_t& itemNum) const
     -> std::shared_ptr<MCLogInventoryItem>
 {
+    return InvItem(*Mech(), list, index, itemNum);
+}
+
+auto MCMechRepairBlock::InvItem(const MCLogMech& mech, const std::vector<int32_t>& list, int32_t index,
+                                uint8_t& itemNum) -> std::shared_ptr<MCLogInventoryItem>
+{
     int32_t earlier = index - 1;
 
     while (earlier >= 0 && list[static_cast<size_t>(earlier)] == list[static_cast<size_t>(index)])
@@ -2038,7 +2020,7 @@ auto MCMechRepairBlock::GetInvItem(const std::vector<int32_t>& list, int32_t ind
     }
 
     int32_t copy = index - earlier - 1;
-    std::shared_ptr<MCLogInventoryItem> item = Mech()->Inventory->GetItemInfo(list[static_cast<size_t>(index)]);
+    std::shared_ptr<MCLogInventoryItem> item = mech.Inventory->GetItemInfo(list[static_cast<size_t>(index)]);
     itemNum = static_cast<uint8_t>(item->Stats[static_cast<size_t>(copy)]->ItemNum);
     return item;
 }
@@ -2336,55 +2318,41 @@ auto MCMechRepairBlock::SetUpItemDragIcon(MCLogInventoryItem& item, uint8_t item
     const std::shared_ptr<MCLogMech> mech = Mech();
     int32_t eventX = event.X;
     int32_t eventY = event.Y;
-    uint8_t masterID = item.MasterID;
     MCRepairScreen::DrawBlankInvInfoBlock(2);
     // Made on the screen, but kept off it until it is raised below (the original added it there).
     const std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create(
         RepairScreen(), eventX - 0x10, eventY - 0x10, 0x20, 0x20,
         [&item](MCLogPort& surface) { OnBeginDragItem(surface, item); }, true);
 
-    float tonnage = MasterComponentList[masterID].Tonnage;
-
-    if (UsesAmmo(masterID))
+    // The copy's info shows as it leaves the mech (its last copy takes the item with it).
+    if (std::ranges::any_of(item.Stats, [itemNum](const std::shared_ptr<MCLogInventoryStat>& stat)
+                            { return static_cast<uint32_t>(stat->ItemNum) == itemNum; }))
     {
-        uint8_t ammo = MasterComponentList[masterID].AmmoMasterId;
-        tonnage = MasterComponentList[ammo].Tonnage + tonnage;
-        mech->Inventory->RemoveItem(ammo, -1);
+        DrawItemInfo(item, *mech->Inventory);
     }
 
-    MCInventoryList& inventory = *mech->Inventory;
-    int32_t index = inventory.GetIndexFromMasterID(masterID);
-    Drag.ItemIndex = index;
-    mech->UsedTonnage -= tonnage;
-    mech->WeaponTonnage -= tonnage;
+    const std::optional<uint8_t> hits = GlobalLog()->UnmountComponent(*mech, item.MasterID, itemNum);
 
-    for (const std::shared_ptr<MCLogInventoryStat>& stat : inventory.GetItemInfo(index)->Stats)
+    if (!hits.has_value())
     {
-        if (static_cast<uint32_t>(stat->ItemNum) != itemNum)
-        {
-            continue;
-        }
-
-        Drag.ItemHits = stat->Hits;
-
-        if (stat->Hits != 0)
-        {
-            MCLogistics::Darken(0, LogisticFadetable(), *icon->Lport());
-        }
-
-        DrawItemInfo(item, *mech->Inventory);
-        inventory.RemoveItem(masterID, stat->StatID);
-        RepairScreen().SetUpCompInv(false, false);
-        SetInventory(std::nullopt);
-        DrawInventory(std::nullopt);
-        mech->CalcBR();
-        DrawBR(std::nullopt);
-        DrawStatusBar();
-        DrawButtons(std::nullopt);
-        icon->BringToFront(true);
-        icon->Raise();
         return;
     }
+
+    Drag.ItemHits = *hits;
+
+    if (*hits != 0)
+    {
+        MCLogistics::Darken(0, LogisticFadetable(), *icon->Lport());
+    }
+
+    RepairScreen().SetUpCompInv(false, false);
+    SetInventory(std::nullopt);
+    DrawInventory(std::nullopt);
+    DrawBR(std::nullopt);
+    DrawStatusBar();
+    DrawButtons(std::nullopt);
+    icon->BringToFront(true);
+    icon->Raise();
 }
 
 auto MCMechRepairBlock::DrawInfo(MCLogPort& port) const -> void

@@ -30,52 +30,25 @@ namespace
     }
 
     /// <summary>
-    /// Mounts the dragged component on <paramref name="mech"/> (the one selected on the repair screen): undeploys it,
-    /// and when it has the free tonnage adds the component (and a weapon's ammo) to its inventory.
+    /// Mounts the dragged component on <paramref name="mech"/> (the one selected on the repair screen), as the logistics
+    /// data mounts it (MCLogistics::MountComponent), and shows it in the mech's row.
     /// </summary>
     /// <returns>True when mounted; false after showing the "too heavy" message.</returns>
     bool MountComponent(MCLogInventoryItem& item, MCLogMech& mech)
     {
-        if (mech.Deployed != 0)
-        {
-            GlobalLog()->UndeployMech(mech);
-        }
-
-        uint8_t masterID = item.MasterID;
-        MCMasterComponent& component = MasterComponentList[masterID];
-        bool withAmmo = UsesAmmo(masterID);
-        double tons = component.Tonnage;
-
-        if (withAmmo)
-        {
-            tons += MasterComponentList[component.AmmoMasterId].Tonnage;
-        }
-
-        if (tons > static_cast<double>(mech.CurTonnage) - mech.UsedTonnage)
+        if (!GlobalLog()->MountComponent(mech, item.MasterID))
         {
             ShowLogMessage(99, true);
             return false;
         }
 
         PlayLogSound(0x34);
-        mech.Inventory->AddItem(masterID, mech.Inventory->CreateStat(masterID, 0, 1, 1, 0xff), false);
-
-        if (withAmmo)
-        {
-            mech.Inventory->AddItem(component.AmmoMasterId, mech.Inventory->CreateStat(masterID, 0, 0, -1, 0xff),
-                                    false);
-        }
-
-        float added = static_cast<float>(tons);
-        mech.UsedTonnage += added;
-        mech.WeaponTonnage += added;
 
         if (const std::shared_ptr<MCMechRepairBlock> row = GlobalLog()->RepairScreen->RowOf(mech); row != nullptr)
         {
             row->SetInventory(std::nullopt);
         }
 
-        mech.CalcBR();
         GlobalLog()->RepairScreen->SelectMech(mech.SharedAs<MCLogMech>());
         return true;
     }

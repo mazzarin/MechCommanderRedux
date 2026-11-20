@@ -151,6 +151,21 @@ public:
     /// </summary>
     void SetWeaponLists();
 
+    /// <summary>A mech's payload as the weapon list shows it: four lists and their copies' damage.</summary>
+    struct MCPayloadLists
+    {
+        /// <summary>The short-, medium- and long-range weapons and the equipment: each copy's inventory position.</summary>
+        std::array<std::vector<int32_t>, 4> Entries;
+        /// <summary>The damage of each list's copies, in its order.</summary>
+        std::array<std::vector<int32_t>, 4> Hits;
+    };
+
+    /// <summary>
+    /// <paramref name="mech"/>'s payload lists (<see cref="SetWeaponLists"/>): an entry per copy, the weapons' lists
+    /// sorted by damage.
+    /// </summary>
+    static MCPayloadLists PayloadLists(MCLogMech& mech);
+
     /// <summary>
     /// Sorts <paramref name="entries"/> (inventory positions in <paramref name="inventory"/>) by their components'
     /// damage, lowest first, as the original's exchange sort (not stable); <paramref name="hits"/> follow their entries.
@@ -163,6 +178,17 @@ public:
     /// </summary>
     std::shared_ptr<MCLogInventoryItem> GetInvItem(const std::vector<int32_t>& list, int32_t index,
                                                    uint8_t& itemNum) const;
+
+    /// <summary><see cref="GetInvItem"/> for <paramref name="mech"/>'s payload lists (<see cref="PayloadLists"/>).</summary>
+    static std::shared_ptr<MCLogInventoryItem> InvItem(const MCLogMech& mech, const std::vector<int32_t>& list,
+                                                       int32_t index, uint8_t& itemNum);
+
+    /// <summary>
+    /// Draws <paramref name="mech"/>'s damage diagram (0x4b x 100, over colour 0x10) into <paramref name="port"/> at
+    /// (<paramref name="xPos"/>, <paramref name="top"/> + 8): the internal structure, then the armor over it, each
+    /// location shaded by its damage.
+    /// </summary>
+    static void PaintDiagram(const MCLogMech& mech, MCLogPort& port, int32_t top, int32_t xPos);
 
     /// <summary>
     /// Repairs <paramref name="points"/> of <paramref name="mech"/>'s armor points (all of it when negative): the head

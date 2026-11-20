@@ -371,6 +371,44 @@ public:
     /// </summary>
     void RemoveVehicleFromSlots(int32_t forceIndex);
 
+    /// <summary>
+    /// The 'MECH BAY's mount, its screens' drop of a spare component on a mech: <paramref name="mech"/> is undeployed;
+    /// when its free tonnage takes component <paramref name="masterID"/> and a weapon's ammunition
+    /// (MCCompInventoryBlock::MountTonnage), a copy of each is added to its inventory, their weight to its used and
+    /// weapon tonnage, and its battle rating worked out again. The spare's count is the caller's.
+    /// </summary>
+    /// <returns>Whether it was mounted (false: too heavy).</returns>
+    bool MountComponent(MCLogMech& mech, uint8_t masterID);
+
+    /// <summary>
+    /// The 'MECH BAY's unmount, a copy picked out of a mech's payload: a weapon's ammunition, then copy
+    /// <paramref name="itemNum"/> of component <paramref name="masterID"/>, leave <paramref name="mech"/>'s inventory
+    /// (the last copy takes its item with it), their weight leaves its used and weapon tonnage, and its battle rating
+    /// is worked out again.
+    /// </summary>
+    /// <returns>
+    /// The copy's damage; none when the mech has no such copy (its ammunition and weight are taken all the same, as
+    /// the original's were).
+    /// </returns>
+    std::optional<uint8_t> UnmountComponent(MCLogMech& mech, uint8_t masterID, uint8_t itemNum);
+
+    /// <summary>
+    /// An undamaged copy of component <paramref name="masterID"/> taken out of a mech, put back with the spare
+    /// components: one more of its item, which is made (MCCompInventoryBlock::AddSpare) when there is none.
+    /// </summary>
+    /// <returns>The item: its count 1 when it had no copies before (its inventory row has to be made).</returns>
+    std::shared_ptr<MCLogInventoryItem> ReturnSpare(uint8_t masterID);
+
+    /// <summary>
+    /// The resource points REPAIR ALL takes to repair <paramref name="mech"/> whole: each engine damage level at
+    /// <see cref="EngineCost"/>, each missing internal structure point at <see cref="InternalCost"/>, each missing
+    /// armor point at <see cref="ArmorCost"/> (what it charges when the points cover them).
+    /// </summary>
+    int32_t RepairCost(const MCLogMech& mech) const;
+
+    /// <summary>The damaged copies of <paramref name="mech"/>'s weapons and equipment, which REFIT ALL replaces from the spares.</summary>
+    static int32_t DamagedComponents(const MCLogMech& mech);
+
     /// <summary>Moves assigned mechs into the force list and unassigned ones back, then renumbers their rows.</summary>
     void ReorderMechs() const;
 

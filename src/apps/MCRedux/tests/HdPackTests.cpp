@@ -3894,6 +3894,19 @@ namespace
         /// <summary>Cuts the shapes' archive's file to nothing (open, it stays open), so no stream of it can be read.</summary>
         void CutShapes() const { std::filesystem::resize_file(_Shapes, 0); }
 
+        /// <summary>Stream <paramref name="stream"/>'s frame asked for ahead, as <paramref name="as"/>.</summary>
+        void AskStream(size_t stream, MCHdArt::ReadAs as) const
+        {
+            const MCHdArt::ShapeAhead shape{_Tables[stream], 0, RunArchive::Side, RunArchive::Side};
+            MCHdArt::ReadShapesAhead(std::span(&shape, 1), as);
+        }
+
+        /// <summary>Stream <paramref name="stream"/>'s frame as drawn.</summary>
+        std::shared_ptr<const MCHdArt::Frame> FindStream(size_t stream) const
+        {
+            return MCHdArt::FindShape(MCHdArt::ShapeTableHash(_Tables[stream]), 0, RunArchive::Side, RunArchive::Side);
+        }
+
         /// <summary>Port-only (MCHdArt::FillGpu): each stream's folder as a packet, every frame its archive holds.</summary>
         std::vector<MCHdArt::PacketAhead> Packets() const
         {
@@ -3919,8 +3932,7 @@ namespace
             for (size_t stream = 0; stream < _Tables.size(); ++stream)
             {
                 MCTest::Scope scope(std::format("stream {}", stream));
-                const std::shared_ptr<const MCHdArt::Frame> found =
-                    MCHdArt::FindShape(MCHdArt::ShapeTableHash(_Tables[stream]), 0, RunArchive::Side, RunArchive::Side);
+                const std::shared_ptr<const MCHdArt::Frame> found = FindStream(stream);
                 REQUIRE(found != nullptr);
                 CHECK(found->Colors.empty());
                 const auto picture = std::ranges::find_if(up, [&found](const MCHdArt::StagedPicture& staged)
@@ -4259,6 +4271,51 @@ TEST_CASE("hd art: a mission that fits goes on the GPU under the loading bar, th
 }
 
 /// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): a picture the fill put up and the GPU let go of (past its room) before its
+/// frame was drawn held the frame's only colours: the frame goes from the cache whole, so asked for ahead it's read again
+/// by the readers, and its first draw finds its colours, reading nothing on the game's thread (19 Nov: mission 28, its
+/// mission past a 4 GiB room, read 379 mechs' frames' colours again so).
+/// </summary>
+TEST_CASE("hd art: a frame whose fill picture the GPU lets go before it's drawn is read ahead again")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-dropped", pieces);
+    const FillSlotsScope slots;
+    const std::vector<MCHdArt::StagedPicture> up = FillUnderTheBar(pack);
+    REQUIRE_EQ(up.size(), pieces.size());
+    const size_t again = MCHdArt::ColorsReadAgain();
+
+    // The GPU lets every picture go, no frame drawn yet; then each frame is asked for ahead, and drawn.
+    for (const MCHdArt::StagedPicture& picture : up)
+    {
+        MCHdArt::PictureDropped(picture.Record->Id);
+    }
+
+    for (size_t stream = 0; stream < pieces.size(); ++stream)
+    {
+        pack.AskStream(stream, MCHdArt::ReadAs::Load);
+    }
+
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+
+    for (size_t stream = 0; stream < pieces.size(); ++stream)
+    {
+        MCTest::Scope scope(std::format("stream {}", stream));
+        const std::shared_ptr<const MCHdArt::Frame> found = pack.FindStream(stream);
+        REQUIRE(found != nullptr);
+        CHECK(!MCHdArt::ColorsOf(*found).empty());
+    }
+
+    CHECK_EQ(MCHdArt::ColorsReadAgain(), again);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's plan, items 2 and 3): a mission that doesn't fit on the GPU (a room the game itself takes)
 /// isn't put there: the bar ends once the hold has it, and its frames are drawn from the hold's memory as they were.
 /// </summary>
@@ -4282,6 +4339,98 @@ TEST_CASE("hd art: a mission that doesn't fit on the GPU stays in the hold, its 
     CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
     pack.CutShapes();
     pack.CheckDrawnFromTheHold();
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): whether the whole mission fits on the GPU is decided once the archives
+/// being opened for the hold are open, on all of them: a mission whose first archive fits on the card and whose whole
+/// doesn't puts none of it up (19 Nov: mission 28 entered the fill on its first archive's 0.8 MB, then left it past a
+/// 4 GiB room, the GPU letting go of what it had put up).
+/// </summary>
+TEST_CASE("hd art: a mission that doesn't fit whole puts none of it on the GPU, though its first archive would fit")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-whole", pieces);
+    const FillSlotsScope slots;
+    const std::array<std::filesystem::path, 1> more{std::filesystem::path(HoldPack::MoreFolder)};
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+
+    // The other archive, as big, waits to be opened: the room fits the first with more than a tenth to spare.
+    MCHdArt::HoldOpens(true);
+    MCHdArt::OpenArchivesAhead(more);
+    MCHdArt::NextFrame(false);
+    const uint64_t first = MCHdArt::GpuFillNow().MissionBytes;
+    REQUIRE(first > 0);
+    MCHdArt::NoteGpuRoom(first + first / 2);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    MCHdArt::HoldOpens(false);
+    MCHdArt::WaitForReadAhead();
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::FinishLoadFill(
+        [&up]
+        {
+            for (MCHdArt::StagedPicture& picture :
+                 MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+            {
+                up.push_back(std::move(picture));
+            }
+        });
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    CHECK(up.empty());
+    CHECK(!fill.Fits);
+    CHECK_EQ(fill.MissionBytes, 2 * first);
+    CHECK_EQ(fill.Up, before);
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): a load no briefing held for (a saved game's, a staged battle's) decides
+/// whether the mission fits on the GPU only once it has made its units (MCHdArt::LoadUnitsMade): a force in no list
+/// counts (20 Nov: the canyon benchmark's ten mechs, 6.2 GB of its 7.9, came after the fill had decided on 1.7).
+/// </summary>
+TEST_CASE("hd art: a load no briefing held for decides the fill on the GPU once its units are made")
+{
+    constexpr std::string_view Unlisted = "no-list";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-units", pieces);
+    const FillSlotsScope slots;
+    REQUIRE(MCHdArt::BriefingFolders(Unlisted).empty());
+    MCHdArt::StartLoadFill(Unlisted);
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::GpuFillNow().MissionBytes > 0);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    MCHdArt::LoadUnitsMade();
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::GpuFillNow().Fits);
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::FinishLoadFill(
+        [&up]
+        {
+            for (MCHdArt::StagedPicture& picture :
+                 MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+            {
+                MCHdArt::ColorsUploaded(*picture.Record);
+                up.push_back(std::move(picture));
+            }
+        });
+    CHECK_EQ(up.size(), pieces.size());
     MCHdArt::LetGoHold();
     GHdArt = previous;
 }
@@ -4334,6 +4483,58 @@ TEST_CASE("hd art: the fill waits for room in the upload slots, the bar shown me
     CHECK_EQ(MCHdArt::GpuFillNow().Up, before + pieces.size());
     pack.CutShapes();
     pack.CheckStaged(up);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's upload slots: who waits): with the fill's readers waiting for room in the slots (its share
+/// held, as pictures staged and not yet recorded hold it, which only the game's thread frees), an archive the load asks
+/// to open is opened all the same: other work ends a fill reader's wait, so the game's thread never waits on the readers
+/// for ever (19 Nov: the canyon's load hung so, every reader waiting for room and the game's thread for an open).
+/// </summary>
+TEST_CASE("hd art: an archive asked for while the fill's readers wait for room is opened")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-open", pieces);
+    const FillSlotsScope slots;
+    MCUploadSlots& pool = slots.Pool();
+    const int64_t waits = pool.Tally().Of(MCUploadSlots::MCKind::Fill).Waits;
+    std::optional<MCUploadSlots::MCLease> share =
+        pool.TryTake(MCUploadSlots::MCKind::Fill, pool.MostFor(MCUploadSlots::MCKind::Fill) * MCUploadSlots::SlotBytes);
+    REQUIRE(share.has_value());
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    const std::array<std::filesystem::path, 1> more{std::filesystem::path(HoldPack::MoreFolder) / "0"};
+    bool openedWhileHeld = false;
+    uint64_t upWhileHeld = 0;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::FinishLoadFill(
+        [&]
+        {
+            // Once a fill reader has waited for room: the open asked for, and waited for as the load waits for its own.
+            if (share.has_value() && pool.Tally().Of(MCUploadSlots::MCKind::Fill).Waits > waits)
+            {
+                MCHdArt::OpenArchivesAhead(more);
+                MCHdArt::WaitForLoadReads();
+                openedWhileHeld = true;
+                upWhileHeld = MCHdArt::GpuFillNow().Up - before;
+                share.reset();
+            }
+
+            for (MCHdArt::StagedPicture& picture :
+                 MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+            {
+                MCHdArt::ColorsUploaded(*picture.Record);
+            }
+        });
+    CHECK(openedWhileHeld);
+    CHECK_EQ(upWhileHeld, 0);
+    CHECK(MCHdArt::GpuFillNow().Up >= before + pieces.size());
     MCHdArt::LetGoHold();
     GHdArt = previous;
 }

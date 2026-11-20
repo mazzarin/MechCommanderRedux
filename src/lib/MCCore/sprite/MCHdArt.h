@@ -701,8 +701,10 @@ namespace MCHdArt
     /// Port-only (SPEC-memory.md's plan, item 2): has the readers put <paramref name="packets"/>' frames on the GPU (each
     /// read, or unpacked from the hold, into the upload slots), in the order given, below every other read: when the
     /// whole mission fits on the GPU (<see cref="GpuFillNow"/>), from a load's start (<see cref="StartLoadFill"/>) to its
-    /// mission's end. A folder asked for before is left as it is. The load's folders (<see cref="LoadFolders"/>) go in
-    /// the order handed, after these.
+    /// mission's end. The whole mission is every archive handed the hold, kept or not, its frames unpacked; whether it
+    /// fits is first decided once the archives being opened for the hold are open (its list's, from the briefing or
+    /// the load's start), so a mission that doesn't fit puts none of it up. A folder asked for before is left as it is.
+    /// The load's folders (<see cref="LoadFolders"/>) go in the order handed, after these.
     /// </summary>
     void FillGpu(std::span<const PacketAhead> packets);
 
@@ -1207,9 +1209,20 @@ namespace MCHdArt
     /// Port-only (SPEC-memory.md's "Under the loading bar"): a mission's load begins: when the hold is wanted, it holds
     /// from now each archive the load opens or asks for (<see cref="OpenArchivesAhead"/>), one an earlier mission left
     /// open too, but none the load doesn't ask for, its reads going several at once beside the load's, as readers are
-    /// free of the load's own, until <see cref="FinishLoadFill"/>.
+    /// free of the load's own, until <see cref="FinishLoadFill"/>. A load of <paramref name="mission"/> (its
+    /// <c>.fit</c>'s name) no briefing held for (<see cref="HoldsFor"/>: a saved game's) opens its list's archives first
+    /// (<see cref="BriefingFolders"/>), as its briefing would have, so the fill on the GPU knows the mission's whole size
+    /// before it puts any of it up (<see cref="FillGpu"/>), with its units once made (<see cref="LoadUnitsMade"/>);
+    /// the list's folders aren't among <see cref="LoadFolders"/> for that.
     /// </summary>
-    void StartLoadFill();
+    void StartLoadFill(std::string_view mission = {});
+
+    /// <summary>
+    /// Port-only (<see cref="FillGpu"/>): a load has made its mission's units, their art handed the hold
+    /// (MCScenario::LoadParts): a load no briefing held for knows its mission's whole size from now (a saved game's or
+    /// a staged battle's force is in no list), and the fill decides whether it fits.
+    /// </summary>
+    void LoadUnitsMade();
 
     /// <summary>
     /// Port-only (the loading bar's last stretch): waits until the hold has read every archive the load handed it (or

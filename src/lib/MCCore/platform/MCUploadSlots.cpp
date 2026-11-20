@@ -325,7 +325,8 @@ std::optional<MCUploadSlots::MCLease> MCUploadSlots::TryTake(MCKind kind, size_t
     return std::nullopt;
 }
 
-std::optional<MCUploadSlots::MCLease> MCUploadSlots::Take(MCKind kind, size_t bytes, std::stop_token stop, MCWait wait)
+std::optional<MCUploadSlots::MCLease> MCUploadSlots::Take(MCKind kind, size_t bytes, std::stop_token stop, MCWait wait,
+                                                          std::chrono::steady_clock::duration most)
 {
     std::unique_lock lock(_Lock);
     MCKindTally& tally = _Tally.Kinds[static_cast<size_t>(kind)];
@@ -359,7 +360,8 @@ std::optional<MCUploadSlots::MCLease> MCUploadSlots::Take(MCKind kind, size_t by
     const auto start = std::chrono::steady_clock::now();
     const std::chrono::microseconds poll = kind == MCKind::Fill ? FillWaitPoll : WaitPoll;
 
-    while (!lease.has_value() && !stop.stop_requested() && (wait == MCWait::Free || !_Sent.empty()))
+    while (!lease.has_value() && !stop.stop_requested() && (wait == MCWait::Free || !_Sent.empty()) &&
+           std::chrono::steady_clock::now() - start < most)
     {
         _Freed.wait_for(lock, poll);
         ReclaimLocked();

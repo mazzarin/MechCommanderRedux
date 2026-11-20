@@ -215,9 +215,11 @@ public:
 
     /// <summary>
     /// As <see cref="TryTake"/>, waiting as <paramref name="wait"/> says until slots are free (the copies sent before have
-    /// run). None for more than the slots <paramref name="kind"/> may take hold, or once <paramref name="stop"/> is asked.
+    /// run), for <paramref name="most"/> at most. None for more than the slots <paramref name="kind"/> may take hold, once
+    /// <paramref name="stop"/> is asked, or once <paramref name="most"/> has gone.
     /// </summary>
-    std::optional<MCLease> Take(MCKind kind, size_t bytes, std::stop_token stop = {}, MCWait wait = MCWait::Free);
+    std::optional<MCLease> Take(MCKind kind, size_t bytes, std::stop_token stop = {}, MCWait wait = MCWait::Free,
+                                std::chrono::steady_clock::duration most = std::chrono::steady_clock::duration::max());
 
     /// <summary>
     /// <paramref name="leases"/>' copies, and some of <paramref name="shared"/>'s, are recorded on commands just

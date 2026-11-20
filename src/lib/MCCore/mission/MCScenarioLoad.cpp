@@ -196,7 +196,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
 
     // Port-only (SPEC-memory.md's "Under the loading bar"): the mission's art held from the load's start, read beside the
     // ground and the rest as the load opens its archives; the bar's last stretch is its bytes (MCHdArt::LoadBarPercent).
-    MCHdArt::StartLoadFill();
+    MCHdArt::StartLoadFill(scenarioName);
     UpdateDisplay(false, true, 100, true, 0);
     // Port-only (HD audio): the pack's sounds that play the moment they are asked for are decoded on a thread of their
     // own from here to the end of the loading, rather than as each first plays.
@@ -996,6 +996,9 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
         Parts[static_cast<size_t>(i)] = ReadScenarioPart(file, i);
         CreatePartObject(i);
     }
+
+    // Port-only (MCHdArt::FillGpu): every unit's art handed the hold, the mission's whole size is known.
+    MCHdArt::LoadUnitsMade();
 
     // Port-only (MechBraking): every mech type's stops are given at the load's end, with its packets
     // (LoadOriginalPackets).

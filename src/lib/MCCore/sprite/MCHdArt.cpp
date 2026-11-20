@@ -393,8 +393,8 @@ namespace
 
     /// <summary>
     /// Port-only (MCHdArt::FillGpu): how many of the fill's reads may be in flight at once in play (a reader waits for free
-    /// slots as the GPU copies, so the others are free for what's asked meanwhile); half the readers under the loading
-    /// bar.
+    /// slots as the GPU copies, so the others are free for what's asked meanwhile); under the loading bar half the
+    /// readers while the hold reads, all of them once it has read everything.
     /// </summary>
     constexpr size_t GpuReadsAtOnce = 1;
     /// <summary>Port-only: under the loading bar the fill reads with the readers' share of 1 in this many.</summary>
@@ -403,6 +403,12 @@ namespace
     constexpr size_t UploadsPerPicture = 2;
     /// <summary>Port-only: the bytes a fill's reader takes of the slots at a time (its frames put in them in turn).</summary>
     constexpr size_t FillLeaseBytes = size_t{8} << 20;
+    /// <summary>
+    /// Port-only (MCHdArt::FillGpu): the longest a fill reader waits for room in the slots at a time before it looks for
+    /// other work again. Work queued for the readers ends its wait at once (StopGpuRoomWaits); this bounds it should a
+    /// way of queueing work miss that.
+    /// </summary>
+    constexpr std::chrono::milliseconds FillRoomWaitMost{20};
     /// <summary>
     /// Port-only (SPEC-memory.md: "less only the plan's own error"): the whole mission is put on the GPU when it fits with
     /// a tenth to spare, and left there until it no longer fits at all, so the mode doesn't flip as a budget wavers.
@@ -415,7 +421,8 @@ namespace
     constexpr std::chrono::seconds GpuFillStall{2};
     /// <summary>
     /// Port-only (MCHdArt::TakeStagedPicture): the frames a draw's picture taken from the slots waits for the renderer to
-    /// ask for it, its slots held, before it's let go of.
+    /// ask for it as it draws the frame, before it goes up as the fill's do (MCHdArt::TakeStagedPictures: a frame read for
+    /// the CPU alone, whose colours are in the picture alone).
     /// </summary>
     constexpr uint64_t DrawnStagedFrames = 2;
 
@@ -563,6 +570,12 @@ namespace
         bool On = false;
         std::deque<std::shared_ptr<MCHdArchive>> Archives;
         std::unordered_set<std::shared_ptr<MCHdArchive>> Queued;
+        /// <summary>
+        /// Port-only (MCHdArt::FillGpu): every archive handed it while it holds, kept or not (Full, none of it kept), and
+        /// their frames' bytes unpacked (UnpackedKept): the mission's whole size on the GPU (UpdateGpuFill).
+        /// </summary>
+        std::unordered_set<std::shared_ptr<MCHdArchive>> Handed;
+        uint64_t HandedGpuBytes = 0;
         uint32_t NextStream = 0;
         uint64_t Generation = 0;
         size_t Reads = 0;
@@ -735,8 +748,7 @@ namespace
         uint64_t GpuStaged = 0;
         /// <summary>
         /// Port-only: a fill reader's room, at least this (a frame that found the slots full needed it), and what stops
-        /// its wait for it: the fill dropped or the read-ahead forgotten (StopGpuRoomWaits), when the game's thread may be
-        /// waiting for the readers while it holds the slots it frees only after.
+        /// its wait for it (StopGpuRoomWaits): the fill dropped, the read-ahead forgotten, or other work for the readers.
         /// </summary>
         size_t GpuRoomNeed = 0;
         std::stop_source GpuRoomStop;
@@ -819,14 +831,18 @@ namespace
         /// <summary>
         /// Port-only (MCHdArt::FillGpu; SPEC-memory.md's plan, item 2): the mission's fill on the GPU: whether it may run
         /// (from a load's start to its mission's end) and whether the whole mission fits (it fills), the mission's bytes
-        /// there (est.: its held archives' frames unpacked, each archive's worked out once), the room a card gives the
+        /// there (est.: HoldQueue::HandedGpuBytes), the room a card gives the
         /// pictures (MCHdArt::NoteGpuRoom; none on shared memory, planned here); the folders asked for (State::Folders'
         /// indices), those handed in order (FillGpu, then the load's), and how far through each it has asked.
         /// </summary>
         bool GpuFillOn = false;
         bool GpuFits = false;
+        /// <summary>
+        /// Port-only: whether the mission's whole size is known: from a load's start when a briefing held for it (its
+        /// list, the lance as placed), else once the load has made its units (MCHdArt::LoadUnitsMade) or ends.
+        /// </summary>
+        bool GpuMissionKnown = false;
         uint64_t GpuMissionBytes = 0;
-        std::unordered_map<const MCHdArchive*, uint64_t> GpuBytesOf;
         std::optional<uint64_t> GpuCardRoom;
         std::unordered_set<uint32_t> GpuAsked;
         std::vector<MCHdArt::PacketAhead> GpuOrder;
@@ -835,8 +851,8 @@ namespace
         /// <summary>
         /// Port-only (MCHdArt::FillGpu): the pictures taken up (by the renderer: TakeStagedPictures, TakeStagedPicture)
         /// and their bytes; a draw's taken from the slots (TakeAhead, kept here until the renderer asks for it as it draws
-        /// it: MCHdArt::TakeStagedPicture, or DrawnStagedFrames have gone), by the frame's number, with the frame it was
-        /// taken in; and when the last went up (FinishLoadFill's stall).
+        /// it: MCHdArt::TakeStagedPicture, or DrawnStagedFrames have gone and it goes up as the fill's do), by the frame's
+        /// number, with the frame it was taken in; and when the last went up (FinishLoadFill's stall).
         /// </summary>
         uint64_t GpuUp = 0;
         uint64_t GpuUpBytes = 0;
@@ -2098,6 +2114,7 @@ namespace
 
     void Drop(State& state, const FrameKey& key, Cached& cached)
     {
+        cached.Undrawn = false;
         state.Order.erase(cached.InOrder);
         state.Bytes -= cached.Frame->Bytes();
         state.AllocatedBytes -= cached.Frame->AllocatedBytes();
@@ -2552,7 +2569,12 @@ namespace
         }
     }
 
-    /// <summary>Port-only (MCHdArt::FillGpu): stops a fill reader's wait for room, if one waits. With ReadAhead::Lock.</summary>
+    /// <summary>
+    /// Port-only (MCHdArt::FillGpu): stops the fill readers' waits for room, if any wait: the fill dropped, the read-ahead
+    /// forgotten, or work for the readers that isn't the fill's queued (an archive to open, an ask, a follow, an archive to
+    /// hold, reads). Every reader may be waiting for room in the slots, which only the game's thread frees, while the
+    /// game's thread waits for that work (an archive being opened, the load's reads). With ReadAhead::Lock held.
+    /// </summary>
     void StopGpuRoomWaits(ReadAhead& ahead)
     {
         ahead.GpuRoomStop.request_stop();
@@ -2721,10 +2743,12 @@ namespace
             return AheadKind::Set;
         }
 
-        // Port-only (MCHdArt::FillGpu): the mission's fill on the GPU, beside the hold (from its memory once held).
-        const size_t gpuReads = ahead.Holding.Loading
-                                    ? std::max(ahead.Settings.Readers / LoadGpuReadersDivisor, GpuReadsAtOnce)
-                                    : GpuReadsAtOnce;
+        // Port-only (MCHdArt::FillGpu): the mission's fill on the GPU, beside the hold (from its memory once held): under
+        // the bar half the readers while the hold reads, all once it's read everything.
+        const bool holding = HoldPending(ahead) || ahead.InFlight[std::to_underlying(AheadKind::Hold)] > 0;
+        const size_t gpuReads = !ahead.Holding.Loading ? GpuReadsAtOnce
+                                : holding ? std::max(ahead.Settings.Readers / LoadGpuReadersDivisor, GpuReadsAtOnce)
+                                          : ahead.Settings.Readers;
 
         if (!waiting(AheadKind::Set) && waiting(AheadKind::Gpu) && ahead.Slots != nullptr &&
             ahead.InFlight[std::to_underlying(AheadKind::Gpu)] < gpuReads)
@@ -3665,6 +3689,23 @@ namespace
     void StartReaders(ReadAhead& ahead);
 
     /// <summary>
+    /// Port-only (MCHdArt::FillGpu): the bytes <paramref name="file"/>'s pieces the hold keeps take unpacked: its frames'
+    /// pictures as the GPU takes them (BC7 colours and indices), the mission's share of the GPU's room.
+    /// </summary>
+    uint64_t UnpackedKept(const MCFastFile& file)
+    {
+        uint64_t bytes = 0;
+
+        for (uint32_t piece = 0; piece < file.HoldPieceCount(); ++piece)
+        {
+            const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
+            bytes += facts.Kept ? facts.Unpacked : 0;
+        }
+
+        return bytes;
+    }
+
+    /// <summary>
     /// Port-only (MCHdArt::StartHold): has the hold read <paramref name="archive"/>, while it holds, once, if it keeps
     /// any of it (HoldsArchive). Call with ReadAhead::Lock held.
     /// </summary>
@@ -3672,8 +3713,17 @@ namespace
     {
         HoldQueue& holding = ahead.Holding;
 
-        if (!holding.On || holding.Full || archive == nullptr || !HoldsArchive(*archive) ||
-            !holding.Queued.insert(archive).second)
+        if (!holding.On || archive == nullptr)
+        {
+            return;
+        }
+
+        if (holding.Handed.insert(archive).second)
+        {
+            holding.HandedGpuBytes += UnpackedKept(*archive->File);
+        }
+
+        if (holding.Full || !HoldsArchive(*archive) || !holding.Queued.insert(archive).second)
         {
             return;
         }
@@ -3681,6 +3731,7 @@ namespace
         // Port-only (SPEC-memory.md's fill): its bytes counted to read, for the loading bar (MCHdArt::LoadFillShare).
         holding.QueuedBytes += archive->HoldBytes;
         holding.Archives.push_back(archive);
+        StopGpuRoomWaits(ahead);
         StartReaders(ahead);
         ahead.Changed.notify_all();
     }
@@ -3718,6 +3769,8 @@ namespace
         holding.On = false;
         holding.Archives.clear();
         holding.Queued.clear();
+        holding.Handed.clear();
+        holding.HandedGpuBytes = 0;
         holding.NextStream = 0;
         holding.QueuedBytes = 0;
         holding.ReadBytes = 0;
@@ -3851,7 +3904,7 @@ namespace
             {
                 // Port-only (MCHdArt::FillGpu): room in the slots first, waited for without the lock and before any read
                 // is taken (the fill's backpressure), so a draw never waits on a read the full slots hold up.
-                // Its wait ends too when the fill is dropped or the read-ahead forgotten (StopGpuRoomWaits).
+                // Its wait ends when other work comes (StopGpuRoomWaits), or after FillRoomWaitMost, to look for it.
                 ++ahead.InFlight[std::to_underlying(AheadKind::Gpu)];
                 const std::shared_ptr<MCUploadSlots> slots = ahead.Slots;
                 const size_t most = FillRoomBytes(*slots);
@@ -3865,7 +3918,8 @@ namespace
                     std::stop_source giveUp;
                     const std::stop_callback readerStopped(stop, [&giveUp] { giveUp.request_stop(); });
                     const std::stop_callback fillDropped(dropped, [&giveUp] { giveUp.request_stop(); });
-                    room = slots->Take(MCUploadSlots::MCKind::Fill, bytes, giveUp.get_token());
+                    room = slots->Take(MCUploadSlots::MCKind::Fill, bytes, giveUp.get_token(),
+                                       MCUploadSlots::MCWait::Free, FillRoomWaitMost);
                 }
 
                 lock.lock();
@@ -3931,6 +3985,11 @@ namespace
         for (AheadRead& read : reads)
         {
             AddWaiting(ahead, kind, std::move(read));
+        }
+
+        if (kind != AheadKind::Gpu)
+        {
+            StopGpuRoomWaits(ahead);
         }
 
         StartReaders(ahead);
@@ -4137,6 +4196,7 @@ namespace
 
         ahead.Follows.push_back(
             Follow{key, frames, folder.Archived->Archive, folder.Archived->Prefix, folder.BakedShadows, {}, itself});
+        StopGpuRoomWaits(ahead);
         StartReaders(ahead);
         ahead.Changed.notify_all();
     }
@@ -5661,6 +5721,7 @@ void MCHdArt::OpenArchivesAhead(std::span<const std::filesystem::path> folders)
 
     if (asked)
     {
+        StopGpuRoomWaits(ahead);
         StartReaders(ahead);
         ahead.Changed.notify_all();
     }
@@ -5893,6 +5954,12 @@ namespace
         ahead.LoadAsks += kind == AheadKind::Load ? 1 : 0;
         ahead.GpuAsks += kind == AheadKind::Gpu ? 1 : 0;
         ahead.Asks.push_back(std::move(batch));
+
+        if (kind != AheadKind::Gpu)
+        {
+            StopGpuRoomWaits(ahead);
+        }
+
         StartReaders(ahead);
         ahead.Changed.notify_all();
     }
@@ -6942,23 +7009,6 @@ void MCHdArt::StartHold()
 namespace
 {
     /// <summary>
-    /// Port-only (MCHdArt::FillGpu): the bytes <paramref name="file"/>'s pieces the hold keeps take unpacked: its frames'
-    /// pictures as the GPU takes them (BC7 colours and indices), the mission's share of the GPU's room.
-    /// </summary>
-    uint64_t UnpackedKept(const MCFastFile& file)
-    {
-        uint64_t bytes = 0;
-
-        for (uint32_t piece = 0; piece < file.HoldPieceCount(); ++piece)
-        {
-            const MCFastFile::HoldPiece facts = file.HoldPieceAt(piece);
-            bytes += facts.Kept ? facts.Unpacked : 0;
-        }
-
-        return bytes;
-    }
-
-    /// <summary>
     /// Port-only: drops the fill's reads waiting, its asks not made reads yet and the pictures it put in the slots that
     /// the game's thread hasn't taken (their slots free as they go). Call with ReadAhead::Lock held.
     /// </summary>
@@ -7000,10 +7050,11 @@ namespace
     }
 
     /// <summary>
-    /// Port-only (MCHdArt::FillGpu; SPEC-memory.md's plan, item 2): whether the whole mission fits on the GPU now (its
-    /// held archives' frames unpacked, with the hold beside them on shared memory), the mode entered with a tenth to spare
-    /// and left only once it no longer fits (its reads waiting dropped then: the pictures up stay as the plan's room
-    /// lets them); while it fits, the folders handed (FillGpu's, then the load's) asked for in order, each once its
+    /// Port-only (MCHdArt::FillGpu; SPEC-memory.md's plan, item 2): whether the whole mission fits on the GPU now (the
+    /// frames of every archive handed the hold unpacked, with the hold beside them on shared memory), the mode entered
+    /// with a tenth to spare, never while archives are being opened for the hold (the mission's size isn't known whole
+    /// until they're open: its list's, from the briefing or the load's start), and left only once it no longer fits (its
+    /// reads waiting dropped then: the pictures up stay as the plan's room lets them); while it fits, the folders handed (FillGpu's, then the load's) asked for in order, each once its
     /// archive is held whole (its frames unpacked from memory, not read from the disk again), at once when the hold
     /// keeps no more or doesn't take it. In play no archive is opened for it. The game's thread's (MCHdArt::NextFrame,
     /// MCHdArt::FinishLoadFill).
@@ -7014,6 +7065,7 @@ namespace
         uint64_t mission = 0;
         uint64_t handed = 0;
         bool loading = false;
+        bool opening = false;
 
         {
             std::scoped_lock lock(ahead.Lock);
@@ -7026,18 +7078,17 @@ namespace
 
             handed = ahead.Holding.QueuedBytes;
             loading = ahead.Holding.Loading;
+            opening = std::ranges::any_of(ahead.Opening, [&ahead](const auto& open)
+                                          { return open.second == ahead.Holding.Generation; });
+            mission = ahead.Holding.HandedGpuBytes;
+        }
 
-            for (const std::shared_ptr<MCHdArchive>& archive : ahead.Holding.Queued)
-            {
-                const auto [known, fresh] = state.GpuBytesOf.try_emplace(archive.get(), 0);
+        state.GpuMissionBytes = mission;
 
-                if (fresh)
-                {
-                    known->second = UnpackedKept(*archive->File);
-                }
-
-                mission += known->second;
-            }
+        // Not entered on part of the mission: one that doesn't fit whole puts none of it up.
+        if (!state.GpuFits && (opening || !state.GpuMissionKnown))
+        {
+            return;
         }
 
         // On shared memory the mission and the hold beside it within the art's room past the rest and the floor; on any
@@ -7050,7 +7101,6 @@ namespace
         const auto within = [&state](uint64_t need, uint64_t room)
         { return state.GpuFits ? need <= room : need + need / FitsMarginDivisor <= room; };
         const bool fits = mission > 0 && within(mission + held, space) && within(mission, card);
-        state.GpuMissionBytes = mission;
 
         if (fits != state.GpuFits && MCFrameLog::Enabled())
         {
@@ -7150,32 +7200,45 @@ namespace
     }
 }
 
-void MCHdArt::StartLoadFill()
+void MCHdArt::StartLoadFill(std::string_view mission)
 {
     if (!Active() || !HoldWanted())
     {
         return;
     }
 
+    // Port-only (MCHdArt::FillGpu): a load no briefing held for opens its mission's list now, as the briefing would have.
+    const bool briefed = mission.empty() || HoldsFor(mission);
     State& state = TheState();
-    state.RecordingLoad = true;
     state.LoadFolders.clear();
     state.LoadFolderKeys.clear();
     state.LoadFoldersAsked = 0;
     state.GpuFillOn = true;
+    state.GpuMissionKnown = briefed;
     state.GpuUpAtLoad = state.GpuUp;
-    ReadAhead& ahead = state.Ahead;
-    std::scoped_lock lock(ahead.Lock);
-    HoldQueue& holding = ahead.Holding;
 
-    // A hold already on (its briefing's, MCHdArt::StartBriefingHold; a load begun without the last mission's let go)
-    // holds what it holds and takes this load's too, its reads now as many at once as the readers are free.
-    BeginHolding(holding);
-    holding.Loading = true;
-    holding.Briefing = false;
-    holding.BarShown = 0;
-    state.GpuReadsAtLoad = ahead.GpuReads;
-    ahead.Changed.notify_all();
+    {
+        ReadAhead& ahead = state.Ahead;
+        std::scoped_lock lock(ahead.Lock);
+        HoldQueue& holding = ahead.Holding;
+
+        // A hold already on (its briefing's, MCHdArt::StartBriefingHold; a load begun without the last mission's let go)
+        // holds what it holds and takes this load's too, its reads now as many at once as the readers are free.
+        BeginHolding(holding);
+        holding.Loading = true;
+        holding.Briefing = false;
+        holding.BarShown = 0;
+        state.GpuReadsAtLoad = ahead.GpuReads;
+        ahead.Changed.notify_all();
+    }
+
+    // Before the load's folders are noted (MCHdArt::LoadFolders, which the lists are worked out from).
+    if (!briefed)
+    {
+        OpenArchivesAhead(BriefingFolders(mission));
+    }
+
+    state.RecordingLoad = true;
 }
 
 void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
@@ -7183,7 +7246,8 @@ void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
     State& state = TheState();
     state.RecordingLoad = false;
     // Port-only (SPEC-memory.md's "Under the loading bar"): when the whole mission fits on the GPU, the bar ends once it's
-    // there too, unless none of it went up for GpuFillStall.
+    // there too, unless none of it went up for GpuFillStall. The load has handed the hold all it will.
+    state.GpuMissionKnown = true;
     UpdateGpuFill(state);
     state.GpuUpAt = std::chrono::steady_clock::now();
     ReadAhead& ahead = state.Ahead;
@@ -7234,6 +7298,11 @@ void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
     }
 }
 
+void MCHdArt::LoadUnitsMade()
+{
+    TheState().GpuMissionKnown = true;
+}
+
 double MCHdArt::LoadFillShare()
 {
     ReadAhead& ahead = TheState().Ahead;
@@ -7280,7 +7349,6 @@ void MCHdArt::LetGoHold()
     state.GpuOrderAsked = 0;
     state.LoadFoldersAsked = 0;
     state.GpuAsked.clear();
-    state.GpuBytesOf.clear();
     state.DrawnStaged.clear();
 
     {
@@ -7848,7 +7916,16 @@ void MCHdArt::PictureDropped(uint64_t id)
     {
         if (const auto found = state.Frames.find(numbered->second); found != state.Frames.end())
         {
-            found->second.OnGpu = false;
+            Cached& cached = found->second;
+            cached.OnGpu = false;
+
+            // Port-only (MCHdArt::FillGpu): a picture the fill put up and the GPU let go of before its frame was drawn held
+            // the frame's only colours: the frame goes whole, back in the hold as before the fill, so the readers read it
+            // ahead as they read any frame to come (kept as a record, it would be read again on the game's thread).
+            if (cached.Undrawn && cached.Frame != nullptr && cached.Colors.empty())
+            {
+                Drop(state, numbered->second, cached);
+            }
         }
     }
 }
@@ -7939,13 +8016,38 @@ std::vector<MCHdArt::StagedPicture> MCHdArt::TakeStagedPictures(size_t mostCount
 {
     State& state = TheState();
     std::vector<std::pair<FrameKey, StagedRead>> taken;
+    std::vector<StagedPicture> pictures;
+    size_t bytes = 0;
+    const auto sizeOf = [](const StagedPicture& picture) { return size_t{picture.ColorBytes} + picture.IndexBytes; };
+
+    // A draw's the renderer didn't ask for (a frame read for the CPU alone) goes up first, its colours in its picture
+    // alone: else they'd be read again when it's drawn.
+    for (auto drawn = state.DrawnStaged.begin(); drawn != state.DrawnStaged.end() && pictures.size() < mostCount;)
+    {
+        if (drawn->second.second + DrawnStagedFrames >= state.Frame)
+        {
+            ++drawn;
+            continue;
+        }
+
+        const size_t size = sizeOf(drawn->second.first);
+
+        if (!pictures.empty() && bytes + size > mostBytes)
+        {
+            break;
+        }
+
+        bytes += size;
+        CountUp(state, drawn->second.first);
+        pictures.push_back(std::move(drawn->second.first));
+        drawn = state.DrawnStaged.erase(drawn);
+    }
 
     {
         ReadAhead& ahead = state.Ahead;
         std::scoped_lock lock(ahead.Lock);
-        size_t bytes = 0;
 
-        while (!ahead.StagedOrder.empty() && taken.size() < mostCount)
+        while (!ahead.StagedOrder.empty() && pictures.size() + taken.size() < mostCount)
         {
             const FrameKey key = ahead.StagedOrder.front();
             const auto found = ahead.Staged.find(key);
@@ -7957,9 +8059,9 @@ std::vector<MCHdArt::StagedPicture> MCHdArt::TakeStagedPictures(size_t mostCount
                 continue;
             }
 
-            const size_t size = size_t{found->second.Picture.ColorBytes} + found->second.Picture.IndexBytes;
+            const size_t size = sizeOf(found->second.Picture);
 
-            if (!taken.empty() && bytes + size > mostBytes)
+            if ((!taken.empty() || !pictures.empty()) && bytes + size > mostBytes)
             {
                 break;
             }
@@ -7972,14 +8074,8 @@ std::vector<MCHdArt::StagedPicture> MCHdArt::TakeStagedPictures(size_t mostCount
         }
     }
 
-    // A draw's the renderer didn't ask for (a frame read for the CPU alone) lets go of its slots: its colours are read
-    // again if it's drawn.
-    std::erase_if(state.DrawnStaged,
-                  [&state](const auto& drawn) { return drawn.second.second + DrawnStagedFrames < state.Frame; });
-
     // Kept as KeepReadAhead keeps a frame read ahead, numbered as a draw would number it.
-    std::vector<StagedPicture> pictures;
-    pictures.reserve(taken.size());
+    pictures.reserve(pictures.size() + taken.size());
 
     for (auto& [key, read] : taken)
     {

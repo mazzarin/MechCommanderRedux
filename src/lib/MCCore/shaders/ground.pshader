@@ -8,6 +8,10 @@
 // GroundScale), the kept place its centre shows: the colours between the kept pixels round it (KeptBetween), the
 // indices, weights and entries the one it lies in.
 // By mode:
+// - Copy (opaque pipeline): the kept view's colours, indices and stands as they are (port-only, SPEC-kept-forest.md:
+//   MCVulkanRenderer's KeptGround::View, the ground and overlays as a surface's pass leaves them, wrapping with the
+//   kept ground), its stands in the entries' place, which the stands build copies, and no weights (a blank texture),
+//   the glints it leaves nothing.
 // - Clear (opaque pipeline): nothing (transparent, index 0, no weight), to draw a part of it again (in its pass, whose
 //   glints and stands targets hold the weights and the entries).
 // - Over (blend pipeline, indices left): the colours over the target's, as the terrain's draws over it leave them,
@@ -16,7 +20,10 @@
 //   entry's colour from then to now (cycle.y), as draw.pshader's Corrected scales it: a step of the cycle draws none of
 //   it again.
 // - Indices (index-only pipeline): the indices where the first pass drew, which wrote them.
+// - Blank (opaque pipeline): a window's new pixels, palette entry 0's colour (`blank`), index 0, nothing standing.
 // Over and Indices fill the ground's gaps (GapFill), so they cover all the target but the void past the map.
+// Port-only (SPEC-kept-wrap.md): drawn into the kept view, a part of it in pieces split at its edges, the quad moved
+// onto each (`moved`), taken back from the pixel's place.
 //
 // Bindings (SDL GPU, SPIR-V): fragment samplers in space2, fragment uniforms in space3.
 
@@ -48,11 +55,18 @@ cbuffer Ground : register(b0, space3)
     // now and z the kept ground's (-1: none); w unused. Index x + i shows the colour of cycleSources[(i + step) & 7].
     int4 cycle;
     uint4 cycleSources[2];
+    // Port-only (SPEC-kept-forest.md), for Blank: its colour (opaque).
+    float4 blank;
+    // Port-only (SPEC-kept-wrap.md): xy how far the quad is moved on the target (drawn pixels), onto a piece of the
+    // kept view; zw unused.
+    int4 moved;
 };
 
-static const int ModeClear = 0;
-static const int ModeOver = 1;
-static const int ModeIndices = 2;
+static const int ModeCopy = 0;
+static const int ModeClear = 1;
+static const int ModeOver = 2;
+static const int ModeIndices = 3;
+static const int ModeBlank = 4;
 
 // The ground's gaps: where the original's tiles' diamonds don't quite meet (a few pixels a screen, at fixed places on
 // the map) only the seam pass reaches, partly. Under it there the nearest pixel the first pass drew shows, looked for
@@ -226,7 +240,8 @@ void StepCycle(inout Output output, int2 kept, int2 size, float covered, int2 un
 
 Output main(float4 position : SV_Position)
 {
-    const int2 target = int2(floor(position.xy));
+    // The drawn pixel (port-only, SPEC-kept-wrap.md: the quad's move taken back).
+    const int2 target = int2(floor(position.xy)) - moved.xy;
 
     Output output;
     output.color = float4(0.0, 0.0, 0.0, 0.0);
@@ -240,6 +255,12 @@ Output main(float4 position : SV_Position)
 
     if (mode == ModeClear)
     {
+        return output;
+    }
+
+    if (mode == ModeBlank)
+    {
+        output.color = blank;
         return output;
     }
 
@@ -264,7 +285,7 @@ Output main(float4 position : SV_Position)
     const float covered = output.color.a;
     int2 under = NoPixel;
 
-    if (covered > 0.0 && covered < 1.0)
+    if (mode != ModeCopy && covered > 0.0 && covered < 1.0)
     {
         under = GapFill(output, kept, size);
     }
@@ -273,6 +294,13 @@ Output main(float4 position : SV_Position)
     {
         StepCycle(output, kept, size, covered, under);
         output.glint = float4(0.0, 0.0, 0.0, output.color.a);
+    }
+    else if (mode == ModeCopy)
+    {
+        output.glint = WeightsAt(kept, size);
+#if DRAW_STANDS
+        output.stands = SlotAt(kept, size);
+#endif
     }
     else if (mode == ModeIndices && output.color.a < 1.0)
     {

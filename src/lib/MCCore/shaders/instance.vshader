@@ -35,7 +35,9 @@ cbuffer Batch : register(b0, space1)
     float4 targetSize;
     // x: the batch's first draw in the buffer.
     uint4 batch;
-    // Port-only: the target's drawn grid's offset across and down (pixels.hlsli); zw unused.
+    // Port-only: the target's drawn grid's offset across and down (pixels.hlsli); zw (SPEC-kept-wrap.md), drawn into
+    // the kept view, how far the draws are moved on the target (drawn pixels), onto a piece of its wrapped textures
+    // (draw.pshader takes it back, its Frame's moved).
     int4 offset;
 };
 
@@ -64,7 +66,9 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     Output output;
     const int4 sizes = max(int4(targetSize), 1);
     const int2 grid = offset.xy + SubPixelOffset(draw.place.w, sizes.zw);
-    output.position = float4(DrawnCorner(draw.rect, sizes, grid, corners[vertex]), 0.0, 1.0);
+    output.position = float4(DrawnCorner(draw.rect, sizes, grid, corners[vertex]) +
+                                 float2(2 * offset.z, -2 * offset.w) / float2(sizes.zw),
+                             0.0, 1.0);
     output.rect = draw.rect;
     output.source = draw.source;
     output.op = draw.op;

@@ -83,6 +83,7 @@ namespace
         float ReliefLook[4] = {};
         /// <summary>How far a forest's canopy sways at the height of a gust (meters, 0 none), and how much brighter.</summary>
         float Sway[4] = {};
+        float Crowns[4] = {};
         /// <summary>The weather's overcast, its colours' grey, wet land's darkening and its veil (0: a clear sky).</summary>
         float Weather[4] = {};
         /// <summary>
@@ -188,6 +189,78 @@ namespace
     /// The puddles' field's format: a puddle's edge is where the field crosses the puddles' level, so it is kept whole.
     /// </summary>
     constexpr SDL_GPUTextureFormat PuddleFormat = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+    /// <summary>
+    /// Port-only (HDSway): the crowns' texture's format: each crown's point and sway in meters, kept whole, so the
+    /// canopy's pixels choose and sway by them as when each worked them out.
+    /// </summary>
+    constexpr SDL_GPUTextureFormat CrownsFormat = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT;
+    /// <summary>The forest's crowns are about this many meters apart (composite.pshader's SwayCrownSize).</summary>
+    constexpr float CrownMeters = 25.0f;
+    /// <summary>
+    /// The crowns' texture holds the crown cells round every one a world texel lies in, this many past them each way
+    /// (composite.pshader's SwayedAt reads the 3 x 3 round a texel's own), and the world's texels this many past it,
+    /// beyond the heat haze's shimmer.
+    /// </summary>
+    constexpr float CrownsBeyond = 1.0f;
+    constexpr float CrownsTexelsBeyond = 2.0f;
+    /// <summary>The most crown cells the crowns' texture holds each way (far more than any view's ground shows).</summary>
+    constexpr float MostCrownsAcross = 256.0f;
+
+    /// <summary>Port-only (HDSway): the crown cells a world's crowns' texture holds: the first, and how many each way.</summary>
+    struct CrownCells
+    {
+        std::array<float, 2> First{};
+        std::array<uint32_t, 2> Count{};
+    };
+
+    /// <summary>
+    /// The crown cells round all the ground a world <paramref name="width"/> by <paramref name="height"/> texels shows:
+    /// its corners' ground points by its uniforms' ground map, the heat haze's shimmer and CrownsTexelsBeyond past them,
+    /// with CrownsBeyond more cells each way; none when that is over MostCrownsAcross.
+    /// </summary>
+    std::optional<CrownCells> CrownCellsOf(const CompositeUniforms& uniforms, float width, float height)
+    {
+        const float beyond = uniforms.Haze[0] + CrownsTexelsBeyond;
+        std::array<float, 2> low{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+        std::array<float, 2> high{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+
+        for (const float x : {-beyond, width + beyond})
+        {
+            for (const float y : {-beyond, height + beyond})
+            {
+                // As composite.pshader's SwayedAt places a texel on the ground.
+                const float offsetX = x + 0.5f - uniforms.Ground[0];
+                const float offsetY = y + 0.5f - uniforms.Ground[1];
+                const std::array<float, 2> at{uniforms.GroundAxes[0] * offsetX + uniforms.GroundAxes[1] * offsetY,
+                                              uniforms.GroundAxes[2] * offsetX + uniforms.GroundAxes[3] * offsetY};
+
+                for (size_t axis = 0; axis < 2; ++axis)
+                {
+                    low[axis] = std::min(low[axis], at[axis]);
+                    high[axis] = std::max(high[axis], at[axis]);
+                }
+            }
+        }
+
+        CrownCells cells;
+
+        for (size_t axis = 0; axis < 2; ++axis)
+        {
+            const float first = std::floor(low[axis] / CrownMeters) - CrownsBeyond;
+            const float count = std::floor(high[axis] / CrownMeters) + CrownsBeyond - first + 1.0f;
+
+            if (!std::isfinite(count) || count > MostCrownsAcross)
+            {
+                return std::nullopt;
+            }
+
+            cells.First[axis] = first;
+            cells.Count[axis] = static_cast<uint32_t>(count);
+        }
+
+        return cells;
+    }
+
     /// <summary>
     /// The light tiles' side, in the world's texels (composite.pshader's lightTiles): a tile meets few lights, and a
     /// SIMD group's pixels mostly share one.
@@ -883,6 +956,8 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
         std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline, Rgba, !Slow},
         std::tuple{&MCVulkanShaders::CompositePuddle, &presenter->_PuddleShader, &presenter->_PuddlePipeline,
                    PuddleFormat, !Slow},
+        std::tuple{&MCVulkanShaders::CompositeCrowns, &presenter->_CrownsShader, &presenter->_CrownsPipeline,
+                   CrownsFormat, !Slow},
     };
 
     // Port-only: each composite's pipeline a job, made with the renderer's all at once (MCVulkanRenderer::MakePipelines)
@@ -1044,8 +1119,8 @@ MCVulkanPresenter::~MCVulkanPresenter()
         Release(texture);
     }
 
-    for (std::vector<Texture>& textures :
-         {std::ref(_Underlays), std::ref(_Blooms), std::ref(_Fields), std::ref(_Puddles), std::ref(_LightTiles)})
+    for (std::vector<Texture>& textures : {std::ref(_Underlays), std::ref(_Blooms), std::ref(_Fields),
+                                           std::ref(_Puddles), std::ref(_Crowns), std::ref(_LightTiles)})
     {
         for (Texture& texture : textures)
         {
@@ -1063,6 +1138,7 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _BrightPipeline.reset();
     _FieldPipeline.reset();
     _PuddlePipeline.reset();
+    _CrownsPipeline.reset();
     _QuadShader.reset();
     _CompositeShader.reset();
     _DryShader.reset();
@@ -1070,6 +1146,7 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _BrightShader.reset();
     _FieldShader.reset();
     _PuddleShader.reset();
+    _CrownsShader.reset();
 
     if (_Claimed)
     {
@@ -1664,6 +1741,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
         SDL_GPUTexture* Field = nullptr;
         /// <summary>Port-only (HD weather): the GPU world's puddles' field (null: none, without puddles).</summary>
         SDL_GPUTexture* Puddles = nullptr;
+        /// <summary>Port-only (HDSway): the GPU world's crowns (null: none, while nothing sways).</summary>
+        SDL_GPUTexture* Crowns = nullptr;
     };
 
     std::vector<std::optional<UnderlayDraw>> underlayDraws(planned.Worlds.size());
@@ -1829,6 +1908,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
             {_NoLightTiles.Handle.get(), _Nearest.get()},
             {_NoLightTiles.Handle.get(), _Nearest.get()},
             {world.Stands, _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
         }};
         // The texels in use and the next across and down, which the world's last pixels read toward.
         const uint32_t drawnWidth = std::min(fieldWidth + 1, field.Width);
@@ -1900,6 +1980,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
             {_NoLightTiles.Handle.get(), _Nearest.get()},
             {_NoLightTiles.Handle.get(), _Nearest.get()},
             {world.Stands, _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
         }};
         DrawComposite(commands, *puddlePass, bindings,
                       {{0.0f, 0.0f, static_cast<float>(puddlesWidth), static_cast<float>(puddlesHeight)},
@@ -1907,6 +1988,80 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
                       uniforms);
         SDL_EndGPURenderPass(puddlePass);
         drawn.Puddles = puddles.Handle.get();
+    }
+
+    // Port-only (HDSway): each GPU world's crowns (composite.pshader's CrownsPass), their points and sways this frame, a
+    // texel a crown cell round all the ground it shows, which the composite's canopy sways by. One that can't be made
+    // holds its canopy still.
+    _Crowns.resize(std::max(_Crowns.size(), underlayDraws.size()));
+
+    for (size_t i = 0; i < underlayDraws.size(); ++i)
+    {
+        if (!gpuSurfaces || !underlayDraws[i].has_value())
+        {
+            continue;
+        }
+
+        UnderlayDraw& drawn = *underlayDraws[i];
+        CompositeUniforms& uniforms = drawn.Uniforms;
+
+        if (uniforms.Sway[0] <= 0.0f)
+        {
+            continue;
+        }
+
+        const World& world = worlds[i];
+        const std::optional<CrownCells> cells = CrownCellsOf(uniforms, world.Size[0], world.Size[1]);
+        Texture& crowns = _Crowns[i];
+
+        if (!cells.has_value())
+        {
+            uniforms.Sway[0] = 0.0f;
+            continue;
+        }
+
+        if (auto made = Ensure(crowns, CrownsFormat, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                               cells->Count[0], cells->Count[1], false);
+            !made)
+        {
+            SDL_Log("MCVulkanPresenter: underlay %zu shown with its canopy still: %s", i, made.error().c_str());
+            uniforms.Sway[0] = 0.0f;
+            continue;
+        }
+
+        const float allocatedWidth = static_cast<float>(crowns.Width);
+        const float allocatedHeight = static_cast<float>(crowns.Height);
+        std::ranges::copy(std::array{cells->First[0], cells->First[1], allocatedWidth, allocatedHeight},
+                          uniforms.Crowns);
+        SDL_GPUColorTargetInfo crownsTarget{};
+        crownsTarget.texture = crowns.Handle.get();
+        // Only the texels the composite reads are drawn (CrownAt).
+        crownsTarget.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        crownsTarget.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* crownsPass = SDL_BeginGPURenderPass(&commands, &crownsTarget, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(crownsPass, _CrownsPipeline.get());
+        const SDL_GPUViewport crownsViewport{0.0f, 0.0f, allocatedWidth, allocatedHeight, 0.0f, 1.0f};
+        SDL_SetGPUViewport(crownsPass, &crownsViewport);
+        // The pass reads its uniforms alone (the world bound for every texture, unread).
+        const CompositeBindings bindings{{
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Linear.get()},
+            {world.Texture, _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
+            {world.Stands, _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
+        }};
+        DrawComposite(commands, *crownsPass, bindings,
+                      {{0.0f, 0.0f, static_cast<float>(cells->Count[0]), static_cast<float>(cells->Count[1])},
+                       {allocatedWidth, allocatedHeight, 0.0f, 0.0f}},
+                      uniforms);
+        SDL_EndGPURenderPass(crownsPass);
+        drawn.Crowns = crowns.Handle.get();
     }
 
     SDL_GPUColorTargetInfo target{};
@@ -1921,7 +2076,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
 
     auto draw = [&](const std::array<float, 4>& rect, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
                     SDL_GPUTexture& indices, SDL_GPUTexture& glints, SDL_GPUTexture& lightTiles,
-                    SDL_GPUTexture& puddles, SDL_GPUTexture& stands, CompositeUniforms uniforms)
+                    SDL_GPUTexture& puddles, SDL_GPUTexture& stands, SDL_GPUTexture& crowns, CompositeUniforms uniforms)
     {
         uniforms.Cycle[0] = planned.Cycle.First;
         uniforms.Cycle[1] = planned.Cycle.Step;
@@ -1944,6 +2099,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
             {&lightTiles, _Nearest.get()},
             {&puddles, _Nearest.get()},
             {&stands, _Nearest.get()},
+            {&crowns, _Nearest.get()},
         }};
 
         // Port-only (HD weather): without the rain's wet look, the weather's veil (the rain's or the falling snow's),
@@ -1967,9 +2123,9 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
     };
 
     // The screen alone, then each underlay's rectangle with its surface (the screen bound for a field it hasn't, and no
-    // light tiles' texture for puddles it hasn't).
+    // light tiles' texture for puddles or crowns it hasn't).
     draw({0.0f, 0.0f, width, height}, *screen, *screen, *ops, *screen, *_NoLightTiles.Handle, *_NoLightTiles.Handle,
-         *_NothingStands.Handle,
+         *_NothingStands.Handle, *_NoLightTiles.Handle,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
                            {0.0f, 0.0f, 1.0f, 1.0f},
@@ -1987,7 +2143,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
         const World& world = worlds[i];
         draw(drawn.Rect, *world.Texture, drawn.Field != nullptr ? *drawn.Field : *screen, *world.Indices, *world.Glints,
              drawn.LightTileTexture != nullptr ? *drawn.LightTileTexture : *_NoLightTiles.Handle,
-             drawn.Puddles != nullptr ? *drawn.Puddles : *_NoLightTiles.Handle, *world.Stands, drawn.Uniforms);
+             drawn.Puddles != nullptr ? *drawn.Puddles : *_NoLightTiles.Handle, *world.Stands,
+             drawn.Crowns != nullptr ? *drawn.Crowns : *_NoLightTiles.Handle, drawn.Uniforms);
     }
 
     SDL_EndGPURenderPass(pass);
@@ -2049,6 +2206,7 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
         {_NoLightTiles.Handle.get(), _Nearest.get()},
         {_NoLightTiles.Handle.get(), _Nearest.get()},
         {_NothingStands.Handle.get(), _Nearest.get()},
+        {_NoLightTiles.Handle.get(), _Nearest.get()},
     }};
 
     DrawComposite(commands, *pass, bindings,

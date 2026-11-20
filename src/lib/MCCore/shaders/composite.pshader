@@ -27,7 +27,9 @@
 // there, each of the up to five texels a puddle's edge looks at took the composite ten reads and most of its registers.
 // The weather's composite where the snow shows no specks (MCWeather::ShownSpeckle: none closer than FullFlakeLines) is
 // built without them (COMPOSITE_SPECKS 0, composite_unspecked.pshader): their lattices' loops held registers enough to
-// slow every pixel of it.
+// slow every pixel of it. Port-only (HDSway): the forest's crowns' points and sways are a pass of their own too
+// (composite_crowns.pshader, CrownsPass), one texel a crown, read by the canopy's sway (SwayedAt): worked out there,
+// each canopy pixel took the composite 69 hashes and the gusts' noise.
 //
 // HLSL's ?: works out both of its sides, so a choice between texture reads or a light's sums is an if. The textures
 // have one level each but the bloom's (its mips), so their reads take level 0 rather than the quad's derivatives.
@@ -36,6 +38,7 @@
 #define COMPOSITE_BRIGHT_PASS 1
 #define COMPOSITE_FIELD_PASS 2
 #define COMPOSITE_PUDDLE_PASS 3
+#define COMPOSITE_CROWNS_PASS 4
 
 #ifndef COMPOSITE_PASS
 #define COMPOSITE_PASS COMPOSITE_SCREEN
@@ -88,6 +91,10 @@ SamplerState puddleSampler : register(s8, space2);
 // or the CPU drew it), which opTex's alpha is read with (WorldTexelAt).
 Texture2D<float> standsTex : register(t9, space2);
 SamplerState standsSampler : register(s9, space2);
+// Port-only (HDSway): the forest's crowns this frame (CrownsPass), one texel a crown cell from crowns.xy: its point (xy)
+// and how far it is swayed (zw), in meters east and north (unused while nothing sways).
+Texture2D<float4> crownsTex : register(t10, space2);
+SamplerState crownsSampler : register(s10, space2);
 
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
 static const uint MaxLights = 64;
@@ -175,6 +182,9 @@ cbuffer Composite : register(b0, space3)
     // Port-only (HDSway, MCLighting::Sway): x, how far a forest's canopy sways at the height of a gust (meters, 0 none);
     // y, how much brighter it shows there.
     float4 sway;
+    // The crowns' texture (crownsTex, CrownsPass): the crown cell its first texel holds (xy), and its allocated size
+    // (zw).
+    float4 crowns;
     // Port-only (HD weather, sprite/MCWeather.h's MCWeatherLook): x, how much of the world's own light the overcast
     // takes (0: a clear sky); y, how much of their colour the world's own colours lose under it (in ambientLook.w); z,
     // how much darker wet land shows; w, how much of a rain-grey veil hangs over the world, drifting in sheets.
@@ -1189,6 +1199,21 @@ float2 CrownSway(float2 centre, float3 own, float time)
     return sway.x * (gust * Wind + SwayRock * lerp(SwayCalm, 1.0, gust) * rock);
 }
 
+// Port-only: the crowns' pass (MCVulkanPresenter's, before the composite): crown cell crowns.xy + `pixel`'s point (xy)
+// and how far it is swayed now (zw), worked out once a frame for every canopy pixel round it (SwayedAt).
+float4 CrownsPass(float2 pixel)
+{
+    float3 own;
+    const float2 centre = CrownPoint(crowns.xy + pixel, own);
+    return float4(centre, CrownSway(centre, own, haze.z));
+}
+
+// Crown cell `cell`'s point (xy) and sway (zw) this frame, from the crowns' pass.
+float4 CrownAt(float2 cell)
+{
+    return TexelAt(crownsTex, crownsSampler, cell - crowns.xy, crowns.zw);
+}
+
 // The world texel a texel's colour is read from as the canopy sways (the texel itself where none does), and how much
 // brighter it shows (light, 1 as drawn).
 float2 SwayedAt(float2 texel, out float light)
@@ -1204,11 +1229,9 @@ float2 SwayedAt(float2 texel, out float light)
     const float2 offset = texel + 0.5 - ground.xy;
     const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
     const float2 home = floor(at / SwayCrownSize);
-    // The nearest crown's point and the next nearest's.
-    float2 nearest = float2(0.0, 0.0);
-    float2 next = float2(0.0, 0.0);
-    float3 nearestOwn = float3(0.0, 0.0, 0.0);
-    float3 nextOwn = float3(0.0, 0.0, 0.0);
+    // The nearest crown's sway and the next nearest's (their points and sways worked out once a frame: CrownsPass).
+    float2 nearestSway = float2(0.0, 0.0);
+    float2 nextSway = float2(0.0, 0.0);
     float nearestAway = 1e9;
     float nextAway = 1e9;
 
@@ -1216,31 +1239,26 @@ float2 SwayedAt(float2 texel, out float light)
     {
         for (int dx = -1; dx <= 1; ++dx)
         {
-            float3 own;
-            const float2 centre = CrownPoint(home + float2(dx, dy), own);
-            const float away = length(centre - at);
+            const float4 crown = CrownAt(home + float2(dx, dy));
+            const float away = length(crown.xy - at);
 
             if (away < nearestAway)
             {
-                next = nearest;
-                nextOwn = nearestOwn;
+                nextSway = nearestSway;
                 nextAway = nearestAway;
-                nearest = centre;
-                nearestOwn = own;
+                nearestSway = crown.zw;
                 nearestAway = away;
             }
             else if (away < nextAway)
             {
-                next = centre;
-                nextOwn = own;
+                nextSway = crown.zw;
                 nextAway = away;
             }
         }
     }
 
-    const float time = haze.z;
-    const float2 own = CrownSway(nearest, nearestOwn, time);
-    const float2 between = 0.5 * (own + CrownSway(next, nextOwn, time));
+    const float2 own = nearestSway;
+    const float2 between = 0.5 * (own + nextSway);
     const float2 meters = lerp(between, own, smoothstep(0.0, SwayCrownEdge, nextAway - nearestAway));
     // The ground's map inverted: meters east and north to texels.
     const float2 texels = float2(groundAxes.w * meters.x - groundAxes.y * meters.y,
@@ -2423,6 +2441,8 @@ float4 main(float4 position : SV_Position) : SV_Target
     return Field(pixel);
 #elif COMPOSITE_PASS == COMPOSITE_PUDDLE_PASS
     return float4(PuddleCell(pixel - PuddleBorder), 0.0, 0.0, 0.0);
+#elif COMPOSITE_PASS == COMPOSITE_CROWNS_PASS
+    return CrownsPass(pixel);
 #else
     return Composed(pixel);
 #endif

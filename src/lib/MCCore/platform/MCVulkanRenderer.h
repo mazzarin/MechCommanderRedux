@@ -248,9 +248,12 @@ public:
     /// ahead (platform/MCSharpPictures); and the bytes they take there now. Of those redrawn, the line art's
     /// (MCSharpLines: a shape's frame, not a font's glyph). The line art put there, however made, and the game's
     /// thread's time for it: waiting for a picture being made ahead, taking it or redrawing it, and its upload's copy.
+    /// Every sharp picture's first put the same way (PutTime: text and line art), and of it the redraws' (RedrawnTime).
     /// </summary>
     struct SharpCounts
     {
+        std::chrono::nanoseconds PutTime{0};
+        std::chrono::nanoseconds RedrawnTime{0};
         size_t Redrawn = 0;
         size_t TakenAhead = 0;
         size_t Bytes = 0;
@@ -477,6 +480,15 @@ public:
         int64_t Parts = 0;
         /// <summary>Port-only (SPEC-kept-wrap.md): the pieces they were drawn in, split at its textures' edges.</summary>
         int64_t Pieces = 0;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): the frames whose ground and overlays were copied from the kept view, the
+        /// overlays' draws those frames left out, the overlays' draws drawn into the view (whole or again, a draw once
+        /// for each part it's drawn in), and the drawn pixels the view was drawn again in.
+        /// </summary>
+        int64_t Viewed = 0;
+        int64_t OverlaysLeft = 0;
+        int64_t OverlaysDrawn = 0;
+        int64_t ViewPixels = 0;
     };
 
     /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
@@ -562,6 +574,11 @@ public:
     /// them both ways to compare).
     /// </summary>
     void SetFoldsIndexPasses(bool folds) { _FoldsIndexPasses = folds; }
+    /// <summary>
+    /// Port-only (SPEC-kept-forest.md): whether the kept ground's view holds the overlays, a frame copying them (on; the
+    /// tests draw a frame both ways to compare). Off, a frame draws its overlays itself and leaves the view as it was.
+    /// </summary>
+    void SetKeepsOverlays(bool keeps) { _KeepsOverlays = keeps; }
     /// <summary>
     /// Port-only: how many times a stripped shape table's rows were asked for (a version 2 pack's, drawn without its HD
     /// frame: RowsGone), each drawn as nothing.
@@ -880,17 +897,19 @@ private:
 
     /// <summary>
     /// Port-only: the draw shader's build a draw goes through (VariantOf): the one for every kind, or the one for the
-    /// original's own kinds alone (shaders/draw_basic.pshader) or for HD art frames alone (draw_hd.pshader).
+    /// original's own kinds alone (shaders/draw_basic.pshader), for HD art frames alone (draw_hd.pshader) or for a
+    /// forest's HD frames alone (draw_trees.pshader: its pipelines only the blend marks' and the blend fold's).
     /// </summary>
     enum class DrawVariant : uint8_t
     {
         Every,
         Basic,
-        Hd
+        Hd,
+        Trees
     };
 
     /// <summary>The draw variants.</summary>
-    static constexpr size_t DrawVariants = 3;
+    static constexpr size_t DrawVariants = 4;
     /// <summary>
     /// Port-only: the surfaces' pipeline sets (_SurfacePipelines), one for each pass's targets: without the glints and
     /// with them, without the stands and with them.
@@ -922,6 +941,18 @@ private:
         bool Fold = false;
         /// <summary>Port-only: the draw shader's build the draws go through.</summary>
         DrawVariant Variant = DrawVariant::Every;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): whether the draws are a terrain overlay's (FastShape), which the kept
+        /// ground's view holds when it holds the frame's ground (KeptGround::View).
+        /// </summary>
+        bool Overlay = false;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): for an overlay's draws, whether they may show a colour the colour cycle steps
+        /// (their original pixels hold one, or a colour table's), and the content of the colour tables they read: what
+        /// they draw with besides their source, fields and uniforms (KeptGround::ViewOverlays' keys).
+        /// </summary>
+        bool OverlayCycles = false;
+        uint64_t OverlayTables = 0;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
         bool ReadsCopy = false;
         MCRect Reads{0, 0, -1, -1};
@@ -992,6 +1023,11 @@ private:
         int32_t HotX = 0;
         int32_t HotY = 0;
         int32_t HeaderWidth = 0;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): the palette indices its pixels hold, for the cells the kept view draws again
+        /// at a step of the colour cycle (GroundPlan::Cycled).
+        /// </summary>
+        std::bitset<256> Colors;
     };
 
     /// <summary>The terrain mesh on the GPU: its tiles' atlas, its cells and images (shaders/terrain.vshader).</summary>
@@ -1096,14 +1132,34 @@ private:
         /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).
         /// </summary>
         std::vector<uint8_t> Looks;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md, part 1): the view, a surface's colours, indices and stands as its frame
+        /// holds them once its ground is laid and its overlays drawn (FastShape: the forests' tiles), so a frame
+        /// copies it in and draws neither. Port-only (SPEC-kept-wrap.md): it wraps with the kept ground, at its Origin,
+        /// so a pan moves it with the ground's; then it's drawn again where the ground was or an overlay's draw changed.
+        /// Only while the terrain's clip covers the surface. Its ground is laid at the colour cycle's step it was last
+        /// brought up to date at (ViewCycleStep): the cells that show a cycled colour are drawn again in it at the next
+        /// (GroundPlan::Cycled).
+        /// </summary>
+        Texture ViewColors;
+        Texture ViewIndices;
+        Texture ViewStands;
+        bool ViewHeld = false;
+        int32_t ViewCycleStep = 0;
+        /// <summary>The overlays' draws it holds: each one's key (OverlayKeys) and its window rectangle from the origin.</summary>
+        std::vector<std::pair<uint64_t, MCRect>> ViewOverlays;
     };
 
     /// <summary>Port-only: what shaders/ground.pshader draws of the kept ground (its modes).</summary>
     enum class KeptGroundMode : int32_t
     {
+        /// <summary>Port-only (the view): the kept view copied in (SPEC-kept-forest.md).</summary>
+        Copy,
         Clear,
         Over,
-        Indices
+        Indices,
+        /// <summary>Port-only (the view): a window's new pixels, as ClearBlank clears them.</summary>
+        Blank
     };
 
     /// <summary>Port-only (KeepGround): how a frame brings the kept ground up to date.</summary>
@@ -1115,6 +1171,12 @@ private:
         std::array<int32_t, 2> Shift{};
         /// <summary>The parts drawn again (drawn pixels), when not whole.</summary>
         std::vector<MCRect> Redrawn;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): the cells that show a cycled colour (drawn pixels, as Redrawn's parts), when
+        /// the kept view holds another step of the colour cycle than the frame's: drawn again in the view, not in the
+        /// kept ground, which the lay takes to the frame's step.
+        /// </summary>
+        std::vector<MCRect> Cycled;
     };
 
     /// <summary>
@@ -1755,10 +1817,13 @@ private:
     /// <paramref name="surfaceIndex"/>, drawn with <paramref name="looks"/>, the fog's flags <paramref name="seen"/>
     /// (<paramref name="fogColumns"/> a row) and colour cycle <paramref name="cycle"/> (the frame's, as sealed): drawn
     /// whole, or shifted and the parts that changed drawn again. Port-only (SPEC-pan-water.md): a step of the cycle
-    /// draws nothing again (the lay shows it); the cycle starting or stopping draws it whole.
+    /// draws nothing again (the lay shows it); the cycle starting or stopping draws it whole. Port-only
+    /// (SPEC-kept-forest.md): with <paramref name="viewStep"/>, the step the kept view holds, other than the frame's,
+    /// the cells that show a cycled colour too (GroundPlan::Cycled).
     /// </summary>
     GroundPlan PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw, std::span<const uint8_t> looks,
-                          std::span<const uint8_t> seen, int32_t fogColumns, const MCColorCycle& cycle) const;
+                          std::span<const uint8_t> seen, int32_t fogColumns, const MCColorCycle& cycle,
+                          std::optional<int32_t> viewStep = std::nullopt) const;
     /// <summary>
     /// Port-only (KeepGround): while a zoom eases (<paramref name="surface"/>'s drawn size covering another part of
     /// its window than the frame before), how the kept ground, drawn at another part, is laid scaled to
@@ -1775,15 +1840,19 @@ private:
     /// </summary>
     static bool ScalesGround();
     /// <summary>
-    /// Port-only (KeepGround): draws the kept ground as <paramref name="mode"/> says (Clear reads none of it), each pixel
-    /// from its own kept pixel, or with <paramref name="scale"/> from where it lies in the kept ground
+    /// Port-only (KeepGround): draws the kept ground as <paramref name="mode"/> says (Clear and Blank read none of it),
+    /// each pixel from its own kept pixel, or with <paramref name="scale"/> from where it lies in the kept ground
     /// (GroundScale::Scale, the colours read between the kept pixels round it), at the drawn pixels showing the
     /// terrain's clip in the render pass under way on <paramref name="surface"/>'s size, through
-    /// <paramref name="pipelines"/>; Over at <paramref name="run"/>'s colour cycle step (SPEC-pan-water.md).
+    /// <paramref name="pipelines"/>; Over at <paramref name="run"/>'s colour cycle step (SPEC-pan-water.md). Port-only
+    /// (SPEC-kept-forest.md): with <paramref name="view"/>, the kept view, its stands in the entries' place; Blank in
+    /// <paramref name="blank"/>. Port-only (SPEC-kept-wrap.md): drawn into the kept view, a piece of it, its quad
+    /// <paramref name="moved"/> on the target (drawn pixels), each pixel drawn as at its own place.
     /// </summary>
     void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
                         const FrameRun& run, const Surface& surface, const MCRect& clip, KeptGroundMode mode,
-                        const std::optional<std::array<float, 4>>& scale = std::nullopt);
+                        const std::optional<std::array<float, 4>>& scale = std::nullopt, bool view = false,
+                        SDL_Color blank = {}, std::array<int32_t, 2> moved = {});
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
         std::span<const std::reference_wrapper<const Surface>> surfaces);
@@ -1812,6 +1881,9 @@ private:
     MCGpuHandle<SDL_GPUShader> _StandsFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsBasicFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsHdFragmentShader;
+    /// <summary>Port-only: the tree build of the draws' fragment shader (shaders/draw_trees.pshader), and its stands build.</summary>
+    MCGpuHandle<SDL_GPUShader> _TreesFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _StandsTreesFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsTerrainFragmentShader;
     MCGpuHandle<SDL_GPUShader> _StandsGroundShader;
 
@@ -1836,8 +1908,11 @@ private:
         /// the indices' red, green and blue by its alpha there, and the stands.
         /// </summary>
         MCGpuHandle<SDL_GPUGraphicsPipeline> BlendFold;
-        /// <summary>Whether every pipeline was made (BlendFold only for a set with the stands: <paramref name="folds"/>).</summary>
-        bool Made(bool folds) const;
+        /// <summary>
+        /// Whether every pipeline was made (BlendFold only for a set with the stands: <paramref name="folds"/>; only
+        /// BlendMarks and BlendFold for the tree build's: <paramref name="trees"/>).
+        /// </summary>
+        bool Made(bool folds, bool trees) const;
         /// <summary>The pipeline <paramref name="record"/>'s draws go through (not a shadow's).</summary>
         SDL_GPUGraphicsPipeline* For(const Record& record) const;
     };
@@ -2210,6 +2285,11 @@ private:
     int64_t _HdDrawn = 0;
     int64_t _HdIndexPicturesDrawn = 0;
     int64_t _HdFolds = 0;
+    /// <summary>Port-only (SPEC-kept-forest.md): whether the draws being recorded are a terrain overlay's (FastShape).</summary>
+    bool _DrawingOverlay = false;
+    /// <summary>Port-only (SPEC-kept-forest.md): the colours of the original's pixels the overlay being recorded draws.</summary>
+    std::bitset<256> _OverlayColours;
+    bool _KeepsOverlays = true;
     bool _FoldsIndexPasses = true;
     int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>

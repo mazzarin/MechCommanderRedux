@@ -375,6 +375,12 @@ private:
     /// </summary>
     MCGpuHandle<SDL_GPUShader> _PuddleShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _PuddlePipeline;
+    /// <summary>
+    /// Port-only (HDSway): the forest's crowns' pass, the composite's shader built for it alone
+    /// (shaders/composite_crowns.pshader).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _CrownsShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _CrownsPipeline;
     MCGpuHandle<SDL_GPUSampler> _Nearest;
     /// <summary>Port-only (HD lighting): linear between texels and mips, for the bloom.</summary>
     MCGpuHandle<SDL_GPUSampler> _Linear;
@@ -397,6 +403,11 @@ private:
     /// Port-only (HD weather): the underlays' puddles' fields (composite.pshader's PuddleCell), in the same order.
     /// </summary>
     std::vector<Texture> _Puddles;
+    /// <summary>
+    /// Port-only (HDSway): the underlays' crowns (composite.pshader's CrownsPass: a texel a crown, its point and sway),
+    /// in the same order.
+    /// </summary>
+    std::vector<Texture> _Crowns;
     /// <summary>
     /// Port-only (HD lighting): the underlays' light tiles (composite.pshader's lightTileTex), in the same order, and
     /// one bound where there are none (never read; made empty).

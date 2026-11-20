@@ -40,6 +40,8 @@
 #include "logistics/MCUnitLimits.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
+#include "network/MCMultiPlayer.h"
+#include "network/MCRoomEnd.h"
 #include "platform/MCFileSystem.h"
 #include "sound/MCSoundSystem.h"
 #include "gui/MCGuiGlobals.h"
@@ -587,6 +589,96 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     Settle();
     CHECK_EQ(MCHdArt::HeldBytes(), before + stored);
     CHECK(MCHdArt::HoldsFor(mission));
+}
+
+namespace
+{
+    /// <summary>The most frames a mission ended at once takes to bring its results up.</summary>
+    constexpr int32_t MostFramesToResults = 300;
+
+    /// <summary>
+    /// The campaign's first mission started (MCTestGame::StartCampaignMission), ended as <paramref name="result"/> (as a
+    /// quick-start mission's when <paramref name="solo"/>), and its results closed: the way back done.
+    /// </summary>
+    void PlayToResultsAndBack(uint32_t result, bool solo)
+    {
+        REQUIRE(MCTestGame::StartCampaignMission());
+        Solo = solo;
+        ScenarioResult = result;
+        Mission()->EndScenarioRequested = -1;
+
+        for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+
+        REQUIRE(Mission()->State == MCMissionState::Results);
+        Mission()->CloseResultsScreen();
+        Settle();
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "Between missions"): a mission's held art is kept past its end only where a mission plays
+/// next. A campaign mission's win holds the next one from its results' close, a loss keeps its own; a won quick-start
+/// mission, back to the main screen, lets go of it, as a match does unless its rematch follows.
+/// </summary>
+TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mission plays next")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCScratchFolder pack("mc_briefing_tests", "between-missions");
+    MCTestGame::BootOptions.Started = [folder = pack.Path()]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    };
+
+    REQUIRE(MCTestGame::StartLogistics());
+    constexpr uint32_t Lost = 0;
+    constexpr uint32_t Won = 4;
+
+    // The campaign's win: its next mission held from the results' close, its own let go of.
+    PlayToResultsAndBack(Won, false);
+    const std::vector<std::string>& missions = Mission()->Scenarios;
+    REQUIRE(missions.size() > 1);
+    CHECK(MCHdArt::HoldsFor(missions[1]));
+    CHECK(!MCHdArt::HoldsFor(missions[0]));
+
+    // What the way back keeps, by where it goes: a loss replays the mission; a quick-start win goes to the main
+    // screen; a match keeps it for its rematch alone.
+    const auto keeps = [](uint32_t result, bool solo)
+    {
+        const uint32_t wasResult = ScenarioResult;
+        const bool wasSolo = Solo;
+        ScenarioResult = result;
+        Solo = solo;
+        const bool kept = Mission()->KeepsHoldPastEnd();
+        ScenarioResult = wasResult;
+        Solo = wasSolo;
+        return kept;
+    };
+
+    CHECK(keeps(Lost, false));
+    CHECK(keeps(Won, false));
+    CHECK(!keeps(Won, true));
+    MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
+    CHECK(!MCRoomEnd::RematchAfterMatch());
+    CHECK(!keeps(Won, false));
+    MCGameContext::Current().SetMultiPlayer(nullptr);
+
+    // A quick-start mission won: the main screen, and nothing held.
+    PlayToResultsAndBack(Won, true);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(!MCHdArt::HoldsFor(missions[0]));
+    CHECK(!MCHdArt::HoldsFor(missions[1]));
+    CHECK_EQ(MCHdArt::HeldBytes(), 0u);
 }
 
 /// <summary>

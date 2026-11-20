@@ -1204,6 +1204,7 @@ auto MCMission::CloseResultsScreen() -> void
     // HD pictures; near black the game's thread makes the screens from them. A launcher's match ends at its results
     // (KillTheGame), at once as the original's.
     const std::function<void()> wayBack = EndScenarioLeavingWayBack();
+    LetGoHoldUnlessKept();
 
     if (wayBack == nullptr)
     {
@@ -1245,6 +1246,11 @@ auto MCMission::CloseResultsScreen() -> void
         MCHdArt::StartBriefingHold(Scenarios[*briefed], MCHdArt::BriefingFolders(Scenarios[*briefed]));
     }
 
+    // Port-only (SPEC-first-use.md's "Between missions"): the screens' whole set of HD pictures read ahead from the click
+    // too, after the briefing's map: the briefing, or a match's games screen and its room (the rematch's, or the next
+    // one made), finds its own at its first draw. Logistics' start asks again (MCLogistics::MakeAhead), for nothing.
+    GuiSystem().ReadMenuSetAhead();
+
     FadeOutWhile(back);
 }
 
@@ -1271,6 +1277,19 @@ auto MCMission::BriefedAfterResults() const -> std::optional<size_t>
     return briefed;
 }
 
+auto MCMission::KeepsHoldPastEnd() const -> bool
+{
+    return MultiPlayer() != nullptr ? MCRoomEnd::RematchAfterMatch() : BriefedAfterResults().has_value();
+}
+
+auto MCMission::LetGoHoldUnlessKept() const -> void
+{
+    if (!KeepsHoldPastEnd())
+    {
+        MCHdArt::LetGoHold();
+    }
+}
+
 auto MCMission::StartLogistics() -> MCLogistics&
 {
     MCPort::GetSystemTime(_LogisticsStart);
@@ -1281,7 +1300,10 @@ auto MCMission::StartLogistics() -> MCLogistics&
 
 auto MCMission::EndScenario() -> void
 {
-    if (const std::function<void()> wayBack = EndScenarioLeavingWayBack(); wayBack != nullptr)
+    const std::function<void()> wayBack = EndScenarioLeavingWayBack();
+    LetGoHoldUnlessKept();
+
+    if (wayBack != nullptr)
     {
         wayBack();
     }
@@ -1322,9 +1344,9 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
         MCGameContext::Current().SetScenario(nullptr);
     }
 
-    // Port-only (SPEC-memory.md's "From the briefing": between missions): the mission's held art kept past its end, for
-    // the next mission known to keep what it lists (MCHdArt::StartBriefingHold lets go of another mission's): a loss
-    // replays the same mission, a match's likeliest next is its rematch.
+    // Port-only (SPEC-memory.md's "Between missions"): the mission's held art isn't let go of here; the caller lets go of
+    // it unless a mission plays next whose briefing or room takes it (KeepsHoldPastEnd; MCHdArt::StartBriefingHold lets
+    // go of another mission's): a loss replays the same mission, a rematch the same map.
 
     // Port-only: each way back to logistics is returned to be done by the caller (EndScenario at once).
     if (ScenarioResult > 3)

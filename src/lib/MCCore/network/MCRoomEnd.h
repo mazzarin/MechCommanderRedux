@@ -124,6 +124,12 @@ namespace MCRoomEnd
     bool TakesOnAfterMatch();
 
     /// <summary>
+    /// Whether <see cref="AfterMatch"/> takes the game to its rematch's room (the host hosting it again, a guest joining
+    /// it), which plays the match's map again: its held art is kept (MCMission::KeepsHoldPastEnd).
+    /// </summary>
+    bool RematchAfterMatch();
+
+    /// <summary>
     /// Each frame, in the menus and at the results: a host's wait for its guests to leave on its word, its internet
     /// game's way back to its place on the service, and a guest's leave on its host's REMATCH.
     /// </summary>

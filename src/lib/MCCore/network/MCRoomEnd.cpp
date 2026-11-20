@@ -18,6 +18,7 @@
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCDirectPlay.h"
+#include "sprite/MCHdArt.h"
 
 namespace
 {
@@ -273,6 +274,8 @@ namespace
     {
         SDL_Log("Room end: the room couldn't be hosted again for the rematch");
         Returning.reset();
+        // Port-only (SPEC-memory.md's "Between missions"): no rematch, so nothing plays the match's held art next.
+        MCHdArt::LetGoHold();
 
         if (const std::shared_ptr<MCMultiPlayer> game = MultiPlayer(); game != nullptr)
         {
@@ -708,6 +711,11 @@ auto MCRoomEnd::TakesOnAfterMatch() -> bool
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     return game != nullptr && game->InMission && !LaunchedFromLobby && MatchRoom.has_value() &&
            MatchRoom->From != MCGames::None;
+}
+
+auto MCRoomEnd::RematchAfterMatch() -> bool
+{
+    return HostAfterResults || JoinAfterResults;
 }
 
 auto MCRoomEnd::AfterMatch() -> bool

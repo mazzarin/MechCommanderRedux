@@ -123,10 +123,22 @@ TEST_CASE("hd caches: the frames in memory take the plan's share, on the GPU 90%
     CHECK(!alone.MemoryShort);
 }
 
+namespace
+{
+    /// <summary>What the ledger counts on the GPU less the upload slots, which are in the machine's memory.</summary>
+    uint64_t LedgersOnCard()
+    {
+        const MCMemoryLedger::MCFigures gpu = MCMemoryLedger::OfSide(MCMemoryLedger::MCSide::Gpu);
+        const MCMemoryLedger::MCFigures slots = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTransfers);
+        return static_cast<uint64_t>(gpu.Allocated + gpu.Retired - (slots.Allocated + slots.Retired));
+    }
+}
+
 /// <summary>
-/// Port-only (20 Nov, the A10's 4 GB card): a card of its own holds at least what the ledger counts on the GPU, its own
-/// figure late or not (DXGI's usage counted a 2x mission's ground and the upload slots a reading after the game had made
-/// them, 512 MB short, and the fill decided on the room it gave). A card sharing the machine's memory keeps its own.
+/// Port-only (20 Nov, the A10's 4 GB card): a card of its own holds at least what the ledger counts on the GPU, less the
+/// upload slots (in the machine's memory: on the A10 DXGI's non-local use fell as they were let go), its own figure late
+/// or not (DXGI's usage counted a 2x mission's ground a reading after the game had made it, and the fill decided on the
+/// room it gave). A card sharing the machine's memory keeps its own.
 /// </summary>
 TEST_CASE("hd caches: a card of its own holds at least what the ledger counts on the GPU, its own figure late or not")
 {
@@ -140,8 +152,10 @@ TEST_CASE("hd caches: a card of its own holds at least what the ledger counts on
     MCFakeMemoryScope scope(system);
     MCMemoryLedger::MCShare ground{MCMemoryLedger::MCHolder::GpuHdGround};
     ground.Set({.Payload = Ground, .Allocated = Ground});
-    const MCMemoryLedger::MCFigures gpu = MCMemoryLedger::OfSide(MCMemoryLedger::MCSide::Gpu);
-    const auto counted = static_cast<uint64_t>(gpu.Allocated + gpu.Retired);
+    // The upload slots, in the machine's memory, aren't counted on the card.
+    MCMemoryLedger::MCShare slots{MCMemoryLedger::MCHolder::GpuTransfers};
+    slots.Set({.Payload = Ground, .Allocated = Ground});
+    const auto counted = LedgersOnCard();
     REQUIRE(counted > Late);
 
     for (const bool shares : {false, true})
@@ -178,8 +192,7 @@ TEST_CASE("hd caches: the card's room now counts what the game made on the GPU s
         MCTestClock clock;
         MCMemoryRoom::MCReader reader(std::string(DeviceName), clock.Reads());
         const uint64_t read = reader.Frame(0).PictureBytes;
-        const MCMemoryLedger::MCFigures before = MCMemoryLedger::OfSide(MCMemoryLedger::MCSide::Gpu);
-        const auto ledgerBefore = static_cast<uint64_t>(before.Allocated + before.Retired);
+        const uint64_t ledgerBefore = LedgersOnCard();
         const uint64_t usedBefore = std::max(Used, ledgerBefore);
         MCMemoryLedger::MCShare ground{MCMemoryLedger::MCHolder::GpuHdGround};
         ground.Set({.Payload = Ground, .Allocated = Ground});

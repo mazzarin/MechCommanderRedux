@@ -162,13 +162,16 @@ namespace
 {
     /// <summary>
     /// Port-only (20 Nov, the A10's 4 GB card): what a card of its own holds of the game's, at least what the ledger has
-    /// on the GPU. DXGI's usage counted a 2x mission's ground and the upload slots a reading after the game had made them
-    /// (512 MB short), and the fill decided on the room it gave.
+    /// on the GPU, less the upload slots. DXGI's usage counted a 2x mission's ground a reading after the game had made it,
+    /// and the fill decided on the room it gave. The slots are in the machine's memory: on the A10 DXGI's non-local use
+    /// fell by the 128 MB of them let go at a load's end, and its local use didn't.
     /// </summary>
     uint64_t UsedAtLeastLedgers(uint64_t used)
     {
         const MCMemoryLedger::MCFigures gpu = MCMemoryLedger::OfSide(MCMemoryLedger::MCSide::Gpu);
-        return std::max(used, static_cast<uint64_t>(std::max<int64_t>(gpu.Allocated + gpu.Retired, 0)));
+        const MCMemoryLedger::MCFigures slots = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTransfers);
+        const int64_t onCard = gpu.Allocated + gpu.Retired - (slots.Allocated + slots.Retired);
+        return std::max(used, static_cast<uint64_t>(std::max<int64_t>(onCard, 0)));
     }
 }
 

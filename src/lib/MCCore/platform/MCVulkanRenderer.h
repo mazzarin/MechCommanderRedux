@@ -282,6 +282,12 @@ public:
     std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(const MCWindow& window) const;
     std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(MCAddressKey key) const;
     /// <summary>
+    /// Port-only, for tests: every channel of <paramref name="window"/>'s surface's indices (shaders/channels.hlsli:
+    /// the palette index, the feet or slopes, the mark), four bytes a pixel, its rows one after another, as
+    /// <see cref="Execute"/> left them: flushes, then waits for the GPU. Empty when the window has no surface yet.
+    /// </summary>
+    std::expected<std::vector<uint8_t>, std::string> ReadIndexChannels(const MCWindow& window);
+    /// <summary>
     /// Port-only: what stands in the surface of the window keyed <paramref name="key"/> (R8, its stands target:
     /// shaders/channels.hlsli), as <see cref="Execute"/> left it; null when the last frame drew it without a fold
     /// (nothing stands: the indices' alpha holds every mark), or there is none.
@@ -512,8 +518,13 @@ public:
     /// </summary>
     int64_t HdFolds() const { return _HdFolds; }
     /// <summary>
-    /// Port-only: whether forests' version 2 HD frames fold their index passes into their draws (on; the tests draw
-    /// them both ways to compare).
+    /// Port-only: the units' and objects' version 2 HD frames drawn so far with their index passes folded in
+    /// (HdMarks::FoldedShape).
+    /// </summary>
+    int64_t HdShapeFolds() const { return _HdShapeFolds; }
+    /// <summary>
+    /// Port-only: whether version 2 HD frames fold their index passes into their draws (a forest's, a unit's and an
+    /// object's: on; the tests draw them both ways to compare).
     /// </summary>
     void SetFoldsIndexPasses(bool folds) { _FoldsIndexPasses = folds; }
     /// <summary>
@@ -853,6 +864,7 @@ private:
         bool IndexMarks = false;
         bool BlendMarks = false;
         bool BlendFold = false;
+        bool BlendIndex = false;
     };
 
     /// <summary>
@@ -880,8 +892,9 @@ private:
         /// </summary>
         bool Marks = false;
         /// <summary>
-        /// Port-only: whether the draws are forests' HD frames with their index passes folded in (HdMarks::Folded):
-        /// blended, writing the indices' red, green and blue where the original draws, and the stands.
+        /// Port-only: whether the draws are HD frames with their index passes folded in, blended, writing the indices'
+        /// red, green and blue where the original draws: forests' (HdMarks::Folded, with Marks), writing the stands
+        /// too, or units' and objects' (HdMarks::FoldedShape, without).
         /// </summary>
         bool Fold = false;
         /// <summary>Port-only: the draw shader's build the draws go through.</summary>
@@ -1266,6 +1279,12 @@ private:
         /// indices where the original draws (its index picture's) as that pass would, in one draw (FoldsIndex).
         /// </summary>
         Folded,
+        /// <summary>
+        /// Port-only: a unit's or an object's version 2 frame with its index pass folded in: as Standing, but the
+        /// frame's draw writes the original's indices where the original draws, as that pass would, and its mark pass
+        /// marks those pixels too (FoldsShape).
+        /// </summary>
+        FoldedShape,
     };
 
     /// <summary>
@@ -1764,6 +1783,11 @@ private:
         /// </summary>
         MCGpuHandle<SDL_GPUGraphicsPipeline> BlendFold;
         /// <summary>
+        /// Port-only: a unit's or an object's version 2 HD frame with its index pass folded in (HdMarks::FoldedShape),
+        /// blended, writing the indices' red, green and blue by its alpha there.
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> BlendIndex;
+        /// <summary>
         /// Whether every pipeline its variant's draws go through was made (<paramref name="uses"/>; BlendFold only for
         /// a set with the stands: <paramref name="folds"/>).
         /// </summary>
@@ -2118,6 +2142,7 @@ private:
     int64_t _HdDrawn = 0;
     int64_t _HdIndexPicturesDrawn = 0;
     int64_t _HdFolds = 0;
+    int64_t _HdShapeFolds = 0;
     bool _FoldsIndexPasses = true;
     int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>

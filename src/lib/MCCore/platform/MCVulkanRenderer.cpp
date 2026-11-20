@@ -194,6 +194,12 @@ namespace
     /// </summary>
     constexpr uint32_t FoldsIndex = 2u;
     /// <summary>
+    /// Port-only: a KindHd draw's op.w bit for a unit's or an object's version 2 frame drawn with its index pass folded
+    /// in (HdMarks::FoldedShape; shaders/draw.pshader's FoldsShape), and for its mark pass, which marks the original's
+    /// pixels too.
+    /// </summary>
+    constexpr uint32_t FoldsShape = 4u;
+    /// <summary>
     /// Port-only: the flags whose values a forest's HD frame's draw has (TreeFlags: smooth-edged, blended, swaying, and
     /// none of the rest), which the tree build of the draws' shader takes as given (shaders/draw.pshader's TreeKnown and
     /// TreeFlags): only such a draw goes through it (VariantOf).
@@ -260,9 +266,10 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: whether a forest's version 2 frame drawn at <paramref name="frameAt"/> (its original pixel
+    /// Port-only: whether a version 2 frame drawn at <paramref name="frameAt"/> (its original pixel
     /// <paramref name="frameFrom"/> at the corner, a window pixel each; <paramref name="width"/> by
-    /// <paramref name="height"/> of them) may fold in its index pass drawn at <paramref name="at"/> (HdMarks::Folded):
+    /// <paramref name="height"/> of them) may fold in its index pass drawn at <paramref name="at"/> (HdMarks::Folded,
+    /// HdMarks::FoldedShape):
     /// it covers the pass's place, and what it covers past it lies outside the frame's pixels, so it writes indices
     /// where the pass would and nowhere else.
     /// </summary>
@@ -1314,7 +1321,7 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
             indices.color_write_mask = SDL_GPU_COLORCOMPONENT_R | SDL_GPU_COLORCOMPONENT_G | SDL_GPU_COLORCOMPONENT_B;
         }
 
-        // Port-only: the stands are written wherever the indices' alpha is, and by a fold.
+        // Port-only: the stands are written wherever the indices' alpha is, and by a forest's fold.
         if (layout.Stands)
         {
             const SDL_GPUColorTargetBlendState& indices = targets[1].blend_state;
@@ -1322,7 +1329,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                 !indices.enable_color_write_mask || (indices.color_write_mask & SDL_GPU_COLORCOMPONENT_A) != 0;
             targets[StandsTarget].format = StandsFormat;
             targets[StandsTarget].blend_state.enable_color_write_mask = true;
-            targets[StandsTarget].blend_state.color_write_mask = writesMark || fold ? SDL_GPU_COLORCOMPONENT_R : 0;
+            targets[StandsTarget].blend_state.color_write_mask =
+                writesMark || (fold && marks) ? SDL_GPU_COLORCOMPONENT_R : 0;
         }
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
@@ -1420,10 +1428,15 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                 draw("blend marks", draws.BlendMarks, true, false, true);
             }
 
-            // Port-only: a fold, only in a pass with the stands.
+            // Port-only: a forest's fold, only in a pass with the stands; a unit's or an object's, in any.
             if (uses.BlendFold && layout.Stands)
             {
                 draw("blend fold", draws.BlendFold, true, false, true, true);
+            }
+
+            if (uses.BlendIndex)
+            {
+                draw("blend index", draws.BlendIndex, true, false, false, true);
             }
         };
 
@@ -2015,9 +2028,17 @@ auto MCVulkanRenderer::UsesOf(DrawVariant variant) -> DrawUses
             return DrawUses{.BlendMarks = true, .BlendFold = true};
         case DrawVariant::Effects:
             return DrawUses{.Blend = true};
+        // A unit's or an object's fold through the HD build alone (VariantOf).
+        case DrawVariant::Hd:
+            return DrawUses{.Opaque = true,
+                            .Blend = true,
+                            .IndexOnly = true,
+                            .IndexMarks = true,
+                            .BlendMarks = true,
+                            .BlendFold = true,
+                            .BlendIndex = true};
         case DrawVariant::Every:
         case DrawVariant::Basic:
-        case DrawVariant::Hd:
             break;
     }
 
@@ -2031,7 +2052,7 @@ bool MCVulkanRenderer::DrawPipelines::Made(bool folds, const DrawUses& uses) con
     { return !used || pipeline != nullptr; };
     return made(uses.Opaque, Opaque) && made(uses.Blend, Blend) && made(uses.IndexOnly, IndexOnly) &&
            made(uses.IndexMarks, IndexMarks) && made(uses.BlendMarks, BlendMarks) &&
-           made(uses.BlendFold && folds, BlendFold);
+           made(uses.BlendFold && folds, BlendFold) && made(uses.BlendIndex, BlendIndex);
 }
 
 bool MCVulkanRenderer::SurfacePipelines::Made(bool folds) const
@@ -2057,7 +2078,7 @@ const MCVulkanRenderer::SurfacePipelines& MCVulkanRenderer::PipelinesFor(const S
 SDL_GPUGraphicsPipeline* MCVulkanRenderer::DrawPipelines::For(const Record& record) const
 {
     return record.IndexOnly ? (record.Marks ? IndexMarks.get() : IndexOnly.get())
-           : record.Blend   ? (record.Fold    ? BlendFold.get()
+           : record.Blend   ? (record.Fold    ? (record.Marks ? BlendFold.get() : BlendIndex.get())
                                : record.Marks ? BlendMarks.get()
                                               : Blend.get())
                             : Opaque.get();
@@ -2077,7 +2098,7 @@ uint32_t MCVulkanRenderer::WrittenChannels(bool blend, bool indexOnly, bool shad
 
     if (blend && fold)
     {
-        return ColoursChannels | GlintsChannels | IndicesRedGreenBlue | StandsChannels;
+        return ColoursChannels | GlintsChannels | IndicesRedGreenBlue | (marks ? StandsChannels : 0u);
     }
 
     if (blend)
@@ -2260,8 +2281,10 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     // A forest's HD frame marks its sway; an HD frame's index-only draw is its mark pass (HdMarks::Standing).
     const bool hdFrame = (op & KindMask) == KindHd || (op & KindMask) == KindHdSmooth;
     const bool marks = indexOnly ? hdFrame : (op & Sways) != 0 && blend;
-    // A forest's HD frame with its index pass folded in (HdMarks::Folded): the HD draw's last field says.
-    const bool fold = hdFrame && marks && !indexOnly && (after & FoldsIndex) != 0;
+    // A forest's HD frame with its index pass folded in (HdMarks::Folded), or a unit's or an object's
+    // (HdMarks::FoldedShape: blended, marking nothing itself): the HD draw's last field says.
+    const bool fold = hdFrame && !indexOnly &&
+                      ((marks && (after & FoldsIndex) != 0) || (!marks && blend && (after & FoldsShape) != 0));
     const DrawVariant variant = VariantOf(op, after);
     const uint32_t channels = WrittenChannels(blend, indexOnly, shadow, marks, fold);
     // A run of draws with the same target, bindings and pipeline.
@@ -2335,8 +2358,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     _Run->DrawNext.push_back(NoDraw);
     Record& record = _Run->Records[*into];
 
-    // Port-only: the surface's passes this frame have its stands, which a fold writes (Surface::Folds).
-    if (fold)
+    // Port-only: the surface's passes this frame have its stands, which a forest's fold writes (Surface::Folds).
+    if (fold && marks)
     {
         surface.Folds = true;
     }
@@ -4502,20 +4525,23 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
     }
 
     const uint32_t color = static_cast<uint32_t>(frame.Scale) | static_cast<uint32_t>(key.value_or(0)) << 8;
+    const uint32_t folds = marks == HdMarks::FoldedShape ? FoldsShape : 0u;
     const uint32_t border =
-        (edges == HdEdges::Picture ? PictureBorder : 0u) | (marks == HdMarks::Folded ? FoldsIndex : 0u);
+        (edges == HdEdges::Picture ? PictureBorder : 0u) | (marks == HdMarks::Folded ? FoldsIndex : 0u) | folds;
 
     if (Add(surface, SourceKind::Picture, *picture, at, from, op, color, before, border))
     {
         ++_HdDrawn;
         _HdFolds += marks == HdMarks::Folded ? 1 : 0;
+        _HdShapeFolds += marks == HdMarks::FoldedShape ? 1 : 0;
     }
 
     // Its mark pass: what stands on the ground wherever the frame shows, past the original's pixels too, which the
-    // original's index pass leaves the ground's (draw.pshader's HdPixelAt).
-    if (marks == HdMarks::Standing && !frame.Blended && (op & Sways) == 0)
+    // original's index pass leaves the ground's (draw.pshader's HdPixelAt); a fold's, on the original's pixels as well,
+    // as that pass would.
+    if ((marks == HdMarks::Standing || marks == HdMarks::FoldedShape) && !frame.Blended && (op & Sways) == 0)
     {
-        Add(surface, SourceKind::Picture, *picture, at, from, op | IndexOnly, color, before, 0);
+        Add(surface, SourceKind::Picture, *picture, at, from, op | IndexOnly, color, before, folds);
     }
 
     return true;
@@ -4841,6 +4867,13 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                                !command.Table.has_value() && !inBetween.has_value() &&
                                !MCRenderer::DrawingGroundFill().has_value() &&
                                FoldFits(at, frameAt, frameFrom, hd->OriginalWidth(), hd->OriginalHeight());
+            // Port-only: a unit's or an object's version 2 frame, opaque and drawn whole (through a table too, no
+            // in-between, no fill under the snow), folds its index pass, which comes after it, into its own draw and its
+            // mark pass (HdMarks::FoldedShape), as a forest's does.
+            const bool foldsShape = _FoldsIndexPasses && (indexOp & Sways) == 0 && fromHd && !translucent &&
+                                    !hd->Blended && !inBetween.has_value() &&
+                                    !MCRenderer::DrawingGroundFill().has_value() &&
+                                    FoldFits(at, frameAt, frameFrom, hd->OriginalWidth(), hd->OriginalHeight());
 
             if ((indexOp & Sways) != 0 && !folds)
             {
@@ -4870,7 +4903,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             if (!drawn)
             {
                 AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges,
-                      folds ? HdMarks::Folded : HdMarks::Standing);
+                      folds ? HdMarks::Folded : (foldsShape ? HdMarks::FoldedShape : HdMarks::Standing));
             }
 
             // A translucent shape with no colour it shows opaque keeps no indices: its index pass would draw nothing.
@@ -4878,7 +4911,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             {
                 NoteBlended(surface, at);
             }
-            else if ((indexOp & Sways) == 0)
+            else if ((indexOp & Sways) == 0 && !foldsShape)
             {
                 Add(surface, indices->Source, indices->Index, at, from, indexOp, 0, before, after);
             }
@@ -9298,6 +9331,34 @@ std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceIndexTexture(MCAddressK
     const auto found = std::ranges::find_if(_RunSurfaces, [&](const Surface& surface)
                                             { return key && surface.Key == key && surface.Index.Handle != nullptr; });
     return found != _RunSurfaces.end() ? found->Index.Handle : nullptr;
+}
+
+auto MCVulkanRenderer::ReadIndexChannels(const MCWindow& window) -> std::expected<std::vector<uint8_t>, std::string>
+{
+    if (auto flushed = Flush({}); !flushed)
+    {
+        return std::unexpected(std::format("reading a surface's index channels: {}", flushed.error()));
+    }
+
+    WaitForRunning();
+    const MCAddressKey key = SurfaceKeyOf(window);
+    const auto found = std::ranges::find_if(_RunSurfaces, [&](const Surface& surface)
+                                            { return key && surface.Key == key && surface.Index.Handle != nullptr; });
+
+    if (found == _RunSurfaces.end())
+    {
+        return std::vector<uint8_t>{};
+    }
+
+    const std::array<std::reference_wrapper<const Texture>, 1> textures{std::cref(found->Index)};
+    auto downloaded = DownloadTextures(textures, IndexPixelBytes);
+
+    if (!downloaded)
+    {
+        return std::unexpected(std::format("reading a surface's index channels: {}", downloaded.error()));
+    }
+
+    return std::move(downloaded->front());
 }
 
 std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceStandsTexture(MCAddressKey key) const

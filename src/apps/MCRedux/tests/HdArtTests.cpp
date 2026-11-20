@@ -89,6 +89,7 @@
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCVulkanRenderer.h"
+#include "shaders/channels.hlsli"
 #include "sprite/MCArmAppearanceType.h"
 #include "sprite/MCElementalTree.h"
 #include "sprite/MCGVAppearanceType.h"
@@ -20857,6 +20858,45 @@ TEST_CASE_ISOLATED("tool: --sprite-pack-check holds the original's sprite frames
 namespace
 {
     /// <summary>
+    /// The pixels of the screen's middle (its half across and down) where <paramref name="shown"/> differs from
+    /// <paramref name="apart"/>, the frames of the screen's size, printed with where as <paramref name="name"/>.
+    /// </summary>
+    size_t MiddleDiffering(std::string_view name, const std::vector<SDL_Color>& apart,
+                           const std::vector<SDL_Color>& shown)
+    {
+        const int32_t width = MCInput::Display()->Width();
+        const int32_t height = MCInput::Display()->Height();
+        REQUIRE(apart.size() == static_cast<size_t>(width) * height);
+        REQUIRE(shown.size() == apart.size());
+        size_t differing = 0;
+        int32_t left = width;
+        int32_t top = height;
+        int32_t right = -1;
+        int32_t bottom = -1;
+
+        for (int32_t y = height / 4; y < height * 3 / 4; ++y)
+        {
+            for (int32_t x = width / 4; x < width * 3 / 4; ++x)
+            {
+                const size_t at = static_cast<size_t>(y) * width + x;
+
+                if (!SameColor(apart[at], shown[at]))
+                {
+                    ++differing;
+                    left = std::min(left, x);
+                    top = std::min(top, y);
+                    right = std::max(right, x);
+                    bottom = std::max(bottom, y);
+                }
+            }
+        }
+
+        std::cout << std::format("  {}: {} pixels of the middle differ", name, differing);
+        std::cout << (differing != 0 ? std::format(", in ({}, {}) to ({}, {})\n", left, top, right, bottom) : "\n");
+        return differing;
+    }
+
+    /// <summary>
     /// A forest's version 2 frame (MakeTestForest's, MarkPackVersion2's) twice, one above the other, swaying over
     /// mission 1, drawn by <paramref name="drawing"/>, paused: the frames shown with their index passes apart, then
     /// both folded into their draws (MCVulkanRenderer's HdMarks::Folded), then the upper apart and the lower folded
@@ -20996,44 +21036,8 @@ TEST_CASE_ISOLATED("game: a forest's version 2 frame folds its index pass into i
         return;
     }
 
-    const int32_t width = MCInput::Display()->Width();
-    const int32_t height = MCInput::Display()->Height();
-    REQUIRE(forest->Apart.size() == static_cast<size_t>(width) * height);
-
-    // The pixels of the middle where a frame differs from the one drawn apart, and where.
-    const auto differingFromApart = [&](std::string_view name, const std::vector<SDL_Color>& shown)
-    {
-        REQUIRE(shown.size() == forest->Apart.size());
-        size_t differing = 0;
-        int32_t left = width;
-        int32_t top = height;
-        int32_t right = -1;
-        int32_t bottom = -1;
-
-        for (int32_t y = height / 4; y < height * 3 / 4; ++y)
-        {
-            for (int32_t x = width / 4; x < width * 3 / 4; ++x)
-            {
-                const size_t at = static_cast<size_t>(y) * width + x;
-
-                if (!SameColor(forest->Apart[at], shown[at]))
-                {
-                    ++differing;
-                    left = std::min(left, x);
-                    top = std::min(top, y);
-                    right = std::max(right, x);
-                    bottom = std::max(bottom, y);
-                }
-            }
-        }
-
-        std::cout << std::format("  {}: {} pixels of the middle differ", name, differing);
-        std::cout << (differing != 0 ? std::format(", in ({}, {}) to ({}, {})\n", left, top, right, bottom) : "\n");
-        return differing;
-    };
-
-    CHECK_EQ(differingFromApart("both folded", forest->Folded), 0u);
-    CHECK_EQ(differingFromApart("the lower folded after the upper apart", forest->Mixed), 0u);
+    CHECK_EQ(MiddleDiffering("both folded", forest->Apart, forest->Folded), 0u);
+    CHECK_EQ(MiddleDiffering("the lower folded after the upper apart", forest->Apart, forest->Mixed), 0u);
 }
 
 /// <summary>
@@ -21053,6 +21057,282 @@ TEST_CASE_ISOLATED("game: a forest's version 2 frame folded into its draw keeps 
     const MCVulkanRenderer::MirrorTally& tally = forest->Renderer->Mirror();
     CHECK_EQ(forest->ForestFramesCompared, 3);
     CHECK(tally.Frames >= forest->ForestFramesCompared);
+    CHECK_EQ(tally.DifferentFrames, 0);
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+}
+
+namespace
+{
+    /// <summary>
+    /// A forest's version 2 frame (MakeTestForest's, MarkPackVersion2's) drawn still (not swaying: as a unit's or an
+    /// object's frame is) four times over mission 1 by <paramref name="drawing"/>, paused, each over the one before:
+    /// as it is, standing on a row; through a table moving its colours along, standing on another; through one making
+    /// every colour the key; and as it is, standing on none. The frames shown and the world's index channels
+    /// (MCVulkanRenderer::ReadIndexChannels) with their index passes apart, then all folded into their draws
+    /// (HdMarks::FoldedShape), then every other one (Mixed: a fold just after a draw apart, of the same picture); and
+    /// the renderer; none when the GPU can't draw it so.
+    /// </summary>
+    struct FoldedShapes
+    {
+        std::shared_ptr<MCVulkanRenderer> Renderer;
+        std::vector<SDL_Color> Apart;
+        std::vector<SDL_Color> Folded;
+        std::vector<SDL_Color> Mixed;
+        std::vector<uint8_t> ApartChannels;
+        std::vector<uint8_t> FoldedChannels;
+        std::vector<uint8_t> MixedChannels;
+        /// <summary>The world surface's width, in its index channels' pixels.</summary>
+        uint32_t ChannelsWidth = 0;
+        /// <summary>The feet bits of the first draw's row (index channels' green and blue).</summary>
+        std::array<uint8_t, 2> FirstFeet{};
+        /// <summary>In mirror mode, the frames with the shapes compared with the software renderer's.</summary>
+        int64_t FramesCompared = 0;
+    };
+
+    std::optional<FoldedShapes> DrawFoldedShapes(MCGpuDrawing drawing)
+    {
+        if (!MCTestGame::Available())
+        {
+            return std::nullopt;
+        }
+
+        MCRenderer::RequestGpuDrawing(drawing);
+        REQUIRE(MCTestGame::StartMission(1));
+        std::shared_ptr<MCVulkanRenderer> renderer =
+            std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+        if (renderer == nullptr || MCRenderer::GpuDrawing() != drawing)
+        {
+            std::cout << "  (skipped: no GPU renderer on this machine)\n";
+            return std::nullopt;
+        }
+
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_shape_fold";
+        const TestForest forest = MakeTestForest(scratch, colors);
+        // Index 0xd8 is the water's colour cycle, which the forest never draws.
+        constexpr uint8_t NeverDrawn = 0xd8;
+        REQUIRE(MarkPackVersion2(forest.Pack, NeverDrawn) > 0);
+        MCRegisteredBlock table(forest.Table.size(), MCDataKind::Shapes);
+        std::ranges::copy(forest.Table, table.Bytes().begin());
+        const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+        REQUIRE(camera != nullptr);
+        REQUIRE(camera->View() != nullptr);
+
+        // Two colour tables, one after the other: each colour moved along, and each made the key (which a shape's
+        // index pass keeps).
+        constexpr size_t TableSize = 256;
+        constexpr size_t Moved = 7;
+        constexpr uint8_t Key = 255;
+        MCRegisteredBlock tables(2 * TableSize, MCDataKind::Tables);
+        const std::span<uint8_t> tableBytes = tables.Bytes();
+
+        for (size_t i = 0; i < TableSize; ++i)
+        {
+            tableBytes[i] = static_cast<uint8_t>(i + Moved);
+            tableBytes[TableSize + i] = Key;
+        }
+
+        std::optional<MCHdArtOn> hdArt(std::in_place, forest.Pack);
+        const int keptSway = GHdSway;
+        GHdSway = 0;
+        GamePaused = true;
+
+        // The draws (from a little right of the middle and up, clear of the units): where, through which table (its
+        // place in the tables), and whether a unit's feet stand on its bottom row.
+        struct Placed
+        {
+            int32_t X = 0;
+            int32_t Y = 0;
+            std::optional<size_t> Table;
+            bool Stands = false;
+        };
+
+        constexpr int32_t Aside = 30;
+        constexpr int32_t Half = 2;
+        const std::array<Placed, 4> places{{
+            {.X = 0, .Y = 0, .Table = std::nullopt, .Stands = true},
+            {.X = TestForest::Width / Half, .Y = TestForest::Height / Half, .Table = 0, .Stands = true},
+            {.X = 0, .Y = TestForest::Height, .Table = TableSize, .Stands = true},
+            {.X = TestForest::Width / Half, .Y = TestForest::Height * 3 / Half, .Table = std::nullopt, .Stands = false},
+        }};
+        int64_t framesCompared = 0;
+        FoldedShapes result{.Renderer = renderer};
+
+        const auto drawn = [&](std::array<bool, 4> folds)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            MCPane& world = camera->View()->WorldFrame();
+            const int32_t x = (world.X1 - world.X0) / 2 + Aside;
+            const int32_t y = (world.Y1 - world.Y0) / 2 - Aside - TestForest::Height;
+
+            for (size_t i = 0; i < places.size(); ++i)
+            {
+                const Placed& place = places[i];
+                const int32_t placeY = y + place.Y;
+                const float feet = static_cast<float>(world.Y0 + placeY + TestForest::Height - 1);
+                const MCRenderer::StandingScope standing(place.Stands ? std::optional(feet) : std::nullopt);
+                renderer->SetFoldsIndexPasses(folds[i]);
+
+                if (place.Table.has_value())
+                {
+                    AGShapeTranslateDraw(world, table.Bytes(), 0, x + place.X, placeY,
+                                         MCColorTable(tableBytes.data() + *place.Table, TableSize));
+                }
+                else
+                {
+                    AGShapeDraw(world, table.Bytes(), 0, x + place.X, placeY);
+                }
+
+                // The first's feet as the renderer writes them (FeetBits).
+                if (i == 0)
+                {
+                    const auto code = static_cast<uint32_t>(std::lround(feet * MCGpuChannels::FeetSteps)) + 1;
+                    result.FirstFeet = {static_cast<uint8_t>(code >> MCGpuChannels::BitsPerByte),
+                                        static_cast<uint8_t>(code & 255u)};
+                }
+            }
+
+            renderer->SetFoldsIndexPasses(true);
+            auto frame = MCInput::Display()->ReadFrame();
+            REQUIRE(frame.has_value());
+            std::vector<uint8_t> channels;
+
+            // In mirror mode, this frame compared too (a frame read is shown nowhere, so the presenter compares only
+            // the frames the game runs); else the world's index channels read.
+            if (drawing == MCGpuDrawing::Mirror)
+            {
+                const auto compared = renderer->Compare({}, {});
+                REQUIRE(compared.has_value());
+                ++framesCompared;
+            }
+            else
+            {
+                const std::shared_ptr<MCWindow> window = world.Window.lock();
+                REQUIRE(window != nullptr);
+                auto read = renderer->ReadIndexChannels(*window);
+                REQUIRE(read.has_value());
+                REQUIRE(!read->empty());
+                uint32_t height = 0;
+                REQUIRE(renderer->SurfaceTexture(*window, result.ChannelsWidth, height) != nullptr);
+                REQUIRE(read->size() == static_cast<size_t>(result.ChannelsWidth) * height * 4);
+                channels = std::move(*read);
+            }
+
+            return std::pair{std::move(*frame), std::move(channels)};
+        };
+
+        renderer->ResetMirror();
+        const int64_t forestFolds = renderer->HdFolds();
+        const int64_t foldsBefore = renderer->HdShapeFolds();
+        std::tie(result.Apart, result.ApartChannels) = drawn({false, false, false, false});
+        CHECK_EQ(renderer->HdShapeFolds(), foldsBefore);
+        std::tie(result.Folded, result.FoldedChannels) = drawn({true, true, true, true});
+        CHECK_EQ(renderer->HdShapeFolds(), foldsBefore + 4);
+        // A unit's or an object's fold binds no stands, leaving the indices' alpha to its mark pass.
+        CHECK_EQ(renderer->LastFrameStandsPasses(), 0);
+        std::tie(result.Mixed, result.MixedChannels) = drawn({false, true, false, true});
+        CHECK_EQ(renderer->HdShapeFolds(), foldsBefore + 6);
+        CHECK_EQ(renderer->HdFolds(), forestFolds);
+        result.FramesCompared = framesCompared;
+        GamePaused = false;
+        GHdSway = keptSway;
+        hdArt.reset();
+        std::filesystem::remove_all(scratch);
+        return result;
+    }
+}
+
+/// <summary>
+/// Port-only: a unit's or an object's version 2 frame folds its index pass into its own draw and its mark pass
+/// (MCVulkanRenderer's HdMarks::FoldedShape): over mission 1 drawn by the GPU, as it is and through tables (one making
+/// every colour the key, which the pass keeps), each standing on its own row or on none, each over the one before, the
+/// world's index target holds what it holds with the passes apart in every pixel and channel (the indices, the feet,
+/// the marks), and the frames show the same over the middle of the screen; and so do folds drawn just after draws
+/// apart, of the same picture (each through its own pipeline).
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a unit's or an object's version 2 frame folds its index pass into its draw and keeps every channel")
+{
+    const std::optional<FoldedShapes> shapes = DrawFoldedShapes(MCGpuDrawing::On);
+
+    if (!shapes.has_value())
+    {
+        return;
+    }
+
+    constexpr size_t Channels = 4;
+    // The pixels whose index channels differ from those drawn apart, a count for each channel, and where.
+    const auto differingFromApart = [&](std::string_view name, const std::vector<uint8_t>& read)
+    {
+        REQUIRE(read.size() == shapes->ApartChannels.size());
+        std::array<size_t, Channels> differing{};
+        size_t first = read.size();
+
+        for (size_t at = 0; at < read.size(); ++at)
+        {
+            if (read[at] != shapes->ApartChannels[at])
+            {
+                ++differing[at % Channels];
+                first = std::min(first, at);
+            }
+        }
+
+        const size_t pixel = first / Channels;
+        std::cout << std::format("  {}: {} pixels' indices, {} and {} feet bytes, {} marks differ", name, differing[0],
+                                 differing[1], differing[2], differing[3]);
+        std::cout << (first < read.size() ? std::format(", the first at ({}, {})\n", pixel % shapes->ChannelsWidth,
+                                                        pixel / shapes->ChannelsWidth)
+                                          : "\n");
+        return differing;
+    };
+
+    constexpr std::array<size_t, Channels> NoneDiffer{};
+    CHECK_EQ(differingFromApart("all folded", shapes->FoldedChannels), NoneDiffer);
+    CHECK_EQ(differingFromApart("every other folded", shapes->MixedChannels), NoneDiffer);
+
+    // What the draws exercise, folded: the key (the table making every colour it), and the first's feet.
+    size_t keys = 0;
+    size_t feet = 0;
+
+    for (size_t at = 0; at < shapes->FoldedChannels.size(); at += Channels)
+    {
+        keys += shapes->FoldedChannels[at] == 255 ? 1 : 0;
+        feet += shapes->FoldedChannels[at + 1] == shapes->FirstFeet[0] &&
+                        shapes->FoldedChannels[at + 2] == shapes->FirstFeet[1]
+                    ? 1
+                    : 0;
+    }
+
+    CHECK(keys > 0);
+    CHECK(feet > 0);
+    CHECK_EQ(MiddleDiffering("all folded", shapes->Apart, shapes->Folded), 0u);
+    CHECK_EQ(MiddleDiffering("every other folded", shapes->Apart, shapes->Mixed), 0u);
+}
+
+/// <summary>
+/// Port-only: the same in mirror mode: the GPU's palette indices are the software renderer's in every frame with the
+/// shapes, folded, apart, and folded just after draws apart (a fold writes the original's indices where it draws, and
+/// only there, the key too).
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a unit's or an object's version 2 frame folded into its draw keeps the original's palette indices")
+{
+    const std::optional<FoldedShapes> shapes = DrawFoldedShapes(MCGpuDrawing::Mirror);
+
+    if (!shapes.has_value())
+    {
+        return;
+    }
+
+    const MCVulkanRenderer::MirrorTally& tally = shapes->Renderer->Mirror();
+    CHECK_EQ(shapes->FramesCompared, 3);
+    CHECK(tally.Frames >= shapes->FramesCompared);
     CHECK_EQ(tally.DifferentFrames, 0);
 
     if (tally.DifferentFrames != 0)

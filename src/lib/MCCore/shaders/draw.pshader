@@ -1178,6 +1178,26 @@ bool FoldsIn(Input input)
     return (kind == KindHd || kind == KindHdSmooth) && (input.op.w & FoldsIndex) != 0;
 }
 #endif
+
+// Port-only: whether the build draws a unit's or an object's version 2 frame with its index pass folded in: the HD
+// build alone, which the renderer gives every HD frame's draw but a forest's and an effect's (VariantOf).
+#define DRAWS_SHAPE_FOLDS (DRAW_VARIANT == DRAW_HD_KINDS)
+#if DRAWS_SHAPE_FOLDS
+// Port-only: a KindHd draw's op.w bit for a unit's or an object's version 2 frame with its index pass folded in
+// (MCVulkanRenderer's HdMarks::FoldedShape, through its BlendIndex pipeline): where the original draws it writes the
+// original's index as the pass would (DrawnOutput's KindTexture: the picture's red, through the table before, its key
+// kept; green and blue the feet, main), the index target's alpha 1 so the pipeline blends it in, and 0 elsewhere,
+// leaving the indices' alpha and the stands; its mark pass, which has the bit too, marks the original's pixels as well
+// as where the frame shows, as the pass would (StandingMark: HdPixelAt).
+static const uint FoldsShape = 4u;
+
+// Whether a draw is a unit's or an object's fold, or its mark pass (FoldsShape: an HD frame's draw only).
+bool FoldsShapeIn(Input input)
+{
+    const uint kind = input.op.x & 15u;
+    return (kind == KindHd || kind == KindHdSmooth) && (input.op.w & FoldsShape) != 0;
+}
+#endif
 // Port-only: the keyed holes of a KindHd draw's picture that a later copy fills edge to edge (MCVulkanRenderer's
 // FillHoles), at most FilledHolesMost, each in two words of span and walk (hole i: low i, high i), its first original
 // pixel and the one past its last (x the low half, y the high; none when both are 0). Their edges aren't softened
@@ -1349,15 +1369,38 @@ Output HdPixelAt(Input input, float2 shape)
     const uint key = (input.op.y >> 8) & 255u;
     const int texelScale = (int)hdScale;
     int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
+#if DRAW_STANDS || DRAWS_SHAPE_FOLDS
+    // A fold's original pixel under it: the pass's texel (the draws' places agree, MCVulkanRenderer::Shape). A forest's
+    // leaves the table's key out, as an overlay's pass does; a unit's or an object's keeps it, as its own pass does
+    // (KeyedAndMapped).
 #if DRAW_STANDS
-    // A fold's original pixel under it: the pass's texel (the draws' places agree, MCVulkanRenderer::Shape).
     const bool folds = FoldsIn(input);
+#else
+    const bool folds = false;
+#endif
+#if DRAWS_SHAPE_FOLDS
+    const bool foldsShape = FoldsShapeIn(input);
+#else
+    const bool foldsShape = false;
+#endif
     const int2 under = int2(floor(shape));
+#if DRAWS_SHAPE_FOLDS
+    // Read for a fold alone, a branch rather than a select: the HD build's other draws are most of its pixels.
+    const bool inPicture = (folds || foldsShape) && all(under >= int2(0, 0)) && all(under < original);
+    float4 underEntry = float4(0.0, 0.0, 0.0, 0.0);
+
+    [branch] if (inPicture)
+    {
+        underEntry = SourceAt(under);
+    }
+#else
     const bool inPicture = all(under >= int2(0, 0)) && all(under < original);
     const float4 underEntry = inPicture ? SourceAt(under) : float4(0.0, 0.0, 0.0, 0.0);
+#endif
     const bool foldTable = (flags & TableBefore) != 0;
     const uint foldedIndex = foldTable ? Table(input.op.z, Byte(underEntry.r)) : Byte(underEntry.r);
-    const bool foldsIndex = folds && inPicture && OriginalDrawsIn(underEntry) && (!foldTable || foldedIndex != 255u);
+    const bool foldsIndex = (folds || foldsShape) && inPicture && OriginalDrawsIn(underEntry) &&
+                            (foldsShape || !foldTable || foldedIndex != 255u);
 #else
     const bool foldsIndex = false;
 #endif
@@ -1397,7 +1440,7 @@ Output HdPixelAt(Input input, float2 shape)
         color = float4(max(color.rgb - LightFloor, 0.0), 0.0);
     }
 
-#if DRAW_STANDS
+#if DRAW_STANDS || DRAWS_SHAPE_FOLDS
     // A fold's original pixel is drawn whatever the frame's colour there (its index, its mark).
     const bool shows = color.a > 0.0 || ((input.op.x & HdLight) != 0 && any(color.rgb > 0.0));
 
@@ -1453,7 +1496,12 @@ Output HdPixelAt(Input input, float2 shape)
     // The frame's mark pass: something stands on the ground wherever it shows.
     if ((input.op.x & IndexOnly) != 0)
     {
+#if DRAWS_SHAPE_FOLDS
+        // A unit's or an object's fold's marks the original's pixels too, as its index pass would (FoldsShape).
+        if (color.a < StandingCoverage && !foldsIndex)
+#else
         if (color.a < StandingCoverage)
+#endif
         {
             discard;
         }
@@ -1476,14 +1524,17 @@ Output HdPixelAt(Input input, float2 shape)
         color.rgb = TableShift(input.op.z, color.rgb, color.a);
     }
 
-#if DRAW_STANDS
+#if DRAW_STANDS || DRAWS_SHAPE_FOLDS
     Output output = Blended(shows ? color : float4(0.0, 0.0, 0.0, 0.0));
     output.index.a = swayMark;
 
-    if (folds)
+    // A fold's index where the original draws (its pipeline leaves the indices' alpha), and a forest's stands.
+    if (folds || foldsShape)
     {
         output.index = foldsIndex ? float4((float)foldedIndex / 255.0, 0.0, 0.0, 1.0) : float4(0.0, 0.0, 0.0, 0.0);
+#if DRAW_STANDS
         output.stands = shows ? swayMark : SwayMark;
+#endif
     }
 #else
     Output output = Blended(color);

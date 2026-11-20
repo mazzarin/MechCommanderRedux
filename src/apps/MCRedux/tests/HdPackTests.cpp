@@ -4216,14 +4216,11 @@ namespace
     };
 
     /// <summary>
-    /// Port-only: a load's fill, the renderer's part done as each frame of the bar is shown (the pictures the readers put
-    /// in the slots taken, all of them, their copies recorded): the pictures taken.
+    /// Port-only: a load's end (MCHdArt::FinishLoadFill), the renderer's part done as each frame of the bar is shown (the
+    /// pictures the readers put in the slots taken, all of them, their copies recorded): the pictures taken.
     /// </summary>
-    std::vector<MCHdArt::StagedPicture> FillUnderTheBar(const HoldPack& pack)
+    std::vector<MCHdArt::StagedPicture> FinishTakingEveryPicture()
     {
-        MCHdArt::StartLoadFill();
-        pack.Open();
-        MCHdArt::FillGpu(pack.Packets());
         std::vector<MCHdArt::StagedPicture> up;
         MCHdArt::FinishLoadFill(
             [&up]
@@ -4236,6 +4233,15 @@ namespace
                 }
             });
         return up;
+    }
+
+    /// <summary>Port-only: a load's fill of <paramref name="pack"/>, to its end (FinishTakingEveryPicture).</summary>
+    std::vector<MCHdArt::StagedPicture> FillUnderTheBar(const HoldPack& pack)
+    {
+        MCHdArt::StartLoadFill();
+        pack.Open();
+        MCHdArt::FillGpu(pack.Packets());
+        return FinishTakingEveryPicture();
     }
 }
 
@@ -4413,24 +4419,67 @@ TEST_CASE("hd art: a load no briefing held for decides the fill on the GPU once 
     pack.Open();
     MCHdArt::FillGpu(pack.Packets());
     MCHdArt::WaitForReadAhead();
+    // The ground already up and in the room the card gives (MCHdArt::GroundOnGpu): the units are what's left.
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NoteGpuRoom(std::nullopt);
     MCHdArt::NextFrame(false);
     CHECK(MCHdArt::GpuFillNow().MissionBytes > 0);
     CHECK(!MCHdArt::GpuFillNow().Fits);
     MCHdArt::LoadUnitsMade();
     MCHdArt::NextFrame(false);
     CHECK(MCHdArt::GpuFillNow().Fits);
-    std::vector<MCHdArt::StagedPicture> up;
-    MCHdArt::FinishLoadFill(
-        [&up]
-        {
-            for (MCHdArt::StagedPicture& picture :
-                 MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
-            {
-                MCHdArt::ColorsUploaded(*picture.Record);
-                up.push_back(std::move(picture));
-            }
-        });
-    CHECK_EQ(up.size(), pieces.size());
+    CHECK_EQ(FinishTakingEveryPicture().size(), pieces.size());
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2: "less only the plan's own error, which the ledger measures"): the fill
+/// decides whether the mission fits once the load's ground is on the GPU and the card has been read again after it, and
+/// counts the mission's frames at what the pages they share take (MCHdArt::GpuFill::PagesShare), not at their own bytes
+/// (20 Nov, the A10's 4 GB card: pictures took 1.25-1.48 times their bytes; the fill decided on the bytes before a 2x
+/// mission's 456 MB of ground went up, and 14 missions went up and came down again).
+/// </summary>
+TEST_CASE("hd art: the fill decides beside the load's ground, the mission's frames counted at what their pages take")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-ground", pieces);
+    const FillSlotsScope slots;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::NextFrame(false);
+    const MCHdArt::GpuFill known = MCHdArt::GpuFillNow();
+    REQUIRE(known.MissionBytes > 0);
+    REQUIRE(known.PagesShare > 1.0);
+    const auto pages = static_cast<uint64_t>(static_cast<double>(known.MissionBytes) * known.PagesShare);
+    constexpr uint64_t PlentyTimes = 4;
+
+    // Before the ground goes up, whatever the room.
+    MCHdArt::NoteGpuRoom(PlentyTimes * pages);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+
+    // The ground up, the room noted before it: not yet.
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+
+    // A room just what its pages take, short of their tenth to spare (its bytes alone fitted it with the tenth).
+    MCHdArt::NoteGpuRoom(pages);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+
+    // A room its pages fit with a tenth to spare.
+    MCHdArt::NoteGpuRoom(pages + pages / 5);
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(FinishTakingEveryPicture().size(), pieces.size());
+    MCHdArt::NoteGpuRoom(std::nullopt);
     MCHdArt::LetGoHold();
     GHdArt = previous;
 }

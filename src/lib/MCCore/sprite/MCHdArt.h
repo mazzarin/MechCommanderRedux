@@ -714,6 +714,8 @@ namespace MCHdArt
         /// <summary>Whether the whole mission fits on the GPU now (it fills), and the bytes it takes there (est.).</summary>
         bool Fits = false;
         uint64_t MissionBytes = 0;
+        /// <summary>How many times their own bytes the mission's frames are counted at on the GPU, in the pages they share.</summary>
+        double PagesShare = 1.0;
         /// <summary>The frames asked for, put in the slots, and on the GPU, and the bytes of those.</summary>
         uint64_t Asked = 0;
         uint64_t Staged = 0;
@@ -1223,6 +1225,15 @@ namespace MCHdArt
     /// a staged battle's force is in no list), and the fill decides whether it fits.
     /// </summary>
     void LoadUnitsMade();
+
+    /// <summary>
+    /// Port-only (<see cref="FillGpu"/>): a load has put its mission's ground on the GPU (MCTerrainUploadGround): the fill
+    /// decides whether the mission fits once the card has been read again after it (the next room noted,
+    /// <see cref="NoteGpuRoom"/>), so its room holds the ground (20 Nov, the A10's 4 GB card: the fill decided before a 2x
+    /// mission's 456 MB of ground went up, then took the mission down again). <see cref="FinishLoadFill"/> counts as both
+    /// for a load that never calls it.
+    /// </summary>
+    void GroundOnGpu();
 
     /// <summary>
     /// Port-only (the loading bar's last stretch): waits until the hold has read every archive the load handed it (or

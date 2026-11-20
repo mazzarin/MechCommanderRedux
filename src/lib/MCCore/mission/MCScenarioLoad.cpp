@@ -379,6 +379,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         Fatal(-1, std::format("The ground can't go up to the GPU: {}", uploaded.error()));
     }
 
+    // Port-only (MCHdArt::FillGpu): the fill decides whether the mission fits on the GPU beside its ground.
+    MCHdArt::GroundOnGpu();
+
     // The 'Mechs start with the damage their loadouts carried over.
     for (const std::shared_ptr<MCObjectList>& list : {InnerSphereMechList(), ClanMechList()})
     {

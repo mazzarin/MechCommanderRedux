@@ -415,6 +415,18 @@ namespace
     /// </summary>
     constexpr uint64_t FitsMarginDivisor = 10;
     /// <summary>
+    /// Port-only (SPEC-memory.md: "the plan's own error, which the ledger measures"): the pages the HD pictures share take
+    /// more than the pictures' own bytes (their places packed in shelves, each kind's last page part full): on the A10's
+    /// NVIDIA driver, 20 Nov, 1.25-1.48 times them in the ten missions held whole. A mission's frames are counted at this
+    /// many times their bytes until the fill has measured its own (PagesMeasuredFromBytes).
+    /// </summary>
+    constexpr double PagesShareFirst = 1.3;
+    /// <summary>
+    /// Port-only: the pictures' bytes on the GPU from which, while a fill puts a mission up, what their pages take is
+    /// measured for it (a few pages part full make a small set's share no guide).
+    /// </summary>
+    constexpr uint64_t PagesMeasuredFromBytes = uint64_t{256} << 20;
+    /// <summary>
     /// Port-only (MCHdArt::FinishLoadFill): the loading bar stops waiting for the fill on the GPU once none of its frames
     /// went up for this long (a renderer that draws no frame meanwhile, a GPU gone).
     /// </summary>
@@ -763,6 +775,17 @@ namespace
         size_t Bytes = 0;
     };
 
+    /// <summary>Port-only (MCHdArt::GroundOnGpu): where a load's ground is, for the fill on the GPU.</summary>
+    enum class GroundState : uint8_t
+    {
+        /// <summary>From a load's start until its ground goes up.</summary>
+        Waiting,
+        /// <summary>Up, the room noted before it went up (the card is read again for the next frame's).</summary>
+        ReadingCard,
+        /// <summary>In the room the card gives the pictures (or no load is under way).</summary>
+        InRoom,
+    };
+
     struct State
     {
         /// <summary>The folder set (empty: the default), and whether the folder in use exists (unknown: not looked).</summary>
@@ -842,6 +865,16 @@ namespace
         /// list, the lance as placed), else once the load has made its units (MCHdArt::LoadUnitsMade) or ends.
         /// </summary>
         bool GpuMissionKnown = false;
+        /// <summary>
+        /// Port-only (MCHdArt::GroundOnGpu): where a load's ground is: not yet up (from the load's start), up with the card
+        /// not yet read again since, or in the room the card gives the pictures; the fill enters only once it is.
+        /// </summary>
+        GroundState GpuGround = GroundState::InRoom;
+        /// <summary>
+        /// Port-only (PagesShare): how many times their own bytes the HD pictures' pages took, as last measured while a
+        /// fill put a mission up (none yet: PagesShareFirst).
+        /// </summary>
+        std::optional<double> GpuPagesShare;
         uint64_t GpuMissionBytes = 0;
         std::optional<uint64_t> GpuCardRoom;
         std::unordered_set<uint32_t> GpuAsked;
@@ -7050,10 +7083,28 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (SPEC-memory.md: "the plan's own error, which the ledger measures"): how many times their own bytes the HD
+    /// pictures take on the GPU, in the pages they share: measured while a fill puts a mission up, once
+    /// PagesMeasuredFromBytes of <paramref name="upBytes"/> are there (the ledger's allocations over the pictures' bytes),
+    /// and kept for the next mission's; until the first, PagesShareFirst. Never under 1.
+    /// </summary>
+    double PagesShare(State& state, uint64_t upBytes)
+    {
+        if (state.GpuFits && upBytes >= PagesMeasuredFromBytes)
+        {
+            const uint64_t taken = AllocatedOf(MCMemoryLedger::MCHolder::GpuHdPictures);
+            state.GpuPagesShare = std::max(1.0, static_cast<double>(taken) / static_cast<double>(upBytes));
+        }
+
+        return state.GpuPagesShare.value_or(PagesShareFirst);
+    }
+
+    /// <summary>
     /// Port-only (MCHdArt::FillGpu; SPEC-memory.md's plan, item 2): whether the whole mission fits on the GPU now (the
-    /// frames of every archive handed the hold unpacked, with the hold beside them on shared memory), the mode entered
-    /// with a tenth to spare, never while archives are being opened for the hold (the mission's size isn't known whole
-    /// until they're open: its list's, from the briefing or the load's start), and left only once it no longer fits (its
+    /// frames of every archive handed the hold unpacked, at what their pages take: PagesShare; with the hold beside them on
+    /// shared memory), the mode entered with a tenth to spare, never while archives are being opened for the hold (the
+    /// mission's size isn't known whole until they're open: its list's, from the briefing or the load's start) nor before
+    /// the load's ground is in the card's room (MCHdArt::GroundOnGpu), and left only once it no longer fits (its
     /// reads waiting dropped then: the pictures up stay as the plan's room lets them); while it fits, the folders handed (FillGpu's, then the load's) asked for in order, each once its
     /// archive is held whole (its frames unpacked from memory, not read from the disk again), at once when the hold
     /// keeps no more or doesn't take it. In play no archive is opened for it. The game's thread's (MCHdArt::NextFrame,
@@ -7085,11 +7136,24 @@ namespace
 
         state.GpuMissionBytes = mission;
 
-        // Not entered on part of the mission: one that doesn't fit whole puts none of it up.
-        if (!state.GpuFits && (opening || !state.GpuMissionKnown))
+        // Not entered on part of the mission (one that doesn't fit whole puts none of it up), nor before the room holds
+        // the load's ground.
+        if (!state.GpuFits && (opening || !state.GpuMissionKnown || state.GpuGround != GroundState::InRoom))
         {
             return;
         }
+
+        // The mission's frames at what their pages take. A card's room counts the pictures up at what the card holds for
+        // them (MCMemoryRoom::CardRoom), so there only the frames still to go up are counted at the pages' share; the
+        // art's room on shared memory leaves the pictures out, so there all of them are.
+        const MCMemoryLedger::MCFigures pictures = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuHdPictures);
+        const auto picturesUp = static_cast<uint64_t>(std::max<int64_t>(pictures.Payload, 0));
+        const double share = PagesShare(state, picturesUp);
+        const auto atShare = [share](uint64_t bytes)
+        { return static_cast<uint64_t>(static_cast<double>(bytes) * share); };
+        const uint64_t up = std::min(mission, picturesUp);
+        const uint64_t onCard = up + atShare(mission - up);
+        const uint64_t inPages = atShare(mission);
 
         // On shared memory the mission and the hold beside it within the art's room past the rest and the floor; on any
         // GPU the mission within the room the renderer's card gives its pictures (MCHdArt::NoteGpuRoom).
@@ -7100,16 +7164,18 @@ namespace
         const uint64_t held = parts.Room.Shared ? std::max<uint64_t>(parts.Held, handed) : 0;
         const auto within = [&state](uint64_t need, uint64_t room)
         { return state.GpuFits ? need <= room : need + need / FitsMarginDivisor <= room; };
-        const bool fits = mission > 0 && within(mission + held, space) && within(mission, card);
+        const bool fits = mission > 0 && within(inPages + held, space) && within(onCard, card);
 
         if (fits != state.GpuFits && MCFrameLog::Enabled())
         {
-            MCFrameLog::Note(
-                std::format("HD fill on the GPU: {} ({:.1f} MB for the mission and {:.1f} MB held, {:.1f} MB of "
-                            "room)",
-                            fits ? "the whole mission fits" : "the mission no longer fits",
-                            static_cast<double>(mission) / BytesPerMb, static_cast<double>(held) / BytesPerMb,
-                            static_cast<double>(std::min(space - std::min(space, held), card)) / BytesPerMb));
+            MCFrameLog::Note(std::format(
+                "HD fill on the GPU: {} ({:.1f} MB for the mission, {:.1f} MB as its pages take it at {:.2f} times its "
+                "bytes, {:.1f} MB held, {:.1f} MB of room)",
+                fits ? "the whole mission fits" : "the mission no longer fits",
+                static_cast<double>(mission) / BytesPerMb,
+                static_cast<double>(parts.Room.Shared ? inPages : onCard) / BytesPerMb, share,
+                static_cast<double>(held) / BytesPerMb,
+                static_cast<double>(std::min(space - std::min(space, held), card)) / BytesPerMb));
         }
 
         if (!fits && state.GpuFits)
@@ -7215,6 +7281,7 @@ void MCHdArt::StartLoadFill(std::string_view mission)
     state.LoadFoldersAsked = 0;
     state.GpuFillOn = true;
     state.GpuMissionKnown = briefed;
+    state.GpuGround = GroundState::Waiting;
     state.GpuUpAtLoad = state.GpuUp;
 
     {
@@ -7246,8 +7313,10 @@ void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
     State& state = TheState();
     state.RecordingLoad = false;
     // Port-only (SPEC-memory.md's "Under the loading bar"): when the whole mission fits on the GPU, the bar ends once it's
-    // there too, unless none of it went up for GpuFillStall. The load has handed the hold all it will.
+    // there too, unless none of it went up for GpuFillStall. The load has handed the hold all it will, and its ground
+    // has gone up (MCHdArt::GroundOnGpu) if it has one.
     state.GpuMissionKnown = true;
+    state.GpuGround = GroundState::InRoom;
     UpdateGpuFill(state);
     state.GpuUpAt = std::chrono::steady_clock::now();
     ReadAhead& ahead = state.Ahead;
@@ -7301,6 +7370,18 @@ void MCHdArt::FinishLoadFill(const std::function<void()>& shown)
 void MCHdArt::LoadUnitsMade()
 {
     TheState().GpuMissionKnown = true;
+}
+
+void MCHdArt::GroundOnGpu()
+{
+    State& state = TheState();
+
+    if (state.GpuGround == GroundState::Waiting)
+    {
+        state.GpuGround = GroundState::ReadingCard;
+        // The card read again for the next frame's room (MCMemoryRoom's reads are CardReadInterval apart).
+        MCMemoryRoom::AskAgain();
+    }
 }
 
 double MCHdArt::LoadFillShare()
@@ -7988,7 +8069,14 @@ void MCHdArt::SetUploadSlots(std::shared_ptr<MCUploadSlots> slots, bool bc7)
 
 void MCHdArt::NoteGpuRoom(std::optional<uint64_t> cardPictureBytes)
 {
-    TheState().GpuCardRoom = cardPictureBytes;
+    State& state = TheState();
+    state.GpuCardRoom = cardPictureBytes;
+
+    // The first room noted after the ground went up was read after it (MCHdArt::GroundOnGpu asked for it).
+    if (state.GpuGround == GroundState::ReadingCard)
+    {
+        state.GpuGround = GroundState::InRoom;
+    }
 }
 
 void MCHdArt::FillGpu(std::span<const PacketAhead> packets)
@@ -8004,6 +8092,7 @@ MCHdArt::GpuFill MCHdArt::GpuFillNow()
     std::scoped_lock lock(ahead.Lock);
     return GpuFill{.Fits = state.GpuFits,
                    .MissionBytes = state.GpuMissionBytes,
+                   .PagesShare = state.GpuPagesShare.value_or(PagesShareFirst),
                    .Asked = ahead.GpuReads,
                    .Staged = ahead.GpuStaged,
                    .Up = state.GpuUp,

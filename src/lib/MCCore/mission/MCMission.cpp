@@ -60,7 +60,6 @@
 #include "platform/MCFrameLog.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
-#include "platform/MCMemoryLedger.h"
 #include "platform/MCSmacker.h"
 #include "platform/MCWin32Defs.h"
 #include "logistics/MCBriefingScreen.h"
@@ -75,26 +74,11 @@ int SomethingOnFire = 0;
 namespace
 {
     /// <summary>
-    /// Port-only (DrawPlaysFirstFrames): the most of play's frames the load draws, until one makes no target of the
-    /// screen's (a kept ground's two, one a frame).
+    /// Port-only (20 Nov, the A10's 4 GB card: play's first frames with the world, its second and third, waited 16 and
+    /// 20 ms for the GPU, still busy with the load's last copies): the load ends once the GPU has done all it was given,
+    /// so play's frames don't wait on it. (Play's first two frames draw no world: MCScenario::Render waits for turn 2.)
     /// </summary>
-    constexpr int32_t FirstFramesMost = 4;
-
-    /// <summary>The bytes the ledger counts in the screen's targets on the GPU now.</summary>
-    int64_t TargetBytes()
-    {
-        const MCMemoryLedger::MCFigures targets = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTargets);
-        return targets.Allocated + targets.Retired;
-    }
-
-    /// <summary>
-    /// Port-only (20 Nov, the A10's 4 GB card: play's first two or three frames came one or two refreshes late, the
-    /// first making play's screen-sized targets, nine of 1920x1080, and the GPU still busy with the load's uploads):
-    /// play's first frames drawn as the load's last, until one makes no target of the screen's, and the GPU waited
-    /// for, so the frames play shows next have nothing to make or wait for. They're shown as drawn, with no turn run
-    /// meanwhile: the world stands still while they wait.
-    /// </summary>
-    void DrawPlaysFirstFrames()
+    void WaitForTheLoadsGpuWork()
     {
         const std::shared_ptr<MCDisplay> display = MCInput::Display();
 
@@ -105,25 +89,12 @@ namespace
 
         using Ms = std::chrono::duration<double, std::milli>;
         const auto began = std::chrono::steady_clock::now();
-        int32_t drawn = 0;
-
-        for (int64_t before = -1; drawn < FirstFramesMost && TargetBytes() != before; ++drawn)
-        {
-            before = TargetBytes();
-            UpdateDisplay(false, Scenario()->StartingUp, Scenario()->StartUpCountdown, false, 0);
-            // A frame drawn ahead makes its targets on the render thread: counted once it's drawn.
-            display->ShowPresented();
-        }
-
-        const auto waited = std::chrono::steady_clock::now();
         display->WaitForGpu();
 
         if (MCFrameLog::Enabled())
         {
-            const auto now = std::chrono::steady_clock::now();
-            MCFrameLog::Note(std::format("play's first frames drawn under the bar: {} in {:.1f} ms, then {:.1f} ms "
-                                         "waiting for the GPU",
-                                         drawn, Ms(waited - began).count(), Ms(now - waited).count()));
+            MCFrameLog::Note(std::format("the load's GPU work done: {:.1f} ms waited for it",
+                                         Ms(std::chrono::steady_clock::now() - began).count()));
         }
     }
 
@@ -1081,7 +1052,7 @@ auto MCMission::StartScenario(std::string_view name) -> void
     GuiSystem().AddCallback(_InterfaceUpdateCallback);
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     MCTelemetry::PlayStarted(game != nullptr ? game->NumPlayers() : 1, game != nullptr && game->IsServer);
-    DrawPlaysFirstFrames();
+    WaitForTheLoadsGpuWork();
     MCFrameLog::Note("mission started");
     // Port-only (lib/MCFirstUse.h): from here the game's thread reads and unpacks nothing for the first time.
     MCFirstUses::PlayStarted();

@@ -2352,9 +2352,29 @@ void MCVulkanPresenter::WaitForGpu()
 {
     ShowPresented();
 
-    if (_Device != nullptr)
+    if (_Device == nullptr)
     {
-        SDL_WaitForGPUIdle(_Device.get());
+        return;
+    }
+
+    if (!SDL_WaitForGPUIdle(_Device.get()))
+    {
+        SDL_Log("MCVulkanPresenter: the GPU not waited for at a load's end (%s)", SDL_GetError());
+        return;
+    }
+
+    // Port-only (SPEC-memory.md's upload slots): the load's own slots let go here, their copies run, and their memory
+    // freed under the bar by the next wait (SDL frees what's released as it waits), not in play's first frames: on the
+    // A10 letting them go there made one of play's first frames a refresh late in 7 of 10 runs.
+    if (_Slots != nullptr)
+    {
+        _Slots->Shrink();
+        _Slots->Reclaim();
+
+        if (!SDL_WaitForGPUIdle(_Device.get()))
+        {
+            SDL_Log("MCVulkanPresenter: the load's upload slots not freed at its end (%s)", SDL_GetError());
+        }
     }
 }
 

@@ -1,8 +1,8 @@
 #pragma once
 
 // Port-only (SPEC-memory.md's "From the briefing"): the HD pack's folders each mission's load hands the hold,
-// which its briefing reads ahead (MCHdArt::BriefingFolders), and each mech chassis's, read as it's placed in the
-// lance (MCHdArt::ChassisFolders): worked out by loading each mission with mc_tests --hold-list and written by
+// which its briefing reads ahead (MCHdArt::BriefingFolders); a lance's mechs' are worked out as each is picked
+// (MechTreeFolders). Worked out by loading each mission with mc_tests --hold-list and written by
 // mc_tests --hold-lists-table (tests/HdPackTests.cpp). Don't edit it.
 
 #include <array>
@@ -20,14 +20,7 @@ struct Mission
     std::span<const uint16_t> Folders;
 };
 
-/// <summary>A mech chassis (its packet in the object file) and its tree's folders, as indices into Folders.</summary>
-struct Chassis
-{
-    uint32_t Number;
-    std::span<const uint16_t> Folders;
-};
-
-inline constexpr std::array<std::string_view, 986> Folders{{
+inline constexpr std::array<std::string_view, 974> Folders{{
     "shapes/8f90f2e6097ae71d",
     "shapes/17d10ea0407c2c3c",
     "shapes/1ea9736d0a05d69e",
@@ -1002,18 +995,6 @@ inline constexpr std::array<std::string_view, 986> Folders{{
     "objects/shapes90/546/0",
     "objects/shapes90/85/0",
     "objects/shapes90/677/0",
-    "mechs/legs90/13/0",
-    "mechs/torsos90/18/0",
-    "mechs/rArms90/18/0",
-    "mechs/lArms90/18/0",
-    "mechs/legs90/18/0",
-    "mechs/torsos90/23/0",
-    "mechs/rArms90/23/0",
-    "mechs/lArms90/23/0",
-    "mechs/legs90/17/0",
-    "mechs/torsos90/22/0",
-    "mechs/rArms90/22/0",
-    "mechs/lArms90/22/0",
 }};
 
 inline constexpr std::array<uint16_t, 314> Mission_mcx0101{{
@@ -1839,90 +1820,6 @@ inline constexpr std::array<uint16_t, 311> Mission_mis0507{{
     285, 283, 290, 506, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306,
     307, 308, 622, 438, 311, 528, 483,
 }};
-inline constexpr std::array<uint16_t, 4> Chassis_1{{
-    457, 472, 473, 474,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_2{{
-    457, 458, 459, 460,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_3{{
-    867, 868, 869, 870,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_15{{
-    236, 237, 238, 239,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_16{{
-    419, 727, 728, 729,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_17{{
-    236, 373, 374, 375,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_18{{
-    763, 764, 765, 766,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_44{{
-    616, 617, 618, 619,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_45{{
-    236, 237, 238, 239,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_46{{
-    616, 682, 683, 684,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_47{{
-    640, 641, 642, 643,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_48{{
-    835, 836, 837, 838,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_49{{
-    802, 803, 804, 805,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_50{{
-    863, 864, 865, 866,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_51{{
-    941, 942, 943, 944,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_52{{
-    376, 377, 378, 379,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_53{{
-    494, 495, 496, 497,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_54{{
-    376, 427, 428, 429,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_55{{
-    236, 373, 374, 375,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_58{{
-    419, 420, 421, 422,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_64{{
-    236, 237, 238, 239,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_65{{
-    419, 727, 728, 729,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_873{{
-    974, 975, 976, 977,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_874{{
-    978, 979, 980, 981,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_875{{
-    982, 983, 984, 985,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_876{{
-    247, 248, 249, 250,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_877{{
-    490, 491, 492, 493,
-}};
-inline constexpr std::array<uint16_t, 4> Chassis_878{{
-    535, 536, 537, 538,
-}};
 
 inline constexpr std::array<Mission, 41> Missions{{
     {"mcx0101", Mission_mcx0101},
@@ -1966,37 +1863,6 @@ inline constexpr std::array<Mission, 41> Missions{{
     {"mis0504", Mission_mis0504},
     {"mis0505", Mission_mis0505},
     {"mis0507", Mission_mis0507},
-}};
-
-inline constexpr std::array<Chassis, 28> Mechs{{
-    {1, Chassis_1},
-    {2, Chassis_2},
-    {3, Chassis_3},
-    {15, Chassis_15},
-    {16, Chassis_16},
-    {17, Chassis_17},
-    {18, Chassis_18},
-    {44, Chassis_44},
-    {45, Chassis_45},
-    {46, Chassis_46},
-    {47, Chassis_47},
-    {48, Chassis_48},
-    {49, Chassis_49},
-    {50, Chassis_50},
-    {51, Chassis_51},
-    {52, Chassis_52},
-    {53, Chassis_53},
-    {54, Chassis_54},
-    {55, Chassis_55},
-    {58, Chassis_58},
-    {64, Chassis_64},
-    {65, Chassis_65},
-    {873, Chassis_873},
-    {874, Chassis_874},
-    {875, Chassis_875},
-    {876, Chassis_876},
-    {877, Chassis_877},
-    {878, Chassis_878},
 }};
 }
 

@@ -351,6 +351,21 @@ auto MCSpriteTree::PrepareHdArt() const -> void
     }
 }
 
+auto MCSpriteTree::HdFolders(bool use90) const -> std::vector<std::filesystem::path>
+{
+    std::vector<std::filesystem::path> folders;
+
+    for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+    {
+        if (const uint32_t fileNumber = FileNumbers[part]; fileNumber != NoFileNumber)
+        {
+            folders.push_back(MCHdArt::MechArchiveFolder(MCSpriteManager::PartFileOf(part, use90), fileNumber));
+        }
+    }
+
+    return folders;
+}
+
 auto MCSpriteTree::NeighbourPackets(const MCGesturePacket& where, int32_t reach) -> std::vector<uint32_t>
 {
     std::vector<uint32_t> packets;

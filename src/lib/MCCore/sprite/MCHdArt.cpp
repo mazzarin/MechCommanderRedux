@@ -6934,13 +6934,7 @@ void MCHdArt::KeepHoldList(std::string_view mission, std::span<const std::string
     }
 }
 
-std::vector<std::filesystem::path> MCHdArt::ChassisFolders(uint32_t chassis)
-{
-    const auto found = std::ranges::find(MCHoldLists::Mechs, chassis, &MCHoldLists::Chassis::Number);
-    return found != MCHoldLists::Mechs.end() ? HoldListFolders(found->Folders) : std::vector<std::filesystem::path>();
-}
-
-void MCHdArt::HoldMechAhead(uint32_t chassis)
+void MCHdArt::HoldMechAhead(std::span<const std::filesystem::path> folders)
 {
     if (!Active() || !HoldWanted())
     {
@@ -6958,7 +6952,7 @@ void MCHdArt::HoldMechAhead(uint32_t chassis)
         }
     }
 
-    OpenArchivesAhead(ChassisFolders(chassis));
+    OpenArchivesAhead(folders);
 }
 
 size_t MCHdArt::HeldReads()

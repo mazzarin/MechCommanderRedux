@@ -20,6 +20,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCHdSettings.h"
+#include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
@@ -6263,14 +6264,13 @@ TEST_CASE_ISOLATED(
         MCFileSystem::ToUtf8(written));
     CHECK(!lines.empty());
 
-    // With --hold-list-chassis, every mech chassis in the object file (an "ObjectClass" of 2) and its tree's folders,
-    // a line each to <out>/chassis.txt, for a briefing to read a lance's mechs as they're placed.
+    // With --hold-list-chassis, every mech chassis in the object file and its tree's folders (MechTreeFolders, as a
+    // briefing works a lance's mech out as it's placed), a line each to <out>/chassis.txt, to check against.
     if (!MCTest::Option("hold-list-chassis").has_value())
     {
         return;
     }
 
-    constexpr int32_t MechClass = 2;
     MCPacketFile objects;
     REQUIRE_EQ(objects.Open(GamePath(ObjectPath, ObjectPakName)), 0);
     std::string chassisLines;
@@ -6278,38 +6278,18 @@ TEST_CASE_ISOLATED(
 
     for (int32_t number = 1; number < objects.GetNumPackets(); ++number)
     {
-        MCFitIniFile packet;
+        const std::vector<std::filesystem::path> folders = MechTreeFolders(static_cast<uint32_t>(number));
 
-        if (objects.SeekPacket(number) != 0 || objects.GetPacketSize() == 0 ||
-            packet.Open(objects, static_cast<uint32_t>(objects.GetPacketSize())) != 0 ||
-            packet.SeekBlock("ObjectClass") != 0 || packet.Read<int32_t>("ObjectTypeNum").value_or(-1) != MechClass)
-        {
-            continue;
-        }
-
-        // The appearance its type would draw ("ObjectType"'s "Appearance"), read without making the type: a packet that
-        // won't make one would stop the game (Fatal).
-        const int32_t appearance =
-            packet.SeekBlock("ObjectType") == 0 ? packet.Read<int32_t>("Appearance").value_or(-1) : -1;
-        const auto tree = appearance >= 0 ? std::dynamic_pointer_cast<MCSpriteTree>(
-                                                AppearanceTypeList().GetAppearance(static_cast<uint32_t>(appearance)))
-                                          : nullptr;
-
-        if (tree == nullptr)
+        if (folders.empty())
         {
             continue;
         }
 
         std::string row = std::to_string(number);
 
-        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+        for (const std::filesystem::path& folder : folders)
         {
-            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
-            {
-                row +=
-                    ' ' +
-                    (MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber) / "0").generic_string();
-            }
+            row += ' ' + folder.generic_string();
         }
 
         chassisLines += row + '\n';
@@ -6337,6 +6317,7 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
         return;
     }
 
+    // --hold-list-chassis's check file, which the table leaves out: a mech's are worked out as it's picked.
     constexpr std::string_view ChassisFile = "chassis";
     constexpr size_t RowLength = 16;
     const std::filesystem::path folder = MCFileSystem::FromUtf8(*in);
@@ -6344,7 +6325,6 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
                                           ? MCFileSystem::FromUtf8(*MCTest::Option("hold-lists-out"))
                                           : folder / "MCHoldLists.h";
     std::map<std::string, std::vector<std::string>> missions;
-    std::map<uint32_t, std::vector<std::string>> chassis;
 
     for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(folder))
     {
@@ -6355,36 +6335,24 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
 
         std::string name = MCFileSystem::ToUtf8(entry.path().stem());
         std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        if (name == ChassisFile)
+        {
+            continue;
+        }
+
         std::ifstream file(entry.path());
 
         for (std::string line; std::getline(file, line);)
         {
-            if (line.empty())
-            {
-                continue;
-            }
-
-            if (name != ChassisFile)
+            if (!line.empty())
             {
                 missions[name].push_back(line);
-                continue;
-            }
-
-            // "<number> <folder> <folder>...".
-            std::istringstream row(line);
-            uint32_t number = 0;
-            REQUIRE(static_cast<bool>(row >> number));
-            std::vector<std::string>& folders = chassis[number];
-
-            for (std::string word; row >> word;)
-            {
-                folders.push_back(word);
             }
         }
     }
 
     REQUIRE(!missions.empty());
-    REQUIRE(!chassis.empty());
     std::vector<std::string> folders;
     std::unordered_map<std::string, size_t> indices;
     std::string lists;
@@ -6413,16 +6381,10 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
     };
 
     std::string missionRows;
-    std::string chassisRows;
 
     for (const auto& [name, lines] : missions)
     {
         missionRows += std::format("    {{\"{}\", {}}},\n", name, listOf("Mission_" + name, lines));
-    }
-
-    for (const auto& [number, lines] : chassis)
-    {
-        chassisRows += std::format("    {{{}, {}}},\n", number, listOf(std::format("Chassis_{}", number), lines));
     }
 
     REQUIRE(folders.size() <= std::numeric_limits<uint16_t>::max());
@@ -6437,23 +6399,18 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
         "#pragma once\n\n"
         "// Port-only (SPEC-memory.md's \"From the briefing\"): the HD pack's folders each mission's load hands the "
         "hold,\n"
-        "// which its briefing reads ahead (MCHdArt::BriefingFolders), and each mech chassis's, read as it's placed in "
-        "the\n"
-        "// lance (MCHdArt::ChassisFolders): worked out by loading each mission with mc_tests --hold-list and written "
-        "by\n"
+        "// which its briefing reads ahead (MCHdArt::BriefingFolders); a lance's mechs' are worked out as each is "
+        "picked\n"
+        "// (MechTreeFolders). Worked out by loading each mission with mc_tests --hold-list and written by\n"
         "// mc_tests --hold-lists-table (tests/HdPackTests.cpp). Don't edit it.\n\n"
         "#include <array>\n#include <cstdint>\n#include <span>\n#include <string_view>\n\n"
         "// clang-format off\n"
         "namespace MCHoldLists\n{{\n"
         "/// <summary>A mission (its file's name, lower case) and its folders, as indices into Folders.</summary>\n"
         "struct Mission\n{{\n    std::string_view Name;\n    std::span<const uint16_t> Folders;\n}};\n\n"
-        "/// <summary>A mech chassis (its packet in the object file) and its tree's folders, as indices into "
-        "Folders.</summary>\n"
-        "struct Chassis\n{{\n    uint32_t Number;\n    std::span<const uint16_t> Folders;\n}};\n\n"
         "inline constexpr std::array<std::string_view, {}> Folders{{{{\n{}}}}};\n\n{}\n"
-        "inline constexpr std::array<Mission, {}> Missions{{{{\n{}}}}};\n\n"
-        "inline constexpr std::array<Chassis, {}> Mechs{{{{\n{}}}}};\n}}\n\n// clang-format on\n",
-        folders.size(), names, lists, missions.size(), missionRows, chassis.size(), chassisRows);
-    std::cout << std::format("  {} missions, {} chassis, {} folders, to {}\n", missions.size(), chassis.size(),
-                             folders.size(), MCFileSystem::ToUtf8(out));
+        "inline constexpr std::array<Mission, {}> Missions{{{{\n{}}}}};\n}}\n\n// clang-format on\n",
+        folders.size(), names, lists, missions.size(), missionRows);
+    std::cout << std::format("  {} missions, {} folders, to {}\n", missions.size(), folders.size(),
+                             MCFileSystem::ToUtf8(out));
 }

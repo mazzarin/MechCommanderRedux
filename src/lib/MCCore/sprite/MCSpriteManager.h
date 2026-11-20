@@ -199,6 +199,16 @@ public:
     std::string PartFileName(MCMechPart part, bool zoomedOut) const;
 
     /// <summary>
+    /// Port-only: the name of <paramref name="part"/>'s part PAK, its 90-pixel one's with <paramref name="use90"/>
+    /// ("legs" or "legs90"): <see cref="PartFileName"/>'s outside a mission, where the 90-pixel PAKs are open exactly
+    /// when Use90PixelSprite is on.
+    /// </summary>
+    static std::string PartFileOf(MCMechPart part, bool use90);
+
+    /// <summary>Port-only: whether the 90-pixel part PAKs are open (Use90PixelSprite at the mission's load), all or none.</summary>
+    bool Uses90PixelParts() const;
+
+    /// <summary>
     /// Port-only: how many packets the PAK of <paramref name="part"/> of mech <paramref name="mechNum"/> holds (the one
     /// <see cref="GetMechShapeData"/> reads with <paramref name="zoomedOut"/>), opening it when first asked for; none when
     /// it can't be opened.

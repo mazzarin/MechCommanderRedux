@@ -1255,18 +1255,11 @@ namespace MCHdArt
     void KeepHoldList(std::string_view mission, std::span<const std::string> folders);
 
     /// <summary>
-    /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders of mech chassis <paramref name="chassis"/>'s
-    /// tree (its packet in the object file), from the list the program carries (sprite/MCHoldLists.h); none for one it
-    /// has no list for.
+    /// Port-only (SPEC-memory.md's "From the briefing"): a mech is in a player's lance: while a briefing's mission is
+    /// held (<see cref="StartBriefingHold"/>), the hold reads its tree's archives too, <paramref name="folders"/> (the
+    /// mech's, MechTreeFolders), and holds them until the mission ends.
     /// </summary>
-    std::vector<std::filesystem::path> ChassisFolders(uint32_t chassis);
-
-    /// <summary>
-    /// Port-only (SPEC-memory.md's "From the briefing"): a mech of chassis <paramref name="chassis"/> is in the player's
-    /// lance: while a briefing's mission is held (<see cref="StartBriefingHold"/>), the hold reads its tree's archives
-    /// too (<see cref="ChassisFolders"/>), and holds them until the mission ends.
-    /// </summary>
-    void HoldMechAhead(uint32_t chassis);
+    void HoldMechAhead(std::span<const std::filesystem::path> folders);
 
     /// <summary>Port-only: how many reads the hold has made (<see cref="StartHold"/>), for the tests.</summary>
     size_t HeldReads();

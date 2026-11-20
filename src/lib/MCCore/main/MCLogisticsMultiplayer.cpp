@@ -30,6 +30,7 @@
 #include "network/MCMultiPlayerHandlers.h"
 #include "object/MCMasterComponent.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCHdArt.h"
 
 namespace
 {
@@ -385,6 +386,10 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
         {
             mech->CalcStatus();
         }
+
+        // Port-only (SPEC-memory.md's manifest: every player's mechs): the other player's mech's HD art held from now,
+        // as this player's own are as they're placed.
+        MCHdArt::HoldMechAhead(mech->HdFolders);
     }
 
     part->CommanderID = commander;

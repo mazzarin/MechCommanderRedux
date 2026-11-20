@@ -35,18 +35,24 @@
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"
+#include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
+#include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "logistics/MCUnitLimits.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
+#include "object/MCBattleMech.h"
+#include "object/MCObjectType.h"
 #include "network/MCRoomEnd.h"
 #include "platform/MCFileSystem.h"
 #include "sound/MCSoundSystem.h"
 #include "gui/MCGuiGlobals.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCHoldLists.h"
+#include "sprite/MCMechActor.h"
+#include "sprite/MCSpriteTree.h"
 #include "sprite/MCSceneLights.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCInput.h"
@@ -529,12 +535,26 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     const std::shared_ptr<MCLogMech> second = std::static_pointer_cast<MCLogMech>(*other);
 
     // Two chassis with a folder each of their own (in neither the mission's list nor the other's), and in the pack an
-    // archive for each of those folders.
-    const std::vector<std::filesystem::path> missionFolders = MCHdArt::BriefingFolders(mission);
-    const auto ownFolder = [&missionFolders](uint32_t chassis, uint32_t otherChassis)
+    // archive for each of those folders: every mech chassis in the object file, its folders worked out as a picked
+    // mech's are (MechTreeFolders).
+    std::map<uint32_t, std::vector<std::filesystem::path>> chassisFolders;
+    MCPacketFile objects;
+    REQUIRE_EQ(objects.Open(GamePath(ObjectPath, ObjectPakName)), 0);
+
+    for (int32_t number = 1; number < objects.GetNumPackets(); ++number)
     {
-        const std::vector<std::filesystem::path> folders = MCHdArt::ChassisFolders(chassis);
-        const std::vector<std::filesystem::path> others = MCHdArt::ChassisFolders(otherChassis);
+        if (std::vector<std::filesystem::path> folders = MechTreeFolders(static_cast<uint32_t>(number));
+            !folders.empty())
+        {
+            chassisFolders.emplace(static_cast<uint32_t>(number), std::move(folders));
+        }
+    }
+
+    const std::vector<std::filesystem::path> missionFolders = MCHdArt::BriefingFolders(mission);
+    const auto ownFolder = [&](uint32_t chassis, uint32_t otherChassis)
+    {
+        const std::vector<std::filesystem::path>& folders = chassisFolders.at(chassis);
+        const std::vector<std::filesystem::path>& others = chassisFolders.at(otherChassis);
         const auto found = std::ranges::find_if(
             folders, [&](const std::filesystem::path& folder)
             { return !std::ranges::contains(missionFolders, folder) && !std::ranges::contains(others, folder); });
@@ -544,17 +564,18 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     std::filesystem::path firstFolder;
     std::filesystem::path secondFolder;
 
-    for (const MCHoldLists::Chassis& a : MCHoldLists::Mechs)
+    for (const uint32_t a : std::views::keys(chassisFolders))
     {
-        for (const MCHoldLists::Chassis& b : MCHoldLists::Mechs)
+        for (const uint32_t b : std::views::keys(chassisFolders))
         {
-            if (firstFolder.empty() && a.Number != b.Number && !ownFolder(a.Number, b.Number).empty() &&
-                !ownFolder(b.Number, a.Number).empty())
+            if (firstFolder.empty() && a != b && !ownFolder(a, b).empty() && !ownFolder(b, a).empty())
             {
-                first->Chassis = a.Number;
-                second->Chassis = b.Number;
-                firstFolder = ownFolder(a.Number, b.Number);
-                secondFolder = ownFolder(b.Number, a.Number);
+                first->Chassis = a;
+                first->HdFolders = chassisFolders.at(a);
+                second->Chassis = b;
+                second->HdFolders = chassisFolders.at(b);
+                firstFolder = ownFolder(a, b);
+                secondFolder = ownFolder(b, a);
             }
         }
     }
@@ -589,6 +610,64 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     Settle();
     CHECK_EQ(MCHdArt::HeldBytes(), before + stored);
     CHECK(MCHdArt::HoldsFor(mission));
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's manifest: the players' part, worked out as each mech is picked): a mech's HD folders
+/// worked out from its chassis with no mission loaded (MechTreeFolders, as a mech joining the force has them) are
+/// those its mission's load draws it from, for every mech in the campaign's first mission, player's and enemy's; and
+/// every stock mission names the sprite file the work-out reads (MechSpriteFile).
+/// </summary>
+TEST_CASE_ISOLATED("game: a picked mech's HD folders are worked out as its mission's load draws it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // Booted first: the missions' files lie in the game's archives.
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+
+    for (const MCHoldLists::Mission& listed : MCHoldLists::Missions)
+    {
+        MCTest::Scope scope{std::string(listed.Name)};
+        MCFitIniFile file;
+        REQUIRE_EQ(file.Open(GamePath(MissionPath, listed.Name, ".fit")), 0);
+        REQUIRE_EQ(file.SeekBlock("SpriteSystem"), 0);
+        CHECK(MCIEquals(file.Read<std::string>("SpriteFileName").value_or(""), MechSpriteFile));
+    }
+
+    const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+    REQUIRE(sprites != nullptr);
+    size_t mechs = 0;
+
+    for (const MCPart& part : Scenario()->Parts)
+    {
+        const auto object = std::dynamic_pointer_cast<MCGameObject>(part.Object.lock());
+
+        if (object == nullptr || object->ObjectClass != MCObjectClass::BattleMech)
+        {
+            continue;
+        }
+
+        const auto actor = std::static_pointer_cast<MCMechActor>(object->GetAppearance());
+        const auto tree = std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType());
+        REQUIRE(tree != nullptr);
+        const uint32_t chassis = static_cast<uint32_t>(object->GetObjectType()->ObjTypeNum);
+        MCTest::Scope scope{std::format("chassis {}", chassis)};
+        std::vector<std::filesystem::path> drawn = tree->HdFolders(sprites->Uses90PixelParts());
+
+        for (std::filesystem::path& folder : drawn)
+        {
+            folder /= "0";
+        }
+
+        CHECK(MechTreeFolders(chassis) == drawn);
+        ++mechs;
+    }
+
+    CHECK(mechs > 1);
 }
 
 namespace

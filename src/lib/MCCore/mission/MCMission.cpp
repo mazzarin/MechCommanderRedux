@@ -14,6 +14,7 @@
 #include "logistics/MCLogRows.h"
 #include "main/MCBenchmark.h"
 #include "main/MCGamePaths.h"
+#include "main/MCLogMechList.h"
 #include "main/MCTelemetry.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCIdleCheck.h"
@@ -188,7 +189,7 @@ namespace
             {
                 if (const MCFitResult<uint32_t> chassis = file.Read<uint32_t>("ObjectNumber"); chassis.has_value())
                 {
-                    MCHdArt::HoldMechAhead(*chassis);
+                    MCHdArt::HoldMechAhead(MechTreeFolders(*chassis));
                 }
             }
         }

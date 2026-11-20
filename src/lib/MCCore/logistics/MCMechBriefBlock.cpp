@@ -256,7 +256,7 @@ auto MCMechBriefBlock::PlaceInEmptySlot(int32_t lance, int32_t slot) const -> bo
         mech->Deployed = true;
         GlobalLog()->AssignedWarriorList->SetDeployed(mech->PilotIndex, true);
         // Port-only (SPEC-memory.md's "From the briefing"): its HD art read from now, behind the briefing.
-        MCHdArt::HoldMechAhead(mech->Chassis);
+        MCHdArt::HoldMechAhead(mech->HdFolders);
         return true;
     }
 
@@ -376,7 +376,7 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                         CurDeployTonnage = DeployTonnageWith(*Mech(), 1.0f);
                         Mech()->Deployed = true;
                         // Port-only (SPEC-memory.md's "From the briefing"): as PlaceInEmptySlot's.
-                        MCHdArt::HoldMechAhead(Mech()->Chassis);
+                        MCHdArt::HoldMechAhead(Mech()->HdFolders);
                     }
                 }
                 else
@@ -417,7 +417,7 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                         Mech()->Deployed = true;
                         GlobalLog()->AssignedWarriorList->SetDeployed(Mech()->PilotIndex, true);
                         // Port-only (SPEC-memory.md's "From the briefing"): as PlaceInEmptySlot's.
-                        MCHdArt::HoldMechAhead(Mech()->Chassis);
+                        MCHdArt::HoldMechAhead(Mech()->HdFolders);
                     }
                 }
                 else

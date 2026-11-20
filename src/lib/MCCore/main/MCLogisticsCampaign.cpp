@@ -944,7 +944,7 @@ auto MCLogistics::GetCurrentMission() -> void
     {
         if (std::shared_ptr<MCLogMech> mech; ForceMechList->GetMechInfo(index, mech) == 0 && mech->Deployed)
         {
-            MCHdArt::HoldMechAhead(mech->Chassis);
+            MCHdArt::HoldMechAhead(mech->HdFolders);
         }
     }
 

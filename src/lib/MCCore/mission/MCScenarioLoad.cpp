@@ -1561,12 +1561,9 @@ auto MCScenario::HoldList(std::string_view fitName) const -> MCHoldList
 
         std::set<std::string>& into = file.Read<bool>("PlayerPart").value_or(false) ? players : others;
 
-        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+        for (const std::filesystem::path& folder : tree->HdFolders(sprites->Uses90PixelParts()))
         {
-            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
-            {
-                into.insert(MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber).generic_string());
-            }
+            into.insert(folder.generic_string());
         }
     }
 

@@ -4445,9 +4445,19 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
 
     if (found == _SharpGlyphs.end())
     {
-        // Port-only: made ahead or the HD art pack's (platform/MCSharpPictures), else redrawn now.
+        // Port-only: made ahead or the HD art pack's (platform/MCSharpPictures), else redrawn now; the game's thread's
+        // time for it counted (SharpCounts::PutTime, and the redraw's RedrawnTime).
+        const auto start = std::chrono::steady_clock::now();
         const std::optional<MCSharpPictures::MCMadePicture> made = MCSharpPictures::Take(key, columns, rows);
-        const std::vector<uint8_t> redrawn = made.has_value() ? std::vector<uint8_t>{} : redraw();
+        std::vector<uint8_t> redrawn;
+
+        if (!made.has_value())
+        {
+            const auto redrawStart = std::chrono::steady_clock::now();
+            redrawn = redraw();
+            _SharpCounts.RedrawnTime += std::chrono::steady_clock::now() - redrawStart;
+        }
+
         const size_t bytes = made.has_value() ? made->RgbaBytes() : redrawn.size();
         const auto width = static_cast<uint32_t>(columns * MCSharpText::Scale);
         const auto height = static_cast<uint32_t>(rows * MCSharpText::Scale);
@@ -4488,6 +4498,7 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
         _SharpGlyphBytes += bytes;
         ++_FrameUploads.Pictures;
         _FrameUploads.PictureBytes += static_cast<int64_t>(bytes);
+        _SharpCounts.PutTime += std::chrono::steady_clock::now() - start;
     }
 
     return found->second;

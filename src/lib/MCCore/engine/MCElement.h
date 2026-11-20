@@ -53,4 +53,18 @@ public:
     /// shown where it is, not on the original's pixel grid. None: on the grid, as the original.
     /// </summary>
     std::optional<std::array<float, 2>> SubPixel;
+    /// SCRATCH PROBE (kept trees' measure): made in a standing tree's DrawAsSeen (MCTree, MCTreeBuilding).
+    bool ProbeTree = false;
+};
+
+/// SCRATCH PROBE (kept trees' measure): a tree's DrawAsSeen under way, and a tree's element being drawn.
+inline bool MCProbeTreeOpen = false;
+inline bool MCProbeTreeDrawing = false;
+
+struct MCProbeTreeScope
+{
+    MCProbeTreeScope() { MCProbeTreeOpen = true; }
+    ~MCProbeTreeScope() { MCProbeTreeOpen = false; }
+    MCProbeTreeScope(const MCProbeTreeScope&) = delete;
+    MCProbeTreeScope& operator=(const MCProbeTreeScope&) = delete;
 };

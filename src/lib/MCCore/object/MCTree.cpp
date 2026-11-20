@@ -297,6 +297,7 @@ auto MCTree::RenderAtEdge() -> void
 
 auto MCTree::DrawAsSeen() -> void
 {
+    const MCProbeTreeScope probeTree;
     // Hazed by how many corners of its vertex square the home team sees; drawn (with its shadow) when any is. (The
     // original also reads each corner's seen bit and drops it.)
     const int32_t numVisible = MCVertexCell::Of(BlockNumber, VertexNumber).VisibleCorners();

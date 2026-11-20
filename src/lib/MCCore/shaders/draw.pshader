@@ -776,7 +776,8 @@ float SmoothCoverage(Input input, float2 at, inout uint value)
 // and wherever the clip cuts it (its corner and source move together): so a draw's pixels do too, and the kept view's
 // moved pixels are the ones a frame drawing them draws. A window place exactly between two of the source's (a window
 // pixel two drawn pixels wide or tall puts every place a quarter from one) counts as a little past it, right and down,
-// as the float division the draws took before left it: so the B-spline's nearest pixel falls where it fell.
+// as the float division the draws took before mostly left it, where the place's float can hold the nudge (a source
+// place under 16 or so); past that the nudge rounds away. Either way a place's bits are the same wherever it's drawn.
 static const float2 SourceTieNudge = float2(1.0, 1.0) / 1048576.0;
 
 float2 SourcePlace(Input input, int2 target)

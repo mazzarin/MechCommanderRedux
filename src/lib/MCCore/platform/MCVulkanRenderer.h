@@ -466,11 +466,13 @@ public:
         int64_t Kept = 0;
         /// <summary>
         /// Port-only (SPEC-kept-forest.md): the frames whose ground and overlays were copied from the kept view, the
-        /// overlays' draws those frames left out, and the overlays' draws drawn into the view (whole or again).
+        /// overlays' draws those frames left out, the overlays' draws drawn into the view (whole or again, a draw once
+        /// for each part it's drawn in), and the drawn pixels the view was drawn again in.
         /// </summary>
         int64_t Viewed = 0;
         int64_t OverlaysLeft = 0;
         int64_t OverlaysDrawn = 0;
+        int64_t ViewPixels = 0;
     };
 
     /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>

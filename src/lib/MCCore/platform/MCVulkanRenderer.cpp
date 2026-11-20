@@ -8766,6 +8766,12 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             if (!record.Resize && record.Overlay && record.SurfaceIndex == surfaceIndex)
             {
+                // One reading the surface's copy would read the view's, made before the frame's: none kept.
+                if (record.ReadsCopy || record.Source == SourceKind::TargetCopy)
+                {
+                    return;
+                }
+
                 overlays.push_back(at);
             }
         }
@@ -8936,11 +8942,13 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             if (whole)
             {
                 drawPart(std::nullopt);
+                _GroundCounts.ViewPixels += static_cast<int64_t>(width) * height;
             }
 
             for (const MCRect& part : parts)
             {
                 drawPart(part);
+                _GroundCounts.ViewPixels += static_cast<int64_t>(part.X1 - part.X0 + 1) * (part.Y1 - part.Y0 + 1);
             }
 
             SDL_EndGPURenderPass(viewing);

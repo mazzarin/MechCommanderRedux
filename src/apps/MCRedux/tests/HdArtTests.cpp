@@ -10121,8 +10121,8 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
 
 namespace
 {
-    /// <summary>The world view's surface as the last frame sealed it (MCDrawnGrid): its drawn grid's offset.</summary>
-    std::optional<std::array<int32_t, 2>> WorldGridOffset(const MCVulkanRenderer& renderer)
+    /// <summary>The world view's surface as the last frame sealed it (MCDrawnGrid): its drawn size and grid.</summary>
+    std::optional<MCVulkanRenderer::SealedPlace> WorldSealedPlace(const MCVulkanRenderer& renderer)
     {
         const std::span<const MCUnderlay> underlays = MCRenderer::Underlays();
         const std::shared_ptr<const MCWindow> world = underlays.empty() ? nullptr : underlays[0].Source.lock();
@@ -10132,8 +10132,13 @@ namespace
             return std::nullopt;
         }
 
-        const std::optional<MCVulkanRenderer::SealedPlace> place =
-            renderer.SealedSize(MCVulkanRenderer::SurfaceKey(*world));
+        return renderer.SealedSize(MCVulkanRenderer::SurfaceKey(*world));
+    }
+
+    /// <summary>The world view's surface as the last frame sealed it: its drawn grid's offset.</summary>
+    std::optional<std::array<int32_t, 2>> WorldGridOffset(const MCVulkanRenderer& renderer)
+    {
+        const std::optional<MCVulkanRenderer::SealedPlace> place = WorldSealedPlace(renderer);
         return place.has_value() ? std::optional(place->Offset) : std::nullopt;
     }
 }
@@ -10248,6 +10253,8 @@ TEST_CASE_ISOLATED("game: the kept view's overlays show as a frame drawing them,
     constexpr std::array<Pan, 5> Pans = {Pan{2.0f, 0.0f}, Pan{0.0f, 3.0f}, Pan{-3.0f, 1.0f}, Pan{0.0f, 0.0f},
                                          Pan{1.0f, -2.0f}};
     constexpr int32_t FramesEach = 3;
+    // A view drawn again in more than a quarter of its pixels a frame, panning a few pixels, would be one drawn whole.
+    constexpr int64_t MostViewRedrawn = 4;
 
     if (!MCTestGame::Available())
     {
@@ -10351,12 +10358,20 @@ TEST_CASE_ISOLATED("game: the kept view's overlays show as a frame drawing them,
     }
 
     const MCVulkanRenderer::GroundCounts after = renderer->KeptGroundCounts();
+    const std::optional<MCVulkanRenderer::SealedPlace> place = WorldSealedPlace(*renderer);
+    REQUIRE(place.has_value());
+    // The view drawn again only where it changed: the frames' worth of whole views it was drawn again in.
+    const int64_t viewArea = static_cast<int64_t>(place->Width) * place->Height;
+    const int64_t viewPixels = after.ViewPixels - before.ViewPixels;
     std::cout << std::format(
         "  {} frames: the ground {} shifted, {} kept, {} whole, {} direct; the kept view copied {} "
-        "times, {} overlay draws left out, {} drawn into it; {} pixels differ\n",
+        "times, {} overlay draws left out, {} drawn into it, {:.1f}% of its pixels a frame drawn again; {} pixels "
+        "differ\n",
         frames, after.Shifted - before.Shifted, after.Kept - before.Kept, after.Whole - before.Whole,
         after.Direct - before.Direct, after.Viewed - before.Viewed, after.OverlaysLeft - before.OverlaysLeft,
-        after.OverlaysDrawn - before.OverlaysDrawn, differing);
+        after.OverlaysDrawn - before.OverlaysDrawn,
+        100.0 * static_cast<double>(viewPixels) / static_cast<double>(std::max<int64_t>(viewArea * frames, 1)),
+        differing);
 
     if (differing != 0)
     {
@@ -10372,6 +10387,8 @@ TEST_CASE_ISOLATED("game: the kept view's overlays show as a frame drawing them,
     CHECK_EQ(after.Direct - before.Direct, 0);
     CHECK_EQ(after.Viewed - before.Viewed, frames);
     CHECK(after.OverlaysLeft - before.OverlaysLeft > 0);
+    CHECK(viewArea > 0);
+    CHECK(MostViewRedrawn * viewPixels < viewArea * frames);
     CHECK_EQ(differing, 0);
     std::filesystem::remove_all(scratch);
 }

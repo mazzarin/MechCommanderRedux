@@ -1240,6 +1240,9 @@ auto MCMission::CloseResultsScreen() -> void
     if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
     {
         MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+        // Port-only (SPEC-memory.md's "From the briefing": between missions): the next mission's hold from now, as its
+        // briefing would start it: a loss's replay keeps what's held, a win's next lets go of the last mission's first.
+        MCHdArt::StartBriefingHold(Scenarios[*briefed], MCHdArt::BriefingFolders(Scenarios[*briefed]));
     }
 
     FadeOutWhile(back);
@@ -1319,8 +1322,9 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
         MCGameContext::Current().SetScenario(nullptr);
     }
 
-    // Port-only: the mission's held art let go of (MCHdArt::StartHold).
-    MCHdArt::LetGoHold();
+    // Port-only (SPEC-memory.md's "From the briefing": between missions): the mission's held art kept past its end, for
+    // the next mission known to keep what it lists (MCHdArt::StartBriefingHold lets go of another mission's): a loss
+    // replays the same mission, a match's likeliest next is its rematch.
 
     // Port-only: each way back to logistics is returned to be done by the caller (EndScenario at once).
     if (ScenarioResult > 3)

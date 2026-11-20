@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -78,4 +79,65 @@ namespace MCFilesAhead
     /// <summary>For the tests: the opens that took a file read ahead since the game started, and the files held now.</summary>
     size_t TakenCount();
     size_t HeldCount();
+
+    /// <summary>
+    /// Port-only (the workspace's SPEC-memory.md, "From the briefing"): a piece of a file in the game folder (the
+    /// install, the release's own copy in it) that a mission's load read from the disk: the file's path from the game
+    /// folder (<c>/</c> between its parts, as spelled on the disk) and where its bytes lie.
+    /// </summary>
+    struct MCFilePiece
+    {
+        std::string File;
+        uint64_t Offset = 0;
+        uint64_t Bytes = 0;
+
+        bool operator==(const MCFilePiece&) const = default;
+    };
+
+    /// <summary>
+    /// From now on, until <see cref="StopNotingPieces"/>, notes the pieces of the game folder's files the calling
+    /// thread reads from the disk (MCDiskFile says so through <see cref="ReadFromDisk"/>), the ones before forgotten.
+    /// </summary>
+    void StartNotingPieces();
+
+    /// <summary>Stops <see cref="StartNotingPieces"/>'s noting; what was noted stays.</summary>
+    void StopNotingPieces();
+
+    /// <summary>
+    /// MCDiskFile's word that it read <paramref name="bytes"/> at <paramref name="offset"/> of <paramref name="path"/>
+    /// from the disk: noted while the calling thread notes pieces.
+    /// </summary>
+    void ReadFromDisk(const std::filesystem::path& path, uint64_t offset, uint64_t bytes);
+
+    /// <summary>
+    /// The pieces noted (see <see cref="StartNotingPieces"/>) of the game folder's files, each file's in order, those
+    /// that meet or lie within MCDiskFile::RunGapBytes of each other joined; the files by name.
+    /// </summary>
+    std::vector<MCFilePiece> NotedPieces();
+
+    /// <summary>
+    /// Starts reading <paramref name="pieces"/> of the game folder's files on a thread of its own, one read at a time of
+    /// at most MCDiskFile::RunMostBytes, each file's in order, into the system's cache of files, keeping nothing: a
+    /// load's reads of them then come from memory. The reads of a call before are stopped first. A file not there, or
+    /// shorter, is read as far as it goes: the pieces say only what to read ahead, never what's in it.
+    /// </summary>
+    void ReadPiecesAhead(std::vector<MCFilePiece> pieces);
+
+    /// <summary>Stops <see cref="ReadPiecesAhead"/>'s reads still running (the system keeps what they read).</summary>
+    void ForgetPieces();
+
+    /// <summary>For the tests: the bytes <see cref="ReadPiecesAhead"/>'s reads have read since the game started.</summary>
+    uint64_t PiecesReadBytes();
+
+    /// <summary>
+    /// <paramref name="pieces"/> as a list's lines (a mission's learned list, the tools'): a piece a line, its file, offset
+    /// and bytes apart by tabs.
+    /// </summary>
+    std::string PiecesText(const std::vector<MCFilePiece>& pieces);
+
+    /// <summary>
+    /// The pieces <paramref name="text"/>'s lines name (<see cref="PiecesText"/>'s), leaving out a line that names no
+    /// file under the game folder (absolute, or climbing out of it) or no bytes.
+    /// </summary>
+    std::vector<MCFilePiece> PiecesOfText(std::string_view text);
 }

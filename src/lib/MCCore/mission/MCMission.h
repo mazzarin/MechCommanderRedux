@@ -233,6 +233,13 @@ void RunMission();
 /// </summary>
 void LoadComponentListIfSwitched();
 
+/// <summary>
+/// Port-only (SPEC-memory.md's "From the briefing"): the next mission is known, <paramref name="mission"/> (its
+/// <c>.fit</c>'s name): its hold starts from its list (MCHdArt::StartBriefingHold of MCHdArt::BriefingFolders), the
+/// ground's relief maps beside its tiles while they're drawn (MCSceneLights::ReliefMapsOn).
+/// </summary>
+void StartMissionHold(const std::string& mission);
+
 /// <summary>The game segment a demo/segment build starts at; 0 for the normal campaign.</summary>
 extern int32_t GlobalGameSegment;
 /// <summary>

@@ -688,13 +688,40 @@ MCFastFile::HoldPiece MCFastFile::HoldPieceAt(uint32_t piece) const
         const Stream& stream = _Streams.at(piece);
         return HoldPiece{.At = stream.At,
                          .Stored = stream.Stored,
-                         .Kept = stream.Kind == StreamKind::Packet || stream.Kind == StreamKind::Heads};
+                         .Kept = stream.Kind == StreamKind::Packet || stream.Kind == StreamKind::Heads,
+                         .Unpacked = stream.Unpacked};
     }
 
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(_ByOffset.at(piece)));
     return HoldPiece{.At = static_cast<uint64_t>(entry.Offset),
                      .Stored = static_cast<uint32_t>(std::max(entry.Size, 0)),
-                     .Kept = true};
+                     .Kept = true,
+                     .Unpacked = static_cast<uint32_t>(std::max(entry.RealSize, 0))};
+}
+
+std::optional<uint32_t> MCFastFile::PieceOf(int32_t index) const
+{
+    if (index < 0)
+    {
+        return std::nullopt;
+    }
+
+    if (_Version2)
+    {
+        return static_cast<size_t>(index) < _Placed.size() ? std::optional(_Placed[static_cast<size_t>(index)].Stream)
+                                                           : std::nullopt;
+    }
+
+    if (static_cast<size_t>(index) >= _Entries.size())
+    {
+        return std::nullopt;
+    }
+
+    // The first piece at its offset: the longest of those starting there (_ByOffset's order), which covers its bytes.
+    const int32_t offset = _Entries[static_cast<size_t>(index)].Offset;
+    const auto at = std::ranges::lower_bound(_ByOffset, offset, {}, [this](int32_t entry)
+                                             { return _Entries[static_cast<size_t>(entry)].Offset; });
+    return static_cast<uint32_t>(at - _ByOffset.begin());
 }
 
 bool MCFastFile::HoldPieces(uint32_t first, uint32_t end, uint64_t start, std::vector<uint8_t>&& run) const

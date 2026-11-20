@@ -111,8 +111,12 @@ namespace MCTest
     class ExpectAssert
     {
     public:
+        /// <summary>A count for asserts that may fail any number of times, none included (a tool's load of a file
+        /// that leaves out blocks the game asserts on).</summary>
+        static constexpr int32_t AnyCount = -1;
+
         /// <param name="text">What the report holds (ignoring case), e.g. the assert's message.</param>
-        /// <param name="count">How many such asserts must fail while it is alive.</param>
+        /// <param name="count">How many such asserts must fail while it is alive, or <see cref="AnyCount"/>.</param>
         /// <param name="where">Where it was opened, for the failure; callers leave it out.</param>
         ExpectAssert(std::string_view text, int32_t count,
                      const std::source_location& where = std::source_location::current());

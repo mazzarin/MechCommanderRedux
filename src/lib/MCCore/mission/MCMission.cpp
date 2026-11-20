@@ -61,6 +61,7 @@
 #include "object/MCObjectTypeManager.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "terrain/MCTacticalMap.h"
 #include "vfx/MCVfxFunctions.h"
 #include "platform/MCFileSystem.h"
@@ -212,7 +213,7 @@ namespace
         if (!started.has_value())
         {
             started = Clock::now();
-            MCHdArt::StartBriefingHold(scenarioName, MCHdArt::BriefingFolders(scenarioName));
+            StartMissionHold(scenarioName);
             HoldPlayersMechs(scenarioName);
             MCFrameLog::Note(std::format("briefing: the hold starts, {} s before the load", TestBriefingSeconds));
             MCHdArt::TraceNote("briefing: the hold starts");
@@ -355,6 +356,12 @@ auto MCMission::ReadLists(MCFitIniFile& file, bool campaign, bool readInDemo) ->
     }
 
     return ReadNameList(file, "Scenario", numScenarios, Scenarios);
+}
+
+auto StartMissionHold(const std::string& mission) -> void
+{
+    MCHdArt::StartBriefingHold(mission, MCHdArt::BriefingFolders(mission), MCSceneLights::ReliefMapsOn());
+    MCFilesAhead::ReadPiecesAhead(MCHdArt::MissionFilePieces(mission));
 }
 
 namespace
@@ -1014,18 +1021,35 @@ auto MCMission::StartScenario(std::string_view name) -> void
     // Port: the scenario's windows are made at the window's size.
     MCFollowWindowSize();
 
-    if (const int32_t result = Scenario()->Load(scenarioName); result != 0)
     {
-        Fatal(result, " Couldnt init scenario ");
+        // Port-only (SPEC-memory.md's "From the briefing"): the pieces of the game folder's files this load reads.
+        struct MCNotePieces
+        {
+            MCNotePieces() { MCFilesAhead::StartNotingPieces(); }
+            ~MCNotePieces() { MCFilesAhead::StopNotingPieces(); }
+            MCNotePieces(const MCNotePieces&) = delete;
+            MCNotePieces& operator=(const MCNotePieces&) = delete;
+        };
+
+        const MCNotePieces noting;
+
+        if (const int32_t result = Scenario()->Load(scenarioName); result != 0)
+        {
+            Fatal(result, " Couldnt init scenario ");
+        }
     }
 
     // Port-only (SPEC-memory.md's "The mission's manifest"): what this load handed the hold, kept as the mission's
     // list for its next briefing, so a mission the program has no list for (a mod's, a multiplayer map, one made in the
-    // editor) is held from its second play on.
+    // editor) is held from its second play on; and the pieces of the game's files it read, which its briefing reads
+    // ahead from then on (what's still being read ahead of this load is of no more use).
     if (MCHdArt::NumberedFolders())
     {
         MCHdArt::KeepHoldList(missionName, Scenario()->HoldList(scenarioName).Folders);
     }
+
+    MCFilesAhead::ForgetPieces();
+    MCHdArt::KeepFilePieces(missionName, MCFilesAhead::NotedPieces());
 
     StartInterface();
     LoadWindowStatus();
@@ -1244,7 +1268,7 @@ auto MCMission::CloseResultsScreen() -> void
         MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
         // Port-only (SPEC-memory.md's "From the briefing": between missions): the next mission's hold from now, as its
         // briefing would start it: a loss's replay keeps what's held, a win's next lets go of the last mission's first.
-        MCHdArt::StartBriefingHold(Scenarios[*briefed], MCHdArt::BriefingFolders(Scenarios[*briefed]));
+        StartMissionHold(Scenarios[*briefed]);
     }
 
     // Port-only (SPEC-first-use.md's "Between missions"): the screens' whole set of HD pictures read ahead from the click

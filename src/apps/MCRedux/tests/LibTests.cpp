@@ -1722,6 +1722,99 @@ TEST_CASE(
     CHECK(std::ranges::find(noted, loose) == noted.end());
 }
 
+namespace
+{
+    /// <summary>The bytes of each read a test makes of a file, and how far apart pieces lie that one read joins or not.</summary>
+    constexpr size_t PieceTestBytes = 4096;
+    constexpr uint64_t JoinedGap = MCDiskFile::RunGapBytes / 2;
+    constexpr uint64_t FarAt = 1024u * 1024u;
+    /// <summary>How long a test waits for the pieces read ahead, a millisecond at a time.</summary>
+    constexpr int32_t PieceWaitMs = 10000;
+
+    /// <summary>Whether the pieces' reads ahead read <paramref name="bytes"/> past <paramref name="from"/>'s count in time.</summary>
+    bool PiecesRead(uint64_t from, uint64_t bytes)
+    {
+        for (int32_t waited = 0; waited < PieceWaitMs && MCFilesAhead::PiecesReadBytes() - from < bytes; ++waited)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        return MCFilesAhead::PiecesReadBytes() - from >= bytes;
+    }
+}
+
+TEST_CASE("game: the pieces of the game folder's files a thread reads from the disk are noted, joined, listed and read "
+          "ahead")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // A loose file of the game folder's at least a far read long, by its spelling on the disk.
+    const std::filesystem::path root = MCFileSystem::GameRoot();
+    std::optional<std::filesystem::path> found;
+
+    for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(root))
+    {
+        if (entry.is_regular_file() && entry.file_size() > FarAt * 2)
+        {
+            found = entry.path();
+            break;
+        }
+    }
+
+    REQUIRE(found.has_value());
+    std::string name = MCFileSystem::ToUtf8(found->lexically_relative(root));
+    std::ranges::replace(name, '\\', '/');
+    const uint64_t length = std::filesystem::file_size(*found);
+    std::optional<MCDiskFile> file = MCDiskFile::Open(*found, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+    REQUIRE(file.has_value());
+    std::vector<uint8_t> bytes(PieceTestBytes);
+
+    // A file outside the game folder (a test's own, in the system's temporary folder), read too: not one of the game
+    // folder's.
+    const std::filesystem::path outside = std::filesystem::temp_directory_path() / "pieces-outside.bin";
+    std::ofstream(outside, std::ios::binary) << std::string(PieceTestBytes, 'x');
+    std::optional<MCDiskFile> other = MCDiskFile::Open(outside, MCDiskFileMode::Read, MCDiskFileReads::Direct);
+    REQUIRE(other.has_value());
+
+    MCFilesAhead::StartNotingPieces();
+    file->ReadAt(0, bytes);
+    file->ReadAt(static_cast<uint32_t>(PieceTestBytes + JoinedGap), bytes);
+    file->ReadAt(static_cast<uint32_t>(FarAt), bytes);
+    other->ReadAt(0, bytes);
+
+    // Another thread's reads are its own.
+    std::thread([&] { MCDiskFile::Open(*found, MCDiskFileMode::Read, MCDiskFileReads::Direct)->ReadAt(0, bytes); })
+        .join();
+    MCFilesAhead::StopNotingPieces();
+    file->ReadAt(static_cast<uint32_t>(FarAt * 2), bytes);
+
+    const std::vector<MCFilesAhead::MCFilePiece> noted = MCFilesAhead::NotedPieces();
+    const MCTest::Scope listed(MCFilesAhead::PiecesText(noted));
+    REQUIRE_EQ(noted.size(), 2u);
+    const MCFilesAhead::MCFilePiece joined{name, 0, PieceTestBytes * 2 + JoinedGap};
+    const MCFilesAhead::MCFilePiece far{name, FarAt, PieceTestBytes};
+    CHECK(noted[0] == joined);
+    CHECK(noted[1] == far);
+
+    // As a list's lines and back; a line naming no file under the game folder, or no bytes, left out.
+    CHECK(MCFilesAhead::PiecesOfText(MCFilesAhead::PiecesText(noted)) == noted);
+    CHECK(MCFilesAhead::PiecesOfText("/etc/hosts\t0\t10\n../up\t0\t10\nnone\t0\t0\nshort\t1\nbad\t1x\t2\n").empty());
+
+    // Read ahead whole, and a piece past the file's end as far as it goes.
+    std::vector<MCFilesAhead::MCFilePiece> ahead = noted;
+    ahead.push_back({name, length - PieceTestBytes / 2, PieceTestBytes});
+    const uint64_t from = MCFilesAhead::PiecesReadBytes();
+    MCFilesAhead::ReadPiecesAhead(ahead);
+    CHECK(PiecesRead(from, PieceTestBytes * 3 + JoinedGap + PieceTestBytes / 2));
+    MCFilesAhead::ForgetPieces();
+    CHECK_EQ(MCFilesAhead::PiecesReadBytes() - from, PieceTestBytes * 3 + JoinedGap + PieceTestBytes / 2);
+    other.reset();
+    std::filesystem::remove(outside);
+}
+
 TEST_CASE("game: packet files open and read")
 {
     if (!MCTestGame::Available())

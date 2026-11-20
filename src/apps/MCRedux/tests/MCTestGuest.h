@@ -5,8 +5,12 @@
 #include "TestGame.h"
 #include "linkup/MCLinkupMessages.h"
 #include "linkup/MCSessionManager.h"
+#include "gui/MCGuiEvent.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCGameList.h"
+#include "logistics/MCLogTextObject.h"
 #include "logistics/MCSessionScreen.h"
+#include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
@@ -845,6 +849,52 @@ namespace MCTestGuest
     inline bool RoomShowsReady(uint32_t id)
     {
         return RoomShows(id) && GlobalLog()->SessionScreen->ShownWithGameUp(id);
+    }
+
+    /// <summary>The LAN screen's player name entry and its game list (lanscreen.fit's elements).</summary>
+    inline constexpr int32_t LanPlayerName = 4;
+    inline constexpr int32_t LanGames = 2;
+
+    /// <summary>Whether <paramref name="screen"/> is logistics' screen now.</summary>
+    template <class Screen> bool OnScreen(const Screen& screen)
+    {
+        return GlobalLog()->CurrentScreen() == screen;
+    }
+
+    /// <summary>Whether this game is in a session.</summary>
+    inline bool InSession()
+    {
+        return MultiPlayer() != nullptr && MultiPlayer()->SessionManager->CurrentSession() != nullptr;
+    }
+
+    /// <summary>
+    /// From the LAN games, joins the room the test's host holds on <paramref name="port"/> as <paramref name="name"/>,
+    /// as a player picking it from the list does: the room (the session screen) opens.
+    /// </summary>
+    inline void JoinFromLan(std::string_view port, std::string_view name)
+    {
+        REQUIRE(OnScreen(GlobalLog()->LanScreen));
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+        manager.ConnectTcp(std::format("127.0.0.1:{}", port));
+        MCSplashScreen& lan = *GlobalLog()->LanScreen;
+        lan.Element<MCLogTextObject>(LanPlayerName)->SetStringBuffer(name);
+        const auto games = lan.Element<MCGameList>(LanGames);
+
+        // The list's refresh (its timer's), until the room is listed.
+        REQUIRE(SettleUntil(
+            [&]
+            {
+                MCGuiEvent refresh;
+                refresh.Clear();
+                refresh.Type = MCGuiEventType::Timer;
+                games->HandleEvent(refresh);
+                return games->NumSessions() > 0;
+            }));
+        games->SelectedSession = 0;
+        games->SelectedGuid = games->Sessions.front();
+        JoinGame();
+        REQUIRE(SettleUntil([] { return OnScreen(GlobalLog()->SessionScreen) && InSession(); }));
+        Settle();
     }
 
     /// <summary>

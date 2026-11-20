@@ -521,6 +521,8 @@
     <ClCompile Include="terrain\MCVideoWindow.cpp" />
     <ClCompile Include="ui\MCRmlArt.cpp" />
     <ClCompile Include="ui\MCRmlFonts.cpp" />
+    <ClCompile Include="ui\MCRmlFrame.cpp" />
+    <ClCompile Include="ui\MCRmlMechLab.cpp" />
     <ClCompile Include="ui\MCRmlMenus.cpp" />
     <ClCompile Include="ui\MCRmlRecorder.cpp" />
     <ClCompile Include="ui\MCRmlSystem.cpp" />
@@ -1034,6 +1036,8 @@
     <ClInclude Include="terrain\MCVideoWindow.h" />
     <ClInclude Include="ui\MCRmlArt.h" />
     <ClInclude Include="ui\MCRmlFonts.h" />
+    <ClInclude Include="ui\MCRmlFrame.h" />
+    <ClInclude Include="ui\MCRmlMechLab.h" />
     <ClInclude Include="ui\MCRmlMenus.h" />
     <ClInclude Include="ui\MCRmlRecorder.h" />
     <ClInclude Include="ui\MCRmlSystem.h" />

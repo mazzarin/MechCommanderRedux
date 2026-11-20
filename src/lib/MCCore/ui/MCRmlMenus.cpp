@@ -3,12 +3,14 @@
 #include "platform/MCUtf8Path.h"
 #include "ui/MCRmlArt.h"
 #include "ui/MCRmlFonts.h"
+#include "ui/MCRmlFrame.h"
 #include "ui/MCRmlRecorder.h"
 #include "ui/MCRmlSystem.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/Input.h>
 
 namespace
@@ -126,7 +128,7 @@ std::expected<std::unique_ptr<MCRmlMenus>, std::string> MCRmlMenus::Create(const
     made._System = std::make_unique<MCRmlSystem>();
     made._Files = std::make_unique<MCRmlFiles>(options.Folder.empty() ? MCRmlFiles::AppFolder() : options.Folder);
     made._Recorder =
-        std::make_unique<MCRmlRecorder>([&made](std::string_view source) { return MCRmlArt::Load(source, made._Hd); });
+        std::make_unique<MCRmlRecorder>([&made](std::string_view source) { return made.LoadPicture(source); });
     made._Fonts = std::make_unique<MCRmlFonts>(*colors, options.Hd);
     Rml::SetSystemInterface(made._System.get());
     Rml::SetFileInterface(made._Files.get());
@@ -140,6 +142,9 @@ std::expected<std::unique_ptr<MCRmlMenus>, std::string> MCRmlMenus::Create(const
 
     made._Started = true;
     Running = true;
+    // RmlUi's factory is made by Initialise: our decorator joins its own after.
+    made._Frames = std::make_unique<MCRmlFrameInstancer>();
+    Rml::Factory::RegisterDecoratorInstancer(MCRmlFrameInstancer::Name, made._Frames.get());
     made._Width = std::max(options.Width, 1);
     made._Height = std::max(options.Height, 1);
     made._Context = Rml::CreateContext(ContextName, Rml::Vector2i(made._Width, made._Height));
@@ -182,6 +187,39 @@ std::expected<void, std::string> MCRmlMenus::Show(std::string_view path)
 MCOptionalRef<Rml::ElementDocument> MCRmlMenus::Document() const
 {
     return _Document != nullptr ? MCOptionalRef<Rml::ElementDocument>(*_Document) : std::nullopt;
+}
+
+void MCRmlMenus::Close()
+{
+    if (_Document != nullptr)
+    {
+        _Document->Close();
+        _Document = nullptr;
+    }
+}
+
+void MCRmlMenus::SetPictures(std::string scheme, MCRmlRecorder::MCLoader loader)
+{
+    if (loader == nullptr)
+    {
+        _Pictures.erase(scheme);
+        return;
+    }
+
+    _Pictures.insert_or_assign(std::move(scheme), std::move(loader));
+}
+
+std::expected<MCRmlRecorder::MCLoaded, std::string> MCRmlMenus::LoadPicture(std::string_view source) const
+{
+    for (const auto& [scheme, loader] : _Pictures)
+    {
+        if (source.starts_with(scheme))
+        {
+            return loader(source);
+        }
+    }
+
+    return MCRmlArt::Load(source, _Hd);
 }
 
 void MCRmlMenus::SetWindow(int32_t width, int32_t height)

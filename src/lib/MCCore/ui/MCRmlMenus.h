@@ -2,6 +2,7 @@
 
 #include "lib/MCOptionalRef.h"
 #include "platform/MCUiDraws.h"
+#include "ui/MCRmlRecorder.h"
 
 namespace Rml
 {
@@ -11,6 +12,7 @@ namespace Rml
 
 class MCRmlFiles;
 class MCRmlFonts;
+class MCRmlFrameInstancer;
 class MCRmlRecorder;
 class MCRmlSystem;
 
@@ -72,6 +74,16 @@ public:
     /// <summary>The document shown (none before <see cref="Show"/>).</summary>
     MCOptionalRef<Rml::ElementDocument> Document() const;
 
+    /// <summary>Closes the document shown, if any (RmlUi lets go of it at the next <see cref="Frame"/>).</summary>
+    void Close();
+
+    /// <summary>
+    /// Pictures whose source starts with <paramref name="scheme"/> (as <c>diagram:</c>) are made by
+    /// <paramref name="loader"/> rather than read from the game's art (<c>art:</c>, ui/MCRmlArt): a screen's pictures
+    /// drawn from the game's state. An empty loader takes the scheme away.
+    /// </summary>
+    void SetPictures(std::string scheme, MCRmlRecorder::MCLoader loader);
+
     /// <summary>Lays the context out again for a window of <paramref name="width"/> x <paramref name="height"/> pixels.</summary>
     void SetWindow(int32_t width, int32_t height);
 
@@ -104,11 +116,18 @@ private:
     /// <summary>Shuts RmlUi down, the context with it, before the interfaces go.</summary>
     void Shutdown();
 
+    /// <summary>The picture <paramref name="source"/> names: a scheme's of <see cref="SetPictures"/>, else the art's.</summary>
+    std::expected<MCRmlRecorder::MCLoaded, std::string> LoadPicture(std::string_view source) const;
+
     // The interfaces outlive RmlUi (it is shut down first, in the destructor).
     std::unique_ptr<MCRmlSystem> _System;
     std::unique_ptr<MCRmlFiles> _Files;
     std::unique_ptr<MCRmlRecorder> _Recorder;
     std::unique_ptr<MCRmlFonts> _Fonts;
+    /// <summary>The frame-box decorator's instancer (ui/MCRmlFrame), registered with RmlUi while it runs.</summary>
+    std::unique_ptr<MCRmlFrameInstancer> _Frames;
+    /// <summary>The picture makers of <see cref="SetPictures"/>, by scheme.</summary>
+    std::map<std::string, MCRmlRecorder::MCLoader, std::less<>> _Pictures;
     bool _Hd = false;
     bool _Started = false;
     int32_t _Width = 0;

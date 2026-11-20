@@ -34,7 +34,8 @@ body
     right: 8dp;
     bottom: 8dp;
     padding: 10dp;
-    decorator: tiled-box(frame-tl, frame-t, frame-tr, frame-l, frame-c, frame-r, frame-bl, frame-b, frame-br);
+    /* The frame cut from MFDSWN01: its corners whole, its edges and centre repeated (our frame-box, ui/MCRmlFrame). */
+    decorator: frame-box(frame-tl, frame-t, frame-tr, frame-l, frame-c, frame-r, frame-bl, frame-b, frame-br);
 }
 
 #title

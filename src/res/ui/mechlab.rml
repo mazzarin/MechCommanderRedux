@@ -1,0 +1,67 @@
+<rml>
+<head>
+    <title>MECH BAY</title>
+    <link type="text/rcss" href="mechlab.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "The screens"): the 'MECH BAY's mech lab, a first take on RmlUi (ui/MCRmlMechLab). -->
+<body data-model="mechlab">
+    <div id="header">
+        <div id="title">'MECH BAY</div>
+        <div id="points">{{points}}</div>
+    </div>
+    <div id="main">
+        <div id="cards">
+            <div class="card" data-for="card : mechs" data-class-picked="card.picked" data-event-click="pick(card.slot)">
+                <img class="plate" data-attr-src="card.plate"/>
+                <div class="tons">{{card.tons}}</div>
+                <div class="pilot">{{card.pilot}}</div>
+            </div>
+        </div>
+        <div id="side">
+            <div id="bay" data-if="picked">
+                <div id="lab" class="zone">
+                    <img id="plate" data-attr-src="plate"/>
+                    <div id="tons">{{tons}}</div>
+                    <div id="callsign">{{callsign}}</div>
+                    <div id="rank">{{rank}}</div>
+                    <img id="diagram" data-attr-src="diagram"/>
+                    <img id="refit" data-attr-src="refit_button"/>
+                    <img id="repair" data-attr-src="repair_button"/>
+                    <img id="armor-knob" class="knob" src="art:logart/lsrupm05" data-style-left="armor_knob + 'dp'"/>
+                    <img id="internal-knob" class="knob" src="art:logart/lsrupm05" data-style-left="internal_knob + 'dp'"/>
+                    <img id="engine-knob" class="knob" src="art:logart/lsrupm05" data-style-left="engine_knob + 'dp'"/>
+                    <div id="load" data-style-width="load + 'dp'"></div>
+                    <div id="payload">
+                        <div class="line" data-for="line : payload" data-class-heading="line.heading"
+                             data-class-damaged="line.damaged" data-attr-master="line.master" data-attr-copy="line.copy">{{line.text}}</div>
+                    </div>
+                </div>
+                <div id="figures">
+                    <div class="column">
+                        <div class="figure"><div class="name">WEIGHT</div><div class="value">{{weight}}</div></div>
+                        <div class="figure"><div class="name">PAYLOAD</div><div class="value">{{payload_weight}}</div></div>
+                        <div class="figure"><div class="name">HEAT</div><div class="value">{{heat}}</div></div>
+                        <div class="figure"><div class="name">REPAIR ALL</div><div class="value">{{repair}}</div></div>
+                    </div>
+                    <div class="column">
+                        <div class="figure"><div class="name">ARMOR</div><div class="value">{{armor}}</div></div>
+                        <div class="figure"><div class="name">INTERNAL</div><div class="value">{{internal}}</div></div>
+                        <div class="figure"><div class="name">RATING</div><div class="value">{{rating}}</div></div>
+                        <div class="figure"><div class="name">REFIT ALL</div><div class="value">{{refit}}</div></div>
+                    </div>
+                </div>
+            </div>
+            <div id="spares" class="zone">
+                <div class="spare" data-for="spare : spares" data-class-short="spare.range == 0"
+                     data-class-medium="spare.range == 1" data-class-long="spare.range == 2"
+                     data-class-greyed="!spare.mountable" data-attr-master="spare.master">
+                    <img class="icon" data-attr-src="spare.icon"/>
+                    <div class="name">{{spare.name}}</div>
+                    <div class="weight">{{spare.weight}}</div>
+                    <div class="count">{{spare.count}}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

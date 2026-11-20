@@ -1448,6 +1448,12 @@
     <ClCompile Include="ui\MCRmlFonts.cpp">
       <Filter>ui</Filter>
     </ClCompile>
+    <ClCompile Include="ui\MCRmlFrame.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlMechLab.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
     <ClCompile Include="ui\MCRmlMenus.cpp">
       <Filter>ui</Filter>
     </ClCompile>
@@ -2943,6 +2949,12 @@
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlFonts.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlFrame.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlMechLab.h">
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlMenus.h">

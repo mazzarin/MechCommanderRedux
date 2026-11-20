@@ -1,0 +1,501 @@
+/* Port-only (SPEC-menus.md): the 'MECH BAY's mech lab, in the 1998 screens' pixels (dp). A first take: the cards, the
+   picked mech's lab and the spare components side by side from 3:2, the spares under the lab on a 4:3 window. */
+
+/* The wells' frame, cut from the 'MECH BAY's INVENTORY INFORMATION well (LSRBK00 at 0,392): its corners and a run of
+   each edge and of the black inside, repeated (our frame-box, ui/MCRmlFrame). */
+@spritesheet well
+{
+    src: art:logart/lsrbk00;
+    well-tl: 0px 392px 2px 2px;
+    well-t: 20px 392px 32px 2px;
+    well-tr: 209px 392px 2px 2px;
+    well-l: 0px 400px 2px 32px;
+    well-c: 20px 400px 32px 32px;
+    well-r: 209px 400px 2px 32px;
+    well-bl: 0px 478px 2px 2px;
+    well-b: 20px 478px 32px 2px;
+    well-br: 209px 478px 2px 2px;
+}
+
+/* The lists' scroll bar (LSCSB00, 13x456): its arrows whole, its track's 5-pixel run repeated (a frame-box of its
+   centre alone). */
+@spritesheet bar
+{
+    src: art:logart/lscsb00;
+    bar-up: 0px 0px 13px 15px;
+    bar-down: 0px 441px 13px 15px;
+    bar-track: 0px 15px 13px 5px;
+    bar-none: 0px 15px 0px 0px;
+}
+
+body
+{
+    width: 100%;
+    height: 100%;
+    background-color: #000;
+    font-family: white10;
+    font-size: 10dp;
+    /* A game font's cell holds its letters and the space under them. */
+    line-height: 1.0;
+    color: #fff;
+}
+
+#header
+{
+    position: absolute;
+    left: 4dp;
+    right: 4dp;
+    top: 2dp;
+    height: 12dp;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+}
+
+#title, #points
+{
+    display: block;
+    height: 12dp;
+    font-family: yellow12;
+    font-size: 12dp;
+}
+
+#main
+{
+    position: absolute;
+    left: 4dp;
+    right: 4dp;
+    top: 18dp;
+    bottom: 4dp;
+    display: flex;
+    flex-direction: row;
+}
+
+/* The force's mechs: as many cards to a row as the width takes. */
+#cards
+{
+    flex: 1 1 auto;
+    margin-right: 4dp;
+    padding: 2dp;
+    overflow-y: auto;
+    display: flex;
+    flex-flow: row wrap;
+    align-content: flex-start;
+    decorator: frame-box(well-tl, well-t, well-tr, well-l, well-c, well-r, well-bl, well-b, well-br);
+}
+
+.card
+{
+    display: block;
+    position: relative;
+    width: 102dp;
+    height: 40dp;
+    margin: 1dp;
+    border: 1dp #303030;
+    background-color: #101010;
+}
+
+.card:hover
+{
+    border-color: #606060;
+}
+
+/* The picked mech's frame, in the colour the 1998 row's frame takes (0xf2). */
+.card.picked
+{
+    border-color: #e4f400;
+}
+
+.card .plate
+{
+    position: absolute;
+    left: 1dp;
+    top: 1dp;
+    width: 100dp;
+    height: 12dp;
+}
+
+.card .tons, .card .pilot
+{
+    position: absolute;
+    left: 3dp;
+    right: 3dp;
+    height: 10dp;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.card .tons
+{
+    top: 15dp;
+}
+
+.card .pilot
+{
+    top: 27dp;
+    height: 8dp;
+    font-family: yellow;
+    font-size: 8dp;
+}
+
+/* The lab and the spares: side by side, or (4:3) the spares under the lab. */
+#side
+{
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: row;
+}
+
+#bay
+{
+    flex: 0 0 auto;
+    display: block;
+    width: 413dp;
+}
+
+/* The 1998 'MECH BAY row, whole (LSRUPM00): its pieces where the 1998 panel draws them. */
+#lab
+{
+    display: block;
+    position: relative;
+    width: 413dp;
+    height: 112dp;
+    decorator: image(art:logart/lsrupm00);
+}
+
+#lab > img, #lab > div
+{
+    position: absolute;
+}
+
+#plate
+{
+    left: 5dp;
+    top: 4dp;
+    width: 100dp;
+    height: 12dp;
+}
+
+#tons, #callsign, #rank
+{
+    width: 96dp;
+    height: 8dp;
+    font-family: bluedrp;
+    font-size: 8dp;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+#tons
+{
+    left: 6dp;
+    top: 18dp;
+}
+
+#callsign, #rank
+{
+    left: 45dp;
+    width: 58dp;
+    font-family: yelldrp;
+}
+
+#callsign
+{
+    top: 42dp;
+}
+
+#rank
+{
+    top: 60dp;
+}
+
+#diagram
+{
+    left: 136dp;
+    top: 8dp;
+    width: 75dp;
+    height: 100dp;
+}
+
+#refit, #repair
+{
+    left: 234dp;
+    width: 66dp;
+    height: 16dp;
+}
+
+#refit
+{
+    top: 3dp;
+}
+
+#repair
+{
+    top: 23dp;
+}
+
+.knob
+{
+    width: 5dp;
+    height: 8dp;
+}
+
+#armor-knob
+{
+    top: 55dp;
+}
+
+#internal-knob
+{
+    top: 76dp;
+}
+
+#engine-knob
+{
+    top: 97dp;
+}
+
+/* The payload's weight against what the mech can carry: the 1998 bar's fill (0xe4) over its painted trough. */
+#load
+{
+    left: 351dp;
+    top: 10dp;
+    height: 2dp;
+    background-color: #00b4e0;
+}
+
+/* The payload list, in the row's PAYLOAD well; its scroll bar over the one painted beside it. */
+#payload
+{
+    left: 309dp;
+    top: 17dp;
+    width: 98dp;
+    height: 88dp;
+    overflow-y: auto;
+}
+
+#payload scrollbarvertical
+{
+    width: 13dp;
+}
+
+#payload sliderarrowdec, #payload sliderarrowinc
+{
+    height: 13dp;
+}
+
+#payload sliderbar
+{
+    height: 5dp;
+    decorator: image(art:logart/scroll);
+}
+
+/* The 1998 list's lines: its 8-pixel fonts, two pixels apart. */
+.line
+{
+    display: block;
+    height: 10dp;
+    padding-left: 2dp;
+    font-family: blue;
+    font-size: 8dp;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    drag: clone;
+}
+
+.line.damaged
+{
+    font-family: gryfnt;
+}
+
+.line.heading
+{
+    font-family: white;
+    background-color: #1c1818;
+    drag: block;
+}
+
+#figures
+{
+    display: flex;
+    flex-direction: row;
+    box-sizing: border-box;
+    width: 413dp;
+    margin-top: 4dp;
+    padding: 4dp 6dp;
+    decorator: frame-box(well-tl, well-t, well-tr, well-l, well-c, well-r, well-bl, well-b, well-br);
+}
+
+#figures .column
+{
+    flex: 1 1 0;
+    display: block;
+}
+
+.figure
+{
+    display: flex;
+    flex-direction: row;
+    height: 12dp;
+}
+
+.figure .name
+{
+    display: block;
+    width: 76dp;
+    white-space: nowrap;
+    font-family: yellow10;
+}
+
+.figure .value
+{
+    display: block;
+    flex: 1 1 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* The spare components: the 1998 inventory rows (171x43), in their range's colour. */
+#spares
+{
+    display: flex;
+    flex-flow: row wrap;
+    align-content: flex-start;
+    box-sizing: border-box;
+    width: 188dp;
+    margin-left: 4dp;
+    padding: 2dp;
+    overflow-y: auto;
+    decorator: frame-box(well-tl, well-t, well-tr, well-l, well-c, well-r, well-bl, well-b, well-br);
+}
+
+#spares scrollbarvertical, #cards scrollbarvertical
+{
+    width: 13dp;
+}
+
+#spares sliderarrowdec, #cards sliderarrowdec
+{
+    height: 15dp;
+    decorator: image(bar-up);
+}
+
+#spares sliderarrowinc, #cards sliderarrowinc
+{
+    height: 15dp;
+    decorator: image(bar-down);
+}
+
+#spares slidertrack, #cards slidertrack
+{
+    decorator: frame-box(bar-none, bar-none, bar-none, bar-none, bar-track, bar-none, bar-none, bar-none, bar-none);
+}
+
+#spares sliderbar, #cards sliderbar
+{
+    min-height: 5dp;
+    max-height: 5dp;
+    decorator: image(art:logart/scroll);
+}
+
+.spare
+{
+    display: block;
+    position: relative;
+    width: 171dp;
+    height: 43dp;
+    decorator: image(art:logart/invblock);
+    drag: clone;
+}
+
+.spare.short
+{
+    decorator: image(art:logart/greeninv);
+}
+
+.spare.medium
+{
+    decorator: image(art:logart/blueinv);
+}
+
+.spare.long
+{
+    decorator: image(art:logart/redinv);
+}
+
+/* What the picked mech can't take: darkened, and not picked up. */
+.spare.greyed
+{
+    opacity: 0.5;
+    drag: block;
+}
+
+.spare .icon
+{
+    position: absolute;
+    left: 3dp;
+    top: 2dp;
+    width: 30dp;
+    height: 30dp;
+}
+
+.spare .name, .spare .weight, .spare .count
+{
+    position: absolute;
+    height: 8dp;
+    font-size: 8dp;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.spare .name
+{
+    left: 38dp;
+    top: 7dp;
+    width: 130dp;
+    font-family: yelldrp;
+}
+
+.spare .weight
+{
+    left: 38dp;
+    top: 21dp;
+    width: 62dp;
+    font-family: bluedrp;
+}
+
+.spare .count
+{
+    left: 103dp;
+    top: 21dp;
+    width: 64dp;
+    font-family: bluedrp;
+}
+
+/* Where a drop lands, while something is dragged over it. */
+.zone.over
+{
+    image-color: #c0ffc0;
+}
+
+/* Narrower than 3:2 (a 4:3 window): the spares under the lab, two to a row. */
+@media (max-aspect-ratio: 3/2)
+{
+    #side
+    {
+        flex-direction: column;
+    }
+
+    #spares
+    {
+        flex: 1 1 0dp;
+        width: 413dp;
+        margin-left: 0;
+        margin-top: 4dp;
+    }
+}

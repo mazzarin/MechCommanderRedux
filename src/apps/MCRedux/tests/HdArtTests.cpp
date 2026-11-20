@@ -10143,7 +10143,7 @@ namespace
 /// window pixels a frame across, down and on the diagonal: the world lies on a grid whose offset changes as it goes, so
 /// every pan moves its picture by whole drawn pixels and the HD ground's kept pixels are moved, not drawn again (none
 /// drawn directly or whole), and in mirror mode every drawn pixel's palette index is still the software renderer's pixel's that
-/// it shows.
+/// it shows. Port-only (SPEC-kept-forest.md): the overlays over it come from the kept view, moved with it, every frame.
 /// </summary>
 TEST_CASE_ISOLATED("game: a pan moves the kept HD ground by whole drawn pixels, every index the original's")
 {
@@ -10220,7 +10220,160 @@ TEST_CASE_ISOLATED("game: a pan moves the kept HD ground by whole drawn pixels, 
     CHECK(offsets.size() > 2);
     CHECK_EQ(tally.Frames, frames);
     CHECK_EQ(tally.DifferentFrames, 0);
+
+    // Port-only (SPEC-kept-forest.md): the overlays in view (the map's roads and forests) come from the kept view every
+    // frame, drawn into it only where the pan uncovered or changed them; their indices the software renderer's too.
+    const int64_t overlaysLeft = after.OverlaysLeft - before.OverlaysLeft;
+    std::cout << std::format("  the kept view: {} frames copied, {} overlay draws left out, {} drawn into it\n",
+                             after.Viewed - before.Viewed, overlaysLeft, after.OverlaysDrawn - before.OverlaysDrawn);
+    CHECK(overlaysLeft > 0);
+    CHECK_EQ(after.Viewed - before.Viewed, frames);
     std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (SPEC-kept-forest.md): mission 1's world over the HD ground with every terrain overlay from a pack, the game
+/// paused, panned a few window pixels a frame and then held, the water's colour cycle stepping each frame: each frame,
+/// its overlays copied from the kept view (moved with the ground, drawn into where the pan uncovered them or their draws
+/// changed) show as the same frame shown again drawing them in its own pass, pixel for pixel.
+/// </summary>
+TEST_CASE_ISOLATED("game: the kept view's overlays show as a frame drawing them, through a pan and the colour cycle")
+{
+    struct Pan
+    {
+        float Across = 0.0f;
+        float Down = 0.0f;
+    };
+
+    constexpr std::array<Pan, 5> Pans = {Pan{2.0f, 0.0f}, Pan{0.0f, 3.0f}, Pan{-3.0f, 1.0f}, Pan{0.0f, 0.0f},
+                                         Pan{1.0f, -2.0f}};
+    constexpr int32_t FramesEach = 3;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_view";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    REQUIRE(WriteTerrainPack(pack, *inUse, colors) > 0);
+    REQUIRE(WriteOverlays(OverlayFolderOf(pack), colors, TestPackScale, Inverted).Written > 0);
+    WritePaletteRgb(pack, colors);
+    const MCHdArtOn hdArt(pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(renderer->HdTerrain());
+    // Paused, with the water's cycle stepped here alone (not by the clock, nor its living water's phase) and the
+    // tactical map's markers lit throughout (they blink five times a second), a frame shown again shows the same (a
+    // frame read is the one last shown).
+    GamePaused = true;
+    const int32_t paletteCycle = GuiSystem().PaletteCycle;
+    GuiSystem().PaletteCycle = 0;
+    const auto show = []
+    {
+        MCTacticalMap::MarkersLit = true;
+        MCTacticalMap::MarkerBlinkTime = 0.0f;
+        MCTestGame::RunFrame(FrameSeconds);
+    };
+
+    show();
+    const MCVulkanRenderer::GroundCounts before = renderer->KeptGroundCounts();
+    const float across = 1.0f / (2.0f * MCTerrain::ProjectionCos);
+    const float down = 1.0f / (2.0f * MCTerrain::ProjectionSin);
+    MCVector3D position = Eye()->GetPosition();
+    const int32_t width = MCInput::Display()->Width();
+    int32_t frames = 0;
+    int64_t differing = 0;
+    std::string first;
+    MCRect where{std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(),
+                 std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min()};
+
+    for (const Pan& pan : Pans)
+    {
+        for (int32_t step = 0; step < FramesEach; ++step)
+        {
+            position.X += pan.Across * across + pan.Down * down;
+            position.Y += pan.Across * across - pan.Down * down;
+            Eye()->SetPosition(position);
+            StepWaterColors(GamePalette(), MCInput::Display());
+            show();
+            ++frames;
+            auto viewed = MCInput::Display()->ReadFrame();
+            REQUIRE(viewed.has_value());
+            // The view left as it was (the ground neither moved nor changed): the next frame goes on from it. (A frame
+            // runs as it's shown, after RunFrame: the view stays off until it's read.)
+            renderer->SetKeepsOverlays(false);
+            show();
+            auto drawn = MCInput::Display()->ReadFrame();
+            renderer->SetKeepsOverlays(true);
+            REQUIRE(drawn.has_value());
+            REQUIRE_EQ(viewed->size(), drawn->size());
+
+            for (size_t i = 0; i < viewed->size(); ++i)
+            {
+                const SDL_Color a = (*viewed)[i];
+                const SDL_Color b = (*drawn)[i];
+                const auto x = static_cast<int32_t>(i % static_cast<size_t>(width));
+                const auto y = static_cast<int32_t>(i / static_cast<size_t>(width));
+
+                if (a.r == b.r && a.g == b.g && a.b == b.b)
+                {
+                    continue;
+                }
+
+                where =
+                    MCRect{std::min(where.X0, x), std::min(where.Y0, y), std::max(where.X1, x), std::max(where.Y1, y)};
+
+                if (differing++ == 0)
+                {
+                    first = std::format("frame {}, pixel {},{}: {},{},{} kept, {},{},{} drawn", frames, x, y, a.r, a.g,
+                                        a.b, b.r, b.g, b.b);
+                }
+            }
+        }
+    }
+
+    const MCVulkanRenderer::GroundCounts after = renderer->KeptGroundCounts();
+    std::cout << std::format(
+        "  {} frames: the ground {} shifted, {} kept, {} whole, {} direct; the kept view copied {} "
+        "times, {} overlay draws left out, {} drawn into it; {} pixels differ\n",
+        frames, after.Shifted - before.Shifted, after.Kept - before.Kept, after.Whole - before.Whole,
+        after.Direct - before.Direct, after.Viewed - before.Viewed, after.OverlaysLeft - before.OverlaysLeft,
+        after.OverlaysDrawn - before.OverlaysDrawn, differing);
+
+    if (differing != 0)
+    {
+        std::cout << std::format("  first difference: {}; all in x {}-{}, y {}-{}\n", first, where.X0, where.X1,
+                                 where.Y0, where.Y1);
+    }
+
+    // Each panned frame moved the ground and copied the view; each shown again, its overlays drawn, kept it.
+    GamePaused = false;
+    GuiSystem().PaletteCycle = paletteCycle;
+    CHECK(after.Shifted - before.Shifted > frames / 2);
+    CHECK_EQ(after.Whole - before.Whole, 0);
+    CHECK_EQ(after.Direct - before.Direct, 0);
+    CHECK_EQ(after.Viewed - before.Viewed, frames);
+    CHECK(after.OverlaysLeft - before.OverlaysLeft > 0);
+    CHECK_EQ(differing, 0);
+    std::filesystem::remove_all(scratch);
 }
 
 namespace

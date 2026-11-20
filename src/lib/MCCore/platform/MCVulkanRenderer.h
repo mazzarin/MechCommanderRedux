@@ -464,6 +464,13 @@ public:
         int64_t Whole = 0;
         int64_t Shifted = 0;
         int64_t Kept = 0;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): the frames whose ground and overlays were copied from the kept view, the
+        /// overlays' draws those frames left out, and the overlays' draws drawn into the view (whole or again).
+        /// </summary>
+        int64_t Viewed = 0;
+        int64_t OverlaysLeft = 0;
+        int64_t OverlaysDrawn = 0;
     };
 
     /// <summary>The kept ground's counts (<see cref="GroundCounts"/>), once a frame running has run.</summary>
@@ -516,6 +523,11 @@ public:
     /// them both ways to compare).
     /// </summary>
     void SetFoldsIndexPasses(bool folds) { _FoldsIndexPasses = folds; }
+    /// <summary>
+    /// Port-only (SPEC-kept-forest.md): whether the kept ground's view holds the overlays, a frame copying them (on; the
+    /// tests draw a frame both ways to compare). Off, a frame draws its overlays itself and leaves the view as it was.
+    /// </summary>
+    void SetKeepsOverlays(bool keeps) { _KeepsOverlays = keeps; }
     /// <summary>
     /// Port-only: how many times a stripped shape table's rows were asked for (a version 2 pack's, drawn without its HD
     /// frame: RowsGone), each drawn as nothing.
@@ -868,6 +880,18 @@ private:
         bool Fold = false;
         /// <summary>Port-only: the draw shader's build the draws go through.</summary>
         DrawVariant Variant = DrawVariant::Every;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): whether the draws are a terrain overlay's (FastShape), which the kept
+        /// ground's view holds when it holds the frame's ground (KeptGround::View).
+        /// </summary>
+        bool Overlay = false;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md): for an overlay's draws, whether they may show a colour the colour cycle steps
+        /// (their original pixels hold one, or a colour table's), and the content of the colour tables they read: what
+        /// they draw with besides their source, fields and uniforms (KeptGround::ViewOverlays' keys).
+        /// </summary>
+        bool OverlayCycles = false;
+        uint64_t OverlayTables = 0;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
         bool ReadsCopy = false;
         MCRect Reads{0, 0, -1, -1};
@@ -1023,6 +1047,20 @@ private:
         /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).
         /// </summary>
         std::vector<uint8_t> Looks;
+        /// <summary>
+        /// Port-only (SPEC-kept-forest.md, part 1): the view, a surface's colours, indices and stands as its frame
+        /// holds them once its ground is laid and its overlays drawn (FastShape: the forests' tiles), so a frame
+        /// copies it in and draws neither. Two of them, as the ground's pairs, a moved view's made from the last one
+        /// shifted; then drawn again where the ground was or an overlay's draw changed. Only while the terrain's clip
+        /// covers the surface.
+        /// </summary>
+        std::array<Texture, 2> ViewColors;
+        std::array<Texture, 2> ViewIndices;
+        std::array<Texture, 2> ViewStands;
+        size_t ViewCurrent = 0;
+        bool ViewHeld = false;
+        /// <summary>The overlays' draws it holds: each one's key (OverlayKeys) and its window rectangle from the origin.</summary>
+        std::vector<std::pair<uint64_t, MCRect>> ViewOverlays;
     };
 
     /// <summary>Port-only: what shaders/ground.pshader draws of the kept ground (its modes).</summary>
@@ -1031,7 +1069,9 @@ private:
         Copy,
         Clear,
         Over,
-        Indices
+        Indices,
+        /// <summary>Port-only (the view): a window's new pixels, as ClearBlank clears them.</summary>
+        Blank
     };
 
     /// <summary>Port-only (KeepGround): how a frame brings the kept ground up to date.</summary>
@@ -1678,7 +1718,8 @@ private:
     /// </summary>
     void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const SurfacePipelines& pipelines,
                         const Surface& surface, const MCRect& clip, KeptGroundMode mode,
-                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {});
+                        std::optional<size_t> from = std::nullopt, std::array<int32_t, 2> shift = {}, bool view = false,
+                        SDL_Color blank = {});
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
         std::span<const std::reference_wrapper<const Surface>> surfaces);
@@ -2089,6 +2130,11 @@ private:
     int64_t _HdDrawn = 0;
     int64_t _HdIndexPicturesDrawn = 0;
     int64_t _HdFolds = 0;
+    /// <summary>Port-only (SPEC-kept-forest.md): whether the draws being recorded are a terrain overlay's (FastShape).</summary>
+    bool _DrawingOverlay = false;
+    /// <summary>Port-only (SPEC-kept-forest.md): the colours of the original's pixels the overlay being recorded draws.</summary>
+    std::bitset<256> _OverlayColours;
+    bool _KeepsOverlays = true;
     bool _FoldsIndexPasses = true;
     int64_t _StrippedRowsAsked = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>

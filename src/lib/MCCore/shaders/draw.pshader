@@ -769,12 +769,29 @@ float SmoothCoverage(Input input, float2 at, inout uint value)
     return smoothstep(EdgeLow, EdgeHigh, coverage);
 }
 
+// Port-only (SPEC-kept-forest.md): where drawn pixel `target`'s centre lies in a draw's source: source.xy, plus how far
+// its window place (pixels.hlsli's) lies past the rectangle's corner in source.zw steps, a mirrored step reading from
+// the right. Worked out in whole numbers (window places times 2D) up to one division, whose numerator stays the same
+// wherever the view moves the draw (its corner, the drawn pixel and the grid's offset move together by whole pixels)
+// and wherever the clip cuts it (its corner and source move together): so a draw's pixels do too, and the kept view's
+// moved pixels are the ones a frame drawing them draws. A window place exactly between two of the source's (a window
+// pixel two drawn pixels wide or tall puts every place a quarter from one) counts as a little past it, right and down,
+// as the float division the draws took before left it: so the B-spline's nearest pixel falls where it fell.
+static const float2 SourceTieNudge = float2(1.0, 1.0) / 1048576.0;
+
+float2 SourcePlace(Input input, int2 target)
+{
+    const int2 twice = 2 * scale.zw;
+    const int2 place = twice * (input.source.xy - input.rect.xy * input.source.zw) +
+                       input.source.zw * ((2 * target + 1) * scale.xy - 2 * offset.xy);
+    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
+    return float2(place) / float2(twice) + flip + SourceTieNudge * float2(input.source.zw);
+}
+
 // Where drawn pixel `target`'s centre lies in a smooth-edged shape's source, less half a texel (SmoothCoverage's `at`).
 float2 ShapePlace(Input input, int2 target)
 {
-    const float2 window = WindowPlace(target);
-    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
-    return float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
+    return SourcePlace(input, target) - 0.5;
 }
 
 // A smooth-edged shape's coverage at drawn pixel `target` (SmoothCoverage of its source pixels). `value` becomes a
@@ -1494,10 +1511,8 @@ Output HdPixelAt(Input input, float2 shape)
 // the steps per window pixel (negative: mirrored), op.y the frame's scale.
 Output HdPixel(Input input, int2 target)
 {
-    // The drawn pixel's centre in window pixels, and in the shape's bounds (a mirrored step reads from the right).
-    const float2 window = WindowPlace(target);
-    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
-    return HdPixelAt(input, float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw));
+    // The drawn pixel's centre in the shape's bounds.
+    return HdPixelAt(input, SourcePlace(input, target));
 }
 
 // Where drawn pixel `target`'s centre lies in a textured polygon's texture (KindHdMap, KindSmoothMap): the polygon's

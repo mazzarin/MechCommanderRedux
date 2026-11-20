@@ -9,7 +9,10 @@
 // - Over (blend pipeline, indices left): the colours over the target's, as the terrain's draws over it leave them,
 //   and the glints under them covered as the colours cover them.
 // - Indices (index-only pipeline): the indices where the first pass drew, which wrote them.
+// - Blank (opaque pipeline): a window's new pixels, palette entry 0's colour (`blank`), index 0, nothing standing.
 // Over and Indices fill the ground's gaps (GapFill), so they cover all the target but the void past the map.
+// Port-only (SPEC-kept-forest.md): Copy reads the kept view too (MCVulkanRenderer's KeptGround::View), the ground and
+// overlays as a surface's pass leaves them, with its stands, which the stands build copies.
 //
 // Bindings (SDL GPU, SPIR-V): fragment samplers in space2, fragment uniforms in space3.
 
@@ -17,17 +20,23 @@ Texture2D<float4> colorsTex : register(t0, space2);
 SamplerState colorsSampler : register(s0, space2);
 Texture2D<float4> indicesTex : register(t1, space2);
 SamplerState indicesSampler : register(s1, space2);
+// The kept view's stands (a blank texture for the kept ground, which has none).
+Texture2D<float> standsTex : register(t2, space2);
+SamplerState standsSampler : register(s2, space2);
 
 cbuffer Ground : register(b0, space3)
 {
     // xy: how far before the drawn pixel its kept pixel lies (drawn pixels); z: the mode; w unused.
     int4 shift;
+    // Blank's colour (opaque).
+    float4 blank;
 };
 
 static const int ModeCopy = 0;
 static const int ModeClear = 1;
 static const int ModeOver = 2;
 static const int ModeIndices = 3;
+static const int ModeBlank = 4;
 
 // The ground's gaps: where the original's tiles' diamonds don't quite meet (a few pixels a screen, at fixed places on
 // the map) only the seam pass reaches, partly. Under it there the nearest pixel the first pass drew shows, looked for
@@ -107,12 +116,26 @@ Output main(float4 position : SV_Position)
         return output;
     }
 
+    if (shift.z == ModeBlank)
+    {
+        output.color = blank;
+        return output;
+    }
+
     uint width;
     uint height;
     colorsTex.GetDimensions(width, height);
     const int2 size = int2(width, height);
     const int2 kept = clamp(target - shift.xy, int2(0, 0), size - 1);
     KeptAt(kept, size, output.color, output.index);
+
+#if DRAW_STANDS
+    // The view's stands, copied (the kept ground has none: its copies, which move it, have no stands target).
+    if (shift.z == ModeCopy)
+    {
+        output.stands = standsTex.SampleLevel(standsSampler, (float2(kept) + 0.5) / float2(size), 0);
+    }
+#endif
 
     if (shift.z != ModeCopy && output.color.a > 0.0 && output.color.a < 1.0)
     {

@@ -1,0 +1,41 @@
+<rml>
+<head>
+    <title>RmlUi probe</title>
+    <link type="text/rcss" href="probe.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md): a test of RmlUi drawing with the game's art and fonts (mc_tests' rml-probe). -->
+<body>
+    <div id="frame">
+        <div id="title">MECH BAY PROBE</div>
+        <div id="panels">
+            <div class="panel" id="buttons">
+                <div class="label">BUTTONS</div>
+                <div class="button" id="original"></div>
+                <div class="button grayed" id="expansion"></div>
+            </div>
+            <div class="panel" id="stock">
+                <div class="label">MECHS IN STOCK</div>
+                <div id="list">
+                    <div class="row">COMMANDO 25</div>
+                    <div class="row">FIRESTARTER 35</div>
+                    <div class="row">RAVEN 35</div>
+                    <div class="row">JENNER 35</div>
+                    <div class="row">HUNCHBACK 50</div>
+                    <div class="row">CENTURION 50</div>
+                    <div class="row">BLACKJACK 45</div>
+                    <div class="row">CATAPULT 65</div>
+                    <div class="row">THOR 70</div>
+                    <div class="row">MADCAT 75</div>
+                    <div class="row">ATLAS 100</div>
+                    <div class="row">DAISHI 100</div>
+                </div>
+            </div>
+            <div class="panel" id="notes">
+                <div class="label">TWO FONTS</div>
+                <div class="text">White, the menus' own.</div>
+                <div class="text yellow">Yellow, as lit.</div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

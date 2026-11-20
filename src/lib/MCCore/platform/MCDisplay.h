@@ -405,6 +405,31 @@ public:
     std::expected<MCShownScreen, std::string> ReadShownScreen();
 
     /// <summary>
+    /// Port-only (SPEC-menus.md): the remade menus' draws, drawn over the whole window from the next frame on
+    /// (<see cref="MCFrame::Overlay"/>); none: nothing over the game's picture.
+    /// </summary>
+    void SetOverlay(std::shared_ptr<const MCUiDraws> overlay) { _Overlay = std::move(overlay); }
+
+    /// <summary>
+    /// Port-only: the whole window's picture at its pixels: <see cref="ReadShownScreen"/>'s where the view lands (its
+    /// nearest pixel), black around it, and the menus' draws over it all (<see cref="SetOverlay"/>, as the presenter
+    /// draws them: MCPresenter::ReadOverlay). An error when the window has no pixels (minimised).
+    /// </summary>
+    std::expected<MCShownScreen, std::string> ReadWindow();
+
+    /// <summary>
+    /// Port-only: the menus' draws <paramref name="overlay"/> alone, as the presenter draws them over the window, over a
+    /// transparent one (MCPresenter::ReadOverlay: premultiplied RGBA, the draws' window's size).
+    /// </summary>
+    std::expected<std::vector<SDL_Color>, std::string> ReadOverlay(const MCUiDraws& overlay)
+    {
+        return _Presenter->ReadOverlay(overlay);
+    }
+
+    /// <summary>Port-only: writes <see cref="ReadWindow"/>'s picture as an RGBA PNG.</summary>
+    std::expected<void, std::string> SaveWindowScreenshot(const std::filesystem::path& path);
+
+    /// <summary>
     /// The whole screen as the player sees it, at the screen's size: its pixels with the underlays' pixels in place of
     /// the key, as <see cref="Present"/> shows them (nearest). When the GPU draws the frame, read back from it (what was
     /// drawn so far is run first).
@@ -553,4 +578,6 @@ private:
     SDL_Color _Surround{0, 0, 0, SDL_ALPHA_OPAQUE};
     /// <summary>The frames presented (<see cref="Presents"/>).</summary>
     uint64_t _Presents = 0;
+    /// <summary>Port-only: the menus' draws over the window (<see cref="SetOverlay"/>).</summary>
+    std::shared_ptr<const MCUiDraws> _Overlay;
 };

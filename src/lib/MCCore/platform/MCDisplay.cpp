@@ -616,6 +616,7 @@ MCFrame MCDisplay::BuildFrame(bool allColors)
     frame.Fade = _Fade;
     frame.FadeScales = _FadeScales;
     frame.Number = _Presents;
+    frame.Overlay = _Overlay;
     return frame;
 }
 
@@ -710,6 +711,119 @@ std::expected<MCDisplay::MCShownScreen, std::string> MCDisplay::ReadShownScreen(
     return screen;
 }
 
+namespace
+{
+    /// <summary>Writes <paramref name="screen"/> as an RGBA PNG.</summary>
+    std::expected<void, std::string> SavePicture(MCDisplay::MCShownScreen& screen, const std::filesystem::path& path)
+    {
+        SDL_Surface* surface = SDL_CreateSurfaceFrom(screen.Width, screen.Height, SDL_PIXELFORMAT_RGBA32,
+                                                     screen.Pixels.data(), screen.Width * sizeof(SDL_Color));
+
+        if (surface == nullptr)
+        {
+            return std::unexpected(SdlError("SDL_CreateSurfaceFrom"));
+        }
+
+        const bool saved = SDL_SavePNG(surface, MCFileSystem::ToUtf8(path).c_str());
+        SDL_DestroySurface(surface);
+
+        if (!saved)
+        {
+            return std::unexpected(SdlError("SDL_SavePNG"));
+        }
+
+        return {};
+    }
+}
+
+std::expected<MCDisplay::MCShownScreen, std::string> MCDisplay::ReadWindow()
+{
+    int width = 0;
+    int height = 0;
+
+    if (!WindowPixelSize(width, height))
+    {
+        return std::unexpected("the window has no pixels to read (minimised)");
+    }
+
+    auto shown = ReadShownScreen();
+
+    if (!shown)
+    {
+        return std::unexpected(shown.error());
+    }
+
+    constexpr SDL_Color Black{0, 0, 0, 255};
+    MCShownScreen window{.Width = width, .Height = height};
+    window.Pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), Black);
+    // Where the view lands, in whole pixels, as the GPU's presenter blits it.
+    const MCViewport viewport = ShownViewport();
+    const int left = static_cast<int>(std::lround(std::max(viewport.X, 0.0f)));
+    const int top = static_cast<int>(std::lround(std::max(viewport.Y, 0.0f)));
+    const int across = static_cast<int>(std::lround(viewport.W));
+    const int down = static_cast<int>(std::lround(viewport.H));
+
+    for (int y = std::max(top, 0); across > 0 && down > 0 && y < std::min(top + down, height); ++y)
+    {
+        const int64_t sy = (static_cast<int64_t>(2 * (y - top) + 1) * shown->Height) / (2 * static_cast<int64_t>(down));
+
+        for (int x = std::max(left, 0); x < std::min(left + across, width); ++x)
+        {
+            const int64_t sx =
+                (static_cast<int64_t>(2 * (x - left) + 1) * shown->Width) / (2 * static_cast<int64_t>(across));
+            window.Pixels[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] =
+                shown->Pixels[static_cast<size_t>(sy) * static_cast<size_t>(shown->Width) + static_cast<size_t>(sx)];
+        }
+    }
+
+    if (_Overlay == nullptr || _Overlay->Draws.empty())
+    {
+        return window;
+    }
+
+    auto overlay = _Presenter->ReadOverlay(*_Overlay);
+
+    if (!overlay)
+    {
+        return std::unexpected(overlay.error());
+    }
+
+    if (_Overlay->Width != width || _Overlay->Height != height ||
+        overlay->size() != static_cast<size_t>(width) * static_cast<size_t>(height))
+    {
+        return std::unexpected(std::format("the menus' draws are for a {}x{} window, not this {}x{} one",
+                                           _Overlay->Width, _Overlay->Height, width, height));
+    }
+
+    // Premultiplied over the picture: each channel its own plus the picture's times what the menus leave of it.
+    constexpr uint32_t Full = 255;
+
+    for (size_t i = 0; i < window.Pixels.size(); ++i)
+    {
+        const SDL_Color& over = (*overlay)[i];
+        SDL_Color& under = window.Pixels[i];
+        const uint32_t kept = Full - over.a;
+        const auto blend = [kept, Full](uint8_t front, uint8_t back)
+        { return static_cast<uint8_t>(std::min<uint32_t>(front + (back * kept + Full / 2) / Full, Full)); };
+        under =
+            SDL_Color{blend(over.r, under.r), blend(over.g, under.g), blend(over.b, under.b), blend(over.a, under.a)};
+    }
+
+    return window;
+}
+
+std::expected<void, std::string> MCDisplay::SaveWindowScreenshot(const std::filesystem::path& path)
+{
+    auto window = ReadWindow();
+
+    if (!window)
+    {
+        return std::unexpected(window.error());
+    }
+
+    return SavePicture(*window, path);
+}
+
 std::expected<void, std::string> MCDisplay::SaveShownScreenshot(const std::filesystem::path& path)
 {
     auto screen = ReadShownScreen();
@@ -719,23 +833,7 @@ std::expected<void, std::string> MCDisplay::SaveShownScreenshot(const std::files
         return std::unexpected(screen.error());
     }
 
-    SDL_Surface* surface = SDL_CreateSurfaceFrom(screen->Width, screen->Height, SDL_PIXELFORMAT_RGBA32,
-                                                 screen->Pixels.data(), screen->Width * sizeof(SDL_Color));
-
-    if (surface == nullptr)
-    {
-        return std::unexpected(SdlError("SDL_CreateSurfaceFrom"));
-    }
-
-    const bool saved = SDL_SavePNG(surface, MCFileSystem::ToUtf8(path).c_str());
-    SDL_DestroySurface(surface);
-
-    if (!saved)
-    {
-        return std::unexpected(SdlError("SDL_SavePNG"));
-    }
-
-    return {};
+    return SavePicture(*screen, path);
 }
 
 std::vector<uint8_t> MCDisplay::ComposeScreen() const

@@ -1,0 +1,169 @@
+#include "stdafx.h"
+#include "ui/MCRmlSystem.h"
+#include "platform/MCUtf8Path.h"
+
+namespace
+{
+    constexpr double NanosecondsPerSecond = 1e9;
+
+    /// <summary>The folder under the app's own that holds the menus' files.</summary>
+    constexpr std::string_view UiFolder = "ui";
+
+    /// <summary>The name RmlUi's messages of <paramref name="type"/> are logged with.</summary>
+    std::string_view TypeName(Rml::Log::Type type)
+    {
+        switch (type)
+        {
+            case Rml::Log::LT_ERROR:
+            case Rml::Log::LT_ASSERT:
+                return "error";
+            case Rml::Log::LT_WARNING:
+                return "warning";
+            case Rml::Log::LT_INFO:
+                return "info";
+            default:
+                return "debug";
+        }
+    }
+}
+
+MCRmlSystem::MCRmlSystem() = default;
+
+MCRmlSystem::~MCRmlSystem() = default;
+
+void MCRmlSystem::SetClock(MCClock clock)
+{
+    _Clock = std::move(clock);
+}
+
+double MCRmlSystem::GetElapsedTime()
+{
+    return _Clock ? _Clock() : static_cast<double>(SDL_GetTicksNS()) / NanosecondsPerSecond;
+}
+
+bool MCRmlSystem::LogMessage(Rml::Log::Type type, const Rml::String& message)
+{
+    // RmlUi's debug messages say what it does every frame; the rest are worth the log.
+    if (type != Rml::Log::LT_DEBUG)
+    {
+        SDL_Log("Menus (RmlUi) %.*s: %s", static_cast<int>(TypeName(type).size()), TypeName(type).data(),
+                message.c_str());
+    }
+
+    return true;
+}
+
+void MCRmlSystem::SetClipboardText(const Rml::String& text)
+{
+    if (!SDL_SetClipboardText(text.c_str()))
+    {
+        SDL_Log("Menus: can't put %zu bytes of text on the clipboard: %s", text.size(), SDL_GetError());
+    }
+}
+
+void MCRmlSystem::GetClipboardText(Rml::String& text)
+{
+    char* clipboard = SDL_GetClipboardText();
+    text = clipboard != nullptr ? clipboard : "";
+    SDL_free(clipboard);
+}
+
+MCRmlFiles::MCRmlFiles(std::filesystem::path folder) : _Folder(std::move(folder))
+{
+}
+
+MCRmlFiles::~MCRmlFiles() = default;
+
+std::filesystem::path MCRmlFiles::AppFolder()
+{
+    // SDL's base path is the program's folder, or the Mac app's resources (null when it can't tell).
+    const char* base = SDL_GetBasePath();
+    return base != nullptr ? MCFileSystem::FromUtf8(base) / UiFolder : std::filesystem::path(UiFolder);
+}
+
+auto MCRmlFiles::Find(Rml::FileHandle file) -> MCOpenFile*
+{
+    const auto found = _Open.find(file);
+    return found != _Open.end() ? found->second.get() : nullptr;
+}
+
+Rml::FileHandle MCRmlFiles::Open(const Rml::String& path)
+{
+    const std::filesystem::path relative = MCFileSystem::FromUtf8(path).lexically_normal();
+
+    if (path.empty() || relative.is_absolute() || relative.has_root_name() || relative.has_root_directory() ||
+        std::any_of(relative.begin(), relative.end(), [](const std::filesystem::path& part) { return part == ".."; }))
+    {
+        SDL_Log("Menus: '%s' isn't a file of the menus' own", path.c_str());
+        return 0;
+    }
+
+    const std::filesystem::path file = _Folder / relative;
+    std::ifstream stream(file, std::ios::binary);
+
+    if (!stream)
+    {
+        SDL_Log("Menus: can't open %s", MCFileSystem::ToUtf8(file).c_str());
+        return 0;
+    }
+
+    auto open = std::make_unique<MCOpenFile>();
+    open->Bytes.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    const auto handle = reinterpret_cast<Rml::FileHandle>(open.get());
+    _Open.emplace(handle, std::move(open));
+    return handle;
+}
+
+void MCRmlFiles::Close(Rml::FileHandle file)
+{
+    _Open.erase(file);
+}
+
+size_t MCRmlFiles::Read(void* buffer, size_t size, Rml::FileHandle file)
+{
+    MCOpenFile* open = Find(file);
+
+    if (open == nullptr)
+    {
+        return 0;
+    }
+
+    const size_t count = std::min(size, open->Bytes.size() - open->At);
+    std::copy_n(open->Bytes.begin() + static_cast<ptrdiff_t>(open->At), count, static_cast<char*>(buffer));
+    open->At += count;
+    return count;
+}
+
+bool MCRmlFiles::Seek(Rml::FileHandle file, long offset, int origin)
+{
+    MCOpenFile* open = Find(file);
+
+    if (open == nullptr)
+    {
+        return false;
+    }
+
+    const auto size = static_cast<int64_t>(open->Bytes.size());
+    const int64_t from = origin == SEEK_SET ? 0 : origin == SEEK_CUR ? static_cast<int64_t>(open->At) : size;
+    const int64_t to = from + offset;
+
+    if (to < 0 || to > size)
+    {
+        return false;
+    }
+
+    open->At = static_cast<size_t>(to);
+    return true;
+}
+
+size_t MCRmlFiles::Tell(Rml::FileHandle file)
+{
+    const MCOpenFile* open = Find(file);
+    return open != nullptr ? open->At : 0;
+}
+
+size_t MCRmlFiles::Length(Rml::FileHandle file)
+{
+    const MCOpenFile* open = Find(file);
+    return open != nullptr ? open->Bytes.size() : 0;
+}

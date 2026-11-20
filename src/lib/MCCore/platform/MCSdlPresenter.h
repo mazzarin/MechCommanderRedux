@@ -2,6 +2,7 @@
 
 #include "platform/MCPresenter.h"
 #include "platform/MCSdlHandle.h"
+#include "platform/MCUiSoftware.h"
 
 /// <summary>
 /// The software renderer's presenter: the CPU composites the screen's underlays (<see cref="MCRenderer::ComposeUnderlays"/>)
@@ -34,6 +35,7 @@ public:
     void SetVSync(bool on) override;
     std::expected<void, std::string> Present(const MCFrame& frame) override;
     std::expected<std::vector<SDL_Color>, std::string> ReadFrame(const MCFrame& frame) override;
+    std::expected<std::vector<SDL_Color>, std::string> ReadOverlay(const MCUiDraws& overlay) override;
     MCViewport Viewport(int viewWidth, int viewHeight) const override;
 
 private:
@@ -48,6 +50,8 @@ private:
     static SDL_Rect ShownRect(const MCFrame& frame);
     /// <summary>Fits <paramref name="view"/> into the window (SDL's logical presentation).</summary>
     void ApplyPresentation(const SDL_Rect& view);
+    /// <summary>Port-only: draws the menus' <paramref name="overlay"/> over the whole window (drawn by the CPU, uploaded).</summary>
+    std::expected<void, std::string> DrawOverlay(const MCUiDraws& overlay);
 
     /// <summary>The window shown in (the display's); destroyed after the renderer.</summary>
     std::shared_ptr<SDL_Window> _Window;
@@ -68,4 +72,7 @@ private:
     bool _FadeScales = false;
     /// <summary>The CPU's composite of the screen.</summary>
     std::vector<uint8_t> _Composed;
+    /// <summary>Port-only: the menus' draws, drawn by the CPU, and their picture's texture (premultiplied RGBA).</summary>
+    MCUiSoftware _Ui;
+    MCSdlHandle<SDL_Texture> _Overlay;
 };

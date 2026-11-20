@@ -222,6 +222,16 @@ std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
         SDL_RenderTexture(_Renderer.get(), _Texture.get(), &view, nullptr);
     }
 
+    if (frame.Overlay != nullptr && !frame.Overlay->Draws.empty())
+    {
+        MCFrameLog::Scope part("present.menus");
+
+        if (auto drawn = DrawOverlay(*frame.Overlay); !drawn)
+        {
+            return drawn;
+        }
+    }
+
     if (!SDL_RenderPresent(_Renderer.get()))
     {
         return std::unexpected(SdlError("SDL_RenderPresent"));
@@ -281,6 +291,62 @@ std::expected<std::vector<SDL_Color>, std::string> MCSdlPresenter::ReadFrame(con
     }
 
     SDL_DestroySurface(rgba);
+    return pixels;
+}
+
+std::expected<void, std::string> MCSdlPresenter::DrawOverlay(const MCUiDraws& overlay)
+{
+    if (auto drawn = _Ui.Draw(overlay); !drawn)
+    {
+        return drawn;
+    }
+
+    const SDL_Surface& picture = *_Ui.Picture();
+
+    if (_Overlay == nullptr || _Overlay->w != picture.w || _Overlay->h != picture.h)
+    {
+        _Overlay.reset(SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
+                                         picture.w, picture.h));
+
+        if (_Overlay == nullptr)
+        {
+            return std::unexpected(SdlError(std::format("SDL_CreateTexture(the menus, {}x{})", picture.w, picture.h)));
+        }
+
+        SDL_SetTextureBlendMode(_Overlay.get(), SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+        SDL_SetTextureScaleMode(_Overlay.get(), SDL_SCALEMODE_NEAREST);
+    }
+
+    if (!SDL_UpdateTexture(_Overlay.get(), nullptr, picture.pixels, picture.pitch))
+    {
+        return std::unexpected(SdlError("SDL_UpdateTexture(the menus)"));
+    }
+
+    // Over the whole window, one picture pixel a window pixel.
+    SDL_SetRenderLogicalPresentation(_Renderer.get(), 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    const SDL_FRect whole{0.0f, 0.0f, static_cast<float>(picture.w), static_cast<float>(picture.h)};
+    SDL_RenderTexture(_Renderer.get(), _Overlay.get(), nullptr, &whole);
+    ApplyPresentation(_View);
+    return {};
+}
+
+std::expected<std::vector<SDL_Color>, std::string> MCSdlPresenter::ReadOverlay(const MCUiDraws& overlay)
+{
+    if (auto drawn = _Ui.Draw(overlay); !drawn)
+    {
+        return std::unexpected(drawn.error());
+    }
+
+    const SDL_Surface& picture = *_Ui.Picture();
+    std::vector<SDL_Color> pixels(static_cast<size_t>(picture.w) * static_cast<size_t>(picture.h));
+
+    for (int y = 0; y < picture.h; ++y)
+    {
+        std::memcpy(pixels.data() + static_cast<size_t>(y) * static_cast<size_t>(picture.w),
+                    static_cast<const uint8_t*>(picture.pixels) + static_cast<ptrdiff_t>(y) * picture.pitch,
+                    static_cast<size_t>(picture.w) * sizeof(SDL_Color));
+    }
+
     return pixels;
 }
 

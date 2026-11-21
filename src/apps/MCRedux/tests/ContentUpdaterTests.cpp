@@ -3599,7 +3599,7 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown
 }
 
 TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until the player picks, in HD PACK's "
-                   "button's column; 2X is downloaded at once, as GET's change is")
+                   "button's column; 2X asks first, saying its size, then downloads as GET's change does")
 {
     if (!MCTestGame::Available())
     {
@@ -3627,9 +3627,24 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until
     CHECK_EQ(remove->GlobalX() + remove->Width() / 2, centre->first);
     MCScreenInput::SaveShot("hd options art size", MCScreenInput::ScreenHash());
 
-    // A click picks 2X, the player's pick, downloaded while the game goes on; RESTART then.
+    // A click on 2X asks first, saying how much it downloads: CANCEL keeps the full art.
+    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
     MCScreenInput::RealClick(centre->first, centre->second);
     ScreenFrames();
+    REQUIRE(question.IsShowing());
+    CHECK_EQ(question.Text, std::format("Download the 2X HD art ({})?", twoX));
+    MCScreenInput::SaveShot("hd options art size question", MCScreenInput::ScreenHash());
+    RealClickOn(*question.CancelButton);
+    CHECK(!question.IsShowing());
+    CHECK(!MCUpdater::HdPack().TwoXChosen);
+    CHECK(!MCUpdater::Working());
+    CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("FULL"));
+
+    // OK: 2X, the player's pick, downloaded while the game goes on; RESTART then.
+    MCScreenInput::RealClick(centre->first, centre->second);
+    ScreenFrames();
+    REQUIRE(question.IsShowing());
+    RealClickOn(*question.OkButton);
     CHECK(MCUpdater::HdPack().TwoXChosen);
     CHECK(MCUpdater::HdPack().PlayerPicked);
     CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("2X"));
@@ -3644,6 +3659,42 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until
     const std::optional<MCContentUpdater::MCChoice> choice = MCContentUpdater::Choice(*MakeDisk(), release.Game.Path());
     REQUIRE(choice.has_value());
     CHECK(choice->Picked == MCContentUpdater::MCPicked::Player);
+}
+
+/// <summary>
+/// A change of the HD art that fails says so in a player's words, with the button that tries again: it showed the
+/// failure's own text, a file's path cut off at the panel's edge (the 2X art of an unpublished build, 21 Nov playtest).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD OPTIONS says a failed HD art download in a player's words, GET trying again")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("hd-options-art-size-failed");
+    AddTwoX(release);
+    release.Machine = BigMachine;
+    UpdateToRelease2(release);
+    MCUpdaterScope scope(release, false);
+    REQUIRE(MCTestGame::StartLogistics());
+    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
+    const std::optional<std::pair<int32_t, int32_t>> centre = list->SettingCentre(HdArtSizeRow);
+    REQUIRE(centre.has_value());
+
+    // The 2X art's archive gone from the release's host, as a build's not yet published: 2X, asked and taken, fails.
+    std::error_code error;
+    REQUIRE(std::filesystem::remove(release.Host.Path() / "hd2x-2.zip", error));
+    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
+    MCScreenInput::RealClick(centre->first, centre->second);
+    ScreenFrames();
+    REQUIRE(question.IsShowing());
+    RealClickOn(*question.OkButton);
+    REQUIRE(ScreenFramesUntil(MCStage::Failed));
+    ScreenFrames();
+    CHECK_EQ(list->Description(HdPackRow), std::string("THE DOWNLOAD FAILED. GET TRIES AGAIN."));
+    CHECK(ButtonShown("GET"));
+    MCScreenInput::SaveShot("hd options art size failed", MCScreenInput::ScreenHash());
 }
 
 TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD out")

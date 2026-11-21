@@ -131,7 +131,8 @@ namespace MCUpdater
         uint64_t TwoXBytes = 0;
         /// <summary>
         /// The change: none, downloading (<see cref="Received"/> of <see cref="Expected"/>), ready (in or out at the
-        /// next start) or failed (<see cref="Error"/>).
+        /// next start) or failed (<see cref="Error"/>: why, in the player's words, when it's a reason they can act on;
+        /// else empty, the detail in the log).
         /// </summary>
         MCStage Stage = MCStage::None;
         uint64_t Received = 0;

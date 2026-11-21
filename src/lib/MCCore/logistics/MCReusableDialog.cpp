@@ -268,6 +268,9 @@ auto MCReusableDialog::SetTwoButton(bool twoButtons) -> void
 {
     TwoButton = twoButtons;
     const int32_t buttonY = Height() - 0x17;
+    // Port: OK shows again after a waiting message (ShowWaitingDialog), which hides the buttons: the message that
+    // followed one (COULDN'T JOIN THE ROOM AGAIN...) had nothing to click, only Return closing it.
+    OkButton->ShowGuiWindow(true);
 
     if (TwoButton)
     {

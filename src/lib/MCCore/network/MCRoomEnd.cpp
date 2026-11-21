@@ -796,12 +796,14 @@ auto MCRoomEnd::Frame() -> void
     const MCHow how = Ending->How;
     Ending.reset();
 
-    if (game == nullptr || GlobalLog() == nullptr)
+    if (game == nullptr)
     {
         return;
     }
 
-    // The rematch: the results close, and the room is hosted again (AfterMatch); with them gone already, at once.
+    // The rematch: the results close, and the room is hosted again (AfterMatch, once the menus are back); with them gone
+    // already, at once. At the results the mission has no menus (it dropped them as the scenario loaded): asking for them
+    // first dropped the rematch there, the room never hosted again.
     if (how == MCHow::Rematch)
     {
         HostAfterResults = true;
@@ -810,11 +812,17 @@ auto MCRoomEnd::Frame() -> void
         {
             Mission()->CloseResultsScreen();
         }
-        else
+        else if (GlobalLog() != nullptr)
         {
             AfterMatch();
         }
 
+        // Else the results are already closing: the mission's way back hosts it (TakesOnAfterMatch).
+        return;
+    }
+
+    if (GlobalLog() == nullptr)
+    {
         return;
     }
 

@@ -102,6 +102,14 @@ namespace MCTestGame
     /// <returns>Whether the scenario is up.</returns>
     bool StartCampaignMission();
 
+    /// <summary>
+    /// Logistics started (<see cref="StartLogistics"/>), a new campaign's first mission (<see cref="StartCampaignMission"/>)
+    /// played and ended with <paramref name="result"/> (above 3 a win; 3 both sides lost, as a match's end): runs frames
+    /// until its results screen is up. The mission has no logistics then (it dropped it as the scenario loaded).
+    /// </summary>
+    /// <returns>Whether logistics came up (the results are required).</returns>
+    bool ReachFirstResults(uint32_t result);
+
     /// <summary>The tests' user folder (under the temporary folder): the game writes its saves and settings there.</summary>
     std::filesystem::path UserFolder();
 

@@ -14,8 +14,10 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
+#include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
 #include "mission/MCRematchLetters.h"
 #include "mission/MCScenario.h"
@@ -391,6 +393,70 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
 }
 
 /// <summary>
+/// The host's REMATCH from the match's own results, where the mission has no logistics (it dropped it as the scenario
+/// loaded): once its guests have left, the results close and the room is hosted again, keeping their places. The wait's
+/// end asked for the logistics first and, finding none, dropped the rematch: the results stayed up with NEXT MISSION
+/// alone and the room never came back (an internet game's kept place listed as a greyed room meanwhile; the 21 Nov
+/// playtest, 2 of 2). A campaign mission's results, both sides lost, stand in for the match's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a host's REMATCH from its match's results hosts the room again")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28957";
+    constexpr uint32_t BothSidesLost = 3;
+    const std::string address = std::format("127.0.0.1:{}", Port);
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::ReachFirstResults(BothSidesLost));
+    REQUIRE(GlobalLog() == nullptr);
+
+    // The match's room, as the LAN games host it (here once the results are up, with no screens to host from), and ANN
+    // in it; the match under way since the room's start.
+    auto host = std::make_shared<MCMultiPlayer>();
+    MCGameContext::Current().SetMultiPlayer(host);
+    REQUIRE_EQ(host->Start(), 0);
+    MCSessionManager& manager = *host->SessionManager;
+    manager.ConnectTcp(address);
+    REQUIRE_EQ(host->CreateSession("COMMANDER'S GAME", "COMMANDER", 4), 0);
+    REQUIRE(MCRoomEnd::GamesOf() == MCRoomEnd::MCGames::Lan);
+    const std::shared_ptr<MCFidpSession> matchRoom = manager.CurrentSession();
+    Guest ann("ANN", MCMatchRule::Supported);
+    REQUIRE(ann.Join(*manager.DirectPlay, address));
+    REQUIRE(SettleUntil([&] { return host->PlayerRules.contains(ann.Id()); }));
+    MCRoomEnd::MatchStarts();
+    host->InMission = true;
+    IsMPlayerGame = true;
+
+    // The results' REMATCH: ANN is told and leaves.
+    REQUIRE(MCRoomEnd::OffersRematch());
+    MCRoomEnd::Rematch();
+    REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
+    CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Rematch)});
+    ann.Leave();
+
+    // The results close, and the room is hosted again: a new session, the host alone in it, ANN's place kept.
+    CHECK(SettleUntil([&] { return Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr; }));
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            return GlobalLog() != nullptr && OnScreen(GlobalLog()->SessionScreen) && InSession() &&
+                   manager.CurrentSession() != matchRoom;
+        }));
+    Settle();
+    CHECK(!MCRoomEnd::Rematching());
+    CHECK(Scenario() == nullptr);
+    CHECK(MultiPlayer()->IsHost);
+    CHECK_EQ(manager.CurrentSession()->Name, std::string("COMMANDER'S GAME"));
+    CHECK_EQ(manager.GetPlayers(nullptr).size(), 1u);
+    CHECK_EQ(GlobalLog()->SessionScreen->StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
+    SaveShot("rematch 3 room again from the results", ScreenHash());
+    IsMPlayerGame = false;
+}
+
+/// <summary>
 /// A guest whose host has a rematch: its game leaves the session at once, waits over the LAN games ("REJOINING BOB'S GAME
 /// FOR A REMATCH...") and joins the room the host hosts again; a room that doesn't come back in time is said over the
 /// games.
@@ -443,6 +509,10 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host has a rematch joins its room ag
     REQUIRE(SettleUntil([] { return DialogText() == "Couldn't join the room again: it has closed."; }));
     CHECK(OnScreen(GlobalLog()->LanScreen));
     CHECK(!InSession());
+
+    // Its OK, which the waiting message had hidden, closes it with a click.
+    ClickButton(*GlobalLog()->MessageDialog->OkButton);
+    CHECK(DialogText().empty());
 }
 
 /// <summary>

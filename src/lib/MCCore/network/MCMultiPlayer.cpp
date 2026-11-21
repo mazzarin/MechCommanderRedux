@@ -1264,8 +1264,6 @@ void ShowOkDialog(MCReusableDialog& dialog, std::string_view text, std::function
     dialog.OkButton->SetUpPicture(upArt);
     dialog.OkButton->SetDownPicture(downArt);
     dialog.OkButton->Disabled = false;
-    // Port: after a waiting dialog (ShowWaitingDialog), which hides it.
-    dialog.OkButton->ShowGuiWindow(true);
     dialog.OkButton->Draw();
     dialog.Activate();
 }

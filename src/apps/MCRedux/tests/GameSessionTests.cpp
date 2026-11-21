@@ -377,36 +377,11 @@ namespace
 
     /// <summary>
     /// A new campaign's first mission, played with the force's first mech and ended with <paramref name="result"/>
-    /// (above 3 a win): its results screen up.
-    /// </summary>
-    bool ReachFirstResults(uint32_t result)
-    {
-        if (!MCTestGame::StartLogistics())
-        {
-            return false;
-        }
-
-        REQUIRE(MCTestGame::StartCampaignMission());
-        ScenarioResult = result;
-        Mission()->EndScenarioRequested = -1;
-
-        for (int32_t frame = 0; frame < 300 && Mission()->State != MCMissionState::Results; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-
-        REQUIRE(Mission()->State == MCMissionState::Results);
-        REQUIRE(Mission()->ResultsScreen != nullptr);
-        return true;
-    }
-
-    /// <summary>
-    /// A new campaign's first mission, played with the force's first mech and ended with <paramref name="result"/>
     /// (above 3 a win) once the results screen is closed.
     /// </summary>
     bool PlayFirstMission(uint32_t result)
     {
-        if (!ReachFirstResults(result))
+        if (!MCTestGame::ReachFirstResults(result))
         {
             return false;
         }
@@ -431,7 +406,7 @@ TEST_CASE_ISOLATED("game: a launcher's game stopped on its match's results scree
     }
 
     const MCTestGame::SaveGameCleanup saves;
-    REQUIRE(ReachFirstResults(5));
+    REQUIRE(MCTestGame::ReachFirstResults(5));
     // A launcher's game in its match.
     MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
     MultiPlayer()->InMission = true;
@@ -489,7 +464,7 @@ TEST_CASE_ISOLATED("game: a match's guest whose session is lost at the results k
     }
 
     const MCTestGame::SaveGameCleanup saves;
-    REQUIRE(ReachFirstResults(5));
+    REQUIRE(MCTestGame::ReachFirstResults(5));
     const MCMultiPlayer& game = PlayAsLanGuest();
 
     // The system's word (DPSYS_SESSIONLOST) at the results.
@@ -536,7 +511,7 @@ TEST_CASE_ISOLATED("game: a match's results close in the fade into the menus, th
     }
 
     const MCTestGame::SaveGameCleanup saves;
-    REQUIRE(ReachFirstResults(5));
+    REQUIRE(MCTestGame::ReachFirstResults(5));
     PlayAsLanGuest();
     IsMPlayerGame = false;
     const size_t taken = MCFilesAhead::TakenCount();

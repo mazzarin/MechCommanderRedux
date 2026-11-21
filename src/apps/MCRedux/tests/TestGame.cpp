@@ -38,6 +38,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
+#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
@@ -595,6 +596,30 @@ namespace MCTestGame
         std::cout << "  the campaign's scenario never started (mission state " << std::to_underlying(Mission()->State)
                   << ")\n";
         return false;
+    }
+
+    bool ReachFirstResults(uint32_t result)
+    {
+        // Twenty seconds: the scenario's end and the results' fade in.
+        constexpr int32_t MostFrames = 300;
+
+        if (!StartLogistics())
+        {
+            return false;
+        }
+
+        REQUIRE(StartCampaignMission());
+        ScenarioResult = result;
+        Mission()->EndScenarioRequested = -1;
+
+        for (int32_t frame = 0; frame < MostFrames && Mission()->State != MCMissionState::Results; frame++)
+        {
+            RunFrame(1.0f / 15.0f);
+        }
+
+        REQUIRE(Mission()->State == MCMissionState::Results);
+        REQUIRE(Mission()->ResultsScreen != nullptr);
+        return true;
     }
 
     namespace

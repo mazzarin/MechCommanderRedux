@@ -46,6 +46,15 @@ namespace
     constexpr std::string_view RestartLabel = "RESTART";
     std::vector<MCGuiHandle<MCLogTextButton>> HdPackButtons;
 
+    /// <summary>
+    /// What HD PACK says of a change that failed: with the updater's reason when it has one in the player's words, else
+    /// with the button that tries again (its detail is in the log).
+    /// </summary>
+    constexpr std::string_view DownloadFailed = "THE DOWNLOAD FAILED";
+    constexpr std::string_view NotRemoved = "IT COULDN'T BE REMOVED";
+    constexpr std::string_view FailedBecauseFormat = "{}: {}.";
+    constexpr std::string_view FailedAgainFormat = "{}. {} TRIES AGAIN.";
+
     /// <summary>The button HD PACK shows: GET, STOP while it downloads, REMOVE, RESTART once a change is ready; none.</summary>
     std::string_view HdPackAction(const MCUpdater::MCHdPack& pack)
     {
@@ -97,10 +106,18 @@ namespace
                 return pack.Chosen ? "DOWNLOADED. RESTART THE GAME TO SEE IT." : "RESTART THE GAME TO REMOVE IT.";
             case MCUpdater::MCStage::Failed:
             {
+                const std::string_view failed = pack.Chosen ? DownloadFailed : NotRemoved;
+
+                // The button shown (HdPackAction) tries the same again.
+                if (pack.Error.empty())
+                {
+                    return std::format(FailedAgainFormat, failed, HdPackAction(pack));
+                }
+
                 std::string error = pack.Error;
                 std::ranges::transform(error, error.begin(), [](char c)
                                        { return static_cast<char>(std::toupper(static_cast<unsigned char>(c))); });
-                return std::format("{}: {}.", pack.Chosen ? "THE DOWNLOAD FAILED" : "IT COULDN'T BE REMOVED", error);
+                return std::format(FailedBecauseFormat, failed, error);
             }
             default:
                 break;
@@ -172,14 +189,15 @@ namespace
         }
     }
 
-    /// <summary>What REMOVE asks first.</summary>
+    /// <summary>What REMOVE asks first, and the questions' CANCEL held.</summary>
     constexpr std::string_view RemoveQuestion = "Remove the HD pack?";
+    constexpr std::string_view CancelHeld = "bg_cancl.tga";
 
     /// <summary>REMOVE: asked first.</summary>
     void AskToRemoveHd()
     {
         AskMenuQuestion(
-            *GlobalLog()->QuestionDialog, RemoveQuestion, [] { MCUpdater::ChooseHd(false); }, nullptr, "bg_cancl.tga",
+            *GlobalLog()->QuestionDialog, RemoveQuestion, [] { MCUpdater::ChooseHd(false); }, nullptr, CancelHeld,
             true);
     }
 
@@ -223,10 +241,36 @@ namespace
         return MCUpdater::HdPack().TwoXChosen ? TwoXArt : FullArt;
     }
 
-    /// <summary>A click on HD ART SIZE: the player's pick, planned as GET's change is.</summary>
+    /// <summary>What a pick of HD ART SIZE that downloads asks first: the art's name, and its size where known.</summary>
+    constexpr std::string_view DownloadArtFormat = "Download the {} HD art?";
+    constexpr std::string_view DownloadArtSizedFormat = "Download the {} HD art ({})?";
+    constexpr std::string_view FullArtName = "full";
+    constexpr std::string_view TwoXArtName = "2X";
+
+    /// <summary>
+    /// A click on HD ART SIZE: the player's pick, planned as GET's change is. A size the copy doesn't have downloads, so
+    /// it asks first, saying how much (CANCEL keeps the art chosen: the row shows it again); going back to the size the
+    /// copy has asks nothing.
+    /// </summary>
     void HdArtSizeChanged(int32_t size)
     {
-        MCUpdater::ChooseHdArt(size == TwoXArt);
+        const bool twoX = size == TwoXArt;
+        const MCUpdater::MCHdPack& pack = MCUpdater::HdPack();
+
+        if (twoX == pack.TwoX)
+        {
+            MCUpdater::ChooseHdArt(twoX);
+            return;
+        }
+
+        const std::string_view name = twoX ? TwoXArtName : FullArtName;
+        const uint64_t bytes = twoX ? pack.TwoXBytes : pack.FullBytes;
+        const std::string question = bytes == 0
+                                         ? std::format(DownloadArtFormat, name)
+                                         : std::format(DownloadArtSizedFormat, name, MCUpdateWork::SizeText(bytes));
+        AskMenuQuestion(
+            *GlobalLog()->QuestionDialog, question, [twoX] { MCUpdater::ChooseHdArt(twoX); }, nullptr, CancelHeld,
+            true);
     }
 
     /// <summary>HD ART SIZE's line: whose pick it is, and both sizes where the release says them.</summary>

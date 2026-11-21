@@ -641,9 +641,10 @@ namespace
 
         if (!error.empty())
         {
+            // The detail (a file's path, a host's answer) is the log's; HD OPTIONS says it in the player's words.
             SDL_Log("Updater: the HD pack's change failed: %s", error.c_str());
             Hd.Stage = MCStage::Failed;
-            Hd.Error = Printable(error, MaxErrorLength, false);
+            Hd.Error.clear();
             return;
         }
 
@@ -1227,7 +1228,7 @@ namespace
         {
             SDL_Log("Updater: the HD pack's choice isn't kept: %s", kept.error().c_str());
             Hd.Stage = MCStage::Failed;
-            Hd.Error = Printable(kept.error(), MaxErrorLength, false);
+            Hd.Error.clear();
             return;
         }
 

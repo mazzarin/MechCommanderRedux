@@ -868,6 +868,9 @@ int main(int argc, char** argv)
     }
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));
+    // Each report says the content release the copy plays, and the release due while its art downloads (none without a
+    // record).
+    MCTelemetry::SetContent(MCTelemetry::ContentOf(*MakeDisk(), options->DataFolder, record, MC_VERSION_BUILD));
     MCBenchmark::SetBuild(MC_VERSION_SHOWN ", commit " MC_VERSION_COMMIT);
     // The HD art frames kept, in memory and on the GPU, by what this machine says it can spare.
     MCMemoryRoom::SetSystem(MCMakeMemorySystem());

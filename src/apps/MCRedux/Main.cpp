@@ -415,9 +415,31 @@ namespace
         static const MCContentUpdater::MCMachine machine = []
         {
             constexpr uint64_t BytesPerMegabyte = uint64_t{1} << 20;
-            const MCContentUpdater::MCMachine found{
+            MCContentUpdater::MCMachine found{
                 .MemoryBytes = static_cast<uint64_t>(std::max(SDL_GetSystemRAM(), 0)) * BytesPerMegabyte,
                 .CardBytes = MCOwnCardBytes()};
+
+            // TRIAL BUILD ONLY: the rehearsal's small machine. A number of megabytes in the trial user folder's
+            // trial-memory-mb.txt stands for this machine's memory (a file, as Sparkle's relaunch drops the
+            // environment).
+            constexpr std::string_view TrialMemoryFile = "trial-memory-mb.txt";
+            if (auto player = PlayerFolder(); player)
+            {
+                std::ifstream memoryFile(*player / TrialMemoryFile);
+                uint64_t megabytes = 0;
+                if (memoryFile >> megabytes && megabytes != 0)
+                {
+                    SDL_Log("Trial: memory taken as %llu MB (%s)", static_cast<unsigned long long>(megabytes),
+                            std::string(TrialMemoryFile).c_str());
+                    found.MemoryBytes = megabytes * BytesPerMegabyte;
+                }
+            }
+            else
+            {
+                SDL_Log("Trial: no user folder for %s: %s", std::string(TrialMemoryFile).c_str(),
+                        player.error().c_str());
+            }
+
             const std::string card = found.CardBytes
                                          ? std::format("a card of {} MB", *found.CardBytes / BytesPerMegabyte)
                                          : std::string("no card of its own");

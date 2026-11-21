@@ -4063,7 +4063,7 @@ namespace
     /// downloads (what's in of the whole), then once it's in.
     /// </summary>
     constexpr std::string_view DueArtDownloadingLine = "NEW HD ART DOWNLOADING: {}";
-    constexpr std::string_view DueArtReadyLine = "NEW HD ART READY: PRESS RESTART";
+    constexpr std::string_view DueArtReadyLine = "NEW HD ART READY: PLEASE RESTART";
 
     /// <summary>The notice at a mission's briefing or in a match's room: while that art downloads, then once it's in.</summary>
     constexpr std::string_view DueArtDownloadingNotice =

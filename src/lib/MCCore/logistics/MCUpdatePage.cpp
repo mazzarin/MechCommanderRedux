@@ -806,10 +806,10 @@ namespace
     /// <summary>
     /// Port-only (Redux HD): what the line says of the new HD art a program installed alone came for
     /// (MCUpdater::DueArt), the game showing the old art until it's in: while it downloads (what's in of the whole), then
-    /// once it's in, RESTART (the UPDATE page's) named when the page offers it.
+    /// once it's in, asking for a restart when the page offers RESTART.
     /// </summary>
     constexpr std::string_view DueArtDownloadingLine = "NEW HD ART DOWNLOADING: {}";
-    constexpr std::string_view DueArtRestartLine = "NEW HD ART READY: PRESS RESTART";
+    constexpr std::string_view DueArtRestartLine = "NEW HD ART READY: PLEASE RESTART";
     constexpr std::string_view DueArtReadyLine = "NEW HD ART READY";
 
     /// <summary>What the line under QUIT says while an update waits.</summary>

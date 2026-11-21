@@ -9512,27 +9512,33 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             const uint32_t width = surface.Target.Width;
             const uint32_t height = surface.Target.Height;
 
-            for (auto made :
-                 {EnsureTexture(kept.Colors[into], MCHolder::GpuTargets, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, usage,
-                                width, height),
-                  EnsureTexture(kept.Indices[into], MCHolder::GpuTargets, IndexFormat, usage, width, height),
-                  EnsureTexture(kept.Weights[into], MCHolder::GpuTargets, GlintFormat, usage, width, height),
-                  EnsureTexture(kept.Slots[into], MCHolder::GpuTargets, StandsFormat, usage, width, height)})
+            // Port-only (SPEC-memory.md's first view): both pairs made at once, so the one the first shift moves the
+            // ground into is made with this one (by the first view, drawn before play), not in a frame of play.
+            for (const size_t pair : {into, 1 - into})
             {
-                if (!made)
+                for (auto made :
+                     {EnsureTexture(kept.Colors[pair], MCHolder::GpuTargets, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                    usage, width, height),
+                      EnsureTexture(kept.Indices[pair], MCHolder::GpuTargets, IndexFormat, usage, width, height),
+                      EnsureTexture(kept.Weights[pair], MCHolder::GpuTargets, GlintFormat, usage, width, height),
+                      EnsureTexture(kept.Slots[pair], MCHolder::GpuTargets, StandsFormat, usage, width, height)})
                 {
-                    SDL_Log("MCVulkanRenderer: the ground isn't kept (%ux%u): %s", width, height, made.error().c_str());
-
-                    for (size_t i = 0; i < kept.Colors.size(); ++i)
+                    if (!made)
                     {
-                        Release(kept.Colors[i]);
-                        Release(kept.Indices[i]);
-                        Release(kept.Weights[i]);
-                        Release(kept.Slots[i]);
-                    }
+                        SDL_Log("MCVulkanRenderer: the ground isn't kept (%ux%u): %s", width, height,
+                                made.error().c_str());
 
-                    kept.Held = false;
-                    return false;
+                        for (size_t i = 0; i < kept.Colors.size(); ++i)
+                        {
+                            Release(kept.Colors[i]);
+                            Release(kept.Indices[i]);
+                            Release(kept.Weights[i]);
+                            Release(kept.Slots[i]);
+                        }
+
+                        kept.Held = false;
+                        return false;
+                    }
                 }
             }
 

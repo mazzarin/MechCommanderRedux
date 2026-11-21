@@ -395,6 +395,14 @@ public:
     std::expected<void, std::string> RunRecorded();
 
     /// <summary>
+    /// Port-only: the frame as it stands (its view, its colours, its underlays now) run whole as <see cref="Present"/>
+    /// would run it, the GPU renderer's draws and the composite, but shown nowhere and waited for
+    /// (MCPresenter::ComposeUnshown): for draws made before the frame they're for is shown (play's first view, drawn
+    /// under the loading bar).
+    /// </summary>
+    std::expected<void, std::string> RunUnshown();
+
+    /// <summary>
     /// Draws the frame as <see cref="Present"/> would, at the screen's size, into an offscreen texture and reads it
     /// back as RGBA (tests compare it with <see cref="ComposeScreen"/>).
     /// </summary>

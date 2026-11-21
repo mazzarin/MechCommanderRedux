@@ -110,6 +110,41 @@ public:
     /// </summary>
     void FollowViewSize();
 
+    /// <summary>The camera's place on screen and the view's size it follows, as <see cref="PlaceOnScreen"/> sets them.</summary>
+    struct MCScreenPlace
+    {
+        float ViewWidth = 0.0f;
+        float ViewHeight = 0.0f;
+        float SinAngle = 0.0f;
+        float CosAngle = 0.0f;
+        float HalfWidth = 0.0f;
+        float HalfHeight = 0.0f;
+        MCVector2D ScreenUL;
+        MCVector2D LastScreenUL;
+        std::array<int32_t, 2> ScreenULFraction{};
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the first view, MCMission::DrawFirstView): the view's size
+    /// followed and the camera's place on screen worked out from where it is, as an update leaves them, without moving
+    /// it: <see cref="ScreenUL"/> from <c>Position</c>, and <see cref="LastScreenUL"/> the same (no scroll since). The
+    /// place it had, for <see cref="PutBackOnScreen"/>.
+    /// </summary>
+    [[nodiscard]] MCScreenPlace PlaceOnScreen();
+
+    /// <summary>
+    /// Port-only: the camera's place on screen and view size as <paramref name="place"/> held them: the first view,
+    /// drawn, leaves play's first update the camera it would have found.
+    /// </summary>
+    void PutBackOnScreen(const MCScreenPlace& place);
+
+    /// <summary>
+    /// Port-only (the first view, MCCameraList::DrawFirstViews): while set, <see cref="Render"/> draws the ground alone.
+    /// The map's objects and the units, the craters, particles and weather are left out: their draws step play (a
+    /// building's animation and fire and its sound, the particles' and the weather's clocks).
+    /// </summary>
+    static inline bool DrawsGroundOnly = false;
+
     /// <summary>The pane the camera renders into (null for a camera with no window).</summary>
     std::shared_ptr<MCViewWindow> View() const { return _View.Lock(); }
 
@@ -195,6 +230,12 @@ public:
     float DistanceThreshold = 10.0f;
 
 private:
+    /// <summary>
+    /// The camera's place projected, as an update ends: <see cref="ScreenUL"/> and, with HDSmoothCamera, its fraction;
+    /// nothing without a terrain.
+    /// </summary>
+    void ProjectPosition();
+
     /// <summary>The pane it renders into: a child of its title window or of the main window, closed with the camera.</summary>
     MCGuiHandle<MCViewWindow> _View;
     /// <summary>

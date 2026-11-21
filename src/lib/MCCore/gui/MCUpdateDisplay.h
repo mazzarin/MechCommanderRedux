@@ -81,6 +81,14 @@ void RehearseScreen();
 /// window's: <see cref="RehearseScreen"/>). Whether it ran (<paramref name="setUp"/> with it).
 /// </summary>
 bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp);
+/// <summary>
+/// Port-only (SPEC-memory.md's "Under the loading bar": the first view): what <paramref name="draw"/> draws, drawn as a
+/// frame's draws are and run on the GPU now in a frame laid out as the next one shown will be (its view, its colours,
+/// its underlays: MCDisplay::RunUnshown), shown nowhere and waited for: the textures it draws into made, at the sizes
+/// that frame shows them, and its work done before the frames shown. Unlike a rehearsal, its draws are drawn. Only with
+/// the GPU's surfaces shown and outside a frame's draw; whether it ran.
+/// </summary>
+bool DrawUnshown(const std::function<void()>& draw);
 /// <summary>Port-only, for the tests: the rehearsals run so far (RehearseScreen's and RehearseHidden's).</summary>
 size_t RehearsalsRun();
 /// <summary>

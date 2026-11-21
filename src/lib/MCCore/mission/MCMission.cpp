@@ -21,11 +21,13 @@
 #include "gui/MCGuiSmackerWindow.h"
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "camera/MCCamera.h"
+#include "camera/MCCameraList.h"
 #include "camera/MCMainWindow.h"
 #include "camera/MCViewWindow.h"
 #include "appear/MCAppearance.h"
 #include "object/MCObjectSystem.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCMemoryLedger.h"
 #include "platform/MCRenderer.h"
 #include "color/MCPalette.h"
 #include "engine/MCCraterManager.h"
@@ -1058,6 +1060,7 @@ auto MCMission::StartScenario(std::string_view name) -> void
     State = MCMissionState::Scenario;
     WaitTimer = WaitTime;
     ARedrawScreen();
+    DrawFirstView();
     ScenarioCallback = AddCallback(PlayScenario);
 
     if (_InterfaceUpdateCallback == nullptr)
@@ -1159,6 +1162,34 @@ auto MCMission::PrepareOpeningView() -> void
         std::format("the opening view: {} HD frames read ({:.1f} MB), {} on the GPU, {:.1f} ms", frames.size(),
                     static_cast<double>(bytes) / BytesPerMb, onGpu,
                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()));
+}
+
+auto MCMission::DrawFirstView() -> void
+{
+    const std::shared_ptr<MCCameraList> cameras = CameraList();
+
+    if (!DrawsFirstView || cameras == nullptr)
+    {
+        return;
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    const int64_t targets = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTargets).Allocated;
+    std::vector<MCCameraList::MCFirstView> drawn;
+
+    if (!DrawUnshown([&drawn, &cameras] { drawn = cameras->DrawFirstViews(); }) || drawn.empty())
+    {
+        return;
+    }
+
+    // The views wiped once their draw has run, in a frame of its own, then taken from under the screen where they
+    // weren't: play's first frame draws no world (MCScenario::Render's turn 2), so it shows them as before.
+    DrawUnshown([&drawn] { MCCameraList::WipeFirstViews(drawn); });
+    MCCameraList::UnderlayFirstViewsAsBefore(drawn);
+    MCFrameLog::Note(std::format(
+        "play's first view drawn under the bar: {} view(s), {:.1f} MB of targets made, {:.1f} ms", drawn.size(),
+        static_cast<double>(MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTargets).Allocated - targets) / BytesPerMb,
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()));
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void

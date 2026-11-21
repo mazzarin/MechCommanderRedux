@@ -639,6 +639,11 @@ std::expected<void, std::string> MCDisplay::RunRecorded()
     return _Presenter->RunRecorded(_FrameUnderlays);
 }
 
+std::expected<void, std::string> MCDisplay::RunUnshown()
+{
+    return _Presenter->ComposeUnshown(BuildFrame(false));
+}
+
 void MCDisplay::ShowFinished()
 {
     _Presenter->ShowFinished();

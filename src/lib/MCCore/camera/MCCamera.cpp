@@ -730,27 +730,56 @@ auto MCCamera::Update() -> void
         terrainWindow->Update();
     }
 
-    if (Terrain() != nullptr)
-    {
-        ScreenUL = MCTerrain::ProjectTerrain(Position);
-        ScreenULFraction = {};
-
-        if (MCSmoothCamera())
-        {
-            const MCVector2D exact = MCTerrain::ProjectTerrainUnrounded(Position);
-            const auto steps = [](float past)
-            {
-                constexpr int32_t Most = MCDrawnGrid::FractionSteps - 1;
-                const auto rounded = static_cast<int32_t>(std::lround(past * MCDrawnGrid::FractionSteps));
-                return std::clamp(rounded, -Most, Most);
-            };
-
-            ScreenULFraction = {steps(exact.X - ScreenUL.X), steps(exact.Y - ScreenUL.Y)};
-        }
-    }
-
+    ProjectPosition();
     TargetChanged = false;
     ForceUpdate = false;
+}
+
+auto MCCamera::ProjectPosition() -> void
+{
+    if (Terrain() == nullptr)
+    {
+        return;
+    }
+
+    ScreenUL = MCTerrain::ProjectTerrain(Position);
+    ScreenULFraction = {};
+
+    if (MCSmoothCamera())
+    {
+        const MCVector2D exact = MCTerrain::ProjectTerrainUnrounded(Position);
+        const auto steps = [](float past)
+        {
+            constexpr int32_t Most = MCDrawnGrid::FractionSteps - 1;
+            const auto rounded = static_cast<int32_t>(std::lround(past * MCDrawnGrid::FractionSteps));
+            return std::clamp(rounded, -Most, Most);
+        };
+
+        ScreenULFraction = {steps(exact.X - ScreenUL.X), steps(exact.Y - ScreenUL.Y)};
+    }
+}
+
+auto MCCamera::PlaceOnScreen() -> MCScreenPlace
+{
+    const MCScreenPlace was{ViewWidth,  ViewHeight, SinAngle,     CosAngle,        HalfWidth,
+                            HalfHeight, ScreenUL,   LastScreenUL, ScreenULFraction};
+    FollowViewSize();
+    ProjectPosition();
+    LastScreenUL = ScreenUL;
+    return was;
+}
+
+auto MCCamera::PutBackOnScreen(const MCScreenPlace& place) -> void
+{
+    ViewWidth = place.ViewWidth;
+    ViewHeight = place.ViewHeight;
+    SinAngle = place.SinAngle;
+    CosAngle = place.CosAngle;
+    HalfWidth = place.HalfWidth;
+    HalfHeight = place.HalfHeight;
+    ScreenUL = place.ScreenUL;
+    LastScreenUL = place.LastScreenUL;
+    ScreenULFraction = place.ScreenULFraction;
 }
 
 auto MCCamera::Render() -> void
@@ -807,22 +836,25 @@ auto MCCamera::Render() -> void
         }
     }
 
+    if (!DrawsGroundOnly)
     {
-        MCFrameLog::Scope part("draw.objects");
-        CraterManager().Render();
-        ObjectList()->Render();
-    }
+        {
+            MCFrameLog::Scope part("draw.objects");
+            CraterManager().Render();
+            ObjectList()->Render();
+        }
 
-    {
-        MCFrameLog::Scope part("draw.particles");
-        // Port-only (HD particles): what flies about the battle, moved on to the game's time.
-        MCParticles::Draw(*this);
-    }
+        {
+            MCFrameLog::Scope part("draw.particles");
+            // Port-only (HD particles): what flies about the battle, moved on to the game's time.
+            MCParticles::Draw(*this);
+        }
 
-    {
-        MCFrameLog::Scope part("draw.weather");
-        // Port-only (HD weather): the rain, moved on to the game's time.
-        MCWeather::Draw(*this);
+        {
+            MCFrameLog::Scope part("draw.weather");
+            // Port-only (HD weather): the rain, moved on to the game's time.
+            MCWeather::Draw(*this);
+        }
     }
 
     {

@@ -335,33 +335,52 @@ namespace
     /// <summary>The rehearsals run so far (RehearsalsRun).</summary>
     size_t Rehearsals = 0;
 
-    /// <summary>A rehearsal of what <paramref name="draw"/> draws (see <see cref="RehearseScreen"/>).</summary>
-    void Rehearse(const std::function<void()>& draw)
+    /// <summary>
+    /// What <paramref name="draw"/> draws, drawn as a frame's draws are (the mouse's lock held, the HD pictures read
+    /// ahead kept first, as a frame's draws find them; frame log part <paramref name="drawPart"/>), then
+    /// <paramref name="run"/> on the display, nothing shown (part <paramref name="runPart"/>); a run that fails is logged
+    /// as <paramref name="what"/>.
+    /// </summary>
+    void DrawThenRun(std::string_view drawPart, std::string_view runPart, std::string_view what,
+                     const std::function<void()>& draw,
+                     const std::function<std::expected<void, std::string>(MCDisplay&)>& run)
     {
-        Rehearsals++;
         std::scoped_lock lock(MouseCritSec);
         InMouseCritSec = 1;
 
         {
-            MCFrameLog::Scope part("draw.rehearsal");
-            // The HD pictures read ahead kept first, as a frame's draws find them.
+            MCFrameLog::Scope part(drawPart);
             MCHdArt::KeepReadAhead();
-            const MCRenderer::RehearsalScope rehearsal;
             draw();
         }
 
-        // What it queued sent up now (tens of MB for a screen's first), nothing shown.
         if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
         {
-            MCFrameLog::Scope sent("render.rehearsal");
+            MCFrameLog::Scope sent(runPart);
 
-            if (const std::expected<void, std::string> ran = display->RunRecorded(); !ran)
+            if (const std::expected<void, std::string> ran = run(*display); !ran)
             {
-                SDL_Log("Rehearse: sending up what a rehearsal queued failed: %s", ran.error().c_str());
+                SDL_Log("UpdateDisplay: %.*s failed: %s", static_cast<int>(what.size()), what.data(),
+                        ran.error().c_str());
             }
         }
 
         InMouseCritSec = 0;
+    }
+
+    /// <summary>A rehearsal of what <paramref name="draw"/> draws (see <see cref="RehearseScreen"/>).</summary>
+    void Rehearse(const std::function<void()>& draw)
+    {
+        Rehearsals++;
+        // What it queued sent up now (tens of MB for a screen's first), nothing shown.
+        DrawThenRun(
+            "draw.rehearsal", "render.rehearsal", "sending up what a rehearsal queued",
+            [&draw]
+            {
+                const MCRenderer::RehearsalScope rehearsal;
+                draw();
+            },
+            [](MCDisplay& display) { return display.RunRecorded(); });
     }
 }
 
@@ -443,6 +462,22 @@ void RehearseScreen()
     {
         Rehearse(DrawScreenWindow);
     }
+}
+
+bool DrawUnshown(const std::function<void()>& draw)
+{
+    if (InMouseCritSec != 0 || MCRenderer::GpuDrawing() != MCGpuDrawing::On || MCInput::Display() == nullptr)
+    {
+        return false;
+    }
+
+    DrawThenRun("draw.unshown", "render.unshown", "running draws as a frame not shown", draw,
+                [](MCDisplay& display)
+                {
+                    UpdateDisplayView(display);
+                    return display.RunUnshown();
+                });
+    return true;
 }
 
 bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)

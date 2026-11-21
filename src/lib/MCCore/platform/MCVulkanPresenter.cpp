@@ -1263,6 +1263,7 @@ std::expected<void, std::string> MCVulkanPresenter::Ensure(Texture& texture, SDL
     texture.Width = width;
     texture.Height = height;
     texture.Levels = levels;
+
     return {};
 }
 
@@ -2658,6 +2659,58 @@ std::expected<void, std::string> MCVulkanPresenter::Discard(const MCFrame& frame
                           _Renderer->SetColors(frame.PaletteColors, frame.Cycle);
                           PlaceUnderlays(frame);
                       });
+}
+
+std::expected<void, std::string> MCVulkanPresenter::ComposeUnshown(const MCFrame& frame)
+{
+    // Port-only: the frame run ahead before this one goes first, as before a frame shown (its errors are this one's).
+    std::string errors;
+
+    if (auto finished = FinishFrames(); !finished)
+    {
+        errors = std::move(finished.error());
+    }
+
+    // The specks' lattices as the frames shown left them: placed and moved as each frame is planned (SetLighting), they
+    // would start from this one, which no one sees.
+    const std::vector<MCSpeckLattice> specks = _Specks;
+    auto plan = Plan(frame, false);
+    _Specks = specks;
+
+    if (!plan)
+    {
+        return std::unexpected(Joined(std::move(errors), plan.error()));
+    }
+
+    PlannedFrame& planned = **plan;
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(_Device.get());
+
+    if (commands == nullptr)
+    {
+        Recycle(planned);
+        return std::unexpected(Joined(std::move(errors), SdlError("SDL_AcquireGPUCommandBuffer")));
+    }
+
+    auto ran = RunPlanned(*commands, planned);
+    Recycle(planned);
+
+    if (!ran)
+    {
+        SDL_CancelGPUCommandBuffer(commands);
+        return std::unexpected(Joined(std::move(errors), ran.error()));
+    }
+
+    // Waited for, as a frame not shown is (Discard): what it made is ready before the next frame.
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+
+    if (fence == nullptr)
+    {
+        return std::unexpected(Joined(std::move(errors), SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence")));
+    }
+
+    SDL_WaitForGPUFences(_Device.get(), true, &fence, 1);
+    SDL_ReleaseGPUFence(_Device.get(), fence);
+    return Outcome(std::move(errors));
 }
 
 std::expected<void, std::string> MCVulkanPresenter::RunRecorded(std::span<const MCUnderlay> underlays)

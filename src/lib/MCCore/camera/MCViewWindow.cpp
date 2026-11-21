@@ -253,9 +253,26 @@ auto MCViewWindow::Resize(int32_t w, int32_t h) -> void
     GetCamera()->SetViewSize(static_cast<float>(WorldWidth()), static_cast<float>(WorldHeight()));
 }
 
+auto MCViewWindow::ShowsWorld() -> bool
+{
+    return ShowWindow != 0 && (IsHidden() == 0 || HideOffset != 0);
+}
+
+auto MCViewWindow::ShowWorldUnder() -> void
+{
+    UpdateWorldSurface();
+    const MCPane& shown = Frame();
+    const std::shared_ptr<MCWindow> shownWindow = shown.Window.lock();
+    MCRenderer::SetUnderlay(MCUnderlay{MCAddressKey::Of(*this),
+                                       shownWindow != nullptr && shownWindow->Pixels != nullptr
+                                           ? MCAddressKey::Of(shownWindow->Pixels[0])
+                                           : MCAddressKey(),
+                                       MCRect{shown.X0, shown.Y0, shown.X1, shown.Y1}, WorldWindow});
+}
+
 auto MCViewWindow::Display() -> void
 {
-    if (ShowWindow == 0 || (IsHidden() != 0 && HideOffset == 0))
+    if (!ShowsWorld())
     {
         // Port: a view not shown shows no world.
         MCRenderer::RemoveUnderlay(MCAddressKey::Of(*this));
@@ -266,14 +283,7 @@ auto MCViewWindow::Display() -> void
     // drawn when the scenario no longer renders). The zoom eased in MCCamera::Update.
     StartZoom();
     ZoomShown = true;
-    UpdateWorldSurface();
-    const MCPane& shown = Frame();
-    const std::shared_ptr<MCWindow> shownWindow = shown.Window.lock();
-    MCRenderer::SetUnderlay(MCUnderlay{MCAddressKey::Of(*this),
-                                       shownWindow != nullptr && shownWindow->Pixels != nullptr
-                                           ? MCAddressKey::Of(shownWindow->Pixels[0])
-                                           : MCAddressKey(),
-                                       MCRect{shown.X0, shown.Y0, shown.X1, shown.Y1}, WorldWindow});
+    ShowWorldUnder();
     VfxPaneWipe(Frame(), MCRenderer::UnderlayKey);
 
     if (Scenario() != nullptr && (ScenarioEndTurn == -1 || Turn < ScenarioEndTurn))

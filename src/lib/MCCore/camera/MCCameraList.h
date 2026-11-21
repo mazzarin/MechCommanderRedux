@@ -1,10 +1,14 @@
 #pragma once
 
+#include <span>
+#include <vector>
+
 #include "camera/MCCamera.h"
 #include "gui/MCGuiRef.h"
 
 class MCGuiObject;
 class MCMainWindow;
+class MCViewWindow;
 
 /// <summary>
 /// The game's cameras, read from the camera FIT file ("CameraInfo", then "Camera%d" / "ObjectCamera%d" blocks), and
@@ -47,6 +51,36 @@ public:
     /// making each the <see cref="Eye"/> while it renders.</summary>
     void RenderView(MCGuiObject& window);
 
+    /// <summary>A view <see cref="DrawFirstViews"/> drew, and whether its world was under the screen before.</summary>
+    struct MCFirstView
+    {
+        std::shared_ptr<MCViewWindow> View;
+        bool WasUnderlaid = false;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the first view, MCMission::DrawFirstView): each active
+    /// camera's shown view's ground drawn as play's first frame with the world will draw it, before play's first frame:
+    /// the view's zoom started and its world set under the screen, the camera placed on screen where it is
+    /// (MCCamera::PlaceOnScreen), its world rendered (<see cref="RenderView"/>) with the ground alone
+    /// (MCCamera::DrawsGroundOnly). Play is left as it was: the camera's place on screen (MCCamera::PutBackOnScreen), the
+    /// dice and the blocks the draw marks are put back (MCTerrain::RestoreMarkedBlocks). The views drawn.
+    /// </summary>
+    std::vector<MCFirstView> DrawFirstViews();
+
+    /// <summary>
+    /// Port-only: the views <see cref="DrawFirstViews"/> drew wiped to colour 0, as a world surface no frame has drawn
+    /// holds, so the world play's first frame with it draws (MCScenario::Render's turn 2) starts from what it did.
+    /// </summary>
+    static void WipeFirstViews(std::span<const MCFirstView> views);
+
+    /// <summary>
+    /// Port-only: the worlds of the views <see cref="DrawFirstViews"/> drew taken from under the screen where they
+    /// weren't before, once their wipe has run, so play's first frame shows the screen as it did (the view's
+    /// MCViewWindow::Display sets them again).
+    /// </summary>
+    static void UnderlayFirstViewsAsBefore(std::span<const MCFirstView> views);
+
     /// <summary>Updates the active cameras.</summary>
     void Update();
 
@@ -63,6 +97,9 @@ public:
     std::weak_ptr<MCCamera> CurrentCamera;
 
 private:
+    /// <summary>Each active camera whose view is shown, with its view, each view once.</summary>
+    std::vector<std::pair<std::shared_ptr<MCCamera>, std::shared_ptr<MCViewWindow>>> ShownViews();
+
     /// <summary>The cameras, in the file's order.</summary>
     std::vector<std::shared_ptr<MCCamera>> _Cameras;
     /// <summary>The main window holding the main cameras' panes: a child of the screen, closed with the list.</summary>

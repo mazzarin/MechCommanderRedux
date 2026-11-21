@@ -117,6 +117,26 @@ public:
     /// <summary>Forgets the blocks drawn (a new frame).</summary>
     void ClearUsedBlocks();
 
+    /// <summary>The blocks a draw marked: drawn, and near the view (MarkEdgeBlocks).</summary>
+    struct MCMarkedBlocks
+    {
+        std::vector<int32_t> Used;
+        std::vector<int32_t> Edge;
+    };
+
+    /// <summary>The blocks the last draw marked, for <see cref="RestoreMarkedBlocks"/>.</summary>
+    MCMarkedBlocks MarkedBlocks() const { return {_UsedBlocks, _EdgeBlocks}; }
+
+    /// <summary>
+    /// Puts back the blocks <paramref name="blocks"/> held: a draw that isn't play's (the first view, drawn before play)
+    /// leaves play's updates their blocks, as the objects in a block drawn are the ones updated (MCObjectList::Update).
+    /// </summary>
+    void RestoreMarkedBlocks(MCMarkedBlocks blocks)
+    {
+        _UsedBlocks = std::move(blocks.Used);
+        _EdgeBlocks = std::move(blocks.Edge);
+    }
+
     /// <summary>
     /// Whether map block <paramref name="blockNum"/> is drawn this frame. Block -1 (no block) always is: the
     /// original's list ended at its first -1, and a search for -1 found it.

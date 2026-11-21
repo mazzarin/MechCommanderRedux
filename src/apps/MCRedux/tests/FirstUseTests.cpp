@@ -6,13 +6,17 @@
 #include "lib/MCFirstUse.h"
 #include "main/MCGameContext.h"
 #include "main/MCHdSettings.h"
+#include "main/MCMissionGlobals.h"
+#include "mission/MCMission.h"
 #include "mission/MCStagedBattle.h"
 #include "mission/MCTrailerMission.h"
 #include "object/MCArtillery.h"
 #include "object/MCCommander.h"
 #include "object/MCForces.h"
 #include "object/MCMover.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCInput.h"
 #include "platform/MCMemoryLedger.h"
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCRenderer.h"
@@ -484,6 +488,124 @@ TEST_CASE_ISOLATED("game: play's first frames in the canyon read and unpack noth
     HdMemory memory;
     PlayStaged(spec, memory);
     RequireOpeningUsesNothing(MCFirstUses::Take());
+}
+
+namespace
+{
+    /// <summary>
+    /// The screen's targets (the GPU textures a shown view's world and its kept ground draw into, MCHolder::GpuTargets)
+    /// at play's first frame shown and once the test game's start-up has run on (turn 30), in a player's mission 3 with
+    /// the guard's pack, play's first view drawn under the bar or not (MCMission::DrawsFirstView).
+    /// </summary>
+    struct PlayTargets
+    {
+        std::optional<int64_t> AtStart;
+        int64_t Later = 0;
+        /// <summary>Each change seen at a present in play: the turn and the bytes made (or let go of, negative).</summary>
+        std::vector<std::pair<int32_t, int64_t>> Changes;
+        int64_t Seen = 0;
+
+        /// <summary>The changes, a line each, for a failing check.</summary>
+        std::string Listed() const
+        {
+            std::string listed;
+
+            for (const auto& [turn, bytes] : Changes)
+            {
+                listed += std::format("\n  turn {}: {:+.2f} MB", turn, static_cast<double>(bytes) / BytesPerMb);
+            }
+
+            return listed;
+        }
+    };
+
+    PlayTargets TargetsInPlay(bool firstView)
+    {
+        struct Hooked
+        {
+            explicit Hooked(std::function<void()> hook) { MCTestGame::OnPresent = std::move(hook); }
+            ~Hooked()
+            {
+                MCTestGame::OnPresent = nullptr;
+                MCMission::DrawsFirstView = true;
+            }
+
+            Hooked(const Hooked&) = delete;
+            Hooked& operator=(const Hooked&) = delete;
+        };
+
+        PlayTargets targets;
+        MCMission::DrawsFirstView = firstView;
+        const Hooked hooked(
+            [&targets]
+            {
+                const std::shared_ptr<MCMission> mission = Mission();
+
+                if (mission == nullptr || mission->State != MCMissionState::Scenario)
+                {
+                    return;
+                }
+
+                const int64_t now = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTargets).Allocated;
+
+                if (!targets.AtStart.has_value())
+                {
+                    targets.AtStart = now;
+                }
+                else if (now != targets.Seen)
+                {
+                    targets.Changes.emplace_back(Turn, now - targets.Seen);
+                }
+
+                targets.Seen = now;
+            });
+        MCTestContextScope scope;
+        StartAsPlayer(scope, OpeningMission, GuardPack());
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        REQUIRE(display != nullptr);
+        // The last frame presented ahead drawn, so what it made is counted.
+        display->ShowPresented();
+        targets.Later = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTargets).Allocated;
+        REQUIRE(targets.AtStart.has_value());
+        return targets;
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "Under the loading bar": the first view): play's first frames make none of the screen's
+/// targets: the load drew the first view under the bar (MCMission::DrawFirstView), so the world's first frame in play
+/// finds its surface and kept ground made at the sizes it shows them (on the A10 their making and first drawing made
+/// one of play's first frames a refresh late).
+/// </summary>
+TEST_CASE_ISOLATED("game: play's first frames make none of the screen's targets: the load drew the first view")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const PlayTargets targets = TargetsInPlay(true);
+    CHECK(*targets.AtStart > 0);
+
+    if (targets.Later != *targets.AtStart)
+    {
+        FAIL_CHECK(std::format("play made {:.2f} MB of the screen's targets after its first frame:{}",
+                               static_cast<double>(targets.Later - *targets.AtStart) / BytesPerMb, targets.Listed()));
+    }
+}
+
+/// <summary>The control: without the first view drawn under the bar, play's first frames with the world make them.</summary>
+TEST_CASE_ISOLATED("game: without the first view drawn under the bar, play's first frames make the screen's targets")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const PlayTargets targets = TargetsInPlay(false);
+    CHECK(targets.Later > *targets.AtStart);
+    std::cout << std::format("  play made {:.2f} MB of the screen's targets after its first frame:{}\n",
+                             static_cast<double>(targets.Later - *targets.AtStart) / BytesPerMb, targets.Listed());
 }
 
 /// <summary>

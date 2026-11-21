@@ -198,6 +198,14 @@ public:
     virtual std::expected<void, std::string> Discard(const MCFrame&) { return {}; }
 
     /// <summary>
+    /// Port-only: <paramref name="frame"/> run whole as <see cref="Present"/> runs it, composited too, but shown nowhere
+    /// and waited for, so what a shown frame makes for its first world (the screen's surfaces, the composite's bloom
+    /// and fields) is made (play's first view, drawn under the loading bar: gui/MCUpdateDisplay.h's DrawUnshown). With
+    /// no GPU composite, as <see cref="Discard"/>.
+    /// </summary>
+    virtual std::expected<void, std::string> ComposeUnshown(const MCFrame& frame) { return Discard(frame); }
+
+    /// <summary>
     /// Port-only: what a GPU renderer has recorded since the last frame run now, showing nothing and taking no frame
     /// (a rehearsal's uploads: gui/MCUpdateDisplay.h's RehearseScreen), <paramref name="underlays"/> the last frame's;
     /// waited for. Nothing without one, or when nothing was recorded.

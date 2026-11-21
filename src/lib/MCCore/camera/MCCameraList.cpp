@@ -3,9 +3,12 @@
 #include "camera/MCCamera.h"
 #include "color/MCPalette.h"
 #include "camera/MCMainWindow.h"
+#include "camera/MCViewWindow.h"
 #include "lib/MCFitIniFile.h"
 #include "main/MCGameContext.h"
+#include "platform/MCRenderer.h"
 #include "terrain/MCTerrain.h"
+#include "vfx/MCVfxFunctions.h"
 
 std::string CameraPath = "data\\cameras\\";
 
@@ -159,6 +162,111 @@ auto MCCameraList::RenderView(MCGuiObject& window) -> void
         }
 
         _Eye = savedEye;
+    }
+}
+
+auto MCCameraList::ShownViews() -> std::vector<std::pair<std::shared_ptr<MCCamera>, std::shared_ptr<MCViewWindow>>>
+{
+    std::vector<std::pair<std::shared_ptr<MCCamera>, std::shared_ptr<MCViewWindow>>> shown;
+
+    for (const std::shared_ptr<MCCamera>& camera : _Cameras)
+    {
+        if (std::shared_ptr<MCViewWindow> view = camera->Active ? camera->View() : nullptr;
+            view != nullptr && view->ShowsWorld() &&
+            std::ranges::none_of(shown, [&view](const auto& taken) { return taken.second == view; }))
+        {
+            shown.emplace_back(camera, std::move(view));
+        }
+    }
+
+    return shown;
+}
+
+namespace
+{
+    /// <summary>
+    /// While one lives, the first view's draw leaves play as it would be without it. The camera draws the ground alone
+    /// (MCCamera::DrawsGroundOnly): the original's objects do part of play as they draw (a building steps its animation
+    /// and its fire's damage and starts its sound), the units have no place on screen before their first update, and
+    /// the particles and weather step from the time they were last drawn. The dice are put back where they were
+    /// (MCPort::RandState): a draw that rolled them would change every roll after it, and in a match a machine not
+    /// drawing on the GPU draws no first view. And the blocks the draw marks are put back: the map's objects in the
+    /// blocks drawn are the ones an update moves on (MCObjectList::Update).
+    /// </summary>
+    class MCPlayAsItWas
+    {
+    public:
+        MCPlayAsItWas()
+            : _GroundOnly(std::exchange(MCCamera::DrawsGroundOnly, true))
+            , _Dice(MCPort::RandState())
+            , _Blocks(Terrain()->MarkedBlocks())
+        {
+        }
+
+        ~MCPlayAsItWas()
+        {
+            MCCamera::DrawsGroundOnly = _GroundOnly;
+            MCPort::SeedRand(_Dice);
+            Terrain()->RestoreMarkedBlocks(std::move(_Blocks));
+        }
+
+        MCPlayAsItWas(const MCPlayAsItWas&) = delete;
+        MCPlayAsItWas& operator=(const MCPlayAsItWas&) = delete;
+
+    private:
+        bool _GroundOnly;
+        uint32_t _Dice;
+        MCTerrain::MCMarkedBlocks _Blocks;
+    };
+
+    /// <summary>Whether <paramref name="view"/>'s world is under the screen (its underlay set).</summary>
+    bool Underlaid(const MCViewWindow& view)
+    {
+        return std::ranges::any_of(MCRenderer::Underlays(), [key = MCAddressKey::Of(view)](const MCUnderlay& underlay)
+                                   { return underlay.Owner == key; });
+    }
+}
+
+auto MCCameraList::DrawFirstViews() -> std::vector<MCFirstView>
+{
+    std::vector<MCFirstView> drawn;
+
+    if (Terrain() == nullptr)
+    {
+        return drawn;
+    }
+
+    const MCPlayAsItWas asItWas;
+
+    for (const auto& [camera, view] : ShownViews())
+    {
+        drawn.push_back({view, Underlaid(*view)});
+        view->StartZoom();
+        view->ShowWorldUnder();
+        const MCCamera::MCScreenPlace was = camera->PlaceOnScreen();
+        RenderView(*view);
+        camera->PutBackOnScreen(was);
+    }
+
+    return drawn;
+}
+
+auto MCCameraList::WipeFirstViews(std::span<const MCFirstView> views) -> void
+{
+    for (const MCFirstView& drawn : views)
+    {
+        VfxPaneWipe(drawn.View->WorldFrame(), 0);
+    }
+}
+
+auto MCCameraList::UnderlayFirstViewsAsBefore(std::span<const MCFirstView> views) -> void
+{
+    for (const MCFirstView& drawn : views)
+    {
+        if (!drawn.WasUnderlaid)
+        {
+            MCRenderer::RemoveUnderlay(MCAddressKey::Of(*drawn.View));
+        }
     }
 }
 

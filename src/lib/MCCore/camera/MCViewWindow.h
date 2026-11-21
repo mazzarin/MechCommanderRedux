@@ -87,6 +87,14 @@ public:
     void EaseZoom();
     /// <summary>Sets the zoom the first time it is needed: one world pixel per screen pixel, within the limits.</summary>
     void StartZoom();
+    /// <summary>Port: whether the view is shown, so it shows the world (<see cref="Display"/>).</summary>
+    bool ShowsWorld();
+    /// <summary>
+    /// Port: the world surface sized (<see cref="UpdateWorldSurface"/>) and set as the screen's underlay in the view's
+    /// rectangle, as <see cref="Display"/> shows it each frame; for play's first view, drawn under the loading bar
+    /// before the view's first frame (MCMission::DrawFirstView).
+    /// </summary>
+    void ShowWorldUnder();
     /// <summary>Screen pixels per world surface pixel, across and down.</summary>
     float WorldScaleX();
     float WorldScaleY();

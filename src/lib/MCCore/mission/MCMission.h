@@ -100,6 +100,22 @@ public:
     static void PrepareOpeningView();
 
     /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the first view): play's first view drawn once at the load's
+    /// end, under the bar, and its GPU work done, rather than in play's first frames with the world (on the A10 one of
+    /// them came a refresh late in 7 of 13 runs, its world's first drawing 35-46 ms on the GPU): each shown view's
+    /// ground drawn (MCCameraList::DrawFirstViews) and the frame run whole on the GPU, composite too, laid out as play's
+    /// and shown nowhere (gui/MCUpdateDisplay.h's DrawUnshown), so the screen's surfaces, the kept ground's and the
+    /// composite's targets are made at the sizes play shows them; then the views wiped in a frame of their own
+    /// (MCCameraList::WipeFirstViews) and taken from under the screen where they weren't
+    /// (MCCameraList::UnderlayFirstViewsAsBefore), so play's first frames show and do what they did. Only with the GPU
+    /// drawing; the frame log notes it.
+    /// </summary>
+    static void DrawFirstView();
+
+    /// <summary>For the tests: off, play's first view is drawn in play's first frames with the world, as before.</summary>
+    static inline bool DrawsFirstView = true;
+
+    /// <summary>
     /// Asks for scenario <paramref name="scenarioName"/> to start: <see cref="Run"/> starts it after its frame's work,
     /// once the click or network handler that asked has returned.
     /// </summary>

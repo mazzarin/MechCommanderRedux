@@ -2814,6 +2814,9 @@
     <ClInclude Include="sprite\MCMechStopsKnown.h">
       <Filter>sprite</Filter>
     </ClInclude>
+    <ClInclude Include="sprite\MCOpeningLists.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
     <ClInclude Include="sprite\MCPackRecords.h">
       <Filter>sprite</Filter>
     </ClInclude>

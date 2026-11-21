@@ -4273,6 +4273,27 @@ namespace
         return folders;
     }
 
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): a type's archive in <paramref name="pack"/> at
+    /// <paramref name="type"/> (<c>objects/shapes90/7</c>), a packet's frame 0 in each of its streams, and a row for the
+    /// archive's own folder, as the pack's archives have.
+    /// </summary>
+    void WriteTypeArchive(const ScratchFolder& pack, std::string_view type, std::span<const int32_t> packets)
+    {
+        std::vector<Version2Stream> streams;
+
+        for (const int32_t packet : packets)
+        {
+            Version2Stream& stream = streams.emplace_back();
+            stream.Entries.push_back(
+                Raw(std::format("{}\\0.hdf", packet), FrameFile(RunArchive::Side, RunArchive::Side, packet)));
+        }
+
+        const std::filesystem::path archive = pack.Path() / std::filesystem::path(type).concat(".hda");
+        std::filesystem::create_directories(archive.parent_path());
+        WriteBytes(archive, BuildVersion2Streams(streams, {{std::string(), {}}}));
+    }
+
     /// <summary>Port-only: a load's fill of <paramref name="pack"/>, to its end (FinishTakingEveryPicture).</summary>
     std::vector<MCHdArt::StagedPicture> FillUnderTheBar(const HoldPack& pack)
     {
@@ -4433,6 +4454,105 @@ TEST_CASE("hd art: a mission that doesn't fit whole puts none of it on the GPU, 
     CHECK(!fill.Fits);
     CHECK_EQ(fill.MissionBytes, 2 * first);
     CHECK_EQ(fill.Up, before);
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing": the opening): a mission that doesn't fit on the GPU whole puts
+/// its opening up first, in its order, as far as the opening's room (a quarter of the pictures' room) takes it; given room
+/// for all of it, the rest goes up after; left again, the opening is walked again within its room, nothing up read again
+/// (21 Nov: on a card the mission didn't fit, none of it went up, and its first draws were read in play).
+/// </summary>
+TEST_CASE("hd art: a mission that doesn't fit whole puts its opening on the GPU first, as far as its room takes it")
+{
+    constexpr size_t Pieces = 16;
+    constexpr size_t Frames = 16;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr uint64_t NoRoom = 1;
+    // The rooms, in tenths of the mission's bytes at the pages' share: one it doesn't fit (to enter or to stay), whose
+    // quarter takes a few of its folders; one it fits whole.
+    constexpr double ShortTenths = 9;
+    constexpr double WholeTenths = 20;
+    constexpr double Tenths = 10;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces(Pieces, HoldPiece{StreamKind::Packet});
+    const HoldPack pack("gpu-opening", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    // The pack's folders backwards: the opening's order goes up, not the list's.
+    std::vector<MCHdArt::OpeningPacket> opening;
+
+    for (const std::filesystem::path& folder : PacketFolders(pack) | std::views::reverse)
+    {
+        opening.push_back({folder, std::nullopt});
+    }
+
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::NoteGpuRoom(NoRoom);
+    MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+    MCHdArt::SetOpening(opening);
+    FramesUntilUp(before + 1, Frames, up);
+    const MCHdArt::GpuFill known = MCHdArt::GpuFillNow();
+    REQUIRE(known.MissionBytes > 0);
+    CHECK(!known.Fits);
+    CHECK(up.empty());
+    CHECK_EQ(known.OpeningAsked, 0);
+    const auto room = [&known](double tenths)
+    { return static_cast<uint64_t>(static_cast<double>(known.MissionBytes) * known.PagesShare * tenths / Tenths); };
+    // Within the opening's room, the first of its folders up, in its order: the pack's last.
+    const auto checkOpening = [&](uint64_t pictures)
+    {
+        const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+        CHECK(!fill.Fits);
+        CHECK(fill.OpeningDone);
+        REQUIRE(fill.OpeningAsked > 0);
+        CHECK(fill.OpeningAsked < Pieces);
+        CHECK(static_cast<uint64_t>(static_cast<double>(fill.OpeningBytes) * fill.PagesShare) <=
+              std::min(MCHdArt::OpeningMostBytes, room(ShortTenths) / MCHdArt::OpeningRoomShare));
+        CHECK_EQ(fill.Up, before + pictures);
+
+        for (size_t at = 0; at < fill.OpeningAsked; ++at)
+        {
+            MCTest::Scope scope(std::format("its folder {}", at));
+            const std::shared_ptr<const MCHdArt::Frame> found = pack.FindStream(Pieces - 1 - at);
+            REQUIRE(found != nullptr);
+            CHECK(std::ranges::any_of(up, [&found](const MCHdArt::StagedPicture& picture)
+                                      { return picture.Record->Id == found->Id; }));
+        }
+
+        return fill.OpeningAsked;
+    };
+
+    {
+        MCTest::Scope scope("a room it doesn't fit");
+        MCHdArt::NoteGpuRoom(room(ShortTenths));
+        FramesUntilUp(before + Pieces, Frames, up);
+        CHECK_EQ(up.size(), checkOpening(up.size()));
+    }
+
+    {
+        MCTest::Scope scope("a room it fits whole");
+        MCHdArt::NoteGpuRoom(room(WholeTenths));
+        FramesUntilUp(before + Pieces, Frames, up);
+        const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+        CHECK(fill.Fits);
+        CHECK(fill.OpeningDone);
+        CHECK_EQ(fill.OpeningAsked, Pieces);
+        CHECK_EQ(fill.Up, before + Pieces);
+    }
+
+    {
+        MCTest::Scope scope("left again");
+        MCHdArt::NoteGpuRoom(room(ShortTenths));
+        FramesUntilUp(before + Pieces + 1, Frames, up);
+        checkOpening(Pieces);
+        CHECK_EQ(up.size(), Pieces);
+    }
+
     MCHdArt::NoteGpuRoom(std::nullopt);
     MCHdArt::LetGoHold();
     GHdArt = previous;
@@ -5025,19 +5145,7 @@ TEST_CASE("hd art: the briefing puts up every packet of a type its list names by
     const int previous = GHdArt;
     GHdArt = 1;
     const ScratchFolder pack("briefing-type-packets");
-    std::vector<Version2Stream> streams;
-
-    for (const int32_t packet : Packets)
-    {
-        Version2Stream& stream = streams.emplace_back();
-        stream.Entries.push_back(
-            Raw(std::format("{}\\0.hdf", packet), FrameFile(RunArchive::Side, RunArchive::Side, packet)));
-    }
-
-    // A row for the archive's own folder, as the pack's archives have.
-    const std::filesystem::path archive = pack.Path() / std::filesystem::path(Type).concat(".hda");
-    std::filesystem::create_directories(archive.parent_path());
-    WriteBytes(archive, BuildVersion2Streams(streams, {{std::string(), {}}}));
+    WriteTypeArchive(pack, Type, Packets);
     MCHdArt::SetPackFolder(pack.Path());
     const FillSlotsScope slots;
     const uint64_t before = MCHdArt::GpuFillNow().Up;
@@ -5048,6 +5156,126 @@ TEST_CASE("hd art: the briefing puts up every packet of a type its list names by
     CHECK(MCHdArt::GpuFillNow().Fits);
     CHECK_EQ(MCHdArt::GpuFillNow().Up, before + Packets.size());
     CHECK_EQ(up.size(), Packets.size());
+    MCHdArt::LetGoHold();
+    MCHdArt::SetPackFolder({});
+    GHdArt = previous;
+}
+
+namespace
+{
+    /// <summary>
+    /// Port-only (the opening): a load no briefing held for, of a mission that doesn't fit on the GPU whole (a room of
+    /// 0.9 of it at its pages' share), whose opening is the pack's folders backwards: the bar ends with it up
+    /// (<paramref name="waitForGpu"/>), or in a match (not) with it asked for before play, up in play's frames after.
+    /// </summary>
+    void CheckLoadOpening(std::string_view name, bool waitForGpu)
+    {
+        constexpr size_t Pieces = 8;
+        constexpr size_t Frames = 16;
+        constexpr double ShortShare = 0.9;
+        const ReaderScope readers({.Readers = 2, .Hold = true});
+        const int previous = GHdArt;
+        GHdArt = 1;
+        const std::vector<HoldPiece> pieces(Pieces, HoldPiece{StreamKind::Packet});
+        const HoldPack pack(name, pieces);
+        const FillSlotsScope slots;
+        const MCHdArt::GpuFill start = MCHdArt::GpuFillNow();
+        std::vector<MCHdArt::OpeningPacket> opening;
+
+        for (const std::filesystem::path& folder : PacketFolders(pack) | std::views::reverse)
+        {
+            opening.push_back({folder, std::nullopt});
+        }
+
+        MCHdArt::NoteGpuRoom(
+            static_cast<uint64_t>(static_cast<double>(pack.HeldBytes()) * start.PagesShare * ShortShare));
+        MCHdArt::StartLoadFill();
+        pack.Open();
+        MCHdArt::FillGpu(pack.Packets());
+        MCHdArt::SetOpening(opening);
+        std::vector<MCHdArt::StagedPicture> up;
+        MCHdArt::FinishLoadFill([&up] { TakeEveryPicture(up); }, waitForGpu);
+        const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+        CHECK(!fill.Fits);
+        CHECK(fill.OpeningDone);
+        REQUIRE(fill.OpeningAsked > 0);
+        CHECK(fill.OpeningAsked < Pieces);
+
+        if (!waitForGpu)
+        {
+            FramesUntilUp(start.Up + fill.OpeningAsked, Frames, up);
+        }
+
+        CHECK_EQ(up.size(), fill.OpeningAsked);
+        CHECK_EQ(MCHdArt::GpuFillNow().Up, start.Up + fill.OpeningAsked);
+        const std::shared_ptr<const MCHdArt::Frame> first = pack.FindStream(Pieces - 1);
+        REQUIRE(first != nullptr);
+        CHECK(std::ranges::any_of(up, [&first](const MCHdArt::StagedPicture& picture)
+                                  { return picture.Record->Id == first->Id; }));
+        MCHdArt::NoteGpuRoom(std::nullopt);
+        MCHdArt::LetGoHold();
+        GHdArt = previous;
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "Under the loading bar"): a load no briefing came before (a saved game) of a mission that
+/// doesn't fit on the GPU whole ends its bar once the mission's opening is up.
+/// </summary>
+TEST_CASE("hd art: a load no briefing held for ends its bar once the opening of a mission that doesn't fit is up")
+{
+    CheckLoadOpening("load-opening", true);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing", a match): a match's load, whose bar doesn't wait for the
+/// GPU, asks for the opening of a mission that doesn't fit while the load's archives are its to look up, so it goes up in
+/// play's first frames (21 Nov: only a fitting mission's rest was asked for then; in play none is opened for it).
+/// </summary>
+TEST_CASE("hd art: a match's load asks for the opening of a mission that doesn't fit before play")
+{
+    CheckLoadOpening("match-opening", false);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing": the opening): a packet of the player's mechs in the opening (a
+/// PAK and a packet number, which names one gesture at one facing on any mech) goes up as that packet of each mech placed
+/// whose part is that PAK's, and not of a mech of the mission's own, though the player places one of its type too.
+/// </summary>
+TEST_CASE("hd art: the opening's packets of the player's mechs go up as those of the mechs placed")
+{
+    constexpr size_t MostFrames = 64;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view Part = "mechs/legs90";
+    constexpr uint16_t Packet = 51;
+    // The player's mech's archive and the mission's own mech's, each with the opening's packet among others.
+    constexpr std::string_view Players = "mechs/legs90/7";
+    constexpr std::string_view Missions = "mechs/legs90/8";
+    constexpr std::array<int32_t, 3> Packets{0, Packet, Packet + 1};
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const ScratchFolder pack("opening-lance");
+    WriteTypeArchive(pack, Players, Packets);
+    WriteTypeArchive(pack, Missions, Packets);
+    MCHdArt::SetPackFolder(pack.Path());
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::StagedPicture> up;
+    const std::array<std::filesystem::path, 1> list{std::filesystem::path(Missions) / "0"};
+    const std::array<std::filesystem::path, 1> placed{std::filesystem::path(Players) / "0"};
+    const std::array<MCHdArt::OpeningPacket, 1> opening{MCHdArt::OpeningPacket{std::filesystem::path(Part), Packet}};
+    MCHdArt::StartBriefingHold(Mission, list, false);
+    MCHdArt::SetOpening(opening);
+    MCHdArt::HoldMechAhead(placed);
+    MCHdArt::HoldMechAhead(list);
+    FramesUntilUp(before + 2 * Packets.size(), MostFrames, up);
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    CHECK(fill.Fits);
+    CHECK_EQ(fill.Up, before + 2 * Packets.size());
+    CHECK(fill.OpeningDone);
+    CHECK_EQ(fill.OpeningAsked, 1);
+    CHECK(fill.OpeningBytes > 0);
     MCHdArt::LetGoHold();
     MCHdArt::SetPackFolder({});
     GHdArt = previous;

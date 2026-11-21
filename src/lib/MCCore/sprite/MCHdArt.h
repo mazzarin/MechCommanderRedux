@@ -727,6 +727,13 @@ namespace MCHdArt
         /// <summary>Those in the slots that the renderer hasn't taken, and whether reads are left (asked or read now).</summary>
         size_t Waiting = 0;
         bool Reading = false;
+        /// <summary>
+        /// Port-only (the opening: <see cref="SetOpening"/>): the bytes unpacked of the opening's folders walked (asked now
+        /// or before), those of them asked for, and whether the walk reached its end or the opening's room.
+        /// </summary>
+        uint64_t OpeningBytes = 0;
+        size_t OpeningAsked = 0;
+        bool OpeningDone = false;
     };
 
     GpuFill GpuFillNow();
@@ -1336,6 +1343,43 @@ namespace MCHdArt
     /// and with <paramref name="relief"/> each tile's relief map beside it. Another mission's hold is let go of first.
     /// </summary>
     void StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders, bool relief);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing": the opening): a packet a mission's play draws first. A
+    /// folder of the mission's own, whole (no Packet), or a packet of each of the player's mechs placed (Folder names its
+    /// part's PAK, <c>mechs/legs90</c>; a packet number names one gesture at one facing on any mech: MCSpriteTree's
+    /// PacketAt).
+    /// </summary>
+    struct OpeningPacket
+    {
+        std::filesystem::path Folder;
+        std::optional<uint16_t> Packet;
+    };
+
+    /// <summary>
+    /// Port-only (the opening): <paramref name="packets"/>, in the order a play first draws them, as the held mission's
+    /// opening in place of its list's (sprite/MCOpeningLists.h, which <see cref="StartBriefingHold"/> and a load no
+    /// briefing held for take): the fill puts them on the GPU first, on every card, the whole of it where the mission
+    /// fits and at most <see cref="OpeningMostBytes"/> (a quarter of the pictures' room at most) where it doesn't. The
+    /// player's mechs are those placed (<see cref="HoldMechAhead"/>) and those a load hands that aren't the mission's.
+    /// Its folders' archives are opened and held ahead, as the opening's from its list are, before the list's.
+    /// </summary>
+    void SetOpening(std::span<const OpeningPacket> packets);
+
+    /// <summary>
+    /// Port-only (the opening): the mech part's archive <paramref name="folder"/> (the pack's, relative to it, as a generic
+    /// path) is or lies in: <c>mechs/legs90/7</c> of <c>mechs/legs90/7/0</c> and of any packet of it; none for a folder no
+    /// mech part's. Its part's PAK is the archive's own folder (<c>mechs/legs90</c>).
+    /// </summary>
+    std::optional<std::string> MechPartArchive(std::string_view folder);
+
+    /// <summary>
+    /// Port-only (the opening: the middle ground's simulation, 20 Nov: on the 4 GB card 146 of play's 147 first-use waits
+    /// avoided with 512 MB a mission put up first, 128 with 128 MB): the most the opening puts on the GPU where the whole
+    /// mission doesn't fit, at its pages' share, and the share of the pictures' room it takes at most.
+    /// </summary>
+    constexpr uint64_t OpeningMostBytes = uint64_t{512} << 20;
+    constexpr uint64_t OpeningRoomShare = 4;
 
     /// <summary>
     /// Port-only, for test runs (<c>-hdbriefinghold on|off</c>; on unless set): whether the hold may start from the

@@ -7,6 +7,8 @@
 #include "lib/MCFirstUse.h"
 #include "main/MCGameContext.h"
 #include "main/MCHdSettings.h"
+#include "mission/MCMission.h"
+#include "mission/MCScenario.h"
 #include "mission/MCStagedBattle.h"
 #include "mission/MCTrailerMission.h"
 #include "object/MCArtillery.h"
@@ -20,6 +22,7 @@
 #include "platform/MCRenderer.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCOpeningLists.h"
 
 // Port-only (the workspace's SPEC-first-use.md, its guard: lib/MCFirstUse.h): once a mission's load is over, the
 // game's thread reads, unpacks and waits on nothing for the first time. The guard's tests play a mission's battle as a
@@ -435,6 +438,92 @@ namespace
         PlayBattle(GuardPlayFrames, memory);
         RequireNoFirstUses(MCFirstUses::Take());
     }
+
+    /// <summary>
+    /// The HD trace's use lines (MCHdArt's TraceUse): their mark, and their fields: the mark, the time, how, the folder,
+    /// the frame's name and its microseconds.
+    /// </summary>
+    constexpr std::string_view TraceUseMark = "U\t";
+    constexpr size_t TraceUseFields = 6;
+    constexpr size_t TraceUseHow = 2;
+    constexpr size_t TraceUseFolder = 3;
+    /// <summary>How a use line says a frame was first drawn: kept as read ahead, taken from a reader, or read then.</summary>
+    constexpr auto FirstDrawUses = std::to_array<std::string_view>({"kept", "taken", "read"});
+    /// <summary>The opening list's lines (sprite/MCOpeningLists.h): a folder of the mission's, a packet of the player's mechs.</summary>
+    constexpr std::string_view OpeningFolderLine = "F";
+    constexpr std::string_view OpeningLanceLine = "L";
+
+    /// <summary>Whether <paramref name="folder"/> is a packet's: its last part a number (<c>objects/shapes/614/0</c>).</summary>
+    bool NumberedFolder(std::string_view folder)
+    {
+        const std::string_view last = folder.substr(folder.rfind('/') + 1);
+        return !last.empty() && std::ranges::all_of(last, [](unsigned char c) { return std::isdigit(c) != 0; });
+    }
+
+    /// <summary>
+    /// Port-only (the opening's list, sprite/MCOpeningLists.h): writes to <c>&lt;folder&gt;/&lt;mission&gt;.txt</c> the
+    /// pack's packets the play that the HD trace <paramref name="trace"/> records first drew, in that order, each once:
+    /// a folder of the mission's <c>F &lt;folder&gt;</c>, a packet of the player's mechs <c>L &lt;its part's PAK
+    /// folder&gt; &lt;packet&gt;</c> (a mech part's archive the mission's list lacks, as it leaves the player's out:
+    /// MCScenario::HoldList). Only packets' folders, not the ground's or the interface's. Gives the lines written.
+    /// </summary>
+    size_t WriteOpening(const std::filesystem::path& trace, const std::filesystem::path& folder)
+    {
+        const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+        std::unordered_set<std::string> missionMechs;
+
+        for (const std::string& listed : Scenario()->HoldList(mission).Folders)
+        {
+            if (std::optional<std::string> archive = MCHdArt::MechPartArchive(listed); archive.has_value())
+            {
+                missionMechs.insert(std::move(*archive));
+            }
+        }
+
+        std::ifstream in(trace);
+        REQUIRE(in.good());
+        std::unordered_set<std::string> written;
+        std::string lines;
+
+        for (std::string line; std::getline(in, line);)
+        {
+            if (!line.starts_with(TraceUseMark))
+            {
+                continue;
+            }
+
+            std::vector<std::string_view> fields;
+
+            for (const auto part : std::views::split(std::string_view(line), '\t'))
+            {
+                fields.emplace_back(part.begin(), part.end());
+            }
+
+            if (fields.size() < TraceUseFields || !std::ranges::contains(FirstDrawUses, fields[TraceUseHow]) ||
+                !NumberedFolder(fields[TraceUseFolder]))
+            {
+                continue;
+            }
+
+            const std::string at(fields[TraceUseFolder]);
+            const std::optional<std::string> archive = MCHdArt::MechPartArchive(at);
+            // A packet of the archive's own, its number alone past it (mechs/legs90/7/51).
+            const bool lance = archive.has_value() && !missionMechs.contains(*archive) && at.size() > archive->size() &&
+                               at.find('/', archive->size() + 1) == std::string::npos;
+            std::string row = lance ? std::format("{} {} {}", OpeningLanceLine, archive->substr(0, archive->rfind('/')),
+                                                  at.substr(archive->size() + 1))
+                                    : std::format("{} {}", OpeningFolderLine, at);
+
+            if (written.insert(row).second)
+            {
+                lines += row + '\n';
+            }
+        }
+
+        std::filesystem::create_directories(folder);
+        std::ofstream(folder / MCFileSystem::FromUtf8(mission + ".txt"), std::ios::binary) << lines;
+        return written.size();
+    }
 }
 
 TEST_CASE_ISOLATED("game: in mission 1's battle the game's thread reads and unpacks nothing after the load")
@@ -663,12 +752,262 @@ TEST_CASE_ISOLATED("tool: --first-uses plays a mission as a player's and lists t
         "  mission {}: up in {:.1f} s, {} frames played ({} of the player's and {} enemies left), "
         "{} first uses in play ({:.1f} ms), {} past the list; the HD art's memory at most "
         "{:.1f} MB (on average {:.1f}), {} mechs up at most; the mission on the GPU {} ({:.1f} MB; the fill asked {} "
-        "frames and put {} up)\n",
+        "frames and put {} up; the opening {:.1f} MB walked, {} folders asked{})\n",
         mission, loadSeconds, played, players.size(), enemies.size(), uses.size(), ms, MCFirstUses::Dropped(),
         static_cast<double>(memory.Peak) / BytesPerMb, memory.Mean() / BytesPerMb, memory.Mechs,
-        fill.Fits ? "whole" : "not whole", static_cast<double>(fill.MissionBytes) / BytesPerMb, fill.Asked, fill.Up);
+        fill.Fits ? "whole" : "not whole", static_cast<double>(fill.MissionBytes) / BytesPerMb, fill.Asked, fill.Up,
+        static_cast<double>(fill.OpeningBytes) / BytesPerMb, fill.OpeningAsked, fill.OpeningDone ? "" : ", not done");
     MCFrameLog::Close();
     MCHdArt::CloseTrace();
     MCMemoryRoom::SetMachineBytes(std::nullopt);
     MCMemoryRoom::SetCardBytes(std::nullopt);
+
+    // --first-uses-opening <folder>: the mission's opening, as its trace (--first-uses-trace) records the play first drew
+    // it (WriteOpening), for --opening-lists-table. A staged battle has none: it's no mission's.
+    if (const std::optional<std::string_view> opening = MCTest::Option("first-uses-opening");
+        opening.has_value() && !canyon)
+    {
+        const std::optional<std::string_view> trace = MCTest::Option("first-uses-trace");
+        REQUIRE(trace.has_value());
+        const size_t lines = WriteOpening(MCFileSystem::FromUtf8(*trace), MCFileSystem::FromUtf8(*opening));
+        std::cout << std::format("  the opening: {} packets first drawn, to {}\n", lines, *opening);
+        CHECK(lines > 0);
+    }
+}
+
+namespace
+{
+    /// <summary>
+    /// The opening table's preamble and its types (sprite/MCOpeningLists.h), as --opening-lists-table writes them ahead of
+    /// the tables.
+    /// </summary>
+    constexpr std::string_view OpeningTableHead = R"(#pragma once
+
+// Port-only (SPEC-memory.md's "The GPU from the briefing": the opening): the HD pack's packets each mission's play
+// draws first, in the order a recorded play first drew them, which the fill puts on the GPU first (MCHdArt's
+// opening). Worked out by playing each mission a minute with mc_tests --first-uses --first-uses-opening
+// (tests/FirstUseTests.cpp) and written by mc_tests --opening-lists-table. Don't edit it.
+
+#include <array>
+#include <cstdint>
+#include <span>
+#include <string_view>
+
+// clang-format off
+namespace MCOpeningLists
+{
+/// <summary>
+/// A packet a mission's play draws first: a folder of Folders whole (Packet NoPacket), or a packet of the player's mechs
+/// (Folders names its part's PAK, "mechs/legs90"; every packet number names one gesture at one facing on any mech), the
+/// packet of each mech placed whose part is that PAK's.
+/// </summary>
+struct Entry
+{
+    uint16_t Folder = 0;
+    uint16_t Packet = 0;
+};
+
+/// <summary>An Entry's Packet for a folder of the mission's own.</summary>
+inline constexpr uint16_t NoPacket = 0xffff;
+
+/// <summary>A mission (its file's name, lower case) and its entries, in the order its play first drew them.</summary>
+struct Mission
+{
+    std::string_view Name;
+    std::span<const Entry> Entries;
+};
+
+)";
+
+    /// <summary>The doc of the table's AnyMission (OpeningTableHead's types).</summary>
+    constexpr std::string_view AnyMissionDoc = R"(/// <summary>
+/// The player's mechs' packets for a mission with no list of its own (a match's map, a mod's): those most missions'
+/// plays drew first, in their order on average.
+/// </summary>
+)";
+
+    /// <summary>
+    /// --opening-lists-table's: a packet of the player's mechs common enough for AnyMission, in a quarter of the missions'
+    /// openings at least; the table's rows, so many entries or names a line.
+    /// </summary>
+    constexpr size_t AnyMissionShare = 4;
+    constexpr size_t OpeningRowEntries = 8;
+
+    /// <summary>A line of an opening's list (WriteOpening): its folder, and the packet of a line of the player's mechs.</summary>
+    struct OpeningLine
+    {
+        std::string Folder;
+        std::optional<uint16_t> Packet;
+    };
+
+    /// <summary>The opening's list WriteOpening wrote at <paramref name="path"/>, its lines in order.</summary>
+    std::vector<OpeningLine> ReadOpening(const std::filesystem::path& path)
+    {
+        std::ifstream file(path);
+        std::vector<OpeningLine> lines;
+
+        for (std::string line; std::getline(file, line);)
+        {
+            std::istringstream words(line);
+            std::string kind;
+            std::string folder;
+            words >> kind >> folder;
+
+            if (kind == OpeningFolderLine && !folder.empty())
+            {
+                lines.push_back(OpeningLine{std::move(folder), std::nullopt});
+            }
+            else if (uint32_t packet = 0; kind == OpeningLanceLine && words >> packet)
+            {
+                REQUIRE(packet < MCOpeningLists::NoPacket);
+                lines.push_back(OpeningLine{std::move(folder), static_cast<uint16_t>(packet)});
+            }
+            else
+            {
+                FAIL_CHECK(std::format("{}: a line neither a folder's nor a packet's: \"{}\"", path.string(), line));
+            }
+        }
+
+        return lines;
+    }
+
+    /// <summary>The entries of the table's array, OpeningRowEntries a line, each as its Entry (Folder, Packet).</summary>
+    std::string OpeningRows(std::span<const std::pair<size_t, uint16_t>> entries)
+    {
+        std::string rows;
+
+        for (size_t at = 0; at < entries.size(); ++at)
+        {
+            rows += (at % OpeningRowEntries == 0 ? "    " : " ") +
+                    std::format("{{{}, {}}},", entries[at].first, entries[at].second) +
+                    (at % OpeningRowEntries == OpeningRowEntries - 1 || at + 1 == entries.size() ? "\n" : "");
+        }
+
+        return rows;
+    }
+
+    /// <summary>A table's <c>std::array</c> of <paramref name="type"/> named <paramref name="name"/> with its rows.</summary>
+    std::string OpeningArray(std::string_view type, std::string_view name, size_t count, const std::string& rows)
+    {
+        return count == 0
+                   ? std::format("inline constexpr std::array<{}, 0> {}{{}};\n", type, name)
+                   : std::format("inline constexpr std::array<{}, {}> {}{{{{\n{}}}}};\n", type, count, name, rows);
+    }
+}
+
+/// <summary>
+/// Tool (SPEC-memory.md's "The GPU from the briefing": the opening): <c>--opening-lists-table &lt;folder&gt;</c> reads the
+/// openings --first-uses-opening wrote there (<c>&lt;mission&gt;.txt</c> each) and writes sprite/MCOpeningLists.h, the
+/// openings the program carries, to <c>--opening-lists-out &lt;file&gt;</c> (<c>&lt;folder&gt;/MCOpeningLists.h</c> by
+/// default): each folder once, each mission's entries as indices into them, the missions by name, and for a mission with
+/// none the player's mechs' packets a quarter of the missions' openings or more hold, in their order on average.
+/// </summary>
+TEST_CASE("tool: --opening-lists-table writes the missions' openings as the table the program carries")
+{
+    const std::optional<std::string_view> in = MCTest::Option("opening-lists-table");
+
+    if (!in.has_value())
+    {
+        return;
+    }
+
+    const std::filesystem::path folder = MCFileSystem::FromUtf8(*in);
+    const std::filesystem::path out = MCTest::Option("opening-lists-out").has_value()
+                                          ? MCFileSystem::FromUtf8(*MCTest::Option("opening-lists-out"))
+                                          : folder / "MCOpeningLists.h";
+    std::map<std::string, std::vector<OpeningLine>> missions;
+
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(folder))
+    {
+        if (entry.path().extension() == ".txt")
+        {
+            std::string name = MCFileSystem::ToUtf8(entry.path().stem());
+            std::ranges::transform(name, name.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            missions[name] = ReadOpening(entry.path());
+        }
+    }
+
+    REQUIRE(!missions.empty());
+    std::vector<std::string> folders;
+    std::unordered_map<std::string, size_t> indices;
+    const auto indexOf = [&](const std::string& name)
+    {
+        const auto [found, fresh] = indices.try_emplace(name, folders.size());
+
+        if (fresh)
+        {
+            folders.push_back(name);
+        }
+
+        return found->second;
+    };
+
+    // Each packet of the player's mechs: the missions whose openings hold it, and its places among theirs (0 to 1).
+    std::map<std::pair<std::string, uint16_t>, std::pair<size_t, double>> lance;
+    std::string arrays;
+    std::string table;
+    size_t entries = 0;
+
+    for (const auto& [name, lines] : missions)
+    {
+        std::string identifier = name;
+        std::ranges::replace_if(identifier, [](unsigned char c) { return std::isalnum(c) == 0; }, '_');
+        const auto lanceLines = static_cast<size_t>(
+            std::ranges::count_if(lines, [](const OpeningLine& line) { return line.Packet.has_value(); }));
+        std::vector<std::pair<size_t, uint16_t>> rows;
+        size_t lanceAt = 0;
+
+        for (const OpeningLine& line : lines)
+        {
+            rows.emplace_back(indexOf(line.Folder), line.Packet.value_or(MCOpeningLists::NoPacket));
+
+            if (line.Packet.has_value())
+            {
+                auto& [count, places] = lance[{line.Folder, *line.Packet}];
+                ++count;
+                places += static_cast<double>(lanceAt++) / static_cast<double>(lanceLines);
+            }
+        }
+
+        arrays += OpeningArray("Entry", "Opening_" + identifier, rows.size(), OpeningRows(rows)) + "\n";
+        table += std::format("    {{\"{}\", Opening_{}}},\n", name, identifier);
+        entries += rows.size();
+    }
+
+    std::vector<std::tuple<double, std::string, uint16_t>> common;
+
+    for (const auto& [key, tally] : lance)
+    {
+        if (tally.first * AnyMissionShare >= missions.size())
+        {
+            common.emplace_back(tally.second / static_cast<double>(tally.first), key.first, key.second);
+        }
+    }
+
+    std::ranges::sort(common);
+    std::vector<std::pair<size_t, uint16_t>> any;
+
+    for (const auto& [place, part, packet] : common)
+    {
+        any.emplace_back(indexOf(part), packet);
+    }
+
+    REQUIRE(folders.size() < MCOpeningLists::NoPacket);
+    std::string names;
+
+    for (size_t at = 0; at < folders.size(); ++at)
+    {
+        names += std::format("    \"{}\",\n", folders[at]);
+    }
+
+    const std::string text =
+        std::string(OpeningTableHead) + OpeningArray("std::string_view", "Folders", folders.size(), names) + "\n" +
+        arrays + OpeningArray("Mission", "Missions", missions.size(), table) + "\n" + std::string(AnyMissionDoc) +
+        OpeningArray("Entry", "AnyMission", any.size(), OpeningRows(any)) + "}\n\n// clang-format on\n";
+    std::ofstream(out, std::ios::binary) << text;
+    std::cout << std::format(
+        "  {} missions' openings, {} entries, {} folders, {} packets of the player's mechs for any "
+        "mission, to {}\n",
+        missions.size(), entries, folders.size(), any.size(), MCFileSystem::ToUtf8(out));
 }

@@ -990,6 +990,7 @@
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCMechStops.h" />
     <ClInclude Include="sprite\MCMechStopsKnown.h" />
+    <ClInclude Include="sprite\MCOpeningLists.h" />
     <ClInclude Include="sprite\MCPackRecords.h" />
     <ClInclude Include="sprite\MCPaletteNight.h" />
     <ClInclude Include="sprite\MCParticles.h" />

@@ -67,6 +67,9 @@ namespace
     /// <summary>The most the pack's thunder may decode to as a mission loads (its 23 s are 4.5 MB); past it, it streams.
     /// </summary>
     constexpr uint64_t ThunderMostBytes = 32u * 1024u * 1024u;
+    /// <summary>The most the pack's rain loop may decode to as a mission loads (its 40 s are 7.7 MB); past it, it streams.
+    /// </summary>
+    constexpr uint64_t RainMostBytes = 32u * 1024u * 1024u;
 
     /// <summary>A stream of sound in <paramref name="format"/> played at <paramref name="speed"/> times its rate.</summary>
     std::expected<std::shared_ptr<MCAudioStream>, std::string> StreamAtSpeed(MCAudio& mixer, MCSoundFormat format,
@@ -556,6 +559,7 @@ void MCSoundSystem::PurgeSoundSystem()
     StopRain();
     _RainLevel = 0.0f;
     _RainMissing = false;
+    _RainPcm = {};
     _ThunderRolls.clear();
     _ThunderMissing = false;
     _ThunderBytes.reset();
@@ -1003,9 +1007,26 @@ void MCSoundSystem::UpdateRain(float heard)
 
     if (_RainStream == nullptr)
     {
-        const std::optional<std::filesystem::path> path = MCHdAudio::RainLoop();
-        _RainLoop = path.has_value() ? MCFlac::Open(*path) : nullptr;
-        _RainStream = StreamPackSound(_Renderer.Mixer(), path, "rain loop", 1.0f, _RainLoop);
+        // Port: the loop decoded as the mission loaded (PrepareRain) plays from memory, nothing read or decoded on the
+        // game's thread; else from its file, opened and decoded as it plays.
+        if (!_RainPcm.empty())
+        {
+            std::expected<std::shared_ptr<MCAudioStream>, std::string> stream =
+                StreamAtSpeed(_Renderer.Mixer(), _RainFormat, 1.0f);
+            _RainStream = stream.has_value() ? std::move(*stream) : nullptr;
+            _RainPcmAt = 0;
+
+            if (!stream.has_value())
+            {
+                SDL_Log("MCSoundSystem: the decoded rain loop won't play: %s", stream.error().c_str());
+            }
+        }
+        else
+        {
+            const std::optional<std::filesystem::path> path = MCHdAudio::RainLoop();
+            _RainLoop = path.has_value() ? MCFlac::Open(*path) : nullptr;
+            _RainStream = StreamPackSound(_Renderer.Mixer(), path, "rain loop", 1.0f, _RainLoop);
+        }
 
         if (_RainStream == nullptr)
         {
@@ -1014,11 +1035,25 @@ void MCSoundSystem::UpdateRain(float heard)
             return;
         }
 
-        _RainChunk.resize(PackChunkFrames * _RainLoop->Format().BlockAlign());
+        _RainChunk.resize(PackChunkFrames * (_RainLoop != nullptr ? _RainLoop->Format() : _RainFormat).BlockAlign());
     }
 
     _RainStream->SetVolume(MCSoundChannel::BufferVolume(ChannelVolume(DigitalMasterVolume) * _RainLevel));
-    const uint64_t ahead = uint64_t{PackAheadSeconds} * _RainLoop->Format().Rate;
+    const uint64_t ahead = uint64_t{PackAheadSeconds} * (_RainLoop != nullptr ? _RainLoop->Format() : _RainFormat).Rate;
+
+    // Round and round from memory: at the loop's end, from its start again.
+    if (_RainLoop == nullptr)
+    {
+        while (_RainStream->QueuedFrames() < ahead)
+        {
+            const size_t queued = std::min(_RainChunk.size(), _RainPcm.size() - _RainPcmAt);
+            _RainStream->Queue(std::span(_RainPcm).subspan(_RainPcmAt, queued));
+            _RainPcmAt = _RainPcmAt + queued == _RainPcm.size() ? 0 : _RainPcmAt + queued;
+        }
+
+        return;
+    }
+
     bool fromStart = false;
 
     // Round and round: at the loop's end, from its start again (the loop is made to run on without a seam).
@@ -1050,6 +1085,30 @@ void MCSoundSystem::StopRain()
 {
     _RainStream.reset();
     _RainLoop.reset();
+    _RainPcmAt = 0;
+}
+
+void MCSoundSystem::PrepareRain()
+{
+    if (UseSound == 0 || _RainMissing || !_RainPcm.empty() || MCWeather::LookOf(MCWeather::Shown()).Heard <= 0.0f)
+    {
+        return;
+    }
+
+    const std::optional<std::filesystem::path> path = MCHdAudio::RainLoop();
+    const std::shared_ptr<const std::vector<uint8_t>> bytes = path.has_value() ? MCFlac::ReadFile(*path) : nullptr;
+    const std::unique_ptr<MCFlac> file = bytes != nullptr ? MCFlac::Open(bytes) : nullptr;
+
+    if (file == nullptr || file->Frames() == 0 || file->Format().BlockAlign() == 0 ||
+        file->Frames() > RainMostBytes / file->Format().BlockAlign())
+    {
+        return;
+    }
+
+    // As a reader gives it: a corrupt frame ends it there, as it stops a streamed loop.
+    _RainPcm.resize(static_cast<size_t>(file->Frames()) * file->Format().BlockAlign());
+    _RainPcm.resize(file->Read(_RainPcm));
+    _RainFormat = file->Format();
 }
 
 void MCSoundSystem::UpdateThunder(float heard, MCOptionalRef<const MCWeather::MCThunderClap> clap)

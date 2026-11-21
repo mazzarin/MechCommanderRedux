@@ -362,6 +362,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     // Port-only: the HD art pack's ground is read here, under the loading bar, rather than in the mission's first frame.
     MCTerrainReadHdTiles();
     SoundSystem()->PrepareThunder();
+    SoundSystem()->PrepareRain();
     MCHdAudio::FinishPreparing();
     UpdateDisplay(false, true, 30, true, 100);
 

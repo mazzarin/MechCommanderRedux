@@ -203,6 +203,14 @@ public:
     /// loading bar, and decodes it whole, so a clap reads and decodes nothing (it is kept till the purge).
     /// </summary>
     void PrepareThunder();
+    /// <summary>
+    /// Port-only (HD weather): reads the pack's rain loop for a mission whose weather shown is heard raining, under its
+    /// loading bar, and decodes it whole, so the rain bed reads and decodes nothing in play, as it starts or after (it is
+    /// kept till the purge; one past RainMostBytes streams from its file as before).
+    /// </summary>
+    void PrepareRain();
+    /// <summary>Whether the rain loop is decoded whole (<see cref="PrepareRain"/>).</summary>
+    bool RainPrepared() const { return !_RainPcm.empty(); }
     /// <summary>How many claps of thunder are rolling (one fading out under a newer one counts).</summary>
     size_t ThunderRolls() const { return _ThunderRolls.size(); }
     /// <summary>Streams music <paramref name="musicId"/> ("DMS%d", +25 on the second planet), fading from the stream
@@ -422,8 +430,15 @@ private:
     std::vector<std::shared_ptr<MCRadio>> _Radios;
     /// <summary>The music state Update keeps (by <see cref="MCMusicState"/>).</summary>
     std::array<bool, 8> _MusicState{};
-    /// <summary>The rain loop the rain bed reads (null while it plays none).</summary>
+    /// <summary>The rain loop the rain bed reads (null while it plays none, or plays _RainPcm).</summary>
     std::unique_ptr<MCFlac> _RainLoop;
+    /// <summary>
+    /// Port: the rain loop decoded whole as a mission whose weather rains loads (PrepareRain), its format, and how far
+    /// into it the rain bed has queued (empty: the rain bed reads its own reader).
+    /// </summary>
+    std::vector<uint8_t> _RainPcm;
+    MCSoundFormat _RainFormat{};
+    size_t _RainPcmAt = 0;
     /// <summary>The stream the rain bed plays through (null while it plays none).</summary>
     std::shared_ptr<MCAudioStream> _RainStream;
     /// <summary>The rain loop's PCM read last.</summary>

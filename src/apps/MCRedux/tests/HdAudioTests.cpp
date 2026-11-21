@@ -900,6 +900,27 @@ TEST_CASE(
     sound->UpdateRain(1.0f);
     CHECK(heardAt(0.25f));
 
+    // A mission whose weather rains decodes the loop as it loads (21 Nov: it was opened and decoded on the game's thread
+    // as the rain began): the rain bed reads nothing as it starts or after, round and round as the streamed one, till
+    // the purge.
+    sound->PurgeSoundSystem();
+    const int shownWeather = GHdWeather;
+    GHdWeather = HdWeatherRain;
+    sound->PrepareRain();
+    GHdWeather = shownWeather;
+    CHECK(sound->RainPrepared());
+    std::filesystem::remove(loop);
+
+    for (const float level : {0.25f, 0.5f, 0.75f, 1.0f, 1.0f})
+    {
+        sound->UpdateRain(1.0f);
+        CHECK(heardAt(level));
+    }
+
+    Write(loop, Flac());
+    sound->PurgeSoundSystem();
+    CHECK(!sound->RainPrepared());
+
     // A downpour is heard louder than rain, and a clear sky not at all; nothing is heard while no rain is drawn.
     CHECK(MCWeather::LookOf(MCWeatherKind::Downpour).Heard > MCWeather::LookOf(MCWeatherKind::Rain).Heard);
     CHECK_EQ(MCWeather::LookOf(MCWeatherKind::Clear).Heard, 0.0f);

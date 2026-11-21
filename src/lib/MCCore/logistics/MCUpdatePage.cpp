@@ -617,6 +617,13 @@ namespace
         return std::format("VERSION {} INSTALLS AS YOU QUIT.", status.Version);
     }
 
+    /// <summary>What's in of a download: of the whole once that's known ("2.1 OF 7.4 GB"), else what's in.</summary>
+    std::string InHandText(const MCStatus& status)
+    {
+        return status.Expected == 0 ? MCUpdateWork::SizeText(status.Received)
+                                    : MCUpdateWork::ProgressText(status.Received, status.Expected);
+    }
+
     /// <summary>What the status line says the update is doing.</summary>
     std::string StatusText(const MCStatus& status)
     {
@@ -634,14 +641,7 @@ namespace
                 return std::format("A NEWER VERSION IS OUT: {} TO DOWNLOAD.", MCUpdateWork::SizeText(status.Expected));
             }
             case MCStage::Downloading:
-            {
-                if (status.Expected == 0)
-                {
-                    return std::format("DOWNLOADING: {}.", MCUpdateWork::SizeText(status.Received));
-                }
-
-                return std::format("DOWNLOADING: {}.", MCUpdateWork::ProgressText(status.Received, status.Expected));
-            }
+                return std::format("DOWNLOADING: {}.", InHandText(status));
             case MCStage::Ready:
             {
                 // In a lobby's room, what RESTART does there (network/MCLobbyUpdate.h).
@@ -673,6 +673,9 @@ namespace
     /// </summary>
     /// <summary>RESTART shown as the update's stage and a lobby's room allow (with the page's buttons, below).</summary>
     void ShowRestart(MCStage stage);
+
+    /// <summary>Whether the page offers RESTART at the update's <paramref name="stage"/> (<see cref="ShowRestart"/>).</summary>
+    bool RestartOffered(MCStage stage);
 
     class MCLogUpdateNotes : public MCLogScrollList
     {
@@ -800,6 +803,15 @@ namespace
     constexpr int32_t MenuButtonStep = 29;
     constexpr int32_t RowsUnderQuit = 23;
 
+    /// <summary>
+    /// Port-only (Redux HD): what the line says of the new HD art a program installed alone came for
+    /// (MCUpdater::DueArt), the game showing the old art until it's in: while it downloads (what's in of the whole), then
+    /// once it's in, RESTART (the UPDATE page's) named when the page offers it.
+    /// </summary>
+    constexpr std::string_view DueArtDownloadingLine = "NEW HD ART DOWNLOADING: {}";
+    constexpr std::string_view DueArtRestartLine = "NEW HD ART READY: PRESS RESTART";
+    constexpr std::string_view DueArtReadyLine = "NEW HD ART READY";
+
     /// <summary>What the line under QUIT says while an update waits.</summary>
     std::string NoticeText(const MCStatus& status)
     {
@@ -810,11 +822,19 @@ namespace
             case MCStage::Found:
                 return std::format("VERSION {} IS OUT", status.Version);
             case MCStage::Downloading:
-                return std::format("DOWNLOADING VERSION {}", status.Version);
+                return MCUpdater::DueArt() ? std::format(DueArtDownloadingLine, InHandText(status))
+                                           : std::format("DOWNLOADING VERSION {}", status.Version);
             case MCStage::Ready:
+            {
+                if (MCUpdater::DueArt())
+                {
+                    return std::string(RestartOffered(status.Stage) ? DueArtRestartLine : DueArtReadyLine);
+                }
+
                 return status.GoesIn == MCUpdater::MCGoesIn::NextStart
                            ? std::format("VERSION {} IS IN", status.Version)
                            : std::format("VERSION {} IS READY TO INSTALL", status.Version);
+            }
             case MCStage::Installing:
                 return std::format("INSTALLING VERSION {}", status.Version);
             case MCStage::Failed:
@@ -1025,13 +1045,18 @@ namespace
         }
     }
 
-    void ShowRestart(MCStage stage)
+    bool RestartOffered(MCStage stage)
     {
         // Only where what the game starts outlives it, and not for a setup waiting for the player's own start; in a
         // lobby's room, only when every game there can rejoin, before the match (network/MCLobbyUpdate.h).
-        const bool shown = stage == MCStage::Ready && MCUpdater::CanStartAgain() &&
-                           MCUpdater::Status().GoesIn != MCUpdater::MCGoesIn::PlayersStart &&
-                           (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart());
+        return stage == MCStage::Ready && MCUpdater::CanStartAgain() &&
+               MCUpdater::Status().GoesIn != MCUpdater::MCGoesIn::PlayersStart &&
+               (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart());
+    }
+
+    void ShowRestart(MCStage stage)
+    {
+        const bool shown = RestartOffered(stage);
 
         for (const MCUpdatePageView& view : LivePages())
         {
@@ -1266,6 +1291,11 @@ bool UpdatePageShown()
 std::string UpdatePageStatus()
 {
     return StatusText(MCUpdater::Status());
+}
+
+std::string UpdateLineText()
+{
+    return NoticeText(MCUpdater::Status());
 }
 
 std::vector<std::string> UpdatePageLines()

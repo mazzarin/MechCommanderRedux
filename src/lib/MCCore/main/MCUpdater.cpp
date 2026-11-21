@@ -1391,6 +1391,12 @@ auto MCUpdater::Waiting() -> bool
     return Current.Stage != MCStage::None;
 }
 
+auto MCUpdater::DueArt() -> bool
+{
+    return Content && Offer && Offer->Due && Offer->Content != nullptr &&
+           Offer->Content->Plan.Record.Sets.contains(MCContentList::HdSet);
+}
+
 auto MCUpdater::Answer(MCAnswer answer) -> void
 {
     if (!Available())

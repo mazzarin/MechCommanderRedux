@@ -192,6 +192,7 @@
     <ClCompile Include="logistics\MCConnectMenu.cpp" />
     <ClCompile Include="logistics\MCControlsPanel.cpp" />
     <ClCompile Include="logistics\MCDragIcon.cpp" />
+    <ClCompile Include="logistics\MCDueArtNotice.cpp" />
     <ClCompile Include="logistics\MCFileScrollPane.cpp" />
     <ClCompile Include="logistics\MCGameList.cpp" />
     <ClCompile Include="logistics\MCGenericScreen.cpp" />
@@ -706,6 +707,7 @@
     <ClInclude Include="logistics\MCConnectMenu.h" />
     <ClInclude Include="logistics\MCControlsPanel.h" />
     <ClInclude Include="logistics\MCDragIcon.h" />
+    <ClInclude Include="logistics\MCDueArtNotice.h" />
     <ClInclude Include="logistics\MCFileScrollPane.h" />
     <ClInclude Include="logistics\MCGameList.h" />
     <ClInclude Include="logistics\MCGenericScreen.h" />

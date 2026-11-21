@@ -309,6 +309,14 @@ namespace MCUpdater
     /// <summary>Whether an update waits for the player: found, downloading, ready or failed (the UPDATE button lit).</summary>
     bool Waiting();
 
+    /// <summary>
+    /// Port-only (Redux HD): whether the update shown brings the HD art a program installed alone came for
+    /// (MCContentUpdater::MCOffer::Due, planned with the HD set): until a start puts it in, the game shows the old art
+    /// (SPEC-install-and-updates.md's Forced art), as the main menu's line and a notice say
+    /// (logistics/MCUpdatePage.h, logistics/MCDueArtNotice.h).
+    /// </summary>
+    bool DueArt();
+
     /// <summary>The player's answer (from the UPDATE page), passed to the backend.</summary>
     void Answer(MCAnswer answer);
 

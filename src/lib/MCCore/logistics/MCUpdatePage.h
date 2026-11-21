@@ -84,3 +84,9 @@ std::string UpdatePageStatus();
 
 /// <summary>The lines the page shows of what the update brings, as wrapped.</summary>
 std::vector<std::string> UpdatePageLines();
+
+/// <summary>
+/// Port-only (Redux HD): what the line saying an update waits says now (the main menu's under QUIT, and a lobby's
+/// session screen's); empty when none waits.
+/// </summary>
+std::string UpdateLineText();

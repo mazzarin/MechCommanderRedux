@@ -504,6 +504,9 @@
     <ClCompile Include="logistics\MCDragIcon.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCDueArtNotice.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCFileScrollPane.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -1964,6 +1967,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCDragIcon.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCDueArtNotice.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCFileScrollPane.h">

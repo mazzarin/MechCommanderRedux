@@ -8,18 +8,24 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiFont.h"
+#include "gui/MCGuiGlobals.h"
+#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCHdOptionsPanel.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
+#include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
+#include "network/MCMultiPlayer.h"
 #include "platform/MCSocket.h"
 #include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
@@ -43,7 +49,8 @@
 // beside it. The HD pack got and removed at the release installed (HD OPTIONS), an update planned for the sets chosen,
 // and the first start's install into a folder an installer prepared, with its window (MCFirstStart.h). The art a
 // program installed alone came for (a list in a format its old game couldn't read), not fetched before the game opens
-// and downloaded by itself once it's open.
+// and downloaded by itself once it's open; while it isn't in, the main menu's line and a notice at a mission's briefing
+// or a match's room say the game shows the old art.
 
 namespace
 {
@@ -4047,4 +4054,227 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
              std::format("VERSION {} ({}) IS IN. RESTART TO PLAY IT.", ReleaseVersion, RunningBuild));
     CHECK(!ButtonOnMainShown("INSTALL"));
     CHECK(ButtonOnMainShown("RESTART"));
+}
+
+namespace
+{
+    /// <summary>
+    /// What the line under the main menu's buttons says of the new HD art a program installed alone came for: while it
+    /// downloads (what's in of the whole), then once it's in.
+    /// </summary>
+    constexpr std::string_view DueArtDownloadingLine = "NEW HD ART DOWNLOADING: {}";
+    constexpr std::string_view DueArtReadyLine = "NEW HD ART READY: PRESS RESTART";
+
+    /// <summary>The notice at a mission's briefing or in a match's room: while that art downloads, then once it's in.</summary>
+    constexpr std::string_view DueArtDownloadingNotice =
+        "The new HD art is still downloading. Until you restart with it, the game shows the old art.";
+    constexpr std::string_view DueArtReadyNotice =
+        "The new HD art is ready. Until you restart with it, the game shows the old art.";
+
+    /// <summary>Release 9's full HD art as a download's whole: the widest figures the line writes.</summary>
+    constexpr uint64_t ReleaseNineHdBytes = 7'400'000'000;
+
+    /// <summary>The port the room's test hosts its lobby game on.</summary>
+    constexpr uint16_t DueRoomPort = 28961;
+
+    /// <summary>Runs the game's frames, and the updater's with them, until <paramref name="done"/>; false if it never is.</summary>
+    bool GameFramesUntil(const std::function<bool()>& done)
+    {
+        return FramesUntil(
+            [&]
+            {
+                MCTestGame::RunFrame(1.0f / 15.0f);
+                return done();
+            });
+    }
+
+    /// <summary>Two seconds of the game's frames: a screen change's wipe settles.</summary>
+    void SettleScreen()
+    {
+        constexpr int32_t frames = 30;
+
+        for (int32_t frame = 0; frame < frames; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+    }
+
+    /// <summary>The release's files, its zip's download stalled from its first bytes until <paramref name="stall"/> opens.</summary>
+    MCUpdater::MCSourceMaker StallAt(const MCHostedRelease& release, const std::shared_ptr<MCGate>& stall)
+    {
+        return [host = release.Host.Path(), stall] { return std::make_unique<MCStallingSource>(host, stall); };
+    }
+
+    /// <summary>What's in when the download stalls (<see cref="StallAt"/>): the terrain's patch and the zip's first bytes.</summary>
+    uint64_t StalledBytes(const MCHostedRelease& release)
+    {
+        return std::filesystem::file_size(release.Host.Path() / "patches" / "terrain-1-2.hdiff") + uint64_t{SendBytes};
+    }
+
+    /// <summary>Whether <paramref name="text"/> fits the box under the main menu's buttons (as wide as UPDATE).</summary>
+    bool FitsUnderButtons(std::string_view text)
+    {
+        const std::shared_ptr<MCLogButton> update = GlobalLog()->MainScreen->CinemaButton.Lock();
+        REQUIRE(update != nullptr);
+        return WhiteFont->Width(text) <= update->Width();
+    }
+}
+
+TEST_CASE_ISOLATED("game: while the new HD art a program installed alone came for downloads, the line under the main "
+                   "menu's buttons says how much of it is in; once it's in, to press RESTART")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("due-line");
+    NoteRelease2Due(release);
+    const auto stall = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false, StallAt(release, stall));
+    REQUIRE(MCTestGame::StartLogistics());
+    const uint64_t inHand = StalledBytes(release);
+    REQUIRE(GameFramesUntil([&] { return stall->Reached && MCUpdater::Status().Received == inHand; }));
+    ScreenFrames();
+
+    // Downloading: what's in of the whole, in the box under QUIT; release 9's whole fits there too.
+    CHECK_EQ(UpdateLineText(),
+             std::format(DueArtDownloadingLine, MCUpdateWork::ProgressText(inHand, UpdateBytes(release))));
+    CHECK(FitsUnderButtons(UpdateLineText()));
+    CHECK(FitsUnderButtons(
+        std::format(DueArtDownloadingLine, MCUpdateWork::ProgressText(ReleaseNineHdBytes, ReleaseNineHdBytes))));
+    MCScreenInput::SaveShot("art due line 0 downloading", MCScreenInput::ScreenHash());
+
+    // In and checked: RESTART (the UPDATE page's) puts it in.
+    stall->Open = true;
+    REQUIRE(GameFramesUntil([] { return Stage() == MCStage::Ready; }));
+    ScreenFrames();
+    CHECK_EQ(UpdateLineText(), std::string(DueArtReadyLine));
+    CHECK(FitsUnderButtons(UpdateLineText()));
+    MCScreenInput::SaveShot("art due line 1 ready", MCScreenInput::ScreenHash());
+}
+
+TEST_CASE_ISOLATED("game: a mission's briefing says once a run, the new HD art a program installed alone came for in "
+                   "and waiting for its restart, that the game shows the old art until then")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("due-briefing");
+    NoteRelease2Due(release);
+    MCUpdaterScope scope(release, false);
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(GameFramesUntil([] { return Stage() == MCStage::Ready; }));
+    SettleScreen();
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+
+    // Not on the main menu, whose line says it.
+    CHECK(!dialog.IsShowing());
+
+    // The campaign's first briefing, as its mission starts: the notice.
+    NewCampaign();
+    SettleScreen();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    REQUIRE(dialog.IsShowing());
+    CHECK_EQ(dialog.Text, std::string(DueArtReadyNotice));
+    MCScreenInput::SaveShot("art due notice 0 briefing", MCScreenInput::ScreenHash());
+    RealClickOn(*dialog.OkButton);
+    CHECK(!dialog.IsShowing());
+
+    // Once a run: the briefing shown again from the main menu, it doesn't show again.
+    GlobalLog()->SetUpMainScreen(false);
+    SettleScreen();
+    ReturnToGame();
+    SettleScreen();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(!dialog.IsShowing());
+}
+
+TEST_CASE_ISOLATED("game: a match's room says once, as the player hosts it, that the game shows the old HD art while "
+                   "the new art a program installed alone came for downloads; the notice closes as the match begins")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("due-room");
+    NoteRelease2Due(release);
+    const auto stall = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false, StallAt(release, stall));
+    REQUIRE(MCTestGame::StartLobby(std::format("-host -port {} -player BOB", DueRoomPort)));
+    REQUIRE(GameFramesUntil([&] { return stall->Reached.load(); }));
+    ScreenFrames();
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    REQUIRE(dialog.IsShowing());
+    CHECK_EQ(dialog.Text, std::string(DueArtDownloadingNotice));
+
+    // The room's own line says it too, release 9's whole fitting its field.
+    const MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    REQUIRE(screen.UpdateLine != nullptr);
+    CHECK(UpdateLineText().starts_with(DueArtDownloadingLine.substr(0, DueArtDownloadingLine.find('{'))));
+    CHECK(WhiteFont->Width(
+              std::format(DueArtDownloadingLine, MCUpdateWork::ProgressText(ReleaseNineHdBytes, ReleaseNineHdBytes))) <=
+          screen.UpdateLine->Width());
+    MCScreenInput::SaveShot("art due notice 1 room", MCScreenInput::ScreenHash());
+
+    // The match begins: the notice closes by itself, holding nothing up, and isn't shown again.
+    MultiPlayer()->InLogistics = true;
+    ScreenFrames();
+    CHECK(!dialog.IsShowing());
+    MultiPlayer()->InLogistics = false;
+    ScreenFrames();
+    CHECK(!dialog.IsShowing());
+}
+
+TEST_CASE_ISOLATED("game: a copy with no release due says nothing of new HD art: the main menu's line names the "
+                   "version found and downloading, and a mission's briefing shows no notice")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("due-none");
+    const auto stall = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false, StallAt(release, stall));
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(GameFramesUntil([] { return Stage() == MCStage::Found; }));
+    ScreenFrames();
+    CHECK_EQ(UpdateLineText(), std::format("VERSION {} ({}) IS OUT", ReleaseVersion, RunningBuild));
+
+    // INSTALL: the player's download, named by its version.
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(GameFramesUntil([&] { return stall->Reached.load(); }));
+    ScreenFrames();
+    CHECK(Stage() == MCStage::Downloading);
+    CHECK_EQ(UpdateLineText(), std::format("DOWNLOADING VERSION {} ({})", ReleaseVersion, RunningBuild));
+
+    NewCampaign();
+    SettleScreen();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+}
+
+TEST_CASE("updater: the art a program installed alone came for, without HD (the player took it out), is no new HD "
+          "art: the line names the version downloading, then in")
+{
+    MCHostedRelease release("due-without-hd");
+    NoteRelease2Due(release);
+    REQUIRE(MCContentUpdater::Choose(*MakeDisk(), release.Game.Path(), WithoutHd, MCContentUpdater::MCPicked::Player)
+                .has_value());
+    std::vector<std::string> lines;
+    MCUpdaterScope scope(release, false);
+    MCUpdater::SetListener([&] { lines.push_back(UpdateLineText()); });
+    MCUpdater::CheckAtStart();
+    const bool ready = FramesUntil([] { return Stage() == MCStage::Ready; });
+    MCUpdater::SetListener(nullptr);
+    REQUIRE(ready);
+    CHECK(std::ranges::find(lines, std::format("DOWNLOADING VERSION {} ({})", ReleaseVersion, RunningBuild)) !=
+          lines.end());
+    CHECK(std::ranges::none_of(lines, [](const std::string& line) { return line.starts_with("NEW HD ART"); }));
+    CHECK_EQ(UpdateLineText(), std::format("VERSION {} ({}) IS IN", ReleaseVersion, RunningBuild));
 }

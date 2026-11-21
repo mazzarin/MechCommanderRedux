@@ -1715,6 +1715,11 @@ private:
         /// translucent draw shows opaque has no index pass (Shape).
         /// </summary>
         std::bitset<256> Colors;
+        /// <summary>
+        /// Port-only: an overlay's key in the HD art pack (MCHdArt::TerrainTileKey of its bytes), worked out at its first
+        /// draw (FastShape): hashing its bytes at each was most of a pan's overlay lookups, up to 0.9 ms a frame.
+        /// </summary>
+        std::optional<uint64_t> HdKey;
     };
 
     /// <summary>

@@ -363,6 +363,8 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                 CurDeployTonnage = DeployTonnageWith(*occupant, -1.0f);
                 occupant->Deployed = false;
                 deploy.Unit = -1;
+                // Port-only (SPEC-memory.md's "The GPU from the briefing"): the mission's no more (PickUp's too).
+                MCHdArt::MechTakenOff(occupant->HdFolders);
 
                 if (Mech() != nullptr)
                 {
@@ -579,6 +581,9 @@ auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
                     deploy.Unit = -1;
                     CurDeployTonnage = DeployTonnageWith(*Mech(), -1.0f);
                     GlobalLog()->AssignedWarriorList->SetDeployed(Mech()->PilotIndex, false);
+                    // Port-only (SPEC-memory.md's "The GPU from the briefing"): the mission's no more until it's dropped
+                    // in a slot again (DropInSlotAt, PlaceInEmptySlot: MCHdArt::HoldMechAhead).
+                    MCHdArt::MechTakenOff(Mech()->HdFolders);
                 }
 
                 screen.CalcTonnages();

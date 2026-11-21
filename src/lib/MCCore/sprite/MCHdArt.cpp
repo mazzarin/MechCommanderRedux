@@ -840,6 +840,12 @@ namespace
         std::vector<FrameFolder> Folders;
         std::unordered_map<PathKey, uint32_t> FolderIndices;
         /// <summary>
+        /// Port-only (FindKeyed): the ground's folders' indices (TerrainFolder's, ReliefFolder's, OverlayFolder's) by
+        /// their names: making a folder's path and finding it among the rest for each of hundreds of draws a frame cost a
+        /// pan up to 0.9 ms a frame with the overlays' hashing (21 Nov).
+        /// </summary>
+        std::unordered_map<std::string_view, uint32_t> KeyedFolders;
+        /// <summary>
         /// FindShape's folders' indices by their shape table's hash: making a folder's path and finding it among the
         /// folders' cost more, every draw, than finding its frame.
         /// </summary>
@@ -893,6 +899,23 @@ namespace
         std::vector<std::string> ManifestFolders;
         bool ManifestFinal = false;
         uint64_t ManifestGeneration = 0;
+        /// <summary>
+        /// Port-only (MCHdArt::MechTakenOff): each of ManifestPlayers' folders (by its key there) and how many of the
+        /// mechs placed now it's one of (none: every mech it's one of was taken off), and the changes to them; the bytes
+        /// of the archives handed that only mechs taken off need (TakenOffBytes), as counted at PlacedCounted's change
+        /// with HoldQueue::Handed that size.
+        /// </summary>
+        struct PlacedFolder
+        {
+            std::filesystem::path Folder;
+            uint32_t Mechs = 0;
+        };
+
+        std::unordered_map<std::string, PlacedFolder> PlacedFolders;
+        uint64_t PlacedGeneration = 0;
+        uint64_t PlacedCounted = 0;
+        size_t PlacedHanded = 0;
+        uint64_t TakenOffGpuBytes = 0;
         std::unordered_map<FrameKey, Cached, FrameKeyHash> Frames;
         /// <summary>The keys of the frames held (those in Frames with one), least recently used first.</summary>
         std::list<FrameKey> Order;
@@ -1509,6 +1532,7 @@ namespace
 
     void QueueHold(ReadAhead& ahead, const std::shared_ptr<MCHdArchive>& archive);
     bool HoldsArchive(const MCHdArchive& archive);
+    uint64_t UnpackedKept(const MCFastFile& file);
     bool IsHashName(std::string_view name);
 
     /// <summary>
@@ -1538,6 +1562,108 @@ namespace
                 state.BriefingFillFolders.push_back(folder);
             }
         }
+    }
+
+    /// <summary>Whether <paramref name="folder"/> is <paramref name="archive"/>'s folder or lies under it.</summary>
+    bool Under(std::string_view folder, std::string_view archive)
+    {
+        return folder == archive ||
+               (folder.size() > archive.size() && folder.starts_with(archive) && folder[archive.size()] == '/');
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::MechTakenOff): whether <paramref name="folder"/> (the pack's) is only the mechs' taken off: one
+    /// of a mech's placed, none placed now, and none of the mission's own.
+    /// </summary>
+    bool TakenOff(const State& state, const std::filesystem::path& folder)
+    {
+        if (state.PlacedFolders.empty())
+        {
+            return false;
+        }
+
+        const std::string key = folder.generic_string();
+        const auto placed = state.PlacedFolders.find(key);
+        return placed != state.PlacedFolders.end() && placed->second.Mechs == 0 &&
+               !std::ranges::contains(state.ManifestFolders, key);
+    }
+
+    /// <summary>
+    /// Port-only (MCHdArt::MechTakenOff): the bytes unpacked (UnpackedKept) of the archives handed the hold that only
+    /// mechs taken off need: an archive standing for a folder of theirs (the nearest of its folders that has one, as
+    /// OpenArchivesAhead finds it) that no folder of a mech placed or of the mission's own lies under. Counted again only
+    /// when the mechs placed or the archives handed change; a mech's archives found in a few lookups each, so swapping
+    /// mechs costs a frame little. The game's thread's; call with ReadAhead::Lock held.
+    /// </summary>
+    uint64_t TakenOffBytes(State& state, const std::filesystem::path& pack)
+    {
+        const HoldQueue& holding = state.Ahead.Holding;
+
+        if (state.PlacedCounted == state.PlacedGeneration && state.PlacedHanded == holding.Handed.size())
+        {
+            return state.TakenOffGpuBytes;
+        }
+
+        state.PlacedCounted = state.PlacedGeneration;
+        state.PlacedHanded = holding.Handed.size();
+        state.TakenOffGpuBytes = 0;
+        std::vector<const std::filesystem::path*> off;
+        std::vector<std::string_view> needed(state.ManifestFolders.begin(), state.ManifestFolders.end());
+
+        for (const auto& [key, placed] : state.PlacedFolders)
+        {
+            if (placed.Mechs == 0)
+            {
+                off.push_back(&placed.Folder);
+            }
+            else
+            {
+                needed.push_back(key);
+            }
+        }
+
+        std::unordered_set<const MCHdArchive*> counted;
+
+        for (const std::filesystem::path* folder : off)
+        {
+            for (std::filesystem::path at = pack / *folder; at.has_relative_path() && at != pack; at = at.parent_path())
+            {
+                // The game's thread's archives, or one the readers opened that it hasn't taken yet; a folder without
+                // one of its own passed for those above it.
+                std::shared_ptr<MCHdArchive> archive;
+
+                if (const auto known = state.Archives.find(KeyOfPath(at)); known != state.Archives.end())
+                {
+                    archive = known->second;
+                }
+                else if (const auto opened = state.Ahead.Opened.find(at); opened != state.Ahead.Opened.end())
+                {
+                    if (!opened->second.Archive.has_value())
+                    {
+                        break;
+                    }
+
+                    archive = *opened->second.Archive;
+                }
+
+                if (archive == nullptr)
+                {
+                    continue;
+                }
+
+                const std::string name = at.lexically_relative(pack).generic_string();
+
+                if (holding.Handed.contains(archive) && counted.insert(archive.get()).second &&
+                    std::ranges::none_of(needed, [&name](std::string_view listed) { return Under(listed, name); }))
+                {
+                    state.TakenOffGpuBytes += UnpackedKept(*archive->File);
+                }
+
+                break;
+            }
+        }
+
+        return state.TakenOffGpuBytes;
     }
 
     /// <summary>
@@ -5332,6 +5458,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Uploaded.clear();
     state.Folders.clear();
     state.FolderIndices.clear();
+    state.KeyedFolders.clear();
     state.ShapeTableFolders.clear();
     state.Bytes = 0;
     state.AllocatedBytes = 0;
@@ -6939,8 +7066,9 @@ namespace
 namespace
 {
     /// <summary>
-    /// The frame of <paramref name="folder"/> named <paramref name="key"/> (a terrain tile's, an overlay's:
-    /// TerrainTileHash of its data), its bounds <paramref name="width"/> x <paramref name="height"/>; null with HD art off.
+    /// The frame of <paramref name="folder"/> (TerrainFolder, ReliefFolder or OverlayFolder: State::KeyedFolders keeps
+    /// its index) named <paramref name="key"/> (a terrain tile's, an overlay's: TerrainTileHash of its data), its bounds
+    /// <paramref name="width"/> x <paramref name="height"/>; null with HD art off.
     /// </summary>
     std::shared_ptr<const MCHdArt::Frame> FindKeyed(std::string_view folder, uint64_t key, int32_t width,
                                                     int32_t height)
@@ -6950,7 +7078,15 @@ namespace
             return nullptr;
         }
 
-        return Cache(FrameKey{FolderIndex(MCHdArt::PackFolder() / folder, Naming::Hash), key}, width, height);
+        State& state = TheState();
+        auto [index, fresh] = state.KeyedFolders.try_emplace(folder, 0);
+
+        if (fresh)
+        {
+            index->second = FolderIndex(MCHdArt::PackFolder() / folder, Naming::Hash);
+        }
+
+        return Cache(FrameKey{index->second, key}, width, height);
     }
 
     /// <summary>As FindKeyed, for the frame named by its picture's data <paramref name="data"/>.</summary>
@@ -7588,6 +7724,7 @@ namespace
     void UpdateGpuFill(State& state)
     {
         ReadAhead& ahead = state.Ahead;
+        const std::filesystem::path pack = MCHdArt::PackFolder();
         uint64_t mission = 0;
         uint64_t handed = 0;
         uint64_t ground = 0;
@@ -7609,7 +7746,8 @@ namespace
             loading = ahead.Holding.Loading;
             opening = std::ranges::any_of(ahead.Opening, [&ahead](const auto& open)
                                           { return open.second == ahead.Holding.Generation; });
-            mission = ahead.Holding.HandedGpuBytes;
+            // A mech taken off in the mech bay is the mission's no more (MCHdArt::MechTakenOff).
+            mission = Less(ahead.Holding.HandedGpuBytes, TakenOffBytes(state, pack));
             ground = ahead.Holding.GroundGpuBytes;
             fillDone = GpuFillDone(state);
         }
@@ -7695,13 +7833,13 @@ namespace
             Skip,
         };
 
-        const std::filesystem::path pack = MCHdArt::PackFolder();
         const auto look = [&](const std::filesystem::path& folder, uint32_t& index)
         {
             index = FolderIndex(pack / folder, Naming::Number);
             FrameFolder& frames = state.Folders.at(index);
 
-            if (state.GpuAsked.contains(index))
+            // A mech's taken off since waits until it's placed again (MCHdArt::MechTakenOff), noted again then.
+            if (state.GpuAsked.contains(index) || TakenOff(state, folder))
             {
                 return Next::Skip;
             }
@@ -8005,10 +8143,12 @@ void MCHdArt::LetGoHold()
         DropGpuReads(ahead);
     }
 
-    // The manifest goes with the hold (MCHdArt::Manifest).
+    // The manifest goes with the hold (MCHdArt::Manifest), the mechs placed with it.
     state.ManifestPlayers.clear();
     state.ManifestPlayerKeys.clear();
     state.ManifestFolders.clear();
+    state.PlacedFolders.clear();
+    ++state.PlacedGeneration;
     state.ManifestFinal = false;
     ++state.ManifestGeneration;
 
@@ -8473,17 +8613,24 @@ void MCHdArt::HoldMechAhead(std::span<const std::filesystem::path> folders)
         }
     }
 
-    // The manifest's players' part (MCHdArt::Manifest).
+    // The manifest's players' part (MCHdArt::Manifest), each folder's mechs placed counted (MCHdArt::MechTakenOff).
     State& state = TheState();
 
     for (const std::filesystem::path& folder : folders)
     {
-        if (state.ManifestPlayerKeys.insert(folder.generic_string()).second)
+        std::string key = folder.generic_string();
+        State::PlacedFolder& placed = state.PlacedFolders[key];
+        placed.Folder = folder;
+        ++placed.Mechs;
+
+        if (state.ManifestPlayerKeys.insert(std::move(key)).second)
         {
             state.ManifestPlayers.push_back(folder);
             ++state.ManifestGeneration;
         }
     }
+
+    ++state.PlacedGeneration;
 
     // Port-only (SPEC-memory.md's "The GPU from the briefing"): after the mission's, as placed.
     if (state.BriefingFill)
@@ -8494,13 +8641,22 @@ void MCHdArt::HoldMechAhead(std::span<const std::filesystem::path> folders)
     OpenArchivesAhead(folders);
 }
 
-namespace
+void MCHdArt::MechTakenOff(std::span<const std::filesystem::path> folders)
 {
-    /// <summary>Whether <paramref name="folder"/> is <paramref name="archive"/>'s folder or lies under it.</summary>
-    bool Under(std::string_view folder, std::string_view archive)
+    State& state = TheState();
+
+    for (const std::filesystem::path& folder : folders)
     {
-        return folder == archive ||
-               (folder.size() > archive.size() && folder.starts_with(archive) && folder[archive.size()] == '/');
+        const std::string key = folder.generic_string();
+
+        // Only a mech placed while a mission was held counts (HoldMechAhead).
+        if (const auto placed = state.PlacedFolders.find(key);
+            placed != state.PlacedFolders.end() && placed->second.Mechs > 0 && --placed->second.Mechs == 0)
+        {
+            // Placed again, it goes up after the mission's again (NoteBriefingFillFolders).
+            state.BriefingFillKeys.erase(key);
+            ++state.PlacedGeneration;
+        }
     }
 }
 
@@ -8792,6 +8948,34 @@ namespace
                                          static_cast<double>(MCFastFile::HeldBytes()) / BytesPerMb));
         }
     }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "When the system says memory is short", its first step): the mission's fill on the GPU
+    /// stops with the hold's: its reads waiting dropped, and nothing more asked for until the next briefing or load starts
+    /// it (MCHdArt::StartBriefingHold, MCHdArt::StartLoadFill); the pictures up stay. Without it the fill went on asking
+    /// for the rest of the mission, read from the disk once the hold kept no more.
+    /// </summary>
+    void StopGpuFill(State& state)
+    {
+        if (!state.GpuFillOn)
+        {
+            return;
+        }
+
+        state.GpuFillOn = false;
+
+        if (std::exchange(state.GpuFits, false))
+        {
+            std::scoped_lock lock(state.Ahead.Lock);
+            DropGpuReads(state.Ahead);
+        }
+
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::Note(std::format("HD fill on the GPU: memory short, the fill stopped at {:.1f} MB up",
+                                         static_cast<double>(state.GpuUpBytes) / BytesPerMb));
+        }
+    }
 }
 
 size_t MCHdArt::CacheBudget()
@@ -8892,11 +9076,12 @@ std::optional<uint64_t> MCHdArt::NextFrame(bool memoryShort)
     // past the working set, then the hold.
     //
     // While the system says memory is short (SPEC-memory.md's "When the system says memory is short"), the hold's fill
-    // stops first, then the frames kept go whatever the budget, then, when they've no more to give this frame, the hold,
-    // whatever -hdhold says.
+    // stops first, the GPU's with it, then the frames kept go whatever the budget, then, when they've no more to give this
+    // frame, the hold, whatever -hdhold says.
     if (memoryShort)
     {
         StopFilling();
+        StopGpuFill(state);
     }
 
     const ArtPlan plan = PlanArt(GetReaderSettings());

@@ -1454,6 +1454,14 @@ namespace MCHdArt
     /// </summary>
     void HoldMechAhead(std::span<const std::filesystem::path> folders);
 
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing": counted again at each change): a mech placed in a lance
+    /// (<see cref="HoldMechAhead"/>) is taken off, <paramref name="folders"/> its tree's. Its archives, unless a mech
+    /// placed or the mission's own needs them, are the mission's no more for the fill on the GPU: off its size, and not
+    /// put up until it's placed again. The hold keeps what it read of them.
+    /// </summary>
+    void MechTakenOff(std::span<const std::filesystem::path> folders);
+
     /// <summary>Port-only: how many reads the hold has made (<see cref="StartHold"/>), for the tests.</summary>
     size_t HeldReads();
 

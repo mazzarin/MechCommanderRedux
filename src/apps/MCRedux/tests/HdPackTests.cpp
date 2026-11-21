@@ -5054,6 +5054,71 @@ TEST_CASE("hd art: the briefing puts up every packet of a type its list names by
 }
 
 /// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing": counted again at each change): a mech taken off in the mech
+/// bay comes off the mission's size on the GPU, as it went on it when placed, and goes back on when placed again (21 Nov:
+/// a mech taken off stayed counted, so swapping mechs could make a mission that fits seem not to).
+/// </summary>
+TEST_CASE("hd art: a mech taken off at the briefing comes off the mission's size on the GPU")
+{
+    constexpr std::string_view Mission = "mis0101";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("briefing-mech-off", pieces);
+    const FillSlotsScope slots;
+    // The other archive stands for a mech's folder of its own, as big as the mission's.
+    const std::array<std::filesystem::path, 1> mech{std::filesystem::path(HoldPack::MoreFolder)};
+    const auto missionBytes = []
+    {
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::WaitForHold();
+        MCHdArt::NextFrame(false);
+        return MCHdArt::GpuFillNow().MissionBytes;
+    };
+
+    MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+    const uint64_t own = missionBytes();
+    REQUIRE(own > 0);
+    MCHdArt::HoldMechAhead(mech);
+    CHECK_EQ(missionBytes(), 2 * own);
+    MCHdArt::MechTakenOff(mech);
+    CHECK_EQ(missionBytes(), own);
+    MCHdArt::HoldMechAhead(mech);
+    CHECK_EQ(missionBytes(), 2 * own);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "When the system says memory is short", its first step): memory short, the fill on the GPU
+/// stops with the hold's, the rest of the mission asked for no more (21 Nov: it went on asking, the hold keeping no
+/// more), and the load's bar waits for nothing on the GPU.
+/// </summary>
+TEST_CASE("hd art: memory short stops the fill on the GPU with the hold's")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}, {StreamKind::Packet, 1000}};
+    const HoldPack pack("gpu-fill-memory-short", pieces);
+    const FillSlotsScope slots;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForHold();
+    MCHdArt::NextFrame(true);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    const uint64_t asked = MCHdArt::GpuFillNow().Asked;
+    FinishTakingEveryPicture();
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Asked, asked);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's "The GPU from the briefing", for the timing runs' comparison): with -hdbriefingfill off the
 /// briefing holds its mission's art and puts none of it on the GPU, as before it.
 /// </summary>

@@ -5190,7 +5190,13 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
     // Port-only: an overlay the HD art pack has a frame of is shown from it, the original's draw keeping its indices; a
     // translucent one's frame holds its blended pixels too (MCHdArt::Frame::Blended), and the original draws nothing.
     // An opaque one's edges are smooth (KindHdSmooth), reaching a window pixel past it each way the pane allows.
-    if (const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::FindOverlay(shape.first(*size), width, height);
+    if (!found->get().HdKey.has_value() && MCHdArt::Active())
+    {
+        found->get().HdKey = MCHdArt::TerrainTileKey(shape.first(*size));
+    }
+
+    if (const std::shared_ptr<const MCHdArt::Frame> hd =
+            found->get().HdKey.has_value() ? MCHdArt::FindOverlayByKey(*found->get().HdKey, width, height) : nullptr;
         hd != nullptr && hd->Blended == command.Alpha)
     {
         const HdEdges edges = hd->Blended ? HdEdges::Frame : HdEdges::Smooth;

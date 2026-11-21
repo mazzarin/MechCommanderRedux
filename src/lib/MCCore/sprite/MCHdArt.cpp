@@ -415,6 +415,13 @@ namespace
     /// </summary>
     constexpr std::chrono::milliseconds FillRoomWaitMost{20};
     /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): the most of a frame the fill's walk over the folders it
+    /// takes in may take outside a load, the rest walked in the frames after. A folder's first look takes about 10 us
+    /// (its archive found, its index made), and a briefing takes in thousands at once (mission 1's: 3,115, 31 ms walked
+    /// in one frame). Under the loading bar it walks them all.
+    /// </summary>
+    constexpr std::chrono::microseconds FillWalkMostPerFrame{500};
+    /// <summary>
     /// Port-only (SPEC-memory.md: "less only the plan's own error"): the whole mission is put on the GPU when it fits with
     /// a tenth to spare, and left there until it no longer fits at all, so the mode doesn't flip as a budget wavers.
     /// </summary>
@@ -7734,11 +7741,20 @@ namespace
         std::vector<MCHdArt::PacketAhead> packets;
         std::vector<std::filesystem::path> typePackets;
         // Each in its order from where it was left (packetAt: its packet at an index), up to the first whose archive the
-        // hold reads still. With types, a folder naming a type (TypePackets) brings its archive's other packets after.
+        // hold reads still, or outside a load to the frame's share (FillWalkMostPerFrame; one folder at least). With
+        // types, a folder naming a type (TypePackets) brings its archive's other packets after.
+        const auto walkUntil = std::chrono::steady_clock::now() + FillWalkMostPerFrame;
+        bool walked = false;
         const auto walk = [&](size_t count, size_t& asked, const auto& packetAt, bool types)
         {
             for (; asked < count; ++asked)
             {
+                if (walked && !loading && std::chrono::steady_clock::now() >= walkUntil)
+                {
+                    return false;
+                }
+
+                walked = true;
                 const MCHdArt::PacketAhead packet = packetAt(asked);
                 uint32_t index = 0;
                 const Next next = look(packet.Folder, index);

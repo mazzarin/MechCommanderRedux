@@ -22,6 +22,7 @@
 #include "lib/MCThreadKeeper.h"
 #include "lib/MCWorkers.h"
 #include "main/MCGameContext.h"
+#include "main/MCSystemConfig.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCThreadPriority.h"
 
@@ -640,6 +641,78 @@ TEST_CASE("file: the player's own settings are read and saved in their folder wh
     CHECK_EQ(MCFileSystem::SettingsToRead("prefs.cfg"), "prefs.cfg");
     CHECK_EQ(MCFileSystem::SettingsToWrite("prefs.cfg"), "prefs.cfg");
 #endif
+}
+
+/// <summary>
+/// The release doesn't list PREFS.CFG, so an update never replaces a taken-over folder's own: a copy with none anywhere
+/// gets one where the game saves it, the folder's own that an earlier update set aside in Redux backup, else every
+/// setting at its default; one the game can already read (the user folder's, the install's) is left as it is.
+/// </summary>
+TEST_CASE("file: a copy without prefs.cfg gets one where it's saved: the folder's own an update set aside, else the "
+          "defaults")
+{
+    ScratchFolder folder("ensure-prefs");
+    const std::filesystem::path install = folder.Path() / "install";
+    const std::filesystem::path user = folder.Path() / "user";
+    std::filesystem::create_directories(install);
+    std::filesystem::create_directories(user);
+
+    MCTestContextScope scope;
+    scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
+    MCFileSystem::SetGameRoot(install);
+    MCFileSystem::SetUserRoot(user);
+
+    // None anywhere (a new install): the defaults, in the user folder; the install untouched.
+    REQUIRE(EnsurePrefs());
+    REQUIRE(std::filesystem::is_regular_file(user / "prefs.cfg"));
+    CHECK(!std::filesystem::exists(install / "prefs.cfg"));
+    MCFitIniFile fit;
+    REQUIRE_EQ(fit.Open(MCFileSystem::SettingsToRead("prefs.cfg")), 0);
+    REQUIRE_EQ(fit.SeekBlock("MechCommander"), 0);
+    CHECK(fit.Read<int32_t>("PrefsVersion") == MCFitResult<int32_t>(PrefsVersion));
+    CHECK(!fit.Read<int32_t>("Difficulty").has_value());
+    fit.Close();
+
+    // The user folder's, once there, is the player's: left as it is, a set-aside one notwithstanding.
+    const std::vector<uint8_t> players = Bytes("FITini\r\n[MechCommander]\r\nl Difficulty = 2\r\n\r\nFITend\r\n");
+    WriteFile(user / "prefs.cfg", players);
+    const std::vector<uint8_t> setAside =
+        Bytes("FITini\r\n[MechCommander]\r\nl Difficulty = 1\r\nl MusicVolume = 40\r\n\r\nFITend\r\n");
+    std::filesystem::create_directories(install / "Redux backup");
+    WriteFile(install / "Redux backup/prefs.cfg", setAside);
+    REQUIRE(EnsurePrefs());
+    CHECK(ReadFile(user / "prefs.cfg") == players);
+
+    // A taken-over folder's own in the install, none in the user folder: read from there as ever, nothing made.
+    std::filesystem::remove(user / "prefs.cfg");
+    const std::vector<uint8_t> folders = Bytes("FITini\r\n[MechCommander]\r\nl Difficulty = 3\r\n\r\nFITend\r\n");
+    WriteFile(install / "prefs.cfg", folders);
+    REQUIRE(EnsurePrefs());
+    CHECK(!std::filesystem::exists(user / "prefs.cfg"));
+    CHECK(ReadFile(install / "prefs.cfg") == folders);
+
+    // None but the one an update set aside (release 8 replaced a taken-over folder's, and release 9 drops the default
+    // it put there): carried over to the user folder as it was, and kept in Redux backup for the uninstall.
+    std::filesystem::remove(install / "prefs.cfg");
+    REQUIRE(EnsurePrefs());
+    CHECK(ReadFile(user / "prefs.cfg") == setAside);
+    CHECK(ReadFile(install / "Redux backup/prefs.cfg") == setAside);
+
+    // A launcher's match with the player's own folder and none anywhere: made there, never in the launcher's.
+    std::filesystem::remove(user / "prefs.cfg");
+    std::filesystem::remove(install / "Redux backup/prefs.cfg");
+    const std::filesystem::path player = folder.Path() / "player's own";
+    REQUIRE(MCFileSystem::SetSettingsRoot(player));
+
+    struct MCSettingsReset
+    {
+        ~MCSettingsReset() { MCFileSystem::SetSettingsRoot({}); }
+    } reset;
+
+    REQUIRE(EnsurePrefs());
+    CHECK(std::filesystem::is_regular_file(player / "prefs.cfg"));
+    CHECK(!std::filesystem::exists(user / "prefs.cfg"));
+    CHECK_EQ(MCFileSystem::SettingsToRead("prefs.cfg"), MCFileSystem::ToUtf8(player / "prefs.cfg"));
 }
 
 /// <summary>

@@ -21,6 +21,7 @@
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrainTiles.h"
+#include "update/MCContentList.h"
 
 std::string CampaignFile = "campaign";
 std::string MissionName = "MechCmdr1.fit";
@@ -282,6 +283,50 @@ void OpenGameFastFiles()
     MCReleaseData::Open(MCFileSystem::GameRoot());
 }
 
+bool EnsurePrefs()
+{
+    std::error_code error;
+
+    if (std::filesystem::is_regular_file(MCFileSystem::Resolve(MCFileSystem::SettingsToRead(PrefsFile)), error))
+    {
+        return true;
+    }
+
+    const std::string target = MCFileSystem::SettingsToWrite(PrefsFile);
+    const std::filesystem::path setAside =
+        MCFileSystem::Resolve(std::format("{}/{}", MCContentList::BackupFolder, PrefsFile));
+
+    if (std::filesystem::is_regular_file(setAside, error))
+    {
+        const std::filesystem::path written = MCFileSystem::ResolveWrite(target);
+
+        if (std::filesystem::copy_file(setAside, written, error))
+        {
+            SDL_Log("Settings: none yet; the folder's own, set aside by an update in %s, carried over to %s",
+                    MCFileSystem::ToUtf8(setAside).c_str(), MCFileSystem::ToUtf8(written).c_str());
+            return true;
+        }
+
+        SDL_Log("Settings: none yet; the folder's own in %s can't be carried over to %s (%s): every setting at its "
+                "default",
+                MCFileSystem::ToUtf8(setAside).c_str(), MCFileSystem::ToUtf8(written).c_str(), error.message().c_str());
+    }
+
+    MCFitIniFile prefs;
+
+    if (const int32_t result = prefs.Create(target); result != 0)
+    {
+        SDL_Log("Settings: none yet, and %s can't be made (%#x)", target.c_str(), static_cast<uint32_t>(result));
+        return false;
+    }
+
+    // As SavePrefs writes a file whose settings are all at their defaults: the format alone.
+    prefs.WriteBlock("MechCommander");
+    prefs.WriteIdLong("PrefsVersion", PrefsVersion);
+    SDL_Log("Settings: none yet; every setting at its default, in %s", target.c_str());
+    return true;
+}
+
 void SystemInit()
 {
     // Port: the original registered the "QueryCancelAutoPlay" window message to keep the CD's autorun from starting
@@ -299,6 +344,7 @@ void SystemInit()
         OpenGameFastFiles();
     }
 
+    EnsurePrefs();
     MCFitIniFile prefsFile;
 
     if (const int32_t result = prefsFile.Open(MCFileSystem::SettingsToRead(PrefsFile)); result != 0)

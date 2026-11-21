@@ -11,6 +11,17 @@ class MCFitIniFile;
 /// <summary>PREFS.CFG's name, in the player's settings folder (MCFileSystem::SettingsToRead, SettingsToWrite).</summary>
 inline constexpr std::string_view PrefsFile = "prefs.cfg";
 
+/// <summary>
+/// Port-only (Redux HD): makes the player's PREFS.CFG where the game saves it (MCFileSystem::SettingsToWrite) when none
+/// of the folders the game reads it from (the settings folder, the user folder, the install) holds one. The release
+/// doesn't list PREFS.CFG, so no update replaces a taken-over folder's own, which the game reads as the player's until
+/// its first save. A copy with none starts from the folder's own that an earlier release's update set aside in
+/// <c>Redux backup</c> (release 8 listed the file, and replaced a taken-over folder's), else from every setting at its
+/// default.
+/// </summary>
+/// <returns>Whether a PREFS.CFG is there to read now.</returns>
+bool EnsurePrefs();
+
 /// <summary>The campaign control FIT the game session starts ("campaign", in the mission path).</summary>
 extern std::string CampaignFile;
 /// <summary>SYSTEM.CFG "missionName": the mission FIT a game segment (-mission N) starts.</summary>

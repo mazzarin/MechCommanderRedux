@@ -4207,7 +4207,9 @@ void MCVulkanRenderer::PlaceStagedPictures()
     const double speed = _Slots->CopyBytesPerSecond() > 0.0 ? _Slots->CopyBytesPerSecond() : FillGuessBytesPerSecond;
     const size_t bytes = loading ? std::numeric_limits<size_t>::max()
                                  : std::max(FillLeastBytes, static_cast<size_t>(FillShare * _FramePeriod * speed));
-    const size_t count = loading ? std::numeric_limits<size_t>::max() : FillMostPerFrame;
+    const size_t count = loading                      ? std::numeric_limits<size_t>::max()
+                         : MCHdArt::BriefingFilling() ? FillMostPerBriefingFrame
+                                                      : FillMostPerFrame;
 
     for (const MCHdArt::StagedPicture& staged : MCHdArt::TakeStagedPictures(count, bytes))
     {

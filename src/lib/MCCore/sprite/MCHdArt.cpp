@@ -8017,6 +8017,14 @@ bool MCHdArt::BriefingFillWanted()
     return BriefingHoldWanted() && !TheState().BriefingFillOff;
 }
 
+bool MCHdArt::BriefingFilling()
+{
+    const State& state = TheState();
+    ReadAhead& ahead = TheState().Ahead;
+    std::scoped_lock lock(ahead.Lock);
+    return state.BriefingFill && state.GpuFits && !ahead.Holding.Loading;
+}
+
 namespace
 {
     /// <summary>

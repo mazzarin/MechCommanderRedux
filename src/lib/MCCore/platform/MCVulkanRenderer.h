@@ -1589,6 +1589,8 @@ private:
     static constexpr size_t FillLeastBytes = size_t{256} << 10;
     /// <summary>Port-only: the most of the fill's pictures a frame in play copies up.</summary>
     static constexpr size_t FillMostPerFrame = 64;
+    /// <summary>Port-only: the most a frame of a briefing's fill copies up (MCHdArt::BriefingFilling).</summary>
+    static constexpr size_t FillMostPerBriefingFrame = 32;
     /// <summary>Port-only: the frame times the fill's budget is reckoned between (360 Hz to 30 Hz), and their smoothing.</summary>
     static constexpr double FillLeastPeriod = 1.0 / 360.0;
     static constexpr double FillMostPeriod = 1.0 / 30.0;

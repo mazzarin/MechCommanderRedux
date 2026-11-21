@@ -24,8 +24,13 @@
 /// </summary>
 namespace MCContentList
 {
-    /// <summary>The format this game reads; a list of a higher one needs a newer program.</summary>
-    constexpr uint64_t KnownFormat = 1;
+    /// <summary>
+    /// The format this game reads, and every one before it; a list of a higher one needs a newer program. Format 2 is
+    /// a list with the 2x set (<see cref="MCList::Variants"/>), from release 9 on: a game before it, which can't plan
+    /// that set, takes the program alone, and the new program gets the art (SPEC-install-and-updates.md's Formats only
+    /// grow).
+    /// </summary>
+    constexpr uint64_t KnownFormat = 2;
 
     /// <summary>
     /// The sets, as the list names them: the original's data, the HD pack, and the HD pack's 2x art, which goes only
@@ -140,7 +145,7 @@ namespace MCContentList
         /// Other sets' copies of the files (the 2x set's, <see cref="Hd2xSet"/>): a copy with a variant's set takes it in
         /// place of the file at its path, so a file with no variant (HD's sound and movies) is the same in both and comes
         /// once. A variant at a path no file has is its set's alone. Each variant's set is one the files don't have.
-        /// Added in format 1 (<c>variants</c>): a game before it reads the files alone, its sets as ever.
+        /// <c>variants</c>: a list with them is format 2 (<see cref="KnownFormat"/>); one of format 1 is read the same.
         /// </summary>
         std::vector<MCFile> Variants;
     };

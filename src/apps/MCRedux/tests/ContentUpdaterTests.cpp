@@ -10,12 +10,14 @@
 #include "TestGame.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCHdOptionsPanel.h"
+#include "logistics/MCLogButton.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdatePage.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
 #include "platform/MCSocket.h"
@@ -39,7 +41,9 @@
 // armed; the program's backend (Sparkle on the Mac) held to release.json's build and armed with the content, neither
 // half going in without the other; a skip kept; another copy kept from swapping under a running one, and from staging
 // beside it. The HD pack got and removed at the release installed (HD OPTIONS), an update planned for the sets chosen,
-// and the first start's install into a folder an installer prepared, with its window (MCFirstStart.h).
+// and the first start's install into a folder an installer prepared, with its window (MCFirstStart.h). The art a
+// program installed alone came for (a list in a format its old game couldn't read), not fetched before the game opens
+// and downloaded by itself once it's open.
 
 namespace
 {
@@ -1627,6 +1631,193 @@ TEST_CASE("updater: HD OPTIONS shows the HD art's size and both sets' sizes; the
     REQUIRE(MCContentSwap::Run(*MakeDisk(), shown.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
     CHECK(InstalledSets(shown) == WithHd2x);
     CHECK_EQ(Read(shown.Game.Path() / "HD" / "terrain.hda"), std::string(TerrainAt2x));
+}
+
+namespace
+{
+    /// <summary>
+    /// Release 2's content noted due, as a game that can't read its list's format leaves it when it arms the program
+    /// alone (MCContentUpdater::Arm): the art that program came for, the program the copy runs now taking it.
+    /// </summary>
+    void NoteRelease2Due(const MCHostedRelease& release)
+    {
+        REQUIRE(MCInstalled::NoteDue(*MakeDisk(), release.Game.Path(), {.Release = 2, .LowestProgram = release.Build})
+                    .has_value());
+    }
+
+    /// <summary>
+    /// The release's files hosted in a folder, each zip's download stalled after its first bytes until the gate opens
+    /// or the work stops (the player quitting midway); the patches come whole.
+    /// </summary>
+    class MCStallingSource final : public MCContentStage::MCSource
+    {
+    public:
+        MCStallingSource(std::filesystem::path folder, std::shared_ptr<MCGate> gate)
+            : _Inner(std::move(folder)), _Gate(std::move(gate))
+        {
+        }
+
+        std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
+                                               const std::function<bool(std::span<const char>)>& received) override
+        {
+            if (!name.ends_with(".zip"))
+            {
+                return _Inner.Fetch(name, to, size, received);
+            }
+
+            uint64_t sent = 0;
+            return _Inner.Fetch(name, to, size,
+                                [&](std::span<const char> bytes)
+                                {
+                                    sent += bytes.size();
+
+                                    if (!received(bytes))
+                                    {
+                                        return false;
+                                    }
+
+                                    while (sent >= SendBytes && !_Gate->Open)
+                                    {
+                                        _Gate->Reached = true;
+
+                                        if (!received({}))
+                                        {
+                                            return false;
+                                        }
+
+                                        std::this_thread::sleep_for(LookAgain);
+                                    }
+
+                                    return true;
+                                });
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            return _Inner.Read(name, most);
+        }
+
+    private:
+        MCFolderSource _Inner;
+        std::shared_ptr<MCGate> _Gate;
+    };
+
+    /// <summary>What release 2's update downloads for a copy of release 1 with HD: the terrain's patch and a zip.</summary>
+    uint64_t UpdateBytes(const MCHostedRelease& release)
+    {
+        return std::filesystem::file_size(release.Host.Path() / "patches" / "terrain-1-2.hdiff") +
+               std::filesystem::file_size(release.Host.Path() / "update-2.zip");
+    }
+}
+
+TEST_CASE("content updater: a list of format 2, with the 2x set, is read, and one of format 1 still is; a list of a "
+          "format newer than the game reads brings the program alone, its release's content noted due")
+{
+    MCHostedRelease release("list-formats");
+    AddTwoX(release);
+    release.Machine = SmallMachine;
+    const std::filesystem::path& game = release.Game.Path();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCFolderSource source(release.Host.Path());
+
+    // Format 2, a list with the 2x set (release 9's on): planned, the 2x art in its place on a small machine.
+    MCContentList::MCList list = release.List;
+    list.Format = 2;
+    release.SetList(list);
+    const auto two = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(two.has_value());
+    REQUIRE(two->has_value());
+    REQUIRE((*two)->Content != nullptr);
+    CHECK_EQ((*two)->Content->List.Format, uint64_t{2});
+    CHECK((*two)->Content->Plan.Record.Sets == WithHd2x);
+
+    // Format 1 (release 8's): as ever.
+    list.Format = 1;
+    release.SetList(list);
+    const auto one = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(one.has_value());
+    REQUIRE(one->has_value());
+    REQUIRE((*one)->Content != nullptr);
+    CHECK_EQ((*one)->Content->List.Format, uint64_t{1});
+
+    // A format newer than this game reads: the program alone, which takes the release's content; armed, it notes that
+    // content due, for the new program to get.
+    list.Format = MCContentList::KnownFormat + 1;
+    release.SetList(list);
+    release.Publish(2, 2, NewerBuild);
+    const auto newer = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(newer.has_value());
+    REQUIRE(newer->has_value());
+    CHECK((*newer)->Content == nullptr);
+    CHECK((*newer)->ProgramBuild == std::optional<uint64_t>(NewerBuild));
+    REQUIRE(MCContentUpdater::Arm(release.Setup(), *disk, **newer).has_value());
+    CHECK(!release.Armed());
+    const MCInstalled::MCDue due{.Release = 2, .LowestProgram = NewerBuild};
+    CHECK(MCInstalled::ReadDue(*disk, game) == due);
+}
+
+TEST_CASE("updater: the art a program installed alone came for downloads by itself even where the player skipped its "
+          "release")
+{
+    MCHostedRelease release("due-skipped");
+
+    // The release skipped (an earlier offer of it), then its program installed alone (another copy's INSTALL, say).
+    {
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        MCFolderSource source(release.Host.Path());
+        const auto offer = MCContentUpdater::Check(release.Setup(), *disk, source);
+        REQUIRE(offer.has_value());
+        REQUIRE(offer->has_value());
+        REQUIRE(MCContentUpdater::Skip(release.Setup(), *disk, **offer).has_value());
+    }
+
+    NoteRelease2Due(release);
+    MCUpdaterScope scope(release, false);
+    MCUpdater::CheckAtStart();
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Ready; }));
+    CHECK(release.Armed());
+    REQUIRE(MCContentSwap::Run(*MakeDisk(), release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    release.CheckIsRelease2();
+    CHECK(!MCInstalled::ReadDue(*MakeDisk(), release.Game.Path()).has_value());
+}
+
+TEST_CASE("updater: the art a program installed alone came for, quit midway, downloads by itself again at the next "
+          "start, counting from its first report what's in hand (the staged patch, the cut zip resumed by its range)")
+{
+    MCHostedRelease release("due-quit");
+    const std::filesystem::path& game = release.Game.Path();
+    NoteRelease2Due(release);
+    const uint64_t inHand =
+        std::filesystem::file_size(release.Host.Path() / "patches" / "terrain-1-2.hdiff") + uint64_t{SendBytes};
+
+    // The first start: the download starts by itself and stalls in the update zip; the player quits.
+    {
+        const auto stall = std::make_shared<MCGate>();
+        MCUpdaterScope scope(release, false, [host = release.Host.Path(), stall]
+                             { return std::make_unique<MCStallingSource>(host, stall); });
+        MCUpdater::CheckAtStart();
+        REQUIRE(FramesUntil([&] { return stall->Reached && MCUpdater::Status().Received == inHand; }));
+        CHECK(Stage() == MCStage::Downloading);
+        MCUpdater::Quit();
+    }
+
+    REQUIRE_EQ(std::filesystem::file_size(game / "Redux update" / "download" / "update-2.zip"), uint64_t{SendBytes});
+    CHECK(!release.Armed());
+
+    // The next start: by itself again, counting what's in hand from the first, out of the whole.
+    const auto gate = std::make_shared<MCGate>();
+    MCUpdaterScope next(release, false,
+                        [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+    MCUpdater::CheckAtStart();
+    REQUIRE(FramesUntil([&] { return gate->Reached && MCUpdater::Status().Received != 0; }));
+    CHECK(Stage() == MCStage::Downloading);
+    CHECK_EQ(MCUpdater::Status().Received, inHand);
+    CHECK_EQ(MCUpdater::Status().Expected, UpdateBytes(release));
+    gate->Open = true;
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Ready; }));
+    CHECK(release.Armed());
+    REQUIRE(MCContentSwap::Run(*MakeDisk(), game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    release.CheckIsRelease2();
 }
 
 TEST_CASE("content updater: an update is planned for the sets chosen")
@@ -3357,6 +3548,62 @@ TEST_CASE_ISOLATED("first start: --get-content gets what a first start gets and 
     SDL_Quit();
 }
 
+TEST_CASE_ISOLATED("content at a start: the art a program installed alone came for isn't fetched before the game "
+                   "opens; once it's open, its download starts by itself, at the machine's HD art size, and goes in at "
+                   "the next start")
+{
+    if (!WindowsOpen())
+    {
+        return;
+    }
+
+    MCHostedRelease release("due-start");
+    AddTwoX(release);
+    release.Machine = SmallMachine;
+    const std::filesystem::path& game = release.Game.Path();
+    NoteRelease2Due(release);
+    std::deque<MCFolderSource> made;
+    const MCContentAtStart::MCStart start{.GameFolder = game,
+                                          .RunningBuild = RunningBuild,
+                                          .Content = release.Setup(),
+                                          .Source = [&]() -> std::unique_ptr<MCContentStage::MCSource>
+                                          {
+                                              made.emplace_back(release.Host.Path());
+                                              return std::make_unique<MCBorrowedSource>(made.back());
+                                          },
+                                          .Window = TestWindow(1)};
+
+    // The start: nothing asked of the host and no window; the game opens on the files it has.
+    auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+    CHECK(MCContentAtStart::BeforeOpening(start, {}, std::nullopt, *record) == MCContentAtStart::MCOutcome::Play);
+    CHECK(made.empty());
+    CHECK_EQ(record->Release, uint64_t{1});
+    CHECK(!release.Armed());
+    CHECK(MCInstalled::ReadDue(*MakeDisk(), game).has_value());
+
+    // Open, its check downloads the release unasked, the 2x art on this small machine; RESTART then.
+    {
+        MCUpdaterScope scope(release, false);
+        MCUpdater::CheckAtStart();
+        REQUIRE(FramesUntil([] { return Stage() == MCStage::Ready; }));
+        CHECK(MCUpdater::Status().GoesIn == MCUpdater::MCGoesIn::NextStart);
+        CHECK(release.Armed());
+    }
+
+    REQUIRE(MCContentSwap::Run(*MakeDisk(), game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(InstalledSets(release) == WithHd2x);
+    CHECK_EQ(Read(game / "HD" / "terrain.hda"), std::string(TerrainAt2x));
+    CHECK_EQ(Read(game / "HD" / "palette.rgb"), std::string(Palette));
+    CHECK(!MCInstalled::ReadDue(*MakeDisk(), game).has_value());
+
+    // HD OPTIONS has both sizes to show, not one.
+    const auto installed = MCInstalled::Read(game);
+    REQUIRE(installed.has_value());
+    CHECK_EQ(installed->SetBytes.at("hd2x"), uint64_t{TerrainAt2x.size() + Palette.size()});
+    SDL_Quit();
+}
+
 TEST_CASE("recovery screen: its text wraps between words, a word too long within it; past 12 lines the step to take "
           "still shows whole")
 {
@@ -3733,4 +3980,71 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD o
     CHECK_EQ(list->Description(HdPackRow), std::string("RESTART THE GAME TO REMOVE IT."));
     CHECK(ButtonShown("RESTART"));
     CHECK(!ButtonShown("REMOVE"));
+}
+
+namespace
+{
+    /// <summary>Whether the main menu's button <paramref name="label"/> (the UPDATE page's) is showing.</summary>
+    bool ButtonOnMainShown(std::string_view label)
+    {
+        const std::shared_ptr<MCLogTextButton> button = MCScreenInput::FindTextButton(*GlobalLog()->MainScreen, label);
+        return button != nullptr && button->IsShowing();
+    }
+}
+
+TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its download from its first bytes: UPDATE "
+                   "lit, its page saying what's in of the whole with the version and notes, no INSTALL or SKIP; then "
+                   "RESTART")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("due-page");
+    NoteRelease2Due(release);
+    const auto stall = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false, [host = release.Host.Path(), stall]
+                         { return std::make_unique<MCStallingSource>(host, stall); });
+    REQUIRE(MCTestGame::StartLogistics());
+    const uint64_t inHand =
+        std::filesystem::file_size(release.Host.Path() / "patches" / "terrain-1-2.hdiff") + uint64_t{SendBytes};
+    REQUIRE(FramesUntil(
+        [&]
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+            return stall->Reached && MCUpdater::Status().Received == inHand;
+        }));
+    ScreenFrames();
+
+    // The main menu's UPDATE lit, its page showing the download under way, nothing to answer.
+    const std::shared_ptr<MCLogButton> update = GlobalLog()->MainScreen->CinemaButton.Lock();
+    REQUIRE(update != nullptr);
+    CHECK(!update->Disabled);
+    RealClickOn(*update);
+    REQUIRE(UpdatePageShown());
+    CHECK_EQ(UpdatePageStatus(),
+             std::format("DOWNLOADING: {}.", MCUpdateWork::ProgressText(inHand, UpdateBytes(release))));
+    CHECK_EQ(MCUpdater::Status().Version, std::format("{} ({})", ReleaseVersion, RunningBuild));
+    const std::vector<std::string> lines = UpdatePageLines();
+    REQUIRE(!lines.empty());
+    CHECK_EQ(lines.front(), std::string("NEW MISSIONS."));
+    CHECK(!ButtonOnMainShown("INSTALL"));
+    CHECK(!ButtonOnMainShown("SKIP"));
+    MCScreenInput::SaveShot("update forced art", MCScreenInput::ScreenHash());
+
+    // In and checked: RESTART.
+    stall->Open = true;
+    REQUIRE(FramesUntil(
+        [&]
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+            return Stage() == MCStage::Ready;
+        }));
+    ScreenFrames();
+    CHECK(release.Armed());
+    CHECK_EQ(UpdatePageStatus(),
+             std::format("VERSION {} ({}) IS IN. RESTART TO PLAY IT.", ReleaseVersion, RunningBuild));
+    CHECK(!ButtonOnMainShown("INSTALL"));
+    CHECK(ButtonOnMainShown("RESTART"));
 }

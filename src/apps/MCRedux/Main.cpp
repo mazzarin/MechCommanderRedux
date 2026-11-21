@@ -755,7 +755,8 @@ int main(int argc, char** argv)
     }
     else if (updates)
     {
-        // The player who quit leaves cleanly; the next start carries on.
+        // The content the game can't play without comes first (the art a program installed alone came for doesn't: the
+        // updater downloads it once the game is open). The player who quit leaves cleanly; the next start carries on.
         if (const MCContentAtStart::MCOutcome got =
                 MCContentAtStart::BeforeOpening(start, options->GameCommandLine, heldLock, *installed);
             got != MCContentAtStart::MCOutcome::Play)

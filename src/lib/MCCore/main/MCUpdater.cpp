@@ -326,6 +326,29 @@ namespace
         Changed();
     }
 
+    /// <summary>
+    /// The update found is shown. One that comes by itself (a program below the lowest release a copy may stay on, the
+    /// art a program installed alone came for) shows its download at once, with no question and no SKIP, and starts at
+    /// the next frame (never from inside the backend's own report), as after INSTALL again.
+    /// </summary>
+    void ShowFound()
+    {
+        if (Offer->Forced)
+        {
+            SDL_Log("Updater: build %llu downloads by itself: this one is below the lowest release a copy may stay on",
+                    static_cast<unsigned long long>(Offer->ProgramBuild.value_or(0)));
+            InstallAgain = MCAgain::Looking;
+        }
+        else if (Offer->Due)
+        {
+            SDL_Log("Updater: release %llu downloads by itself: it brings the art this program was installed for",
+                    static_cast<unsigned long long>(Offer->Release.Number));
+            InstallAgain = MCAgain::Looking;
+        }
+
+        ShowOffer();
+    }
+
     /// <summary>The downloads' progress: <paramref name="received"/> bytes in of the whole update.</summary>
     void ShowProgress(uint64_t received, uint64_t expected)
     {
@@ -770,7 +793,7 @@ namespace
             return;
         }
 
-        ShowOffer();
+        ShowFound();
     }
 
     /// <summary>Staging's end: on to the program's download, or armed when there's none.</summary>
@@ -1432,17 +1455,7 @@ auto MCUpdater::Found(std::string version, std::string notes) -> void
     {
         if (Step == MCStep::CheckingProgram)
         {
-            // Below the lowest release a copy may stay on, it downloads unasked, from the next frame (never from inside
-            // the backend's own report), as INSTALL again does.
-            if (Offer && Offer->Forced)
-            {
-                SDL_Log(
-                    "Updater: build %llu downloads by itself: this one is below the lowest release a copy may stay on",
-                    static_cast<unsigned long long>(Offer->ProgramBuild.value_or(0)));
-                InstallAgain = MCAgain::Looking;
-            }
-
-            ShowOffer();
+            ShowFound();
         }
 
         return;

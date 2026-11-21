@@ -161,6 +161,12 @@ namespace MCContentUpdater
         /// and alone (no content, and armed without noting the content due), and the player isn't asked.
         /// </summary>
         bool Forced = false;
+        /// <summary>
+        /// Its content brings the art a program installed alone came for (MCInstalled::DueFor), its release or a later
+        /// one: it downloads by itself, skipped or not, planned as any download (the machine's HD art where the player
+        /// didn't pick its size), and the player isn't asked (SPEC-install-and-updates.md's Forced art).
+        /// </summary>
+        bool Due = false;
 
         /// <summary>What the content downloads.</summary>
         uint64_t ContentBytes() const;
@@ -184,7 +190,8 @@ namespace MCContentUpdater
     /// The update; none when nothing's newer, the player skipped it, or an update already waits for the next start; or
     /// why there's none (the files refused, the host out of reach, a game folder this account can't write). Below
     /// release.json's lowest release a copy may stay on, the program alone, forced (<see cref="MCOffer::Forced"/>),
-    /// skipped or not.
+    /// skipped or not; the art a program installed alone came for, forced too (<see cref="MCOffer::Due"/>), skipped
+    /// or not.
     /// </returns>
     std::expected<std::optional<MCOffer>, std::string> Check(const MCSetup& setup, MCUpdateDisk& disk,
                                                              MCContentStage::MCSource& source, const MCGoOn& goOn = {});

@@ -462,9 +462,21 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
     }
 
     const MCReleaseFile::MCRelease& release = chosen->Release;
+    const auto installed = MCInstalled::Read(disk, setup.GameFolder);
 
-    // Below the lowest release a copy may stay on, the program comes whatever the player skipped.
-    if (release.Number == chosen->Kept.Skipped && !chosen->BelowRequired)
+    if (!installed)
+    {
+        return std::unexpected(installed.error());
+    }
+
+    // The art a program installed alone came for (a list its old game couldn't read) comes with its release or a later
+    // one.
+    const std::optional<MCInstalled::MCDue> due =
+        MCInstalled::DueFor(disk, setup.GameFolder, *installed, setup.RunningBuild);
+    const bool bringsDue = due && MCReleaseFile::OrderOf(release) >= MCReleaseFile::MCOrder{due->Epoch, due->Release};
+
+    // Below the lowest release a copy may stay on, the program comes whatever the player skipped; so does the art due.
+    if (release.Number == chosen->Kept.Skipped && !chosen->BelowRequired && !bringsDue)
     {
         SDL_Log("Updates: release %llu was skipped", static_cast<unsigned long long>(release.Number));
         return std::nullopt;
@@ -491,13 +503,6 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
                                      ? program->second.Zip->Size
                                      : program->second.Size;
         }
-    }
-
-    const auto installed = MCInstalled::Read(disk, setup.GameFolder);
-
-    if (!installed)
-    {
-        return std::unexpected(installed.error());
     }
 
     const bool newContent = MCReleaseFile::OrderOf(release) > InstalledOrder(*installed);
@@ -551,6 +556,17 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         }
 
         offer.Content = std::move(*content);
+    }
+
+    // The art due comes by itself, unasked.
+    offer.Due = bringsDue && offer.Content != nullptr;
+
+    if (offer.Due)
+    {
+        SDL_Log("Updates: release %llu brings the art build %llu was installed alone for (release %llu's): it "
+                "downloads by itself",
+                static_cast<unsigned long long>(release.Number), static_cast<unsigned long long>(due->LowestProgram),
+                static_cast<unsigned long long>(due->Release));
     }
 
     // A list this game can't read, and no program to read it: nothing here can take the release.

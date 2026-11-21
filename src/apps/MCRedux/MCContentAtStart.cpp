@@ -200,24 +200,28 @@ bool MCContentAtStart::SwapStaged(const MCStart& start, std::string_view command
     return true;
 }
 
-MCOutcome MCContentAtStart::GetAtStart(const MCStart& start, std::string_view commandLine,
-                                       MCOptionalRef<MCUpdateLock> lock, MCInstalled::MCStartNeed need, bool askAlways,
-                                       MCInstalled::MCRecord& record)
+namespace
 {
-    if (!start.Content)
+    /// <summary>
+    /// The content a start gets in the first start's window (<paramref name="need"/>, MCInstalled::AtStart's), in a
+    /// build that updates its content: downloaded, checked and put in place, the window showing the progress; content
+    /// that doesn't come is asked about there (TRY AGAIN, QUIT). <paramref name="record"/> is then the installed record
+    /// as it is.
+    /// </summary>
+    MCOutcome GetAtStart(const MCStart& start, std::string_view commandLine, MCOptionalRef<MCUpdateLock> lock,
+                         MCInstalled::MCStartNeed need, MCInstalled::MCRecord& record)
     {
-        return MCOutcome::Play;
-    }
+        if (!start.Content)
+        {
+            return MCOutcome::Play;
+        }
 
-    const bool needed = need == MCInstalled::MCStartNeed::Needed;
-    SDL_Log("Updates: the start gets the game's content%s", needed ? "" : ", which its program was installed for");
-    const MCFirstStart::MCWork work = ContentWork(start, MCContentUpdater::Install);
+        const bool needed = need == MCInstalled::MCStartNeed::Needed;
+        SDL_Log("Updates: the start gets the game's content%s", needed ? "" : ", which its program was installed for");
 
-    // Content only due that can't come, or whose window the player closed, leaves the files to play as they are;
-    // content needed (or asked for) ends the start then, and the next one carries on.
-    if (needed || askAlways)
-    {
-        const std::expected<bool, std::string> done = MCFirstStart::RunAsking(GettingHeading, work, start.Window);
+        // Content that can't come, or whose window the player closed, ends the start; the next one carries on.
+        const std::expected<bool, std::string> done = MCFirstStart::RunAsking(
+            MCContentAtStart::GettingHeading, ContentWork(start, MCContentUpdater::Install), start.Window);
 
         if (!done)
         {
@@ -229,44 +233,39 @@ MCOutcome MCContentAtStart::GetAtStart(const MCStart& start, std::string_view co
         {
             return MCOutcome::Quit;
         }
-    }
-    else if (const auto done = MCFirstStart::Run(GettingHeading, work, start.Window); !done || !*done)
-    {
-        SDL_Log("Updates: the content due waits for a later start (%s): the files play as they are",
-                done ? "the window was closed" : done.error().Reason.c_str());
-        return MCOutcome::Play;
-    }
 
-    for (;;)
-    {
-        if (!SwapStaged(start, commandLine, lock))
+        for (;;)
         {
-            return MCOutcome::Failed;
-        }
+            if (!MCContentAtStart::SwapStaged(start, commandLine, lock))
+            {
+                return MCOutcome::Failed;
+            }
 
-        auto swapped = MCInstalled::Read(*MakeDisk(), start.GameFolder);
+            auto swapped = MCInstalled::Read(*MakeDisk(), start.GameFolder);
 
-        if (!swapped)
-        {
-            SDL_Log("Updates: %s", swapped.error().c_str());
-            return needed ? MCOutcome::Failed : MCOutcome::Play;
-        }
+            if (!swapped)
+            {
+                SDL_Log("Updates: %s", swapped.error().c_str());
+                return needed ? MCOutcome::Failed : MCOutcome::Play;
+            }
 
-        record = std::move(*swapped);
+            record = std::move(*swapped);
 
-        // Put back (another copy of the game holds the folder): it goes in once that copy is closed.
-        if (!needed || !StillNeeded(start, record))
-        {
-            return MCOutcome::Play;
-        }
+            // Put back (another copy of the game holds the folder): it goes in once that copy is closed.
+            if (!needed || !StillNeeded(start, record))
+            {
+                return MCOutcome::Play;
+            }
 
-        SDL_Log("Updates: the content is downloaded, but another copy of the game holds the folder");
-        constexpr std::array<std::string_view, 2> Buttons = {MCFirstStart::TryAgainButton, MCFirstStart::QuitButton};
-        const std::optional<size_t> answer = MCFirstStart::Ask(HeldHeading, HeldText, Buttons, start.Window);
+            SDL_Log("Updates: the content is downloaded, but another copy of the game holds the folder");
+            constexpr std::array<std::string_view, 2> Buttons = {MCFirstStart::TryAgainButton,
+                                                                 MCFirstStart::QuitButton};
+            const std::optional<size_t> answer = MCFirstStart::Ask(HeldHeading, HeldText, Buttons, start.Window);
 
-        if (!answer || Buttons[*answer] == MCFirstStart::QuitButton)
-        {
-            return MCOutcome::Quit;
+            if (!answer || Buttons[*answer] == MCFirstStart::QuitButton)
+            {
+                return MCOutcome::Quit;
+            }
         }
     }
 }
@@ -274,15 +273,21 @@ MCOutcome MCContentAtStart::GetAtStart(const MCStart& start, std::string_view co
 MCOutcome MCContentAtStart::BeforeOpening(const MCStart& start, std::string_view commandLine,
                                           MCOptionalRef<MCUpdateLock> lock, MCInstalled::MCRecord& record)
 {
-    const MCInstalled::MCStartNeed need =
-        MCInstalled::AtStart(*MakeDisk(), start.GameFolder, record, start.RunningBuild, start.LowestContentRelease);
-
-    if (need == MCInstalled::MCStartNeed::Nothing)
+    switch (MCInstalled::AtStart(*MakeDisk(), start.GameFolder, record, start.RunningBuild, start.LowestContentRelease))
     {
-        return MCOutcome::Play;
+        case MCInstalled::MCStartNeed::Nothing:
+            return MCOutcome::Play;
+        case MCInstalled::MCStartNeed::Due:
+        {
+            // The game plays the art it has meanwhile; its updater's check downloads the release by itself.
+            SDL_Log("Updates: the art this program was installed for is due: the game opens, and its updater gets it");
+            return MCOutcome::Play;
+        }
+        case MCInstalled::MCStartNeed::Needed:
+            break;
     }
 
-    return GetAtStart(start, commandLine, lock, need, false, record);
+    return GetAtStart(start, commandLine, lock, MCInstalled::MCStartNeed::Needed, record);
 }
 
 int MCContentAtStart::GetContentOnly(const MCStart& start, MCOptionalRef<MCUpdateLock> lock)
@@ -315,7 +320,7 @@ int MCContentAtStart::GetContentOnly(const MCStart& start, MCOptionalRef<MCUpdat
         return 0;
     }
 
-    const MCOutcome outcome = GetAtStart(start, {}, lock, need, true, *installed);
+    const MCOutcome outcome = GetAtStart(start, {}, lock, need, *installed);
     SDL_Log("Getting the content: %s",
             outcome == MCOutcome::Play ? "in place" : "not in place; the next start carries on");
     return outcome == MCOutcome::Play ? 0 : 1;

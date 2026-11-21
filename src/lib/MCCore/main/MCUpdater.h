@@ -21,10 +21,11 @@
 //   Without it, the program's backend alone finds, downloads and installs its newest version.
 //
 // The main menu's UPDATE button and page (logistics/MCUpdatePage.h) show where it is and pass on the player's answers:
-// nothing downloads until the player chooses INSTALL. With neither half (the tests, a build without one) there is
-// nothing to update and the main menu keeps ORIGINAL CINEMA. Everything here happens on the main thread: Sparkle calls
-// its driver there, as the frame pumps the window's events. Standard headers only (update/MCUpdateWork.h is too): the
-// Mac's Sparkle backend includes it without the precompiled header.
+// nothing downloads until the player chooses INSTALL, but what comes by itself: a program below release.json's lowest
+// release a copy may stay on, and the art a program installed alone came for. With neither half (the tests, a build
+// without one) there is nothing to update and the main menu keeps ORIGINAL CINEMA. Everything here happens on the main
+// thread: Sparkle calls its driver there, as the frame pumps the window's events. Standard headers only
+// (update/MCUpdateWork.h is too): the Mac's Sparkle backend includes it without the precompiled header.
 
 namespace MCContentUpdater
 {

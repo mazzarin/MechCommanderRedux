@@ -427,7 +427,8 @@ std::expected<MCList, std::string> MCContentList::Read(std::string_view payload)
 
                                   CheckNoClashes(list.Files);
 
-                                  // Added in format 1: a list before it has none, and a game before it reads past it.
+                                  // The 2x set: a list with it is format 2, which a game before release 9 doesn't
+                                  // read (it takes the program alone); one of format 1 is read the same.
                                   for (const MCJson& entry : Array(json, VariantsKey, false))
                                   {
                                       list.Variants.push_back(ReadFile(entry, zipNames));

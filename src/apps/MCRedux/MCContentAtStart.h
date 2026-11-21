@@ -11,9 +11,10 @@ class MCUpdateLock;
 /// <summary>
 /// Port-only: what a start does with the game's content before anything opens (SPEC-install-and-updates.md's Applying
 /// an update and The content list's first start): a staged update put in place, or the recovery screen when it can't
-/// finish; then the content the start must get (a first start, a release older than the program plays, the one its
-/// program was installed alone for), downloaded, checked and put in place in the first start's window
-/// (MCFirstStart.h). Main.cpp's start uses it, and so does <c>--get-content</c>, the Windows setup's last step.
+/// finish; then the content the game can't play without (a first start, a release older than the program plays),
+/// downloaded, checked and put in place in the first start's window (MCFirstStart.h). The art a program installed alone
+/// came for doesn't hold the start up: the game's updater downloads it by itself once the game is open (Forced art).
+/// Main.cpp's start uses it, and so does <c>--get-content</c>, the Windows setup's last step, which gets that art too.
 /// </summary>
 namespace MCContentAtStart
 {
@@ -59,26 +60,19 @@ namespace MCContentAtStart
                     MCOptionalRef<MCUpdateLock> lock = std::nullopt);
 
     /// <summary>
-    /// The content a start must get before anything opens (<paramref name="need"/>, MCInstalled::AtStart's), in a build
-    /// that updates its content: downloaded, checked and put in place, the window showing the progress. Content needed
-    /// that doesn't come is asked about in the window (TRY AGAIN, QUIT); so is content only due when
-    /// <paramref name="askAlways"/> (--get-content), which otherwise leaves the files to play as they are.
-    /// <paramref name="record"/> is then the installed record as it is.
-    /// </summary>
-    MCOutcome GetAtStart(const MCStart& start, std::string_view commandLine, MCOptionalRef<MCUpdateLock> lock,
-                         MCInstalled::MCStartNeed need, bool askAlways, MCInstalled::MCRecord& record);
-
-    /// <summary>
-    /// A start's content step once any staged update is in place (<see cref="SwapStaged"/>), in a build that updates its
-    /// content: what the copy, with <paramref name="record"/>, must get before anything opens (MCInstalled::AtStart),
-    /// got as <see cref="GetAtStart"/> gets it. <paramref name="record"/> is then the installed record as it is.
+    /// A start's content step once any staged update is in place (<see cref="SwapStaged"/>), in a build that updates
+    /// its content: the release the game can't play without (MCInstalled::MCStartNeed::Needed), downloaded, checked and
+    /// put in place, the window showing the progress, and asked about there (TRY AGAIN, QUIT) when it doesn't come.
+    /// The art a program installed alone came for (MCStartNeed::Due) isn't waited for: the game opens on the files it
+    /// has. <paramref name="record"/> is then the installed record as it is.
     /// </summary>
     MCOutcome BeforeOpening(const MCStart& start, std::string_view commandLine, MCOptionalRef<MCUpdateLock> lock,
                             MCInstalled::MCRecord& record);
 
     /// <summary>
     /// <c>--get-content</c>: what a first start does for the content, then no game. Any staged update goes in first;
-    /// then the content the copy must get, in the window, under <paramref name="lock"/> (the game's, held shared).
+    /// then the content the copy needs (the art a program installed alone came for too), in the window, asked about
+    /// there when it doesn't come, under <paramref name="lock"/> (the game's, held shared).
     /// </summary>
     /// <returns>
     /// The exit code: 0 once the content is in place, or when none is needed (no window opens); 1 when the player quit,

@@ -111,14 +111,23 @@ namespace MCInstalled
     /// <summary>The content noted due (<see cref="DueFile"/>); none without the note, or when it can't be read (logged).</summary>
     std::optional<MCDue> ReadDue(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
 
-    /// <summary>What a start must get before anything opens.</summary>
+    /// <summary>
+    /// The content noted due (<see cref="ReadDue"/>) that a program of build <paramref name="runningBuild"/> takes and
+    /// the copy, with <paramref name="record"/>, hasn't installed yet; none otherwise (an older program plays the files
+    /// it has, and is offered the update again).
+    /// </summary>
+    std::optional<MCDue> DueFor(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCRecord& record,
+                                uint64_t runningBuild);
+
+    /// <summary>What a start's content needs: nothing, the art due once the game is open, or a release first.</summary>
     enum class MCStartNeed : uint8_t
     {
         /// <summary>Nothing: the files play as they are.</summary>
         Nothing,
         /// <summary>
-        /// The release a program was armed alone for (<see cref="DueFile"/>), this program taking it: fetched first;
-        /// if it can't be, the files play as they are.
+        /// The release a program was armed alone for (<see cref="DueFor"/>), this program taking it: the start doesn't
+        /// wait for it, the game opening on the files it has, and the game's updater downloads it by itself
+        /// (MCContentUpdater::MCOffer::Due); <c>--get-content</c> gets it in its window.
         /// </summary>
         Due,
         /// <summary>
@@ -130,7 +139,8 @@ namespace MCInstalled
 
     /// <summary>
     /// What a start of build <paramref name="runningBuild"/>, which plays content releases from
-    /// <paramref name="lowestContent"/> on, must get before anything opens, the copy having <paramref name="record"/>.
+    /// <paramref name="lowestContent"/> on, needs of its content (<see cref="MCStartNeed"/>), the copy having
+    /// <paramref name="record"/>.
     /// </summary>
     MCStartNeed AtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCRecord& record,
                         uint64_t runningBuild, uint64_t lowestContent);

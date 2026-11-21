@@ -217,6 +217,21 @@ std::optional<MCInstalled::MCDue> MCInstalled::ReadDue(MCUpdateDisk& disk, const
     return *due;
 }
 
+std::optional<MCInstalled::MCDue> MCInstalled::DueFor(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                                      const MCRecord& record, uint64_t runningBuild)
+{
+    std::optional<MCDue> due = ReadDue(disk, gameFolder);
+
+    if (!due ||
+        MCReleaseFile::MCOrder{due->Epoch, due->Release} <= MCReleaseFile::MCOrder{record.Epoch, record.Release} ||
+        runningBuild < due->LowestProgram)
+    {
+        return std::nullopt;
+    }
+
+    return due;
+}
+
 MCInstalled::MCStartNeed MCInstalled::AtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
                                               const MCRecord& record, uint64_t runningBuild, uint64_t lowestContent)
 {
@@ -226,11 +241,7 @@ MCInstalled::MCStartNeed MCInstalled::AtStart(MCUpdateDisk& disk, const std::fil
         return MCStartNeed::Needed;
     }
 
-    // Due only to a program that takes it: an older one plays the files it has, and is offered the update again.
-    if (const std::optional<MCDue> due = ReadDue(disk, gameFolder);
-        due &&
-        MCReleaseFile::MCOrder{due->Epoch, due->Release} > MCReleaseFile::MCOrder{record.Epoch, record.Release} &&
-        runningBuild >= due->LowestProgram)
+    if (DueFor(disk, gameFolder, record, runningBuild))
     {
         return MCStartNeed::Due;
     }

@@ -755,18 +755,13 @@ int main(int argc, char** argv)
     }
     else if (updates)
     {
-        if (const MCInstalled::MCStartNeed need = MCInstalled::AtStart(*MakeDisk(), options->DataFolder, *installed,
-                                                                       MC_VERSION_BUILD, LowestContentRelease);
-            need != MCInstalled::MCStartNeed::Nothing)
+        // The player who quit leaves cleanly; the next start carries on.
+        if (const MCContentAtStart::MCOutcome got =
+                MCContentAtStart::BeforeOpening(start, options->GameCommandLine, heldLock, *installed);
+            got != MCContentAtStart::MCOutcome::Play)
         {
-            // The player who quit leaves cleanly; the next start carries on.
-            if (const MCContentAtStart::MCOutcome got =
-                    MCContentAtStart::GetAtStart(start, options->GameCommandLine, heldLock, need, false, *installed);
-                got != MCContentAtStart::MCOutcome::Play)
-            {
-                SDL_Quit();
-                return got == MCContentAtStart::MCOutcome::Quit ? 0 : 1;
-            }
+            SDL_Quit();
+            return got == MCContentAtStart::MCOutcome::Quit ? 0 : 1;
         }
 
         // The release's own copy of a match's data, filled from the game folder (update/MCReleaseCopy.h), from the

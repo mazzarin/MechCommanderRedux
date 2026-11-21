@@ -69,6 +69,14 @@ namespace MCContentAtStart
                          MCInstalled::MCStartNeed need, bool askAlways, MCInstalled::MCRecord& record);
 
     /// <summary>
+    /// A start's content step once any staged update is in place (<see cref="SwapStaged"/>), in a build that updates its
+    /// content: what the copy, with <paramref name="record"/>, must get before anything opens (MCInstalled::AtStart),
+    /// got as <see cref="GetAtStart"/> gets it. <paramref name="record"/> is then the installed record as it is.
+    /// </summary>
+    MCOutcome BeforeOpening(const MCStart& start, std::string_view commandLine, MCOptionalRef<MCUpdateLock> lock,
+                            MCInstalled::MCRecord& record);
+
+    /// <summary>
     /// <c>--get-content</c>: what a first start does for the content, then no game. Any staged update goes in first;
     /// then the content the copy must get, in the window, under <paramref name="lock"/> (the game's, held shared).
     /// </summary>

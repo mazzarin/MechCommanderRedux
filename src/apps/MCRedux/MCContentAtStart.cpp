@@ -271,6 +271,20 @@ MCOutcome MCContentAtStart::GetAtStart(const MCStart& start, std::string_view co
     }
 }
 
+MCOutcome MCContentAtStart::BeforeOpening(const MCStart& start, std::string_view commandLine,
+                                          MCOptionalRef<MCUpdateLock> lock, MCInstalled::MCRecord& record)
+{
+    const MCInstalled::MCStartNeed need =
+        MCInstalled::AtStart(*MakeDisk(), start.GameFolder, record, start.RunningBuild, start.LowestContentRelease);
+
+    if (need == MCInstalled::MCStartNeed::Nothing)
+    {
+        return MCOutcome::Play;
+    }
+
+    return GetAtStart(start, commandLine, lock, need, false, record);
+}
+
 int MCContentAtStart::GetContentOnly(const MCStart& start, MCOptionalRef<MCUpdateLock> lock)
 {
     if (!start.Content)

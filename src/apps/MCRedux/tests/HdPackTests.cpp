@@ -5282,6 +5282,62 @@ TEST_CASE("hd art: the opening's packets of the player's mechs go up as those of
 }
 
 /// <summary>
+/// Port-only (the opening): a packet of the player's mechs at a place in the lance goes up as that packet of the mech
+/// placed there among those whose part is that PAK's (MCHdArt::OpeningLance's order), not of every one; a mech past the
+/// list's places takes theirs in turn again (21 Nov: every lance packet went up for every mech of its part, 3.2 times
+/// what the play drew, filling the opening's room).
+/// </summary>
+TEST_CASE("hd art: the opening's packets of the player's mechs at a place go up as those of the mech placed there")
+{
+    constexpr size_t MostFrames = 64;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view Part = "mechs/legs90";
+    constexpr uint16_t First = 51;
+    constexpr uint16_t Second = 52;
+    // Three of the player's mechs placed in turn: the first has both packets, the second the second's, the third the
+    // first's; the list's play had two places.
+    constexpr std::array<std::string_view, 3> Mechs{"mechs/legs90/7", "mechs/legs90/9", "mechs/legs90/11"};
+    constexpr std::array<int32_t, 3> FirstPackets{0, First, Second};
+    constexpr std::array<int32_t, 2> SecondPackets{0, Second};
+    constexpr std::array<int32_t, 2> ThirdPackets{0, First};
+    // Placed so, 7/51, 9/52 and 11/51 go up (11 at place 2, the first again); for every mech, 7/52 too.
+    constexpr size_t OpeningFolders = 3;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const ScratchFolder pack("opening-places");
+    WriteTypeArchive(pack, Mechs[0], FirstPackets);
+    WriteTypeArchive(pack, Mechs[1], SecondPackets);
+    WriteTypeArchive(pack, Mechs[2], ThirdPackets);
+    MCHdArt::SetPackFolder(pack.Path());
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    const uint64_t frames = FirstPackets.size() + SecondPackets.size() + ThirdPackets.size();
+    std::vector<MCHdArt::StagedPicture> up;
+    const std::array<MCHdArt::OpeningPacket, 2> opening{MCHdArt::OpeningPacket{std::filesystem::path(Part), First, 0},
+                                                        MCHdArt::OpeningPacket{std::filesystem::path(Part), Second, 1}};
+    MCHdArt::StartBriefingHold(Mission, {}, false);
+    MCHdArt::SetOpening(opening);
+
+    for (const std::string_view mech : Mechs)
+    {
+        const std::array<std::filesystem::path, 1> placed{std::filesystem::path(mech) / "0"};
+        MCHdArt::HoldMechAhead(placed);
+    }
+
+    CHECK(std::ranges::equal(MCHdArt::OpeningLance(), Mechs));
+    FramesUntilUp(before + frames, MostFrames, up);
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    CHECK(fill.Fits);
+    CHECK_EQ(fill.Up, before + frames);
+    CHECK(fill.OpeningDone);
+    CHECK_EQ(fill.OpeningAsked, OpeningFolders);
+    MCHdArt::LetGoHold();
+    MCHdArt::SetPackFolder({});
+    GHdArt = previous;
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's "The GPU from the briefing": counted again at each change): a mech taken off in the mech
 /// bay comes off the mission's size on the GPU, as it went on it when placed, and goes back on when placed again (21 Nov:
 /// a mech taken off stayed counted, so swapping mechs could make a mission that fits seem not to).

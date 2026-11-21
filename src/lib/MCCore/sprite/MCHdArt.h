@@ -1346,14 +1346,16 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only (SPEC-memory.md's "The GPU from the briefing": the opening): a packet a mission's play draws first. A
-    /// folder of the mission's own, whole (no Packet), or a packet of each of the player's mechs placed (Folder names its
-    /// part's PAK, <c>mechs/legs90</c>; a packet number names one gesture at one facing on any mech: MCSpriteTree's
-    /// PacketAt).
+    /// folder of the mission's own, whole (no Packet), or a packet of the player's mechs (Folder names its part's PAK,
+    /// <c>mechs/legs90</c>; a packet number names one gesture at one facing on any mech: MCSpriteTree's PacketAt): of the
+    /// mech at Place among the player's mechs whose part is that PAK's (as <see cref="OpeningLance"/> orders them), those
+    /// past the most places the list's play had taking theirs in turn again; with no Place, of each of them.
     /// </summary>
     struct OpeningPacket
     {
         std::filesystem::path Folder;
         std::optional<uint16_t> Packet;
+        std::optional<uint8_t> Place;
     };
 
     /// <summary>
@@ -1372,6 +1374,13 @@ namespace MCHdArt
     /// mech part's. Its part's PAK is the archive's own folder (<c>mechs/legs90</c>).
     /// </summary>
     std::optional<std::string> MechPartArchive(std::string_view folder);
+
+    /// <summary>
+    /// Port-only (the opening): the player's mechs' part archives (<c>mechs/legs90/7</c>), in the order the opening counts
+    /// their places in: those placed (<see cref="HoldMechAhead"/>), in the order placed, then those the load handed that
+    /// aren't the mission's own.
+    /// </summary>
+    std::vector<std::string> OpeningLance();
 
     /// <summary>
     /// Port-only (the opening: the middle ground's simulation, 20 Nov: on the 4 GB card 146 of play's 147 first-use waits

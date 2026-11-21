@@ -7791,7 +7791,8 @@ namespace
 
             packets.push_back(MCHdArt::OpeningPacket{
                 MCFileSystem::FromUtf8(MCOpeningLists::Folders[entry.Folder]),
-                entry.Packet == MCOpeningLists::NoPacket ? std::nullopt : std::optional<uint16_t>(entry.Packet)});
+                entry.Packet == MCOpeningLists::NoPacket ? std::nullopt : std::optional<uint16_t>(entry.Packet),
+                entry.Place == MCOpeningLists::AnyPlace ? std::nullopt : std::optional<uint8_t>(entry.Place)});
         }
 
         return packets;
@@ -7876,14 +7877,13 @@ namespace
     }
 
     /// <summary>
-    /// Port-only (the opening): the order it goes up in, built again when the opening or the player's mechs changed: each
-    /// packet in turn, a folder of the mission's whole, a packet of the player's mechs' as each mech's whose part is that
-    /// PAK's (those placed, in the order placed, then those the load handed that aren't the mission's), each folder once;
-    /// the walk then from the start (what it asked stays asked).
+    /// Port-only (the opening): the player's mechs' part archives brought up to date: those placed, in the order placed
+    /// (as of PlacedGeneration), then those the load handed that aren't the mission's (LoadFolders); a change has the
+    /// order built again (BuildOpening).
     /// </summary>
-    void BuildOpening(State& state)
+    void UpdateOpeningLance(State& state)
     {
-        bool changed = state.OpeningBuiltAt != state.OpeningGeneration;
+        bool changed = false;
         const auto addTo = [&state](std::vector<std::string>& lance, std::string_view folder)
         {
             std::optional<std::string> archive = MCHdArt::MechPartArchive(folder);
@@ -7925,7 +7925,24 @@ namespace
                       changed;
         }
 
-        if (!changed)
+        if (changed)
+        {
+            state.OpeningBuiltAt = std::numeric_limits<uint64_t>::max();
+        }
+    }
+
+    /// <summary>
+    /// Port-only (the opening): the order it goes up in, built again when the opening or the player's mechs changed
+    /// (UpdateOpeningLance): each packet in turn, a folder of the mission's whole, a packet of the player's mechs' as
+    /// that of each mech whose part is that PAK's and whose place among them (MCHdArt::OpeningLance's order), counted
+    /// round the most places the list's play had of it, is the packet's (every one's, with no place), each folder once;
+    /// the walk then from the start (what it asked stays asked).
+    /// </summary>
+    void BuildOpening(State& state)
+    {
+        UpdateOpeningLance(state);
+
+        if (state.OpeningBuiltAt == state.OpeningGeneration)
         {
             return;
         }
@@ -7941,6 +7958,18 @@ namespace
             }
         };
 
+        // Each PAK's places in the list's play: the most its packets name, plus one.
+        std::unordered_map<std::string, uint32_t> places;
+
+        for (const MCHdArt::OpeningPacket& packet : state.Opening)
+        {
+            if (packet.Packet.has_value() && packet.Place.has_value())
+            {
+                uint32_t& most = places[packet.Folder.generic_string()];
+                most = std::max<uint32_t>(most, uint32_t{*packet.Place} + 1);
+            }
+        }
+
         for (const MCHdArt::OpeningPacket& packet : state.Opening)
         {
             std::string folder = packet.Folder.generic_string();
@@ -7951,14 +7980,24 @@ namespace
                 continue;
             }
 
+            const uint32_t most = packet.Place.has_value() ? places.at(folder) : 0;
+            uint32_t place = 0;
+
             for (const std::vector<std::string>* lance : {&state.OpeningLancePlaced, &state.OpeningLanceLoaded})
             {
                 for (const std::string& archive : *lance)
                 {
-                    if (Under(archive, folder))
+                    if (!Under(archive, folder))
+                    {
+                        continue;
+                    }
+
+                    if (!packet.Place.has_value() || place % most == *packet.Place)
                     {
                         add(std::format("{}/{}", archive, *packet.Packet));
                     }
+
+                    ++place;
                 }
             }
         }
@@ -9766,6 +9805,15 @@ void MCHdArt::SetOpening(std::span<const OpeningPacket> packets)
     state.Opening.assign(packets.begin(), packets.end());
     ++state.OpeningGeneration;
     OpenArchivesAhead(OpeningFolders(state));
+}
+
+std::vector<std::string> MCHdArt::OpeningLance()
+{
+    State& state = TheState();
+    UpdateOpeningLance(state);
+    std::vector<std::string> lance = state.OpeningLancePlaced;
+    lance.insert(lance.end(), state.OpeningLanceLoaded.begin(), state.OpeningLanceLoaded.end());
+    return lance;
 }
 
 std::vector<MCHdArt::StagedPicture> MCHdArt::TakeStagedPictures(size_t mostCount, size_t mostBytes)

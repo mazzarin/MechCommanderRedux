@@ -464,8 +464,10 @@ namespace
     /// Port-only (the opening's list, sprite/MCOpeningLists.h): writes to <c>&lt;folder&gt;/&lt;mission&gt;.txt</c> the
     /// pack's packets the play that the HD trace <paramref name="trace"/> records first drew, in that order, each once:
     /// a folder of the mission's <c>F &lt;folder&gt;</c>, a packet of the player's mechs <c>L &lt;its part's PAK
-    /// folder&gt; &lt;packet&gt;</c> (a mech part's archive the mission's list lacks, as it leaves the player's out:
-    /// MCScenario::HoldList). Only packets' folders, not the ground's or the interface's. Gives the lines written.
+    /// folder&gt; &lt;place&gt; &lt;packet&gt;</c> (a mech part's archive the mission's list lacks, as it leaves the
+    /// player's out: MCScenario::HoldList), its place its archive's among the player's of that PAK in
+    /// MCHdArt::OpeningLance's order (none, <c>L &lt;PAK&gt; &lt;packet&gt;</c>, where it isn't there). Only packets'
+    /// folders, not the ground's or the interface's. Gives the lines written.
     /// </summary>
     size_t WriteOpening(const std::filesystem::path& trace, const std::filesystem::path& folder)
     {
@@ -478,6 +480,15 @@ namespace
             {
                 missionMechs.insert(std::move(*archive));
             }
+        }
+
+        // Each of the player's mechs' archives' place among those of its PAK.
+        std::unordered_map<std::string, size_t> places;
+        std::unordered_map<std::string, size_t> paks;
+
+        for (const std::string& archive : MCHdArt::OpeningLance())
+        {
+            places.emplace(archive, paks[archive.substr(0, archive.rfind('/'))]++);
         }
 
         std::ifstream in(trace);
@@ -510,9 +521,17 @@ namespace
             // A packet of the archive's own, its number alone past it (mechs/legs90/7/51).
             const bool lance = archive.has_value() && !missionMechs.contains(*archive) && at.size() > archive->size() &&
                                at.find('/', archive->size() + 1) == std::string::npos;
-            std::string row = lance ? std::format("{} {} {}", OpeningLanceLine, archive->substr(0, archive->rfind('/')),
-                                                  at.substr(archive->size() + 1))
-                                    : std::format("{} {}", OpeningFolderLine, at);
+            std::string row = std::format("{} {}", OpeningFolderLine, at);
+
+            if (lance)
+            {
+                const std::string pak = archive->substr(0, archive->rfind('/'));
+                const std::string packet = at.substr(archive->size() + 1);
+                const auto place = places.find(*archive);
+                row = place != places.end() && place->second < MCOpeningLists::AnyPlace
+                          ? std::format("{} {} {} {}", OpeningLanceLine, pak, place->second, packet)
+                          : std::format("{} {} {}", OpeningLanceLine, pak, packet);
+            }
 
             if (written.insert(row).second)
             {
@@ -796,19 +815,21 @@ namespace
 // clang-format off
 namespace MCOpeningLists
 {
+/// <summary>An Entry's Packet for a folder of the mission's own, and its Place for a packet of every player's mech.</summary>
+inline constexpr uint16_t NoPacket = 0xffff;
+inline constexpr uint8_t AnyPlace = 0xff;
+
 /// <summary>
 /// A packet a mission's play draws first: a folder of Folders whole (Packet NoPacket), or a packet of the player's mechs
-/// (Folders names its part's PAK, "mechs/legs90"; every packet number names one gesture at one facing on any mech), the
-/// packet of each mech placed whose part is that PAK's.
+/// (Folders names its part's PAK, "mechs/legs90"; every packet number names one gesture at one facing on any mech): that
+/// of the mech at Place among the player's mechs whose part is that PAK's (MCHdArt::OpeningLance's order), or of each.
 /// </summary>
 struct Entry
 {
     uint16_t Folder = 0;
     uint16_t Packet = 0;
+    uint8_t Place = AnyPlace;
 };
-
-/// <summary>An Entry's Packet for a folder of the mission's own.</summary>
-inline constexpr uint16_t NoPacket = 0xffff;
 
 /// <summary>A mission (its file's name, lower case) and its entries, in the order its play first drew them.</summary>
 struct Mission
@@ -833,11 +854,23 @@ struct Mission
     constexpr size_t AnyMissionShare = 4;
     constexpr size_t OpeningRowEntries = 8;
 
-    /// <summary>A line of an opening's list (WriteOpening): its folder, and the packet of a line of the player's mechs.</summary>
+    /// <summary>
+    /// A line of an opening's list (WriteOpening): its folder, and the packet of a line of the player's mechs and its
+    /// mech's place.
+    /// </summary>
     struct OpeningLine
     {
         std::string Folder;
         std::optional<uint16_t> Packet;
+        std::optional<uint8_t> Place;
+    };
+
+    /// <summary>An entry of the table's arrays: its folder's index in Folders, its Packet and its Place (none: AnyPlace).</summary>
+    struct OpeningRow
+    {
+        size_t Folder = 0;
+        uint16_t Packet = MCOpeningLists::NoPacket;
+        std::optional<uint8_t> Place;
     };
 
     /// <summary>The opening's list WriteOpening wrote at <paramref name="path"/>, its lines in order.</summary>
@@ -852,15 +885,26 @@ struct Mission
             std::string kind;
             std::string folder;
             words >> kind >> folder;
+            // A lance line's numbers: its packet, or its place and its packet.
+            std::vector<uint32_t> numbers;
 
-            if (kind == OpeningFolderLine && !folder.empty())
+            for (uint32_t number = 0; words >> number;)
             {
-                lines.push_back(OpeningLine{std::move(folder), std::nullopt});
+                numbers.push_back(number);
             }
-            else if (uint32_t packet = 0; kind == OpeningLanceLine && words >> packet)
+
+            if (kind == OpeningFolderLine && !folder.empty() && numbers.empty())
             {
+                lines.push_back(OpeningLine{std::move(folder), std::nullopt, std::nullopt});
+            }
+            else if (kind == OpeningLanceLine && (numbers.size() == 1 || numbers.size() == 2))
+            {
+                const uint32_t packet = numbers.back();
                 REQUIRE(packet < MCOpeningLists::NoPacket);
-                lines.push_back(OpeningLine{std::move(folder), static_cast<uint16_t>(packet)});
+                REQUIRE(numbers.front() < MCOpeningLists::AnyPlace);
+                lines.push_back(
+                    OpeningLine{std::move(folder), static_cast<uint16_t>(packet),
+                                numbers.size() == 2 ? std::optional<uint8_t>(numbers.front()) : std::nullopt});
             }
             else
             {
@@ -871,15 +915,20 @@ struct Mission
         return lines;
     }
 
-    /// <summary>The entries of the table's array, OpeningRowEntries a line, each as its Entry (Folder, Packet).</summary>
-    std::string OpeningRows(std::span<const std::pair<size_t, uint16_t>> entries)
+    /// <summary>
+    /// The entries of the table's array, OpeningRowEntries a line, each as its Entry (Folder, Packet, and Place where
+    /// it has one).
+    /// </summary>
+    std::string OpeningRows(std::span<const OpeningRow> entries)
     {
         std::string rows;
 
         for (size_t at = 0; at < entries.size(); ++at)
         {
+            const OpeningRow& entry = entries[at];
             rows += (at % OpeningRowEntries == 0 ? "    " : " ") +
-                    std::format("{{{}, {}}},", entries[at].first, entries[at].second) +
+                    (entry.Place.has_value() ? std::format("{{{}, {}, {}}},", entry.Folder, entry.Packet, *entry.Place)
+                                             : std::format("{{{}, {}}},", entry.Folder, entry.Packet)) +
                     (at % OpeningRowEntries == OpeningRowEntries - 1 || at + 1 == entries.size() ? "\n" : "");
         }
 
@@ -955,18 +1004,28 @@ TEST_CASE("tool: --opening-lists-table writes the missions' openings as the tabl
         std::ranges::replace_if(identifier, [](unsigned char c) { return std::isalnum(c) == 0; }, '_');
         const auto lanceLines = static_cast<size_t>(
             std::ranges::count_if(lines, [](const OpeningLine& line) { return line.Packet.has_value(); }));
-        std::vector<std::pair<size_t, uint16_t>> rows;
+        std::vector<OpeningRow> rows;
         size_t lanceAt = 0;
+        // A packet counted once a mission, at its first place there, whichever mech's.
+        std::set<std::pair<std::string, uint16_t>> counted;
 
         for (const OpeningLine& line : lines)
         {
-            rows.emplace_back(indexOf(line.Folder), line.Packet.value_or(MCOpeningLists::NoPacket));
+            rows.push_back(
+                OpeningRow{indexOf(line.Folder), line.Packet.value_or(MCOpeningLists::NoPacket), line.Place});
 
-            if (line.Packet.has_value())
+            if (!line.Packet.has_value())
+            {
+                continue;
+            }
+
+            const double at = static_cast<double>(lanceAt++) / static_cast<double>(lanceLines);
+
+            if (counted.emplace(line.Folder, *line.Packet).second)
             {
                 auto& [count, places] = lance[{line.Folder, *line.Packet}];
                 ++count;
-                places += static_cast<double>(lanceAt++) / static_cast<double>(lanceLines);
+                places += at;
             }
         }
 
@@ -986,11 +1045,12 @@ TEST_CASE("tool: --opening-lists-table writes the missions' openings as the tabl
     }
 
     std::ranges::sort(common);
-    std::vector<std::pair<size_t, uint16_t>> any;
+    // Every player's mech's packets (no place): a match's lance is no list's.
+    std::vector<OpeningRow> any;
 
     for (const auto& [place, part, packet] : common)
     {
-        any.emplace_back(indexOf(part), packet);
+        any.push_back(OpeningRow{indexOf(part), packet, std::nullopt});
     }
 
     REQUIRE(folders.size() < MCOpeningLists::NoPacket);

@@ -5,12 +5,20 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <vector>
+
+class MCUpdateDisk;
+
+namespace MCInstalled
+{
+    struct MCRecord;
+}
 
 // Port-only (the personal build): reports of the player's computer, how smoothly the game runs on it (frame times, what
 // fell back to keep up), its settings and its crashes, under the copy's random ID, sent to the project's own server (a Cloudflare Worker) for the performance targets; PLAN.md's "Telemetry"
@@ -230,8 +238,33 @@ namespace MCTelemetry
         std::optional<int32_t> Entries;
     };
 
+    /// <summary>
+    /// Port-only (Redux HD): the copy's content, as each report says it ("content"): the content release installed,
+    /// and the release due when one is (update/MCInstalled.h's DueFor), whose art downloads by itself while the game
+    /// plays the art the copy has (a program installed alone, as 0.6.8 installs 0.7.0).
+    /// </summary>
+    struct MCContent
+    {
+        uint64_t Release = 0;
+        std::optional<uint64_t> Due;
+    };
+
     /// <summary>The app's backend (before the game starts); none takes it away.</summary>
     void SetBackend(std::unique_ptr<MCBackend> backend);
+
+    /// <summary>
+    /// The copy's content (<see cref="MCContent"/>) for a program of build <paramref name="runningBuild"/>, the copy in
+    /// <paramref name="gameFolder"/> having <paramref name="record"/>; none when nothing is installed (no record: a first
+    /// start's, or a build that updates no content).
+    /// </summary>
+    std::optional<MCContent> ContentOf(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                       const MCInstalled::MCRecord& record, uint64_t runningBuild);
+
+    /// <summary>
+    /// The copy's content (<see cref="ContentOf"/>), which each report then says; none, nothing of it. Set as the game
+    /// starts, once a run: a release due goes in only at a start.
+    /// </summary>
+    void SetContent(std::optional<MCContent> content);
 
     /// <summary>Whether this build reports (it has a backend).</summary>
     bool Available();

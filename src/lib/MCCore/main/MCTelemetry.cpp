@@ -9,6 +9,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCMemoryRoom.h"
 #include "sprite/MCHdArt.h"
+#include "update/MCInstalled.h"
 
 int GReports = 0;
 
@@ -258,6 +259,8 @@ namespace
     std::map<uint32_t, std::function<void(int32_t, const std::string&)>> Handlers;
     bool Started = false;
     MCMachine Machine;
+    /// <summary>The copy's content, as each report says it (MCTelemetry::SetContent); none says nothing of it.</summary>
+    std::optional<MCTelemetry::MCContent> Content;
     MCState State;
     MCPlay Play;
     MCPrompt Pending = MCPrompt::None;
@@ -676,7 +679,24 @@ namespace
         return settings.Close();
     }
 
-    /// <summary>A report's start: its kind, whether it's this player's first, the game and the computer.</summary>
+    /// <summary>The copy's content: its release, and the release due when one is.</summary>
+    std::string ContentJson(const MCTelemetry::MCContent& content)
+    {
+        MCJsonObject json;
+        json.Integer("release", static_cast<int64_t>(content.Release));
+
+        if (content.Due.has_value())
+        {
+            json.Integer("due", static_cast<int64_t>(*content.Due));
+        }
+
+        return json.Close();
+    }
+
+    /// <summary>
+    /// A report's start: its kind, whether it's this player's first, the game, the computer and the copy's content
+    /// (none said where it's not known).
+    /// </summary>
     MCJsonObject ReportStart(std::string_view kind, std::string_view app)
     {
         MCJsonObject report;
@@ -687,6 +707,12 @@ namespace
             .Text("app", app)
             .Text("id", State.Id)
             .Raw("machine", MachineJson());
+
+        if (Content.has_value())
+        {
+            report.Raw("content", ContentJson(*Content));
+        }
+
         return report;
     }
 
@@ -1104,6 +1130,23 @@ auto MCTelemetry::SetBackend(std::unique_ptr<MCBackend> backend) -> void
     LastFrame.reset();
     LinkReports = 0;
     LoadReports = 0;
+}
+
+auto MCTelemetry::ContentOf(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                            const MCInstalled::MCRecord& record, uint64_t runningBuild) -> std::optional<MCContent>
+{
+    if (record.Release == 0)
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<MCInstalled::MCDue> due = MCInstalled::DueFor(disk, gameFolder, record, runningBuild);
+    return MCContent{.Release = record.Release, .Due = due ? std::optional(due->Release) : std::nullopt};
+}
+
+auto MCTelemetry::SetContent(std::optional<MCContent> content) -> void
+{
+    Content = content;
 }
 
 auto MCTelemetry::Available() -> bool

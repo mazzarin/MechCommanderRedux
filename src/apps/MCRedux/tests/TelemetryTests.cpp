@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "../MCMemorySystem.h"
 #include "../MCTelemetryBackend.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "MCTestGuest.h"
@@ -23,13 +24,15 @@
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCVulkanShaders.h"
+#include "update/MCInstalled.h"
+#include "update/MCUpdateDisk.h"
 
 // The reports (main/MCTelemetry.h), with a stand-in for the app's backend: nothing sent before the player has seen
 // what the reports hold, the question where the law wants consent first (the system's own region, or the server's),
 // the notice elsewhere; a match's report at its end, the missions' at the first and then a week apart; the last run's
 // crash with its black box; a file the campaign's load refused, at once, saying why; the card the game draws on, as
-// the system says it (a stand-in's, and this platform's own); and the main menu's notice and question
-// (logistics/MCReportsNotice.h).
+// the system says it (a stand-in's, and this platform's own); the copy's content release, and the release due while it
+// plays the art it has; and the main menu's notice and question (logistics/MCReportsNotice.h).
 
 namespace
 {
@@ -645,6 +648,129 @@ TEST_CASE("reports: each says the card the game draws on as the system says it t
     MCTelemetry::LoadRefused(load);
     REQUIRE_EQ(sent.size(), size_t{5});
     CHECK((system->CardReads == reads || system->AskedName != DeviceName));
+}
+
+namespace
+{
+    /// <summary>The content releases of the copy in the content's tests: release 8 installed, release 9's due.</summary>
+    constexpr uint64_t InstalledRelease = 8;
+    constexpr uint64_t DueRelease = 9;
+    /// <summary>The program the copy runs (0.7.0, say), and a later one.</summary>
+    constexpr uint64_t RunningProgram = 1001;
+    constexpr uint64_t LaterProgram = 1002;
+
+    /// <summary>
+    /// A copy's game folder of the test's own, for its due note; its content left out of the reports again at the
+    /// test's end.
+    /// </summary>
+    class MCReportedCopy
+    {
+    public:
+        explicit MCReportedCopy(std::string_view name) : _Folder("reports-content", name) {}
+
+        ~MCReportedCopy() { MCTelemetry::SetContent(std::nullopt); }
+
+        MCReportedCopy(const MCReportedCopy&) = delete;
+        MCReportedCopy& operator=(const MCReportedCopy&) = delete;
+
+        /// <summary>
+        /// <paramref name="release"/>'s content noted due to programs from <paramref name="lowestProgram"/> on, as a
+        /// game that installed the program alone leaves it (0.6.8 installing 0.7.0).
+        /// </summary>
+        void NoteDue(uint64_t release, uint64_t lowestProgram)
+        {
+            REQUIRE(MCInstalled::NoteDue(*_Disk, _Folder.Path(), {.Release = release, .LowestProgram = lowestProgram})
+                        .has_value());
+        }
+
+        /// <summary>The game started on the copy with <paramref name="release"/> installed (0: none, no record).</summary>
+        void Start(uint64_t release)
+        {
+            MCInstalled::MCRecord record;
+            record.Release = release;
+            MCTelemetry::SetContent(MCTelemetry::ContentOf(*_Disk, _Folder.Path(), record, RunningProgram));
+        }
+
+    private:
+        MCScratchFolder _Folder;
+        std::unique_ptr<MCUpdateDisk> _Disk = MakeDisk();
+    };
+
+    /// <summary>A refused load's report, which goes at once.</summary>
+    const MCTelemetry::MCRefusedLoad ContentLoad{.Reason = MCTelemetry::MCLoadRefusal::Unopened, .Kind = "pkk"};
+}
+
+TEST_CASE("reports: each says the copy's content release and the release due, while the game plays the art it has and "
+          "the new art downloads")
+{
+    MCFakeReports reports;
+    StartReporting(reports);
+    const std::vector<std::pair<std::string, std::string>>& sent = reports.Log->Requests;
+    MCReportedCopy copy("due");
+
+    // 0.6.8 installed this program alone, noting release 9's content due to it: the game plays release 8's art.
+    copy.NoteDue(DueRelease, RunningProgram);
+    copy.Start(InstalledRelease);
+    MCTelemetry::LoadRefused(ContentLoad);
+    REQUIRE_EQ(sent.size(), size_t{1});
+    CHECK(Holds(sent[0].second, R"(},"content":{"release":8,"due":9},"load":{)"));
+
+    // A match's report says it too.
+    MCTelemetry::PlayLoading("mc2mp_01", true);
+    MCTelemetry::PlayStarted(2, true);
+    Play(130.0);
+    MCTelemetry::PlayEnded();
+    REQUIRE_EQ(sent.size(), size_t{2});
+    CHECK(Holds(sent[1].second, R"("content":{"release":8,"due":9},"display":{)"));
+}
+
+TEST_CASE("reports: with no release due, each says the copy's content release alone")
+{
+    MCFakeReports reports;
+    StartReporting(reports);
+    const std::vector<std::pair<std::string, std::string>>& sent = reports.Log->Requests;
+    MCReportedCopy copy("none-due");
+
+    // No note.
+    copy.Start(InstalledRelease);
+    MCTelemetry::LoadRefused(ContentLoad);
+
+    // A note for a later program, which this one isn't: it plays the files it has, and is offered the update again.
+    copy.NoteDue(DueRelease, LaterProgram);
+    copy.Start(InstalledRelease);
+    MCTelemetry::LoadRefused(ContentLoad);
+
+    // The release noted due installed.
+    copy.NoteDue(DueRelease, RunningProgram);
+    copy.Start(DueRelease);
+    MCTelemetry::LoadRefused(ContentLoad);
+
+    REQUIRE_EQ(sent.size(), size_t{3});
+    CHECK(Holds(sent[0].second, R"("content":{"release":8},"load":{)"));
+    CHECK(Holds(sent[1].second, R"("content":{"release":8},"load":{)"));
+    CHECK(Holds(sent[2].second, R"("content":{"release":9},"load":{)"));
+}
+
+TEST_CASE("reports: a copy with no installed record says nothing of its content")
+{
+    MCFakeReports reports;
+    StartReporting(reports);
+    const std::vector<std::pair<std::string, std::string>>& sent = reports.Log->Requests;
+    MCReportedCopy copy("no-record");
+
+    // Nothing installed (a first start's copy, or a build that updates no content), a note due or not.
+    copy.Start(0);
+    MCTelemetry::LoadRefused(ContentLoad);
+    copy.NoteDue(DueRelease, RunningProgram);
+    copy.Start(0);
+    MCTelemetry::LoadRefused(ContentLoad);
+    REQUIRE_EQ(sent.size(), size_t{2});
+
+    for (const std::pair<std::string, std::string>& request : sent)
+    {
+        CHECK(Holds(request.second, R"(},"load":{)"));
+        CHECK(!Holds(request.second, "content"));
+    }
 }
 
 /// <summary>

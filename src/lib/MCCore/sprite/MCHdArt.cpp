@@ -1632,10 +1632,31 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (SPEC-pack-v2.md's facts): the shape table record (record 1) of the folder <paramref name="archived"/>
+    /// stands for in its version 2 archive; none when it holds none (or the archive is version 1's).
+    /// </summary>
+    std::optional<std::span<const uint8_t>> ShapeRecordOf(const FrameFolder::InArchive& archived)
+    {
+        // The folder in its archive: the start of its frames' names without the separator after it.
+        const std::string_view inArchive =
+            std::string_view(archived.Prefix).substr(0, archived.Prefix.empty() ? 0 : archived.Prefix.size() - 1);
+
+        for (const auto& [type, data] : archived.Archive->File->Facts(inArchive))
+        {
+            if (type == static_cast<uint16_t>(MCPackRecords::Type::ShapeTable))
+            {
+                return data;
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    /// <summary>
     /// The frames <paramref name="folder"/>'s archive holds: one past the highest numbered frame (not an in-between or
     /// turn middle) among its entries (a packet may skip a number: an empty frame of the original's), as the archive
-    /// found them when it opened (MCHdArchive::FrameCounts), counted once a folder (FrameFolder::InArchive::Frames). 0
-    /// outside an archive.
+    /// found them when it opened (MCHdArchive::FrameCounts); a version 2 archive's, its shape table's count, which none
+    /// lies past. Counted once a folder (FrameFolder::InArchive::Frames). 0 outside an archive.
     /// </summary>
     int32_t ArchivedFrames(FrameFolder& folder)
     {
@@ -1652,9 +1673,20 @@ namespace
             return *archived.Frames;
         }
 
-        // A version 2 archive keeps no names: its numbered frames are found by their keys.
+        // A version 2 archive keeps no names. Port-only: a packet's folder holds its shape table (record 1), whose count
+        // none of its frames lies past (every folder of pack v2's, 21 Nov), so the count is read: trying each name took
+        // 58 us a folder, on the game's thread as the fill asks (mission 1's briefing: 3,115 folders, 180 ms in one
+        // frame). A folder without one (a mod's pack's) is found by its keys.
         if (archived.Archive->File->IsVersion2())
         {
+            if (const std::optional<std::span<const uint8_t>> record = ShapeRecordOf(archived); record.has_value())
+            {
+                const std::span<const uint8_t> table =
+                    record->subspan(std::min(MCShape::TableStart(*record), record->size()));
+                archived.Frames = std::clamp(VfxShapeCount(table), 0, MostArchivedFrames);
+                return *archived.Frames;
+            }
+
             int32_t count = 0;
 
             for (int32_t frame = 0; frame < MostArchivedFrames; ++frame)
@@ -5723,16 +5755,9 @@ namespace
             return std::unexpected(NotVersion2);
         }
 
-        // The folder in its archive: the start of its frames' names without the separator after it.
-        const std::string_view inArchive =
-            std::string_view(archived.Prefix).substr(0, archived.Prefix.empty() ? 0 : archived.Prefix.size() - 1);
-
-        for (const auto& [type, data] : archived.Archive->File->Facts(inArchive))
+        if (const std::optional<std::span<const uint8_t>> record = ShapeRecordOf(archived); record.has_value())
         {
-            if (type == static_cast<uint16_t>(MCPackRecords::Type::ShapeTable))
-            {
-                return FolderShapeTable{.Record = data, .Archived = std::cref(archived)};
-            }
+            return FolderShapeTable{.Record = *record, .Archived = std::cref(archived)};
         }
 
         return std::unexpected(NoRecord);

@@ -3663,7 +3663,7 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until
 
 /// <summary>
 /// A change of the HD art that fails says so in a player's words, with the button that tries again: it showed the
-/// failure's own text, a file's path cut off at the panel's edge (the 2X art of an unpublished build, 21 Nov playtest).
+/// failure's own text, a file's path cut off at the panel's edge (the 2X art of an unpublished build, 20 Nov playtest).
 /// </summary>
 TEST_CASE_ISOLATED("game: HD OPTIONS says a failed HD art download in a player's words, GET trying again")
 {

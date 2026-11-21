@@ -636,6 +636,8 @@ auto MCRoomEnd::MatchStarts() -> void
 {
     MatchRoom = RoomNow();
     Returning.reset();
+    // A rematch's hosting is the last match's way back, never this one's.
+    HostAfterResults = false;
 }
 
 auto MCRoomEnd::OffersRematch() -> bool

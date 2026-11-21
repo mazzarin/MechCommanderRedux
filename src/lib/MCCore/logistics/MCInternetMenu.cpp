@@ -16,7 +16,8 @@
 #include "logistics/MCLogGroupBox.h"
 #include "logistics/MCLogLabel.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCLogTextButton.h"
+#include "logistics/MCLogToolButton.h"
+#include "logistics/MCLogPort.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCReusableDialog.h"
@@ -25,6 +26,7 @@
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"
 #include "network/MCMultiPlayer.h"
+#include "vfx/MCVfxFunctions.h"
 
 #include <charconv>
 
@@ -100,9 +102,19 @@ namespace
     constexpr uint8_t BoxOutline = 0x13;
     constexpr int32_t BoxLeftGap = 1;
     constexpr int32_t BoxTopGap = 2;
-    /// <summary>PUBLIC or PRIVATE, under the game's name in the host block.</summary>
+    /// <summary>
+    /// PRIVATE, under the game's name in the host block: a check box, ticked for a game joined by its code alone. The
+    /// box is outlined as the art's entries are, filled as the tick's ground, and the tick is the preferences screen's
+    /// (the original's difficulty checks); the word beside it takes the click as well.
+    /// </summary>
     constexpr int32_t PrivacyLeft = 359;
-    constexpr int32_t PrivacyTop = 328;
+    constexpr int32_t PrivacyTop = 330;
+    constexpr int32_t CheckSize = 9;
+    constexpr int32_t CheckLabelGap = 4;
+    constexpr uint8_t CheckFill = 0x14;
+    constexpr std::string_view CheckTick = "prefs_01.tga";
+    /// <summary>The preferences screen's checks' press sound (prefscreen.fit's PressSFX).</summary>
+    constexpr uint32_t CheckSound = 16;
     /// <summary>The game's code (the service's four characters), the player's and game's names' lengths (the LAN screen's).</summary>
     constexpr int32_t CodeLength = 4;
     constexpr int32_t PlayerNameLength = 0x10;
@@ -119,7 +131,6 @@ namespace
     constexpr uint32_t GameNameString = 0x377;
     constexpr int32_t SecondsPerMinute = 60;
 
-    constexpr std::string_view PublicWord = "PUBLIC";
     constexpr std::string_view PrivateWord = "PRIVATE";
     constexpr std::string_view CodeWord = "CODE";
     constexpr std::string_view CountsFormat = "{} ONLINE, {} IN GAMES";
@@ -234,8 +245,9 @@ namespace
     MCGuiHandle<MCLogLabel> CodeLabel;
     MCGuiHandle<MCLogGroupBox> CodeBox;
     MCGuiHandle<MCLogTextObject> CodeEntry;
-    MCGuiHandle<MCLogTextButton> PublicButton;
-    MCGuiHandle<MCLogTextButton> PrivateButton;
+    MCGuiHandle<MCLogGroupBox> PrivateBox;
+    MCGuiHandle<MCLogLabel> PrivateLabel;
+    MCGuiHandle<MCLogToolButton> PrivateCheck;
     std::unique_ptr<MCInternetList> List;
     /// <summary>The list let go while the player is away (logistics/MCIdleCheck.h), opened again at the next input.</summary>
     bool ListAway = false;
@@ -279,8 +291,9 @@ namespace
         CodeLabel->ShowGuiWindow(block == BrowseBlock);
         CodeBox->ShowGuiWindow(block == BrowseBlock);
         CodeEntry->ShowGuiWindow(block == BrowseBlock);
-        PublicButton->ShowGuiWindow(block == HostBlock && HostsPublic);
-        PrivateButton->ShowGuiWindow(block == HostBlock && !HostsPublic);
+        PrivateBox->ShowGuiWindow(block == HostBlock);
+        PrivateLabel->ShowGuiWindow(block == HostBlock);
+        PrivateCheck->ShowGuiWindow(block == HostBlock);
     }
 
     /// <summary>The picked game's players, then where it is and what it's doing, in the player list.</summary>
@@ -667,8 +680,7 @@ namespace
     void SetHostsPublic(bool isPublic)
     {
         HostsPublic = isPublic;
-        PublicButton->ShowGuiWindow(isPublic);
-        PrivateButton->ShowGuiWindow(!isPublic);
+        PrivateCheck->Toggled = !isPublic;
     }
 
     /// <summary>CANCEL: from the host block back to the games, from the games back to MULTIPLAYER ACCESS.</summary>
@@ -1087,12 +1099,34 @@ void SetUpInternetScreen(MCSplashScreen& screen)
             // Its buffer holds the code and the end of its text.
             entry.InitBuffer(CodeLength + 1, MCLogInputType::Text);
         });
-    PublicButton = screen.CreateChild<MCLogTextButton>(
-        [](MCLogTextButton& button)
-        { button.InitWithLabel(PrivacyLeft, PrivacyTop, PublicWord, [] { SetHostsPublic(false); }); });
-    PrivateButton = screen.CreateChild<MCLogTextButton>(
-        [](MCLogTextButton& button)
-        { button.InitWithLabel(PrivacyLeft, PrivacyTop, PrivateWord, [] { SetHostsPublic(true); }); });
+    PrivateBox = screen.CreateChild<MCLogGroupBox>(
+        [](MCLogGroupBox& box) { box.Init(PrivacyLeft, PrivacyTop, CheckSize, CheckSize); }, BoxOutline, CheckFill);
+    PrivateLabel = screen.CreateChild<MCLogLabel>(
+        [](MCLogLabel& label)
+        { label.InitAt(PrivacyLeft + CheckSize + CheckLabelGap, PrivacyTop + (CheckSize - WhiteFont->Height()) / 2); },
+        PrivateWord);
+    // The check: inside the box's outline, over the word too, which it takes clicks for. It draws only the box's inside,
+    // the tick or the clear ground (a button with no face for its state wipes itself whole, the word with it).
+    PrivateCheck = screen.CreateChild<MCLogToolButton>(
+        [](MCLogToolButton& check)
+        {
+            const int32_t left = PrivacyLeft + 1;
+            const int32_t top = PrivacyTop + 1;
+            const int32_t inside = CheckSize - 2;
+            check.Init(left, top, PrivateLabel->Right() - left, std::max(inside, PrivateLabel->Bottom() - top),
+                       PrivateWord);
+            check.SetTransparent(true);
+            check.SetDownPicture(CheckTick);
+            auto clear = std::make_shared<MCLogPort>();
+            clear->Init(inside, inside);
+            VfxPaneWipe(clear->Frame(), CheckFill);
+            check.UpPicture = clear;
+            check.OverPicture = clear;
+            check.GrayPicture = std::move(clear);
+            check.PressSound = CheckSound;
+            check.Toggled = !HostsPublic;
+            check.Callback().SetExec([] { SetHostsPublic(!PrivateCheck->Toggled); });
+        });
 
     screen.Element<MCLogButton>(CancelButton)->Callback().SetExec(CancelInternet);
     screen.Element<MCLogButton>(HostButton)->Callback().SetExec(HostInternetGame);

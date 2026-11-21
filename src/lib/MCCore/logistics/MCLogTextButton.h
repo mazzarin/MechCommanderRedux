@@ -36,9 +36,9 @@ private:
 /// pictures in its font, from the pictures mc_tests' --hd-extract-menus writes of these words; a button with a word not
 /// here has no HD copy, which it logs as it's made.
 /// </summary>
-inline constexpr std::array<std::string_view, 14> MCTextButtonLabels = {
-    "CONTROLS", "DEFAULTS", "LAPTOP",  "DONE",    "OPTIONS", "ORIGINAL", "GET",
-    "STOP",     "REMOVE",   "RESTART", "INSTALL", "SKIP",    "PUBLIC",   "PRIVATE",
+inline constexpr std::array<std::string_view, 12> MCTextButtonLabels = {
+    "CONTROLS", "DEFAULTS", "LAPTOP", "DONE",    "OPTIONS", "ORIGINAL",
+    "GET",      "STOP",     "REMOVE", "RESTART", "INSTALL", "SKIP",
 };
 
 /// <summary>Port-only: the pictures a text button showing <paramref name="label"/> has (MCLogTextButton::InitWithLabel's).</summary>

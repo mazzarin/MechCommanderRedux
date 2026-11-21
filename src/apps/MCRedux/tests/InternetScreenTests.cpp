@@ -348,7 +348,8 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     Settle();
     CHECK(join->Disabled);
 
-    // HOST GAME: the game's name and players, PUBLIC (or PRIVATE, a click away).
+    // HOST GAME: the game's name and players, PRIVATE's box clear; a click on the word or the box ticks it, and again
+    // clears it.
     Click(HostX, HostY);
     Settle();
     CHECK(InternetHostsPublic());
@@ -357,6 +358,12 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     Settle();
     CHECK(!InternetHostsPublic());
     SaveShot("internet 4 host private", ScreenHash());
+    Click(PrivacyBoxX, PrivacyBoxY);
+    Settle();
+    CHECK(InternetHostsPublic());
+    Click(PrivacyBoxX, PrivacyBoxY);
+    Settle();
+    CHECK(!InternetHostsPublic());
     Click(PrivacyX, PrivacyY);
     Settle();
     CHECK(InternetHostsPublic());

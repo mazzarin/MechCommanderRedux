@@ -18,13 +18,17 @@ namespace MCInternetSpots
     constexpr int32_t LanX = 477;
     constexpr int32_t LanY = 228;
 
-    /// <summary>INTERNET CONNECTION's HOST GAME, CANCEL, the host block's PUBLIC or PRIVATE, and the CODE box.</summary>
+    /// <summary>
+    /// INTERNET CONNECTION's HOST GAME, CANCEL, the host block's PRIVATE (the word, and its check box), and the CODE box.
+    /// </summary>
     constexpr int32_t HostX = 558;
     constexpr int32_t HostY = 325;
     constexpr int32_t CancelX = 580;
     constexpr int32_t CancelY = 116;
     constexpr int32_t PrivacyX = 390;
     constexpr int32_t PrivacyY = 335;
+    constexpr int32_t PrivacyBoxX = 363;
+    constexpr int32_t PrivacyBoxY = 334;
     constexpr int32_t CodeX = 494;
     constexpr int32_t CodeY = 315;
 

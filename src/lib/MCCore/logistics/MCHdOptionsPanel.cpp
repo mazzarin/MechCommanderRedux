@@ -250,14 +250,16 @@ namespace
     /// <summary>
     /// A click on HD ART SIZE: the player's pick, planned as GET's change is. A size the copy doesn't have downloads, so
     /// it asks first, saying how much (CANCEL keeps the art chosen: the row shows it again); going back to the size the
-    /// copy has asks nothing.
+    /// copy has asks nothing. During HD's first download the copy has the size being downloaded; with HD not chosen the
+    /// pick downloads nothing.
     /// </summary>
     void HdArtSizeChanged(int32_t size)
     {
         const bool twoX = size == TwoXArt;
         const MCUpdater::MCHdPack& pack = MCUpdater::HdPack();
+        const bool copyTwoX = pack.Installed ? pack.TwoX : pack.TwoXChosen;
 
-        if (twoX == pack.TwoX)
+        if (!pack.Chosen || twoX == copyTwoX)
         {
             MCUpdater::ChooseHdArt(twoX);
             return;

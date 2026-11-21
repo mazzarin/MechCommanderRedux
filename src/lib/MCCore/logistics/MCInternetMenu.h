@@ -35,7 +35,7 @@ void ShowInternetScreen();
 
 /// <summary>
 /// Sets up INTERNET CONNECTION (made from the LAN screen's lanscreen.fit): its panel retitled, its list of the service's
-/// games, its counts' line, the CODE box, PUBLIC or PRIVATE in the host block, and its buttons' callbacks.
+/// games, its counts' line, the CODE box, the PRIVATE check box in the host block, and its buttons' callbacks.
 /// </summary>
 void SetUpInternetScreen(MCSplashScreen& screen);
 

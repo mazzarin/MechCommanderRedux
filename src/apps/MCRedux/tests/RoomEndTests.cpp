@@ -396,7 +396,7 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
 /// The host's REMATCH from the match's own results, where the mission has no logistics (it dropped it as the scenario
 /// loaded): once its guests have left, the results close and the room is hosted again, keeping their places. The wait's
 /// end asked for the logistics first and, finding none, dropped the rematch: the results stayed up with NEXT MISSION
-/// alone and the room never came back (an internet game's kept place listed as a greyed room meanwhile; the 21 Nov
+/// alone and the room never came back (an internet game's kept place listed as a greyed room meanwhile; the 20 Nov
 /// playtest, 2 of 2). A campaign mission's results, both sides lost, stand in for the match's.
 /// </summary>
 TEST_CASE_ISOLATED("game: a host's REMATCH from its match's results hosts the room again")

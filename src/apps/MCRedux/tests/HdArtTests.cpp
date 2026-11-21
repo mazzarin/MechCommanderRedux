@@ -15401,7 +15401,7 @@ namespace
         shoot("mp_access");
 
         // INTERNET CONNECTION: the list, a game picked (its players and where it is), one in battle picked, and the
-        // host block, PUBLIC then PRIVATE.
+        // host block, then PRIVATE ticked.
         click(InternetX, InternetY);
 
         if (GlobalLog()->CurrentScreen() != GlobalLog()->InternetScreen)

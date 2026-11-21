@@ -55,6 +55,12 @@ namespace MCFrameLog
     /// </summary>
     void Line(std::string_view text);
 
+    /// <summary>
+    /// Waits until the log's file holds all that was written to it (the file is written on a thread of its own, so a
+    /// write the disk holds up never lengthens a frame): for reading it while it's open.
+    /// </summary>
+    void WaitForWrites();
+
     /// <summary>The tests' clock instead of the system's (none: the system's again), set while no frame runs.</summary>
     void SetClockForTests(MCClock clock);
 

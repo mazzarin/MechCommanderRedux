@@ -130,6 +130,7 @@ namespace
         /// <summary>The log as written so far.</summary>
         std::string Text() const
         {
+            MCFrameLog::WaitForWrites();
             std::ifstream file(Path());
             return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
         }

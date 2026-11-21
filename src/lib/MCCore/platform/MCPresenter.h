@@ -224,7 +224,7 @@ public:
 
     /// <summary>
     /// Port-only: shows a frame presented ahead, waiting for its drawing, then waits until the GPU has done all it was
-    /// given: a mission's load, at its end (MCMission::StartScenario).
+    /// given, and lets the load's own upload slots go: a mission's load, at its end (MCMission::StartScenario).
     /// </summary>
     virtual void WaitForGpu() { ShowPresented(); }
 

@@ -2,6 +2,7 @@
 // stand-ins.
 
 #include "lib/MCDiskFile.h"
+#include "lib/MCFilesAhead.h"
 #include "lib/MCFirstUse.h"
 
 #include <algorithm>
@@ -181,6 +182,8 @@ size_t MCDiskFile::ReadDirect(uint32_t offset, std::span<uint8_t> buffer) const
         }
     }
 
+    // Port-only (SPEC-memory.md's "From the briefing"): a mission's load's reads, its next briefing's to read ahead.
+    MCFilesAhead::ReadFromDisk(_Path, offset, done);
     return done;
 }
 

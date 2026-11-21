@@ -1291,6 +1291,9 @@
     <ClCompile Include="platform\MCTlsThreading.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCUploadSlots.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCVulkanPresenter.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -2742,6 +2745,9 @@
     <ClInclude Include="platform\MCTlsThreading.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCUploadSlots.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCUtf8Path.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2812,6 +2818,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCMechStopsKnown.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCOpeningLists.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCPackRecords.h">

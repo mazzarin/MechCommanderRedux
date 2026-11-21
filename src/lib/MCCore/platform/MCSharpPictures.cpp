@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCSharpPictures.h"
 #include "lib/MCFastFile.h"
+#include "lib/MCFirstUse.h"
 #include "lib/MCFnvHash.h"
 #include "lib/MCWorkers.h"
 #include "platform/MCFileSystem.h"
@@ -55,6 +56,9 @@ namespace
     /// left out, as a malformed one.
     /// </summary>
     constexpr size_t MostPackBytes = size_t{64} * 1024 * 1024;
+
+    /// <summary>Port-only (lib/MCFirstUse.h): how the guard names a picture taken from the pack (MCSharpPictures::Take).</summary>
+    constexpr std::string_view SharpPicturesUse = "sharp pictures";
 
     /// <summary>The bytes of a picture redrawn from <paramref name="columns"/> x <paramref name="rows"/> pixels, as kept.</summary>
     size_t RedGreenBytes(int32_t columns, int32_t rows)
@@ -837,8 +841,17 @@ std::optional<MCSharpPictures::MCMadePicture> MCSharpPictures::Take(uint64_t key
     {
         const std::shared_ptr<const Packed> pack = state.Pack;
         lock.unlock();
-        std::optional<MCMadePicture> packed =
-            pack != nullptr ? FromPack(*pack, key, RedGreenBytes(columns, rows)) : std::nullopt;
+        const size_t bytes = RedGreenBytes(columns, rows);
+        std::optional<MCMadePicture> packed;
+
+        if (pack != nullptr)
+        {
+            // Port-only (lib/MCFirstUse.h): a picture the game's thread unpacks from the pack's bytes as it's first shown.
+            const MCFirstUseScope use(
+                MCFirstUseKind::Unpack, [&] { return std::format("{} {:016x}", SharpPicturesUse, key); }, bytes);
+            packed = FromPack(*pack, key, bytes);
+        }
+
         lock.lock();
 
         if (packed.has_value())

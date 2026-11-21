@@ -1,10 +1,14 @@
 #pragma once
 
 #include "lib/MCDiskFile.h"
+#include "lib/MCFilesAhead.h"
 #include "platform/MCAddressKey.h"
 #include "platform/MCSharpLines.h"
+#include "platform/MCUploadSlots.h"
 #include "shaders/channels.hlsli"
 #include "sprite/MCBc7.h"
+
+#include <bitset>
 
 class MCShape;
 
@@ -512,9 +516,10 @@ namespace MCHdArt
 
     /// <summary>
     /// Port-only (SPEC-first-use.md: the camera's surroundings): has the readers read <paramref name="packets"/> whole,
-    /// ahead of their first draws, as <paramref name="as"/> (Soon or Set): a unit's or object's in or near the view. A
-    /// packet's archive entries neighbour each other, so it is one read or a few. Nothing when HD art doesn't draw
-    /// numbered folders, and none of a frame kept, read, looked at or asked for already.
+    /// ahead of their first draws, as <paramref name="as"/> (Soon or Set; Soon is the load's under
+    /// <see cref="MCOpeningViewAsks"/>): a unit's or object's in or near the view. A packet's archive entries neighbour
+    /// each other, so it is one read or a few. Nothing when HD art doesn't draw numbered folders, and none of a frame
+    /// kept, read, looked at or asked for already.
     /// </summary>
     void ReadPacketsAhead(std::span<const PacketAhead> packets, ReadAs as);
 
@@ -590,8 +595,9 @@ namespace MCHdArt
     std::optional<std::vector<GuardedRead>> GuardedReads();
 
     /// <summary>
-    /// Port-only: <see cref="ReadPacketsAhead"/> of one packet, without its turn middles, as a set's: folder
-    /// <paramref name="folder"/>'s first <paramref name="frames"/> frames (none given: all its archive holds).
+    /// Port-only: <see cref="ReadPacketsAhead"/> of one packet, without its turn middles, as a set's (the load's under
+    /// <see cref="MCOpeningViewAsks"/>): folder <paramref name="folder"/>'s first <paramref name="frames"/> frames (none
+    /// given: all its archive holds).
     /// </summary>
     void ReadPacketAhead(const std::filesystem::path& folder, std::optional<int32_t> frames = std::nullopt);
 
@@ -655,6 +661,99 @@ namespace MCHdArt
 
     /// <summary>Port-only: the GPU let go of the picture of the frame numbered <paramref name="id"/>.</summary>
     void PictureDropped(uint64_t id);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's indices): the palette indices <paramref name="indices"/> (R8G8: an index and its mark)
+    /// draws where the original draws (<see cref="OriginalDrawsMark"/>).
+    /// </summary>
+    std::bitset<256> DrawnColorsOf(std::span<const uint8_t> indices);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's plan, item 2: the whole mission on the GPU): a frame's picture a reader put in the
+    /// upload slots, for the renderer to copy into its place: the frame's record (numbered, kept by the cache, its colours
+    /// left out), the lease holding the bytes (shared by the frames put in it, freed once every copy from it has run),
+    /// where its colours and indices lie in the slots' buffer, whether the colours are BC7 (else RGBA, decoded by the
+    /// reader for a GPU without BC7), and the colours its indices draw where the original does (a marked frame's).
+    /// </summary>
+    struct StagedPicture
+    {
+        std::shared_ptr<const Frame> Record;
+        std::shared_ptr<const MCUploadSlots::MCLease> Lease;
+        uint32_t ColorsAt = 0;
+        uint32_t ColorBytes = 0;
+        uint32_t IndicesAt = 0;
+        uint32_t IndexBytes = 0;
+        bool Bc7 = false;
+        std::bitset<256> DrawnColors;
+    };
+
+    /// <summary>
+    /// Port-only: the renderer's upload slots, which the mission's fill on the GPU stages its pictures in (none: no fill,
+    /// a renderer without them), and whether its GPU takes BC7 (else the readers decode the colours).
+    /// </summary>
+    void SetUploadSlots(std::shared_ptr<MCUploadSlots> slots, bool bc7);
+
+    /// <summary>
+    /// Port-only (the whole mission on the GPU, if it fits): on a card of its own, the bytes its pictures may take
+    /// (MCMemoryRoom::CardRoom), noted each frame before <see cref="NextFrame"/>; none on shared memory, where the art's
+    /// room says.
+    /// </summary>
+    void NoteGpuRoom(std::optional<uint64_t> cardPictureBytes);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's plan, item 2): has the readers put <paramref name="packets"/>' frames on the GPU (each
+    /// read, or unpacked from the hold, into the upload slots), in the order given, below every other read: when the
+    /// whole mission fits on the GPU (<see cref="GpuFillNow"/>), from a load's start (<see cref="StartLoadFill"/>) to its
+    /// mission's end. The whole mission is every archive handed the hold, kept or not, its frames unpacked; whether it
+    /// fits is first decided once the archives being opened for the hold are open (its list's, from the briefing or
+    /// the load's start), so a mission that doesn't fit puts none of it up. A folder asked for before is left as it is.
+    /// The load's folders (<see cref="LoadFolders"/>) go in the order handed, after these.
+    /// </summary>
+    void FillGpu(std::span<const PacketAhead> packets);
+
+    /// <summary>Port-only: the mission's fill on the GPU now (<see cref="FillGpu"/>), for the frame log and the tests.</summary>
+    struct GpuFill
+    {
+        /// <summary>Whether the whole mission fits on the GPU now (it fills), and the bytes it takes there (est.).</summary>
+        bool Fits = false;
+        uint64_t MissionBytes = 0;
+        /// <summary>How many times their own bytes the mission's frames are counted at on the GPU, in the pages they share.</summary>
+        double PagesShare = 1.0;
+        /// <summary>The frames asked for, put in the slots, and on the GPU, and the bytes of those.</summary>
+        uint64_t Asked = 0;
+        uint64_t Staged = 0;
+        uint64_t Up = 0;
+        uint64_t UpBytes = 0;
+        /// <summary>Those in the slots that the renderer hasn't taken, and whether reads are left (asked or read now).</summary>
+        size_t Waiting = 0;
+        bool Reading = false;
+        /// <summary>
+        /// Port-only (the opening: <see cref="SetOpening"/>): the bytes unpacked of the opening's folders walked (asked now
+        /// or before), those of them asked for, and whether the walk reached its end or the opening's room.
+        /// </summary>
+        uint64_t OpeningBytes = 0;
+        size_t OpeningAsked = 0;
+        bool OpeningDone = false;
+    };
+
+    GpuFill GpuFillNow();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's fill caps): the pictures the readers put in the slots, the soonest asked first, as many
+    /// as <paramref name="mostCount"/> and <paramref name="mostBytes"/> take (one at least while any wait): kept by the
+    /// cache, for the renderer to copy up this frame (the game's thread's, as a frame starts).
+    /// </summary>
+    std::vector<StagedPicture> TakeStagedPictures(size_t mostCount, size_t mostBytes);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md: a picture a frame draws is never capped): the picture of the frame numbered
+    /// <paramref name="id"/> the readers put in the slots, which a draw took from them (its record kept), for the
+    /// renderer to copy up now; none when there's none.
+    /// </summary>
+    std::optional<StagedPicture> TakeStagedPicture(uint64_t id);
+
+    /// <summary>Port-only: whether a load's fill runs now (<see cref="StartLoadFill"/> to <see cref="FinishLoadFill"/>).</summary>
+    bool LoadFilling();
 
     /// <summary>Port-only (the tests): how many times the cache read a frame again for its colours (ColorsOf).</summary>
     size_t ColorsReadAgain();
@@ -765,6 +864,29 @@ namespace MCHdArt
     /// asks for, as one read then is, and has the frames drawn after it read ahead. The game's thread, once a frame.
     /// </summary>
     void KeepReadAhead();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): while one lives (the end of a mission's
+    /// load), what play's first frames draw is asked for as the load's own reads, which the load waits for
+    /// (<see cref="WaitForLoadReads"/>): a unit's packets drawn now (<see cref="ReadAs::Soon"/>) and an object's
+    /// (<see cref="ReadPacketAhead"/>). A unit's sets to come stay sets. The game's thread's; the folders asked are noted
+    /// for <see cref="KeepOpeningView"/>.
+    /// </summary>
+    class MCOpeningViewAsks
+    {
+    public:
+        MCOpeningViewAsks();
+        ~MCOpeningViewAsks();
+        MCOpeningViewAsks(const MCOpeningViewAsks&) = delete;
+        MCOpeningViewAsks& operator=(const MCOpeningViewAsks&) = delete;
+    };
+
+    /// <summary>
+    /// Port-only (the opening view): keeps what the readers read (<see cref="KeepReadAhead"/>) and gives the frames of
+    /// the folders asked for under <see cref="MCOpeningViewAsks"/> that are kept and not yet drawn, for the GPU to take
+    /// before play (MCRenderer::PrepareHdPictures); the folders noted are forgotten.
+    /// </summary>
+    std::vector<std::shared_ptr<const Frame>> KeepOpeningView();
 
     /// <summary>
     /// Port-only: keeps <paramref name="frame"/>, numbered anew, as the HD copy of the picture with
@@ -1011,6 +1133,15 @@ namespace MCHdArt
     void WaitForReadAhead();
 
     /// <summary>
+    /// Port-only (the tests: MCHdArt::FillGpu): waits until the readers have made the fill's asks reads and read them, or
+    /// put pictures in the slots for the renderer to take, or until <see cref="GpuReadsWaitMost"/> passes (a reader
+    /// waiting for room only the renderer frees): the readers run below the game's thread, so a test's frames, which take
+    /// no time of their own, may otherwise pass before they have read anything.
+    /// </summary>
+    void WaitForGpuReads();
+    constexpr std::chrono::seconds GpuReadsWaitMost{5};
+
+    /// <summary>
     /// Port-only: waits until the readers have read what a load waits for (<see cref="ReadGroundAhead"/>), not the rest
     /// they were handed.
     /// </summary>
@@ -1131,20 +1262,47 @@ namespace MCHdArt
     /// Port-only (SPEC-memory.md's "Under the loading bar"): a mission's load begins: when the hold is wanted, it holds
     /// from now each archive the load opens or asks for (<see cref="OpenArchivesAhead"/>), one an earlier mission left
     /// open too, but none the load doesn't ask for, its reads going several at once beside the load's, as readers are
-    /// free of the load's own, until <see cref="FinishLoadFill"/>.
+    /// free of the load's own, until <see cref="FinishLoadFill"/>. A load of <paramref name="mission"/> (its
+    /// <c>.fit</c>'s name) no briefing held for (<see cref="HoldsFor"/>: a saved game's) opens its list's archives first
+    /// (<see cref="BriefingFolders"/>), as its briefing would have, so the fill on the GPU knows the mission's whole size
+    /// before it puts any of it up (<see cref="FillGpu"/>), with its units once made (<see cref="LoadUnitsMade"/>);
+    /// the list's folders aren't among <see cref="LoadFolders"/> for that.
     /// </summary>
-    void StartLoadFill();
+    void StartLoadFill(std::string_view mission = {});
+
+    /// <summary>
+    /// Port-only (<see cref="FillGpu"/>): a load has made its mission's units, their art handed the hold
+    /// (MCScenario::LoadParts): a load no briefing held for knows its mission's whole size from now (a saved game's or
+    /// a staged battle's force is in no list), and the fill decides whether it fits.
+    /// </summary>
+    void LoadUnitsMade();
+
+    /// <summary>
+    /// Port-only (<see cref="FillGpu"/>): a load has put its mission's ground on the GPU (MCTerrainUploadGround): the fill
+    /// decides whether the mission fits once the card has been read again after it (the next room noted,
+    /// <see cref="NoteGpuRoom"/>), so its room holds the ground (20 Nov, the A10's 4 GB card: the fill decided before a 2x
+    /// mission's 456 MB of ground went up, then took the mission down again). <see cref="FinishLoadFill"/> counts as both
+    /// for a load that never calls it.
+    /// </summary>
+    void GroundOnGpu();
 
     /// <summary>
     /// Port-only (the loading bar's last stretch): waits until the hold has read every archive the load handed it (or
     /// was let go of, or is full), calling <paramref name="shown"/> every <see cref="LoadFillShowEvery"/> meanwhile so the
     /// bar moves and the screen stays live, and once more after, the bar whole; from then on the hold reads below
-    /// everything else, a run at a time.
+    /// everything else, a run at a time. With <paramref name="waitForGpu"/> off (a match: SPEC-memory.md's "The GPU from
+    /// the briefing") it ends once the art is in memory, and what's left goes up as the others load, then in play.
     /// </summary>
-    void FinishLoadFill(const std::function<void()>& shown);
+    void FinishLoadFill(const std::function<void()>& shown, bool waitForGpu = true);
 
     /// <summary>Port-only: how often <see cref="FinishLoadFill"/> shows the bar while it waits.</summary>
     constexpr std::chrono::milliseconds LoadFillShowEvery{33};
+
+    /// <summary>
+    /// Port-only (<see cref="FinishLoadFill"/>): the loading bar stops waiting for the fill on the GPU once none of its
+    /// frames went up for this long (a renderer that draws no frame meanwhile, a GPU gone).
+    /// </summary>
+    constexpr std::chrono::seconds GpuFillStall{2};
 
     /// <summary>
     /// Port-only: the share of the load's fill read (<see cref="StartLoadFill"/>): the bytes the hold has read over those
@@ -1179,10 +1337,58 @@ namespace MCHdArt
     /// <c>.fit</c>'s name): when the hold is wanted, it holds from now that mission's art, the archives of
     /// <paramref name="folders"/> (the pack's, from its list) and of those handed it next (<see cref="OpenArchivesAhead"/>:
     /// each mech of the player's lance as it's placed), reading behind the screens, a run of
-    /// <see cref="BriefingRunBytes"/> at a time, until the load (<see cref="StartLoadFill"/>). Another mission's hold is
-    /// let go of first.
+    /// <see cref="BriefingRunBytes"/> at a time, until the load (<see cref="StartLoadFill"/>). The ground's frames the
+    /// list names (<c>terrain/&lt;hash&gt;</c>, <c>overlays/&lt;hash&gt;</c>, as the load asked for them:
+    /// <see cref="ReadGroundAhead"/>, <see cref="ReadOverlaysAhead"/>) are held alone, not their archives (every map's),
+    /// and with <paramref name="relief"/> each tile's relief map beside it. Another mission's hold is let go of first.
     /// </summary>
-    void StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders);
+    void StartBriefingHold(std::string_view mission, std::span<const std::filesystem::path> folders, bool relief);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing": the opening): a packet a mission's play draws first. A
+    /// folder of the mission's own, whole (no Packet), or a packet of the player's mechs (Folder names its part's PAK,
+    /// <c>mechs/legs90</c>; a packet number names one gesture at one facing on any mech: MCSpriteTree's PacketAt): of the
+    /// mech at Place among the player's mechs whose part is that PAK's (as <see cref="OpeningLance"/> orders them), those
+    /// past the most places the list's play had taking theirs in turn again; with no Place, of each of them.
+    /// </summary>
+    struct OpeningPacket
+    {
+        std::filesystem::path Folder;
+        std::optional<uint16_t> Packet;
+        std::optional<uint8_t> Place;
+    };
+
+    /// <summary>
+    /// Port-only (the opening): <paramref name="packets"/>, in the order a play first draws them, as the held mission's
+    /// opening in place of its list's (sprite/MCOpeningLists.h, which <see cref="StartBriefingHold"/> and a load no
+    /// briefing held for take): the fill puts them on the GPU first, on every card, the whole of it where the mission
+    /// fits and at most <see cref="OpeningMostBytes"/> (a quarter of the pictures' room at most) where it doesn't. The
+    /// player's mechs are those placed (<see cref="HoldMechAhead"/>) and those a load hands that aren't the mission's.
+    /// Its folders' archives are opened and held ahead, as the opening's from its list are, before the list's.
+    /// </summary>
+    void SetOpening(std::span<const OpeningPacket> packets);
+
+    /// <summary>
+    /// Port-only (the opening): the mech part's archive <paramref name="folder"/> (the pack's, relative to it, as a generic
+    /// path) is or lies in: <c>mechs/legs90/7</c> of <c>mechs/legs90/7/0</c> and of any packet of it; none for a folder no
+    /// mech part's. Its part's PAK is the archive's own folder (<c>mechs/legs90</c>).
+    /// </summary>
+    std::optional<std::string> MechPartArchive(std::string_view folder);
+
+    /// <summary>
+    /// Port-only (the opening): the player's mechs' part archives (<c>mechs/legs90/7</c>), in the order the opening counts
+    /// their places in: those placed (<see cref="HoldMechAhead"/>), in the order placed, then those the load handed that
+    /// aren't the mission's own.
+    /// </summary>
+    std::vector<std::string> OpeningLance();
+
+    /// <summary>
+    /// Port-only (the opening: the middle ground's simulation, 20 Nov: on the 4 GB card 146 of play's 147 first-use waits
+    /// avoided with 512 MB a mission put up first, 128 with 128 MB): the most the opening puts on the GPU where the whole
+    /// mission doesn't fit, at its pages' share, and the share of the pictures' room it takes at most.
+    /// </summary>
+    constexpr uint64_t OpeningMostBytes = uint64_t{512} << 20;
+    constexpr uint64_t OpeningRoomShare = 4;
 
     /// <summary>
     /// Port-only, for test runs (<c>-hdbriefinghold on|off</c>; on unless set): whether the hold may start from the
@@ -1193,6 +1399,22 @@ namespace MCHdArt
 
     /// <summary>Port-only: whether the hold is wanted, and from the briefing (<see cref="SetBriefingHold"/>).</summary>
     bool BriefingHoldWanted();
+
+    /// <summary>
+    /// Port-only, for test runs (<c>-hdbriefingfill on|off</c>; on unless set; SPEC-memory.md's "The GPU from the
+    /// briefing"): whether the fill on the GPU may start from the briefing (<see cref="StartBriefingHold"/>). Off, it
+    /// starts at the load, the timing runs' comparison.
+    /// </summary>
+    void SetBriefingFill(bool on);
+
+    /// <summary>Port-only: whether the fill on the GPU starts from the briefing (<see cref="SetBriefingFill"/>).</summary>
+    bool BriefingFillWanted();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): whether a briefing's fill is putting its mission up now,
+    /// with no load under way (the renderer takes fewer of its pictures a frame then: MCVulkanRenderer::PlaceStagedPictures).
+    /// </summary>
+    bool BriefingFilling();
 
     /// <summary>
     /// Port-only: whether the hold holds for <paramref name="mission"/> since its briefing (<see cref="StartBriefingHold"/>,
@@ -1215,25 +1437,83 @@ namespace MCHdArt
     std::vector<std::filesystem::path> LoadFolders();
 
     /// <summary>
-    /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders <paramref name="mission"/>'s load hands the
-    /// hold, from the list the program carries for it (sprite/MCHoldLists.h, worked out from <see cref="LoadFolders"/>),
-    /// but those of the player's lance; none for a mission it has no list for (a mod's), which fills at its load.
+    /// Port-only (SPEC-memory.md's "From the briefing" and "The mission's manifest"): the pack's folders
+    /// <paramref name="mission"/>'s load hands the hold, but those of the player's lance: the list its last load learned
+    /// (<see cref="KeepHoldList"/>, in the user folder), else the program's (sprite/MCHoldLists.h, worked out from
+    /// <see cref="LoadFolders"/>); none for a mission with neither (a mod's first play), which fills at its load.
     /// </summary>
     std::vector<std::filesystem::path> BriefingFolders(std::string_view mission);
 
     /// <summary>
-    /// Port-only (SPEC-memory.md's "From the briefing"): the pack's folders of mech chassis <paramref name="chassis"/>'s
-    /// tree (its packet in the object file), from the list the program carries (sprite/MCHoldLists.h); none for one it
-    /// has no list for.
+    /// Port-only (SPEC-memory.md's "The mission's manifest"): one of the pack's archives a mission's manifest lists, each
+    /// once: the folder it stands for (relative to the pack), what the hold keeps of it (stored) and its pictures as the
+    /// GPU takes them (unpacked), and the frames it holds that the mission needs (a ground archive's: those its list
+    /// names; any other's: all). Need: when recorded plays of the mission first drew it, in seconds of play; none until
+    /// a play has been recorded.
     /// </summary>
-    std::vector<std::filesystem::path> ChassisFolders(uint32_t chassis);
+    struct ManifestEntry
+    {
+        std::filesystem::path Folder;
+        std::optional<float> Need;
+        uint64_t Bytes = 0;
+        uint64_t GpuBytes = 0;
+        uint32_t Frames = 0;
+    };
 
     /// <summary>
-    /// Port-only (SPEC-memory.md's "From the briefing"): a mech of chassis <paramref name="chassis"/> is in the player's
-    /// lance: while a briefing's mission is held (<see cref="StartBriefingHold"/>), the hold reads its tree's archives
-    /// too (<see cref="ChassisFolders"/>), and holds them until the mission ends.
+    /// Port-only: a mission's manifest as the hold reads it now: the mission (its briefing's, <see cref="StartBriefingHold"/>;
+    /// empty when none), its part (Entries) and the players' (each mech as it's picked: <see cref="HoldMechAhead"/>; an
+    /// archive another unit of the mission's shares is the mission's), each archive in the order the hold took it; a
+    /// count of its changes (a list held, a mech picked, an archive opened, the load begun, the hold let go); and whether
+    /// it's complete: the load has begun, so every player's mechs are in, and every archive it lists is open.
     /// </summary>
-    void HoldMechAhead(uint32_t chassis);
+    struct MissionManifest
+    {
+        std::string Mission;
+        std::vector<ManifestEntry> Entries;
+        std::vector<ManifestEntry> Players;
+        uint64_t Generation = 0;
+        bool Complete = false;
+    };
+
+    /// <summary>Port-only: the mission's manifest now (<see cref="MissionManifest"/>). The game's thread's.</summary>
+    MissionManifest Manifest();
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The mission's manifest"): keeps <paramref name="folders"/> (MCScenario::HoldList) as
+    /// the hold list <paramref name="mission"/>'s load learned, in the user folder, for its next briefing
+    /// (<see cref="BriefingFolders"/>). Each load writes its own, so a list follows the mission's files and settings.
+    /// </summary>
+    void KeepHoldList(std::string_view mission, std::span<const std::string> folders);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): the pieces of the game folder's files <paramref name="mission"/>'s
+    /// load reads from the disk (MCFilesAhead::NotedPieces), its briefing's to read ahead: those its last load learned
+    /// (<see cref="KeepFilePieces"/>), else the program's (sprite/MCHoldLists.h); none for a mission with neither. HD
+    /// art or none.
+    /// </summary>
+    std::vector<MCFilesAhead::MCFilePiece> MissionFilePieces(std::string_view mission);
+
+    /// <summary>
+    /// Port-only: keeps <paramref name="pieces"/> as those <paramref name="mission"/>'s load read, in the user folder
+    /// beside its hold list, for <see cref="MissionFilePieces"/>; none kept leaves the last list.
+    /// </summary>
+    void KeepFilePieces(std::string_view mission, const std::vector<MCFilesAhead::MCFilePiece>& pieces);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "From the briefing"): a mech is in a player's lance: while a briefing's mission is
+    /// held (<see cref="StartBriefingHold"/>), the hold reads its tree's archives too, <paramref name="folders"/> (the
+    /// mech's, MechTreeFolders), and holds them until the mission ends.
+    /// </summary>
+    void HoldMechAhead(std::span<const std::filesystem::path> folders);
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing": counted again at each change): a mech placed in a lance
+    /// (<see cref="HoldMechAhead"/>) is taken off, <paramref name="folders"/> its tree's. Its archives, unless a mech
+    /// placed or the mission's own needs them, are the mission's no more for the fill on the GPU: off its size, and not
+    /// put up until it's placed again. The hold keeps what it read of them.
+    /// </summary>
+    void MechTakenOff(std::span<const std::filesystem::path> folders);
 
     /// <summary>Port-only: how many reads the hold has made (<see cref="StartHold"/>), for the tests.</summary>
     size_t HeldReads();

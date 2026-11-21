@@ -196,7 +196,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
 
     // Port-only (SPEC-memory.md's "Under the loading bar"): the mission's art held from the load's start, read beside the
     // ground and the rest as the load opens its archives; the bar's last stretch is its bytes (MCHdArt::LoadBarPercent).
-    MCHdArt::StartLoadFill();
+    MCHdArt::StartLoadFill(scenarioName);
     UpdateDisplay(false, true, 100, true, 0);
     // Port-only (HD audio): the pack's sounds that play the moment they are asked for are decoded on a thread of their
     // own from here to the end of the loading, rather than as each first plays.
@@ -362,6 +362,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     // Port-only: the HD art pack's ground is read here, under the loading bar, rather than in the mission's first frame.
     MCTerrainReadHdTiles();
     SoundSystem()->PrepareThunder();
+    SoundSystem()->PrepareRain();
     MCHdAudio::FinishPreparing();
     UpdateDisplay(false, true, 30, true, 100);
 
@@ -378,6 +379,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     {
         Fatal(-1, std::format("The ground can't go up to the GPU: {}", uploaded.error()));
     }
+
+    // Port-only (MCHdArt::FillGpu): the fill decides whether the mission fits on the GPU beside its ground.
+    MCHdArt::GroundOnGpu();
 
     // The 'Mechs start with the damage their loadouts carried over.
     for (const std::shared_ptr<MCObjectList>& list : {InnerSphereMechList(), ClanMechList()})
@@ -401,7 +405,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCHdArt::WaitForReadAhead();
     MCHdArt::KeepReadAhead();
     // Port-only (SPEC-memory.md): the bar ends once the mission's art is in memory, so play reads nothing from the disk.
-    MCHdArt::FinishLoadFill(ShowLoadingBar);
+    // In a match it doesn't wait for the GPU (SPEC-memory.md's "The GPU from the briefing"): the player checks in, and
+    // what's left goes up while the others load, so no player's fill holds up the room.
+    MCHdArt::FinishLoadFill(ShowLoadingBar, MultiPlayer() == nullptr);
 
     HasOutputBlock = file.SeekBlock("Output") == 0;
     file.Close();
@@ -997,6 +1003,9 @@ auto MCScenario::LoadParts(MCFitIniFile& file) -> void
         CreatePartObject(i);
     }
 
+    // Port-only (MCHdArt::FillGpu): every unit's art handed the hold, the mission's whole size is known.
+    MCHdArt::LoadUnitsMade();
+
     // Port-only (MechBraking): every mech type's stops are given at the load's end, with its packets
     // (LoadOriginalPackets).
     UpdateDisplay(false, true, 20, true, 90);
@@ -1527,4 +1536,86 @@ auto MCScenario::CreatePartObject(int32_t partNumber) -> void
     }
 
     GameObjectMap().AddObject(*object);
+}
+
+auto MCScenario::HoldList(std::string_view fitName) const -> MCHoldList
+{
+    MCHoldList list;
+    MCFitIniFile file;
+    const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+
+    if (sprites == nullptr || file.Open(GamePath(MissionPath, fitName, ".fit")) != 0)
+    {
+        return list;
+    }
+
+    // Each mech's trees' folders, the player's parts' (PlayerPart in the mission's file, part n its Part<n>) apart.
+    std::set<std::string> players;
+    std::set<std::string> others;
+
+    // Part n is the file's Part<n> block (Parts[0] is none).
+    for (size_t index = 1; index < Parts.size(); ++index)
+    {
+        const auto object = std::dynamic_pointer_cast<MCGameObject>(Parts[index].Object.lock());
+        const auto actor = object != nullptr && object->ObjectClass == MCObjectClass::BattleMech
+                               ? std::static_pointer_cast<MCMechActor>(object->GetAppearance())
+                               : nullptr;
+        const auto tree =
+            actor != nullptr ? std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType()) : nullptr;
+
+        if (tree == nullptr || file.SeekBlock(std::format("Part{}", index)) != 0)
+        {
+            continue;
+        }
+
+        std::set<std::string>& into = file.Read<bool>("PlayerPart").value_or(false) ? players : others;
+
+        for (const std::filesystem::path& folder : tree->HdFolders(sprites->Uses90PixelParts()))
+        {
+            into.insert(folder.generic_string());
+        }
+    }
+
+    const auto playersOnly = [&](const std::string& folder)
+    {
+        const auto under = [&folder](const std::string& tree)
+        { return folder == tree || (folder.starts_with(tree) && folder[tree.size()] == '/'); };
+        return std::ranges::any_of(players, under) && !std::ranges::any_of(others, under);
+    };
+
+    // A type's folder (the first three of a deeper folder's names) by its packet 0's.
+    constexpr ptrdiff_t TypeDepth = 3;
+    const auto typeFolder = [](const std::filesystem::path& folder)
+    {
+        if (std::distance(folder.begin(), folder.end()) <= TypeDepth)
+        {
+            return folder.generic_string();
+        }
+
+        std::filesystem::path type;
+        auto name = folder.begin();
+
+        for (ptrdiff_t depth = 0; depth < TypeDepth; ++depth, ++name)
+        {
+            type /= *name;
+        }
+
+        return (type / "0").generic_string();
+    };
+
+    std::set<std::string> listed;
+
+    for (const std::filesystem::path& folder : MCHdArt::LoadFolders())
+    {
+        if (playersOnly(folder.generic_string()))
+        {
+            ++list.PlayersLeft;
+        }
+        else if (std::string type = typeFolder(folder); listed.insert(type).second)
+        {
+            list.Folders.push_back(std::move(type));
+        }
+    }
+
+    return list;
 }

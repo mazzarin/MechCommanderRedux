@@ -30,6 +30,7 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "main/MCLogistics.h"
+#include "mission/MCMission.h"
 #include "main/MCGameStrings.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMPGameConfiguration.h"
@@ -1632,6 +1633,13 @@ auto MCSessionScreen::LoadMission(std::string_view fileName) -> void
     if (result == 0)
     {
         SetMap(text);
+
+        // Port-only (SPEC-memory.md's "From the briefing": a match's map at the room's pick): its mission's art held from
+        // now, behind the room, as a campaign's from its briefing; START's mech bay keeps it, another map lets go of it.
+        if (const MCFitResult<std::string> mission = iniFile.Read<std::string>("MissionName"); mission.has_value())
+        {
+            StartMissionHold(*mission);
+        }
 
         if (iniFile.ReadIdULong("MissionTime", value) == 0)
         {

@@ -84,3 +84,15 @@ private:
     /// <summary>The position <paramref name="index"/> reads (a negative one the first), or the end.</summary>
     size_t Position(int32_t index) const;
 };
+
+/// <summary>Port-only: the sprite file every stock mission names (its "SpriteSystem" block's "SpriteFileName").</summary>
+inline constexpr std::string_view MechSpriteFile = "sprites";
+
+/// <summary>
+/// Port-only (SPEC-memory.md's manifest: the players' part, worked out as each mech is picked): the HD pack's folders
+/// of mech chassis <paramref name="chassis"/>'s tree, each part's first packet's (<c>&lt;part&gt;/&lt;mech&gt;/0</c>, as a
+/// mission's hold list names them): its type's appearance (its packet in the object file) read from the sprite file
+/// (<see cref="MechSpriteFile"/>) as a mission's load reads it (MCAppearanceTypeList), the 90-pixel parts' when Use90PixelSprite is on. None for a
+/// chassis that isn't a mech's, or files that lack it.
+/// </summary>
+std::vector<std::filesystem::path> MechTreeFolders(uint32_t chassis);

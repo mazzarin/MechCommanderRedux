@@ -9995,7 +9995,8 @@ TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, an
         MCTestGame::RunFrame(FrameSeconds);
         CHECK_EQ(renderer->TerrainUploads(), uint64_t{2});
         CHECK_EQ(renderer->TerrainTileUploads(), 2);
-        CHECK(renderer->UploadBytesKept() <= 2 * MCVulkanRenderer::KeptUploadBytes);
+        // Port-only (SPEC-memory.md's upload slots): the ground went up through the slots, and nothing past them is kept.
+        CHECK_EQ(renderer->UploadBytesKept(), renderer->UploadSlots()->Bytes());
 
         MCTerrainForgetMesh();
         MCTestGame::RunFrame(FrameSeconds);

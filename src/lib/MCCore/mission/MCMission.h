@@ -90,6 +90,16 @@ public:
     static void StartInterface();
 
     /// <summary>
+    /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): what play's first frames draw, read and
+    /// unpacked by HD art's readers as the load's own reads, waited for, and put on the GPU before play, rather than on
+    /// the game's thread as each is first drawn: every object and unit whose place lies in the camera's starting view
+    /// (at the zoom play starts at: after LoadWindowStatus) or the ring around it the camera's surroundings read ahead
+    /// (MCAppearance::NearView), each appearance's packets drawn now (MCAppearance::ReadAhead under
+    /// MCHdArt::MCOpeningViewAsks). A unit's sets to come are read behind it, as in play.
+    /// </summary>
+    static void PrepareOpeningView();
+
+    /// <summary>
     /// Asks for scenario <paramref name="scenarioName"/> to start: <see cref="Run"/> starts it after its frame's work,
     /// once the click or network handler that asked has returned.
     /// </summary>
@@ -124,6 +134,15 @@ public:
     /// the campaign's end).
     /// </summary>
     std::optional<size_t> BriefedAfterResults() const;
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "Between missions"): whether the mission's held art is kept past its end, once the
+    /// scenario has ended (EndScenarioLeavingWayBack): a mission plays next whose briefing or room takes the hold (the
+    /// campaign's, <see cref="BriefedAfterResults"/>; a match's rematch, MCRoomEnd::RematchAfterMatch). Where none
+    /// does (a won solo mission's main screen, the campaign's end, a match's games screen, a launcher's game's end) the
+    /// hold is let go of.
+    /// </summary>
+    bool KeepsHoldPastEnd() const;
 
     /// <summary>Writes the interface window states (zoom, tac map, palette) to <c>windows.fit</c>.</summary>
     static void SaveWindowStatus();
@@ -167,6 +186,8 @@ public:
 private:
     /// <summary>Starts a new logistics phase after a scenario.</summary>
     MCLogistics& StartLogistics();
+    /// <summary>Port-only: lets go of the mission's held art once its scenario has ended, unless <see cref="KeepsHoldPastEnd"/>.</summary>
+    void LetGoHoldUnlessKept() const;
     /// <summary>
     /// The way back to logistics after a campaign's mission (its next briefing, or the same one's again) or a match's
     /// (the main screen; a launcher's game ends there): <see cref="EndScenarioLeavingWayBack"/>'s last.
@@ -211,6 +232,13 @@ void RunMission();
 /// when what's read has changed since (a match begun or ended: lib/MCReleaseData.h).
 /// </summary>
 void LoadComponentListIfSwitched();
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "From the briefing"): the next mission is known, <paramref name="mission"/> (its
+/// <c>.fit</c>'s name): its hold starts from its list (MCHdArt::StartBriefingHold of MCHdArt::BriefingFolders), the
+/// ground's relief maps beside its tiles while they're drawn (MCSceneLights::ReliefMapsOn).
+/// </summary>
+void StartMissionHold(const std::string& mission);
 
 /// <summary>The game segment a demo/segment build starts at; 0 for the normal campaign.</summary>
 extern int32_t GlobalGameSegment;

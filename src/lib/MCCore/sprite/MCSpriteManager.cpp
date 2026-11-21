@@ -706,8 +706,17 @@ auto MCSpriteManager::AttachHdArt() -> void
 
 auto MCSpriteManager::PartFileName(MCMechPart part, bool zoomedOut) const -> std::string
 {
-    const bool use90 = zoomedOut && _PartFiles90[part] != nullptr;
+    return PartFileOf(part, zoomedOut && _PartFiles90[part] != nullptr);
+}
+
+auto MCSpriteManager::PartFileOf(MCMechPart part, bool use90) -> std::string
+{
     return std::format("{}{}", PartFileNames[static_cast<size_t>(part)], use90 ? "90" : "");
+}
+
+auto MCSpriteManager::Uses90PixelParts() const -> bool
+{
+    return _PartFiles90[MCMechPart::Legs] != nullptr;
 }
 
 auto MCSpriteManager::MechPacketCount(uint32_t mechNum, MCMechPart part, bool zoomedOut) -> std::optional<uint32_t>

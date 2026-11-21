@@ -49,6 +49,24 @@ public:
     /// <returns>0, or an error code.</returns>
     int32_t Load(std::string_view scenarioName, std::string_view terrainName = {});
 
+    /// <summary>A mission's hold list (<see cref="HoldList"/>).</summary>
+    struct MCHoldList
+    {
+        /// <summary>The pack's folders, one a line in the order handed.</summary>
+        std::vector<std::string> Folders;
+        /// <summary>The folders handed that only the player's mechs have, left out.</summary>
+        size_t PlayersLeft = 0;
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The mission's manifest"): the pack's folders this load handed the hold
+    /// (<see cref="MCHdArt::LoadFolders"/>) as the mission's hold list: all but those of the player's mechs that no other
+    /// unit's tree shares (a lance is read as it's placed), and a type's packets' folders
+    /// (<c>objects/shapes90/&lt;n&gt;/&lt;packet&gt;</c>) once, by its packet 0's, since any of them opens the same
+    /// archive. <paramref name="fitName"/> is the mission file the load read (PlayerPart marks the player's parts).
+    /// </summary>
+    MCHoldList HoldList(std::string_view fitName) const;
+
     /// <summary>Shuts every game system down and frees the scenario's data (the scenario must still be installed).</summary>
     void Unload();
 

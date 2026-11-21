@@ -937,14 +937,14 @@ auto MCLogistics::GetCurrentMission() -> void
 
     // Port-only (SPEC-memory.md's "From the briefing"): the next mission known, its HD art is read from now, behind
     // the briefing's screens, and its load keeps it.
-    MCHdArt::StartBriefingHold(fileName, MCHdArt::BriefingFolders(fileName));
+    StartMissionHold(fileName);
 
     // And the lance's mechs placed already (the last mission's), as each placed later (MCMechBriefBlock::PlaceInEmptySlot).
     for (int32_t index = 0; ForceMechList != nullptr && index < ForceMechList->GetMechCount(); ++index)
     {
         if (std::shared_ptr<MCLogMech> mech; ForceMechList->GetMechInfo(index, mech) == 0 && mech->Deployed)
         {
-            MCHdArt::HoldMechAhead(mech->Chassis);
+            MCHdArt::HoldMechAhead(mech->HdFolders);
         }
     }
 

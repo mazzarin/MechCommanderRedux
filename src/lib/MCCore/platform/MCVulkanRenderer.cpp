@@ -2,6 +2,7 @@
 #include "platform/MCVulkanRenderer.h"
 #include "color/MCPalette.h"
 #include "platform/MCFileSystem.h"
+#include "lib/MCOptionalRef.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCGpuCounted.h"
 #include "platform/MCShapeRows.h"
@@ -40,29 +41,6 @@ namespace
     std::string SdlError(std::string_view what)
     {
         return std::format("{}: {}", what, SDL_GetError());
-    }
-
-    /// <summary>An upload transfer buffer of <paramref name="size"/> bytes for <paramref name="what"/>, or why not.</summary>
-    std::expected<std::shared_ptr<SDL_GPUTransferBuffer>, std::string> MakeUploadBuffer(
-        const std::shared_ptr<SDL_GPUDevice>& device, size_t size, std::string_view what)
-    {
-        if (size > std::numeric_limits<uint32_t>::max())
-        {
-            return std::unexpected(std::format("{}: {} bytes are more than a transfer buffer holds", what, size));
-        }
-
-        SDL_GPUTransferBufferCreateInfo info{};
-        info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        info.size = static_cast<uint32_t>(size);
-        std::shared_ptr<SDL_GPUTransferBuffer> buffer =
-            MCGpuCounted::MakeTransferBuffer(device, info, MCHolder::GpuTransfers);
-
-        if (buffer == nullptr)
-        {
-            return std::unexpected(SdlError(std::format("SDL_CreateGPUTransferBuffer({}, {} bytes)", what, size)));
-        }
-
-        return buffer;
     }
 
     /// <summary>
@@ -494,21 +472,6 @@ namespace
     constexpr size_t DecodedBytes = MCShapeRows::DecodedBytes;
     /// <summary>The width of the strip of written pixels.</summary>
     constexpr int32_t StripWidth = 4096;
-    /// <summary>Upload offsets are kept on this boundary (the strictest any backend asks of a texture copy).</summary>
-    constexpr size_t UploadAlignment = 512;
-    /// <summary>
-    /// Port-only: the ground's upload (hundreds of megabytes with HD art) is written into transfer buffers this big,
-    /// this many in turn (MCVulkanRenderer::ChunkedUpload).
-    /// </summary>
-    constexpr size_t UploadChunkBytes = 32 * 1024 * 1024;
-    constexpr size_t UploadChunks = 2;
-
-    /// <summary><paramref name="offset"/> rounded up to UploadAlignment.</summary>
-    constexpr size_t AlignUpload(size_t offset)
-    {
-        return (offset + UploadAlignment - 1) & ~(UploadAlignment - 1);
-    }
-
     /// <summary>The draw shader's vertex uniforms (shaders/instance.vshader, cbuffer Batch).</summary>
     struct BatchUniforms
     {
@@ -886,25 +849,6 @@ namespace
                 x += count;
             }
         }
-    }
-
-    /// <summary>
-    /// Port-only: the colours of the pixels the original draws in a version 2 HD frame's index picture
-    /// <paramref name="indices"/> (MCHdArt::OriginalDrawsMark), as DrawnColors gives an atlas image's.
-    /// </summary>
-    std::bitset<256> HdDrawnColors(std::span<const uint8_t> indices)
-    {
-        std::bitset<256> colors;
-
-        for (size_t at = 0; at + MCHdArt::IndexBytes <= indices.size(); at += MCHdArt::IndexBytes)
-        {
-            if (MCHdArt::OriginalDrawsMark(indices[at + 1]))
-            {
-                colors.set(indices[at]);
-            }
-        }
-
-        return colors;
     }
 
     // Fast shapes (fastshp.cpp's format): rows of packets covering width + 1 pixels; c < 0x80 is a run of c pixels of
@@ -1364,11 +1308,14 @@ void MCVulkanRenderer::MakePipelines(std::vector<PipelineJob>& jobs)
 }
 
 std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::Create(
-    std::shared_ptr<SDL_GPUDevice> device, std::vector<PipelineJob>& moreJobs)
+    std::shared_ptr<SDL_GPUDevice> device, std::shared_ptr<MCUploadSlots> slots, std::vector<PipelineJob>& moreJobs)
 {
     auto renderer = std::make_unique<MCVulkanRenderer>(Key{});
     renderer->_Device = device;
-    renderer->_Run = SealedFrame(new FrameRun);
+    renderer->_Slots = std::move(slots);
+    renderer->_Run = renderer->NewRun();
+    // Port-only (MCHdArt::FillGpu): the mission's fill stages its pictures in the renderer's upload slots.
+    MCHdArt::SetUploadSlots(renderer->_Slots, renderer->TakesBc7());
     // Port-only: the card the HD art frames' room is asked of is the one SDL's device runs on, which SDL names.
     const char* const deviceName =
         SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device.get()), SDL_PROP_GPU_DEVICE_NAME_STRING, "");
@@ -1770,6 +1717,12 @@ MCVulkanRenderer::~MCVulkanRenderer()
         return;
     }
 
+    // Port-only: the fill stages no more in this renderer's slots.
+    if (_Slots != nullptr)
+    {
+        MCHdArt::SetUploadSlots(nullptr, false);
+    }
+
     SDL_WaitForGPUIdle(_Device.get());
 
     for (Surface& surface : _RunSurfaces)
@@ -1833,7 +1786,6 @@ MCVulkanRenderer::~MCVulkanRenderer()
     Release(_PaletteTexture);
     Release(_Strip);
 
-    _Transfer.reset();
     _DrawBuffer.reset();
     _Nearest.reset();
     _Linear.reset();
@@ -1908,11 +1860,12 @@ std::span<uint8_t> MCVulkanRenderer::QueueUpload(std::shared_ptr<SDL_GPUTexture>
 std::span<uint8_t> MCVulkanRenderer::QueueUpload(FrameRun& run, std::shared_ptr<SDL_GPUTexture> texture, uint32_t x,
                                                  uint32_t y, uint32_t width, uint32_t height, uint32_t bytesPerPixel)
 {
-    const size_t offset = AlignUpload(run.Staging.size());
+    // Port-only (SPEC-memory.md's upload slots): into the slots, never waiting (past them when none are free).
     const size_t size = static_cast<size_t>(width) * height * bytesPerPixel;
-    run.Staging.resize(offset + size);
-    run.Uploads.push_back(Upload{std::move(texture), x, y, width, height, bytesPerPixel, offset});
-    return std::span(run.Staging).subspan(offset, size);
+    const MCUploadBatch::MCStaged staged = run.Staging.Stage(size, FrameLeaseBytes, false);
+    run.Uploads.push_back(
+        Upload{std::move(texture), x, y, width, height, bytesPerPixel, staged.Offset, staged.Buffer, nullptr});
+    return staged.Bytes;
 }
 
 void MCVulkanRenderer::NotSupported(std::string_view command)
@@ -1974,9 +1927,19 @@ void MCVulkanRenderer::BeginRecording()
     // Port-only (SPEC-memory.md's indices): the weather, shown, reads every unit's indices on the CPU.
     MCHdArt::KeepIndices(MCWeather::Shown() != MCWeatherKind::Clear);
     // Port-only (SPEC-memory.md's plan): on shared memory, the pictures' share of the art's room too.
+    MCHdArt::NoteGpuRoom(room.PictureBytes);
     const std::optional<uint64_t> planned = MCHdArt::NextFrame(room.MemoryShort);
     TrimHdPictures(static_cast<size_t>(std::min(room.PictureBytes, planned.value_or(room.PictureBytes))));
     KeepSparePages();
+
+    // Port-only (SPEC-memory.md's upload slots): the slots whose copies are done freed, waking a reader waiting for room.
+    if (_Slots != nullptr)
+    {
+        _Slots->Reclaim();
+    }
+
+    // Port-only (MCHdArt::FillGpu): the mission's pictures the readers put in the upload slots, as the caps let them.
+    PlaceStagedPictures();
     _HdPicturePayload.Set({.Payload = static_cast<int64_t>(_HdPictureBytes)});
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
@@ -3184,7 +3147,7 @@ std::expected<void, std::string> MCVulkanRenderer::KeepFramePicture(MCTexture& t
     }
 
     _Run->Uploads.push_back(
-        Upload{kept.Handle, 0, 0, width, height, 1, 0, nullptr, 0, _Run->Pictures[state.Index].Texture});
+        Upload{kept.Handle, 0, 0, width, height, 1, 0, nullptr, _Run->Pictures[state.Index].Texture});
     _Run->Pictures[state.Index].Texture = kept.Handle;
     MCGpuCounted::Retire(kept.Handle);
     _Run->Retired.push_back(kept);
@@ -4222,6 +4185,190 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
     indices(picture);
 }
 
+bool MCVulkanRenderer::TakesBc7()
+{
+    if (!_Bc7.has_value())
+    {
+        _Bc7 = SDL_GPUTextureSupportsFormat(_Device.get(), SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
+                                            SDL_GPU_TEXTUREUSAGE_SAMPLER);
+    }
+
+    return *_Bc7;
+}
+
+auto MCVulkanRenderer::NewHdPicture(const MCHdArt::Frame& frame, uint32_t colorWidth, uint32_t colorHeight, bool bc7)
+    -> std::optional<Picture>
+{
+    const auto originalWidth = static_cast<uint32_t>(frame.OriginalWidth());
+    const auto originalHeight = static_cast<uint32_t>(frame.OriginalHeight());
+    // Port-only: in a page the HD frames share, so draws from any of them share their bindings, or, too big for one, in
+    // textures of its own.
+    const SDL_GPUTextureFormat colorFormat =
+        bc7 ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexSideFor(frame.Scale), colorFormat, HdPageSide,
+                              bc7 ? Bc7Block : 1};
+    Picture picture;
+
+    if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))
+    {
+        auto made = EnsureTexture(picture.Texture, MCHolder::GpuHdPictures, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
+                                  HdIndexUsage, originalWidth, originalHeight);
+
+        if (made)
+        {
+            made = EnsureTexture(picture.HdColors, MCHolder::GpuHdPictures, colorFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                                 colorWidth, colorHeight);
+        }
+
+        if (!made)
+        {
+            SDL_Log("MCVulkanRenderer: HD art frame %dx%d: %s", frame.Width, frame.Height, made.error().c_str());
+            Release(picture.Texture);
+            Release(picture.HdColors);
+            _HdRefused.insert(frame.Id);
+            return std::nullopt;
+        }
+    }
+
+    return picture;
+}
+
+auto MCVulkanRenderer::KeepHdPicture(const MCHdArt::Frame& frame, Picture&& picture, std::bitset<256> drawnColors)
+    -> std::unordered_map<uint64_t, Picture>::iterator
+{
+    // Port-only (KindHdSmooth): a version 1 frame's marks say which pixels have an index, its spread ones too; which its
+    // frame covers is marked on the GPU (MarkHdCoverage). A frame holding its blended pixels draws its own edges.
+    if (!frame.Marked && !frame.Blended)
+    {
+        _Run->CoverageMarks.push_back(HdCoverageMark{
+            picture.Texture, picture.HdColors, picture.Place, static_cast<uint32_t>(frame.OriginalWidth()),
+            static_cast<uint32_t>(frame.OriginalHeight()), static_cast<uint32_t>(frame.Scale)});
+    }
+
+    // Port-only (SPEC-memory.md's indices): a version 2 frame's index passes read this picture, not the CPU's copy.
+    picture.HdMarks = frame.Marked;
+    picture.DrawnColors = drawnColors;
+    MCHdArt::ColorsUploaded(frame);
+    const size_t bytes = picture.Bytes;
+    const auto found = _HdPictures.emplace(frame.Id, std::move(picture)).first;
+    found->second.InOrder = _HdOrder.insert(_HdOrder.end(), frame.Id);
+    _HdPictureBytes += bytes;
+    ++_FrameUploads.Pictures;
+    _FrameUploads.PictureBytes += static_cast<int64_t>(bytes);
+    return found;
+}
+
+auto MCVulkanRenderer::PlaceStagedPicture(const MCHdArt::StagedPicture& staged)
+    -> std::optional<std::unordered_map<uint64_t, Picture>::iterator>
+{
+    const MCHdArt::Frame& frame = *staged.Record;
+    const auto originalWidth = static_cast<uint32_t>(frame.OriginalWidth());
+    const auto originalHeight = static_cast<uint32_t>(frame.OriginalHeight());
+    const bool bc7 = staged.Bc7;
+    const auto colorWidth = static_cast<uint32_t>(bc7 ? MCBc7::Padded(frame.Width) : frame.Width);
+    const auto colorHeight = static_cast<uint32_t>(bc7 ? MCBc7::Padded(frame.Height) : frame.Height);
+
+    if (_HdPictures.contains(frame.Id) || _HdRefused.contains(frame.Id) || staged.Lease == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    if (staged.IndexBytes != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes ||
+        staged.ColorBytes != static_cast<size_t>(colorWidth) * colorHeight * (bc7 ? HdBc7Bytes : HdRgbaBytes))
+    {
+        NotSupported("an HD art frame whose pixels don't match its size");
+        MCHdArt::PictureDropped(frame.Id);
+        return std::nullopt;
+    }
+
+    std::optional<Picture> made = NewHdPicture(frame, colorWidth, colorHeight, bc7);
+
+    if (!made.has_value())
+    {
+        MCHdArt::PictureDropped(frame.Id);
+        return std::nullopt;
+    }
+
+    // Copied from where the reader put them, the lease carried by the frame's uploads until their copies have run.
+    const PicturePlace& place = made->Place;
+    SDL_GPUTransferBuffer* const from = staged.Lease->Buffer();
+    _Run->Uploads.push_back(Upload{made->Texture.Handle, place.X, place.Y, originalWidth, originalHeight,
+                                   static_cast<uint32_t>(MCHdArt::IndexBytes), staged.IndicesAt, from, nullptr});
+    _Run->Uploads.push_back(Upload{made->HdColors.Handle, place.HdX, place.HdY, colorWidth, colorHeight,
+                                   bc7 ? HdBc7Bytes : HdRgbaBytes, staged.ColorsAt, from, nullptr});
+    _Run->Staging.Carry(staged.Lease, size_t{staged.ColorBytes} + staged.IndexBytes);
+    made->Bytes = size_t{staged.ColorBytes} + staged.IndexBytes;
+    return KeepHdPicture(frame, std::move(*made), staged.DrawnColors);
+}
+
+void MCVulkanRenderer::PlaceStagedPictures()
+{
+    if (_Slots == nullptr)
+    {
+        return;
+    }
+
+    // Port-only (SPEC-memory.md's fill caps): under the loading bar, all there are; in play, a share of a frame's time
+    // at the copy speed measured (an estimate before one is), at least a floor, and a count (each copy costs barriers).
+    const auto now = std::chrono::steady_clock::now();
+    const double interval =
+        _LastFrameStart.has_value() ? std::chrono::duration<double>(now - *_LastFrameStart).count() : FillLeastPeriod;
+    _LastFrameStart = now;
+    _FramePeriod = _FramePeriod * (1.0 - FillPeriodWeight) +
+                   std::clamp(interval, FillLeastPeriod, FillMostPeriod) * FillPeriodWeight;
+    const bool loading = MCHdArt::LoadFilling();
+
+    // Port-only (SPEC-memory.md's upload slots): more of them while a load's fill runs; without them it goes on in those
+    // kept.
+    if (loading && !_WasLoadFilling)
+    {
+        if (const std::expected<void, std::string> grown = _Slots->Grow(MCUploadSlots::LoadBytesNow()); !grown)
+        {
+            SDL_Log("MCVulkanRenderer: the upload slots not grown for the load (%s)", grown.error().c_str());
+        }
+    }
+
+    // The slots at a load's end in the frame log: the copy speed measured (a copy's GPU time is its bytes over it), the
+    // most in use, and the waits and refusals by kind.
+    if (_WasLoadFilling && !loading && MCFrameLog::Enabled())
+    {
+        const MCUploadSlots::MCTally tally = _Slots->Tally();
+        std::string kinds;
+
+        for (size_t kind = 0; kind < MCUploadSlots::KindCount; ++kind)
+        {
+            const MCUploadSlots::MCKindTally& of = tally.Kinds[kind];
+            kinds += std::format("{}{} {} waits ({:.1f} ms), {} full", kinds.empty() ? "" : "; ",
+                                 MCUploadSlots::KindName(static_cast<MCUploadSlots::MCKind>(kind)), of.Waits,
+                                 std::chrono::duration<double, std::milli>(of.Waited).count(), of.Refused);
+        }
+
+        MCFrameLog::Note(std::format("upload slots at the load's end: {} MB, copies at {:.2f} GB/s, at most {} of {} "
+                                     "slots in use; {}",
+                                     _Slots->Bytes() >> 20, _Slots->CopyBytesPerSecond() / BytesPerGb, tally.PeakInUse,
+                                     _Slots->Slots(), kinds));
+    }
+
+    // The load's own slots go once their copies have run (MCUploadSlots::Reclaim).
+    if (_WasLoadFilling && !loading)
+    {
+        _Slots->Shrink();
+    }
+
+    _WasLoadFilling = loading;
+    const double speed = _Slots->CopyBytesPerSecond() > 0.0 ? _Slots->CopyBytesPerSecond() : FillGuessBytesPerSecond;
+    const size_t bytes = loading ? std::numeric_limits<size_t>::max()
+                                 : std::max(FillLeastBytes, static_cast<size_t>(FillShare * _FramePeriod * speed));
+    const size_t count = loading                      ? std::numeric_limits<size_t>::max()
+                         : MCHdArt::BriefingFilling() ? FillMostPerBriefingFrame
+                                                      : FillMostPerFrame;
+
+    for (const MCHdArt::StagedPicture& staged : MCHdArt::TakeStagedPictures(count, bytes))
+    {
+        PlaceStagedPicture(staged);
+    }
+}
+
 auto MCVulkanRenderer::HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table) -> HdEdges
 {
     return frame.Blended || MCHdArt::KeepsFrameEdges(table) ? HdEdges::Frame : HdEdges::Smooth;
@@ -4241,6 +4388,19 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
     if (found == _HdPictures.end() && _HdRefused.contains(frame.Id))
     {
         return std::nullopt;
+    }
+
+    // Port-only (MCHdArt::FillGpu): a picture a reader put in the upload slots, which the draw took from them: copied up
+    // from there now, never capped.
+    if (found == _HdPictures.end())
+    {
+        if (std::optional<MCHdArt::StagedPicture> staged = MCHdArt::TakeStagedPicture(frame.Id); staged.has_value())
+        {
+            if (const auto placed = PlaceStagedPicture(*staged); placed.has_value())
+            {
+                found = *placed;
+            }
+        }
     }
 
     if (found == _HdPictures.end())
@@ -4270,14 +4430,8 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
             return std::nullopt;
         }
 
-        if (!_Bc7.has_value())
-        {
-            _Bc7 = SDL_GPUTextureSupportsFormat(_Device.get(), SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM,
-                                                SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
-        }
-
         // A GPU without BC7 gets the colours decoded here.
-        const bool sendBc7 = bc7 && *_Bc7;
+        const bool sendBc7 = bc7 && TakesBc7();
         std::vector<uint8_t> decoded;
         std::span<const uint8_t> colors = source;
 
@@ -4289,35 +4443,14 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
             colorHeight = height;
         }
 
-        // Port-only: in a page the HD frames share, so draws from any of them share their bindings, or, too big for
-        // one, in textures of its own.
-        const SDL_GPUTextureFormat colorFormat =
-            sendBc7 ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, HdIndexSideFor(frame.Scale), colorFormat,
-                                  HdPageSide, sendBc7 ? Bc7Block : 1};
-        Picture picture;
+        std::optional<Picture> made = NewHdPicture(frame, colorWidth, colorHeight, sendBc7);
 
-        if (!PlaceShared(PageKind::Hd, layout, picture, originalWidth, originalHeight, colorWidth, colorHeight))
+        if (!made.has_value())
         {
-            auto made = EnsureTexture(picture.Texture, MCHolder::GpuHdPictures, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
-                                      HdIndexUsage, originalWidth, originalHeight);
-
-            if (made)
-            {
-                made = EnsureTexture(picture.HdColors, MCHolder::GpuHdPictures, colorFormat,
-                                     SDL_GPU_TEXTUREUSAGE_SAMPLER, colorWidth, colorHeight);
-            }
-
-            if (!made)
-            {
-                SDL_Log("MCVulkanRenderer: HD art frame %ux%u: %s", width, height, made.error().c_str());
-                Release(picture.Texture);
-                Release(picture.HdColors);
-                _HdRefused.insert(frame.Id);
-                return std::nullopt;
-            }
+            return std::nullopt;
         }
 
+        Picture& picture = *made;
         const PicturePlace& place = picture.Place;
         std::ranges::copy(indices, QueueUpload(picture.Texture.Handle, place.X, place.Y, originalWidth, originalHeight,
                                                static_cast<uint32_t>(MCHdArt::IndexBytes))
@@ -4326,25 +4459,8 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
                                               sendBc7 ? HdBc7Bytes : HdRgbaBytes)
                                       .begin());
         picture.Bytes = indices.size() + colors.size();
-
-        // Port-only (KindHdSmooth): a version 1 frame's marks say which pixels have an index, its spread ones too; which
-        // its frame covers is marked on the GPU (MarkHdCoverage). A frame holding its blended pixels draws its own
-        // edges.
-        if (!frame.Marked && !frame.Blended)
-        {
-            _Run->CoverageMarks.push_back(HdCoverageMark{picture.Texture, picture.HdColors, place, originalWidth,
-                                                         originalHeight, static_cast<uint32_t>(frame.Scale)});
-        }
-
-        // Port-only (SPEC-memory.md's indices): a version 2 frame's index passes read this picture, not the CPU's copy.
-        picture.HdMarks = frame.Marked;
-        picture.DrawnColors = frame.Marked ? HdDrawnColors(indices) : std::bitset<256>{};
-        MCHdArt::ColorsUploaded(frame);
-        found = _HdPictures.emplace(frame.Id, picture).first;
-        found->second.InOrder = _HdOrder.insert(_HdOrder.end(), frame.Id);
-        _HdPictureBytes += picture.Bytes;
-        ++_FrameUploads.Pictures;
-        _FrameUploads.PictureBytes += static_cast<int64_t>(picture.Bytes);
+        found = KeepHdPicture(frame, std::move(picture),
+                              frame.Marked ? MCHdArt::DrawnColorsOf(indices) : std::bitset<256>{});
     }
     else if (found->second.LastFrame != _Frame)
     {
@@ -5247,7 +5363,13 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
     // Port-only: an overlay the HD art pack has a frame of is shown from it, the original's draw keeping its indices; a
     // translucent one's frame holds its blended pixels too (MCHdArt::Frame::Blended), and the original draws nothing.
     // An opaque one's edges are smooth (KindHdSmooth), reaching a window pixel past it each way the pane allows.
-    if (const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::FindOverlay(shape.first(*size), width, height);
+    if (!found->get().HdKey.has_value() && MCHdArt::Active())
+    {
+        found->get().HdKey = MCHdArt::TerrainTileKey(shape.first(*size));
+    }
+
+    if (const std::shared_ptr<const MCHdArt::Frame> hd =
+            found->get().HdKey.has_value() ? MCHdArt::FindOverlayByKey(*found->get().HdKey, width, height) : nullptr;
         hd != nullptr && hd->Blended == command.Alpha)
     {
         const HdEdges edges = hd->Blended ? HdEdges::Frame : HdEdges::Smooth;
@@ -6511,35 +6633,25 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
 /// <summary>
 /// Port-only: the ground's upload (hundreds of megabytes with HD art). Staged with a frame's uploads, it took that
 /// much twice (the staging, then the transfer buffer) and kept both for the session. Here its bytes are written straight
-/// into UploadChunks transfer buffers of UploadChunkBytes in turn, each sent up on a command buffer of its own as it
-/// fills (the GPU runs them before the frame being recorded), a chunk written again only once the GPU has copied it: it
-/// holds no more than those, and they go once it's done. A span it gives is written in full before the next is asked
-/// for, and only written (transfer memory is write-combined: reading it back is slow).
+/// into the upload slots (SPEC-memory.md), a lease (GroundLeaseBytes, less of few slots) at a time, each sent up on a command buffer of its
+/// own as it fills (the GPU runs them before the frame being recorded), its slots free again once the GPU has copied it.
+/// At a load it waits for slots as the copies sent before run (the load's wait; never for leases not yet sent, which
+/// only this thread sends); inside a frame (the mesh's cells again
+/// in play) it never waits, going past the slots when none are free. A span it gives is written in full before the next
+/// is asked for, and only written (transfer memory is write-combined: reading it back is slow).
 /// </summary>
 class MCVulkanRenderer::ChunkedUpload
 {
 public:
-    explicit ChunkedUpload(std::shared_ptr<SDL_GPUDevice> device) : _Device(std::move(device)) {}
+    ChunkedUpload(std::shared_ptr<SDL_GPUDevice> device, std::shared_ptr<MCUploadSlots> slots, bool waits)
+        : _LeaseBytes(LeaseBytesFor(MCOptionalOf(std::shared_ptr<const MCUploadSlots>(slots))))
+        , _Batch(std::move(device), std::move(slots), MCUploadSlots::MCKind::Ground)
+        , _Waits(waits)
+    {
+    }
 
     ChunkedUpload(const ChunkedUpload&) = delete;
     ChunkedUpload& operator=(const ChunkedUpload&) = delete;
-
-    /// <summary>
-    /// Waits for the chunks sent to be copied (a fence goes back to SDL only once its commands have run; copying a
-    /// chunk takes the GPU about a millisecond); a chunk not sent (an error) is dropped.
-    /// </summary>
-    ~ChunkedUpload()
-    {
-        if (_Mapped != nullptr)
-        {
-            SDL_UnmapGPUTransferBuffer(_Device.get(), _Chunks[_Chunk].Transfer.get());
-        }
-
-        for (Chunk& chunk : _Chunks)
-        {
-            WaitFor(chunk);
-        }
-    }
 
     /// <summary>
     /// Where to write the bytes of an upload into a rectangle of <paramref name="texture"/>, <paramref name="width"/>
@@ -6567,11 +6679,11 @@ public:
         return Place(std::move(region), size);
     }
 
-    /// <summary>Sends up what's written since the last chunk went.</summary>
+    /// <summary>Sends up what's written since the last lease went.</summary>
     std::expected<void, std::string> Finish() { return Send(); }
 
 private:
-    /// <summary>An upload in the chunk being written: into a texture's rectangle, or into a buffer.</summary>
+    /// <summary>An upload in the lease being written: into a texture's rectangle, or into a buffer.</summary>
     struct Region
     {
         std::shared_ptr<SDL_GPUTexture> Texture;
@@ -6580,50 +6692,29 @@ private:
         uint32_t Y = 0;
         uint32_t Width = 0;
         uint32_t Height = 0;
-        size_t Offset = 0;
-        size_t Size = 0;
+        SDL_GPUTransferBuffer* From = nullptr;
+        uint32_t Offset = 0;
+        uint32_t Size = 0;
     };
 
-    /// <summary>A transfer buffer, its size, and the fence of the commands copying from it while they may run.</summary>
-    struct Chunk
+    /// <summary>
+    /// A lease's bytes: GroundLeaseBytes, or a quarter of what the ground may hold of fewer slots (several in flight as
+    /// the GPU copies them).
+    /// </summary>
+    static size_t LeaseBytesFor(MCOptionalRef<const MCUploadSlots> slots)
     {
-        std::shared_ptr<SDL_GPUTransferBuffer> Transfer;
-        size_t Size = 0;
-        SDL_GPUFence* Sent = nullptr;
-    };
-
-    /// <summary>Waits until <paramref name="chunk"/>'s commands have run (if it was sent), then lets the fence go.</summary>
-    void WaitFor(Chunk& chunk)
-    {
-        if (chunk.Sent == nullptr)
-        {
-            return;
-        }
-
-        // A fence let go before its commands have run may be handed out again and seem done too soon: one that can't
-        // be waited for is kept.
-        if (!SDL_WaitForGPUFences(_Device.get(), true, &chunk.Sent, 1))
-        {
-            SDL_Log("MCVulkanRenderer: the ground's upload can't wait for its copy (%s); its fence is kept",
-                    SDL_GetError());
-        }
-        else
-        {
-            SDL_ReleaseGPUFence(_Device.get(), chunk.Sent);
-        }
-
-        chunk.Sent = nullptr;
+        constexpr size_t LeasesInFlight = 4;
+        const size_t most = slots.has_value() ? slots->get().MostFor(MCUploadSlots::MCKind::Ground) : 0;
+        return std::clamp(most * MCUploadSlots::SlotBytes / LeasesInFlight, MCUploadSlots::SlotBytes, GroundLeaseBytes);
     }
 
     /// <summary>
-    /// Room for <paramref name="size"/> bytes of <paramref name="region"/> in the chunk being written (the next one,
-    /// once its last copy has run, when they don't fit: this one goes up).
+    /// Room for <paramref name="size"/> bytes of <paramref name="region"/> (in the next lease, once what's written goes
+    /// up, when they'd take this one past its bytes).
     /// </summary>
     std::expected<std::span<uint8_t>, std::string> Place(Region region, size_t size)
     {
-        size_t offset = AlignUpload(_Used);
-
-        if (_Mapped != nullptr && offset + size > _Chunks[_Chunk].Size)
+        if (!_Regions.empty() && _Batch.StagedBytes() + size > _LeaseBytes)
         {
             if (auto sent = Send(); !sent)
             {
@@ -6631,100 +6722,55 @@ private:
             }
         }
 
-        if (_Mapped == nullptr)
+        const MCUploadBatch::MCStaged staged = _Batch.Stage(size, _LeaseBytes, _Waits);
+
+        if (staged.Buffer == nullptr)
         {
-            Chunk& chunk = _Chunks[_Chunk];
-            WaitFor(chunk);
-
-            // An upload bigger than a chunk has a chunk of its size.
-            if (chunk.Transfer == nullptr || chunk.Size < size)
-            {
-                const size_t chunkSize = std::max(size, UploadChunkBytes);
-                auto made = MakeUploadBuffer(_Device, chunkSize, "the ground's upload");
-
-                if (!made)
-                {
-                    return std::unexpected(made.error());
-                }
-
-                chunk.Transfer = std::move(*made);
-                chunk.Size = chunkSize;
-            }
-
-            // Not cycled: its last copy has run.
-            void* const memory = SDL_MapGPUTransferBuffer(_Device.get(), chunk.Transfer.get(), false);
-
-            if (memory == nullptr)
-            {
-                return std::unexpected(SdlError("SDL_MapGPUTransferBuffer(the ground's upload)"));
-            }
-
-            _Mapped = static_cast<uint8_t*>(memory);
-            offset = 0;
+            return std::unexpected(std::format("the ground's upload of {} bytes has nowhere to go", size));
         }
 
-        region.Offset = offset;
-        region.Size = size;
+        region.From = staged.Buffer;
+        region.Offset = staged.Offset;
+        region.Size = static_cast<uint32_t>(size);
         _Regions.push_back(std::move(region));
-        _Used = offset + size;
-        return std::span(_Mapped + offset, size);
+        return staged.Bytes;
     }
 
-    /// <summary>Sends the chunk being written up, on a command buffer of its own; the next chunk is written next.</summary>
+    /// <summary>Sends what's written up, on a command buffer of its own.</summary>
     std::expected<void, std::string> Send()
     {
-        if (_Mapped == nullptr)
+        if (_Regions.empty())
         {
             return {};
         }
 
-        Chunk& chunk = _Chunks[_Chunk];
-        SDL_UnmapGPUTransferBuffer(_Device.get(), chunk.Transfer.get());
-        _Mapped = nullptr;
-        SDL_GPUCommandBuffer* const commands = SDL_AcquireGPUCommandBuffer(_Device.get());
-
-        if (commands == nullptr)
-        {
-            return std::unexpected(SdlError("SDL_AcquireGPUCommandBuffer(the ground's upload)"));
-        }
-
-        SDL_GPUCopyPass* const pass = SDL_BeginGPUCopyPass(commands);
-
-        for (const Region& region : _Regions)
-        {
-            if (region.Texture != nullptr)
+        auto sent = _Batch.Submit(
+            [&](SDL_GPUCopyPass& pass)
             {
-                UploadRectangle(pass, chunk.Transfer.get(), region.Offset, region.Width, region.Texture.get(), region.X,
-                                region.Y, region.Width, region.Height);
-            }
-            else
-            {
-                SDL_GPUTransferBufferLocation source{chunk.Transfer.get(), static_cast<uint32_t>(region.Offset)};
-                SDL_GPUBufferRegion destination{region.Buffer.get(), 0, static_cast<uint32_t>(region.Size)};
-                SDL_UploadToGPUBuffer(pass, &source, &destination, false);
-            }
-        }
+                for (const Region& region : _Regions)
+                {
+                    if (region.Texture != nullptr)
+                    {
+                        UploadRectangle(&pass, region.From, region.Offset, region.Width, region.Texture.get(), region.X,
+                                        region.Y, region.Width, region.Height);
+                    }
+                    else
+                    {
+                        SDL_GPUTransferBufferLocation source{region.From, region.Offset};
+                        SDL_GPUBufferRegion destination{region.Buffer.get(), 0, region.Size};
+                        SDL_UploadToGPUBuffer(&pass, &source, &destination, false);
+                    }
+                }
+            });
 
-        SDL_EndGPUCopyPass(pass);
         _Regions.clear();
-        _Used = 0;
-        chunk.Sent = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
-
-        if (chunk.Sent == nullptr)
-        {
-            return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence(the ground's upload)"));
-        }
-
-        _Chunk = (_Chunk + 1) % UploadChunks;
-        return {};
+        return sent;
     }
 
-    std::shared_ptr<SDL_GPUDevice> _Device;
-    std::array<Chunk, UploadChunks> _Chunks;
-    /// <summary>The chunk being written, its memory while mapped, the bytes written in it, and their uploads.</summary>
-    size_t _Chunk = 0;
-    uint8_t* _Mapped = nullptr;
-    size_t _Used = 0;
+    size_t _LeaseBytes = GroundLeaseBytes;
+    MCUploadBatch _Batch;
+    /// <summary>Whether it waits for slots (at a load), else goes past them (inside a frame).</summary>
+    bool _Waits = false;
     std::vector<Region> _Regions;
 };
 
@@ -6737,6 +6783,12 @@ std::expected<void, std::string> MCVulkanRenderer::PrepareTerrain(const MCTerrai
     }
 
     return UploadTerrainMesh(mesh);
+}
+
+size_t MCVulkanRenderer::PrepareHdPictures(std::span<const std::shared_ptr<const MCHdArt::Frame>> frames)
+{
+    return static_cast<size_t>(std::ranges::count_if(frames, [this](const std::shared_ptr<const MCHdArt::Frame>& frame)
+                                                     { return frame != nullptr && HdPictureOf(*frame).has_value(); }));
 }
 
 std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target, const MCTerrainFrame& frame)
@@ -6878,7 +6930,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         _TerrainMesh.Tiles == mesh.Tiles)
     {
         placeMesh();
-        ChunkedUpload upload(_Device);
+        ChunkedUpload upload(_Device, _Slots, !_Recording);
 
         if (auto sent = UploadTerrainCells(upload, mesh); !sent)
         {
@@ -7123,7 +7175,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
     }
 
     // Straight to the GPU, a chunk at a time. A tile's texels are decoded here first (its runs read them back).
-    ChunkedUpload upload(_Device);
+    ChunkedUpload upload(_Device, _Slots, !_Recording);
     std::vector<uint8_t> texels;
 
     for (size_t i = 0; i < places.size(); ++i)
@@ -8779,8 +8831,15 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
     // The keyed pictures' draws are the run's.
     _KeyedPictures.clear();
     SealedFrame sealed = std::move(_Run);
-    _Run = _SpareRun != nullptr ? std::move(_SpareRun) : SealedFrame(new FrameRun);
+    _Run = _SpareRun != nullptr ? std::move(_SpareRun) : NewRun();
     return sealed;
+}
+
+auto MCVulkanRenderer::NewRun() const -> SealedFrame
+{
+    SealedFrame run(new FrameRun);
+    run->Staging = MCUploadBatch(_Device, _Slots, MCUploadSlots::MCKind::Frame);
+    return run;
 }
 
 void MCVulkanRenderer::Recycle(SealedFrame run)
@@ -8805,13 +8864,8 @@ void MCVulkanRenderer::EmptyRun(FrameRun& run)
     run.DrawNext.clear();
     run.DrawsMoved = false;
     run.Uploads.clear();
-    run.Staging.clear();
-
-    // A burst's staging goes (KeptUploadBytes).
-    if (run.Staging.capacity() > KeptUploadBytes)
-    {
-        run.Staging = std::vector<uint8_t>();
-    }
+    // A run that ran sent its uploads' slots; one dropped gives them back.
+    run.Staging.Clear();
 
     run.TerrainDraws.clear();
     run.Pictures.clear();
@@ -8819,7 +8873,6 @@ void MCVulkanRenderer::EmptyRun(FrameRun& run)
     run.StripRows = 0;
     // The commands that read what was let go are submitted, or never will be (SDL frees it once the GPU is done).
     run.Retired.clear();
-    run.RetiredTransfers.clear();
     run.RetiredMovies.clear();
     run.Conversions.clear();
     run.CoverageMarks.clear();
@@ -8884,38 +8937,14 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
     // Port-only: the draws in their records' order.
     LayOutDraws(run);
 
-    // Everything up in one transfer: the uploads, then the draws. Past KeptUploadBytes, through a transfer buffer
-    // of the frame's own, released once the frame has run.
-    const size_t drawOffset = AlignUpload(run.Staging.size());
+    // Port-only (SPEC-memory.md's upload slots): the draws go up with the uploads, staged after them.
     const size_t drawBytes = run.Draws.size() * sizeof(run.Draws[0]);
-    const size_t total = drawOffset + drawBytes;
-    std::shared_ptr<SDL_GPUTransferBuffer> transfer = _Transfer;
+    MCUploadBatch::MCStaged draws;
 
-    if (total > KeptUploadBytes)
+    if (drawBytes > 0)
     {
-        auto made = MakeUploadBuffer(_Device, total, "the frame's uploads");
-
-        if (!made)
-        {
-            return std::unexpected(made.error());
-        }
-
-        transfer = std::move(*made);
-        run.RetiredTransfers.push_back(transfer);
-    }
-    else if (_Transfer == nullptr || _TransferSize < total)
-    {
-        const size_t size = std::min(total + total / 4, KeptUploadBytes);
-        auto made = MakeUploadBuffer(_Device, size, "the frames' uploads");
-        _Transfer = made ? std::move(*made) : nullptr;
-        _TransferSize = _Transfer != nullptr ? static_cast<uint32_t>(size) : 0;
-
-        if (!made)
-        {
-            return std::unexpected(made.error());
-        }
-
-        transfer = _Transfer;
+        draws = run.Staging.Stage(drawBytes, FrameLeaseBytes, false);
+        std::memcpy(draws.Bytes.data(), run.Draws.data(), draws.Bytes.size());
     }
 
     if (drawBytes > 0 && (_DrawBuffer == nullptr || _DrawBufferSize < drawBytes))
@@ -8932,48 +8961,54 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
         }
     }
 
-    void* const memory = SDL_MapGPUTransferBuffer(_Device.get(), transfer.get(), true);
-
-    if (memory == nullptr)
+    // Port-only: the uploads in order (a frame's picture kept before its texture goes up again reads it as it was),
+    // then the draws, on a command buffer of their own submitted before the frame's (the GPU runs its queue in order),
+    // whose fence frees their slots.
+    const auto record = [&](SDL_GPUCopyPass& copyPass)
     {
-        return std::unexpected(SdlError("SDL_MapGPUTransferBuffer"));
-    }
-
-    const std::span<uint8_t> mapped(static_cast<uint8_t*>(memory), total);
-    std::ranges::copy(run.Staging, mapped.begin());
-
-    if (drawBytes > 0)
-    {
-        std::memcpy(mapped.subspan(drawOffset, drawBytes).data(), run.Draws.data(), drawBytes);
-    }
-
-    SDL_UnmapGPUTransferBuffer(_Device.get(), transfer.get());
-    SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(&commands);
-
-    for (const Upload& upload : run.Uploads)
-    {
-        if (upload.Texture == nullptr)
+        for (const Upload& upload : run.Uploads)
         {
-            continue;
+            if (upload.Texture == nullptr)
+            {
+                continue;
+            }
+
+            if (upload.From != nullptr)
+            {
+                SDL_GPUTextureLocation from{};
+                from.texture = upload.From.get();
+                from.x = upload.X;
+                from.y = upload.Y;
+                SDL_GPUTextureLocation to{};
+                to.texture = upload.Texture.get();
+                to.x = upload.X;
+                to.y = upload.Y;
+                SDL_CopyGPUTextureToTexture(&copyPass, &from, &to, upload.Width, upload.Height, 1, false);
+                continue;
+            }
+
+            // Nothing could hold its bytes (logged as staged): not sent.
+            if (upload.Buffer != nullptr)
+            {
+                UploadRectangle(&copyPass, upload.Buffer, upload.Offset, upload.Width, upload.Texture.get(), upload.X,
+                                upload.Y, upload.Width, upload.Height);
+            }
         }
 
-        if (upload.From != nullptr)
+        if (draws.Buffer != nullptr)
         {
-            SDL_GPUTextureLocation from{};
-            from.texture = upload.From.get();
-            from.x = upload.X;
-            from.y = upload.Y;
-            SDL_GPUTextureLocation to{};
-            to.texture = upload.Texture.get();
-            to.x = upload.X;
-            to.y = upload.Y;
-            SDL_CopyGPUTextureToTexture(copyPass, &from, &to, upload.Width, upload.Height, 1, false);
-            continue;
+            SDL_GPUTransferBufferLocation source{draws.Buffer, draws.Offset};
+            SDL_GPUBufferRegion destination{_DrawBuffer.get(), 0, static_cast<uint32_t>(drawBytes)};
+            SDL_UploadToGPUBuffer(&copyPass, &source, &destination, false);
         }
+    };
 
-        UploadRectangle(copyPass, upload.Buffer != nullptr ? upload.Buffer.get() : transfer.get(), upload.Offset,
-                        upload.RowPixels != 0 ? upload.RowPixels : upload.Width, upload.Texture.get(), upload.X,
-                        upload.Y, upload.Width, upload.Height);
+    if (!run.Uploads.empty() || drawBytes > 0)
+    {
+        if (auto sent = run.Staging.Submit(record); !sent)
+        {
+            return sent;
+        }
     }
 
     // Port-only (the kept surfaces): what the uploads wrote is new to the draws that read it.
@@ -8981,15 +9016,6 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
     {
         Restamp(upload.Texture);
     }
-
-    if (drawBytes > 0)
-    {
-        SDL_GPUTransferBufferLocation source{transfer.get(), static_cast<uint32_t>(drawOffset)};
-        SDL_GPUBufferRegion destination{_DrawBuffer.get(), 0, static_cast<uint32_t>(drawBytes)};
-        SDL_UploadToGPUBuffer(copyPass, &source, &destination, false);
-    }
-
-    SDL_EndGPUCopyPass(copyPass);
 
     // A surface now drawn at another size (its window or the rectangle it's shown in changed) starts again.
     for (Surface& surface : _RunSurfaces)
@@ -10669,12 +10695,19 @@ auto MCVulkanRenderer::SealedSize(MCAddressKey key) const -> std::optional<Seale
 size_t MCVulkanRenderer::UploadBytesKept() const
 {
     WaitForRunning();
-    return _Run->Staging.capacity() + (_SpareRun != nullptr ? _SpareRun->Staging.capacity() : 0) + _TransferSize;
+    size_t pastSlots = 0;
+
+    for (const SealedFrame* run : {&_Run, &_SpareRun})
+    {
+        pastSlots += *run != nullptr ? (*run)->Staging.PastSlots() : 0;
+    }
+
+    return (_Slots != nullptr ? _Slots->Bytes() : 0) + pastSlots;
 }
 
 size_t MCVulkanRenderer::QueuedUploadBytes() const
 {
-    return _Run->Staging.size();
+    return _Run->Staging.StagedBytes();
 }
 
 bool MCVulkanRenderer::HoldsDraws() const

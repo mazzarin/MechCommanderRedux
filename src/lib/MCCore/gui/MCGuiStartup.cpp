@@ -25,6 +25,7 @@
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
+#include "platform/MCUploadSlots.h"
 #include "platform/MCWin32Defs.h"
 #include "sprite/MCHdArt.h"
 #include <charconv>
@@ -426,6 +427,30 @@ namespace
         SDL_Log("%.*s: planned as %llu GB", static_cast<int>(word.size()), word.data(),
                 static_cast<unsigned long long>(gb));
     }
+
+    /// <summary>
+    /// Port-only, for timing runs (SPEC-memory.md's upload slots, timed at 128, 256 and 512 MB):
+    /// <c>-hdslots &lt;MB&gt;</c>, the upload slots' size whatever the machine (MCUploadSlots::SetBytes). Whole MB; a
+    /// value it can't take is logged and left out.
+    /// </summary>
+    void SetUploadSlots(std::string_view value)
+    {
+        constexpr int BytesPerMbShift = 20;
+        constexpr size_t MostMb = MCUploadSlots::MostBytes >> BytesPerMbShift;
+        size_t mb = 0;
+        const char* const end = value.data() + value.size();
+
+        if (const auto [at, error] = std::from_chars(value.data(), end, mb);
+            error != std::errc() || at != end || mb == 0 || mb > MostMb)
+        {
+            SDL_Log("-hdslots: \"%.*s\" isn't a whole number of MB from 1 to %zu", static_cast<int>(value.size()),
+                    value.data(), MostMb);
+            return;
+        }
+
+        MCUploadSlots::SetBytes(mb << BytesPerMbShift);
+        SDL_Log("-hdslots: the upload slots take %zu MB", mb);
+    }
 }
 
 auto LobbyCommandWords(std::span<const std::string> words) -> std::string
@@ -798,6 +823,20 @@ auto ParseCommandLine(std::string_view commandLine) -> void
 
             i++;
         }
+        else if (MCIEquals(word, "-hdbriefingfill"))
+        {
+            // Port-only, for test runs (no player passes it): "-hdbriefingfill on|off": whether the fill on the GPU starts
+            // from the briefing (MCHdArt::SetBriefingFill); off, at the load, as before it.
+            if (hasArgument)
+            {
+                if (const std::optional<bool> on = OnOrOff(word, words[i + 1]); on.has_value())
+                {
+                    MCHdArt::SetBriefingFill(*on);
+                }
+            }
+
+            i++;
+        }
         else if (MCIEquals(word, "-briefingbench"))
         {
             // Port-only, for test runs (no player passes it): "-briefingbench <seconds>" times a new campaign's first
@@ -814,6 +853,16 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             if (hasArgument)
             {
                 SetPlannedMemory(word, words[i + 1]);
+            }
+
+            i++;
+        }
+        else if (MCIEquals(word, "-hdslots"))
+        {
+            // Port-only: the upload slots' size, for timing runs (SetUploadSlots).
+            if (hasArgument)
+            {
+                SetUploadSlots(words[i + 1]);
             }
 
             i++;

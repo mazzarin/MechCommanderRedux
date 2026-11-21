@@ -123,6 +123,8 @@ void MCMemoryRoom::SetSystem(std::shared_ptr<MCSystem> system)
     {
         std::scoped_lock lock(state.Lock);
         state.System = std::move(system);
+        // The card last read was the old system's (MCMemoryRoom::CardRoomNow).
+        state.LastCard.reset();
     }
 
     AskAgain();
@@ -167,6 +169,38 @@ MCMemoryRoom::MCArtRoom MCMemoryRoom::ArtRoom()
     const uint64_t ceiling =
         MCMemoryLedger::Ceiling(MCMemoryLedger::MCRoom{.MachineBytes = TotalBytes(), .Shared = shared});
     return MCArtRoom{.Bytes = ceiling > fixed ? ceiling - fixed : 0, .Shared = shared};
+}
+
+namespace
+{
+    /// <summary>
+    /// Port-only (20 Nov, the A10's 4 GB card): what a card of its own holds of the game's, at least what the ledger has
+    /// on the GPU, less the upload slots. DXGI's usage counted a 2x mission's ground a reading after the game had made it,
+    /// and the fill decided on the room it gave. The slots are in the machine's memory: on the A10 DXGI's non-local use
+    /// fell by the 128 MB of them let go at a load's end, and its local use didn't.
+    /// </summary>
+    uint64_t UsedAtLeastLedgers(uint64_t used)
+    {
+        const MCMemoryLedger::MCFigures gpu = MCMemoryLedger::OfSide(MCMemoryLedger::MCSide::Gpu);
+        const MCMemoryLedger::MCFigures slots = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTransfers);
+        const int64_t onCard = gpu.Allocated + gpu.Retired - (slots.Allocated + slots.Retired);
+        return std::max(used, static_cast<uint64_t>(std::max<int64_t>(onCard, 0)));
+    }
+}
+
+std::optional<uint64_t> MCMemoryRoom::CardRoomNow(uint64_t held)
+{
+    MCRoomState& state = TheState();
+    std::scoped_lock lock(state.Lock);
+
+    if (!state.LastCard.has_value() || state.LastCard->SharesMemory)
+    {
+        return std::nullopt;
+    }
+
+    MCCard card = *state.LastCard;
+    card.Used = UsedAtLeastLedgers(card.Used);
+    return CardRoom(card, held);
 }
 
 uint64_t MCMemoryRoom::CardRoom(const MCCard& card, uint64_t held)
@@ -245,7 +279,15 @@ MCMemoryRoom::MCFrameRoom MCMemoryRoom::MCReader::Frame(uint64_t held)
         }
 
         state.LastCard = _Card;
-        _Room = _Card.has_value() ? CardRoom(*_Card, held) : MostHdBytes;
+        std::optional<MCCard> counted = _Card;
+
+        // Port-only: the room on a card of its own counts at least what the ledger has on the GPU.
+        if (counted.has_value() && !counted->SharesMemory)
+        {
+            counted->Used = UsedAtLeastLedgers(counted->Used);
+        }
+
+        _Room = counted.has_value() ? CardRoom(*counted, held) : MostHdBytes;
         _CardShort = _Card.has_value() && _Card->Used > _Card->Budget;
     }
 

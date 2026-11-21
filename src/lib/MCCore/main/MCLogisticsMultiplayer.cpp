@@ -30,6 +30,7 @@
 #include "network/MCMultiPlayerHandlers.h"
 #include "object/MCMasterComponent.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCHdArt.h"
 
 namespace
 {
@@ -385,6 +386,10 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
         {
             mech->CalcStatus();
         }
+
+        // Port-only (SPEC-memory.md's manifest: every player's mechs): the other player's mech's HD art held from now,
+        // as this player's own are as they're placed.
+        MCHdArt::HoldMechAhead(mech->HdFolders);
     }
 
     part->CommanderID = commander;
@@ -1021,6 +1026,9 @@ auto MCLogistics::RemoveForceAtDropSlot(int32_t slotIndex, uint32_t playerID, bo
     else
     {
         const auto& mech = static_cast<const MCLogMech&>(*part);
+        // Port-only (SPEC-memory.md's "The GPU from the briefing"): the mission's no more, as it was held when placed
+        // (HandleDeployForceMessage).
+        MCHdArt::MechTakenOff(mech.HdFolders);
 
         // Original behaviour (OB-098): the pilot is removed by its id compared as a byte.
         if (const std::shared_ptr<MCLogWarrior> pilot = mech.NetworkPilot.lock())

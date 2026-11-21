@@ -174,6 +174,12 @@ public:
     bool HasFolder(std::string_view path) const;
 
     /// <summary>
+    /// Port-only (version 2): how many folders the archive has a row for, its own (the empty path) among them; 0 in an
+    /// archive of version 1.
+    /// </summary>
+    size_t FolderCount() const { return _FolderKeys.size(); }
+
+    /// <summary>
     /// Port-only (version 2): folder <paramref name="path"/>'s facts records, each its type and data, in order; none for
     /// a folder without facts or an archive of version 1.
     /// </summary>
@@ -218,13 +224,15 @@ public:
     /// <summary>
     /// Port-only (the hold, SPEC-memory.md's fill): a piece of the archive the hold may keep as stored, its place and
     /// stored bytes, and whether it's one the hold keeps: a version 2 archive's stream (a packet's or the heads', not the
-    /// tiles' or pictures'), a version 1 archive's entry (every one).
+    /// tiles' or pictures'), a version 1 archive's entry (every one); and its bytes unpacked (the frames' pictures as
+    /// the GPU takes them: SPEC-memory.md's whole mission on the GPU).
     /// </summary>
     struct HoldPiece
     {
         uint64_t At = 0;
         uint32_t Stored = 0;
         bool Kept = false;
+        uint32_t Unpacked = 0;
     };
 
     /// <summary>
@@ -235,6 +243,13 @@ public:
 
     /// <summary>Port-only (the hold): piece <paramref name="piece"/> in the order they lie.</summary>
     HoldPiece HoldPieceAt(uint32_t piece) const;
+
+    /// <summary>
+    /// Port-only (the hold, SPEC-memory.md's ground): the piece (<see cref="HoldPieceAt"/>) holding entry
+    /// <paramref name="index"/>'s stored bytes: a version 2 entry's stream, a version 1 entry's own (or the one its bytes
+    /// are stored once with); none for an index out of range.
+    /// </summary>
+    std::optional<uint32_t> PieceOf(int32_t index) const;
 
     /// <summary>
     /// Port-only (the hold): keeps pieces <paramref name="first"/> to <paramref name="end"/> (one past the last) as stored,

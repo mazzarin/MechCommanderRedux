@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
+#include "MCTestGuest.h"
 #include "MCTestShapes.h"
 #include "TestGame.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -20,6 +21,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCHdSettings.h"
+#include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
@@ -3894,6 +3896,58 @@ namespace
         /// <summary>Cuts the shapes' archive's file to nothing (open, it stays open), so no stream of it can be read.</summary>
         void CutShapes() const { std::filesystem::resize_file(_Shapes, 0); }
 
+        /// <summary>Stream <paramref name="stream"/>'s frame asked for ahead, as <paramref name="as"/>.</summary>
+        void AskStream(size_t stream, MCHdArt::ReadAs as) const
+        {
+            const MCHdArt::ShapeAhead shape{_Tables[stream], 0, RunArchive::Side, RunArchive::Side};
+            MCHdArt::ReadShapesAhead(std::span(&shape, 1), as);
+        }
+
+        /// <summary>Stream <paramref name="stream"/>'s frame as drawn.</summary>
+        std::shared_ptr<const MCHdArt::Frame> FindStream(size_t stream) const
+        {
+            return MCHdArt::FindShape(MCHdArt::ShapeTableHash(_Tables[stream]), 0, RunArchive::Side, RunArchive::Side);
+        }
+
+        /// <summary>Port-only (MCHdArt::FillGpu): each stream's folder as a packet, every frame its archive holds.</summary>
+        std::vector<MCHdArt::PacketAhead> Packets() const
+        {
+            std::vector<MCHdArt::PacketAhead> packets;
+
+            for (const std::vector<uint8_t>& table : _Tables)
+            {
+                packets.push_back({MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table)), std::nullopt, false, 0});
+            }
+
+            return packets;
+        }
+
+        /// <summary>
+        /// Port-only (MCHdArt::FillGpu): checks each stream's frame went up through the slots (<paramref name="up"/>):
+        /// its colours there as its file decodes them, its indices beside them, and the cache's record, which a draw
+        /// finds, keeping no colours.
+        /// </summary>
+        void CheckStaged(std::span<const MCHdArt::StagedPicture> up) const
+        {
+            REQUIRE_EQ(up.size(), _Tables.size());
+
+            for (size_t stream = 0; stream < _Tables.size(); ++stream)
+            {
+                MCTest::Scope scope(std::format("stream {}", stream));
+                const std::shared_ptr<const MCHdArt::Frame> found = FindStream(stream);
+                REQUIRE(found != nullptr);
+                CHECK(found->Colors.empty());
+                const auto picture = std::ranges::find_if(up, [&found](const MCHdArt::StagedPicture& staged)
+                                                          { return staged.Record->Id == found->Id; });
+                REQUIRE(picture != up.end());
+                const auto decoded = MCHdArt::DecodeHdf(_Files[stream], RunArchive::Side, RunArchive::Side);
+                REQUIRE(decoded.has_value());
+                const std::span<const uint8_t> colors = picture->Lease->At(picture->ColorsAt, picture->ColorBytes);
+                CHECK(std::ranges::equal(colors, decoded->Colors));
+                CHECK_EQ(picture->IndexBytes, decoded->Indices.size());
+            }
+        }
+
         const std::filesystem::path& Folder() const { return _Scratch.Path(); }
 
     private:
@@ -4123,6 +4177,714 @@ TEST_CASE("hd art: the load's fill holds what the load opens before the load end
     GHdArt = previous;
 }
 
+namespace
+{
+    /// <summary>Port-only (MCHdArt::FillGpu): upload slots over memory of the test's, whose copies are done at once.</summary>
+    class FillSlotsBacking final : public MCUploadSlots::MCBacking
+    {
+    public:
+        explicit FillSlotsBacking(size_t slots) : _Memory(slots * MCUploadSlots::SlotBytes) {}
+
+        std::span<uint8_t> Memory() override { return _Memory; }
+        SDL_GPUTransferBuffer* Buffer() override { return nullptr; }
+        bool Done(SDL_GPUFence*) override { return true; }
+        bool Wait(SDL_GPUFence*) override { return true; }
+        void Release(SDL_GPUFence*) override {}
+        void Flush() override {}
+
+    private:
+        std::vector<uint8_t> _Memory;
+    };
+
+    /// <summary>Port-only: the fill's slots for a scope, as the renderer sets its own (MCHdArt::SetUploadSlots).</summary>
+    class FillSlotsScope
+    {
+    public:
+        static constexpr size_t Slots = 64;
+
+        FillSlotsScope() : _Slots(MCUploadSlots::MakeWith(std::make_unique<FillSlotsBacking>(Slots)))
+        {
+            MCHdArt::SetUploadSlots(_Slots, true);
+        }
+
+        ~FillSlotsScope() { MCHdArt::SetUploadSlots(nullptr, false); }
+        FillSlotsScope(const FillSlotsScope&) = delete;
+        FillSlotsScope& operator=(const FillSlotsScope&) = delete;
+
+        MCUploadSlots& Pool() const { return *_Slots; }
+
+    private:
+        std::shared_ptr<MCUploadSlots> _Slots;
+    };
+
+    /// <summary>
+    /// Port-only: the renderer's part of a frame for the fill: the pictures the readers put in the slots taken, all of
+    /// them, their copies recorded, added to <paramref name="up"/>.
+    /// </summary>
+    void TakeEveryPicture(std::vector<MCHdArt::StagedPicture>& up)
+    {
+        for (MCHdArt::StagedPicture& picture :
+             MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+        {
+            MCHdArt::ColorsUploaded(*picture.Record);
+            up.push_back(std::move(picture));
+        }
+    }
+
+    /// <summary>
+    /// Port-only: a load's end (MCHdArt::FinishLoadFill), the renderer's part done as each frame of the bar is shown
+    /// (TakeEveryPicture): the pictures taken.
+    /// </summary>
+    std::vector<MCHdArt::StagedPicture> FinishTakingEveryPicture()
+    {
+        std::vector<MCHdArt::StagedPicture> up;
+        MCHdArt::FinishLoadFill([&up] { TakeEveryPicture(up); });
+        return up;
+    }
+
+    /// <summary>
+    /// Port-only: play's frames (or a briefing's) for the fill, at most <paramref name="most"/>, until
+    /// <paramref name="until"/> pictures are up: each after the readers' work, the fill's too (MCHdArt::WaitForGpuReads),
+    /// its pictures taken (TakeEveryPicture).
+    /// </summary>
+    void FramesUntilUp(uint64_t until, size_t most, std::vector<MCHdArt::StagedPicture>& up)
+    {
+        for (size_t frame = 0; frame < most && MCHdArt::GpuFillNow().Up < until; ++frame)
+        {
+            MCHdArt::WaitForReadAhead();
+            MCHdArt::WaitForHold();
+            MCHdArt::NextFrame(false);
+            MCHdArt::WaitForReadAhead();
+            MCHdArt::WaitForGpuReads();
+            TakeEveryPicture(up);
+        }
+    }
+
+    /// <summary>Port-only: the folders of <paramref name="pack"/>'s packets, as a mission's list names them.</summary>
+    std::vector<std::filesystem::path> PacketFolders(const HoldPack& pack)
+    {
+        std::vector<std::filesystem::path> folders;
+
+        for (const MCHdArt::PacketAhead& packet : pack.Packets())
+        {
+            folders.push_back(packet.Folder);
+        }
+
+        return folders;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): a type's archive in <paramref name="pack"/> at
+    /// <paramref name="type"/> (<c>objects/shapes90/7</c>), a packet's frame 0 in each of its streams, and a row for the
+    /// archive's own folder, as the pack's archives have.
+    /// </summary>
+    void WriteTypeArchive(const ScratchFolder& pack, std::string_view type, std::span<const int32_t> packets)
+    {
+        std::vector<Version2Stream> streams;
+
+        for (const int32_t packet : packets)
+        {
+            Version2Stream& stream = streams.emplace_back();
+            stream.Entries.push_back(
+                Raw(std::format("{}\\0.hdf", packet), FrameFile(RunArchive::Side, RunArchive::Side, packet)));
+        }
+
+        const std::filesystem::path archive = pack.Path() / std::filesystem::path(type).concat(".hda");
+        std::filesystem::create_directories(archive.parent_path());
+        WriteBytes(archive, BuildVersion2Streams(streams, {{std::string(), {}}}));
+    }
+
+    /// <summary>Port-only: a load's fill of <paramref name="pack"/>, to its end (FinishTakingEveryPicture).</summary>
+    std::vector<MCHdArt::StagedPicture> FillUnderTheBar(const HoldPack& pack)
+    {
+        MCHdArt::StartLoadFill();
+        pack.Open();
+        MCHdArt::FillGpu(pack.Packets());
+        return FinishTakingEveryPicture();
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2: the whole mission on the GPU, if it fits): under the loading bar the readers
+/// unpack the mission's frames from the hold and put their pictures in the upload slots, which the renderer copies up as
+/// the bar is shown; the bar ends once they're all up. Each picture's bytes are its file's, and the cache's record, which
+/// a draw finds with the archive's file gone, keeps no colours: nothing is read again for them.
+/// </summary>
+TEST_CASE("hd art: a mission that fits goes on the GPU under the loading bar, through the upload slots")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}, {StreamKind::Packet, 1000}};
+    const HoldPack pack("gpu-fill", pieces);
+    const FillSlotsScope slots;
+    const size_t again = MCHdArt::ColorsReadAgain();
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    const std::vector<MCHdArt::StagedPicture> up = FillUnderTheBar(pack);
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    CHECK(fill.Fits);
+    CHECK(fill.MissionBytes > 0);
+    CHECK_EQ(fill.Up, before + pieces.size());
+    CHECK(!fill.Reading);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    pack.CutShapes();
+    pack.CheckStaged(up);
+    CHECK_EQ(MCHdArt::ColorsReadAgain(), again);
+    MCHdArt::LetGoHold();
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): a picture the fill put up and the GPU let go of (past its room) before its
+/// frame was drawn held the frame's only colours: the frame goes from the cache whole, so asked for ahead it's read again
+/// by the readers, and its first draw finds its colours, reading nothing on the game's thread (19 Nov: mission 28, its
+/// mission past a 4 GiB room, read 379 mechs' frames' colours again so).
+/// </summary>
+TEST_CASE("hd art: a frame whose fill picture the GPU lets go before it's drawn is read ahead again")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-dropped", pieces);
+    const FillSlotsScope slots;
+    const std::vector<MCHdArt::StagedPicture> up = FillUnderTheBar(pack);
+    REQUIRE_EQ(up.size(), pieces.size());
+    const size_t again = MCHdArt::ColorsReadAgain();
+
+    // The GPU lets every picture go, no frame drawn yet; then each frame is asked for ahead, and drawn.
+    for (const MCHdArt::StagedPicture& picture : up)
+    {
+        MCHdArt::PictureDropped(picture.Record->Id);
+    }
+
+    for (size_t stream = 0; stream < pieces.size(); ++stream)
+    {
+        pack.AskStream(stream, MCHdArt::ReadAs::Load);
+    }
+
+    MCHdArt::WaitForLoadReads();
+    MCHdArt::KeepReadAhead();
+
+    for (size_t stream = 0; stream < pieces.size(); ++stream)
+    {
+        MCTest::Scope scope(std::format("stream {}", stream));
+        const std::shared_ptr<const MCHdArt::Frame> found = pack.FindStream(stream);
+        REQUIRE(found != nullptr);
+        CHECK(!MCHdArt::ColorsOf(*found).empty());
+    }
+
+    CHECK_EQ(MCHdArt::ColorsReadAgain(), again);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, items 2 and 3): a mission that doesn't fit on the GPU (a room the game itself takes)
+/// isn't put there: the bar ends once the hold has it, and its frames are drawn from the hold's memory as they were.
+/// </summary>
+TEST_CASE("hd art: a mission that doesn't fit on the GPU stays in the hold, its frames drawn from memory")
+{
+    constexpr uint64_t NoRoom = 2 * MCMemoryRoom::GameItselfBytes;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    const MCFakeMemoryScope memory(system);
+    system->Total = NoRoom;
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-short", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    const std::vector<MCHdArt::StagedPicture> up = FillUnderTheBar(pack);
+    CHECK(up.empty());
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    pack.CutShapes();
+    pack.CheckDrawnFromTheHold();
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): whether the whole mission fits on the GPU is decided once the archives
+/// being opened for the hold are open, on all of them: a mission whose first archive fits on the card and whose whole
+/// doesn't puts none of it up (19 Nov: mission 28 entered the fill on its first archive's 0.8 MB, then left it past a
+/// 4 GiB room, the GPU letting go of what it had put up).
+/// </summary>
+TEST_CASE("hd art: a mission that doesn't fit whole puts none of it on the GPU, though its first archive would fit")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-whole", pieces);
+    const FillSlotsScope slots;
+    const std::array<std::filesystem::path, 1> more{std::filesystem::path(HoldPack::MoreFolder)};
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+
+    // The other archive, as big, waits to be opened: the room fits the first with more than a tenth to spare.
+    MCHdArt::HoldOpens(true);
+    MCHdArt::OpenArchivesAhead(more);
+    MCHdArt::NextFrame(false);
+    const uint64_t first = MCHdArt::GpuFillNow().MissionBytes;
+    REQUIRE(first > 0);
+    MCHdArt::NoteGpuRoom(first + first / 2);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    MCHdArt::HoldOpens(false);
+    MCHdArt::WaitForReadAhead();
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::FinishLoadFill(
+        [&up]
+        {
+            for (MCHdArt::StagedPicture& picture :
+                 MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+            {
+                up.push_back(std::move(picture));
+            }
+        });
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    CHECK(up.empty());
+    CHECK(!fill.Fits);
+    CHECK_EQ(fill.MissionBytes, 2 * first);
+    CHECK_EQ(fill.Up, before);
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing": the opening): a mission that doesn't fit on the GPU whole puts
+/// its opening up first, in its order, as far as the opening's room (a quarter of the pictures' room) takes it; given room
+/// for all of it, the rest goes up after; left again, the opening is walked again within its room, nothing up read again
+/// (21 Nov: on a card the mission didn't fit, none of it went up, and its first draws were read in play).
+/// </summary>
+TEST_CASE("hd art: a mission that doesn't fit whole puts its opening on the GPU first, as far as its room takes it")
+{
+    constexpr size_t Pieces = 16;
+    constexpr size_t Frames = 16;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr uint64_t NoRoom = 1;
+    // The rooms, in tenths of the mission's bytes at the pages' share: one it doesn't fit (to enter or to stay), whose
+    // quarter takes a few of its folders; one it fits whole.
+    constexpr double ShortTenths = 9;
+    constexpr double WholeTenths = 20;
+    constexpr double Tenths = 10;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces(Pieces, HoldPiece{StreamKind::Packet});
+    const HoldPack pack("gpu-opening", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    // The pack's folders backwards: the opening's order goes up, not the list's.
+    std::vector<MCHdArt::OpeningPacket> opening;
+
+    for (const std::filesystem::path& folder : PacketFolders(pack) | std::views::reverse)
+    {
+        opening.push_back({folder, std::nullopt});
+    }
+
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::NoteGpuRoom(NoRoom);
+    MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+    MCHdArt::SetOpening(opening);
+    FramesUntilUp(before + 1, Frames, up);
+    const MCHdArt::GpuFill known = MCHdArt::GpuFillNow();
+    REQUIRE(known.MissionBytes > 0);
+    CHECK(!known.Fits);
+    CHECK(up.empty());
+    CHECK_EQ(known.OpeningAsked, 0);
+    const auto room = [&known](double tenths)
+    { return static_cast<uint64_t>(static_cast<double>(known.MissionBytes) * known.PagesShare * tenths / Tenths); };
+    // Within the opening's room, the first of its folders up, in its order: the pack's last.
+    const auto checkOpening = [&](uint64_t pictures)
+    {
+        const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+        CHECK(!fill.Fits);
+        CHECK(fill.OpeningDone);
+        REQUIRE(fill.OpeningAsked > 0);
+        CHECK(fill.OpeningAsked < Pieces);
+        CHECK(static_cast<uint64_t>(static_cast<double>(fill.OpeningBytes) * fill.PagesShare) <=
+              std::min(MCHdArt::OpeningMostBytes, room(ShortTenths) / MCHdArt::OpeningRoomShare));
+        CHECK_EQ(fill.Up, before + pictures);
+
+        for (size_t at = 0; at < fill.OpeningAsked; ++at)
+        {
+            MCTest::Scope scope(std::format("its folder {}", at));
+            const std::shared_ptr<const MCHdArt::Frame> found = pack.FindStream(Pieces - 1 - at);
+            REQUIRE(found != nullptr);
+            CHECK(std::ranges::any_of(up, [&found](const MCHdArt::StagedPicture& picture)
+                                      { return picture.Record->Id == found->Id; }));
+        }
+
+        return fill.OpeningAsked;
+    };
+
+    {
+        MCTest::Scope scope("a room it doesn't fit");
+        MCHdArt::NoteGpuRoom(room(ShortTenths));
+        FramesUntilUp(before + Pieces, Frames, up);
+        CHECK_EQ(up.size(), checkOpening(up.size()));
+    }
+
+    {
+        MCTest::Scope scope("a room it fits whole");
+        MCHdArt::NoteGpuRoom(room(WholeTenths));
+        FramesUntilUp(before + Pieces, Frames, up);
+        const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+        CHECK(fill.Fits);
+        CHECK(fill.OpeningDone);
+        CHECK_EQ(fill.OpeningAsked, Pieces);
+        CHECK_EQ(fill.Up, before + Pieces);
+    }
+
+    {
+        MCTest::Scope scope("left again");
+        MCHdArt::NoteGpuRoom(room(ShortTenths));
+        FramesUntilUp(before + Pieces + 1, Frames, up);
+        checkOpening(Pieces);
+        CHECK_EQ(up.size(), Pieces);
+    }
+
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): a load no briefing held for (a saved game's, a staged battle's) decides
+/// whether the mission fits on the GPU only once it has made its units (MCHdArt::LoadUnitsMade): a force in no list
+/// counts (20 Nov: the canyon benchmark's ten mechs, 6.2 GB of its 7.9, came after the fill had decided on 1.7).
+/// </summary>
+TEST_CASE("hd art: a load no briefing held for decides the fill on the GPU once its units are made")
+{
+    constexpr std::string_view Unlisted = "no-list";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-units", pieces);
+    const FillSlotsScope slots;
+    REQUIRE(MCHdArt::BriefingFolders(Unlisted).empty());
+    MCHdArt::StartLoadFill(Unlisted);
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    // The ground already up and in the room the card gives (MCHdArt::GroundOnGpu): the units are what's left.
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::GpuFillNow().MissionBytes > 0);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    MCHdArt::LoadUnitsMade();
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(FinishTakingEveryPicture().size(), pieces.size());
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2: "less only the plan's own error, which the ledger measures"): the fill
+/// decides whether the mission fits once the load's ground is on the GPU and the card has been read again after it, and
+/// counts the mission's frames at what the pages they share take (MCHdArt::GpuFill::PagesShare), not at their own bytes
+/// (20 Nov, the A10's 4 GB card: pictures took 1.25-1.48 times their bytes; the fill decided on the bytes before a 2x
+/// mission's 456 MB of ground went up, and 14 missions went up and came down again).
+/// </summary>
+TEST_CASE("hd art: the fill decides beside the load's ground, the mission's frames counted at what their pages take")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-ground", pieces);
+    const FillSlotsScope slots;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::NextFrame(false);
+    const MCHdArt::GpuFill known = MCHdArt::GpuFillNow();
+    REQUIRE(known.MissionBytes > 0);
+    REQUIRE(known.PagesShare > 1.0);
+    const auto pages = static_cast<uint64_t>(static_cast<double>(known.MissionBytes) * known.PagesShare);
+    constexpr uint64_t PlentyTimes = 4;
+
+    // Before the ground goes up, whatever the room.
+    MCHdArt::NoteGpuRoom(PlentyTimes * pages);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+
+    // The ground up, the room noted before it: not yet.
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+
+    // A room just what its pages take, short of their tenth to spare (its bytes alone fitted it with the tenth).
+    MCHdArt::NoteGpuRoom(pages);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+
+    // A room its pages fit with a tenth to spare.
+    MCHdArt::NoteGpuRoom(pages + pages / 5);
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(FinishTakingEveryPicture().size(), pieces.size());
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): what the HD pictures' pages take is measured once the fill has put the
+/// mission up whole, never part way, and kept for the next mission's (20 Nov, the A10's 4 GB card: measured part way it
+/// moved with the part going up, 2x 19's 1.58 near its load's end against 1.29 whole, and three missions that fit left
+/// the fill).
+/// </summary>
+TEST_CASE("hd art: the fill measures what its pictures' pages take once the mission is up whole, not part way")
+{
+    constexpr int64_t PagesBytes = int64_t{512} << 20;
+    constexpr uint64_t PlentyTimes = 4;
+    constexpr double ShareTolerance = 1e-9;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-share", pieces);
+    const FillSlotsScope slots;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NextFrame(false);
+    const MCHdArt::GpuFill known = MCHdArt::GpuFillNow();
+    REQUIRE(known.MissionBytes > 0);
+
+    // Part way, the pages part full: twice their pictures' bytes, past the bytes the share is measured from.
+    MCMemoryLedger::MCShare pages{MCMemoryLedger::MCHolder::GpuHdPictures};
+    pages.Set({.Payload = PagesBytes, .Allocated = 2 * PagesBytes});
+    MCHdArt::NoteGpuRoom(PlentyTimes * known.MissionBytes);
+    MCHdArt::NextFrame(false);
+    REQUIRE(MCHdArt::GpuFillNow().Fits);
+    MCHdArt::NextFrame(false);
+    CHECK_EQ(MCHdArt::GpuFillNow().PagesShare, known.PagesShare);
+
+    // Up whole: measured.
+    CHECK_EQ(FinishTakingEveryPicture().size(), pieces.size());
+    MCHdArt::NextFrame(false);
+    const MCMemoryLedger::MCFigures whole = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuHdPictures);
+    const double measured = static_cast<double>(whole.Allocated) / static_cast<double>(whole.Payload);
+    CHECK(std::abs(MCHdArt::GpuFillNow().PagesShare - measured) < ShareTolerance);
+    pages.Set({});
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): a fill left once the mission no longer fits puts nothing more up, the
+/// frames a reader had taken to read included (20 Nov, the A10's 4 GB card: 2x missions 22 and 24, left at the card's
+/// reading after they entered, went up whole in play, 64 pictures a frame, the game's thread waiting for slots).
+/// </summary>
+TEST_CASE("hd art: a fill left puts nothing more up, the frames a reader had taken included")
+{
+    constexpr uint64_t PlentyTimes = 4;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-left", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NextFrame(false);
+    const uint64_t mission = MCHdArt::GpuFillNow().MissionBytes;
+    REQUIRE(mission > 0);
+
+    // In, the readers holding the runs they take.
+    MCHdArt::HoldTakenRuns(true);
+    MCHdArt::NoteGpuRoom(PlentyTimes * mission);
+    MCHdArt::NextFrame(false);
+    REQUIRE(MCHdArt::GpuFillNow().Fits);
+    MCHdArt::WaitForHeldRun();
+
+    // Out before they're read.
+    MCHdArt::NoteGpuRoom(0);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    MCHdArt::HoldTakenRuns(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()).empty());
+    CHECK_EQ(MCHdArt::GpuFillNow().Waiting, 0);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's plan, item 2): a mission up whole stays in once the load's fill is done, whatever its
+/// estimate (the bytes of its archives, some of which the GPU never takes): what's up is all of it (20 Nov, the A10's
+/// 4 GB card: whole missions ended 66-175 MB of the estimate over what went up, and 2x 21 and full 1 were counted out in
+/// play by 2-3 MB as the card filled).
+/// </summary>
+TEST_CASE("hd art: a mission up whole stays in once the load's fill is done, whatever its estimate")
+{
+    constexpr uint64_t PlentyTimes = 4;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-done", pieces);
+    const FillSlotsScope slots;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::GroundOnGpu();
+    MCHdArt::NextFrame(false);
+    const uint64_t mission = MCHdArt::GpuFillNow().MissionBytes;
+    REQUIRE(mission > 0);
+    MCHdArt::NoteGpuRoom(PlentyTimes * mission);
+    MCHdArt::NextFrame(false);
+    REQUIRE(MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(FinishTakingEveryPicture().size(), pieces.size());
+
+    // Up whole, its pictures half the estimate: a room under the estimate but over them keeps it in.
+    const auto half = static_cast<int64_t>(mission / 2);
+    MCMemoryLedger::MCShare up{MCMemoryLedger::MCHolder::GpuHdPictures};
+    up.Set({.Payload = half, .Allocated = half});
+    MCHdArt::NoteGpuRoom(mission * 3 / 4);
+    MCHdArt::NextFrame(false);
+    CHECK(MCHdArt::GpuFillNow().Fits);
+
+    // A room under what's up: out.
+    MCHdArt::NoteGpuRoom(mission / 4);
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    up.Set({});
+    MCHdArt::NoteGpuRoom(std::nullopt);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's upload slots: a fill reader waits for its room before it takes any read): with the fill's
+/// share of the slots held (as pictures staged and not yet recorded hold it), its reader waits and the bar is shown
+/// meanwhile, the game's thread never waiting; once the share is given back the mission goes up whole.
+/// </summary>
+TEST_CASE("hd art: the fill waits for room in the upload slots, the bar shown meanwhile, then goes up whole")
+{
+    constexpr size_t ShowsHeld = 3;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-room", pieces);
+    const FillSlotsScope slots;
+    MCUploadSlots& pool = slots.Pool();
+    const int64_t waits = pool.Tally().Of(MCUploadSlots::MCKind::Fill).Waits;
+    std::optional<MCUploadSlots::MCLease> share =
+        pool.TryTake(MCUploadSlots::MCKind::Fill, pool.MostFor(MCUploadSlots::MCKind::Fill) * MCUploadSlots::SlotBytes);
+    REQUIRE(share.has_value());
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    size_t shows = 0;
+    uint64_t upWhileHeld = 0;
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::FinishLoadFill(
+        [&]
+        {
+            if (++shows == ShowsHeld)
+            {
+                upWhileHeld = MCHdArt::GpuFillNow().Up - before;
+                share.reset();
+            }
+
+            for (MCHdArt::StagedPicture& picture :
+                 MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+            {
+                MCHdArt::ColorsUploaded(*picture.Record);
+                up.push_back(std::move(picture));
+            }
+        });
+    CHECK(shows > ShowsHeld);
+    CHECK_EQ(upWhileHeld, 0);
+    CHECK(pool.Tally().Of(MCUploadSlots::MCKind::Fill).Waits > waits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before + pieces.size());
+    pack.CutShapes();
+    pack.CheckStaged(up);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's upload slots: who waits): with the fill's readers waiting for room in the slots (its share
+/// held, as pictures staged and not yet recorded hold it, which only the game's thread frees), an archive the load asks
+/// to open is opened all the same: other work ends a fill reader's wait, so the game's thread never waits on the readers
+/// for ever (19 Nov: the canyon's load hung so, every reader waiting for room and the game's thread for an open).
+/// </summary>
+TEST_CASE("hd art: an archive asked for while the fill's readers wait for room is opened")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("gpu-fill-open", pieces);
+    const FillSlotsScope slots;
+    MCUploadSlots& pool = slots.Pool();
+    const int64_t waits = pool.Tally().Of(MCUploadSlots::MCKind::Fill).Waits;
+    std::optional<MCUploadSlots::MCLease> share =
+        pool.TryTake(MCUploadSlots::MCKind::Fill, pool.MostFor(MCUploadSlots::MCKind::Fill) * MCUploadSlots::SlotBytes);
+    REQUIRE(share.has_value());
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    const std::array<std::filesystem::path, 1> more{std::filesystem::path(HoldPack::MoreFolder) / "0"};
+    bool openedWhileHeld = false;
+    uint64_t upWhileHeld = 0;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::FinishLoadFill(
+        [&]
+        {
+            // Once a fill reader has waited for room: the open asked for, and waited for as the load waits for its own.
+            if (share.has_value() && pool.Tally().Of(MCUploadSlots::MCKind::Fill).Waits > waits)
+            {
+                MCHdArt::OpenArchivesAhead(more);
+                MCHdArt::WaitForLoadReads();
+                openedWhileHeld = true;
+                upWhileHeld = MCHdArt::GpuFillNow().Up - before;
+                share.reset();
+            }
+
+            for (MCHdArt::StagedPicture& picture :
+                 MCHdArt::TakeStagedPictures(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()))
+            {
+                MCHdArt::ColorsUploaded(*picture.Record);
+            }
+        });
+    CHECK(openedWhileHeld);
+    CHECK_EQ(upWhileHeld, 0);
+    CHECK(MCHdArt::GpuFillNow().Up >= before + pieces.size());
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
 /// <summary>
 /// Port-only (SPEC-memory.md's "From the briefing"): the hold starts at a mission's briefing
 /// (MCHdArt::StartBriefingHold), reading the archives of the folders it's given in runs of MCHdArt::BriefingRunBytes
@@ -4152,7 +4914,7 @@ TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mis
 
     {
         MCTest::Scope scope("the briefing");
-        MCHdArt::StartBriefingHold(Mission, shapes);
+        MCHdArt::StartBriefingHold(Mission, shapes, false);
         // Its archive opened by the readers, then held.
         MCHdArt::WaitForReadAhead();
         MCHdArt::WaitForHold();
@@ -4181,7 +4943,7 @@ TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mis
 
     {
         MCTest::Scope scope("another mission's briefing");
-        MCHdArt::StartBriefingHold(Other, {});
+        MCHdArt::StartBriefingHold(Other, {}, false);
         CHECK_EQ(MCHdArt::HeldBytes(), 0u);
         CHECK(MCHdArt::HoldsFor(Other));
         CHECK(!MCHdArt::HoldsFor(Mission));
@@ -4193,11 +4955,515 @@ TEST_CASE("hd art: a briefing holds its mission's art in short runs, and the mis
 }
 
 /// <summary>
+/// Port-only (SPEC-memory.md's ground by name): a load notes the ground's frames it asks for among the folders it hands
+/// the hold (MCHdArt::LoadFolders: <c>terrain/&lt;hash&gt;</c>, <c>overlays/&lt;hash&gt;</c>), and a briefing given them
+/// holds those frames' streams of the ground's archives alone (MCHdArt::StartBriefingHold), each tile's relief map beside
+/// it with relief maps: never the rest of an archive that keeps every map's ground, nor a stream twice.
+/// </summary>
+TEST_CASE("hd art: a briefing holds the ground its list names, only those frames of the ground's archives")
+{
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view ReliefFolder = "relief";
+    constexpr int32_t Side = RunArchive::Side;
+    // Each stream a frame and a filler past the gap a run reads across, so no run takes a stream not asked for.
+    constexpr size_t Filler = MCHdArt::ReaderRunGap + 1;
+    constexpr std::array<uint64_t, 4> Keys{0x1111, 0x2222, 0x3333, 0x4444};
+    constexpr size_t TerrainRuns = 2;
+    constexpr size_t ReliefRuns = 2;
+    constexpr size_t OverlayRuns = 1;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const ScratchFolder pack("ground-hold");
+    const auto name = [](uint64_t key) { return std::format("{:016x}", key); };
+    std::vector<size_t> stored;
+    std::vector<Version2Stream> streams;
+
+    for (size_t at = 0; at < Keys.size(); ++at)
+    {
+        Version2Stream& stream = streams.emplace_back(Version2Stream{{}, MCFastFile::StreamKind::Tiles});
+        const std::vector<uint8_t> frame = FrameFile(Side, Side, static_cast<int32_t>(at) + 1);
+        stream.Entries.push_back(Raw(name(Keys[at]) + ".hdf", frame));
+        stream.Entries.push_back(Raw(std::format("filler{}.bin", at), std::vector<uint8_t>(Filler)));
+        stored.push_back(frame.size() + Filler);
+    }
+
+    const std::vector<uint8_t> archive = BuildVersion2Streams(streams);
+
+    for (const std::string_view folder : {MCHdArt::TerrainFolder, ReliefFolder, MCHdArt::OverlayFolder})
+    {
+        WriteBytes(pack.Path() / std::filesystem::path(folder).concat(".hda"), archive);
+    }
+
+    MCHdArt::SetPackFolder(pack.Path());
+
+    {
+        MCTest::Scope scope("a load's names");
+        const std::array<MCHdArt::GroundAhead, 1> tile{{{.Width = Side, .Height = Side, .Key = Keys[0]}}};
+        const std::array<MCHdArt::GroundAhead, 1> overlay{{{.Width = Side, .Height = Side, .Key = Keys[3]}}};
+        MCHdArt::StartLoadFill();
+        MCHdArt::ReadGroundAhead(tile, true);
+        MCHdArt::ReadOverlaysAhead(overlay);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::FinishLoadFill([] {});
+        const std::vector<std::filesystem::path> folders = MCHdArt::LoadFolders();
+        CHECK(std::ranges::contains(folders, std::filesystem::path(MCHdArt::TerrainFolder) / name(Keys[0])));
+        CHECK(std::ranges::contains(folders, std::filesystem::path(MCHdArt::OverlayFolder) / name(Keys[3])));
+        // Read for the load, not held: the ground's archives keep every map's.
+        CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+        MCHdArt::LetGoHold();
+    }
+
+    const std::vector<std::filesystem::path> list{std::filesystem::path(MCHdArt::TerrainFolder) / name(Keys[0]),
+                                                  std::filesystem::path(MCHdArt::TerrainFolder) / name(Keys[2]),
+                                                  std::filesystem::path(MCHdArt::OverlayFolder) / name(Keys[3])};
+    const size_t reads = MCHdArt::HeldReads();
+
+    {
+        MCTest::Scope scope("the briefing");
+        MCHdArt::StartBriefingHold(Mission, list, true);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::WaitForHold();
+        // The two tiles, their relief maps and the overlay: never the streams between.
+        CHECK_EQ(MCHdArt::HeldBytes(), 2 * (stored[0] + stored[2]) + stored[3]);
+        CHECK_EQ(MCHdArt::HeldReads(), reads + TerrainRuns + ReliefRuns + OverlayRuns);
+
+        // Its manifest (MCHdArt::Manifest): each ground archive once, with the frames its list names; not complete
+        // before the load, when the players' mechs may still change.
+        const MCHdArt::MissionManifest manifest = MCHdArt::Manifest();
+        CHECK(manifest.Mission == Mission);
+        CHECK(manifest.Players.empty());
+        CHECK(!manifest.Complete);
+        REQUIRE_EQ(manifest.Entries.size(), 3u);
+        uint64_t bytes = 0;
+        uint32_t frames = 0;
+
+        for (const MCHdArt::ManifestEntry& entry : manifest.Entries)
+        {
+            bytes += entry.Bytes;
+            frames += entry.Frames;
+            CHECK(entry.GpuBytes > 0);
+        }
+
+        CHECK_EQ(bytes, 2 * (stored[0] + stored[2]) + stored[3]);
+        CHECK_EQ(frames, 5u);
+    }
+
+    {
+        MCTest::Scope scope("the same list again");
+        MCHdArt::StartBriefingHold(Mission, list, true);
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::WaitForHold();
+        CHECK_EQ(MCHdArt::HeldBytes(), 2 * (stored[0] + stored[2]) + stored[3]);
+        CHECK_EQ(MCHdArt::HeldReads(), reads + TerrainRuns + ReliefRuns + OverlayRuns);
+    }
+
+    {
+        // Complete once the load begins, a change of its own.
+        MCTest::Scope scope("the load");
+        const uint64_t generation = MCHdArt::Manifest().Generation;
+        MCHdArt::StartLoadFill();
+        const MCHdArt::MissionManifest loading = MCHdArt::Manifest();
+        CHECK(loading.Complete);
+        CHECK(loading.Generation > generation);
+        CHECK_EQ(loading.Entries.size(), 3u);
+        MCHdArt::FinishLoadFill([] {});
+    }
+
+    MCHdArt::LetGoHold();
+    CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+    CHECK(MCHdArt::Manifest().Entries.empty());
+    MCHdArt::SetPackFolder({});
+    GHdArt = previous;
+}
+
+/// <summary>
 /// Port-only (MCHdArt::StartBriefingHold): a briefing left before the readers opened its archives hands none of them to
 /// the next mission's hold, as they open or at its start (MCHdArt::StartHold): each open is the hold's it was asked
 /// in, let go of with it (MCHdArt::LetGoHold), the archive the game's thread's to take. A later mission asking for
 /// them again holds them, past a folder found to have no archive of its own.
 /// </summary>
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing"): a mission that fits goes on the GPU from its briefing, at
+/// play's pace (the readers' work and the renderer's take each frame), before Launch; its load then asks for nothing more
+/// and its bar waits for nothing on the GPU.
+/// </summary>
+TEST_CASE("hd art: a mission that fits goes on the GPU from its briefing, and its load adds nothing")
+{
+    constexpr size_t MostFrames = 64;
+    constexpr std::string_view Mission = "mis0101";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}, {StreamKind::Packet, 1000}};
+    const HoldPack pack("briefing-fill", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::StagedPicture> up;
+
+    {
+        MCTest::Scope scope("the briefing");
+        MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+        FramesUntilUp(before + pieces.size(), MostFrames, up);
+        const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+        CHECK(fill.Fits);
+        CHECK(fill.MissionBytes > 0);
+        CHECK_EQ(fill.Up, before + pieces.size());
+        CHECK(!MCHdArt::LoadFilling());
+    }
+
+    {
+        MCTest::Scope scope("its load");
+        const uint64_t asked = MCHdArt::GpuFillNow().Asked;
+        MCHdArt::StartLoadFill(Mission);
+        MCHdArt::WaitForReadAhead();
+        CHECK(FinishTakingEveryPicture().empty());
+        CHECK_EQ(MCHdArt::GpuFillNow().Asked, asked);
+        CHECK_EQ(MCHdArt::GpuFillNow().Up, before + pieces.size());
+        CHECK(MCHdArt::GpuFillNow().Fits);
+    }
+
+    pack.CutShapes();
+    pack.CheckStaged(up);
+    MCHdArt::LetGoHold();
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing"): a mission's list names a type by its packet 0's folder, which
+/// opens the type's archive; the briefing puts up every packet the archive holds, though the type has no packet 0 and its
+/// numbers skip more than the pack's types do.
+/// </summary>
+TEST_CASE("hd art: the briefing puts up every packet of a type its list names by one folder")
+{
+    constexpr size_t MostFrames = 64;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view Type = "objects/shapes90/7";
+    constexpr std::array<int32_t, 3> Packets{3, 4, 140};
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const ScratchFolder pack("briefing-type-packets");
+    WriteTypeArchive(pack, Type, Packets);
+    MCHdArt::SetPackFolder(pack.Path());
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::StagedPicture> up;
+    const std::array<std::filesystem::path, 1> list{std::filesystem::path(Type) / "0"};
+    MCHdArt::StartBriefingHold(Mission, list, false);
+    FramesUntilUp(before + Packets.size(), MostFrames, up);
+    CHECK(MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before + Packets.size());
+    CHECK_EQ(up.size(), Packets.size());
+    MCHdArt::LetGoHold();
+    MCHdArt::SetPackFolder({});
+    GHdArt = previous;
+}
+
+namespace
+{
+    /// <summary>
+    /// Port-only (the opening): a load no briefing held for, of a mission that doesn't fit on the GPU whole (a room of
+    /// 0.9 of it at its pages' share), whose opening is the pack's folders backwards: the bar ends with it up
+    /// (<paramref name="waitForGpu"/>), or in a match (not) with it asked for before play, up in play's frames after.
+    /// </summary>
+    void CheckLoadOpening(std::string_view name, bool waitForGpu)
+    {
+        constexpr size_t Pieces = 8;
+        constexpr size_t Frames = 16;
+        constexpr double ShortShare = 0.9;
+        const ReaderScope readers({.Readers = 2, .Hold = true});
+        const int previous = GHdArt;
+        GHdArt = 1;
+        const std::vector<HoldPiece> pieces(Pieces, HoldPiece{StreamKind::Packet});
+        const HoldPack pack(name, pieces);
+        const FillSlotsScope slots;
+        const MCHdArt::GpuFill start = MCHdArt::GpuFillNow();
+        std::vector<MCHdArt::OpeningPacket> opening;
+
+        for (const std::filesystem::path& folder : PacketFolders(pack) | std::views::reverse)
+        {
+            opening.push_back({folder, std::nullopt});
+        }
+
+        MCHdArt::NoteGpuRoom(
+            static_cast<uint64_t>(static_cast<double>(pack.HeldBytes()) * start.PagesShare * ShortShare));
+        MCHdArt::StartLoadFill();
+        pack.Open();
+        MCHdArt::FillGpu(pack.Packets());
+        MCHdArt::SetOpening(opening);
+        std::vector<MCHdArt::StagedPicture> up;
+        MCHdArt::FinishLoadFill([&up] { TakeEveryPicture(up); }, waitForGpu);
+        const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+        CHECK(!fill.Fits);
+        CHECK(fill.OpeningDone);
+        REQUIRE(fill.OpeningAsked > 0);
+        CHECK(fill.OpeningAsked < Pieces);
+
+        if (!waitForGpu)
+        {
+            FramesUntilUp(start.Up + fill.OpeningAsked, Frames, up);
+        }
+
+        CHECK_EQ(up.size(), fill.OpeningAsked);
+        CHECK_EQ(MCHdArt::GpuFillNow().Up, start.Up + fill.OpeningAsked);
+        const std::shared_ptr<const MCHdArt::Frame> first = pack.FindStream(Pieces - 1);
+        REQUIRE(first != nullptr);
+        CHECK(std::ranges::any_of(up, [&first](const MCHdArt::StagedPicture& picture)
+                                  { return picture.Record->Id == first->Id; }));
+        MCHdArt::NoteGpuRoom(std::nullopt);
+        MCHdArt::LetGoHold();
+        GHdArt = previous;
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "Under the loading bar"): a load no briefing came before (a saved game) of a mission that
+/// doesn't fit on the GPU whole ends its bar once the mission's opening is up.
+/// </summary>
+TEST_CASE("hd art: a load no briefing held for ends its bar once the opening of a mission that doesn't fit is up")
+{
+    CheckLoadOpening("load-opening", true);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing", a match): a match's load, whose bar doesn't wait for the
+/// GPU, asks for the opening of a mission that doesn't fit while the load's archives are its to look up, so it goes up in
+/// play's first frames (21 Nov: only a fitting mission's rest was asked for then; in play none is opened for it).
+/// </summary>
+TEST_CASE("hd art: a match's load asks for the opening of a mission that doesn't fit before play")
+{
+    CheckLoadOpening("match-opening", false);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing": the opening): a packet of the player's mechs in the opening (a
+/// PAK and a packet number, which names one gesture at one facing on any mech) goes up as that packet of each mech placed
+/// whose part is that PAK's, and not of a mech of the mission's own, though the player places one of its type too.
+/// </summary>
+TEST_CASE("hd art: the opening's packets of the player's mechs go up as those of the mechs placed")
+{
+    constexpr size_t MostFrames = 64;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view Part = "mechs/legs90";
+    constexpr uint16_t Packet = 51;
+    // The player's mech's archive and the mission's own mech's, each with the opening's packet among others.
+    constexpr std::string_view Players = "mechs/legs90/7";
+    constexpr std::string_view Missions = "mechs/legs90/8";
+    constexpr std::array<int32_t, 3> Packets{0, Packet, Packet + 1};
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const ScratchFolder pack("opening-lance");
+    WriteTypeArchive(pack, Players, Packets);
+    WriteTypeArchive(pack, Missions, Packets);
+    MCHdArt::SetPackFolder(pack.Path());
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::StagedPicture> up;
+    const std::array<std::filesystem::path, 1> list{std::filesystem::path(Missions) / "0"};
+    const std::array<std::filesystem::path, 1> placed{std::filesystem::path(Players) / "0"};
+    const std::array<MCHdArt::OpeningPacket, 1> opening{MCHdArt::OpeningPacket{std::filesystem::path(Part), Packet}};
+    MCHdArt::StartBriefingHold(Mission, list, false);
+    MCHdArt::SetOpening(opening);
+    MCHdArt::HoldMechAhead(placed);
+    MCHdArt::HoldMechAhead(list);
+    FramesUntilUp(before + 2 * Packets.size(), MostFrames, up);
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    CHECK(fill.Fits);
+    CHECK_EQ(fill.Up, before + 2 * Packets.size());
+    CHECK(fill.OpeningDone);
+    CHECK_EQ(fill.OpeningAsked, 1);
+    CHECK(fill.OpeningBytes > 0);
+    MCHdArt::LetGoHold();
+    MCHdArt::SetPackFolder({});
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (the opening): a packet of the player's mechs at a place in the lance goes up as that packet of the mech
+/// placed there among those whose part is that PAK's (MCHdArt::OpeningLance's order), not of every one; a mech past the
+/// list's places takes theirs in turn again (21 Nov: every lance packet went up for every mech of its part, 3.2 times
+/// what the play drew, filling the opening's room).
+/// </summary>
+TEST_CASE("hd art: the opening's packets of the player's mechs at a place go up as those of the mech placed there")
+{
+    constexpr size_t MostFrames = 64;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr std::string_view Part = "mechs/legs90";
+    constexpr uint16_t First = 51;
+    constexpr uint16_t Second = 52;
+    // Three of the player's mechs placed in turn: the first has both packets, the second the second's, the third the
+    // first's; the list's play had two places.
+    constexpr std::array<std::string_view, 3> Mechs{"mechs/legs90/7", "mechs/legs90/9", "mechs/legs90/11"};
+    constexpr std::array<int32_t, 3> FirstPackets{0, First, Second};
+    constexpr std::array<int32_t, 2> SecondPackets{0, Second};
+    constexpr std::array<int32_t, 2> ThirdPackets{0, First};
+    // Placed so, 7/51, 9/52 and 11/51 go up (11 at place 2, the first again); for every mech, 7/52 too.
+    constexpr size_t OpeningFolders = 3;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const ScratchFolder pack("opening-places");
+    WriteTypeArchive(pack, Mechs[0], FirstPackets);
+    WriteTypeArchive(pack, Mechs[1], SecondPackets);
+    WriteTypeArchive(pack, Mechs[2], ThirdPackets);
+    MCHdArt::SetPackFolder(pack.Path());
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    const uint64_t frames = FirstPackets.size() + SecondPackets.size() + ThirdPackets.size();
+    std::vector<MCHdArt::StagedPicture> up;
+    const std::array<MCHdArt::OpeningPacket, 2> opening{MCHdArt::OpeningPacket{std::filesystem::path(Part), First, 0},
+                                                        MCHdArt::OpeningPacket{std::filesystem::path(Part), Second, 1}};
+    MCHdArt::StartBriefingHold(Mission, {}, false);
+    MCHdArt::SetOpening(opening);
+
+    for (const std::string_view mech : Mechs)
+    {
+        const std::array<std::filesystem::path, 1> placed{std::filesystem::path(mech) / "0"};
+        MCHdArt::HoldMechAhead(placed);
+    }
+
+    CHECK(std::ranges::equal(MCHdArt::OpeningLance(), Mechs));
+    FramesUntilUp(before + frames, MostFrames, up);
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    CHECK(fill.Fits);
+    CHECK_EQ(fill.Up, before + frames);
+    CHECK(fill.OpeningDone);
+    CHECK_EQ(fill.OpeningAsked, OpeningFolders);
+    MCHdArt::LetGoHold();
+    MCHdArt::SetPackFolder({});
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing": counted again at each change): a mech taken off in the mech
+/// bay comes off the mission's size on the GPU, as it went on it when placed, and goes back on when placed again (21 Nov:
+/// a mech taken off stayed counted, so swapping mechs could make a mission that fits seem not to).
+/// </summary>
+TEST_CASE("hd art: a mech taken off at the briefing comes off the mission's size on the GPU")
+{
+    constexpr std::string_view Mission = "mis0101";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("briefing-mech-off", pieces);
+    const FillSlotsScope slots;
+    // The other archive stands for a mech's folder of its own, as big as the mission's.
+    const std::array<std::filesystem::path, 1> mech{std::filesystem::path(HoldPack::MoreFolder)};
+    const auto missionBytes = []
+    {
+        MCHdArt::WaitForReadAhead();
+        MCHdArt::WaitForHold();
+        MCHdArt::NextFrame(false);
+        return MCHdArt::GpuFillNow().MissionBytes;
+    };
+
+    MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+    const uint64_t own = missionBytes();
+    REQUIRE(own > 0);
+    MCHdArt::HoldMechAhead(mech);
+    CHECK_EQ(missionBytes(), 2 * own);
+    MCHdArt::MechTakenOff(mech);
+    CHECK_EQ(missionBytes(), own);
+    MCHdArt::HoldMechAhead(mech);
+    CHECK_EQ(missionBytes(), 2 * own);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "When the system says memory is short", its first step): memory short, the fill on the GPU
+/// stops with the hold's, the rest of the mission asked for no more (21 Nov: it went on asking, the hold keeping no
+/// more), and the load's bar waits for nothing on the GPU.
+/// </summary>
+TEST_CASE("hd art: memory short stops the fill on the GPU with the hold's")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}, {StreamKind::Packet, 1000}};
+    const HoldPack pack("gpu-fill-memory-short", pieces);
+    const FillSlotsScope slots;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    MCHdArt::WaitForHold();
+    MCHdArt::NextFrame(true);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    const uint64_t asked = MCHdArt::GpuFillNow().Asked;
+    FinishTakingEveryPicture();
+    MCHdArt::NextFrame(false);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Asked, asked);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing", for the timing runs' comparison): with -hdbriefingfill off the
+/// briefing holds its mission's art and puts none of it on the GPU, as before it.
+/// </summary>
+TEST_CASE("hd art: with the briefing's fill off, a briefing puts nothing on the GPU")
+{
+    constexpr size_t Frames = 8;
+    constexpr std::string_view Mission = "mis0101";
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("briefing-fill-off", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::SetBriefingFill(false);
+    CHECK(!MCHdArt::BriefingFillWanted());
+    MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+    FramesUntilUp(before + pieces.size(), Frames, up);
+    CHECK(up.empty());
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    CHECK(!MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    MCHdArt::SetBriefingFill(true);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing", a match): a match's load ends once its art is in memory (the
+/// player checks in then), not once it's all on the GPU; what's left goes up in the frames after, so no player's fill
+/// holds up the room.
+/// </summary>
+TEST_CASE("hd art: a match's load ends with its art in memory, what's left going up after it")
+{
+    constexpr size_t MostFrames = 64;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("match-fill", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    MCHdArt::StartLoadFill();
+    pack.Open();
+    MCHdArt::FillGpu(pack.Packets());
+    // The renderer takes nothing meanwhile: a load that waited for the GPU would wait out its stall.
+    const auto began = std::chrono::steady_clock::now();
+    MCHdArt::FinishLoadFill([] {}, false);
+    CHECK(std::chrono::steady_clock::now() - began < MCHdArt::GpuFillStall);
+    CHECK(!MCHdArt::LoadFilling());
+    CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
+    CHECK(MCHdArt::GpuFillNow().Fits);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    std::vector<MCHdArt::StagedPicture> up;
+    FramesUntilUp(before + pieces.size(), MostFrames, up);
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before + pieces.size());
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
 TEST_CASE("hd art: a briefing left before its archives open hands them to no other mission's hold")
 {
     constexpr std::string_view Mission = "mis0101";
@@ -4214,8 +5480,8 @@ TEST_CASE("hd art: a briefing left before its archives open hands them to no oth
 
     // The first briefing's archive waits to be opened while the player goes on to another mission's briefing.
     MCHdArt::HoldOpens(true);
-    MCHdArt::StartBriefingHold(Mission, shapes);
-    MCHdArt::StartBriefingHold(Other, more);
+    MCHdArt::StartBriefingHold(Mission, shapes, false);
+    MCHdArt::StartBriefingHold(Other, more, false);
     MCHdArt::HoldOpens(false);
     MCHdArt::WaitForReadAhead();
     MCHdArt::WaitForHold();
@@ -4226,7 +5492,7 @@ TEST_CASE("hd art: a briefing left before its archives open hands them to no oth
     MCHdArt::WaitForHold();
     CHECK_EQ(MCHdArt::HeldBytes(), pack.HeldBytes());
     // A third mission's briefing asks for the first's folder: the shapes' archive opened for it is held now.
-    MCHdArt::StartBriefingHold(Third, shapes);
+    MCHdArt::StartBriefingHold(Third, shapes, false);
     MCHdArt::WaitForReadAhead();
     MCHdArt::WaitForHold();
     CHECK(MCHdArt::HoldsFor(Third));
@@ -4262,6 +5528,72 @@ TEST_CASE_ISOLATED("hd art: -hdbriefing holds a game segment's mission before it
     const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
     CHECK(MCHdArt::HoldsFor(mission));
     CHECK_EQ(TestBriefingSeconds, 0);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The mission's manifest"): a mission's load keeps what it handed the hold as the
+/// mission's list in the user folder (MCHdArt::KeepHoldList), the list the load works out (MCScenario::HoldList: the
+/// player's mechs' folders left out), and its next briefing holds from it (MCHdArt::BriefingFolders) before the
+/// program's table: a mod's mission, a multiplayer map or one made in the editor is held from its second play on. Beside
+/// it, the pieces of the game folder's files the load read (MCHdArt::KeepFilePieces), which the mission's next pick reads
+/// ahead (StartMissionHold).
+/// </summary>
+TEST_CASE_ISOLATED("hd art: a mission's load keeps its hold list, and its next briefing holds from it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const ScratchFolder pack("learned-hold-list");
+    MCTestGame::BootOptions.Started = [folder = pack.Path()]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    };
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    const MCScenario::MCHoldList list = Scenario()->HoldList(mission);
+    REQUIRE(!list.Folders.empty());
+    CHECK(list.PlayersLeft > 0);
+    const std::vector<std::filesystem::path> briefing = MCHdArt::BriefingFolders(mission);
+    REQUIRE_EQ(briefing.size(), list.Folders.size());
+
+    for (size_t index = 0; index < briefing.size(); ++index)
+    {
+        CHECK_EQ(briefing[index].generic_string(), list.Folders[index]);
+    }
+
+    // The original's packet files and archives among the files' pieces, all read ahead at the mission's next pick.
+    const std::vector<MCFilesAhead::MCFilePiece> pieces = MCHdArt::MissionFilePieces(mission);
+    REQUIRE(!pieces.empty());
+    CHECK(pieces == MCFilesAhead::NotedPieces());
+    const auto ofKind = [&pieces](std::string_view extension)
+    {
+        return std::ranges::any_of(
+            pieces, [extension](const MCFilesAhead::MCFilePiece& piece)
+            { return MCIEquals(std::filesystem::path(piece.File).extension().string(), extension); });
+    };
+
+    CHECK(ofKind(".pak"));
+    CHECK(ofKind(".fst"));
+    const uint64_t listed = std::ranges::fold_left(pieces | std::views::transform(&MCFilesAhead::MCFilePiece::Bytes),
+                                                   uint64_t{0}, std::plus<>());
+    const uint64_t from = MCFilesAhead::PiecesReadBytes();
+    StartMissionHold(mission);
+    constexpr int32_t WaitMs = 20000;
+
+    for (int32_t waited = 0; waited < WaitMs && MCFilesAhead::PiecesReadBytes() - from < listed; ++waited)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    CHECK_EQ(MCFilesAhead::PiecesReadBytes() - from, listed);
+    MCFilesAhead::ForgetPieces();
 }
 
 /// <summary>
@@ -6165,6 +7497,25 @@ TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's 
     CHECK_EQ(total, size_t{0});
 }
 
+namespace
+{
+    /// <summary>The stem's end of a list of the pieces of the game folder's files a load read, beside its list.</summary>
+    constexpr std::string_view PiecesListStem = ".files";
+
+    /// <summary>
+    /// Writes the pieces of the game folder's files the last load read (MCFilesAhead::NotedPieces) to
+    /// <paramref name="out"/>/&lt;mission&gt;.files.txt, beside its list.
+    /// </summary>
+    /// <returns>How many.</returns>
+    size_t WriteLoadPieces(const std::filesystem::path& out, std::string_view mission)
+    {
+        const std::vector<MCFilesAhead::MCFilePiece> pieces = MCFilesAhead::NotedPieces();
+        std::ofstream(out / MCFileSystem::FromUtf8(std::format("{}{}.txt", mission, PiecesListStem)), std::ios::binary)
+            << MCFilesAhead::PiecesText(pieces);
+        return pieces.size();
+    }
+}
+
 /// <summary>
 /// Tool (SPEC-memory.md's "From the briefing": a mission's list): <c>--hold-list &lt;pack&gt;</c> loads mission
 /// <c>--hold-list-mission &lt;n&gt;</c> (1 by default) with the pack and its hold on, as a player's load is, and writes the
@@ -6172,7 +7523,8 @@ TEST_CASE_ISOLATED("tool: --hd-guard-mission lists the original art a mission's 
 /// <c>&lt;--hold-list-out&gt;/&lt;mission&gt;.txt</c> (the working folder by default): all but those of the player's mechs
 /// that no other unit's tree shares, which a briefing reads as each is placed in the lance. A type's packets' folders
 /// (<c>objects/shapes90/&lt;n&gt;/&lt;packet&gt;</c>) are listed once, by its packet 0's, as the game hands a type's art
-/// ahead (MCAppearanceType's MCHdArt::OpenArchivesAhead): any of them opens the same archive.
+/// ahead (MCAppearanceType's MCHdArt::OpenArchivesAhead): any of them opens the same archive. Beside it,
+/// <c>&lt;mission&gt;.files.txt</c>: the pieces of the game folder's files the load read (MCFilesAhead::NotedPieces).
 /// </summary>
 TEST_CASE_ISOLATED(
     "tool: --hold-list writes the pack's folders a mission's load hands the hold, the player's mechs' out")
@@ -6207,99 +7559,34 @@ TEST_CASE_ISOLATED(
     const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
     REQUIRE(sprites != nullptr);
 
-    // Each mech's trees' folders, the player's parts' (PlayerPart in the mission's file, part n its Part<n + 1>) apart.
-    MCFitIniFile file;
-    REQUIRE_EQ(file.Open(GamePath(MissionPath, mission, ".fit")), 0);
-    std::set<std::string> players;
-    std::set<std::string> others;
-    const std::vector<MCPart>& parts = Scenario()->Parts;
-
-    // Part n is the file's Part<n> block (Parts[0] is none).
-    for (size_t index = 1; index < parts.size(); ++index)
-    {
-        const auto object = std::dynamic_pointer_cast<MCGameObject>(parts[index].Object.lock());
-        const auto actor = object != nullptr && object->ObjectClass == MCObjectClass::BattleMech
-                               ? std::static_pointer_cast<MCMechActor>(object->GetAppearance())
-                               : nullptr;
-        const auto tree =
-            actor != nullptr ? std::static_pointer_cast<MCSpriteTree>(actor->GetAppearanceType()) : nullptr;
-
-        if (tree == nullptr)
-        {
-            continue;
-        }
-
-        REQUIRE_EQ(file.SeekBlock(std::format("Part{}", index)), 0);
-        std::set<std::string>& into = file.Read<bool>("PlayerPart").value_or(false) ? players : others;
-
-        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
-        {
-            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
-            {
-                into.insert(MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber).generic_string());
-            }
-        }
-    }
-
-    REQUIRE(!players.empty());
-    const auto playersOnly = [&](const std::filesystem::path& folder)
-    {
-        const std::string text = folder.generic_string();
-        const auto under = [&text](const std::string& tree)
-        { return text == tree || (text.starts_with(tree) && text[tree.size()] == '/'); };
-        return std::ranges::any_of(players, under) && !std::ranges::any_of(others, under);
-    };
-
-    // A type's folder (the first three of a deeper folder's names) by its packet 0's.
-    constexpr size_t TypeDepth = 3;
-    const auto typeFolder = [](const std::filesystem::path& folder)
-    {
-        std::filesystem::path type;
-        size_t depth = 0;
-
-        for (auto name = folder.begin(); name != folder.end() && depth < TypeDepth; ++name, ++depth)
-        {
-            type /= *name;
-        }
-
-        return std::distance(folder.begin(), folder.end()) > static_cast<ptrdiff_t>(TypeDepth) ? type / "0" : folder;
-    };
-
-    size_t left = 0;
+    // The load's list as a player's game keeps it (MCScenario::HoldList): the player's mechs' folders left out.
+    const MCScenario::MCHoldList list = Scenario()->HoldList(mission);
     std::string lines;
-    std::set<std::string> listed;
 
-    for (const std::filesystem::path& folder : MCHdArt::LoadFolders())
+    for (const std::string& folder : list.Folders)
     {
-        if (playersOnly(folder))
-        {
-            ++left;
-            continue;
-        }
-
-        if (std::string type = typeFolder(folder).generic_string(); listed.insert(type).second)
-        {
-            lines += type + '\n';
-        }
+        lines += folder + '\n';
     }
 
     std::filesystem::create_directories(out);
     const std::filesystem::path written = out / MCFileSystem::FromUtf8(mission + ".txt");
     std::ofstream(written, std::ios::binary) << lines;
+    const size_t pieces = WriteLoadPieces(out, mission);
     std::cout << std::format(
-        "  mission {} ({}): {} folders handed, {} of the player's mechs' left out, {} types' listed, "
-        "to {}\n",
-        segment, mission, MCHdArt::LoadFolders().size(), left, listed.size(), MCFileSystem::ToUtf8(written));
+        "  mission {} ({}): {} folders handed, {} of the player's mechs' left out, {} types' listed, {} files' "
+        "pieces, to {}\n",
+        segment, mission, MCHdArt::LoadFolders().size(), list.PlayersLeft, list.Folders.size(), pieces,
+        MCFileSystem::ToUtf8(written));
     CHECK(!lines.empty());
+    CHECK(pieces > 0);
 
-    // With --hold-list-chassis, every mech chassis in the object file (an "ObjectClass" of 2) and its tree's folders,
-    // a line each to <out>/chassis.txt, for a briefing to read a lance's mechs as they're placed.
+    // With --hold-list-chassis, every mech chassis in the object file and its tree's folders (MechTreeFolders, as a
+    // briefing works a lance's mech out as it's placed), a line each to <out>/chassis.txt, to check against.
     if (!MCTest::Option("hold-list-chassis").has_value())
     {
         return;
     }
 
-    constexpr int32_t MechClass = 2;
     MCPacketFile objects;
     REQUIRE_EQ(objects.Open(GamePath(ObjectPath, ObjectPakName)), 0);
     std::string chassisLines;
@@ -6307,38 +7594,18 @@ TEST_CASE_ISOLATED(
 
     for (int32_t number = 1; number < objects.GetNumPackets(); ++number)
     {
-        MCFitIniFile packet;
+        const std::vector<std::filesystem::path> folders = MechTreeFolders(static_cast<uint32_t>(number));
 
-        if (objects.SeekPacket(number) != 0 || objects.GetPacketSize() == 0 ||
-            packet.Open(objects, static_cast<uint32_t>(objects.GetPacketSize())) != 0 ||
-            packet.SeekBlock("ObjectClass") != 0 || packet.Read<int32_t>("ObjectTypeNum").value_or(-1) != MechClass)
-        {
-            continue;
-        }
-
-        // The appearance its type would draw ("ObjectType"'s "Appearance"), read without making the type: a packet that
-        // won't make one would stop the game (Fatal).
-        const int32_t appearance =
-            packet.SeekBlock("ObjectType") == 0 ? packet.Read<int32_t>("Appearance").value_or(-1) : -1;
-        const auto tree = appearance >= 0 ? std::dynamic_pointer_cast<MCSpriteTree>(
-                                                AppearanceTypeList().GetAppearance(static_cast<uint32_t>(appearance)))
-                                          : nullptr;
-
-        if (tree == nullptr)
+        if (folders.empty())
         {
             continue;
         }
 
         std::string row = std::to_string(number);
 
-        for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+        for (const std::filesystem::path& folder : folders)
         {
-            if (const uint32_t fileNumber = tree->FileNumbers[part]; fileNumber != NoFileNumber)
-            {
-                row +=
-                    ' ' +
-                    (MCHdArt::MechArchiveFolder(sprites->PartFileName(part, true), fileNumber) / "0").generic_string();
-            }
+            row += ' ' + folder.generic_string();
         }
 
         chassisLines += row + '\n';
@@ -6351,11 +7618,82 @@ TEST_CASE_ISOLATED(
 }
 
 /// <summary>
+/// Tool (SPEC-memory.md's manifest: multiplayer maps): <c>--hold-list-map &lt;pack&gt;</c> loads the mission of match
+/// map <c>--hold-list-map-name &lt;map&gt;</c> (its <c>.mpk</c>'s name) with the pack and its hold on, as single player
+/// loads a campaign's, and writes the pack's folders the load handed the hold as <c>--hold-list</c> does, to
+/// <c>&lt;--hold-list-out&gt;/&lt;mission&gt;.txt</c> (the mission its file names), and its files' pieces beside it. A
+/// match's players' mechs are no part of a list (the players' part is worked out as each is picked), so a load with none
+/// leaves out nothing of the map's.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hold-list-map writes the pack's folders a match map's load hands the hold")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hold-list-map");
+    const std::optional<std::string_view> map = MCTest::Option("hold-list-map-name");
+
+    if (!pack.has_value() || !map.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::filesystem::path out = MCFileSystem::FromUtf8(MCTest::Option("hold-list-out").value_or("."));
+    MCTestGame::BootOptions.Started = [folder = MCFileSystem::FromUtf8(*pack)]
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    };
+
+    // A match's file has none of the campaign's lists (its warriors, parts and place in the master mission file): their
+    // reads assert, at its load and wherever the logistics' screens list a save of it.
+    const MCTest::ExpectAssert campaignOnly("", MCTest::ExpectAssert::AnyCount);
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // The map's mission: its file's first packet's.
+    MCPacketFile packets;
+    MCFitIniFile file;
+    REQUIRE_EQ(packets.Open(GamePath(SavePath, *map, ".mpk")), 0);
+    REQUIRE_EQ(packets.SeekPacket(0), 0);
+    REQUIRE_EQ(file.Open(packets, static_cast<uint32_t>(packets.GetPacketSize())), 0);
+    REQUIRE_EQ(file.SeekBlock("Multiplayer"), 0);
+    const MCFitResult<std::string> named = file.Read<std::string>("MissionName");
+    REQUIRE(named.has_value());
+    const std::string mission = *named;
+    file.Close();
+
+    // Its load as a campaign mission's.
+    Mission()->StartScenario(mission);
+    REQUIRE(MCTestGuest::SettleUntil([] { return Scenario() != nullptr && Scenario()->StartingUp; }));
+
+    REQUIRE(MCHdArt::Active());
+
+    const MCScenario::MCHoldList list = Scenario()->HoldList(mission);
+    std::string lines;
+
+    for (const std::string& folder : list.Folders)
+    {
+        lines += folder + '\n';
+    }
+
+    std::filesystem::create_directories(out);
+    const std::filesystem::path written = out / MCFileSystem::FromUtf8(mission + ".txt");
+    std::ofstream(written, std::ios::binary) << lines;
+    const size_t pieces = WriteLoadPieces(out, mission);
+    std::cout << std::format("  map {} ({}): {} folders handed, {} listed, {} files' pieces, to {}\n", *map, mission,
+                             MCHdArt::LoadFolders().size(), list.Folders.size(), pieces, MCFileSystem::ToUtf8(written));
+    CHECK(!lines.empty());
+    CHECK(pieces > 0);
+}
+
+/// <summary>
 /// Tool (SPEC-memory.md's "From the briefing"): <c>--hold-lists-table &lt;folder&gt;</c> reads the lists
 /// <c>--hold-list</c> wrote there (<c>&lt;mission&gt;.txt</c> each, and <c>chassis.txt</c>) and writes
 /// sprite/MCHoldLists.h, the lists the program carries, to <c>--hold-lists-out &lt;file&gt;</c>
-/// (<c>&lt;folder&gt;/MCHoldLists.h</c> by default): each folder once, each mission's and each mech chassis's as indices
-/// into them, the missions by name and the chassis by number.
+/// (<c>&lt;folder&gt;/MCHoldLists.h</c> by default): each folder once, each mission's as indices into them, the missions
+/// by name; each mission's ground by name (<c>terrain/&lt;hash&gt;</c>, <c>overlays/&lt;hash&gt;</c>) as its tile set
+/// and the slots of it named, a bit each (MCKnownGroundNames: the program's table); and the pieces of the game
+/// folder's files its load read (<c>&lt;mission&gt;.files.txt</c>), each file named once.
 /// </summary>
 TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table the program carries")
 {
@@ -6366,6 +7704,7 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
         return;
     }
 
+    // --hold-list-chassis's check file, which the table leaves out: a mech's are worked out as it's picked.
     constexpr std::string_view ChassisFile = "chassis";
     constexpr size_t RowLength = 16;
     const std::filesystem::path folder = MCFileSystem::FromUtf8(*in);
@@ -6373,7 +7712,7 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
                                           ? MCFileSystem::FromUtf8(*MCTest::Option("hold-lists-out"))
                                           : folder / "MCHoldLists.h";
     std::map<std::string, std::vector<std::string>> missions;
-    std::map<uint32_t, std::vector<std::string>> chassis;
+    std::map<std::string, std::vector<MCFilesAhead::MCFilePiece>> missionPieces;
 
     for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(folder))
     {
@@ -6384,39 +7723,120 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
 
         std::string name = MCFileSystem::ToUtf8(entry.path().stem());
         std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        if (name == ChassisFile)
+        {
+            continue;
+        }
+
+        if (name.ends_with(PiecesListStem))
+        {
+            std::ifstream file(entry.path(), std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+            missionPieces[name.substr(0, name.size() - PiecesListStem.size())] = MCFilesAhead::PiecesOfText(text);
+            continue;
+        }
+
         std::ifstream file(entry.path());
 
         for (std::string line; std::getline(file, line);)
         {
-            if (line.empty())
-            {
-                continue;
-            }
-
-            if (name != ChassisFile)
+            if (!line.empty())
             {
                 missions[name].push_back(line);
-                continue;
-            }
-
-            // "<number> <folder> <folder>...".
-            std::istringstream row(line);
-            uint32_t number = 0;
-            REQUIRE(static_cast<bool>(row >> number));
-            std::vector<std::string>& folders = chassis[number];
-
-            for (std::string word; row >> word;)
-            {
-                folders.push_back(word);
             }
         }
     }
 
     REQUIRE(!missions.empty());
-    REQUIRE(!chassis.empty());
     std::vector<std::string> folders;
     std::unordered_map<std::string, size_t> indices;
     std::string lists;
+
+    // A mission's ground by name, as the tile set whose slots name it all and a bitset of those slots, each kind's.
+    constexpr size_t BitsAWord = 64;
+    constexpr size_t WordsARow = 4;
+    const std::span<const MCKnownGroundNames> sets = MCGroundNamesInUse();
+    const auto groundOf = [&](const std::string& name, std::vector<std::string>& lines)
+    {
+        std::map<std::string, std::vector<uint64_t>> asked;
+        std::erase_if(lines,
+                      [&asked](const std::string& line)
+                      {
+                          const size_t slash = line.find('/');
+                          const std::string kind = line.substr(0, slash);
+
+                          if (slash == std::string::npos ||
+                              (kind != MCHdArt::TerrainFolder && kind != MCHdArt::OverlayFolder))
+                          {
+                              return false;
+                          }
+
+                          asked[kind].push_back(std::stoull(line.substr(slash + 1), nullptr, 16));
+                          return true;
+                      });
+
+        if (asked.empty())
+        {
+            return std::string("0, {}, {}");
+        }
+
+        const auto slotsIn = [](std::span<const MCGroundNameRow> rows, std::span<const uint64_t> keys)
+        {
+            std::vector<int32_t> slots;
+
+            for (const uint64_t key : keys)
+            {
+                if (const auto row = std::ranges::find(rows, key, &MCGroundNameRow::Key); row != rows.end())
+                {
+                    slots.push_back(row->Slot);
+                }
+            }
+
+            return slots;
+        };
+
+        for (const MCKnownGroundNames& set : sets)
+        {
+            const std::vector<int32_t> tiles = slotsIn(set.Tiles, asked[std::string(MCHdArt::TerrainFolder)]);
+            const std::vector<int32_t> overlays = slotsIn(set.Overlays, asked[std::string(MCHdArt::OverlayFolder)]);
+
+            if (tiles.size() != asked[std::string(MCHdArt::TerrainFolder)].size() ||
+                overlays.size() != asked[std::string(MCHdArt::OverlayFolder)].size())
+            {
+                continue;
+            }
+
+            const auto bits = [&](std::string identifier, const std::vector<int32_t>& slots)
+            {
+                std::ranges::replace_if(identifier, [](unsigned char c) { return std::isalnum(c) == 0; }, '_');
+                std::vector<uint64_t> words((static_cast<size_t>(set.Slots) + BitsAWord - 1) / BitsAWord);
+
+                for (const int32_t slot : slots)
+                {
+                    words[static_cast<size_t>(slot) / BitsAWord] |= uint64_t{1}
+                                                                    << (static_cast<size_t>(slot) % BitsAWord);
+                }
+
+                std::string numbers;
+
+                for (size_t at = 0; at < words.size(); ++at)
+                {
+                    numbers += std::format("{}0x{:016x},", at % WordsARow == 0 ? "\n    " : " ", words[at]);
+                }
+
+                lists += std::format("inline constexpr std::array<uint64_t, {}> {}{{{{{}\n}}}};\n", words.size(),
+                                     identifier, numbers);
+                return identifier;
+            };
+
+            return std::format("0x{:016x}, {}, {}", set.FilesHash, bits("Tiles_" + name, tiles),
+                               bits("Overlays_" + name, overlays));
+        }
+
+        FAIL_CHECK(std::format("{}: no tile set the program knows names all its ground", name));
+        return std::string("0, {}, {}");
+    };
 
     // An array of indices into Folders named <identifier>, of <lines>' folders (each added to Folders the first time).
     const auto listOf = [&](std::string identifier, const std::vector<std::string>& lines)
@@ -6441,17 +7861,57 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
         return identifier;
     };
 
-    std::string missionRows;
-    std::string chassisRows;
-
-    for (const auto& [name, lines] : missions)
+    // An array of the mission's pieces named Pieces_<name>, each file an index into Files (added the first time).
+    std::vector<std::string> files;
+    std::unordered_map<std::string, size_t> fileIndices;
+    size_t pieceCount = 0;
+    const auto piecesOf = [&](const std::string& name)
     {
-        missionRows += std::format("    {{\"{}\", {}}},\n", name, listOf("Mission_" + name, lines));
+        const auto found = missionPieces.find(name);
+
+        if (found == missionPieces.end() || found->second.empty())
+        {
+            return std::string("{}");
+        }
+
+        std::string identifier = "Pieces_" + name;
+        std::ranges::replace_if(identifier, [](unsigned char c) { return std::isalnum(c) == 0; }, '_');
+        std::string rows;
+
+        for (const MCFilesAhead::MCFilePiece& piece : found->second)
+        {
+            const auto [file, fresh] = fileIndices.try_emplace(piece.File, files.size());
+
+            if (fresh)
+            {
+                files.push_back(piece.File);
+            }
+
+            REQUIRE(piece.Offset + piece.Bytes <= std::numeric_limits<uint32_t>::max());
+            ++pieceCount;
+            rows += std::format("\n    {{{}, {}, {}}},", file->second, piece.Offset, piece.Bytes);
+        }
+
+        lists += std::format("inline constexpr std::array<Piece, {}> {}{{{{{}\n}}}};\n", found->second.size(),
+                             identifier, rows);
+        return identifier;
+    };
+
+    std::string missionRows;
+
+    for (auto& [name, lines] : missions)
+    {
+        const std::string ground = groundOf(name, lines);
+        const std::string folderList = listOf("Mission_" + name, lines);
+        missionRows += std::format("    {{\"{}\", {}, {}, {}}},\n", name, folderList, ground, piecesOf(name));
     }
 
-    for (const auto& [number, lines] : chassis)
+    REQUIRE(files.size() <= std::numeric_limits<uint16_t>::max());
+    std::string fileNames;
+
+    for (const std::string& name : files)
     {
-        chassisRows += std::format("    {{{}, {}}},\n", number, listOf(std::format("Chassis_{}", number), lines));
+        fileNames += std::format("    \"{}\",\n", name);
     }
 
     REQUIRE(folders.size() <= std::numeric_limits<uint16_t>::max());
@@ -6466,23 +7926,33 @@ TEST_CASE("tool: --hold-lists-table writes the missions' hold lists as the table
         "#pragma once\n\n"
         "// Port-only (SPEC-memory.md's \"From the briefing\"): the HD pack's folders each mission's load hands the "
         "hold,\n"
-        "// which its briefing reads ahead (MCHdArt::BriefingFolders), and each mech chassis's, read as it's placed in "
-        "the\n"
-        "// lance (MCHdArt::ChassisFolders): worked out by loading each mission with mc_tests --hold-list and written "
-        "by\n"
-        "// mc_tests --hold-lists-table (tests/HdPackTests.cpp). Don't edit it.\n\n"
+        "// and the ground's frames it asks for, which its briefing reads ahead (MCHdArt::BriefingFolders), and the "
+        "pieces of\n"
+        "// the game folder's files it reads (MCHdArt::MissionFilePieces); a lance's mechs' are worked out as each is "
+        "picked\n"
+        "// (MechTreeFolders). Worked out by loading each mission with mc_tests --hold-list (a match map's with\n"
+        "// --hold-list-map) and written by mc_tests --hold-lists-table (tests/HdPackTests.cpp). Don't edit it.\n\n"
         "#include <array>\n#include <cstdint>\n#include <span>\n#include <string_view>\n\n"
         "// clang-format off\n"
         "namespace MCHoldLists\n{{\n"
-        "/// <summary>A mission (its file's name, lower case) and its folders, as indices into Folders.</summary>\n"
-        "struct Mission\n{{\n    std::string_view Name;\n    std::span<const uint16_t> Folders;\n}};\n\n"
-        "/// <summary>A mech chassis (its packet in the object file) and its tree's folders, as indices into "
-        "Folders.</summary>\n"
-        "struct Chassis\n{{\n    uint32_t Number;\n    std::span<const uint16_t> Folders;\n}};\n\n"
-        "inline constexpr std::array<std::string_view, {}> Folders{{{{\n{}}}}};\n\n{}\n"
-        "inline constexpr std::array<Mission, {}> Missions{{{{\n{}}}}};\n\n"
-        "inline constexpr std::array<Chassis, {}> Mechs{{{{\n{}}}}};\n}}\n\n// clang-format on\n",
-        folders.size(), names, lists, missions.size(), missionRows, chassis.size(), chassisRows);
-    std::cout << std::format("  {} missions, {} chassis, {} folders, to {}\n", missions.size(), chassis.size(),
-                             folders.size(), MCFileSystem::ToUtf8(out));
+        "/// <summary>A piece of a file of the game folder's a load reads: the file, as an index into Files, and "
+        "where its\n"
+        "/// bytes lie.</summary>\n"
+        "struct Piece\n{{\n    uint16_t File = 0;\n    uint32_t Offset = 0;\n    uint32_t Bytes = 0;\n}};\n\n"
+        "/// <summary>\n"
+        "/// A mission (its file's name, lower case), its folders, as indices into Folders, the ground its load "
+        "asks for:\n"
+        "/// its tile set (MCKnownGroundNames::FilesHash; 0: none) and the slots of it asked for as ground tiles and "
+        "as\n"
+        "/// overlays, a bit each, from slot 0's lowest; and the pieces of the game folder's files it reads.\n"
+        "/// </summary>\n"
+        "struct Mission\n{{\n    std::string_view Name;\n    std::span<const uint16_t> Folders;\n"
+        "    uint64_t GroundSet = 0;\n    std::span<const uint64_t> Tiles;\n    std::span<const uint64_t> "
+        "Overlays;\n    std::span<const Piece> Pieces;\n}};\n\n"
+        "inline constexpr std::array<std::string_view, {}> Folders{{{{\n{}}}}};\n\n"
+        "inline constexpr std::array<std::string_view, {}> Files{{{{\n{}}}}};\n\n{}\n"
+        "inline constexpr std::array<Mission, {}> Missions{{{{\n{}}}}};\n}}\n\n// clang-format on\n",
+        folders.size(), names, files.size(), fileNames, lists, missions.size(), missionRows);
+    std::cout << std::format("  {} missions, {} folders, {} files' pieces of {} files, to {}\n", missions.size(),
+                             folders.size(), pieceCount, files.size(), MCFileSystem::ToUtf8(out));
 }

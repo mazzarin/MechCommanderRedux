@@ -123,6 +123,93 @@ TEST_CASE("hd caches: the frames in memory take the plan's share, on the GPU 90%
     CHECK(!alone.MemoryShort);
 }
 
+namespace
+{
+    /// <summary>What the ledger counts on the GPU less the upload slots, which are in the machine's memory.</summary>
+    uint64_t LedgersOnCard()
+    {
+        const MCMemoryLedger::MCFigures gpu = MCMemoryLedger::OfSide(MCMemoryLedger::MCSide::Gpu);
+        const MCMemoryLedger::MCFigures slots = MCMemoryLedger::Of(MCMemoryLedger::MCHolder::GpuTransfers);
+        return static_cast<uint64_t>(gpu.Allocated + gpu.Retired - (slots.Allocated + slots.Retired));
+    }
+}
+
+/// <summary>
+/// Port-only (20 Nov, the A10's 4 GB card): a card of its own holds at least what the ledger counts on the GPU, less the
+/// upload slots (in the machine's memory: on the A10 DXGI's non-local use fell as they were let go), its own figure late
+/// or not (DXGI's usage counted a 2x mission's ground a reading after the game had made it, and the fill decided on the
+/// room it gave). A card sharing the machine's memory keeps its own.
+/// </summary>
+TEST_CASE("hd caches: a card of its own holds at least what the ledger counts on the GPU, its own figure late or not")
+{
+    constexpr uint64_t Budget = 3584 * MB;
+    constexpr uint64_t Late = 200 * MB;
+    constexpr int64_t Ground = int64_t{600} << 20;
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    system->Budget = Budget;
+    system->Rest = Late;
+    system->Held = [] { return uint64_t{0}; };
+    MCFakeMemoryScope scope(system);
+    MCMemoryLedger::MCShare ground{MCMemoryLedger::MCHolder::GpuHdGround};
+    ground.Set({.Payload = Ground, .Allocated = Ground});
+    // The upload slots, in the machine's memory, aren't counted on the card.
+    MCMemoryLedger::MCShare slots{MCMemoryLedger::MCHolder::GpuTransfers};
+    slots.Set({.Payload = Ground, .Allocated = Ground});
+    const auto counted = LedgersOnCard();
+    REQUIRE(counted > Late);
+
+    for (const bool shares : {false, true})
+    {
+        MCTest::Scope where(shares ? "a card sharing the machine's memory" : "a card of its own");
+        system->SharesMemory = shares;
+        MCTestClock clock;
+        MCMemoryRoom::MCReader reader(std::string(DeviceName), clock.Reads());
+        CHECK_EQ(reader.Frame(0).PictureBytes, shares ? Budget - Late : Budget * 9 / 10 - counted);
+    }
+}
+
+/// <summary>
+/// Port-only (20 Nov, the A10's 4 GB card): the room the card last read gives the pictures counts what the ledger has on
+/// the GPU now, so what the game made since the read (a load's ground) is in it (the fill decided on 2478 MB of room at
+/// every mission, the ground left out). A card sharing the machine's memory, or none read, gives none.
+/// </summary>
+TEST_CASE("hd caches: the card's room now counts what the game made on the GPU since the card was read")
+{
+    constexpr uint64_t Budget = 3584 * MB;
+    constexpr uint64_t Used = 200 * MB;
+    constexpr int64_t Ground = int64_t{600} << 20;
+    constexpr uint64_t Held = 50 * MB;
+    const auto system = std::make_shared<MCFakeMemorySystem>();
+    system->Budget = Budget;
+    system->Rest = Used;
+    system->Held = [] { return uint64_t{0}; };
+    MCFakeMemoryScope scope(system);
+
+    for (const bool shares : {false, true})
+    {
+        MCTest::Scope where(shares ? "a card sharing the machine's memory" : "a card of its own");
+        system->SharesMemory = shares;
+        MCTestClock clock;
+        MCMemoryRoom::MCReader reader(std::string(DeviceName), clock.Reads());
+        const uint64_t read = reader.Frame(0).PictureBytes;
+        const uint64_t ledgerBefore = LedgersOnCard();
+        const uint64_t usedBefore = std::max(Used, ledgerBefore);
+        MCMemoryLedger::MCShare ground{MCMemoryLedger::MCHolder::GpuHdGround};
+        ground.Set({.Payload = Ground, .Allocated = Ground});
+
+        if (shares)
+        {
+            CHECK(!MCMemoryRoom::CardRoomNow(Held).has_value());
+            continue;
+        }
+
+        const std::optional<uint64_t> now = MCMemoryRoom::CardRoomNow(Held);
+        REQUIRE(now.has_value());
+        CHECK_EQ(read, Budget * 9 / 10 - usedBefore);
+        CHECK_EQ(*now, Budget * 9 / 10 + Held - std::max(Used, ledgerBefore + static_cast<uint64_t>(Ground)));
+    }
+}
+
 /// <summary>
 /// The card is asked again every two seconds (MCMemoryRoom::CardReadInterval), its room holding between; a card over
 /// its budget (other programs took some) trims the HD pictures to what's left and, sharing the machine's memory, the

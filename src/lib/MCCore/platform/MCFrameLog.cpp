@@ -2,6 +2,10 @@
 #include "platform/MCFrameLog.h"
 #include "platform/MCMemoryRoom.h"
 
+#include <condition_variable>
+#include <stop_token>
+#include <thread>
+
 namespace
 {
     /// <summary>Frames seen before any is called slow: what is usual needs a few.</summary>
@@ -59,11 +63,28 @@ namespace
         size_t ShownLong = 0;
     };
 
+    /// <summary>
+    /// Port-only: the log's file, written on a thread of its own. The game's thread hands it the text written where it
+    /// once wrote and flushed the file itself (hand), so a write the disk holds up never lengthens a frame: a frame's time
+    /// starts as the last one ends, before that one's text is written, and under a backup's load such writes took
+    /// 136-353 ms (21 Nov), counted in the next frame as time none of its parts took. The text handed and not yet written
+    /// and whether some is being written are under Lock; the file is the thread's while it runs.
+    /// </summary>
+    struct MCFrameLogWriter
+    {
+        std::mutex Lock;
+        std::condition_variable_any Changed;
+        std::string Waiting;
+        bool Writing = false;
+        std::ofstream File;
+        std::jthread Thread;
+    };
+
     struct MCFrameLogState
     {
         /// <summary>
         /// Guards the frame's parts, counts and notes, which come from any thread (MCFrameLog.h's Threads), and the
-        /// log's generation. The rest is the game thread's alone (Open, Close, NextFrame), so the file is written
+        /// log's generation. The rest is the game thread's alone (Open, Close, NextFrame), so the text is written
         /// without it: a render thread's part never waits for a write.
         /// </summary>
         std::mutex Lock;
@@ -73,7 +94,9 @@ namespace
         MCNamed<uint64_t> Parts;
         MCNamed<int64_t> Counts;
         std::vector<std::string> Notes;
-        std::ofstream File;
+        /// <summary>The text written since it was last handed to the writer (hand).</summary>
+        std::string Text;
+        MCFrameLogWriter Writer;
         uint64_t Opened = 0;
         /// <summary>When the frame running started (none before the first).</summary>
         std::optional<uint64_t> FrameStart;
@@ -116,6 +139,48 @@ namespace
     {
         const MCFrameLog::MCClock& clock = testClock();
         return clock ? clock() : SDL_GetPerformanceCounter();
+    }
+
+    /// <summary>The writer's thread: writes the text handed it as it comes, until stopped with none left.</summary>
+    void writeHanded(const std::stop_token& stop, MCFrameLogWriter& writer)
+    {
+        std::unique_lock lock(writer.Lock);
+
+        while (true)
+        {
+            writer.Changed.wait(lock, stop, [&writer] { return !writer.Waiting.empty(); });
+
+            if (writer.Waiting.empty())
+            {
+                return;
+            }
+
+            const std::string text = std::exchange(writer.Waiting, {});
+            writer.Writing = true;
+            lock.unlock();
+            writer.File << text;
+            writer.File.flush();
+            lock.lock();
+            writer.Writing = false;
+            writer.Changed.notify_all();
+        }
+    }
+
+    /// <summary>Hands the text written so far to the writer's thread.</summary>
+    void hand(MCFrameLogState& log)
+    {
+        if (log.Text.empty())
+        {
+            return;
+        }
+
+        {
+            const std::scoped_lock lock(log.Writer.Lock);
+            log.Writer.Waiting += log.Text;
+        }
+
+        log.Text.clear();
+        log.Writer.Changed.notify_all();
     }
 
     double toMs(uint64_t ticks)
@@ -239,21 +304,21 @@ namespace
 
     void writeFrame(MCFrameLogState& log, const MCFrameRecord& frame, double ms, double usual, bool slow)
     {
-        log.File << std::format("frame {} {:.2f} ms (usual {:.2f}){}\n", log.Frame, ms, usual, slow ? " SLOW" : "");
+        log.Text += std::format("frame {} {:.2f} ms (usual {:.2f}){}\n", log.Frame, ms, usual, slow ? " SLOW" : "");
 
         for (const auto& [name, ticks] : frame.Parts)
         {
-            log.File << std::format("    {:<22} {:8.2f}\n", name, toMs(ticks));
+            log.Text += std::format("    {:<22} {:8.2f}\n", name, toMs(ticks));
         }
 
         for (const auto& [name, amount] : frame.Counts)
         {
-            log.File << std::format("    + {}: {}\n", name, amount);
+            log.Text += std::format("    + {}: {}\n", name, amount);
         }
 
         for (const std::string& note : frame.Notes)
         {
-            log.File << "    * " << note << "\n";
+            log.Text += std::format("    * {}\n", note);
         }
     }
 
@@ -262,54 +327,55 @@ namespace
     {
         MCSecond& second = log.Second;
         const double frames = static_cast<double>(second.Times.size());
-        log.File << std::format("-- {:.1f} s: {} frames, {}", toMs(end - log.Opened) / MsPerSecond, second.Times.size(),
+        log.Text += std::format("-- {:.1f} s: {} frames, {}", toMs(end - log.Opened) / MsPerSecond, second.Times.size(),
                                 timesText(second.Times));
 
         if (second.RefreshHz > 0.0)
         {
-            log.File << std::format("; {} over {} refreshes at {:.0f} Hz", second.LongFrames, LongFrameRefreshes,
+            log.Text += std::format("; {} over {} refreshes at {:.0f} Hz", second.LongFrames, LongFrameRefreshes,
                                     second.RefreshHz);
         }
 
         if (!second.Shown.empty())
         {
-            log.File << std::format("; shown: {} frames, {}", second.Shown.size(), timesText(second.Shown));
+            log.Text += std::format("; shown: {} frames, {}", second.Shown.size(), timesText(second.Shown));
 
             if (second.RefreshHz > 0.0)
             {
-                log.File << std::format(", {} over {} refreshes", second.ShownLong, LongFrameRefreshes);
+                log.Text += std::format(", {} over {} refreshes", second.ShownLong, LongFrameRefreshes);
             }
         }
 
-        log.File << "\n";
+        log.Text += '\n';
 
         if (!second.Parts.empty())
         {
-            log.File << "   a frame:";
+            log.Text += "   a frame:";
 
             for (size_t i = 0; i < second.Parts.size(); i++)
             {
                 const auto& [name, ticks] = second.Parts[i];
-                log.File << std::format("{} {} {:.2f}", i == 0 ? "" : ",", name, toMs(ticks) / frames);
+                log.Text += std::format("{} {} {:.2f}", i == 0 ? "" : ",", name, toMs(ticks) / frames);
             }
 
-            log.File << "\n";
+            log.Text += '\n';
         }
 
         if (!second.Counts.empty())
         {
-            log.File << "   counts:";
+            log.Text += "   counts:";
 
             for (size_t i = 0; i < second.Counts.size(); i++)
             {
                 const auto& [name, amount] = second.Counts[i];
-                log.File << std::format("{} {} {}", i == 0 ? "" : ",", name, amount);
+                log.Text += std::format("{} {} {}", i == 0 ? "" : ",", name, amount);
             }
 
-            log.File << "\n";
+            log.Text += '\n';
         }
 
-        log.File << MCMemoryRoom::LedgerLine() << "\n";
+        log.Text += MCMemoryRoom::LedgerLine();
+        log.Text += '\n';
         second = MCSecond{.Start = end};
     }
 }
@@ -322,27 +388,28 @@ namespace MCFrameLog
         MCFrameLogState& log = state();
         const std::scoped_lock lock(log.Lock);
         ++log.Generation;
-        log.File.clear();
-        log.File.open(path, std::ios::out | std::ios::trunc);
-        log.Enabled = log.File.is_open();
+        log.Writer.File.clear();
+        log.Writer.File.open(path, std::ios::out | std::ios::trunc);
+        log.Enabled = log.Writer.File.is_open();
 
         if (log.Enabled)
         {
+            log.Writer.Thread = std::jthread(writeHanded, std::ref(log.Writer));
             log.Opened = now();
             log.Second = MCSecond{.Start = log.Opened};
-            log.File
-                << "MCRedux frame log: frames much slower than the usual one or late by a refresh of the screen\n"
-                   "(SLOW), frames with notes (*), and a line a second (--): the game's loop's frames, then the\n"
-                   "frames as the screen showed them (shown: each as it was handed over, with vsync no sooner\n"
-                   "than a refresh after the last, as the queue of frames for the screen shows them).\n"
-                   "Times in ms. A part is listed when it ends, so after the parts inside it; render.* parts are\n"
-                   "the render thread's, counted in the frame running as they end. + lines count what the frame\n"
-                   "did. The GPU's own time isn't measured: present.acquire and present.wait wait for it and for\n"
-                   "the screen. memory: each holder's bytes (payload/allocated/retired, MB), each side's sum, what\n"
-                   "the game holds against half the machine's memory (and a card's against 90% of its room), and\n"
-                   "the system's figure: macOS's physical footprint (Metal's memory in it), Windows' private bytes\n"
-                   "and DXGI's local and non-local use, each with what no holder names (unnamed).\n";
-            log.File.flush();
+            log.Text +=
+                "MCRedux frame log: frames much slower than the usual one or late by a refresh of the screen\n"
+                "(SLOW), frames with notes (*), and a line a second (--): the game's loop's frames, then the\n"
+                "frames as the screen showed them (shown: each as it was handed over, with vsync no sooner\n"
+                "than a refresh after the last, as the queue of frames for the screen shows them).\n"
+                "Times in ms. A part is listed when it ends, so after the parts inside it; render.* parts are\n"
+                "the render thread's, counted in the frame running as they end. + lines count what the frame\n"
+                "did. The GPU's own time isn't measured: present.acquire and present.wait wait for it and for\n"
+                "the screen. memory: each holder's bytes (payload/allocated/retired, MB), each side's sum, what\n"
+                "the game holds against half the machine's memory (and a card's against 90% of its room), and\n"
+                "the system's figure: macOS's physical footprint (Metal's memory in it), Windows' private bytes\n"
+                "and DXGI's local and non-local use, each with what no holder names (unnamed).\n";
+            hand(log);
         }
 
         return log.Enabled;
@@ -354,11 +421,16 @@ namespace MCFrameLog
         const std::scoped_lock lock(log.Lock);
         ++log.Generation;
 
-        if (log.File.is_open())
+        // What's left written before the file closes.
+        if (log.Writer.File.is_open())
         {
-            log.File.close();
+            hand(log);
+            log.Writer.Thread.request_stop();
+            log.Writer.Thread.join();
+            log.Writer.File.close();
         }
 
+        log.Text.clear();
         log.Enabled = false;
         log.FrameStart.reset();
         log.Frame = 0;
@@ -415,7 +487,7 @@ namespace MCFrameLog
             if (slow || !frame.Notes.empty())
             {
                 writeFrame(log, frame, ms, usual, slow);
-                log.File.flush();
+                hand(log);
             }
 
             MCSecond& second = log.Second;
@@ -467,7 +539,7 @@ namespace MCFrameLog
             if (toMs(frameEnd - second.Start) >= MsPerSecond)
             {
                 writeSecond(log, frameEnd);
-                log.File.flush();
+                hand(log);
             }
         }
 
@@ -514,9 +586,17 @@ namespace MCFrameLog
 
         if (log.Enabled)
         {
-            log.File << text << "\n";
-            log.File.flush();
+            log.Text += text;
+            log.Text += '\n';
+            hand(log);
         }
+    }
+
+    void WaitForWrites()
+    {
+        MCFrameLogWriter& writer = state().Writer;
+        std::unique_lock lock(writer.Lock);
+        writer.Changed.wait(lock, [&writer] { return writer.Waiting.empty() && !writer.Writing; });
     }
 
     void SetClockForTests(MCClock clock)

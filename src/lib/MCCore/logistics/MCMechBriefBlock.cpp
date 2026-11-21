@@ -256,7 +256,7 @@ auto MCMechBriefBlock::PlaceInEmptySlot(int32_t lance, int32_t slot) const -> bo
         mech->Deployed = true;
         GlobalLog()->AssignedWarriorList->SetDeployed(mech->PilotIndex, true);
         // Port-only (SPEC-memory.md's "From the briefing"): its HD art read from now, behind the briefing.
-        MCHdArt::HoldMechAhead(mech->Chassis);
+        MCHdArt::HoldMechAhead(mech->HdFolders);
         return true;
     }
 
@@ -363,6 +363,8 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                 CurDeployTonnage = DeployTonnageWith(*occupant, -1.0f);
                 occupant->Deployed = false;
                 deploy.Unit = -1;
+                // Port-only (SPEC-memory.md's "The GPU from the briefing"): the mission's no more (PickUp's too).
+                MCHdArt::MechTakenOff(occupant->HdFolders);
 
                 if (Mech() != nullptr)
                 {
@@ -376,7 +378,7 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                         CurDeployTonnage = DeployTonnageWith(*Mech(), 1.0f);
                         Mech()->Deployed = true;
                         // Port-only (SPEC-memory.md's "From the briefing"): as PlaceInEmptySlot's.
-                        MCHdArt::HoldMechAhead(Mech()->Chassis);
+                        MCHdArt::HoldMechAhead(Mech()->HdFolders);
                     }
                 }
                 else
@@ -417,7 +419,7 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                         Mech()->Deployed = true;
                         GlobalLog()->AssignedWarriorList->SetDeployed(Mech()->PilotIndex, true);
                         // Port-only (SPEC-memory.md's "From the briefing"): as PlaceInEmptySlot's.
-                        MCHdArt::HoldMechAhead(Mech()->Chassis);
+                        MCHdArt::HoldMechAhead(Mech()->HdFolders);
                     }
                 }
                 else
@@ -579,6 +581,9 @@ auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
                     deploy.Unit = -1;
                     CurDeployTonnage = DeployTonnageWith(*Mech(), -1.0f);
                     GlobalLog()->AssignedWarriorList->SetDeployed(Mech()->PilotIndex, false);
+                    // Port-only (SPEC-memory.md's "The GPU from the briefing"): the mission's no more until it's dropped
+                    // in a slot again (DropInSlotAt, PlaceInEmptySlot: MCHdArt::HoldMechAhead).
+                    MCHdArt::MechTakenOff(Mech()->HdFolders);
                 }
 
                 screen.CalcTonnages();

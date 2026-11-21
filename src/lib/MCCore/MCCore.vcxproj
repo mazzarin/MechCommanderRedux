@@ -467,6 +467,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="platform\MCTlsThreading.cpp" />
+    <ClCompile Include="platform\MCUploadSlots.cpp" />
     <ClCompile Include="platform\MCVulkanPresenter.cpp" />
     <ClCompile Include="platform\MCVulkanRenderer.cpp" />
     <ClCompile Include="platform\MCVulkanShaders.cpp" />
@@ -966,6 +967,7 @@
     <ClInclude Include="platform\MCStringTable.h" />
     <ClInclude Include="platform\MCThreadPriority.h" />
     <ClInclude Include="platform\MCTlsThreading.h" />
+    <ClInclude Include="platform\MCUploadSlots.h" />
     <ClInclude Include="platform\MCUtf8Path.h" />
     <ClInclude Include="platform\MCVulkanPresenter.h" />
     <ClInclude Include="platform\MCVulkanRenderer.h" />
@@ -990,6 +992,7 @@
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCMechStops.h" />
     <ClInclude Include="sprite\MCMechStopsKnown.h" />
+    <ClInclude Include="sprite\MCOpeningLists.h" />
     <ClInclude Include="sprite\MCPackRecords.h" />
     <ClInclude Include="sprite\MCPaletteNight.h" />
     <ClInclude Include="sprite\MCParticles.h" />

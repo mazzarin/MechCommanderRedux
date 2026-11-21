@@ -13,6 +13,7 @@
 #include "object/MCCommander.h"
 #include "object/MCForces.h"
 #include "object/MCMover.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCMemoryLedger.h"
 #include "platform/MCMemoryRoom.h"
@@ -288,8 +289,16 @@ namespace
     constexpr std::string_view MusicFiles = "sound/music";
     constexpr std::string_view StereoMusicFiles = "stereo/MUSIC";
     constexpr std::string_view MusicItem = "music starts read on the game's thread";
+    /// <summary>
+    /// The interface's HD line art and glyphs taken from the pack as each is first shown (MCSharpPictures::Take), its
+    /// own item: about 4 us a picture, 0.1-0.2 ms in play's first frames (19 Nov; with the player's pack, 32-41 in
+    /// play's first frame, 21 Nov).
+    /// </summary>
+    constexpr std::string_view SharpPictures = "sharp pictures ";
+    constexpr std::string_view SharpPicturesItem = "the interface's line art taken from the pack as first shown";
 
     constexpr auto OpenFirstUses = std::to_array<MCOpenFirstUse>({
+        {MCFirstUseKind::Unpack, SharpPictures, SharpPicturesItem},
         {MCFirstUseKind::Open, MusicFiles, MusicItem},
         {MCFirstUseKind::Read, MusicFiles, MusicItem},
         {MCFirstUseKind::Open, StereoMusicFiles, MusicItem},
@@ -350,11 +359,6 @@ namespace
     /// </summary>
     constexpr int32_t OpeningFrames = 3;
 
-    /// <summary>
-    /// The interface's HD line art and glyphs taken from the pack as each is first shown (MCSharpPictures::Take), its
-    /// own item: about 4 us a picture, 0.1-0.2 ms in play's first frames (19 Nov).
-    /// </summary>
-    constexpr std::string_view SharpPictures = "sharp pictures ";
     /// <summary>A crater or footprint a unit makes in play, its own item (SPEC-first-use.md's craters, step5-fill).</summary>
     constexpr std::string_view Craters = "craters.hda ";
 
@@ -384,11 +388,32 @@ namespace
             "in play's first frames, not the music's, movies', line art's or craters'");
     }
 
-    /// <summary>The pack the guard plays with: --hd-pack's (absolute: the game works in the install's folder), else none.</summary>
+    /// <summary>The app's name for its player's folder, as SDL keeps it (Main.cpp's PlayerFolder).</summary>
+    constexpr const char* PlayerFolderName = "MechCommander Redux";
+
+    /// <summary>
+    /// The pack the guard plays with: --hd-pack's (absolute: the game works in the install's folder), else the one this
+    /// machine's player plays with (the HD pack in the app's own player folder, as the game finds it there), else none:
+    /// the original's art alone. Port-only (21 Nov): without --hd-pack the suite's guard played with no pack, so it caught
+    /// no HD first use.
+    /// </summary>
     std::filesystem::path GuardPack()
     {
-        const std::optional<std::string_view> pack = MCTest::Option("hd-pack");
-        return pack.has_value() ? std::filesystem::absolute(std::filesystem::path(*pack)) : std::filesystem::path();
+        if (const std::optional<std::string_view> pack = MCTest::Option("hd-pack"); pack.has_value())
+        {
+            return std::filesystem::absolute(std::filesystem::path(*pack));
+        }
+
+        const std::unique_ptr<char, decltype(&SDL_free)> player(SDL_GetPrefPath(nullptr, PlayerFolderName), &SDL_free);
+
+        if (player == nullptr)
+        {
+            return {};
+        }
+
+        const std::filesystem::path pack = MCFileSystem::FromUtf8(player.get()) / MCHdArt::DefaultFolder;
+        std::error_code error;
+        return std::filesystem::is_directory(pack, error) ? pack : std::filesystem::path();
     }
 
     /// <summary>The frames of play the guard's missions run: a minute of the game's.</summary>
@@ -447,7 +472,7 @@ constexpr int32_t OpeningMission = 3;
 
 /// <summary>
 /// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): play's first frames in mission 3, as a
-/// player's, with the guard's pack (--hd-pack), read, unpack and wait on nothing on the game's thread: the load read and
+/// player's, with the guard's pack (GuardPack), read, unpack and wait on nothing on the game's thread: the load read and
 /// unpacked what its view and the ring around it draw, and put it on the GPU.
 /// </summary>
 TEST_CASE_ISOLATED("game: play's first frames in mission 3 read and unpack nothing on the game's thread")

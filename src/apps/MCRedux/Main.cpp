@@ -108,7 +108,7 @@ namespace
     /// keys): the root key made 4 Nov 2026, kept offline. A build without one updates no content and takes no lock, and
     /// the Mac's Sparkle updates the program alone.
     /// </summary>
-    constexpr std::array<std::string_view, 1> RootKeys = {"XRHmDBox9rew2PKwZEWSV7OygkHBplwIC4Ugl1Dvll0="};
+    constexpr std::array<std::string_view, 1> RootKeys = {"bPNH7azF4mlwbvSoiviFmOg7ZnkSzhNmnh09Djbmg+o=" /* TRIAL BUILD ONLY: the rehearsal's throwaway root key */};
 
     /// <summary>
     /// The lowest key list issue this build takes, even on a fresh install with none kept (SPEC-install-and-updates.md's

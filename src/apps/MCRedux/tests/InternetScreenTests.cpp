@@ -868,7 +868,8 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
 /// <summary>
 /// Port-only (Redux HD): an internet host's REMATCH (network/MCRoomEnd.h): its game keeps its place on the service
 /// through the match's session's end and comes back to it (the same code, no game hosted afresh), and its room is
-/// hosted again, a new session with the same name and the match's mission.
+/// hosted again, a new session with the same name and the match's mission, listed out of battle (the match's start
+/// stayed on it, so the service turned its guests away: the 21 Nov playtest).
 /// </summary>
 TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the same code")
 {
@@ -896,8 +897,11 @@ TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the
 
     REQUIRE_EQ(hosted(), 1);
 
-    // The match starts (its hook alone: START needs a player on each team), and the host's REMATCH at its results.
+    // The match starts (its lock and its hook: START needs a player on each team), its room in battle on the service's
+    // list, and the host's REMATCH at its results.
+    REQUIRE(manager.LockSession());
     MCRoomEnd::MatchStarts();
+    REQUIRE(SettleUntil([&] { return service.Room()->at("battle") == true; }));
     MCRoomEnd::Rematch();
     REQUIRE(SettleUntil(
         [&]
@@ -912,6 +916,8 @@ TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the
                               { return path.starts_with(std::format("/game/{}?", MCFakeGames::GameCode)); }));
     CHECK(!service.HostPlaceKept());
     CHECK_EQ(manager.CurrentSession()->Name, gameName);
+    // The room back on the list out of battle, as its guests can join it (the service turns joins to one in battle away).
+    CHECK(service.Room()->at("battle") == false);
     CHECK(!GlobalLog()->SessionScreen->MissionFile.empty());
     CHECK(DialogText().empty());
     SaveShot("internet 14 rematch", ScreenHash());

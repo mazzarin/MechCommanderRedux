@@ -387,7 +387,10 @@ public:
     uint32_t ServerID = 0;
     /// <summary>Whether this machine is the server (host).</summary>
     bool IsHost = false;
-    /// <summary>Set once the game started (the session is locked, or the host said so).</summary>
+    /// <summary>
+    /// Set once the game started (the session is locked, or the host said so); port-only (Redux HD): cleared as a
+    /// session is hosted or joined, so a rematch's room isn't listed in its last match's battle.
+    /// </summary>
     bool GameStarted = false;
     /// <summary>Port-only (the personal build): why the last lobby join that failed found no room (SetupLobbyConnection).</summary>
     MCRoomRefusal LastRoomRefusal = MCRoomRefusal::Gone;

@@ -900,6 +900,9 @@ int32_t MCSessionManager::HostSession(const MCFidpSession& session, std::string_
 {
     Assert(DirectPlay != nullptr, 0, "Can't host session.  No DirectPlayObject");
     IsHost = true;
+    // Port-only (Redux HD): a room hosted again for a rematch (MCRoomEnd) is listed out of battle, as its guests can
+    // join it: the last match's start was that session's.
+    GameStarted = false;
 
     if (DirectPlay->Open(session.SessionDesc, DPOPEN_CREATE | DPOPEN_RETURNSTATUS) != DP_OK)
     {
@@ -923,8 +926,10 @@ int32_t MCSessionManager::HostSession(const MCFidpSession& session, std::string_
 int32_t MCSessionManager::JoinSession(const _GUID& sessionGUID, std::string_view playerName)
 {
     Assert(DirectPlay != nullptr, 0);
-    // An earlier join's refusal says nothing of this one.
+    // An earlier join's refusal says nothing of this one, nor an earlier match's start (should the room roll over to
+    // this machine, its listing says whether this one's battle started).
     _Refusal.clear();
+    GameStarted = false;
     const std::shared_ptr<MCFidpSession> session = FindMatchingSession(sessionGUID);
 
     if (session == nullptr)

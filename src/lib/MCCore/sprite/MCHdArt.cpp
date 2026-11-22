@@ -7001,6 +7001,19 @@ namespace
         units.High = static_cast<size_t>((frame.Height + units.Side - 1) / units.Side);
         return units;
     }
+
+    /// <summary>The bytes <paramref name="frame"/>'s colours take, laid out as UnitsOf says; none in another format.</summary>
+    size_t ColorBytesOf(const MCHdArt::Frame& frame)
+    {
+        const std::optional<ColorUnits> units = UnitsOf(frame);
+        return units.has_value() ? units->Wide * units->High * units->Bytes : 0;
+    }
+}
+
+size_t MCHdArt::StoredBytes(const Frame& frame)
+{
+    return ColorBytesOf(frame) +
+           static_cast<size_t>(frame.OriginalWidth()) * static_cast<size_t>(frame.OriginalHeight()) * IndexBytes;
 }
 
 MCHdArt::Frame MCHdArt::BlankFrame(const Frame& like, int32_t width, int32_t height)
@@ -7011,8 +7024,7 @@ MCHdArt::Frame MCHdArt::BlankFrame(const Frame& like, int32_t width, int32_t hei
     blank.Blended = like.Blended;
     blank.Width = width * like.Scale;
     blank.Height = height * like.Scale;
-    const std::optional<ColorUnits> units = UnitsOf(blank);
-    blank.Colors.assign(units.has_value() ? units->Wide * units->High * units->Bytes : 0, 0);
+    blank.Colors.assign(ColorBytesOf(blank), 0);
     blank.Indices.assign(static_cast<size_t>(width) * height * IndexBytes, 0);
     return blank;
 }

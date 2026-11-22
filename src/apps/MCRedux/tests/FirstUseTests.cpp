@@ -598,6 +598,48 @@ TEST_CASE_ISOLATED("game: play's first frames in mission 3 read and unpack nothi
 }
 
 /// <summary>
+/// Port-only (SPEC-memory.md's "Under the loading bar": the opening view): a player's load of mission 3 with the guard's
+/// pack reads no frame's colours again: the opening view's frames that went up under the bar (or from the briefing) let
+/// go of theirs, and the frame log's count of them comes from their sizes (22 Nov: it read each one's again to count it).
+/// </summary>
+TEST_CASE_ISOLATED("game: a load reads no frame's colours again to count its opening view")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = GuardPack();
+
+    if (pack.empty())
+    {
+        return;
+    }
+
+    constexpr std::string_view OpeningNote = "the opening view: ";
+    MCTestContextScope scope;
+    const MCScratchFolder folder("mc_first_use_tests", "opening-view-count");
+    const std::filesystem::path log = folder.Path() / "load.framelog";
+    REQUIRE(MCFrameLog::Open(log));
+    const size_t again = MCHdArt::ColorsReadAgain();
+    StartAsPlayer(scope, OpeningMission, pack);
+    const size_t readAgain = MCHdArt::ColorsReadAgain() - again;
+    const MCHdArt::GpuFill fill = MCHdArt::GpuFillNow();
+    // The test game's frames don't move the log's on: its first frame, which the notes so far go to, then written.
+    MCFrameLog::NextFrame();
+    MCFrameLog::NextFrame();
+    MCFrameLog::Close();
+    std::ifstream in(log);
+    const std::string text((std::istreambuf_iterator<char>(in)), {});
+    const size_t note = text.find(OpeningNote);
+    REQUIRE(note != std::string::npos);
+    std::cout << "  " << text.substr(note, text.find('\n', note) - note) << "; " << fill.Up << " frames up, "
+              << (fill.Fits ? "the mission whole" : "its opening") << "\n";
+    CHECK(fill.Up > 0);
+    CHECK_EQ(readAgain, 0);
+}
+
+/// <summary>
 /// Port-only (the opening view): the same for the canyon's battle, its staged force as the benchmark plays it, at the
 /// zoom play opens at: the battle's own zoom from its first frame (540 lines, eased) is the zoom's read-ahead's, as a
 /// player's is.

@@ -9708,6 +9708,11 @@ size_t MCHdArt::ColorsReadAgain()
     return TheState().ColorsReadAgain;
 }
 
+std::string MCHdArt::OpeningMission()
+{
+    return TheState().OpeningMission;
+}
+
 std::bitset<256> MCHdArt::DrawnColorsOf(std::span<const uint8_t> indices)
 {
     std::bitset<256> colors;

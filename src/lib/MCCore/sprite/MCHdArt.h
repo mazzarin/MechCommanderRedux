@@ -758,6 +758,12 @@ namespace MCHdArt
     /// <summary>Port-only (the tests): how many times the cache read a frame again for its colours (ColorsOf).</summary>
     size_t ColorsReadAgain();
 
+    /// <summary>
+    /// Port-only (the tests): the mission whose opening the fill puts up first (<see cref="SetOpening"/>): the one a
+    /// briefing or a load held; none once the hold lets go.
+    /// </summary>
+    std::string OpeningMission();
+
     /// <summary>Port-only (SPEC-memory.md's indices): who asks for a frame's indices (<see cref="IndicesOf"/>).</summary>
     enum class MCIndicesUse : uint8_t
     {

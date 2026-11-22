@@ -5667,6 +5667,18 @@ namespace
             CHECK_EQ(briefing[index].generic_string(), list.Folders[index]);
         }
     }
+
+    /// <summary>
+    /// A campaign's mission launched from logistics as a player launches it (its file logistics' copy,
+    /// <see cref="LogisticsBridge"/>), HD art on from <paramref name="pack"/> with the hold wanted: the mission's own name.
+    /// </summary>
+    std::string LaunchFromLogistics(const std::filesystem::path& pack)
+    {
+        MCTestGame::BootOptions.Started = [pack] { HoldFrom(pack); };
+        REQUIRE(MCTestGame::StartLogistics());
+        REQUIRE(MCTestGame::StartCampaignMission());
+        return Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    }
 }
 
 /// <summary>
@@ -5761,13 +5773,30 @@ TEST_CASE_ISOLATED("hd art: a campaign's mission launched from logistics keeps i
     }
 
     const ScratchFolder pack("learned-hold-list-bridge");
-    MCTestGame::BootOptions.Started = [folder = pack.Path()] { HoldFrom(folder); };
-    REQUIRE(MCTestGame::StartLogistics());
-    REQUIRE(MCTestGame::StartCampaignMission());
-    const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    const std::string mission = LaunchFromLogistics(pack.Path());
     const MCScenario::MCHoldList list = Scenario()->HoldList(LogisticsBridge);
     REQUIRE(!list.Folders.empty());
     CheckBriefingHoldsFrom(mission, list);
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The GPU from the briefing"): a campaign's mission launched from logistics loads
+/// logistics' copy of its file ("bridge"), and the load's fill goes on with the mission its briefing held, so the
+/// opening put up first is the mission's own (its list's: sprite/MCOpeningLists.h), not any mission's, as for a load
+/// no briefing held.
+/// </summary>
+TEST_CASE_ISOLATED("hd art: a campaign's mission launched from logistics keeps its briefing's opening")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const ScratchFolder pack("opening-bridge");
+    const std::string mission = LaunchFromLogistics(pack.Path());
+    REQUIRE(!mission.empty());
+    CHECK(MCIEquals(MCHdArt::OpeningMission(), mission));
+    CHECK(MCHdArt::HoldsFor(mission));
 }
 
 /// <summary>

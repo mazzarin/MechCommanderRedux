@@ -1063,7 +1063,7 @@ auto MCMission::StartScenario(std::string_view name) -> void
 
         const MCNotePieces noting;
 
-        if (const int32_t result = Scenario()->Load(scenarioName); result != 0)
+        if (const int32_t result = Scenario()->Load(scenarioName, {}, missionName); result != 0)
         {
             Fatal(result, " Couldnt init scenario ");
         }

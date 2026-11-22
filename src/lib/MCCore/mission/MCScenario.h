@@ -44,10 +44,12 @@ public:
 
     /// <summary>
     /// Loads scenario <paramref name="scenarioName"/> and starts every game system. <paramref name="terrainName"/>,
-    /// when given, loads that terrain instead of the FIT's (the editor path; no move maps then).
+    /// when given, loads that terrain instead of the FIT's (the editor path; no move maps then). Port-only:
+    /// <paramref name="missionName"/>, when given, is the mission the file is a copy of (a campaign's, launched from
+    /// logistics as "bridge"), whose HD art the load's fill holds (MCHdArt::StartLoadFill: its briefing's opening).
     /// </summary>
     /// <returns>0, or an error code.</returns>
-    int32_t Load(std::string_view scenarioName, std::string_view terrainName = {});
+    int32_t Load(std::string_view scenarioName, std::string_view terrainName = {}, std::string_view missionName = {});
 
     /// <summary>A mission's hold list (<see cref="HoldList"/>).</summary>
     struct MCHoldList

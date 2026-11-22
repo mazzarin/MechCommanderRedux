@@ -4,14 +4,14 @@ class MCGenericScreen;
 class MCGuiObject;
 class MCLogOptionList;
 
-// Port-only: the preferences screen's HD OPTIONS page, where the player sets the HD settings (main/MCHdSettings.h): the
-// packs, the lighting, the effects, the mechs' motion and the reports (main/MCTelemetry.h), a row each under headings,
-// in a list that scrolls; MoreUnits and StandStillPace have no row yet (PREFS alone sets them, and DEFAULTS and
-// ORIGINAL). In a game that manages its content (main/MCUpdater.h), HD PACK's button gets the HD pack or removes it at
-// once, and RESTART puts it in; HD ART SIZE under it shows the HD art's size, FULL or 2X, the machine's until the
-// player picks one, and a pick plans the change at once as GET does. The OPTIONS button in the preferences panel's HD
-// box shows it in that panel's place; DONE goes back. It edits the settings themselves: the preferences' ACCEPT writes
-// them to PREFS, CANCEL puts back what they were when the screen opened.
+// Port-only: the preferences screen's HD OPTIONS page, where the player sets the HD settings (main/MCHdSettings.h):
+// the packs, the lighting, the effects, the mechs' motion and the reports (main/MCTelemetry.h), a row each under
+// headings, in a list that scrolls; MoreUnits has no row yet (PREFS alone sets it, and DEFAULTS and ORIGINAL). In a
+// game that manages its content (main/MCUpdater.h), HD PACK's button gets the HD pack or removes it at once, and
+// RESTART puts it in; HD ART SIZE under it shows the HD art's size, FULL or 2X, the machine's until the player picks
+// one, and a pick plans the change at once as GET does. The OPTIONS button in the preferences panel's HD box shows it in that panel's place; DONE goes
+// back. It edits the settings themselves: the preferences' ACCEPT writes them to PREFS, CANCEL puts back what they were
+// when the screen opened.
 
 /// <summary>
 /// Adds the HD OPTIONS page (hidden) to <paramref name="screen"/>, and the OPTIONS button that shows it to

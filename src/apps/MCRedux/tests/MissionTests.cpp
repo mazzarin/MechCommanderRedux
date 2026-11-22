@@ -812,21 +812,20 @@ namespace
         CHECK_EQ(checks, static_cast<int32_t>(StandingSeconds / CombatUpdateFrequency));
         // It stood: the chance grew.
         CHECK(last > first);
-        std::cout << std::format("  {} a second, StandStillPace {}: {:.2f} at first, {:.2f} after {} s\n", fps,
-                                 GStandStillPace, first, last, StandingSeconds);
+        std::cout << std::format("  {} a second: {:.2f} at first, {:.2f} after {} s\n", fps, first, last,
+                                 StandingSeconds);
         return last;
     }
 }
 
 /// <summary>
-/// OB-193 (fixed, with StandStillPace): a target holding still gets easier to hit, up to MaxStationaryTime, by the
-/// time added at each to-hit check. The original adds the frame's length, and the checks come at the pilot's combat
-/// ticks and shots, not every frame, so at 120 frames a second it builds 8 times slower than at 15. With
-/// StandStillPace it builds as the original's does at 15, at any frame rate: mission 1's first mech checking its
-/// lancemate, standing beside it, every combat tick for 8 seconds.
+/// OB-193 (fixed): a target holding still gets easier to hit, up to MaxStationaryTime, by the time added at each
+/// to-hit check. The original adds the frame's length, and the checks come at the pilot's combat ticks and shots, not
+/// every frame, so at 120 frames a second it built 8 times slower than at 15. It builds as the original's does at 15,
+/// at any frame rate: mission 1's first mech checking its lancemate, standing beside it, every combat tick for 8
+/// seconds.
 /// </summary>
-TEST_CASE_ISOLATED("game: with StandStillPace a target standing still gets easier to hit as fast at 120 frames a "
-                   "second as at 15 (OB-193)")
+TEST_CASE_ISOLATED("game: a target standing still gets easier to hit as fast at 120 frames a second as at 15 (OB-193)")
 {
     if (!MCTestGame::Available())
     {
@@ -854,17 +853,8 @@ TEST_CASE_ISOLATED("game: with StandStillPace a target standing still gets easie
     REQUIRE(weaponIndex >= 0);
     constexpr int Locked = 15;
     constexpr int Fast = 120;
-    GStandStillPace = 0;
-    const float original = ChanceAfterStanding(*shooter, target, other, weaponIndex, Locked);
-    const float originalFast = ChanceAfterStanding(*shooter, target, other, weaponIndex, Fast);
-    GStandStillPace = 1;
-    const float paced = ChanceAfterStanding(*shooter, target, other, weaponIndex, Locked);
-    const float pacedFast = ChanceAfterStanding(*shooter, target, other, weaponIndex, Fast);
-    GStandStillPace = 0;
+    const float locked = ChanceAfterStanding(*shooter, target, other, weaponIndex, Locked);
+    const float fast = ChanceAfterStanding(*shooter, target, other, weaponIndex, Fast);
 
-    // The original's: slower at 120.
-    CHECK(originalFast < original);
-    // Paced: the original's at 15 frames a second, at either rate.
-    CHECK_EQ(paced, original);
-    CHECK_EQ(pacedFast, original);
+    CHECK_EQ(fast, locked);
 }

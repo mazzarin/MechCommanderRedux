@@ -96,7 +96,7 @@ namespace
     }
 
     /// <summary>The HD settings with no row on the HD OPTIONS page yet (PREFS alone sets them).</summary>
-    constexpr std::array<std::string_view, 2> Unlisted = {"MoreUnits", "StandStillPace"};
+    constexpr std::array<std::string_view, 1> Unlisted = {"MoreUnits"};
 
     /// <summary>Whether <paramref name="setting"/> has a row on the HD OPTIONS page.</summary>
     bool Listed(const MCHdSettings::MCSetting& setting)
@@ -174,11 +174,10 @@ TEST_CASE("hd settings: each HD setting has its own key and global, off in the o
         CHECK((setting.Personal != setting.Original) == (setting.Key != "HDFlecks" && !setting.Player));
         // The tests keep the original's defaults (only the app calls UseHdByDefault and UsePersonalGameplay).
         CHECK_EQ(MCHdSettings::Default(setting), setting.Original);
-        CHECK_EQ(setting.Gameplay,
-                 setting.Key == "MechBraking" || setting.Key == "MoreUnits" || setting.Key == "StandStillPace");
+        CHECK_EQ(setting.Gameplay, setting.Key == "MechBraking" || setting.Key == "MoreUnits");
     }
 
-    CHECK_EQ(keys.size(), size_t{19});
+    CHECK_EQ(keys.size(), size_t{18});
 }
 
 /// <summary>
@@ -197,7 +196,6 @@ TEST_CASE_ISOLATED(
 
     CHECK_EQ(MCHdSettings::Default(MCHdSettings::Find("MechBraking")), 1);
     CHECK_EQ(MCHdSettings::Default(MCHdSettings::Find("MoreUnits")), 1);
-    CHECK_EQ(MCHdSettings::Default(MCHdSettings::Find("StandStillPace")), 1);
 
     // PREFS without MoreUnits: the personal build's player may own 200 units, and the setting at its default isn't
     // written.

@@ -4381,6 +4381,70 @@ TEST_CASE("hd art: a frame whose fill picture the GPU lets go before it's drawn 
 }
 
 /// <summary>
+/// Port-only (SPEC-memory.md's one copy of a frame's colours): a frame drawn, its colours let go once the GPU took its
+/// picture, then the picture let go of (past the GPU's room: a 4 GB card panning away) goes from the cache whole, so asked
+/// for ahead again (its appearance near the view) it's read by the readers, and its next draw reads nothing on the game's
+/// thread. Kept as a record without colours, that draw read them there.
+/// </summary>
+TEST_CASE("hd art: a drawn frame whose picture the GPU lets go is read ahead again")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("drawn-dropped", pieces);
+    pack.Open();
+
+    // Each frame asked for ahead, then drawn, its colours there.
+    const auto askAndDraw = [&pack, &pieces]
+    {
+        for (size_t stream = 0; stream < pieces.size(); ++stream)
+        {
+            pack.AskStream(stream, MCHdArt::ReadAs::Load);
+        }
+
+        MCHdArt::WaitForLoadReads();
+        MCHdArt::KeepReadAhead();
+        std::vector<std::shared_ptr<const MCHdArt::Frame>> drawn;
+
+        for (size_t stream = 0; stream < pieces.size(); ++stream)
+        {
+            MCTest::Scope scope(std::format("stream {}", stream));
+            std::shared_ptr<const MCHdArt::Frame> found = pack.FindStream(stream);
+            REQUIRE(found != nullptr);
+            CHECK(!MCHdArt::ColorsOf(*found).empty());
+            drawn.push_back(std::move(found));
+        }
+
+        return drawn;
+    };
+
+    const size_t again = MCHdArt::ColorsReadAgain();
+    const size_t ahead = MCHdArt::FramesReadAhead();
+
+    const std::vector<std::shared_ptr<const MCHdArt::Frame>> drawn = askAndDraw();
+
+    for (const std::shared_ptr<const MCHdArt::Frame>& frame : drawn)
+    {
+        MCHdArt::ColorsUploaded(*frame);
+        MCHdArt::PictureDropped(frame->Id);
+    }
+
+    const std::vector<std::shared_ptr<const MCHdArt::Frame>> drawnAgain = askAndDraw();
+    REQUIRE_EQ(drawnAgain.size(), drawn.size());
+
+    for (size_t stream = 0; stream < drawn.size(); ++stream)
+    {
+        CHECK(drawnAgain[stream] != drawn[stream]);
+        CHECK_EQ(drawnAgain[stream]->Id, drawn[stream]->Id);
+    }
+
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 2 * pieces.size());
+    CHECK_EQ(MCHdArt::ColorsReadAgain(), again);
+    GHdArt = previous;
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's plan, items 2 and 3): a mission that doesn't fit on the GPU (a room the game itself takes)
 /// isn't put there: the bar ends once the hold has it, and its frames are drawn from the hold's memory as they were.
 /// </summary>

@@ -9675,10 +9675,13 @@ void MCHdArt::PictureDropped(uint64_t id)
             Cached& cached = found->second;
             cached.OnGpu = false;
 
-            // Port-only (MCHdArt::FillGpu): a picture the fill put up and the GPU let go of before its frame was drawn held
-            // the frame's only colours: the frame goes whole, back in the hold as before the fill, so the readers read it
-            // ahead as they read any frame to come (kept as a record, it would be read again on the game's thread).
-            if (cached.Undrawn && cached.Frame != nullptr && cached.Colors.empty())
+            // Port-only (MCHdArt::FillGpu): a picture the GPU let go of held the frame's only colours, drawn or not (the
+            // fill's, put up before its frame was drawn; a draw's, its colours let go once up): the frame goes whole, so the
+            // readers read it ahead again as they read any frame to come, its appearance near the view asking for its
+            // packet again (Drop). Kept as a record, its next draw would read it on the game's thread (a 4 GB card panning
+            // back to what it let go). A draw holds a mission's frame only while it runs; a texture's record
+            // (MCVulkanRenderer's TextureState::Hd) is read whole again by ColorsOf, as its colours alone were.
+            if (cached.Frame != nullptr && cached.Colors.empty())
             {
                 Drop(state, numbered->second, cached);
             }

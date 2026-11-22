@@ -659,6 +659,9 @@ namespace
         if (again)
         {
             StartSetsChange();
+
+            // Back to what's installed, it only clears what the stopped download left: the page still says it stops.
+            Hd.Stopping = Hd.Stage == MCStage::Downloading && !HdChangeWanted();
             return;
         }
 
@@ -1348,6 +1351,19 @@ auto MCUpdater::ChooseHdArt(bool twoX) -> void
 
     SDL_Log("Updater: the player picks the %s HD art", twoX ? "2x" : "full");
     ChangeHd(sets, MCContentUpdater::MCPicked::Player);
+}
+
+auto MCUpdater::StopHd() -> void
+{
+    // Back to what the copy has: an installed pack at its art's size (as a pick of that size on HD ART SIZE is), not a
+    // removal REMOVE would have asked about first.
+    if (Hd.Installed && Hd.Chosen)
+    {
+        ChooseHdArt(Hd.TwoX);
+        return;
+    }
+
+    ChooseHd(false);
 }
 
 auto MCUpdater::SetGpuSamplesBc7(bool samples) -> void

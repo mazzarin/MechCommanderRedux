@@ -5037,12 +5037,13 @@ namespace
     /// The sun's relief (GHdRelief) with HD lighting by day, over mission 1 drawn by the GPU, paused: a test forest's
     /// frame from a pack (MakeTestForest) drawn in the world, swaying (GHdSway, its canopy marked; held still so the
     /// frames compare) or not (standing on the ground as any object does), shows its body with relief on as with it
-    /// off, as drawn, unless <paramref name="share"/> of MCLighting gives it a share of the sun's relief; the ground
-    /// round it takes the relief whatever that share (the mission's own things there, which the share changes as it
-    /// does the frame's, aren't the ground's: mission 1's rocks). <paramref name="name"/> names its scratch and its shown
-    /// frames.
+    /// off, as drawn, unless <paramref name="share"/> of MCLighting gives it a share of the sun's relief; or, drawn
+    /// <paramref name="laid"/> on the ground (MCRenderer::OnGroundScope, as an overlay, a crater or a footprint is),
+    /// takes the relief whatever that share, as the ground does. The ground round it takes the relief whatever that
+    /// share (the mission's own things there, which the share changes as it does the frame's, aren't the ground's: its
+    /// units). <paramref name="name"/> names its scratch and its shown frames.
     /// </summary>
-    void CheckReliefSpares(bool sway, float MCSceneLights::MCLighting::* share, std::string_view name)
+    void CheckReliefSpares(bool sway, bool laid, float MCSceneLights::MCLighting::* share, std::string_view name)
     {
         if (!MCTestGame::Available())
         {
@@ -5093,6 +5094,7 @@ namespace
 
             if (drawForest)
             {
+                const MCRenderer::OnGroundScope onGround(laid);
                 MCPane& world = camera->View()->WorldFrame();
                 AGShapeDraw(world, table.Bytes(), 0, (world.X1 - world.X0) / 2 + Aside,
                             (world.Y1 - world.Y0) / 2 - Aside);
@@ -5156,6 +5158,7 @@ namespace
         size_t bodyPixels = 0;
         size_t bodySpared = 0;
         size_t bodyLit = 0;
+        size_t bodyByShare = 0;
         size_t groundPixels = 0;
         size_t groundLit = 0;
         size_t groundByShare = 0;
@@ -5176,6 +5179,7 @@ namespace
                     ++bodyPixels;
                     bodySpared += SameColor(at(spared, x, y), under) ? 0 : 1;
                     bodyLit += SameColor(at(lit, x, y), under) ? 0 : 1;
+                    bodyByShare += SameColor(at(spared, x, y), at(lit, x, y)) ? 0 : 1;
                 }
                 else if (ground && !SameColor(at(bareSpared, x, y), at(bareLit, x, y)))
                 {
@@ -5191,14 +5195,23 @@ namespace
         }
 
         std::cout << std::format(
-            "  the {}: {} of {} pixels changed by the relief spared, {} with all of it; the ground "
+            "  the {}: {} of {} pixels changed by the relief spared, {} with all of it, {} by its share; the ground "
             "round it: {} of {} lit by it, {} changed by its share; {} of the mission's own things there\n",
-            name, bodySpared, bodyPixels, bodyLit, groundLit, groundPixels, groundByShare, sharedAround);
+            name, bodySpared, bodyPixels, bodyLit, bodyByShare, groundLit, groundPixels, groundByShare, sharedAround);
         REQUIRE(bodyPixels > 0);
-        CHECK_EQ(bodySpared, 0u);
         CHECK(bodyLit * 10 > bodyPixels);
         CHECK(groundLit * 10 > groundPixels);
         CHECK_EQ(groundByShare, 0u);
+
+        if (laid)
+        {
+            CHECK(bodySpared * 10 > bodyPixels);
+            CHECK_EQ(bodyByShare, 0u);
+        }
+        else
+        {
+            CHECK_EQ(bodySpared, 0u);
+        }
     }
 }
 
@@ -5208,7 +5221,7 @@ namespace
 /// </summary>
 TEST_CASE_ISOLATED("game: the sun's relief spares a swaying forest's canopy, the ground round it lit by it")
 {
-    CheckReliefSpares(true, &MCSceneLights::MCLighting::CanopyRelief, "canopy");
+    CheckReliefSpares(true, false, &MCSceneLights::MCLighting::CanopyRelief, "canopy");
 }
 
 /// <summary>
@@ -5218,7 +5231,17 @@ TEST_CASE_ISOLATED("game: the sun's relief spares a swaying forest's canopy, the
 /// </summary>
 TEST_CASE_ISOLATED("game: the sun's relief spares what stands on the ground, the ground round it lit by it")
 {
-    CheckReliefSpares(false, &MCSceneLights::MCLighting::StandingRelief, "standing");
+    CheckReliefSpares(false, false, &MCSceneLights::MCLighting::StandingRelief, "standing");
+}
+
+/// <summary>
+/// What is laid on the ground (MCRenderer::OnGroundScope: a terrain overlay's rocks, roads and rubble, a crater, a
+/// footprint) takes the sun's relief as the ground does, whatever the share of what stands on it (CheckReliefSpares,
+/// MCLighting::StandingRelief): the forest's frame drawn so.
+/// </summary>
+TEST_CASE_ISOLATED("game: the sun's relief lights what is laid on the ground as the ground, the ground round it too")
+{
+    CheckReliefSpares(false, true, &MCSceneLights::MCLighting::StandingRelief, "laid");
 }
 
 /// <summary>

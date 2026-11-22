@@ -53,6 +53,11 @@ public:
     std::optional<float> GroundFill;
 
     /// <summary>
+    /// Port-only (HD lighting's sun relief): a footprint's or a crater's, laid on the ground (MCRenderer::OnGroundScope).
+    /// </summary>
+    bool OnGround = false;
+
+    /// <summary>
     /// Port-only (HD lighting's headlights): a unit's part's, the window row its feet stand on (MCRenderer::
     /// StandingScope); none for every other shape.
     /// </summary>

@@ -214,7 +214,8 @@ namespace MCSceneLights
         /// <summary>
         /// With relief on: how much of the sun's relief what stands on the ground shows (units, buildings, objects: the
         /// GPU world's StandingMark), 0 to 1 of the ground's (0: lit as drawn, so the fine shading of their art isn't
-        /// raised into bumps, a crate's faces crumpled and a dome's seams embossed; the lights still show it).
+        /// raised into bumps, a crate's faces crumpled and a dome's seams embossed; the lights still show it). What is
+        /// laid on the ground (its overlays' rocks, roads and rubble, craters, footprints) takes the ground's.
         /// </summary>
         float StandingRelief = 0.0f;
         /// <summary>

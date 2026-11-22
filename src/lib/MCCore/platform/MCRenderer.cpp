@@ -652,6 +652,9 @@ namespace
     /// <summary>How far a <see cref="MCRenderer::GroundFillScope"/>'s draws are filled in, none outside one.</summary>
     std::optional<float> GroundFillDrawn;
 
+    /// <summary>Whether a <see cref="MCRenderer::OnGroundScope"/> marks the draws as laid on the ground.</summary>
+    bool OnGroundDrawn = false;
+
     /// <summary>The row a <see cref="MCRenderer::StandingScope"/>'s unit stands on, none outside one.</summary>
     std::optional<float> StandingDrawn;
 
@@ -939,6 +942,21 @@ MCRenderer::GroundFillScope::~GroundFillScope()
 std::optional<float> MCRenderer::DrawingGroundFill()
 {
     return GroundFillDrawn;
+}
+
+MCRenderer::OnGroundScope::OnGroundScope(bool onGround) : _Was(OnGroundDrawn)
+{
+    OnGroundDrawn = _Was || onGround;
+}
+
+MCRenderer::OnGroundScope::~OnGroundScope()
+{
+    OnGroundDrawn = _Was;
+}
+
+bool MCRenderer::DrawingOnGround()
+{
+    return OnGroundDrawn;
 }
 
 MCRenderer::StandingScope::StandingScope(std::optional<float> feet) : _Was(StandingDrawn)

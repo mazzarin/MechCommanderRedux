@@ -24,7 +24,8 @@
 //   Read as at or under GroundMark, under CanopyMark, and (port-only: the sun's relief, IsStanding) under
 //   StandingMarkTop.
 // - 2, TerrainMark: ground without a relief map (the original's tiles, an HD tile without one: the terrain shader's
-//   draws, draw.pshader's main). Read as at or under GroundMark, and under CanopyMark.
+//   draws) and what is laid on it (a terrain overlay: rocks, roads, rubble; a crater, a footprint: draw.pshader's
+//   LaidOnGround), from draw.pshader's main. Read as at or under GroundMark, and under CanopyMark.
 // - 8, 16 and 24, FoggedWaterMark for each of a water tile's corners the fog of war leaves seen (water without a relief
 //   map). Read under CanopyMark, as round(a / FoggedWaterMark) up to MostFogEdge.
 // - 64, SwayMark: a forest's canopy. Read two ways: within SwayMarkNear of it (IsCanopy: 49 to 79), and over CanopyMark

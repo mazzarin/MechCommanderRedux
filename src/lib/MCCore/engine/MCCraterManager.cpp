@@ -236,6 +236,8 @@ auto MCCraterManager::Render() -> void
                 element.GroundFill = MCWeather::FilledIn(ScenarioTime - crater.MadeAt);
             }
 
+            element.OnGround = true;
+
             elements.Add(element);
         }
     }

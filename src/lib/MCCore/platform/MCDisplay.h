@@ -428,6 +428,16 @@ public:
     static void OnShownGrids(std::span<const MCShownGrid> grids, float& logicalX, float& logicalY);
 
     /// <summary>
+    /// Port-only: on one axis, a point of the logical screen at <paramref name="screen"/> that
+    /// <see cref="OnShownGrids"/> moved to <paramref name="moved"/>: the moved place, but on the screen's first and
+    /// last pixels (of the <paramref name="size"/> from <paramref name="first"/>), which keep the screen's. The game
+    /// scrolls the view with the mouse there (at the top only on the first: MCGuiInput's ScrollScreen), and with the
+    /// smooth camera's place between pixels the picture, and the point with it, moves by up to a window pixel and a
+    /// half: over a screen pixel at the closest zoom.
+    /// </summary>
+    static float KeptOnScreenEdge(float screen, float moved, int32_t first, int32_t size);
+
+    /// <summary>
     /// Tests: called at the start of each <see cref="Present"/>, with the screen as it is about to be shown (frames
     /// drawn inside the game's own loops, such as the logistics screen wipes, are seen too).
     /// </summary>

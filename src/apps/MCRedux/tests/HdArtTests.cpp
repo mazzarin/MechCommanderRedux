@@ -11773,6 +11773,100 @@ TEST_CASE_ISOLATED("game: the mouse over the GPU's world maps through the drawn 
     CHECK(std::fabs(mappedY - (logicalY - moved(1))) < Near);
 }
 
+/// <summary>
+/// Port-only (HDSmoothCamera, MCDrawnGrid): at the closest zoom, the camera put between pixels where the picture, and a
+/// point the mouse maps through its grid with it, moves over a screen line down (MCDisplay::OnShownGrids; the plane
+/// playtest's "panning up gets stuck at max zoom", 22 Nov: the window's top row read as the screen's second line,
+/// inside the edge's border): the mouse at the window's top row is at the screen's top (MCDisplay::KeptOnScreenEdge),
+/// and after the interface's start delay the view scrolls up.
+/// </summary>
+TEST_CASE_ISOLATED("game: with the smooth camera between pixels, the mouse at the screen's top scrolls the view up")
+{
+    // A fraction of a window pixel a frame up the screen: the camera's place between pixels goes through them all.
+    constexpr float Up = -0.07f;
+    constexpr int32_t MostFrames = 200;
+    // The interface's start delay (MCTacticalInterface::ScrollStart, half a second), then a few frames' scroll.
+    constexpr int32_t ScrollFrames = 12;
+    constexpr float ZoomNear = 0.5f;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCViewWindow> view = MCMainView();
+    REQUIRE(view != nullptr);
+    float closest = 0.0f;
+    float furthest = 0.0f;
+    view->ZoomLimits(closest, furthest);
+    REQUIRE(std::fabs(view->ZoomHeight - closest) < ZoomNear);
+    GHdSmoothCamera = 1;
+    // The camera lets go of the unit it follows, as a scroll does, and the cursor starts in the screen's middle.
+    Eye()->ChangeTarget(nullptr, false);
+    MCScreenInput::RealMove(GuiSystem().Width() / 2, GuiSystem().Height() / 2);
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+
+    // Up the screen by fractions of a pixel until the grid moves the top line's point a line down or more.
+    MCVector3D position = Eye()->GetPosition();
+    float windowX = 0.0f;
+    float windowY = 0.0f;
+    float movedY = 0.0f;
+    bool found = false;
+
+    for (int32_t frame = 0; frame < MostFrames && !found; ++frame)
+    {
+        REQUIRE(PanFrame(position, 0.0f, Up));
+        const std::span<const MCShownGrid> grids = display->Presenter().ShownGrids();
+
+        if (grids.size() != 1 || grids[0].Rect.Y0 != 0)
+        {
+            continue;
+        }
+
+        float x = static_cast<float>((grids[0].Rect.X0 + grids[0].Rect.X1) / 2) + 0.5f;
+        movedY = 0.0f;
+        display->LogicalToWindow(x, movedY, windowX, windowY);
+        MCDisplay::OnShownGrids(grids, x, movedY);
+        found = movedY >= 1.0f;
+    }
+
+    REQUIRE(found);
+
+    // The mouse at the window's top row, over the world's middle.
+    SDL_Event motion{};
+    motion.type = SDL_EVENT_MOUSE_MOTION;
+    motion.motion.windowID = SDL_GetWindowID(&display->Window());
+    motion.motion.x = windowX;
+    motion.motion.y = windowY;
+    MCInput::HandleEvent(motion);
+    const MCPoint cursor = MCInput::GetCursorPos();
+    const MCVector3D before = Eye()->GetPosition();
+
+    for (int32_t frame = 0; frame < ScrollFrames; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    // Up the screen is west and north alike (MCCamera::ScrollCamera), a window pixel 1/(2 sin) of each.
+    const MCVector3D after = Eye()->GetPosition();
+    const float pixel = 1.0f / (2.0f * MCTerrain::ProjectionSin);
+    const float up = 0.5f * ((before.X - after.X) + (after.Y - before.Y)) / pixel;
+    std::cout << std::format(
+        "  the grid moved the top line to {:.3f}; the cursor at line {}; the view {:.1f} pixels up\n", movedY, cursor.y,
+        up);
+    CHECK_EQ(cursor.y, 0);
+    CHECK(up > 1.0f);
+    GHdSmoothCamera = 0;
+}
+
 namespace
 {
     /// <summary>

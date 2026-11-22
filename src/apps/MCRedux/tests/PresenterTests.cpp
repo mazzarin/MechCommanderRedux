@@ -473,6 +473,31 @@ TEST_CASE("presenter: over a world on its drawn grid, the mouse picks the pixel 
     CHECK_EQ(y, static_cast<float>(Top) + 3.5f);
 }
 
+/// <summary>
+/// Port-only: where a world's drawn grid moves a point (MCDisplay::OnShownGrids), the screen's first and last pixels on
+/// each axis keep the place the screen gives them (MCDisplay::KeptOnScreenEdge), so the mouse still scrolls the view
+/// there; everywhere else the move holds.
+/// </summary>
+TEST_CASE("presenter: over a world's drawn grid, a point on the screen's edge pixels stays on them")
+{
+    constexpr int32_t Lines = 540;
+    constexpr int32_t Lower = 10;
+
+    // The top line moved a line and a quarter down (the smooth camera between pixels at the closest zoom), and the
+    // bottom line a little up: each stays where it was.
+    CHECK_EQ(MCDisplay::KeptOnScreenEdge(0.0f, 1.25f, 0, Lines), 0.0f);
+    CHECK_EQ(MCDisplay::KeptOnScreenEdge(0.75f, 2.0f, 0, Lines), 0.75f);
+    CHECK_EQ(MCDisplay::KeptOnScreenEdge(539.0f, 538.25f, 0, Lines), 539.0f);
+
+    // The lines next to them move.
+    CHECK_EQ(MCDisplay::KeptOnScreenEdge(1.0f, 2.25f, 0, Lines), 2.25f);
+    CHECK_EQ(MCDisplay::KeptOnScreenEdge(538.75f, 537.5f, 0, Lines), 537.5f);
+
+    // A screen that starts lower in the view's space.
+    CHECK_EQ(MCDisplay::KeptOnScreenEdge(10.5f, 11.75f, Lower, Lines), 10.5f);
+    CHECK_EQ(MCDisplay::KeptOnScreenEdge(11.5f, 12.75f, Lower, Lines), 12.75f);
+}
+
 namespace
 {
     /// <summary>

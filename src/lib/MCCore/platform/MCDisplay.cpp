@@ -861,8 +861,18 @@ bool MCDisplay::WindowToLogical(float windowX, float windowY, float& logicalX, f
         MapToLogical(ShownViewport(), _View.w, _View.h, windowX * density, windowY * density, logicalX, logicalY);
     logicalX += static_cast<float>(_View.x);
     logicalY += static_cast<float>(_View.y);
+    const float screenX = logicalX;
+    const float screenY = logicalY;
     OnShownGrids(_Presenter->ShownGrids(), logicalX, logicalY);
+    logicalX = KeptOnScreenEdge(screenX, logicalX, _View.x, _View.w);
+    logicalY = KeptOnScreenEdge(screenY, logicalY, _View.y, _View.h);
     return inside;
+}
+
+float MCDisplay::KeptOnScreenEdge(float screen, float moved, int32_t first, int32_t size)
+{
+    const bool edge = screen < static_cast<float>(first + 1) || screen >= static_cast<float>(first + size - 1);
+    return edge ? screen : moved;
 }
 
 void MCDisplay::OnShownGrids(std::span<const MCShownGrid> grids, float& logicalX, float& logicalY)

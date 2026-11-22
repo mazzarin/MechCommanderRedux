@@ -2454,6 +2454,15 @@ Output main(Input input)
     keptSlot = 0;
     Output output = DrawnOutput(input);
 
+#if DRAW_VARIANT == DRAW_TERRAIN_KINDS
+    // Port-only (the sun's relief): the terrain layer's ground without a mark of its own (a relief map's, fogged
+    // water's) is marked as ground, so the composite tells it from what stands on it (channels.hlsli's TerrainMark).
+    if (output.index.a < StandingMarkTop)
+    {
+        output.index.a = TerrainMark;
+    }
+#endif
+
 #if DRAWS_TERRAIN_KINDS
     // Port-only (SPEC-pan-water.md): in the kept ground's pass, the terrain's cycled share in the glints target,
     // premultiplied as the colours are, so the seam pass's blend mixes it as it mixes the colours.

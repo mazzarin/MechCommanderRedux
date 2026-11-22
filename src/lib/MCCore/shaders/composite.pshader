@@ -177,7 +177,8 @@ cbuffer Composite : register(b0, space3)
     float4 airBeams;
     // Port-only (HD lighting's relief maps, MCLighting::ReliefMaps): x, how steeply the HD ground's relief maps stand
     // its bumps (0: the ground is lit by its brightness, as the rest); y (MCLighting::CanopyRelief), how much of the
-    // sun's relief a forest's canopy shows where it is marked (IsCanopy; 1: as the ground's).
+    // sun's relief a forest's canopy shows where it is marked (IsCanopy; 1: as the ground's); z
+    // (MCLighting::StandingRelief), how much of it what stands on the ground shows (IsStanding; 1: as the ground's).
     float4 reliefLook;
     // Port-only (HDSway, MCLighting::Sway): x, how far a forest's canopy sways at the height of a gust (meters, 0 none);
     // y, how much brighter it shows there.
@@ -1173,6 +1174,14 @@ bool IsCanopy(float2 texel)
 {
     const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
     return abs(WorldTexelAt(at).a - SwayMark) < SwayMarkNear;
+}
+
+// Port-only (the sun's relief): whether something stands on the ground at a world texel (a unit, a building, an object:
+// channels.hlsli's StandingMark), told from the ground in a GPU world (mode.y), whose ground the terrain layer marks.
+bool IsStanding(float2 texel)
+{
+    const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
+    return mode.y != 0.0 && WorldTexelAt(at).a < StandingMarkTop;
 }
 
 // The point of crown cell `cell` (meters), and its own values (0 to 1) for its rate, beat and swell.
@@ -2350,8 +2359,9 @@ float4 Composed(float2 pixel)
             const float sunGlint = weather.x > 0.0 ? 0.0 : SunGlint;
             const float3 caught =
                 TexelAt(glintTex, glintSampler, clamp(round(hazy), 0.0, worldSize.xy - 1.0), worldSize.zw).rgb;
-            // Port-only: the sun's relief spares a forest's canopy as much as reliefLook.y says.
-            const float sunRelief = IsCanopy(hazy) ? reliefLook.y : 1.0;
+            // Port-only: the sun's relief spares a forest's canopy as much as reliefLook.y says, and what stands on the
+            // ground as much as reliefLook.z says: their art's fine shading, taken for height, showed as bumps.
+            const float sunRelief = IsCanopy(hazy) ? reliefLook.y : IsStanding(hazy) ? reliefLook.z : 1.0;
             const uint2 near = LightsNear(hazy + 0.5);
             // Port-only (HD weather's snow): the specks drawn into the world as the flakes are (a pale one as bright to
             // the light as theirs), then the cover laid over it before it's lit; the veil's sheets taken once for them

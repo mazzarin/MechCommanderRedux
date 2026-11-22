@@ -5031,157 +5031,194 @@ TEST_CASE_ISOLATED("game: with HDSway a forest's canopy sways downwind as the ga
     CHECK(brighter < 1.0 + Light + 0.02);
 }
 
+namespace
+{
+    /// <summary>
+    /// The sun's relief (GHdRelief) with HD lighting by day, over mission 1 drawn by the GPU, paused: a test forest's
+    /// frame from a pack (MakeTestForest) drawn in the world, swaying (GHdSway, its canopy marked; held still so the
+    /// frames compare) or not (standing on the ground as any object does), shows its body with relief on as with it
+    /// off, as drawn, unless <paramref name="share"/> of MCLighting gives it a share of the sun's relief; the ground
+    /// round it takes the relief whatever that share (the mission's own things there, which the share changes as it
+    /// does the frame's, aren't the ground's: mission 1's rocks). <paramref name="name"/> names its scratch and its shown
+    /// frames.
+    /// </summary>
+    void CheckReliefSpares(bool sway, float MCSceneLights::MCLighting::* share, std::string_view name)
+    {
+        if (!MCTestGame::Available())
+        {
+            return;
+        }
+
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartMission(1));
+
+        if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+        {
+            std::cout << "  (skipped: no GPU renderer on this machine)\n";
+            return;
+        }
+
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        const std::filesystem::path scratch =
+            std::filesystem::temp_directory_path() / std::format("mc_tests_hd_{}_relief", name);
+        const TestForest forest = MakeTestForest(scratch, colors);
+        MCRegisteredBlock table(forest.Table.size(), MCDataKind::Shapes);
+        std::ranges::copy(forest.Table, table.Bytes().begin());
+        std::optional<MCHdArtOn> hdArt(std::in_place, forest.Pack);
+
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        const int32_t width = display->Width();
+        const int32_t height = display->Height();
+        const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+        REQUIRE(camera != nullptr);
+        REQUIRE(camera->View() != nullptr);
+        const int lightingWas = GHdLighting;
+        MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+        const MCSceneLights::MCLighting kept = lighting;
+        GHdLighting = HdLightingOn;
+        GHdSway = sway ? 1 : 0;
+        lighting.Sway = 0.0f;
+        lighting.SunRelief = 1.0f;
+        GamePaused = true;
+
+        // A frame of the world with relief on or off and the frame's share of it, the forest drawn in it (a little right
+        // of the middle and up, clear of the units) or not.
+        constexpr int32_t Aside = 30;
+        const auto shown = [&](bool drawForest, int relief, float given)
+        {
+            GHdRelief = relief;
+            lighting.*share = given;
+            MCTestGame::RunFrame(FrameSeconds);
+
+            if (drawForest)
+            {
+                MCPane& world = camera->View()->WorldFrame();
+                AGShapeDraw(world, table.Bytes(), 0, (world.X1 - world.X0) / 2 + Aside,
+                            (world.Y1 - world.Y0) / 2 - Aside);
+            }
+
+            auto frame = display->ReadFrame();
+            REQUIRE(frame.has_value());
+            REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+            return std::move(*frame);
+        };
+
+        const std::vector<SDL_Color> bare = shown(false, 0, 0.0f);
+        const std::vector<SDL_Color> bareSpared = shown(false, 1, 0.0f);
+        const std::vector<SDL_Color> bareLit = shown(false, 1, 1.0f);
+        const std::vector<SDL_Color> flat = shown(true, 0, 0.0f);
+        const std::vector<SDL_Color> spared = shown(true, 1, 0.0f);
+        const std::vector<SDL_Color> lit = shown(true, 1, 1.0f);
+        SaveShownFrame(lit, width, height, std::format("{}-relief-lit", name));
+        SaveShownFrame(spared, width, height, std::format("{}-relief-spared", name));
+        GHdRelief = 0;
+        GHdSway = 0;
+        GamePaused = false;
+        GHdLighting = lightingWas;
+        lighting = kept;
+        hdArt.reset();
+        std::filesystem::remove_all(scratch);
+
+        // The frame on the screen, where it differs from the bare ground (near the middle: the minimap's blips blink), and
+        // its body (a canopy when it sways), the left CanopyColumns of its Width (each past its last pixel).
+        const auto at = [&](const std::vector<SDL_Color>& frame, int32_t x, int32_t y)
+        { return frame[static_cast<size_t>(y) * width + x]; };
+        int32_t frameLeft = width;
+        int32_t frameRight = 0;
+        int32_t frameTop = height;
+        int32_t frameBottom = 0;
+
+        for (int32_t y = height / 4; y < height * 3 / 4; ++y)
+        {
+            for (int32_t x = width / 4; x < width * 3 / 4; ++x)
+            {
+                if (!SameColor(at(bare, x, y), at(flat, x, y)))
+                {
+                    frameLeft = std::min(frameLeft, x);
+                    frameRight = std::max(frameRight, x + 1);
+                    frameTop = std::min(frameTop, y);
+                    frameBottom = std::max(frameBottom, y + 1);
+                }
+            }
+        }
+
+        REQUIRE(frameRight > frameLeft);
+        REQUIRE(frameBottom > frameTop);
+        const int32_t bodyRight = frameLeft + (frameRight - frameLeft) * TestForest::CanopyColumns / TestForest::Width;
+
+        // Inside the body's edge (Fringe pixels, drawn smooth): the pixels the relief changed, spared and with its share.
+        // Round the frame past its edge (Fringe pixels: the frame's faint coverage, marked as it, can leave the ground's
+        // colour as it was), Margin pixels wide: the ground's, and those the body's share changed; the mission's own
+        // things there, which the share changes without the frame, apart.
+        constexpr int32_t Fringe = 2;
+        constexpr int32_t Margin = 24;
+        size_t bodyPixels = 0;
+        size_t bodySpared = 0;
+        size_t bodyLit = 0;
+        size_t groundPixels = 0;
+        size_t groundLit = 0;
+        size_t groundByShare = 0;
+        size_t sharedAround = 0;
+
+        for (int32_t y = frameTop - Margin; y < frameBottom + Margin; ++y)
+        {
+            for (int32_t x = frameLeft - Margin; x < frameRight + Margin; ++x)
+            {
+                const bool body = x >= frameLeft + Fringe && x < bodyRight - Fringe && y >= frameTop + Fringe &&
+                                  y < frameBottom - Fringe;
+                const bool ground = x < frameLeft - Fringe || x >= frameRight + Fringe || y < frameTop - Fringe ||
+                                    y >= frameBottom + Fringe;
+                const SDL_Color under = at(flat, x, y);
+
+                if (body)
+                {
+                    ++bodyPixels;
+                    bodySpared += SameColor(at(spared, x, y), under) ? 0 : 1;
+                    bodyLit += SameColor(at(lit, x, y), under) ? 0 : 1;
+                }
+                else if (ground && !SameColor(at(bareSpared, x, y), at(bareLit, x, y)))
+                {
+                    ++sharedAround;
+                }
+                else if (ground)
+                {
+                    ++groundPixels;
+                    groundLit += SameColor(at(spared, x, y), under) ? 0 : 1;
+                    groundByShare += SameColor(at(spared, x, y), at(lit, x, y)) ? 0 : 1;
+                }
+            }
+        }
+
+        std::cout << std::format(
+            "  the {}: {} of {} pixels changed by the relief spared, {} with all of it; the ground "
+            "round it: {} of {} lit by it, {} changed by its share; {} of the mission's own things there\n",
+            name, bodySpared, bodyPixels, bodyLit, groundLit, groundPixels, groundByShare, sharedAround);
+        REQUIRE(bodyPixels > 0);
+        CHECK_EQ(bodySpared, 0u);
+        CHECK(bodyLit * 10 > bodyPixels);
+        CHECK(groundLit * 10 > groundPixels);
+        CHECK_EQ(groundByShare, 0u);
+    }
+}
+
 /// <summary>
-/// The sun's relief (GHdRelief) with HD lighting by day, over mission 1 drawn by the GPU, paused, forests swaying
-/// (GHdSway, held still so the frames compare): a forest's frame from the pack drawn in the world shows its canopy with
-/// relief on as with it off, as drawn, unless MCLighting::CanopyRelief gives it a share of the sun's relief; the ground
-/// round it takes the relief whatever that share. The canopy's tiny bumps catching the sun glittered as it swayed.
+/// The sun's relief spares a swaying forest's canopy (CheckReliefSpares, MCLighting::CanopyRelief): the canopy's tiny
+/// bumps catching the sun glittered as it swayed.
 /// </summary>
 TEST_CASE_ISOLATED("game: the sun's relief spares a swaying forest's canopy, the ground round it lit by it")
 {
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
+    CheckReliefSpares(true, &MCSceneLights::MCLighting::CanopyRelief, "canopy");
+}
 
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartMission(1));
-
-    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
-    {
-        std::cout << "  (skipped: no GPU renderer on this machine)\n";
-        return;
-    }
-
-    std::array<SDL_Color, 256> colors{};
-    MCInput::Display()->GetShownColors(colors);
-    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_canopy_relief";
-    const TestForest forest = MakeTestForest(scratch, colors);
-    MCRegisteredBlock table(forest.Table.size(), MCDataKind::Shapes);
-    std::ranges::copy(forest.Table, table.Bytes().begin());
-    std::optional<MCHdArtOn> hdArt(std::in_place, forest.Pack);
-
-    const std::shared_ptr<MCDisplay> display = MCInput::Display();
-    const int32_t width = display->Width();
-    const int32_t height = display->Height();
-    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
-    REQUIRE(camera != nullptr);
-    REQUIRE(camera->View() != nullptr);
-    const int lightingWas = GHdLighting;
-    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
-    const MCSceneLights::MCLighting kept = lighting;
-    GHdLighting = HdLightingOn;
-    GHdSway = 1;
-    lighting.Sway = 0.0f;
-    lighting.SunRelief = 1.0f;
-    GamePaused = true;
-
-    // A frame of the world with relief on or off and the canopy's share of it, the forest drawn in it (a little right
-    // of the middle and up, clear of the units) or not.
-    constexpr int32_t Aside = 30;
-    const auto shown = [&](bool drawForest, int relief, float canopy)
-    {
-        GHdRelief = relief;
-        lighting.CanopyRelief = canopy;
-        MCTestGame::RunFrame(FrameSeconds);
-
-        if (drawForest)
-        {
-            MCPane& world = camera->View()->WorldFrame();
-            AGShapeDraw(world, table.Bytes(), 0, (world.X1 - world.X0) / 2 + Aside, (world.Y1 - world.Y0) / 2 - Aside);
-        }
-
-        auto frame = display->ReadFrame();
-        REQUIRE(frame.has_value());
-        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
-        return std::move(*frame);
-    };
-
-    const std::vector<SDL_Color> bare = shown(false, 0, 0.0f);
-    const std::vector<SDL_Color> flat = shown(true, 0, 0.0f);
-    const std::vector<SDL_Color> spared = shown(true, 1, 0.0f);
-    const std::vector<SDL_Color> lit = shown(true, 1, 1.0f);
-    SaveShownFrame(lit, width, height, "canopy-relief-lit");
-    SaveShownFrame(spared, width, height, "canopy-relief-spared");
-    GHdRelief = 0;
-    GHdSway = 0;
-    GamePaused = false;
-    GHdLighting = lightingWas;
-    lighting = kept;
-    hdArt.reset();
-    std::filesystem::remove_all(scratch);
-
-    // The frame on the screen, where it differs from the bare ground (near the middle: the minimap's blips blink), and
-    // its canopy, the left CanopyColumns of its Width (each past its last pixel).
-    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t x, int32_t y)
-    { return frame[static_cast<size_t>(y) * width + x]; };
-    int32_t frameLeft = width;
-    int32_t frameRight = 0;
-    int32_t frameTop = height;
-    int32_t frameBottom = 0;
-
-    for (int32_t y = height / 4; y < height * 3 / 4; ++y)
-    {
-        for (int32_t x = width / 4; x < width * 3 / 4; ++x)
-        {
-            if (!SameColor(at(bare, x, y), at(flat, x, y)))
-            {
-                frameLeft = std::min(frameLeft, x);
-                frameRight = std::max(frameRight, x + 1);
-                frameTop = std::min(frameTop, y);
-                frameBottom = std::max(frameBottom, y + 1);
-            }
-        }
-    }
-
-    REQUIRE(frameRight > frameLeft);
-    REQUIRE(frameBottom > frameTop);
-    const int32_t canopyRight = frameLeft + (frameRight - frameLeft) * TestForest::CanopyColumns / TestForest::Width;
-
-    // Inside the canopy's edge (Fringe pixels, drawn smooth): the pixels the relief changed, spared and with its share.
-    // Round the frame, Margin pixels wide: the ground's, and those the canopy's share changed.
-    constexpr int32_t Fringe = 2;
-    constexpr int32_t Margin = 24;
-    size_t canopyPixels = 0;
-    size_t canopySpared = 0;
-    size_t canopyLit = 0;
-    size_t groundPixels = 0;
-    size_t groundLit = 0;
-    size_t groundByShare = 0;
-
-    for (int32_t y = frameTop - Margin; y < frameBottom + Margin; ++y)
-    {
-        for (int32_t x = frameLeft - Margin; x < frameRight + Margin; ++x)
-        {
-            const bool canopy = x >= frameLeft + Fringe && x < canopyRight - Fringe && y >= frameTop + Fringe &&
-                                y < frameBottom - Fringe;
-            const bool ground = x < frameLeft || x >= frameRight || y < frameTop || y >= frameBottom;
-            const SDL_Color under = at(flat, x, y);
-
-            if (canopy)
-            {
-                ++canopyPixels;
-                canopySpared += SameColor(at(spared, x, y), under) ? 0 : 1;
-                canopyLit += SameColor(at(lit, x, y), under) ? 0 : 1;
-            }
-            else if (ground)
-            {
-                ++groundPixels;
-                groundLit += SameColor(at(spared, x, y), under) ? 0 : 1;
-                groundByShare += SameColor(at(spared, x, y), at(lit, x, y)) ? 0 : 1;
-            }
-        }
-    }
-
-    std::cout << std::format(
-        "  the canopy: {} of {} pixels changed by the relief spared, {} with all of it; the ground "
-        "round it: {} of {} lit by it, {} changed by the canopy's share\n",
-        canopySpared, canopyPixels, canopyLit, groundLit, groundPixels, groundByShare);
-    REQUIRE(canopyPixels > 0);
-    CHECK_EQ(canopySpared, 0u);
-    CHECK(canopyLit * 10 > canopyPixels);
-    CHECK(groundLit * 10 > groundPixels);
-    CHECK_EQ(groundByShare, 0u);
+/// <summary>
+/// The sun's relief spares what stands on the ground (CheckReliefSpares, MCLighting::StandingRelief): a building's or
+/// an object's frame, here the forest's unswayed. Its art's fine shading, taken for height, showed as bumps: a crate's
+/// faces crumpled, a dome's seams embossed (the plane playtest, 21 Nov).
+/// </summary>
+TEST_CASE_ISOLATED("game: the sun's relief spares what stands on the ground, the ground round it lit by it")
+{
+    CheckReliefSpares(false, &MCSceneLights::MCLighting::StandingRelief, "standing");
 }
 
 /// <summary>
@@ -8396,10 +8433,10 @@ namespace
     }
 
     /// <summary>
-    /// With <c>--hd-sun-relief &lt;strength&gt;[,&lt;canopy&gt;]</c>, turns relief on (GHdRelief), the sun showing the
-    /// world's relief that much (MCLighting::SunRelief, 0 to 1), and a swaying forest's canopy that share of it
-    /// (MCLighting::CanopyRelief; left out, its default); the relief maps keep their steepness unless --hd-relief-maps
-    /// says.
+    /// With <c>--hd-sun-relief &lt;strength&gt;[,&lt;canopy&gt;[,&lt;standing&gt;]]</c>, turns relief on (GHdRelief),
+    /// the sun showing the world's relief that much (MCLighting::SunRelief, 0 to 1), a swaying forest's canopy that share
+    /// of it (MCLighting::CanopyRelief) and what stands on the ground that share (MCLighting::StandingRelief; each left
+    /// out, its default); the relief maps keep their steepness unless --hd-relief-maps says.
     /// </summary>
     void SunReliefFromOptions()
     {
@@ -8412,10 +8449,11 @@ namespace
 
         MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
         const std::string given(*strength);
-        REQUIRE(std::sscanf(given.c_str(), "%f,%f", &settings.SunRelief, &settings.CanopyRelief) >= 1);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f", &settings.SunRelief, &settings.CanopyRelief,
+                            &settings.StandingRelief) >= 1);
         GHdRelief = 1;
-        std::cout << std::format("  sun relief: {:.2f}, the canopy {:.2f} of it\n", settings.SunRelief,
-                                 settings.CanopyRelief);
+        std::cout << std::format("  sun relief: {:.2f}, the canopy {:.2f} of it, what stands {:.2f}\n",
+                                 settings.SunRelief, settings.CanopyRelief, settings.StandingRelief);
     }
 
     /// <summary>

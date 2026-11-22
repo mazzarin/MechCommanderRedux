@@ -77,6 +77,7 @@ namespace
         bool OverCanopy;
         bool Print;
         uint32_t FoggedWater;
+        bool Standing;
     };
 
     AlphaRead ReadAlpha(uint32_t byte)
@@ -90,6 +91,7 @@ namespace
             .OverCanopy = !ground && a > Gc::CanopyMark,
             .Print = ground && a < Gc::FilledMarkTop,
             .FoggedWater = !ground && a < Gc::CanopyMark ? std::min(edges, Gc::MostFogEdge) : 0u,
+            .Standing = a < Gc::StandingMarkTop,
         };
     }
 
@@ -155,22 +157,25 @@ TEST_CASE("gpu channels: the coverage marks take a version 1 frame's greens to t
 
 TEST_CASE("gpu channels: each mark in the index target's alpha reads as itself and nothing else")
 {
-    // What stands on the ground, and ground without a relief map.
+    // What stands on the ground, and ground without a relief map: alike but for whether something stands there.
     const AlphaRead standing = ReadAlpha(Written(Gc::StandingMark));
-    CHECK(!standing.Ground && !standing.Canopy && !standing.OverCanopy && !standing.Print);
+    CHECK(!standing.Ground && !standing.Canopy && !standing.OverCanopy && !standing.Print && standing.Standing);
     CHECK_EQ(standing.FoggedWater, 0u);
+    const AlphaRead terrain = ReadAlpha(Written(Gc::TerrainMark));
+    CHECK(!terrain.Ground && !terrain.Canopy && !terrain.OverCanopy && !terrain.Print && !terrain.Standing);
+    CHECK_EQ(terrain.FoggedWater, 0u);
 
     // Water at the fog of war's edge, a mark for each corner the fog leaves seen.
     for (uint32_t edges = 1; edges <= FogEdges; edges++)
     {
         const AlphaRead water = ReadAlpha(Written(Gc::FoggedWaterMark * static_cast<float>(edges)));
-        CHECK(!water.Ground && !water.Canopy && !water.OverCanopy && !water.Print);
+        CHECK(!water.Ground && !water.Canopy && !water.OverCanopy && !water.Print && !water.Standing);
         CHECK_EQ(water.FoggedWater, edges);
     }
 
     // A forest's canopy, read both ways.
     const AlphaRead canopy = ReadAlpha(Written(Gc::SwayMark));
-    CHECK(!canopy.Ground && canopy.Canopy && canopy.OverCanopy && !canopy.Print);
+    CHECK(!canopy.Ground && canopy.Canopy && canopy.OverCanopy && !canopy.Print && !canopy.Standing);
     CHECK_EQ(canopy.FoggedWater, 0u);
 
     // A print under the snow, filled in step by step, and how far it reads.
@@ -179,7 +184,7 @@ TEST_CASE("gpu channels: each mark in the index target's alpha reads as itself a
         const float filled = static_cast<float>(step) / static_cast<float>(FillSteps);
         const uint32_t byte = Written(Gc::FilledMarkFrom + Gc::FilledMarkSpan * filled);
         const AlphaRead print = ReadAlpha(byte);
-        CHECK(print.Ground && !print.Canopy && !print.OverCanopy && print.Print);
+        CHECK(print.Ground && !print.Canopy && !print.OverCanopy && print.Print && !print.Standing);
         const float read = std::clamp((Read(byte) - Gc::FilledMarkFrom) / Gc::FilledMarkSpan, 0.0f, 1.0f);
         CHECK(std::abs(read - filled) <= 1.0f / (UnormMost * Gc::FilledMarkSpan));
     }
@@ -189,7 +194,7 @@ TEST_CASE("gpu channels: each mark in the index target's alpha reads as itself a
     {
         const float blocked = Read(share);
         const AlphaRead ground = ReadAlpha(Written(1.0f - Gc::BlockedMarkSpan * blocked));
-        CHECK(ground.Ground && !ground.Canopy && !ground.OverCanopy && !ground.Print);
+        CHECK(ground.Ground && !ground.Canopy && !ground.OverCanopy && !ground.Print && !ground.Standing);
         CHECK_EQ(ground.FoggedWater, 0u);
     }
 }

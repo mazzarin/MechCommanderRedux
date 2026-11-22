@@ -564,6 +564,4 @@ These are in the original Mission Editor.
 
 ### HD Lighting
 
-- **Redux HD.** The sun shows the ground's bumps and slopes, but not the shape of mechs, vehicles, buildings and
-  objects: they are lit as drawn, with no brighter side toward the sun. Their HD art lacks the lighting data this needs
-  (which way each part faces).
+- **Redux HD.** The sun doesn't shade mechs, vehicles, buildings or objects: their HD art has no lighting data yet.

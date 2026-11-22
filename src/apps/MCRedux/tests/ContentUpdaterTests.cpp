@@ -2781,6 +2781,74 @@ TEST_CASE("updater: HD's choice changed while it downloads stops the download fo
     CHECK(!std::filesystem::exists(download));
 }
 
+TEST_CASE("updater: STOP while the HD art's size changes keeps the pack at the size it has, nothing planned and what "
+          "it downloaded gone; STOP during HD's first download plans no HD; the page says it stops until it has")
+{
+    // Held at its first download with something staged and downloaded, STOP pressed: it says it stops until the work
+    // has (never STARTING THE DOWNLOAD again), and nothing is armed or left behind.
+    const auto stop = [](const MCHostedRelease& release, const MCGate& gate)
+    {
+        const std::filesystem::path& game = release.Game.Path();
+        REQUIRE(FramesUntil([&] { return gate.Reached.load(); }));
+        CHECK(MCUpdater::HdPack().Stage == MCStage::Downloading);
+        const std::filesystem::path staged = game / "Redux update" / "staged";
+        const std::filesystem::path download = game / "Redux update" / "download";
+        Write(staged / "HD" / "terrain.hda", "half the terrain");
+        Write(download / "hd2x-2.zip", "half the zip");
+
+        MCUpdater::StopHd();
+        CHECK(MCUpdater::HdPack().Stopping);
+        REQUIRE(FramesUntil(
+            []
+            {
+                const MCUpdater::MCHdPack& pack = MCUpdater::HdPack();
+                return pack.Stage != MCStage::Downloading || !pack.Stopping;
+            }));
+        CHECK(MCUpdater::HdPack().Stage == MCStage::None);
+        REQUIRE(FramesUntilIdle());
+        CHECK(MCUpdater::HdPack().Stage == MCStage::None);
+        CHECK(!MCUpdater::HdPack().Stopping);
+        CHECK(!release.Armed());
+        CHECK(StagingFree(game));
+        CHECK(!std::filesystem::exists(staged));
+        CHECK(!std::filesystem::exists(download));
+    };
+
+    {
+        MCHostedRelease release("updater-hd-size-stop");
+        AddTwoX(release);
+        release.Machine = BigMachine;
+        UpdateToRelease2(release);
+        const std::filesystem::path& game = release.Game.Path();
+        const auto gate = std::make_shared<MCGate>();
+        MCUpdaterScope scope(release, false,
+                             [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+        REQUIRE(MCUpdater::HdPack().Installed);
+        REQUIRE(!MCUpdater::HdPack().TwoX);
+
+        MCUpdater::ChooseHdArt(true);
+        stop(release, *gate);
+        CHECK(MCUpdater::HdPack().Installed);
+        CHECK(MCUpdater::HdPack().Chosen);
+        CHECK(!MCUpdater::HdPack().TwoXChosen);
+        CHECK(MCContentUpdater::Chosen(*MakeDisk(), game) == WithHd);
+        CHECK(InstalledSets(release) == WithHd);
+        CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    }
+
+    MCHostedRelease release("updater-hd-get-stop");
+    UpdateToRelease2(release);
+    ChangeSets(release, WithoutHd);
+    const auto gate = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false,
+                         [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+    MCUpdater::ChooseHd(true);
+    stop(release, *gate);
+    CHECK(!MCUpdater::HdPack().Chosen);
+    CHECK(MCContentUpdater::Chosen(*MakeDisk(), release.Game.Path()) == WithoutHd);
+    CHECK(InstalledSets(release) == WithoutHd);
+}
+
 namespace
 {
     /// <summary>Runs the updater's frames a while, as the game does, with no end looked for.</summary>

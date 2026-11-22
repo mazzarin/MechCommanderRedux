@@ -139,7 +139,10 @@ namespace MCUpdater
         uint64_t Received = 0;
         uint64_t Expected = 0;
         std::string Error;
-        /// <summary>The player changed their mind while it downloaded: it stops, then the new choice is planned.</summary>
+        /// <summary>
+        /// The player changed their mind while it downloaded: it stops, then the new choice is planned. Back to what's
+        /// installed, it stops until what the download left is cleared.
+        /// </summary>
         bool Stopping = false;
         /// <summary>The update shown brings the change (it was planned with the choice).</summary>
         bool WithUpdate = false;
@@ -267,7 +270,7 @@ namespace MCUpdater
     const MCHdPack& HdPack();
 
     /// <summary>
-    /// The player chose to have the HD pack or not (HD OPTIONS' GET, REMOVE and STOP): kept as the copy's choice, then
+    /// The player chose to have the HD pack or not (HD OPTIONS' GET and REMOVE): kept as the copy's choice, then
     /// planned against the release installed, downloaded while the game plays, and in or out at the next start (RESTART,
     /// or quitting). The same choice again after a failure tries again. With an update shown,
     /// the update is planned again with it; changed while it downloads, the download stops for the new choice. A
@@ -281,6 +284,13 @@ namespace MCUpdater
     /// is planned again with it).
     /// </summary>
     void ChooseHdArt(bool twoX);
+
+    /// <summary>
+    /// STOP on HD OPTIONS, while the HD pack's change downloads: the copy keeps what it has. A pack installed stays, at
+    /// the size it has (a change of the art's size stopped); without one, no HD (HD's first download stopped). What the
+    /// download staged goes.
+    /// </summary>
+    void StopHd();
 
     /// <summary>RESTART on HD OPTIONS: with the HD pack's change ready, the game quits and starts again, putting it in.</summary>
     void RestartForHd();

@@ -206,7 +206,7 @@ namespace
     {
         const std::array<std::pair<std::string_view, std::function<void()>>, 4> buttons = {{
             {GetLabel, [] { MCUpdater::ChooseHd(true); }},
-            {StopLabel, [] { MCUpdater::ChooseHd(false); }},
+            {StopLabel, MCUpdater::StopHd},
             {RemoveLabel, AskToRemoveHd},
             {RestartLabel, MCUpdater::RestartForHd},
         }};

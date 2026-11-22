@@ -254,6 +254,11 @@ enum : uint32_t
     DPENUMSESSIONS_ASYNC = 0x10,
     DPENUMSESSIONS_PASSWORDREQUIRED = 0x40,
     DPENUMSESSIONS_RETURNSTATUS = 0x80,
+    /// <summary>
+    /// Port-only: EnumSessions sends its question and reports what answered by then, without waiting for answers (those to
+    /// it are reported by the next): a screen that searches every few seconds.
+    /// </summary>
+    MCENUMSESSIONS_NOWAIT = 0x10000,
 
     /// <summary>EnumSessions callback flag: the enumeration is over (the description is null).</summary>
     DPESC_TIMEDOUT = 0x01,
@@ -337,8 +342,9 @@ public:
     uint32_t InitializeConnection(std::span<const uint8_t> connection, uint32_t flags);
 
     /// <summary>
-    /// Asks for sessions of <paramref name="desc"/>'s application and reports those that answered lately, then
-    /// calls <paramref name="callback"/> once more with DPESC_TIMEDOUT.
+    /// Asks for sessions of <paramref name="desc"/>'s application and reports those that answered lately (waiting a
+    /// moment for answers, unless MCENUMSESSIONS_NOWAIT), then calls <paramref name="callback"/> once more with
+    /// DPESC_TIMEDOUT.
     /// </summary>
     uint32_t EnumSessions(const DPSESSIONDESC2& desc, uint32_t timeout, const MCEnumSessionsCallback& callback,
                           uint32_t flags);

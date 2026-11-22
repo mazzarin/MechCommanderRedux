@@ -339,7 +339,10 @@ auto MCSplashScreen::ShowGuiWindow(bool show) -> void
         InternetScreenHidden();
     }
 
-    // The connection screens poll while shown: the connect screen through its element 3.
+    // The connection screens poll while shown: the connect screen through its element 3. Port: a poll doesn't wait for
+    // answers (they're listed by the next); the LAN screen's first question goes as it shows, so its first poll lists
+    // them. Not the connect screen's: it's a lobby's waiting screen too, and the question would catch the room the host
+    // is leaving still answering.
     if (GlobalLog()->ConnectScreen.Is(*this))
     {
         if (show)
@@ -355,6 +358,7 @@ auto MCSplashScreen::ShowGuiWindow(bool show) -> void
     {
         if (show)
         {
+            MCGameList::AskForSessions();
             GuiSystem().AddTimer(weak_from_this(), PollTimer, PollInterval, 0, 0, false);
             MCGenericScreen::ShowGuiWindow(show);
             return;

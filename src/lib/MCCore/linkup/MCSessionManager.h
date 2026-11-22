@@ -245,9 +245,13 @@ public:
     /// match started). Before that its room takes players until START.
     /// </summary>
     [[nodiscard]] bool SessionLocked() const { return _SessionLocked; }
-    /// <summary>Re-enumerates the sessions of this game on the current connection.</summary>
+    /// <summary>
+    /// Re-enumerates the sessions of this game on the current connection: those that answered within a moment, or (not
+    /// <paramref name="waitForAnswers"/>, a search repeated every few seconds) those that answered by now, the answers to
+    /// this search listed by the next.
+    /// </summary>
     /// <returns>The sessions listed, or none without DirectPlay.</returns>
-    std::optional<std::vector<std::shared_ptr<MCFidpSession>>> GetSessions();
+    std::optional<std::vector<std::shared_ptr<MCFidpSession>>> GetSessions(bool waitForAnswers = true);
     /// <summary>
     /// The players of the current session (enumerated first when this machine has no player yet: those of the listed
     /// <paramref name="session"/>, or of the session joined when null).

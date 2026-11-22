@@ -5501,6 +5501,41 @@ TEST_CASE("hd art: a briefing left before its archives open hands them to no oth
     GHdArt = previous;
 }
 
+namespace
+{
+    /// <summary>
+    /// HD art on from <paramref name="folder"/>'s pack with the hold wanted (the reader's settings): what the hold's
+    /// tests set as the game boots (MCTestGame::BootOptions.Started).
+    /// </summary>
+    void HoldFrom(const std::filesystem::path& folder)
+    {
+        GHdArt = 1;
+        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
+        settings.Hold = true;
+        MCHdArt::SetReaderSettings(settings);
+        MCHdArt::SetPackFolder(folder);
+    }
+
+    /// <summary>
+    /// The mission file a launch from logistics loads: logistics' copy of the mission's, in the save folder
+    /// (MCMission::StartScenario).
+    /// </summary>
+    constexpr std::string_view LogisticsBridge = "bridge";
+
+    /// <summary>Checks that <paramref name="mission"/>'s next briefing holds <paramref name="list"/>'s folders, in its
+    /// order (MCHdArt::BriefingFolders).</summary>
+    void CheckBriefingHoldsFrom(std::string_view mission, const MCScenario::MCHoldList& list)
+    {
+        const std::vector<std::filesystem::path> briefing = MCHdArt::BriefingFolders(mission);
+        REQUIRE_EQ(briefing.size(), list.Folders.size());
+
+        for (size_t index = 0; index < briefing.size(); ++index)
+        {
+            CHECK_EQ(briefing[index].generic_string(), list.Folders[index]);
+        }
+    }
+}
+
 /// <summary>
 /// Port-only, for test runs: -hdbriefing (TestBriefingSeconds) waits before a game segment's load with the mission's
 /// hold started as its briefing would start it, and the load keeps that hold (MCHdArt::HoldsFor); the wait is spent.
@@ -5516,11 +5551,7 @@ TEST_CASE_ISOLATED("hd art: -hdbriefing holds a game segment's mission before it
     const ScratchFolder pack("hdbriefing");
     MCTestGame::BootOptions.Started = [folder = pack.Path()]
     {
-        GHdArt = 1;
-        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
-        settings.Hold = true;
-        MCHdArt::SetReaderSettings(settings);
-        MCHdArt::SetPackFolder(folder);
+        HoldFrom(folder);
         TestBriefingSeconds = WaitSeconds;
     };
 
@@ -5546,27 +5577,14 @@ TEST_CASE_ISOLATED("hd art: a mission's load keeps its hold list, and its next b
     }
 
     const ScratchFolder pack("learned-hold-list");
-    MCTestGame::BootOptions.Started = [folder = pack.Path()]
-    {
-        GHdArt = 1;
-        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
-        settings.Hold = true;
-        MCHdArt::SetReaderSettings(settings);
-        MCHdArt::SetPackFolder(folder);
-    };
+    MCTestGame::BootOptions.Started = [folder = pack.Path()] { HoldFrom(folder); };
 
     REQUIRE(MCTestGame::StartMission(1));
     const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
     const MCScenario::MCHoldList list = Scenario()->HoldList(mission);
     REQUIRE(!list.Folders.empty());
     CHECK(list.PlayersLeft > 0);
-    const std::vector<std::filesystem::path> briefing = MCHdArt::BriefingFolders(mission);
-    REQUIRE_EQ(briefing.size(), list.Folders.size());
-
-    for (size_t index = 0; index < briefing.size(); ++index)
-    {
-        CHECK_EQ(briefing[index].generic_string(), list.Folders[index]);
-    }
+    CheckBriefingHoldsFrom(mission, list);
 
     // The original's packet files and archives among the files' pieces, all read ahead at the mission's next pick.
     const std::vector<MCFilesAhead::MCFilePiece> pieces = MCHdArt::MissionFilePieces(mission);
@@ -5594,6 +5612,29 @@ TEST_CASE_ISOLATED("hd art: a mission's load keeps its hold list, and its next b
 
     CHECK_EQ(MCFilesAhead::PiecesReadBytes() - from, listed);
     MCFilesAhead::ForgetPieces();
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "The mission's manifest"): a campaign's mission launched from logistics loads logistics'
+/// copy of its file ("bridge", in the save folder) and keeps its hold list as a mission loaded directly does
+/// (MCScenario::HoldList opening the copy where the load does): the list its next briefing holds from. A fan campaign's
+/// missions, which the program carries no list for, are held from their second play on.
+/// </summary>
+TEST_CASE_ISOLATED("hd art: a campaign's mission launched from logistics keeps its hold list")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const ScratchFolder pack("learned-hold-list-bridge");
+    MCTestGame::BootOptions.Started = [folder = pack.Path()] { HoldFrom(folder); };
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+    const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
+    const MCScenario::MCHoldList list = Scenario()->HoldList(LogisticsBridge);
+    REQUIRE(!list.Folders.empty());
+    CheckBriefingHoldsFrom(mission, list);
 }
 
 /// <summary>
@@ -7544,14 +7585,7 @@ TEST_CASE_ISOLATED(
     }
 
     const std::filesystem::path out = MCFileSystem::FromUtf8(MCTest::Option("hold-list-out").value_or("."));
-    MCTestGame::BootOptions.Started = [folder = MCFileSystem::FromUtf8(*pack)]
-    {
-        GHdArt = 1;
-        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
-        settings.Hold = true;
-        MCHdArt::SetReaderSettings(settings);
-        MCHdArt::SetPackFolder(folder);
-    };
+    MCTestGame::BootOptions.Started = [folder = MCFileSystem::FromUtf8(*pack)] { HoldFrom(folder); };
 
     REQUIRE(MCTestGame::StartMission(segment));
     REQUIRE(MCHdArt::Active());
@@ -7636,14 +7670,7 @@ TEST_CASE_ISOLATED("tool: --hold-list-map writes the pack's folders a match map'
     }
 
     const std::filesystem::path out = MCFileSystem::FromUtf8(MCTest::Option("hold-list-out").value_or("."));
-    MCTestGame::BootOptions.Started = [folder = MCFileSystem::FromUtf8(*pack)]
-    {
-        GHdArt = 1;
-        MCHdArt::ReaderSettings settings = MCHdArt::GetReaderSettings();
-        settings.Hold = true;
-        MCHdArt::SetReaderSettings(settings);
-        MCHdArt::SetPackFolder(folder);
-    };
+    MCTestGame::BootOptions.Started = [folder = MCFileSystem::FromUtf8(*pack)] { HoldFrom(folder); };
 
     // A match's file has none of the campaign's lists (its warriors, parts and place in the master mission file): their
     // reads assert, at its load and wherever the logistics' screens list a save of it.

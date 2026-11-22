@@ -938,6 +938,31 @@ public:
     static std::optional<float> DrawingGroundFill();
 
     /// <summary>
+    /// Port-only (HD lighting's sun relief): while one made with <c>true</c> lives, the draws are laid on the ground (a
+    /// crater's, a footprint's; the hardware renderer takes a terrain overlay's so itself): it marks their pixels as the
+    /// ground's, for the composite to give them the ground's relief, not what stands on it's (nothing in software). One
+    /// made with <c>false</c> changes nothing.
+    /// </summary>
+    class OnGroundScope
+    {
+    public:
+        /// <summary>Marks the draws as laid on the ground when <paramref name="onGround"/>.</summary>
+        explicit OnGroundScope(bool onGround);
+
+        /// <summary>Marks as before the scope.</summary>
+        ~OnGroundScope();
+
+        OnGroundScope(const OnGroundScope&) = delete;
+        OnGroundScope& operator=(const OnGroundScope&) = delete;
+
+    private:
+        bool _Was = false;
+    };
+
+    /// <summary>Whether the draws now are laid on the ground (<see cref="OnGroundScope"/>).</summary>
+    static bool DrawingOnGround();
+
+    /// <summary>
     /// Port-only (HD lighting's headlights): while one made with a row lives, the shape draws are a unit's whose feet
     /// stand on that row of the window drawn on (its pixels, a jumping unit's ground under it): the hardware renderer
     /// writes it with their indices, for the composite to light their pixels where the unit stands and to know them in

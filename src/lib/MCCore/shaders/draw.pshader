@@ -311,6 +311,9 @@ static int2 placeSize;
 // not an atlas page's state, from main.
 static const uint HdMarksSource = 1u;
 static bool sourceMarks;
+// Port-only (HD lighting's sun relief): place.w's bit for a draw laid on the ground (a terrain overlay's, a crater's or a
+// footprint's: MCVulkanRenderer's LaidOnGround), which marks its pixels as the ground's (TerrainMark), from main.
+static const uint LaidOnGround = 4u;
 
 // A texel of the draw's source, in its picture.
 float4 SourceAt(int2 texel)
@@ -2455,6 +2458,22 @@ Output main(Input input)
     cycledShare = float3(0.0, 0.0, 0.0);
     keptSlot = 0;
     Output output = DrawnOutput(input);
+
+    // Port-only (the sun's relief): the terrain layer's ground without a mark of its own (a relief map's, fogged water's)
+    // and what is laid on it (an overlay, a crater, a footprint: LaidOnGround) are marked as ground, so the composite
+    // tells them from what stands on it (channels.hlsli's TerrainMark). A fold's alpha says where its index goes.
+#if DRAW_VARIANT == DRAW_TERRAIN_KINDS
+    const bool onGround = true;
+#elif DRAW_STANDS
+    const bool onGround = (input.place.w & LaidOnGround) != 0 && !FoldsIn(input);
+#else
+    const bool onGround = (input.place.w & LaidOnGround) != 0;
+#endif
+
+    if (onGround && output.index.a < StandingMarkTop)
+    {
+        output.index.a = TerrainMark;
+    }
 
 #if DRAWS_TERRAIN_KINDS
     // Port-only (SPEC-pan-water.md): in the kept ground's pass, the terrain's cycled share in the glints target,

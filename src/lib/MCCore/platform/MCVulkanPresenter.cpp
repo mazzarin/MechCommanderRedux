@@ -592,6 +592,7 @@ namespace
             uniforms.AirBeams[2] = down;
             uniforms.ReliefLook[0] = MCSceneLights::ReliefMapsOn() ? lighting.ReliefMaps : 0.0f;
             uniforms.ReliefLook[1] = lighting.CanopyRelief;
+            uniforms.ReliefLook[2] = lighting.StandingRelief;
         }
 
         uniforms.LightTone[0] = lighting.Scatter;

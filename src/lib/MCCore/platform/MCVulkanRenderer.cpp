@@ -194,6 +194,12 @@ namespace
     constexpr uint32_t SubPixelPlaced = 2u;
     constexpr uint32_t SubPixelXShift = 8;
     constexpr uint32_t SubPixelYShift = 16;
+    /// <summary>
+    /// Port-only (HD lighting's sun relief): place.w's bit for a draw laid on the ground (a terrain overlay's, a crater's
+    /// or a footprint's: MCRenderer::OnGroundScope), whose pixels draw.pshader marks as the ground's (TerrainMark), not
+    /// what stands on it's (shaders/draw.pshader's LaidOnGround).
+    /// </summary>
+    constexpr uint32_t LaidOnGround = 4u;
 
     constexpr float SubPixelSteps = 256.0f;
     constexpr int32_t SubPixelMost = 255;
@@ -2406,6 +2412,12 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     {
         draw[PlaceFlagsField] |= static_cast<int32_t>(SubPixelPlaced | SubPixelBits((*fraction)[0]) << SubPixelXShift |
                                                       SubPixelBits((*fraction)[1]) << SubPixelYShift);
+    }
+
+    // Port-only (HD lighting's sun relief): a terrain overlay's draws and a crater's or a footprint's lie on the ground.
+    if (_DrawingOverlay || MCRenderer::DrawingOnGround())
+    {
+        draw[PlaceFlagsField] |= static_cast<int32_t>(LaidOnGround);
     }
 
     const bool indexOnly = (op & IndexOnly) != 0;

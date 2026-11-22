@@ -47,6 +47,7 @@ auto MCVfxElement::ClampFrame() -> void
 auto MCVfxElement::Draw() -> void
 {
     const MCRenderer::GroundFillScope fill(GroundFill);
+    const MCRenderer::OnGroundScope onGround(OnGround);
     const MCRenderer::StandingScope standing(Feet);
 
     if (!NoScaleDraw)

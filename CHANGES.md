@@ -41,6 +41,7 @@ adds are in the [README](README.md#what-redux-hd-adds).
     - [Multiplayer Issues](#multiplayer-issues)
     - [Mission Scripts (Modding)](#mission-scripts-modding)
     - [Mission Editor Issues](#mission-editor-issues)
+    - [HD Lighting](#hd-lighting)
 
 ---
 
@@ -567,3 +568,7 @@ These are in the original Mission Editor.
 - Some error messages are empty: a mission file missing while writing a distribution file, or a path map file that
   doesn't open.
 - **Help > Help Topics** doesn't open: the help file is Windows Help (`.hlp`), which Windows 10 and 11 can't show.
+
+### HD Lighting
+
+- **Redux HD.** The sun doesn't shade mechs, vehicles, buildings or objects: their HD art has no lighting data yet.

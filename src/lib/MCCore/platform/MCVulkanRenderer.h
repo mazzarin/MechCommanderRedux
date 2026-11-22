@@ -1310,6 +1310,14 @@ private:
     /// </summary>
     static bool DrawsApart(const Record& later, uint16_t surface, SourceKind source, uint32_t sourceIndex,
                            uint32_t channels, const MCRect& written);
+    /// <summary>
+    /// Port-only: whether <paramref name="record"/>'s draws and <paramref name="other"/>'s, records of
+    /// <paramref name="run"/> that are neither a resize nor a terrain layer, go through one pipeline with one set of
+    /// bindings on one target (DrawPipelines::For's state, a fold's too; an overlay's and a tree's apart from the
+    /// rest, as the kept view holds them), so one draw call can draw them: what a draw's run (Add) and a batch of
+    /// records (Run) both need.
+    /// </summary>
+    static bool SameDrawCall(const FrameRun& run, const Record& record, const Record& other);
     /// <summary>Port-only: puts <paramref name="run"/>'s draws in their records' order, each record's together (Record::First).</summary>
     void LayOutDraws(FrameRun& run);
     /// <summary>Adds particle <paramref name="command"/>'s draw to <paramref name="surface"/> (Particle).</summary>

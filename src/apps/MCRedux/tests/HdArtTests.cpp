@@ -7771,6 +7771,37 @@ namespace
         std::filesystem::create_directories(stairs.Pack / MCHdArt::FolderOf(stairs.Key));
         return stairs;
     }
+
+    /// <summary>
+    /// The smooth-edge tests' staircase, a pixel longer each row in <paramref name="opaque"/>, and its HD frame in a pack
+    /// made from <paramref name="colors"/>: the original's steps at the tests' packs' scale, nearest.
+    /// </summary>
+    StairShape MakeSteppedStairs(std::string_view name, std::span<const SDL_Color, 256> colors, uint8_t opaque)
+    {
+        std::vector<uint8_t> rows;
+
+        for (int32_t row = 0; row < StairRows; ++row)
+        {
+            rows.push_back(RunOf(row + 1));
+            rows.insert(rows.end(), static_cast<size_t>(row + 1), opaque);
+            rows.push_back(RowEnd);
+        }
+
+        StairShape stairs = MakeStairShape(name, StairRows, rows);
+        WriteSteppedFrame(stairs.Pack / MCHdArt::FolderOf(stairs.Key) / "0", StairRows, StairRows, TestPackScale,
+                          colors[opaque],
+                          [&](int32_t x, int32_t y) { return x <= y ? std::optional(opaque) : std::nullopt; });
+        WritePaletteRgb(stairs.Pack, colors);
+        return stairs;
+    }
+
+    /// <summary>Draws <paramref name="stairs"/> at the screen pane's middle, its HD frame attached.</summary>
+    void DrawStairsMid(const StairShape& stairs)
+    {
+        MCPane& pane = ScreenPort()->Frame();
+        MCHdArt::Attach(stairs.Shape, stairs.Key);
+        AGShapeDraw(pane, stairs.Shape->FrameList(), 0, (pane.X1 - pane.X0) / 2, (pane.Y1 - pane.Y0) / 2);
+    }
 }
 
 /// <summary>
@@ -7795,29 +7826,8 @@ TEST_CASE_ISOLATED("game: HD art draws a sprite's HD frame with its original's e
     MCInput::Display()->GetShownColors(colors);
     const uint8_t opaque = FullColorIndex(colors);
     const uint8_t plain = ContrastingIndex(colors, opaque);
-    std::vector<uint8_t> rows;
-
-    for (int32_t row = 0; row < StairRows; ++row)
-    {
-        rows.push_back(RunOf(row + 1));
-        rows.insert(rows.end(), static_cast<size_t>(row + 1), opaque);
-        rows.push_back(RowEnd);
-    }
-
-    const StairShape stairs = MakeStairShape("mc_tests_hd_smooth_frame", StairRows, rows);
-    constexpr int32_t Scale = 2;
-    WriteSteppedFrame(stairs.Pack / MCHdArt::FolderOf(stairs.Key) / "0", StairRows, StairRows, Scale, colors[opaque],
-                      [&](int32_t x, int32_t y) { return x <= y ? std::optional(opaque) : std::nullopt; });
-    WritePaletteRgb(stairs.Pack, colors);
-
-    MCPane& pane = ScreenPort()->Frame();
-    const int32_t x = (pane.X1 - pane.X0) / 2;
-    const int32_t y = (pane.Y1 - pane.Y0) / 2;
-    const auto draw = [&]
-    {
-        MCHdArt::Attach(stairs.Shape, stairs.Key);
-        AGShapeDraw(pane, stairs.Shape->FrameList(), 0, x, y);
-    };
+    const StairShape stairs = MakeSteppedStairs("mc_tests_hd_smooth_frame", colors, opaque);
+    const auto draw = [&] { DrawStairsMid(stairs); };
 
     // A whole pixel: the bottom row's left end, inside the staircase.
     constexpr std::pair<double, double> Inside = {0.1, 0.99};
@@ -7829,6 +7839,114 @@ TEST_CASE_ISOLATED("game: HD art draws a sprite's HD frame with its original's e
                              smooth.Scale, LargestStep(original), LargestStep(smooth));
     CHECK(LargestStep(original) > smooth.Scale * 0.75);
     CHECK(LargestStep(smooth) < smooth.Scale * 0.6);
+    std::filesystem::remove_all(stairs.Scratch);
+}
+
+namespace
+{
+    /// <summary>A window with the UI's lines at two drawn pixels a window pixel (StartScaledUp's at 2.5).</summary>
+    constexpr int32_t TwiceWidth = 1280;
+    constexpr int32_t TwiceHeight = 960;
+    constexpr float TwiceScale = 2.0f;
+    /// <summary>Half a window pixel past the whole one, across and down: one drawn pixel at twice the screen.</summary>
+    constexpr std::array<float, 2> HalfPixel = {0.5f, 0.5f};
+    constexpr int32_t HalfPixelDrawn = 1;
+    /// <summary>A change of a shown pixel the eye sees (a draw moves the bloom round it by about 1/255).</summary>
+    constexpr int32_t SeenColourChange = 12;
+
+    /// <summary>The frame shown once <paramref name="draw"/> draws on the screen pane wiped to
+    /// <paramref name="plain"/>.</summary>
+    Shown ShownAfter(uint8_t plain, const std::function<void()>& draw, const std::filesystem::path& scratch)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        VfxPaneWipe(ScreenPort()->Frame(), plain);
+        draw();
+        return ReadShown(scratch);
+    }
+
+    /// <summary>Whether shown pixel (<paramref name="x"/>, <paramref name="y"/>) of <paramref name="a"/> looks
+    /// different from (<paramref name="x"/> - <paramref name="dx"/>, <paramref name="y"/> - <paramref name="dy"/>) of
+    /// <paramref name="b"/>.</summary>
+    bool LooksDifferent(const Shown& a, const Shown& b, int32_t x, int32_t y, int32_t dx = 0, int32_t dy = 0)
+    {
+        const auto pixel = [](const Shown& shown, int32_t px, int32_t py)
+        { return &shown.Pixels[(static_cast<size_t>(py) * shown.Width + px) * BytesPerPixel]; };
+        return ColourDistance(pixel(a, x, y), pixel(b, x - dx, y - dy)) > SeenColourChange;
+    }
+}
+
+/// <summary>
+/// Port-only (HDSmoothMotion's mechs, drawn between window pixels): an HD frame drawn half a window pixel past its whole
+/// one (MCRenderer::SubPixelScope) on a screen shown at two drawn pixels a window pixel shows its picture a drawn pixel
+/// right and down, with its rectangle (draw.pshader's SourcePlace takes the draw's own grid offset): the smooth-edge
+/// test's staircase drawn so is, shown pixel for shown pixel, the one drawn at its whole place moved a drawn pixel.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art drawn half a window pixel on shows its picture a drawn pixel on at twice the screen")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    ScaleUp(TwiceWidth, TwiceHeight, ScaledUpLines);
+    REQUIRE_EQ(MCInput::Display()->UnderlayScale(), TwiceScale);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+    const uint8_t plain = ContrastingIndex(colors, opaque);
+    const StairShape stairs = MakeSteppedStairs("mc_tests_hd_half_pixel", colors, opaque);
+    const MCHdArtOn hdArt(stairs.Pack);
+    const auto whole = [&] { DrawStairsMid(stairs); };
+    const auto half = [&]
+    {
+        const MCRenderer::SubPixelScope placed(HalfPixel);
+        DrawStairsMid(stairs);
+    };
+
+    GamePaused = true;
+    // Drawn once first, so the draws compared both find its HD picture up.
+    ShownAfter(plain, whole, stairs.Scratch);
+    const Shown none = ShownAfter(plain, [] {}, stairs.Scratch);
+    const Shown atWhole = ShownAfter(plain, whole, stairs.Scratch);
+    const Shown atHalf = ShownAfter(plain, half, stairs.Scratch);
+    GamePaused = false;
+    REQUIRE_EQ(atWhole.Width, atHalf.Width);
+    REQUIRE_EQ(atWhole.Height, atHalf.Height);
+    MCRect box{atWhole.Width, atWhole.Height, -1, -1};
+
+    for (int32_t y = 0; y < atWhole.Height; ++y)
+    {
+        for (int32_t x = 0; x < atWhole.Width; ++x)
+        {
+            if (LooksDifferent(atWhole, none, x, y))
+            {
+                box = {std::min(box.X0, x), std::min(box.Y0, y), std::max(box.X1, x), std::max(box.Y1, y)};
+            }
+        }
+    }
+
+    // The staircase, a drawn pixel either side of it on the screen.
+    REQUIRE(box.X0 > HalfPixelDrawn);
+    REQUIRE(box.Y0 > HalfPixelDrawn);
+    REQUIRE(box.X1 + HalfPixelDrawn < atWhole.Width);
+    REQUIRE(box.Y1 + HalfPixelDrawn < atWhole.Height);
+    int32_t inPlace = 0;
+    int32_t moved = 0;
+
+    for (int32_t y = box.Y0 - HalfPixelDrawn; y <= box.Y1 + HalfPixelDrawn; ++y)
+    {
+        for (int32_t x = box.X0 - HalfPixelDrawn; x <= box.X1 + HalfPixelDrawn; ++x)
+        {
+            inPlace += LooksDifferent(atHalf, atWhole, x, y) ? 1 : 0;
+            moved += LooksDifferent(atHalf, atWhole, x, y, HalfPixelDrawn, HalfPixelDrawn) ? 1 : 0;
+        }
+    }
+
+    std::cout << std::format("  the staircase's {}x{} shown pixels drawn half a pixel on: {} differ from the whole "
+                             "place's, {} from it moved a drawn pixel\n",
+                             box.X1 - box.X0 + 1, box.Y1 - box.Y0 + 1, inPlace, moved);
+    CHECK(inPlace > 0);
+    CHECK_EQ(moved, 0);
     std::filesystem::remove_all(stairs.Scratch);
 }
 

@@ -2441,14 +2441,29 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         }
     }
 
-    // A run of draws with the same target, bindings and pipeline.
+    // The draw's record, should it start one (its draws, First and Last, set then).
+    Record fresh;
+    fresh.SurfaceIndex = surfaceIndex;
+    fresh.Source = source;
+    fresh.SourceIndex = sourceIndex;
+    fresh.Blend = blend;
+    fresh.IndexOnly = indexOnly;
+    fresh.Shadow = shadow;
+    fresh.Marks = marks;
+    fresh.Fold = fold;
+    fresh.Variant = variant;
+    fresh.Overlay = overlay;
+    fresh.Tree = tree;
+    fresh.OverlayCycles = overlayCycles;
+    fresh.OverlayTables = overlayTables;
+    fresh.Channels = channels;
+
+    // A run of draws with the same target, bindings and pipeline, and (an overlay's or a tree's) the same key's parts for
+    // the kept view (which Run's batches of records need not share).
     const auto sameRun = [&](const Record& last)
     {
-        return !last.Resize && last.TerrainDraw < 0 && last.SurfaceIndex == surfaceIndex && last.Source == source &&
-               SameBindings(*_Run, source, last.SourceIndex, sourceIndex) && last.Blend == blend &&
-               last.IndexOnly == indexOnly && last.Shadow == shadow && last.Marks == marks && last.Fold == fold &&
-               last.Variant == variant && last.Overlay == overlay && last.Tree == tree &&
-               last.OverlayCycles == overlayCycles && last.OverlayTables == overlayTables;
+        return SameDrawCall(*_Run, fresh, last) && last.OverlayCycles == overlayCycles &&
+               last.OverlayTables == overlayTables;
     };
 
     std::optional<size_t> into;
@@ -2493,21 +2508,6 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     }
     else
     {
-        Record fresh;
-        fresh.SurfaceIndex = surfaceIndex;
-        fresh.Source = source;
-        fresh.SourceIndex = sourceIndex;
-        fresh.Blend = blend;
-        fresh.IndexOnly = indexOnly;
-        fresh.Shadow = shadow;
-        fresh.Marks = marks;
-        fresh.Fold = fold;
-        fresh.Variant = variant;
-        fresh.Overlay = overlay;
-        fresh.Tree = tree;
-        fresh.OverlayCycles = overlayCycles;
-        fresh.OverlayTables = overlayTables;
-        fresh.Channels = channels;
         fresh.First = drawn;
         fresh.Last = drawn;
         _Run->Records.push_back(fresh);
@@ -3518,6 +3518,16 @@ bool MCVulkanRenderer::SameBindings(const FrameRun& run, SourceKind source, uint
     // Port-only: pictures in one shared page are read from its textures.
     return source == SourceKind::Picture && run.Pictures[a].Texture == run.Pictures[b].Texture &&
            run.Pictures[a].HdColors == run.Pictures[b].HdColors;
+}
+
+bool MCVulkanRenderer::SameDrawCall(const FrameRun& run, const Record& record, const Record& other)
+{
+    return !record.Resize && !other.Resize && record.TerrainDraw < 0 && other.TerrainDraw < 0 &&
+           record.SurfaceIndex == other.SurfaceIndex && record.Source == other.Source &&
+           SameBindings(run, record.Source, other.SourceIndex, record.SourceIndex) && record.Blend == other.Blend &&
+           record.IndexOnly == other.IndexOnly && record.Shadow == other.Shadow && record.Marks == other.Marks &&
+           record.Fold == other.Fold && record.Variant == other.Variant && record.Overlay == other.Overlay &&
+           record.Tree == other.Tree;
 }
 
 std::optional<uint32_t> MCVulkanRenderer::PictureForKey(uint64_t key, uint32_t width, uint32_t height,
@@ -10332,12 +10342,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             const Record& next = run.Records[order[last + 1]];
             const Record& previous = run.Records[order[last]];
 
-            if (next.Resize || next.TerrainDraw >= 0 || next.SurfaceIndex != record.SurfaceIndex ||
-                next.Source != record.Source ||
-                !SameBindings(run, record.Source, next.SourceIndex, record.SourceIndex) || next.Blend != record.Blend ||
-                next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.Marks != record.Marks ||
-                next.Fold != record.Fold || next.Variant != record.Variant || next.Overlay != record.Overlay ||
-                next.Tree != record.Tree || next.ReadsCopy || record.ReadsCopy ||
+            if (!SameDrawCall(run, record, next) || next.ReadsCopy || record.ReadsCopy ||
                 next.First != previous.First + previous.Count)
             {
                 break;

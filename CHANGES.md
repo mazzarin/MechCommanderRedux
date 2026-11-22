@@ -348,6 +348,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
   send messages big enough to get a slower player dropped.
 - An in-mission chat message too short to hold its text, or from a player who has just left, no longer crashes the
   game.
+- **Redux HD.** The game that takes a match over from a host that dropped out no longer sends every battle update it
+  hadn't sent since the match began, one a frame, before settling into the usual few a second: ten minutes in, that
+  was an update every frame for up to 12 seconds (OB-194).
 - **Redux HD.** The host checks that every player has the same mission and game data as its own, so players whose
   files differ no longer start a match that drifts apart. The original only checked that the mission file was there.
   Each game sends a hash of the mission's files (its scenario, script, map and purchase list) and of the data every
@@ -384,6 +387,10 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - **Redux HD.** Sensor contacts' blips spin at the same pace at any frame rate, showing every frame of their art, and
   ping once each time round. A turret's, train car's or elemental's spun and pinged four times as fast at 60 frames a
   second, and the others' skipped frames or slowed with the frame rate.
+- The game no longer jumps a quarter of a second ahead every few minutes (on a Mac every 3 minutes, on Windows every
+  7). The original split the computer's clock count in two halves to time a frame, and a frame during which the count
+  carried into the upper half came out far longer than it was, so the battle moved on by the most a frame may, a
+  quarter of a second, at once (OB-062).
 - Text shows ´ ¨ ° ¿ « » § ² º and ½, which the game's fonts listed but left blank: the marks are cut from the fonts'
   own é, ë and å, ¿ « » are made from ? < >, and the rest are drawn in the fonts' style.
 

@@ -114,9 +114,10 @@ auto MCGameList::HandleEvent(MCGuiEvent& event) -> void
         if (multiPlayer != nullptr && multiPlayer->SessionManager != nullptr)
         {
             // The sessions that have players (an empty one is remembered as deleted and never listed again). The scan
-            // stops at the first deleted session.
+            // stops at the first deleted session. Port: without waiting for answers (the search held the screen 60 ms
+            // every 2 s); this one's are listed by the next refresh.
             const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> list =
-                multiPlayer->SessionManager->GetSessions();
+                multiPlayer->SessionManager->GetSessions(false);
 
             for (size_t i = 0; list.has_value() && i < list->size(); i++)
             {
@@ -157,6 +158,16 @@ auto MCGameList::HandleEvent(MCGuiEvent& event) -> void
         }
 
         RebuildLines();
+    }
+}
+
+auto MCGameList::AskForSessions() -> void
+{
+    const std::shared_ptr<MCMultiPlayer> multiPlayer = MultiPlayer();
+
+    if (multiPlayer != nullptr && multiPlayer->SessionManager != nullptr)
+    {
+        multiPlayer->SessionManager->GetSessions(false);
     }
 }
 

@@ -1186,3 +1186,39 @@ TEST_CASE("directplay: a rollover waits until the machine taking over can be rea
     CHECK(SystemTypes(Drain(unreached.CatMachine, {unreached.AnnMachine})) ==
           std::vector<uint32_t>{uint32_t{DPSYS_SESSIONLOST}});
 }
+
+/// <summary>
+/// Port-only: the connection screens' poll searches every 2 s without waiting for answers (MCENUMSESSIONS_NOWAIT; it
+/// waited 60 ms, the screen held each time): the search comes back at once, and the host's answer is listed by the next.
+/// The fastest of a few searches is timed, so one held by a busy machine doesn't fail the test.
+/// </summary>
+TEST_CASE("directplay: a search that doesn't wait comes back at once, the host's session listed by a later one")
+{
+    constexpr int timedSearches = 5;
+    MCDirectPlay host;
+    MCDirectPlay joiner;
+    REQUIRE_EQ(Connect(host, "127.0.0.1:28876"), DP_OK);
+    REQUIRE_EQ(Host(host, "Solaris VII", 6), DP_OK);
+    REQUIRE_EQ(Connect(joiner, "127.0.0.1:28876"), DP_OK);
+    DPSESSIONDESC2 desc{};
+    desc.dwSize = sizeof(desc);
+    desc.guidApplication = TestApplication;
+
+    uint64_t fastest = UINT64_MAX;
+
+    for (int search = 0; search < timedSearches; search++)
+    {
+        const uint64_t start = SDL_GetTicks();
+        joiner.EnumSessions(
+            desc, 0, [](const DPSESSIONDESC2&, uint32_t flags) { return (flags & DPESC_TIMEDOUT) == 0; },
+            DPENUMSESSIONS_AVAILABLE | MCENUMSESSIONS_NOWAIT);
+        fastest = std::min(fastest, SDL_GetTicks() - start);
+    }
+
+    CHECK(fastest < MCDirectPlay::EnumListenMs);
+
+    const std::vector<DPSESSIONDESC2> sessions =
+        Enumerate(joiner, host, DPENUMSESSIONS_AVAILABLE | MCENUMSESSIONS_NOWAIT);
+    REQUIRE_EQ(sessions.size(), size_t{1});
+    CHECK(sessions[0].SessionName == std::optional<std::string>("Solaris VII"));
+}

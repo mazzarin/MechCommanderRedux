@@ -102,8 +102,8 @@ namespace
     constexpr uint64_t ReplyTimeoutMs = 5000;
     /// <summary>How long connecting to a host may take.</summary>
     constexpr int ConnectTimeoutMs = 3000;
-    /// <summary>How long EnumSessions listens for answers after asking.</summary>
-    constexpr uint64_t EnumListenMs = 60;
+    /// <summary>How long a typed host name that couldn't be resolved waits before EnumSessions looks it up again.</summary>
+    constexpr uint64_t ResolveRetryMs = 10000;
     /// <summary>How long an answering session stays listed without answering again.</summary>
     constexpr uint64_t SessionExpiryMs = 4000;
     /// <summary>
@@ -568,6 +568,12 @@ struct MCDirectPlay::Impl
     uint16_t Port = DefaultPort;
     /// <summary>The address <see cref="HostName"/> resolved to when sessions were last asked for.</summary>
     std::optional<uint32_t> QueriedIp;
+    /// <summary>
+    /// Port-only: the host name <see cref="QueriedIp"/> is <see cref="HostName"/>'s address for, looked up once a name
+    /// (the lookup waits on the network), and when a failed lookup may be tried again.
+    /// </summary>
+    std::string ResolvedName;
+    uint64_t ResolveAgainAt = 0;
 
     Mode State = Mode::None;
     /// <summary>A joiner whose host went away: everything fails until Close.</summary>
@@ -2597,7 +2603,13 @@ uint32_t MCDirectPlay::EnumSessions(const DPSESSIONDESC2& desc, uint32_t, const 
 
         if (!impl.HostName.empty())
         {
-            impl.QueriedIp = MCSocket::Resolve(impl.HostName);
+            // Port-only: looked up once a typed name, not at every search (a search is the LAN screen's every 2 s).
+            if (impl.ResolvedName != impl.HostName || (!impl.QueriedIp.has_value() && NowMs() >= impl.ResolveAgainAt))
+            {
+                impl.QueriedIp = MCSocket::Resolve(impl.HostName);
+                impl.ResolvedName = impl.HostName;
+                impl.ResolveAgainAt = NowMs() + ResolveRetryMs;
+            }
 
             if (impl.QueriedIp.has_value())
             {
@@ -2610,12 +2622,17 @@ uint32_t MCDirectPlay::EnumSessions(const DPSESSIONDESC2& desc, uint32_t, const 
             MCSocket::SendTo(impl.Udp, {MCSocket::LoopbackIp, impl.Port}, query.Bytes);
         }
 
-        const uint64_t until = NowMs() + EnumListenMs;
-
-        while (NowMs() < until)
+        // Port-only: a search that mustn't hold the game's thread (MCENUMSESSIONS_NOWAIT: the connection screens' poll,
+        // every 2 s) lists what answered by now; this one's answers are listed by the next.
+        if ((flags & MCENUMSESSIONS_NOWAIT) == 0)
         {
-            impl.ReadAnswers();
-            SDL_Delay(5);
+            const uint64_t until = NowMs() + EnumListenMs;
+
+            while (NowMs() < until)
+            {
+                impl.ReadAnswers();
+                SDL_Delay(5);
+            }
         }
 
         impl.ReadAnswers();

@@ -71,11 +71,19 @@ namespace
 
     /// <summary>
     /// A machine that just became the server takes over the movers: each gets the server's control (SetControl 2) and
-    /// its pilot's current order is cleared.
+    /// its pilot's current order is cleared. Its updates to the guests run from now (OB-194).
     /// </summary>
     /// <remarks>Inline in the original (SetServer and PlayerLeftGame).</remarks>
     void TakeOverMovers(MCMultiPlayer& multiPlayer)
     {
+        // OB-194 (fixed): the original left a guest's update times as the match began them (0), and UpdateClients moves
+        // each on by its interval once a frame, so a game that became the server sent every update it had never sent,
+        // one a frame, until they caught up: ten minutes in, 1,800-3,000 of the movers' (3 to 5 a second), one each frame
+        // for up to 12.5 s at 240 frames a second. Now the next of each goes at once and the rest at their intervals.
+        multiPlayer.NextWorldStateUpdateTime = ScenarioTime;
+        multiPlayer.NextMoverUpdateTime = ScenarioTime;
+        multiPlayer.NextTurretUpdateTime = ScenarioTime;
+
         for (int32_t i = 0; i < multiPlayer.NumMovers; i++)
         {
             const std::shared_ptr<MCMover> mover = LockObject(multiPlayer.MoverRoster[i]);

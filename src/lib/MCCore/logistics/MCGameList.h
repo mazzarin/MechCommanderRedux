@@ -26,6 +26,12 @@ public:
     /// </summary>
     void HandleEvent(MCGuiEvent& event) override;
 
+    /// <summary>
+    /// Port: asks for sessions without listing them, so the first refresh of a connection screen just shown lists those
+    /// that answered (a refresh doesn't wait for answers: they're listed by the next).
+    /// </summary>
+    static void AskForSessions();
+
     /// <summary>The selected session's GUID, or null (and a refresh when the selection is past the list).</summary>
     std::optional<_GUID> GetSelectedGame();
 

@@ -874,7 +874,7 @@ void MCSessionManager::ClearSessionList()
     std::erase_if(Sessions, [&](const auto& session) { return session != current; });
 }
 
-std::optional<std::vector<std::shared_ptr<MCFidpSession>>> MCSessionManager::GetSessions()
+std::optional<std::vector<std::shared_ptr<MCFidpSession>>> MCSessionManager::GetSessions(bool waitForAnswers)
 {
     if (DirectPlay == nullptr)
     {
@@ -885,7 +885,8 @@ std::optional<std::vector<std::shared_ptr<MCFidpSession>>> MCSessionManager::Get
     DPSESSIONDESC2 desc{};
     desc.dwSize = sizeof(DPSESSIONDESC2);
     desc.guidApplication = _AppGuid;
-    DirectPlay->EnumSessions(desc, 0, SessionAdder(), EnumSessionFlags);
+    DirectPlay->EnumSessions(desc, 0, SessionAdder(),
+                             waitForAnswers ? EnumSessionFlags : EnumSessionFlags | MCENUMSESSIONS_NOWAIT);
     return Sessions;
 }
 

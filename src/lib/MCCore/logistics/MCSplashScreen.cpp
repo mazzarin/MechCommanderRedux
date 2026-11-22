@@ -14,6 +14,7 @@
 #include "logistics/MCLogChatInput.h"
 #include "logistics/MCPlayerNameObject.h"
 #include "logistics/MCSessionScreen.h"
+#include "linkup/MCSessionManager.h"
 #include "main/MCLogistics.h"
 
 namespace
@@ -339,11 +340,19 @@ auto MCSplashScreen::ShowGuiWindow(bool show) -> void
         InternetScreenHidden();
     }
 
-    // The connection screens poll while shown: the connect screen through its element 3.
+    // The connection screens poll while shown: the connect screen through its element 3. Port: a poll doesn't wait for
+    // answers (they're listed by the next), so the first question goes as the screen shows and the first poll lists its
+    // answers. Not on a lobby's game's connect screen, its waiting screen: there the question would catch the room the
+    // host is leaving still answering.
     if (GlobalLog()->ConnectScreen.Is(*this))
     {
         if (show)
         {
+            if (!LobbyLaunchArgs.Active)
+            {
+                MCGameList::AskForSessions();
+            }
+
             GuiSystem().AddTimer(Elements[3], PollTimer, PollInterval, 0, 0, false);
             MCGenericScreen::ShowGuiWindow(show);
             return;
@@ -355,6 +364,7 @@ auto MCSplashScreen::ShowGuiWindow(bool show) -> void
     {
         if (show)
         {
+            MCGameList::AskForSessions();
             GuiSystem().AddTimer(weak_from_this(), PollTimer, PollInterval, 0, 0, false);
             MCGenericScreen::ShowGuiWindow(show);
             return;

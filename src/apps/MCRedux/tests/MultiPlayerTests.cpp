@@ -14,6 +14,7 @@
 #include "linkup/MCSessionManager.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
+#include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "mission/MCWeatherPlay.h"
 #include "network/MCGameDataHash.h"
@@ -1965,8 +1966,8 @@ namespace
 /// <summary>
 /// Port-only (Redux HD): the host's game gone mid-match (its machine off), the session rolls over to Ann's machine, the
 /// earliest joined (SPEC-host-rollover.md), and Ann's game serves the match: it is the server, and every unit, which it
-/// holds as the old server's updates left it, is its to run (the original's TakeOverMovers); Cat's orders go to it
-/// through the session's new hub.
+/// holds as the old server's updates left it, is its to run (the original's TakeOverMovers), and its updates to the
+/// guests run on from then (OB-194); Cat's orders go to it through the session's new hub.
 /// </summary>
 TEST_CASE(
     "network: the host's game gone mid-match, the game its session rolls over to runs every unit and takes orders")
@@ -2006,6 +2007,16 @@ TEST_CASE(
         MultiPlayerApplicationCallback(msg);
     };
 
+    // Ten minutes into the match (the scenario's clock, put back after).
+    constexpr float tenMinutes = 600.0f;
+
+    struct ClockScope
+    {
+        float Saved = ScenarioTime;
+        ~ClockScope() { ScenarioTime = Saved; }
+    } clock;
+
+    ScenarioTime = tenMinutes;
     bob.reset();
     REQUIRE(ExchangeAmong({ann, cat}, [&] { return game.IsServer && cat.ServerID == ann.MyPlayerID; }));
     CHECK(ann.IsHost);
@@ -2013,6 +2024,10 @@ TEST_CASE(
     CHECK_EQ(game.HostID, ann.MyPlayerID);
     CHECK_CALLED_WITH(annsMech->Controls, ServerControl);
     CHECK_CALLED_WITH(catsMech->Controls, ServerControl);
+    // Its updates run on from now, not from the match's start (one a frame until they caught up: OB-194).
+    CHECK(game.NextMoverUpdateTime >= tenMinutes);
+    CHECK(game.NextTurretUpdateTime >= tenMinutes);
+    CHECK(game.NextWorldStateUpdateTime >= tenMinutes);
 
     // Cat's order (here for a unit no commander has: the game drops it after reading it) reaches the new server.
     MCMPPlayerOrderMessage order{};

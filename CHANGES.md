@@ -348,6 +348,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
   send messages big enough to get a slower player dropped.
 - An in-mission chat message too short to hold its text, or from a player who has just left, no longer crashes the
   game.
+- **Redux HD.** The game that takes a match over from a host that dropped out no longer sends every battle update it
+  hadn't sent since the match began, one a frame, before settling into the usual few a second: ten minutes in, that
+  was an update every frame for up to 12 seconds (OB-194).
 - **Redux HD.** The host checks that every player has the same mission and game data as its own, so players whose
   files differ no longer start a match that drifts apart. The original only checked that the mission file was there.
   Each game sends a hash of the mission's files (its scenario, script, map and purchase list) and of the data every

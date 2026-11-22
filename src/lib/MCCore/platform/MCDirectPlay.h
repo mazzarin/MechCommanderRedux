@@ -317,6 +317,8 @@ public:
     static constexpr uint16_t DefaultPort = 28800;
     /// <summary>The size of the connection data EnumConnections hands out and CreateCompoundAddress builds.</summary>
     static constexpr uint32_t ConnectionDataSize = 16 + 256;
+    /// <summary>How long EnumSessions listens for answers after asking (unless MCENUMSESSIONS_NOWAIT).</summary>
+    static constexpr uint64_t EnumListenMs = 60;
 
     MCDirectPlay();
     ~MCDirectPlay();

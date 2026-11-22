@@ -102,8 +102,6 @@ namespace
     constexpr uint64_t ReplyTimeoutMs = 5000;
     /// <summary>How long connecting to a host may take.</summary>
     constexpr int ConnectTimeoutMs = 3000;
-    /// <summary>How long EnumSessions listens for answers after asking (unless MCENUMSESSIONS_NOWAIT).</summary>
-    constexpr uint64_t EnumListenMs = 60;
     /// <summary>How long a typed host name that couldn't be resolved waits before EnumSessions looks it up again.</summary>
     constexpr uint64_t ResolveRetryMs = 10000;
     /// <summary>How long an answering session stays listed without answering again.</summary>

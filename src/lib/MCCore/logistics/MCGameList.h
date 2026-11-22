@@ -27,8 +27,8 @@ public:
     void HandleEvent(MCGuiEvent& event) override;
 
     /// <summary>
-    /// Port: asks for sessions without listing them, so the first refresh of the LAN screen just shown lists those that
-    /// answered (a refresh doesn't wait for answers: they're listed by the next).
+    /// Port: asks for sessions without listing them, so the first refresh of a connection screen just shown lists those
+    /// that answered (a refresh doesn't wait for answers: they're listed by the next).
     /// </summary>
     static void AskForSessions();
 

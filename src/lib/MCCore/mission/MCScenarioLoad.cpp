@@ -178,7 +178,8 @@ namespace
     }
 }
 
-auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainName) -> int32_t
+auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainName, std::string_view missionName)
+    -> int32_t
 {
     NumCameraDrones = 0;
     // Port fix: the original freed the connect shapes with free() while the renderer still had them registered.
@@ -196,7 +197,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
 
     // Port-only (SPEC-memory.md's "Under the loading bar"): the mission's art held from the load's start, read beside the
     // ground and the rest as the load opens its archives; the bar's last stretch is its bytes (MCHdArt::LoadBarPercent).
-    MCHdArt::StartLoadFill(scenarioName);
+    // The mission's own name, not its logistics' copy's: its briefing held it, and its opening is the one put up.
+    MCHdArt::StartLoadFill(missionName.empty() ? scenarioName : missionName);
     UpdateDisplay(false, true, 100, true, 0);
     // Port-only (HD audio): the pack's sounds that play the moment they are asked for are decoded on a thread of their
     // own from here to the end of the loading, rather than as each first plays.

@@ -8683,7 +8683,8 @@ bool MCHdArt::BriefingFilling()
     const State& state = TheState();
     ReadAhead& ahead = TheState().Ahead;
     std::scoped_lock lock(ahead.Lock);
-    return state.BriefingFill && state.GpuFits && !ahead.Holding.Loading;
+    // Port-only (the opening): the fill's whether the mission fits or only its opening goes up.
+    return state.BriefingFill && state.GpuFillOn && !ahead.Holding.Loading;
 }
 
 namespace
@@ -9440,7 +9441,8 @@ namespace
     /// Port-only (SPEC-memory.md's "When the system says memory is short", its first step): the mission's fill on the GPU
     /// stops with the hold's: its reads waiting dropped, and nothing more asked for until the next briefing or load starts
     /// it (MCHdArt::StartBriefingHold, MCHdArt::StartLoadFill); the pictures up stay. Without it the fill went on asking
-    /// for the rest of the mission, read from the disk once the hold kept no more.
+    /// for the rest of the mission, read from the disk once the hold kept no more. The same for a mission that doesn't fit,
+    /// whose opening alone fills (up to OpeningMostBytes): its reads asked go too.
     /// </summary>
     void StopGpuFill(State& state)
     {
@@ -9450,8 +9452,8 @@ namespace
         }
 
         state.GpuFillOn = false;
+        state.GpuFits = false;
 
-        if (std::exchange(state.GpuFits, false))
         {
             std::scoped_lock lock(state.Ahead.Lock);
             DropGpuReads(state.Ahead);

@@ -1418,8 +1418,9 @@ namespace MCHdArt
     bool BriefingFillWanted();
 
     /// <summary>
-    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): whether a briefing's fill is putting its mission up now,
-    /// with no load under way (the renderer takes fewer of its pictures a frame then: MCVulkanRenderer::PlaceStagedPictures).
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): whether a briefing's fill is putting its mission up now
+    /// (or, where it doesn't fit, its opening), with no load under way (the renderer takes fewer of its pictures a frame
+    /// then: MCVulkanRenderer::PlaceStagedPictures).
     /// </summary>
     bool BriefingFilling();
 

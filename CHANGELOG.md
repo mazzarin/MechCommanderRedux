@@ -30,7 +30,6 @@ This is a two-part update.
 - Night mode, in testing: units see half as far, and LIGHTS (N) turns their headlights off or on.
 - MATCH OPTIONS: MOST SKILLED PILOT, and a ban on each kind of weapon.
 - Up to 200 mechs and vehicles outside a match (was 100).
-- A game started from a launcher plays your MechCommander Redux HD.
 - The main menu shows the version you're running.
 - Many crashes fixed.
 - Multiplayer cleanup: match continues after host leaves, reallocation of mechs after a player leaves, ability to

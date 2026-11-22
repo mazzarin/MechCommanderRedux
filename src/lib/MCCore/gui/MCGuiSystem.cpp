@@ -512,6 +512,23 @@ auto MCGuiSystem::CloseMovie() -> void
     }
 }
 
+namespace
+{
+    /// <summary>The counts the original took for a frame that took none (1e-4 as a float).</summary>
+    constexpr double NoFrameCounts = 9.999999747378752e-05;
+}
+
+double MCFrameCounts(int64_t start, int64_t stop)
+{
+    // OB-062 (fixed): the original split the counters in 32-bit halves, took the low halves' difference as a signed
+    // 32-bit number (which carries already) and added the high halves' difference times 2^32 on top, so a frame across
+    // a carry into the high half counted 2^32 too many: it read as longer than 0.25 s and was clamped to that, the world
+    // moving a quarter second in one frame. On a 24 MHz counter (Apple silicon's) that was once every 179 s; on Windows'
+    // 10 MHz, every 7 minutes.
+    const auto counts = static_cast<double>(stop - start);
+    return counts == 0.0 ? NoFrameCounts : counts;
+}
+
 auto MCGuiSystem::RunFrameCallbacks(bool includeAdded) -> void
 {
     CloseRetired();
@@ -633,27 +650,12 @@ auto MCGuiSystem::Run() -> void
 
         PerfStopTime = MCPort::PerformanceCounter();
 
-        // The frame's length. The counters are split in 32-bit halves and the low halves' difference taken as a
-        // signed 32-bit number, so a carry into the high half counts 2^32 too many (OB-062): that frame reads as
-        // longer than 0.25 s and is clamped.
-        const int32_t highDifference = static_cast<int32_t>(static_cast<uint64_t>(PerfStopTime) >> 32) -
-                                       static_cast<int32_t>(static_cast<uint64_t>(PerfStartTime) >> 32);
-        const int32_t lowDifference =
-            static_cast<int32_t>(static_cast<uint32_t>(PerfStopTime) - static_cast<uint32_t>(PerfStartTime));
+        // The frame's length (MCFrameCounts: OB-062).
         PrevStart = PerfStartTime;
-        double elapsed = static_cast<double>(highDifference) * 4294967296.0 + static_cast<double>(lowDifference);
-
-        if (elapsed == 0.0)
-        {
-            elapsed = 9.999999747378752e-05;
-        }
-
-        const double countsLow = static_cast<double>(static_cast<uint32_t>(CountsPerSecond));
-        FrameLength = static_cast<float>(elapsed / countsLow);
-        FrameRate = static_cast<float>(
-            (static_cast<double>(static_cast<int32_t>(static_cast<uint64_t>(CountsPerSecond) >> 32)) * 4294967296.0 +
-             countsLow) /
-            elapsed);
+        const double elapsed = MCFrameCounts(PerfStartTime, PerfStopTime);
+        const auto countsPerSecond = static_cast<double>(CountsPerSecond);
+        FrameLength = static_cast<float>(elapsed / countsPerSecond);
+        FrameRate = static_cast<float>(countsPerSecond / elapsed);
 
         if (FrameLength > 0.25f)
         {

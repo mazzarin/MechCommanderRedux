@@ -384,6 +384,10 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - **Redux HD.** Sensor contacts' blips spin at the same pace at any frame rate, showing every frame of their art, and
   ping once each time round. A turret's, train car's or elemental's spun and pinged four times as fast at 60 frames a
   second, and the others' skipped frames or slowed with the frame rate.
+- The game no longer jumps a quarter of a second ahead every few minutes (on a Mac every 3 minutes, on Windows every
+  7). The original split the computer's clock count in two halves to time a frame, and a frame during which the count
+  carried into the upper half came out far longer than it was, so the battle moved on by the most a frame may, a
+  quarter of a second, at once (OB-062).
 - Text shows ´ ¨ ° ¿ « » § ² º and ½, which the game's fonts listed but left blank: the marks are cut from the fonts'
   own é, ë and å, ¿ « » are made from ? < >, and the rest are drawn in the fonts' style.
 

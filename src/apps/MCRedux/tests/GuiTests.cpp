@@ -119,3 +119,25 @@ TEST_CASE("gui: a font's data is registered while loaded and freed with it")
 
     CHECK(!MCIsRegistered(data));
 }
+
+namespace
+{
+    /// <summary>A frame at 240 Hz on Apple silicon's 24 MHz counter, in counts.</summary>
+    constexpr int64_t FrameAt240Hz = 100000;
+    /// <summary>A counter reading just below a carry into its high 32 bits.</summary>
+    constexpr int64_t BelowCarry = (int64_t{1} << 32) - FrameAt240Hz / 2;
+}
+
+/// <summary>
+/// OB-062 (fixed): a frame across a carry into the counter's high 32 bits is as long as any other. The original counted
+/// 2^32 too many there (179 s on a 24 MHz counter), so that frame was clamped to a quarter second and the world jumped.
+/// </summary>
+TEST_CASE("frame length: a frame across the counter's carry into its high half counts what passed")
+{
+    CHECK_EQ(MCFrameCounts(BelowCarry, BelowCarry + FrameAt240Hz), static_cast<double>(FrameAt240Hz));
+    CHECK_EQ(MCFrameCounts(BelowCarry - FrameAt240Hz, BelowCarry), static_cast<double>(FrameAt240Hz));
+    // Two carries on, as after a long wait.
+    CHECK_EQ(MCFrameCounts(BelowCarry, BelowCarry + (int64_t{2} << 32)), static_cast<double>(int64_t{2} << 32));
+    // None passed: the original's 1e-4 counts, never a division by zero.
+    CHECK(MCFrameCounts(BelowCarry, BelowCarry) > 0.0);
+}

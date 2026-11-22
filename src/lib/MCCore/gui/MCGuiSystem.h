@@ -344,6 +344,12 @@ bool MCFollowWindowSize();
 /// </summary>
 std::string DisplayDescription();
 
+/// <summary>
+/// The performance counter's counts from <paramref name="start"/> to <paramref name="stop"/>, a frame's length
+/// (<see cref="MCGuiSystem::Run"/>); 1e-4 when none passed, as the original took it.
+/// </summary>
+double MCFrameCounts(int64_t start, int64_t stop);
+
 /// <summary>Draws every screen into its picture.</summary>
 void ARedrawScreen();
 /// <summary>Points the screen port at the display's buffer (the original locked the DirectDraw back surface).</summary>

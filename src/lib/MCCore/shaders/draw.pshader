@@ -838,13 +838,15 @@ float SmoothCoverage(Input input, float2 at, inout uint value)
 // pixel two drawn pixels wide or tall puts every place a quarter from one) counts as a little past it, right and down,
 // as the float division the draws took before mostly left it, where the place's float can hold the nudge (a source
 // place under 16 or so); past that the nudge rounds away. Either way a place's bits are the same wherever it's drawn.
+// The grid's offset is the draw's own (targetOffset), so a draw placed between window pixels (HDSmoothPlace) moves
+// its picture with its rectangle.
 static const float2 SourceTieNudge = float2(1.0, 1.0) / 1048576.0;
 
 float2 SourcePlace(Input input, int2 target)
 {
     const int2 twice = 2 * scale.zw;
     const int2 place = twice * (input.source.xy - input.rect.xy * input.source.zw) +
-                       input.source.zw * ((2 * target + 1) * scale.xy - 2 * offset.xy);
+                       input.source.zw * ((2 * target + 1) * scale.xy - 2 * targetOffset);
     const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
     return float2(place) / float2(twice) + flip + SourceTieNudge * float2(input.source.zw);
 }

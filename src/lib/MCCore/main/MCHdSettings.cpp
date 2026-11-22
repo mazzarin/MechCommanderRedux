@@ -6,6 +6,7 @@
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCTelemetry.h"
+#include "object/MCMoverGameSystem.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCMechActor.h"
@@ -72,6 +73,9 @@ namespace
         // MoreUnits (gameplay) lets the player own 100 mechs and vehicles outside a match, not 50
         // (logistics/MCUnitLimits.h).
         MCSetting{.Key = "MoreUnits", .Value = GMoreUnits, .Gameplay = true},
+        // StandStillPace (gameplay) has a target holding still get easier to hit at 15 frames a second's pace, at any
+        // frame rate (OB-193, object/MCMoverGameSystem.h).
+        MCSetting{.Key = "StandStillPace", .Value = GStandStillPace, .Gameplay = true},
         // Reports sends reports of the computer, how the game runs, its settings and its crashes, under a random ID, once
         // the player has seen what they hold (main/MCTelemetry.h): off until then, whatever the build.
         MCSetting{.Key = "Reports", .Value = GReports, .Personal = 0, .Player = true},

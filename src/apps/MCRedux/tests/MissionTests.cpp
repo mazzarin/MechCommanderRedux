@@ -765,3 +765,106 @@ TEST_CASE_ISOLATED("game: mission 3's lookout on the central hill reveals the Co
 
     CHECK_EQ(commandos, 2);
 }
+
+namespace
+{
+    /// <summary>The seconds a target stands still in the stand-still test (32 of a pilot's combat ticks).</summary>
+    constexpr double StandingSeconds = 8.0;
+
+    /// <summary>
+    /// The chance <paramref name="shooter"/> has of hitting <paramref name="target"/>, standing still, with
+    /// <paramref name="weaponIndex"/> once it has stood <see cref="StandingSeconds"/> at <paramref name="fps"/>
+    /// frames a second, checked at each of a pilot's combat ticks (CombatUpdateFrequency) as the pilot's weapons
+    /// status checks it; first timing <paramref name="other"/>, so the target's time starts from nothing.
+    /// </summary>
+    float ChanceAfterStanding(MCMover& shooter, const std::shared_ptr<MCMover>& target,
+                              const std::shared_ptr<MCMover>& other, int32_t weaponIndex, int fps)
+    {
+        const auto chance = [&](const std::shared_ptr<MCMover>& at)
+        {
+            int32_t range = 0;
+            return shooter.CalcAttackChance(at, -1, ScenarioTime, weaponIndex, 0.0f, range, std::nullopt);
+        };
+
+        chance(other);
+        const float first = chance(target);
+        const double frameSeconds = 1.0 / fps;
+        double stood = 0.0;
+        double nextCheck = CombatUpdateFrequency;
+        float last = first;
+        int32_t checks = 0;
+
+        // The clock counted here, not ScenarioTime (a float summed every frame), so both rates check as often.
+        while (stood + frameSeconds / 2 < StandingSeconds)
+        {
+            MCTestGame::RunFrame(static_cast<float>(frameSeconds));
+            stood += frameSeconds;
+
+            if (stood + frameSeconds / 2 >= nextCheck)
+            {
+                REQUIRE_EQ(target->GetVelocity().Magnitude(), 0.0);
+                last = chance(target);
+                checks++;
+                nextCheck += CombatUpdateFrequency;
+            }
+        }
+
+        CHECK_EQ(checks, static_cast<int32_t>(StandingSeconds / CombatUpdateFrequency));
+        // It stood: the chance grew.
+        CHECK(last > first);
+        std::cout << std::format("  {} a second, StandStillPace {}: {:.2f} at first, {:.2f} after {} s\n", fps,
+                                 GStandStillPace, first, last, StandingSeconds);
+        return last;
+    }
+}
+
+/// <summary>
+/// OB-193 (fixed, with StandStillPace): a target holding still gets easier to hit, up to MaxStationaryTime, by the
+/// time added at each to-hit check. The original adds the frame's length, and the checks come at the pilot's combat
+/// ticks and shots, not every frame, so at 120 frames a second it builds 8 times slower than at 15. With
+/// StandStillPace it builds as the original's does at 15, at any frame rate: mission 1's first mech checking its
+/// lancemate, standing beside it, every combat tick for 8 seconds.
+/// </summary>
+TEST_CASE_ISOLATED("game: with StandStillPace a target standing still gets easier to hit as fast at 120 frames a "
+                   "second as at 15 (OB-193)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    constexpr int32_t FirstPlayerPart = 0x200;
+    const std::shared_ptr<MCMover> shooter = GetMoverFromPartId(FirstPlayerPart);
+    const std::shared_ptr<MCMover> target = GetMoverFromPartId(FirstPlayerPart + 1);
+    const std::shared_ptr<MCMover> other = GetMoverFromPartId(FirstPlayerPart + 2);
+    REQUIRE(shooter != nullptr);
+    REQUIRE(target != nullptr);
+    REQUIRE(other != nullptr);
+
+    // A weapon whose chance it rates at that range (none: out of every weapon's range).
+    int32_t weaponIndex = -1;
+
+    for (int32_t i = shooter->NumOther; weaponIndex < 0 && i < shooter->NumOther + shooter->NumWeapons; i++)
+    {
+        int32_t range = 0;
+        weaponIndex = shooter->CalcAttackChance(target, -1, ScenarioTime, i, 0.0f, range, std::nullopt) > 0.0f ? i : -1;
+    }
+
+    REQUIRE(weaponIndex >= 0);
+    constexpr int Locked = 15;
+    constexpr int Fast = 120;
+    GStandStillPace = 0;
+    const float original = ChanceAfterStanding(*shooter, target, other, weaponIndex, Locked);
+    const float originalFast = ChanceAfterStanding(*shooter, target, other, weaponIndex, Fast);
+    GStandStillPace = 1;
+    const float paced = ChanceAfterStanding(*shooter, target, other, weaponIndex, Locked);
+    const float pacedFast = ChanceAfterStanding(*shooter, target, other, weaponIndex, Fast);
+    GStandStillPace = 0;
+
+    // The original's: slower at 120.
+    CHECK(originalFast < original);
+    // Paced: the original's at 15 frames a second, at either rate.
+    CHECK_EQ(paced, original);
+    CHECK_EQ(pacedFast, original);
+}

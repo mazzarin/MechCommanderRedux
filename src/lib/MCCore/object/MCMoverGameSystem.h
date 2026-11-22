@@ -32,6 +32,12 @@ extern float RangeRatingIncrement;
 extern float WeaponFireModifiers[30];
 /// <summary>"MaxStationaryTime": seconds a target must hold still for the full stationary modifier.</summary>
 extern float MaxStationaryTime;
+/// <summary>
+/// Port-only (PREFS StandStillPace, gameplay): a target holding still gets easier to hit at the original's pace at 15
+/// frames a second, at any frame rate (OB-193, MCMover::CalcAttackChance). Off: the original's, by the frame's length.
+/// In a match the server's, which rolls every shot, as the original's plays at the server's frame rate.
+/// </summary>
+extern int GStandStillPace;
 /// <summary>"GroupOrderGoalOffset" (127).</summary>
 extern float GroupOrderGoalOffset;
 /// <summary>"MinRangeIncrement" (30).</summary>

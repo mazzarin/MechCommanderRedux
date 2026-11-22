@@ -276,6 +276,11 @@ adds are in the [README](README.md#what-redux-hd-adds).
   shot reaching its target holds at 15 frames a second; at 60 or 120, the target's sprite shifting between its
   animation frames could end the flight, and the hit landed at once, mid-flight (more than a quarter of LRM hits at
   120). At 15 frames a second or fewer nothing changes.
+- **Redux HD.** With `StandStillPace` in `PREFS.CFG`, a target standing still gets easier to hit as quickly at any
+  frame rate as in the original at 15 frames a second. The original timed how long the target had stood by adding the
+  frame's length at each to-hit check (a few times a second, and at each shot), not by the clock, so the higher the
+  frame rate, the slower the bonus built: at 120 frames a second, 8 times slower than at 15 (OB-193). At 15 frames a
+  second nothing changes. In multiplayer the host's `StandStillPace` applies: the host's game rolls every shot.
 - A mech component that was already destroyed and then hit again, for example when its limb was blown off, no longer
   shows in its normal colour on the payload page. Its health wrapped around instead of staying at 0, so a destroyed
   Gauss rifle (railgun) could look undamaged while a destroyed ER laser showed red.

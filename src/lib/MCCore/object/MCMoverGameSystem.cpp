@@ -21,6 +21,7 @@ float DefaultAttackRange = 75.0f;
 int32_t NumRangeRatings = 31;
 float RangeRatingIncrement = 30.0f;
 float MaxStationaryTime = 0.0f;
+int GStandStillPace = 0;
 float GroupOrderGoalOffset = 127.0f;
 float MinRangeIncrement = 30.0f;
 float MinRangeModIncrement = 10.0f;

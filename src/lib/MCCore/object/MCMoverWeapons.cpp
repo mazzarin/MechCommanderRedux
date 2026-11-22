@@ -911,7 +911,11 @@ auto MCMover::CalcAttackChance(std::shared_ptr<MCGameObject> target, int32_t aim
 
                 if (std::sqrt(x * x + y * y + z * z) == 0.0)
                 {
-                    StationaryTime = FrameLength + StationaryTime;
+                    // OB-193 (fixed, with StandStillPace): the original adds the frame's length at every check, and
+                    // the checks come at shots and the pilot's combat ticks, not every frame: so the bonus builds with
+                    // the frame's length, 8 times slower at 120 frames a second than at 15. Paced, each check adds 15
+                    // frames a second's, as the original plays at 15 at any frame rate.
+                    StationaryTime = (GStandStillPace != 0 ? LockedFrameLength : FrameLength) + StationaryTime;
                 }
                 else
                 {

@@ -143,10 +143,17 @@ float SlotAt(int2 kept, int2 size)
     return slotsTex.SampleLevel(slotsSampler, KeptPlace(kept, size), 0).r;
 }
 
-// Port-only (a zoom easing): the kept colours at kept place `place` (kept pixels; a pixel's centre at .5), as sharp as
-// the kept ground: Catmull-Rom between the 4x4 kept pixels round it (bilinear blurs the HD ground's grain), from nine
-// bilinear taps (each pair of middle pixels' weights as one tap between them). Its alpha is the bilinear one, and its
-// colours (premultiplied) kept within it, so it rings neither past the ground's edges nor into its gaps.
+// Port-only (a zoom easing): the kept ground's coverage at kept place `place` (kept pixels; a pixel's centre at .5),
+// bilinear.
+float KeptCover(float2 place, int2 size)
+{
+    return colorsTex.SampleLevel(colorsSampler, KeptTap(place, size), 0).a;
+}
+
+// Port-only (a zoom easing): the kept colours at kept place `place`, as sharp as the kept ground: Catmull-Rom between
+// the 4x4 kept pixels round it (bilinear blurs the HD ground's grain), from nine bilinear taps (each pair of middle
+// pixels' weights as one tap between them). Its alpha is the bilinear one (KeptCover), and its colours (premultiplied)
+// kept within it, so it rings neither past the ground's edges nor into its gaps.
 float4 KeptBetween(float2 place, int2 size)
 {
     const float2 centre = floor(place - 0.5) + 0.5;
@@ -169,7 +176,7 @@ float4 KeptBetween(float2 place, int2 size)
         }
     }
 
-    const float alpha = colorsTex.SampleLevel(colorsSampler, KeptTap(place, size), 0).a;
+    const float alpha = KeptCover(place, size);
     return float4(clamp(sharp, float3(0.0, 0.0, 0.0), alpha.xxx), alpha);
 }
 
@@ -274,7 +281,17 @@ Output main(float4 position : SV_Position)
     {
         const float2 place = (float2(target) + 0.5) * scale.xy + scale.zw;
         kept = clamp(int2(floor(place)), int2(0, 0), size - 1);
-        output.color = KeptBetween(place, size);
+
+        // Indices writes no colours (its pipeline's mask), so it takes only the coverage, which says where it writes.
+        [branch] if (mode == ModeIndices)
+        {
+            output.color = float4(0.0, 0.0, 0.0, KeptCover(place, size));
+        }
+        else
+        {
+            output.color = KeptBetween(place, size);
+        }
+
         output.index = indicesTex.SampleLevel(indicesSampler, KeptPlace(kept, size), 0);
     }
     else

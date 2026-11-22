@@ -1544,7 +1544,8 @@ auto MCScenario::HoldList(std::string_view fitName) const -> MCHoldList
     MCFitIniFile file;
     const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
 
-    if (sprites == nullptr || file.Open(GamePath(MissionPath, fitName, ".fit")) != 0)
+    // Opened where the load opened it: a launch from logistics reads logistics' copy ("bridge") in the save folder.
+    if (sprites == nullptr || OpenWithSaveFallback(file, MissionPath, fitName) != 0)
     {
         return list;
     }

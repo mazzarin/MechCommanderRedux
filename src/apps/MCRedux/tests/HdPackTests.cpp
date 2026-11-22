@@ -4381,6 +4381,70 @@ TEST_CASE("hd art: a frame whose fill picture the GPU lets go before it's drawn 
 }
 
 /// <summary>
+/// Port-only (SPEC-memory.md's one copy of a frame's colours): a frame drawn, its colours let go once the GPU took its
+/// picture, then the picture let go of (past the GPU's room: a 4 GB card panning away) goes from the cache whole, so asked
+/// for ahead again (its appearance near the view) it's read by the readers, and its next draw reads nothing on the game's
+/// thread. Kept as a record without colours, that draw read them there.
+/// </summary>
+TEST_CASE("hd art: a drawn frame whose picture the GPU lets go is read ahead again")
+{
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces{{StreamKind::Heads}, {StreamKind::Packet}};
+    const HoldPack pack("drawn-dropped", pieces);
+    pack.Open();
+
+    // Each frame asked for ahead, then drawn, its colours there.
+    const auto askAndDraw = [&pack, &pieces]
+    {
+        for (size_t stream = 0; stream < pieces.size(); ++stream)
+        {
+            pack.AskStream(stream, MCHdArt::ReadAs::Load);
+        }
+
+        MCHdArt::WaitForLoadReads();
+        MCHdArt::KeepReadAhead();
+        std::vector<std::shared_ptr<const MCHdArt::Frame>> drawn;
+
+        for (size_t stream = 0; stream < pieces.size(); ++stream)
+        {
+            MCTest::Scope scope(std::format("stream {}", stream));
+            std::shared_ptr<const MCHdArt::Frame> found = pack.FindStream(stream);
+            REQUIRE(found != nullptr);
+            CHECK(!MCHdArt::ColorsOf(*found).empty());
+            drawn.push_back(std::move(found));
+        }
+
+        return drawn;
+    };
+
+    const size_t again = MCHdArt::ColorsReadAgain();
+    const size_t ahead = MCHdArt::FramesReadAhead();
+
+    const std::vector<std::shared_ptr<const MCHdArt::Frame>> drawn = askAndDraw();
+
+    for (const std::shared_ptr<const MCHdArt::Frame>& frame : drawn)
+    {
+        MCHdArt::ColorsUploaded(*frame);
+        MCHdArt::PictureDropped(frame->Id);
+    }
+
+    const std::vector<std::shared_ptr<const MCHdArt::Frame>> drawnAgain = askAndDraw();
+    REQUIRE_EQ(drawnAgain.size(), drawn.size());
+
+    for (size_t stream = 0; stream < drawn.size(); ++stream)
+    {
+        CHECK(drawnAgain[stream] != drawn[stream]);
+        CHECK_EQ(drawnAgain[stream]->Id, drawn[stream]->Id);
+    }
+
+    CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + 2 * pieces.size());
+    CHECK_EQ(MCHdArt::ColorsReadAgain(), again);
+    GHdArt = previous;
+}
+
+/// <summary>
 /// Port-only (SPEC-memory.md's plan, items 2 and 3): a mission that doesn't fit on the GPU (a room the game itself takes)
 /// isn't put there: the bar ends once the hold has it, and its frames are drawn from the hold's memory as they were.
 /// </summary>
@@ -5398,6 +5462,75 @@ TEST_CASE("hd art: memory short stops the fill on the GPU with the hold's")
     MCHdArt::NextFrame(false);
     CHECK(!MCHdArt::GpuFillNow().Fits);
     CHECK_EQ(MCHdArt::GpuFillNow().Asked, asked);
+    MCHdArt::LetGoHold();
+    GHdArt = previous;
+}
+
+/// <summary>
+/// Port-only (SPEC-memory.md's "When the system says memory is short", and the opening): the same where the mission
+/// doesn't fit and only its opening goes up from the briefing, at the briefing's pace: memory short, what the opening
+/// asked for goes (its pictures in the slots with it) and nothing more goes up (22 Nov: it ran on, up to
+/// OpeningMostBytes, on the 8 GB machines the stop is for).
+/// </summary>
+TEST_CASE("hd art: memory short stops the opening's fill on the GPU where the mission doesn't fit")
+{
+    constexpr size_t Pieces = 16;
+    constexpr size_t Frames = 16;
+    constexpr std::string_view Mission = "mis0101";
+    constexpr uint64_t NoRoom = 1;
+    // A room it doesn't fit, in tenths of the mission's bytes at the pages' share, whose quarter takes a few folders.
+    constexpr double ShortTenths = 9;
+    constexpr double Tenths = 10;
+    const ReaderScope readers({.Readers = 2, .Hold = true});
+    const int previous = GHdArt;
+    GHdArt = 1;
+    const std::vector<HoldPiece> pieces(Pieces, HoldPiece{StreamKind::Packet});
+    const HoldPack pack("gpu-opening-memory-short", pieces);
+    const FillSlotsScope slots;
+    const uint64_t before = MCHdArt::GpuFillNow().Up;
+    std::vector<MCHdArt::OpeningPacket> opening;
+
+    for (const std::filesystem::path& folder : PacketFolders(pack))
+    {
+        opening.push_back({folder, std::nullopt});
+    }
+
+    std::vector<MCHdArt::StagedPicture> up;
+    MCHdArt::NoteGpuRoom(NoRoom);
+    MCHdArt::StartBriefingHold(Mission, PacketFolders(pack), false);
+    MCHdArt::SetOpening(opening);
+    FramesUntilUp(before + 1, Frames, up);
+    const MCHdArt::GpuFill known = MCHdArt::GpuFillNow();
+    REQUIRE(known.MissionBytes > 0);
+    REQUIRE(up.empty());
+
+    // Its opening asked for within its room, and put in the slots, no frame taking them up yet: at the briefing's pace.
+    MCHdArt::NoteGpuRoom(
+        static_cast<uint64_t>(static_cast<double>(known.MissionBytes) * known.PagesShare * ShortTenths / Tenths));
+    MCHdArt::WaitForHold();
+    MCHdArt::NextFrame(false);
+    MCHdArt::WaitForReadAhead();
+    MCHdArt::WaitForGpuReads();
+    const MCHdArt::GpuFill asked = MCHdArt::GpuFillNow();
+    CHECK(!asked.Fits);
+    REQUIRE(asked.OpeningAsked > 0);
+    REQUIRE(asked.Waiting > 0);
+    CHECK(MCHdArt::BriefingFilling());
+
+    // Memory short: what it asked for goes at once (a read under way then is dropped as it ends), and nothing goes up
+    // after.
+    MCHdArt::NextFrame(true);
+    CHECK_EQ(MCHdArt::GpuFillNow().Waiting, 0);
+    CHECK(!MCHdArt::BriefingFilling());
+    MCHdArt::WaitForGpuReads();
+    const MCHdArt::GpuFill stopped = MCHdArt::GpuFillNow();
+    CHECK_EQ(stopped.Waiting, 0);
+    CHECK(!stopped.Reading);
+    FramesUntilUp(before + 1, Frames, up);
+    CHECK(up.empty());
+    CHECK_EQ(MCHdArt::GpuFillNow().Up, before);
+    CHECK_EQ(MCHdArt::GpuFillNow().Asked, stopped.Asked);
+    MCHdArt::NoteGpuRoom(std::nullopt);
     MCHdArt::LetGoHold();
     GHdArt = previous;
 }

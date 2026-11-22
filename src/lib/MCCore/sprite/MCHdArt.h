@@ -924,6 +924,13 @@ namespace MCHdArt
     void LetGoKeptForMission();
 
     /// <summary>
+    /// Port-only (the frame log's counts): the bytes <paramref name="frame"/>'s colours and indices take, from its size,
+    /// whether its record holds them now or the cache let go of them once the GPU had its picture (SPEC-memory.md's one
+    /// copy of a frame's colours, and its indices): nothing is read. Its colours count in a sprite's formats (RGBA8, BC7).
+    /// </summary>
+    size_t StoredBytes(const Frame& frame);
+
+    /// <summary>
     /// Port-only: a frame of <paramref name="like"/>'s scale and colour format for a picture of
     /// <paramref name="width"/> x <paramref name="height"/> original pixels, all blank (no colour, no index).
     /// </summary>
@@ -1411,8 +1418,9 @@ namespace MCHdArt
     bool BriefingFillWanted();
 
     /// <summary>
-    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): whether a briefing's fill is putting its mission up now,
-    /// with no load under way (the renderer takes fewer of its pictures a frame then: MCVulkanRenderer::PlaceStagedPictures).
+    /// Port-only (SPEC-memory.md's "The GPU from the briefing"): whether a briefing's fill is putting its mission up now
+    /// (or, where it doesn't fit, its opening), with no load under way (the renderer takes fewer of its pictures a frame
+    /// then: MCVulkanRenderer::PlaceStagedPictures).
     /// </summary>
     bool BriefingFilling();
 

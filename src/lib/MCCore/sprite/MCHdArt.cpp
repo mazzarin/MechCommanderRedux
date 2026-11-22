@@ -7001,6 +7001,19 @@ namespace
         units.High = static_cast<size_t>((frame.Height + units.Side - 1) / units.Side);
         return units;
     }
+
+    /// <summary>The bytes <paramref name="frame"/>'s colours take, laid out as UnitsOf says; none in another format.</summary>
+    size_t ColorBytesOf(const MCHdArt::Frame& frame)
+    {
+        const std::optional<ColorUnits> units = UnitsOf(frame);
+        return units.has_value() ? units->Wide * units->High * units->Bytes : 0;
+    }
+}
+
+size_t MCHdArt::StoredBytes(const Frame& frame)
+{
+    return ColorBytesOf(frame) +
+           static_cast<size_t>(frame.OriginalWidth()) * static_cast<size_t>(frame.OriginalHeight()) * IndexBytes;
 }
 
 MCHdArt::Frame MCHdArt::BlankFrame(const Frame& like, int32_t width, int32_t height)
@@ -7011,8 +7024,7 @@ MCHdArt::Frame MCHdArt::BlankFrame(const Frame& like, int32_t width, int32_t hei
     blank.Blended = like.Blended;
     blank.Width = width * like.Scale;
     blank.Height = height * like.Scale;
-    const std::optional<ColorUnits> units = UnitsOf(blank);
-    blank.Colors.assign(units.has_value() ? units->Wide * units->High * units->Bytes : 0, 0);
+    blank.Colors.assign(ColorBytesOf(blank), 0);
     blank.Indices.assign(static_cast<size_t>(width) * height * IndexBytes, 0);
     return blank;
 }
@@ -8671,7 +8683,8 @@ bool MCHdArt::BriefingFilling()
     const State& state = TheState();
     ReadAhead& ahead = TheState().Ahead;
     std::scoped_lock lock(ahead.Lock);
-    return state.BriefingFill && state.GpuFits && !ahead.Holding.Loading;
+    // Port-only (the opening): the fill's whether the mission fits or only its opening goes up.
+    return state.BriefingFill && state.GpuFillOn && !ahead.Holding.Loading;
 }
 
 namespace
@@ -9428,7 +9441,8 @@ namespace
     /// Port-only (SPEC-memory.md's "When the system says memory is short", its first step): the mission's fill on the GPU
     /// stops with the hold's: its reads waiting dropped, and nothing more asked for until the next briefing or load starts
     /// it (MCHdArt::StartBriefingHold, MCHdArt::StartLoadFill); the pictures up stay. Without it the fill went on asking
-    /// for the rest of the mission, read from the disk once the hold kept no more.
+    /// for the rest of the mission, read from the disk once the hold kept no more. The same for a mission that doesn't fit,
+    /// whose opening alone fills (up to OpeningMostBytes): its reads asked go too.
     /// </summary>
     void StopGpuFill(State& state)
     {
@@ -9438,8 +9452,8 @@ namespace
         }
 
         state.GpuFillOn = false;
+        state.GpuFits = false;
 
-        if (std::exchange(state.GpuFits, false))
         {
             std::scoped_lock lock(state.Ahead.Lock);
             DropGpuReads(state.Ahead);
@@ -9675,10 +9689,13 @@ void MCHdArt::PictureDropped(uint64_t id)
             Cached& cached = found->second;
             cached.OnGpu = false;
 
-            // Port-only (MCHdArt::FillGpu): a picture the fill put up and the GPU let go of before its frame was drawn held
-            // the frame's only colours: the frame goes whole, back in the hold as before the fill, so the readers read it
-            // ahead as they read any frame to come (kept as a record, it would be read again on the game's thread).
-            if (cached.Undrawn && cached.Frame != nullptr && cached.Colors.empty())
+            // Port-only (MCHdArt::FillGpu): a picture the GPU let go of held the frame's only colours, drawn or not (the
+            // fill's, put up before its frame was drawn; a draw's, its colours let go once up): the frame goes whole, so the
+            // readers read it ahead again as they read any frame to come, its appearance near the view asking for its
+            // packet again (Drop). Kept as a record, its next draw would read it on the game's thread (a 4 GB card panning
+            // back to what it let go). A draw holds a mission's frame only while it runs; a texture's record
+            // (MCVulkanRenderer's TextureState::Hd) is read whole again by ColorsOf, as its colours alone were.
+            if (cached.Frame != nullptr && cached.Colors.empty())
             {
                 Drop(state, numbered->second, cached);
             }

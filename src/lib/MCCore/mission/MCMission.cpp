@@ -1161,12 +1161,6 @@ auto MCMission::PrepareOpeningView() -> void
 
     MCHdArt::WaitForLoadReads();
     const std::vector<std::shared_ptr<const MCHdArt::Frame>> frames = MCHdArt::KeepOpeningView();
-    size_t bytes = 0;
-
-    for (const std::shared_ptr<const MCHdArt::Frame>& frame : frames)
-    {
-        bytes += MCHdArt::ColorsOf(*frame).size() + frame->Indices.size();
-    }
 
     // Their pictures made and sent up now, shown nowhere, rather than in play's first frame.
     size_t onGpu = 0;
@@ -1186,10 +1180,22 @@ auto MCMission::PrepareOpeningView() -> void
         }
     }
 
-    MCFrameLog::Note(
-        std::format("the opening view: {} HD frames read ({:.1f} MB), {} on the GPU, {:.1f} ms", frames.size(),
-                    static_cast<double>(bytes) / BytesPerMb, onGpu,
-                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()));
+    // Port-only (the frame log's): their bytes from their sizes, reading nothing (those up from the briefing or the load's
+    // fill have let go of their colours: counting what ColorsOf gives read them all again).
+    if (MCFrameLog::Enabled())
+    {
+        size_t bytes = 0;
+
+        for (const std::shared_ptr<const MCHdArt::Frame>& frame : frames)
+        {
+            bytes += MCHdArt::StoredBytes(*frame);
+        }
+
+        MCFrameLog::Note(
+            std::format("the opening view: {} HD frames read ({:.1f} MB), {} on the GPU, {:.1f} ms", frames.size(),
+                        static_cast<double>(bytes) / BytesPerMb, onGpu,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()));
+    }
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void

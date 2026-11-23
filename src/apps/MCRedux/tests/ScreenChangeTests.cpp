@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "TestGame.h"
+#include "fakes/MCManualClock.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiSystem.h"
@@ -11,6 +12,7 @@
 #include "logistics/MCMainMenu.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
+#include "main/MCGameContext.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
@@ -236,13 +238,16 @@ TEST_CASE_ISOLATED("screen change: a job runs live before the fade-out, and can 
     jobPieces = 0;
     darkPieces = 0;
     then = false;
-    const auto budget = std::chrono::duration<double, std::milli>(MCScreenChange::FrameBudgetMs);
-    const MCScreenChange::MCPiece slow{.Part = {},
-                                       .Run = [&jobPieces, budget]
-                                       {
-                                           std::this_thread::sleep_for(budget * 2);
-                                           jobPieces++;
-                                       }};
+    // The budget is the game's time: the test's clock moved on twice the budget.
+    constexpr double NanosecondsPerMs = 1e6;
+    const auto budget = static_cast<uint64_t>(MCScreenChange::FrameBudgetMs * 2 * NanosecondsPerMs);
+    const MCScreenChange::MCPiece slow{
+        .Part = {},
+        .Run = [&jobPieces, budget]
+        {
+            dynamic_cast<MCManualClock&>(MCGameContext::Current().Clock()).Advance(budget);
+            jobPieces++;
+        }};
     REQUIRE(MCScreenChange::Start({.Name = "a test's",
                                    .Job = {slow, job},
                                    .FadeOut = MCScreenChange::MCFadeOut::AfterJob,
@@ -427,10 +432,10 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     CHECK(std::ranges::all_of(out, [](const MCShown& frame)
                               { return frame.Results && frame.Battle && frame.State == MCMissionState::Results; }));
 
-    // Dark only while the way back's pieces are left: a frame each, black.
+    // Dark only while the way back's pieces are left, each frame black: none here, where the frame's budget is the
+    // test's clock, which doesn't move within a frame (the pieces all fit the frame after the fade-out's black one).
     const std::span<const MCShown> dark =
         RunOf(shown, out.size(), [](const MCShown& frame) { return frame.Phase == MCPhase::Dark; });
-    CHECK(!dark.empty());
     CHECK(std::ranges::all_of(dark, [](const MCShown& frame) { return frame.Fade == MCScreenChange::Black; }));
 
     // The next screen fades in from its first frame, in the menus' frame.

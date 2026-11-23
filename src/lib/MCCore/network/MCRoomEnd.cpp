@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "network/MCRoomEnd.h"
 #include "gui/MCGuiSystem.h"
 #include "linkup/MCFidpPlayer.h"
@@ -112,6 +114,15 @@ namespace
         std::ranges::transform(upper, upper.begin(),
                                [](char c) { return static_cast<char>(std::toupper(static_cast<unsigned char>(c))); });
         return upper;
+    }
+
+    /// <summary>
+    /// What a guest says of its room's end: closed by its host <paramref name="closedBy"/>, as it said, else its
+    /// connection to <paramref name="host"/>'s game lost.
+    /// </summary>
+    std::string LineOf(const std::optional<std::string>& closedBy, std::string_view host)
+    {
+        return closedBy.has_value() ? std::format(ClosedFormat, *closedBy) : std::format(LostFormat, host);
     }
 
     /// <summary>
@@ -302,7 +313,10 @@ namespace
         SDL_Log("Room end: \"%s\" hosted again for the rematch; keeping %zu guests' places", room.Name.c_str(),
                 room.Guests.size());
         DropMessage(*GlobalLog());
-        GlobalLog()->SetUpSessionScreen();
+        // Port-only (SPEC-menus.md's stage 2): through the flow, the room landing on the games and the main menu.
+        // Set up at once (the picks and the guests' places after it), shown through the flow.
+        MCScreenFlow::Land(MCMenuScreens::RoomStack());
+        MCMenuScreens::OpenRoom("room again");
         GlobalLog()->SessionScreen->TakePicks(room.Picks);
         MCLobbyUpdate::KeepPlacesFor(room.Guests);
     }
@@ -339,8 +353,15 @@ namespace
             }
 
             Reopening = room;
-            MCRoomEnd::ShowGames(room.From, {});
-            ShowWaitingDialog(ReopeningText);
+            // Its wait over the games once they show, unless the room has opened meanwhile.
+            MCRoomEnd::ShowGames(room.From, {},
+                                 []
+                                 {
+                                     if (Reopening.has_value())
+                                     {
+                                         ShowWaitingDialog(ReopeningText);
+                                     }
+                                 });
             return;
         }
 
@@ -393,9 +414,21 @@ namespace
         }
 
         game->PlayerRules.clear();
-        MCRoomEnd::ShowGames(rejoin->From, {});
-        MCLobbyUpdate::WaitForRoom(rejoin->Room);
+        // The wait (its REJOINING line) over the games once they show.
+        MCRoomEnd::ShowGames(rejoin->From, {}, [room = rejoin->Room] { MCLobbyUpdate::WaitForRoom(room); });
     }
+}
+
+auto MCRoomEnd::WaitsForGuests() -> bool
+{
+    return Ending.has_value();
+}
+
+auto MCRoomEnd::GuestLine() -> std::string
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+    return LineOf(ClosedBy,
+                  game != nullptr && game->SessionManager != nullptr ? HostName(*game) : std::string(SomeHost));
 }
 
 auto MCRoomEnd::GamesOf() -> MCGames
@@ -416,7 +449,7 @@ auto MCRoomEnd::GamesOf() -> MCGames
     return connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx ? MCGames::Lan : MCGames::None;
 }
 
-auto MCRoomEnd::ShowGames(MCGames games, std::string_view line) -> void
+auto MCRoomEnd::ShowGames(MCGames games, std::string_view line, std::function<void()> then) -> void
 {
     MCLogistics& logistics = *GlobalLog();
     // Back at the games, no rematch is pending (JoinAgain has taken its own before).
@@ -431,24 +464,37 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line) -> void
         MultiPlayer()->Start();
     }
 
-    logistics.CurrentScreen()->ShowGuiWindow(false);
-    DropMessage(logistics);
+    // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade (at once on the way back from a match,
+    // dark already), landing on the games with MULTIPLAYER ACCESS and the main menu under them.
+    MCScreenFlow::Land(MCMenuScreens::GamesStack(games == MCGames::Internet, false));
+    MCScreenFlow::Change("games",
+                         [games, line = std::string(line), then = std::move(then)]
+                         {
+                             MCLogistics& shown = *GlobalLog();
+                             shown.CurrentScreen()->ShowGuiWindow(false);
+                             DropMessage(shown);
 
-    if (games == MCGames::Internet)
-    {
-        ShowInternetScreen();
-    }
-    else
-    {
-        ShowLanScreen();
-    }
+                             if (games == MCGames::Internet)
+                             {
+                                 ShowInternetScreen();
+                             }
+                             else
+                             {
+                                 ShowLanScreen();
+                             }
 
-    logistics.ShowLogScreen(true, true);
+                             shown.ShowLogScreen(true, true);
 
-    if (!line.empty())
-    {
-        ShowMenuMessage(line);
-    }
+                             if (!line.empty())
+                             {
+                                 ShowMenuMessage(line);
+                             }
+
+                             if (then != nullptr)
+                             {
+                                 then();
+                             }
+                         });
 }
 
 auto MCRoomEnd::CloseRoom() -> bool
@@ -587,8 +633,7 @@ auto MCRoomEnd::SessionLost() -> bool
         return true;
     }
 
-    const std::string host = HostName(*game);
-    std::string line = closedBy.has_value() ? std::format(ClosedFormat, *closedBy) : std::format(LostFormat, host);
+    std::string line = LineOf(closedBy, HostName(*game));
     SDL_Log("Room end: the room ended under this game (%s)", line.c_str());
 
     // A match: back to the games once its scenario has ended (MCRoomEnd::AfterMatch).

@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "gui/MCScrollPane.h"
 #include "lib/MCFatal.h"
@@ -159,16 +161,10 @@ auto MCPurchaseScreen::Click(int32_t xPos, int32_t yPos) -> void
         return;
     }
 
+    // Port-only (SPEC-menus.md's stage 2): MAIN MENU as Escape, through the flow (a match's asks first).
     if (inside(0x10, 0x21, 2, 0xd1))
     {
-        if (MultiPlayer() != nullptr)
-        {
-            CheckExit();
-            return;
-        }
-
-        PlayLogSound(0x36);
-        GlobalLog()->SetUpMainScreen(false);
+        MCMenuScreens::LeaveCampaign();
         return;
     }
 
@@ -234,8 +230,18 @@ auto MCPurchaseScreen::HandleEvent(MCGuiEvent& event) -> void
         }
 
         case 8:
+        {
+            // Port-only (SPEC-menus.md's stage 2): Escape goes back one screen, as MAIN MENU does (the original's did
+            // nothing).
+            if (event.Key == 0x1b)
+            {
+                MCScreenFlow::Back();
+                break;
+            }
+
             GlobalLog()->ProcessCheatCode(event.ScanCode);
             break;
+        }
         case 0x13:
         {
             // Blink the briefing button.

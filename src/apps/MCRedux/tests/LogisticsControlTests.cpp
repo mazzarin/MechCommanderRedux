@@ -760,8 +760,8 @@ TEST_CASE("logistics: a sale's spinner is locked (but a component sale's), one i
 
 // The message dialogs
 
-TEST_CASE("game: the message dialog grows a middle piece for every two lines, and its keys answer (Escape runs OK too, "
-          "OB-074)")
+TEST_CASE("game: the message dialog grows a middle piece for every two lines, and its keys answer (Escape is a "
+          "question's CANCEL, OB-074)")
 {
     LogisticsScreen screen;
 
@@ -806,13 +806,17 @@ TEST_CASE("game: the message dialog grows a middle piece for every two lines, an
 
     std::vector<int32_t> results;
     int32_t okRuns = 0;
+    int32_t cancelRuns = 0;
     dialog->SetTwoButton(true);
     dialog->Callback = [&](int32_t result) { results.push_back(result); };
     dialog->OkButton->Callback().SetExec([&] { okRuns++; });
+    dialog->CancelButton->Callback().SetExec([&] { cancelRuns++; });
     dialog->KeepCallbacks = true;
     Send(*dialog, MCGuiEventType::KeyDown, 0, 0, 0x0d);
     Send(*dialog, MCGuiEventType::KeyDown, 0, 0, 0x1b);
-    CHECK_EQ(okRuns, 2);
+    // OB-074 (fixed): Escape on a question is its CANCEL (the original ran OK).
+    CHECK_EQ(okRuns, 1);
+    CHECK_EQ(cancelRuns, 1);
     REQUIRE_EQ(results.size(), 2u);
     CHECK_EQ(results[0], -1);
     CHECK_EQ(results[1], 0);

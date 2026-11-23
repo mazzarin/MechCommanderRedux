@@ -7,7 +7,7 @@
 namespace
 {
     /// <summary>The art <see cref="LogArt"/> loaded, by file name.</summary>
-    std::unordered_map<std::string, std::shared_ptr<MCLogPort>> LoadedArt;
+    MCLogArtCache LoadedArt;
 }
 
 auto LogArt(std::string_view fileName) -> std::shared_ptr<MCLogPort>
@@ -32,6 +32,17 @@ auto LogScreenArt(std::string_view name) -> std::shared_ptr<MCLogPort>
 auto ClearLogArt() -> void
 {
     LoadedArt.clear();
+}
+
+auto TakeLogArt() -> MCLogArtCache
+{
+    return std::exchange(LoadedArt, {});
+}
+
+auto ReuseLogArt(MCLogArtCache art) -> void
+{
+    // Art loaded since it was handed over stays.
+    LoadedArt.merge(art);
 }
 
 auto LogArtLoaded() -> size_t

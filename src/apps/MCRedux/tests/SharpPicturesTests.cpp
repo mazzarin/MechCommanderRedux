@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "TestGame.h"
+#include "gui/MCScreenChange.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
@@ -113,6 +114,7 @@ namespace
     {
         const MCVulkanRenderer::SharpCounts clicked = SharpCountsNow(renderer);
         NewCampaign();
+        MCTestGame::FinishChanges();
         const MCVulkanRenderer::SharpCounts faded = SharpCountsNow(renderer);
         std::cout << std::format(
             "  the click's fade: {} sharp pictures taken made ahead, {} redrawn ({:.3f} ms of it), "
@@ -684,11 +686,11 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
 }
 
 /// <summary>
-/// Port-only: NEW CAMPAIGN's click fades the main menu at once and starts the campaign (its load, the briefing's
-/// set-up) once the screen is nearly black, then does what a fade into the briefing does; the next frame's fade, from
-/// black, does none of it again.
+/// Port-only (SPEC-menus.md's stage 2): NEW CAMPAIGN's click is a change of screen through the flow: the main menu fades
+/// out live from the click, the campaign starts (its load, the briefing's set-up) once the screen is black, then what a
+/// fade into the briefing does, and the briefing fades in; its next frame does none of it again.
 /// </summary>
-TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its click, once the screen is nearly black")
+TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its click, once the screen is black")
 {
     if (!MCTestGame::Available())
     {
@@ -697,9 +699,8 @@ TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its 
 
     StartSharpLogistics();
     REQUIRE(GlobalLog()->MainScreen->IsShowing());
-    REQUIRE(GuiSystem().CanFade());
 
-    // At each present of the click, how far the fade had gone and whether the campaign had started (the main menu
+    // At each present of the change, how far the fade had gone and whether the campaign had started (the main menu
     // hidden: the work's last step).
     struct MCShown
     {
@@ -713,14 +714,19 @@ TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its 
     { shown.push_back({.Fade = MCInput::Display()->Fade(), .Started = !GlobalLog()->MainScreen->IsShowing()}); };
 
     NewCampaign();
+    REQUIRE(MCTestGame::FinishChanges());
     MCTestGame::OnPresent = {};
     REQUIRE(!shown.empty());
     REQUIRE(!shown.front().Started);
     const auto firstStarted = std::ranges::find_if(shown, &MCShown::Started);
     REQUIRE(firstStarted != shown.end());
-    CHECK(std::prev(firstStarted)->Fade >= MCGuiSystem::FadeNearBlack);
+    REQUIRE(firstStarted != shown.begin());
+    // The main menu shown fading before the work, which waited for black.
+    CHECK(std::ranges::any_of(shown.begin(), firstStarted,
+                              [](const MCShown& at) { return at.Fade > 0 && at.Fade < MCScreenChange::Black; }));
+    CHECK_EQ(std::prev(firstStarted)->Fade, MCScreenChange::Black);
+    CHECK_EQ(shown.back().Fade, 0);
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
-    CHECK(!GuiSystem().CanFade());
     CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
     const size_t started = RehearsalsRun();
     MCTestGame::RunFrame(FrameSeconds);
@@ -742,6 +748,7 @@ TEST_CASE_ISOLATED("game: a fade into a screen rehearses it once the screen is n
 
     StartSharpLogistics();
     NewCampaign();
+    REQUIRE(MCTestGame::FinishChanges());
     MCSharpPictures::WaitForMade();
     Settle();
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);

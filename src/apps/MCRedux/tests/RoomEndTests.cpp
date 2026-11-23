@@ -147,6 +147,30 @@ TEST_CASE_ISOLATED("game: a LAN guest whose room ends goes back to the LAN games
 }
 
 /// <summary>
+/// Port-only (SPEC-menus.md's stage 2): a launcher's guest, whose room is the stack's end, whose host closes the room
+/// saying so: the game's last message says why ("BOB CLOSED THE GAME."), its OK ending the game as the original's did.
+/// </summary>
+TEST_CASE_ISOLATED("game: a launcher's guest whose host closes the room says so as the game ends")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28958";
+    Host bob;
+    REQUIRE(bob.Open(Port, "BOB", "BOB'S GAME"));
+    REQUIRE(MCTestGame::StartLobby(std::format("-join 127.0.0.1 -port {} -player ANN", Port)));
+    REQUIRE(SettleUntil([] { return InSession() && OnScreen(GlobalLog()->SessionScreen); }));
+
+    bob.SendRoomEnds(MultiPlayer()->SessionManager->MyPlayerID, std::to_underlying(MCRoomEnd::MCHow::Closed));
+    REQUIRE(SettleUntil([] { return !InSession(); }));
+    Settle();
+    CHECK_EQ(DialogText(), std::string("BOB CLOSED THE GAME."));
+    bob.Close();
+}
+
+/// <summary>
 /// A LAN guest whose host starts a mission its game can't load (a hostile host, or a start without the file check):
 /// the guest leaves the room for the LAN games, saying so ("COULDN'T LOAD THE HOST'S MISSION."), where it went on into
 /// the mech bay with nothing loaded and the scenario's start quit the game (an empty mission's name, a Fatal); and a

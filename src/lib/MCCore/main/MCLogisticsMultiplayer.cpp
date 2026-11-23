@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "linkup/MCSessionManager.h"
+#include "logistics/MCMenuScreens.h"
 #include "main/MCLogistics.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFatal.h"
@@ -556,7 +559,18 @@ auto MCLogistics::LoadMatchMission(std::string_view mission) -> bool
         return false;
     }
 
-    SetUpBriefingScreen(false);
+    // Port-only (SPEC-menus.md's stage 2): the briefing through the flow, with the one fade. The room it came from is
+    // gone from the stack (the match started): the briefing's way back is the main menu's, or a launcher's end.
+    MCScreenFlow::Land(LaunchedFromLobby ? std::vector<MCScreenFlow::MCScreenId>{MCMenuScreens::Campaign()}
+                                         : std::vector{MCMenuScreens::Main(), MCMenuScreens::Campaign()});
+    MCScreenFlow::Change("match briefing",
+                         []
+                         {
+                             if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
+                             {
+                                 logistics->SetUpBriefingScreen(false);
+                             }
+                         });
     return true;
 }
 

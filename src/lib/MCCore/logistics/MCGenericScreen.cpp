@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
 #include "logistics/MCGenericScreen.h"
 #include "color/MCPalette.h"
 #include "gui/MCGuiEvent.h"
@@ -159,26 +160,27 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
         case 0:
             exec = NewMcxCampaign;
             break;
+        // Port-only (SPEC-menus.md's stage 2): each change of screen through the flow, with the one fade.
         case 1:
-            exec = SaveScreen;
+            exec = MCScreenFlow::Via("save game", SaveScreen);
             break;
         case 2:
-            exec = LoadScreen;
+            exec = MCScreenFlow::Via("load game", LoadScreen);
             break;
         case 3:
-            exec = ShowPreferences;
+            exec = MCScreenFlow::Via("preferences", ShowPreferences);
             break;
         case 4:
-            exec = ConnectScreen;
+            exec = MCScreenFlow::Via("multiplayer", ConnectScreen);
             break;
         case 5:
         {
-            exec = ReplayCinema;
+            exec = MCScreenFlow::Via("cinema", ReplayCinema);
             CinemaButton = button.WeakAs<MCLogButton>();
             break;
         }
         case 6:
-            exec = ReturnToGame;
+            exec = MCScreenFlow::Via("return to game", ReturnToGame);
             break;
         case 7:
             exec = GameOverMan;
@@ -186,7 +188,7 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
         case 8:
         case 9:
         {
-            button.Callback().SetExec(callback == 8 ? LoadGame : SaveGame);
+            button.Callback().SetExec(callback == 8 ? MCScreenFlow::Via("load", LoadGame) : SaveGame);
             LoadSaveButton = button.WeakAs<MCLogButton>();
             button.Disabled = true;
             return true;
@@ -200,7 +202,8 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
         }
         case 11:
         {
-            button.Callback().SetExec(Cancel);
+            // Port-only (SPEC-menus.md's stage 2): CANCEL goes back one screen, as Escape does.
+            button.Callback().SetExec([] { MCScreenFlow::Back(); });
             CancelButton = button.WeakAs<MCLogButton>();
             return true;
         }
@@ -356,9 +359,10 @@ auto MCGenericScreen::Draw() -> void
 
 auto MCGenericScreen::HandleEvent(MCGuiEvent& event) -> void
 {
+    // Port-only (SPEC-menus.md's stage 2): Escape goes back one screen (the original's went to the main menu).
     if (event.Type == MCGuiEventType::KeyDown && event.Key == 0x1b)
     {
-        Cancel();
+        MCScreenFlow::Back();
     }
 
     if (EventRoutine != nullptr)

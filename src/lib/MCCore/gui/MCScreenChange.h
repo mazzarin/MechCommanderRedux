@@ -49,15 +49,25 @@ namespace MCScreenChange
         /// <summary>At the press: the job runs on as it fades out, and what's left of it once the screen is dark.</summary>
         AtPress,
         /// <summary>Once the job is done (<see cref="MCPhase::Working"/> until then).</summary>
-        AfterJob
+        AfterJob,
+        /// <summary>
+        /// None: the screen is black already (a movie ended), so the change starts dark, its job's and dark work run, and
+        /// the next screen fades in.
+        /// </summary>
+        FromBlack
     };
 
-    /// <summary>A piece of a change's work, run in one frame.</summary>
+    /// <summary>
+    /// A piece of a change's work: run in one frame (<see cref="Run"/>), or a wait (<see cref="Until"/>), polled once a
+    /// frame until it's done, the pieces after it waiting for it (a thread's work, a connection, a screen's pictures).
+    /// </summary>
     struct MCPiece
     {
         /// <summary>The frame log's part its time goes in (MCFrameLog::Scope); none when empty.</summary>
         std::string_view Part;
         std::function<void()> Run;
+        /// <summary>A wait: whether it's done, asked once a frame (after <see cref="Run"/>, if any, has run once).</summary>
+        std::function<bool()> Until;
     };
 
     /// <summary>A change of screen, as <see cref="Start"/> runs it.</summary>
@@ -110,6 +120,15 @@ namespace MCScreenChange
 
     /// <summary>Whether the screen is black, the fade-out shown whole: the change's last work runs.</summary>
     bool Dark();
+
+    /// <summary>
+    /// Whether the running change's job is done (every piece of it run, every wait over): it says so the frame it is
+    /// (the frame log's note). False with no change running.
+    /// </summary>
+    bool JobDone();
+
+    /// <summary>Whether a change's piece runs now (Tend, or RunPieces): work a change does, not a press.</summary>
+    bool InPiece();
 
     /// <summary>Whether a change runs (from <see cref="Start"/> until the fade-in is over).</summary>
     bool Running();

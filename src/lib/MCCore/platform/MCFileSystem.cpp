@@ -109,6 +109,97 @@ namespace
         return part.size() >= 2 && part[1] == ':' && std::isalpha(static_cast<unsigned char>(part[0]));
     }
 
+    /// <summary>
+    /// Port-only: the names in each folder the case-blind walk (<see cref="ResolveFrom"/>) looked in, by name lower-cased,
+    /// each listing with the folder's time of last change as read: read again only once the folder changes (a name
+    /// added, removed or renamed changes it). Reading a folder was most of a lookup's cost: an archive's file isn't
+    /// there loose, so each open read the folders on its path in the user folder and the install, the read-ahead's
+    /// threads many at once (on the way back from a mission, 23 Nov: 2.4 s of a 39 s recording in opening folders, the
+    /// game's thread waiting for the read-ahead; menus-flow's HISTORY entry). A volume whose times are coarse (FAT's two
+    /// seconds) could hide a name added in the same tick as a read, but such volumes ignore case, so their names are
+    /// found as spelled before the walk looks here.
+    /// </summary>
+    class MCFolderNames
+    {
+    public:
+        /// <summary>
+        /// The entry of <paramref name="folder"/> named <paramref name="name"/> without regard to case (the first so
+        /// named, as the folder lists them), or nothing when the folder has none or isn't a folder.
+        /// </summary>
+        std::optional<std::filesystem::path> Find(const std::filesystem::path& folder, std::string_view name)
+        {
+            std::error_code error;
+
+            if (!std::filesystem::is_directory(folder, error))
+            {
+                return std::nullopt;
+            }
+
+            const std::filesystem::file_time_type changed = std::filesystem::last_write_time(folder, error);
+
+            if (error)
+            {
+                return std::nullopt;
+            }
+
+            const std::lock_guard lock(_Lock);
+            MCListing& listing = _Folders[folder.native()];
+
+            if (!listing.Read || listing.Changed != changed)
+            {
+                listing.ByName.clear();
+
+                for (const auto& entry : std::filesystem::directory_iterator(folder, error))
+                {
+                    listing.ByName.try_emplace(Lowered(MCFileSystem::ToUtf8(entry.path().filename())), entry.path());
+                }
+
+                // A folder that couldn't be read whole is read again at the next lookup.
+                listing.Changed = changed;
+                listing.Read = !error;
+
+                if (error)
+                {
+                    SDL_Log("MCFileSystem: couldn't list %s to look for %.*s without regard to case: %s",
+                            MCFileSystem::ToUtf8(folder).c_str(), static_cast<int>(name.size()), name.data(),
+                            error.message().c_str());
+                }
+            }
+
+            const auto found = listing.ByName.find(Lowered(name));
+            return found != listing.ByName.end() ? std::optional(found->second) : std::nullopt;
+        }
+
+    private:
+        /// <summary>A folder's names as last read, and the folder's time of last change then.</summary>
+        struct MCListing
+        {
+            bool Read = false;
+            std::filesystem::file_time_type Changed;
+            std::unordered_map<std::string, std::filesystem::path> ByName;
+        };
+
+        /// <summary><paramref name="name"/> lower-cased as <c>MCPort::StrICmp</c> compares names.</summary>
+        static std::string Lowered(std::string_view name)
+        {
+            std::string lowered(name);
+            std::ranges::transform(lowered, lowered.begin(), [](char c)
+                                   { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+            return lowered;
+        }
+
+        /// <summary>The read-ahead's threads look up files with the game's.</summary>
+        std::mutex _Lock;
+        std::unordered_map<std::filesystem::path::string_type, MCListing> _Folders;
+    };
+
+    /// <summary>The folders' names (<see cref="MCFolderNames"/>), shared by every disk source.</summary>
+    MCFolderNames& FolderNames()
+    {
+        static MCFolderNames names;
+        return names;
+    }
+
     /// <summary>Resolves <paramref name="gamePath"/> against <paramref name="root"/> (for a relative path).</summary>
     /// <remarks>
     /// A relative path never leaves <paramref name="root"/>: a ".." at the root is ignored, as at a drive's root, and a
@@ -200,22 +291,11 @@ namespace
             }
 
             // Not there as spelled: look for the entry that matches without regard to case.
-            bool found = false;
-
-            if (std::filesystem::is_directory(result, error))
+            if (std::optional<std::filesystem::path> found = FolderNames().Find(result, part))
             {
-                for (const auto& entry : std::filesystem::directory_iterator(result, error))
-                {
-                    if (MCPort::StrICmp(MCFileSystem::ToUtf8(entry.path().filename()), part) == 0)
-                    {
-                        result = entry.path();
-                        found = true;
-                        break;
-                    }
-                }
+                result = std::move(*found);
             }
-
-            if (!found)
+            else
             {
                 result = std::move(exact);
             }

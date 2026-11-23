@@ -283,6 +283,9 @@
     <ClCompile Include="tests\ScreenChangeTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\ScreenFlowTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ScreenInput.cpp">
       <Filter>tests</Filter>
     </ClCompile>

@@ -67,5 +67,17 @@ std::shared_ptr<MCLogPort> LogScreenArt(std::string_view name);
 /// <summary>Port: frees the art <see cref="LogArt"/> loaded.</summary>
 void ClearLogArt();
 
+/// <summary>Port-only: the art <see cref="LogArt"/> holds loaded, by file name.</summary>
+using MCLogArtCache = std::unordered_map<std::string, std::shared_ptr<MCLogPort>>;
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 2): hands over the art <see cref="LogArt"/> holds, leaving it none, to be kept
+/// across a mission (MCLogisticsArt).
+/// </summary>
+MCLogArtCache TakeLogArt();
+
+/// <summary>Port-only: <see cref="LogArt"/>'s art again, as <see cref="TakeLogArt"/> handed it over.</summary>
+void ReuseLogArt(MCLogArtCache art);
+
 /// <summary>Port-only, for the tests: the art files <see cref="LogArt"/> holds loaded.</summary>
 size_t LogArtLoaded();

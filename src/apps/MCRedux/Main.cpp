@@ -20,6 +20,7 @@
 #include "lib/MCThreadKeeper.h"
 #include "network/MCInternetGame.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCIntroNote.h"
 #include "network/MCRejoinNote.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
@@ -679,6 +680,9 @@ int main(int argc, char** argv)
     {
         MCRejoinNote::Discard(options->UserFolder);
     }
+
+    // Port-only (SPEC-menus.md's "The intro movies"): a start the game made itself (RESTART) skips the intro movies.
+    MCIntroNote::SkipIntro = MCIntroNote::TakeAtStart(options->UserFolder, MCRejoinNote::Now());
 
     // A build that updates its content carries the root keys.
     std::vector<MCSignedFile::MCPublicKey> rootKeys = BuildRootKeys();

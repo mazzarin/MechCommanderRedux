@@ -64,6 +64,16 @@ namespace
         return static_cast<double>(to - from) * MsPerSecond / static_cast<double>(SDL_GetPerformanceFrequency());
     }
 
+    /// <summary>
+    /// Milliseconds on the game's clock since its counter read <paramref name="from"/>: the frame's budget is the game's
+    /// time, so a test's manual clock gives every run the same frames.
+    /// </summary>
+    double GameMsSince(int64_t from)
+    {
+        return static_cast<double>(MCPort::PerformanceCounter() - from) * MsPerSecond /
+               static_cast<double>(MCPort::PerformanceFrequency());
+    }
+
     /// <summary>The refresh rate of the window's screen (Hz); 0 when not known.</summary>
     double RefreshHz()
     {
@@ -121,29 +131,69 @@ namespace
         return false;
     }
 
-    /// <summary>
-    /// Runs the change's next piece in its phase (<see cref="PiecesLeft"/>); whether the change still runs after it (a
-    /// piece may end its own change: the game stopping).
-    /// </summary>
-    bool RunNextPiece()
+    /// <summary>What running a piece came to.</summary>
+    enum class MCRan
     {
-        MCPiece& piece = JobLeft() ? Current.Change.Job[Current.NextJob++] : Current.Change.Dark[Current.NextDark++];
+        /// <summary>Done: the next piece may run.</summary>
+        Done,
+        /// <summary>A wait not over: the pieces after it wait for the next frame.</summary>
+        Waiting,
+        /// <summary>The piece ended its own change (the game stopping, the player calling it off).</summary>
+        Ended
+    };
+
+    /// <summary>
+    /// Runs the change's next piece in its phase (<see cref="PiecesLeft"/>): its run once, then its wait, if any, asked
+    /// (the piece stays next while the wait isn't over).
+    /// </summary>
+    MCRan RunNextPiece()
+    {
+        const bool job = JobLeft();
+        MCPiece& piece = job ? Current.Change.Job[Current.NextJob] : Current.Change.Dark[Current.NextDark];
         // Moved out first: the piece's work may end the change, and its description with it.
         const std::function<void()> run = std::move(piece.Run);
+        piece.Run = nullptr;
+        const std::string_view part = piece.Part;
         const uint64_t generation = Generation;
-        RunInPart(piece.Part, run);
+        Tending = true;
+        RunInPart(part, run);
+        Tending = false;
 
         if (generation != Generation)
         {
-            return false;
+            return MCRan::Ended;
         }
+
+        MCPiece& waiting = job ? Current.Change.Job[Current.NextJob] : Current.Change.Dark[Current.NextDark];
+
+        if (waiting.Until != nullptr)
+        {
+            // The wait copied: it may end the change too.
+            const std::function<bool()> until = waiting.Until;
+            Tending = true;
+            const bool over = until();
+            Tending = false;
+
+            if (generation != Generation)
+            {
+                return MCRan::Ended;
+            }
+
+            if (!over)
+            {
+                return MCRan::Waiting;
+            }
+        }
+
+        (job ? Current.NextJob : Current.NextDark)++;
 
         if (Current.JobDone == 0 && !JobLeft())
         {
             Current.JobDone = SDL_GetPerformanceCounter();
+            MCFrameLog::Note(std::format("change {}: the job done", Current.Change.Name));
         }
 
-        return true;
+        return MCRan::Done;
     }
 
     /// <summary>The screen shown starts to fade out (from its next frame).</summary>
@@ -208,10 +258,16 @@ auto MCScreenChange::Start(MCChange change) -> bool
         Current.JobDone = now;
     }
 
-    // A job to do first, live; else the fade-out from the press.
+    // A job to do first, live; black already, dark from the press; else the fade-out from the press.
     if (Current.Change.FadeOut == MCFadeOut::AfterJob && !Current.Change.Job.empty())
     {
         Current.Phase = MCPhase::Working;
+    }
+    else if (Current.Change.FadeOut == MCFadeOut::FromBlack)
+    {
+        Current.Phase = MCPhase::Dark;
+        Current.OutStarted = now;
+        Current.Darkened = now;
     }
     else
     {
@@ -232,19 +288,17 @@ auto MCScreenChange::Tend() -> void
 
     if (PiecesLeft())
     {
-        Tending = true;
-        const uint64_t started = SDL_GetPerformanceCounter();
-        bool running = true;
+        const int64_t started = MCPort::PerformanceCounter();
+        MCRan ran = MCRan::Done;
 
         // At least one piece a frame: a slow one gets a frame of its own, so the screen is never held long between them.
+        // A wait not over leaves the rest for the next frame.
         do
         {
-            running = RunNextPiece();
-        } while (running && PiecesLeft() && MsBetween(started, SDL_GetPerformanceCounter()) < FrameBudgetMs);
+            ran = RunNextPiece();
+        } while (ran == MCRan::Done && PiecesLeft() && GameMsSince(started) < FrameBudgetMs);
 
-        Tending = false;
-
-        if (!running || PiecesLeft())
+        if (ran != MCRan::Done || PiecesLeft())
         {
             return;
         }
@@ -256,7 +310,6 @@ auto MCScreenChange::Tend() -> void
     {
         case MCPhase::Working:
         {
-            MCFrameLog::Note(std::format("change {}: the job done", Current.Change.Name));
             StartFadeOut(now);
             break;
         }
@@ -277,10 +330,21 @@ auto MCScreenChange::Tend() -> void
 
 auto MCScreenChange::RunPieces(std::span<const MCPiece> pieces) -> void
 {
+    const bool tending = Tending;
+    Tending = true;
+
     for (const MCPiece& piece : pieces)
     {
         RunInPart(piece.Part, piece.Run);
+
+        // A wait done without a change: asked until it's over (nothing else to draw meanwhile).
+        while (piece.Until != nullptr && !piece.Until())
+        {
+            SDL_Delay(1);
+        }
     }
+
+    Tending = tending;
 }
 
 auto MCScreenChange::Phase() -> MCPhase
@@ -296,6 +360,16 @@ auto MCScreenChange::Name() -> std::string_view
 auto MCScreenChange::Dark() -> bool
 {
     return Current.Phase == MCPhase::Dark;
+}
+
+auto MCScreenChange::JobDone() -> bool
+{
+    return Current.Phase != MCPhase::None && Current.JobDone != 0;
+}
+
+auto MCScreenChange::InPiece() -> bool
+{
+    return Tending;
 }
 
 auto MCScreenChange::Running() -> bool

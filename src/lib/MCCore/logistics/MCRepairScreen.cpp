@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCRepairScreen.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCListView.h"
@@ -369,16 +371,10 @@ auto MCRepairScreen::HandleEvent(MCGuiEvent& event) -> void
             return;
         }
 
+        // Port-only (SPEC-menus.md's stage 2): MAIN MENU as Escape, through the flow (a match's asks first).
         if (inside(2, 0x10, 0xd1, 0x21))
         {
-            if (MultiPlayer() != nullptr)
-            {
-                CheckExit();
-                return;
-            }
-
-            PlayLogSound(TabSample);
-            GlobalLog()->SetUpMainScreen(false);
+            MCMenuScreens::LeaveCampaign();
             return;
         }
 
@@ -429,6 +425,14 @@ auto MCRepairScreen::HandleEvent(MCGuiEvent& event) -> void
 
     if (event.Type == MCGuiEventType::KeyUp)
     {
+        // Port-only (SPEC-menus.md's stage 2): Escape goes back one screen, as MAIN MENU does (the original's did
+        // nothing).
+        if (event.Key == 0x1b)
+        {
+            MCScreenFlow::Back();
+            return;
+        }
+
         GlobalLog()->ProcessCheatCode(event.ScanCode);
         return;
     }

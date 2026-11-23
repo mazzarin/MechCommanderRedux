@@ -1224,7 +1224,7 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE(MCTelemetry::Reporting());
     NewCampaign();
-    MCTestGame::RunFrame(1.0f / 15.0f);
+    REQUIRE(MCTestGame::FinishChanges());
     const int32_t good = logistics->CurrentMission;
     REQUIRE(good >= 0);
     const auto scenarios = static_cast<int32_t>(Mission()->Scenarios.size());

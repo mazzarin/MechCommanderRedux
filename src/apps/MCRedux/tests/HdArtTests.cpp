@@ -13491,6 +13491,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     Cancel();
     AuditLabel = "to briefing";
     NewCampaign();
+    REQUIRE(MCTestGame::FinishChanges());
     shoot("briefing");
     GlobalLog()->BriefingScreen->SetUpMission();
     shoot("briefing_mission");
@@ -15864,6 +15865,7 @@ namespace
 #endif
         TourMultiplayer(shoot);
         NewMcxCampaign();
+        REQUIRE(MCTestGame::FinishChanges());
         shoot("briefing_expansion");
 
         if (!LaunchFromBriefing(detail))
@@ -19193,6 +19195,7 @@ namespace
         REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
         SDL_SyncWindow(&MCInput::Display()->Window());
         NewCampaign();
+        REQUIRE(MCTestGame::FinishChanges());
         return std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
     }
 

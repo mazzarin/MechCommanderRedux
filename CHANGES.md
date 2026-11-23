@@ -287,6 +287,8 @@ adds are in the [README](README.md#what-redux-hd-adds).
 
 ### Logistics and Menus
 
+- Escape answers a yes-or-no question with CANCEL; it used to answer OK, so Escape on "Are you sure you want to exit?"
+  left the game (OB-074). A message with one button still closes with Escape.
 - Dragging the scroll thumb of a logistics text box no longer crashes.
 - Stray text no longer follows the refit dialog's messages.
 - Dropping a unit with the right mouse button when no drop slot is free no longer corrupts memory, and a unit that is
@@ -482,7 +484,6 @@ These bugs are in the original MechCommander Gold. Some of these bugs are kept o
 
 ### Logistics and Menus
 
-- **Escape on a two-button dialog does the OK action, not Cancel.**
 - **A damaged engine can be removed from a mech by an item repair.**
 - A component picked up with the right mouse button can be lost when it can't be mounted.
 - Moving two mechs, vehicles or pilots in a row between lists can corrupt both lists.

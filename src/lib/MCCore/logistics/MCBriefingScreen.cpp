@@ -957,14 +957,16 @@ auto MCBriefingScreen::HandleEvent(MCGuiEvent& event) -> void
         }
         case 8:
         {
-            if (event.Key == 0x1b && MovieOver == 0)
+            // Port-only (SPEC-menus.md's stage 2): Escape stops the operation's movie while one is open (the original's
+            // MovieOver alone, which logistics clears every frame, so its Escape tried to stop a movie whatever showed).
+            if (event.Key == 0x1b && MovieOver == 0 && SmackerWindow != nullptr)
             {
                 StopSmackerMovies();
                 return;
             }
 
-            // Port-only (SPEC-menus.md's stage 2): Escape goes back one screen, as MAIN MENU does (the original's did
-            // nothing once the movie was over).
+            // Port-only (SPEC-menus.md's stage 2): else Escape goes back one screen, as MAIN MENU does (the original's
+            // did nothing).
             if (event.Key == 0x1b)
             {
                 MCScreenFlow::Back();

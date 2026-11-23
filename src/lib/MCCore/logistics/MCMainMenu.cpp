@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
 #include "logistics/MCMainMenu.h"
 #include "ai/MCMoveGeometry.h"
 #include "gui/MCUpdateDisplay.h"
@@ -32,10 +33,12 @@ namespace
         SoundSystem()->StopDigitalMusic();
         SoundSystem()->PlayBettySample(0x19);
 
-        // Port-only: the campaign started and its briefing set up in the fade from the click once the screen is nearly
-        // black, then what the fade into the briefing does (FadeOutWhile), where the main menu sat frozen for it before
-        // its fade began (64-65 ms on the A10, 18-38 on the M4 Pro). Betty's line and the music's stop at the click.
-        FadeOutWhile([&] { BeginCampaign(campaign, startFile, firstPlanet); });
+        // Port-only: the campaign started and its briefing set up once the screen is dark, where the main menu sat
+        // frozen for it before its fade began (64-65 ms on the A10, 18-38 on the M4 Pro); port-only (SPEC-menus.md's
+        // stage 2): in a change of screen through the flow, the main menu fading out live, the briefing fading in.
+        // Betty's line and the music's stop at the click.
+        MCScreenFlow::Change("new campaign", [campaign = std::string(campaign), startFile = std::string(startFile),
+                                              firstPlanet] { BeginCampaign(campaign, startFile, firstPlanet); });
     }
 }
 

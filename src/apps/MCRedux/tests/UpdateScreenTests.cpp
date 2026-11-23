@@ -201,6 +201,7 @@ TEST_CASE_ISOLATED("game: UPDATE opens remade through the flow: INSTALL, the dow
         return;
     }
 
+    const MCTestGame::KeepPrefs keptPrefs;
     MCFakeUpdater updater;
     GRenderer = static_cast<int>(MCRendererKind::Software);
     REQUIRE(MCTestGame::StartLogistics());

@@ -209,39 +209,6 @@ namespace
         }
     }
 
-    /// <summary>Keeps the tests' prefs.cfg as it was: the main menu's answer writes PREFS.</summary>
-    class MCKeepPrefs
-    {
-    public:
-        MCKeepPrefs()
-        {
-            std::ifstream file(_Path, std::ios::binary);
-            _Existed = file.is_open();
-            _Contents.assign(std::istreambuf_iterator<char>(file), {});
-        }
-
-        ~MCKeepPrefs()
-        {
-            if (_Existed)
-            {
-                std::ofstream(_Path, std::ios::binary | std::ios::trunc) << _Contents;
-            }
-            else
-            {
-                std::error_code error;
-                std::filesystem::remove(_Path, error);
-            }
-        }
-
-        MCKeepPrefs(const MCKeepPrefs&) = delete;
-        MCKeepPrefs& operator=(const MCKeepPrefs&) = delete;
-
-    private:
-        std::filesystem::path _Path = MCFileSystem::UserRoot() / "prefs.cfg";
-        bool _Existed = false;
-        std::string _Contents;
-    };
-
     /// <summary>Whether <paramref name="json"/> holds <paramref name="part"/>.</summary>
     bool Holds(std::string_view json, std::string_view part)
     {
@@ -1065,7 +1032,7 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
         return;
     }
 
-    const MCKeepPrefs prefs;
+    const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     REQUIRE(MCTestGame::StartLogistics());
     MCTestGame::RunFrame(1.0f / 15.0f);
@@ -1098,7 +1065,7 @@ TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice onc
         return;
     }
 
-    const MCKeepPrefs prefs;
+    const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     MCTestGuest::Guest guest("ANN");
     REQUIRE(MCTestGame::StartLobby("-host -port 28899 -player BOB"));
@@ -1130,7 +1097,7 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
         return;
     }
 
-    const MCKeepPrefs prefs;
+    const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     reports.Log->Countries = {"DE"};
     REQUIRE(MCTestGame::StartLogistics());
@@ -1213,7 +1180,7 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
 
     constexpr int32_t damagedEntry = 37;
     constexpr int32_t componentEntries = 50;
-    const MCKeepPrefs prefs;
+    const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     REQUIRE(MCTestGame::StartLogistics());
     MCTestGame::RunFrame(1.0f / 15.0f);

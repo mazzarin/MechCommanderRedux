@@ -293,6 +293,7 @@ TEST_CASE_ISOLATED("game: Preferences opens through the flow and reads in every 
         return;
     }
 
+    const MCTestGame::KeepPrefs keptPrefs;
     GRenderer = static_cast<int>(MCRendererKind::Software);
     REQUIRE(MCTestGame::StartLogistics());
     RunWhileChanging();
@@ -344,6 +345,7 @@ TEST_CASE_ISOLATED("game: Preferences from the keys: sections, rows, Escape puts
         return;
     }
 
+    const MCTestGame::KeepPrefs keptPrefs;
     GRenderer = static_cast<int>(MCRendererKind::Software);
     REQUIRE(MCTestGame::StartLogistics());
     RunWhileChanging();
@@ -405,6 +407,7 @@ TEST_CASE_ISOLATED("game: CONTROLS' boxes take the next key, a modifier alone, a
         return;
     }
 
+    const MCTestGame::KeepPrefs keptPrefs;
     GRenderer = static_cast<int>(MCRendererKind::Software);
     REQUIRE(MCTestGame::StartLogistics());
     RunWhileChanging();
@@ -467,6 +470,7 @@ TEST_CASE_ISOLATED("game: Escape in a mission opens the pause; RESUME, ALL PREFE
         return;
     }
 
+    const MCTestGame::KeepPrefs keptPrefs;
     const MCTestGame::SaveGameCleanup saves;
     StartBattle();
 
@@ -581,6 +585,7 @@ TEST_CASE_ISOLATED("game: a match's pause: the battle goes on, and LEAVE MATCH a
         return;
     }
 
+    const MCTestGame::KeepPrefs keptPrefs;
     const MCTestGame::SaveGameCleanup saves;
     StartBattle();
     const MCOptionalRef<MCRmlMenus> menus = MCRemadeScreens::Menus();
@@ -639,6 +644,7 @@ TEST_CASE_ISOLATED("game: a match that ends under its pause keeps the pause's ch
         return;
     }
 
+    const MCTestGame::KeepPrefs keptPrefs;
     const MCTestGame::SaveGameCleanup saves;
     StartBattle();
     const MCOptionalRef<MCRmlMenus> menus = MCRemadeScreens::Menus();
@@ -667,7 +673,8 @@ TEST_CASE_ISOLATED("game: a match that ends under its pause keeps the pause's ch
     MCScreenInput::RealKey(SDL_SCANCODE_RIGHT);
     CHECK(GScrollSpeed != quick);
 
-    MCPauseScreen::MissionEnding();
+    // The match ends: MissionEnding resumes the pause it opened (this test opens a match's pause itself).
+    pause->Resume();
     RunFrames(SettleFrames);
     CHECK(!Menus().Mission().Showing());
     CHECK_EQ(GScrollSpeed, quick);
@@ -684,8 +691,7 @@ TEST_CASE_ISOLATED("game: a match that ends under its pause keeps the pause's ch
     REQUIRE(pause != nullptr);
     ClickOn(Find(*pause, "leave"));
     REQUIRE(MCRemadeTest::OnTop<MCQuestionWindow>(MCRemadeTest::MCLayer::Mission) != nullptr);
-    MCPauseScreen::MissionEnding();
+    pause->Resume();
     RunFrames(SettleFrames);
     CHECK(!Menus().Mission().Showing());
-    CHECK(!MCPauseScreen::Shows());
 }

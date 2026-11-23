@@ -171,6 +171,16 @@ void MCSettingsScreen::ListenToRow(const MCSetting& setting)
 
     OnChange(id, [this, &setting](int value) { OnRowChange(setting, value); });
 
+    // The kit writes the steppers' words as a document loads; rows written after that get theirs here.
+    if (const MCOptionalRef<Rml::ElementDocument> document = Document();
+        setting.Control == MCControl::Stepper && document.has_value())
+    {
+        if (Rml::Element* stepper = document->get().GetElementById(id); stepper != nullptr)
+        {
+            MCRmlKit::SetChoice(*stepper, MCRmlKit::Choice(*stepper));
+        }
+    }
+
     if (setting.Control == MCControl::Slider && setting.Preview)
     {
         Listen(id, Rml::EventId::Mouseup, [this, &setting](Rml::Event&) { Preview(setting); });

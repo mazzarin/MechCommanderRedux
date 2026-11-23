@@ -156,6 +156,7 @@ namespace
 
             Menus = std::move(*made);
             Menus->SetClock([] { return 0.0; });
+            Menus->Kit().KeepPlayed(true);
             Probe = Menus->Menus().CreateChild<MCRmlProbe>([](MCRmlProbe&) {});
 
             if (const auto opened = Probe->Open(); !opened)
@@ -502,6 +503,92 @@ TEST_CASE_ISOLATED("menus: the probe screen plays from the keys with the 1998 so
     CHECK(probe.Ringed());
     probe.MouseTo(1.0f, 1.0f);
     CHECK(!probe.Ringed());
+}
+
+/// <summary>
+/// A press that closes its own screen (the window's CANCEL, clicked or pressed by Enter, and Escape, its Back): the
+/// screen is destroyed at once, but it and the press's action are let go only once the press is done, so what the
+/// action does after the close is still there; then both are gone. The kit keeps no list of its sounds in the game.
+/// </summary>
+TEST_CASE_ISOLATED("menus: a press that closes its own screen finishes before the screen goes")
+{
+    // One menus at a time (RmlUi's): the probe's, then the game's.
+    {
+        MCHeadlessProbe probe(1280, 720);
+        REQUIRE_EQ(probe.Error, "");
+        probe.Frames();
+        MCRmlProbe& screen = *probe.Probe;
+
+        enum class MCPress
+        {
+            Click,
+            Enter,
+            Escape
+        };
+
+        for (const MCPress press : {MCPress::Click, MCPress::Enter, MCPress::Escape})
+        {
+            probe.Document().GetElementById("window")->Focus(true);
+            probe.Key(SDLK_RETURN);
+            const std::weak_ptr<MCRmlScreen> window = screen.Window().Lock();
+            REQUIRE(!window.expired());
+            REQUIRE_EQ(probe.Focused(), "cancel");
+            Rml::Element* cancel = window.lock()->Document()->get().GetElementById("cancel");
+            REQUIRE(cancel != nullptr);
+
+            // The window's Back (CANCEL's and Escape's) closes it, then looks at itself and at what it holds.
+            auto held = std::make_shared<int>(0);
+            const std::weak_ptr<int> heldWatch = held;
+            bool destroyedInside = false;
+            bool heldInside = false;
+            window.lock()->Back =
+                [&closing = *window.lock(), held = std::move(held), &heldWatch, &destroyedInside, &heldInside]
+            {
+                closing.Close();
+                destroyedInside = closing.WasDestroyed();
+                heldInside = !heldWatch.expired() && *held == 0;
+            };
+
+            switch (press)
+            {
+                case MCPress::Click:
+                    cancel->Click();
+                    break;
+                case MCPress::Enter:
+                    probe.Key(SDLK_RETURN);
+                    break;
+                case MCPress::Escape:
+                    probe.Key(SDLK_ESCAPE);
+                    break;
+            }
+
+            CHECK(destroyedInside);
+            CHECK(heldInside);
+            CHECK(window.expired());
+            CHECK(heldWatch.expired());
+            probe.Frames(1);
+            REQUIRE(probe.Menus->Menus().Top().has_value());
+            CHECK_EQ(&probe.Menus->Menus().Top()->get(), static_cast<MCRmlScreen*>(&screen));
+        }
+    }
+
+    // In the game (no test asking to keep them) the sounds are played, not kept.
+    int played = 0;
+    auto made = MCRmlMenus::Create(MCRmlMenus::MCOptions{.Width = 1280,
+                                                         .Height = 720,
+                                                         .MissionUnit = MCRmlMenus::MenusUnit,
+                                                         .Sound = [&played](uint32_t) { ++played; }});
+    REQUIRE(made.has_value());
+    const std::unique_ptr<MCRmlMenus> menus = std::move(*made);
+    menus->SetClock([] { return 0.0; });
+    const MCGuiHandle<MCRmlProbe> quiet = menus->Menus().CreateChild<MCRmlProbe>([](MCRmlProbe&) {});
+    REQUIRE(quiet->Open().has_value());
+    menus->Frame();
+    menus->HandleEvent(KeyEvent(SDL_EVENT_KEY_DOWN, SDLK_E, SDL_KMOD_NONE));
+    menus->HandleEvent(KeyEvent(SDL_EVENT_KEY_UP, SDLK_E, SDL_KMOD_NONE));
+    menus->Frame();
+    CHECK_EQ(played, 1);
+    CHECK(menus->Kit().Played().empty());
 }
 
 /// <summary>

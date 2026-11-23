@@ -65,7 +65,9 @@ public:
     /// <summary>Sets <paramref name="control"/>'s choice, as the player would, without its sound.</summary>
     static void SetChoice(Rml::Element& control, int choice);
 
-    /// <summary>Port-only, for the tests: the sounds played since the start.</summary>
+    /// <summary>Port-only, for the tests: from now on the sounds played are kept (<see cref="Played"/>); off, none.</summary>
+    void KeepPlayed(bool keep) { _KeepPlayed = keep; }
+    /// <summary>Port-only, for the tests: the sounds played while <see cref="KeepPlayed"/> was on.</summary>
     const std::vector<uint32_t>& Played() const { return _Played; }
 
     /// <summary>The kit's listener on a document (an Rml::EventListener).</summary>
@@ -84,6 +86,8 @@ private:
     void Choose(Rml::Element& control, int choice, bool tell);
 
     MCSound _Sound;
+    /// <summary>Port-only, for the tests (<see cref="KeepPlayed"/>): off in the game, so the list doesn't grow.</summary>
+    bool _KeepPlayed = false;
     std::vector<uint32_t> _Played;
     std::unique_ptr<MCListener> _Listener;
     /// <summary>The documents attached (RmlUi's; each detached before it closes).</summary>

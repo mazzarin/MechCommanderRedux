@@ -16,14 +16,31 @@ namespace
     constexpr const char* FirstFocusAttribute = "data-first";
 }
 
-/// <summary>One of a screen's listeners: a function called with the event.</summary>
-class MCRmlScreen::MCAction final : public Rml::EventListener
+/// <summary>
+/// One of a screen's listeners: a function called with the event. A click can close its own screen (BACK, CANCEL):
+/// the action and its screen are pinned while it runs, so the screen's Destroy (its listeners let go) frees them only
+/// once the event is done with them.
+/// </summary>
+class MCRmlScreen::MCAction final
+    : public Rml::EventListener
+    , public std::enable_shared_from_this<MCAction>
 {
 public:
-    explicit MCAction(std::function<void(Rml::Event&)> act) : _Act(std::move(act)) {}
-    void ProcessEvent(Rml::Event& event) override { _Act(event); }
+    MCAction(std::weak_ptr<MCRmlScreen> screen, std::function<void(Rml::Event&)> act)
+        : _Screen(std::move(screen)), _Act(std::move(act))
+    {
+    }
+
+    void ProcessEvent(Rml::Event& event) override
+    {
+        // Let go of in reverse: the screen first (which may free it), then the action.
+        const std::shared_ptr<MCAction> action = shared_from_this();
+        const std::shared_ptr<MCRmlScreen> screen = _Screen.lock();
+        _Act(event);
+    }
 
 private:
+    std::weak_ptr<MCRmlScreen> _Screen;
     std::function<void(Rml::Event&)> _Act;
 };
 
@@ -195,7 +212,7 @@ bool MCRmlScreen::OnClick(const std::string& id, std::function<void()> act)
         return false;
     }
 
-    auto action = std::make_unique<MCAction>([act = std::move(act)](Rml::Event&) { act(); });
+    auto action = std::make_shared<MCAction>(weak_from_this(), [act = std::move(act)](Rml::Event&) { act(); });
     element->AddEventListener(Rml::EventId::Click, action.get());
     _Listening.push_back(
         MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Click), .Action = std::move(action)});
@@ -212,7 +229,7 @@ bool MCRmlScreen::OnChange(const std::string& id, std::function<void(int value)>
         return false;
     }
 
-    auto action = std::make_unique<MCAction>([act = std::move(act)](Rml::Event& event)
+    auto action = std::make_shared<MCAction>(weak_from_this(), [act = std::move(act)](Rml::Event& event)
                                              { act(event.GetParameter<int>("value", 0)); });
     element->AddEventListener(Rml::EventId::Change, action.get());
     _Listening.push_back(

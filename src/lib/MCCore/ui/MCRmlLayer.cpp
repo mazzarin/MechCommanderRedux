@@ -169,20 +169,21 @@ bool MCRmlLayer::TakeKey(int key, int modifiers)
         return false;
     }
 
-    MCRmlScreen& screen = top->get();
+    // Pinned for the key's length: its Back can close it (a window's CANCEL), which mustn't free it while Back runs.
+    const std::shared_ptr<MCRmlScreen> screen = top->get().shared_from_this();
 
     switch (key)
     {
         case Rml::Input::KI_ESCAPE:
         {
             // Back one screen, or the window's CANCEL (its Back).
-            if (screen.Back)
+            if (screen->Back)
             {
-                screen.Back();
+                screen->Back();
             }
             else
             {
-                screen.Hide();
+                screen->Hide();
             }
 
             return true;
@@ -190,7 +191,7 @@ bool MCRmlLayer::TakeKey(int key, int modifiers)
         case Rml::Input::KI_Q:
         case Rml::Input::KI_E:
         {
-            if (const MCOptionalRef<Rml::ElementDocument> document = screen.Document(); document.has_value())
+            if (const MCOptionalRef<Rml::ElementDocument> document = screen->Document(); document.has_value())
             {
                 return _Kit.StepTab(document->get(), key == Rml::Input::KI_Q ? -1 : 1);
             }
@@ -198,7 +199,7 @@ bool MCRmlLayer::TakeKey(int key, int modifiers)
             return false;
         }
         default:
-            return screen.OnKey(key, modifiers);
+            return screen->OnKey(key, modifiers);
     }
 }
 

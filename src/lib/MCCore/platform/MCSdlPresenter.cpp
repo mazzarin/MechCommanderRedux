@@ -8,6 +8,109 @@ namespace
     {
         return std::format("{}: {}", what, SDL_GetError());
     }
+
+    // Port-only: the menus' picture, SDL_PIXELFORMAT_RGBA32 (bytes R, G, B, A on every machine).
+    constexpr int PictureBytes = 4;
+    constexpr int AlphaByte = 3;
+    constexpr uint32_t WholeAlpha = 255;
+    constexpr int FactorBits = 16;
+    constexpr uint32_t FactorHalf = 1u << (FactorBits - 1);
+
+    /// <summary>Port-only: for each alpha, colour times this, shifted down FactorBits, undoes premultiplying by it
+    /// (colour times 255 / alpha, rounded; at most 255 * 255 * 2^16 + FactorHalf, inside 32 bits).</summary>
+    constexpr std::array<uint32_t, WholeAlpha + 1> Unpremultipliers = []
+    {
+        std::array<uint32_t, WholeAlpha + 1> factors{};
+
+        for (uint32_t alpha = 1; alpha <= WholeAlpha; ++alpha)
+        {
+            factors[alpha] = ((WholeAlpha << FactorBits) + alpha / 2) / alpha;
+        }
+
+        return factors;
+    }();
+
+    const uint8_t* PictureRow(const SDL_Surface& picture, int y)
+    {
+        return static_cast<const uint8_t*>(picture.pixels) + static_cast<ptrdiff_t>(y) * picture.pitch;
+    }
+
+    /// <summary>Port-only: the box of <paramref name="picture"/> holding every pixel with any coverage (empty when
+    /// none has any).</summary>
+    SDL_Rect CoveredBox(const SDL_Surface& picture)
+    {
+        int left = picture.w;
+        int right = -1;
+        int top = -1;
+        int bottom = -1;
+
+        for (int y = 0; y < picture.h; ++y)
+        {
+            const uint8_t* row = PictureRow(picture, y);
+            int first = 0;
+
+            while (first < picture.w && row[first * PictureBytes + AlphaByte] == 0)
+            {
+                ++first;
+            }
+
+            if (first == picture.w)
+            {
+                continue;
+            }
+
+            int last = picture.w - 1;
+
+            while (row[last * PictureBytes + AlphaByte] == 0)
+            {
+                --last;
+            }
+
+            left = std::min(left, first);
+            right = std::max(right, last);
+            top = top < 0 ? y : top;
+            bottom = y;
+        }
+
+        return right < 0 ? SDL_Rect{} : SDL_Rect{left, top, right - left + 1, bottom - top + 1};
+    }
+
+    /// <summary>Port-only: whether every pixel of <paramref name="picture"/> in <paramref name="box"/> is whole.</summary>
+    bool WholeIn(const SDL_Surface& picture, const SDL_Rect& box)
+    {
+        for (int y = box.y; y < box.y + box.h; ++y)
+        {
+            const uint8_t* row = PictureRow(picture, y);
+
+            for (int x = box.x; x < box.x + box.w; ++x)
+            {
+                if (row[x * PictureBytes + AlphaByte] != WholeAlpha)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Port-only: <paramref name="count"/> premultiplied RGBA pixels written to <paramref name="to"/> in
+    /// straight alpha.</summary>
+    void Straighten(const uint8_t* from, uint8_t* to, int count)
+    {
+        for (int i = 0; i < count; ++i, from += PictureBytes, to += PictureBytes)
+        {
+            const uint32_t factor = Unpremultipliers[from[AlphaByte]];
+
+            for (int channel = 0; channel < AlphaByte; ++channel)
+            {
+                to[channel] = static_cast<uint8_t>(
+                    std::min<uint32_t>((from[channel] * factor + FactorHalf) >> FactorBits, WholeAlpha));
+            }
+
+            to[AlphaByte] = from[AlphaByte];
+        }
+    }
 }
 
 std::expected<std::unique_ptr<MCSdlPresenter>, std::string> MCSdlPresenter::Create(std::shared_ptr<SDL_Window> window,
@@ -305,41 +408,84 @@ std::expected<void, std::string> MCSdlPresenter::DrawOverlay(const std::shared_p
             return drawn;
         }
 
-        const SDL_Surface& picture = *_Ui.Picture();
-
-        if (_Overlay == nullptr || _Overlay->w != picture.w || _Overlay->h != picture.h)
+        if (auto uploaded = UploadOverlay(*_Ui.Picture()); !uploaded)
         {
-            _Overlay.reset(SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
-                                             picture.w, picture.h));
-
-            if (_Overlay == nullptr)
-            {
-                return std::unexpected(
-                    SdlError(std::format("SDL_CreateTexture(the menus, {}x{})", picture.w, picture.h)));
-            }
-
-            SDL_SetTextureBlendMode(_Overlay.get(), SDL_BLENDMODE_BLEND_PREMULTIPLIED);
-            SDL_SetTextureScaleMode(_Overlay.get(), SDL_SCALEMODE_NEAREST);
-        }
-
-        if (!SDL_UpdateTexture(_Overlay.get(), nullptr, picture.pixels, picture.pitch))
-        {
-            return std::unexpected(SdlError("SDL_UpdateTexture(the menus)"));
+            return uploaded;
         }
 
         _OverlayDrawn = overlay;
         ++_OverlayUploads;
     }
 
-    // Over the whole window, one picture pixel a window pixel, its colours faded with the frame (premultiplied: the
+    if (_OverlayBox.w <= 0)
+    {
+        return {};
+    }
+
+    // Its covered box over the window, one picture pixel a window pixel, its colours faded with the frame (the
     // colour scaled, the coverage kept).
     constexpr float Full = 255.0f;
     const auto kept = static_cast<uint8_t>(std::lround(std::clamp(shown, 0.0f, 1.0f) * Full));
     SDL_SetTextureColorMod(_Overlay.get(), kept, kept, kept);
     SDL_SetRenderLogicalPresentation(_Renderer.get(), 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
-    const SDL_FRect whole{0.0f, 0.0f, static_cast<float>(_Overlay->w), static_cast<float>(_Overlay->h)};
-    SDL_RenderTexture(_Renderer.get(), _Overlay.get(), nullptr, &whole);
+    const SDL_FRect box{static_cast<float>(_OverlayBox.x), static_cast<float>(_OverlayBox.y),
+                        static_cast<float>(_OverlayBox.w), static_cast<float>(_OverlayBox.h)};
+    SDL_RenderTexture(_Renderer.get(), _Overlay.get(), &box, &box);
     ApplyPresentation(_View);
+    return {};
+}
+
+std::expected<void, std::string> MCSdlPresenter::UploadOverlay(const SDL_Surface& picture)
+{
+    if (_Overlay == nullptr || _Overlay->w != picture.w || _Overlay->h != picture.h)
+    {
+        _Overlay.reset(SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
+                                         picture.w, picture.h));
+
+        if (_Overlay == nullptr)
+        {
+            return std::unexpected(SdlError(std::format("SDL_CreateTexture(the menus, {}x{})", picture.w, picture.h)));
+        }
+
+        SDL_SetTextureScaleMode(_Overlay.get(), SDL_SCALEMODE_NEAREST);
+    }
+
+    _OverlayBox = CoveredBox(picture);
+
+    if (_OverlayBox.w <= 0)
+    {
+        return {};
+    }
+
+    // SDL's software blitter has no fast way for a premultiplied blend: a scalar loop a pixel, about 38 ms a
+    // 1920x1080 frame on the HP laptop's i5-4310U, paid every frame a menu shows. A copy, or a blend in straight
+    // alpha (its SIMD way), costs a fraction of that, and a whole box's copy is the same picture on every machine.
+    const bool whole = WholeIn(picture, _OverlayBox);
+    void* pixels = nullptr;
+    int pitch = 0;
+
+    if (!SDL_LockTexture(_Overlay.get(), &_OverlayBox, &pixels, &pitch))
+    {
+        return std::unexpected(SdlError("SDL_LockTexture(the menus)"));
+    }
+
+    for (int y = 0; y < _OverlayBox.h; ++y)
+    {
+        const uint8_t* from = PictureRow(picture, _OverlayBox.y + y) + _OverlayBox.x * PictureBytes;
+        auto* to = static_cast<uint8_t*>(pixels) + static_cast<ptrdiff_t>(y) * pitch;
+
+        if (whole)
+        {
+            std::memcpy(to, from, static_cast<size_t>(_OverlayBox.w) * PictureBytes);
+        }
+        else
+        {
+            Straighten(from, to, _OverlayBox.w);
+        }
+    }
+
+    SDL_UnlockTexture(_Overlay.get());
+    SDL_SetTextureBlendMode(_Overlay.get(), whole ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
     return {};
 }
 

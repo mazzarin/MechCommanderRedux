@@ -29,6 +29,8 @@ namespace MCMenuScreens
     MCScreenFlow::MCScreenId Connection();
     /// <summary>A launcher's ready room (its first screen while the lobby's join goes on).</summary>
     MCScreenFlow::MCScreenId ReadyRoom();
+    /// <summary>UPDATE opened from INTERNET: the main menu's page (until stage 6), going back to INTERNET.</summary>
+    MCScreenFlow::MCScreenId Update();
 
     /// <summary>
     /// The stack under a match's games list (LAN or INTERNET), <paramref name="internet"/> saying which: the main menu,

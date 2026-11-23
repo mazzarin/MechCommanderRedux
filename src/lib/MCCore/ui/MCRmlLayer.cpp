@@ -287,8 +287,12 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
             }
 
             // RmlUi's first (a text box's typing, the focus's moves, Enter's press, a control's Left and Right); what
-            // it leaves, the layer's and the screen's: not a letter typed in a text box, but its Escape.
-            if (_Context.ProcessKeyDown(key, held) && (!typing || key == Rml::Input::KI_ESCAPE))
+            // it leaves, the layer's and the screen's: not a letter typed in a text box. Escape is always the layer's:
+            // RmlUi does nothing with it, and its text box stops every key it doesn't move out of (SPEC-menus.md's
+            // stage 3: Escape closes HOST GAME's window from its name).
+            const bool left = _Context.ProcessKeyDown(key, held);
+
+            if (key == Rml::Input::KI_ESCAPE || (left && !typing))
             {
                 TakeKey(key, held);
             }
@@ -331,4 +335,31 @@ void MCRmlLayer::Update()
 {
     _Kit.Update(_Context);
     _Context.Update();
+}
+
+void MCRmlLayer::Tend()
+{
+    // Copies: a screen's frame may show or hide screens (a window over it, the next screen).
+    const std::vector<MCGuiHandle<MCRmlScreen>> shown = _ShownOrder;
+
+    for (const MCGuiHandle<MCRmlScreen>& handle : shown)
+    {
+        if (const std::shared_ptr<MCRmlScreen> screen = handle.Lock(); screen != nullptr && screen->Shown())
+        {
+            screen->OnFrame();
+        }
+    }
+}
+
+void MCRmlLayer::HideAll()
+{
+    const std::vector<MCGuiHandle<MCRmlScreen>> shown = _ShownOrder;
+
+    for (auto at = shown.rbegin(); at != shown.rend(); ++at)
+    {
+        if (const std::shared_ptr<MCRmlScreen> screen = at->Lock(); screen != nullptr)
+        {
+            screen->Hide();
+        }
+    }
 }

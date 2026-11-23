@@ -1,0 +1,30 @@
+<rml>
+<head>
+    <title>Dialog</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="dialog.rcss"/>
+    <style>
+        /* Over a remade screen: what it belongs to alone above the sentence when it has no title; the keys under it. */
+        #dialog .titlebar.bare { border-bottom-width: 0; padding-bottom: 0; margin-bottom: 4dp; }
+        #dialog .hints { margin-top: 8dp; }
+    </style>
+</head>
+<!-- Port-only (SPEC-menus.md's stage 3, "When something goes wrong"): a message or question over a remade screen: what
+     it belongs to in cyan, its title when it has one, one short sentence under it; the way back at the left and the
+     answer at the right (none while a job runs with no way out). -->
+<body class="window-body">
+    <div class="veil"></div>
+    <div class="window-place">
+        <div class="dialog panel glass" id="dialog">
+            <div class="titlebar" id="titlebar"><div class="eyebrow" id="eyebrow"></div><div class="heading caps" id="heading"></div></div>
+            <div class="say" id="say"></div>
+            <div class="foot row" id="foot">
+                <div class="grow"></div>
+                <div class="button" id="other" data-hint="Cancel"></div>
+                <div class="button main" id="main" data-hint="OK" data-first></div>
+            </div>
+            <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+        </div>
+    </div>
+</body>
+</rml>

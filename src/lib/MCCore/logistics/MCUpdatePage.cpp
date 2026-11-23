@@ -3,6 +3,9 @@
 #include "platform/MCFileSystem.h"
 #include "network/MCRejoinNote.h"
 #include "logistics/MCUpdatePage.h"
+#include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
@@ -1279,12 +1282,27 @@ void ShowUpdatePage()
     }
 }
 
-void HideUpdatePage()
+void HideUpdatePageViews()
 {
     for (const MCUpdatePageView& view : LivePages())
     {
         view.Page->ShowGuiWindow(false);
     }
+}
+
+void HideUpdatePage()
+{
+    // Port-only (SPEC-menus.md's stage 3): opened from INTERNET, its way back is INTERNET's, which hides it (the flow
+    // asked while it still shows, or it would take the main menu under it for the screen shown); not during a change of
+    // screen, as no way back is.
+    if (const MCScreenFlow::MCScreenId update = MCMenuScreens::Update();
+        update != MCScreenFlow::NoScreen && MCScreenFlow::Shown() == update &&
+        (MCScreenChange::Running() || MCScreenFlow::Back()))
+    {
+        return;
+    }
+
+    HideUpdatePageViews();
 }
 
 bool UpdatePageShown()

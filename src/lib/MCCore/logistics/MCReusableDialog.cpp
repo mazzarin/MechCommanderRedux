@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCReusableDialog.h"
+#include "ui/MCRmlDialog.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "iface/MCKeyBindings.h"
@@ -223,6 +224,8 @@ auto MCReusableDialog::Deactivate(int32_t dialogResult) -> void
 {
     GuiSystem().Release();
     ShowGuiWindow(false);
+    // Port-only (SPEC-menus.md's stage 3): a wait said over a remade screen in this dialog's place ends with it.
+    MCRmlDialogs::EndWait();
 
     // Port-only: the keyboard a dialog asking for a key held (KeyTaker) goes back.
     if (GuiSystem().HasText(*this))

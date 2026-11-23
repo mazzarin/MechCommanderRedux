@@ -6,10 +6,26 @@
 #include "logistics/MCReusableDialog.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
+#include "ui/MCRmlDialog.h"
 
 auto ShowMenuMessage(std::string_view text, std::function<void(int32_t)> callback, std::string_view upArt,
                      std::string_view downArt) -> void
 {
+    // Port-only (SPEC-menus.md's stage 3): over a remade screen, the remade dialog (the 1998 one would show under it).
+    constexpr int32_t OkAnswer = 1;
+
+    if (MCRmlDialogs::Message(text,
+                              [callback]
+                              {
+                                  if (callback != nullptr)
+                                  {
+                                      callback(OkAnswer);
+                                  }
+                              }))
+    {
+        return;
+    }
+
     MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
     dialog.SetText(text);
     dialog.SetTwoButton(false);
@@ -36,6 +52,16 @@ auto AskMenuQuestion(MCReusableDialog& dialog, uint32_t stringId, std::function<
 auto AskMenuQuestion(MCReusableDialog& dialog, std::string_view text, std::function<void()> okExec,
                      std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons) -> void
 {
+    // Port-only (SPEC-menus.md's stage 3): over a remade screen, the remade dialog (the 1998 one would show under it).
+    if (MCRmlDialogs::Show(MCRmlDialog::MCSay{.Text = MCRmlDialogs::AsSentence(text),
+                                              .Main = "OK",
+                                              .Other = "Cancel",
+                                              .OnMain = std::move(okExec),
+                                              .OnOther = std::move(cancelExec)}))
+    {
+        return;
+    }
+
     dialog.SetText(text);
     dialog.SetTwoButton(true);
     dialog.Callback = nullptr;

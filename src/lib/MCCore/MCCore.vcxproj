@@ -197,6 +197,7 @@
     <ClCompile Include="logistics\MCDueArtNotice.cpp" />
     <ClCompile Include="logistics\MCFileScrollPane.cpp" />
     <ClCompile Include="logistics\MCGameList.cpp" />
+    <ClCompile Include="logistics\MCGamesScreen.cpp" />
     <ClCompile Include="logistics\MCGenericScreen.cpp" />
     <ClCompile Include="logistics\MCHdOptionsPanel.cpp" />
     <ClCompile Include="logistics\MCIdleCheck.cpp" />
@@ -305,6 +306,7 @@
     <ClCompile Include="mission\MCTrailerMission.cpp" />
     <ClCompile Include="mission\MCWeatherPlay.cpp" />
     <ClCompile Include="network\MCGameDataHash.cpp" />
+    <ClCompile Include="network\MCGamesList.cpp" />
     <ClCompile Include="network\MCInternetCopy.cpp" />
     <ClCompile Include="network\MCInternetGame.cpp" />
     <ClCompile Include="network\MCInternetLobby.cpp" />
@@ -527,6 +529,8 @@
     <ClCompile Include="terrain\MCVideoWindow.cpp" />
     <ClCompile Include="ui\MCRmlArt.cpp" />
     <ClCompile Include="ui\MCRmlChecks.cpp" />
+    <ClCompile Include="ui\MCRmlDialog.cpp" />
+    <ClCompile Include="ui\MCRmlFlow.cpp" />
     <ClCompile Include="ui\MCRmlKit.cpp" />
     <ClCompile Include="ui\MCRmlLayer.cpp" />
     <ClCompile Include="ui\MCRmlMenus.cpp" />
@@ -729,6 +733,7 @@
     <ClInclude Include="logistics\MCDueArtNotice.h" />
     <ClInclude Include="logistics\MCFileScrollPane.h" />
     <ClInclude Include="logistics\MCGameList.h" />
+    <ClInclude Include="logistics\MCGamesScreen.h" />
     <ClInclude Include="logistics\MCGenericScreen.h" />
     <ClInclude Include="logistics\MCHdOptionsPanel.h" />
     <ClInclude Include="logistics\MCIdleCheck.h" />
@@ -836,6 +841,7 @@
     <ClInclude Include="mission\MCTrailerMission.h" />
     <ClInclude Include="mission\MCWeatherPlay.h" />
     <ClInclude Include="network\MCGameDataHash.h" />
+    <ClInclude Include="network\MCGamesList.h" />
     <ClInclude Include="network\MCInternetCopy.h" />
     <ClInclude Include="network\MCInternetGame.h" />
     <ClInclude Include="network\MCInternetLobby.h" />
@@ -1051,6 +1057,8 @@
     <ClInclude Include="terrain\MCVideoWindow.h" />
     <ClInclude Include="ui\MCRmlArt.h" />
     <ClInclude Include="ui\MCRmlChecks.h" />
+    <ClInclude Include="ui\MCRmlDialog.h" />
+    <ClInclude Include="ui\MCRmlFlow.h" />
     <ClInclude Include="ui\MCRmlKit.h" />
     <ClInclude Include="ui\MCRmlLayer.h" />
     <ClInclude Include="ui\MCRmlMenus.h" />

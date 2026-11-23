@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
+#include "MCMenusPictures.h"
 #include "MCTest.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
@@ -34,61 +35,11 @@ namespace
     constexpr const char* NowClass = "now";
     constexpr const char* PickedClass = "picked";
 
-    struct MCWindowSize
-    {
-        int32_t Width;
-        int32_t Height;
-    };
+    using namespace MCMenusPictures;
+    // Overloaded below for the window's picture.
+    using MCMenusPictures::PictureHash;
 
-    /// <summary>
-    /// The windows the players' reports name (90 days to 19 Nov, HISTORY.md: 16:9, 16:10, 21:9 and 4:3, from 640x480
-    /// to 3840x2410).
-    /// </summary>
-    constexpr std::array<MCWindowSize, 16> PlayersWindows = {{
-        {640, 480},
-        {1280, 960},
-        {1366, 768},
-        {1440, 900},
-        {1600, 900},
-        {1920, 1080},
-        {1920, 1200},
-        {2560, 1440},
-        {2560, 1920},
-        {3440, 1440},
-        {3456, 2168},
-        {3600, 2024},
-        {3600, 2260},
-        {3840, 1600},
-        {3840, 2160},
-        {3840, 2410},
-    }};
-
-    /// <summary>A remade screen's recorded frames' windows (SPEC-menus.md, "Testing"): 4:3, 16:9 and 5:4.</summary>
-    constexpr std::array<MCWindowSize, 3> FrameWindows = {{{640, 480}, {1280, 720}, {1280, 1024}}};
-
-    constexpr uint32_t FnvBasis = 0x811c9dc5;
-    constexpr uint32_t FnvPrime = 0x01000193;
     constexpr size_t PixelBytes = 4;
-
-    /// <summary>The FNV-1a hash of a picture's size and its RGBA pixels, row by row.</summary>
-    uint32_t PictureHash(const SDL_Surface& picture)
-    {
-        uint32_t hash = FnvBasis;
-        hash = (hash ^ static_cast<uint32_t>(picture.w)) * FnvPrime;
-        hash = (hash ^ static_cast<uint32_t>(picture.h)) * FnvPrime;
-
-        for (int y = 0; y < picture.h; ++y)
-        {
-            const auto* row = static_cast<const uint8_t*>(picture.pixels) + static_cast<ptrdiff_t>(y) * picture.pitch;
-
-            for (size_t i = 0; i < static_cast<size_t>(picture.w) * PixelBytes; ++i)
-            {
-                hash = (hash ^ row[i]) * FnvPrime;
-            }
-        }
-
-        return hash;
-    }
 
     /// <summary>The FNV-1a hash of a window's picture as the display reads it.</summary>
     uint32_t PictureHash(const MCDisplay::MCShownScreen& picture)
@@ -285,19 +236,6 @@ namespace
         MCUiSoftware _Software;
         size_t _Heard = 0;
     };
-
-    std::optional<std::filesystem::path> ShotPath(std::string_view name)
-    {
-        const std::optional<std::string_view> shots = MCTest::Option("shots");
-
-        if (!shots.has_value())
-        {
-            return std::nullopt;
-        }
-
-        std::filesystem::create_directories(std::filesystem::path(*shots));
-        return std::filesystem::path(*shots) / std::format("{}.png", name);
-    }
 }
 
 /// <summary>

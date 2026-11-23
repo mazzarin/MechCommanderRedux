@@ -34,19 +34,11 @@ bool WhackTimer = false;
 
 namespace
 {
-    /// <summary>The fewest and the most players a hosted LAN session takes (a game rule).</summary>
-    constexpr int32_t MinSessionPlayers = 2;
+    /// <summary>The most players a lobby's session takes (a game rule).</summary>
     constexpr int32_t MaxSessionPlayers = 6;
 
     /// <summary>DirectPlay's DPERR_CONNECTING: the modem is still dialling.</summary>
     constexpr int32_t DialStillConnecting = static_cast<int32_t>(0x8877015e);
-
-    /// <summary>The listed session <paramref name="games"/> has selected, or null.</summary>
-    std::shared_ptr<MCFidpSession> SelectedSession(MCGameList& games)
-    {
-        const std::optional<_GUID> game = games.GetSelectedGame();
-        return game.has_value() ? MultiPlayer()->SessionManager->FindMatchingSession(*game) : nullptr;
-    }
 
     /// <summary>The player's name for the multiplayer screens: the one remembered (or the user's), if any.</summary>
     std::optional<std::string> RememberedUserName()
@@ -58,12 +50,6 @@ namespace
     std::string PlayerNameOrDefault()
     {
         return RememberedUserName().value_or("Player");
-    }
-
-    /// <summary>The players a hosted LAN session takes: the number typed in the LAN screen's entry 11, within the rule.</summary>
-    int32_t TypedMaxPlayers()
-    {
-        return std::clamp(ElementNumber(*GlobalLog()->LanScreen, 11), MinSessionPlayers, MaxSessionPlayers);
     }
 
     /// <summary>Opens the ready room (session screen) after a session was joined or created from <paramref name="from"/>.</summary>
@@ -93,17 +79,6 @@ namespace
     void CountLanPlayers()
     {
         NumLanPlayers = static_cast<int32_t>(MultiPlayer()->SessionManager->GetPlayers(nullptr).size());
-    }
-
-    /// <summary>Shows the LAN session list (after connecting), the player entry focused.</summary>
-    void OpenLanScreen()
-    {
-        GlobalLog()->MultiplayerScreen->ShowGuiWindow(false);
-        GlobalLog()->LanScreen->ShowGuiWindow(true);
-        GlobalLog()->LanScreen->ShowBlock(0);
-        GlobalLog()->SetCurrentScreen(GlobalLog()->LanScreen);
-        GlobalLog()->LogisticsState = 0xb;
-        GuiSystem().SetText(GlobalLog()->LanScreen->Elements[4]);
     }
 
     /// <summary>
@@ -196,10 +171,9 @@ void ConnectScreen()
 
 void CancelToConnect()
 {
-    // Port-only (the personal build): the LAN games stand for the connection screen (ConnectScreen), so their CANCEL
-    // goes back to the main menu, and a LAN game's room (the session screen; the ready room's) to the games. The modem
-    // and serial screens (shown only without a network) go back to the connection screen, as in the original.
-    const bool fromGames = GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen;
+    // Port-only (the personal build): a LAN game's room (the session screen; the ready room's) goes back to the games.
+    // The modem and serial screens (shown only without a network) go back to the connection screen, as in the original.
+    // Port-only (SPEC-menus.md's stage 3): the remade LAN screen's own way back is its kind's (logistics/MCGamesScreen).
     const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
     const bool fromRoom = GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
     const bool fromLanGame = (fromRoom || GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen) &&
@@ -207,13 +181,7 @@ void CancelToConnect()
     // Port (Redux HD): an internet game's room goes back to the INTERNET screen.
     const bool fromInternetGame = fromRoom && MultiPlayer()->SessionManager->Internet != nullptr;
     WhackTimer = true;
-    GlobalLog()->LanScreen->ShowBlock(0);
     GlobalLog()->ModemScreen->ShowBlock(0);
-    auto games = GlobalLog()->LanScreen->Element<MCGameList>(2);
-    games->ClearSelection();
-    games->Clear();
-    GlobalLog()->LanScreen->Element<MCLogScrollTextObject>(3)->Clear();
-    GlobalLog()->LanScreen->Element<MCLogButton>(6)->Disabled = true;
     // Original behaviour (OB-167): the same timer is removed twice (team 2's is left).
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
@@ -225,20 +193,6 @@ void CancelToConnect()
     {
         GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen, 0);
         GlobalLog()->ClearChat();
-    }
-
-    if (fromGames)
-    {
-        // Port (Redux HD): back to INTERNET and LAN, when this game has internet games.
-        if (HasInternetGames())
-        {
-            GlobalLog()->LanScreen->ShowGuiWindow(false);
-            ShowAccessScreen();
-            return;
-        }
-
-        Cancel();
-        return;
     }
 
     GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
@@ -266,39 +220,40 @@ void CancelToMPlayer()
     KillTheGame();
 }
 
-void LeaveRoom()
+void LeaveRoom(std::string line)
 {
     // Port-only (Redux HD): a host tells its guests the room closes, and leaves once they have (network/MCRoomEnd.h).
     if (MCRoomEnd::CloseRoom())
     {
+        if (!line.empty())
+        {
+            ShowMenuMessage(line);
+        }
+
         return;
     }
 
     // Port-only (SPEC-menus.md's stage 2): the way out through the flow, with the one fade (the host's wait for its
     // guests above stays live, its EXIT disabled, as its games come through the flow too).
     MCScreenFlow::Change("room back",
-                         []
+                         [line = std::move(line)]
                          {
                              const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
 
                              if (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx)
                              {
                                  CancelToConnect();
-                                 return;
+                             }
+                             else
+                             {
+                                 Cancel();
                              }
 
-                             Cancel();
+                             if (!line.empty())
+                             {
+                                 ShowMenuMessage(line);
+                             }
                          });
-}
-
-void CancelToLan()
-{
-    GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-    GlobalLog()->LanScreen->ShowGuiWindow(true);
-    GlobalLog()->SetCurrentScreen(GlobalLog()->LanScreen);
-    GlobalLog()->LogisticsState = 0xb;
-    GlobalLog()->LanScreen->ShowBlock(0);
-    GlobalLog()->LanScreen->Element<MCGameList>(2)->ClearSelection();
 }
 
 void CancelToSession()
@@ -366,7 +321,7 @@ void DoTheIpxThang()
         MultiPlayer()->SessionManager->ConnectIpx();
     }
 
-    OpenLanScreen();
+    ShowLanScreen();
 }
 
 void DoTheTcpThang()
@@ -376,7 +331,8 @@ void DoTheTcpThang()
         MultiPlayer()->SessionManager->ConnectTcp(const_cast<char*>(""));
     }
 
-    OpenLanScreen();
+    // Port-only (SPEC-menus.md's stage 3): the remade LAN screen, shown at once.
+    ShowLanScreen();
 }
 
 void TcpipxDialogCallback(int32_t result)
@@ -391,28 +347,6 @@ void TcpipxDialogCallback(int32_t result)
     {
         DoTheTcpThang();
     }
-}
-
-void ShowLanScreen()
-{
-    MCSplashScreen& screen = *GlobalLog()->LanScreen;
-    auto gameEntry = screen.Element<MCLogTextObject>(10);
-
-    if (const std::optional<std::string> name = RememberedUserName())
-    {
-        screen.Element<MCLogTextObject>(4)->SetStringBuffer(*name);
-        gameEntry->InitBuffer(0x18, MCLogInputType::Text);
-        gameEntry->SetStringBuffer(MCFormatPrintf(LoadGameString(0x377, 0xfe).c_str(), name->c_str()));
-    }
-    else
-    {
-        screen.Element<MCLogTextObject>(4)->SetStringBuffer("Player");
-        gameEntry->SetStringBuffer("Game");
-    }
-
-    // Port-only (the personal build): straight to the games, over TCP/IP. The original asked "IPX or TCP?" when the
-    // machine had both, or said which it used; the port's IPX is the same search under its old name (MCDirectPlay).
-    DoTheTcpThang();
 }
 
 void DoExitToZone1()
@@ -439,17 +373,6 @@ void ShowInternet()
     AskMenuQuestion(*GlobalLog()->MessageDialog, 0x352, DoExitToMplayer, DoExitToZone, "bh_cancl.tga", true);
 }
 
-void HostGame()
-{
-    MCSplashScreen& screen = *GlobalLog()->LanScreen;
-    const std::string playerName = ElementText(screen, 4);
-    SaveUserName(playerName);
-    screen.ShowBlock(1);
-    GuiSystem().SetText(screen.Elements[11]);
-    screen.Element<MCLogTextObject>(10)->SetStringBuffer(
-        MCFormatPrintf(LoadGameString(0x377, 0xfe).c_str(), playerName.c_str()));
-}
-
 void ResetReadyRoom()
 {
     MCGuiEvent event;
@@ -457,70 +380,6 @@ void ResetReadyRoom()
     event.Type = 0x13;
     event.Data = 0;
     ReadyRoomPlayerListHandleEvent(*GlobalLog()->ConnectScreen->Element<MCGuiObject>(3), event);
-    event.Clear();
-    event.Type = 0x1e;
-    event.Data = 4;
-    PlayerListHandleEvent(*GlobalLog()->LanScreen->Element<MCGuiObject>(3), event);
-}
-
-void JoinGame()
-{
-    if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr)
-    {
-        return;
-    }
-
-    MCSessionManager& manager = *MultiPlayer()->SessionManager;
-
-    if (const std::optional<_GUID> game = GlobalLog()->LanScreen->Element<MCGameList>(2)->GetSelectedGame())
-    {
-        if (auto session = manager.FindMatchingSession(*game); session != nullptr)
-        {
-            std::string playerName = ElementText(*GlobalLog()->LanScreen, 4);
-            SaveUserName(playerName);
-
-            if (session->SessionDesc.dwCurrentPlayers < session->SessionDesc.dwMaxPlayers)
-            {
-                const int32_t result = manager.JoinSession(session->SessionDesc.guidInstance, playerName);
-                CountLanPlayers();
-
-                if (result == 0)
-                {
-                    // Port-only (the personal build): straight into the room, which its host shows again with this
-                    // player in it (the original's ready room waited for the host's GO).
-                    // Port-only (SPEC-menus.md's stage 2): set up at once, shown through the flow, with the one fade.
-                    MCMenuScreens::OpenRoom("room");
-                    return;
-                }
-
-                // Port: this join's host refused this game at the door, saying why.
-                if (const std::string refusal = manager.RefusalReason(); !refusal.empty())
-                {
-                    ShowMenuMessage(MCRefusedText(refusal));
-                    return;
-                }
-            }
-        }
-    }
-
-    // The game can't be joined.
-    ShowMenuMessage(0xa7);
-}
-
-void CreateSession()
-{
-    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
-    {
-        std::string sessionName = ElementText(*GlobalLog()->LanScreen, 10);
-        const int32_t maxPlayers = TypedMaxPlayers();
-        std::string playerName = ElementText(*GlobalLog()->LanScreen, 4);
-        MultiPlayer()->CreateSession(sessionName.data(), playerName.data(), maxPlayers);
-    }
-
-    // Port-only (the personal build): straight into the room, the host alone in it until players join (the original
-    // waited in the ready room).
-    // Port-only (SPEC-menus.md's stage 2): set up at once, shown through the flow, with the one fade.
-    MCMenuScreens::OpenRoom("room");
 }
 
 void CreateSerialSession()
@@ -673,13 +532,14 @@ void Go()
         return;
     }
 
-    // A LAN session takes the number typed; a lobby (0x10) game six, a modem or serial game two.
+    // A LAN session takes the number its host chose (the original read the LAN screen's box, remade since: SPEC-menus.md's
+    // stage 3); a lobby (0x10) game six, a modem or serial game two.
     const MCNetProtocol connection = manager.CurrentConnection;
     int32_t maxPlayers;
 
     if (connection == MCNetProtocol::Ipx || connection == MCNetProtocol::TcpIp)
     {
-        maxPlayers = TypedMaxPlayers();
+        maxPlayers = static_cast<int32_t>(session->SessionDesc.dwMaxPlayers);
     }
     else
     {
@@ -710,7 +570,7 @@ void WaitForCall()
         }
     }
 
-    GlobalLog()->LanScreen->Element<MCLogTextObject>(11)->InitBuffer(2, MCLogInputType::Digits);
+    // (The original also set the 1998 LAN screen's players box to digits here; that screen is remade.)
     GlobalLog()->ModemScreen->ShowGuiWindow(false);
     GlobalLog()->ConnectScreen->Element<MCLogButton>(2)->Disabled = false;
     GlobalLog()->ConnectScreen->ShowGuiWindow(true);
@@ -801,45 +661,6 @@ void ModemListHandleEvent(MCGuiObject& object, MCGuiEvent& event)
     }
 }
 
-void PlayerListHandleEvent(MCGuiObject& object, MCGuiEvent& event)
-{
-    if (event.Type != 0x1e)
-    {
-        return;
-    }
-
-    auto& list = static_cast<MCLogScrollTextObject&>(object);
-
-    if (event.Data == 3)
-    {
-        // A game was picked: list its players.
-        if (object.Parent.expired() || MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr)
-        {
-            return;
-        }
-
-        const auto games = std::static_pointer_cast<MCGenericScreen>(object.ParentObject())->Element<MCGameList>(2);
-        list.Clear();
-
-        if (games == nullptr || games->SelectedSession <= -1)
-        {
-            return;
-        }
-
-        if (const std::shared_ptr<MCFidpSession> session = SelectedSession(*games))
-        {
-            for (const auto& player : MultiPlayer()->SessionManager->GetPlayers(session))
-            {
-                list.Print(player->Name, 0x1f);
-            }
-        }
-    }
-    else if (event.Data == 4)
-    {
-        list.Clear();
-    }
-}
-
 void ReadyRoomPlayerListHandleEvent(MCGuiObject& object, MCGuiEvent& event)
 {
     if (event.Type != 0x13 || MultiPlayer() == nullptr)
@@ -895,45 +716,6 @@ void ReadyRoomPlayerListHandleEvent(MCGuiObject& object, MCGuiEvent& event)
     if (manager->IsHost != 0)
     {
         GlobalLog()->ConnectScreen->Element<MCLogButton>(2)->Disabled = players.size() < 2;
-    }
-}
-
-void LanScreenHandleEvent(MCGuiObject& object, MCGuiEvent& event)
-{
-    auto& screen = static_cast<MCGenericScreen&>(object);
-
-    if (event.Type == 0x13)
-    {
-        screen.Element<MCGuiObject>(2)->HandleEvent(event);
-        screen.Element<MCGuiObject>(3)->HandleEvent(event);
-        return;
-    }
-
-    if (event.Type != 0x1e)
-    {
-        return;
-    }
-
-    auto joinButton = screen.Element<MCLogButton>(6);
-
-    if (event.Data == 3)
-    {
-        // A game was picked: its players are listed, and it can be joined unless full.
-        const std::shared_ptr<MCFidpSession> session = SelectedSession(*screen.Element<MCGameList>(2));
-        screen.Element<MCGuiObject>(3)->HandleEvent(event);
-
-        if (session != nullptr)
-        {
-            joinButton->Disabled = session->SessionDesc.dwMaxPlayers <= session->SessionDesc.dwCurrentPlayers;
-        }
-
-        return;
-    }
-
-    if (event.Data == 4)
-    {
-        screen.Element<MCGuiObject>(3)->HandleEvent(event);
-        joinButton->Disabled = true;
     }
 }
 

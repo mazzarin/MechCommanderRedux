@@ -14,6 +14,32 @@ namespace
     constexpr const char* KeysClass = "keys";
     /// <summary>An element the focus goes to first when the screen shows (the look's convention).</summary>
     constexpr const char* FirstFocusAttribute = "data-first";
+    /// <summary>The arrow keys, which the hint line boxes one by one, narrower (the look's <c>.key.updown</c>).</summary>
+    constexpr std::array<std::string_view, 4> ArrowKeys = {"↑", "↓", "←", "→"};
+    constexpr char KeySeparator = ' ';
+
+    /// <summary>
+    /// A hint's key boxed for the hint line: arrows each in a box of their own (<c>↑ ↓</c>), as the frames draw them;
+    /// any other key in one (<c>Q E</c>).
+    /// </summary>
+    std::string KeyBoxes(std::string_view key)
+    {
+        std::string arrows;
+
+        for (const auto part : std::views::split(key, KeySeparator))
+        {
+            const std::string_view arrow(part.begin(), part.end());
+
+            if (std::ranges::find(ArrowKeys, arrow) == ArrowKeys.end())
+            {
+                return std::format("<span class=\"key\">{}</span>", key);
+            }
+
+            arrows += std::format("<span class=\"key updown\">{}</span>", arrow);
+        }
+
+        return arrows;
+    }
 }
 
 /// <summary>One of a screen's listeners: a function called with the event.</summary>
@@ -139,22 +165,8 @@ void MCRmlScreen::Show()
         return;
     }
 
-    // The hint line's right: the screen's own keys, each boxed before what it does.
-    std::string keys;
-
-    for (const MCRmlKeyHint& hint : Keys)
-    {
-        keys += std::format("<span class=\"hint\"><span class=\"key\">{}</span>{}</span>", hint.Key, hint.Does);
-    }
-
-    Rml::ElementList parts;
-    _Document->GetElementsByClassName(parts, KeysClass);
-
-    for (Rml::Element* part : parts)
-    {
-        part->SetInnerRML(keys);
-    }
-
+    OnShow();
+    ShowKeys();
     _Document->Show(Modal ? Rml::ModalFlag::Modal : Rml::ModalFlag::None, Rml::FocusFlag::Document);
 
     // The focus on what the player most likely wants, without its ring until a key is pressed.
@@ -165,6 +177,30 @@ void MCRmlScreen::Show()
 
     _Shown = true;
     Layer().Shown(*this);
+}
+
+void MCRmlScreen::ShowKeys()
+{
+    if (_Document == nullptr)
+    {
+        return;
+    }
+
+    // The hint line's right: the screen's own keys, each boxed before what it does.
+    std::string keys;
+
+    for (const MCRmlKeyHint& hint : Keys)
+    {
+        keys += std::format("<span class=\"hint\">{}{}</span>", KeyBoxes(hint.Key), hint.Does);
+    }
+
+    Rml::ElementList parts;
+    _Document->GetElementsByClassName(parts, KeysClass);
+
+    for (Rml::Element* part : parts)
+    {
+        part->SetInnerRML(keys);
+    }
 }
 
 void MCRmlScreen::Hide()
@@ -182,6 +218,8 @@ void MCRmlScreen::Hide()
         {
             Layer().Hidden(*this);
         }
+
+        OnHide();
     }
 }
 

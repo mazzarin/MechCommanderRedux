@@ -91,6 +91,11 @@ public:
     const MCBusiestHours& Busiest() const { return _Busiest; }
     /// <summary>Why the service turned it away for good (another protocol, a ban): none while it lives.</summary>
     std::optional<MCServiceRefusal> Refusal() const { return _Refusal; }
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 3): why its socket last closed before the service sent a list (the socket's
+    /// MCWebSocket::WhyClosed), while it tries again; none once a list is in, or before the first try ends.
+    /// </summary>
+    const std::optional<std::string>& Trouble() const { return _Trouble; }
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -108,6 +113,7 @@ private:
     std::optional<MCInternetListing> _Listing;
     MCBusiestHours _Busiest;
     std::optional<MCServiceRefusal> _Refusal;
+    std::optional<std::string> _Trouble;
     Clock::time_point _LastPing;
     /// <summary>When the socket comes back after a drop (none while it's up), and the tries at it since it was last in.</summary>
     std::optional<Clock::time_point> _NextTry;

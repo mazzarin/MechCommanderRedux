@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "gui/MCScreenFlow.h"
+#include "ui/MCRmlFlow.h"
 #include "network/MCIntroNote.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMenuScreens.h"
@@ -531,14 +532,16 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
     Logistics = std::make_shared<MCLogistics>();
     Logistics->Start();
 
+    // Port-only (SPEC-menus.md's "The intro movies"): a start the game made itself skips the intro, as Escape does
+    // (network/MCIntroNote.h); taken by the first start, a launcher's too (which plays none).
+    const bool skipIntro = std::exchange(MCIntroNote::SkipIntro, false);
+
     if (LaunchedFromLobby == 0)
     {
         // The result is dropped, as in the original.
         SetupNextSegment(GlobalGameSegment);
 
-        // Port-only (SPEC-menus.md's "The intro movies"): a start the game made itself skips the intro, as Escape does
-        // (network/MCIntroNote.h).
-        if (std::exchange(MCIntroNote::SkipIntro, false) && State == MCMissionState::PlayMovie && CurrentMovie == 0)
+        if (skipIntro && State == MCMissionState::PlayMovie && CurrentMovie == 0)
         {
             EscapedSmackerMovie = -1;
         }
@@ -718,7 +721,8 @@ auto MCMission::Run() -> int32_t
         }
         case MCMissionState::Logistics:
         {
-            if (Logistics != nullptr && Logistics->CurrentScreen()->IsShowing() == 0)
+            // Port-only (SPEC-menus.md's stage 3): not while a remade screen shows over it (ui/MCRmlFlow).
+            if (Logistics != nullptr && Logistics->CurrentScreen()->IsShowing() == 0 && !MCRmlFlow::Showing())
             {
                 Logistics->ShowLogScreen(true, false);
             }
@@ -1105,6 +1109,9 @@ auto MCMission::LoadScenario(std::string_view name) -> void
         // Destroyed before the pointers to it are cleared, as in the original.
         Logistics.reset();
         SetGlobalLog({});
+        // Port-only (SPEC-menus.md's stage 3): the menus' way back goes with them; the way out of the mission lands
+        // its own (MCScreenFlow::Land), or starts from the screen it shows.
+        MCScreenFlow::Clear();
     }
 
     // How long logistics took: the time of day of (end - start) as a FILETIME, so whole days are dropped.

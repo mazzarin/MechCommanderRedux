@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "fixtures/MCRegisteredData.h"
 #include "TestGame.h"
+#include "MCTestGuest.h"
 #include "fakes/MCMemoryFileSource.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
@@ -539,7 +540,7 @@ TEST_CASE_ISOLATED("game: a match's results close in the fade into the menus, th
 
 /// <summary>
 /// A guest the LAN games took to its match, whose host is lost mid-battle: the scenario ends and its game goes back to
-/// the LAN games, saying so ("LOST THE CONNECTION TO THE HOST'S GAME.", the host's name unknown here), not to the main
+/// the LAN games, saying so ("Lost the connection to the host's game.", the host's name unknown here), not to the main
 /// menu with the original's message (which the room's end missed in a mission, as it does at the results).
 /// </summary>
 TEST_CASE_ISOLATED("game: a LAN match's guest whose host is lost mid-battle goes back to the LAN games, saying so")
@@ -561,9 +562,8 @@ TEST_CASE_ISOLATED("game: a LAN match's guest whose host is lost mid-battle goes
     CHECK(Mission()->State == MCMissionState::Logistics);
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
     REQUIRE(logistics != nullptr);
-    CHECK(logistics->CurrentScreen() == logistics->LanScreen);
-    CHECK(logistics->MessageDialog->ShowWindow);
-    CHECK_EQ(logistics->MessageDialog->Text, std::string("LOST THE CONNECTION TO THE HOST'S GAME."));
+    CHECK(MCTestGuest::OnLan());
+    CHECK_EQ(MCTestGuest::DialogText(), std::string("Lost the connection to the host's game."));
     IsMPlayerGame = false;
 }
 
@@ -588,9 +588,8 @@ namespace
         CHECK(Mission()->State == MCMissionState::Logistics);
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         REQUIRE(logistics != nullptr);
-        CHECK(logistics->CurrentScreen() == logistics->LanScreen);
-        CHECK(logistics->MessageDialog->ShowWindow);
-        CHECK_EQ(logistics->MessageDialog->Text, std::string("LOST THE CONNECTION TO THE HOST'S GAME."));
+        CHECK(MCTestGuest::OnLan());
+        CHECK_EQ(MCTestGuest::DialogText(), std::string("Lost the connection to the host's game."));
     }
 }
 

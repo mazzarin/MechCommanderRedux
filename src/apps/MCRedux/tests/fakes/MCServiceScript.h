@@ -23,8 +23,17 @@ namespace MCServiceScript
         bool ClosedByGame = false;
         /// <summary>The game closed it as a drop (CloseAway).</summary>
         bool ClosedAway = false;
+        /// <summary>Why it closed, as the platform's socket says it (a drop's code; the Mac's words when offline).</summary>
+        std::string WhyClosed = "closed (1006)";
 
         void Send(const nlohmann::json& message) { Inbox.push_back({false, message.dump()}); }
+
+        /// <summary>The service's end closed (or never reached, <paramref name="why"/> saying so) before it listed games.</summary>
+        void Drop(std::string why)
+        {
+            WhyClosed = std::move(why);
+            State = MCWebSocket::State::Closed;
+        }
     };
 
     class ScriptedSocket final : public MCWebSocket
@@ -36,7 +45,7 @@ namespace MCServiceScript
         void SendBinary(std::span<const uint8_t>) override {}
         std::vector<Message> Take() override { return std::exchange(_Script.Inbox, {}); }
         State GetState() const override { return _Script.State; }
-        std::string WhyClosed() const override { return "closed (1006)"; }
+        std::string WhyClosed() const override { return _Script.WhyClosed; }
         size_t Unsent() const override { return 0; }
 
         void Close() override

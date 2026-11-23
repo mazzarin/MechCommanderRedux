@@ -342,6 +342,8 @@ TEST_CASE_ISOLATED("screen flow: NEXT MISSION lands on the briefing with the mai
 
     const MCTestGame::SaveGameCleanup saves;
     REQUIRE(MCTestGame::ReachFirstResults(5));
+    // The menus' way back went with them into the mission.
+    CHECK(StackNow().empty());
     RunWhileChanging();
     Mission()->LeaveResults();
     RunWhileChanging();
@@ -411,4 +413,20 @@ TEST_CASE("intro note: a restart's note skips the intro once, within its life")
     CHECK(!MCIntroNote::TakeAtStart(folder, Now + MCIntroNote::Life.count() + 1));
     CHECK(!std::filesystem::exists(folder / MCIntroNote::FileName));
     std::filesystem::remove_all(folder);
+}
+
+/// <summary>
+/// The intro note's skip is the first start's, a launcher's too (which plays no movies): it isn't left over for a later
+/// start in the same run.
+/// </summary>
+TEST_CASE_ISOLATED("intro note: a launcher's start takes the restart's skip too")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCIntroNote::SkipIntro = true;
+    REQUIRE(MCTestGame::StartLobby("-host -port 28981 -player BOB"));
+    CHECK(!MCIntroNote::SkipIntro);
 }

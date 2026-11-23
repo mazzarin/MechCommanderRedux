@@ -522,6 +522,9 @@
     <ClCompile Include="logistics\MCGameList.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCGamesScreen.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCGenericScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -842,6 +845,9 @@
       <Filter>mission</Filter>
     </ClCompile>
     <ClCompile Include="network\MCGameDataHash.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
+    <ClCompile Include="network\MCGamesList.cpp">
       <Filter>network</Filter>
     </ClCompile>
     <ClCompile Include="network\MCInternetCopy.cpp">
@@ -1466,6 +1472,12 @@
     <ClCompile Include="ui\MCRmlChecks.cpp">
       <Filter>ui</Filter>
     </ClCompile>
+    <ClCompile Include="ui\MCRmlDialog.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlFlow.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
     <ClCompile Include="ui\MCRmlKit.cpp">
       <Filter>ui</Filter>
     </ClCompile>
@@ -2038,6 +2050,9 @@
     <ClInclude Include="logistics\MCGameList.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCGamesScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCGenericScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2353,6 +2368,9 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="network\MCGameDataHash.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCGamesList.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCInternetCopy.h">
@@ -2994,6 +3012,12 @@
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlChecks.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlDialog.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlFlow.h">
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlKit.h">

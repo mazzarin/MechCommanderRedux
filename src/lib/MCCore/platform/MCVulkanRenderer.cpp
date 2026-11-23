@@ -326,8 +326,14 @@ namespace
     /// </summary>
     constexpr uint64_t SpareRetryFrames = 60;
 
-    /// <summary>Port-only: the pages sharp glyphs share (RGBA8, 4 MB; the interface's take 0.1 MB).</summary>
+    /// <summary>Port-only: the pages sharp glyphs share (R8G8, 2 MB; the interface's take 0.05 MB).</summary>
     constexpr uint32_t SharpPageSide = 1024;
+    /// <summary>
+    /// Diagnostic (issue 4: every word a solid bar on an RX 7600): a sharp picture on the GPU keeps only its redraw's
+    /// red (the font byte) and green (the coverage), all draw.pshader's SharpGlyphPixel reads, as R8G8 instead of RGBA8.
+    /// </summary>
+    constexpr SDL_GPUTextureFormat SharpFormat = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM;
+    constexpr uint32_t SharpTexelBytes = 2;
     /// <summary>A place's corner or size packed as a draw's field: x in bits 0-15, y in 16-31.</summary>
     int32_t PackedPair(uint16_t x, uint16_t y)
     {
@@ -4760,27 +4766,33 @@ MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
 
         // Port-only: in a page the sharp glyphs share, so draws from any of them share their bindings, or, too big
         // for one, in a texture of its own.
-        const SharedLayout layout{SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SharpPageSide};
+        const SharedLayout layout{SharpFormat, SharpPageSide};
 
         if (!PlaceShared(PageKind::Sharp, layout, picture, width, height, 0, 0) &&
-            !EnsureTexture(picture.Texture, MCHolder::GpuPictures, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                           SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
+            !EnsureTexture(picture.Texture, MCHolder::GpuPictures, SharpFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, width,
+                           height))
         {
             return std::nullopt;
         }
 
-        const std::span<uint8_t> upload =
-            QueueUpload(picture.Texture.Handle, picture.Place.X, picture.Place.Y, width, height, HdRgbaBytes);
-
         if (made.has_value())
         {
-            made->CopyRgbaTo(upload);
+            redrawn.resize(bytes);
+            made->CopyRgbaTo(redrawn);
             ++_SharpCounts.TakenAhead;
         }
         else
         {
-            std::ranges::copy(redrawn, upload.begin());
             ++_SharpCounts.Redrawn;
+        }
+
+        const std::span<uint8_t> upload =
+            QueueUpload(picture.Texture.Handle, picture.Place.X, picture.Place.Y, width, height, SharpTexelBytes);
+
+        for (size_t texel = 0; texel < static_cast<size_t>(width) * height; ++texel)
+        {
+            upload[texel * SharpTexelBytes] = redrawn[texel * HdRgbaBytes];
+            upload[texel * SharpTexelBytes + 1] = redrawn[texel * HdRgbaBytes + 1];
         }
 
         picture.Bytes = bytes;

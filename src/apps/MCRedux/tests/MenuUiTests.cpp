@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
@@ -7,10 +8,12 @@
 #include "platform/MCUiSoftware.h"
 #include "platform/MCUtf8Path.h"
 #include "sprite/MCHdArt.h"
+#include "ui/MCRmlArt.h"
 #include "ui/MCRmlChecks.h"
 #include "ui/MCRmlKit.h"
 #include "ui/MCRmlMenus.h"
 #include "ui/MCRmlProbe.h"
+#include "ui/MCRmlSystem.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -565,6 +568,65 @@ TEST_CASE_ISOLATED("menus: the mission's layer has its own unit and draws under 
     const Rml::Element* missionTab = mission->Document()->get().QuerySelector(std::format(".tab.{}", NowClass));
     REQUIRE(missionTab != nullptr);
     CHECK_EQ(missionTab->GetInnerRML(), "Games");
+}
+
+namespace
+{
+    /// <summary>A PNG of <paramref name="width"/> x <paramref name="height"/> pixels in one colour, RGB (no alpha) as the menus' opaque art is.</summary>
+    void WriteRgbPng(const std::filesystem::path& path, int width, int height, SDL_Color color)
+    {
+        std::filesystem::create_directories(path.parent_path());
+        SDL_Surface* surface = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGB24);
+        REQUIRE(surface != nullptr);
+        SDL_FillSurfaceRect(surface, nullptr, SDL_MapSurfaceRGB(surface, color.r, color.g, color.b));
+        const bool saved = SDL_SavePNG(surface, MCFileSystem::ToUtf8(path).c_str());
+        SDL_DestroySurface(surface);
+        REQUIRE(saved);
+    }
+}
+
+/// <summary>
+/// The app's own art (SPEC-menus.md, "The art"): an RGB PNG under the <c>ui</c> folder's <c>art</c>, read whole and
+/// opaque; with HD art on, its HD copy in <c>art/hd</c> drawn in its place, smoothly, while RmlUi is told the 1998 size;
+/// with HD art off, or no copy, the 1998 picture.
+/// </summary>
+TEST_CASE("menus: the app's art reads as RGB, its HD copy in its place at the 1998 size")
+{
+    constexpr int Width = 6;
+    constexpr int Height = 4;
+    constexpr int HdScale = 4;
+    constexpr SDL_Color Painted{40, 80, 120, 255};
+    constexpr SDL_Color HdPainted{60, 90, 130, 255};
+    const MCScratchFolder scratch("mc_menu_ui_tests", "app-art");
+    const std::filesystem::path& folder = scratch.Path();
+    WriteRgbPng(folder / "art" / "painting.png", Width, Height, Painted);
+    WriteRgbPng(folder / "art" / "hd" / "painting.png", Width * HdScale, Height * HdScale, HdPainted);
+    WriteRgbPng(folder / "art" / "plain.png", Width, Height, Painted);
+    const MCRmlFiles files(folder);
+    CHECK_EQ(MCRmlArt::HdPath("art/painting.png"), "art/hd/painting.png");
+
+    for (const bool hd : {false, true})
+    {
+        const auto loaded = MCRmlArt::Load("art/painting.png", hd, files);
+        REQUIRE(loaded.has_value());
+        CHECK_EQ(loaded->Width, Width);
+        CHECK_EQ(loaded->Height, Height);
+        const MCUiTexture& texture = *loaded->Texture;
+        CHECK_EQ(texture.Width, hd ? Width * HdScale : Width);
+        CHECK_EQ(texture.Height, hd ? Height * HdScale : Height);
+        CHECK_EQ(texture.Smooth, true);
+        const SDL_Color want = hd ? HdPainted : Painted;
+        REQUIRE(texture.Pixels.size() == static_cast<size_t>(texture.Width * texture.Height) * PixelBytes);
+        CHECK_EQ(std::format("{},{},{},{}", texture.Pixels[0], texture.Pixels[1], texture.Pixels[2], texture.Pixels[3]),
+                 std::format("{},{},{},255", want.r, want.g, want.b));
+    }
+
+    // No HD copy: the 1998 picture with HD art on too; a picture that isn't there, or isn't a PNG, an error.
+    const auto plain = MCRmlArt::Load("art/plain.png", true, files);
+    REQUIRE(plain.has_value());
+    CHECK_EQ(plain->Texture->Width, Width);
+    CHECK(!MCRmlArt::Load("art/missing.png", true, files).has_value());
+    CHECK(!MCRmlArt::Load("../painting.png", false, files).has_value());
 }
 
 namespace

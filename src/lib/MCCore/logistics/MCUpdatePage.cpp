@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#include "network/MCIntroNote.h"
+#include "platform/MCFileSystem.h"
+#include "network/MCRejoinNote.h"
 #include "logistics/MCUpdatePage.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
@@ -1098,6 +1101,13 @@ namespace
     {
         if (!MCLobbyUpdate::Restart())
         {
+            // Port-only (SPEC-menus.md's "The intro movies"): the game starts itself again, so its next start skips the
+            // intro (network/MCIntroNote.h); a lobby's room's restart rejoins the room, with no intro.
+            if (const auto written = MCIntroNote::Write(MCFileSystem::UserRoot(), MCRejoinNote::Now()); !written)
+            {
+                SDL_Log("UPDATE: RESTART's intro note: %s", written.error().c_str());
+            }
+
             MCUpdater::Answer(MCAnswer::Install);
         }
     }

@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "network/MCRoomEnd.h"
 #include "gui/MCGuiSystem.h"
 #include "linkup/MCFidpPlayer.h"
@@ -302,7 +304,9 @@ namespace
         SDL_Log("Room end: \"%s\" hosted again for the rematch; keeping %zu guests' places", room.Name.c_str(),
                 room.Guests.size());
         DropMessage(*GlobalLog());
-        GlobalLog()->SetUpSessionScreen();
+        // Port-only (SPEC-menus.md's stage 2): through the flow, the room landing on the games and the main menu.
+        MCScreenFlow::Land(MCMenuScreens::RoomStack());
+        MCScreenFlow::Change("room again", [] { GlobalLog()->SetUpSessionScreen(); });
         GlobalLog()->SessionScreen->TakePicks(room.Picks);
         MCLobbyUpdate::KeepPlacesFor(room.Guests);
     }
@@ -431,24 +435,32 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line) -> void
         MultiPlayer()->Start();
     }
 
-    logistics.CurrentScreen()->ShowGuiWindow(false);
-    DropMessage(logistics);
+    // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade (at once on the way back from a match,
+    // dark already), landing on the games with MULTIPLAYER ACCESS and the main menu under them.
+    MCScreenFlow::Land(MCMenuScreens::GamesStack(games == MCGames::Internet, false));
+    MCScreenFlow::Change("games",
+                         [games, line = std::string(line)]
+                         {
+                             MCLogistics& shown = *GlobalLog();
+                             shown.CurrentScreen()->ShowGuiWindow(false);
+                             DropMessage(shown);
 
-    if (games == MCGames::Internet)
-    {
-        ShowInternetScreen();
-    }
-    else
-    {
-        ShowLanScreen();
-    }
+                             if (games == MCGames::Internet)
+                             {
+                                 ShowInternetScreen();
+                             }
+                             else
+                             {
+                                 ShowLanScreen();
+                             }
 
-    logistics.ShowLogScreen(true, true);
+                             shown.ShowLogScreen(true, true);
 
-    if (!line.empty())
-    {
-        ShowMenuMessage(line);
-    }
+                             if (!line.empty())
+                             {
+                                 ShowMenuMessage(line);
+                             }
+                         });
 }
 
 auto MCRoomEnd::CloseRoom() -> bool

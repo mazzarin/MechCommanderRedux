@@ -603,11 +603,14 @@ public:
     /// <summary>The screen being shown (one of the screens below; null before the first).</summary>
     std::shared_ptr<MCLogObject> CurrentScreen() const { return _CurrentScreen.lock(); }
 
-    /// <summary>Makes <paramref name="screen"/> the screen being shown (empty: none).</summary>
-    void SetCurrentScreen(std::weak_ptr<MCLogObject> screen) { _CurrentScreen = std::move(screen); }
+    /// <summary>
+    /// Makes <paramref name="screen"/> the screen being shown (empty: none). Port-only (SPEC-menus.md's stage 2): a
+    /// change of screen made outside a change of the flow's, with the menus up, is counted (MCScreenFlow::Unrouted).
+    /// </summary>
+    void SetCurrentScreen(std::weak_ptr<MCLogObject> screen);
 
     /// <summary>Makes <paramref name="screen"/> the screen being shown.</summary>
-    void SetCurrentScreen(MCLogObject& screen) { _CurrentScreen = screen.WeakAs<MCLogObject>(); }
+    void SetCurrentScreen(MCLogObject& screen) { SetCurrentScreen(screen.WeakAs<MCLogObject>()); }
     MCGuiHandle<MCSessionScreen> SessionScreen;
     MCGuiHandle<MCSplashScreen> SerialScreen;
     /// <summary>The multiplayer connection screen (the one after the protocol choice).</summary>
@@ -723,6 +726,8 @@ private:
 
     /// <summary>Set by <see cref="Start"/>: the destructor takes the screens and art down.</summary>
     bool _Started = false;
+    /// <summary>Port-only: set while <see cref="Start"/> makes the screens (its screen changes are the menus' first).</summary>
+    bool _Starting = false;
     /// <summary>The screen being shown (one of the screens it owns).</summary>
     std::weak_ptr<MCLogObject> _CurrentScreen;
 };

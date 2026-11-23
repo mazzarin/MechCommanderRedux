@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
 #include "logistics/MCConnectMenu.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
@@ -67,15 +68,24 @@ namespace
     /// <summary>Opens the ready room (session screen) after a session was joined or created from <paramref name="from"/>.</summary>
     void EnterReadyRoom(MCLogObject& from, std::optional<bool> goDisabled)
     {
-        from.ShowGuiWindow(false);
-        GlobalLog()->ConnectScreen->ShowGuiWindow(true);
-        GlobalLog()->SetCurrentScreen(GlobalLog()->ConnectScreen);
-        GlobalLog()->LogisticsState = 0xe;
+        // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
+        MCScreenFlow::Change("ready room",
+                             [from = from.WeakAs<MCLogObject>(), goDisabled]
+                             {
+                                 if (const std::shared_ptr<MCLogObject> shown = from.lock(); shown != nullptr)
+                                 {
+                                     shown->ShowGuiWindow(false);
+                                 }
 
-        if (goDisabled.has_value())
-        {
-            GlobalLog()->ConnectScreen->Element<MCLogButton>(2)->Disabled = *goDisabled;
-        }
+                                 GlobalLog()->ConnectScreen->ShowGuiWindow(true);
+                                 GlobalLog()->SetCurrentScreen(GlobalLog()->ConnectScreen);
+                                 GlobalLog()->LogisticsState = 0xe;
+
+                                 if (goDisabled.has_value())
+                                 {
+                                     GlobalLog()->ConnectScreen->Element<MCLogButton>(2)->Disabled = *goDisabled;
+                                 }
+                             });
     }
 
     /// <summary>After a session was joined: how many are in it.</summary>
@@ -287,7 +297,8 @@ void CancelToLan()
 void CancelToSession()
 {
     MCSplashScreen& loadScreen = *GlobalLog()->LoadScreen;
-    loadScreen.CancelButton->Callback().SetExec(Cancel);
+    // Port-only (SPEC-menus.md's stage 2): CANCEL goes back one screen, as Escape does.
+    loadScreen.CancelButton->Callback().SetExec([] { MCScreenFlow::Back(); });
     loadScreen.LoadSaveButton->Callback().SetExec(LoadGame);
     loadScreen.FilePane->SetMultiplayer(false);
     GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
@@ -470,7 +481,8 @@ void JoinGame()
                 {
                     // Port-only (the personal build): straight into the room, which its host shows again with this
                     // player in it (the original's ready room waited for the host's GO).
-                    GlobalLog()->SetUpSessionScreen();
+                    // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
+                    MCScreenFlow::Change("room", [] { GlobalLog()->SetUpSessionScreen(); });
                     return;
                 }
 
@@ -500,7 +512,8 @@ void CreateSession()
 
     // Port-only (the personal build): straight into the room, the host alone in it until players join (the original
     // waited in the ready room).
-    GlobalLog()->SetUpSessionScreen();
+    // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
+    MCScreenFlow::Change("room", [] { GlobalLog()->SetUpSessionScreen(); });
 }
 
 void CreateSerialSession()

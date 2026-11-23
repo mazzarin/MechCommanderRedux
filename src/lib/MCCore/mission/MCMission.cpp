@@ -1,4 +1,8 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "network/MCIntroNote.h"
+#include "logistics/MCLoadSaveMenu.h"
+#include "logistics/MCMenuScreens.h"
 #include "mission/MCMission.h"
 #include "lib/MCReleaseData.h"
 #include "ai/MCMoveGeometry.h"
@@ -531,6 +535,13 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
     {
         // The result is dropped, as in the original.
         SetupNextSegment(GlobalGameSegment);
+
+        // Port-only (SPEC-menus.md's "The intro movies"): a start the game made itself skips the intro, as Escape does
+        // (network/MCIntroNote.h).
+        if (std::exchange(MCIntroNote::SkipIntro, false) && State == MCMissionState::PlayMovie && CurrentMovie == 0)
+        {
+            EscapedSmackerMovie = -1;
+        }
     }
     else
     {
@@ -560,8 +571,10 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
             }
 
             // Port-only (the personal build): straight into the room, as a LAN game's hosting and joining go (the
-            // original waited in the ready room for the host's GO).
-            GlobalLog()->SetUpSessionScreen();
+            // original waited in the ready room for the host's GO). Port-only (SPEC-menus.md's stage 2): a launcher's
+            // room at the stack's end; a rejoin's (the menus' after an update) on INTERNET and the main menu.
+            MCScreenFlow::Land(MCMenuScreens::RoomStack());
+            MCScreenFlow::Change("room", [] { GlobalLog()->SetUpSessionScreen(); });
         }
     }
 
@@ -672,6 +685,8 @@ auto MCMission::Run() -> int32_t
     // two jump targets (reset the display first, or not).
     bool resetDisplay = false;
     bool toLogistics = false;
+    // Port-only (SPEC-menus.md's stage 2): the menus come after a movie (they fade in from black).
+    bool fromMovie = false;
 
     switch (State)
     {
@@ -791,6 +806,14 @@ auto MCMission::Run() -> int32_t
                 }
                 else if (CurrentMovie == 5)
                 {
+                    // Port-only (SPEC-menus.md's stage 2): the campaign's last mission won, its two end movies, then the
+                    // main menu (MCX.EXE quit the game).
+                    if (GameOver && GlobalGameSegment == 0 && InDemo == 0)
+                    {
+                        EndToMainMenu();
+                        break;
+                    }
+
                     NextState = MCMissionState::Quit;
                     State = MCMissionState::Quit;
                 }
@@ -846,6 +869,7 @@ auto MCMission::Run() -> int32_t
             ResetFullScreenDisplay();
             _PlayingLogisticsMusic = 0;
             toLogistics = true;
+            fromMovie = true;
             break;
         }
         case MCMissionState::StartScenario:
@@ -939,6 +963,13 @@ auto MCMission::Run() -> int32_t
     {
         ResetFullScreenDisplay();
         toLogistics = true;
+        fromMovie = true;
+    }
+
+    // Port-only (SPEC-menus.md's stage 2): from a movie (the intro, ORIGINAL CINEMA) the menus fade in from black.
+    if (toLogistics && fromMovie && GuiSystem().CanChangeScreen() && !MCScreenChange::Running())
+    {
+        MCScreenChange::Start({.Name = "from the movie", .FadeOut = MCScreenChange::MCFadeOut::FromBlack});
     }
 
     if (toLogistics)
@@ -1561,8 +1592,31 @@ auto MCMission::LetGoHoldUnlessKept() const -> void
     }
 }
 
+auto MCMission::EndToMainMenu() -> void
+{
+    GameOver = false;
+    CurrentMovie = -1;
+    ResetFullScreenDisplay();
+    MCLogistics& logistics = Logistics != nullptr ? *Logistics : StartLogistics();
+    LastLogisticsMissionState = 0;
+    State = MCMissionState::Logistics;
+    NextState = MCMissionState::Logistics;
+    _PlayingLogisticsMusic = 0;
+    MCScreenFlow::Land({MCMenuScreens::Main()});
+    logistics.SetCurrentScreen(logistics.MainScreen);
+    logistics.LogisticsState = 1;
+    logistics.ShowLogScreen(true, true);
+    MCScreenFlow::Noted();
+
+    if (GuiSystem().CanChangeScreen() && !MCScreenChange::Running())
+    {
+        MCScreenChange::Start({.Name = "the campaign's end", .FadeOut = MCScreenChange::MCFadeOut::FromBlack});
+    }
+}
+
 auto MCMission::StartLogistics() -> MCLogistics&
 {
+    const MCFrameLog::Scope part("menus.start");
     MCPort::GetSystemTime(_LogisticsStart);
     Logistics = std::make_shared<MCLogistics>();
     Logistics->Start();
@@ -1624,16 +1678,17 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
     {
         if (Solo != 0)
         {
-            // A won solo (quick-start) mission: back to the main screen.
+            // A won solo (quick-start) mission: back to the main screen. Port-only (SPEC-menus.md's stage 2): back to SOLO
+            // MISSIONS, where it was picked, the main menu under it.
             return [this]
             {
                 MCLogistics& logistics = StartLogistics();
                 LastLogisticsMissionState = 0;
                 State = MCMissionState::Logistics;
+                MCScreenFlow::Land({MCMenuScreens::Main(), MCMenuScreens::Solo()});
                 logistics.CurrentScreen()->ShowGuiWindow(false);
-                logistics.SetCurrentScreen(logistics.MainScreen);
-                logistics.LogisticsState = 1;
-                logistics.ShowLogScreen(true, true);
+                SoloLoadScreen();
+                MCScreenFlow::Noted();
                 Solo = false;
             };
         }
@@ -1659,8 +1714,11 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
             char startName[] = "start1";
             char extension[] = ".pkk";
             logistics.LoadCampaign(startName, extension, true, false);
+            // Port-only (SPEC-menus.md's stage 2): its briefing again (REPLAY MISSION), the main menu under it.
+            MCScreenFlow::Land({MCMenuScreens::Main(), MCMenuScreens::Campaign()});
             logistics.SetUpBriefingScreen(false);
             logistics.ShowLogScreen(true, false);
+            MCScreenFlow::Noted();
         };
     }
 
@@ -1701,9 +1759,17 @@ auto MCMission::BackToLogistics() -> void
         std::string startName =
             std::format("start{}", replay ? logistics.CurrentMission + 1 : logistics.CurrentMission);
         char extension[] = ".pkk";
-        logistics.LoadCampaign(startName, extension, replay, false);
+        {
+            const MCFrameLog::Scope part("menus.campaign");
+            logistics.LoadCampaign(startName, extension, replay, false);
+        }
+
+        const MCFrameLog::Scope part("menus.briefing");
+        // Port-only (SPEC-menus.md's stage 2): NEXT MISSION's briefing, or REPLAY MISSION's, the main menu under it.
+        MCScreenFlow::Land({MCMenuScreens::Main(), MCMenuScreens::Campaign()});
         logistics.SetUpBriefingScreen(false);
         logistics.ShowLogScreen(true, false);
+        MCScreenFlow::Noted();
         return;
     }
 
@@ -1714,6 +1780,8 @@ auto MCMission::BackToLogistics() -> void
     logistics.SetCurrentScreen(logistics.MainScreen);
     logistics.LogisticsState = 1;
     logistics.ShowLogScreen(true, true);
+    MCScreenFlow::Land({MCMenuScreens::Main()});
+    MCScreenFlow::Noted();
 
     // Port-only (Redux HD): a game the menus took to its room goes back to its games screen (network/MCRoomEnd.h).
     if (MCRoomEnd::AfterMatch())

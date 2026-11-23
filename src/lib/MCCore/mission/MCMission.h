@@ -210,6 +210,12 @@ public:
 private:
     /// <summary>Starts a new logistics phase after a scenario.</summary>
     MCLogistics& StartLogistics();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): the campaign's last mission won and its two end movies played, the main menu
+    /// (MCX.EXE quit the game), fading in from black.
+    /// </summary>
+    void EndToMainMenu();
     /// <summary>Port-only: lets go of the mission's held art once its scenario has ended, unless <see cref="KeepsHoldPastEnd"/>.</summary>
     void LetGoHoldUnlessKept() const;
     /// <summary>

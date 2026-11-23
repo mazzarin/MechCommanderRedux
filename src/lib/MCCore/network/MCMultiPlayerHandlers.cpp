@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCLobbyUpdate.h"
@@ -415,7 +417,8 @@ void HandleAppSwitchScreen(uint32_t, std::span<const uint8_t> msg)
 {
     if (ReadLinkupMessage<MCMPTwoLongMessage>(msg).Value1 == 1 && GlobalLog() != nullptr)
     {
-        GlobalLog()->SetUpSessionScreen();
+        // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
+        MCScreenFlow::Change("room", [] { GlobalLog()->SetUpSessionScreen(); });
     }
 }
 
@@ -1382,10 +1385,15 @@ namespace
             WhackTimer = true;
         }
 
-        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-        GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
-        GlobalLog()->LogisticsState = 1;
-        GlobalLog()->ShowLogScreen(true, true);
+        // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
+        MCScreenFlow::Change("main menu",
+                             []
+                             {
+                                 GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+                                 GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
+                                 GlobalLog()->LogisticsState = 1;
+                                 GlobalLog()->ShowLogScreen(true, true);
+                             });
         game.LeaveSession();
     }
 }

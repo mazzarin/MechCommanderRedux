@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "main/MCLogistics.h"
 #include "lib/MCReleaseData.h"
 #include "gui/MCGuiFont.h"
@@ -289,7 +292,10 @@ auto MCLogistics::Start() -> void
     }
 
     _Started = true;
+    _Starting = true;
     SetGlobalLog(weak_from_this());
+    // Port-only (SPEC-menus.md's stage 2): the old screens as the flow's kinds.
+    MCMenuScreens::Register();
     // Port-only: what the screens look for in the archives is noted while they're up, to be read ahead when they're
     // made again (MCMission::CloseResultsScreen).
     MCFilesAhead::StartNoting();
@@ -338,6 +344,8 @@ auto MCLogistics::Start() -> void
         ChatShown = false;
     }
 
+    // Port-only: the frame log's parts of the menus' start (the screens, then the art), as the way back times them.
+    std::optional<MCFrameLog::Scope> part(std::in_place, "menus.screens");
     // The screens are the screen window's children for good, hidden until shown; each is made where the original
     // initialised it (and so added it to the screen), so they keep the original's order there.
     // (Each handle is stored before the screen's Init, as the original stored the pointer first.)
@@ -566,6 +574,8 @@ auto MCLogistics::Start() -> void
     makeDialog(QuestionDialog);
     makeDialog(RefitDialog);
 
+    part.reset();
+    part.emplace("menus.art");
     ResourceBackPort = NewPort(0x3d, 0xc);
     VfxPaneWipe(ResourceBackPort->Frame(), 0x10);
     ClockBackPort = NewPort(0x32, 0xc);
@@ -662,6 +672,38 @@ auto MCLogistics::Start() -> void
 
     ShowLogScreen(false, false);
     MakeAhead();
+    _Starting = false;
+
+    // Port-only (SPEC-menus.md's stage 2): the menus' first screen at the stack's bottom, at the game's start (the way
+    // back lands where it goes, MCScreenFlow::Land).
+    if (MCScreenFlow::Stack().empty() && MCScreenFlow::Landing().empty())
+    {
+        MCScreenFlow::Noted();
+    }
+}
+
+auto MCLogistics::SetCurrentScreen(std::weak_ptr<MCLogObject> screen) -> void
+{
+    const std::shared_ptr<MCLogObject> before = _CurrentScreen.lock();
+    const std::shared_ptr<MCLogObject> after = screen.lock();
+    _CurrentScreen = std::move(screen);
+
+    if (_Starting || before == nullptr || after == nullptr || before == after || MCScreenChange::InPiece() ||
+        MCScreenChange::Dark() || !HasGuiSystem() || !GuiSystem().CanChangeScreen())
+    {
+        return;
+    }
+
+    // The campaign's screens slide between each other.
+    const auto campaign = [this](const std::shared_ptr<MCLogObject>& shown)
+    { return BriefingScreen.Is(*shown) || PurchaseScreen.Is(*shown) || RepairScreen.Is(*shown); };
+
+    if (campaign(before) && campaign(after))
+    {
+        return;
+    }
+
+    MCScreenFlow::NoteUnrouted(std::format("logistics state {}", LogisticsState));
 }
 
 namespace

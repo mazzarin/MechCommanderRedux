@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
 #include "logistics/MCSessionScreen.h"
 #include "lib/MCReleaseData.h"
 #include "gui/MCGuiEvent.h"
@@ -149,17 +150,23 @@ namespace
     void MPLoadWorked(int32_t)
     {
         MCSplashScreen& loadScreen = *GlobalLog()->LoadScreen;
-        loadScreen.CancelButton->Callback().SetExec(Cancel);
+        // Port-only (SPEC-menus.md's stage 2): CANCEL goes back one screen, as Escape does.
+        loadScreen.CancelButton->Callback().SetExec([] { MCScreenFlow::Back(); });
         loadScreen.LoadSaveButton->Callback().SetExec(LoadGame);
         loadScreen.FilePane->SetMultiplayer(false);
 
         // Port-only (the personal build): the room shown again loads its mission on the session screen itself.
+        // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
         if (GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen)
         {
-            GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-            GlobalLog()->SetCurrentScreen(Screen());
-            GlobalLog()->LogisticsState = 8;
-            GlobalLog()->ShowLogScreen(true, true);
+            MCScreenFlow::Change("mission picked",
+                                 []
+                                 {
+                                     GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+                                     GlobalLog()->SetCurrentScreen(Screen());
+                                     GlobalLog()->LogisticsState = 8;
+                                     GlobalLog()->ShowLogScreen(true, true);
+                                 });
         }
 
         // Port-only (the personal build): a player who joined meanwhile wasn't asked for the file: the room is shown
@@ -181,7 +188,7 @@ namespace
     {
         MCSplashScreen& loadScreen = *GlobalLog()->LoadScreen;
         loadScreen.LoadSaveButton->Callback().SetExec(LoadMPGame);
-        loadScreen.CancelButton->Callback().SetExec(CancelToSession);
+        loadScreen.CancelButton->Callback().SetExec([] { MCScreenFlow::Back(); });
         loadScreen.FilePane->SetMultiplayer(true);
         GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
         GlobalLog()->SetCurrentScreen(loadScreen);
@@ -363,7 +370,7 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
             });
     };
 
-    LoadMissionButton = makeButton(0x107, 0xd1, "map", OpenMissionLoad);
+    LoadMissionButton = makeButton(0x107, 0xd1, "map", MCScreenFlow::Via("mission pick", OpenMissionLoad));
     StartButton = makeButton(0x1de, 0x1b4, "begin", StartMission);
     StartButton->Disabled = true;
 
@@ -586,6 +593,13 @@ auto MCSessionScreen::DrawStartWaits(const MCPane& frame) -> void
 
 auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
 {
+    // Port-only (SPEC-menus.md's stage 2): Escape goes back one screen, as EXIT does (the original's did nothing).
+    if (event.Type == MCGuiEventType::KeyDown && event.Key == 0x1b)
+    {
+        MCScreenFlow::Back();
+        return;
+    }
+
     if (event.Type == 0x13)
     {
         if (event.Data == ScreenTimer)
@@ -748,7 +762,9 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     ExitButton->Disabled = false;
     StartButton->Disabled = true;
 
-    ExitButton->Callback().SetExec(LaunchedFromLobby != 0 ? CancelToMPlayer : LeaveRoom);
+    // Port-only (SPEC-menus.md's stage 2): EXIT goes back one screen, as Escape does (the room's way back: a launcher's
+    // asks to leave the game, which ends it).
+    ExitButton->Callback().SetExec([] { MCScreenFlow::Back(); });
     CancelMission();
     Team2RP = 0;
     Team1RP = 0;

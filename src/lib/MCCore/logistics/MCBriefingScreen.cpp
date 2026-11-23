@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCBriefingScreen.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSmackerWindow.h"
@@ -844,17 +846,10 @@ auto MCBriefingScreen::HandleClick(int32_t xPos, int32_t yPos) -> void
         return;
     }
 
+    // Port-only (SPEC-menus.md's stage 2): MAIN MENU as Escape, through the flow (a match's asks first).
     if (Inside(point, 2, 0x10, 0xd1, 0x21))
     {
-        if (MultiPlayer() == nullptr)
-        {
-            StopSmackerMovies();
-            SoundSystem()->PlayInterfaceSample(0x36);
-            GlobalLog()->SetUpMainScreen(false);
-            return;
-        }
-
-        CheckExit();
+        MCMenuScreens::LeaveCampaign();
         return;
     }
 
@@ -965,6 +960,14 @@ auto MCBriefingScreen::HandleEvent(MCGuiEvent& event) -> void
             if (event.Key == 0x1b && MovieOver == 0)
             {
                 StopSmackerMovies();
+                return;
+            }
+
+            // Port-only (SPEC-menus.md's stage 2): Escape goes back one screen, as MAIN MENU does (the original's did
+            // nothing once the movie was over).
+            if (event.Key == 0x1b)
+            {
+                MCScreenFlow::Back();
                 return;
             }
 

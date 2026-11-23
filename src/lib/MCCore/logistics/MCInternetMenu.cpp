@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCInternetMenu.h"
+#include "gui/MCScreenFlow.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCUpdater.h"
@@ -267,6 +268,11 @@ namespace
         int32_t MaxPlayers = MostPlayers;
         Clock::time_point NextSearch;
         int32_t Searches = 0;
+        /// <summary>
+        /// Port-only (SPEC-menus.md's stage 2): joined or hosted, the room to open: the change it runs in (the join's
+        /// job, live) fades out, and the room opens dark.
+        /// </summary>
+        bool Entered = false;
     };
 
     std::optional<PendingGame> Pending;
@@ -422,6 +428,12 @@ namespace
                 Pending->Shown.c_str(), static_cast<int>(why.size()), why.data());
         Pending.reset();
 
+        // Port-only (SPEC-menus.md's stage 2): the change the join ran in called off, INTERNET staying up.
+        if (MCScreenChange::Name() == JoiningChange)
+        {
+            MCScreenChange::Cancel();
+        }
+
         if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
         {
             Manager().EndInternet();
@@ -466,17 +478,32 @@ namespace
     }
 
     /// <summary>The game joined or hosted: its room (the session screen) opens.</summary>
-    void EnterRoom()
+    void OpenRoom()
     {
         Pending.reset();
         GlobalLog()->MessageDialog->Deactivate(0);
         GlobalLog()->SetUpSessionScreen();
     }
 
+    /// <summary>
+    /// The game joined or hosted: port-only (SPEC-menus.md's stage 2), the change the join runs in moves on (its job
+    /// done), and the room opens once the screen is dark; with none (no display), at once.
+    /// </summary>
+    void EnterRoom()
+    {
+        if (MCScreenChange::Name() == JoiningChange && Pending.has_value())
+        {
+            Pending->Entered = true;
+            return;
+        }
+
+        OpenRoom();
+    }
+
     /// <summary>Moves the game being joined or hosted along: the service's answer, the link, then the room.</summary>
     void TendPending()
     {
-        if (!Pending.has_value())
+        if (!Pending.has_value() || Pending->Entered)
         {
             return;
         }
@@ -584,6 +611,23 @@ namespace
         ShowConnecting(pending.Hosting ? std::string(HostingText) : std::format(ConnectingFormat, pending.Shown),
                        CancelPending);
         Pending = std::move(pending);
+
+        // Port-only (SPEC-menus.md's stage 2): the join or host is a change's job, run while INTERNET stays up live (its
+        // timer moves it along, its CANCEL calls the change off); joined, the screen fades out and the room opens dark.
+        MCScreenChange::Start({.Name = std::string(JoiningChange),
+                               .Job = {{.Part = {}, .Until = [] { return !Pending.has_value() || Pending->Entered; }}},
+                               .FadeOut = MCScreenChange::MCFadeOut::AfterJob,
+                               .Dark = {{.Part = "change.screen",
+                                         .Run =
+                                             []
+                                         {
+                                             if (Pending.has_value() && Pending->Entered)
+                                             {
+                                                 OpenRoom();
+                                                 MCScreenFlow::Noted();
+                                             }
+                                         }}},
+                               .CalledOff = CancelPending});
     }
 
     // ---- the buttons ----
@@ -683,6 +727,22 @@ namespace
         PrivateCheck->Toggled = !isPublic;
     }
 
+    void CancelInternet();
+}
+
+void InternetBack()
+{
+    if (ShownBlock == HostBlock)
+    {
+        CancelInternet();
+        return;
+    }
+
+    MCScreenFlow::Change("internet back", CancelInternet);
+}
+
+namespace
+{
     /// <summary>CANCEL: from the host block back to the games, from the games back to MULTIPLAYER ACCESS.</summary>
     void CancelInternet()
     {
@@ -1128,7 +1188,8 @@ void SetUpInternetScreen(MCSplashScreen& screen)
             check.Callback().SetExec([] { SetHostsPublic(!PrivateCheck->Toggled); });
         });
 
-    screen.Element<MCLogButton>(CancelButton)->Callback().SetExec(CancelInternet);
+    // Port-only (SPEC-menus.md's stage 2): CANCEL goes back one screen, as Escape does (InternetBack).
+    screen.Element<MCLogButton>(CancelButton)->Callback().SetExec([] { MCScreenFlow::Back(); });
     screen.Element<MCLogButton>(HostButton)->Callback().SetExec(HostInternetGame);
     screen.Element<MCLogButton>(JoinButton)->Callback().SetExec(JoinInternetGame);
     screen.Element<MCLogButton>(CreateButton)->Callback().SetExec(CreateInternetSession);

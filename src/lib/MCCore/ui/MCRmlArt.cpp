@@ -2,6 +2,7 @@
 #include "ui/MCRmlArt.h"
 #include "logistics/MCLogPort.h"
 #include "main/MCGamePaths.h"
+#include "main/MCLogistics.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShapeFile.h"
@@ -48,9 +49,33 @@ namespace
         return file;
     }
 
-    std::expected<MCArtPicture, std::string> ReadArt(std::string_view name)
+    /// <summary>The briefing map a mission's name stands for (its mission file's MapFile's <c>.log.tga</c>).</summary>
+    std::expected<std::string, std::string> MapFile(std::string_view scenario)
     {
-        const std::expected<std::string, std::string> path = ArtFile(name);
+        if (scenario.empty() || scenario.find_first_of(":/\\.") != std::string_view::npos)
+        {
+            return std::unexpected(std::format("'{}' isn't the name of a mission", scenario));
+        }
+
+        if (std::optional<std::string> path = MCLogistics::BriefingMapFile(scenario); path.has_value())
+        {
+            return std::move(*path);
+        }
+
+        return std::unexpected(std::format("the mission {} names no map", scenario));
+    }
+
+    /// <summary>The picture a source names: <c>art:</c>'s or <c>map:</c>'s file.</summary>
+    std::expected<std::string, std::string> GameFile(std::string_view source)
+    {
+        return source.starts_with(MCRmlArt::MapScheme) ? MapFile(source.substr(MCRmlArt::MapScheme.size()))
+                                                       : ArtFile(source.substr(MCRmlArt::Scheme.size()));
+    }
+
+    /// <summary>The game's picture <paramref name="source"/> names (<c>art:</c>'s or <c>map:</c>'s), with its colours.</summary>
+    std::expected<MCArtPicture, std::string> ReadArt(std::string_view source)
+    {
+        const std::expected<std::string, std::string> path = GameFile(source);
 
         if (!path)
         {
@@ -295,12 +320,12 @@ namespace MCRmlArt
 
     std::expected<MCRmlRecorder::MCLoaded, std::string> Load(std::string_view source, bool hd, const MCRmlFiles& files)
     {
-        if (!source.starts_with(Scheme))
+        if (!source.starts_with(Scheme) && !source.starts_with(MapScheme))
         {
             return LoadAppArt(source, hd, files);
         }
 
-        const std::expected<MCArtPicture, std::string> picture = ReadArt(source.substr(Scheme.size()));
+        const std::expected<MCArtPicture, std::string> picture = ReadArt(source);
 
         if (!picture)
         {
@@ -324,7 +349,7 @@ namespace MCRmlArt
 
     std::expected<std::array<SDL_Color, 256>, std::string> Colors(std::string_view name)
     {
-        const std::expected<MCArtPicture, std::string> picture = ReadArt(name);
+        const std::expected<MCArtPicture, std::string> picture = ReadArt(std::string(Scheme) + std::string(name));
 
         if (!picture)
         {

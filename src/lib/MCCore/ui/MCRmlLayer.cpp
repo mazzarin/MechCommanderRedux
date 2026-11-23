@@ -69,6 +69,9 @@ namespace
     constexpr const char* FocusVisible = "focus-visible";
     /// <summary>No modifier key held (RmlUi's modifiers are flags).</summary>
     constexpr int NoModifiers = 0;
+    /// <summary>A text box's button that Enter in it presses (its id), and the look's class of a button that's off.</summary>
+    constexpr const char* EnterAttribute = "data-enter";
+    constexpr const char* OffClass = "off";
 
     /// <summary>The window pixels a window point is (SDL's mouse events are in points).</summary>
     float PixelsPerPoint(SDL_WindowID id)
@@ -278,9 +281,22 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
 
             const bool typing = Typing();
 
-            // Enter in a text box: done, on to the next control as Tab goes (what was typed is its value already).
+            // Enter in a text box: done, on to the next control as Tab goes (what was typed is its value already); in
+            // one whose data-enter names a button (SAVE GAME's NAME), that button pressed (port-only, stage 5).
             if (typing && (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER))
             {
+                if (Rml::Element* box = _Context.GetFocusElement(); box != nullptr && box->HasAttribute(EnterAttribute))
+                {
+                    const std::string pressed = box->GetAttribute<Rml::String>(EnterAttribute, "");
+
+                    if (Rml::Element* button = box->GetOwnerDocument()->GetElementById(pressed);
+                        button != nullptr && !button->IsClassSet(OffClass))
+                    {
+                        button->Click();
+                        return true;
+                    }
+                }
+
                 _Context.ProcessKeyDown(Rml::Input::KI_TAB, NoModifiers);
                 _Context.ProcessKeyUp(Rml::Input::KI_TAB, NoModifiers);
                 return true;

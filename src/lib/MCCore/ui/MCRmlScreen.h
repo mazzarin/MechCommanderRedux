@@ -77,6 +77,9 @@ public:
     /// <summary>The keys the hint line names at its right (SPEC-menus.md, "Without a mouse").</summary>
     std::vector<MCRmlKeyHint> Keys;
 
+    /// <summary>The hint line's keys written again from <see cref="Keys"/> (as Show writes them), the screen kept where it is.</summary>
+    void WriteKeys();
+
     /// <summary>A window over a screen (shown modal: the screens under it take no input while it shows).</summary>
     bool Modal = false;
 

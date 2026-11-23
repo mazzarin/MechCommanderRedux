@@ -1,0 +1,79 @@
+<rml>
+<head>
+    <title>Saves</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="saves.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, stage 5): LOAD GAME and SAVE GAME (logistics/MCSavesMenu), one panel over the painting
+     viewing the saves list (logistics/MCSaves): the saves newest first, ALL or one campaign's, the picked one's facts and
+     its mission's map beside them. SAVE GAME adds a name and SAVE at the foot. -->
+<body class="stone painting" data-model="saves">
+    <div class="stage16">
+        <div id="frame" class="content">
+            <div id="load" class="panel glass">
+                <div class="titlebar row bottom">
+                    <div class="grow">
+                        <div class="eyebrow">{{eyebrow}}</div>
+                        <div class="title caps">{{title}}</div>
+                    </div>
+                    <div class="data grey caps nowrap" id="count">{{count}}</div>
+                </div>
+                <div class="switch small" id="which" data-tabs><div class="on">All</div><div>Original campaign</div><div>Expansion campaign</div></div>
+                <div class="row gap12 grow" id="body">
+                    <div id="saves" class="column">
+                        <div class="list-head row">
+                            <div class="cell grow">Mission</div>
+                            <div class="cell c-campaign" data-if="all">Campaign</div>
+                            <div class="cell c-when">Saved</div>
+                            <div class="cell c-rp">RP</div>
+                            <div class="cell c-saved">Date</div>
+                        </div>
+                        <div class="scroll-box grow" id="list-box" data-if="rows.size > 0">
+                            <div class="scroller" id="list">
+                                <div class="list-row row" data-for="row, i : rows" data-class-picked="i == picked"
+                                     data-event-click="pick(i)" data-event-focus="pick(i)">
+                                    <div class="cell grow">{{row.mission}}</div>
+                                    <div class="cell c-campaign" data-if="all">{{row.campaign}}</div>
+                                    <div class="cell c-when">{{row.when}}</div>
+                                    <div class="cell c-rp">{{row.points}}</div>
+                                    <div class="cell c-saved">{{row.date}}</div>
+                                </div>
+                            </div>
+                            <div class="fade"></div>
+                        </div>
+                        <div class="empty" data-if="rows.size == 0"><div class="text">{{empty}}</div></div>
+                    </div>
+                    <div id="pick">
+                        <div data-if="shown" class="column grow">
+                            <div class="eyebrow" data-if="pickEyebrow != ''">{{pickEyebrow}}</div>
+                            <div class="heading caps nowrap" id="pick-heading">{{pickHeading}}</div>
+                            <div class="data grey caps nowrap" id="pick-campaign">{{pickCampaign}}</div>
+                            <div class="fact" data-if="pickOperation != ''"><div class="label">Operation</div><div>{{pickOperation}}</div></div>
+                            <div class="fact" data-if="pickMission != ''"><div class="label">Mission</div><div>{{pickMission}}</div></div>
+                            <div class="fact" data-if="pickSaved != ''"><div class="label">Saved</div><div>{{pickSaved}}</div></div>
+                            <div class="fact" data-if="pickPoints != ''"><div class="label">RP</div><div class="cream">{{pickPoints}}</div></div>
+                            <div class="fact" data-if="pickDate != ''"><div class="label">Date</div><div>{{pickDate}}</div></div>
+                            <div class="savemap" id="map"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="foot" class="row gap8">
+                    <div class="button" id="back" data-hint="Back">Back</div>
+                    <div class="grow"></div>
+                    <div class="button" id="delete" data-class-off="!canDelete" data-hint="Delete">Delete</div>
+                    <div class="eyebrow name-label" data-if="saving">Name</div>
+                    <input type="text" class="field" id="name" data-if="saving" data-value="name" maxlength="31" data-enter="main"/>
+                    <div class="button main" id="main" data-class-off="!canMain" data-attr-data-hint="does">{{does}}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar" class="bar glass">
+        <div class="stage16">
+            <div class="content">
+                <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

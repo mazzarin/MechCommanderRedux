@@ -63,6 +63,15 @@
     <CopyFileToFolders Include="..\..\res\ui\missions.json">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\saves.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\saves.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\saves_dialog.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\probe.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>

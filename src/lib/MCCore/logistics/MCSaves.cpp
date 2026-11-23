@@ -327,21 +327,42 @@ void MCSaves::ReadSave(MCSave& save, std::span<const std::vector<MCScenario>> ca
         return;
     }
 
-    const MCScenario& entry = scenarios[*scenario];
-    save.Operation = entry.Operation;
-    save.Mission = entry.Mission;
-    save.Scenario = entry.File;
-    auto [names, made] = named.try_emplace(Lowered(entry.File));
+    NameMission(save, scenarios[*scenario], named);
+    save.Read = true;
+}
+
+void MCSaves::NameMission(MCSave& save, const MCScenario& scenario, std::unordered_map<std::string, MCNamed>& named)
+{
+    save.Operation = scenario.Operation;
+    save.Mission = scenario.Mission;
+    save.Scenario = scenario.File;
+    auto [names, made] = named.try_emplace(Lowered(scenario.File));
 
     if (made)
     {
-        auto [operation, mission] = NamesOf(entry.File);
+        auto [operation, mission] = NamesOf(scenario.File);
         names->second = MCNamed{std::move(operation), std::move(mission)};
     }
 
     save.OperationName = names->second.Operation;
     save.MissionName = names->second.Mission;
+}
+
+auto MCSaves::Unsaved(MCCampaign campaign, int32_t mission, uint32_t points) -> MCSave
+{
+    MCSave save{.Campaign = campaign, .When = MCWhen::Named, .ResourcePoints = points};
+    const std::vector<MCScenario> scenarios = ReadScenarios(MasterFiles[static_cast<size_t>(campaign)]);
+
+    if (mission < 0 || static_cast<size_t>(mission) >= scenarios.size())
+    {
+        SDL_Log("MCSaves: the campaign's mission %d isn't in its master mission file", mission);
+        return save;
+    }
+
+    std::unordered_map<std::string, MCNamed> named;
+    NameMission(save, scenarios[static_cast<size_t>(mission)], named);
     save.Read = true;
+    return save;
 }
 
 const std::vector<MCSaves::MCSave>& MCSaves::All() const
@@ -412,6 +433,12 @@ MCSaves::MCWritten MCSaves::Write(std::string_view name)
         return space.available >= RoomForASave;
     };
 
+    if (!CanName(name))
+    {
+        SDL_Log("MCSaves: '%.*s' can't name a save's file", static_cast<int>(name.size()), name.data());
+        return MCWritten::Failed;
+    }
+
     if (!disk())
     {
         SDL_Log("MCSaves: no room on the disk to save %.*s", static_cast<int>(name.size()), name.data());
@@ -444,6 +471,14 @@ std::optional<std::string> MCSaves::FreeName()
     }
 
     return std::nullopt;
+}
+
+bool MCSaves::CanName(std::string_view name)
+{
+    // The characters no file system's name takes, or that would put the save in another folder.
+    constexpr std::string_view NotInAName = "\\/:*?\"<>|";
+    return !name.empty() && name.find_first_not_of(' ') != std::string_view::npos &&
+           name.find_first_of(NotInAName) == std::string_view::npos && name != "." && name != "..";
 }
 
 uint64_t MCSaves::Revision() const

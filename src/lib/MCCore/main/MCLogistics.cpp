@@ -897,7 +897,7 @@ auto MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs as) -> void
     MCHdArt::ReadPicturesAhead(pictures, as);
 }
 
-auto MCLogistics::BriefingMapOf(std::string_view scenario) -> std::optional<MCPicturePixels>
+auto MCLogistics::BriefingMapFile(std::string_view scenario) -> std::optional<std::string>
 {
     // The longest map name GetCurrentMission reads.
     constexpr size_t MapFileChars = 0xff;
@@ -910,9 +910,15 @@ auto MCLogistics::BriefingMapOf(std::string_view scenario) -> std::optional<MCPi
         return std::nullopt;
     }
 
+    return GamePath(TerrainPath, map, ".log.tga");
+}
+
+auto MCLogistics::BriefingMapOf(std::string_view scenario) -> std::optional<MCPicturePixels>
+{
+    const std::optional<std::string> path = BriefingMapFile(scenario);
     MCFile file;
 
-    if (file.Open(GamePath(TerrainPath, map, ".log.tga")) != 0 || file.FileSize() == 0)
+    if (!path.has_value() || file.Open(*path) != 0 || file.FileSize() == 0)
     {
         return std::nullopt;
     }

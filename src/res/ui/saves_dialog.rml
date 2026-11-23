@@ -1,0 +1,30 @@
+<rml>
+<head>
+    <title>Saves dialog</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="saves.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, stage 5): LOAD GAME's and SAVE GAME's window over them (logistics/MCSavesMenu): DELETE's
+     question and an overwrite's, CANCEL first; or a message with OK ("Game saved.", "This save couldn't be loaded."). -->
+<body class="window-body" data-model="saves_dialog">
+    <div class="veil"></div>
+    <div class="window-place">
+        <div class="dialog panel glass" id="dialog">
+            <div class="titlebar"><div class="heading caps" id="question">{{question}}</div></div>
+            <div class="say" data-if="first != ''"><p>{{first}}</p><p data-if="second != ''">{{second}}</p></div>
+            <div class="foot row">
+                <div class="button" id="cancel" data-if="asks" data-hint="Cancel">Cancel</div>
+                <div class="grow"></div>
+                <div class="button main" id="answer" data-first data-attr-data-hint="answer">{{answer}}</div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar" class="bar glass">
+        <div class="stage16">
+            <div class="content">
+                <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

@@ -13,6 +13,7 @@
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameSession.h"
@@ -183,12 +184,11 @@ auto MCMenuScreens::Register() -> void
     Ids.MissionPick = MCScreenFlow::Register(OldScreen(
         "mission pick", [] { return ShowingLoad(true, false); }, [] { GlobalLog()->SetUpSessionScreen(); },
         Back("mission pick back", CancelToSession), true));
-    Ids.Load =
-        MCScreenFlow::Register(OldScreen("load", [] { return ShowingLoad(false, false); }, LoadScreen, {}, true));
+    // Stage 5: LOAD GAME and SAVE GAME remade (logistics/MCSavesMenu); SOLO MISSIONS on the old file screen until 7.
+    Ids.Load = MCScreenFlow::Register(MCSavesMenu::Kind(MCSavesScreen::MCMode::Load));
     Ids.Solo = MCScreenFlow::Register(
         OldScreen("solo missions", [] { return ShowingLoad(false, true); }, SoloLoadScreen, {}, true));
-    Ids.Save = MCScreenFlow::Register(
-        OldScreen("save", [] { return Showing(&MCLogistics::SaveScreen); }, SaveScreen, {}, true));
+    Ids.Save = MCScreenFlow::Register(MCSavesMenu::Kind(MCSavesScreen::MCMode::Save));
     Ids.Preferences = MCScreenFlow::Register(OldScreen(
         "preferences", [] { return Showing(&MCLogistics::PrefScreen); }, ShowPreferences,
         Back("preferences back", CancelPrefs)));

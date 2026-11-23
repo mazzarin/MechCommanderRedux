@@ -94,6 +94,15 @@ public:
     /// <summary>The first default name with no save (the game's "savegame%03i", from 0, as today); none past 999.</summary>
     static std::optional<std::string> FreeName();
 
+    /// <summary>
+    /// The save the campaign would make now (SAVE GAME's "This save"): <paramref name="campaign"/>'s scenario
+    /// <paramref name="mission"/> (the logistics' CurrentMission) with <paramref name="points"/> RP, named, unwritten.
+    /// </summary>
+    static MCSave Unsaved(MCCampaign campaign, int32_t mission, uint32_t points);
+
+    /// <summary>Whether <paramref name="name"/> can name a save's file: not empty, no folder or drive in it.</summary>
+    static bool CanName(std::string_view name);
+
     /// <summary>Counts every change of the list, so a view can tell when to read it again.</summary>
     uint64_t Revision() const;
 
@@ -128,6 +137,8 @@ private:
 
     /// <summary>The scenarios a campaign's master mission file lists; none when it can't be read.</summary>
     static std::vector<MCScenario> ReadScenarios(std::string_view master);
+    /// <summary><paramref name="save"/>'s mission <paramref name="scenario"/>, named by its briefing (read once in <paramref name="named"/>).</summary>
+    static void NameMission(MCSave& save, const MCScenario& scenario, std::unordered_map<std::string, MCNamed>& named);
     void ReadSave(MCSave& save, std::span<const std::vector<MCScenario>> campaigns,
                   std::unordered_map<std::string, MCNamed>& named) const;
     SDL_Time Now() const;

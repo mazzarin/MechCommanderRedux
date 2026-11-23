@@ -681,6 +681,9 @@
     <ClCompile Include="logistics\MCSaves.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCSavesMenu.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCSessionScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2201,6 +2204,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSaves.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCSavesMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSessionScreen.h">

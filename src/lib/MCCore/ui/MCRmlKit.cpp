@@ -19,6 +19,8 @@ namespace
     constexpr const char* TabClass = "tab";
     constexpr const char* NowClass = "now";
     constexpr const char* SwitchClass = "switch";
+    /// <summary>A switch Q and E step as tabs (a screen's groups: LOAD GAME's campaigns).</summary>
+    constexpr const char* TabsSwitchAttribute = "data-tabs";
     constexpr const char* OnClass = "on";
     constexpr const char* StepperClass = "stepper";
     constexpr const char* ArrowClass = "arrow";
@@ -336,6 +338,24 @@ bool MCRmlKit::StepTab(Rml::ElementDocument& document, int step)
         const int next = (std::max(Choice(*tabs), 0) + step + count) % count;
         Play(TabSound);
         Choose(*tabs, next, true);
+        return true;
+    }
+
+    // Port-only (stage 5): a screen without tabs whose groups are a switch's (LOAD GAME's ALL and campaigns, marked
+    // data-tabs) has Q and E step it, as tabs, round from its last to its first.
+    Rml::ElementList switches;
+    document.QuerySelectorAll(switches, std::format(".{}[{}]", SwitchClass, TabsSwitchAttribute));
+
+    for (Rml::Element* control : switches)
+    {
+        if (!control->IsVisible(true) || control->GetNumChildren() == 0)
+        {
+            continue;
+        }
+
+        const int count = control->GetNumChildren();
+        Play(TabSound);
+        Choose(*control, (std::max(Choice(*control), 0) + step + count) % count, true);
         return true;
     }
 

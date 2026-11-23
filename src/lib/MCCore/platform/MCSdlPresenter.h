@@ -56,9 +56,6 @@ private:
     /// <paramref name="shown"/> (the fade): drawn by the CPU and uploaded when it isn't the overlay drawn last.
     /// </summary>
     std::expected<void, std::string> DrawOverlay(const std::shared_ptr<const MCUiDraws>& overlay, float shown);
-    /// <summary>Port-only: puts the menus' newly drawn <paramref name="picture"/> (premultiplied RGBA) in
-    /// <see cref="_Overlay"/>, as <see cref="_Ui"/>'s comment says.</summary>
-    std::expected<void, std::string> UploadOverlay(const SDL_Surface& picture);
     /// <summary>With the frame log open, runs the renderer's queued draws now, so they count in the part made.</summary>
     void RunQueueForLog();
 
@@ -81,14 +78,9 @@ private:
     bool _FadeScales = false;
     /// <summary>The CPU's composite of the screen.</summary>
     std::vector<uint8_t> _Composed;
-    /// <summary>
-    /// Port-only: the menus' draws, drawn by the CPU (premultiplied RGBA), and their picture's texture: its covered
-    /// box (<see cref="_OverlayBox"/>) copied as it is when every pixel in it is whole, else in straight alpha.
-    /// </summary>
+    /// <summary>Port-only: the menus' draws, drawn by the CPU, and their picture's texture (premultiplied RGBA).</summary>
     MCUiSoftware _Ui;
     MCSdlHandle<SDL_Texture> _Overlay;
-    /// <summary>Port-only: the box of the menus' picture holding every pixel with any coverage (empty: none).</summary>
-    SDL_Rect _OverlayBox{};
     /// <summary>Port-only: the menus' draws <see cref="_Overlay"/> holds (MCRmlMenus hands the same ones out again
     /// while nothing changes).</summary>
     std::shared_ptr<const MCUiDraws> _OverlayDrawn;

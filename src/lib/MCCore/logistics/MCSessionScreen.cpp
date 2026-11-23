@@ -759,7 +759,9 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     _Pinging = true;
     SessionButton->Disabled = false;
     ExitButton->Toggled = false;
-    ExitButton->Disabled = false;
+    // Port-only (SPEC-menus.md's stage 2): a room that waits for its guests to leave stays with nothing to press when
+    // it's shown again (a guest's late join), as MCRoomEnd::CloseRoom left it.
+    ExitButton->Disabled = MCRoomEnd::WaitsForGuests();
     StartButton->Disabled = true;
 
     // Port-only (SPEC-menus.md's stage 2): EXIT goes back one screen, as Escape does (the room's way back: a launcher's

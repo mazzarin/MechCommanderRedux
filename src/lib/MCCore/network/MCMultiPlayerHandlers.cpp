@@ -1420,6 +1420,10 @@ void HandleLocalPlayerRemoved()
     MCMultiPlayer& game = Game();
     LastConnectionType = game.SessionManager->CurrentConnection;
 
+    // Port-only (SPEC-menus.md's stage 2): a launcher's guest, its room the stack's end, says why the game ends
+    // ("BOB CLOSED THE GAME."); its OK ends the game, as the original's message's did.
+    const std::string line = LaunchedFromLobby && !game.IsHost ? MCRoomEnd::GuestLine() : LoadGameString(0x369, 0xfe);
+
     // Port-only (Redux HD): at the results the battle is over, and a game the menus took to its room goes back to its
     // games screen, saying why (network/MCRoomEnd.h).
     if (MCRoomEnd::SessionLost())
@@ -1438,7 +1442,7 @@ void HandleLocalPlayerRemoved()
         Mission()->EndScenario();
     }
 
-    ShowOkDialog(*GlobalLog()->MessageDialog, LoadGameString(0x369, 0xfe), LostConnectionDialogExit);
+    ShowOkDialog(*GlobalLog()->MessageDialog, line, LostConnectionDialogExit);
 }
 
 void TakeHeldSessionLoss()

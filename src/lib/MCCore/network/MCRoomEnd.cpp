@@ -117,6 +117,15 @@ namespace
     }
 
     /// <summary>
+    /// What a guest says of its room's end: closed by its host <paramref name="closedBy"/>, as it said, else its
+    /// connection to <paramref name="host"/>'s game lost.
+    /// </summary>
+    std::string LineOf(const std::optional<std::string>& closedBy, std::string_view host)
+    {
+        return closedBy.has_value() ? std::format(ClosedFormat, *closedBy) : std::format(LostFormat, host);
+    }
+
+    /// <summary>
     /// The host's name in the menus' capitals, as the session has it: its host's player (as the transport marks it), or
     /// the game's host or server.
     /// </summary>
@@ -410,6 +419,18 @@ namespace
     }
 }
 
+auto MCRoomEnd::WaitsForGuests() -> bool
+{
+    return Ending.has_value();
+}
+
+auto MCRoomEnd::GuestLine() -> std::string
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+    return LineOf(ClosedBy,
+                  game != nullptr && game->SessionManager != nullptr ? HostName(*game) : std::string(SomeHost));
+}
+
 auto MCRoomEnd::GamesOf() -> MCGames
 {
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
@@ -612,8 +633,7 @@ auto MCRoomEnd::SessionLost() -> bool
         return true;
     }
 
-    const std::string host = HostName(*game);
-    std::string line = closedBy.has_value() ? std::format(ClosedFormat, *closedBy) : std::format(LostFormat, host);
+    std::string line = LineOf(closedBy, HostName(*game));
     SDL_Log("Room end: the room ended under this game (%s)", line.c_str());
 
     // A match: back to the games once its scenario has ended (MCRoomEnd::AfterMatch).

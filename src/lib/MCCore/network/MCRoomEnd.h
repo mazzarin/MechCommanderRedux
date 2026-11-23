@@ -67,6 +67,12 @@ namespace MCRoomEnd
     bool CloseRoom();
 
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): whether the host's room is ending (closed, or gone for its rematch) and
+    /// waits for its guests to leave: nothing more to press on it, though it's shown again (a guest's join).
+    /// </summary>
+    bool WaitsForGuests();
+
+    /// <summary>
     /// The host's MCMPMessageType::RoomEnds from player <paramref name="fromId"/>, saying <paramref name="how"/>.
     /// </summary>
     /// <returns>Whether the room ends here now (the host closed it): the game leaves as it does when the session is lost.</returns>
@@ -79,6 +85,13 @@ namespace MCRoomEnd
     /// </summary>
     /// <returns>Whether it took it; false: the original's way (the main menu and its message).</returns>
     bool SessionLost();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): what a guest says as its room ends under it ("BOB CLOSED THE GAME.", or
+    /// "LOST THE CONNECTION TO BOB'S GAME."): for a launcher's guest, whose room is the stack's end, the original's
+    /// message's text, its OK ending the game. Asked before <see cref="SessionLost"/>, which takes the host's word.
+    /// </summary>
+    std::string GuestLine();
 
     /// <summary>
     /// Leaves the room this game is in as its EXIT does, its screens' own cleared, and shows the games screen it came

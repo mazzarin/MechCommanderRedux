@@ -20,6 +20,8 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 
+#include <random>
+
 // Port-only (SPEC-menus.md, stage 2): the remade menus' building blocks (MCCore's ui/) proved on the probe screen
 // (src/res/ui/probe.rml), which no player sees: RmlUi's layout with the app's face, drawn on the software path the same
 // on every machine; the layout and legibility checks at every window the players' reports name; a resize; the keys; a
@@ -329,6 +331,387 @@ TEST_CASE_ISOLATED("menus: the probe screen draws the same on every machine at 4
             probe.Drawn(ShotPath(std::format("menus_probe_{}x{}", frame.Window.Width, frame.Window.Height)));
         CHECK_EQ(std::format("{}x{}: {:#010x}", frame.Window.Width, frame.Window.Height, hash),
                  std::format("{}x{}: {:#010x}", frame.Window.Width, frame.Window.Height, frame.Hash));
+    }
+}
+
+namespace
+{
+    /// <summary>Where two pictures first differ (their sizes, or a pixel's bytes in each); nothing: the same bytes.</summary>
+    std::string PictureDifference(const SDL_Surface& first, const SDL_Surface& second)
+    {
+        if (first.w != second.w || first.h != second.h)
+        {
+            return std::format("{}x{} against {}x{}", first.w, first.h, second.w, second.h);
+        }
+
+        for (int y = 0; y < first.h; ++y)
+        {
+            const auto* a = static_cast<const uint8_t*>(first.pixels) + static_cast<ptrdiff_t>(y) * first.pitch;
+            const auto* b = static_cast<const uint8_t*>(second.pixels) + static_cast<ptrdiff_t>(y) * second.pitch;
+
+            for (int x = 0; x < first.w; ++x)
+            {
+                const size_t at = static_cast<size_t>(x) * PixelBytes;
+
+                if (std::memcmp(a + at, b + at, PixelBytes) != 0)
+                {
+                    return std::format("pixel {},{}: {:02x}{:02x}{:02x}{:02x} against {:02x}{:02x}{:02x}{:02x}", x, y,
+                                       a[at], a[at + 1], a[at + 2], a[at + 3], b[at], b[at + 1], b[at + 2], b[at + 3]);
+                }
+            }
+        }
+
+        return {};
+    }
+
+    /// <summary>The pixels the last draw of <paramref name="software"/> drew (its boxes' areas, summed).</summary>
+    int64_t ChangedArea(const MCUiSoftware& software)
+    {
+        int64_t area = 0;
+
+        for (const SDL_Rect& box : software.Changed())
+        {
+            area += static_cast<int64_t>(box.w) * static_cast<int64_t>(box.h);
+        }
+
+        return area;
+    }
+
+    /// <summary>The middle of <paramref name="element"/>'s border box, in window pixels.</summary>
+    Rml::Vector2f MiddleOf(Rml::Element& element)
+    {
+        return element.GetAbsoluteOffset(Rml::BoxArea::Border) + element.GetBox().GetSize() / 2.0f;
+    }
+}
+
+/// <summary>
+/// The software path draws again only the boxes a frame changes (MCUiSoftware), and its picture is the one a whole
+/// redraw gives, byte for byte: over the mouse moving down the list's rows, the list scrolled, a change of tab, the
+/// window opening (its veil over everything) and a hover in it, the window closing and the screen faded (its opacity
+/// stepped down and back). A hover draws again only a small part of the window.
+/// </summary>
+TEST_CASE_ISOLATED("menus: the software path's partial redraw gives a whole redraw's picture, byte for byte")
+{
+    constexpr MCWindowSize Window = FrameWindows[1];
+    constexpr int64_t WindowArea = static_cast<int64_t>(Window.Width) * Window.Height;
+    // A hover's redraw: under a tenth of the window (the rows' boxes).
+    constexpr int64_t HoverAreaMost = WindowArea / 10;
+    // Games enough for the list to scroll.
+    constexpr int ScrollingGames = 40;
+    MCHeadlessProbe probe(Window.Width, Window.Height);
+    REQUIRE_EQ(probe.Error, "");
+    probe.Probe->SetGames(MCRmlProbe::SampleGames(ScrollingGames));
+    MCUiSoftware kept;
+    MCUiSoftware whole;
+
+    // A step's settled frame drawn on the kept picture (only where it changed) and wholly, the two compared; the
+    // pixels the kept picture drew.
+    const auto drawn = [&](std::string_view step)
+    {
+        const std::shared_ptr<const MCUiDraws> draws = probe.Frames();
+        REQUIRE(draws != nullptr);
+        const auto keptDrawn = kept.Draw(*draws);
+        REQUIRE_EQ(keptDrawn.has_value() ? std::string() : keptDrawn.error(), "");
+        whole.Forget();
+        const auto wholeDrawn = whole.Draw(*draws);
+        REQUIRE_EQ(wholeDrawn.has_value() ? std::string() : wholeDrawn.error(), "");
+        CHECK_EQ(std::format("{}: {}", step, PictureDifference(*kept.Picture(), *whole.Picture())),
+                 std::format("{}: ", step));
+        return ChangedArea(kept);
+    };
+
+    CHECK_EQ(drawn("first"), WindowArea);
+    const std::vector<Rml::Element*> rows = probe.Rows();
+    REQUIRE(rows.size() > 3);
+
+    // The mouse's first move, onto the first row: the focus ring goes and the mouse's hints show.
+    const Rml::Vector2f first = MiddleOf(*rows[0]);
+    probe.MouseTo(first.x, first.y);
+    CHECK(drawn("the mouse's first move") > 0);
+
+    // On down the rows: each move restyles the row left and the row reached (the picked row looks the same hovered or
+    // not), and draws little.
+    for (size_t row = 1; row <= 3; ++row)
+    {
+        const Rml::Vector2f at = MiddleOf(*rows[row]);
+        probe.MouseTo(at.x, at.y);
+        const int64_t area = drawn(std::format("hover {}", row));
+        CHECK(area > 0);
+        CHECK(area < HoverAreaMost);
+    }
+
+    // The list scrolled a row and a little (the rows cut by its box), then back.
+    constexpr float PastRow = 3.0f;
+    Rml::Element& list = *probe.Document().GetElementById("list");
+    list.SetScrollTop(rows[1]->GetAbsoluteTop() - rows[0]->GetAbsoluteTop() + PastRow);
+    CHECK(drawn("scrolled") > 0);
+    list.SetScrollTop(0.0f);
+    drawn("scrolled back");
+
+    // The next tab.
+    probe.Key(SDLK_E);
+    CHECK(drawn("tab") > 0);
+
+    // The window, its veil over the whole screen; a hover on its LEAVE; closed.
+    probe.Document().GetElementById("window")->Focus(true);
+    probe.Key(SDLK_RETURN);
+    REQUIRE(static_cast<bool>(probe.Probe->Window()));
+    CHECK_EQ(drawn("window"), WindowArea);
+    Rml::Element* leave = probe.Probe->Window().Lock()->Document()->get().GetElementById("leave");
+    REQUIRE(leave != nullptr);
+    const Rml::Vector2f atLeave = MiddleOf(*leave);
+    probe.MouseTo(atLeave.x, atLeave.y);
+    CHECK(drawn("hover in the window") < HoverAreaMost);
+    probe.Key(SDLK_ESCAPE);
+    drawn("window closed");
+
+    // A fade: the screen's opacity stepped down, and back.
+    for (const char* opacity : {"0.5", "0.25"})
+    {
+        probe.Document().SetProperty("opacity", opacity);
+        drawn(std::format("opacity {}", opacity));
+    }
+
+    probe.Document().RemoveProperty("opacity");
+    drawn("opacity back");
+
+    // Nothing changed: nothing drawn.
+    CHECK_EQ(drawn("again"), 0);
+}
+
+namespace
+{
+    /// <summary>
+    /// The software path's boxes and pictures drawn the plain way, for the tests: every rectangle a copy by SDL's
+    /// software renderer (a box its white texel scaled and coloured, a picture its texels scaled), cut by the draw's
+    /// scissor, the whole picture each time.
+    /// </summary>
+    class MCSdlRectangles
+    {
+    public:
+        MCSdlRectangles(int width, int height)
+            : _Surface(SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32))
+            , _Renderer(_Surface != nullptr ? SDL_CreateSoftwareRenderer(_Surface.get()) : nullptr)
+        {
+            _White = Texture(MCUiTexture{.Id = 0, .Width = 1, .Height = 1, .Pixels = {255, 255, 255, 255}});
+        }
+
+        ~MCSdlRectangles()
+        {
+            _Textures.clear();
+            _White.reset();
+            _Renderer.reset();
+        }
+
+        MCSdlRectangles(const MCSdlRectangles&) = delete;
+        MCSdlRectangles& operator=(const MCSdlRectangles&) = delete;
+
+        const SDL_Surface& Draw(const MCUiDraws& draws)
+        {
+            SDL_Renderer* renderer = _Renderer.get();
+            SDL_SetRenderClipRect(renderer, nullptr);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+            SDL_RenderClear(renderer);
+
+            for (const MCUiDraw& draw : draws.Draws)
+            {
+                SDL_Texture* texture = _White.get();
+
+                if (draw.Texture != nullptr)
+                {
+                    auto& kept = _Textures[draw.Texture->Id];
+                    kept = kept != nullptr ? std::move(kept) : Texture(*draw.Texture);
+                    texture = kept.get();
+                }
+
+                SDL_SetRenderClipRect(renderer, draw.Scissor.has_value() ? &*draw.Scissor : nullptr);
+
+                for (const MCUiPiece& piece : MCUiPieces(draw))
+                {
+                    REQUIRE(piece.Quad.has_value());
+                    const MCUiQuad& quad = *piece.Quad;
+                    SDL_SetTextureColorMod(texture, quad.Color[0], quad.Color[1], quad.Color[2]);
+                    SDL_SetTextureAlphaMod(texture, quad.Color[3]);
+                    const auto toFloat = [](const SDL_Rect& rect)
+                    {
+                        return SDL_FRect{static_cast<float>(rect.x), static_cast<float>(rect.y),
+                                         static_cast<float>(rect.w), static_cast<float>(rect.h)};
+                    };
+
+                    const SDL_FRect target = toFloat(quad.Target);
+                    const std::optional<SDL_FRect> source =
+                        quad.Source.has_value() ? std::optional(toFloat(*quad.Source)) : std::nullopt;
+                    SDL_RenderTexture(renderer, texture, source.has_value() ? &*source : nullptr, &target);
+                }
+            }
+
+            REQUIRE(SDL_FlushRenderer(renderer));
+            return *_Surface;
+        }
+
+    private:
+        MCSdlHandle<SDL_Texture> Texture(const MCUiTexture& picture)
+        {
+            MCSdlHandle<SDL_Texture> made(SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32,
+                                                            SDL_TEXTUREACCESS_STATIC, picture.Width, picture.Height));
+            REQUIRE(made != nullptr);
+            REQUIRE(SDL_UpdateTexture(made.get(), nullptr, picture.Pixels.data(),
+                                      picture.Width * static_cast<int>(PixelBytes)));
+            SDL_SetTextureBlendMode(made.get(), SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+            SDL_SetTextureScaleMode(made.get(), picture.Smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+            return made;
+        }
+
+        MCSdlHandle<SDL_Surface> _Surface;
+        MCSdlHandle<SDL_Renderer> _Renderer;
+        MCSdlHandle<SDL_Texture> _White;
+        std::unordered_map<uint64_t, MCSdlHandle<SDL_Texture>> _Textures;
+    };
+
+    /// <summary>
+    /// Random rectangles over a window, as RmlUi draws them (two triangles over four corners): boxes of one colour and
+    /// pictures (whole texels, scaled up, down or not, nearest or smooth), some cut by a scissor, some partly outside
+    /// the window, in premultiplied colours (some opaque, some nothing).
+    /// </summary>
+    class MCRandomRectangles
+    {
+    public:
+        MCRandomRectangles(int width, int height) : _Width(width), _Height(height)
+        {
+            constexpr int Pictures = 6;
+            constexpr int PictureSizeMost = 48;
+
+            for (int i = 0; i < Pictures; ++i)
+            {
+                auto picture = std::make_shared<MCUiTexture>(MCUiTexture{
+                    .Id = static_cast<uint64_t>(i + 1),
+                    .Width = Between(1, PictureSizeMost),
+                    .Height = Between(1, PictureSizeMost),
+                    .Smooth = i % 2 == 0,
+                });
+
+                for (int texel = 0; texel < picture->Width * picture->Height; ++texel)
+                {
+                    const std::array<uint8_t, PixelBytes> color = Color();
+                    picture->Pixels.insert(picture->Pixels.end(), color.begin(), color.end());
+                }
+
+                _Pictures.push_back(std::move(picture));
+            }
+        }
+
+        /// <summary>A rectangle's draw, made anew.</summary>
+        MCUiDraw Draw()
+        {
+            // Some past the window's edges.
+            constexpr int Beyond = 40;
+            constexpr int SizeMost = 400;
+            constexpr int OneIn = 4;
+            const int x = Between(-Beyond, _Width);
+            const int y = Between(-Beyond, _Height);
+            const int w = Between(1, SizeMost);
+            const int h = Between(1, SizeMost);
+            MCUiDraw draw;
+            std::array<float, 2> u{0.0f, 0.0f};
+            std::array<float, 2> v{0.0f, 0.0f};
+
+            if (Between(0, 1) == 0)
+            {
+                draw.Texture = _Pictures[static_cast<size_t>(Between(0, static_cast<int>(_Pictures.size()) - 1))];
+                const int across = draw.Texture->Width;
+                const int down = draw.Texture->Height;
+                const int left = Between(0, across - 1);
+                const int top = Between(0, down - 1);
+                const auto place = [](int texels, int size)
+                { return static_cast<float>(texels) / static_cast<float>(size); };
+                u = {place(left, across), place(Between(left + 1, across), across)};
+                v = {place(top, down), place(Between(top + 1, down), down)};
+            }
+
+            const std::array<uint8_t, PixelBytes> color = Color();
+            auto geometry = std::make_shared<MCUiGeometry>();
+            geometry->Vertices = {
+                {.X = static_cast<float>(x), .Y = static_cast<float>(y), .Color = color, .U = u[0], .V = v[0]},
+                {.X = static_cast<float>(x + w), .Y = static_cast<float>(y), .Color = color, .U = u[1], .V = v[0]},
+                {.X = static_cast<float>(x + w), .Y = static_cast<float>(y + h), .Color = color, .U = u[1], .V = v[1]},
+                {.X = static_cast<float>(x), .Y = static_cast<float>(y + h), .Color = color, .U = u[0], .V = v[1]},
+            };
+
+            geometry->Indices = {0, 1, 2, 0, 2, 3};
+            draw.Geometry = std::move(geometry);
+
+            if (Between(1, OneIn) == 1)
+            {
+                draw.Scissor = SDL_Rect{Between(0, _Width / 2), Between(0, _Height / 2), Between(1, _Width / 2),
+                                        Between(1, _Height / 2)};
+            }
+
+            return draw;
+        }
+
+        int Between(int low, int high) { return std::uniform_int_distribution<int>(low, high)(_Random); }
+
+    private:
+        /// <summary>A premultiplied colour: opaque, nothing, or any alpha with channels no more than it.</summary>
+        std::array<uint8_t, PixelBytes> Color()
+        {
+            constexpr int Kinds = 4;
+            const int kind = Between(1, Kinds);
+            const int alpha = kind == 1 ? 255 : kind == 2 ? 0 : Between(0, 255);
+            const auto channel = [&] { return static_cast<uint8_t>(Between(0, alpha)); };
+            return {channel(), channel(), channel(), static_cast<uint8_t>(alpha)};
+        }
+
+        int _Width;
+        int _Height;
+        std::mt19937 _Random{1};
+        std::vector<std::shared_ptr<MCUiTexture>> _Pictures;
+    };
+}
+
+/// <summary>
+/// The software path's rectangles come out as SDL's software renderer draws them, byte for byte: boxes of one colour
+/// (MCUiFill, SDL's blend) and pictures scaled once and copied after (SDL's scale), cut by scissors and the window's
+/// edges, drawn whole and then, as draws are taken away, changed and added, only where they changed.
+/// </summary>
+TEST_CASE_ISOLATED("menus: the software path's boxes and pictures draw as SDL's renderer draws them, byte for byte")
+{
+    constexpr int Width = 640;
+    constexpr int Height = 480;
+    constexpr int Rectangles = 300;
+    constexpr int Changes = 12;
+    MCRandomRectangles random(Width, Height);
+    MCUiDraws draws{.Width = Width, .Height = Height};
+
+    for (int i = 0; i < Rectangles; ++i)
+    {
+        draws.Draws.push_back(random.Draw());
+    }
+
+    MCUiSoftware software;
+    MCSdlRectangles plain(Width, Height);
+    REQUIRE(software.Draw(draws).has_value());
+    CHECK_EQ(PictureDifference(*software.Picture(), plain.Draw(draws)), "");
+
+    for (int change = 0; change < Changes; ++change)
+    {
+        // A few draws taken away, a few changed, a few added.
+        constexpr int Each = 3;
+
+        for (int i = 0; i < Each; ++i)
+        {
+            draws.Draws.erase(draws.Draws.begin() + random.Between(0, static_cast<int>(draws.Draws.size()) - 1));
+            draws.Draws[static_cast<size_t>(random.Between(0, static_cast<int>(draws.Draws.size()) - 1))] =
+                random.Draw();
+            draws.Draws.insert(draws.Draws.begin() + random.Between(0, static_cast<int>(draws.Draws.size())),
+                               random.Draw());
+        }
+
+        REQUIRE(software.Draw(draws).has_value());
+        CHECK(software.Changed().size() > 0);
+        CHECK_EQ(std::format("change {}: {}", change, PictureDifference(*software.Picture(), plain.Draw(draws))),
+                 std::format("change {}: ", change));
     }
 }
 
@@ -852,6 +1235,8 @@ namespace
 /// into the folder. Then it times <c>--rml-frames</c> frames (200 by default) without vsync, the mouse moving down the
 /// list's rows (each frame restyles two): the menus' layout and recording a frame, the present with their draws and
 /// without, and their draws drawn alone and read back; and the present's parts from a frame log beside the picture.
+/// On the software path also a redraw's time (the boxes changed) and a whole picture's (the median of
+/// <c>--rml-whole</c>, 20 by default).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen")
 {
@@ -936,6 +1321,8 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
     MCFrameLog::NextFrame();
     MCFrameLog::StartTally();
 
+    std::shared_ptr<const MCUiDraws> lastDraws;
+
     for (int32_t frame = 0; frame < frames; ++frame)
     {
         MCFrameLog::NextFrame();
@@ -943,6 +1330,7 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
         MCInput::HandleEvent(MouseAt(*display, rowsX, y));
         const uint64_t start = SDL_GetPerformanceCounter();
         const std::shared_ptr<const MCUiDraws> draws = menus.FrameFor(width, height);
+        lastDraws = draws;
         const uint64_t laid = SDL_GetPerformanceCounter();
         display->SetOverlay(draws);
         REQUIRE(display->Present(false).has_value());
@@ -989,6 +1377,38 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
     MCFrameLog::Close();
     std::cout << std::format("  the present's parts, ms a frame, with the menus: {}; without: {}\n",
                              PresentParts(withParts, frames), PresentParts(withoutParts, frames));
+
+    // The software path: a redraw's time (only the boxes changed), and a whole picture's drawn on the CPU.
+    if (software && redraws > 0 && lastDraws != nullptr)
+    {
+        const auto drawPart = std::ranges::find(withParts.PartsMs, std::string("present.menus.draw"),
+                                                &std::pair<std::string, double>::first);
+        const double redrawMs = drawPart != withParts.PartsMs.end() ? drawPart->second / redraws : 0.0;
+        constexpr int32_t DefaultWholeRedraws = 20;
+        int32_t wholeRedraws = DefaultWholeRedraws;
+
+        if (const std::optional<std::string_view> option = MCTest::Option("rml-whole"); option.has_value())
+        {
+            std::from_chars(option->data(), option->data() + option->size(), wholeRedraws);
+        }
+
+        MCUiSoftware whole;
+        std::vector<double> wholeMs;
+
+        for (int32_t i = 0; i < std::max(wholeRedraws, 1); ++i)
+        {
+            whole.Forget();
+            const uint64_t start = SDL_GetPerformanceCounter();
+            REQUIRE(whole.Draw(*lastDraws).has_value());
+            wholeMs.push_back(Milliseconds(start, SDL_GetPerformanceCounter()));
+        }
+
+        std::ranges::sort(wholeMs);
+        std::cout << std::format(
+            "  the software path: a redraw {:.3f} ms (of {}, the boxes changed, uploaded); a whole "
+            "picture drawn {:.3f} ms (the median of {})\n",
+            redrawMs, redraws, wholeMs[wholeMs.size() / 2], wholeMs.size());
+    }
 
     GHdArt = 0;
     MCHdArt::SetPackFolder({});

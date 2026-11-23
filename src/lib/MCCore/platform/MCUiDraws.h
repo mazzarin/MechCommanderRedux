@@ -71,8 +71,14 @@ inline float MCUiShown(int fade)
 }
 
 /// <summary>
+/// Whether <paramref name="first"/> and <paramref name="second"/> draw the same pixels: the same geometry and texture
+/// (RmlUi keeps both while nothing changes; neither changes once recorded), moved and cut alike.
+/// </summary>
+bool MCUiSameDraw(const MCUiDraw& first, const MCUiDraw& second);
+
+/// <summary>
 /// Whether <paramref name="first"/> and <paramref name="second"/> draw the same picture: the same window, and draw for
-/// draw the same geometry and texture (RmlUi keeps both while nothing changes), moved and cut alike.
+/// draw the same (<see cref="MCUiSameDraw"/>).
 /// </summary>
 bool MCUiSameDraws(const MCUiDraws& first, const MCUiDraws& second);
 

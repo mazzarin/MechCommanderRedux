@@ -232,6 +232,13 @@ private:
     void BlitShown(SDL_GPUCommandBuffer& commands, const ShownLayout& layout, SDL_GPUTexture& target, uint32_t width,
                    uint32_t height) const;
     /// <summary>
+    /// Port-only (SPEC-menus.md): the frame's menus' draws (<see cref="ShownLayout::Overlay"/>) over
+    /// <paramref name="target"/>, the whole window's picture; nothing when it has none.
+    /// </summary>
+    std::expected<void, std::string> DrawMenus(SDL_GPUCommandBuffer& commands, SDL_GPUTexture& target,
+                                               SDL_GPUTextureFormat format, uint32_t width, uint32_t height,
+                                               const ShownLayout& layout);
+    /// <summary>
     /// Port-only (<see cref="RecordWindow"/>): the window as shown blitted into _Recorded, and its download begun on
     /// <paramref name="commands"/>: the transfer buffer it lands in once they're done (the caller releases it).
     /// </summary>

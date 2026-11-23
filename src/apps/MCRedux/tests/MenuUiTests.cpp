@@ -759,6 +759,52 @@ TEST_CASE_ISOLATED("game: the probe screen draws over the game with the 1998 art
     CHECK(display->OverlayRedraws() > redraws);
 }
 
+/// <summary>
+/// On the GPU renderer the menus' draws are on the window itself, and in its recording (MCDisplay::RecordWindow, the
+/// tour's whole-window pictures): JOIN GAME's blue where the probe's layout puts it, not the logistics screen under it.
+/// Skipped where the GPU renderer isn't there (it fell back to the software one).
+/// </summary>
+TEST_CASE_ISOLATED("game: the probe screen shows on the GPU renderer's window and in its recording")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    GRenderer = static_cast<int>(MCRendererKind::Vulkan);
+    REQUIRE(MCTestGame::StartLogistics());
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+
+    if (display->RendererKind() != MCRendererKind::Vulkan)
+    {
+        return;
+    }
+
+    constexpr MCWindowSize Window{1280, 720};
+    REQUIRE(SetWindowPixels(*display, Window.Width, Window.Height));
+    MCGameProbe probe(*display, false);
+    REQUIRE_EQ(probe.Error, "");
+    RunFrames(SettleFrames);
+
+    std::optional<MCWindowFrame> taken;
+    REQUIRE(display->RecordWindow([&taken](MCWindowFrame&& frame) { taken = std::move(frame); }));
+    MCTestGame::RunFrame(FrameSeconds);
+    display->ShowPresented();
+    display->RecordWindow({});
+    REQUIRE(taken.has_value());
+    REQUIRE_EQ(taken->Width, Window.Width);
+    REQUIRE_EQ(taken->Height, Window.Height);
+
+    // JOIN GAME's middle, in window pixels: the look's main button blue (.button.main, #0c346c).
+    Rml::Element* join = probe.Probe->Document()->get().GetElementById("join");
+    REQUIRE(join != nullptr);
+    const Rml::Vector2f at = join->GetAbsoluteOffset(Rml::BoxArea::Border) + join->GetBox().GetSize() / 2.0f;
+    const SDL_Color& pixel = taken->Pixels[static_cast<size_t>(std::lround(at.y)) * static_cast<size_t>(Window.Width) +
+                                           static_cast<size_t>(std::lround(at.x))];
+    CHECK_EQ(std::format("{:02x}{:02x}{:02x}", pixel.r, pixel.g, pixel.b), "0c346c");
+}
+
 namespace
 {
     /// <summary>The milliseconds from <paramref name="start"/> to <paramref name="end"/> (SDL's performance counter).</summary>

@@ -2337,6 +2337,14 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
     if (swapchain != nullptr)
     {
         BlitShown(commands, layout, *swapchain, swapchainWidth, swapchainHeight);
+
+        // Port-only (SPEC-menus.md): the menus' draws over the whole window, last.
+        if (auto drawn = DrawMenus(commands, *swapchain, SDL_GetGPUSwapchainTextureFormat(_Device.get(), _Window.get()),
+                                   swapchainWidth, swapchainHeight, layout);
+            !drawn)
+        {
+            SDL_Log("MCVulkanPresenter: the menus aren't drawn: %s", drawn.error().c_str());
+        }
     }
 
     // Port-only (RecordWindow): the window as shown, read back once the frame is submitted.
@@ -2364,22 +2372,6 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
             else
             {
                 KeepLate(copied.error());
-            }
-        }
-
-        // Port-only (SPEC-menus.md): the menus' draws over the whole window, last. A frame without them is shown alone.
-        if (layout.Overlay != nullptr && !layout.Overlay->Draws.empty())
-        {
-            MCFrameLog::Scope part("present.menus");
-            auto ui = Ui();
-            auto drawn = ui ? ui->get().Draw(
-                                  commands, *swapchain, SDL_GetGPUSwapchainTextureFormat(_Device.get(), _Window.get()),
-                                  swapchainWidth, swapchainHeight, *layout.Overlay, false, layout.OverlayShown)
-                            : std::expected<void, std::string>(std::unexpected(ui.error()));
-
-            if (!drawn)
-            {
-                SDL_Log("MCVulkanPresenter: the menus aren't drawn: %s", drawn.error().c_str());
             }
         }
     }
@@ -2467,6 +2459,27 @@ void MCVulkanPresenter::BlitShown(SDL_GPUCommandBuffer& commands, const ShownLay
     }
 }
 
+std::expected<void, std::string> MCVulkanPresenter::DrawMenus(SDL_GPUCommandBuffer& commands, SDL_GPUTexture& target,
+                                                              SDL_GPUTextureFormat format, uint32_t width,
+                                                              uint32_t height, const ShownLayout& layout)
+{
+    // A frame without them is shown alone.
+    if (layout.Overlay == nullptr || layout.Overlay->Draws.empty())
+    {
+        return {};
+    }
+
+    MCFrameLog::Scope part("present.menus");
+    auto ui = Ui();
+
+    if (!ui)
+    {
+        return std::unexpected(ui.error());
+    }
+
+    return ui->get().Draw(commands, target, format, width, height, *layout.Overlay, false, layout.OverlayShown);
+}
+
 auto MCVulkanPresenter::RecordShown(SDL_GPUCommandBuffer& commands, const ShownLayout& layout, uint32_t width,
                                     uint32_t height) -> std::expected<SDL_GPUTransferBuffer*, std::string>
 {
@@ -2481,6 +2494,13 @@ auto MCVulkanPresenter::RecordShown(SDL_GPUCommandBuffer& commands, const ShownL
     }
 
     BlitShown(commands, layout, *_Recorded.Handle.get(), width, height);
+
+    // The menus over it, as the window shows them.
+    if (auto drawn = DrawMenus(commands, *_Recorded.Handle.get(), Rgba, width, height, layout); !drawn)
+    {
+        return std::unexpected(std::format("the window recorded: {}", drawn.error()));
+    }
+
     SDL_GPUTransferBufferCreateInfo info{};
     info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
     info.size = width * height * static_cast<uint32_t>(sizeof(SDL_Color));

@@ -555,7 +555,7 @@ namespace
             // Port-only (SPEC-menus.md's stage 2): through the flow, the room landing where a launcher's (or the
             // menus') room is.
             MCScreenFlow::Land(MCMenuScreens::RoomStack());
-            MCScreenFlow::Change("room", [] { GlobalLog()->SetUpSessionScreen(); });
+            MCMenuScreens::OpenRoom("room");
             return;
         }
 

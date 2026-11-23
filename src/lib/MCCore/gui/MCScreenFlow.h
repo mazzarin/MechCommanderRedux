@@ -142,6 +142,9 @@ namespace MCScreenFlow
     /// </summary>
     size_t Unrouted();
 
+    /// <summary>Whether a change of screen waits for the one running (<see cref="Change"/> in a change).</summary>
+    bool Waiting();
+
     /// <summary>Counts a change of screen made outside a change (<see cref="Unrouted"/>), named <paramref name="what"/>.</summary>
     void NoteUnrouted(std::string_view what);
 }

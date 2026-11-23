@@ -54,9 +54,10 @@ namespace MCRoomEnd
 
     /// <summary>
     /// Shows <paramref name="games"/> (the LAN games, or INTERNET CONNECTION), a multiplayer game made for it if there is
-    /// none, and says <paramref name="line"/> over it (nothing when empty).
+    /// none, and says <paramref name="line"/> over it (nothing when empty); <paramref name="then"/> runs once they show
+    /// (the change of screen's work).
     /// </summary>
-    void ShowGames(MCGames games, std::string_view line);
+    void ShowGames(MCGames games, std::string_view line, std::function<void()> then = {});
 
     /// <summary>
     /// The host's EXIT from its room (logistics/MCConnectMenu.h's LeaveRoom): with guests whose builds take its word, it

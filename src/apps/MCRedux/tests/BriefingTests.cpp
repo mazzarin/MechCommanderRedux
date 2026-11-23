@@ -703,7 +703,7 @@ namespace
 /// <summary>
 /// Port-only (SPEC-memory.md's "Between missions"): a mission's held art is kept past its end only where a mission plays
 /// next. A campaign mission's win holds the next one from its results' close, a loss keeps its own; a won quick-start
-/// mission, back to the main screen, lets go of it, as a match does unless its rematch follows.
+/// mission, back to SOLO MISSIONS, lets go of it, as a match does unless its rematch follows.
 /// </summary>
 TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mission plays next")
 {
@@ -733,8 +733,8 @@ TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mis
     CHECK(MCHdArt::HoldsFor(missions[1]));
     CHECK(!MCHdArt::HoldsFor(missions[0]));
 
-    // What the way back keeps, by where it goes: a loss replays the mission; a quick-start win goes to the main
-    // screen; a match keeps it for its rematch alone.
+    // What the way back keeps, by where it goes: a loss replays the mission; a quick-start win goes to SOLO
+    // MISSIONS; a match keeps it for its rematch alone.
     const auto keeps = [](uint32_t result, bool solo)
     {
         const uint32_t wasResult = ScenarioResult;
@@ -755,9 +755,10 @@ TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mis
     CHECK(!keeps(Won, false));
     MCGameContext::Current().SetMultiPlayer(nullptr);
 
-    // A quick-start mission won: the main screen, and nothing held.
+    // A quick-start mission won: SOLO MISSIONS (stage 2's landing), and nothing held.
     PlayToResultsAndBack(Won, true);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen);
+    CHECK(LoadingSolo);
     CHECK(!MCHdArt::HoldsFor(missions[0]));
     CHECK(!MCHdArt::HoldsFor(missions[1]));
     CHECK_EQ(MCHdArt::HeldBytes(), 0u);

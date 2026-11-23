@@ -2,6 +2,7 @@
 #include "logistics/MCInternetMenu.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCIdleCheck.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCUpdater.h"
 #include "network/MCLobbyUpdate.h"
@@ -477,12 +478,12 @@ namespace
         }
     }
 
-    /// <summary>The game joined or hosted: its room (the session screen) opens.</summary>
+    /// <summary>The game joined or hosted outside its change: its room (the session screen) opens through the flow.</summary>
     void OpenRoom()
     {
         Pending.reset();
         GlobalLog()->MessageDialog->Deactivate(0);
-        GlobalLog()->SetUpSessionScreen();
+        MCMenuScreens::OpenRoom("room");
     }
 
     /// <summary>
@@ -491,8 +492,10 @@ namespace
     /// </summary>
     void EnterRoom()
     {
+        // Set up at once (what the host says next lands in it), shown once the screen is dark.
         if (MCScreenChange::Name() == JoiningChange && Pending.has_value())
         {
+            MCMenuScreens::PrepareRoom();
             Pending->Entered = true;
             return;
         }
@@ -623,7 +626,9 @@ namespace
                                          {
                                              if (Pending.has_value() && Pending->Entered)
                                              {
-                                                 OpenRoom();
+                                                 Pending.reset();
+                                                 GlobalLog()->MessageDialog->Deactivate(0);
+                                                 MCMenuScreens::ShowPreparedRoom();
                                                  MCScreenFlow::Noted();
                                              }
                                          }}},

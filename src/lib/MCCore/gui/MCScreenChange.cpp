@@ -64,6 +64,16 @@ namespace
         return static_cast<double>(to - from) * MsPerSecond / static_cast<double>(SDL_GetPerformanceFrequency());
     }
 
+    /// <summary>
+    /// Milliseconds on the game's clock since its counter read <paramref name="from"/>: the frame's budget is the game's
+    /// time, so a test's manual clock gives every run the same frames.
+    /// </summary>
+    double GameMsSince(int64_t from)
+    {
+        return static_cast<double>(MCPort::PerformanceCounter() - from) * MsPerSecond /
+               static_cast<double>(MCPort::PerformanceFrequency());
+    }
+
     /// <summary>The refresh rate of the window's screen (Hz); 0 when not known.</summary>
     double RefreshHz()
     {
@@ -278,7 +288,7 @@ auto MCScreenChange::Tend() -> void
 
     if (PiecesLeft())
     {
-        const uint64_t started = SDL_GetPerformanceCounter();
+        const int64_t started = MCPort::PerformanceCounter();
         MCRan ran = MCRan::Done;
 
         // At least one piece a frame: a slow one gets a frame of its own, so the screen is never held long between them.
@@ -286,7 +296,7 @@ auto MCScreenChange::Tend() -> void
         do
         {
             ran = RunNextPiece();
-        } while (ran == MCRan::Done && PiecesLeft() && MsBetween(started, SDL_GetPerformanceCounter()) < FrameBudgetMs);
+        } while (ran == MCRan::Done && PiecesLeft() && GameMsSince(started) < FrameBudgetMs);
 
         if (ran != MCRan::Done || PiecesLeft())
         {

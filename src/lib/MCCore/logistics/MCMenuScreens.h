@@ -54,6 +54,22 @@ namespace MCMenuScreens
     /// </summary>
     void LeaveCampaign();
 
+    /// <summary>
+    /// The room opened at a network's word (a join, the host's word to show it, a lobby's room, a rematch): its set-up at
+    /// once, as the original's, so what the host says next lands in it; shown through the flow's change named
+    /// <paramref name="name"/> (one for every word before it shows; none when it shows already or the screen is dark).
+    /// </summary>
+    void OpenRoom(std::string name);
+
+    /// <summary>
+    /// The room set up at a network's word (<see cref="OpenRoom"/>) for a change that shows it itself
+    /// (<see cref="ShowPreparedRoom"/>), as the INTERNET join's does.
+    /// </summary>
+    void PrepareRoom();
+
+    /// <summary>The room readied (<see cref="PrepareRoom"/>) shown, in a change's dark work.</summary>
+    void ShowPreparedRoom();
+
     /// <summary>The text of <see cref="AskQuit"/>'s and <see cref="AskLeaveGame"/>'s questions.</summary>
     inline constexpr std::string_view QuitQuestion = "Quit the game?";
     inline constexpr std::string_view LeaveGameQuestion = "Leave the game?";

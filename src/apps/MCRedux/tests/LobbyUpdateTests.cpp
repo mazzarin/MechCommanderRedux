@@ -1117,6 +1117,8 @@ TEST_CASE_ISOLATED("game: a lobby's guest started from the rejoin note joins, an
 
     CHECK(hostRestarts());
     CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));
+    // The waiting screen's change of screen (its fades) done.
+    REQUIRE(MCTestGame::FinishChanges());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen);
     MCScreenInput::SaveShot("lobby guest wait 0 host updating", MCScreenInput::ScreenHash());
 
@@ -1156,6 +1158,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest started from the rejoin note joins, an
     Host newBob;
     REQUIRE(newBob.Open(Port, std::string(HostName), std::string(RoomName)));
     CHECK(SettleUntil([&] { return !newBob.Joined().empty(); }));
+    REQUIRE(MCTestGame::FinishChanges());
     CHECK(InSession());
     CHECK(DialogText().empty());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);

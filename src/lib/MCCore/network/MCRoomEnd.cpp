@@ -305,8 +305,9 @@ namespace
                 room.Guests.size());
         DropMessage(*GlobalLog());
         // Port-only (SPEC-menus.md's stage 2): through the flow, the room landing on the games and the main menu.
+        // Set up at once (the picks and the guests' places after it), shown through the flow.
         MCScreenFlow::Land(MCMenuScreens::RoomStack());
-        MCScreenFlow::Change("room again", [] { GlobalLog()->SetUpSessionScreen(); });
+        MCMenuScreens::OpenRoom("room again");
         GlobalLog()->SessionScreen->TakePicks(room.Picks);
         MCLobbyUpdate::KeepPlacesFor(room.Guests);
     }
@@ -343,8 +344,15 @@ namespace
             }
 
             Reopening = room;
-            MCRoomEnd::ShowGames(room.From, {});
-            ShowWaitingDialog(ReopeningText);
+            // Its wait over the games once they show, unless the room has opened meanwhile.
+            MCRoomEnd::ShowGames(room.From, {},
+                                 []
+                                 {
+                                     if (Reopening.has_value())
+                                     {
+                                         ShowWaitingDialog(ReopeningText);
+                                     }
+                                 });
             return;
         }
 
@@ -397,8 +405,8 @@ namespace
         }
 
         game->PlayerRules.clear();
-        MCRoomEnd::ShowGames(rejoin->From, {});
-        MCLobbyUpdate::WaitForRoom(rejoin->Room);
+        // The wait (its REJOINING line) over the games once they show.
+        MCRoomEnd::ShowGames(rejoin->From, {}, [room = rejoin->Room] { MCLobbyUpdate::WaitForRoom(room); });
     }
 }
 
@@ -420,7 +428,7 @@ auto MCRoomEnd::GamesOf() -> MCGames
     return connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx ? MCGames::Lan : MCGames::None;
 }
 
-auto MCRoomEnd::ShowGames(MCGames games, std::string_view line) -> void
+auto MCRoomEnd::ShowGames(MCGames games, std::string_view line, std::function<void()> then) -> void
 {
     MCLogistics& logistics = *GlobalLog();
     // Back at the games, no rematch is pending (JoinAgain has taken its own before).
@@ -439,7 +447,7 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line) -> void
     // dark already), landing on the games with MULTIPLAYER ACCESS and the main menu under them.
     MCScreenFlow::Land(MCMenuScreens::GamesStack(games == MCGames::Internet, false));
     MCScreenFlow::Change("games",
-                         [games, line = std::string(line)]
+                         [games, line = std::string(line), then = std::move(then)]
                          {
                              MCLogistics& shown = *GlobalLog();
                              shown.CurrentScreen()->ShowGuiWindow(false);
@@ -459,6 +467,11 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line) -> void
                              if (!line.empty())
                              {
                                  ShowMenuMessage(line);
+                             }
+
+                             if (then != nullptr)
+                             {
+                                 then();
                              }
                          });
 }

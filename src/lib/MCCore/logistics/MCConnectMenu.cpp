@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCMenuScreens.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
 #include "linkup/MCFidpPlayer.h"
@@ -273,15 +274,21 @@ void LeaveRoom()
         return;
     }
 
-    const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
+    // Port-only (SPEC-menus.md's stage 2): the way out through the flow, with the one fade (the host's wait for its
+    // guests above stays live, its EXIT disabled, as its games come through the flow too).
+    MCScreenFlow::Change("room back",
+                         []
+                         {
+                             const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
 
-    if (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx)
-    {
-        CancelToConnect();
-        return;
-    }
+                             if (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx)
+                             {
+                                 CancelToConnect();
+                                 return;
+                             }
 
-    Cancel();
+                             Cancel();
+                         });
 }
 
 void CancelToLan()
@@ -481,8 +488,8 @@ void JoinGame()
                 {
                     // Port-only (the personal build): straight into the room, which its host shows again with this
                     // player in it (the original's ready room waited for the host's GO).
-                    // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
-                    MCScreenFlow::Change("room", [] { GlobalLog()->SetUpSessionScreen(); });
+                    // Port-only (SPEC-menus.md's stage 2): set up at once, shown through the flow, with the one fade.
+                    MCMenuScreens::OpenRoom("room");
                     return;
                 }
 
@@ -512,8 +519,8 @@ void CreateSession()
 
     // Port-only (the personal build): straight into the room, the host alone in it until players join (the original
     // waited in the ready room).
-    // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
-    MCScreenFlow::Change("room", [] { GlobalLog()->SetUpSessionScreen(); });
+    // Port-only (SPEC-menus.md's stage 2): set up at once, shown through the flow, with the one fade.
+    MCMenuScreens::OpenRoom("room");
 }
 
 void CreateSerialSession()

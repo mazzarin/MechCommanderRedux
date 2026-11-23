@@ -166,6 +166,12 @@ namespace MCTestGame
     void RunFrame(float seconds);
 
     /// <summary>
+    /// Runs frames until no change of screen runs or waits (a press's fade out, its work, the fade in), for a few
+    /// seconds of game time at most; whether they ended.
+    /// </summary>
+    bool FinishChanges();
+
+    /// <summary>
     /// Called on every present after the boot (from MCDisplay::OnPresent, which the boot takes over). A test that
     /// folds the presents into a hash sets it, and clears it at the end.
     /// </summary>

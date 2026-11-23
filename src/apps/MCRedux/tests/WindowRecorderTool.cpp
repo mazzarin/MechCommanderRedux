@@ -7,11 +7,14 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
 #include "gui/MCUpdateDisplay.h"
 #include "main/MCGameContext.h"
 #include "main/MCHdSettings.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCSplashScreen.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
@@ -41,6 +44,11 @@
 // --record-window-framelog <file> (the frame log, as the app's -framelog writes it: each change's line, the parts'
 // times). Each frame recorded waits for the GPU's copy, so frames take a few milliseconds longer than in play: time
 // the changes with --record-window-video 0.
+//
+// Port-only (SPEC-menus.md's stage 2): --record-window-landings 1 goes on through each landing out of a mission: a
+// loss's REPLAY MISSION, a quick-start mission's win to SOLO MISSIONS, Escape back to the main menu, and the
+// campaign's last mission won to the main menu (its end movies skipped with Escape); each part's summary ends with the
+// flow's stack.
 
 namespace
 {
@@ -99,6 +107,10 @@ namespace
     constexpr double MsPerSecond = 1000.0;
     /// <summary>The first mission's result that wins it (above 3).</summary>
     constexpr uint32_t Won = 5;
+    /// <summary>A mission's result that loses it (below 3).</summary>
+    constexpr uint32_t Lost = 0;
+    /// <summary>How often the campaign's end movies are skipped (Escape), in seconds.</summary>
+    constexpr double SkipEvery = 0.5;
     /// <summary>The most frames the scenario's end takes to bring the results up (twenty seconds).</summary>
     constexpr int32_t MostFramesToResults = 300;
 
@@ -706,6 +718,31 @@ namespace
         return fallback;
     }
 
+    /// <summary>The briefing's first mech deployed, as MCTestGame::StartCampaignMission deploys it.</summary>
+    void DeployFirstMech()
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        REQUIRE(logistics->CurrentScreen() == logistics->BriefingScreen);
+        std::shared_ptr<MCLogMech> mech;
+        REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
+        logistics->DeploySlots[0][0].Unit = 0;
+        mech->Deployed = true;
+    }
+
+    /// <summary>The mission's results brought up at once (not recorded), ended as <paramref name="result"/>.</summary>
+    void EndToResults(uint32_t result)
+    {
+        ScenarioResult = result;
+        Mission()->EndScenarioRequested = -1;
+
+        for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+
+        REQUIRE(Mission()->State == MCMissionState::Results);
+    }
+
     /// <summary>Records a part into <paramref name="folder"/>: <paramref name="run"/> played while it records.</summary>
     std::string RecordPart(const std::filesystem::path& folder, int width, int height, const std::function<void()>& run)
     {
@@ -812,16 +849,9 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     } closeLog;
     RunPaced(time, Settled, MostChangeSeconds);
     NewCampaign();
+    RunPaced(time, Settled, MostChangeSeconds);
     RunPacedFor(time, SecondsBefore);
-    {
-        // As MCTestGame::StartCampaignMission deploys: the force's first mech.
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        REQUIRE(logistics->CurrentScreen() == logistics->BriefingScreen);
-        std::shared_ptr<MCLogMech> mech;
-        REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
-        logistics->DeploySlots[0][0].Unit = 0;
-        mech->Deployed = true;
-    }
+    DeployFirstMech();
 
     // BEGIN MISSION (MCBriefingScreen::Launch) to the battlefield's first seconds.
     const std::string into = RecordPart(
@@ -837,15 +867,7 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     std::cout << "into the mission:\n" << into;
 
     // The mission won, its results up (not recorded: their own fade-in is the original's).
-    ScenarioResult = Won;
-    Mission()->EndScenarioRequested = -1;
-
-    for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
-    {
-        MCTestGame::RunFrame(1.0f / 15.0f);
-    }
-
-    REQUIRE(Mission()->State == MCMissionState::Results);
+    EndToResults(Won);
     RunPacedFor(time, SecondsBefore);
 
     // DONE to the next screen.
@@ -858,4 +880,78 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
                                            RunPacedFor(time, SecondsAfter);
                                        });
     std::cout << "out of the mission:\n" << out;
+
+    if (!MCTest::Option("record-window-landings").has_value())
+    {
+        return;
+    }
+
+    // Each landing out of a mission (not recorded: BEGIN MISSION, recorded above, and the results' fade-in).
+    const auto playToResults = [&time](uint32_t result)
+    {
+        DeployFirstMech();
+        Mission()->RequestScenario(Mission()->Scenarios[static_cast<size_t>(Mission()->CurrentScenario)]);
+        REQUIRE(RunPaced(
+            time, [] { return Mission()->State == MCMissionState::Scenario && Settled(); }, MostChangeSeconds));
+        EndToResults(result);
+        RunPacedFor(time, SecondsBefore);
+    };
+
+    const auto recordLanding =
+        [&](std::string_view name, const std::function<void()>& press, const std::function<bool()>& landed)
+    {
+        const std::string report =
+            RecordPart(folder / name, width, height,
+                       [&]
+                       {
+                           RunPacedFor(time, SecondsBefore);
+                           press();
+                           CHECK(RunPaced(time, [&] { return Settled() && landed(); }, MostChangeSeconds));
+                           RunPacedFor(time, SecondsAfter);
+                       });
+        std::cout << std::format("{}:\n{}  the flow's stack: {}\n", name, report, MCScreenFlow::StackText());
+    };
+
+    const auto shows = [](auto MCLogistics::* screen)
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        return logistics != nullptr && logistics->CurrentScreen() == logistics.get()->*screen;
+    };
+
+    const auto leaveResults = [] { Mission()->LeaveResults(); };
+
+    // A loss: REPLAY MISSION's briefing, the main menu under it.
+    playToResults(Lost);
+    recordLanding("replay-mission", leaveResults, [&] { return shows(&MCLogistics::BriefingScreen); });
+
+    // A quick-start mission won: SOLO MISSIONS, the main menu under it; Escape goes back to the main menu.
+    Solo = true;
+    playToResults(Won);
+    recordLanding("solo-missions", leaveResults, [&] { return shows(&MCLogistics::LoadScreen) && LoadingSolo; });
+    Solo = false;
+    recordLanding(
+        "back-to-main", [] { MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE); },
+        [&] { return shows(&MCLogistics::MainScreen); });
+
+    // The campaign's last mission won: its end movies (skipped), then the main menu.
+    NewCampaign();
+    REQUIRE(RunPaced(time, Settled, MostChangeSeconds));
+    Mission()->CurrentScenario = static_cast<int32_t>(Mission()->Scenarios.size()) - 1;
+    playToResults(Won);
+    Clock::time_point skipped = Clock::now();
+    recordLanding("campaign-end", leaveResults,
+                  [&]
+                  {
+                      const auto every =
+                          std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(SkipEvery));
+
+                      if (GuiSystem().SmackerWindow != nullptr && Clock::now() - skipped >= every)
+                      {
+                          skipped = Clock::now();
+                          MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+                      }
+
+                      return Mission()->State == MCMissionState::Logistics && GuiSystem().SmackerWindow == nullptr &&
+                             shows(&MCLogistics::MainScreen);
+                  });
 }

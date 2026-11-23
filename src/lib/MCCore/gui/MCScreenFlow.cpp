@@ -63,12 +63,14 @@ namespace
     }
 
     /// <summary>
-    /// The screen shown now, as the kinds say: the stack's top first (unchanged), then the landing's, the rest of the
-    /// stack (a way back), then any (a way forward).
+    /// The screen shown now, as the kinds say: the stack's top first (unchanged; one without a Shows, which only the flow
+    /// shows, is taken at its word), then the landing's, the rest of the stack (a way back), then any (a way forward).
     /// </summary>
     MCScreenId ShownNow()
     {
-        if (!StackIds.empty() && ShowsNow(StackIds.back()))
+        if (!StackIds.empty() &&
+            (ShowsNow(StackIds.back()) ||
+             (Known(StackIds.back()) && Kinds[static_cast<size_t>(StackIds.back())].Shows == nullptr)))
         {
             return StackIds.back();
         }
@@ -180,6 +182,7 @@ namespace
             return false;
         }
 
+        MCScreenFlow::Noted();
         const MCScreenKind& kind = Kinds[static_cast<size_t>(id)];
         const MCScreenId from = MCScreenFlow::Shown();
         std::vector<MCScreenChange::MCPiece> prepare =
@@ -236,7 +239,15 @@ auto MCScreenFlow::Replace(MCScreenId id) -> bool
 
 auto MCScreenFlow::Back() -> bool
 {
-    if (MCScreenChange::Running() || StackIds.empty())
+    if (MCScreenChange::Running())
+    {
+        return false;
+    }
+
+    // A screen shown outside a change (an old path the flow doesn't route yet): the stack follows it first.
+    Noted();
+
+    if (StackIds.empty())
     {
         return false;
     }
@@ -373,6 +384,11 @@ auto MCScreenFlow::Clear() -> void
     StackIds.clear();
     Landed.clear();
     Queue.clear();
+}
+
+auto MCScreenFlow::Waiting() -> bool
+{
+    return !Queue.empty();
 }
 
 auto MCScreenFlow::Unrouted() -> size_t

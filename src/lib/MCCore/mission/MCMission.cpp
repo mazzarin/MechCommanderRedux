@@ -1559,7 +1559,7 @@ auto MCMission::ShowLoadingScreen() -> void
 auto MCMission::BriefedAfterResults() const -> std::optional<size_t>
 {
     // The way back's own choice (EndScenarioLeavingWayBack, BackToLogistics): a solo mission lost goes back to its
-    // campaign's start, won to the main screen.
+    // campaign's start, won to SOLO MISSIONS (SPEC-menus.md's stage 2).
     constexpr uint32_t LostBelow = 3;
     const bool won = ScenarioResult > LostBelow;
 

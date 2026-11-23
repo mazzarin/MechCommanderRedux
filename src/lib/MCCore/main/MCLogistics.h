@@ -335,6 +335,16 @@ public:
     /// <summary>Switches to the multiplayer session screen.</summary>
     int32_t SetUpSessionScreen();
 
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): <see cref="SetUpSessionScreen"/>'s set-up of the room (its players and picks
+    /// emptied, a host's word to its guests to show it), without showing it: at a network's word, as the original set it
+    /// up, so what the host says next lands in it while the screen shown fades out.
+    /// </summary>
+    void ReadySessionScreen();
+
+    /// <summary>Port-only: <see cref="SetUpSessionScreen"/>'s showing of the room, readied (<see cref="ReadySessionScreen"/>).</summary>
+    void ShowSessionScreen();
+
     /// <summary>Switches to the repair screen (with the slide when <paramref name="animate"/>).</summary>
     int32_t SetUpRepairScreen(bool animate);
 

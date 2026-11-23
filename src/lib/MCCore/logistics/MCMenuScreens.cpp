@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCMenuScreens.h"
+#include "gui/MCScreenChange.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCConnectMenu.h"
@@ -135,6 +136,14 @@ namespace
 
     MCIds Ids;
     bool Registered = false;
+    /// <summary>The room readied at a network's word and a change to show it under way (<see cref="MCMenuScreens::OpenRoom"/>).</summary>
+    bool RoomShowing = false;
+
+    /// <summary>Whether a change to show the readied room is under way (running or waiting; stale once neither).</summary>
+    bool RoomShowPending()
+    {
+        return RoomShowing && (MCScreenChange::Running() || MCScreenFlow::Waiting());
+    }
 
     const MCIds& TheIds()
     {
@@ -169,7 +178,7 @@ auto MCMenuScreens::Register() -> void
                 return;
             }
 
-            MCScreenFlow::Change("room back", LeaveRoom);
+            LeaveRoom();
         }));
     Ids.MissionPick = MCScreenFlow::Register(OldScreen(
         "mission pick", [] { return ShowingLoad(true, false); }, [] { GlobalLog()->SetUpSessionScreen(); },
@@ -314,4 +323,43 @@ auto MCMenuScreens::LeaveCampaign() -> void
 
     PlayLogSound(MainMenuSample);
     MCScreenFlow::Change("campaign back", [] { GlobalLog()->SetUpMainScreen(false); });
+}
+
+auto MCMenuScreens::PrepareRoom() -> void
+{
+    GlobalLog()->ReadySessionScreen();
+    RoomShowing = true;
+}
+
+auto MCMenuScreens::ShowPreparedRoom() -> void
+{
+    RoomShowing = false;
+    GlobalLog()->ShowSessionScreen();
+}
+
+auto MCMenuScreens::OpenRoom(std::string name) -> void
+{
+    MCLogistics& logistics = *GlobalLog();
+
+    // Shown already (the host's word to show it again), or dark already (a change's own work): set up at once.
+    if (logistics.CurrentScreen() == logistics.SessionScreen || MCScreenChange::InPiece())
+    {
+        RoomShowing = false;
+        logistics.SetUpSessionScreen();
+        MCScreenFlow::Noted();
+        return;
+    }
+
+    const bool pending = RoomShowPending();
+    const std::shared_ptr<MCLogObject> before = logistics.CurrentScreen();
+    PrepareRoom();
+
+    // Its set-up gave the room up (too few players: the main menu, as the original's) or a change shows it already.
+    if (logistics.CurrentScreen() != before || pending)
+    {
+        RoomShowing = pending;
+        return;
+    }
+
+    MCScreenFlow::Change(std::move(name), ShowPreparedRoom);
 }

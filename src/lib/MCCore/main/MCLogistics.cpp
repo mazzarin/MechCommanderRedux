@@ -1695,6 +1695,27 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
 auto MCLogistics::SetUpSessionScreen() -> int32_t
 {
+    ShowSessionScreen();
+    ReadySessionScreen();
+    return 0;
+}
+
+auto MCLogistics::ReadySessionScreen() -> void
+{
+    SessionScreen->Activate(false);
+
+    // Port (Redux HD): an internet game's host passes its code on to its players.
+    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
+    {
+        if (const std::optional<std::string> code = MultiPlayer()->SessionManager->HostedInternetCode())
+        {
+            Chat->AddLine(std::format(InternetCodeFormat, *code));
+        }
+    }
+}
+
+auto MCLogistics::ShowSessionScreen() -> void
+{
     NoteScreen("session");
 
     if (MultiplayerInitialized)
@@ -1706,18 +1727,6 @@ auto MCLogistics::SetUpSessionScreen() -> int32_t
     SetCurrentScreen(SessionScreen);
     ShowLogScreen(true, true);
     LogisticsState = 8;
-    SessionScreen->Activate(false);
-
-    // Port (Redux HD): an internet game's host passes its code on to its players.
-    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
-    {
-        if (const std::optional<std::string> code = MultiPlayer()->SessionManager->HostedInternetCode())
-        {
-            Chat->AddLine(std::format(InternetCodeFormat, *code));
-        }
-    }
-
-    return 0;
 }
 
 auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t

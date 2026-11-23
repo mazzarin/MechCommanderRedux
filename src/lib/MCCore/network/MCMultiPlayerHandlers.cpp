@@ -417,8 +417,8 @@ void HandleAppSwitchScreen(uint32_t, std::span<const uint8_t> msg)
 {
     if (ReadLinkupMessage<MCMPTwoLongMessage>(msg).Value1 == 1 && GlobalLog() != nullptr)
     {
-        // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
-        MCScreenFlow::Change("room", [] { GlobalLog()->SetUpSessionScreen(); });
+        // Port-only (SPEC-menus.md's stage 2): set up at once, shown through the flow, with the one fade.
+        MCMenuScreens::OpenRoom("room");
     }
 }
 

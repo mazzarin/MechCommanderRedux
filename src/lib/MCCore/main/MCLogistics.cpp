@@ -75,6 +75,7 @@
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShapeFile.h"
+#include "ui/MCRmlFlow.h"
 #include "vfx/MCVfxFunctions.h"
 
 std::type_identity_t<std::array<bool, 7>> LogCheatActive{};
@@ -738,6 +739,13 @@ auto MCLogistics::SetCurrentScreen(std::weak_ptr<MCLogObject> screen) -> void
     const std::shared_ptr<MCLogObject> before = _CurrentScreen.lock();
     const std::shared_ptr<MCLogObject> after = screen.lock();
     _CurrentScreen = std::move(screen);
+
+    // Port-only (SPEC-menus.md, the remade screens): an old screen come up goes over the remade ones, which hide (one
+    // made logistics' screen is shown just after).
+    if (after != nullptr && (after->ShowWindow || after != before))
+    {
+        MCRmlFlow::OldScreenShown();
+    }
 
     if (_Starting || before == nullptr || after == nullptr || before == after || MCScreenChange::InPiece() ||
         MCScreenChange::Dark() || !HasGuiSystem() || !GuiSystem().CanChangeScreen())

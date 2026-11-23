@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "network/MCMPGameConfiguration.h"
 #include "gui/MCGuiStartup.h"
+#include "ui/MCRmlFlow.h"
 #include "color/MCPalette.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFatal.h"
@@ -1010,6 +1011,8 @@ auto RunGame(std::string_view commandLine, std::chrono::milliseconds internetLea
     }
 
     ReleaseInternetMenus();
+    // Port-only (SPEC-menus.md, the remade screens): the menus' RmlUi stopped while the display and the GUI are there.
+    MCRmlFlow::Stop();
     GuiSystem().Stop();
     context.SetGuiSystem(nullptr);
     return exitCode;

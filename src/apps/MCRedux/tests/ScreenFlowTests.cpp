@@ -19,6 +19,12 @@
 #include "network/MCIntroNote.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
+#include "ui/MCRmlFlow.h"
+#include "ui/MCRmlLayer.h"
+#include "ui/MCRmlProbe.h"
+
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 // Port-only (SPEC-menus.md's stage 2, "The screens' flow"): every change of screen through MCScreenFlow with the one
 // fade, Escape back one screen on every screen, the landings' stacks, the stack's ends, and the waits a change's work
@@ -294,6 +300,104 @@ TEST_CASE_ISOLATED("screen flow: a registered screen and an old one hand over to
 
     PressAndCheck("back to the main menu", [] { MCScreenFlow::Back(); }, {main});
     CHECK(!shown);
+    CHECK(GlobalLog()->MainScreen->IsShowing());
+}
+
+/// <summary>
+/// The remade screens in the flow (ui/MCRmlFlow): a kept kind's screen is the same one each time it shows, an afresh
+/// kind's is made at each press and closed as it hides; while the change fades, a second ENTER or ESC on the screen going
+/// presses nothing, as on the 1998 screens.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "screen flow: a remade screen is kept or made afresh, and a second ENTER during the fade does nothing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    RunWhileChanging();
+
+    const auto probe = [](MCRmlLayer& layer) -> MCGuiHandle<MCRmlScreen>
+    { return layer.CreateChild<MCRmlProbe>([](MCRmlProbe&) {}); };
+    const MCScreenId kept =
+        MCScreenFlow::Register(MCRmlFlow::Kind("a kept test screen", probe, MCRmlFlow::MCKeep::Kept));
+    const MCScreenId afresh =
+        MCScreenFlow::Register(MCRmlFlow::Kind("an afresh test screen", probe, MCRmlFlow::MCKeep::Afresh));
+    const MCScreenId main = MCMenuScreens::Main();
+
+    MCScreenFlow::Open(kept);
+    RunWhileChanging();
+    const MCGuiHandle<MCRmlScreen> keptScreen = MCRmlFlow::Made("a kept test screen");
+    REQUIRE(keptScreen);
+    REQUIRE(keptScreen->Shown());
+    CHECK(MCRmlFlow::Showing());
+    CHECK(!GlobalLog()->MainScreen->IsShowing());
+    auto& keptProbe = static_cast<MCRmlProbe&>(*keptScreen.Lock());
+
+    // ENTER presses the focus's button (JOIN GAME); ESC is the screen's Back, here the next screen.
+    int32_t backs = 0;
+    keptScreen->Back = [&backs, afresh]
+    {
+        ++backs;
+        MCScreenFlow::Open(afresh);
+    };
+
+    Rml::Element* join = keptScreen->Document()->get().GetElementById("join");
+    REQUIRE(join != nullptr);
+    join->Focus(true);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    CHECK_EQ(keptProbe.Joins(), 1);
+
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    CHECK_EQ(backs, 1);
+
+    for (int32_t frame = 0; frame < MostFrames && !MCScreenChange::HoldsInput(); frame++)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    REQUIRE(MCScreenChange::HoldsInput());
+    REQUIRE(keptScreen->Shown());
+    join->Focus(true);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    CHECK_EQ(keptProbe.Joins(), 1);
+    CHECK_EQ(backs, 1);
+
+    RunWhileChanging();
+    CHECK((StackNow() == std::vector<MCScreenId>{main, kept, afresh}));
+    const MCGuiHandle<MCRmlScreen> firstAfresh = MCRmlFlow::Made("an afresh test screen");
+    REQUIRE(firstAfresh);
+    CHECK(firstAfresh->Shown());
+    CHECK(!keptScreen->Shown());
+    const std::weak_ptr<MCRmlScreen> firstWatch = firstAfresh.Lock();
+
+    // Back: the afresh screen closed, the kept one the same as before.
+    MCScreenFlow::Back();
+    RunWhileChanging();
+    CHECK(firstWatch.expired());
+    CHECK(!MCRmlFlow::Made("an afresh test screen"));
+    REQUIRE(MCRmlFlow::Made("a kept test screen"));
+    CHECK(MCRmlFlow::Made("a kept test screen").Lock() == keptScreen.Lock());
+    CHECK(keptScreen->Shown());
+    CHECK_EQ(keptProbe.Joins(), 1);
+
+    // Opened again: a new screen.
+    MCScreenFlow::Open(afresh);
+    RunWhileChanging();
+    const MCGuiHandle<MCRmlScreen> secondAfresh = MCRmlFlow::Made("an afresh test screen");
+    REQUIRE(secondAfresh);
+    CHECK(secondAfresh->Shown());
+
+    // Back to the main menu: no remade screen shows over it.
+    MCScreenFlow::Back();
+    RunWhileChanging();
+    MCScreenFlow::Back();
+    RunWhileChanging();
+    CHECK(StackNow() == std::vector<MCScreenId>{main});
+    CHECK(!MCRmlFlow::Showing());
     CHECK(GlobalLog()->MainScreen->IsShowing());
 }
 

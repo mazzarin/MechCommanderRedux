@@ -333,3 +333,30 @@ void MCRmlLayer::Update()
     _Kit.Update(_Context);
     _Context.Update();
 }
+
+void MCRmlLayer::Tend()
+{
+    // Copies: a screen's frame may show or hide screens (a window over it, the next screen).
+    const std::vector<MCGuiHandle<MCRmlScreen>> shown = _ShownOrder;
+
+    for (const MCGuiHandle<MCRmlScreen>& handle : shown)
+    {
+        if (const std::shared_ptr<MCRmlScreen> screen = handle.Lock(); screen != nullptr && screen->Shown())
+        {
+            screen->OnFrame();
+        }
+    }
+}
+
+void MCRmlLayer::HideAll()
+{
+    const std::vector<MCGuiHandle<MCRmlScreen>> shown = _ShownOrder;
+
+    for (auto at = shown.rbegin(); at != shown.rend(); ++at)
+    {
+        if (const std::shared_ptr<MCRmlScreen> screen = at->Lock(); screen != nullptr)
+        {
+            screen->Hide();
+        }
+    }
+}

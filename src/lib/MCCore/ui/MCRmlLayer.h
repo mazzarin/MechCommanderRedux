@@ -102,6 +102,12 @@ public:
     /// <summary>The layer's frame, before its draws are recorded: the kit's controls kept up, then RmlUi's layout.</summary>
     void Update();
 
+    /// <summary>Port-only (SPEC-menus.md's stage 3): the game's frame for the screens shown (each's OnFrame), oldest first.</summary>
+    void Tend();
+
+    /// <summary>Hides every screen shown (an old screen came up over them).</summary>
+    void HideAll();
+
     /// <summary>
     /// A key RmlUi left (RmlUi's KeyIdentifier): Escape to the top screen's Back, Q and E to its tabs, the rest to the
     /// screen (MCRmlScreen::OnKey); whether it was used.

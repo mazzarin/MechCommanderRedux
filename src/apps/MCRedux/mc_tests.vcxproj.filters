@@ -358,6 +358,9 @@
     <ClCompile Include="tests\WebSocketTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\WindowRecorderTool.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ZoomTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

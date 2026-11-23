@@ -126,6 +126,12 @@ struct MCFrame
     /// </summary>
     int Fade = 0;
     /// <summary>
+    /// Port-only: the fade scales every component toward black (by <see cref="Fade"/> / 255: a change of screen's,
+    /// SPEC-menus.md's stage 1, even over its length) where the original's takes the levels off each (which takes a
+    /// dark screen black in its first steps).
+    /// </summary>
+    bool FadeScales = false;
+    /// <summary>
     /// Port-only: the colour of the window around the view (<see cref="MCDisplay::SetSurround"/>), before
     /// <see cref="Fade"/>; the presenter takes the fade off it as off the picture (<see cref="MCFadedSurround"/>).
     /// </summary>
@@ -136,6 +142,11 @@ struct MCFrame
     /// <see cref="MCPresenter::ShowFinished"/>). Else it is shown before Present returns.
     /// </summary>
     bool Ahead = false;
+    /// <summary>
+    /// Port-only: the display's count of presents at this one (<see cref="MCDisplay::Presents"/>), which a recording's
+    /// frames carry (<see cref="MCWindowFrame::Number"/>).
+    /// </summary>
+    uint64_t Number = 0;
 
     /// <summary>Whether the frame is composited at <see cref="OutputWidth"/> x <see cref="OutputHeight"/>.</summary>
     bool ScaledOutput() const { return OutputWidth > 0 && OutputHeight > 0; }
@@ -150,10 +161,31 @@ struct MCFrame
 void MCComposeScaled(const MCFrame& frame, std::vector<uint8_t>& pixels);
 
 /// <summary>
-/// Port-only: <paramref name="frame"/>'s <see cref="MCFrame::Surround"/> as shown, its fade's levels taken off each
-/// component as the picture's are.
+/// Port-only: <paramref name="color"/> through a screen fade of <paramref name="fade"/> (<see cref="MCFrame::Fade"/>):
+/// the levels taken off each component, or each scaled toward black with <paramref name="scales"/>
+/// (<see cref="MCFrame::FadeScales"/>). Its alpha is kept.
+/// </summary>
+SDL_Color MCFadedColor(SDL_Color color, int fade, bool scales);
+
+/// <summary>
+/// Port-only: <paramref name="frame"/>'s <see cref="MCFrame::Surround"/> as shown, faded as the picture is, opaque.
 /// </summary>
 SDL_Color MCFadedSurround(const MCFrame& frame);
+
+/// <summary>
+/// Port-only: a frame as the window showed it, the whole window (the view where it was shown, and around it), read back
+/// for a recording (<see cref="MCPresenter::RecordWindow"/>).
+/// </summary>
+struct MCWindowFrame
+{
+    /// <summary>The present it was (<see cref="MCFrame::Number"/>).</summary>
+    uint64_t Number = 0;
+    /// <summary>The window's size in pixels.</summary>
+    int Width = 0;
+    int Height = 0;
+    /// <summary>Its pixels, RGBA, row after row.</summary>
+    std::vector<SDL_Color> Pixels;
+};
 
 /// <summary>
 /// Shows frames in the display's window. Every call is made from the thread that created the display.
@@ -252,6 +284,14 @@ public:
     /// in the order they're drawn (a later one over an earlier); none without a GPU renderer's.
     /// </summary>
     virtual std::span<const MCShownGrid> ShownGrids() const { return {}; }
+
+    /// <summary>
+    /// Port-only, a tool's (mc_tests' --record-window): from now on each frame shown is also read back whole, as the
+    /// window shows it, and handed to <paramref name="taken"/> on the thread that shows it (the game's) once its
+    /// present is done; an empty function stops. Each read waits for the GPU, so the frames take longer than in play.
+    /// False when this presenter can't.
+    /// </summary>
+    virtual bool RecordWindow(std::function<void(MCWindowFrame&&)> /*taken*/) { return false; }
 };
 
 /// <summary>

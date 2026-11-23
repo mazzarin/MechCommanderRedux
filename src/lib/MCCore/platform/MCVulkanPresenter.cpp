@@ -38,7 +38,10 @@ namespace
         /// <summary>The colour cycle: the first index and the step (-1: none), then the eight sources.</summary>
         int32_t Cycle[4];
         uint32_t CycleSources[8];
-        /// <summary>The screen fade: x, the amount taken off every component (0 none, 1 black).</summary>
+        /// <summary>
+        /// The screen fade: x, the amount taken off every component (0 none, 1 black); port-only, y 1 when each is
+        /// scaled toward black by it instead (MCFrame::FadeScales).
+        /// </summary>
         float Fade[4];
         /// <summary>Port-only (HD lighting): the lights, their strength, the world's own light and 1 / the tilt.</summary>
         float Lighting[4] = {0.0f, 0.0f, 1.0f, 1.0f};
@@ -870,6 +873,8 @@ struct MCVulkanPresenter::PlannedFrame
     ShownLayout Layout;
     MCColorCycle Cycle;
     int Fade = 0;
+    /// <summary>Port-only: whether the fade scales the colours (<see cref="MCFrame::FadeScales"/>).</summary>
+    bool FadeScales = false;
     /// <summary>The palette (<see cref="MCFrame::PaletteColors"/>), and whether it changed since the last frame.</summary>
     std::array<SDL_Color, 256> Palette{};
     bool PaletteChanged = false;
@@ -1297,9 +1302,10 @@ auto MCVulkanPresenter::Plan(const MCFrame& frame, bool read)
     planned->Width = frame.Width;
     planned->Height = frame.Height;
     planned->Layout = ShownLayout{frame.View, frame.ScaledOutput() ? frame.OutputWidth : 0,
-                                  frame.ScaledOutput() ? frame.OutputHeight : 0, MCFadedSurround(frame)};
+                                  frame.ScaledOutput() ? frame.OutputHeight : 0, MCFadedSurround(frame), frame.Number};
     planned->Cycle = frame.Cycle;
     planned->Fade = frame.Fade;
+    planned->FadeScales = frame.FadeScales;
     std::ranges::copy(frame.PaletteColors.first(std::min(frame.PaletteColors.size(), planned->Palette.size())),
                       planned->Palette.begin());
     planned->PaletteChanged = frame.PaletteChanged;
@@ -2066,6 +2072,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
         }
 
         uniforms.Fade[0] = static_cast<float>(planned.Fade) / 255.0f;
+        uniforms.Fade[1] = planned.FadeScales ? 1.0f : 0.0f;
 
         const CompositeBindings bindings{{
             {screen, _Nearest.get()},
@@ -2323,43 +2330,39 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
     // No swapchain image (a minimised or hidden window): the frame is composited but not shown.
     if (swapchain != nullptr)
     {
-        const MCViewport shown = MCPresentViewport(static_cast<int>(swapchainWidth), static_cast<int>(swapchainHeight),
-                                                   layout.View.w, layout.View.h, _Presentation);
-        SDL_GPUBlitInfo blit{};
-        blit.source.texture = _Frame.Handle.get();
+        BlitShown(commands, layout, *swapchain, swapchainWidth, swapchainHeight);
+    }
 
-        // A frame composited at the output's size is shown whole.
-        if (layout.Scaled())
+    // Port-only (RecordWindow): the window as shown, read back once the frame is submitted.
+    SDL_GPUTransferBuffer* recorded = nullptr;
+    uint32_t recordedWidth = swapchainWidth;
+    uint32_t recordedHeight = swapchainHeight;
+
+    if (_WindowRecorder)
+    {
+        if (swapchain == nullptr)
         {
-            blit.source.w = static_cast<uint32_t>(layout.OutputWidth);
-            blit.source.h = static_cast<uint32_t>(layout.OutputHeight);
+            int width = 0;
+            int height = 0;
+            SDL_GetWindowSizeInPixels(_Window.get(), &width, &height);
+            recordedWidth = static_cast<uint32_t>(std::max(width, 0));
+            recordedHeight = static_cast<uint32_t>(std::max(height, 0));
         }
-        else
-        {
-            blit.source.x = static_cast<uint32_t>(layout.View.x);
-            blit.source.y = static_cast<uint32_t>(layout.View.y);
-            blit.source.w = static_cast<uint32_t>(layout.View.w);
-            blit.source.h = static_cast<uint32_t>(layout.View.h);
-        }
 
-        blit.destination.texture = swapchain;
-        blit.destination.x = static_cast<uint32_t>(std::lround(std::max(shown.X, 0.0f)));
-        blit.destination.y = static_cast<uint32_t>(std::lround(std::max(shown.Y, 0.0f)));
-        blit.destination.w = static_cast<uint32_t>(std::lround(shown.W));
-        blit.destination.h = static_cast<uint32_t>(std::lround(shown.H));
-        blit.load_op = SDL_GPU_LOADOP_CLEAR;
-        // Port-only: the window around the view in the frame's surround (the menus' stone colour), faded.
-        constexpr float ComponentMost = 255.0f;
-        blit.clear_color = SDL_FColor{static_cast<float>(layout.Surround.r) / ComponentMost,
-                                      static_cast<float>(layout.Surround.g) / ComponentMost,
-                                      static_cast<float>(layout.Surround.b) / ComponentMost, 1.0f};
-        blit.filter = _Presentation.Linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;
-
-        if (blit.destination.w != 0 && blit.destination.h != 0)
+        if (recordedWidth > 0 && recordedHeight > 0)
         {
-            SDL_BlitGPUTexture(&commands, &blit);
+            if (auto copied = RecordShown(commands, layout, recordedWidth, recordedHeight); copied)
+            {
+                recorded = *copied;
+            }
+            else
+            {
+                KeepLate(copied.error());
+            }
         }
     }
+
+    std::expected<void, std::string> submitted;
 
     if (MCFrameLog::Scope part("present.submit"); _ThirdImage)
     {
@@ -2369,19 +2372,149 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
 
         if (fence == nullptr)
         {
-            return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence"));
+            submitted = std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence"));
         }
-
-        _Sent.push_back({fence, ++_FramesSent});
+        else
+        {
+            _Sent.push_back({fence, ++_FramesSent});
+        }
     }
     else if (!SDL_SubmitGPUCommandBuffer(&commands))
     {
-        return std::unexpected(SdlError("SDL_SubmitGPUCommandBuffer"));
+        submitted = std::unexpected(SdlError("SDL_SubmitGPUCommandBuffer"));
+    }
+
+    if (recorded != nullptr)
+    {
+        if (submitted)
+        {
+            TakeRecorded(*recorded, layout.Number, recordedWidth, recordedHeight);
+        }
+
+        SDL_ReleaseGPUTransferBuffer(_Device.get(), recorded);
+    }
+
+    if (!submitted)
+    {
+        return submitted;
     }
 
     // The frame handed to the screen: the frame log's time between these is the screen's (a benchmark's hitches).
     MCFrameLog::Presented();
     return {};
+}
+
+void MCVulkanPresenter::BlitShown(SDL_GPUCommandBuffer& commands, const ShownLayout& layout, SDL_GPUTexture& target,
+                                  uint32_t width, uint32_t height) const
+{
+    const MCViewport shown = MCPresentViewport(static_cast<int>(width), static_cast<int>(height), layout.View.w,
+                                               layout.View.h, _Presentation);
+    SDL_GPUBlitInfo blit{};
+    blit.source.texture = _Frame.Handle.get();
+
+    // A frame composited at the output's size is shown whole.
+    if (layout.Scaled())
+    {
+        blit.source.w = static_cast<uint32_t>(layout.OutputWidth);
+        blit.source.h = static_cast<uint32_t>(layout.OutputHeight);
+    }
+    else
+    {
+        blit.source.x = static_cast<uint32_t>(layout.View.x);
+        blit.source.y = static_cast<uint32_t>(layout.View.y);
+        blit.source.w = static_cast<uint32_t>(layout.View.w);
+        blit.source.h = static_cast<uint32_t>(layout.View.h);
+    }
+
+    blit.destination.texture = &target;
+    blit.destination.x = static_cast<uint32_t>(std::lround(std::max(shown.X, 0.0f)));
+    blit.destination.y = static_cast<uint32_t>(std::lround(std::max(shown.Y, 0.0f)));
+    blit.destination.w = static_cast<uint32_t>(std::lround(shown.W));
+    blit.destination.h = static_cast<uint32_t>(std::lround(shown.H));
+    blit.load_op = SDL_GPU_LOADOP_CLEAR;
+    // Port-only: the window around the view in the frame's surround (the menus' stone colour), faded.
+    constexpr float ComponentMost = 255.0f;
+    blit.clear_color = SDL_FColor{static_cast<float>(layout.Surround.r) / ComponentMost,
+                                  static_cast<float>(layout.Surround.g) / ComponentMost,
+                                  static_cast<float>(layout.Surround.b) / ComponentMost, 1.0f};
+    blit.filter = _Presentation.Linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;
+
+    if (blit.destination.w != 0 && blit.destination.h != 0)
+    {
+        SDL_BlitGPUTexture(&commands, &blit);
+    }
+}
+
+auto MCVulkanPresenter::RecordShown(SDL_GPUCommandBuffer& commands, const ShownLayout& layout, uint32_t width,
+                                    uint32_t height) -> std::expected<SDL_GPUTransferBuffer*, std::string>
+{
+    // R8G8B8A8, as _Frame (and SDL_Color's byte order).
+    constexpr SDL_GPUTextureFormat Rgba = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+    if (auto made = Ensure(_Recorded, Rgba, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, width,
+                           height, true);
+        !made)
+    {
+        return std::unexpected(std::format("the window recorded: {}", made.error()));
+    }
+
+    BlitShown(commands, layout, *_Recorded.Handle.get(), width, height);
+    SDL_GPUTransferBufferCreateInfo info{};
+    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    info.size = width * height * static_cast<uint32_t>(sizeof(SDL_Color));
+    SDL_GPUTransferBuffer* download = SDL_CreateGPUTransferBuffer(_Device.get(), &info);
+
+    if (download == nullptr)
+    {
+        return std::unexpected(SdlError("SDL_CreateGPUTransferBuffer (the window recorded)"));
+    }
+
+    SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(&commands);
+    SDL_GPUTextureRegion source{};
+    source.texture = _Recorded.Handle.get();
+    source.w = width;
+    source.h = height;
+    source.d = 1;
+    SDL_GPUTextureTransferInfo destination{};
+    destination.transfer_buffer = download;
+    destination.pixels_per_row = width;
+    destination.rows_per_layer = height;
+    SDL_DownloadFromGPUTexture(pass, &source, &destination);
+    SDL_EndGPUCopyPass(pass);
+    return download;
+}
+
+void MCVulkanPresenter::TakeRecorded(SDL_GPUTransferBuffer& download, uint64_t number, uint32_t width, uint32_t height)
+{
+    // The frame and its copy done on the GPU.
+    SDL_WaitForGPUIdle(_Device.get());
+    const void* mapped = SDL_MapGPUTransferBuffer(_Device.get(), &download, false);
+
+    if (mapped == nullptr)
+    {
+        KeepLate(SdlError(std::format("SDL_MapGPUTransferBuffer (the window recorded, present {})", number)));
+        return;
+    }
+
+    MCWindowFrame frame{.Number = number, .Width = static_cast<int>(width), .Height = static_cast<int>(height)};
+    frame.Pixels.resize(static_cast<size_t>(width) * height);
+    // R8G8B8A8 is SDL_Color's byte order.
+    std::memcpy(frame.Pixels.data(), mapped, frame.Pixels.size() * sizeof(SDL_Color));
+    SDL_UnmapGPUTransferBuffer(_Device.get(), &download);
+    _WindowRecorder(std::move(frame));
+}
+
+bool MCVulkanPresenter::RecordWindow(std::function<void(MCWindowFrame&&)> taken)
+{
+    // Frames are shown, and so recorded, on the game's thread, as this is called.
+    _WindowRecorder = std::move(taken);
+
+    if (!_WindowRecorder)
+    {
+        Release(_Recorded);
+    }
+
+    return true;
 }
 
 void MCVulkanPresenter::RunAhead(PlannedFrame& planned)

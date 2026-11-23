@@ -139,11 +139,26 @@ void MCComposeScaled(const MCFrame& frame, std::vector<uint8_t>& pixels)
     }
 }
 
+SDL_Color MCFadedColor(SDL_Color color, int fade, bool scales)
+{
+    constexpr int Black = 255;
+    const int level = std::clamp(fade, 0, Black);
+    const auto faded = [level, scales](uint8_t component)
+    {
+        const int value = static_cast<int>(component);
+        // Rounded to the nearest, as the GPU's composite writes it.
+        return static_cast<uint8_t>(scales ? (value * (Black - level) + Black / 2) / Black
+                                           : std::max(value - level, 0));
+    };
+
+    return SDL_Color{faded(color.r), faded(color.g), faded(color.b), color.a};
+}
+
 SDL_Color MCFadedSurround(const MCFrame& frame)
 {
-    const auto faded = [&frame](uint8_t component)
-    { return static_cast<uint8_t>(std::max(static_cast<int>(component) - frame.Fade, 0)); };
-    return SDL_Color{faded(frame.Surround.r), faded(frame.Surround.g), faded(frame.Surround.b), SDL_ALPHA_OPAQUE};
+    SDL_Color faded = MCFadedColor(frame.Surround, frame.Fade, frame.FadeScales);
+    faded.a = SDL_ALPHA_OPAQUE;
+    return faded;
 }
 
 MCViewport MCPresentViewport(int outputWidth, int outputHeight, int viewWidth, int viewHeight,

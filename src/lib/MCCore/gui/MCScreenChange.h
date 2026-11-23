@@ -34,9 +34,11 @@ namespace MCScreenChange
     /// <summary>
     /// Starts change <paramref name="name"/> (the frame log's name for it): the screen shown fades out from the next
     /// frame, and the player's clicks and keys are held until the change is over. False, and nothing started, while a
-    /// change runs or the screen can't be shown (no display).
+    /// change runs or the screen can't be shown (no display). When it carries on from change <paramref name="after"/>
+    /// (the last to end: the way into a mission's two, around the load), its line in the frame log also gives the time
+    /// from that one's press (BEGIN MISSION's, to the battlefield's first whole frame).
     /// </summary>
-    bool Start(std::string_view name);
+    bool Start(std::string_view name, std::string_view after = {});
 
     /// <summary>The change's phase now.</summary>
     MCPhase Phase();

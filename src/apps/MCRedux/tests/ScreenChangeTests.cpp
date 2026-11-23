@@ -43,6 +43,7 @@ namespace
     struct MCShown
     {
         int Fade = 0;
+        bool FadeScales = false;
         MCPhase Phase = MCPhase::None;
         SDL_Color Surround{};
         SDL_Rect View{};
@@ -68,6 +69,7 @@ namespace
             {
                 const MCDisplay& display = *MCInput::Display();
                 shown.push_back(MCShown{.Fade = display.Fade(),
+                                        .FadeScales = display.FadeScales(),
                                         .Phase = MCScreenChange::Phase(),
                                         .Surround = display.Surround(),
                                         .View = display.View(),
@@ -108,6 +110,8 @@ namespace
         CHECK_EQ(frames.back().Fade, out ? MCScreenChange::Black : 0);
         CHECK(std::ranges::any_of(frames, [](const MCShown& frame)
                                   { return frame.Fade > 0 && frame.Fade < MCScreenChange::Black; }));
+        // Each component scaled toward black, so a dark screen fades evenly over the fade's length.
+        CHECK(std::ranges::all_of(frames, [](const MCShown& frame) { return frame.FadeScales || frame.Fade == 0; }));
     }
 
     /// <summary>The frames of <paramref name="shown"/> from <paramref name="from"/> while <paramref name="keep"/> holds.</summary>
@@ -156,8 +160,8 @@ namespace
 }
 
 /// <summary>
-/// The shown colour round the view takes the fade off each component, as the picture's colours are, so the window
-/// round the menus' frame fades with it.
+/// The shown colour round the view is faded as the picture's colours are (the levels taken off each component, or each
+/// scaled toward black for a change of screen), so the window round the menus' frame fades with it.
 /// </summary>
 TEST_CASE("presenter: the window round the view fades with the picture")
 {
@@ -169,6 +173,14 @@ TEST_CASE("presenter: the window round the view fades with the picture")
     frame.Fade = 0x30;
     CHECK(SameColor(MCFadedSurround(frame), SDL_Color{0x08, 0x0b, 0x0c, SDL_ALPHA_OPAQUE}));
 
+    frame.Fade = MCScreenChange::Black;
+    CHECK(SameColor(MCFadedSurround(frame), Black));
+
+    // A change of screen's fade scales each component (rounded), evenly whatever the colour's brightness.
+    frame.FadeScales = true;
+    frame.Fade = 0x30;
+    CHECK(SameColor(MCFadedSurround(frame), SDL_Color{0x2d, 0x30, 0x31, SDL_ALPHA_OPAQUE}));
+    CHECK(SameColor(MCFadedColor(SDL_Color{0x10, 0x80, 0xff, 0x40}, 0x80, true), SDL_Color{0x08, 0x40, 0x7f, 0x40}));
     frame.Fade = MCScreenChange::Black;
     CHECK(SameColor(MCFadedSurround(frame), Black));
 }

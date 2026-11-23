@@ -467,9 +467,10 @@ void MCDisplay::SetGamma(float gamma, float brightness)
     _PaletteDirty = true;
 }
 
-void MCDisplay::SetFade(int levels)
+void MCDisplay::SetFade(int levels, bool scales)
 {
     _Fade = std::clamp(levels, 0, 255);
+    _FadeScales = scales;
 }
 
 void MCDisplay::GetShownColors(std::span<SDL_Color, 256> out) const
@@ -613,12 +614,15 @@ MCFrame MCDisplay::BuildFrame(bool allColors)
     frame.Colors = _ShownColors;
     frame.PaletteColors = _PaletteColors;
     frame.Fade = _Fade;
+    frame.FadeScales = _FadeScales;
+    frame.Number = _Presents;
     return frame;
 }
 
 std::expected<void, std::string> MCDisplay::Present(bool ahead)
 {
     MCGameContext::Current().Clock().Presented();
+    _Presents++;
 
     if (OnPresent)
     {
@@ -633,6 +637,11 @@ std::expected<void, std::string> MCDisplay::Present(bool ahead)
     MCFrame frame = BuildFrame(false);
     frame.Ahead = ahead;
     return _Presenter->Present(frame);
+}
+
+bool MCDisplay::RecordWindow(std::function<void(MCWindowFrame&&)> taken)
+{
+    return _Presenter->RecordWindow(std::move(taken));
 }
 
 std::expected<void, std::string> MCDisplay::RunRecorded()

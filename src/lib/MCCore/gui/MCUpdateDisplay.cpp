@@ -174,6 +174,11 @@ namespace
     constexpr int32_t LoadingStartNoise = 100;
     int32_t LoadingNoise = LoadingStartNoise;
     int32_t LoadingBar = 0;
+    /// <summary>
+    /// Port-only: whether the frame loop's loading screen has had its first frame: wiped once, as the screen left by the
+    /// briefing goes, then its static builds up from frame to frame as the load's own frames' does (they never wipe).
+    /// </summary>
+    bool LoadingScreenStarted = false;
 
     /// <summary>The palette waiting for the next frame (MCGuiSystem::ActivatePalette) put in.</summary>
     void ActivatePendingPalette(MCGuiSystem& gui)
@@ -559,6 +564,7 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     // Port-only (SPEC-menus.md's stage 1): the frame loop's frames while the loading screen is up outside the load's
     // own (faded in before it, out after it) draw it in place of the screen window, as the load last drew it.
     const bool loadingScreen = LoadingScreenUp && !showProgress;
+    LoadingScreenStarted = LoadingScreenStarted && LoadingScreenUp;
 
     if (loadingScreen)
     {
@@ -583,7 +589,11 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
         // draws the screens halfway through the work between them.
         if (loadingScreen && !MCScreenChange::Dark())
         {
-            VfxPaneWipe(ScreenPort()->Frame(), 0);
+            if (!LoadingScreenStarted)
+            {
+                VfxPaneWipe(ScreenPort()->Frame(), 0);
+                LoadingScreenStarted = true;
+            }
         }
         else if (!MCScreenChange::Dark())
         {
@@ -673,7 +683,7 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 
     if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr && changing)
     {
-        display->SetFade(changeFade);
+        display->SetFade(changeFade, true);
     }
 
     // Port-only: ahead in a frame loop (MCFramesAhead), unless a palette waits to go in after the frame is shown.

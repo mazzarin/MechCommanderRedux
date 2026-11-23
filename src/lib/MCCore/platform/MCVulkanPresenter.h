@@ -121,6 +121,7 @@ public:
     void WaitForGpu() override;
     void ShowBeforeInput() override;
     std::span<const MCShownGrid> ShownGrids() const override { return _ShownGrids; }
+    bool RecordWindow(std::function<void(MCWindowFrame&&)> taken) override;
 
 private:
     /// <summary>
@@ -183,6 +184,8 @@ private:
         int OutputHeight = 0;
         /// <summary>Port-only: the window around the view, faded (<see cref="MCFadedSurround"/>).</summary>
         SDL_Color Surround{0, 0, 0, SDL_ALPHA_OPAQUE};
+        /// <summary>Port-only: the frame's present (<see cref="MCFrame::Number"/>).</summary>
+        uint64_t Number = 0;
 
         /// <summary>Whether it's composited at the output's size (<see cref="MCFrame::ScaledOutput"/>).</summary>
         bool Scaled() const { return OutputWidth > 0 && OutputHeight > 0; }
@@ -213,6 +216,25 @@ private:
     /// the GPU), the wait's length kept in _LastImageWaitMs; the game's thread.
     /// </summary>
     std::expected<void, std::string> ShowFrame(SDL_GPUCommandBuffer& commands, const ShownLayout& layout);
+    /// <summary>
+    /// Port-only: blits _Frame (laid out as <paramref name="layout"/>) onto <paramref name="target"/> as the window
+    /// shows it at <paramref name="width"/> x <paramref name="height"/> pixels: the view where it's shown, the surround
+    /// round it.
+    /// </summary>
+    void BlitShown(SDL_GPUCommandBuffer& commands, const ShownLayout& layout, SDL_GPUTexture& target, uint32_t width,
+                   uint32_t height) const;
+    /// <summary>
+    /// Port-only (<see cref="RecordWindow"/>): the window as shown blitted into _Recorded, and its download begun on
+    /// <paramref name="commands"/>: the transfer buffer it lands in once they're done (the caller releases it).
+    /// </summary>
+    std::expected<SDL_GPUTransferBuffer*, std::string> RecordShown(SDL_GPUCommandBuffer& commands,
+                                                                   const ShownLayout& layout, uint32_t width,
+                                                                   uint32_t height);
+    /// <summary>
+    /// Port-only: waits for the GPU, then hands <paramref name="download"/>'s window (present
+    /// <paramref name="number"/>) to the recording.
+    /// </summary>
+    void TakeRecorded(SDL_GPUTransferBuffer& download, uint64_t number, uint32_t width, uint32_t height);
     /// <summary>Port-only: shows the frame run ahead (_Unshown), which has run, on a command buffer of its own.</summary>
     std::expected<void, std::string> Show();
     /// <summary>
@@ -441,6 +463,10 @@ private:
     /// </summary>
     float _LastImageWaitMs = 0.0f;
     float _ImageWaitMs = 0.0f;
+    /// <summary>Port-only, a tool's: where each frame shown goes as the window showed it (<see cref="RecordWindow"/>).</summary>
+    std::function<void(MCWindowFrame&&)> _WindowRecorder;
+    /// <summary>Port-only: the window as shown, for <see cref="_WindowRecorder"/>.</summary>
+    Texture _Recorded;
     /// <summary>Port-only: the render thread; last, so it stops before what it uses goes.</summary>
     RenderThread _Thread;
 };

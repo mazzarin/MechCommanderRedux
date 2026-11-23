@@ -21,11 +21,11 @@ public:
     void Advance(uint64_t nanoseconds);
 
     /// <summary>
-    /// From now on each present after the first since the clock last advanced moves it on by a 60 Hz refresh, as
-    /// waiting for the display would. Loops that draw frames until some time has passed (the logistics screen wipes)
-    /// then end after the frames they would take on a real display.
+    /// From now on (until <paramref name="on"/> is false) each present after the first since the clock last advanced
+    /// moves it on by a 60 Hz refresh, as waiting for the display would. Loops that draw frames until some time has
+    /// passed (the logistics screen wipes) then end after the frames they would take on a real display.
     /// </summary>
-    void AdvanceOnPresent();
+    void AdvanceOnPresent(bool on = true);
 
     /// <summary>The clock in nanoseconds, without counting as a read.</summary>
     uint64_t Nanoseconds() const { return _Nanoseconds.load(); }

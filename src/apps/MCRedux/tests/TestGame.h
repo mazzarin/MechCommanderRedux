@@ -210,4 +210,11 @@ namespace MCTestGame
     /// and vehicles (NumUnits), as purchases or a mission's salvage would.
     /// </summary>
     void OwnUnits(int32_t units);
+
+    /// <summary>
+    /// Port-only: runs a frame and saves it as the window shows it, the whole window (the view where it lands and the
+    /// surround round it: MCPresenter::RecordWindow), as a PNG at <paramref name="path"/>; false when the presenter
+    /// can't read the window back or the picture can't be written.
+    /// </summary>
+    bool SaveWholeWindow(const std::filesystem::path& path);
 }

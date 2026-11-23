@@ -197,6 +197,7 @@
     <ClCompile Include="tests\VideoWindowTests.cpp" />
     <ClCompile Include="tests\WeatherPaceTests.cpp" />
     <ClCompile Include="tests\WebSocketTests.cpp" />
+    <ClCompile Include="tests\WindowRecorderTool.cpp" />
     <ClCompile Include="tests\ZoomTests.cpp" />
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCContentAtStart.h" />

@@ -875,3 +875,37 @@ void MCTestGame::OwnUnits(int32_t units)
         REQUIRE(logistics->MechList->AddMech(profile, false, true, true) != nullptr);
     }
 }
+
+bool MCTestGame::SaveWholeWindow(const std::filesystem::path& path)
+{
+    MCDisplay& display = *MCInput::Display();
+    std::optional<MCWindowFrame> taken;
+
+    if (!display.RecordWindow([&taken](MCWindowFrame&& frame) { taken = std::move(frame); }))
+    {
+        return false;
+    }
+
+    RunFrame(1.0f / 15.0f);
+    // A frame run ahead is shown (and read back) once it's drawn.
+    display.ShowPresented();
+    display.RecordWindow({});
+
+    if (!taken.has_value())
+    {
+        return false;
+    }
+
+    SDL_Surface* surface =
+        SDL_CreateSurfaceFrom(taken->Width, taken->Height, SDL_PIXELFORMAT_RGBA32, taken->Pixels.data(),
+                              taken->Width * static_cast<int>(sizeof(SDL_Color)));
+
+    if (surface == nullptr)
+    {
+        return false;
+    }
+
+    const bool saved = SDL_SavePNG(surface, MCFileSystem::ToUtf8(path).c_str());
+    SDL_DestroySurface(surface);
+    return saved;
+}

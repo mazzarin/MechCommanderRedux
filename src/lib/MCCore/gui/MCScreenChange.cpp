@@ -37,6 +37,12 @@ namespace
 
     MCChange Change;
     size_t ChangesFinished = 0;
+    /// <summary>The last change to end: its name and its press (for a change carrying on from it).</summary>
+    std::string LastName;
+    uint64_t LastPressed = 0;
+    /// <summary>The running change's press carried from the one it carries on from (0: none).</summary>
+    uint64_t CarriedPress = 0;
+    std::string CarriedFrom;
 
     /// <summary>Milliseconds between two of SDL's counter's readings.</summary>
     double MsBetween(uint64_t from, uint64_t to)
@@ -78,16 +84,25 @@ namespace
             Change.Name, MsBetween(Change.Pressed, Change.FirstFrame), MsBetween(Change.Pressed, Change.Darkened),
             MsBetween(Change.Darkened, Change.FirstFrame), MsBetween(Change.Darkened, Change.WorkDone),
             Change.Frames.size(), Change.DarkFrames, longest, over, LateRefreshes, refreshMs));
+
+        if (CarriedPress != 0)
+        {
+            MCFrameLog::Line(std::format("change {}: from {}'s press to the first whole frame {:.1f} ms", Change.Name,
+                                         CarriedFrom, MsBetween(CarriedPress, Change.FirstFrame)));
+        }
     }
 }
 
-auto MCScreenChange::Start(std::string_view name) -> bool
+auto MCScreenChange::Start(std::string_view name, std::string_view after) -> bool
 {
     if (Change.Phase != MCPhase::None || MCInput::Display() == nullptr)
     {
         return false;
     }
 
+    const bool carries = !after.empty() && after == LastName;
+    CarriedPress = carries ? LastPressed : 0;
+    CarriedFrom = carries ? std::string(after) : std::string();
     Change = MCChange{.Name = std::string(name), .Phase = MCPhase::Out};
     Change.Pressed = SDL_GetPerformanceCounter();
     Change.LastShown = Change.Pressed;
@@ -204,6 +219,9 @@ auto MCScreenChange::Presented(int fade) -> void
             if (fade <= 0)
             {
                 LogChange();
+                LastName = Change.Name;
+                LastPressed = CarriedPress != 0 ? CarriedPress : Change.Pressed;
+                CarriedPress = 0;
                 Change = MCChange{};
                 ChangesFinished++;
             }
@@ -227,6 +245,7 @@ auto MCScreenChange::Cancel() -> void
     }
 
     Change = MCChange{};
+    CarriedPress = 0;
 }
 
 auto MCScreenChange::Finished() -> size_t

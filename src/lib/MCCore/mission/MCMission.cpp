@@ -83,6 +83,14 @@ int SomethingOnFire = 0;
 
 namespace
 {
+    /// <summary>Milliseconds in a second.</summary>
+    constexpr double MsPerSecond = 1000.0;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 1): the way back's pieces run in a dark frame while this much of it has gone (a
+    /// 240 Hz refresh), so the screen is dark only as long as their work takes.
+    /// </summary>
+    constexpr double ArrivalBudgetMs = 4.0;
+
     /// <summary>
     /// Port-only (20 Nov, the A10's 4 GB card: play's first frames with the world, its second and third, waited 16 and
     /// 20 ms for the GPU, still busy with the load's last copies): the load ends once the GPU has done all it was given,
@@ -1303,11 +1311,17 @@ auto MCMission::EndsAtResults() const -> bool
 
 auto MCMission::ReadWayBackAhead(bool hold) const -> void
 {
-    MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles());
+    if (const MCFrameLog::Scope part("change.files ahead"); true)
+    {
+        MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles());
+    }
 
     if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
     {
-        MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+        if (const MCFrameLog::Scope part("change.map ahead"); true)
+        {
+            MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+        }
 
         // Port-only (SPEC-memory.md's "From the briefing": between missions): the next mission's hold from now, as its
         // briefing would start it: a loss's replay keeps what's held, a win's next lets go of the last mission's first.
@@ -1320,6 +1334,7 @@ auto MCMission::ReadWayBackAhead(bool hold) const -> void
     // Port-only (SPEC-first-use.md's "Between missions"): the screens' whole set of HD pictures read ahead from the click
     // too, after the briefing's map: the briefing, or a match's games screen and its room (the rematch's, or the next
     // one made), finds its own at its first draw. Logistics' start asks again (MCLogistics::MakeAhead), for nothing.
+    const MCFrameLog::Scope part("change.menus ahead");
     GuiSystem().ReadMenuSetAhead();
 }
 
@@ -1513,7 +1528,7 @@ auto MCMission::TendPassage() -> bool
             // The loading screen is in: the save, the menus' teardown and the load behind it.
             LoadScenario(_PassageScenario);
 
-            if (MCScreenChange::Start("into the battle"))
+            if (MCScreenChange::Start("into the battle", "into the mission"))
             {
                 _Passage = MCPassage::LoadingOut;
                 return true;
@@ -1564,14 +1579,23 @@ auto MCMission::TendPassage() -> bool
         }
         case MCPassage::Arriving:
         {
-            // A piece a dark frame; all that are left at once if the change was called off.
+            // Pieces while the dark frame's budget lasts (a slow one gets a frame of its own, so the screen is never held
+            // long between them); all that are left at once if the change was called off.
+            const uint64_t started = SDL_GetPerformanceCounter();
+            const auto withinBudget = [started]
+            {
+                const double ms = static_cast<double>(SDL_GetPerformanceCounter() - started) * MsPerSecond /
+                                  static_cast<double>(SDL_GetPerformanceFrequency());
+                return ms < ArrivalBudgetMs;
+            };
+
             do
             {
                 if (_ArrivalPiece < _ArrivalPieces.size())
                 {
                     _ArrivalPieces[_ArrivalPiece++]();
                 }
-            } while (!MCScreenChange::Running() && _ArrivalPiece < _ArrivalPieces.size());
+            } while (_ArrivalPiece < _ArrivalPieces.size() && (!MCScreenChange::Running() || withinBudget()));
 
             if (_ArrivalPiece >= _ArrivalPieces.size())
             {

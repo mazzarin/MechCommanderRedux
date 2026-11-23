@@ -26,9 +26,9 @@ void MCManualClock::Advance(uint64_t nanoseconds)
     _Presents = 0;
 }
 
-void MCManualClock::AdvanceOnPresent()
+void MCManualClock::AdvanceOnPresent(bool on)
 {
-    _AdvanceOnPresent = true;
+    _AdvanceOnPresent = on;
 }
 
 uint64_t MCManualClock::Read()

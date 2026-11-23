@@ -13340,7 +13340,8 @@ TEST_CASE_ISOLATED("game: HD art's ground fades from tile to tile across their s
 /// and the pack's menu art with <c>--hd-pack &lt;pack&gt;</c>), and saves each as shown into the folder; with
 /// <c>--hd-original 1</c>, as the game shows them without. With <c>--hd-audit-menus 1</c> every draw is audited as
 /// --hd-audit's are (into the folder's audit/), and with it or <c>--sharp-menus-tour 1</c> every other screen is shown
-/// too (TourScreens: the multiplayer screens, a mission from its loading screen to its results, and more).
+/// too (TourScreens: the multiplayer screens, a mission from its loading screen to its results, and more). With
+/// <c>--sharp-menus-window 1</c> each is saved as the whole window too (<c>_window.png</c>: what shows round the view).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off")
 {
@@ -13433,6 +13434,15 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
         const std::filesystem::path path = folder / std::format("{}_{}.png", name, original ? "original" : "sharp");
         REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
         std::cout << std::format("  {}: {}\n", name, path.string());
+
+        // Port-only: with --sharp-menus-window 1, the whole window too, as it shows round the view (the menus' frame on
+        // the stone, SPEC-menus.md's stage 1).
+        if (MCTest::Option("sharp-menus-window").has_value())
+        {
+            const std::filesystem::path window =
+                folder / std::format("{}_{}_window.png", name, original ? "original" : "sharp");
+            REQUIRE(MCTestGame::SaveWholeWindow(window));
+        }
     };
 
     shoot("main_menu");

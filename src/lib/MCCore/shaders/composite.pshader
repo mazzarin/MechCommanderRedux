@@ -127,6 +127,8 @@ cbuffer Composite : register(b0, space3)
     uint4 cycleSources[2];
     // The screen fade (MCDisplay::SetFade): x, the amount taken off every component of the finished colour (0 none,
     // 1 black). The scene fades between screens (aSystem::fadeDownCurrentPalette) are done here, not in the palette.
+    // Port-only: y, 1 when each component is scaled toward black by x instead (a change of screen's, even on a dark
+    // screen: MCFrame::FadeScales).
     float4 fade;
     // Port-only (HD lighting, sprite/MCSceneLights.h): x, the lights in lights (0 none); y, their strength; z, the
     // world's own light (1 as drawn); w, the screen width a ground distance takes per screen height it takes (1 / the
@@ -738,7 +740,7 @@ float3 Lit(float3 world, float selfLit, float2 texel, float2 slope, float sunRel
 // The finished colour through the screen fade.
 float4 Faded(float3 color)
 {
-    return float4(saturate(color - fade.x), 1.0);
+    return float4(fade.y > 0.5 ? color * (1.0 - fade.x) : saturate(color - fade.x), 1.0);
 }
 
 // The GPU world between its texels (from its four nearest, blended), clamped to the surface.

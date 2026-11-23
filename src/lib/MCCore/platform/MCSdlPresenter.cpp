@@ -145,7 +145,7 @@ std::expected<void, std::string> MCSdlPresenter::Upload(const MCFrame& frame)
         return made;
     }
 
-    if (frame.ColorsChanged || frame.Fade != _Fade)
+    if (frame.ColorsChanged || frame.Fade != _Fade || frame.FadeScales != _FadeScales)
     {
         // The screen fade, on the colours: every pixel is a palette index here.
         std::array<SDL_Color, 256> colors;
@@ -153,13 +153,12 @@ std::expected<void, std::string> MCSdlPresenter::Upload(const MCFrame& frame)
         for (size_t i = 0; i < colors.size(); ++i)
         {
             const SDL_Color& color = frame.Colors[i];
-            colors[i] = {static_cast<uint8_t>(std::max(color.r - frame.Fade, 0)),
-                         static_cast<uint8_t>(std::max(color.g - frame.Fade, 0)),
-                         static_cast<uint8_t>(std::max(color.b - frame.Fade, 0)), color.a};
+            colors[i] = MCFadedColor(color, frame.Fade, frame.FadeScales);
         }
 
         SDL_SetPaletteColors(_Palette.get(), colors.data(), 0, 256);
         _Fade = frame.Fade;
+        _FadeScales = frame.FadeScales;
     }
 
     std::span<const uint8_t> pixels = frame.Pixels;

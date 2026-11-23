@@ -64,6 +64,8 @@ private:
     MCPresentation _Presentation;
     /// <summary>The screen fade the palette was last set with (<see cref="MCFrame::Fade"/>).</summary>
     int _Fade = 0;
+    /// <summary>Port-only: whether that fade scaled the colours (<see cref="MCFrame::FadeScales"/>).</summary>
+    bool _FadeScales = false;
     /// <summary>The CPU's composite of the screen.</summary>
     std::vector<uint8_t> _Composed;
 };

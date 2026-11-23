@@ -283,13 +283,18 @@ public:
 
     /// <summary>
     /// Fades the whole picture toward black: <paramref name="levels"/> (0 none .. 255 black) are taken off every shown
-    /// colour's components, by the presenter (the composite shader on the GPU), whatever the surfaces hold. Takes effect
-    /// at the next <see cref="Present"/>; the palette isn't changed.
+    /// colour's components, by the presenter (the composite shader on the GPU), whatever the surfaces hold; port-only,
+    /// with <paramref name="scales"/> each component is scaled toward black by levels / 255 instead (a change of
+    /// screen's, gui/MCScreenChange.h: even over its length on a dark screen). Takes effect at the next
+    /// <see cref="Present"/>; the palette isn't changed.
     /// </summary>
-    void SetFade(int levels);
+    void SetFade(int levels, bool scales = false);
 
     /// <summary>The fade set last.</summary>
     int Fade() const { return _Fade; }
+
+    /// <summary>Port-only: whether the fade set last scales the colours (<see cref="SetFade"/>).</summary>
+    bool FadeScales() const { return _FadeScales; }
 
     /// <summary>
     /// Port-only: the colour the window shows around the view (black unless set; the menus' stone colour around their
@@ -299,6 +304,12 @@ public:
 
     /// <summary>The surround set last (<see cref="SetSurround"/>).</summary>
     SDL_Color Surround() const { return _Surround; }
+
+    /// <summary>Port-only: the frames presented (or, the window minimised, not shown) since the display opened.</summary>
+    uint64_t Presents() const { return _Presents; }
+
+    /// <summary>Port-only, a tool's: the presenter's <see cref="MCPresenter::RecordWindow"/>.</summary>
+    bool RecordWindow(std::function<void(MCWindowFrame&&)> taken);
 
     /// <summary>The 256 colours as they are shown: the palette through the gamma and brightness, then the cycle.</summary>
     void GetShownColors(std::span<SDL_Color, 256> out) const;
@@ -455,6 +466,9 @@ public:
     /// <summary>Tests: the window taken as minimised (<see cref="Minimised"/>); SDL can't minimise their hidden windows.</summary>
     bool TakenAsMinimised = false;
 
+    /// <summary>Where the shown view lands in the window, in window pixels.</summary>
+    MCViewport ShownViewport() const;
+
 private:
     /// <summary>Resizes the window to the screen's size times its scale (windowed, not following the window).</summary>
     void ResizeWindowToScale();
@@ -477,8 +491,6 @@ private:
     /// any it remaps: setting them replaced the animated colours. Called with the palette lock held.
     /// </summary>
     void EndCycleOver(int first, int count);
-    /// <summary>Where the shown view lands in the window, in window pixels.</summary>
-    MCViewport ShownViewport() const;
     /// <summary>
     /// The size the frame is composited at when the whole screen is shown scaled up (the window's pixels it covers), so
     /// the underlays keep the window's resolution, or, with <see cref="SharpScreen"/>, any view shown scaled up (the
@@ -536,6 +548,9 @@ private:
     float _Brightness = 1.0f;
     /// <summary>The screen fade (<see cref="SetFade"/>).</summary>
     std::atomic<int> _Fade = 0;
+    std::atomic<bool> _FadeScales = false;
     /// <summary>The window around the view (<see cref="SetSurround"/>).</summary>
     SDL_Color _Surround{0, 0, 0, SDL_ALPHA_OPAQUE};
+    /// <summary>The frames presented (<see cref="Presents"/>).</summary>
+    uint64_t _Presents = 0;
 };

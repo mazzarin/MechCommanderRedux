@@ -215,7 +215,7 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
     PressAndCheck("Escape from PREFERENCES", PressEscape, {main});
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
 
-    PressAndCheck("LOAD GAME", MCScreenFlow::Via("load game", LoadScreen), {main, MCMenuScreens::Load()});
+    PressAndCheck("LOAD GAME", [] { MCScreenFlow::Open(MCMenuScreens::Load()); }, {main, MCMenuScreens::Load()});
     PressAndCheck("Escape from LOAD GAME", PressEscape, {main});
 
     PressAndCheck("NEW CAMPAIGN", NewCampaign, {main, MCMenuScreens::Campaign()});

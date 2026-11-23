@@ -449,6 +449,9 @@
     <ClInclude Include="tests\MCInternetSpots.h">
       <Filter>tests</Filter>
     </ClInclude>
+    <ClInclude Include="tests\MCMenuFrames.h">
+      <Filter>tests</Filter>
+    </ClInclude>
     <ClInclude Include="tests\MCMock.h">
       <Filter>tests</Filter>
     </ClInclude>

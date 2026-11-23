@@ -46,7 +46,7 @@
                     <div id="pick">
                         <div data-if="shown" class="column grow">
                             <div class="eyebrow" data-if="pickEyebrow != ''">{{pickEyebrow}}</div>
-                            <div class="heading caps nowrap" id="pick-heading">{{pickHeading}}</div>
+                            <div class="heading caps" id="pick-heading">{{pickHeading}}</div>
                             <div class="data grey caps nowrap" id="pick-campaign">{{pickCampaign}}</div>
                             <div class="fact" data-if="pickOperation != ''"><div class="label">Operation</div><div>{{pickOperation}}</div></div>
                             <div class="fact" data-if="pickMission != ''"><div class="label">Mission</div><div>{{pickMission}}</div></div>

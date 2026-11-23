@@ -26,11 +26,15 @@
 .c-rp { flex: 0 0 52dp; }
 .c-saved { flex: 0 0 92dp; }
 
-/* A row's mission in white, the rest grey; the picked row's all white. */
+/* A row's mission in white, the rest grey; the picked row's all white. A mission or name too long for its column
+   goes on to a second line, whole (a player's name of 31 letters, the longest missions at 4:3). */
 .list-row .cell { color: #a4b0bc; }
 .list-row .cell.grow, .list-row.picked .cell { color: #fcfcfc; }
+#saves .list-row { height: auto; min-height: 16dp; white-space: normal; }
+#saves .list-row .cell.grow { white-space: normal; word-break: break-word; }
 
-/* The picked save: its mission, its campaign, its place in it, then its mission's map. */
+/* The picked save: its mission (on two lines when it's long), its campaign, its place in it, then its mission's map. */
+#pick-heading { white-space: normal; word-break: break-word; }
 #pick-campaign { margin-bottom: 8dp; }
 .fact { height: 16dp; display: flex; flex-direction: row; font-size: 11.63dp; line-height: 16dp; white-space: nowrap; }
 .fact .label { flex: 0 0 72dp; font-size: 9.51dp; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #7cd4ec; }
@@ -42,6 +46,15 @@
 
 #hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 40dp; }
 #hintbar .hints { margin-top: 14dp; }
+/* A window's own hint line over the screen's, in the well, so the screen's keys don't show through it. */
+.window-body #hintbar { background-color: #040404; }
+
+/* A 4:3 or 5:4 window: the campaign's column goes (the picked save names it) and the picked save's column narrows,
+   so the missions keep their room. */
+@media (max-aspect-ratio: 3/2) {
+    #saves .c-campaign { display: none; }
+    #pick { flex: 0 0 176dp; }
+}
 
 /* A window over the screen (DELETE's question, an overwrite's, a message): the question as its title, what it means
    under it, the way back at the left and the answer at the right (the frames' dialog.rcss). */

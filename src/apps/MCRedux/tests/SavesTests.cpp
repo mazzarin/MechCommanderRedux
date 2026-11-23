@@ -1,9 +1,18 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "MCMenuFrames.h"
 #include "MCScratchFolder.h"
+#include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiGlobals.h"
+#include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
 #include "lib/MCFile.h"
+#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMenuScreens.h"
+#include "logistics/MCSplashScreen.h"
+#include "logistics/MCSavesMenu.h"
 #include "logistics/MCMissionNames.h"
 #include "logistics/MCSaves.h"
 #include "logistics/MCUnitLimits.h"
@@ -11,7 +20,11 @@
 #include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCInput.h"
+#include "ui/MCRmlChecks.h"
+#include "ui/MCRmlMenus.h"
 
 // Port-only (SPEC-menus.md's stage 5, "Models and views"): the saves list LOAD GAME and SAVE GAME view (and CONTINUE
 // will), the missions' names it shows them by, and the dates it tells them by.
@@ -222,4 +235,313 @@ TEST_CASE_ISOLATED("game: the saves list names each save by its mission, newest 
     CHECK(saves.Find(*free)->get().When == MCSaves::MCWhen::Named);
     CHECK_EQ(saves.Latest()->get().Name, *free);
     CHECK(MCSaves::FreeName() != free);
+}
+
+namespace
+{
+    constexpr float FlowFrame = 1.0f / 60.0f;
+    constexpr int32_t MostChangeFrames = 600;
+
+    /// <summary>Frames until the change of screen running (and one queued behind it) is done.</summary>
+    void RunWhileChanging()
+    {
+        for (int32_t pass = 0; pass < 2; pass++)
+        {
+            for (int32_t frame = 0; frame < MostChangeFrames && MCScreenChange::Running(); frame++)
+            {
+                MCTestGame::RunFrame(FlowFrame);
+            }
+
+            MCTestGame::RunFrame(FlowFrame);
+        }
+    }
+
+    /// <summary>The campaign's first mission saved as the game names its own before it, and by a player's name.</summary>
+    std::pair<std::string, std::string> SaveFirstMission()
+    {
+        const std::string before = MCFormatPrintf(LoadGameString(PortArthurBefore, SaveNameLength).c_str(), 1, 1);
+        const std::string named = "Kaio, second try";
+        REQUIRE_EQ(MCLogistics::SaveCampaign(before), 0);
+        ResourcePoints += 500;
+        REQUIRE_EQ(MCLogistics::SaveCampaign(named), 0);
+        SetSavedAgo(before, 2 * SecondsPerHour);
+        SetSavedAgo(named, SecondsPerHour);
+        return {before, named};
+    }
+}
+
+/// <summary>
+/// The main menu's LOAD GAME opens the remade screen over it: every campaign's saves newest first, the newest picked
+/// with its facts and its mission's map; Q and E change the campaign shown; Escape goes back; LOAD plays the picked save,
+/// its briefing up and LOAD GAME given way to it.
+/// </summary>
+TEST_CASE_ISOLATED("game: LOAD GAME lists the saves, picks the newest and loads it into its briefing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    const auto [before, named] = SaveFirstMission();
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE_EQ(MCScreenFlow::StackText(), std::string("main"));
+
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+    CHECK(screen.Shown());
+    CHECK(screen.Mode() == MCSavesScreen::MCMode::Load);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > load"));
+    REQUIRE_EQ(screen.Rows().size(), size_t{2});
+    CHECK_EQ(screen.Rows()[0].Mission, named);
+    CHECK_EQ(screen.Rows()[0].When, std::string("Named"));
+    CHECK_EQ(screen.Rows()[1].Mission, std::string("Liberate work camps"));
+    CHECK_EQ(screen.Rows()[1].When, std::string("Before"));
+    CHECK_EQ(screen.Rows()[1].Campaign, std::string("Original"));
+    CHECK_EQ(screen.Picked(), 0);
+    CHECK_EQ(screen.MapSource(), std::string("map:mis0101"));
+    CHECK(!screen.Campaign().has_value());
+
+    // E: the original campaign's (both), again: the expansion's (none), Q twice back to ALL.
+    MCScreenInput::RealKey(SDL_SCANCODE_E);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.Campaign() == MCSaves::MCCampaign::Original);
+    CHECK_EQ(screen.Rows().size(), size_t{2});
+    MCScreenInput::RealKey(SDL_SCANCODE_E);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.Campaign() == MCSaves::MCCampaign::Expansion);
+    CHECK(screen.Rows().empty());
+    CHECK_EQ(screen.Picked(), -1);
+    MCScreenInput::RealKey(SDL_SCANCODE_Q);
+    MCScreenInput::RealKey(SDL_SCANCODE_Q);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!screen.Campaign().has_value());
+
+    // Escape: the main menu again.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    RunWhileChanging();
+    CHECK(!screen.Shown());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main"));
+
+    // LOAD the game's own save (Down to the second row, then Enter): its briefing, the stack the main menu and the
+    // campaign.
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    CHECK_EQ(screen.Picked(), 0);
+    MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(screen.PickedSave(), std::optional<std::string>(before));
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    RunWhileChanging();
+    CHECK(!screen.Shown());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK_EQ(GlobalLog()->CurrentMission, 0);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
+}
+
+namespace
+{
+    /// <summary>Sets when the save <paramref name="name"/> was written to <paramref name="at"/> (as SDL tells time).</summary>
+    void SetSavedAt(std::string_view name, SDL_Time at)
+    {
+        SDL_Time now = 0;
+        REQUIRE(SDL_GetCurrentTime(&now));
+        const std::filesystem::path file = MCFileSystem::Resolve(GamePath(SavePath, name, ".sav"));
+        std::filesystem::last_write_time(file,
+                                         std::filesystem::file_time_type::clock::now() +
+                                             std::chrono::duration_cast<std::filesystem::file_time_type::duration>(
+                                                 std::chrono::nanoseconds(at - now)));
+    }
+
+    /// <summary>
+    /// The window's picture now, its hash named by <paramref name="what"/> and its size ("load 640x480: 0x..."), saved
+    /// with <c>--shots</c>.
+    /// </summary>
+    std::string DrawnWindow(MCDisplay& display, std::string_view what)
+    {
+        constexpr int32_t SettleFrames = 4;
+
+        for (int32_t frame = 0; frame < SettleFrames; frame++)
+        {
+            MCTestGame::RunFrame(FlowFrame);
+        }
+
+        const auto window = display.ReadWindow();
+        REQUIRE(window.has_value());
+
+        if (const std::optional<std::filesystem::path> path =
+                MCMenuFrames::ShotPath(std::format("saves_{}_{}x{}", what, window->Width, window->Height));
+            path.has_value())
+        {
+            REQUIRE(display.SaveWindowScreenshot(*path).has_value());
+        }
+
+        return std::format("{} {}x{}: {:#010x}", what, window->Width, window->Height,
+                           MCMenuFrames::PictureHash(*window));
+    }
+}
+
+/// <summary>
+/// LOAD GAME, DELETE's question over it and SAVE GAME over the game on the software renderer, the whole window at
+/// 640x480, 1280x720 and 1280x1024 (the 1998 briefing map among it), the hashes recorded: the Mac's and Windows' alike
+/// with the game's data. Its saves' times are fixed against today's noon, so their dates read the same every day.
+/// With <c>--shots</c> each is saved.
+/// </summary>
+TEST_CASE_ISOLATED("game: LOAD GAME, its DELETE question and SAVE GAME draw the same on every machine")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    REQUIRE(display->RendererKind() == MCRendererKind::Software);
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+
+    // Three saves: the game's before and after the first mission, and one the player named, today and yesterday.
+    const SDL_Time noon = TodaysNoon();
+    MCSaves::Game().SetClock([noon] { return noon; });
+    const std::string before = MCFormatPrintf(LoadGameString(PortArthurBefore, SaveNameLength).c_str(), 1, 1);
+    const std::string after = MCFormatPrintf(LoadGameString(PortArthurAfter, SaveNameLength).c_str(), 1, 1);
+    REQUIRE_EQ(MCLogistics::SaveCampaign(before), 0);
+    REQUIRE_EQ(MCLogistics::SaveCampaign("Kaio, second try"), 0);
+    ResourcePoints += 2250;
+    REQUIRE_EQ(MCLogistics::SaveCampaign(after), 0);
+    SetSavedAt(after, noon - SecondsPerHour * NanosecondsPerSecond);
+    SetSavedAt(before, noon - 2 * SecondsPerHour * NanosecondsPerSecond);
+    SetSavedAt("Kaio, second try", noon - (SecondsPerDay - SecondsPerHour) * NanosecondsPerSecond);
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+
+    // On LOAD GAME from the main menu, and its DELETE's question; then SAVE GAME, opened between missions.
+    struct MCDrawn
+    {
+        std::string_view What;
+        std::array<uint32_t, MCMenuFrames::FrameWindows.size()> Hashes;
+    };
+
+    constexpr std::array<MCDrawn, 3> Drawn = {{
+        {"load", {0x31082c34, 0xf77f4dd1, 0xc3f660ac}},
+        {"delete", {0xee7115ae, 0xcf3d29f1, 0x477778ed}},
+        {"save", {0x5063f15c, 0x5699ee0f, 0x6b5b8276}},
+    }};
+
+    const auto drawEach = [&display](const MCDrawn& drawn)
+    {
+        for (size_t i = 0; i < MCMenuFrames::FrameWindows.size(); i++)
+        {
+            const MCMenuFrames::MCWindowSize& size = MCMenuFrames::FrameWindows[i];
+            REQUIRE(MCMenuFrames::SetWindowPixels(*display, size.Width, size.Height));
+            CHECK_EQ(DrawnWindow(*display, drawn.What),
+                     std::format("{} {}x{}: {:#010x}", drawn.What, size.Width, size.Height, drawn.Hashes[i]));
+        }
+    };
+
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+    drawEach(Drawn[0]);
+    screen.PressDelete();
+    REQUIRE(screen.Dialog());
+    CHECK(screen.Dialog()->Shown());
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::DeleteQuestion));
+    CHECK_EQ(screen.Dialog()->Saying().First, std::string("Operation 1, mission 1: Liberate work camps."));
+    CHECK_EQ(screen.Dialog()->Saying().Second, std::string("Saved after the mission, today at 11:00."));
+    drawEach(Drawn[1]);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!screen.Dialog()->Shown());
+    CHECK(screen.Shown());
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    RunWhileChanging();
+
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    CHECK(screen.Shown());
+    CHECK(screen.Mode() == MCSavesScreen::MCMode::Save);
+    drawEach(Drawn[2]);
+}
+
+/// <summary>
+/// LOAD GAME, its DELETE question and SAVE GAME at every window the players' reports name, with the longest names
+/// they show (the campaigns' longest mission's, a player's longest name): every element inside the
+/// window, no two siblings overlapping, no text spilling or cut (MCRmlChecks::BoxProblems); every text at least 8
+/// units high, at its contrast (MCRmlChecks::Illegible).
+/// </summary>
+TEST_CASE_ISOLATED("game: LOAD GAME and SAVE GAME lay out and read at every window the players' reports name")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+
+    // The saves named as the game names its own for the original's longest mission's (operation 4, mission 6) and a
+    // player's save under the longest name the box takes.
+    constexpr int32_t LongestOperation = 4;
+    constexpr int32_t LongestMission = 6;
+    const std::string longest =
+        MCFormatPrintf(LoadGameString(PortArthurBefore, SaveNameLength).c_str(), LongestOperation, LongestMission);
+    const std::string longestName(31, 'W');
+    REQUIRE_EQ(MCLogistics::SaveCampaign(longest), 0);
+    REQUIRE_EQ(MCLogistics::SaveCampaign(longestName), 0);
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+
+    const auto check = [](std::string_view what)
+    {
+        REQUIRE(MCRmlMenus::Running().has_value());
+        MCRmlMenus& menus = MCRmlMenus::Running()->get();
+
+        for (const MCMenuFrames::MCWindowSize& window : MCMenuFrames::PlayersWindows)
+        {
+            menus.SetWindow(window.Width, window.Height);
+            menus.Frame();
+            const float unit = MCRmlMenus::MenusUnit(window.Width, window.Height);
+            const std::string where = std::format("{} {}x{}: ", what, window.Width, window.Height);
+            CHECK_EQ(where + MCRmlChecks::BoxProblems(menus.Menus().Context()), where);
+            CHECK_EQ(where + MCRmlChecks::Illegible(menus.Menus().Context(), unit), where);
+        }
+    };
+
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+    REQUIRE_EQ(screen.Rows().size(), size_t{2});
+    const auto row = std::ranges::find_if(screen.Rows(), [](const MCSavesScreen::MCRow& shown)
+                                          { return shown.Mission == "Destroy Smoke Jaguar orbital guns"; });
+    REQUIRE(row != screen.Rows().end());
+    screen.Pick(static_cast<int>(row - screen.Rows().begin()));
+    check("load");
+    screen.PressDelete();
+    check("delete");
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    RunWhileChanging();
+
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    screen.Pick(0);
+    check("save");
 }

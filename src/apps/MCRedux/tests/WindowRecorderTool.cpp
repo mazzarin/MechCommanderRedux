@@ -137,12 +137,17 @@ namespace
         bool Same = false;
     };
 
+    /// <summary>How many phases a change has (MCScreenChange::MCPhase's, None to In).</summary>
+    constexpr size_t PhaseCount = static_cast<size_t>(MCPhase::In) + 1;
+
     std::string_view PhaseName(MCPhase phase)
     {
         switch (phase)
         {
             case MCPhase::None:
                 return "none";
+            case MCPhase::Working:
+                return "working";
             case MCPhase::Out:
                 return "out";
             case MCPhase::Dark:
@@ -518,8 +523,8 @@ namespace
             list("fades running the wrong way (something they don't cover came or went)", wrongWay);
             list("frames with something round the view but the surround", stray);
 
-            // Each change: its frames by phase, and from its first frame (the one after the press) to the next screen's
-            // first and its fade-in's end.
+            // Each change: its frames by phase, and from its fade-out's first frame (the one after the press, or after
+            // its job) to the next screen's first and its fade-in's end.
             for (size_t first = 0; first < frames.size();)
             {
                 const std::string& name = frames[first].Note.Change;
@@ -531,13 +536,19 @@ namespace
                 }
 
                 size_t end = first;
-                std::array<size_t, 4> phases{};
+                std::array<size_t, PhaseCount> phases{};
+                std::optional<double> firstOut;
                 std::optional<double> firstIn;
 
                 while (end < frames.size() && frames[end].Note.Change == name)
                 {
                     const MCFrameNote& note = frames[end].Note;
                     phases[static_cast<size_t>(note.Phase)]++;
+
+                    if (note.Phase == MCPhase::Out && !firstOut.has_value())
+                    {
+                        firstOut = note.PresentMs;
+                    }
 
                     if (note.Phase == MCPhase::In && !firstIn.has_value())
                     {
@@ -547,12 +558,13 @@ namespace
                     end++;
                 }
 
-                const double start = frames[first].Note.PresentMs;
-                line(std::format("change {}: {} frames out, {} dark, {} in; its first frame to the next screen's first "
-                                 "{:.1f} ms, to the fade-in's end {:.1f} ms",
-                                 name, phases[static_cast<size_t>(MCPhase::Out)],
-                                 phases[static_cast<size_t>(MCPhase::Dark)], phases[static_cast<size_t>(MCPhase::In)],
-                                 firstIn.value_or(start) - start, frames[end - 1].Note.PresentMs - start));
+                const double start = firstOut.value_or(frames[first].Note.PresentMs);
+                const auto count = [&phases](MCPhase phase) { return phases[static_cast<size_t>(phase)]; };
+                line(std::format("change {}: {} frames working, {} out, {} dark, {} in; its fade-out's first frame to "
+                                 "the next screen's first {:.1f} ms, to the fade-in's end {:.1f} ms",
+                                 name, count(MCPhase::Working), count(MCPhase::Out), count(MCPhase::Dark),
+                                 count(MCPhase::In), firstIn.value_or(start) - start,
+                                 frames[end - 1].Note.PresentMs - start));
                 first = end;
             }
 
@@ -677,10 +689,10 @@ namespace
         RunPaced(time, [] { return false; }, seconds);
     }
 
-    /// <summary>Whether no change of screen runs and the mission's passage is over.</summary>
+    /// <summary>Whether no change of screen runs.</summary>
     bool Settled()
     {
-        return !MCScreenChange::Running() && !Mission()->Passing();
+        return !MCScreenChange::Running();
     }
 
     /// <summary>An option's number, else <paramref name="fallback"/>.</summary>

@@ -21,6 +21,8 @@
 #include "platform/MCPresenter.h"
 #include "vfx/MCVfx.h"
 
+#include <thread>
+
 // Port-only (SPEC-menus.md's stage 1): the changes of screen into a mission and back, as continuous sequences (the
 // screen fading out live, dark only while work is left, the next fading in from its first frame), and the menus' frame
 // in the middle of the window.
@@ -90,7 +92,7 @@ namespace
     /// <summary>Runs frames until no change of screen runs (at most <see cref="MostFrames"/>).</summary>
     void RunWhileChanging()
     {
-        for (int32_t frame = 0; frame < MostFrames && (MCScreenChange::Running() || Mission()->Passing()); frame++)
+        for (int32_t frame = 0; frame < MostFrames && MCScreenChange::Running(); frame++)
         {
             MCTestGame::RunFrame(1.0f / 15.0f);
         }
@@ -129,13 +131,13 @@ namespace
     }
 
     /// <summary>
-    /// The frames of <paramref name="shown"/> from <paramref name="from"/>, after the change's last: shown clear, no
-    /// change running (the frame loop ran until the mission's passage noticed the change was over, a frame on).
+    /// The frames of <paramref name="shown"/> from <paramref name="from"/>, after the change's last: none (the frame loop
+    /// ran until the change was over).
     /// </summary>
     void CheckAfterChange(std::span<const MCShown> shown, size_t from)
     {
         REQUIRE(from <= shown.size());
-        CHECK(shown.size() - from <= 1);
+        CHECK_EQ(shown.size(), from);
         CHECK(std::ranges::all_of(shown.subspan(from), [](const MCShown& frame)
                                   { return frame.Phase == MCPhase::None && frame.Fade == 0; }));
     }
@@ -186,8 +188,85 @@ TEST_CASE("presenter: the window round the view fades with the picture")
 }
 
 /// <summary>
+/// A change whose job runs first runs it live, a piece at a time within the frame's budget, the screen shown clear and
+/// the player's input given to it; one change at a time. Done, the screen fades out, the dark work runs and the next
+/// screen fades in, and the change's Then follows. Called off while its job runs, the change undoes it (CalledOff) and the
+/// screen shown stays, clear.
+/// </summary>
+TEST_CASE_ISOLATED("screen change: a job runs live before the fade-out, and can be called off")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::StartLogistics());
+    RunWhileChanging();
+
+    int32_t jobPieces = 0;
+    int32_t darkPieces = 0;
+    bool calledOff = false;
+    bool then = false;
+    const MCScreenChange::MCPiece job{.Part = {}, .Run = [&jobPieces] { jobPieces++; }};
+    REQUIRE(MCScreenChange::Start({.Name = "a test's",
+                                   .Job = {job, job},
+                                   .FadeOut = MCScreenChange::MCFadeOut::AfterJob,
+                                   .Dark = {{.Part = {}, .Run = [&darkPieces] { darkPieces++; }}},
+                                   .CalledOff = [&calledOff] { calledOff = true; },
+                                   .Then = [&then] { then = true; }}));
+    CHECK(MCScreenChange::Phase() == MCPhase::Working);
+    CHECK(!MCScreenChange::HoldsInput());
+    CHECK_EQ(MCScreenChange::FadeNow(), 0);
+    CHECK(!MCScreenChange::Start({.Name = "a second"}));
+
+    // Both pieces in the frame's budget, then the fade-out from that frame.
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(jobPieces, 2);
+    CHECK(MCScreenChange::Phase() == MCPhase::Out);
+    CHECK(MCScreenChange::HoldsInput());
+    RunWhileChanging();
+    CHECK_EQ(darkPieces, 1);
+    CHECK(then);
+    CHECK(!calledOff);
+    CHECK(!MCScreenChange::HoldsInput());
+
+    // A piece longer than the frame's budget leaves the next for the next frame, the screen still clear; called off
+    // there, the rest isn't run.
+    jobPieces = 0;
+    darkPieces = 0;
+    then = false;
+    const auto budget = std::chrono::duration<double, std::milli>(MCScreenChange::FrameBudgetMs);
+    const MCScreenChange::MCPiece slow{.Part = {},
+                                       .Run = [&jobPieces, budget]
+                                       {
+                                           std::this_thread::sleep_for(budget * 2);
+                                           jobPieces++;
+                                       }};
+    REQUIRE(MCScreenChange::Start({.Name = "a test's",
+                                   .Job = {slow, job},
+                                   .FadeOut = MCScreenChange::MCFadeOut::AfterJob,
+                                   .Dark = {{.Part = {}, .Run = [&darkPieces] { darkPieces++; }}},
+                                   .CalledOff = [&calledOff] { calledOff = true; },
+                                   .Then = [&then] { then = true; }}));
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(jobPieces, 1);
+    CHECK(MCScreenChange::Phase() == MCPhase::Working);
+    CHECK_EQ(MCInput::Display()->Fade(), 0);
+    MCScreenChange::Cancel();
+    CHECK(calledOff);
+    CHECK(!MCScreenChange::Running());
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(jobPieces, 1);
+    CHECK_EQ(darkPieces, 0);
+    CHECK(!then);
+    CHECK_EQ(MCInput::Display()->Fade(), 0);
+}
+
+/// <summary>
 /// BEGIN MISSION fades the briefing out live (it keeps drawing), straight into the loading screen fading in, without a
-/// dark frame between; the save, the menus' teardown and the load run behind the loading screen, which then fades out,
+/// dark frame between; the save, the menus' teardown and the load run behind the loading screen (the next change's job,
+/// live), which then fades out,
 /// and the battlefield fades in at the window's size from its first frame. The player's clicks and keys are held
 /// meanwhile. The menus sit in their 640x480 frame on the stone; the battlefield fills the window.
 /// </summary>
@@ -272,6 +351,9 @@ TEST_CASE_ISOLATED("game: BEGIN MISSION fades into the loading screen, and the l
     CheckFade(loading.subspan(static_cast<size_t>(loadingOut - loading.begin())), true,
               "the loading screen's fade-out");
     CHECK(std::ranges::all_of(loading, [](const MCShown& frame) { return SameColor(frame.Surround, MenuStone); }));
+    // The load's own frames, the change into the battle's job, show the loading screen clear.
+    CHECK(std::ranges::all_of(loading,
+                              [](const MCShown& frame) { return frame.Phase != MCPhase::Working || frame.Fade == 0; }));
 
     // The battlefield fades in from its first frame, filling the window.
     const size_t battleFrom = briefing.size() + loading.size();

@@ -83,13 +83,10 @@ int SomethingOnFire = 0;
 
 namespace
 {
-    /// <summary>Milliseconds in a second.</summary>
-    constexpr double MsPerSecond = 1000.0;
-    /// <summary>
-    /// Port-only (SPEC-menus.md's stage 1): the way back's pieces run in a dark frame while this much of it has gone (a
-    /// 240 Hz refresh), so the screen is dark only as long as their work takes.
-    /// </summary>
-    constexpr double ArrivalBudgetMs = 4.0;
+    /// <summary>Port-only (SPEC-menus.md's stage 1): the frame log's names for the changes of screen into a mission and back.</summary>
+    constexpr std::string_view IntoTheMissionChange = "into the mission";
+    constexpr std::string_view IntoTheBattleChange = "into the battle";
+    constexpr std::string_view OutOfTheMissionChange = "out of the mission";
 
     /// <summary>
     /// Port-only (20 Nov, the A10's 4 GB card: play's first frames with the world, its second and third, waited 16 and
@@ -647,13 +644,12 @@ auto MCMission::Shutdown() -> void
         SetGlobalLog({});
     }
 
-    // Port-only (SPEC-menus.md's stage 1): a passage left behind with its change of screen.
-    if (_Passage != MCPassage::None)
+    // Port-only (SPEC-menus.md's stage 1): a change of screen left behind, and the loading screen it put up.
+    MCScreenChange::Cancel();
+
+    if (LoadingScreenUp)
     {
-        _Passage = MCPassage::None;
-        LoadingScreenUp = false;
-        ReleaseLoadingShape();
-        MCScreenChange::Cancel();
+        TakeDownLoadingScreen();
     }
 
     State = MCMissionState::Start;
@@ -663,9 +659,10 @@ auto MCMission::Run() -> int32_t
 {
     KeepScreenBlack = false;
 
-    // Port-only (SPEC-menus.md's stage 1): the way into a mission or back out, in changes of screen; while it holds the
-    // state, the state machine's own step waits.
-    if (TendPassage())
+    // Port-only (SPEC-menus.md's stage 1): the way into a mission or back out, in changes of screen
+    // (gui/MCScreenChange.h): while the screen is dark for one, or the loading screen is up between the briefing and the
+    // battlefield, the change holds the state and the state machine's own step waits.
+    if (MCScreenChange::Dark() || LoadingScreenUp)
     {
         UpdateMissionSound();
         return 0;
@@ -930,14 +927,9 @@ auto MCMission::Run() -> int32_t
         _RequestedScenario.reset();
 
         // Port-only (SPEC-menus.md's stage 1): from a briefing, in a change of screen: it fades out live from the next
-        // frame (TendPassage). At once otherwise, as the original.
-        if (State == MCMissionState::Logistics && GlobalLog() != nullptr && GuiSystem().CanChangeScreen() &&
-            MCScreenChange::Start("into the mission"))
-        {
-            _PassageScenario = scenarioName;
-            _Passage = MCPassage::BriefingOut;
-        }
-        else
+        // frame. At once otherwise, as the original.
+        if (State != MCMissionState::Logistics || GlobalLog() == nullptr || !GuiSystem().CanChangeScreen() ||
+            !MCScreenChange::Start(IntoTheMission(scenarioName)))
         {
             StartScenario(scenarioName);
         }
@@ -1089,8 +1081,8 @@ auto MCMission::LoadScenario(std::string_view name) -> void
     TotalLogisticsTime = static_cast<float>(elapsed.wMinute) * 60.0f + static_cast<float>(elapsed.wHour) * 3600.0f +
                          static_cast<float>(elapsed.wSecond) + static_cast<float>(elapsed.wMilliseconds / 1000);
 
-    // Port-only (SPEC-menus.md's stage 1): in a passage the loading screen put the game's palette in already.
-    if (_Passage == MCPassage::None)
+    // Port-only (SPEC-menus.md's stage 1): in a change of screen the loading screen put the game's palette in already.
+    if (!LoadingScreenUp)
     {
         GamePalette().Activate();
         InitAlphaLookup(GamePalette().Colors());
@@ -1309,33 +1301,36 @@ auto MCMission::EndsAtResults() const -> bool
     return match != nullptr && !MCRoomEnd::TakesOnAfterMatch() && match->InMission && IsMPlayerGame;
 }
 
-auto MCMission::ReadWayBackAhead(bool hold) const -> void
+auto MCMission::WayBackAhead(bool hold) const -> std::vector<MCScreenChange::MCPiece>
 {
-    if (const MCFrameLog::Scope part("change.files ahead"); true)
-    {
-        MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles());
-    }
+    std::vector<MCScreenChange::MCPiece> pieces;
+    pieces.push_back(
+        {.Part = "change.files ahead",
+         .Run = [] { MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles()); }});
 
     if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
     {
-        if (const MCFrameLog::Scope part("change.map ahead"); true)
-        {
-            MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
-        }
+        const std::string& briefing = Scenarios[*briefed];
+        pieces.push_back({.Part = "change.map ahead",
+                          .Run = [this, briefing, hold]
+                          {
+                              MCLogistics::ReadBriefingMapAhead(briefing);
 
-        // Port-only (SPEC-memory.md's "From the briefing": between missions): the next mission's hold from now, as its
-        // briefing would start it: a loss's replay keeps what's held, a win's next lets go of the last mission's first.
-        if (hold)
-        {
-            StartMissionHold(Scenarios[*briefed]);
-        }
+                              // Port-only (SPEC-memory.md's "From the briefing": between missions): the next mission's
+                              // hold from now, as its briefing would start it: a loss's replay keeps what's held, a win's
+                              // next lets go of the last mission's first.
+                              if (hold)
+                              {
+                                  StartMissionHold(briefing);
+                              }
+                          }});
     }
 
     // Port-only (SPEC-first-use.md's "Between missions"): the screens' whole set of HD pictures read ahead from the click
     // too, after the briefing's map: the briefing, or a match's games screen and its room (the rematch's, or the next
     // one made), finds its own at its first draw. Logistics' start asks again (MCLogistics::MakeAhead), for nothing.
-    const MCFrameLog::Scope part("change.menus ahead");
-    GuiSystem().ReadMenuSetAhead();
+    pieces.push_back({.Part = "change.menus ahead", .Run = [] { GuiSystem().ReadMenuSetAhead(); }});
+    return pieces;
 }
 
 auto MCMission::CloseResultsScreen() -> void
@@ -1396,75 +1391,114 @@ auto MCMission::CloseResultsScreen() -> void
         ~MCForget() { MCFilesAhead::Forget(); }
     } forget;
 
-    ReadWayBackAhead(true);
+    MCScreenChange::RunPieces(WayBackAhead(true));
     FadeOutWhile(back);
 }
 
 auto MCMission::LeaveResults() -> void
 {
     // Leaving already (a match's REMATCH heard as the player pressed on).
-    if (_Passage != MCPassage::None)
+    if (MCScreenChange::Name() == OutOfTheMissionChange)
     {
-        return;
-    }
-
-    if (ResultsScreen == nullptr || Scenario() == nullptr || EndsAtResults() || !GuiSystem().CanChangeScreen() ||
-        !MCScreenChange::Start("out of the mission"))
-    {
-        CloseResultsScreen();
         return;
     }
 
     // From the press, while the results fade out live, the files the way back looks for are read ahead, the next
     // briefing's map and the menus' pictures; the mission's held art is kept for the battlefield under them until the
-    // scenario ends, at dark (CloseResultsInPassage).
-    ReadWayBackAhead(false);
-    _Passage = MCPassage::ResultsOut;
+    // scenario ends, once dark. Called off, what was read ahead goes.
+    if (ResultsScreen == nullptr || Scenario() == nullptr || EndsAtResults() || !GuiSystem().CanChangeScreen() ||
+        !MCScreenChange::Start({.Name = std::string(OutOfTheMissionChange),
+                                .Job = WayBackAhead(false),
+                                .FadeOut = MCScreenChange::MCFadeOut::AtPress,
+                                .Dark = ResultsClosing(),
+                                .CalledOff = [] { MCFilesAhead::Forget(); }}))
+    {
+        CloseResultsScreen();
+    }
 }
 
-auto MCMission::CloseResultsInPassage() -> void
+auto MCMission::ResultsClosing() -> std::vector<MCScreenChange::MCPiece>
 {
-    // The pieces run a dark frame each: the scenario ended (the bridge file, the sounds, its unload), the way back (the
-    // menus made again, the next screen set up), then what a fade into a screen does (IntoScreenPieces).
-    _ArrivalPieces.clear();
-    _ArrivalPiece = 0;
-    _ArrivalPieces.emplace_back(
-        [this]
-        {
-            CloseGuiObject(ResultsScreen);
-            ResultsScreen.reset();
-            GuiSystem().CursorHidden = false;
+    // The scenario ended (the bridge file, the sounds, its unload), the way back (the menus made again, the next screen
+    // set up), then what a fade into a screen does.
+    std::vector<MCScreenChange::MCPiece> pieces;
+    pieces.push_back({.Part = "change.scenario ended",
+                      .Run = [this]
+                      {
+                          CloseGuiObject(ResultsScreen);
+                          ResultsScreen.reset();
+                          GuiSystem().CursorHidden = false;
 
-            if (Scenario() == nullptr)
-            {
-                return;
-            }
+                          if (Scenario() == nullptr)
+                          {
+                              return;
+                          }
 
-            _WayBack = EndScenarioLeavingWayBack();
-            LetGoHoldUnlessKept();
+                          _WayBack = EndScenarioLeavingWayBack();
+                          LetGoHoldUnlessKept();
 
-            if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
-            {
-                StartMissionHold(Scenarios[*briefed]);
-            }
-        });
-    _ArrivalPieces.emplace_back(
-        [this]
-        {
-            const MCFrameLog::Scope part("change.way back");
+                          if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
+                          {
+                              StartMissionHold(Scenarios[*briefed]);
+                          }
+                      }});
+    pieces.push_back({.Part = "change.way back",
+                      .Run = [this]
+                      {
+                          if (_WayBack != nullptr)
+                          {
+                              const std::function<void()> wayBack = std::move(_WayBack);
+                              _WayBack = nullptr;
+                              wayBack();
+                          }
 
-            if (_WayBack != nullptr)
-            {
-                const std::function<void()> wayBack = std::move(_WayBack);
-                _WayBack = nullptr;
-                wayBack();
-            }
+                          AfterResults();
+                          MCFilesAhead::Forget();
+                      }});
 
-            AfterResults();
-            MCFilesAhead::Forget();
-        });
+    for (std::function<void()>& piece : IntoScreenPieces())
+    {
+        pieces.push_back({.Part = "change.next screen", .Run = std::move(piece)});
+    }
 
-    std::ranges::move(IntoScreenPieces(), std::back_inserter(_ArrivalPieces));
+    return pieces;
+}
+
+auto MCMission::IntoTheMission(const std::string& scenarioName) -> MCScreenChange::MCChange
+{
+    return {.Name = std::string(IntoTheMissionChange),
+            .FadeOut = MCScreenChange::MCFadeOut::AtPress,
+            .Dark = {{.Part = "change.loading screen", .Run = [this] { ShowLoadingScreen(); }}},
+            .Then = [this, scenarioName] { StartIntoTheBattle(scenarioName); }};
+}
+
+auto MCMission::StartIntoTheBattle(const std::string& scenarioName) -> void
+{
+    const auto load = [this, scenarioName] { LoadScenario(scenarioName); };
+    const auto enter = [this]
+    {
+        TakeDownLoadingScreen();
+        EnterScenario();
+    };
+
+    // The load runs as the change's job, live (it draws its own frames, the loading screen's bar).
+    if (MCScreenChange::Start({.Name = std::string(IntoTheBattleChange),
+                               .After = std::string(IntoTheMissionChange),
+                               .Job = {{.Part = {}, .Run = load}},
+                               .FadeOut = MCScreenChange::MCFadeOut::AfterJob,
+                               .Dark = {{.Part = "change.into play", .Run = enter}}}))
+    {
+        return;
+    }
+
+    load();
+    enter();
+}
+
+auto MCMission::TakeDownLoadingScreen() -> void
+{
+    LoadingScreenUp = false;
+    ReleaseLoadingShape();
 }
 
 auto MCMission::ShowLoadingScreen() -> void
@@ -1489,127 +1523,6 @@ auto MCMission::ShowLoadingScreen() -> void
     HoldLoadingShape();
     LoadingScreenUp = true;
     State = MCMissionState::StartScenario;
-}
-
-auto MCMission::TendPassage() -> bool
-{
-    switch (_Passage)
-    {
-        case MCPassage::None:
-            return false;
-        case MCPassage::BriefingOut:
-        {
-            // The briefing fades out live, the state machine's logistics step running, until the screen is dark.
-            if (MCScreenChange::Running() && !MCScreenChange::Dark())
-            {
-                return false;
-            }
-
-            if (!MCScreenChange::Dark())
-            {
-                // The change called off: the mission starts at once, as the original's.
-                _Passage = MCPassage::None;
-                StartScenario(_PassageScenario);
-                return true;
-            }
-
-            ShowLoadingScreen();
-            _Passage = MCPassage::LoadingIn;
-            MCScreenChange::FadeIn();
-            return true;
-        }
-        case MCPassage::LoadingIn:
-        {
-            if (MCScreenChange::Running())
-            {
-                return true;
-            }
-
-            // The loading screen is in: the save, the menus' teardown and the load behind it.
-            LoadScenario(_PassageScenario);
-
-            if (MCScreenChange::Start("into the battle", "into the mission"))
-            {
-                _Passage = MCPassage::LoadingOut;
-                return true;
-            }
-
-            _Passage = MCPassage::None;
-            LoadingScreenUp = false;
-            ReleaseLoadingShape();
-            EnterScenario();
-            return true;
-        }
-        case MCPassage::LoadingOut:
-        {
-            if (MCScreenChange::Running() && !MCScreenChange::Dark())
-            {
-                return true;
-            }
-
-            LoadingScreenUp = false;
-            ReleaseLoadingShape();
-            EnterScenario();
-            _Passage = MCScreenChange::Dark() ? MCPassage::BattleIn : MCPassage::None;
-            MCScreenChange::FadeIn();
-            return true;
-        }
-        case MCPassage::BattleIn:
-        case MCPassage::ArrivedIn:
-        {
-            // The next screen plays as it fades in.
-            if (!MCScreenChange::Running())
-            {
-                _Passage = MCPassage::None;
-            }
-
-            return false;
-        }
-        case MCPassage::ResultsOut:
-        {
-            // The results fade out live, the state machine's results step running, until the screen is dark.
-            if (MCScreenChange::Running() && !MCScreenChange::Dark())
-            {
-                return false;
-            }
-
-            CloseResultsInPassage();
-            _Passage = MCPassage::Arriving;
-            [[fallthrough]];
-        }
-        case MCPassage::Arriving:
-        {
-            // Pieces while the dark frame's budget lasts (a slow one gets a frame of its own, so the screen is never held
-            // long between them); all that are left at once if the change was called off.
-            const uint64_t started = SDL_GetPerformanceCounter();
-            const auto withinBudget = [started]
-            {
-                const double ms = static_cast<double>(SDL_GetPerformanceCounter() - started) * MsPerSecond /
-                                  static_cast<double>(SDL_GetPerformanceFrequency());
-                return ms < ArrivalBudgetMs;
-            };
-
-            do
-            {
-                if (_ArrivalPiece < _ArrivalPieces.size())
-                {
-                    _ArrivalPieces[_ArrivalPiece++]();
-                }
-            } while (_ArrivalPiece < _ArrivalPieces.size() && (!MCScreenChange::Running() || withinBudget()));
-
-            if (_ArrivalPiece >= _ArrivalPieces.size())
-            {
-                _ArrivalPieces.clear();
-                _ArrivalPiece = 0;
-                _Passage = MCScreenChange::Dark() ? MCPassage::ArrivedIn : MCPassage::None;
-                MCScreenChange::FadeIn();
-            }
-
-            return true;
-        }
-    }
-
-    return false;
 }
 
 auto MCMission::BriefedAfterResults() const -> std::optional<size_t>

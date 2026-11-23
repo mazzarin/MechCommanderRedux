@@ -546,12 +546,12 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     // Port-only: the screen the palette is for, set up already, rehearsed once the fade is nearly black, then the
     // screens a slide from it may bring in, a step each (IntoScreenPieces): there a piece's step, darkened by its time,
     // can't be seen, where at the fade's start each held the bright screen (up to 35 ms on the A10). A fade of
-    // FadeOutWhile's did them already. Port-only (SPEC-menus.md's stage 1): in a change of screen (gui/MCScreenChange.h)
-    // there's no palette fade: the palette goes in once the screen is dark, before the frame is drawn, and the frame
-    // fades in from there.
+    // FadeOutWhile's did them already. Port-only (SPEC-menus.md's stage 1): in a change of screen's fade
+    // (gui/MCScreenChange.h) there's no palette fade: the palette goes in once the screen is dark, before the frame is
+    // drawn, and the frame fades in from there.
     if (!gui.PendingPalette.empty())
     {
-        if (!MCScreenChange::Running())
+        if (!MCScreenChange::Fading())
         {
             gui.FadeDownCurrentPalette(IntoScreenPieces(), MCGuiSystem::FadeNearBlack);
         }

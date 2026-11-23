@@ -375,7 +375,7 @@ namespace
         constexpr int32_t mostFrames = 300;
         RealClick(LaunchButton.x, LaunchButton.y);
         // Port-only (SPEC-menus.md's stage 1): the scenario loads behind the loading screen, and plays once it has
-        // faded out (MCMission's passage).
+        // faded out (MCMission's changes of screen, gui/MCScreenChange.h).
         const auto playing = [] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; };
 
         for (int32_t frame = 0; frame < mostFrames && !playing(); frame++)

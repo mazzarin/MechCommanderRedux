@@ -9,6 +9,7 @@
 #include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiStartup.h"
 #include "gui/MCHardwareCursor.h"
+#include "gui/MCScreenChange.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCUpdateDisplay.h"
 #include "iface/MCTacticalInterface.h"
@@ -536,6 +537,9 @@ auto MCGuiSystem::RunFrameCallbacks(bool includeAdded) -> void
     // The original's array: a callback removed while they run shifts the later ones down (the next one waits a frame),
     // and the slots past the end read null.
     const size_t count = _Callbacks.size();
+    // Port-only (SPEC-menus.md's stages 1 and 2): a change of screen's work for the frame, before its logic; a callback
+    // it adds runs from the next frame, as one added by a callback.
+    MCScreenChange::Tend();
 
     for (size_t i = 0; i < (includeAdded ? _Callbacks.size() : count); i++)
     {

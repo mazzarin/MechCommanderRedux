@@ -482,6 +482,12 @@ void MCRmlKit::Update(Rml::Context& context)
 
     for (Rml::ElementDocument* document : _Documents)
     {
+        // The context's own documents: the other layer's are kept up by its own update, with its own hover and focus.
+        if (document->GetContext() != &context)
+        {
+            continue;
+        }
+
         // The ring over the edge of what has the keys' focus, in the document's own pixels.
         if (Rml::Element* ring = RingOf(*document); ring != nullptr)
         {

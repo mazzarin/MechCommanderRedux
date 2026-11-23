@@ -262,6 +262,13 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
                 return true;
             }
 
+            // A held Escape or Enter goes back or presses once, not once a repeat (a held arrow keeps moving).
+            if (event.key.repeat &&
+                (key == Rml::Input::KI_ESCAPE || key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER))
+            {
+                return true;
+            }
+
             // A key shows where the focus is: its ring from the first key on (the mouse's first move takes it away).
             if (Rml::Element* focus = _Context.GetFocusElement();
                 focus != nullptr && focus != focus->GetOwnerDocument())

@@ -488,8 +488,12 @@ TEST_CASE_ISOLATED("menus: the probe screen plays from the keys with the 1998 so
     CHECK_EQ(backs, 0);
     CHECK_EQ(&probe.Menus->Menus().Top()->get(), static_cast<MCRmlScreen*>(&screen));
 
-    // Escape: the screen's way back.
+    // Escape: the screen's way back, once however long it's held.
     probe.Key(SDLK_ESCAPE);
+    CHECK_EQ(backs, 1);
+    SDL_Event held = KeyEvent(SDL_EVENT_KEY_DOWN, SDLK_ESCAPE, SDL_KMOD_NONE);
+    held.key.repeat = true;
+    probe.Menus->HandleEvent(held);
     CHECK_EQ(backs, 1);
 
     // The mouse's first move takes the ring away.
@@ -559,6 +563,17 @@ TEST_CASE_ISOLATED("menus: the mission's layer has its own unit and draws under 
     REQUIRE(menusTitle != nullptr);
     REQUIRE(missionTitle != nullptr);
     CHECK(missionTitle->GetBox().GetSize().y > menusTitle->GetBox().GetSize().y);
+
+    // The mouse on a button with a hint, a screen on each layer: the hint shows, and unchanged frames keep their draws
+    // (each layer keeps up its own documents' hint lines).
+    Rml::Element* join = probe.Document().GetElementById("join");
+    REQUIRE(join != nullptr);
+    probe.MouseTo(join->GetAbsoluteLeft() + 2.0f, join->GetAbsoluteTop() + 2.0f);
+    const Rml::Element* hints = probe.Document().QuerySelector(".mouse-hints");
+    REQUIRE(hints != nullptr);
+    CHECK(hints->GetInnerRML().find("Join") != std::string::npos);
+    const std::shared_ptr<const MCUiDraws> hovered = probe.Frames();
+    CHECK_EQ(probe.Frames().get(), hovered.get());
 
     // The keys go to the menus' screen while it shows, then to the mission's.
     probe.Key(SDLK_E);

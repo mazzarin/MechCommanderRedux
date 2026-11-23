@@ -133,7 +133,10 @@ void MCRmlProbe::OpenWindow()
 
     if (const auto opened = window->Open(); !opened)
     {
-        SDL_Log("Menus: the probe's window: %s", opened.error().c_str());
+        // Let go of, so the next press tries again.
+        SDL_Log("Menus: the probe's window can't open: %s", opened.error().c_str());
+        window->Close();
+        return;
     }
 
     _Window = window;

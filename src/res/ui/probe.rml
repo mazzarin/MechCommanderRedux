@@ -1,40 +1,87 @@
 <rml>
 <head>
-    <title>RmlUi probe</title>
+    <title>Probe</title>
+    <link type="text/rcss" href="look.rcss"/>
     <link type="text/rcss" href="probe.rcss"/>
 </head>
-<!-- Port-only (SPEC-menus.md): a test of RmlUi drawing with the game's art and fonts (mc_tests' rml-probe). -->
-<body>
-    <div id="frame">
-        <div id="title">MECH BAY PROBE</div>
-        <div id="panels">
-            <div class="panel" id="buttons">
-                <div class="label">BUTTONS</div>
-                <div class="button" id="original"></div>
-                <div class="button grayed" id="expansion"></div>
+<!-- Port-only (SPEC-menus.md, stage 2): the building blocks' test screen (mc_tests' probe tests, the menus tour):
+     every control of the kit, a list from a model, a 1998 picture, the hint line. No player sees it. -->
+<body class="stone" data-model="probe">
+    <div class="stage16">
+        <div class="content">
+            <div class="titlebar row">
+                <div class="grow">
+                    <div class="eyebrow">Building blocks</div>
+                    <div class="title caps">Probe</div>
+                </div>
+                <div class="data grey caps" id="status">{{status}}</div>
             </div>
-            <div class="panel" id="stock">
-                <div class="label">MECHS IN STOCK</div>
-                <div id="list">
-                    <div class="row">COMMANDO 25</div>
-                    <div class="row">FIRESTARTER 35</div>
-                    <div class="row">RAVEN 35</div>
-                    <div class="row">JENNER 35</div>
-                    <div class="row">HUNCHBACK 50</div>
-                    <div class="row">CENTURION 50</div>
-                    <div class="row">BLACKJACK 45</div>
-                    <div class="row">CATAPULT 65</div>
-                    <div class="row">THOR 70</div>
-                    <div class="row">MADCAT 75</div>
-                    <div class="row">ATLAS 100</div>
-                    <div class="row">DAISHI 100</div>
+            <div class="tabs row" id="tabs">
+                <div class="tab now">Controls</div>
+                <div class="tab">Games</div>
+                <div class="tab">Art</div>
+            </div>
+            <div class="row grow" id="panels">
+                <div class="panel column" id="settings">
+                    <div class="panel-name">Settings</div>
+                    <div class="setting">
+                        <div class="data caps cyan">Volume</div>
+                        <div class="row gap8">
+                            <input type="range" class="slider" id="volume" min="0" max="100" step="5" data-value="volume" data-first/>
+                            <div class="data cream" id="volume-number">{{volume}}</div>
+                        </div>
+                    </div>
+                    <div class="setting">
+                        <div class="data caps cyan">Detail</div>
+                        <div class="stepper" id="detail" data-choices="Low|Medium|High|Highest|Most" data-choice="2">
+                            <div class="arrow">&lt;</div>
+                            <div class="step-value"></div>
+                            <div class="arrow">&gt;</div>
+                        </div>
+                    </div>
+                    <div class="setting">
+                        <div class="data caps cyan">Music</div>
+                        <div class="switch" id="music"><div class="on">On</div><div>Off</div></div>
+                    </div>
+                    <div class="setting">
+                        <div class="data caps cyan">Name</div>
+                        <input type="text" class="field" id="name" data-value="name" maxlength="20"/>
+                    </div>
+                </div>
+                <div class="panel column grow" id="games">
+                    <div class="panel-name row"><div class="grow">Games</div><div class="data grey">{{count}}</div></div>
+                    <div class="list-head row">
+                        <div class="cell grow">Game</div>
+                        <div class="cell map">Map</div>
+                        <div class="cell players right">Players</div>
+                    </div>
+                    <div class="scroll-box grow" id="list-box">
+                        <div class="scroller" id="list">
+                            <div class="list-row row" data-for="game, i : games" data-class-picked="i == picked"
+                                 data-event-click="pick(i)" data-hint="Pick">
+                                <div class="cell grow">{{game.name}}</div>
+                                <div class="cell map">{{game.map}}</div>
+                                <div class="cell players right">{{game.players}}</div>
+                            </div>
+                            <div class="empty" data-if="games.size == 0">No games.</div>
+                        </div>
+                        <div class="fade"></div>
+                    </div>
+                </div>
+                <div class="panel column" id="art">
+                    <div class="panel-name">1998 art</div>
+                    <div class="picture" id="painting"></div>
+                    <div class="data grey">The main menu's painting, whole.</div>
                 </div>
             </div>
-            <div class="panel" id="notes">
-                <div class="label">TWO FONTS</div>
-                <div class="text">White, the menus' own.</div>
-                <div class="text yellow">Yellow, as lit.</div>
+            <div class="row foot" id="foot">
+                <div class="button" id="back" data-hint="Back">Main menu</div>
+                <div class="grow"></div>
+                <div class="button" id="window" data-hint="Open">Window</div>
+                <div class="button off" id="host">Host game</div>
+                <div class="button main" id="join" data-hint="Join">Join game</div>
             </div>
+            <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
         </div>
     </div>
 </body>

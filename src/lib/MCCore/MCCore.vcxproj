@@ -523,9 +523,13 @@
     <ClCompile Include="terrain\MCToolPalButton.cpp" />
     <ClCompile Include="terrain\MCVideoWindow.cpp" />
     <ClCompile Include="ui\MCRmlArt.cpp" />
-    <ClCompile Include="ui\MCRmlFonts.cpp" />
+    <ClCompile Include="ui\MCRmlChecks.cpp" />
+    <ClCompile Include="ui\MCRmlKit.cpp" />
+    <ClCompile Include="ui\MCRmlLayer.cpp" />
     <ClCompile Include="ui\MCRmlMenus.cpp" />
+    <ClCompile Include="ui\MCRmlProbe.cpp" />
     <ClCompile Include="ui\MCRmlRecorder.cpp" />
+    <ClCompile Include="ui\MCRmlScreen.cpp" />
     <ClCompile Include="ui\MCRmlSystem.cpp" />
     <ClCompile Include="update\MCContentFolder.cpp" />
     <ClCompile Include="update\MCContentList.cpp" />
@@ -1040,9 +1044,14 @@
     <ClInclude Include="terrain\MCVertex.h" />
     <ClInclude Include="terrain\MCVideoWindow.h" />
     <ClInclude Include="ui\MCRmlArt.h" />
-    <ClInclude Include="ui\MCRmlFonts.h" />
+    <ClInclude Include="ui\MCRmlChecks.h" />
+    <ClInclude Include="ui\MCRmlKit.h" />
+    <ClInclude Include="ui\MCRmlLayer.h" />
     <ClInclude Include="ui\MCRmlMenus.h" />
+    <ClInclude Include="ui\MCRmlModel.h" />
+    <ClInclude Include="ui\MCRmlProbe.h" />
     <ClInclude Include="ui\MCRmlRecorder.h" />
+    <ClInclude Include="ui\MCRmlScreen.h" />
     <ClInclude Include="ui\MCRmlSystem.h" />
     <ClInclude Include="update\MCContentFolder.h" />
     <ClInclude Include="update\MCContentList.h" />
@@ -2766,8 +2775,8 @@
     </ClCompile>
   </ItemGroup>
   <!-- RmlUi 6.3 (src\lib\RmlUi-6.3, MIT): the remade menus' layout, styling and input (ui\ in MCCore). Its
-       core's every C++ file, as its own CMake builds a static library with no font engine of its own
-       (RMLUI_FONT_ENGINE none: no FreeType; RMLUI_STATIC_LIB, which its headers read, MechCommander.props), in
+       core's every C++ file and its FreeType font engine (FontEngineDefault), as its own CMake builds a static
+       library with RMLUI_FONT_ENGINE freetype (RMLUI_STATIC_LIB, which its headers read, MechCommander.props), in
        C++17 as there. Outside MCCore, so its own ItemGroup, which sync_projects.py leaves alone;
        src\mac\CMakeLists.txt reads the list from here. -->
   <ItemGroup>
@@ -2861,7 +2870,7 @@
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
-      <PreprocessorDefinitions>RMLUI_VERSION="6.3";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>RMLUI_VERSION="6.3";RMLUI_FONT_ENGINE_FREETYPE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\DataController.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -3422,6 +3431,57 @@
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineDefault\FontEngineInterfaceDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\FontEngineDefault\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineDefault\FontFace.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\FontEngineDefault\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineDefault\FontFaceHandleDefault.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\FontEngineDefault\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineDefault\FontFaceLayer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\FontEngineDefault\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineDefault\FontFamily.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\FontEngineDefault\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineDefault\FontProvider.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\FontEngineDefault\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineDefault\FreeTypeInterface.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)rmlui\FontEngineDefault\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)RmlUi-6.3\Source\Core\FontEngineInterface.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -4059,6 +4119,111 @@
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <ObjectFileName>$(IntDir)rmlui\Core\</ObjectFileName>
+    </ClCompile>
+  </ItemGroup>
+  <!-- FreeType 2.15.0 (src\lib\freetype-2.15.0, the FreeType License): the letters under RmlUi's font engine. Its
+       base and the TrueType modules alone, as its README-MC.md says: FT2_BUILD_LIBRARY, its modules and options
+       the game's own (mc\mc_ftmodule.h, mc\mc_ftoption.h), C without /sdl. src\mac\CMakeLists.txt reads the list
+       from here. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\autofit\autofit.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\base\ftbase.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\base\ftbitmap.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\base\ftdebug.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\base\ftinit.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\base\ftmm.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\base\ftsystem.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\psnames\psnames.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\sfnt\sfnt.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\smooth\smooth.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)freetype-2.15.0\src\truetype\truetype.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)freetype\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)freetype-2.15.0\include;$(MCLibDir)freetype-2.15.0\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>FT2_BUILD_LIBRARY;FT_CONFIG_MODULES_H=&lt;mc_ftmodule.h&gt;;FT_CONFIG_OPTIONS_H=&lt;mc_ftoption.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemGroup>
   <!-- Begin: the internet games' networking (tools/vendor/ice_itemgroups.py writes this block). -->

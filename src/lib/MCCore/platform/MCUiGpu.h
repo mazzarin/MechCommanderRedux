@@ -32,11 +32,12 @@ public:
     /// <summary>
     /// Draws <paramref name="draws"/> on <paramref name="commands"/> over <paramref name="target"/> (its
     /// <paramref name="format"/>, <paramref name="width"/> x <paramref name="height"/> pixels), first cleared to
-    /// transparent when <paramref name="clear"/>; the pictures it hasn't drawn before uploaded first.
+    /// transparent when <paramref name="clear"/>; the pictures it hasn't drawn before uploaded first. Their colours
+    /// are scaled by <paramref name="shown"/> (the frame's fade: 1 none, 0 black), their coverage kept.
     /// </summary>
     std::expected<void, std::string> Draw(SDL_GPUCommandBuffer& commands, SDL_GPUTexture& target,
                                           SDL_GPUTextureFormat format, uint32_t width, uint32_t height,
-                                          const MCUiDraws& draws, bool clear);
+                                          const MCUiDraws& draws, bool clear, float shown = 1.0f);
 
     /// <summary>The pictures' textures kept (each let go of once its picture is gone).</summary>
     size_t TexturesKept() const { return _Textures.size(); }

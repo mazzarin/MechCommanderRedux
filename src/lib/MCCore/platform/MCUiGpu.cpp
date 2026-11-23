@@ -236,7 +236,7 @@ std::expected<void, std::string> MCUiGpu::FillVertices(SDL_GPUCopyPass& pass, st
 
 std::expected<void, std::string> MCUiGpu::Draw(SDL_GPUCommandBuffer& commands, SDL_GPUTexture& target,
                                                SDL_GPUTextureFormat format, uint32_t width, uint32_t height,
-                                               const MCUiDraws& draws, bool clear)
+                                               const MCUiDraws& draws, bool clear, float shown)
 {
     auto pipeline = PipelineFor(format);
 
@@ -316,8 +316,8 @@ std::expected<void, std::string> MCUiGpu::Draw(SDL_GPUCommandBuffer& commands, S
                 vertices.push_back(MCGpuVertex{
                     .Place = {static_cast<float>(MCUiPlace(vertex.X, draw.X)),
                               static_cast<float>(MCUiPlace(vertex.Y, draw.Y)), vertex.U, vertex.V},
-                    .Color = {vertex.Color[0] / ByteMax, vertex.Color[1] / ByteMax, vertex.Color[2] / ByteMax,
-                              vertex.Color[3] / ByteMax},
+                    .Color = {vertex.Color[0] * shown / ByteMax, vertex.Color[1] * shown / ByteMax,
+                              vertex.Color[2] * shown / ByteMax, vertex.Color[3] / ByteMax},
                 });
             }
 

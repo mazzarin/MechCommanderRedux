@@ -1,0 +1,426 @@
+/* Port-only: the remade menus' look (SPEC-menus.md, "The look"), one sheet for every screen, the game's copy of
+   tools/menus-frames/frames/look.rcss (the style frames') with the controls live: hover, pressed and the keys' focus
+   are RmlUi's own states, and the kit (MCCore's ui/MCRmlKit) runs them. The workspace's frames stay the design. Lengths in dp: one dp is one unit,
+   a 1998 pixel, the window over min(W / 640, H / 480). RCSS has no variables: each value is written where it's used.
+
+   The palette:  well #040404 (the well at 85%: #040404d9)  stone #383b3c  frame #dce4e4
+                 command blue #0c346c, hover #174a8c, pressed #082a58  card teal #045454
+                 hover #12222e  rule #2a3742  rail #1e2a34  thumb #7a8a9a
+                 white #fcfcfc  cyan #7cd4ec  cream #fcfcb8  green #00cc98  grey #a4b0bc  dim #6c7a88
+                 orange #e08a2c  red #f26b55
+   The night (the campaign's screens and the room, no frames): night #0b1116; a place raised a step (a card, a
+                 player) #142029, under the pointer #1b2c38; an open place sunk a step (a slot, a payload's free row,
+                 no map yet) #0f171e; a closed one's edge #1e2b36; the rule between rows #141e26.
+   Each colour one job: white names and rows; cyan labels and what the player is handling (the focus, a field being
+   typed in, a slider's level, a stepper's arrows, the current tab, what a drag would add); cream numbers that count
+   and what is in (the drop, a payload); grey what is said about a thing, and a level read out; card teal what is
+   chosen (a row, a card, a switch's side); command blue the main action only; red a warning; a player's colour only
+   their name.
+   The sizes (units of letters, highest ascender to lowest descender; font size = units / 0.946):
+                 Fine 8 (8.75dp)  Data 9 (9.51dp)  Text 11 (11.63dp)  Heading 14 (14.8dp)  Title 20 (21.14dp)
+   Title and Heading in capitals; a name keeps its own case everywhere else (a callsign is in capitals).
+   Space: steps of 4; the margin 16; columns 16 apart; panels 8 apart and 12 inside; a list row 16; a button 20; a
+   choice 24. */
+
+body {
+    width: 100%;
+    height: 100%;
+    font-family: Saira;
+    font-weight: 500;
+    font-size: 11.63dp;
+    line-height: 15dp;
+    color: #fcfcfc;
+}
+
+div, p, h1, h2, h3, ul, li, section, header, footer { display: block; }
+img { display: block; }
+span, em, strong { display: inline; }
+
+/* ---- Letters ---- */
+
+.fine { font-size: 8.75dp; line-height: 11dp; }
+.data { font-size: 9.51dp; line-height: 12dp; }
+.text { font-size: 11.63dp; line-height: 15dp; }
+.heading { font-size: 14.8dp; line-height: 18dp; font-weight: 600; }
+.title { font-size: 21.14dp; line-height: 25dp; font-weight: 700; }
+.caps { font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.title.caps { font-weight: 700; letter-spacing: 0.02em; }
+
+.white { color: #fcfcfc; }
+.cyan { color: #7cd4ec; }
+.cream { color: #fcfcb8; }
+.grey { color: #a4b0bc; }
+.dim { color: #6c7a88; }
+.green { color: #00cc98; }
+.orange { color: #e08a2c; }
+.red { color: #f26b55; }
+.nowrap { white-space: nowrap; }
+.right { text-align: right; }
+.centre { text-align: center; }
+
+/* ---- Layout ---- */
+
+.row { display: flex; flex-direction: row; align-items: center; }
+.row.top { align-items: flex-start; }
+.row.bottom { align-items: flex-end; }
+.column { display: flex; flex-direction: column; }
+.grow { flex: 1 1 0; }
+.fixed { flex: 0 0 auto; }
+.gap4 { gap: 4dp; }
+.gap8 { gap: 8dp; }
+.gap12 { gap: 12dp; }
+
+/* The 16:9 content: the window less its margins, never wider than 16:9's (821 units), centred. */
+.stage16 {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+}
+.content {
+    flex: 0 1 821dp;
+    margin: 0 16dp;
+    display: flex;
+    flex-direction: column;
+}
+
+/* The 1998 screen, 640x480 units, centred: a painting's own places (its window) are laid out in it. */
+.screen43 {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 640dp;
+    height: 480dp;
+    margin-left: -320dp;
+    margin-top: -240dp;
+}
+
+/* ---- Grounds ---- */
+
+/* The main menu's painting, its height the window's, its sides painted out at 16:9 and 21:9. */
+.stone { background-color: #383b3c; }
+/* The campaign's screens and the room: the night, no frames; columns 16 apart, each named over a rule. */
+.night { background-color: #0b1116; }
+
+/* A column's name in Heading over a rule, its count at the right in grey Data. */
+.head { padding-bottom: 5dp; border-bottom: 1dp #2a3742; margin-bottom: 8dp; }
+
+/* A panel: a well in a 1-unit light frame, 12 inside. On a painting, the well at 85%. */
+.panel {
+    box-sizing: border-box;
+    background-color: #040404;
+    border: 1dp #dce4e4;
+    padding: 12dp;
+}
+.panel.glass { background-color: #040404d9; }
+.panel.flush { padding: 0; }
+
+/* A panel's name, in Heading over a rule. */
+.panel-name {
+    font-size: 14.8dp;
+    line-height: 18dp;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-bottom: 5dp;
+    border-bottom: 1dp #2a3742;
+    margin-bottom: 8dp;
+}
+
+/* A bar along the window's top or bottom: the well, or the well at 85% over a painting. */
+.bar { box-sizing: border-box; background-color: #040404; }
+.bar.glass { background-color: #040404d9; }
+
+.rule { height: 1dp; background-color: #2a3742; }
+
+/* A screen's name: what it belongs to above it in cyan Data, the name in Title, its status on the right. */
+.titlebar { padding-bottom: 6dp; border-bottom: 1dp #2a3742; margin-bottom: 8dp; }
+.eyebrow { font-size: 9.51dp; line-height: 12dp; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #7cd4ec; }
+
+/* ---- Buttons: 20 units, their word in Text capitals ---- */
+
+.button {
+    display: inline-block;
+    box-sizing: border-box;
+    height: 20dp;
+    padding: 0 12dp;
+    border: 1dp #dce4e4;
+    font-size: 11.63dp;
+    line-height: 18dp;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    text-align: center;
+    white-space: nowrap;
+    color: #fcfcfc;
+}
+.button.main { background-color: #0c346c; border-color: #0c346c; }
+.button.main:hover { background-color: #174a8c; border-color: #174a8c; }
+.button.main:active { background-color: #082a58; border-color: #082a58; }
+.button:hover { background-color: #12222e; }
+.button:active { background-color: #082a58; }
+.button.off, .button.off:hover, .button.off:active { background-color: #1e2a34; border-color: #1e2a34; color: #6c7a88; }
+.button.small { height: 16dp; line-height: 14dp; padding: 0 8dp; font-size: 9.51dp; }
+.button.wide { display: block; width: 100%; }
+.button.tall { height: 24dp; line-height: 22dp; }
+
+/* ---- Controls ---- */
+
+/* A text box: framed in dim grey, cyan while typed in. */
+.field {
+    box-sizing: border-box;
+    height: 20dp;
+    padding: 0 6dp;
+    border: 1dp #6c7a88;
+    background-color: #040404;
+    font-size: 11.63dp;
+    line-height: 18dp;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.field.typing, input.text.field:focus { border-color: #7cd4ec; }
+.caret { display: inline-block; width: 1dp; height: 12dp; background-color: #7cd4ec; vertical-align: middle; }
+
+/* A switch, for two to four choices: 20-unit segments framed in dim grey, the one on filled teal. */
+.switch { display: flex; flex-direction: row; }
+.switch > div {
+    box-sizing: border-box;
+    height: 20dp;
+    padding: 0 12dp;
+    border: 1dp #6c7a88;
+    margin-right: -1dp;
+    font-size: 9.51dp;
+    line-height: 18dp;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #a4b0bc;
+    white-space: nowrap;
+}
+.switch > .on { background-color: #045454; color: #fcfcfc; }
+.switch.small > div { height: 16dp; line-height: 14dp; padding: 0 8dp; }
+/* The chat (multiplayer): the newest line at its foot, as many above it as its room holds. A sender's name in their player's
+   colour; a line only the team saw marked TEAM; the game's own lines in grey. Under them the line being typed, after
+   the switch for who hears it: TEAM (the team only) or ALL. */
+.chat { display: flex; flex-direction: column; }
+.chat > * { flex: 0 0 auto; }
+.chat > .chat-lines { flex: 1 1 0; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; }
+.chat-lines > * { flex: 0 0 auto; }
+.chat-line { font-size: 11.63dp; line-height: 15dp; }
+.chat-line .name { font-weight: 600; }
+.chat-line .to { font-size: 8.75dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+.chat-line.game { color: #a4b0bc; }
+.chat-say { display: flex; flex-direction: row; gap: 6dp; margin-top: 6dp; }
+.chat-say > .switch { flex: 0 0 auto; }
+.chat-say > .field { flex: 1 1 0; }
+.chat-say > .button { flex: 0 0 auto; margin-left: 6dp; }  /* the screen's next step, ending the line */
+/* A list: its column names in cyan Data, rows 16 units in Text, the hover and the pick filled. */
+.list-head {
+    height: 16dp;
+    font-size: 9.51dp;
+    line-height: 16dp;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #7cd4ec;
+    border-bottom: 1dp #2a3742;
+}
+.list-row {
+    height: 16dp;
+    font-size: 11.63dp;
+    line-height: 16dp;
+    white-space: nowrap;
+}
+.list-row:hover { background-color: #12222e; }
+.list-row.picked { background-color: #045454; }
+.list-row.off { color: #6c7a88; }
+.cell { box-sizing: border-box; padding: 0 6dp; overflow: hidden; white-space: nowrap; }
+
+/* The scroll rail: 2 units, no arrows; its thumb the list's view. Under the pointer it widens to 4, the thumb lighter,
+   to be grabbed (its hit area is 12 units wide either way). */
+.rail { position: relative; width: 2dp; background-color: #1e2a34; }
+.thumb { position: absolute; left: 0; right: 0; background-color: #7a8a9a; }
+.rail.near, .rail:hover { width: 4dp; }
+.rail.near .thumb { background-color: #a4b0bc; }
+
+/* A list longer than its room: its rows cut at the region's foot (the last one shown in part, so more is plainly
+   there), the rail down its right side. */
+.scroller { display: block; position: relative; overflow: hidden; padding-right: 10dp; }
+.scroller > .rail { position: absolute; right: 0; top: 0; bottom: 0; }
+/* A list with more below fades out over its last 20 units into the ground: a row the window cuts reads as the list
+   going on, not as a row sliced. */
+.scroller > .fade, .scroll > .fade {
+    position: absolute;
+    left: 0;
+    right: 10dp;
+    bottom: 0;
+    height: 20dp;
+    decorator: vertical-gradient(#0b111600 #0b1116ff);
+}
+
+/* A level read out (armour, a skill, how far a video has played): the rail filled grey to it, nothing to grab. */
+.meter { position: relative; height: 4dp; background-color: #1e2a34; }
+.meter-fill { position: absolute; left: 0; top: 0; bottom: 0; background-color: #a4b0bc; }
+
+/* A load against its limit (the drop's tons, a payload's): the ramp, 1998's rising segments remade, lit cream left to
+   right as it fills, cyan for what a unit or a part being dragged would add, red from the load on when it would
+   go over the limit (it's refused). 52 units on DEPLOY, 16 small. */
+.ramp { display: flex; flex-direction: row; align-items: flex-end; gap: 2dp; height: 52dp; }
+.ramp > .seg { flex: 1 1 0; background-color: #1e2a34; }
+.ramp > .seg.on { background-color: #fcfcb8; }
+.ramp > .seg.more { background-color: #7cd4ec; }
+.ramp > .seg.over { background-color: #f26b55; }
+.ramp.small { gap: 1dp; height: 16dp; }
+
+/* A stepper, for more than four choices: the value between two arrows, dim at the ends. */
+.stepper { display: flex; flex-direction: row; align-items: center; }
+.stepper > * { flex: 0 0 auto; }
+.arrow { box-sizing: border-box; width: 16dp; height: 20dp; padding-bottom: 3dp; font-size: 21.14dp; line-height: 17dp; font-weight: 700; color: #7cd4ec; text-align: center; }
+.arrow.off { color: #6c7a88; }
+.step-value { box-sizing: border-box; width: 76dp; height: 20dp; border-bottom: 1dp #2a3742; font-size: 9.51dp; line-height: 19dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; text-align: center; white-space: nowrap; }
+
+/* A slider: the rail filled to its level, a knob at the level; its number beside it (the screen's). */
+.slider { position: relative; height: 4dp; background-color: #1e2a34; }
+.slider-fill { position: absolute; left: 0; top: 0; bottom: 0; background-color: #7cd4ec; }
+.knob { position: absolute; top: -4dp; width: 3dp; height: 12dp; margin-left: -1dp; background-color: #fcfcfc; }
+
+/* A window over a screen: the screen under a veil (the well at 80%), the window centred. */
+.veil { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background-color: #040404cc; }
+.window-place { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: flex; flex-direction: row; justify-content: center; align-items: center; }
+
+/* The hints along the foot, in Fine: a key in a box, a mouse drawn in strokes with the button meant filled. */
+.hints { font-size: 8.75dp; line-height: 11dp; color: #a4b0bc; white-space: nowrap; }
+.key {
+    display: inline-block;
+    box-sizing: border-box;
+    padding: 0 3dp;
+    margin-right: 4dp;
+    border: 1dp #6c7a88;
+    font-weight: 600;
+    color: #fcfcfc;
+    line-height: 11dp;
+}
+.hint { display: inline-block; margin-right: 16dp; }
+/* Up and down's arrows are narrow: their boxes padded to left and right's width. */
+.key.updown { padding: 0 5dp; }
+.mouse {
+    display: inline-block;
+    position: relative;
+    box-sizing: border-box;
+    width: 9dp;
+    height: 13dp;  /* a key's box: 11 units of line and its border */
+    margin-right: 4dp;
+    border: 1dp #6c7a88;
+    border-radius: 3dp 3dp 4dp 4dp;
+    vertical-align: top;
+}
+.mouse .buttons { position: absolute; left: 0; right: 0; top: 5dp; height: 1dp; background-color: #6c7a88; }
+.mouse .split { position: absolute; left: 3dp; top: 0; width: 1dp; height: 5dp; background-color: #6c7a88; }
+.mouse .press { position: absolute; top: 0; width: 3dp; height: 5dp; background-color: #fcfcfc; }
+.mouse.left .press { left: 0; border-top-left-radius: 2dp; }
+.mouse.right .press { right: 0; border-top-right-radius: 2dp; }
+.hints .keys .hint { margin-right: 0; margin-left: 16dp; }
+/* The keys' focus: a cyan ring over the thing's edge, so nothing moves; shown once a key is pressed, gone when the
+   mouse moves (RmlUi's :focus-visible). */
+.focus { position: relative; }
+/* The kit's one ring a document, placed over the edge of what has the keys' focus (its box in pixels). */
+.focus-ring { position: absolute; border: 1dp #7cd4ec; z-index: 100; pointer-events: none; box-sizing: border-box; }
+
+/* The campaign's tabs: the current one white over a 2-unit cyan line. */
+.tab {
+    box-sizing: border-box;
+    height: 28dp;
+    padding: 0 12dp;
+    font-size: 11.63dp;
+    line-height: 26dp;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #a4b0bc;
+    white-space: nowrap;
+}
+.tab.now { color: #fcfcfc; border-bottom: 2dp #7cd4ec; }
+
+/* A list with nothing in it, or that couldn't be read: one short sentence where the rows would be, in Text, white,
+   centred in the list's room; the one thing to do about it (RETRY) a button under it. The list's head stays. */
+.empty { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+         text-align: center; }
+.empty > .button { margin-top: 12dp; }
+
+/* ---- The controls live (the kit, MCCore's ui/MCRmlKit; each control's markup) ----
+
+   A button: <div class="button">WORD</div>, the main action .main, one that's off .off (its click goes no further).
+   A list: rows <div class="list-row"> in a <div class="scroller"> (the wheel, the rail, a row at a time by the
+   arrows), followed by <div class="fade"/> while more lies below; the picked row .picked; Enter on a row picks it
+   and presses the screen's .button.main.
+   Tabs: <div class="tabs"><div class="tab now">A</div><div class="tab">B</div></div>; Q and E, or a click.
+   A switch: <div class="switch"><div class="on">ON</div><div>OFF</div></div>; Left and Right, or a click.
+   A stepper: <div class="stepper" data-choices="LOW|MEDIUM|HIGH" data-choice="1"><div class="arrow">&lt;</div>
+   <div class="step-value"/><div class="arrow">&gt;</div></div>; Left and Right, or its arrows.
+   A slider: <input type="range" class="slider" min="0" max="100" step="5" value="50"/>, its number the screen's.
+   A text box: <input type="text" class="field" value="..."/>; Enter leaves it.
+   A window: its own document, shown over the screen: <body class="window-body"><div class="veil"/>
+   <div class="window-place"><div class="panel window">...</div></div></body>; Escape is its CANCEL, Enter its main.
+   The hint line: <div class="hints row"><div class="mouse-hints grow"/><div class="keys"/></div>: the left what the
+   mouse's button does with the thing under it (its data-hint), the right the screen's keys.
+   The empty and error lines: <div class="empty">No games.</div>, <div class="empty error">...</div>.
+   The first focus: the element with data-first. */
+
+.button, .list-row, .switch, .stepper, input.range, input.text { tab-index: auto; nav: auto; focus: auto; }
+.button { cursor: pointer; }
+
+/* A list's room: rows scroll inside it under a 2-unit rail, 4 under the pointer (its hit area wider). */
+.scroll-box { position: relative; }
+.scroll-box > .scroller { position: absolute; top: 0; right: 0; bottom: 0; left: 0; overflow-y: auto; padding-right: 0; }
+.scroll-box > .fade {
+    position: absolute;
+    left: 0;
+    right: 6dp;
+    bottom: 0;
+    height: 20dp;
+    decorator: vertical-gradient(#04040400 #040404ff);
+    pointer-events: none;
+}
+scrollbarvertical { width: 6dp; margin-left: 2dp; }
+/* A list's head over a list whose rail shows keeps the rail's room at its right, so its columns stay over the rows'
+   (the kit sets .rail-room). */
+.list-head.rail-room { padding-right: 8dp; }
+scrollbarvertical slidertrack { margin-left: 2dp; width: 2dp; background-color: #1e2a34; }
+scrollbarvertical sliderbar { margin-left: 2dp; width: 2dp; min-height: 12dp; background-color: #7a8a9a; }
+scrollbarvertical:hover slidertrack, scrollbarvertical:hover sliderbar { margin-left: 0; width: 4dp; }
+scrollbarvertical:hover sliderbar { background-color: #a4b0bc; }
+scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; height: 0; }
+scrollbarhorizontal { height: 0; }
+
+/* A switch and a stepper with the focus show it by the ring; their choice under the pointer lighter. */
+.switch > div:hover { color: #fcfcfc; }
+.stepper .arrow:hover { color: #fcfcfc; }
+.stepper .arrow.off:hover { color: #6c7a88; }
+
+/* The slider: RmlUi's range input, its track the rail, its progress the level in cyan, its bar the knob. */
+input.range.slider { display: block; box-sizing: border-box; height: 12dp; width: 120dp; }
+input.range.slider slidertrack { margin-top: 4dp; height: 4dp; background-color: #1e2a34; }
+input.range.slider sliderprogress { margin-top: 4dp; height: 4dp; background-color: #7cd4ec; }
+input.range.slider sliderbar { width: 3dp; height: 12dp; margin-left: -1dp; background-color: #fcfcfc; }
+input.range.slider sliderarrowdec, input.range.slider sliderarrowinc { width: 0; height: 0; }
+
+/* A text box: RmlUi's text input, its caret cyan. */
+input.text.field { display: block; width: 160dp; color: #fcfcfc; }
+input.text.field selection { background-color: #045454; color: #fcfcfc; }
+
+/* A window's document: the screen under it veiled, the window centred. */
+.window-body { width: 100%; height: 100%; }
+.window { box-sizing: border-box; min-width: 240dp; }
+.window .foot { margin-top: 12dp; }
+
+/* The empty line, and the error line (one pithy sentence naming the thing). */
+.empty.error { color: #fcfcfc; }
+.error-mark { color: #f26b55; font-weight: 600; }
+
+/* The hint line along the window's foot, in Fine. */
+.hints { height: 13dp; margin-top: 8dp; }
+.hints .keys .hint { margin-right: 0; margin-left: 16dp; }

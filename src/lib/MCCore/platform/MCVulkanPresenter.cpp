@@ -1302,9 +1302,13 @@ auto MCVulkanPresenter::Plan(const MCFrame& frame, bool read)
     planned->Frame = &frame;
     planned->Width = frame.Width;
     planned->Height = frame.Height;
-    planned->Layout = ShownLayout{frame.View, frame.ScaledOutput() ? frame.OutputWidth : 0,
-                                  frame.ScaledOutput() ? frame.OutputHeight : 0, MCFadedSurround(frame), frame.Number,
-                                  frame.Overlay};
+    planned->Layout = ShownLayout{frame.View,
+                                  frame.ScaledOutput() ? frame.OutputWidth : 0,
+                                  frame.ScaledOutput() ? frame.OutputHeight : 0,
+                                  MCFadedSurround(frame),
+                                  frame.Number,
+                                  frame.Overlay,
+                                  MCUiShown(frame.Fade)};
     planned->Cycle = frame.Cycle;
     planned->Fade = frame.Fade;
     planned->FadeScales = frame.FadeScales;
@@ -2368,9 +2372,9 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
         {
             MCFrameLog::Scope part("present.menus");
             auto ui = Ui();
-            auto drawn = ui ? ui->get().Draw(commands, *swapchain,
-                                             SDL_GetGPUSwapchainTextureFormat(_Device.get(), _Window.get()),
-                                             swapchainWidth, swapchainHeight, *layout.Overlay, false)
+            auto drawn = ui ? ui->get().Draw(
+                                  commands, *swapchain, SDL_GetGPUSwapchainTextureFormat(_Device.get(), _Window.get()),
+                                  swapchainWidth, swapchainHeight, *layout.Overlay, false, layout.OverlayShown)
                             : std::expected<void, std::string>(std::unexpected(ui.error()));
 
             if (!drawn)

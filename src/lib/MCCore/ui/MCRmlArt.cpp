@@ -5,6 +5,7 @@
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShapeFile.h"
+#include "ui/MCRmlSystem.h"
 
 namespace
 {
@@ -163,13 +164,140 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>A PNG's width and height, from its header (its IHDR chunk, first after the signature).</summary>
+    constexpr size_t PngWidthAt = 16;
+    constexpr size_t PngHeaderBytes = 24;
+    constexpr std::array<uint8_t, 8> PngSignature = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    /// <summary>The folder beside an app picture its HD copy is in.</summary>
+    constexpr std::string_view HdFolder = "hd";
+
+    uint32_t BigEndian(const std::vector<char>& bytes, size_t at)
+    {
+        uint32_t value = 0;
+
+        for (size_t i = 0; i < sizeof(uint32_t); ++i)
+        {
+            value = (value << CHAR_BIT) | static_cast<uint8_t>(bytes[at + i]);
+        }
+
+        return value;
+    }
+
+    std::expected<SDL_Point, std::string> PngSize(const std::vector<char>& bytes, std::string_view path)
+    {
+        if (bytes.size() < PngHeaderBytes ||
+            !std::equal(PngSignature.begin(), PngSignature.end(), bytes.begin(),
+                        [](uint8_t want, char have) { return static_cast<uint8_t>(have) == want; }))
+        {
+            return std::unexpected(std::format("the menus' picture {} isn't a PNG", path));
+        }
+
+        return SDL_Point{static_cast<int>(BigEndian(bytes, PngWidthAt)),
+                         static_cast<int>(BigEndian(bytes, PngWidthAt + sizeof(uint32_t)))};
+    }
+
+    /// <summary>A PNG's pixels in RGBA8, premultiplied, smoothly filtered when drawn at another size.</summary>
+    std::expected<std::shared_ptr<const MCUiTexture>, std::string> DecodePng(const std::vector<char>& bytes,
+                                                                             std::string_view path)
+    {
+        SDL_IOStream* stream = SDL_IOFromConstMem(bytes.data(), bytes.size());
+        SDL_Surface* loaded = stream != nullptr ? SDL_LoadPNG_IO(stream, true) : nullptr;
+        SDL_Surface* rgba = loaded != nullptr ? SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32) : nullptr;
+        SDL_DestroySurface(loaded);
+
+        if (rgba == nullptr)
+        {
+            return std::unexpected(std::format("the menus' picture {} can't be read: {}", path, SDL_GetError()));
+        }
+
+        std::vector<uint8_t> pixels(static_cast<size_t>(rgba->w) * static_cast<size_t>(rgba->h) * PixelBytes);
+
+        for (int y = 0; y < rgba->h; ++y)
+        {
+            const auto* row = static_cast<const uint8_t*>(rgba->pixels) + static_cast<ptrdiff_t>(y) * rgba->pitch;
+
+            for (int x = 0; x < rgba->w; ++x)
+            {
+                const uint8_t* from = row + static_cast<size_t>(x) * PixelBytes;
+                uint8_t* to = pixels.data() + (static_cast<size_t>(y) * static_cast<size_t>(rgba->w) + x) * PixelBytes;
+                const uint32_t alpha = from[3];
+
+                for (size_t c = 0; c < 3; ++c)
+                {
+                    to[c] = static_cast<uint8_t>((from[c] * alpha + Opaque / 2) / Opaque);
+                }
+
+                to[3] = from[3];
+            }
+        }
+
+        const int width = rgba->w;
+        const int height = rgba->h;
+        SDL_DestroySurface(rgba);
+        return MCRmlRecorder::MakeTexture(width, height, std::move(pixels), true);
+    }
+
+    /// <summary>The app's picture <paramref name="path"/>, its HD copy in its place when asked and there.</summary>
+    std::expected<MCRmlRecorder::MCLoaded, std::string> LoadAppArt(std::string_view path, bool hd,
+                                                                   const MCRmlFiles& files)
+    {
+        const std::expected<std::vector<char>, std::string> bytes = files.ReadFile(path);
+
+        if (!bytes)
+        {
+            return std::unexpected(bytes.error());
+        }
+
+        const std::expected<SDL_Point, std::string> size = PngSize(*bytes, path);
+
+        if (!size)
+        {
+            return std::unexpected(size.error());
+        }
+
+        const std::string hdPath = MCRmlArt::HdPath(path);
+
+        if (hd && files.Has(hdPath))
+        {
+            if (const std::expected<std::vector<char>, std::string> hdBytes = files.ReadFile(hdPath); hdBytes)
+            {
+                if (auto texture = DecodePng(*hdBytes, hdPath); texture)
+                {
+                    return MCRmlRecorder::MCLoaded{.Texture = std::move(*texture), .Width = size->x, .Height = size->y};
+                }
+                else
+                {
+                    SDL_Log("Menus: %s; the 1998 size drawn instead", texture.error().c_str());
+                }
+            }
+        }
+
+        auto texture = DecodePng(*bytes, path);
+
+        if (!texture)
+        {
+            return std::unexpected(texture.error());
+        }
+
+        return MCRmlRecorder::MCLoaded{.Texture = std::move(*texture), .Width = size->x, .Height = size->y};
+    }
+}
+
 namespace MCRmlArt
 {
-    std::expected<MCRmlRecorder::MCLoaded, std::string> Load(std::string_view source, bool hd)
+    std::string HdPath(std::string_view path)
+    {
+        const std::filesystem::path file(path);
+        return (file.parent_path() / HdFolder / file.filename()).generic_string();
+    }
+
+    std::expected<MCRmlRecorder::MCLoaded, std::string> Load(std::string_view source, bool hd, const MCRmlFiles& files)
     {
         if (!source.starts_with(Scheme))
         {
-            return std::unexpected(std::format("'{}' doesn't name a picture as {}<name>", source, Scheme));
+            return LoadAppArt(source, hd, files);
         }
 
         const std::expected<MCArtPicture, std::string> picture = ReadArt(source.substr(Scheme.size()));

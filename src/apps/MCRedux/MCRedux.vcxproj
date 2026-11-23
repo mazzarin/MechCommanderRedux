@@ -57,11 +57,29 @@
   <!-- Port-only (SPEC-menus.md): the remade menus' documents and style sheets, in a ui folder beside the program,
        where SDL's base path finds them (MCCore's ui\MCRmlSystem.h). -->
   <ItemGroup>
+    <CopyFileToFolders Include="..\..\res\ui\look.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\probe.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\probe.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\probe_window.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\fonts\OFL.txt">
+      <DestinationFolders>$(OutDir)ui\fonts</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\fonts\SairaSemiCondensed-Bold.ttf">
+      <DestinationFolders>$(OutDir)ui\fonts</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\fonts\SairaSemiCondensed-Medium.ttf">
+      <DestinationFolders>$(OutDir)ui\fonts</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\fonts\SairaSemiCondensed-SemiBold.ttf">
+      <DestinationFolders>$(OutDir)ui\fonts</DestinationFolders>
     </CopyFileToFolders>
   </ItemGroup>
   <ItemGroup>

@@ -1,0 +1,22 @@
+<rml>
+<head>
+    <title>Probe window</title>
+    <link type="text/rcss" href="look.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, stage 2): the probe's window, a question over it, opened on CANCEL. -->
+<body class="window-body">
+    <div class="veil"></div>
+    <div class="window-place">
+        <div class="panel window">
+            <div class="panel-name">Leave the probe?</div>
+            <div class="text">The probe closes.</div>
+            <div class="row foot gap8">
+                <div class="grow"></div>
+                <div class="button" id="cancel" data-first>Cancel</div>
+                <div class="button main" id="leave">Leave</div>
+            </div>
+            <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+        </div>
+    </div>
+</body>
+</rml>

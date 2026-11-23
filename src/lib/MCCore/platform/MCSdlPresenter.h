@@ -36,6 +36,7 @@ public:
     std::expected<void, std::string> Present(const MCFrame& frame) override;
     std::expected<std::vector<SDL_Color>, std::string> ReadFrame(const MCFrame& frame) override;
     std::expected<std::vector<SDL_Color>, std::string> ReadOverlay(const MCUiDraws& overlay) override;
+    uint64_t OverlayRedraws() const override { return _OverlayUploads; }
     MCViewport Viewport(int viewWidth, int viewHeight) const override;
 
 private:
@@ -50,8 +51,11 @@ private:
     static SDL_Rect ShownRect(const MCFrame& frame);
     /// <summary>Fits <paramref name="view"/> into the window (SDL's logical presentation).</summary>
     void ApplyPresentation(const SDL_Rect& view);
-    /// <summary>Port-only: draws the menus' <paramref name="overlay"/> over the whole window (drawn by the CPU, uploaded).</summary>
-    std::expected<void, std::string> DrawOverlay(const MCUiDraws& overlay);
+    /// <summary>
+    /// Port-only: draws the menus' <paramref name="overlay"/> over the whole window, its colours times
+    /// <paramref name="shown"/> (the fade): drawn by the CPU and uploaded when it isn't the overlay drawn last.
+    /// </summary>
+    std::expected<void, std::string> DrawOverlay(const std::shared_ptr<const MCUiDraws>& overlay, float shown);
 
     /// <summary>The window shown in (the display's); destroyed after the renderer.</summary>
     std::shared_ptr<SDL_Window> _Window;
@@ -75,4 +79,9 @@ private:
     /// <summary>Port-only: the menus' draws, drawn by the CPU, and their picture's texture (premultiplied RGBA).</summary>
     MCUiSoftware _Ui;
     MCSdlHandle<SDL_Texture> _Overlay;
+    /// <summary>Port-only: the menus' draws <see cref="_Overlay"/> holds (MCRmlMenus hands the same ones out again
+    /// while nothing changes).</summary>
+    std::shared_ptr<const MCUiDraws> _OverlayDrawn;
+    /// <summary>Port-only, for the tests: how many times the menus' picture was drawn and uploaded.</summary>
+    uint64_t _OverlayUploads = 0;
 };

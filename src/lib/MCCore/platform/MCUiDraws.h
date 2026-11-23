@@ -60,6 +60,22 @@ struct MCUiDraws
     std::vector<MCUiDraw> Draws;
 };
 
+/// <summary>
+/// How much of the menus' colours a frame faded by <paramref name="fade"/> (MCFrame::Fade: 0 none, 255 black) shows:
+/// their colours times it over the faded picture, their coverage kept, so they fade with it.
+/// </summary>
+inline float MCUiShown(int fade)
+{
+    constexpr float Black = 255.0f;
+    return 1.0f - static_cast<float>(std::clamp(fade, 0, static_cast<int>(Black))) / Black;
+}
+
+/// <summary>
+/// Whether <paramref name="first"/> and <paramref name="second"/> draw the same picture: the same window, and draw for
+/// draw the same geometry and texture (RmlUi keeps both while nothing changes), moved and cut alike.
+/// </summary>
+bool MCUiSameDraws(const MCUiDraws& first, const MCUiDraws& second);
+
 /// <summary>The window pixel edge a vertex's coordinate <paramref name="at"/> moved by <paramref name="by"/> lands on.</summary>
 int32_t MCUiPlace(float at, float by);
 

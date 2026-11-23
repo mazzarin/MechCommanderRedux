@@ -1454,13 +1454,25 @@
     <ClCompile Include="ui\MCRmlArt.cpp">
       <Filter>ui</Filter>
     </ClCompile>
-    <ClCompile Include="ui\MCRmlFonts.cpp">
+    <ClCompile Include="ui\MCRmlChecks.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlKit.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlLayer.cpp">
       <Filter>ui</Filter>
     </ClCompile>
     <ClCompile Include="ui\MCRmlMenus.cpp">
       <Filter>ui</Filter>
     </ClCompile>
+    <ClCompile Include="ui\MCRmlProbe.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
     <ClCompile Include="ui\MCRmlRecorder.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\MCRmlScreen.cpp">
       <Filter>ui</Filter>
     </ClCompile>
     <ClCompile Include="ui\MCRmlSystem.cpp">
@@ -2963,13 +2975,28 @@
     <ClInclude Include="ui\MCRmlArt.h">
       <Filter>ui</Filter>
     </ClInclude>
-    <ClInclude Include="ui\MCRmlFonts.h">
+    <ClInclude Include="ui\MCRmlChecks.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlKit.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlLayer.h">
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlMenus.h">
       <Filter>ui</Filter>
     </ClInclude>
+    <ClInclude Include="ui\MCRmlModel.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlProbe.h">
+      <Filter>ui</Filter>
+    </ClInclude>
     <ClInclude Include="ui\MCRmlRecorder.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlScreen.h">
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlSystem.h">

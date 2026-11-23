@@ -226,7 +226,7 @@ std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
     {
         MCFrameLog::Scope part("present.menus");
 
-        if (auto drawn = DrawOverlay(*frame.Overlay); !drawn)
+        if (auto drawn = DrawOverlay(frame.Overlay, MCUiShown(frame.Fade)); !drawn)
         {
             return drawn;
         }
@@ -294,37 +294,50 @@ std::expected<std::vector<SDL_Color>, std::string> MCSdlPresenter::ReadFrame(con
     return pixels;
 }
 
-std::expected<void, std::string> MCSdlPresenter::DrawOverlay(const MCUiDraws& overlay)
+std::expected<void, std::string> MCSdlPresenter::DrawOverlay(const std::shared_ptr<const MCUiDraws>& overlay,
+                                                             float shown)
 {
-    if (auto drawn = _Ui.Draw(overlay); !drawn)
+    // The menus' picture is drawn by the CPU and uploaded only when it changes; else the one kept is shown again.
+    if (overlay != _OverlayDrawn || _Overlay == nullptr)
     {
-        return drawn;
-    }
-
-    const SDL_Surface& picture = *_Ui.Picture();
-
-    if (_Overlay == nullptr || _Overlay->w != picture.w || _Overlay->h != picture.h)
-    {
-        _Overlay.reset(SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
-                                         picture.w, picture.h));
-
-        if (_Overlay == nullptr)
+        if (auto drawn = _Ui.Draw(*overlay); !drawn)
         {
-            return std::unexpected(SdlError(std::format("SDL_CreateTexture(the menus, {}x{})", picture.w, picture.h)));
+            return drawn;
         }
 
-        SDL_SetTextureBlendMode(_Overlay.get(), SDL_BLENDMODE_BLEND_PREMULTIPLIED);
-        SDL_SetTextureScaleMode(_Overlay.get(), SDL_SCALEMODE_NEAREST);
+        const SDL_Surface& picture = *_Ui.Picture();
+
+        if (_Overlay == nullptr || _Overlay->w != picture.w || _Overlay->h != picture.h)
+        {
+            _Overlay.reset(SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
+                                             picture.w, picture.h));
+
+            if (_Overlay == nullptr)
+            {
+                return std::unexpected(
+                    SdlError(std::format("SDL_CreateTexture(the menus, {}x{})", picture.w, picture.h)));
+            }
+
+            SDL_SetTextureBlendMode(_Overlay.get(), SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+            SDL_SetTextureScaleMode(_Overlay.get(), SDL_SCALEMODE_NEAREST);
+        }
+
+        if (!SDL_UpdateTexture(_Overlay.get(), nullptr, picture.pixels, picture.pitch))
+        {
+            return std::unexpected(SdlError("SDL_UpdateTexture(the menus)"));
+        }
+
+        _OverlayDrawn = overlay;
+        ++_OverlayUploads;
     }
 
-    if (!SDL_UpdateTexture(_Overlay.get(), nullptr, picture.pixels, picture.pitch))
-    {
-        return std::unexpected(SdlError("SDL_UpdateTexture(the menus)"));
-    }
-
-    // Over the whole window, one picture pixel a window pixel.
+    // Over the whole window, one picture pixel a window pixel, its colours faded with the frame (premultiplied: the
+    // colour scaled, the coverage kept).
+    constexpr float Full = 255.0f;
+    const auto kept = static_cast<uint8_t>(std::lround(std::clamp(shown, 0.0f, 1.0f) * Full));
+    SDL_SetTextureColorMod(_Overlay.get(), kept, kept, kept);
     SDL_SetRenderLogicalPresentation(_Renderer.get(), 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
-    const SDL_FRect whole{0.0f, 0.0f, static_cast<float>(picture.w), static_cast<float>(picture.h)};
+    const SDL_FRect whole{0.0f, 0.0f, static_cast<float>(_Overlay->w), static_cast<float>(_Overlay->h)};
     SDL_RenderTexture(_Renderer.get(), _Overlay.get(), nullptr, &whole);
     ApplyPresentation(_View);
     return {};

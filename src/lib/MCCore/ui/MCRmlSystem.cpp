@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "ui/MCRmlSystem.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
 #include "platform/MCUtf8Path.h"
 
 namespace
@@ -27,7 +29,9 @@ namespace
     }
 }
 
-MCRmlSystem::MCRmlSystem() = default;
+MCRmlSystem::MCRmlSystem(MCOptionalRef<SDL_Window> window) : _Window(window)
+{
+}
 
 MCRmlSystem::~MCRmlSystem() = default;
 
@@ -68,6 +72,63 @@ void MCRmlSystem::GetClipboardText(Rml::String& text)
     SDL_free(clipboard);
 }
 
+MCOptionalRef<SDL_Window> MCRmlSystem::TextWindow() const
+{
+    if (_Window.has_value())
+    {
+        return _Window;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    return display != nullptr ? MCOptionalRef<SDL_Window>(display->Window()) : std::nullopt;
+}
+
+void MCRmlSystem::ActivateKeyboard(Rml::Vector2f caretPosition, float lineHeight)
+{
+    const MCOptionalRef<SDL_Window> window = TextWindow();
+
+    if (!window.has_value())
+    {
+        return;
+    }
+
+    // The caret's place, in the window's points, for the system's input methods (their candidates beside it).
+    const float density = std::max(SDL_GetWindowPixelDensity(&window->get()), 1.0f);
+    const SDL_Rect area{static_cast<int>(caretPosition.x / density), static_cast<int>(caretPosition.y / density), 1,
+                        std::max(static_cast<int>(lineHeight / density), 1)};
+    SDL_SetTextInputArea(&window->get(), &area, 0);
+    SetTextInput(window->get(), true);
+}
+
+void MCRmlSystem::DeactivateKeyboard()
+{
+    if (const MCOptionalRef<SDL_Window> window = TextWindow(); window.has_value())
+    {
+        SetTextInput(window->get(), false);
+    }
+}
+
+void MCRmlSystem::SetTextInput(SDL_Window& window, bool on)
+{
+    if (on == _Typing)
+    {
+        return;
+    }
+
+    _Typing = on;
+
+    // The game's window: the game's input keeps text input as asked (its chat asks too); another (a test's): SDL's.
+    if (!_Window.has_value())
+    {
+        MCInput::SetTextInput(on);
+    }
+    else if (!(on ? SDL_StartTextInput(&window) : SDL_StopTextInput(&window)))
+    {
+        SDL_Log("Menus: SDL's text input didn't %s in window %u: %s", on ? "start" : "stop", SDL_GetWindowID(&window),
+                SDL_GetError());
+    }
+}
+
 MCRmlFiles::MCRmlFiles(std::filesystem::path folder) : _Folder(std::move(folder))
 {
 }
@@ -87,15 +148,14 @@ auto MCRmlFiles::Find(Rml::FileHandle file) -> MCOpenFile*
     return found != _Open.end() ? found->second.get() : nullptr;
 }
 
-Rml::FileHandle MCRmlFiles::Open(const Rml::String& path)
+std::expected<std::vector<char>, std::string> MCRmlFiles::ReadFile(std::string_view path) const
 {
-    const std::filesystem::path relative = MCFileSystem::FromUtf8(path).lexically_normal();
+    const std::filesystem::path relative = MCFileSystem::FromUtf8(std::string(path)).lexically_normal();
 
     if (path.empty() || relative.is_absolute() || relative.has_root_name() || relative.has_root_directory() ||
         std::any_of(relative.begin(), relative.end(), [](const std::filesystem::path& part) { return part == ".."; }))
     {
-        SDL_Log("Menus: '%s' isn't a file of the menus' own", path.c_str());
-        return 0;
+        return std::unexpected(std::format("'{}' isn't a file of the menus' own", path));
     }
 
     const std::filesystem::path file = _Folder / relative;
@@ -103,12 +163,31 @@ Rml::FileHandle MCRmlFiles::Open(const Rml::String& path)
 
     if (!stream)
     {
-        SDL_Log("Menus: can't open %s", MCFileSystem::ToUtf8(file).c_str());
+        return std::unexpected(std::format("can't open {}", MCFileSystem::ToUtf8(file)));
+    }
+
+    return std::vector<char>(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+}
+
+bool MCRmlFiles::Has(std::string_view path) const
+{
+    const std::filesystem::path relative = MCFileSystem::FromUtf8(std::string(path)).lexically_normal();
+    std::error_code error;
+    return !relative.is_absolute() && std::filesystem::is_regular_file(_Folder / relative, error);
+}
+
+Rml::FileHandle MCRmlFiles::Open(const Rml::String& path)
+{
+    std::expected<std::vector<char>, std::string> bytes = ReadFile(path);
+
+    if (!bytes)
+    {
+        SDL_Log("Menus: %s", bytes.error().c_str());
         return 0;
     }
 
     auto open = std::make_unique<MCOpenFile>();
-    open->Bytes.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    open->Bytes = std::move(*bytes);
     const auto handle = reinterpret_cast<Rml::FileHandle>(open.get());
     _Open.emplace(handle, std::move(open));
     return handle;

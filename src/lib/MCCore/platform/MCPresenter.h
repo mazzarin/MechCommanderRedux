@@ -248,6 +248,12 @@ public:
     virtual std::expected<std::vector<SDL_Color>, std::string> ReadOverlay(const MCUiDraws& overlay) = 0;
 
     /// <summary>
+    /// Port-only, for the tests: how many times the menus' picture was drawn again (the software renderer keeps it while
+    /// the menus' draws are the same; the GPU draws them each frame, and counts nothing).
+    /// </summary>
+    virtual uint64_t OverlayRedraws() const { return 0; }
+
+    /// <summary>
     /// A frame that isn't shown (the window is minimised): a GPU renderer still runs what was drawn for it, so what it
     /// recorded doesn't pile up, and waits for the GPU to finish it, so neither does what the GPU holds for it.
     /// </summary>

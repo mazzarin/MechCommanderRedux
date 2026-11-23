@@ -190,6 +190,8 @@ private:
         uint64_t Number = 0;
         /// <summary>Port-only: the menus' draws over the window (<see cref="MCFrame::Overlay"/>).</summary>
         std::shared_ptr<const MCUiDraws> Overlay;
+        /// <summary>Port-only: how much of the menus' colours the frame's fade leaves (MCUiShown).</summary>
+        float OverlayShown = 1.0f;
 
         /// <summary>Whether it's composited at the output's size (<see cref="MCFrame::ScaledOutput"/>).</summary>
         bool Scaled() const { return OutputWidth > 0 && OutputHeight > 0; }

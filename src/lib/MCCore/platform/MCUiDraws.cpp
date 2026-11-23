@@ -224,3 +224,21 @@ std::vector<MCUiPiece> MCUiPieces(const MCUiDraw& draw)
 
     return pieces;
 }
+
+bool MCUiSameDraws(const MCUiDraws& first, const MCUiDraws& second)
+{
+    const auto sameScissor = [](const std::optional<SDL_Rect>& a, const std::optional<SDL_Rect>& b)
+    {
+        return a.has_value() == b.has_value() &&
+               (!a.has_value() || (a->x == b->x && a->y == b->y && a->w == b->w && a->h == b->h));
+    };
+
+    const auto sameDraw = [&sameScissor](const MCUiDraw& a, const MCUiDraw& b)
+    {
+        return a.Geometry == b.Geometry && a.Texture == b.Texture && a.X == b.X && a.Y == b.Y &&
+               sameScissor(a.Scissor, b.Scissor);
+    };
+
+    return first.Width == second.Width && first.Height == second.Height &&
+           std::ranges::equal(first.Draws, second.Draws, sameDraw);
+}

@@ -136,25 +136,33 @@ std::expected<void, std::string> MCUiSoftware::Draw(const MCUiDraws& draws)
                 continue;
             }
 
-            // Triangles as they are, their corners on whole pixels, as the GPU's.
+            // Triangles as they are, their corners on whole pixels, as the GPU's. SDL's software triangles blend only
+            // straight alpha (SDL_triangle.c copies a premultiplied one over what's there), so their corners' colours
+            // are given straight and blended so, which premultiplies them as it blends: the same but for the colours
+            // between corners (a gradient's), mixed straight. A picture's own texels stay premultiplied: its half
+            // transparent ones drawn so come out darker (pictures are rectangles, copied above, all but never this).
             SDL_SetTextureColorMod(texture, 255, 255, 255);
             SDL_SetTextureAlphaMod(texture, 255);
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
             const MCUiGeometry& geometry = *draw.Geometry;
             vertices.clear();
 
             for (size_t i = piece.First; i < piece.First + piece.Count; ++i)
             {
                 const MCUiVertex& vertex = geometry.Vertices[static_cast<size_t>(geometry.Indices[i])];
+                const float alpha = vertex.Color[3] / ByteMax;
+                const auto straight = [alpha](uint8_t channel)
+                { return alpha > 0.0f ? std::min(channel / ByteMax / alpha, 1.0f) : 0.0f; };
                 vertices.push_back(SDL_Vertex{
                     .position = {static_cast<float>(MCUiPlace(vertex.X, draw.X)),
                                  static_cast<float>(MCUiPlace(vertex.Y, draw.Y))},
-                    .color = {vertex.Color[0] / ByteMax, vertex.Color[1] / ByteMax, vertex.Color[2] / ByteMax,
-                              vertex.Color[3] / ByteMax},
+                    .color = {straight(vertex.Color[0]), straight(vertex.Color[1]), straight(vertex.Color[2]), alpha},
                     .tex_coord = {draw.Texture != nullptr ? vertex.U : 0.0f, draw.Texture != nullptr ? vertex.V : 0.0f},
                 });
             }
 
             SDL_RenderGeometry(renderer, texture, vertices.data(), static_cast<int>(vertices.size()), nullptr, 0);
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
         }
     }
 

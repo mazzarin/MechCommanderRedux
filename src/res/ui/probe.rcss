@@ -1,153 +1,18 @@
-/* Port-only (SPEC-menus.md): the probe's style, in the 1998 screens' pixels (dp). */
+/* Port-only (SPEC-menus.md, stage 2): the probe's own places, over the look (look.rcss). */
 
-@spritesheet frame
-{
-    src: art:MFDSWN01;
-    frame-tl: 0px 0px 5px 5px;
-    frame-t: 40px 0px 32px 5px;
-    frame-tr: 135px 0px 5px 5px;
-    frame-l: 0px 40px 5px 40px;
-    frame-c: 20px 40px 40px 40px;
-    frame-r: 135px 40px 5px 40px;
-    frame-bl: 0px 234px 5px 5px;
-    frame-b: 40px 234px 32px 5px;
-    frame-br: 135px 234px 5px 5px;
-}
+.content { padding: 16dp 0 8dp 0; }
+#panels { margin-top: 8dp; gap: 8dp; align-items: stretch; }
+#settings { flex: 0 0 196dp; }
+#art { flex: 0 0 176dp; }
+.setting { margin-bottom: 12dp; }
+.setting > .data { margin-bottom: 4dp; }
+#games .scroll-box { flex: 1 1 0; min-height: 64dp; }
+.cell.map { width: 120dp; }
+.cell.players { width: 64dp; }
+.picture { width: 152dp; height: 114dp; margin-bottom: 6dp; decorator: image(art:mm_bkgd contain center center); }
+#foot { margin-top: 8dp; gap: 8dp; }
 
-body
-{
-    width: 100%;
-    height: 100%;
-    background-color: #000;
-    font-family: white10;
-    font-size: 10dp;
-    /* A game font's cell holds its letters and the space under them. */
-    line-height: 1.0;
-    color: #fff;
-}
-
-#frame
-{
-    position: absolute;
-    left: 8dp;
-    top: 8dp;
-    right: 8dp;
-    bottom: 8dp;
-    padding: 10dp;
-    decorator: tiled-box(frame-tl, frame-t, frame-tr, frame-l, frame-c, frame-r, frame-bl, frame-b, frame-br);
-}
-
-#title
-{
-    display: block;
-    height: 12dp;
-    margin-bottom: 8dp;
-    font-family: yellow12;
-    font-size: 12dp;
-}
-
-#panels
-{
-    display: flex;
-    flex-direction: row;
-}
-
-.panel
-{
-    display: block;
-    flex: 1;
-    margin: 4dp;
-    padding: 6dp;
-    background-color: #182018;
-}
-
-.label
-{
-    display: block;
-    height: 10dp;
-    margin-bottom: 6dp;
-}
-
-/* The main menu's buttons, their words in their pictures: up (and lit, as in 1998), pressed, grayed. */
-.button
-{
-    display: block;
-    width: 217dp;
-    height: 26dp;
-    margin-bottom: 4dp;
-    decorator: image(art:mm_xbh01);
-}
-
-.button:active
-{
-    decorator: image(art:mm_xbg01);
-}
-
-.button.grayed
-{
-    decorator: image(art:mm_xbn02);
-}
-
-#list
-{
-    display: block;
-    height: 72dp;
-    overflow-y: scroll;
-}
-
-.row
-{
-    display: block;
-    height: 12dp;
-}
-
-.row:hover
-{
-    background-color: #304030;
-}
-
-scrollbarvertical
-{
-    width: 6dp;
-}
-
-scrollbarvertical slidertrack
-{
-    background-color: #202820;
-}
-
-scrollbarvertical sliderbar
-{
-    background-color: #708070;
-}
-
-scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc
-{
-    height: 0;
-}
-
-.text
-{
-    display: block;
-    height: 10dp;
-    margin-bottom: 4dp;
-}
-
-.yellow
-{
-    font-family: yellow10;
-}
-
-/* Narrower than 3:2 (a 4:3 window): the panels stacked. */
-@media (max-aspect-ratio: 3/2)
-{
-    #panels
-    {
-        flex-direction: column;
-    }
-
-    .panel
-    {
-        flex: 0 0 auto;
-    }
+/* A 4:3 or 5:4 window: the art's panel goes, the settings and the games share the room. */
+@media (max-aspect-ratio: 3/2) {
+    #art { display: none; }
 }

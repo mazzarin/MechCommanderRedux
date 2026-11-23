@@ -272,6 +272,11 @@ void MCDisplay::WindowScreenSize(int& width, int& height) const
     height = size.y;
 }
 
+SDL_Point MCDisplay::ScreenSizeFor(int pixelWidth, int pixelHeight) const
+{
+    return FollowingScreenSize(pixelWidth, pixelHeight, SDL_GetWindowDisplayScale(_Window.get()), ScreenFit());
+}
+
 float MCDisplay::AutoInterfaceScale(int lines)
 {
     const double wanted = static_cast<double>(lines) / OriginalLines;
@@ -633,6 +638,12 @@ std::expected<void, std::string> MCDisplay::Present(bool ahead)
     if (Minimised())
     {
         return _Presenter->Discard(BuildFrame(false));
+    }
+
+    // Port-only: the menus' draws for this frame, at the window's pixels now.
+    if (int pixelWidth = 0, pixelHeight = 0; _OverlaySource && WindowPixelSize(pixelWidth, pixelHeight))
+    {
+        _Overlay = _OverlaySource(pixelWidth, pixelHeight);
     }
 
     MCFrame frame = BuildFrame(false);

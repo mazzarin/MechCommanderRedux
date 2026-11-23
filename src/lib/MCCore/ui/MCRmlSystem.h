@@ -1,12 +1,15 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
+
 #include <RmlUi/Core/FileInterface.h>
 #include <RmlUi/Core/SystemInterface.h>
 
 /// <summary>
 /// Port-only (SPEC-menus.md, "How it's built"): what RmlUi asks of the system: the time (the game's clock unless a
-/// test gives its own, so a test's frames are the same each run), its messages in the game's log, and the clipboard
-/// (SDL's).
+/// test gives its own, so a test's frames are the same each run), its messages in the game's log, the clipboard
+/// (SDL's), and SDL's text input, started while a text box has the focus (its caret's place given to the system's
+/// input methods).
 /// </summary>
 class MCRmlSystem final : public Rml::SystemInterface
 {
@@ -14,7 +17,8 @@ public:
     /// <summary>A clock in seconds.</summary>
     using MCClock = std::function<double()>;
 
-    MCRmlSystem();
+    /// <summary>The system for the window <paramref name="window"/> (none: the game's display's).</summary>
+    explicit MCRmlSystem(MCOptionalRef<SDL_Window> window);
     ~MCRmlSystem() override;
     MCRmlSystem(const MCRmlSystem&) = delete;
     MCRmlSystem& operator=(const MCRmlSystem&) = delete;
@@ -26,9 +30,21 @@ public:
     bool LogMessage(Rml::Log::Type type, const Rml::String& message) override;
     void SetClipboardText(const Rml::String& text) override;
     void GetClipboardText(Rml::String& text) override;
+    void ActivateKeyboard(Rml::Vector2f caretPosition, float lineHeight) override;
+    void DeactivateKeyboard() override;
+
+    /// <summary>Whether SDL's text input is on for a text box (tests).</summary>
+    bool Typing() const { return _Typing; }
 
 private:
+    /// <summary>The window text is typed into, when there is one.</summary>
+    MCOptionalRef<SDL_Window> TextWindow() const;
+    /// <summary>Text input on or off for the menus' text boxes.</summary>
+    void SetTextInput(SDL_Window& window, bool on);
+
     MCClock _Clock;
+    MCOptionalRef<SDL_Window> _Window;
+    bool _Typing = false;
 };
 
 /// <summary>
@@ -49,6 +65,11 @@ public:
     static std::filesystem::path AppFolder();
 
     const std::filesystem::path& Folder() const { return _Folder; }
+
+    /// <summary>The file <paramref name="path"/>'s bytes (a path under the folder), or why not.</summary>
+    std::expected<std::vector<char>, std::string> ReadFile(std::string_view path) const;
+    /// <summary>Whether the folder has the file <paramref name="path"/>.</summary>
+    bool Has(std::string_view path) const;
 
     Rml::FileHandle Open(const Rml::String& path) override;
     void Close(Rml::FileHandle file) override;

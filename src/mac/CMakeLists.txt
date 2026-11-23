@@ -233,20 +233,30 @@ target_link_libraries(mc_datachannel PUBLIC mc_mbedtls PRIVATE mc_usrsctp mc_jui
 target_link_libraries(MCCore PUBLIC mc_datachannel)
 # JSON for Modern C++ (update/'s files), header-only; the tests write and read updates' files too.
 target_include_directories(MCCore PUBLIC ${MC_SRC}/lib/nlohmann-json-3.12.0/single_include)
-# RmlUi (the remade menus' layout, styling and input; MCCore's ui/ is ours over it): its core, the files MCCore.vcxproj
-# lists, built as its own CMake builds a static library with no font engine of its own (src/lib/RmlUi-6.3/README-MC.md).
-# Without fused multiply-adds, as MCCore, so its layout's sums are Windows' too.
+# FreeType (the letters under RmlUi's font engine): its base and TrueType modules, the files MCCore.vcxproj lists, with
+# the game's modules and options (src/lib/freetype-2.15.0/README-MC.md), so a face draws the same letters on Windows.
+set(MC_FREETYPE_DIR ${MC_SRC}/lib/freetype-2.15.0)
+mc_vendored_items(MC_FREETYPE_ITEMS freetype-2.15.0 c)
+add_library(mc_freetype STATIC ${MC_FREETYPE_ITEMS})
+target_compile_definitions(mc_freetype PRIVATE FT2_BUILD_LIBRARY
+                                       PUBLIC "FT_CONFIG_MODULES_H=<mc_ftmodule.h>" "FT_CONFIG_OPTIONS_H=<mc_ftoption.h>")
+target_compile_options(mc_freetype PRIVATE -w -ffp-contract=off)
+target_include_directories(mc_freetype PUBLIC ${MC_FREETYPE_DIR}/include ${MC_FREETYPE_DIR}/mc)
+# RmlUi (the remade menus' layout, styling and input; MCCore's ui/ is ours over it): its core and its FreeType font
+# engine, the files MCCore.vcxproj lists, built as its own CMake builds a static library with RMLUI_FONT_ENGINE
+# freetype (src/lib/RmlUi-6.3/README-MC.md). Without fused multiply-adds, as MCCore, so its layout's sums are Windows'.
 set(MC_RMLUI_DIR ${MC_SRC}/lib/RmlUi-6.3)
 mc_vendored_items(MC_RMLUI_ITEMS RmlUi-6.3 cpp)
 add_library(mc_rmlui STATIC ${MC_RMLUI_ITEMS})
 set_target_properties(mc_rmlui PROPERTIES CXX_STANDARD 17)
 target_compile_definitions(mc_rmlui PUBLIC RMLUI_STATIC_LIB)
 # Its version for Core.cpp alone, as its CMake gives it (so without the precompiled header, made without it).
-set_source_files_properties(${MC_RMLUI_DIR}/Source/Core/Core.cpp PROPERTIES COMPILE_DEFINITIONS "RMLUI_VERSION=\"6.3\""
+set_source_files_properties(${MC_RMLUI_DIR}/Source/Core/Core.cpp PROPERTIES COMPILE_DEFINITIONS "RMLUI_VERSION=\"6.3\";RMLUI_FONT_ENGINE_FREETYPE"
                                                                       SKIP_PRECOMPILE_HEADERS ON)
 target_compile_options(mc_rmlui PRIVATE -w -ffp-contract=off)
 target_precompile_headers(mc_rmlui PRIVATE ${MC_RMLUI_DIR}/Source/Core/precompiled.h)
 target_include_directories(mc_rmlui PUBLIC ${MC_RMLUI_DIR}/Include)
+target_link_libraries(mc_rmlui PRIVATE mc_freetype)
 target_link_libraries(MCCore PUBLIC mc_rmlui)
 # dr_flac: one portable C decoder, outside MCCore's precompiled C++ header, as on Windows.
 add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
@@ -300,8 +310,14 @@ set(MC_ICON ${MC_SRC}/res/MCRedux.icns)
 set_source_files_properties(${MC_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 # Port-only (SPEC-menus.md): the remade menus' documents and style sheets (src/res/ui), in the app's resources' ui
 # folder, where SDL's base path finds them (ui/MCRmlSystem.h); the tests' beside mc_tests.
-file(GLOB MC_UI_FILES CONFIGURE_DEPENDS ${MC_SRC}/res/ui/*.rml ${MC_SRC}/res/ui/*.rcss)
-set_source_files_properties(${MC_UI_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/ui)
+# The face's files and their licence in its fonts folder, the new art in its art folder (each kept in its own folder).
+file(GLOB_RECURSE MC_UI_FILES CONFIGURE_DEPENDS ${MC_SRC}/res/ui/*.rml ${MC_SRC}/res/ui/*.rcss ${MC_SRC}/res/ui/*.ttf
+     ${MC_SRC}/res/ui/*.txt ${MC_SRC}/res/ui/*.png)
+foreach(ui_file ${MC_UI_FILES})
+  file(RELATIVE_PATH ui_relative ${MC_SRC}/res/ui ${ui_file})
+  get_filename_component(ui_folder "${ui_relative}" DIRECTORY)
+  set_source_files_properties(${ui_file} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/ui/${ui_folder})
+endforeach()
 #
 # Personal build: the app updates itself through Sparkle (src/lib/Sparkle-2.10.1, its framework as released), which the
 # Mac-only MCSparkleUpdater.mm drives; the framework is copied into Contents/Frameworks before the app is signed.
@@ -341,8 +357,12 @@ target_include_directories(mc_tests PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
 target_precompile_headers(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
 target_link_libraries(mc_tests PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework IOKit"
                       "-framework Metal")
-add_custom_command(TARGET mc_tests POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:mc_tests>/ui
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MC_UI_FILES} $<TARGET_FILE_DIR:mc_tests>/ui
+# The menus' documents beside mc_tests, copied again whenever one changes (not only when mc_tests is linked).
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/mc_tests_ui.stamp
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${MC_SRC}/res/ui ${CMAKE_CURRENT_BINARY_DIR}/ui
+  COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_BINARY_DIR}/mc_tests_ui.stamp
+  DEPENDS ${MC_UI_FILES}
   COMMENT "Copying the menus' documents beside mc_tests"
   VERBATIM)
+add_custom_target(mc_tests_ui DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/mc_tests_ui.stamp)
+add_dependencies(mc_tests mc_tests_ui)

@@ -740,6 +740,15 @@ namespace
             MCTestGame::RunFrame(1.0f / 15.0f);
         }
 
+        if (Mission()->State != MCMissionState::Results)
+        {
+            std::cout << std::format(
+                "  the mission's end never brought its results up (state {}, next {}, solo {}, turn {}, starting {}, "
+                "paused {})\n",
+                std::to_underlying(Mission()->State), std::to_underlying(Mission()->NextState), Solo, Turn,
+                Scenario() != nullptr && Scenario()->StartingUp, GamePaused);
+        }
+
         REQUIRE(Mission()->State == MCMissionState::Results);
     }
 
@@ -887,12 +896,22 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     }
 
     // Each landing out of a mission (not recorded: BEGIN MISSION, recorded above, and the results' fade-in).
-    const auto playToResults = [&time](uint32_t result)
+    const auto playToResults = [&time](uint32_t result, bool solo, bool last)
     {
         DeployFirstMech();
         Mission()->RequestScenario(Mission()->Scenarios[static_cast<size_t>(Mission()->CurrentScenario)]);
+        // Its start-up over first (an end asked for while it lasts never comes: its turns stop).
         REQUIRE(RunPaced(
-            time, [] { return Mission()->State == MCMissionState::Scenario && Settled(); }, MostChangeSeconds));
+            time, [] { return Mission()->State == MCMissionState::Scenario && Settled() && !Scenario()->StartingUp; },
+            MostChangeSeconds));
+        // As a quick-start mission's end (BriefingTests' PlayToResultsAndBack), or the campaign's last.
+        Solo = solo;
+
+        if (last)
+        {
+            Mission()->CurrentScenario = static_cast<int32_t>(Mission()->LastScenario);
+        }
+
         EndToResults(result);
         RunPacedFor(time, SecondsBefore);
     };
@@ -921,23 +940,21 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     const auto leaveResults = [] { Mission()->LeaveResults(); };
 
     // A loss: REPLAY MISSION's briefing, the main menu under it.
-    playToResults(Lost);
+    playToResults(Lost, false, false);
     recordLanding("replay-mission", leaveResults, [&] { return shows(&MCLogistics::BriefingScreen); });
 
     // A quick-start mission won: SOLO MISSIONS, the main menu under it; Escape goes back to the main menu.
-    Solo = true;
-    playToResults(Won);
+    playToResults(Won, true, false);
     recordLanding("solo-missions", leaveResults, [&] { return shows(&MCLogistics::LoadScreen) && LoadingSolo; });
     Solo = false;
     recordLanding(
         "back-to-main", [] { MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE); },
         [&] { return shows(&MCLogistics::MainScreen); });
 
-    // The campaign's last mission won: its end movies (skipped), then the main menu.
+    // The campaign's last mission won (the first, marked last): its end movies (skipped), then the main menu.
     NewCampaign();
     REQUIRE(RunPaced(time, Settled, MostChangeSeconds));
-    Mission()->CurrentScenario = static_cast<int32_t>(Mission()->Scenarios.size()) - 1;
-    playToResults(Won);
+    playToResults(Won, false, true);
     Clock::time_point skipped = Clock::now();
     recordLanding("campaign-end", leaveResults,
                   [&]

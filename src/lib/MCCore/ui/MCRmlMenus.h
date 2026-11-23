@@ -71,11 +71,6 @@ public:
     static std::expected<std::reference_wrapper<MCRmlMenus>, std::string> Start(const MCOptions& options);
     /// <summary>The game's own, when started.</summary>
     static MCOptionalRef<MCRmlMenus> Running();
-    /// <summary>
-    /// STAND-IN (menus stage 5, until menus-kit-fix's own lands in <c>menus</c>): the game's own, started over the game's
-    /// display the first time a remade screen is wanted (its window's pixels, HD art as the game draws it), or why not.
-    /// </summary>
-    static std::expected<std::reference_wrapper<MCRmlMenus>, std::string> ForGame();
     /// <summary>Stops the game's own (its screens destroyed, RmlUi shut down).</summary>
     static void Stop();
 

@@ -20,7 +20,6 @@
 #include "network/MCMultiPlayer.h"
 #include "object/MCMechWarrior.h"
 #include "sound/MCSoundSystem.h"
-#include "ui/MCRmlMenus.h"
 
 namespace
 {
@@ -128,9 +127,6 @@ auto MCGameSession::DebuggerWindow() const -> std::shared_ptr<MCAblDebuggerWindo
 
 MCGameSession::~MCGameSession()
 {
-    // STAND-IN (menus stage 5, until menus-kit-fix's): the game's own remade menus stopped with the game, their screens
-    // destroyed while the game they show is still here.
-    MCRmlMenus::Stop();
     CloseGuiObject(_DebuggerWindow);
 
     if (Mission() != nullptr)

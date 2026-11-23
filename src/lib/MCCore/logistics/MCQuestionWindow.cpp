@@ -26,8 +26,9 @@ MCQuestionWindow::MCQuestionWindow(std::string heading, std::string act, std::fu
     Keys = {{"Enter", _Act}, {"Esc", "Cancel"}};
 }
 
-bool MCQuestionWindow::Ask(MCRmlScreen& over, std::string heading, std::string act, std::function<void()> yes,
-                           std::function<void()> closed, std::string eyebrow)
+MCGuiHandle<MCQuestionWindow> MCQuestionWindow::Ask(MCRmlScreen& over, std::string heading, std::string act,
+                                                    std::function<void()> yes, std::function<void()> closed,
+                                                    std::string eyebrow)
 {
     const MCGuiHandle<MCQuestionWindow> window = over.Layer().CreateChild<MCQuestionWindow>(
         [&closed, &eyebrow](MCQuestionWindow& made)
@@ -42,10 +43,10 @@ bool MCQuestionWindow::Ask(MCRmlScreen& over, std::string heading, std::string a
     {
         SDL_Log("MCQuestionWindow: cannot open %s: %s", AskDocument, opened.error().c_str());
         window->Close();
-        return false;
+        return {};
     }
 
-    return true;
+    return window;
 }
 
 void MCQuestionWindow::OnLoaded(Rml::ElementDocument& document)

@@ -7,6 +7,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "iface/MCKeyBindings.h"
+#include "lib/MCFitIniFile.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPauseScreen.h"
@@ -17,9 +18,11 @@
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
+#include "main/MCSystemConfig.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "platform/MCPresenter.h"
 #include "ui/MCRmlChecks.h"
@@ -155,6 +158,14 @@ namespace
         }
 
         return *element;
+    }
+
+    /// <summary>The words <paramref name="stepper"/> shows between its arrows.</summary>
+    std::string StepWords(Rml::Element& stepper)
+    {
+        Rml::ElementList parts;
+        stepper.GetElementsByClassName(parts, "step-value");
+        return parts.size() == 1 ? parts.front()->GetInnerRML() : std::string();
     }
 
     /// <summary>A mouse event at window pixel (<paramref name="x"/>, <paramref name="y"/>) as SDL sends it, then a frame.</summary>
@@ -358,9 +369,13 @@ TEST_CASE_ISOLATED("game: Preferences from the keys: sections, rows, Escape puts
         speed.Focus();
         MCScreenInput::RealKey(SDL_SCANCODE_TAB);
         CHECK(Menus().Menus().Context().GetFocusElement() == &Find(*prefs, "cancel"));
+        const std::string speedWords = StepWords(speed);
+        CHECK(!speedWords.empty());
         speed.Focus();
         MCScreenInput::RealKey(SDL_SCANCODE_RIGHT);
         CHECK(GScrollSpeed != scrollSpeed);
+        CHECK(!StepWords(speed).empty());
+        CHECK(StepWords(speed) != speedWords);
         PressEscape();
         CheckOnMainMenu();
         CHECK_EQ(GScrollSpeed, scrollSpeed);
@@ -462,6 +477,7 @@ TEST_CASE_ISOLATED("game: Escape in a mission opens the pause; RESUME, ALL PREFE
     CHECK(GamePaused);
     CHECK_EQ(Find(*pause, "name").GetInnerRML(), "Paused");
     CHECK_EQ(Find(*pause, "leave").GetInnerRML(), "Abort mission");
+    CHECK(!StepWords(Find(*pause, "scroll-speed")).empty());
     const int32_t turn = Turn;
     RunFrames(SettleFrames);
     CHECK_EQ(Turn, turn);
@@ -608,4 +624,68 @@ TEST_CASE_ISOLATED("game: a match's pause: the battle goes on, and LEAVE MATCH a
     CHECK(!Menus().Mission().Showing());
     CHECK_EQ(Mission()->EndScenarioRequested, -1);
     CHECK_EQ(ScenarioResult, LeftMatchResult);
+}
+
+/// <summary>
+/// A match that ends while something is open over its pause: Preferences' changes, not yet accepted, are put back and
+/// never kept (the pause's own quick change is), and LEAVE MATCH's question goes with the pause, so nothing holds the
+/// keys over the results.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match that ends under its pause keeps the pause's change, not Preferences', and leaves "
+                   "no window")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup saves;
+    StartBattle();
+    const MCOptionalRef<MCRmlMenus> menus = MCRemadeScreens::Menus();
+    REQUIRE(menus.has_value());
+    const auto openMatchPause = [&menus]
+    {
+        const MCGuiHandle<MCPauseScreen> made = menus->get().Mission().CreateChild<MCPauseScreen>(
+            [](MCPauseScreen& pause) { pause.Back = [&pause] { pause.Resume(); }; }, true);
+        REQUIRE(made->Open().has_value());
+        RunFrames(SettleFrames);
+        return made.Lock();
+    };
+
+    // The pause's scroll speed changed (kept as it closes), then Preferences' changed again, not accepted.
+    std::shared_ptr<MCPauseScreen> pause = openMatchPause();
+    REQUIRE(pause != nullptr);
+    Find(*pause, "scroll-speed").Focus();
+    MCScreenInput::RealKey(SDL_SCANCODE_RIGHT);
+    const int quick = GScrollSpeed;
+    ClickOn(Find(*pause, "all"));
+    const std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OnTop<MCPrefsScreen>(MCRemadeTest::MCLayer::Mission);
+    REQUIRE(prefs != nullptr);
+    prefs->ShowSection(MCSection::Display);
+    RunFrames(SettleFrames);
+    Find(*prefs, "scroll-speed").Focus();
+    MCScreenInput::RealKey(SDL_SCANCODE_RIGHT);
+    CHECK(GScrollSpeed != quick);
+
+    MCPauseScreen::MissionEnding();
+    RunFrames(SettleFrames);
+    CHECK(!Menus().Mission().Showing());
+    CHECK_EQ(GScrollSpeed, quick);
+    {
+        MCFitIniFile kept;
+        REQUIRE_EQ(kept.Open(MCFileSystem::ToUtf8(MCFileSystem::UserRoot() / PrefsFile)), 0);
+        ReadPreferences(kept);
+    }
+
+    CHECK_EQ(GScrollSpeed, quick);
+
+    // LEAVE MATCH's question up as the match ends: it goes with the pause.
+    pause = openMatchPause();
+    REQUIRE(pause != nullptr);
+    ClickOn(Find(*pause, "leave"));
+    REQUIRE(MCRemadeTest::OnTop<MCQuestionWindow>(MCRemadeTest::MCLayer::Mission) != nullptr);
+    MCPauseScreen::MissionEnding();
+    RunFrames(SettleFrames);
+    CHECK(!Menus().Mission().Showing());
+    CHECK(!MCPauseScreen::Shows());
 }

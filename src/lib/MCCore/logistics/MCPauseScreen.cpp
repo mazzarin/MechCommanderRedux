@@ -2,7 +2,6 @@
 #include "logistics/MCPauseScreen.h"
 #include "gui/MCGuiGlobals.h"
 #include "iface/MCTacticalInterface.h"
-#include "logistics/MCQuestionWindow.h"
 #include "logistics/MCRemadeScreens.h"
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
@@ -192,22 +191,24 @@ void MCPauseScreen::OnLoaded(Rml::ElementDocument& document)
                 }
 
                 const std::weak_ptr<MCPauseScreen> self = std::static_pointer_cast<MCPauseScreen>(shared_from_this());
-                MCQuestionWindow::Ask(*this, std::string(ExitQuestion), std::string(ExitWord),
-                                      [self]
-                                      {
-                                          if (const std::shared_ptr<MCPauseScreen> pause = self.lock();
-                                              pause != nullptr)
-                                          {
-                                              pause->LeaveMission();
-                                          }
-                                      },
-                                      {});
+                _Question = MCQuestionWindow::Ask(*this, std::string(ExitQuestion), std::string(ExitWord),
+                                                  [self]
+                                                  {
+                                                      if (const std::shared_ptr<MCPauseScreen> pause = self.lock();
+                                                          pause != nullptr)
+                                                      {
+                                                          pause->LeaveMission();
+                                                      }
+                                                  },
+                                                  {});
             });
     Refresh();
 }
 
 void MCPauseScreen::Resume()
 {
+    // The mission's end in a match can come while Preferences is open over it: its changes aren't kept.
+    CloseOver();
     Keep();
 
     if (!_Multiplayer)
@@ -223,6 +224,19 @@ void MCPauseScreen::Keep()
     if (std::exchange(_Changed, false))
     {
         MCSettingsModel::Keep();
+    }
+}
+
+void MCPauseScreen::CloseOver()
+{
+    if (const std::shared_ptr<MCPrefsScreen> prefs = _Prefs.Lock(); prefs != nullptr)
+    {
+        prefs->Close();
+    }
+
+    if (const std::shared_ptr<MCQuestionWindow> question = _Question.Lock(); question != nullptr)
+    {
+        question->Close();
     }
 }
 
@@ -304,11 +318,7 @@ void MCPauseScreen::LeaveMission()
 void MCPauseScreen::OnDestroy()
 {
     // The mission's end takes it down too: the battle isn't left paused.
-    if (const std::shared_ptr<MCPrefsScreen> prefs = _Prefs.Lock(); prefs != nullptr)
-    {
-        prefs->Close();
-    }
-
+    CloseOver();
     Keep();
 
     if (!_Multiplayer)

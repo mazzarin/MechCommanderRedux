@@ -1,6 +1,7 @@
 #pragma once
 
 #include "logistics/MCPrefsScreen.h"
+#include "logistics/MCQuestionWindow.h"
 #include "logistics/MCSettingsScreen.h"
 
 /// <summary>
@@ -43,8 +44,14 @@ private:
     void LeaveMission();
     /// <summary>The changes kept, once.</summary>
     void Keep();
+    /// <summary>
+    /// What is open over the pause closed: Preferences as CANCEL leaves it (what it opened with put back, so nothing of
+    /// it is kept), and LEAVE MATCH's question (it lives on the layer, and would hold the keys over the results).
+    /// </summary>
+    void CloseOver();
 
     bool _Multiplayer;
     bool _Changed = false;
     MCGuiHandle<MCPrefsScreen> _Prefs;
+    MCGuiHandle<MCQuestionWindow> _Question;
 };

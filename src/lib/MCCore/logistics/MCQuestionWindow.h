@@ -16,10 +16,12 @@ public:
     /// <summary>
     /// Opens the question over the top of <paramref name="over"/>'s layer, <paramref name="eyebrow"/> over it (the
     /// game's name, or none); <paramref name="closed"/> runs after either answer (the screen under it shows the setting
-    /// as it is then). False when its document can't be read.
+    /// as it is then). The window, for the screen that asked to close it when it goes first (it lives on the layer);
+    /// none when its document can't be read.
     /// </summary>
-    static bool Ask(MCRmlScreen& over, std::string heading, std::string act, std::function<void()> yes,
-                    std::function<void()> closed, std::string eyebrow = {});
+    static MCGuiHandle<MCQuestionWindow> Ask(MCRmlScreen& over, std::string heading, std::string act,
+                                             std::function<void()> yes, std::function<void()> closed,
+                                             std::string eyebrow = {});
 
 protected:
     void OnLoaded(Rml::ElementDocument& document) override;

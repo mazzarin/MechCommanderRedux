@@ -657,6 +657,9 @@ auto MCMission::Shutdown() -> void
         SetGlobalLog({});
     }
 
+    // Port-only (SPEC-menus.md's stage 2): the art kept for a way back that won't come.
+    KeptLogisticsArt.reset();
+
     // Port-only (SPEC-menus.md's stage 1): a change of screen left behind, and the loading screen it put up.
     MCScreenChange::Cancel();
 
@@ -1097,6 +1100,8 @@ auto MCMission::LoadScenario(std::string_view name) -> void
 
     if (Logistics != nullptr)
     {
+        // Port-only (SPEC-menus.md's stage 2): its art kept for the way back.
+        KeptLogisticsArt = Logistics->TakeArt();
         // Destroyed before the pointers to it are cleared, as in the original.
         Logistics.reset();
         SetGlobalLog({});
@@ -1619,6 +1624,7 @@ auto MCMission::StartLogistics() -> MCLogistics&
     const MCFrameLog::Scope part("menus.start");
     MCPort::GetSystemTime(_LogisticsStart);
     Logistics = std::make_shared<MCLogistics>();
+    Logistics->ReuseArt(std::exchange(KeptLogisticsArt, nullptr));
     Logistics->Start();
     return *Logistics;
 }

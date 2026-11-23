@@ -682,9 +682,14 @@ namespace
     /// The campaign's first mission started (MCTestGame::StartCampaignMission), ended as <paramref name="result"/> (as a
     /// quick-start mission's when <paramref name="solo"/>), and its results closed: the way back done.
     /// </summary>
-    void PlayToResultsAndBack(uint32_t result, bool solo)
+    void PlayToResultsAndBack(uint32_t result, bool solo);
+
+    /// <summary>
+    /// The mission playing ended as <paramref name="result"/> (as a quick-start mission's when <paramref name="solo"/>),
+    /// and its results closed: the way back done.
+    /// </summary>
+    void EndToResultsAndBack(uint32_t result, bool solo)
     {
-        REQUIRE(MCTestGame::StartCampaignMission());
         Solo = solo;
         ScenarioResult = result;
         Mission()->EndScenarioRequested = -1;
@@ -697,6 +702,12 @@ namespace
         REQUIRE(Mission()->State == MCMissionState::Results);
         Mission()->CloseResultsScreen();
         Settle();
+    }
+
+    void PlayToResultsAndBack(uint32_t result, bool solo)
+    {
+        REQUIRE(MCTestGame::StartCampaignMission());
+        EndToResultsAndBack(result, solo);
     }
 }
 
@@ -762,6 +773,43 @@ TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mis
     CHECK(!MCHdArt::HoldsFor(missions[0]));
     CHECK(!MCHdArt::HoldsFor(missions[1]));
     CHECK_EQ(MCHdArt::HeldBytes(), 0u);
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 2: the menus' data outlives a mission): the mission keeps the logistics' art while it
+/// plays, and the way back takes it instead of loading it again; art loaded from other files (the game's files switched
+/// meanwhile) is loaded again.
+/// </summary>
+TEST_CASE_ISOLATED("game: the way back from a mission takes the menus' art kept across it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    constexpr uint32_t Won = 4;
+    const std::span<const uint8_t> shapes = GlobalLog()->MechRepShapes[0].Bytes();
+    const std::shared_ptr<MCLogPort> button = GlobalLog()->ScreenButtonPorts[0][0];
+    REQUIRE(!shapes.empty());
+    REQUIRE(button != nullptr);
+
+    REQUIRE(MCTestGame::StartCampaignMission());
+    REQUIRE(Mission()->KeptLogisticsArt != nullptr);
+    CHECK(Mission()->KeptLogisticsArt->Files.MechRepShapes[0].Bytes().data() == shapes.data());
+    CHECK(Mission()->KeptLogisticsArt->Files.ScreenButtonPorts[0][0] == button);
+    EndToResultsAndBack(Won, false);
+    CHECK(Mission()->KeptLogisticsArt == nullptr);
+    CHECK(GlobalLog()->MechRepShapes[0].Bytes().data() == shapes.data());
+    CHECK(GlobalLog()->ScreenButtonPorts[0][0] == button);
+
+    // Kept from other files: loaded again (the old picture, still held here, isn't the new one).
+    REQUIRE(MCTestGame::StartCampaignMission());
+    REQUIRE(Mission()->KeptLogisticsArt != nullptr);
+    Mission()->KeptLogisticsArt->Key.Switches++;
+    EndToResultsAndBack(Won, false);
+    REQUIRE(GlobalLog()->ScreenButtonPorts[0][0] != nullptr);
+    CHECK(GlobalLog()->ScreenButtonPorts[0][0] != button);
 }
 
 /// <summary>

@@ -7,6 +7,7 @@
 #include "gui/MCGuiRef.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogObject.h"
+#include "logistics/MCLogPort.h"
 #include "main/MCDropSlot.h"
 #include "main/MCInventoryList.h"
 #include "main/MCLogMechList.h"
@@ -54,7 +55,65 @@ namespace MCTelemetry
 /// Original source: <c>logistics.cpp</c>, 0x1908 bytes (allocated in <c>mission.cpp</c>). The original's
 /// <c>init</c> is <see cref="Start"/> (the empty object is what tests build), its <c>destroy</c> the destructor.
 /// </remarks>
-class MCLogistics : public std::enable_shared_from_this<MCLogistics>
+/// <summary>
+/// The logistics' own art files, which <see cref="MCLogistics::Start"/> loads before the screens draw from them (each is
+/// only drawn from): a base of <see cref="MCLogistics"/>, so they can be kept across a mission whole
+/// (<see cref="MCLogisticsArt"/>).
+/// </summary>
+struct MCLogisticsArtFiles
+{
+    /// <summary>The mech repair screen shapes (<c>mechrep##.shp</c>, by mech name index).</summary>
+    std::array<MCRegisteredBlock, 24> MechRepShapes;
+    /// <summary>The vehicle repair screen shapes (<c>vr1_##.shp</c>; none where the file is missing).</summary>
+    std::array<MCRegisteredBlock, 35> VehicleRepShapes;
+    /// <summary>The mech icon shapes (<c>mi##.shp</c>).</summary>
+    std::array<MCRegisteredBlock, 24> MechIconShapes;
+    /// <summary>The vehicle icon shapes (<c>vi1_##.shp</c>; none where the file is missing).</summary>
+    std::array<MCRegisteredBlock, 35> VehicleIconShapes;
+    /// <summary>The repair screen's mech picture background (<c>lsrupm00.tga</c>).</summary>
+    std::shared_ptr<MCLogPort> RepairBackPort;
+    /// <summary>The repair screen pieces (<c>lsrupm03, 01, 04, 02, 06, 07.tga</c>).</summary>
+    std::array<std::shared_ptr<MCLogPort>, 6> RepairPorts;
+    /// <summary>The purchase screen pieces (<c>lspcb05, 07, 06, 09.tga</c>).</summary>
+    std::array<std::shared_ptr<MCLogPort>, 4> PurchasePorts;
+    /// <summary>The screen switch buttons' pictures: button 0, exit, buttons 1..3; normal, highlighted, gray.</summary>
+    std::array<std::array<std::shared_ptr<MCLogPort>, 3>, 5> ScreenButtonPorts;
+    /// <summary>The inventory tab icons: mechs, pilots, components, vehicles (<c>lscii?.tga</c>).</summary>
+    std::array<std::shared_ptr<MCLogPort>, 4> InventoryIconPorts;
+};
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 2: the menus' data outlives a mission): what the art files were loaded from, the
+/// same files only when all three are as then.
+/// </summary>
+struct MCLogisticsArtKey
+{
+    /// <summary><c>MCReleaseData::Switches()</c>: the game's files (a match's or single player's).</summary>
+    uint32_t Switches = 0;
+    /// <summary><c>MCHdArt::NumberedFolders()</c>: a shape file read as the pack's copy.</summary>
+    bool Numbered = false;
+    /// <summary><c>MCHdArt::PackFolder()</c>.</summary>
+    std::filesystem::path Pack;
+
+    bool operator==(const MCLogisticsArtKey&) const = default;
+};
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 2: the menus' data outlives a mission): a logistics' art kept by the mission while
+/// it plays (<see cref="MCLogistics::TakeArt"/>) and taken back by the next logistics if it would load the same files
+/// (<see cref="MCLogistics::ReuseArt"/>), so the way back makes only the screens again.
+/// </summary>
+struct MCLogisticsArt
+{
+    MCLogisticsArtKey Key;
+    MCLogisticsArtFiles Files;
+    /// <summary><c>LogArt</c>'s pictures (logistics/MCLogPort.h).</summary>
+    MCLogArtCache Loaded;
+};
+
+class MCLogistics
+    : public std::enable_shared_from_this<MCLogistics>
+    , public MCLogisticsArtFiles
 {
 public:
     /// <summary>The drop zone's lances.</summary>
@@ -85,6 +144,18 @@ public:
     /// ready room when launched from a lobby). Makes this the <see cref="GlobalLog"/> (it must be shared).
     /// </summary>
     void Start();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): hands over this logistics' art (<see cref="MCLogisticsArtFiles"/> and
+    /// <c>LogArt</c>'s), leaving it none, for the mission to keep while it plays; none before <see cref="Start"/>.
+    /// </summary>
+    std::shared_ptr<MCLogisticsArt> TakeArt();
+
+    /// <summary>
+    /// Port-only: the art a logistics before this one loaded (<see cref="TakeArt"/>), which <see cref="Start"/> takes
+    /// instead of loading it again when it was loaded from the same files (<see cref="MCLogisticsArtKey"/>).
+    /// </summary>
+    void ReuseArt(std::shared_ptr<MCLogisticsArt> art);
 
     /// <summary>
     /// Port-only: ties the mech and vehicle icons' damage shapes (<c>mi##.shp</c>, <c>vi1##.shp</c>) to the HD art
@@ -269,6 +340,11 @@ public:
     /// folder's.
     /// </summary>
     void ReadKeptTablesIfSwitched();
+    /// <summary>Loads the art files (<see cref="MCLogisticsArtFiles"/>) but the inventory tabs' icons.</summary>
+    void LoadArtFiles();
+    /// <summary>Takes <see cref="ReuseArt"/>'s art when it was loaded from the files this one would load.</summary>
+    /// <returns>Whether it was taken (so not to be loaded).</returns>
+    bool TakeBackArt();
 
     /// <summary>Switches to the purchase screen (with the slide when <paramref name="animate"/>).</summary>
     int32_t SetUpPurchaseScreen(bool animate);
@@ -336,8 +412,8 @@ public:
     int32_t SetUpSessionScreen();
 
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 2): <see cref="SetUpSessionScreen"/>'s set-up of the room (its players and picks
-    /// emptied, a host's word to its guests to show it), without showing it: at a network's word, as the original set it
+    /// Port-only (SPEC-menus.md's stage 2): <see cref="SetUpSessionScreen"/>'s set-up of the room (the last session's
+    /// lists let go of, its players and picks emptied, a host's word to its guests to show it), without showing it: at a network's word, as the original set it
     /// up, so what the host says next lands in it while the screen shown fades out.
     /// </summary>
     void ReadySessionScreen();
@@ -658,34 +734,16 @@ public:
     MCGuiHandle<MCLogChatWindow> ChatWindow;
     /// <summary>Whether the chat shows, while it is on no screen (<see cref="ShowChat"/>).</summary>
     bool ChatShown = false;
-    /// <summary>The mech repair screen shapes (<c>mechrep##.shp</c>, by mech name index).</summary>
-    std::array<MCRegisteredBlock, 24> MechRepShapes;
-    /// <summary>The vehicle repair screen shapes (<c>vr1_##.shp</c>; none where the file is missing).</summary>
-    std::array<MCRegisteredBlock, 35> VehicleRepShapes;
-    /// <summary>The mech icon shapes (<c>mi##.shp</c>).</summary>
-    std::array<MCRegisteredBlock, 24> MechIconShapes;
-    /// <summary>The vehicle icon shapes (<c>vi1_##.shp</c>; none where the file is missing).</summary>
-    std::array<MCRegisteredBlock, 35> VehicleIconShapes;
     /// <summary>Colour remap tables for drawing shapes (<c>VFX_shape_lookaside</c>).</summary>
     std::array<std::array<uint8_t, 256>, 10> ShapeLookaside{};
     /// <summary>Port-only: what the icon shapes' ties to the HD art pack last while it lives (AttachHdArt).</summary>
     std::shared_ptr<const int> HdArtOwner;
-    /// <summary>The repair screen's mech picture background (<c>lsrupm00.tga</c>).</summary>
-    std::shared_ptr<MCLogPort> RepairBackPort;
     /// <summary>The inventory block background (<c>invblock.tga</c>).</summary>
     std::shared_ptr<MCLogPort> InvBlockPort;
     /// <summary>The box behind the resource figure at the top right.</summary>
     std::shared_ptr<MCLogPort> ResourceBackPort;
     /// <summary>The box behind the clock at the top right.</summary>
     std::shared_ptr<MCLogPort> ClockBackPort;
-    /// <summary>The repair screen pieces (<c>lsrupm03, 01, 04, 02, 06, 07.tga</c>).</summary>
-    std::array<std::shared_ptr<MCLogPort>, 6> RepairPorts;
-    /// <summary>The purchase screen pieces (<c>lspcb05, 07, 06, 09.tga</c>).</summary>
-    std::array<std::shared_ptr<MCLogPort>, 4> PurchasePorts;
-    /// <summary>The screen switch buttons' pictures: button 0, exit, buttons 1..3; normal, highlighted, gray.</summary>
-    std::array<std::array<std::shared_ptr<MCLogPort>, 3>, 5> ScreenButtonPorts;
-    /// <summary>The inventory tab icons: mechs, pilots, components, vehicles (<c>lscii?.tga</c>).</summary>
-    std::array<std::shared_ptr<MCLogPort>, 4> InventoryIconPorts;
     /// <summary>
     /// The chat text colour of each player number (1, 3, 4, 2, 6, 5), used as <c>%fc</c> codes by
     /// <c>MCLogChatWindow::ProcessChatString</c>.
@@ -736,6 +794,10 @@ private:
 
     /// <summary>Set by <see cref="Start"/>: the destructor takes the screens and art down.</summary>
     bool _Started = false;
+    /// <summary>The art <see cref="ReuseArt"/> handed over, until <see cref="Start"/> takes it or drops it.</summary>
+    std::shared_ptr<MCLogisticsArt> _ReusedArt;
+    /// <summary>What <see cref="Start"/> loaded or took its art from.</summary>
+    MCLogisticsArtKey _ArtKey;
     /// <summary>Port-only: set while <see cref="Start"/> makes the screens (its screen changes are the menus' first).</summary>
     bool _Starting = false;
     /// <summary>The screen being shown (one of the screens it owns).</summary>

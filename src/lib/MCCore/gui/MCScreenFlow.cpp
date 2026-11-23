@@ -159,8 +159,9 @@ namespace
     bool StartChange(std::string name, std::function<void()> work, std::vector<MCScreenChange::MCPiece> prepare,
                      std::function<bool()> ready)
     {
+        // A copy: a change that can't start (nothing shown) runs it below.
         if (MCScreenChange::Start({.Name = std::move(name),
-                                   .Job = std::move(prepare),
+                                   .Job = prepare,
                                    .FadeOut = MCScreenChange::MCFadeOut::AtPress,
                                    .Dark = DarkPieces(work, ready)}))
         {
@@ -183,11 +184,14 @@ namespace
         }
 
         MCScreenFlow::Noted();
-        const MCScreenKind& kind = Kinds[static_cast<size_t>(id)];
         const MCScreenId from = MCScreenFlow::Shown();
+        // Copies: a kind's Prepare may register kinds (a logistics' start), which moves them.
+        const std::string name = std::format("{} to {}", NameOf(from), Kinds[static_cast<size_t>(id)].Name);
+        std::function<bool()> ready = Kinds[static_cast<size_t>(id)].Ready;
+        const std::function<std::vector<MCScreenChange::MCPiece>()> makePrepare =
+            Kinds[static_cast<size_t>(id)].Prepare;
         std::vector<MCScreenChange::MCPiece> prepare =
-            kind.Prepare != nullptr ? kind.Prepare() : std::vector<MCScreenChange::MCPiece>{};
-        const std::string name = std::format("{} to {}", NameOf(from), kind.Name);
+            makePrepare != nullptr ? makePrepare() : std::vector<MCScreenChange::MCPiece>{};
         return StartChange(
             name,
             [id, from, move]
@@ -200,7 +204,7 @@ namespace
                 RunIfSet(Kinds[static_cast<size_t>(id)].Show);
                 Follow(id, move);
             },
-            std::move(prepare), kind.Ready);
+            std::move(prepare), std::move(ready));
     }
 }
 

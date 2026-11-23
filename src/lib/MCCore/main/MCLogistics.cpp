@@ -296,6 +296,11 @@ auto MCLogistics::Start() -> void
     SetGlobalLog(weak_from_this());
     // Port-only (SPEC-menus.md's stage 2): the old screens as the flow's kinds.
     MCMenuScreens::Register();
+    // Port-only (SPEC-menus.md's stage 2): the art a logistics before this one loaded, kept across the mission, when it
+    // was loaded from the files this one would load.
+    _ArtKey = {
+        .Switches = MCReleaseData::Switches(), .Numbered = MCHdArt::NumberedFolders(), .Pack = MCHdArt::PackFolder()};
+    const bool artReused = TakeBackArt();
     // Port-only: what the screens look for in the archives is noted while they're up, to be read ahead when they're
     // made again (MCMission::CloseResultsScreen).
     MCFilesAhead::StartNoting();
@@ -332,10 +337,14 @@ auto MCLogistics::Start() -> void
     MultiplayerInitialized = false;
     DefaultPlanningTime = 0xf0;
     PlanningTime = 0xf0;
-    InventoryIconPorts[0] = NewArtPort("logart\\lsciim.tga");
-    InventoryIconPorts[1] = NewArtPort("logart\\lsciip.tga");
-    InventoryIconPorts[2] = NewArtPort("logart\\lsciic.tga");
-    InventoryIconPorts[3] = NewArtPort("logart\\lsciiv.tga");
+
+    if (!artReused)
+    {
+        InventoryIconPorts[0] = NewArtPort("logart\\lsciim.tga");
+        InventoryIconPorts[1] = NewArtPort("logart\\lsciip.tga");
+        InventoryIconPorts[2] = NewArtPort("logart\\lsciic.tga");
+        InventoryIconPorts[3] = NewArtPort("logart\\lsciiv.tga");
+    }
 
     if (InDemo == 0)
     {
@@ -580,32 +589,10 @@ auto MCLogistics::Start() -> void
     VfxPaneWipe(ResourceBackPort->Frame(), 0x10);
     ClockBackPort = NewPort(0x32, 0xc);
     VfxPaneWipe(ClockBackPort->Frame(), 0x10);
-    RepairBackPort = NewArtPort("logart\\lsrupm00.tga");
 
-    MCShapeFile shapeFile;
-
-    for (size_t i = 0; i < MechRepShapes.size(); ++i)
+    if (!artReused)
     {
-        MechRepShapes[i] = LoadShapeFile(shapeFile, std::format("{}mechrep{:02}.shp", ArtPath, i),
-                                         "could not open mechrep shape file", "unexpected mechrep size");
-        MechIconShapes[i] = LoadShapeFile(shapeFile, std::format("{}mi{:02}.shp", ArtPath, i),
-                                          "could not open mechicon shape file", "unexpected mechicon size");
-    }
-
-    // A vehicle without a repair picture has no icon either.
-    for (size_t i = 0; i < VehicleRepShapes.size(); ++i)
-    {
-        if (shapeFile.Open(std::format("{}vr1{:02}.shp", ArtPath, i)) != 0)
-        {
-            continue;
-        }
-
-        VehicleRepShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
-
-        if (shapeFile.Open(std::format("{}vi1{:02}.shp", ArtPath, i)) == 0)
-        {
-            VehicleIconShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
-        }
+        LoadArtFiles();
     }
 
     // Ten remap tables: each maps every colour to 0xff (transparent) except one, which it recolours.
@@ -628,29 +615,6 @@ auto MCLogistics::Start() -> void
 
     MCRenderer::RegisterData(std::span(ShapeLookaside[0].data(), sizeof(ShapeLookaside)), MCDataKind::Tables);
     AttachHdArt();
-
-    RepairPorts[0] = NewArtPort("logart\\lsrupm03.tga");
-    RepairPorts[1] = NewArtPort("logart\\lsrupm01.tga");
-    RepairPorts[2] = NewArtPort("logart\\lsrupm04.tga");
-    RepairPorts[3] = NewArtPort("logart\\lsrupm02.tga");
-    RepairPorts[4] = NewArtPort("logart\\lsrupm06.tga");
-    RepairPorts[5] = NewArtPort("logart\\lsrupm07.tga");
-    PurchasePorts[0] = NewArtPort("logart\\lspcb05.tga");
-    PurchasePorts[1] = NewArtPort("logart\\lspcb07.tga");
-    PurchasePorts[2] = NewArtPort("logart\\lspcb06.tga");
-    PurchasePorts[3] = NewArtPort("logart\\lspcb09.tga");
-    static constexpr std::array<std::string_view, 5> buttonNames = {
-        "logart\\lscb{}00.tga", "b{}_exit.tga", "logart\\lscb{}01.tga", "logart\\lscb{}02.tga", "logart\\lscb{}03.tga"};
-    static constexpr std::array<char, 3> buttonStates = {'n', 'h', 'g'};
-
-    for (size_t button = 0; button < ScreenButtonPorts.size(); ++button)
-    {
-        for (size_t state = 0; state < buttonStates.size(); ++state)
-        {
-            ScreenButtonPorts[button][state] =
-                NewArtPort(std::vformat(buttonNames[button], std::make_format_args(buttonStates[state])));
-        }
-    }
 
     ReadGameSystemValues();
 
@@ -680,6 +644,93 @@ auto MCLogistics::Start() -> void
     {
         MCScreenFlow::Noted();
     }
+}
+
+auto MCLogistics::LoadArtFiles() -> void
+{
+    RepairBackPort = NewArtPort("logart\\lsrupm00.tga");
+
+    MCShapeFile shapeFile;
+
+    for (size_t i = 0; i < MechRepShapes.size(); ++i)
+    {
+        MechRepShapes[i] = LoadShapeFile(shapeFile, std::format("{}mechrep{:02}.shp", ArtPath, i),
+                                         "could not open mechrep shape file", "unexpected mechrep size");
+        MechIconShapes[i] = LoadShapeFile(shapeFile, std::format("{}mi{:02}.shp", ArtPath, i),
+                                          "could not open mechicon shape file", "unexpected mechicon size");
+    }
+
+    // A vehicle without a repair picture has no icon either.
+    for (size_t i = 0; i < VehicleRepShapes.size(); ++i)
+    {
+        if (shapeFile.Open(std::format("{}vr1{:02}.shp", ArtPath, i)) != 0)
+        {
+            continue;
+        }
+
+        VehicleRepShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
+
+        if (shapeFile.Open(std::format("{}vi1{:02}.shp", ArtPath, i)) == 0)
+        {
+            VehicleIconShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
+        }
+    }
+
+    RepairPorts[0] = NewArtPort("logart\\lsrupm03.tga");
+    RepairPorts[1] = NewArtPort("logart\\lsrupm01.tga");
+    RepairPorts[2] = NewArtPort("logart\\lsrupm04.tga");
+    RepairPorts[3] = NewArtPort("logart\\lsrupm02.tga");
+    RepairPorts[4] = NewArtPort("logart\\lsrupm06.tga");
+    RepairPorts[5] = NewArtPort("logart\\lsrupm07.tga");
+    PurchasePorts[0] = NewArtPort("logart\\lspcb05.tga");
+    PurchasePorts[1] = NewArtPort("logart\\lspcb07.tga");
+    PurchasePorts[2] = NewArtPort("logart\\lspcb06.tga");
+    PurchasePorts[3] = NewArtPort("logart\\lspcb09.tga");
+    static constexpr std::array<std::string_view, 5> buttonNames = {
+        "logart\\lscb{}00.tga", "b{}_exit.tga", "logart\\lscb{}01.tga", "logart\\lscb{}02.tga", "logart\\lscb{}03.tga"};
+    static constexpr std::array<char, 3> buttonStates = {'n', 'h', 'g'};
+
+    for (size_t button = 0; button < ScreenButtonPorts.size(); ++button)
+    {
+        for (size_t state = 0; state < buttonStates.size(); ++state)
+        {
+            ScreenButtonPorts[button][state] =
+                NewArtPort(std::vformat(buttonNames[button], std::make_format_args(buttonStates[state])));
+        }
+    }
+}
+
+auto MCLogistics::TakeBackArt() -> bool
+{
+    const std::shared_ptr<MCLogisticsArt> art = std::exchange(_ReusedArt, nullptr);
+
+    if (art == nullptr || art->Key != _ArtKey)
+    {
+        return false;
+    }
+
+    static_cast<MCLogisticsArtFiles&>(*this) = std::move(art->Files);
+    ReuseLogArt(std::move(art->Loaded));
+    return true;
+}
+
+auto MCLogistics::TakeArt() -> std::shared_ptr<MCLogisticsArt>
+{
+    if (!_Started)
+    {
+        return nullptr;
+    }
+
+    auto art = std::make_shared<MCLogisticsArt>();
+    art->Key = _ArtKey;
+    art->Files = std::move(static_cast<MCLogisticsArtFiles&>(*this));
+    art->Loaded = TakeLogArt();
+    return art;
+}
+
+auto MCLogistics::ReuseArt(std::shared_ptr<MCLogisticsArt> art) -> void
+{
+    _ReusedArt = std::move(art);
 }
 
 auto MCLogistics::SetCurrentScreen(std::weak_ptr<MCLogObject> screen) -> void
@@ -1702,6 +1753,13 @@ auto MCLogistics::SetUpSessionScreen() -> int32_t
 
 auto MCLogistics::ReadySessionScreen() -> void
 {
+    // Before the room's set-up, as the original went: the last session's lists go, and the chat's handler is set again
+    // by the set-up.
+    if (MultiplayerInitialized)
+    {
+        DestroyMultiplayer();
+    }
+
     SessionScreen->Activate(false);
 
     // Port (Redux HD): an internet game's host passes its code on to its players.
@@ -1717,12 +1775,6 @@ auto MCLogistics::ReadySessionScreen() -> void
 auto MCLogistics::ShowSessionScreen() -> void
 {
     NoteScreen("session");
-
-    if (MultiplayerInitialized)
-    {
-        DestroyMultiplayer();
-    }
-
     CurrentScreen()->ShowGuiWindow(false);
     SetCurrentScreen(SessionScreen);
     ShowLogScreen(true, true);

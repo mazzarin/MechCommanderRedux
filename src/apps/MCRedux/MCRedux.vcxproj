@@ -66,9 +66,6 @@
     <CopyFileToFolders Include="..\..\res\ui\dialog_ask.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\..\res\ui\dialog_exit_mp.rml">
-      <DestinationFolders>$(OutDir)ui</DestinationFolders>
-    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\dialog_reports.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>

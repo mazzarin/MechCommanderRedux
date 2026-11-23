@@ -10,14 +10,19 @@
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCPrefsScreen.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
+#include "logistics/MCRemadeScreens.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
+#include "ui/MCRmlLayer.h"
+#include "ui/MCRmlMenus.h"
 
 namespace
 {
@@ -129,6 +134,7 @@ namespace
         MCScreenId Solo = MCScreenFlow::NoScreen;
         MCScreenId Save = MCScreenFlow::NoScreen;
         MCScreenId Preferences = MCScreenFlow::NoScreen;
+        MCScreenId Update = MCScreenFlow::NoScreen;
         MCScreenId Campaign = MCScreenFlow::NoScreen;
         MCScreenId Connection = MCScreenFlow::NoScreen;
         MCScreenId ReadyRoom = MCScreenFlow::NoScreen;
@@ -189,9 +195,24 @@ auto MCMenuScreens::Register() -> void
         OldScreen("solo missions", [] { return ShowingLoad(false, true); }, SoloLoadScreen, {}, true));
     Ids.Save = MCScreenFlow::Register(
         OldScreen("save", [] { return Showing(&MCLogistics::SaveScreen); }, SaveScreen, {}, true));
-    Ids.Preferences = MCScreenFlow::Register(OldScreen(
-        "preferences", [] { return Showing(&MCLogistics::PrefScreen); }, ShowPreferences,
-        Back("preferences back", CancelPrefs)));
+    // Port-only (SPEC-menus.md, stage 6): Preferences remade (logistics/MCPrefsScreen.h), made afresh at each press so it
+    // reads the settings as they are then; ACCEPT and CANCEL both show the screen below.
+    Ids.Preferences = MCScreenFlow::Register(
+        MCRemadeScreens::Kind("preferences",
+                              [](MCRmlMenus& menus)
+                              {
+                                  return MCGuiHandle<MCRmlScreen>(menus.Menus().CreateChild<MCPrefsScreen>(
+                                      [](MCPrefsScreen& made) { made.Accepted = [] { MCScreenFlow::ShowBelow(); }; }));
+                              }));
+    // Port-only (stage 6): UPDATE remade (logistics/MCUpdateScreen.h), from the main menu's UPDATE and INTERNET's newer
+    // game, made afresh at each press, named by where it opened; BACK shows that screen again.
+    Ids.Update = MCScreenFlow::Register(
+        MCRemadeScreens::Kind("update",
+                              [](MCRmlMenus& menus)
+                              {
+                                  return MCGuiHandle<MCRmlScreen>(menus.Menus().CreateChild<MCUpdateScreen>(
+                                      [](MCUpdateScreen&) {}, MCUpdateScreen::PlaceOfShown()));
+                              }));
     Ids.Campaign = MCScreenFlow::Register(OldScreen(
         "campaign",
         []
@@ -255,6 +276,11 @@ auto MCMenuScreens::Save() -> MCScreenId
 auto MCMenuScreens::Preferences() -> MCScreenId
 {
     return TheIds().Preferences;
+}
+
+auto MCMenuScreens::Update() -> MCScreenId
+{
+    return TheIds().Update;
 }
 
 auto MCMenuScreens::Campaign() -> MCScreenId

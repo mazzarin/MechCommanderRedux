@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCRemadeScreens.h"
 #include "main/MCHdSettings.h"
+#include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
 #include "ui/MCRmlScreen.h"
 
@@ -33,6 +34,12 @@ MCOptionalRef<MCRmlMenus> MCRemadeScreens::Menus()
     }
 
     return started->get();
+}
+
+bool MCRemadeScreens::Showing()
+{
+    const MCOptionalRef<MCRmlMenus> running = MCRmlMenus::Running();
+    return running.has_value() && running->get().Menus().Showing();
 }
 
 MCScreenFlow::MCScreenKind MCRemadeScreens::Kind(std::string name, MCMake make, std::function<void()> leave)

@@ -327,6 +327,8 @@ void MCSettingsScreen::RefreshRow(Rml::ElementDocument& document, const MCSettin
     if (Rml::Element* row = document.GetElementById(PartId(RowPrefix, setting.Id)); row != nullptr)
     {
         row->SetClass(HeldClass, isHeld);
+        // Its words are a held thing's, read as an off button's are (ui/MCRmlChecks: the large contrast).
+        row->SetClass(OffClass, isHeld);
     }
 
     if (Rml::Element* line = document.GetElementById(PartId(LinePrefix, setting.Id)); line != nullptr)

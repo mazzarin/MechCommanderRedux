@@ -65,9 +65,6 @@
     <CopyFileToFolders Include="..\..\res\ui\dialog_ask.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\..\res\ui\dialog_exit_mp.rml">
-      <DestinationFolders>$(OutDir)ui</DestinationFolders>
-    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\dialog_reports.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
@@ -223,6 +220,7 @@
     <ClCompile Include="tests\ObjectTypeTests.cpp" />
     <ClCompile Include="tests\PathfindingTests.cpp" />
     <ClCompile Include="tests\PortTests.cpp" />
+    <ClCompile Include="tests\PrefsScreenTests.cpp" />
     <ClCompile Include="tests\PresenterTests.cpp" />
     <ClCompile Include="tests\ProgramSwapTests.cpp" />
     <ClCompile Include="tests\PurchaseTests.cpp" />
@@ -249,6 +247,7 @@
     <ClCompile Include="tests\TestGame.cpp" />
     <ClCompile Include="tests\TurretTests.cpp" />
     <ClCompile Include="tests\UpdaterTests.cpp" />
+    <ClCompile Include="tests\UpdateScreenTests.cpp" />
     <ClCompile Include="tests\UploadSlotsTests.cpp" />
     <ClCompile Include="tests\VfxFontImageTests.cpp" />
     <ClCompile Include="tests\VfxGameHelperTests.cpp" />
@@ -297,6 +296,7 @@
     <ClInclude Include="tests\MCTestArchive.h" />
     <ClInclude Include="tests\MCTestGuest.h" />
     <ClInclude Include="tests\MCTestShapes.h" />
+    <ClInclude Include="tests\RemadeScreens.h" />
     <ClInclude Include="tests\ScreenInput.h" />
     <ClInclude Include="tests\TestGame.h" />
   </ItemGroup>

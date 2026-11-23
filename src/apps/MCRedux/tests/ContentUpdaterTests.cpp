@@ -3078,6 +3078,45 @@ TEST_CASE("updater: the HD pack's download stops while a match's mission plays, 
     CHECK(release.Armed());
 }
 
+/// <summary>
+/// Port-only (SPEC-menus.md's UPDATE, STOP and RESUME): STOP holds an update's content download where it is, however
+/// long, and a match's mission ending meanwhile doesn't let it go; RESUME goes on from there to READY.
+/// </summary>
+TEST_CASE("updater: STOP holds an update's download where it is until RESUME, then it goes on")
+{
+    MCHostedRelease release("updater-stopped");
+    const auto gate = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false,
+                         [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+    CheckUntilFound(scope, std::nullopt);
+    CHECK(!MCUpdater::CanStopDownload());
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([&] { return gate->Reached.load(); }));
+    REQUIRE(MCUpdater::CanStopDownload());
+
+    MCUpdater::StopDownload();
+    CHECK(MCUpdater::DownloadStopped());
+    CHECK(!MCUpdater::CanStopDownload());
+    REQUIRE(FramesUntilIdle());
+    gate->Reached = false;
+    gate->Open = true;
+    SomeFrames();
+    MCUpdater::PauseWork(false);
+    SomeFrames();
+    CHECK(!MCUpdater::Working());
+    CHECK(!gate->Reached);
+    CHECK(Stage() == MCStage::Downloading);
+    CHECK(MCUpdater::DownloadStopped());
+
+    MCUpdater::ResumeDownload();
+    CHECK(!MCUpdater::DownloadStopped());
+    CHECK(MCUpdater::Working());
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    CHECK(Stage() == MCStage::Ready);
+    CHECK(release.Armed());
+    CHECK(StagingFree(release.Game.Path()));
+}
+
 TEST_CASE("updater: with an update shown, HD's choice plans the update again with it; Sparkle lets its update go and "
           "finds it again")
 {
@@ -3413,6 +3452,9 @@ TEST_CASE("first start: a failed download is told by its kind, in plain words, i
     const MCFailure nearlyRoom = failure(nearly, source);
     CHECK(nearlyRoom.Kind == MCFailureKind::DiskFull);
     CHECK_EQ(nearlyRoom.BytesShort, Short);
+    // What it needs free in all: on the full disk, all of it short (the UPDATE screen's "needed" and "free").
+    CHECK_EQ(noRoom.BytesNeeded, noRoom.BytesShort);
+    CHECK_EQ(nearlyRoom.BytesNeeded, noRoom.BytesNeeded);
     CHECK_EQ(MCFirstStart::ProblemText(noRoom),
              std::format("NOT ENOUGH DISK SPACE: THE DOWNLOAD NEEDS {} MORE. FREE SOME UP, THEN TRY AGAIN.",
                          MCUpdateWork::SizeText(noRoom.BytesShort)));
@@ -3432,6 +3474,33 @@ TEST_CASE("first start: a failed download is told by its kind, in plain words, i
     {
         CHECK(MCFirstStart::ProblemText(failed).find(failed.Reason) == std::string::npos);
     }
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md's UPDATE): an update's staging that fails keeps its failure's kind in the status, as the
+/// UPDATE screen words it: the host out of reach once INSTALL is pressed ("Couldn't reach the update server.", RETRY).
+/// </summary>
+TEST_CASE("updater: a staging that can't reach the host fails as Unreachable, to try again")
+{
+    MCHostedRelease release("updater-unreachable");
+    // The check reads the host; the staging after INSTALL finds nothing listening.
+    const auto made = std::make_shared<std::atomic<int32_t>>(0);
+    MCUpdaterScope scope(release, false,
+                         [host = release.Host.Path(), made]() -> std::unique_ptr<MCContentStage::MCSource>
+                         {
+                             if (made->fetch_add(1) == 0)
+                             {
+                                 return std::make_unique<MCFolderSource>(host);
+                             }
+
+                             return UnreachableSource();
+                         });
+    CheckUntilFound(scope, std::nullopt);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Failed; }));
+    CHECK(MCUpdater::Status().Failure == MCUpdateWork::MCFailureKind::Unreachable);
+    CHECK(MCUpdater::Status().Retry);
+    CHECK(StagingFree(release.Game.Path()));
 }
 
 TEST_CASE("first start: a start after a cut-off download shows what's in hand from its first report while it checks "
@@ -4096,7 +4165,9 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
     const std::shared_ptr<MCLogButton> update = GlobalLog()->MainScreen->CinemaButton.Lock();
     REQUIRE(update != nullptr);
     CHECK(!update->Disabled);
-    RealClickOn(*update);
+    // The original's page (a lobby's room still shows it; the button opens the remade one: UpdateScreenTests.cpp).
+    ShowUpdatePage();
+    ScreenFrames();
     REQUIRE(UpdatePageShown());
     CHECK_EQ(UpdatePageStatus(),
              std::format("DOWNLOADING: {}.", MCUpdateWork::ProgressText(inHand, UpdateBytes(release))));

@@ -4,6 +4,8 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "mission/MCMission.h"
+#include "logistics/MCPauseScreen.h"
+#include "logistics/MCRemadeScreens.h"
 #include "lib/MCReleaseData.h"
 #include "ai/MCMoveGeometry.h"
 #include "lib/MCFatal.h"
@@ -718,7 +720,8 @@ auto MCMission::Run() -> int32_t
         }
         case MCMissionState::Logistics:
         {
-            if (Logistics != nullptr && Logistics->CurrentScreen()->IsShowing() == 0)
+            // Port-only (SPEC-menus.md's stage 6): not while a remade screen shows over it (logistics/MCRemadeScreens).
+            if (Logistics != nullptr && Logistics->CurrentScreen()->IsShowing() == 0 && !MCRemadeScreens::Showing())
             {
                 Logistics->ShowLogScreen(true, false);
             }
@@ -784,6 +787,8 @@ auto MCMission::Run() -> int32_t
         {
             if ((ScenarioResult != 0 || EndScenarioRequested != 0) && !Scenario()->StartingUp)
             {
+                // Port-only (SPEC-menus.md, "A pause menu"): a pause still up as the mission ends goes first.
+                MCPauseScreen::MissionEnding();
                 Scenario()->SetupBonus();
                 ResultsScreen->Activate();
                 State = MCMissionState::Results;

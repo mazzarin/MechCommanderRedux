@@ -3,6 +3,7 @@
 #include "../MCTelemetryBackend.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "MCTestGuest.h"
 #include "TestGame.h"
@@ -1135,15 +1136,18 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     REQUIRE(MCTestGame::StartLogistics());
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(reports.Log->Requests.empty());
-    MCReusableDialog& dialog = *GlobalLog()->QuestionDialog;
-    REQUIRE(dialog.IsShowing());
-    CHECK_EQ(dialog.Text, std::string(ReportsText(MCPrompt::Ask)));
-    MCScreenInput::SaveShot("reports question", MCScreenInput::ScreenHash());
-    CHECK(TextInsidePanel(dialog));
-    MCScreenInput::RealClick(dialog.CancelButton->GlobalX() + dialog.CancelButton->Width() / 2,
-                             dialog.CancelButton->GlobalY() + dialog.CancelButton->Height() / 2);
+    // Port-only (SPEC-menus.md's stage 6): the question remade, a dialog over the main menu, DON'T SEND with the focus.
+    CHECK(!GlobalLog()->QuestionDialog->IsShowing());
+    const std::shared_ptr<MCRmlScreen> question = MCRemadeTest::OnTop<MCRmlScreen>();
+    REQUIRE(question != nullptr);
+    CHECK_EQ(MCRemadeTest::Words(*question, "ask"),
+             std::string("Send reports of your computer, frame rates, settings and crashes, under a random ID, to help "
+                         "MechCommander Redux run better?"));
+    CHECK_EQ(MCRemadeTest::Words(*question, "kept"), std::string("No name or IP address is kept."));
+    MCScreenInput::SaveShownShot("reports question");
+    REQUIRE(MCRemadeTest::Press(*question, "no"));
     MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK(!dialog.IsShowing());
+    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
     CHECK_EQ(GReports, 0);
     CHECK(!MCTelemetry::Reporting());
     CHECK(MCTelemetry::Prompt() == MCPrompt::None);

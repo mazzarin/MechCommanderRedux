@@ -144,6 +144,10 @@ namespace
     MCAgain InstallAgain = MCAgain::No;
     /// <summary>The download the pause stopped (staging or the change of sets), to go on with after it; none, Idle.</summary>
     MCStep PausedStep = MCStep::Idle;
+    /// <summary>Port-only: the player's STOP on UPDATE holds the update's download as a match's mission does, until RESUME.</summary>
+    bool PlayerStopped = false;
+    /// <summary>The update's staging's failure (its kind and sizes), written on the work's thread before the work ends.</summary>
+    std::shared_ptr<MCUpdateWork::MCFailure> StagingFailure;
 
     /// <summary>The input's quit: the game ends as if the player had closed it.</summary>
     void InputQuit()
@@ -212,6 +216,7 @@ namespace
         SetsChosenAgain = false;
         ProgramClosing = false;
         PausedStep = MCStep::Idle;
+        PlayerStopped = false;
         InstallAgain = MCAgain::No;
     }
 
@@ -288,16 +293,20 @@ namespace
     /// <paramref name="retry"/> (a fresh check first). Work still under way (the program's backend failing while the
     /// content stages) stops before the staging lock goes, so no copy stages beside it.
     /// </summary>
-    void Fail(std::string_view error, bool retry = true)
+    void Fail(std::string_view error, bool retry = true, const MCUpdateWork::MCFailure& failure = {})
     {
         SDL_Log("Updater: %s failed: %s", Current.Version.c_str(), std::string(error).c_str());
         StopWork();
         StagingLock.reset();
         PausedStep = MCStep::Idle;
+        PlayerStopped = false;
         Step = MCStep::Finished;
         Current.Stage = MCStage::Failed;
         Current.Error = Printable(error, MaxErrorLength, false);
         Current.Retry = retry;
+        Current.Failure = failure.Kind;
+        Current.NeededBytes = failure.BytesNeeded;
+        Current.FreeBytes = failure.BytesNeeded - std::min(failure.BytesShort, failure.BytesNeeded);
         InstallAgain = MCAgain::No;
         Changed();
     }
@@ -379,8 +388,10 @@ namespace
     /// <summary>Stages the update's content on the work's thread; <paramref name="arm"/>, arms it there too.</summary>
     void StartStaging(bool arm)
     {
+        StagingFailure = std::make_shared<MCUpdateWork::MCFailure>();
         RunWork("the update's staging",
-                [setup = *Content, makeSource = MakeSource, offer = *Offer, arm](MCUpdateWork::MCContext& context)
+                [setup = *Content, makeSource = MakeSource, offer = *Offer, arm,
+                 failure = StagingFailure](MCUpdateWork::MCContext& context)
                 {
                     return MCUpdateWork::WithSource<std::optional<MCOffer>>(
                         makeSource, context.Stop,
@@ -393,6 +404,7 @@ namespace
                                                             MCUpdateWork::Reporter(context.Progress, context.Stop));
                                 !staged)
                             {
+                                *failure = staged.error();
                                 return std::unexpected(staged.error().Reason);
                             }
 
@@ -710,11 +722,11 @@ namespace
         }
     }
 
-    /// <summary>The download a match's mission stopped goes on from where it was (its staged files kept).</summary>
+    /// <summary>The download a match's mission (or STOP) stopped goes on from where it was (its staged files kept).</summary>
     void Resume()
     {
         const MCStep resume = std::exchange(PausedStep, MCStep::Idle);
-        SDL_Log("Updater: the mission is over: the download goes on");
+        SDL_Log("Updater: the download goes on");
 
         if (resume == MCStep::StagingContent)
         {
@@ -725,6 +737,41 @@ namespace
             // Its staging lock is still this copy's: taken again for the sets' change.
             StagingLock.reset();
             StartSetsChange();
+        }
+    }
+
+    /// <summary>
+    /// Each frame, and at STOP and RESUME: while <paramref name="held"/> (a match's mission plays, or the player
+    /// stopped the update's download), the content's download stops where it is; once not, it goes on from there.
+    /// </summary>
+    void HoldWork(bool held)
+    {
+        if (held)
+        {
+            // Each frame: a download that began during the mission (the start's check ending in the HD pack's change)
+            // stops too. Only downloads stop: a check or the quiet update's record is done in a moment.
+            Paused = true;
+
+            if (Work != nullptr && PausedStep == MCStep::Idle &&
+                (Step == MCStep::StagingContent || Step == MCStep::ChangingSets))
+            {
+                SDL_Log("Updater: the download stops %s", PlayerStopped ? "(STOP)" : "while the mission plays");
+                PausedStep = Step;
+                Work->Stop();
+            }
+
+            return;
+        }
+
+        if (!std::exchange(Paused, false))
+        {
+            return;
+        }
+
+        // Still stopping, its end goes on with it (Frame).
+        if (PausedStep != MCStep::Idle && Work == nullptr)
+        {
+            Resume();
         }
     }
 
@@ -809,7 +856,7 @@ namespace
                 Backend->Answer(MCAnswer::Later);
             }
 
-            Fail(error);
+            Fail(error, true, StagingFailure != nullptr ? *StagingFailure : MCUpdateWork::MCFailure{});
             return;
         }
 
@@ -1050,11 +1097,13 @@ auto MCUpdater::Frame() -> void
             return;
         }
 
-        SDL_Log("Updater: the download waits for the mission to end (%s)", error.c_str());
+        SDL_Log("Updater: the download waits (%s)", error.c_str());
         return;
     }
 
+    // Done as STOP came (or not stopped at all): nothing is held now.
     PausedStep = MCStep::Idle;
+    PlayerStopped = false;
 
     switch (Step)
     {
@@ -1081,34 +1130,42 @@ auto MCUpdater::Frame() -> void
 auto MCUpdater::PauseWork(bool paused) -> void
 {
     MatchPlays->store(paused);
+    HoldWork(paused || PlayerStopped);
+}
 
-    if (paused)
-    {
-        // Each frame: a download that began during the mission (the start's check ending in the HD pack's change)
-        // stops too. Only downloads stop: a check or the quiet update's record is done in a moment.
-        Paused = true;
+auto MCUpdater::CanStopDownload() -> bool
+{
+    return Current.Stage == MCStage::Downloading && !PlayerStopped && Step == MCStep::StagingContent;
+}
 
-        if (Work != nullptr && PausedStep == MCStep::Idle &&
-            (Step == MCStep::StagingContent || Step == MCStep::ChangingSets))
-        {
-            SDL_Log("Updater: the download stops while the mission plays");
-            PausedStep = Step;
-            Work->Stop();
-        }
-
-        return;
-    }
-
-    if (!std::exchange(Paused, false))
+auto MCUpdater::StopDownload() -> void
+{
+    if (!CanStopDownload())
     {
         return;
     }
 
-    // Still stopping, its end goes on with it (Frame).
-    if (PausedStep != MCStep::Idle && Work == nullptr)
+    SDL_Log("Updater: STOP: %s's download stops where it is", Current.Version.c_str());
+    PlayerStopped = true;
+    HoldWork(true);
+    Changed();
+}
+
+auto MCUpdater::ResumeDownload() -> void
+{
+    if (!std::exchange(PlayerStopped, false))
     {
-        Resume();
+        return;
     }
+
+    SDL_Log("Updater: RESUME: %s's download goes on", Current.Version.c_str());
+    HoldWork(MatchPlays->load());
+    Changed();
+}
+
+auto MCUpdater::DownloadStopped() -> bool
+{
+    return PlayerStopped && Current.Stage == MCStage::Downloading;
 }
 
 auto MCUpdater::Quit() -> void

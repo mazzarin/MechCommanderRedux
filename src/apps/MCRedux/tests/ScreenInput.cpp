@@ -179,6 +179,12 @@ namespace MCScreenInput
 
     void RealKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod)
     {
+        SendKeyEvent(scancode, down, mod);
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    void SendKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod)
+    {
         SDL_Event key{};
         key.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
         key.key.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
@@ -187,7 +193,6 @@ namespace MCScreenInput
         key.key.mod = mod;
         key.key.down = down;
         MCInput::HandleEvent(key);
-        MCTestGame::RunFrame(1.0f / 15.0f);
     }
 
     void RealChord(SDL_Scancode modifier, SDL_Keymod mod, SDL_Scancode scancode)

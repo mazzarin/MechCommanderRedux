@@ -630,6 +630,9 @@
     <ClCompile Include="logistics\MCMissionLogisticsBridge.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCPauseScreen.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCPilotInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -712,6 +715,9 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCUpdatePage.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCUpdateScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCVehicleInventoryBlock.cpp">
@@ -2161,6 +2167,9 @@
     <ClInclude Include="logistics\MCMissionLogisticsBridge.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCPauseScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCPilotInventoryBlock.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2243,6 +2252,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCUpdatePage.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCUpdateScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCVehicleInventoryBlock.h">

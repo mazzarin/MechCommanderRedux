@@ -200,14 +200,29 @@ namespace
         bool Disabled = false;
     };
 
+    /// <summary>Whether <paramref name="element"/> or anything round it is off (a held switch's segment, its row).</summary>
+    bool InsideOff(Rml::Element& element)
+    {
+        for (Rml::Element* at = &element; at != nullptr; at = at->GetParentNode())
+        {
+            if (at->IsClassSet(OffClass))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>What a text sits on: the nearest element out from it with a ground; a picture found first is a picture.</summary>
     MCGround GroundOf(Rml::Element& text)
     {
         MCGround ground;
+        // Off anywhere round it, not only inside its ground (a held switch's segment is its own ground).
+        ground.Disabled = text.GetParentNode() != nullptr && InsideOff(*text.GetParentNode());
 
         for (Rml::Element* element = text.GetParentNode(); element != nullptr; element = element->GetParentNode())
         {
-            ground.Disabled = ground.Disabled || element->IsClassSet(OffClass);
             const Rml::Style::ComputedValues& values = element->GetComputedValues();
 
             if (values.background_color().alpha >= GroundAlpha)

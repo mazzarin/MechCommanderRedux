@@ -19,6 +19,9 @@ namespace MCRemadeScreens
     /// </summary>
     MCOptionalRef<MCRmlMenus> Menus();
 
+    /// <summary>Whether a remade screen shows on the menus' layer (the old screen under it stays hidden).</summary>
+    bool Showing();
+
     /// <summary>What makes a remade screen on the menus' layer (MCRmlLayer::CreateChild).</summary>
     using MCMake = std::function<MCGuiHandle<MCRmlScreen>(MCRmlMenus& menus)>;
 

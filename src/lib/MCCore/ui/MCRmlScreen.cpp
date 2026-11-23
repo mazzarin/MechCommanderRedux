@@ -156,6 +156,27 @@ void MCRmlScreen::Show()
         return;
     }
 
+    OnShow();
+    ShowKeys();
+    _Document->Show(Modal ? Rml::ModalFlag::Modal : Rml::ModalFlag::None, Rml::FocusFlag::Document);
+
+    // The focus on what the player most likely wants, without its ring until a key is pressed.
+    if (const MCOptionalRef<Rml::Element> first = FirstFocus(*_Document); first.has_value())
+    {
+        first->get().Focus(false);
+    }
+
+    _Shown = true;
+    Layer().Shown(*this);
+}
+
+void MCRmlScreen::ShowKeys()
+{
+    if (_Document == nullptr)
+    {
+        return;
+    }
+
     // The hint line's right: the screen's own keys, each boxed before what it does.
     std::string keys;
 
@@ -171,17 +192,6 @@ void MCRmlScreen::Show()
     {
         part->SetInnerRML(keys);
     }
-
-    _Document->Show(Modal ? Rml::ModalFlag::Modal : Rml::ModalFlag::None, Rml::FocusFlag::Document);
-
-    // The focus on what the player most likely wants, without its ring until a key is pressed.
-    if (const MCOptionalRef<Rml::Element> first = FirstFocus(*_Document); first.has_value())
-    {
-        first->get().Focus(false);
-    }
-
-    _Shown = true;
-    Layer().Shown(*this);
 }
 
 void MCRmlScreen::Hide()
@@ -199,6 +209,8 @@ void MCRmlScreen::Hide()
         {
             Layer().Hidden(*this);
         }
+
+        OnHide();
     }
 }
 

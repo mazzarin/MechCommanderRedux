@@ -6,8 +6,16 @@
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
+#include "logistics/MCRemadeScreens.h"
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
+#include "ui/MCRmlLayer.h"
+#include "ui/MCRmlMenus.h"
+#include "ui/MCRmlScreen.h"
+
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/StringUtilities.h>
 
 namespace
 {
@@ -43,13 +51,96 @@ namespace
         MCTelemetry::Answered(send);
         SavePrefs();
     }
+
+    /// <summary>The remade question's document and its places (ui/dialog_reports.rml).</summary>
+    constexpr const char* ReportsDocument = "dialog_reports.rml";
+    constexpr const char* AskId = "ask";
+    constexpr const char* KeptId = "kept";
+    constexpr const char* SendId = "yes";
+    constexpr const char* DontSendId = "no";
+
+    /// <summary>The remade question's words (the style frames' dialog_reports.rml: today's question, its two sentences).</summary>
+    constexpr std::string_view AskText = "Send reports of your computer, frame rates, settings and crashes, under a "
+                                         "random ID, to help MechCommander Redux run better?";
+    constexpr std::string_view KeptText = "No name or IP address is kept.";
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md, "The reports question"; stage 6): the question remade, a dialog over the main menu (or
+    /// the room, for a launcher's players): SEND turns REPORTS on, DON'T SEND (and Escape) leaves it off; Preferences'
+    /// REPORTS changes it later.
+    /// </summary>
+    class MCReportsDialog final : public MCRmlScreen
+    {
+    public:
+        MCReportsDialog()
+        {
+            SetDocument(ReportsDocument);
+            Modal = true;
+            // The focus on DON'T SEND: Enter alone never agrees to reports.
+            Keys = {{"Esc", "Don't send"}};
+        }
+
+        void Answered(bool send)
+        {
+            // Closed first: the answer's save can't reach a dialog already gone.
+            const std::shared_ptr<MCRmlScreen> pinned = shared_from_this();
+            Close();
+            Answer(send);
+        }
+
+    protected:
+        void OnLoaded(Rml::ElementDocument& document) override
+        {
+            for (const auto& [id, words] : {std::pair{AskId, AskText}, std::pair{KeptId, KeptText}})
+            {
+                if (Rml::Element* element = document.GetElementById(id); element != nullptr)
+                {
+                    element->SetInnerRML(Rml::StringUtilities::EncodeRml(std::string(words)));
+                }
+            }
+
+            OnClick(SendId, [this] { Answered(true); });
+            OnClick(DontSendId, [this] { Answered(false); });
+        }
+    };
+
+    /// <summary>Whether a remade screen shows on the menus' layer (Preferences over the main menu, the question itself).</summary>
+    bool RemadeShows()
+    {
+        const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
+        return menus.has_value() && menus->get().Menus().Showing();
+    }
+
+    /// <summary>The question asked as the remade dialog; false when the menus' RmlUi can't start or its document can't be read.</summary>
+    bool AskRemade()
+    {
+        const MCOptionalRef<MCRmlMenus> menus = MCRemadeScreens::Menus();
+
+        if (!menus.has_value())
+        {
+            return false;
+        }
+
+        const MCGuiHandle<MCReportsDialog> question = menus->get().Menus().CreateChild<MCReportsDialog>(
+            [](MCReportsDialog& made) { made.Back = [&made] { made.Answered(false); }; });
+
+        if (const std::expected<void, std::string> opened = question->Open(); !opened)
+        {
+            SDL_Log("Reports: the question can't be asked as %s (%s); asked as the original's dialog", ReportsDocument,
+                    opened.error().c_str());
+            question->Close();
+            return false;
+        }
+
+        return true;
+    }
 }
 
 bool NoticeScreenFree()
 {
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
     return logistics != nullptr && OnNoticeScreen(*logistics) && !logistics->MessageDialog->IsShowing() &&
-           !logistics->QuestionDialog->IsShowing() && !UpdatePageShown();
+           !logistics->QuestionDialog->IsShowing() && !UpdatePageShown() && !RemadeShows();
 }
 
 void ShowReportsNotice()
@@ -65,6 +156,11 @@ void ShowReportsNotice()
 
     if (prompt == MCPrompt::Ask)
     {
+        if (AskRemade())
+        {
+            return;
+        }
+
         AskMenuQuestion(
             *logistics->QuestionDialog, QuestionText, [] { Answer(true); }, [] { Answer(false); }, "bg_cancl.tga",
             true);

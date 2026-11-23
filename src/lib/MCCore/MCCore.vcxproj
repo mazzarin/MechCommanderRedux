@@ -233,6 +233,7 @@
     <ClCompile Include="logistics\MCMechRepairBlock.cpp" />
     <ClCompile Include="logistics\MCMenuScreens.cpp" />
     <ClCompile Include="logistics\MCMissionLogisticsBridge.cpp" />
+    <ClCompile Include="logistics\MCPauseScreen.cpp" />
     <ClCompile Include="logistics\MCPilotInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCPilotPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCPlayerNameObject.cpp" />
@@ -261,6 +262,7 @@
     <ClCompile Include="logistics\MCTickerLine.cpp" />
     <ClCompile Include="logistics\MCUnitLimits.cpp" />
     <ClCompile Include="logistics\MCUpdatePage.cpp" />
+    <ClCompile Include="logistics\MCUpdateScreen.cpp" />
     <ClCompile Include="logistics\MCVehicleInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCVehiclePurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCVehicleRepairBlock.cpp" />
@@ -770,6 +772,7 @@
     <ClInclude Include="logistics\MCMechRepairBlock.h" />
     <ClInclude Include="logistics\MCMenuScreens.h" />
     <ClInclude Include="logistics\MCMissionLogisticsBridge.h" />
+    <ClInclude Include="logistics\MCPauseScreen.h" />
     <ClInclude Include="logistics\MCPilotInventoryBlock.h" />
     <ClInclude Include="logistics\MCPilotPurchaseBlock.h" />
     <ClInclude Include="logistics\MCPlayerNameObject.h" />
@@ -798,6 +801,7 @@
     <ClInclude Include="logistics\MCTickerLine.h" />
     <ClInclude Include="logistics\MCUnitLimits.h" />
     <ClInclude Include="logistics\MCUpdatePage.h" />
+    <ClInclude Include="logistics\MCUpdateScreen.h" />
     <ClInclude Include="logistics\MCVehicleInventoryBlock.h" />
     <ClInclude Include="logistics\MCVehiclePurchaseBlock.h" />
     <ClInclude Include="logistics\MCVehicleRepairBlock.h" />

@@ -4,6 +4,7 @@
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCUpdater.h"
 #include "network/MCLobbyUpdate.h"
 #include "gui/MCGuiEvent.h"
@@ -687,9 +688,17 @@ namespace
         else if (picked.has_value() && UpdateBrings(*picked))
         {
             // A newer game: the update first, its new version joining the game (network/MCLobbyUpdate.h).
-            MCLobbyUpdate::JoinAfterUpdate(MCLobbyUpdate::MCJoinAfter{
-                .Code = picked->Code, .Name = picked->Name, .PlayerName = pending.PlayerName, .RelayOnly = true});
-            ShowUpdatePageOver(InternetScreen());
+            // Port-only (stage 6): the remade UPDATE in INTERNET's place, through the screens' flow; the old page over
+            // INTERNET when the menus' RmlUi can't start.
+            MCLobbyUpdate::MCJoinAfter join{
+                .Code = picked->Code, .Name = picked->Name, .PlayerName = pending.PlayerName, .RelayOnly = true};
+
+            if (!MCUpdateScreen::Open(join))
+            {
+                MCLobbyUpdate::JoinAfterUpdate(std::move(join));
+                ShowUpdatePageOver(InternetScreen());
+            }
+
             return;
         }
         else

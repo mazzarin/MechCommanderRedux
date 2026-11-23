@@ -12,6 +12,8 @@ namespace
 
     constexpr const char* AskDocument = "dialog_ask.rml";
     constexpr const char* HeadingId = "heading";
+    constexpr const char* EyebrowId = "eyebrow";
+    constexpr const char* HiddenClass = "hidden";
     constexpr const char* YesId = "yes";
     constexpr const char* NoId = "no";
 }
@@ -25,12 +27,13 @@ MCQuestionWindow::MCQuestionWindow(std::string heading, std::string act, std::fu
 }
 
 bool MCQuestionWindow::Ask(MCRmlScreen& over, std::string heading, std::string act, std::function<void()> yes,
-                           std::function<void()> closed)
+                           std::function<void()> closed, std::string eyebrow)
 {
     const MCGuiHandle<MCQuestionWindow> window = over.Layer().CreateChild<MCQuestionWindow>(
-        [&closed](MCQuestionWindow& made)
+        [&closed, &eyebrow](MCQuestionWindow& made)
         {
             made._Closed = std::move(closed);
+            made._Eyebrow = std::move(eyebrow);
             made.Back = [&made] { made.Answer({}); };
         },
         std::move(heading), std::move(act), std::move(yes));
@@ -50,6 +53,12 @@ void MCQuestionWindow::OnLoaded(Rml::ElementDocument& document)
     if (Rml::Element* heading = document.GetElementById(HeadingId); heading != nullptr)
     {
         heading->SetInnerRML(EncodeRml(_Heading));
+    }
+
+    if (Rml::Element* eyebrow = document.GetElementById(EyebrowId); eyebrow != nullptr)
+    {
+        eyebrow->SetInnerRML(EncodeRml(_Eyebrow));
+        eyebrow->SetClass(HiddenClass, _Eyebrow.empty());
     }
 
     if (Rml::Element* yes = document.GetElementById(YesId); yes != nullptr)

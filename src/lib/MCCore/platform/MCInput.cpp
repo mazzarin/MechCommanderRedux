@@ -1066,10 +1066,15 @@ namespace MCInput
         // A key down as the hold starts would stay down: its release never reaches the game.
         if (held)
         {
-            for (std::atomic<bool>& down : input.Down)
-            {
-                down = false;
-            }
+            LetGoOfKeys();
+        }
+    }
+
+    void LetGoOfKeys()
+    {
+        for (std::atomic<bool>& down : state().Down)
+        {
+            down = false;
         }
     }
 

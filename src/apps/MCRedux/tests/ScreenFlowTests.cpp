@@ -210,7 +210,8 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
     const MCScreenId main = MCMenuScreens::Main();
     REQUIRE(StackNow() == std::vector{main});
 
-    PressAndCheck("PREFERENCES", MCScreenFlow::Via("preferences", ShowPreferences),
+    // Preferences remade (stage 6): the main menu's button opens its kind.
+    PressAndCheck("PREFERENCES", [] { MCScreenFlow::Open(MCMenuScreens::Preferences()); },
                   {main, MCMenuScreens::Preferences()});
     PressAndCheck("Escape from PREFERENCES", PressEscape, {main});
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);

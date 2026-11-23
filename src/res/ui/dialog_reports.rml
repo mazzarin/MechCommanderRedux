@@ -12,7 +12,7 @@
         <div class="dialog panel glass">
             <div class="titlebar"><div class="heading caps">Send reports?</div></div>
             <div class="say"><p id="ask"></p><p id="kept"></p></div>
-            <div class="foot row"><div class="button" id="no">Don't send</div><div class="grow"></div><div class="button main" id="yes" data-first>Send</div></div>
+            <div class="foot row"><div class="button" id="no" data-first>Don't send</div><div class="grow"></div><div class="button main" id="yes">Send</div></div>
         </div>
     </div>
 </body>

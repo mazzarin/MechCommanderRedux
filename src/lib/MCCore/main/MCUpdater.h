@@ -167,6 +167,14 @@ namespace MCUpdater
         std::string Error;
         /// <summary>Failed: whether INSTALL tries again (a fresh check first), the download having failed.</summary>
         bool Retry = false;
+        /// <summary>
+        /// Port-only (SPEC-menus.md, UPDATE's "When something goes wrong"): Failed, what kind of failure, as the UPDATE
+        /// screen words it (the content's staging tells it; anything else is Other).
+        /// </summary>
+        MCUpdateWork::MCFailureKind Failure = MCUpdateWork::MCFailureKind::Other;
+        /// <summary>Failed for the disk's room (DiskFull): the bytes free the update needs, and the bytes the disk had.</summary>
+        uint64_t NeededBytes = 0;
+        uint64_t FreeBytes = 0;
         /// <summary>Ready: how it goes in.</summary>
         MCGoesIn GoesIn = MCGoesIn::AsItQuits;
     };
@@ -245,6 +253,24 @@ namespace MCUpdater
     /// nothing from the match. The program's download, Sparkle's own, isn't paused.
     /// </summary>
     void PauseWork(bool paused);
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md, UPDATE's STOP): whether the update's download can be stopped now: its content
+    /// downloading (the program's own download, Sparkle's or the setup's, can't be).
+    /// </summary>
+    bool CanStopDownload();
+
+    /// <summary>
+    /// STOP: the update's content download stops where it is and waits, its staged files kept, until
+    /// <see cref="ResumeDownload"/> (or, after a quit, the next start's INSTALL).
+    /// </summary>
+    void StopDownload();
+
+    /// <summary>RESUME: the download stopped goes on from where it was (once a match's mission is over, if one plays).</summary>
+    void ResumeDownload();
+
+    /// <summary>Whether the player stopped the update's download (STOP), until RESUME.</summary>
+    bool DownloadStopped();
 
     /// <summary>
     /// The game is quitting: work under way stops, its transfer cancelled, and is waited for (staged files stay for the

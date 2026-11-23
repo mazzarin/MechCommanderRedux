@@ -78,6 +78,8 @@ public:
 
     /// <summary>The keys the hint line names at its right (SPEC-menus.md, "Without a mouse").</summary>
     std::vector<MCRmlKeyHint> Keys;
+    /// <summary>The hint line's keys put again from <see cref="Keys"/> (they changed while the screen shows).</summary>
+    void ShowKeys();
 
     /// <summary>A window over a screen (shown modal: the screens under it take no input while it shows).</summary>
     bool Modal = false;
@@ -124,6 +126,10 @@ protected:
     virtual void MakeModels(Rml::Context& /*context*/) {}
     /// <summary>The document read, before its first layout: the screen finds its elements and listens to them.</summary>
     virtual void OnLoaded(Rml::ElementDocument& /*document*/) {}
+    /// <summary>The screen about to show (its models brought up to date first); nothing here.</summary>
+    virtual void OnShow() {}
+    /// <summary>The screen just hidden (what it listens to while shown let go); nothing here.</summary>
+    virtual void OnHide() {}
     /// <summary>
     /// The element the focus goes to as the screen shows: the one marked <c>data-first</c> (the look's convention);
     /// none: the document's own.

@@ -76,6 +76,12 @@ namespace MCScreenInput
     void RealKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod);
 
     /// <summary>
+    /// Sends one SDL key event for <paramref name="scancode"/>, down or up, with <paramref name="mod"/> held, as play
+    /// does, without a frame (a tool running its own frames).
+    /// </summary>
+    void SendKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod = SDL_KMOD_NONE);
+
+    /// <summary>
     /// Holds <paramref name="modifier"/> (<paramref name="mod"/>), presses and lets go of <paramref name="scancode"/>,
     /// then lets go of the modifier, as play does.
     /// </summary>

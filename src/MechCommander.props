@@ -26,6 +26,10 @@
     <MCDxcSha256>AD31B1FC8443175D204F77A611FDB3EF2EC42759BDC2F1167368DE24A4A7E7F1</MCDxcSha256>
     <MCDxcDir>$(MSBuildThisFileDirectory)build\tools\dxc-$(MCDxcVersion)\</MCDxcDir>
     <MCDxc>$(MCDxcDir)bin\x64\dxc.exe</MCDxc>
+    <!-- Port-only: the shaders as HLSL 2018, whose && || and ?: evaluate both sides. HLSL 2021 (dxc's default) compiles
+         them as branches, and AMD's driver (26.10, RDNA 3) gets that valid SPIR-V wrong: HD pictures drawn through a
+         colour table came out black (the HUD's mech icons, dimmed menu art). The Mac's glslang never branches there. -->
+    <MCDxcLanguage>-HV 2018</MCDxcLanguage>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -142,5 +146,19 @@
     <Unzip SourceFiles="$(_MCDxcZip)" DestinationFolder="$(MCDxcDir)" />
     <Delete Files="$(_MCDxcZip)" />
     <Error Condition="!Exists('$(MCDxc)')" Text="dxc $(MCDxcVersion): $(MCDxc) isn't in the zip." />
+  </Target>
+
+  <!-- Port-only: every shader is compiled as HLSL 2018 (MCDxcLanguage, above), or AMD's driver draws HD art black. The
+       build stops if the flag is empty, or if a dxc command doesn't pass it: a new shader's, or one a merge from
+       upstream (which lacks the flag) brought back. -->
+  <Target Name="MCCheckDxcLanguage" BeforeTargets="CustomBuild" Condition="'@(CustomBuild)'!=''">
+    <Error Condition="'$(MCDxcLanguage)'==''"
+           Text="MCDxcLanguage is empty: the shaders must build as HLSL 2018 (MechCommander.props)." />
+    <ItemGroup>
+      <_MCDxcWithoutLanguage Include="@(CustomBuild)"
+          Condition="$([System.String]::Copy('%(CustomBuild.Command)').Contains('$(MCDxc)')) and !$([System.String]::Copy('%(CustomBuild.Command)').Contains('$(MCDxcLanguage)'))" />
+    </ItemGroup>
+    <Error Condition="'@(_MCDxcWithoutLanguage)'!=''"
+           Text="These shaders' dxc commands don't pass %24(MCDxcLanguage) ($(MCDxcLanguage)): @(_MCDxcWithoutLanguage, ', ')." />
   </Target>
 </Project>

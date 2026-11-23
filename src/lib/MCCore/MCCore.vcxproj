@@ -1069,7 +1069,7 @@
     <CustomBuild Include="shaders\composite.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1079,7 +1079,7 @@
     <CustomBuild Include="shaders\composite_bright.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1088,7 +1088,7 @@
     <CustomBuild Include="shaders\composite_field.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1097,7 +1097,7 @@
     <CustomBuild Include="shaders\composite_dry.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1106,7 +1106,7 @@
     <CustomBuild Include="shaders\composite_unspecked.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1115,7 +1115,7 @@
     <CustomBuild Include="shaders\composite_puddle.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1124,7 +1124,7 @@
     <CustomBuild Include="shaders\composite_crowns.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1133,7 +1133,7 @@
     <CustomBuild Include="shaders\draw.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1143,7 +1143,7 @@
     <CustomBuild Include="shaders\draw_basic.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1152,7 +1152,7 @@
     <CustomBuild Include="shaders\draw_terrain.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1161,7 +1161,7 @@
     <CustomBuild Include="shaders\draw_hd.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1170,7 +1170,7 @@
     <CustomBuild Include="shaders\ground.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1180,7 +1180,7 @@
     <CustomBuild Include="shaders\draw_stands.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1189,7 +1189,7 @@
     <CustomBuild Include="shaders\draw_basic_stands.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;%(RootDir)%(Directory)draw_basic.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1198,7 +1198,7 @@
     <CustomBuild Include="shaders\draw_hd_stands.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;%(RootDir)%(Directory)draw_hd.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1207,7 +1207,7 @@
     <CustomBuild Include="shaders\draw_terrain_stands.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;%(RootDir)%(Directory)draw_terrain.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1216,7 +1216,7 @@
     <CustomBuild Include="shaders\draw_trees.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1225,7 +1225,7 @@
     <CustomBuild Include="shaders\draw_trees_stands.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;%(RootDir)%(Directory)draw_trees.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1234,7 +1234,7 @@
     <CustomBuild Include="shaders\ground_stands.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;%(RootDir)%(Directory)ground.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1244,7 +1244,7 @@
     <CustomBuild Include="shaders\movie.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1254,7 +1254,7 @@
     <CustomBuild Include="shaders\hdcoverage.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T ps_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)channels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
@@ -1263,7 +1263,7 @@
     <CustomBuild Include="shaders\instance.vshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T vs_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T vs_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL vertex shader %(Filename).vshader</Message>
@@ -1272,7 +1272,7 @@
     <CustomBuild Include="shaders\quad.vshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T vs_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T vs_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL vertex shader %(Filename).vshader</Message>
@@ -1281,7 +1281,7 @@
     <CustomBuild Include="shaders\terrain.vshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
-"$(MCDxc)" -T vs_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+"$(MCDxc)" -T vs_6_0 -E main -spirv $(MCDxcLanguage) "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
       <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL vertex shader %(Filename).vshader</Message>

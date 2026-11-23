@@ -59,6 +59,9 @@
     <CopyFileToFolders Include="..\..\res\ui\look.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\missions.json">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\probe.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
@@ -198,6 +201,7 @@
     <ClCompile Include="tests\PurchaseTests.cpp" />
     <ClCompile Include="tests\ReleaseCopyTests.cpp" />
     <ClCompile Include="tests\RoomEndTests.cpp" />
+    <ClCompile Include="tests\SavesTests.cpp" />
     <ClCompile Include="tests\ScenarioTests.cpp" />
     <ClCompile Include="tests\ScreenChangeTests.cpp" />
     <ClCompile Include="tests\ScreenFlowTests.cpp" />

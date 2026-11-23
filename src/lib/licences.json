@@ -26,6 +26,7 @@
         { "Folder": "mbedtls-3.6.7", "Name": "Mbed TLS 3.6.7", "File": "LICENSE" },
         { "Folder": "smol-atlas-77a4e174", "Name": "smol-atlas", "File": "license.md" },
         { "Folder": "RmlUi-6.3", "Name": "RmlUi 6.3", "File": "LICENSE.txt" },
+        { "Folder": "freetype-2.15.0", "Name": "FreeType 2.15.0 (portions of this software are copyright The FreeType Project, www.freetype.org)", "File": "docs/FTL.TXT" },
         {
             "Folder": "RmlUi-6.3",
             "Name": "robin_hood and itlib, in RmlUi 6.3",

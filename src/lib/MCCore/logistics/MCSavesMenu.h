@@ -95,6 +95,8 @@ public:
     /// <summary>The list's rows, the picked one's index (-1 for none) and the save's name it stands for.</summary>
     const std::vector<MCRow>& Rows() const { return _Rows; }
     int Picked() const { return _Picked; }
+    /// <summary>The saves the rows show, by name, in the rows' order.</summary>
+    const std::vector<std::string>& Saves() const { return _Names; }
     std::optional<std::string> PickedSave() const;
 
     /// <summary>The campaign shown (none: ALL).</summary>
@@ -135,7 +137,7 @@ private:
     /// <summary>The window, made on first use, saying <paramref name="say"/>.</summary>
     void Say(MCSavesDialog::MCSay say);
     void Load(const std::string& name);
-    void Save(const std::string& name);
+    void Save(const std::string& name, MCSaves::MCOld old = MCSaves::MCOld::WrittenOver);
     /// <summary>SAVE GAME's way out once saved: the campaign screen it was left from.</summary>
     static void BackToCampaign();
 

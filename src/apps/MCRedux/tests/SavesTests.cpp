@@ -545,3 +545,162 @@ TEST_CASE_ISOLATED("game: LOAD GAME and SAVE GAME lay out and read at every wind
     screen.Pick(0);
     check("save");
 }
+
+namespace
+{
+    /// <summary>Types <paramref name="text"/> as the keyboard does, into what has the focus.</summary>
+    void TypeText(const char* text)
+    {
+        SDL_Event typed{};
+        typed.type = SDL_EVENT_TEXT_INPUT;
+        typed.text.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
+        typed.text.text = text;
+        MCInput::HandleEvent(typed);
+        MCTestGame::RunFrame(FlowFrame);
+    }
+}
+
+/// <summary>
+/// SAVE GAME, opened between missions: the first free default name typed, Enter in it saves, "Game saved." closes
+/// itself after 3 seconds back to the campaign; a save picked puts its name in the box and SAVE asks before writing
+/// over it; a name no file can have, and a full disk, each say so. LOAD GAME's DELETE asks, then deletes the save and
+/// picks the next; Escape keeps it.
+/// </summary>
+TEST_CASE_ISOLATED("game: SAVE GAME saves under the name typed, asks before writing over one, and says why one fails")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCRmlMenus::ForGame().has_value());
+    double clock = 0.0;
+    MCRmlMenus::Running()->get().SetClock([&clock] { return clock; });
+
+    // The default name, saved by Enter in it: "Game saved.", gone by itself 3 seconds on, the campaign again.
+    const std::string first = MCFormatPrintf(LoadGameString(0x37c, 0x95).c_str(), 0);
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+    CHECK(screen.Mode() == MCSavesScreen::MCMode::Save);
+    CHECK_EQ(screen.Name(), first);
+    CHECK_EQ(screen.Picked(), -1);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > save"));
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    REQUIRE(screen.Dialog());
+    CHECK(screen.Dialog()->Shown());
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::SavedText));
+    CHECK(FileExists(GamePath(SavePath, first, ".sav")));
+    REQUIRE_EQ(screen.Saves().size(), size_t{1});
+    clock += MCSavesMenu::SavedSeconds + 0.1;
+    MCTestGame::RunFrame(FlowFrame);
+    RunWhileChanging();
+    CHECK(!screen.Dialog()->Shown());
+    CHECK(!screen.Shown());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
+
+    // Again: the next free name; the save picked fills the box, and SAVE asks before writing over it.
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    CHECK_EQ(screen.Name(), MCFormatPrintf(LoadGameString(0x37c, 0x95).c_str(), 1));
+    screen.Pick(0);
+    CHECK_EQ(screen.Name(), first);
+    screen.PressMain();
+    CHECK(screen.Dialog()->Shown());
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::OverwriteQuestion));
+    CHECK(screen.Dialog()->Saying().Asks);
+    // Escape keeps it; asked again, OVERWRITE writes it.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    CHECK(!screen.Dialog()->Shown());
+    CHECK(screen.Shown());
+    screen.PressMain();
+    screen.Dialog()->Answer();
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::SavedText));
+    CHECK_EQ(screen.Saves().size(), size_t{1});
+
+    // OK at once (not waiting): the campaign.
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    RunWhileChanging();
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+
+    // A name no file can have, then a full disk: each says why, and SAVE GAME stays.
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    TypeText("/");
+    CHECK(screen.Name().find('/') != std::string::npos);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::SaveFailedText));
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    CHECK(!screen.Dialog()->Shown());
+    CHECK(screen.Shown());
+    MCSaves::Game().SetRoom([] { return std::uintmax_t{0}; });
+    screen.Pick(0);
+    screen.PressMain();
+    screen.Dialog()->Answer();
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::DiskFullText));
+    MCSaves::Game().SetRoom({});
+    screen.Dialog()->Answer();
+    CHECK(screen.Shown());
+    // The disk refused before the old save was deleted: it's kept.
+    CHECK_EQ(screen.Saves().size(), size_t{1});
+    CHECK(FileExists(GamePath(SavePath, first, ".sav")));
+    // Escape with the focus in NAME: the main menu again.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    RunWhileChanging();
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main"));
+}
+
+/// <summary>LOAD GAME's DELETE (the key and the button): the question names the save; Escape keeps it, DELETE takes it.</summary>
+TEST_CASE_ISOLATED("game: LOAD GAME's DELETE asks first, then deletes the save and picks the next")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    const auto [before, named] = SaveFirstMission();
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+    REQUIRE_EQ(screen.Saves().size(), size_t{2});
+    CHECK_EQ(screen.PickedSave(), std::optional<std::string>(named));
+
+    MCScreenInput::RealKey(SDL_SCANCODE_DELETE);
+    REQUIRE(screen.Dialog());
+    CHECK(screen.Dialog()->Shown());
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::DeleteQuestion));
+    CHECK_EQ(screen.Dialog()->Saying().First, std::string("Operation 1, mission 1: Liberate work camps."));
+    CHECK(screen.Dialog()->Saying().Second.starts_with("Saved as Kaio, second try, "));
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    CHECK(!screen.Dialog()->Shown());
+    CHECK_EQ(screen.Saves().size(), size_t{2});
+
+    // The button, then Enter: deleted, the next picked.
+    screen.PressDelete();
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    CHECK(!screen.Dialog()->Shown());
+    REQUIRE_EQ(screen.Saves().size(), size_t{1});
+    CHECK(!FileExists(GamePath(SavePath, named, ".sav")));
+    CHECK_EQ(screen.PickedSave(), std::optional<std::string>(before));
+    CHECK(screen.Shown());
+}

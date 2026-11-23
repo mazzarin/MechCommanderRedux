@@ -85,11 +85,20 @@ public:
     /// <returns>Whether it's gone.</returns>
     bool Delete(std::string_view name);
 
+    /// <summary>What <see cref="Write"/> does with a save of the name already there.</summary>
+    enum class MCOld : uint8_t
+    {
+        /// <summary>Written over, as the game writes its own.</summary>
+        WrittenOver,
+        /// <summary>Deleted first, then the new one written (SAVE GAME's OVERWRITE, as 1998's).</summary>
+        DeletedFirst,
+    };
+
     /// <summary>
-    /// The campaign saved now as <paramref name="name"/> (over a save of that name, as the game writes it), and the list
-    /// read again. A disk without room for a save is refused before anything is written.
+    /// The campaign saved now as <paramref name="name"/>, and the list read again. A name no file can have, and a disk
+    /// without room for a save, are refused before anything is written or deleted.
     /// </summary>
-    MCWritten Write(std::string_view name);
+    MCWritten Write(std::string_view name, MCOld old = MCOld::WrittenOver);
 
     /// <summary>The first default name with no save (the game's "savegame%03i", from 0, as today); none past 999.</summary>
     static std::optional<std::string> FreeName();
@@ -119,6 +128,9 @@ public:
     /// <summary>For the tests: the clock the dates are told by (the system's, local time, without one).</summary>
     void SetClock(std::function<SDL_Time()> clock);
 
+    /// <summary>For the tests: the bytes free on the saves' disk (the disk's own without one).</summary>
+    void SetRoom(std::function<std::uintmax_t()> room) { _Room = std::move(room); }
+
 private:
     /// <summary>A campaign's master mission file's scenarios: each one's file and its operation and mission numbers.</summary>
     struct MCScenario
@@ -142,8 +154,11 @@ private:
     void ReadSave(MCSave& save, std::span<const std::vector<MCScenario>> campaigns,
                   std::unordered_map<std::string, MCNamed>& named) const;
     SDL_Time Now() const;
+    /// <summary>Whether the saves' disk has room for a save.</summary>
+    bool HasRoom() const;
 
     std::vector<MCSave> _Saves;
     uint64_t _Revision = 0;
     std::function<SDL_Time()> _Clock;
+    std::function<std::uintmax_t()> _Room;
 };

@@ -414,35 +414,46 @@ bool MCSaves::Delete(std::string_view name)
     return removed;
 }
 
-MCSaves::MCWritten MCSaves::Write(std::string_view name)
+bool MCSaves::HasRoom() const
 {
-    const auto disk = [this]
+    if (_Room)
     {
-        std::error_code error;
-        const std::filesystem::path root =
-            MCFileSystem::UserRoot().empty() ? MCFileSystem::GameRoot() : MCFileSystem::UserRoot();
-        const std::filesystem::space_info space = std::filesystem::space(root, error);
+        return _Room() >= RoomForASave;
+    }
 
-        if (error)
-        {
-            SDL_Log("MCSaves: the room on %s's disk can't be told (%s)", MCFileSystem::ToUtf8(root).c_str(),
-                    error.message().c_str());
-            return true;
-        }
+    std::error_code error;
+    const std::filesystem::path root =
+        MCFileSystem::UserRoot().empty() ? MCFileSystem::GameRoot() : MCFileSystem::UserRoot();
+    const std::filesystem::space_info space = std::filesystem::space(root, error);
 
-        return space.available >= RoomForASave;
-    };
+    if (error)
+    {
+        SDL_Log("MCSaves: the room on %s's disk can't be told (%s)", MCFileSystem::ToUtf8(root).c_str(),
+                error.message().c_str());
+        return true;
+    }
 
+    return space.available >= RoomForASave;
+}
+
+MCSaves::MCWritten MCSaves::Write(std::string_view name, MCOld old)
+{
     if (!CanName(name))
     {
         SDL_Log("MCSaves: '%.*s' can't name a save's file", static_cast<int>(name.size()), name.data());
         return MCWritten::Failed;
     }
 
-    if (!disk())
+    // Checked before an old save is deleted, so a full disk keeps it.
+    if (!HasRoom())
     {
         SDL_Log("MCSaves: no room on the disk to save %.*s", static_cast<int>(name.size()), name.data());
         return MCWritten::DiskFull;
+    }
+
+    if (old == MCOld::DeletedFirst && Find(name).has_value())
+    {
+        Delete(name);
     }
 
     const int32_t result = MCLogistics::SaveCampaign(name);
@@ -454,7 +465,7 @@ MCSaves::MCWritten MCSaves::Write(std::string_view name)
     }
 
     SDL_Log("MCSaves: saving %.*s failed (%d)", static_cast<int>(name.size()), name.data(), result);
-    return disk() ? MCWritten::Failed : MCWritten::DiskFull;
+    return HasRoom() ? MCWritten::Failed : MCWritten::DiskFull;
 }
 
 std::optional<std::string> MCSaves::FreeName()

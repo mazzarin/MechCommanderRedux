@@ -258,7 +258,7 @@ void MCSavesDialog::Tick()
 
 void MCSavesDialog::Answer()
 {
-    // Hidden first, inside its own click (closing it there is the kit's to fix: menus-kit-fix).
+    // Hidden first, inside its own click (the kit pins the window while its press runs), then its action.
     const std::function<void()> answered = std::move(_Say.Answered);
     _Say.Answered = nullptr;
     _Say.ClosesAfter = 0;
@@ -610,13 +610,7 @@ void MCSavesScreen::PressMain()
             .Second = WhenSentence(save),
             .Answer = "Overwrite",
             .Asks = true,
-            .Answered =
-                [this, name]
-            {
-                // As 1998's: the old file deleted, then the game saved under its name.
-                MCSaves::Game().Delete(name);
-                Save(name);
-            },
+            .Answered = [this, name] { Save(name, MCSaves::MCOld::DeletedFirst); },
         });
         return;
     }
@@ -714,10 +708,10 @@ void MCSavesScreen::Load(const std::string& name)
         });
 }
 
-void MCSavesScreen::Save(const std::string& name)
+void MCSavesScreen::Save(const std::string& name, MCSaves::MCOld old)
 {
     SoundSystem()->StopDigitalMusic();
-    const MCSaves::MCWritten written = MCSaves::Game().Write(name);
+    const MCSaves::MCWritten written = MCSaves::Game().Write(name, old);
     SoundSystem()->PlayDigitalMusic(LogisticsMusic, true);
 
     if (written == MCSaves::MCWritten::Saved)

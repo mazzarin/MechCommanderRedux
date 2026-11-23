@@ -865,6 +865,7 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
     double menusMs = 0.0;
     double withMs = 0.0;
     double readMs = 0.0;
+    const uint64_t redrawsBefore = display->OverlayRedraws();
 
     for (int32_t frame = 0; frame < frames; ++frame)
     {
@@ -882,6 +883,9 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
         withMs += Milliseconds(laid, shown);
         readMs += Milliseconds(shown, SDL_GetPerformanceCounter());
     }
+
+    // The software presenter's redraws of the menus' picture (none on the GPU: it draws them every frame).
+    const uint64_t redraws = display->OverlayRedraws() - redrawsBefore;
 
     // The same without the menus: a present alone, and an empty window's read back.
     const auto empty = std::make_shared<MCUiDraws>(MCUiDraws{.Width = width, .Height = height, .Draws = {}});
@@ -901,9 +905,11 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
 
     std::cout << std::format(
         "  {} frames at {}x{}, no vsync, ms a frame: the menus' layout and recording {:.3f}; a present {:.3f} with "
-        "their draws, {:.3f} without (+{:.3f}); drawn alone and read back {:.3f}, an empty window {:.3f} (+{:.3f})\n",
-        frames, width, height, menusMs / frames, withMs / frames, withoutMs / frames, (withMs - withoutMs) / frames,
-        readMs / frames, readEmptyMs / frames, (readMs - readEmptyMs) / frames);
+        "their draws ({} redrawn by the software presenter), {:.3f} without (+{:.3f}); drawn alone and read back "
+        "{:.3f}, "
+        "an empty window {:.3f} (+{:.3f})\n",
+        frames, width, height, menusMs / frames, withMs / frames, redraws, withoutMs / frames,
+        (withMs - withoutMs) / frames, readMs / frames, readEmptyMs / frames, (readMs - readEmptyMs) / frames);
 
     GHdArt = 0;
     MCHdArt::SetPackFolder({});

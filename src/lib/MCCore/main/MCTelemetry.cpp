@@ -197,6 +197,8 @@ namespace
         bool Server = false;
         int32_t PlayersLost = 0;
         Clock::time_point LoadStart;
+        /// <summary>Port-only: the load's end, when it came before the play's start (PlayLoaded).</summary>
+        std::optional<Clock::time_point> LoadEnd;
         double SincePower = 0.0;
         MCTally Tally;
     };
@@ -1335,6 +1337,14 @@ auto MCTelemetry::PlayLoading(std::string_view mission, bool match) -> void
     SetPhase(MCPhase::Loading);
 }
 
+auto MCTelemetry::PlayLoaded() -> void
+{
+    if (Play.Loading)
+    {
+        Play.LoadEnd = Clock::now();
+    }
+}
+
 auto MCTelemetry::PlayStarted(int32_t players, bool server) -> void
 {
     if (!Play.Loading)
@@ -1347,7 +1357,8 @@ auto MCTelemetry::PlayStarted(int32_t players, bool server) -> void
     Play.Players = players;
     Play.Server = server;
     Play.Tally.Count = 1;
-    Play.Tally.LoadSeconds = std::chrono::duration<double>(Clock::now() - Play.LoadStart).count();
+    Play.Tally.LoadSeconds =
+        std::chrono::duration<double>(Play.LoadEnd.value_or(Clock::now()) - Play.LoadStart).count();
     // The frame the load took isn't play: the next frame measures from the next.
     LastFrame.reset();
     Box.get().Players = static_cast<uint8_t>(std::clamp(players, 0, static_cast<int32_t>(UINT8_MAX)));

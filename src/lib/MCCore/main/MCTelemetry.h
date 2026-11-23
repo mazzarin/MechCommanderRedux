@@ -312,6 +312,12 @@ namespace MCTelemetry
     /// <summary>A scenario starts loading: <paramref name="mission"/>, as a match when <paramref name="match"/>.</summary>
     void PlayLoading(std::string_view mission, bool match);
 
+    /// <summary>
+    /// Port-only: the scenario's load is done, its play not started yet (a fade into the battle comes between them,
+    /// SPEC-menus.md's stage 1): the load's time ends here. Without it, at <see cref="PlayStarted"/>.
+    /// </summary>
+    void PlayLoaded();
+
     /// <summary>The scenario is loaded and runs: <paramref name="players"/> in it, this one the server or not.</summary>
     void PlayStarted(int32_t players, bool server);
 

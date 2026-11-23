@@ -24,6 +24,12 @@ extern std::array<float, FrameGraphLength> FrameRateArray;
 extern size_t FrPointer;
 /// <summary>Set to show a black screen instead of the frame.</summary>
 extern bool KeepScreenBlack;
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 1): while set, the frame loop's frames draw the loading screen (static over the
+/// screen, the connect shape and the bar as the load last drew them) in place of the screen window: the loading screen
+/// faded in before the mission's load and out after it (MCMission). The load's own frames draw it as ever.
+/// </summary>
+extern bool LoadingScreenUp;
 /// <summary>The screenshot counter ("scrn%04d.tga").</summary>
 extern int32_t ShotNum;
 /// <summary>
@@ -83,6 +89,14 @@ void RehearseScreen();
 bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp);
 /// <summary>Port-only, for the tests: the rehearsals run so far (RehearseScreen's and RehearseHidden's).</summary>
 size_t RehearsalsRun();
+/// <summary>
+/// Port-only: what a fade into a screen does, in pieces, each looked up as it runs: the screen shown rehearsed
+/// (RehearseScreen), then the screens a slide from it may bring in readied, a piece for each of their inventory tabs
+/// (the one shown first, then the others, each put back to the one shown), so a tab's first click finds its art loaded
+/// and its pictures sent up. Run in a palette fade near black (FadeOutWhile), or a frame each while a change of screen
+/// is dark (gui/MCScreenChange.h).
+/// </summary>
+std::vector<std::function<void()>> IntoScreenPieces();
 /// <summary>
 /// Port-only: <paramref name="work"/> done in a fade of the screen shown (MCGuiSystem::FadeDownCurrentPalette) once it's
 /// nearly black (MCGuiSystem::FadeNearBlack), then what a fade into a screen does (the screen rehearsed, the screens a

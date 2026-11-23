@@ -7,6 +7,7 @@
 #include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiSmackerWindow.h"
+#include "gui/MCScreenChange.h"
 #include "gui/MCUpdateDisplay.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCVector2D.h"
@@ -478,6 +479,13 @@ auto DispatchGuiEvent(MCGuiEvent& event) -> void
     if (IsPlayerInput(type))
     {
         MCIdleCheck::Input();
+
+        // Port-only (SPEC-menus.md's stage 1): a change of screen holds the player's clicks and keys until the next
+        // screen is in (gui/MCScreenChange.h).
+        if (MCScreenChange::HoldsInput())
+        {
+            return;
+        }
     }
 
     if (type == MCGuiEventType::Timer || (type >= MCGuiEventType::FirstPosted && type < 0x2401))

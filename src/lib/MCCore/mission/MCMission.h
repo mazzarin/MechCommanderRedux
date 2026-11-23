@@ -78,9 +78,32 @@ public:
 
     /// <summary>
     /// Leaves logistics and starts scenario <paramref name="scenarioName"/>: creates the results screen and the
-    /// scenario, and hooks <c>PlayScenario</c> and the interface callback.
+    /// scenario, and hooks <c>PlayScenario</c> and the interface callback. Port-only: <see cref="LoadScenario"/>, then
+    /// <see cref="EnterScenario"/>, at once (a game segment's start, the tests'); from a briefing they come in a change
+    /// of screen (<see cref="RequestScenario"/>).
     /// </summary>
     void StartScenario(std::string_view scenarioName);
+
+    /// <summary>
+    /// Port-only: <see cref="StartScenario"/>'s first part: logistics left (the save, the menus taken down), the
+    /// scenario made and loaded under the loading bar, its interface started and its opening view read; the state
+    /// stays StartScenario.
+    /// </summary>
+    void LoadScenario(std::string_view scenarioName);
+
+    /// <summary>Port-only: <see cref="StartScenario"/>'s last part: the scenario loaded plays (state Scenario) from the next frame.</summary>
+    void EnterScenario();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 1): the player moves on from the results (their button, a match's REMATCH or
+    /// timeout): the results fade out live, and once the screen is dark the results close (<see cref="CloseResultsScreen"/>'s
+    /// way back), the next screen is readied a frame at a time, and it fades in. At once, as <see cref="CloseResultsScreen"/>,
+    /// where no change of screen can run (a launcher's match ends at its results, at once as the original's).
+    /// </summary>
+    void LeaveResults();
+
+    /// <summary>Port-only, for the tests: whether the way into a mission or back out runs a change of screen now.</summary>
+    bool Passing() const { return _Passage != MCPassage::None; }
 
     /// <summary>
     /// Port-only: starts the tactical interface on the scenario loaded (MCTacticalInterface::StartScenario), the HD copies
@@ -101,7 +124,9 @@ public:
 
     /// <summary>
     /// Asks for scenario <paramref name="scenarioName"/> to start: <see cref="Run"/> starts it after its frame's work,
-    /// once the click or network handler that asked has returned.
+    /// once the click or network handler that asked has returned. Port-only (SPEC-menus.md's stage 1): from logistics
+    /// (BEGIN MISSION, a match's start), in a change of screen: the briefing fades out live, the loading screen fades in,
+    /// the save, the menus' teardown and the load run behind it, it fades out, and the battlefield fades in.
     /// </summary>
     /// <remarks>
     /// Starting the scenario frees logistics, and its load draws frames. Started from inside a logistics handler, those
@@ -216,6 +241,62 @@ private:
     bool _FeatureMusicPlaying = false;
     /// <summary>The scenario <see cref="RequestScenario"/> asked for, until <see cref="Run"/> starts it.</summary>
     std::optional<std::string> _RequestedScenario;
+
+    /// <summary>Port-only (SPEC-menus.md's stage 1): where the way into a mission or back out is, in its changes of screen.</summary>
+    enum class MCPassage
+    {
+        /// <summary>None runs.</summary>
+        None,
+        /// <summary>The briefing fades out live.</summary>
+        BriefingOut,
+        /// <summary>The loading screen fades in; the save, the teardown and the load follow behind it.</summary>
+        LoadingIn,
+        /// <summary>The scenario loaded, the loading screen fades out.</summary>
+        LoadingOut,
+        /// <summary>The battlefield fades in, the scenario playing.</summary>
+        BattleIn,
+        /// <summary>The results fade out live.</summary>
+        ResultsOut,
+        /// <summary>The results closed, the next screen readied while dark, a piece a frame.</summary>
+        Arriving,
+        /// <summary>The next screen fades in.</summary>
+        ArrivedIn
+    };
+
+    /// <summary>
+    /// Port-only: one frame of the passage (<see cref="MCPassage"/>), before the state machine's; whether the state
+    /// machine's own step is left out this frame (the passage holds the state).
+    /// </summary>
+    bool TendPassage();
+    /// <summary>Port-only: the loading screen put up while the screen is dark, the briefing faded out.</summary>
+    void ShowLoadingScreen();
+    /// <summary>Port-only: the results closed while the screen is dark: <see cref="CloseResultsScreen"/>'s way back.</summary>
+    void CloseResultsInPassage();
+
+    /// <summary>
+    /// What the results lead to once the scenario has ended: logistics, or the campaign's ending movies (the original's
+    /// in the results screen's destroy).
+    /// </summary>
+    void AfterResults();
+    /// <summary>Port-only: whether the game ends at the results: a launcher's match (BackToLogistics: KillTheGame).</summary>
+    bool EndsAtResults() const;
+    /// <summary>
+    /// Port-only: what the way back from the results reads ahead from the press: the files the menus look for, the next
+    /// briefing's map (and its mission's hold with <paramref name="hold"/>, once the scenario has ended), the menus' HD
+    /// pictures.
+    /// </summary>
+    void ReadWayBackAhead(bool hold) const;
+
+    /// <summary>Port-only: the passage's step.</summary>
+    MCPassage _Passage = MCPassage::None;
+    /// <summary>Port-only: the way back from the results (EndScenarioLeavingWayBack's), between the passage's pieces.</summary>
+    std::function<void()> _WayBack;
+    /// <summary>Port-only: the scenario the passage into a mission loads.</summary>
+    std::string _PassageScenario;
+    /// <summary>Port-only: what the next screen's fade-in waits for, a piece a dark frame (IntoScreenPieces).</summary>
+    std::vector<std::function<void()>> _ArrivalPieces;
+    /// <summary>Port-only: the next of <see cref="_ArrivalPieces"/>.</summary>
+    size_t _ArrivalPiece = 0;
 };
 
 /// <summary>The mission (null before the game's start-up makes it).</summary>

@@ -161,14 +161,35 @@ namespace
         return result == 0 ? 0 : file.Open(GamePath(SaveTempPath, name, ".fit"));
     }
 
-    /// <summary>Shows the connect shape on the loading screen while the scenario loads.</summary>
+    /// <summary>
+    /// Shows the connect shape on the loading screen while the scenario loads. Port-only: one already loaded (the
+    /// loading screen up before the load and after it, HoldLoadingShape) is left as it is.
+    /// </summary>
     class MCConnectShapeScope
     {
     public:
-        MCConnectShapeScope() { ConnectShape() = LoadShapeFile("connect"); }
-        ~MCConnectShapeScope() { ConnectShape() = {}; }
+        MCConnectShapeScope() : _Loaded(ConnectShape().Empty())
+        {
+            if (_Loaded)
+            {
+                ConnectShape() = LoadShapeFile("connect");
+            }
+        }
+
+        ~MCConnectShapeScope()
+        {
+            if (_Loaded)
+            {
+                ConnectShape() = {};
+            }
+        }
+
         MCConnectShapeScope(const MCConnectShapeScope&) = delete;
         MCConnectShapeScope& operator=(const MCConnectShapeScope&) = delete;
+
+    private:
+        /// <summary>Whether this scope loaded it.</summary>
+        bool _Loaded;
     };
 
     /// <summary>A string entry of the scenario FIT that sizes a heap the port no longer has: required, not used.</summary>
@@ -176,6 +197,19 @@ namespace
     {
         RequireFit<uint32_t>(file, name, message);
     }
+}
+
+auto HoldLoadingShape() -> void
+{
+    if (ConnectShape().Empty())
+    {
+        ConnectShape() = LoadShapeFile("connect");
+    }
+}
+
+auto ReleaseLoadingShape() -> void
+{
+    ConnectShape() = {};
 }
 
 auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainName, std::string_view missionName)

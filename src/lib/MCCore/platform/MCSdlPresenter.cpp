@@ -199,7 +199,9 @@ std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
         return uploaded;
     }
 
-    SDL_SetRenderDrawColor(_Renderer.get(), 0, 0, 0, 255);
+    // Port-only: the window around the view in the frame's surround (the menus' stone colour), faded with the picture.
+    const SDL_Color surround = MCFadedSurround(frame);
+    SDL_SetRenderDrawColor(_Renderer.get(), surround.r, surround.g, surround.b, surround.a);
     SDL_RenderClear(_Renderer.get());
     const SDL_Rect shown = ShownRect(frame);
     const SDL_FRect view{static_cast<float>(shown.x), static_cast<float>(shown.y), static_cast<float>(shown.w),

@@ -136,6 +136,7 @@
     <ClCompile Include="gui\MCGuiTransparentTextObject.cpp" />
     <ClCompile Include="gui\MCHardwareCursor.cpp" />
     <ClCompile Include="gui\MCListView.cpp" />
+    <ClCompile Include="gui\MCScreenChange.cpp" />
     <ClCompile Include="gui\MCScrollPane.cpp" />
     <ClCompile Include="gui\MCUpdateDisplay.cpp" />
     <ClCompile Include="iface\MCCommandParser.cpp" />
@@ -653,6 +654,7 @@
     <ClInclude Include="gui\MCGuiTransparentTextObject.h" />
     <ClInclude Include="gui\MCHardwareCursor.h" />
     <ClInclude Include="gui\MCListView.h" />
+    <ClInclude Include="gui\MCScreenChange.h" />
     <ClInclude Include="gui\MCScrollPane.h" />
     <ClInclude Include="gui\MCUpdateDisplay.h" />
     <ClInclude Include="iface\MCCommandParser.h" />

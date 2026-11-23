@@ -176,6 +176,16 @@ public:
     /// the GUI not stopping.
     /// </summary>
     bool CanFade() const;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 1): whether a change of screen can fade (gui/MCScreenChange.h): the display
+    /// ready and the GUI not stopping (the palette as it is, which the change doesn't fade).
+    /// </summary>
+    bool CanChangeScreen() const;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 1): the part of the screen the display shows, which a dialog is centred on (the
+    /// menus' 640x480 frame, or the whole screen in a mission and its results).
+    /// </summary>
+    SDL_Rect ShownView() const;
     /// <summary>The fade's levels, a second's worth (the original's palette steps).</summary>
     static constexpr int32_t FadeLevels = 0x100;
     /// <summary>

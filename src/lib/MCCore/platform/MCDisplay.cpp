@@ -580,6 +580,7 @@ MCFrame MCDisplay::LayoutFrame() const
     frame.Ops = *_Ops;
     ScaledOutput(frame.OutputWidth, frame.OutputHeight);
     frame.SharpScreen = frame.ScaledOutput() && SharpScreen();
+    frame.Surround = _Surround;
     return frame;
 }
 

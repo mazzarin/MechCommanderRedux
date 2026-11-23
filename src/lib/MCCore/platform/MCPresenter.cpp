@@ -139,6 +139,13 @@ void MCComposeScaled(const MCFrame& frame, std::vector<uint8_t>& pixels)
     }
 }
 
+SDL_Color MCFadedSurround(const MCFrame& frame)
+{
+    const auto faded = [&frame](uint8_t component)
+    { return static_cast<uint8_t>(std::max(static_cast<int>(component) - frame.Fade, 0)); };
+    return SDL_Color{faded(frame.Surround.r), faded(frame.Surround.g), faded(frame.Surround.b), SDL_ALPHA_OPAQUE};
+}
+
 MCViewport MCPresentViewport(int outputWidth, int outputHeight, int viewWidth, int viewHeight,
                              const MCPresentation& presentation)
 {

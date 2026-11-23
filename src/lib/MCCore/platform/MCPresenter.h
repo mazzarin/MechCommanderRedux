@@ -126,6 +126,11 @@ struct MCFrame
     /// </summary>
     int Fade = 0;
     /// <summary>
+    /// Port-only: the colour of the window around the view (<see cref="MCDisplay::SetSurround"/>), before
+    /// <see cref="Fade"/>; the presenter takes the fade off it as off the picture (<see cref="MCFadedSurround"/>).
+    /// </summary>
+    SDL_Color Surround{0, 0, 0, SDL_ALPHA_OPAQUE};
+    /// <summary>
     /// Port-only: the frame may be shown after <see cref="MCPresenter::Present"/> returns, once a thread of the
     /// presenter's has drawn it (the game's frame loop: it presents again soon, and checks for the frame meanwhile,
     /// <see cref="MCPresenter::ShowFinished"/>). Else it is shown before Present returns.
@@ -143,6 +148,12 @@ struct MCFrame
 /// through the screen pixel's op table. At the view's own size this is <see cref="MCRenderer::ComposeUnderlays"/>.
 /// </summary>
 void MCComposeScaled(const MCFrame& frame, std::vector<uint8_t>& pixels);
+
+/// <summary>
+/// Port-only: <paramref name="frame"/>'s <see cref="MCFrame::Surround"/> as shown, its fade's levels taken off each
+/// component as the picture's are.
+/// </summary>
+SDL_Color MCFadedSurround(const MCFrame& frame);
 
 /// <summary>
 /// Shows frames in the display's window. Every call is made from the thread that created the display.

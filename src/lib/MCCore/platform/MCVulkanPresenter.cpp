@@ -1297,7 +1297,7 @@ auto MCVulkanPresenter::Plan(const MCFrame& frame, bool read)
     planned->Width = frame.Width;
     planned->Height = frame.Height;
     planned->Layout = ShownLayout{frame.View, frame.ScaledOutput() ? frame.OutputWidth : 0,
-                                  frame.ScaledOutput() ? frame.OutputHeight : 0};
+                                  frame.ScaledOutput() ? frame.OutputHeight : 0, MCFadedSurround(frame)};
     planned->Cycle = frame.Cycle;
     planned->Fade = frame.Fade;
     std::ranges::copy(frame.PaletteColors.first(std::min(frame.PaletteColors.size(), planned->Palette.size())),
@@ -2348,7 +2348,11 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
         blit.destination.w = static_cast<uint32_t>(std::lround(shown.W));
         blit.destination.h = static_cast<uint32_t>(std::lround(shown.H));
         blit.load_op = SDL_GPU_LOADOP_CLEAR;
-        blit.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 1.0f};
+        // Port-only: the window around the view in the frame's surround (the menus' stone colour), faded.
+        constexpr float ComponentMost = 255.0f;
+        blit.clear_color = SDL_FColor{static_cast<float>(layout.Surround.r) / ComponentMost,
+                                      static_cast<float>(layout.Surround.g) / ComponentMost,
+                                      static_cast<float>(layout.Surround.b) / ComponentMost, 1.0f};
         blit.filter = _Presentation.Linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;
 
         if (blit.destination.w != 0 && blit.destination.h != 0)

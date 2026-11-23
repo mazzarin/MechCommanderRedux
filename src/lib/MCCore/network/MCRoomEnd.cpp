@@ -774,7 +774,7 @@ auto MCRoomEnd::Frame() -> void
             RejoinHeard = false;
             JoinAfterResults = true;
             guest->LeaveSession();
-            Mission()->CloseResultsScreen();
+            Mission()->LeaveResults();
         }
         else if (!guest->InMission && !guest->PrepareScenarioReceived && GlobalLog() != nullptr)
         {
@@ -820,7 +820,7 @@ auto MCRoomEnd::Frame() -> void
 
         if (AtResults())
         {
-            Mission()->CloseResultsScreen();
+            Mission()->LeaveResults();
         }
         else if (GlobalLog() != nullptr)
         {

@@ -170,6 +170,7 @@
     <ClCompile Include="tests\ReleaseCopyTests.cpp" />
     <ClCompile Include="tests\RoomEndTests.cpp" />
     <ClCompile Include="tests\ScenarioTests.cpp" />
+    <ClCompile Include="tests\ScreenChangeTests.cpp" />
     <ClCompile Include="tests\ScreenInput.cpp" />
     <ClCompile Include="tests\ServiceSignalingTests.cpp" />
     <ClCompile Include="tests\ServicesTests.cpp" />

@@ -16,6 +16,7 @@
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiScrollTextObject.h"
+#include "gui/MCScreenChange.h"
 #include "gui/MCUpdateDisplay.h"
 #include "iface/MCFriendlyMechIcon.h"
 #include "iface/MCTacticalInterface.h"
@@ -180,13 +181,16 @@ namespace
         font.WriteString(pane, x, y, text.data(), width);
     }
 
-    /// <summary>The move-on button's event routine: on release, closes the results screen.</summary>
+    /// <summary>
+    /// The move-on button's event routine: on release, closes the results screen. Port-only (SPEC-menus.md's stage 1):
+    /// they fade out live first (MCMission::LeaveResults).
+    /// </summary>
     void MoveOnButtonHandleEvent(MCGuiObject&, MCGuiEvent& event)
     {
         // Port-only (Redux HD): a rematch under way closes them itself (network/MCRoomEnd.h).
         if (event.Type == MouseUpEvent && !MCRoomEnd::Rematching())
         {
-            Mission()->CloseResultsScreen();
+            Mission()->LeaveResults();
         }
     }
 
@@ -388,9 +392,18 @@ MCMissionResultsScreen::~MCMissionResultsScreen()
     Destroy();
 }
 
+namespace
+{
+    /// <summary>The panel's place and size in the 640x480 screen it was laid out for.</summary>
+    constexpr int32_t PanelLeft = 0x28;
+    constexpr int32_t PanelTop = 0xf;
+    constexpr int32_t PanelWidth = 0x230;
+    constexpr int32_t PanelHeight = 0x1bc;
+}
+
 auto MCMissionResultsScreen::Init() -> int32_t
 {
-    int32_t result = MCGuiObject::Init(0x28, 0xf, 0x230, 0x1bc, {});
+    int32_t result = MCGuiObject::Init(PanelLeft, PanelTop, PanelWidth, PanelHeight, {});
     Assert(result == 0, static_cast<uint32_t>(result), " error initializing mission results screen display elements ");
     // (The original loaded the art into the window's own picture.)
     result = SetBackground(const_cast<char*>(MultiPlayer() == nullptr ? "mr_bkgd.tga" : "mrm_bkgd.tga"));
@@ -574,8 +587,8 @@ auto MCMissionResultsScreen::HandleEvent(MCGuiEvent& event) -> void
             {
                 if (timerId == TimeoutTimer)
                 {
-                    // The multiplayer timeout: close the screen (this object is deleted here).
-                    Mission()->CloseResultsScreen();
+                    // The multiplayer timeout: close the screen (port-only: faded out first, MCMission::LeaveResults).
+                    Mission()->LeaveResults();
                 }
 
                 return;
@@ -1273,7 +1286,11 @@ auto MCMissionResultsScreen::Activate() -> int32_t
     _StepIndex = 0;
     _Step = MCResultsStep::ResourcePoints;
     _NextDrawTime = MouseTicks;
-    // Shown in front (the original added it to the screen here).
+    // Shown in front (the original added it to the screen here). Port-only (SPEC-menus.md's stage 1): its 640x480 frame
+    // centred on the screen, over the whole battlefield as it ended at the mission's interface size, where the original's
+    // (and the port's, the menus' view) sat in the screen's top-left corner.
+    MoveTo((GuiSystem().Width() - MenuFrameWidth) / 2 + PanelLeft,
+           (GuiSystem().Height() - MenuFrameHeight) / 2 + PanelTop, false);
     ShowGuiWindow(true);
     SetDepth(0x5f);
 

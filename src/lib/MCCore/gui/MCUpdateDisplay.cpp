@@ -6,6 +6,7 @@
 #include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCHardwareCursor.h"
+#include "gui/MCScreenChange.h"
 #include "lib/MCDice.h"
 #include "lib/MCFirstUse.h"
 #include "logistics/MCLogInvScreen.h"
@@ -20,6 +21,7 @@
 #include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
+bool LoadingScreenUp = false;
 uint32_t MouseTicks = 0;
 int MouseScreenX = 320;
 int MouseScreenY = 240;
@@ -91,33 +93,55 @@ namespace
     }
 
     /// <summary>
-    /// Port: picks the part of the screen the display shows. Only a running scenario uses the whole screen; the
-    /// menus, logistics and the results screen are laid out for 640x480 and drawn in the top-left corner of a larger
-    /// one, so the display shows just that corner, scaled to the window. A full-screen movie is centred on the
-    /// screen, so the view is a 640x480 (or the movie's size, if larger) centred on it.
+    /// Whether the display shows the whole screen: a running scenario, and its results over the battlefield as it ended.
+    /// </summary>
+    bool ShowsWholeScreen()
+    {
+        return Mission() != nullptr &&
+               (Mission()->State == MCMissionState::Scenario || Mission()->State == MCMissionState::Results);
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 1): the menus' stone colour, which the window shows around the 640x480 frame the
+    /// screens not yet remade sit in, until the stone itself comes (#383b3c).
+    /// </summary>
+    constexpr SDL_Color MenuStone{0x38, 0x3b, 0x3c, SDL_ALPHA_OPAQUE};
+    /// <summary>The window around a view that fills it, or a movie's.</summary>
+    constexpr SDL_Color NoSurround{0, 0, 0, SDL_ALPHA_OPAQUE};
+
+    /// <summary>
+    /// Port: picks the part of the screen the display shows. A running scenario uses the whole screen, and so do its
+    /// results, centred over the battlefield as it ended (port-only, SPEC-menus.md's stage 1: they were shown in the
+    /// screen's top-left 640x480 too, over the battlefield's corner). The menus and the loading screen are laid out for
+    /// 640x480 and drawn in the top-left corner of a larger screen, so the display shows just that corner: the window is
+    /// the menus' screen, the window in units (MCDisplay::MenuScale), the 640x480 frame in its middle, on the stone's
+    /// colour. A full-screen movie is centred on the screen, so the view is a 640x480 (or the movie's size, if larger)
+    /// centred on it, on black.
     /// </summary>
     void UpdateDisplayView(MCDisplay& display)
     {
-        constexpr int32_t interfaceWidth = 640;
-        constexpr int32_t interfaceHeight = 480;
         int32_t x = 0;
         int32_t y = 0;
         int32_t width = display.Width();
         int32_t height = display.Height();
+        SDL_Color surround = NoSurround;
         const std::shared_ptr<MCGuiObject> movie = HasGuiSystem() ? GuiSystem().SmackerWindow.Lock() : nullptr;
 
         if (movie != nullptr)
         {
-            width = std::max(interfaceWidth, movie->Width());
-            height = std::max(interfaceHeight, movie->Height());
+            width = std::max(MenuFrameWidth, movie->Width());
+            height = std::max(MenuFrameHeight, movie->Height());
             x = movie->GlobalX() + movie->Width() / 2 - width / 2;
             y = movie->GlobalY() + movie->Height() / 2 - height / 2;
         }
-        else if (Mission() == nullptr || Mission()->State != MCMissionState::Scenario)
+        else if (!ShowsWholeScreen())
         {
-            width = interfaceWidth;
-            height = interfaceHeight;
+            width = MenuFrameWidth;
+            height = MenuFrameHeight;
+            surround = MenuStone;
         }
+
+        display.SetSurround(surround);
 
         if (display.SetView(x, y, width, height))
         {
@@ -142,6 +166,27 @@ namespace
 
     /// <summary>Port-only: whether an MCFramesAhead lives.</summary>
     bool FramesAheadOn = false;
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 1): the loading screen as the load last drew it, for the frames that show it
+    /// outside the load's own (LoadingScreenUp): its static's odds (a row in so many stays as it was) and its bar.
+    /// </summary>
+    constexpr int32_t LoadingStartNoise = 100;
+    int32_t LoadingNoise = LoadingStartNoise;
+    int32_t LoadingBar = 0;
+
+    /// <summary>The palette waiting for the next frame (MCGuiSystem::ActivatePalette) put in.</summary>
+    void ActivatePendingPalette(MCGuiSystem& gui)
+    {
+        if (GBitDepth != 16)
+        {
+            gui.TweakPalette(gui.PendingPaletteFirst, gui.PendingPaletteCount, gui.PendingPalette, true);
+        }
+
+        gui.PendingPaletteFirst = 0;
+        gui.PendingPaletteCount = 0;
+        gui.PendingPalette.clear();
+    }
 
     /// <summary>Where the cursor is on the screen, kept inside it.</summary>
     void ReadCursorPosition()
@@ -380,56 +425,49 @@ namespace
 
         return step <= shown ? step - 1 : step;
     }
+}
 
-    /// <summary>
-    /// The pieces of work a fade into a screen does, each looked up as it runs (FadeOutWhile's fade starts before the
-    /// screens exist): the screen the palette is for rehearsed (RehearseScreen), then the screens a slide from it may
-    /// bring in (MCLogistics::ScreensSlidIn), a piece for each of their inventory tabs: the one shown first, then the
-    /// others, each put back to the one shown, so a tab's first click finds its art loaded and its pictures sent up.
-    /// </summary>
-    std::vector<std::function<void()>> IntoScreenPieces()
+std::vector<std::function<void()>> IntoScreenPieces()
+{
+    std::vector<std::function<void()>> pieces = {[] { RehearseScreen(); }};
+
+    for (size_t slid = 0; slid < MCLogistics::MostScreensSlidIn; slid++)
     {
-        std::vector<std::function<void()>> pieces = {[] { RehearseScreen(); }};
-
-        for (size_t slid = 0; slid < MCLogistics::MostScreensSlidIn; slid++)
+        for (int32_t step = 0; step < MCLogistics::InventoryTabs; step++)
         {
-            for (int32_t step = 0; step < MCLogistics::InventoryTabs; step++)
-            {
-                pieces.emplace_back(
-                    [slid, step]
+            pieces.emplace_back(
+                [slid, step]
+                {
+                    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+                    if (logistics == nullptr)
                     {
-                        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+                        return;
+                    }
 
-                        if (logistics == nullptr)
+                    const std::vector<MCGuiHandle<MCLogInvScreen>> screens = logistics->ScreensSlidIn();
+                    const int32_t shown = logistics->CurrentInvTab;
+
+                    // With a tab shown that isn't one of the four (none is), only it is readied.
+                    if (slid >= screens.size() || ((shown < 0 || shown >= MCLogistics::InventoryTabs) && step > 0))
+                    {
+                        return;
+                    }
+
+                    if (const std::shared_ptr<MCLogInvScreen> screen = screens[slid].Lock(); screen != nullptr)
+                    {
+                        const int32_t tab = TabReadied(step, shown);
+
+                        if (RehearseHidden(*screen, [&] { logistics->ReadyForSlide(*screen, tab); }) && tab != shown)
                         {
-                            return;
+                            logistics->ReadyForSlide(*screen, shown);
                         }
-
-                        const std::vector<MCGuiHandle<MCLogInvScreen>> screens = logistics->ScreensSlidIn();
-                        const int32_t shown = logistics->CurrentInvTab;
-
-                        // With a tab shown that isn't one of the four (none is), only it is readied.
-                        if (slid >= screens.size() || ((shown < 0 || shown >= MCLogistics::InventoryTabs) && step > 0))
-                        {
-                            return;
-                        }
-
-                        if (const std::shared_ptr<MCLogInvScreen> screen = screens[slid].Lock(); screen != nullptr)
-                        {
-                            const int32_t tab = TabReadied(step, shown);
-
-                            if (RehearseHidden(*screen, [&] { logistics->ReadyForSlide(*screen, tab); }) &&
-                                tab != shown)
-                            {
-                                logistics->ReadyForSlide(*screen, shown);
-                            }
-                        }
-                    });
-            }
+                    }
+                });
         }
-
-        return pieces;
     }
+
+    return pieces;
 }
 
 size_t RehearsalsRun()
@@ -503,10 +541,29 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     // Port-only: the screen the palette is for, set up already, rehearsed once the fade is nearly black, then the
     // screens a slide from it may bring in, a step each (IntoScreenPieces): there a piece's step, darkened by its time,
     // can't be seen, where at the fade's start each held the bright screen (up to 35 ms on the A10). A fade of
-    // FadeOutWhile's did them already.
+    // FadeOutWhile's did them already. Port-only (SPEC-menus.md's stage 1): in a change of screen (gui/MCScreenChange.h)
+    // there's no palette fade: the palette goes in once the screen is dark, before the frame is drawn, and the frame
+    // fades in from there.
     if (!gui.PendingPalette.empty())
     {
-        gui.FadeDownCurrentPalette(IntoScreenPieces(), MCGuiSystem::FadeNearBlack);
+        if (!MCScreenChange::Running())
+        {
+            gui.FadeDownCurrentPalette(IntoScreenPieces(), MCGuiSystem::FadeNearBlack);
+        }
+        else if (MCScreenChange::Phase() != MCScreenChange::MCPhase::Out)
+        {
+            ActivatePendingPalette(gui);
+        }
+    }
+
+    // Port-only (SPEC-menus.md's stage 1): the frame loop's frames while the loading screen is up outside the load's
+    // own (faded in before it, out after it) draw it in place of the screen window, as the load last drew it.
+    const bool loadingScreen = LoadingScreenUp && !showProgress;
+
+    if (loadingScreen)
+    {
+        staticNoise = true;
+        noiseChance = LoadingNoise;
     }
 
     std::scoped_lock lock(MouseCritSec);
@@ -522,8 +579,17 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 
     if (gui.SmackerWindow == nullptr)
     {
-        MCFrameLog::Scope draw("draw");
-        DrawScreenWindow();
+        // Port-only (SPEC-menus.md's stage 1): a change of screen's dark frames draw nothing (they show black), so none
+        // draws the screens halfway through the work between them.
+        if (loadingScreen && !MCScreenChange::Dark())
+        {
+            VfxPaneWipe(ScreenPort()->Frame(), 0);
+        }
+        else if (!MCScreenChange::Dark())
+        {
+            MCFrameLog::Scope draw("draw");
+            DrawScreenWindow();
+        }
     }
     else
     {
@@ -557,7 +623,13 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     if (!ConnectShape().Empty() && showProgress)
     {
         // Port-only (SPEC-memory.md): the bar's last stretch is the mission's art going into memory.
-        DrawProgress(MCHdArt::LoadBarPercent(progress));
+        LoadingBar = MCHdArt::LoadBarPercent(progress);
+        LoadingNoise = noiseChance;
+        DrawProgress(LoadingBar);
+    }
+    else if (!ConnectShape().Empty() && loadingScreen)
+    {
+        DrawProgress(LoadingBar);
     }
 
     FrameRateArray[FrPointer] = std::min(FrameRate, 60.0f);
@@ -595,21 +667,26 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 
     ReadCursorPosition();
     DrawCursorInBuffer();
+    // Port-only (SPEC-menus.md's stage 1): a change of screen's fade, by the game's clock, on the frame drawn live.
+    const bool changing = MCScreenChange::Running();
+    const int changeFade = changing ? MCScreenChange::FadeNow() : 0;
+
+    if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr && changing)
+    {
+        display->SetFade(changeFade);
+    }
+
     // Port-only: ahead in a frame loop (MCFramesAhead), unless a palette waits to go in after the frame is shown.
     PresentScreen(MCFramesAhead::On() && gui.PendingPalette.empty());
 
-    if (!gui.PendingPalette.empty())
+    if (changing)
+    {
+        MCScreenChange::Presented(changeFade);
+    }
+    else if (!gui.PendingPalette.empty())
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(17));
-
-        if (GBitDepth != 16)
-        {
-            gui.TweakPalette(gui.PendingPaletteFirst, gui.PendingPaletteCount, gui.PendingPalette, true);
-        }
-
-        gui.PendingPaletteFirst = 0;
-        gui.PendingPaletteCount = 0;
-        gui.PendingPalette.clear();
+        ActivatePendingPalette(gui);
     }
 
     InMouseCritSec = 0;

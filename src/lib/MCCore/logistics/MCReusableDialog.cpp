@@ -198,7 +198,12 @@ auto MCReusableDialog::Activate() -> void
     // The original painted the dialog afresh: a press left on its buttons was gone.
     OkButton->PressedDown = false;
     CancelButton->PressedDown = false;
-    MoveTo(0x140 - Width() / 2, 0xf0 - Height() / 2, false);
+    // Port-only (SPEC-menus.md's stage 1): centred on what the window shows (the menus' frame: (320, 240) as the
+    // original's), on its parent.
+    const SDL_Rect shown = GuiSystem().ShownView();
+    const std::shared_ptr<MCGuiObject> parent = Parent.lock();
+    MoveTo(shown.x + shown.w / 2 - (parent != nullptr ? parent->GlobalX() : 0) - Width() / 2,
+           shown.y + shown.h / 2 - (parent != nullptr ? parent->GlobalY() : 0) - Height() / 2, false);
     ShowGuiWindow(true);
 
     if (Timeout > 0)

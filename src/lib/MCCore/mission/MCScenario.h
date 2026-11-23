@@ -343,3 +343,10 @@ extern uint8_t ForceAlways;
 /// 35, else the small one (empty when the scenario has none).
 /// </summary>
 std::span<uint8_t> SensorBlipShape(float tonnage);
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 1): the loading screen's connect shape loaded for the loading screen's frames before
+/// and after the load (gui/MCUpdateDisplay.h's LoadingScreenUp); the load leaves one loaded as it is.
+/// </summary>
+void HoldLoadingShape();
+/// <summary>Port-only: the shape <see cref="HoldLoadingShape"/> loaded let go of, the loading screen down.</summary>
+void ReleaseLoadingShape();

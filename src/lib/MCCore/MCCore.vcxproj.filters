@@ -348,6 +348,9 @@
     <ClCompile Include="gui\MCListView.cpp">
       <Filter>gui</Filter>
     </ClCompile>
+    <ClCompile Include="gui\MCScreenChange.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
     <ClCompile Include="gui\MCScrollPane.cpp">
       <Filter>gui</Filter>
     </ClCompile>
@@ -1805,6 +1808,9 @@
       <Filter>gui</Filter>
     </ClInclude>
     <ClInclude Include="gui\MCListView.h">
+      <Filter>gui</Filter>
+    </ClInclude>
+    <ClInclude Include="gui\MCScreenChange.h">
       <Filter>gui</Filter>
     </ClInclude>
     <ClInclude Include="gui\MCScrollPane.h">

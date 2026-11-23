@@ -181,6 +181,8 @@ private:
         SDL_Rect View{};
         int OutputWidth = 0;
         int OutputHeight = 0;
+        /// <summary>Port-only: the window around the view, faded (<see cref="MCFadedSurround"/>).</summary>
+        SDL_Color Surround{0, 0, 0, SDL_ALPHA_OPAQUE};
 
         /// <summary>Whether it's composited at the output's size (<see cref="MCFrame::ScaledOutput"/>).</summary>
         bool Scaled() const { return OutputWidth > 0 && OutputHeight > 0; }

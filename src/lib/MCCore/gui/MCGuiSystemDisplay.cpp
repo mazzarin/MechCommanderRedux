@@ -2,6 +2,7 @@
 #include "gui/MCGuiSystem.h"
 #include "camera/MCMainWindow.h"
 #include "gui/MCGuiSmackerWindow.h"
+#include "gui/MCScreenChange.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFatal.h"
@@ -353,6 +354,16 @@ auto MCGuiSystem::GammaCorrectCurrentPalette(int32_t level) -> void
 auto MCGuiSystem::CanFade() const -> bool
 {
     return _DisplayReady && !_Stopping && CurrentPalette[FirstGameColor].R != 0;
+}
+
+auto MCGuiSystem::CanChangeScreen() const -> bool
+{
+    return _DisplayReady && !_Stopping;
+}
+
+auto MCGuiSystem::ShownView() const -> SDL_Rect
+{
+    return _Display != nullptr ? _Display->View() : SDL_Rect{0, 0, MenuFrameWidth, MenuFrameHeight};
 }
 
 auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading, int32_t workFrom) -> void

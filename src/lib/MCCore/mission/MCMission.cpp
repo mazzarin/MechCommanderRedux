@@ -31,6 +31,7 @@
 #include "engine/MCCraterManager.h"
 #include "gui/MCGuiButton.h"
 #include "gui/MCGuiPort.h"
+#include "gui/MCScreenChange.h"
 #include "gui/MCUpdateDisplay.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFile.h"
@@ -257,6 +258,18 @@ namespace
                                      static_cast<double>(MCHdArt::HeldBytes()) / BytesPerMb, MCHdArt::HeldReads()));
         MCHdArt::TraceNote("briefing: Launch");
         return false;
+    }
+}
+
+namespace
+{
+    /// <summary>The sound system's step outside a scenario's own (PlayScenario's), and at its results.</summary>
+    void UpdateMissionSound()
+    {
+        if (SoundSystem() != nullptr && (Scenario() == nullptr || EventsToMissionResultsScreen != 0))
+        {
+            SoundSystem()->Update();
+        }
     }
 }
 
@@ -626,12 +639,30 @@ auto MCMission::Shutdown() -> void
         SetGlobalLog({});
     }
 
+    // Port-only (SPEC-menus.md's stage 1): a passage left behind with its change of screen.
+    if (_Passage != MCPassage::None)
+    {
+        _Passage = MCPassage::None;
+        LoadingScreenUp = false;
+        ReleaseLoadingShape();
+        MCScreenChange::Cancel();
+    }
+
     State = MCMissionState::Start;
 }
 
 auto MCMission::Run() -> int32_t
 {
     KeepScreenBlack = false;
+
+    // Port-only (SPEC-menus.md's stage 1): the way into a mission or back out, in changes of screen; while it holds the
+    // state, the state machine's own step waits.
+    if (TendPassage())
+    {
+        UpdateMissionSound();
+        return 0;
+    }
+
     // The states that end up back in logistics share the tails of the binary's switch; these flags stand in for its
     // two jump targets (reset the display first, or not).
     bool resetDisplay = false;
@@ -889,7 +920,19 @@ auto MCMission::Run() -> int32_t
     {
         const std::string scenarioName = std::move(*_RequestedScenario);
         _RequestedScenario.reset();
-        StartScenario(scenarioName);
+
+        // Port-only (SPEC-menus.md's stage 1): from a briefing, in a change of screen: it fades out live from the next
+        // frame (TendPassage). At once otherwise, as the original.
+        if (State == MCMissionState::Logistics && GlobalLog() != nullptr && GuiSystem().CanChangeScreen() &&
+            MCScreenChange::Start("into the mission"))
+        {
+            _PassageScenario = scenarioName;
+            _Passage = MCPassage::BriefingOut;
+        }
+        else
+        {
+            StartScenario(scenarioName);
+        }
     }
 
     if (resetDisplay)
@@ -908,11 +951,7 @@ auto MCMission::Run() -> int32_t
         }
     }
 
-    if (SoundSystem() != nullptr && (Scenario() == nullptr || EventsToMissionResultsScreen != 0))
-    {
-        SoundSystem()->Update();
-    }
-
+    UpdateMissionSound();
     return 0;
 }
 
@@ -988,6 +1027,12 @@ auto MCMission::RunFeatureScreen() -> bool
 
 auto MCMission::StartScenario(std::string_view name) -> void
 {
+    LoadScenario(name);
+    EnterScenario();
+}
+
+auto MCMission::LoadScenario(std::string_view name) -> void
+{
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
     // The mission's own name, kept: a campaign's load reads its logistics' copy of the file ("bridge").
@@ -1036,10 +1081,14 @@ auto MCMission::StartScenario(std::string_view name) -> void
     TotalLogisticsTime = static_cast<float>(elapsed.wMinute) * 60.0f + static_cast<float>(elapsed.wHour) * 3600.0f +
                          static_cast<float>(elapsed.wSecond) + static_cast<float>(elapsed.wMilliseconds / 1000);
 
-    GamePalette().Activate();
-    InitAlphaLookup(GamePalette().Colors());
-    GuiSystem().PaletteCycle = 1;
-    GuiSystem().SetCursorVisible(false);
+    // Port-only (SPEC-menus.md's stage 1): in a passage the loading screen put the game's palette in already.
+    if (_Passage == MCPassage::None)
+    {
+        GamePalette().Activate();
+        InitAlphaLookup(GamePalette().Colors());
+        GuiSystem().PaletteCycle = 1;
+        GuiSystem().SetCursorVisible(false);
+    }
 
     MCGameContext::Current().SetScenario(std::make_unique<MCScenario>());
 
@@ -1085,6 +1134,12 @@ auto MCMission::StartScenario(std::string_view name) -> void
     LoadWindowStatus();
     PrepareOpeningView();
     ScenarioResult = 0;
+    // Port (personal): the load's end for the reports (main/MCTelemetry.h), before a passage's fade into the battle.
+    MCTelemetry::PlayLoaded();
+}
+
+auto MCMission::EnterScenario() -> void
+{
     State = MCMissionState::Scenario;
     WaitTimer = WaitTime;
     ARedrawScreen();
@@ -1212,6 +1267,62 @@ auto MCMission::StopScenarioCallbacks() -> void
     RemoveCallback(ScenarioCallback);
 }
 
+auto MCMission::AfterResults() -> void
+{
+    if (GlobalGameSegment == 0)
+    {
+        if (!GameOver)
+        {
+            GamePaused = false;
+            State = MCMissionState::Logistics;
+            return;
+        }
+
+        if (InDemo != 0)
+        {
+            GamePaused = false;
+            CurrentMovie = 2;
+            State = MCMissionState::FeatureScreen;
+            NextState = MCMissionState::FeatureScreen;
+            return;
+        }
+
+        CurrentMovie = 3;
+        State = MCMissionState::PlayMovie;
+        NextState = MCMissionState::PlayMovie;
+    }
+
+    GamePaused = false;
+}
+
+auto MCMission::EndsAtResults() const -> bool
+{
+    const std::shared_ptr<MCMultiPlayer> match = MultiPlayer();
+    return match != nullptr && !MCRoomEnd::TakesOnAfterMatch() && match->InMission && IsMPlayerGame;
+}
+
+auto MCMission::ReadWayBackAhead(bool hold) const -> void
+{
+    MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles());
+
+    if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
+    {
+        MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
+
+        // Port-only (SPEC-memory.md's "From the briefing": between missions): the next mission's hold from now, as its
+        // briefing would start it: a loss's replay keeps what's held, a win's next lets go of the last mission's first.
+        if (hold)
+        {
+            StartMissionHold(Scenarios[*briefed]);
+        }
+    }
+
+    // Port-only (SPEC-first-use.md's "Between missions"): the screens' whole set of HD pictures read ahead from the click
+    // too, after the briefing's map: the briefing, or a match's games screen and its room (the rematch's, or the next
+    // one made), finds its own at its first draw. Logistics' start asks again (MCLogistics::MakeAhead), for nothing.
+    GuiSystem().ReadMenuSetAhead();
+}
+
 auto MCMission::CloseResultsScreen() -> void
 {
     if (ResultsScreen == nullptr)
@@ -1229,34 +1340,6 @@ auto MCMission::CloseResultsScreen() -> void
         return;
     }
 
-    const auto nextState = [this]
-    {
-        if (GlobalGameSegment == 0)
-        {
-            if (!GameOver)
-            {
-                GamePaused = false;
-                State = MCMissionState::Logistics;
-                return;
-            }
-
-            if (InDemo != 0)
-            {
-                GamePaused = false;
-                CurrentMovie = 2;
-                State = MCMissionState::FeatureScreen;
-                NextState = MCMissionState::FeatureScreen;
-                return;
-            }
-
-            CurrentMovie = 3;
-            State = MCMissionState::PlayMovie;
-            NextState = MCMissionState::PlayMovie;
-        }
-
-        GamePaused = false;
-    };
-
     // Port-only: the way back to logistics from the results (the screens made again, the campaign loaded, the briefing
     // set up, or a match's room: 75-100 ms on the M4 Pro, two-thirds of it looking for and reading files) is done in
     // the fade into logistics once the screen is nearly black, then what the fade into the screen it shows does
@@ -1264,26 +1347,26 @@ auto MCMission::CloseResultsScreen() -> void
     // will look for are read ahead on threads of their own (MCFilesAhead: those looked for in the archives while
     // logistics was up before, its screens made of the same files every time), and the next briefing's map with the
     // HD pictures; near black the game's thread makes the screens from them. A launcher's match ends at its results
-    // (KillTheGame), at once as the original's.
+    // (KillTheGame), at once as the original's. The player's own ways on from the results go through LeaveResults, which
+    // fades them out live first (SPEC-menus.md's stage 1).
+    const bool endsTheGame = EndsAtResults();
     const std::function<void()> wayBack = EndScenarioLeavingWayBack();
     LetGoHoldUnlessKept();
 
     if (wayBack == nullptr)
     {
-        nextState();
+        AfterResults();
         return;
     }
 
-    const auto back = [&wayBack, &nextState]
+    const auto back = [this, &wayBack]
     {
         wayBack();
-        nextState();
+        AfterResults();
     };
 
     // A launcher's match ends there (BackToLogistics: KillTheGame).
-    const std::shared_ptr<MCMultiPlayer> match = MultiPlayer();
-
-    if (match != nullptr && !MCRoomEnd::TakesOnAfterMatch() && match->InMission && IsMPlayerGame)
+    if (endsTheGame)
     {
         back();
         return;
@@ -1298,22 +1381,211 @@ auto MCMission::CloseResultsScreen() -> void
         ~MCForget() { MCFilesAhead::Forget(); }
     } forget;
 
-    MCFilesAhead::ReadAhead(MCFilesAhead::Noted(), MCGameContext::Current().FastFiles());
+    ReadWayBackAhead(true);
+    FadeOutWhile(back);
+}
 
-    if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
+auto MCMission::LeaveResults() -> void
+{
+    // Leaving already (a match's REMATCH heard as the player pressed on).
+    if (_Passage != MCPassage::None)
     {
-        MCLogistics::ReadBriefingMapAhead(Scenarios[*briefed]);
-        // Port-only (SPEC-memory.md's "From the briefing": between missions): the next mission's hold from now, as its
-        // briefing would start it: a loss's replay keeps what's held, a win's next lets go of the last mission's first.
-        StartMissionHold(Scenarios[*briefed]);
+        return;
     }
 
-    // Port-only (SPEC-first-use.md's "Between missions"): the screens' whole set of HD pictures read ahead from the click
-    // too, after the briefing's map: the briefing, or a match's games screen and its room (the rematch's, or the next
-    // one made), finds its own at its first draw. Logistics' start asks again (MCLogistics::MakeAhead), for nothing.
-    GuiSystem().ReadMenuSetAhead();
+    if (ResultsScreen == nullptr || Scenario() == nullptr || EndsAtResults() || !GuiSystem().CanChangeScreen() ||
+        !MCScreenChange::Start("out of the mission"))
+    {
+        CloseResultsScreen();
+        return;
+    }
 
-    FadeOutWhile(back);
+    // From the press, while the results fade out live, the files the way back looks for are read ahead, the next
+    // briefing's map and the menus' pictures; the mission's held art is kept for the battlefield under them until the
+    // scenario ends, at dark (CloseResultsInPassage).
+    ReadWayBackAhead(false);
+    _Passage = MCPassage::ResultsOut;
+}
+
+auto MCMission::CloseResultsInPassage() -> void
+{
+    // The pieces run a dark frame each: the scenario ended (the bridge file, the sounds, its unload), the way back (the
+    // menus made again, the next screen set up), then what a fade into a screen does (IntoScreenPieces).
+    _ArrivalPieces.clear();
+    _ArrivalPiece = 0;
+    _ArrivalPieces.emplace_back(
+        [this]
+        {
+            CloseGuiObject(ResultsScreen);
+            ResultsScreen.reset();
+            GuiSystem().CursorHidden = false;
+
+            if (Scenario() == nullptr)
+            {
+                return;
+            }
+
+            _WayBack = EndScenarioLeavingWayBack();
+            LetGoHoldUnlessKept();
+
+            if (const std::optional<size_t> briefed = BriefedAfterResults(); briefed.has_value())
+            {
+                StartMissionHold(Scenarios[*briefed]);
+            }
+        });
+    _ArrivalPieces.emplace_back(
+        [this]
+        {
+            const MCFrameLog::Scope part("change.way back");
+
+            if (_WayBack != nullptr)
+            {
+                const std::function<void()> wayBack = std::move(_WayBack);
+                _WayBack = nullptr;
+                wayBack();
+            }
+
+            AfterResults();
+            MCFilesAhead::Forget();
+        });
+
+    std::ranges::move(IntoScreenPieces(), std::back_inserter(_ArrivalPieces));
+}
+
+auto MCMission::ShowLoadingScreen() -> void
+{
+    // The game's palette goes in before the loading screen's first frame (UpdateDisplay, the screen dark), as the
+    // load's first frame put it in after its palette fade.
+    GamePalette().Activate();
+    InitAlphaLookup(GamePalette().Colors());
+    GuiSystem().PaletteCycle = 1;
+    GuiSystem().SetCursorVisible(false);
+
+    // The briefing hidden (the menus' teardown comes behind the loading screen, with the save), the loading screen drawn
+    // in its place, in the menus' frame.
+    if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
+    {
+        if (const std::shared_ptr<MCLogObject> screen = logistics->CurrentScreen(); screen != nullptr)
+        {
+            screen->ShowGuiWindow(false);
+        }
+    }
+
+    HoldLoadingShape();
+    LoadingScreenUp = true;
+    State = MCMissionState::StartScenario;
+}
+
+auto MCMission::TendPassage() -> bool
+{
+    switch (_Passage)
+    {
+        case MCPassage::None:
+            return false;
+        case MCPassage::BriefingOut:
+        {
+            // The briefing fades out live, the state machine's logistics step running, until the screen is dark.
+            if (MCScreenChange::Running() && !MCScreenChange::Dark())
+            {
+                return false;
+            }
+
+            if (!MCScreenChange::Dark())
+            {
+                // The change called off: the mission starts at once, as the original's.
+                _Passage = MCPassage::None;
+                StartScenario(_PassageScenario);
+                return true;
+            }
+
+            ShowLoadingScreen();
+            _Passage = MCPassage::LoadingIn;
+            MCScreenChange::FadeIn();
+            return true;
+        }
+        case MCPassage::LoadingIn:
+        {
+            if (MCScreenChange::Running())
+            {
+                return true;
+            }
+
+            // The loading screen is in: the save, the menus' teardown and the load behind it.
+            LoadScenario(_PassageScenario);
+
+            if (MCScreenChange::Start("into the battle"))
+            {
+                _Passage = MCPassage::LoadingOut;
+                return true;
+            }
+
+            _Passage = MCPassage::None;
+            LoadingScreenUp = false;
+            ReleaseLoadingShape();
+            EnterScenario();
+            return true;
+        }
+        case MCPassage::LoadingOut:
+        {
+            if (MCScreenChange::Running() && !MCScreenChange::Dark())
+            {
+                return true;
+            }
+
+            LoadingScreenUp = false;
+            ReleaseLoadingShape();
+            EnterScenario();
+            _Passage = MCScreenChange::Dark() ? MCPassage::BattleIn : MCPassage::None;
+            MCScreenChange::FadeIn();
+            return true;
+        }
+        case MCPassage::BattleIn:
+        case MCPassage::ArrivedIn:
+        {
+            // The next screen plays as it fades in.
+            if (!MCScreenChange::Running())
+            {
+                _Passage = MCPassage::None;
+            }
+
+            return false;
+        }
+        case MCPassage::ResultsOut:
+        {
+            // The results fade out live, the state machine's results step running, until the screen is dark.
+            if (MCScreenChange::Running() && !MCScreenChange::Dark())
+            {
+                return false;
+            }
+
+            CloseResultsInPassage();
+            _Passage = MCPassage::Arriving;
+            [[fallthrough]];
+        }
+        case MCPassage::Arriving:
+        {
+            // A piece a dark frame; all that are left at once if the change was called off.
+            do
+            {
+                if (_ArrivalPiece < _ArrivalPieces.size())
+                {
+                    _ArrivalPieces[_ArrivalPiece++]();
+                }
+            } while (!MCScreenChange::Running() && _ArrivalPiece < _ArrivalPieces.size());
+
+            if (_ArrivalPiece >= _ArrivalPieces.size())
+            {
+                _ArrivalPieces.clear();
+                _ArrivalPiece = 0;
+                _Passage = MCScreenChange::Dark() ? MCPassage::ArrivedIn : MCPassage::None;
+                MCScreenChange::FadeIn();
+            }
+
+            return true;
+        }
+    }
+
+    return false;
 }
 
 auto MCMission::BriefedAfterResults() const -> std::optional<size_t>

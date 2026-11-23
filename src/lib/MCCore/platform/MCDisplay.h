@@ -291,6 +291,15 @@ public:
     /// <summary>The fade set last.</summary>
     int Fade() const { return _Fade; }
 
+    /// <summary>
+    /// Port-only: the colour the window shows around the view (black unless set; the menus' stone colour around their
+    /// 640x480 frame), faded with the picture. Takes effect at the next <see cref="Present"/>.
+    /// </summary>
+    void SetSurround(SDL_Color color) { _Surround = color; }
+
+    /// <summary>The surround set last (<see cref="SetSurround"/>).</summary>
+    SDL_Color Surround() const { return _Surround; }
+
     /// <summary>The 256 colours as they are shown: the palette through the gamma and brightness, then the cycle.</summary>
     void GetShownColors(std::span<SDL_Color, 256> out) const;
 
@@ -527,4 +536,6 @@ private:
     float _Brightness = 1.0f;
     /// <summary>The screen fade (<see cref="SetFade"/>).</summary>
     std::atomic<int> _Fade = 0;
+    /// <summary>The window around the view (<see cref="SetSurround"/>).</summary>
+    SDL_Color _Surround{0, 0, 0, SDL_ALPHA_OPAQUE};
 };

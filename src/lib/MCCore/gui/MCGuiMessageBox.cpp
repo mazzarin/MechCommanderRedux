@@ -18,10 +18,11 @@ auto MCGuiMessageBox::Init(std::string_view text) -> int32_t
 
     const int32_t boxWidth = std::max(WhiteFont->Width(text) + 0xc, 0x48);
     const int32_t fontHeight = WhiteFont->Height();
-    const int32_t screenWidth = GuiSystem().Width();
-    const int32_t screenHeight = GuiSystem().Height();
-    int32_t result = MCGuiObject::Init((screenWidth - boxWidth) / 2, (screenHeight - (fontHeight + 0x28)) / 2, boxWidth,
-                                       fontHeight + 0x28, {});
+    // Port-only (SPEC-menus.md's stage 1): centred on what the window shows (the menus' frame, or the whole screen in a
+    // mission), where the original centred it on the screen.
+    const SDL_Rect shown = GuiSystem().ShownView();
+    int32_t result = MCGuiObject::Init(shown.x + (shown.w - boxWidth) / 2,
+                                       shown.y + (shown.h - (fontHeight + 0x28)) / 2, boxWidth, fontHeight + 0x28, {});
 
     if (result != 0)
     {

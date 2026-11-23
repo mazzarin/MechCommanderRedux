@@ -23,13 +23,13 @@ namespace
 
     constexpr std::string_view NoticeText =
         "MechCommander Redux sends anonymous reports of your computer, frame rates, settings and crashes to help it "
-        "run better. Turn this off under REPORTS in HD OPTIONS.";
+        "run better. Turn this off under REPORTS in PREFERENCES.";
     constexpr std::string_view NoticeWithIdText =
         "MechCommander Redux sends reports of your computer, frame rates, settings and crashes, under a random ID, to "
-        "help it run better.\nNo name or IP address is kept. Turn this off under REPORTS in HD OPTIONS.";
+        "help it run better.\nNo name or IP address is kept. Turn this off under REPORTS in PREFERENCES.";
     constexpr std::string_view QuestionText =
         "Send reports of your computer, frame rates, settings and crashes, under a random ID, to help MechCommander "
-        "Redux run better?\nNo name or IP address is kept. Change this later under REPORTS in HD OPTIONS.";
+        "Redux run better?\nNo name or IP address is kept. Change this later under REPORTS in PREFERENCES.";
 
     /// <summary>The main menu's logistics state, and the session screen's.</summary>
     constexpr int32_t MainMenuState = 1;

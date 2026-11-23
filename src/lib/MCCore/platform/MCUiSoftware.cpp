@@ -927,7 +927,11 @@ std::expected<void, std::string> MCUiSoftware::DrawOne(const MCUiDraw& draw, con
         _Textures[draw.Texture->Id].Picture = draw.Texture;
     }
 
-    SDL_SetRenderClipRect(renderer, &clip);
+    if (!SDL_SetRenderClipRect(renderer, &clip))
+    {
+        return std::unexpected(SdlError(std::format("cutting to {},{} {}x{}", clip.x, clip.y, clip.w, clip.h)));
+    }
+
     _Pieces = MCUiPieces(draw);
 
     for (const MCUiPiece& piece : _Pieces)
@@ -978,7 +982,16 @@ std::expected<void, std::string> MCUiSoftware::DrawOne(const MCUiDraw& draw, con
             SDL_SetTextureAlphaMod(copied, quad.Color[3]);
             const SDL_FRect target = Float(quad.Target);
             const SDL_FRect source = Float(from);
-            SDL_RenderTexture(renderer, copied, &source, &target);
+
+            // A draw dropped would stay out of the picture until its box changed again: the draw fails, and the
+            // next is drawn whole.
+            if (!SDL_RenderTexture(renderer, copied, &source, &target))
+            {
+                return std::unexpected(
+                    SdlError(std::format("picture {} copied to {},{} {}x{}", draw.Texture->Id, quad.Target.x,
+                                         quad.Target.y, quad.Target.w, quad.Target.h)));
+            }
+
             _Queued = true;
             continue;
         }
@@ -1010,8 +1023,15 @@ std::expected<void, std::string> MCUiSoftware::DrawOne(const MCUiDraw& draw, con
         SDL_SetTextureColorMod(texture, Full, Full, Full);
         SDL_SetTextureAlphaMod(texture, Full);
         SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-        SDL_RenderGeometry(renderer, texture, _Vertices.data(), static_cast<int>(_Vertices.size()), nullptr, 0);
+        const bool queued =
+            SDL_RenderGeometry(renderer, texture, _Vertices.data(), static_cast<int>(_Vertices.size()), nullptr, 0);
         SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+
+        if (!queued)
+        {
+            return std::unexpected(SdlError(std::format("{} triangles", _Vertices.size() / TriangleCorners)));
+        }
+
         _Queued = true;
     }
 

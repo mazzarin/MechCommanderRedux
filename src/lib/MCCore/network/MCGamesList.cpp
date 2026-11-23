@@ -143,11 +143,19 @@ std::string MCListedGame::NowText() const
     return std::string(Full() ? FullText : OpenText);
 }
 
+namespace
+{
+    /// <summary>Whether release <paramref name="version"/> is newer than <paramref name="ours"/> (none: never).</summary>
+    bool NewerThan(std::string_view version, const std::optional<std::vector<int32_t>>& ours)
+    {
+        const std::optional<std::vector<int32_t>> theirs = ReleaseOf(version);
+        return theirs.has_value() && ours.has_value() && *theirs > *ours;
+    }
+}
+
 bool MCNeedsNewerVersion(std::string_view version)
 {
-    const std::optional<std::vector<int32_t>> theirs = ReleaseOf(version);
-    const std::optional<std::vector<int32_t>> ours = ReleaseOf(MCInternetGame::SetupNow().Version);
-    return theirs.has_value() && ours.has_value() && *theirs > *ours;
+    return NewerThan(version, ReleaseOf(MCInternetGame::SetupNow().Version));
 }
 
 std::string_view MCRegionName(std::string_view region)
@@ -296,8 +304,11 @@ bool MCGamesList::ReadInternetGames()
 {
     std::vector<MCListedGame> games;
 
-    if (_List != nullptr && _List->Listing().has_value())
+    if (_List != nullptr && _List->Listing().has_value() && !_List->Listing()->Games.empty())
     {
+        // This build's release read once for the listing, not for each game (the setup is read under its lock).
+        const std::optional<std::vector<int32_t>> ours = ReleaseOf(MCInternetGame::SetupNow().Version);
+
         for (const MCInternetListing::Game& listed : _List->Listing()->Games)
         {
             games.push_back(MCListedGame{.Key = listed.Code,
@@ -309,7 +320,7 @@ bool MCGamesList::ReadInternetGames()
                                          .Version = listed.Version,
                                          .InBattle = listed.BattleSeconds.has_value(),
                                          .BattleSeconds = listed.BattleSeconds,
-                                         .NeedsNewer = MCNeedsNewerVersion(listed.Version)});
+                                         .NeedsNewer = NewerThan(listed.Version, ours)});
         }
     }
 

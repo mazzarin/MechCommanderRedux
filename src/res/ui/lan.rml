@@ -39,7 +39,7 @@
                         </div>
                         <div class="empty" id="empty" data-if="games.size == 0">
                             <div class="text">{{empty}}</div>
-                                                        <div class="button small" data-if="retry" data-event-click="retry()">Retry</div>
+                                                        <div class="button small" id="retry" data-if="retry" data-event-click="retry()">Retry</div>
                         </div>
                     </div>
                     <div id="pick" class="column">

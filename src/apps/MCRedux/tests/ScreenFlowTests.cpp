@@ -7,6 +7,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCIdleCheck.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
@@ -399,6 +400,47 @@ TEST_CASE_ISOLATED(
     CHECK(StackNow() == std::vector<MCScreenId>{main});
     CHECK(!MCRmlFlow::Showing());
     CHECK(GlobalLog()->MainScreen->IsShowing());
+}
+
+/// <summary>
+/// The player's input on a remade screen counts as on the 1998 ones: an internet game's idle check sees the player there
+/// (INTERNET keeps its list, a room doesn't ask "Still there?").
+/// </summary>
+TEST_CASE_ISOLATED("screen flow: input on a remade screen keeps the player present")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    RunWhileChanging();
+    auto now = std::chrono::steady_clock::now();
+    MCIdleCheck::SetClock([&now] { return now; });
+    MCIdleCheck::Input();
+
+    const MCScreenId remade = MCScreenFlow::Register(MCRmlFlow::Kind(
+        "a remade test screen", [](MCRmlLayer& layer) -> MCGuiHandle<MCRmlScreen>
+        { return layer.CreateChild<MCRmlProbe>([](MCRmlProbe&) {}); }, MCRmlFlow::MCKeep::Kept));
+    MCScreenFlow::Open(remade);
+    RunWhileChanging();
+    REQUIRE(MCRmlFlow::Showing());
+
+    // A key on it, then the mouse moving: each keeps the player there past the away time since the one before.
+    const auto almostAway = MCIdleCheck::AwayTime - std::chrono::minutes(1);
+    now += almostAway;
+    CHECK(!MCIdleCheck::Away());
+    MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
+    now += almostAway;
+    CHECK(!MCIdleCheck::Away());
+    MCScreenInput::RealMove(100, 100);
+    now += almostAway;
+    CHECK(!MCIdleCheck::Away());
+
+    // Nothing for the away time: away.
+    now += MCIdleCheck::AwayTime;
+    CHECK(MCIdleCheck::Away());
+    MCIdleCheck::SetClock({});
 }
 
 /// <summary>

@@ -67,6 +67,8 @@ namespace
     constexpr const char* RowClass = "list-row";
     /// <summary>The games list's scrolled element, holding its rows.</summary>
     constexpr const char* ListId = "list";
+    /// <summary>RETRY's button, under the list's line while it's offline or not answering.</summary>
+    constexpr const char* RetryId = "retry";
     /// <summary>The look's class for a button that's off.</summary>
     constexpr const char* OffClass = "off";
     constexpr const char* ValueAttribute = "value";
@@ -332,6 +334,12 @@ MCOptionalRef<Rml::Element> MCGamesScreen::FirstFocus(Rml::ElementDocument& docu
         return MCOptionalRef<Rml::Element>(*rows[picked]);
     }
 
+    // Offline or not answering: RETRY, which ENTER presses (the hint line's ENTER Retry), once it shows.
+    if (Rml::Element* retry = document.GetElementById(RetryId); _Retry && retry != nullptr && retry->IsVisible())
+    {
+        return MCOptionalRef<Rml::Element>(*retry);
+    }
+
     Rml::Element* host = document.GetElementById("host");
     return host != nullptr ? MCOptionalRef<Rml::Element>(*host) : std::nullopt;
 }
@@ -374,9 +382,10 @@ void MCGamesScreen::OnHide()
     // Its socket's close takes it off the service's count; a game joined is counted as it plays.
     _List.Close();
 
+    // A join called off, its change with it (shown again over the screen that came up), unless it has joined.
     if (_Join.Pending())
     {
-        _Join.CallOff();
+        CallOff();
     }
 
     if (_HostWindow)
@@ -442,7 +451,7 @@ void MCGamesScreen::FocusFirstRow()
 {
     const MCOptionalRef<Rml::ElementDocument> document = Document();
 
-    if (!document.has_value() || _Rows.empty())
+    if (!document.has_value() || (_Rows.empty() && !_Retry))
     {
         _FocusFirstRow = false;
         return;
@@ -554,7 +563,7 @@ void MCGamesScreen::ShowList()
     const bool update = state == MCGamesState::Update;
     // The first rows to come: the focus goes to the first game, as it would have shown with them (FirstFocus), once
     // they're laid out.
-    _FocusFirstRow = _FocusFirstRow || (_Rows.empty() && !rows.empty());
+    _FocusFirstRow = _FocusFirstRow || (_Rows.empty() && !rows.empty()) || (retry && !_Retry);
     bool changed = false;
     // Each value at once (no short-circuit): every one kept.
     changed |= Keep(_Rows, std::move(rows));
@@ -1041,19 +1050,29 @@ void MCGamesScreen::OpenUpdate(std::optional<MCListedGame> joinAfter)
             .Code = joinAfter->Key, .Name = joinAfter->Name, .PlayerName = _PlayerName, .RelayOnly = true};
     }
 
-    MCScreenFlow::Open(MCMenuScreens::Update());
+    if (!MCScreenFlow::Open(MCMenuScreens::Update()))
+    {
+        SDL_Log("%s: UPDATE can't open now (a change of screen runs)", Place().c_str());
+        return;
+    }
+
     MCLobbyUpdate::JoinAfterUpdate(std::move(after));
 }
 
 void MCGamesScreen::CallOff()
 {
+    // Joined, the room set up and shown once the list is dark: too late to call off (the old screen's CANCEL ended the
+    // game; here the room just shows).
+    if (_Entered)
+    {
+        return;
+    }
+
     if (_Join.Pending())
     {
         _Join.CallOff();
         MCRmlDialogs::Close();
     }
-
-    _Entered = false;
 
     if (MCScreenChange::Name() == JoiningChange && MCScreenChange::Running() && !MCScreenChange::Dark())
     {

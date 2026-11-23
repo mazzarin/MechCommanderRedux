@@ -1144,7 +1144,7 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
              std::string("Send reports of your computer, frame rates, settings and crashes, under a random ID, to help "
                          "MechCommander Redux run better?"));
     CHECK_EQ(MCRemadeTest::Words(*question, "kept"), std::string("No name or IP address is kept."));
-    MCScreenInput::SaveShownShot("reports question");
+    MCScreenInput::SaveWindowShot("reports question");
     REQUIRE(MCRemadeTest::Press(*question, "no"));
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);

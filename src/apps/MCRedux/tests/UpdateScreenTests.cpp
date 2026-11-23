@@ -143,13 +143,7 @@ namespace
                          MCRmlChecks::Illegible(layer.Context(), layer.Unit()),
                      where);
 
-            if (const std::optional<std::string_view> shots = MCTest::Option("shots"); shots.has_value())
-            {
-                std::filesystem::create_directories(std::filesystem::path(*shots));
-                CHECK(
-                    MCTestGame::SaveWholeWindow(std::filesystem::path(*shots) /
-                                                std::format("update_{}_{}x{}.png", name, window.Width, window.Height)));
-            }
+            MCScreenInput::SaveWindowShot(std::format("update_{}_{}x{}", name, window.Width, window.Height));
         }
     }
 }

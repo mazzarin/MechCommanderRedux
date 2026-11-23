@@ -859,7 +859,7 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
              std::string("Downloaded. Restart to install it and join Next version."));
     REQUIRE(MCRemadeTest::Visible(*update, "act"));
     CHECK_EQ(MCRemadeTest::Words(*update, "act"), std::string("Restart"));
-    MCScreenInput::SaveShownShot("internet 13 update to join");
+    MCScreenInput::SaveWindowShot("internet 13 update to join");
 
     // RESTART: the update installs, and the new version joins the game, the menus' again once in.
     REQUIRE(MCRemadeTest::Press(*update, "act"));

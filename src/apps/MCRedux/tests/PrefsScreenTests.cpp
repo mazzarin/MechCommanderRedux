@@ -209,31 +209,7 @@ namespace
         return MCRmlChecks::BoxProblems(layer.Context()) + MCRmlChecks::Illegible(layer.Context(), layer.Unit());
     }
 
-    std::optional<std::filesystem::path> ShotPath(std::string_view name)
-    {
-        const std::optional<std::string_view> shots = MCTest::Option("shots");
-
-        if (!shots.has_value())
-        {
-            return std::nullopt;
-        }
-
-        std::filesystem::create_directories(std::filesystem::path(*shots));
-        return std::filesystem::path(*shots) / std::format("{}.png", name);
-    }
-
-    /// <summary>With <c>--shots</c>, the whole window saved there as <paramref name="name"/>.png.</summary>
-    void SaveShot(std::string_view name)
-    {
-        if (const std::optional<std::filesystem::path> path = ShotPath(name); path.has_value())
-        {
-            if (!MCTestGame::SaveWholeWindow(*path))
-            {
-                FAIL_CHECK(std::format("the window couldn't be saved as {}", path->string()));
-            }
-        }
-    }
-
+    /// <summary><paramref name="words"/> in lower case (a section's name in a picture's name).</summary>
     std::string Lower(std::string_view words)
     {
         std::string lower(words);
@@ -329,8 +305,8 @@ TEST_CASE_ISOLATED("game: Preferences opens through the flow and reads in every 
 
             if (recorded)
             {
-                SaveShot(std::format("prefs_{}_{}x{}", Lower(MCSettingsModel::SectionName(section)), window.Width,
-                                     window.Height));
+                MCScreenInput::SaveWindowShot(std::format(
+                    "prefs_{}_{}x{}", Lower(MCSettingsModel::SectionName(section)), window.Width, window.Height));
             }
         }
     }
@@ -496,7 +472,7 @@ TEST_CASE_ISOLATED("game: Escape in a mission opens the pause; RESUME, ALL PREFE
         RunFrames(SettleFrames);
         CHECK_EQ(std::format("{}x{}: {}", window.Width, window.Height, Problems(Menus().Mission())),
                  std::format("{}x{}: ", window.Width, window.Height));
-        SaveShot(std::format("pause_{}x{}", window.Width, window.Height));
+        MCScreenInput::SaveWindowShot(std::format("pause_{}x{}", window.Width, window.Height));
     }
 
     PressEscape();
@@ -543,8 +519,8 @@ TEST_CASE_ISOLATED("game: Escape in a mission opens the pause; RESUME, ALL PREFE
             const std::string where =
                 std::format("{}x{}, {}: ", window.Width, window.Height, MCSettingsModel::SectionName(section));
             CHECK_EQ(where + Problems(Menus().Mission()), where);
-            SaveShot(std::format("prefs_mission_{}_{}x{}", Lower(MCSettingsModel::SectionName(section)), window.Width,
-                                 window.Height));
+            MCScreenInput::SaveWindowShot(std::format(
+                "prefs_mission_{}_{}x{}", Lower(MCSettingsModel::SectionName(section)), window.Width, window.Height));
         }
     }
 
@@ -612,7 +588,7 @@ TEST_CASE_ISOLATED("game: a match's pause: the battle goes on, and LEAVE MATCH a
         RunFrames(SettleFrames);
         CHECK_EQ(std::format("{}x{}: {}", window.Width, window.Height, Problems(Menus().Mission())),
                  std::format("{}x{}: ", window.Width, window.Height));
-        SaveShot(std::format("pause_mp_{}x{}", window.Width, window.Height));
+        MCScreenInput::SaveWindowShot(std::format("pause_mp_{}x{}", window.Width, window.Height));
     }
 
     ClickOn(Find(*shown, "leave"));

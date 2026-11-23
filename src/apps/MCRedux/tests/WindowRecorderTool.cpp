@@ -14,6 +14,8 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMenuScreens.h"
+#include "logistics/MCSavesMenu.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
@@ -49,6 +51,11 @@
 // loss's REPLAY MISSION, a quick-start mission's win to SOLO MISSIONS, Escape back to the main menu, and the
 // campaign's last mission won to the main menu (its end movies skipped with Escape); each part's summary ends with the
 // flow's stack.
+//
+// Port-only (SPEC-menus.md's stage 5): --record-window-saves 1 goes on, from the briefing the mission's DONE opened,
+// through LOAD GAME's and SAVE GAME's changes: the briefing's way out to the main menu, SAVE GAME opened, Enter saving
+// and the message's OK back to the briefing, LOAD GAME opened, its LOAD into the briefing, LOAD GAME opened again and
+// Escape back to the main menu. It ends there: --record-window-landings is left out with it.
 
 namespace
 {
@@ -890,6 +897,78 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
                                        });
     std::cout << "out of the mission:\n" << out;
 
+    const auto recordLanding =
+        [&](std::string_view name, const std::function<void()>& press, const std::function<bool()>& landed)
+    {
+        const std::string report =
+            RecordPart(folder / name, width, height,
+                       [&]
+                       {
+                           RunPacedFor(time, SecondsBefore);
+                           press();
+                           CHECK(RunPaced(time, [&] { return Settled() && landed(); }, MostChangeSeconds));
+                           RunPacedFor(time, SecondsAfter);
+                       });
+        std::cout << std::format("{}:\n{}  the flow's stack: {}\n", name, report, MCScreenFlow::StackText());
+    };
+
+    const auto shows = [](auto MCLogistics::* screen)
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        return logistics != nullptr && logistics->CurrentScreen() == logistics.get()->*screen;
+    };
+
+    const auto savesShown = [](MCSavesScreen::MCMode mode)
+    {
+        const MCOptionalRef<MCSavesScreen> screen = MCSavesMenu::Screen();
+        return screen.has_value() && screen->get().Shown() && screen->get().Mode() == mode;
+    };
+
+    if (MCTest::Option("record-window-saves").has_value())
+    {
+        const auto toMain = [&](std::string_view name)
+        { recordLanding(name, MCMenuScreens::LeaveCampaign, [&] { return shows(&MCLogistics::MainScreen); }); };
+        const auto openSaves = [&](std::string_view name, MCSavesScreen::MCMode mode)
+        {
+            recordLanding(
+                name,
+                [mode]
+                {
+                    MCScreenFlow::Open(mode == MCSavesScreen::MCMode::Save ? MCMenuScreens::Save()
+                                                                           : MCMenuScreens::Load());
+                },
+                [&savesShown, mode] { return savesShown(mode); });
+        };
+
+        // SAVE GAME: opened, Enter in NAME saving (the message up), its OK back to the briefing.
+        toMain("to-main");
+        openSaves("save-game", MCSavesScreen::MCMode::Save);
+        recordLanding(
+            "saved",
+            [&time]
+            {
+                MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+                RunPacedFor(time, SecondsBefore);
+                MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+            },
+            [&] { return shows(&MCLogistics::BriefingScreen); });
+
+        // LOAD GAME: opened, its LOAD (the save just written, the newest) into its briefing.
+        toMain("to-main-again");
+        openSaves("load-game", MCSavesScreen::MCMode::Load);
+        recordLanding(
+            "loaded", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); },
+            [&] { return shows(&MCLogistics::BriefingScreen); });
+
+        // LOAD GAME opened again, Escape back to the main menu.
+        toMain("to-main-last");
+        openSaves("load-game-again", MCSavesScreen::MCMode::Load);
+        recordLanding(
+            "load-game-back", [] { MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE); },
+            [&] { return shows(&MCLogistics::MainScreen); });
+        return;
+    }
+
     if (!MCTest::Option("record-window-landings").has_value())
     {
         return;
@@ -914,27 +993,6 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
 
         EndToResults(result);
         RunPacedFor(time, SecondsBefore);
-    };
-
-    const auto recordLanding =
-        [&](std::string_view name, const std::function<void()>& press, const std::function<bool()>& landed)
-    {
-        const std::string report =
-            RecordPart(folder / name, width, height,
-                       [&]
-                       {
-                           RunPacedFor(time, SecondsBefore);
-                           press();
-                           CHECK(RunPaced(time, [&] { return Settled() && landed(); }, MostChangeSeconds));
-                           RunPacedFor(time, SecondsAfter);
-                       });
-        std::cout << std::format("{}:\n{}  the flow's stack: {}\n", name, report, MCScreenFlow::StackText());
-    };
-
-    const auto shows = [](auto MCLogistics::* screen)
-    {
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        return logistics != nullptr && logistics->CurrentScreen() == logistics.get()->*screen;
     };
 
     const auto leaveResults = [] { Mission()->LeaveResults(); };

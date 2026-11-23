@@ -26,6 +26,9 @@
 #include "ui/MCRmlChecks.h"
 #include "ui/MCRmlMenus.h"
 
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+
 // Port-only (SPEC-menus.md's stage 5, "Models and views"): the saves list LOAD GAME and SAVE GAME view (and CONTINUE
 // will), the missions' names it shows them by, and the dates it tells them by.
 
@@ -703,4 +706,129 @@ TEST_CASE_ISOLATED("game: LOAD GAME's DELETE asks first, then deletes the save a
     CHECK(!FileExists(GamePath(SavePath, named, ".sav")));
     CHECK_EQ(screen.PickedSave(), std::optional<std::string>(before));
     CHECK(screen.Shown());
+}
+
+namespace
+{
+    /// <summary>A left click in the middle of <paramref name="element"/>, as the mouse sends it: SDL's events in the window's points.</summary>
+    void ClickOn(Rml::Element& element)
+    {
+        SDL_Window& window = MCInput::Display()->Window();
+        const float pixelDensity = SDL_GetWindowPixelDensity(&window);
+        const float density = pixelDensity > 0.0f ? pixelDensity : 1.0f;
+        const Rml::Vector2f middle =
+            element.GetAbsoluteOffset(Rml::BoxArea::Border) + element.GetBox().GetSize(Rml::BoxArea::Border) / 2.0f;
+        SDL_Event motion{};
+        motion.type = SDL_EVENT_MOUSE_MOTION;
+        motion.motion.windowID = SDL_GetWindowID(&window);
+        motion.motion.x = middle.x / density;
+        motion.motion.y = middle.y / density;
+        MCInput::HandleEvent(motion);
+        MCTestGame::RunFrame(FlowFrame);
+
+        for (const bool down : {true, false})
+        {
+            SDL_Event button{};
+            button.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+            button.button.windowID = motion.motion.windowID;
+            button.button.button = SDL_BUTTON_LEFT;
+            button.button.down = down;
+            button.button.clicks = 1;
+            button.button.x = motion.motion.x;
+            button.button.y = motion.motion.y;
+            MCInput::HandleEvent(button);
+            MCTestGame::RunFrame(FlowFrame);
+        }
+    }
+
+    /// <summary><paramref name="screen"/>'s element <paramref name="id"/>, which must be there.</summary>
+    Rml::Element& ElementOf(const MCRmlScreen& screen, const char* id)
+    {
+        REQUIRE(screen.Document().has_value());
+        Rml::Element* element = screen.Document()->get().GetElementById(id);
+        REQUIRE(element != nullptr);
+        return *element;
+    }
+
+    /// <summary>The list's row <paramref name="row"/> on <paramref name="screen"/>.</summary>
+    Rml::Element& RowOf(const MCRmlScreen& screen, int row)
+    {
+        Rml::Element& list = ElementOf(screen, "list");
+        REQUIRE(row < list.GetNumChildren());
+        return *list.GetChild(row);
+    }
+}
+
+/// <summary>
+/// The mouse alone: a row clicked picks it, the switch's tabs filter the list, DELETE and its CANCEL, BACK; SAVE GAME's
+/// row fills NAME, SAVE and OVERWRITE write it, OK goes back to the campaign; LOAD loads.
+/// </summary>
+TEST_CASE_ISOLATED("game: LOAD GAME and SAVE GAME work from the mouse")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    const auto [before, named] = SaveFirstMission();
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+
+    // LOAD GAME: a row, the switch, DELETE's CANCEL, BACK.
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+    REQUIRE_EQ(screen.Saves().size(), size_t{2});
+    ClickOn(RowOf(screen, 1));
+    CHECK_EQ(screen.Picked(), 1);
+    CHECK_EQ(screen.PickedSave(), std::optional<std::string>(before));
+    Rml::Element& tabs = ElementOf(screen, "which");
+    REQUIRE_EQ(tabs.GetNumChildren(), 3);
+    ClickOn(*tabs.GetChild(2));
+    CHECK(screen.Campaign() == std::optional<MCSaves::MCCampaign>(MCSaves::MCCampaign::Expansion));
+    CHECK(screen.Saves().empty());
+    ClickOn(*tabs.GetChild(0));
+    CHECK(!screen.Campaign().has_value());
+    REQUIRE_EQ(screen.Saves().size(), size_t{2});
+    ClickOn(ElementOf(screen, "delete"));
+    REQUIRE(screen.Dialog());
+    CHECK(screen.Dialog()->Shown());
+    ClickOn(ElementOf(*screen.Dialog(), "cancel"));
+    CHECK(!screen.Dialog()->Shown());
+    CHECK_EQ(screen.Saves().size(), size_t{2});
+    ClickOn(ElementOf(screen, "back"));
+    RunWhileChanging();
+    CHECK(!screen.Shown());
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main"));
+
+    // SAVE GAME: a row fills NAME; SAVE, OVERWRITE, OK: the campaign.
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    REQUIRE_EQ(screen.Saves().size(), size_t{2});
+    ClickOn(RowOf(screen, 0));
+    CHECK_EQ(screen.Name(), screen.Saves()[0]);
+    ClickOn(ElementOf(screen, "main"));
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::OverwriteQuestion));
+    ClickOn(ElementOf(*screen.Dialog(), "answer"));
+    CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::SavedText));
+    ClickOn(ElementOf(*screen.Dialog(), "answer"));
+    RunWhileChanging();
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
+
+    // LOAD GAME's LOAD: the briefing the save stands at.
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    ClickOn(ElementOf(screen, "main"));
+    RunWhileChanging();
+    CHECK(!screen.Shown());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
 }

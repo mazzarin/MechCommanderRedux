@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "ui/MCRmlMenus.h"
+#include "gui/MCScreenChange.h"
 #include "logistics/MCLogObject.h"
+#include "sprite/MCHdArt.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCUtf8Path.h"
@@ -41,6 +43,25 @@ namespace
         {"fonts/SairaSemiCondensed-SemiBold.ttf", Rml::Style::FontWeight(SemiBoldWeight)},
         {"fonts/SairaSemiCondensed-Bold.ttf", Rml::Style::FontWeight::Bold},
     }};
+
+    /// <summary>STAND-IN (menus stage 5): whether <paramref name="event"/> is the player's mouse, keys or typing.</summary>
+    bool IsPlayerEvent(const SDL_Event& event)
+    {
+        switch (event.type)
+        {
+            case SDL_EVENT_MOUSE_MOTION:
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+            case SDL_EVENT_MOUSE_WHEEL:
+            case SDL_EVENT_KEY_DOWN:
+            case SDL_EVENT_KEY_UP:
+            case SDL_EVENT_TEXT_INPUT:
+            case SDL_EVENT_TEXT_EDITING:
+                return true;
+            default:
+                return false;
+        }
+    }
 }
 
 MCRmlMenus::MCRmlMenus(Key)
@@ -139,8 +160,23 @@ std::expected<std::reference_wrapper<MCRmlMenus>, std::string> MCRmlMenus::Start
 
         menus = std::move(*made);
         // While one of the menus' screens shows, the window's mouse, keys and text are theirs.
-        MCInput::SetEventLayer([](const SDL_Event& event)
-                               { return GameMenus() != nullptr && GameMenus()->HandleEvent(event); });
+        MCInput::SetEventLayer(
+            [](const SDL_Event& event)
+            {
+                if (GameMenus() == nullptr)
+                {
+                    return false;
+                }
+
+                // STAND-IN (menus stage 5, until menus-kit-fix's): a change of screen holds the player's clicks and
+                // keys until the next screen is in, as the old screens' are (MCScreenChange::HoldsInput).
+                if (GameMenus()->Showing() && MCScreenChange::HoldsInput() && IsPlayerEvent(event))
+                {
+                    return true;
+                }
+
+                return GameMenus()->HandleEvent(event);
+            });
 
         // Their draws over the game's picture, recorded as each frame is presented.
         if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
@@ -157,6 +193,28 @@ std::expected<std::reference_wrapper<MCRmlMenus>, std::string> MCRmlMenus::Start
 MCOptionalRef<MCRmlMenus> MCRmlMenus::Running()
 {
     return GameMenus() != nullptr ? MCOptionalRef<MCRmlMenus>(*GameMenus()) : std::nullopt;
+}
+
+std::expected<std::reference_wrapper<MCRmlMenus>, std::string> MCRmlMenus::ForGame()
+{
+    if (GameMenus() != nullptr)
+    {
+        // HD art as the game draws it now (Preferences may have changed it since).
+        GameMenus()->SetHd(MCHdArt::Active());
+        return std::ref(*GameMenus());
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+
+    if (display == nullptr)
+    {
+        return std::unexpected("the game has no display for the menus");
+    }
+
+    int width = 0;
+    int height = 0;
+    SDL_GetWindowSizeInPixels(&display->Window(), &width, &height);
+    return Start(MCOptions{.Width = width, .Height = height, .Hd = MCHdArt::Active()});
 }
 
 void MCRmlMenus::Stop()

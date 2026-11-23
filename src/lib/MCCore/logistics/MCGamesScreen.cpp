@@ -264,7 +264,6 @@ void MCGamesScreen::MakeModels(Rml::Context& context)
     model.List("pick_players", _PickPlayers, std::pair{"text", &MCPlayer::Text});
     model.Value("counts", _Counts);
     model.Value("empty", _Empty);
-    model.Value("busiest", _Busiest);
     model.Value("retry", _Retry);
     model.Value("update", _Update);
     model.Value("picked", _PickedRow);
@@ -503,7 +502,6 @@ void MCGamesScreen::ShowList()
     }
 
     std::string empty;
-    std::string busiest;
 
     switch (state)
     {
@@ -529,8 +527,8 @@ void MCGamesScreen::ShowList()
         {
             if (rows.empty())
             {
+                // "No open games." alone: no busiest hours until there's enough to go by (the user, 23 Nov).
                 empty = _Where == MCGamesWhere::Internet ? NoGamesText : NoLanGamesText;
-                busiest = _Where == MCGamesWhere::Internet ? _List.Busiest() : std::string();
             }
 
             break;
@@ -562,7 +560,6 @@ void MCGamesScreen::ShowList()
     changed |= Keep(_Rows, std::move(rows));
     changed |= Keep(_Counts, std::move(counts));
     changed |= Keep(_Empty, std::move(empty));
-    changed |= Keep(_Busiest, std::move(busiest));
     changed |= Keep(_Retry, retry);
     changed |= Keep(_Update, update);
     changed |= Keep(_PickedRow, picked);
@@ -572,7 +569,6 @@ void MCGamesScreen::ShowList()
         _Model->Changed("games");
         _Model->Changed("counts");
         _Model->Changed("empty");
-        _Model->Changed("busiest");
         _Model->Changed("retry");
         _Model->Changed("update");
         _Model->Changed("picked");
@@ -698,7 +694,6 @@ MCGamesScreen::MCSeen MCGamesScreen::Seen() const
 {
     MCSeen shown{.Counts = _Counts,
                  .Empty = _Rows.empty() ? _Empty : std::string(),
-                 .Busiest = _Busiest,
                  .Retry = _Retry,
                  .Update = _Update,
                  .Picked = _PickedRow,

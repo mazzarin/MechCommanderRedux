@@ -368,11 +368,6 @@ std::optional<std::pair<int32_t, int32_t>> MCGamesList::Counts() const
     return std::pair{_List->Listing()->Online, _List->Listing()->InGames};
 }
 
-std::string MCGamesList::Busiest() const
-{
-    return _List != nullptr ? MCBusiestText(_List->Busiest(), MCLocalUtcOffset()) : std::string();
-}
-
 // ---- joining and hosting ----
 
 bool MCGameJoin::Begin(MCAsk ask)

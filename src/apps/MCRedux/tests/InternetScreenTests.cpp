@@ -388,14 +388,13 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     REQUIRE(SettleUntil(OnAccess));
     CHECK(list.ClosedByGame);
 
-    // No open games: it says so, and when players are usually on.
+    // No open games: it says so, alone (the week's busiest hours heard, not shown).
     Click(InternetX, InternetY);
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     REQUIRE(list.Opened.size() == 2);
     list.Send(EmptyListingBusySaturday());
     REQUIRE(SettleUntil(CountsAre("3 online, 0 in games")));
     CHECK_EQ(screen.Seen().Empty, "No open games.");
-    CHECK(!screen.Seen().Busiest.empty());
     CHECK(!screen.Seen().CanJoin);
     SaveShownShot("internet 5 empty");
 }
@@ -651,12 +650,10 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     CheckMenusFrames("internet message", {0x2b5bc54f, 0xb371a806, 0x62efe85c});
     PressDialogOk();
 
-    // No games (the busiest hours' line, in the player's own time, checked but not drawn: it differs by machine).
-    list.Send(Listing(Json::array(), 3, 0));
+    // No games: "No open games." alone, the week's busiest hours heard but not drawn.
+    list.Send(EmptyListingBusySaturday());
     REQUIRE(SettleUntil(CountsAre("3 online, 0 in games")));
     CheckMenusFrames("internet empty", {0x282b6b38, 0xf8d9b2c8, 0x3107f607});
-    list.Send(EmptyListingBusySaturday());
-    REQUIRE(SettleUntil([&] { return !screen.Seen().Busiest.empty(); }));
     CHECK_EQ(MenusProblems(), "");
 
     // LAN: no games on this network, then its HOST GAME's window.

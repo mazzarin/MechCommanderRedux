@@ -73,8 +73,6 @@ public:
         std::string Counts;
         /// <summary>The list's line when it has no rows ("No open games."), empty with rows.</summary>
         std::string Empty;
-        /// <summary>The busiest hours beside "No open games.".</summary>
-        std::string Busiest;
         bool Retry = false;
         bool Update = false;
         /// <summary>Each row's columns joined by " | ": "Steel Rain | 2/6 | Europe | Open".</summary>
@@ -196,7 +194,6 @@ private:
     std::vector<MCRow> _Rows;
     std::string _Counts;
     std::string _Empty;
-    std::string _Busiest;
     bool _Retry = false;
     bool _Update = false;
     int _PickedRow = -1;

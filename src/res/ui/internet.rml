@@ -41,7 +41,6 @@
                         </div>
                         <div class="empty" id="empty" data-if="games.size == 0">
                             <div class="text">{{empty}}</div>
-                            <div class="row gap8" data-if="busiest != ''"><div class="data grey caps">Most players are on {{busiest}}</div></div>
                             <div class="button small" data-if="retry" data-event-click="retry()">Retry</div>
                             <div class="button small" data-if="update" data-event-click="update()">Update</div>
                         </div>

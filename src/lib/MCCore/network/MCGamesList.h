@@ -2,7 +2,7 @@
 
 // Port-only (SPEC-menus.md's stage 3, "Models and views"): the games list, which LAN and INTERNET view: the games on
 // this network (DirectPlay's sessions, each with its players, read before joining) or the service's public games (its
-// list socket, its counts and the week's busiest hours), each game as the screens show it; and joining or hosting one,
+// list socket and its counts), each game as the screens show it; and joining or hosting one,
 // a job that moves along a frame at a time while the screen stays live and can be called off. Pulled out of the 1998
 // screens (the LAN screen, and the INTERNET screen in its layout) as they were remade. Every message from the service
 // is checked before it's used (network/MCInternetLobby).
@@ -135,8 +135,6 @@ public:
 
     /// <summary>The service's counts, once it has sent them: every copy online, and those in games.</summary>
     std::optional<std::pair<int32_t, int32_t>> Counts() const;
-    /// <summary>When most players are on, in this machine's time ("Fri to Sun, 7 to 11 PM"); empty before it's heard.</summary>
-    std::string Busiest() const;
 
 private:
     /// <summary>This network's games read again from the session manager (each with its players).</summary>

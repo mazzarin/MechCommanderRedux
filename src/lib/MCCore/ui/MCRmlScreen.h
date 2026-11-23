@@ -153,13 +153,16 @@ private:
     MCOptionalRef<MCRmlLayer> _Layer;
     /// <summary>RmlUi's (its context owns the document; the screen closes it).</summary>
     Rml::ElementDocument* _Document = nullptr;
-    /// <summary>The screen's listeners on its elements (an Rml::EventListener each), and what they listen to.</summary>
+    /// <summary>
+    /// The screen's listeners on its elements (an Rml::EventListener each), and what they listen to; shared, so an
+    /// action running when the screen is destroyed lives until it returns.
+    /// </summary>
     class MCAction;
     struct MCListening
     {
         Rml::Element* Element = nullptr;
         int Event = 0;
-        std::unique_ptr<MCAction> Action;
+        std::shared_ptr<MCAction> Action;
     };
 
     std::vector<MCListening> _Listening;

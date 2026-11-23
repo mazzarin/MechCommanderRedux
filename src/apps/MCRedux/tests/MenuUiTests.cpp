@@ -21,6 +21,8 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 
+#include <random>
+
 // Port-only (SPEC-menus.md, stage 2): the remade menus' building blocks (MCCore's ui/) proved on the probe screen
 // (src/res/ui/probe.rml), which no player sees: RmlUi's layout with the app's face, drawn on the software path the same
 // on every machine; the layout and legibility checks at every window the players' reports name; a resize; the keys; a
@@ -107,6 +109,7 @@ namespace
 
             Menus = std::move(*made);
             Menus->SetClock([] { return 0.0; });
+            Menus->Kit().KeepPlayed(true);
             Probe = Menus->Menus().CreateChild<MCRmlProbe>([](MCRmlProbe&) {});
 
             if (const auto opened = Probe->Open(); !opened)
@@ -267,6 +270,500 @@ TEST_CASE_ISOLATED("menus: the probe screen draws the same on every machine at 4
             probe.Drawn(ShotPath(std::format("menus_probe_{}x{}", frame.Window.Width, frame.Window.Height)));
         CHECK_EQ(std::format("{}x{}: {:#010x}", frame.Window.Width, frame.Window.Height, hash),
                  std::format("{}x{}: {:#010x}", frame.Window.Width, frame.Window.Height, frame.Hash));
+    }
+}
+
+namespace
+{
+    /// <summary>Where two pictures first differ (their sizes, or a pixel's bytes in each); nothing: the same bytes.</summary>
+    std::string PictureDifference(const SDL_Surface& first, const SDL_Surface& second)
+    {
+        if (first.w != second.w || first.h != second.h)
+        {
+            return std::format("{}x{} against {}x{}", first.w, first.h, second.w, second.h);
+        }
+
+        for (int y = 0; y < first.h; ++y)
+        {
+            const auto* a = static_cast<const uint8_t*>(first.pixels) + static_cast<ptrdiff_t>(y) * first.pitch;
+            const auto* b = static_cast<const uint8_t*>(second.pixels) + static_cast<ptrdiff_t>(y) * second.pitch;
+
+            for (int x = 0; x < first.w; ++x)
+            {
+                const size_t at = static_cast<size_t>(x) * PixelBytes;
+
+                if (std::memcmp(a + at, b + at, PixelBytes) != 0)
+                {
+                    return std::format("pixel {},{}: {:02x}{:02x}{:02x}{:02x} against {:02x}{:02x}{:02x}{:02x}", x, y,
+                                       a[at], a[at + 1], a[at + 2], a[at + 3], b[at], b[at + 1], b[at + 2], b[at + 3]);
+                }
+            }
+        }
+
+        return {};
+    }
+
+    /// <summary>The pixels the last draw of <paramref name="software"/> drew (its boxes' areas, summed).</summary>
+    int64_t ChangedArea(const MCUiSoftware& software)
+    {
+        int64_t area = 0;
+
+        for (const SDL_Rect& box : software.Changed())
+        {
+            area += static_cast<int64_t>(box.w) * static_cast<int64_t>(box.h);
+        }
+
+        return area;
+    }
+
+    /// <summary>The middle of <paramref name="element"/>'s border box, in window pixels.</summary>
+    Rml::Vector2f MiddleOf(Rml::Element& element)
+    {
+        return element.GetAbsoluteOffset(Rml::BoxArea::Border) + element.GetBox().GetSize() / 2.0f;
+    }
+}
+
+/// <summary>
+/// The software path draws again only the boxes a frame changes (MCUiSoftware), and its picture is the one a whole
+/// redraw gives, byte for byte: over the mouse moving down the list's rows, the list scrolled, a change of tab, the
+/// window opening (its veil over everything) and a hover in it, the window closing and the screen faded (its opacity
+/// stepped down and back). A hover draws again only a small part of the window.
+/// </summary>
+TEST_CASE_ISOLATED("menus: the software path's partial redraw gives a whole redraw's picture, byte for byte")
+{
+    constexpr MCWindowSize Window = FrameWindows[1];
+    constexpr int64_t WindowArea = static_cast<int64_t>(Window.Width) * Window.Height;
+    // A hover's redraw: under a tenth of the window (the rows' boxes).
+    constexpr int64_t HoverAreaMost = WindowArea / 10;
+    // Games enough for the list to scroll.
+    constexpr int ScrollingGames = 40;
+    MCHeadlessProbe probe(Window.Width, Window.Height);
+    REQUIRE_EQ(probe.Error, "");
+    probe.Probe->SetGames(MCRmlProbe::SampleGames(ScrollingGames));
+    MCUiSoftware kept;
+    MCUiSoftware whole;
+
+    // A step's settled frame drawn on the kept picture (only where it changed) and wholly, the two compared; the
+    // pixels the kept picture drew.
+    const auto drawn = [&](std::string_view step)
+    {
+        const std::shared_ptr<const MCUiDraws> draws = probe.Frames();
+        REQUIRE(draws != nullptr);
+        const auto keptDrawn = kept.Draw(*draws);
+        REQUIRE_EQ(keptDrawn.has_value() ? std::string() : keptDrawn.error(), "");
+        whole.Forget();
+        const auto wholeDrawn = whole.Draw(*draws);
+        REQUIRE_EQ(wholeDrawn.has_value() ? std::string() : wholeDrawn.error(), "");
+        CHECK_EQ(std::format("{}: {}", step, PictureDifference(*kept.Picture(), *whole.Picture())),
+                 std::format("{}: ", step));
+        return ChangedArea(kept);
+    };
+
+    CHECK_EQ(drawn("first"), WindowArea);
+    const std::vector<Rml::Element*> rows = probe.Rows();
+    REQUIRE(rows.size() > 3);
+
+    // The mouse's first move, onto the first row: the focus ring goes and the mouse's hints show.
+    const Rml::Vector2f first = MiddleOf(*rows[0]);
+    probe.MouseTo(first.x, first.y);
+    CHECK(drawn("the mouse's first move") > 0);
+
+    // On down the rows: each move restyles the row left and the row reached (the picked row looks the same hovered or
+    // not), and draws little.
+    for (size_t row = 1; row <= 3; ++row)
+    {
+        const Rml::Vector2f at = MiddleOf(*rows[row]);
+        probe.MouseTo(at.x, at.y);
+        const int64_t area = drawn(std::format("hover {}", row));
+        CHECK(area > 0);
+        CHECK(area < HoverAreaMost);
+    }
+
+    // The list scrolled a row and a little (the rows cut by its box), then back.
+    constexpr float PastRow = 3.0f;
+    Rml::Element& list = *probe.Document().GetElementById("list");
+    list.SetScrollTop(rows[1]->GetAbsoluteTop() - rows[0]->GetAbsoluteTop() + PastRow);
+    CHECK(drawn("scrolled") > 0);
+    list.SetScrollTop(0.0f);
+    drawn("scrolled back");
+
+    // The next tab.
+    probe.Key(SDLK_E);
+    CHECK(drawn("tab") > 0);
+
+    // The window, its veil over the whole screen; a hover on its LEAVE; closed.
+    probe.Document().GetElementById("window")->Focus(true);
+    probe.Key(SDLK_RETURN);
+    REQUIRE(static_cast<bool>(probe.Probe->Window()));
+    CHECK_EQ(drawn("window"), WindowArea);
+    Rml::Element* leave = probe.Probe->Window().Lock()->Document()->get().GetElementById("leave");
+    REQUIRE(leave != nullptr);
+    const Rml::Vector2f atLeave = MiddleOf(*leave);
+    probe.MouseTo(atLeave.x, atLeave.y);
+    CHECK(drawn("hover in the window") < HoverAreaMost);
+    probe.Key(SDLK_ESCAPE);
+    drawn("window closed");
+
+    // A fade: the screen's opacity stepped down, and back.
+    for (const char* opacity : {"0.5", "0.25"})
+    {
+        probe.Document().SetProperty("opacity", opacity);
+        drawn(std::format("opacity {}", opacity));
+    }
+
+    probe.Document().RemoveProperty("opacity");
+    drawn("opacity back");
+
+    // Nothing changed: nothing drawn.
+    CHECK_EQ(drawn("again"), 0);
+}
+
+namespace
+{
+    /// <summary>
+    /// The software path's draws drawn the plain way, for the tests: every rectangle a copy by SDL's software renderer (a
+    /// box its white texel scaled and coloured, a picture its texels scaled), other triangles by its SDL_RenderGeometry,
+    /// cut by the draw's scissor, the whole picture each time.
+    /// </summary>
+    class MCSdlPlain
+    {
+    public:
+        MCSdlPlain(int width, int height)
+            : _Surface(SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32))
+            , _Renderer(_Surface != nullptr ? SDL_CreateSoftwareRenderer(_Surface.get()) : nullptr)
+        {
+            _White = Texture(MCUiTexture{.Id = 0, .Width = 1, .Height = 1, .Pixels = {255, 255, 255, 255}});
+        }
+
+        ~MCSdlPlain()
+        {
+            _Textures.clear();
+            _White.reset();
+            _Renderer.reset();
+        }
+
+        MCSdlPlain(const MCSdlPlain&) = delete;
+        MCSdlPlain& operator=(const MCSdlPlain&) = delete;
+
+        const SDL_Surface& Draw(const MCUiDraws& draws)
+        {
+            SDL_Renderer* renderer = _Renderer.get();
+            SDL_SetRenderClipRect(renderer, nullptr);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+            SDL_RenderClear(renderer);
+
+            for (const MCUiDraw& draw : draws.Draws)
+            {
+                SDL_Texture* texture = _White.get();
+
+                if (draw.Texture != nullptr)
+                {
+                    auto& kept = _Textures[draw.Texture->Id];
+                    kept = kept != nullptr ? std::move(kept) : Texture(*draw.Texture);
+                    texture = kept.get();
+                }
+
+                SDL_SetRenderClipRect(renderer, draw.Scissor.has_value() ? &*draw.Scissor : nullptr);
+
+                for (const MCUiPiece& piece : MCUiPieces(draw))
+                {
+                    if (!piece.Quad.has_value())
+                    {
+                        constexpr Uint8 Full = 255;
+                        MCUiSdlTriangles(draw, piece, _Vertices);
+                        SDL_SetTextureColorMod(texture, Full, Full, Full);
+                        SDL_SetTextureAlphaMod(texture, Full);
+                        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+                        SDL_RenderGeometry(renderer, texture, _Vertices.data(), static_cast<int>(_Vertices.size()),
+                                           nullptr, 0);
+                        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+                        continue;
+                    }
+
+                    const MCUiQuad& quad = *piece.Quad;
+                    SDL_SetTextureColorMod(texture, quad.Color[0], quad.Color[1], quad.Color[2]);
+                    SDL_SetTextureAlphaMod(texture, quad.Color[3]);
+                    const auto toFloat = [](const SDL_Rect& rect)
+                    {
+                        return SDL_FRect{static_cast<float>(rect.x), static_cast<float>(rect.y),
+                                         static_cast<float>(rect.w), static_cast<float>(rect.h)};
+                    };
+
+                    const SDL_FRect target = toFloat(quad.Target);
+                    const std::optional<SDL_FRect> source =
+                        quad.Source.has_value() ? std::optional(toFloat(*quad.Source)) : std::nullopt;
+                    SDL_RenderTexture(renderer, texture, source.has_value() ? &*source : nullptr, &target);
+                }
+            }
+
+            REQUIRE(SDL_FlushRenderer(renderer));
+            return *_Surface;
+        }
+
+    private:
+        MCSdlHandle<SDL_Texture> Texture(const MCUiTexture& picture)
+        {
+            MCSdlHandle<SDL_Texture> made(SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32,
+                                                            SDL_TEXTUREACCESS_STATIC, picture.Width, picture.Height));
+            REQUIRE(made != nullptr);
+            REQUIRE(SDL_UpdateTexture(made.get(), nullptr, picture.Pixels.data(),
+                                      picture.Width * static_cast<int>(PixelBytes)));
+            SDL_SetTextureBlendMode(made.get(), SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+            SDL_SetTextureScaleMode(made.get(), picture.Smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+            return made;
+        }
+
+        MCSdlHandle<SDL_Surface> _Surface;
+        MCSdlHandle<SDL_Renderer> _Renderer;
+        MCSdlHandle<SDL_Texture> _White;
+        std::unordered_map<uint64_t, MCSdlHandle<SDL_Texture>> _Textures;
+        std::vector<SDL_Vertex> _Vertices;
+    };
+
+    /// <summary>
+    /// Random draws over a window: rectangles as RmlUi draws them (two triangles over four corners), boxes of one colour
+    /// and pictures (whole texels, scaled up, down or not, nearest or smooth); and triangles (a gradient's two, a
+    /// border's slanted edge, any, and two kinds SDL takes as a rectangle: a box of one colour between triangles, a right
+    /// triangle after one sharing two of its corners); some cut by a scissor, some partly outside the window, in
+    /// premultiplied colours (some opaque, some nothing).
+    /// </summary>
+    class MCRandomDraws
+    {
+    public:
+        MCRandomDraws(int width, int height) : _Width(width), _Height(height)
+        {
+            constexpr int Pictures = 6;
+            constexpr int PictureSizeMost = 48;
+
+            for (int i = 0; i < Pictures; ++i)
+            {
+                auto picture = std::make_shared<MCUiTexture>(MCUiTexture{
+                    .Id = static_cast<uint64_t>(i + 1),
+                    .Width = Between(1, PictureSizeMost),
+                    .Height = Between(1, PictureSizeMost),
+                    .Smooth = i % 2 == 0,
+                });
+
+                for (int texel = 0; texel < picture->Width * picture->Height; ++texel)
+                {
+                    const std::array<uint8_t, PixelBytes> color = Color();
+                    picture->Pixels.insert(picture->Pixels.end(), color.begin(), color.end());
+                }
+
+                _Pictures.push_back(std::move(picture));
+            }
+        }
+
+        /// <summary>A draw made anew: a rectangle, or (one in three) triangles.</summary>
+        MCUiDraw Draw()
+        {
+            constexpr int Kinds = 3;
+            MCUiDraw draw = Between(1, Kinds) == 1 ? Triangles() : Rectangle();
+            constexpr int OneIn = 4;
+
+            if (Between(1, OneIn) == 1)
+            {
+                draw.Scissor = SDL_Rect{Between(0, _Width / 2), Between(0, _Height / 2), Between(1, _Width / 2),
+                                        Between(1, _Height / 2)};
+            }
+
+            return draw;
+        }
+
+        int Between(int low, int high) { return std::uniform_int_distribution<int>(low, high)(_Random); }
+
+    private:
+        // Some past the window's edges.
+        static constexpr int Beyond = 40;
+        static constexpr int SizeMost = 400;
+
+        /// <summary>A place across and one down, some past the window's edges.</summary>
+        float Across() { return static_cast<float>(Between(-Beyond, _Width + Beyond)); }
+        float Down() { return static_cast<float>(Between(-Beyond, _Height + Beyond)); }
+
+        /// <summary>
+        /// Untextured triangles: a gradient's two, a border's slanted edge, any, or two SDL takes as a rectangle.
+        /// </summary>
+        MCUiDraw Triangles()
+        {
+            constexpr int Kinds = 5;
+            auto geometry = std::make_shared<MCUiGeometry>();
+            std::vector<MCUiVertex>& at = geometry->Vertices;
+            const auto corner = [this](float x, float y, const std::array<uint8_t, PixelBytes>& color)
+            { return MCUiVertex{.X = x, .Y = y, .Color = color}; };
+            const float x = Across();
+            const float y = Down();
+            const auto w = static_cast<float>(Between(1, SizeMost));
+            const auto h = static_cast<float>(Between(1, SizeMost));
+
+            switch (Between(1, Kinds))
+            {
+                case 1:
+                {
+                    // A vertical gradient: two colours, top and bottom.
+                    const std::array<uint8_t, PixelBytes> top = Color();
+                    const std::array<uint8_t, PixelBytes> bottom = Color();
+                    at = {corner(x, y, top), corner(x + w, y, top), corner(x + w, y + h, bottom),
+                          corner(x, y + h, bottom)};
+                    geometry->Indices = {0, 1, 2, 0, 2, 3};
+                    break;
+                }
+                case 2:
+                {
+                    // A border's top edge, its ends slanted, in one colour.
+                    constexpr int WidthMost = 8;
+                    const auto width = static_cast<float>(Between(1, WidthMost));
+                    const std::array<uint8_t, PixelBytes> color = Color();
+                    at = {corner(x, y, color), corner(x + w + 2 * width, y, color),
+                          corner(x + w + width, y + width, color), corner(x + width, y + width, color)};
+                    geometry->Indices = {0, 1, 2, 0, 2, 3};
+                    break;
+                }
+                case 3:
+                {
+                    // Any triangles, either way round, each corner its own colour.
+                    constexpr int Most = 4;
+
+                    for (int i = 0, count = Between(1, Most); i < count; ++i)
+                    {
+                        for (int k = 0; k < 3; ++k)
+                        {
+                            geometry->Indices.push_back(static_cast<int32_t>(at.size()));
+                            at.push_back(corner(Across(), Down(), Color()));
+                        }
+                    }
+
+                    break;
+                }
+                case 4:
+                {
+                    // A rectangle's lower left or upper right half after a triangle sharing an edge with its right
+                    // angle (SDL fills the whole rectangle and leaves the first triangle out: SDL_SW_RenderGeometryRaw
+                    // looks only at the corners it names) or its diagonal (SDL draws both, unless the first's third
+                    // corner is a right angle too), that third corner sometimes in the same colour.
+                    const std::array<uint8_t, PixelBytes> color = Color();
+                    const bool lowerLeft = Between(0, 1) == 1;
+                    const bool sameColour = Between(0, 1) == 1;
+                    at = {corner(x, y, color), lowerLeft ? corner(x, y + h, color) : corner(x + w, y, color),
+                          corner(Across(), Down(), sameColour ? color : Color()), corner(x + w, y + h, color)};
+                    geometry->Indices = Between(0, 1) == 1 ? std::vector<int32_t>{0, 1, 2, 0, 3, 1}
+                                                           : std::vector<int32_t>{0, 3, 2, 0, 3, 1};
+                    break;
+                }
+                default:
+                {
+                    // A box of one colour between two triangles: not a rectangle to the pieces, one to SDL.
+                    const std::array<uint8_t, PixelBytes> color = Color();
+                    at = {corner(Across(), Down(), Color()), corner(Across(), Down(), Color()), corner(x, y, color),
+                          corner(x + w, y, color),           corner(x + w, y + h, color),       corner(x, y + h, color),
+                          corner(Across(), Down(), Color())};
+                    geometry->Indices = {0, 1, 2, 2, 3, 4, 2, 4, 5, 5, 6, 0};
+                    break;
+                }
+            }
+
+            return MCUiDraw{.Geometry = std::move(geometry)};
+        }
+
+        /// <summary>A rectangle's draw: a box of one colour or a picture.</summary>
+        MCUiDraw Rectangle()
+        {
+            const int x = Between(-Beyond, _Width);
+            const int y = Between(-Beyond, _Height);
+            const int w = Between(1, SizeMost);
+            const int h = Between(1, SizeMost);
+            MCUiDraw draw;
+            std::array<float, 2> u{0.0f, 0.0f};
+            std::array<float, 2> v{0.0f, 0.0f};
+
+            if (Between(0, 1) == 0)
+            {
+                draw.Texture = _Pictures[static_cast<size_t>(Between(0, static_cast<int>(_Pictures.size()) - 1))];
+                const int across = draw.Texture->Width;
+                const int down = draw.Texture->Height;
+                const int left = Between(0, across - 1);
+                const int top = Between(0, down - 1);
+                const auto place = [](int texels, int size)
+                { return static_cast<float>(texels) / static_cast<float>(size); };
+                u = {place(left, across), place(Between(left + 1, across), across)};
+                v = {place(top, down), place(Between(top + 1, down), down)};
+            }
+
+            const std::array<uint8_t, PixelBytes> color = Color();
+            auto geometry = std::make_shared<MCUiGeometry>();
+            geometry->Vertices = {
+                {.X = static_cast<float>(x), .Y = static_cast<float>(y), .Color = color, .U = u[0], .V = v[0]},
+                {.X = static_cast<float>(x + w), .Y = static_cast<float>(y), .Color = color, .U = u[1], .V = v[0]},
+                {.X = static_cast<float>(x + w), .Y = static_cast<float>(y + h), .Color = color, .U = u[1], .V = v[1]},
+                {.X = static_cast<float>(x), .Y = static_cast<float>(y + h), .Color = color, .U = u[0], .V = v[1]},
+            };
+
+            geometry->Indices = {0, 1, 2, 0, 2, 3};
+            draw.Geometry = std::move(geometry);
+            return draw;
+        }
+
+        /// <summary>A premultiplied colour: opaque, nothing, or any alpha with channels no more than it.</summary>
+        std::array<uint8_t, PixelBytes> Color()
+        {
+            constexpr int Kinds = 4;
+            const int kind = Between(1, Kinds);
+            const int alpha = kind == 1 ? 255 : kind == 2 ? 0 : Between(0, 255);
+            const auto channel = [&] { return static_cast<uint8_t>(Between(0, alpha)); };
+            return {channel(), channel(), channel(), static_cast<uint8_t>(alpha)};
+        }
+
+        int _Width;
+        int _Height;
+        std::mt19937 _Random{1};
+        std::vector<std::shared_ptr<MCUiTexture>> _Pictures;
+    };
+}
+
+/// <summary>
+/// The software path's draws come out as SDL's software renderer draws them, byte for byte: boxes of one colour
+/// (MCUiFill, SDL's blend), pictures scaled once and copied after (SDL's scale) and untextured triangles (MCUiTriangle,
+/// SDL's), cut by scissors and the window's edges, drawn whole and then, as draws are taken away, changed and added,
+/// only where they changed.
+/// </summary>
+TEST_CASE_ISOLATED("menus: the software path's draws come out as SDL's renderer draws them, byte for byte")
+{
+    constexpr int Width = 640;
+    constexpr int Height = 480;
+    constexpr int Draws = 400;
+    constexpr int Changes = 12;
+    MCRandomDraws random(Width, Height);
+    MCUiDraws draws{.Width = Width, .Height = Height};
+
+    for (int i = 0; i < Draws; ++i)
+    {
+        draws.Draws.push_back(random.Draw());
+    }
+
+    MCUiSoftware software;
+    MCSdlPlain plain(Width, Height);
+    REQUIRE(software.Draw(draws).has_value());
+    CHECK_EQ(PictureDifference(*software.Picture(), plain.Draw(draws)), "");
+
+    for (int change = 0; change < Changes; ++change)
+    {
+        // A few draws taken away, a few changed, a few added.
+        constexpr int Each = 3;
+
+        for (int i = 0; i < Each; ++i)
+        {
+            draws.Draws.erase(draws.Draws.begin() + random.Between(0, static_cast<int>(draws.Draws.size()) - 1));
+            draws.Draws[static_cast<size_t>(random.Between(0, static_cast<int>(draws.Draws.size()) - 1))] =
+                random.Draw();
+            draws.Draws.insert(draws.Draws.begin() + random.Between(0, static_cast<int>(draws.Draws.size())),
+                               random.Draw());
+        }
+
+        REQUIRE(software.Draw(draws).has_value());
+        CHECK(software.Changed().size() > 0);
+        CHECK_EQ(std::format("change {}: {}", change, PictureDifference(*software.Picture(), plain.Draw(draws))),
+                 std::format("change {}: ", change));
     }
 }
 
@@ -440,6 +937,92 @@ TEST_CASE_ISOLATED("menus: the probe screen plays from the keys with the 1998 so
     CHECK(probe.Ringed());
     probe.MouseTo(1.0f, 1.0f);
     CHECK(!probe.Ringed());
+}
+
+/// <summary>
+/// A press that closes its own screen (the window's CANCEL, clicked or pressed by Enter, and Escape, its Back): the
+/// screen is destroyed at once, but it and the press's action are let go only once the press is done, so what the
+/// action does after the close is still there; then both are gone. The kit keeps no list of its sounds in the game.
+/// </summary>
+TEST_CASE_ISOLATED("menus: a press that closes its own screen finishes before the screen goes")
+{
+    // One menus at a time (RmlUi's): the probe's, then the game's.
+    {
+        MCHeadlessProbe probe(1280, 720);
+        REQUIRE_EQ(probe.Error, "");
+        probe.Frames();
+        MCRmlProbe& screen = *probe.Probe;
+
+        enum class MCPress
+        {
+            Click,
+            Enter,
+            Escape
+        };
+
+        for (const MCPress press : {MCPress::Click, MCPress::Enter, MCPress::Escape})
+        {
+            probe.Document().GetElementById("window")->Focus(true);
+            probe.Key(SDLK_RETURN);
+            const std::weak_ptr<MCRmlScreen> window = screen.Window().Lock();
+            REQUIRE(!window.expired());
+            REQUIRE_EQ(probe.Focused(), "cancel");
+            Rml::Element* cancel = window.lock()->Document()->get().GetElementById("cancel");
+            REQUIRE(cancel != nullptr);
+
+            // The window's Back (CANCEL's and Escape's) closes it, then looks at itself and at what it holds.
+            auto held = std::make_shared<int>(0);
+            const std::weak_ptr<int> heldWatch = held;
+            bool destroyedInside = false;
+            bool heldInside = false;
+            window.lock()->Back =
+                [&closing = *window.lock(), held = std::move(held), &heldWatch, &destroyedInside, &heldInside]
+            {
+                closing.Close();
+                destroyedInside = closing.WasDestroyed();
+                heldInside = !heldWatch.expired() && *held == 0;
+            };
+
+            switch (press)
+            {
+                case MCPress::Click:
+                    cancel->Click();
+                    break;
+                case MCPress::Enter:
+                    probe.Key(SDLK_RETURN);
+                    break;
+                case MCPress::Escape:
+                    probe.Key(SDLK_ESCAPE);
+                    break;
+            }
+
+            CHECK(destroyedInside);
+            CHECK(heldInside);
+            CHECK(window.expired());
+            CHECK(heldWatch.expired());
+            probe.Frames(1);
+            REQUIRE(probe.Menus->Menus().Top().has_value());
+            CHECK_EQ(&probe.Menus->Menus().Top()->get(), static_cast<MCRmlScreen*>(&screen));
+        }
+    }
+
+    // In the game (no test asking to keep them) the sounds are played, not kept.
+    int played = 0;
+    auto made = MCRmlMenus::Create(MCRmlMenus::MCOptions{.Width = 1280,
+                                                         .Height = 720,
+                                                         .MissionUnit = MCRmlMenus::MenusUnit,
+                                                         .Sound = [&played](uint32_t) { ++played; }});
+    REQUIRE(made.has_value());
+    const std::unique_ptr<MCRmlMenus> menus = std::move(*made);
+    menus->SetClock([] { return 0.0; });
+    const MCGuiHandle<MCRmlProbe> quiet = menus->Menus().CreateChild<MCRmlProbe>([](MCRmlProbe&) {});
+    REQUIRE(quiet->Open().has_value());
+    menus->Frame();
+    menus->HandleEvent(KeyEvent(SDL_EVENT_KEY_DOWN, SDLK_E, SDL_KMOD_NONE));
+    menus->HandleEvent(KeyEvent(SDL_EVENT_KEY_UP, SDLK_E, SDL_KMOD_NONE));
+    menus->Frame();
+    CHECK_EQ(played, 1);
+    CHECK(menus->Kit().Played().empty());
 }
 
 /// <summary>
@@ -790,6 +1373,8 @@ namespace
 /// into the folder. Then it times <c>--rml-frames</c> frames (200 by default) without vsync, the mouse moving down the
 /// list's rows (each frame restyles two): the menus' layout and recording a frame, the present with their draws and
 /// without, and their draws drawn alone and read back; and the present's parts from a frame log beside the picture.
+/// On the software path also a redraw's time (the boxes changed) and a whole picture's (the median of
+/// <c>--rml-whole</c>, 20 by default).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen")
 {
@@ -874,6 +1459,8 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
     MCFrameLog::NextFrame();
     MCFrameLog::StartTally();
 
+    std::shared_ptr<const MCUiDraws> lastDraws;
+
     for (int32_t frame = 0; frame < frames; ++frame)
     {
         MCFrameLog::NextFrame();
@@ -881,6 +1468,7 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
         MCInput::HandleEvent(MouseAt(*display, rowsX, y));
         const uint64_t start = SDL_GetPerformanceCounter();
         const std::shared_ptr<const MCUiDraws> draws = menus.FrameFor(width, height);
+        lastDraws = draws;
         const uint64_t laid = SDL_GetPerformanceCounter();
         display->SetOverlay(draws);
         REQUIRE(display->Present(false).has_value());
@@ -927,6 +1515,38 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
     MCFrameLog::Close();
     std::cout << std::format("  the present's parts, ms a frame, with the menus: {}; without: {}\n",
                              PresentParts(withParts, frames), PresentParts(withoutParts, frames));
+
+    // The software path: a redraw's time (only the boxes changed), and a whole picture's drawn on the CPU.
+    if (software && redraws > 0 && lastDraws != nullptr)
+    {
+        const auto drawPart = std::ranges::find(withParts.PartsMs, std::string("present.menus.draw"),
+                                                &std::pair<std::string, double>::first);
+        const double redrawMs = drawPart != withParts.PartsMs.end() ? drawPart->second / redraws : 0.0;
+        constexpr int32_t DefaultWholeRedraws = 20;
+        int32_t wholeRedraws = DefaultWholeRedraws;
+
+        if (const std::optional<std::string_view> option = MCTest::Option("rml-whole"); option.has_value())
+        {
+            std::from_chars(option->data(), option->data() + option->size(), wholeRedraws);
+        }
+
+        MCUiSoftware whole;
+        std::vector<double> wholeMs;
+
+        for (int32_t i = 0; i < std::max(wholeRedraws, 1); ++i)
+        {
+            whole.Forget();
+            const uint64_t start = SDL_GetPerformanceCounter();
+            REQUIRE(whole.Draw(*lastDraws).has_value());
+            wholeMs.push_back(Milliseconds(start, SDL_GetPerformanceCounter()));
+        }
+
+        std::ranges::sort(wholeMs);
+        std::cout << std::format(
+            "  the software path: a redraw {:.3f} ms (of {}, the boxes changed, uploaded); a whole "
+            "picture drawn {:.3f} ms (the median of {})\n",
+            redrawMs, redraws, wholeMs[wholeMs.size() / 2], wholeMs.size());
+    }
 
     GHdArt = 0;
     MCHdArt::SetPackFolder({});

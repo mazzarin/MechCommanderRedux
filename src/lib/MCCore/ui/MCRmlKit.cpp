@@ -159,7 +159,10 @@ MCRmlKit::~MCRmlKit() = default;
 
 void MCRmlKit::Play(uint32_t sample)
 {
-    _Played.push_back(sample);
+    if (_KeepPlayed)
+    {
+        _Played.push_back(sample);
+    }
 
     if (_Sound)
     {

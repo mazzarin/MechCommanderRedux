@@ -1,0 +1,18 @@
+/* Port-only (SPEC-menus.md, stage 2): the probe's own places, over the look (look.rcss). */
+
+.content { padding: 16dp 0 8dp 0; }
+#panels { margin-top: 8dp; gap: 8dp; align-items: stretch; }
+#settings { flex: 0 0 196dp; }
+#art { flex: 0 0 176dp; }
+.setting { margin-bottom: 12dp; }
+.setting > .data { margin-bottom: 4dp; }
+#games .scroll-box { flex: 1 1 0; min-height: 64dp; }
+.cell.map { width: 120dp; }
+.cell.players { width: 64dp; }
+.picture { width: 152dp; height: 114dp; margin-bottom: 6dp; decorator: image(art:mm_bkgd contain center center); }
+#foot { margin-top: 8dp; gap: 8dp; }
+
+/* A 4:3 or 5:4 window: the art's panel goes, the settings and the games share the room. */
+@media (max-aspect-ratio: 3/2) {
+    #art { display: none; }
+}

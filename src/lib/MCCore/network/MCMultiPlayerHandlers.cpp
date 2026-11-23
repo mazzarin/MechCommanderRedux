@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCLobbyUpdate.h"
@@ -415,7 +417,8 @@ void HandleAppSwitchScreen(uint32_t, std::span<const uint8_t> msg)
 {
     if (ReadLinkupMessage<MCMPTwoLongMessage>(msg).Value1 == 1 && GlobalLog() != nullptr)
     {
-        GlobalLog()->SetUpSessionScreen();
+        // Port-only (SPEC-menus.md's stage 2): set up at once, shown through the flow, with the one fade.
+        MCMenuScreens::OpenRoom("room");
     }
 }
 
@@ -1382,10 +1385,15 @@ namespace
             WhackTimer = true;
         }
 
-        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-        GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
-        GlobalLog()->LogisticsState = 1;
-        GlobalLog()->ShowLogScreen(true, true);
+        // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
+        MCScreenFlow::Change("main menu",
+                             []
+                             {
+                                 GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+                                 GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
+                                 GlobalLog()->LogisticsState = 1;
+                                 GlobalLog()->ShowLogScreen(true, true);
+                             });
         game.LeaveSession();
     }
 }
@@ -1412,6 +1420,10 @@ void HandleLocalPlayerRemoved()
     MCMultiPlayer& game = Game();
     LastConnectionType = game.SessionManager->CurrentConnection;
 
+    // Port-only (SPEC-menus.md's stage 2): a launcher's guest, its room the stack's end, says why the game ends
+    // ("BOB CLOSED THE GAME."); its OK ends the game, as the original's message's did.
+    const std::string line = LaunchedFromLobby && !game.IsHost ? MCRoomEnd::GuestLine() : LoadGameString(0x369, 0xfe);
+
     // Port-only (Redux HD): at the results the battle is over, and a game the menus took to its room goes back to its
     // games screen, saying why (network/MCRoomEnd.h).
     if (MCRoomEnd::SessionLost())
@@ -1430,7 +1442,7 @@ void HandleLocalPlayerRemoved()
         Mission()->EndScenario();
     }
 
-    ShowOkDialog(*GlobalLog()->MessageDialog, LoadGameString(0x369, 0xfe), LostConnectionDialogExit);
+    ShowOkDialog(*GlobalLog()->MessageDialog, line, LostConnectionDialogExit);
 }
 
 void TakeHeldSessionLoss()

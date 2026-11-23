@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "network/MCLobbyUpdate.h"
 #include "gui/MCGuiStartup.h"
 #include "linkup/MCFidpPlayer.h"
@@ -376,11 +378,16 @@ namespace
     /// <summary>The room's waiting screen, as a lobby's start shows it (its button ends the game).</summary>
     void ShowWaitingScreen()
     {
-        MCLogistics& logistics = *GlobalLog();
-        logistics.CurrentScreen()->ShowGuiWindow(false);
-        logistics.SetCurrentScreen(logistics.ConnectScreen);
-        logistics.LogisticsState = WaitingState;
-        logistics.ShowLogScreen(true, true);
+        // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
+        MCScreenFlow::Change("waiting",
+                             []
+                             {
+                                 MCLogistics& logistics = *GlobalLog();
+                                 logistics.CurrentScreen()->ShowGuiWindow(false);
+                                 logistics.SetCurrentScreen(logistics.ConnectScreen);
+                                 logistics.LogisticsState = WaitingState;
+                                 logistics.ShowLogScreen(true, true);
+                             });
     }
 
     /// <summary>
@@ -545,7 +552,10 @@ namespace
 
             DestroyConnectStatusWindow();
             // Straight into the room, which its host shows again with this guest in it.
-            GlobalLog()->SetUpSessionScreen();
+            // Port-only (SPEC-menus.md's stage 2): through the flow, the room landing where a launcher's (or the
+            // menus') room is.
+            MCScreenFlow::Land(MCMenuScreens::RoomStack());
+            MCMenuScreens::OpenRoom("room");
             return;
         }
 
@@ -1100,10 +1110,17 @@ auto MCLobbyUpdate::JoinFailed() -> void
     if (LobbyLaunchArgs.FromMenus)
     {
         BackToMenus();
-        GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
-        ShowInternetScreen();
-        GlobalLog()->ShowLogScreen(true, true);
-        ShowMenuMessage(text);
+        // Port-only (SPEC-menus.md's stage 2): through the flow, landing on INTERNET with MULTIPLAYER ACCESS and the
+        // main menu under it.
+        MCScreenFlow::Land(MCMenuScreens::GamesStack(true, false));
+        MCScreenFlow::Change("internet",
+                             [text]
+                             {
+                                 GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
+                                 ShowInternetScreen();
+                                 GlobalLog()->ShowLogScreen(true, true);
+                                 ShowMenuMessage(text);
+                             });
         return;
     }
 

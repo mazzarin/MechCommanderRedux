@@ -686,42 +686,47 @@ namespace
             uint32_t Expected;
         };
 
+        // Port-only (SPEC-menus.md's stage 2, 23 Nov 2026): NEW CAMPAIGN is a change of screen through the flow, its
+        // fade drawn on frames of its own (the palette's fade ran in a loop of its own), so the tests' clock moves
+        // differently: from the briefing on only the clock's seconds (and the briefing's movie frame) differ from the
+        // frames before (every frame 0x0a3f55ec, 0x4cf80294 on the GPU; every present 0x98c24128, 0x600d1763).
+
         // The GPU's frames where they differ: the darkened rows and the briefing box are a translate polygon, which the
         // GPU blends (AlphaPal's colours) instead of mapping the indices, so the indices read back there are the ones
         // under the blend. The mirror test checks every other pixel against the software renderer.
         const std::map<std::string_view, uint32_t> gpuExpected = {
-            {"briefing", 0xedf1c712u},
-            {"repair", 0x86494ea8u},
-            {"briefing again", 0x9283c509u},
-            {"briefing, mission tab", 0x910061d7u},
-            {"briefing, deploy", 0x7ad0a197u},
-            {"briefing, deploy second", 0x6bb48f60u},
-            {"briefing, hover", 0x424c8518u},
-            {"briefing, slot to slot", 0xd5dce922u},
-            {"briefing, onto a unit", 0xb7f5a906u},
-            {"briefing, box list scroll", 0x4b19056au},
-            {"briefing, back to pane", 0x23a19455u},
-            {"briefing, deploy again", 0xccbb003du},
-            {"repair again", 0x439473e2u},
-            {"repair, payload", 0x87cb765eu},
-            {"repair, second mech", 0x9c73975au},
-            {"repair, component info", 0x63c55b33u},
-            {"repair, weapon info", 0x87299c63u},
-            {"repair, mech info", 0x90a58371u},
-            {"repair, weapon off", 0xd2a02512u},
-            {"repair, mount laser", 0x6ac823c3u},
-            {"repair, pilots tab", 0xb0ca2b08u},
-            {"repair, pilot info", 0xa92d2f68u},
-            {"repair, vehicles tab", 0xe49639efu},
-            {"repair, mechs tab", 0xfc995c38u},
-            {"repair, mech row info", 0x4a729b92u},
-            {"repair, mech into force", 0xc54c6411u},
-            {"repair, select first", 0x822916a7u},
-            {"repair, mech out", 0xd85d8be8u},
-            {"repair, weapon list scroll", 0x45ae178au},
-            {"repair, first mech out", 0x5af140cbu},
-            {"briefing after repair", 0x6beaaa33u},
-            {"briefing, unit out of slot", 0x51b8fdeeu},
+            {"briefing", 0xaadfead9u},
+            {"repair", 0xf3f62504u},
+            {"briefing again", 0x885d7189u},
+            {"briefing, mission tab", 0x9283c509u},
+            {"briefing, deploy", 0x57766579u},
+            {"briefing, deploy second", 0x0902cc4cu},
+            {"briefing, hover", 0x5e8237bcu},
+            {"briefing, slot to slot", 0xb554a65eu},
+            {"briefing, onto a unit", 0x2bf39850u},
+            {"briefing, box list scroll", 0xc1099574u},
+            {"briefing, back to pane", 0x48da1909u},
+            {"briefing, deploy again", 0x73ea3f9eu},
+            {"repair again", 0x9414f0c0u},
+            {"repair, payload", 0x6c58c107u},
+            {"repair, second mech", 0xccb3194eu},
+            {"repair, component info", 0x7592765bu},
+            {"repair, weapon info", 0x22504c63u},
+            {"repair, mech info", 0x6cd08e4fu},
+            {"repair, weapon off", 0x8813dc44u},
+            {"repair, mount laser", 0x053e8f6bu},
+            {"repair, pilots tab", 0x6d500d1du},
+            {"repair, pilot info", 0x0c921795u},
+            {"repair, vehicles tab", 0x23cfb671u},
+            {"repair, mechs tab", 0xe7400e9cu},
+            {"repair, mech row info", 0x853ec87au},
+            {"repair, mech into force", 0x16033c0cu},
+            {"repair, select first", 0xdf7a59f9u},
+            {"repair, mech out", 0x748527f6u},
+            {"repair, weapon list scroll", 0x23483332u},
+            {"repair, first mech out", 0x3a15c850u},
+            {"briefing after repair", 0x4172eab1u},
+            {"briefing, unit out of slot", 0x6ffea943u},
         };
 
         const Step steps[] = {
@@ -742,22 +747,22 @@ namespace
                  Cancel();
              },
              0xe30aef7bu},
-            {"briefing", [] { NewCampaign(); }, 0xbcd2ec30u},
-            {"purchase", [] { GlobalLog()->SetUpPurchaseScreen(true); }, 0x7e077fadu},
-            {"purchase, pilots", [] { GlobalLog()->PurchaseScreen->SetUpPilotInv(true, true); }, 0x4ae27598u},
-            {"purchase, components", [] { GlobalLog()->PurchaseScreen->SetUpCompInv(true, true); }, 0x62910f9cu},
-            {"purchase, mechs", [] { GlobalLog()->PurchaseScreen->SetUpMechInv(true, true); }, 0x2ef60e5eu},
-            {"repair", [] { GlobalLog()->SetUpRepairScreen(true); }, 0xd28d50c5u},
-            {"briefing again", [] { GlobalLog()->SetUpBriefingScreen(true); }, 0x042383bfu},
-            {"briefing, mission tab", [] { Click(202, 265); }, 0xd643b44du},
-            {"briefing, deploy", [] { Drag(40, 385, 245, 60); }, 0x9339c191u},
-            {"briefing, deploy second", [] { Drag(90, 385, 300, 60); }, 0x9a752797u},
-            {"briefing, hover", [] { SendMouse(7, 100, 60, false); }, 0x6391f04fu},
-            {"briefing, slot to slot", [] { Drag(250, 60, 250, 110); }, 0xc9dbbea0u},
-            {"briefing, onto a unit", [] { Drag(250, 110, 300, 60); }, 0x39358860u},
-            {"briefing, box list scroll", [] { Click(626, 467); }, 0xd8a55766u},
-            {"briefing, back to pane", [] { Drag(300, 60, 60, 400); }, 0xaec42c39u},
-            {"briefing, deploy again", [] { Drag(40, 385, 245, 60); }, 0xbcc4420du},
+            {"briefing", [] { NewCampaign(); }, 0x6079c72fu},
+            {"purchase", [] { GlobalLog()->SetUpPurchaseScreen(true); }, 0x322b3955u},
+            {"purchase, pilots", [] { GlobalLog()->PurchaseScreen->SetUpPilotInv(true, true); }, 0xb68af110u},
+            {"purchase, components", [] { GlobalLog()->PurchaseScreen->SetUpCompInv(true, true); }, 0x67c5820au},
+            {"purchase, mechs", [] { GlobalLog()->PurchaseScreen->SetUpMechInv(true, true); }, 0xe07b66f3u},
+            {"repair", [] { GlobalLog()->SetUpRepairScreen(true); }, 0xd3119f41u},
+            {"briefing again", [] { GlobalLog()->SetUpBriefingScreen(true); }, 0x1d06393fu},
+            {"briefing, mission tab", [] { Click(202, 265); }, 0x042383bfu},
+            {"briefing, deploy", [] { Drag(40, 385, 245, 60); }, 0xee69467bu},
+            {"briefing, deploy second", [] { Drag(90, 385, 300, 60); }, 0x4fd75943u},
+            {"briefing, hover", [] { SendMouse(7, 100, 60, false); }, 0x672b1af3u},
+            {"briefing, slot to slot", [] { Drag(250, 60, 250, 110); }, 0x813d3c0cu},
+            {"briefing, onto a unit", [] { Drag(250, 110, 300, 60); }, 0xaead37cau},
+            {"briefing, box list scroll", [] { Click(626, 467); }, 0x9dd6cea0u},
+            {"briefing, back to pane", [] { Drag(300, 60, 60, 400); }, 0x0bcb173du},
+            {"briefing, deploy again", [] { Drag(40, 385, 245, 60); }, 0x965e223au},
             {"purchase again",
              []
              {
@@ -767,56 +772,56 @@ namespace
                  MCTestGame::StockStore(2);
                  Click(100, 60);
              },
-             0x7949d30bu},
-            {"purchase, buy drag", [] { Drag(300, 80, 100, 200); }, 0x829d115au},
-            {"purchase, quantity up", [] { Click(378, 249); }, 0x58349157u},
-            {"purchase, accept", [] { Click(316, 299); }, 0x3ff329e7u},
-            {"purchase, inventory row", [] { Click(100, 120); }, 0xfdd71060u},
-            {"purchase, variant", [] { Click(393, 32); }, 0xcccc0558u},
-            {"purchase, scroll", [] { Click(631, 474); }, 0x112ee248u},
+             0x2a18e5e5u},
+            {"purchase, buy drag", [] { Drag(300, 80, 100, 200); }, 0x1d17b6fcu},
+            {"purchase, quantity up", [] { Click(378, 249); }, 0x4b037333u},
+            {"purchase, accept", [] { Click(316, 299); }, 0xc9a03745u},
+            {"purchase, inventory row", [] { Click(100, 120); }, 0x66f2e495u},
+            {"purchase, variant", [] { Click(393, 32); }, 0x6a55f13eu},
+            {"purchase, scroll", [] { Click(631, 474); }, 0x4d4a5516u},
             {"purchase, too poor",
              []
              {
                  ResourcePoints = 0;
                  Drag(300, 80, 100, 200);
              },
-             0x25dfbc93u},
-            {"purchase, message ok", [] { Click(366, 283); }, 0x8ec3109bu},
-            {"purchase, inventory info", [] { Click(60, 165); }, 0xfda8bafbu},
-            {"purchase, pilots tab", [] { Click(202, 180); }, 0x4d9d3575u},
+             0x9bdec923u},
+            {"purchase, message ok", [] { Click(366, 283); }, 0x4a3369f2u},
+            {"purchase, inventory info", [] { Click(60, 165); }, 0xb2803191u},
+            {"purchase, pilots tab", [] { Click(202, 180); }, 0xbaf68448u},
             {"purchase, components tab",
              []
              {
                  ResourcePoints = 100000;
                  Click(202, 265);
              },
-             0xe76ce289u},
-            {"purchase, component drag", [] { Drag(300, 80, 100, 200); }, 0xe85a82e2u},
-            {"purchase, component accept", [] { Click(316, 299); }, 0xb8424311u},
-            {"purchase, vehicles tab", [] { Click(202, 335); }, 0x95c3c146u},
-            {"purchase, vehicle drag", [] { Drag(300, 80, 100, 200); }, 0xb60a5029u},
-            {"purchase, vehicle accept", [] { Click(316, 299); }, 0x441a706du},
-            {"purchase, mechs tab", [] { Click(202, 125); }, 0xdc78c644u},
-            {"repair again", [] { Click(100, 78); }, 0xa345ababu},
-            {"repair, payload", [] { Click(560, 60); }, 0xe9a831a2u},
-            {"repair, second mech", [] { Click(300, 170); }, 0x440f6f6eu},
-            {"repair, component info", [] { SendMouse(7, 100, 160, false); }, 0x686410c7u},
-            {"repair, weapon info", [] { SendMouse(7, 560, 175, false); }, 0xb84e5197u},
-            {"repair, mech info", [] { SendMouse(7, 300, 200, false); }, 0xcc3e106du},
-            {"repair, weapon off", [] { Drag(560, 175, 100, 200); }, 0x40a5652du},
-            {"repair, mount laser", [] { Drag(100, 160, 300, 190); }, 0xdfeac413u},
-            {"repair, pilots tab", [] { Click(202, 180); }, 0xea90325bu},
-            {"repair, pilot info", [] { SendMouse(7, 100, 140, false); }, 0xb5025f17u},
-            {"repair, vehicles tab", [] { Click(202, 335); }, 0xabf60696u},
-            {"repair, mechs tab", [] { Click(202, 125); }, 0xb51cd8ddu},
-            {"repair, mech row info", [] { SendMouse(7, 100, 140, false); }, 0xceec3967u},
-            {"repair, mech into force", [] { Drag(100, 140, 300, 300); }, 0xd3a49146u},
-            {"repair, select first", [] { Click(300, 60); }, 0xb62690e0u},
-            {"repair, mech out", [] { Drag(260, 170, 100, 200); }, 0xc5511bb0u},
-            {"repair, weapon list scroll", [] { Click(560, 125); }, 0xe1d91675u},
-            {"repair, first mech out", [] { Drag(260, 60, 100, 200); }, 0x36d78e5cu},
-            {"briefing after repair", [] { GlobalLog()->SetUpBriefingScreen(true); }, 0x0680f0e1u},
-            {"briefing, unit out of slot", [] { Drag(300, 60, 60, 400); }, 0xc392dab4u},
+             0xa1c79fa9u},
+            {"purchase, component drag", [] { Drag(300, 80, 100, 200); }, 0xf1d09d00u},
+            {"purchase, component accept", [] { Click(316, 299); }, 0x47bb8e48u},
+            {"purchase, vehicles tab", [] { Click(202, 335); }, 0x3c15fc48u},
+            {"purchase, vehicle drag", [] { Drag(300, 80, 100, 200); }, 0xb46e9471u},
+            {"purchase, vehicle accept", [] { Click(316, 299); }, 0x41a74e01u},
+            {"purchase, mechs tab", [] { Click(202, 125); }, 0x717f9b92u},
+            {"repair again", [] { Click(100, 78); }, 0x8454de91u},
+            {"repair, payload", [] { Click(560, 60); }, 0xbc5da8afu},
+            {"repair, second mech", [] { Click(300, 170); }, 0x0bccf3f2u},
+            {"repair, component info", [] { SendMouse(7, 100, 160, false); }, 0xdd2483afu},
+            {"repair, weapon info", [] { SendMouse(7, 560, 175, false); }, 0x53750197u},
+            {"repair, mech info", [] { SendMouse(7, 300, 200, false); }, 0xba9395f3u},
+            {"repair, weapon off", [] { Drag(560, 175, 100, 200); }, 0x736543bbu},
+            {"repair, mount laser", [] { Drag(100, 160, 300, 190); }, 0x1b55df9bu},
+            {"repair, pilots tab", [] { Click(202, 180); }, 0xddd1006au},
+            {"repair, pilot info", [] { SendMouse(7, 100, 140, false); }, 0x404c9f5eu},
+            {"repair, vehicles tab", [] { Click(202, 335); }, 0x68332784u},
+            {"repair, mechs tab", [] { Click(202, 125); }, 0x9bc402d1u},
+            {"repair, mech row info", [] { SendMouse(7, 100, 140, false); }, 0x63e1d1ffu},
+            {"repair, mech into force", [] { Drag(100, 140, 300, 300); }, 0x821673bbu},
+            {"repair, select first", [] { Click(300, 60); }, 0x5309cfeeu},
+            {"repair, mech out", [] { Drag(260, 170, 100, 200); }, 0x98c20f9eu},
+            {"repair, weapon list scroll", [] { Click(560, 125); }, 0x1f77777du},
+            {"repair, first mech out", [] { Drag(260, 60, 100, 200); }, 0x989a68ffu},
+            {"briefing after repair", [] { GlobalLog()->SetUpBriefingScreen(true); }, 0x556c6d3bu},
+            {"briefing, unit out of slot", [] { Drag(300, 60, 60, 400); }, 0x8be41291u},
         };
 
         // --shots <folder>: a screenshot of each step, to see what a changed hash shows.
@@ -835,8 +840,8 @@ namespace
 
         MCTestGame::OnPresent = nullptr;
         SaveShot("logistics every frame", frames);
-        CHECK_EQ(frames, gpu ? 0x4cf80294u : 0x0a3f55ecu);
-        CHECK_EQ(presents, gpu ? 0x600d1763u : 0x98c24128u);
+        CHECK_EQ(frames, gpu ? 0x5899660fu : 0xf22117f7u);
+        CHECK_EQ(presents, gpu ? 0xfb0fb864u : 0x5b4eae67u);
         CheckGpuAlone(gpu);
     }
 }

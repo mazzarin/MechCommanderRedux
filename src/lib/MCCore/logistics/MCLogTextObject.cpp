@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
 #include "logistics/MCLogTextObject.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
@@ -125,7 +126,8 @@ auto MCLogTextObject::HandleEvent(MCGuiEvent& event) -> void
             }
             else if (key == 0x1b)
             {
-                Cancel();
+                // Port-only (SPEC-menus.md's stage 2): back one screen (the original's went to the main menu).
+                MCScreenFlow::Back();
             }
             else if (TextLength + 1 < BufferSize && IsValid(static_cast<char>(key)))
             {

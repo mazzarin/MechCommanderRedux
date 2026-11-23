@@ -6,6 +6,8 @@
 #include "camera/MCCamera.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCGuiSystem.h"
+#include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFastFileSet.h"
 #include "logistics/MCFileScrollPane.h"
@@ -512,7 +514,8 @@ namespace MCTestGame
             RunFrame(1.0f / 15.0f);
 
             if (Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
-                GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen && GuiSystem().SmackerWindow == nullptr)
+                GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen && GuiSystem().SmackerWindow == nullptr &&
+                !MCScreenChange::Running())
             {
                 return true;
             }
@@ -545,7 +548,7 @@ namespace MCTestGame
             if (Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
                 (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen ||
                  GlobalLog()->MessageDialog->IsShowing()) &&
-                GuiSystem().SmackerWindow == nullptr)
+                GuiSystem().SmackerWindow == nullptr && !MCScreenChange::Running())
             {
                 return true;
             }
@@ -698,6 +701,25 @@ namespace MCTestGame
 
             return true;
         }
+    }
+
+    bool FinishChanges()
+    {
+        // Ten seconds at 15 frames a second: a change's fades take 0.3 s, its work a few frames.
+        constexpr int32_t MostFrames = 150;
+
+        for (int32_t frame = 0; frame < MostFrames; frame++)
+        {
+            if (!MCScreenChange::Running() && !MCScreenFlow::Waiting())
+            {
+                return true;
+            }
+
+            RunFrame(1.0f / 15.0f);
+        }
+
+        std::cout << std::format("  the change of screen {} never ended\n", MCScreenChange::Name());
+        return false;
     }
 
     void RunFrame(float seconds)

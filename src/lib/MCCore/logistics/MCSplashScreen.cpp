@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "gui/MCScreenFlow.h"
 #include "logistics/MCSplashScreen.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCFileScrollPane.h"
@@ -26,21 +27,25 @@ namespace
     /// <summary>The function of a splash screen button's callback number (12..41), or none for another number.</summary>
     std::function<void()> SplashCallback(int32_t callback)
     {
+        // Port-only (SPEC-menus.md's stage 2): each change of screen through the flow, with the one fade; the screens'
+        // ways back go back one, as Escape does.
+        const auto back = [] { MCScreenFlow::Back(); };
+
         switch (callback)
         {
             case 12:
-                return ShowModemScreen;
+                return MCScreenFlow::Via("modem", ShowModemScreen);
             case 13:
-                return ShowSerialScreen;
+                return MCScreenFlow::Via("serial", ShowSerialScreen);
             case 14:
-                return ShowLanScreen;
+                return MCScreenFlow::Via("lan", ShowLanScreen);
             case 15:
                 // Port (Redux HD): the INTERNET screen (the original asked about the lobbies of 1999).
-                return ShowInternetScreen;
+                return MCScreenFlow::Via("internet", ShowInternetScreen);
             case 16:
-                return CancelToConnect;
+                return back;
             case 17:
-                return CancelToLan;
+                return MCScreenFlow::Via("lan games", CancelToLan);
             case 18:
                 return HostGame;
             case 19:
@@ -58,9 +63,9 @@ namespace
             case 25:
                 return Dial;
             case 35:
-                return CancelPrefs;
+                return back;
             case 36:
-                return WritePrefs;
+                return MCScreenFlow::Via("preferences saved", WritePrefs);
             case 37:
                 return CreateSerialSession;
             case 38:
@@ -68,7 +73,7 @@ namespace
             case 40:
                 return NewCampaign;
             case 41:
-                return SoloLoadScreen;
+                return MCScreenFlow::Via("solo missions", SoloLoadScreen);
             default:
                 return {};
         }

@@ -6,6 +6,7 @@
 // software renderer's, composites on the CPU and shows the result with SDL's 2D renderer.
 
 #include "platform/MCRenderer.h"
+#include "platform/MCUiDraws.h"
 
 /// <summary>Which renderer draws the game (PREFS "Renderer", <c>-renderer</c>).</summary>
 enum class MCRendererKind
@@ -147,6 +148,11 @@ struct MCFrame
     /// frames carry (<see cref="MCWindowFrame::Number"/>).
     /// </summary>
     uint64_t Number = 0;
+    /// <summary>
+    /// Port-only (SPEC-menus.md): the remade menus' draws, drawn over the whole window (bars included) as the last thing
+    /// before the frame is shown, at the window's pixels; none: nothing over the game's picture.
+    /// </summary>
+    std::shared_ptr<const MCUiDraws> Overlay;
 
     /// <summary>Whether the frame is composited at <see cref="OutputWidth"/> x <see cref="OutputHeight"/>.</summary>
     bool ScaledOutput() const { return OutputWidth > 0 && OutputHeight > 0; }
@@ -233,6 +239,19 @@ public:
     /// frame, its surfaces read back and resolved by the same rule. <see cref="MCFrame::Colors"/> isn't used.
     /// </summary>
     virtual std::expected<std::vector<uint8_t>, std::string> ReadScreen(const MCFrame& frame);
+
+    /// <summary>
+    /// Port-only: the menus' draws <paramref name="overlay"/> drawn as <see cref="Present"/> draws a frame's
+    /// <see cref="MCFrame::Overlay"/>, alone, over a transparent window: RGBA, premultiplied, its window's size (tests
+    /// and screenshots lay it over the frame's picture).
+    /// </summary>
+    virtual std::expected<std::vector<SDL_Color>, std::string> ReadOverlay(const MCUiDraws& overlay) = 0;
+
+    /// <summary>
+    /// Port-only, for the tests: how many times the menus' picture was drawn again (the software renderer keeps it while
+    /// the menus' draws are the same; the GPU draws them each frame, and counts nothing).
+    /// </summary>
+    virtual uint64_t OverlayRedraws() const { return 0; }
 
     /// <summary>
     /// A frame that isn't shown (the window is minimised): a GPU renderer still runs what was drawn for it, so what it

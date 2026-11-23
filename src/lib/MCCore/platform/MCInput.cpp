@@ -55,6 +55,8 @@ namespace
         /// <summary>Port-only (Redux HD): the mouse and keys held off the game, and what Escape does then (HoldInput).</summary>
         std::atomic<bool> Held = false;
         std::function<void()> HeldEscape;
+        /// <summary>Port-only: the layer over the game that sees the events first (SetEventLayer).</summary>
+        std::function<bool(const SDL_Event&)> Layer;
     };
 
     MCInputState& state()
@@ -883,6 +885,12 @@ namespace MCInput
             }
         }
 
+        // Port-only: the menus over the game take what they use (SetEventLayer).
+        if (input.Layer && input.Layer(event))
+        {
+            return;
+        }
+
         switch (event.type)
         {
             case SDL_EVENT_QUIT:
@@ -1041,6 +1049,12 @@ namespace MCInput
         input.LastClickPos = {};
         input.Held = false;
         input.HeldEscape = nullptr;
+        input.Layer = nullptr;
+    }
+
+    void SetEventLayer(std::function<bool(const SDL_Event&)> layer)
+    {
+        state().Layer = std::move(layer);
     }
 
     void HoldInput(bool held, std::function<void()> escape)

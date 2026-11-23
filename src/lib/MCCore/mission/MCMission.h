@@ -10,6 +10,7 @@
 class MCFitIniFile;
 class MCGuiCallback;
 class MCLogistics;
+struct MCLogisticsArt;
 class MCMissionResultsScreen;
 
 /// <summary>
@@ -197,6 +198,11 @@ public:
     /// <summary>The logistics phase (also <c>GlobalLog()</c>), while it exists.</summary>
     std::shared_ptr<MCLogistics> Logistics;
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2: the menus' data outlives a mission): the logistics' art, kept while a mission
+    /// plays, for the next logistics to take back (<see cref="MCLogistics::TakeArt"/>).
+    /// </summary>
+    std::shared_ptr<MCLogisticsArt> KeptLogisticsArt;
+    /// <summary>
     /// Nonzero when the scenario should end now, whatever the script says: 1 from the network, -1 when the player
     /// quits from the pause menu. <see cref="Run"/> then opens the results screen, and the objectives' points all
     /// count.
@@ -210,6 +216,12 @@ public:
 private:
     /// <summary>Starts a new logistics phase after a scenario.</summary>
     MCLogistics& StartLogistics();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): the campaign's last mission won and its two end movies played, the main menu
+    /// (MCX.EXE quit the game), fading in from black.
+    /// </summary>
+    void EndToMainMenu();
     /// <summary>Port-only: lets go of the mission's held art once its scenario has ended, unless <see cref="KeepsHoldPastEnd"/>.</summary>
     void LetGoHoldUnlessKept() const;
     /// <summary>

@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
 #include "main/MCLogistics.h"
 #include "lib/MCReleaseData.h"
 #include "gui/MCGuiFont.h"
@@ -289,7 +292,15 @@ auto MCLogistics::Start() -> void
     }
 
     _Started = true;
+    _Starting = true;
     SetGlobalLog(weak_from_this());
+    // Port-only (SPEC-menus.md's stage 2): the old screens as the flow's kinds.
+    MCMenuScreens::Register();
+    // Port-only (SPEC-menus.md's stage 2): the art a logistics before this one loaded, kept across the mission, when it
+    // was loaded from the files this one would load.
+    _ArtKey = {
+        .Switches = MCReleaseData::Switches(), .Numbered = MCHdArt::NumberedFolders(), .Pack = MCHdArt::PackFolder()};
+    const bool artReused = TakeBackArt();
     // Port-only: what the screens look for in the archives is noted while they're up, to be read ahead when they're
     // made again (MCMission::CloseResultsScreen).
     MCFilesAhead::StartNoting();
@@ -326,10 +337,14 @@ auto MCLogistics::Start() -> void
     MultiplayerInitialized = false;
     DefaultPlanningTime = 0xf0;
     PlanningTime = 0xf0;
-    InventoryIconPorts[0] = NewArtPort("logart\\lsciim.tga");
-    InventoryIconPorts[1] = NewArtPort("logart\\lsciip.tga");
-    InventoryIconPorts[2] = NewArtPort("logart\\lsciic.tga");
-    InventoryIconPorts[3] = NewArtPort("logart\\lsciiv.tga");
+
+    if (!artReused)
+    {
+        InventoryIconPorts[0] = NewArtPort("logart\\lsciim.tga");
+        InventoryIconPorts[1] = NewArtPort("logart\\lsciip.tga");
+        InventoryIconPorts[2] = NewArtPort("logart\\lsciic.tga");
+        InventoryIconPorts[3] = NewArtPort("logart\\lsciiv.tga");
+    }
 
     if (InDemo == 0)
     {
@@ -338,6 +353,8 @@ auto MCLogistics::Start() -> void
         ChatShown = false;
     }
 
+    // Port-only: the frame log's parts of the menus' start (the screens, then the art), as the way back times them.
+    std::optional<MCFrameLog::Scope> part(std::in_place, "menus.screens");
     // The screens are the screen window's children for good, hidden until shown; each is made where the original
     // initialised it (and so added it to the screen), so they keep the original's order there.
     // (Each handle is stored before the screen's Init, as the original stored the pointer first.)
@@ -566,10 +583,71 @@ auto MCLogistics::Start() -> void
     makeDialog(QuestionDialog);
     makeDialog(RefitDialog);
 
+    part.reset();
+    part.emplace("menus.art");
     ResourceBackPort = NewPort(0x3d, 0xc);
     VfxPaneWipe(ResourceBackPort->Frame(), 0x10);
     ClockBackPort = NewPort(0x32, 0xc);
     VfxPaneWipe(ClockBackPort->Frame(), 0x10);
+
+    if (!artReused)
+    {
+        LoadArtFiles();
+    }
+
+    // Ten remap tables: each maps every colour to 0xff (transparent) except one, which it recolours.
+    static constexpr std::array<std::pair<uint8_t, uint8_t>, 10> lookasideColors = {{{0xe8, 0xe8},
+                                                                                     {0xe8, 0xf2},
+                                                                                     {0xe8, 0xeb},
+                                                                                     {0xe8, 0xef},
+                                                                                     {0xe8, 0x13},
+                                                                                     {0xe6, 0xe6},
+                                                                                     {0xe6, 0xf1},
+                                                                                     {0xe6, 0xf4},
+                                                                                     {0xe6, 0xed},
+                                                                                     {0xe6, 0x13}}};
+
+    for (size_t i = 0; i < ShapeLookaside.size(); ++i)
+    {
+        ShapeLookaside[i].fill(0xff);
+        ShapeLookaside[i][lookasideColors[i].first] = lookasideColors[i].second;
+    }
+
+    MCRenderer::RegisterData(std::span(ShapeLookaside[0].data(), sizeof(ShapeLookaside)), MCDataKind::Tables);
+    AttachHdArt();
+
+    ReadGameSystemValues();
+
+    ReadyRoomTicks = 0;
+
+    if (LaunchedFromLobby == 0 || MultiPlayer() == nullptr || Turn != 0)
+    {
+        LogisticsState = 1;
+        SetCurrentScreen(MainScreen);
+    }
+    else
+    {
+        // Started from a lobby: straight to the ready room, whose cancel button quits the game. Port-only (the personal
+        // build): it shows while the lobby's join goes on; joined (or hosting), the session screen opens (MCMission).
+        SetCurrentScreen(ConnectScreen);
+        LogisticsState = 0xe;
+        ScreenElement<MCLogButton>(*ConnectScreen, 1)->Callback().SetExec([] { KillTheGame(); });
+    }
+
+    ShowLogScreen(false, false);
+    MakeAhead();
+    _Starting = false;
+
+    // Port-only (SPEC-menus.md's stage 2): the menus' first screen at the stack's bottom, at the game's start (the way
+    // back lands where it goes, MCScreenFlow::Land).
+    if (MCScreenFlow::Stack().empty() && MCScreenFlow::Landing().empty())
+    {
+        MCScreenFlow::Noted();
+    }
+}
+
+auto MCLogistics::LoadArtFiles() -> void
+{
     RepairBackPort = NewArtPort("logart\\lsrupm00.tga");
 
     MCShapeFile shapeFile;
@@ -598,27 +676,6 @@ auto MCLogistics::Start() -> void
         }
     }
 
-    // Ten remap tables: each maps every colour to 0xff (transparent) except one, which it recolours.
-    static constexpr std::array<std::pair<uint8_t, uint8_t>, 10> lookasideColors = {{{0xe8, 0xe8},
-                                                                                     {0xe8, 0xf2},
-                                                                                     {0xe8, 0xeb},
-                                                                                     {0xe8, 0xef},
-                                                                                     {0xe8, 0x13},
-                                                                                     {0xe6, 0xe6},
-                                                                                     {0xe6, 0xf1},
-                                                                                     {0xe6, 0xf4},
-                                                                                     {0xe6, 0xed},
-                                                                                     {0xe6, 0x13}}};
-
-    for (size_t i = 0; i < ShapeLookaside.size(); ++i)
-    {
-        ShapeLookaside[i].fill(0xff);
-        ShapeLookaside[i][lookasideColors[i].first] = lookasideColors[i].second;
-    }
-
-    MCRenderer::RegisterData(std::span(ShapeLookaside[0].data(), sizeof(ShapeLookaside)), MCDataKind::Tables);
-    AttachHdArt();
-
     RepairPorts[0] = NewArtPort("logart\\lsrupm03.tga");
     RepairPorts[1] = NewArtPort("logart\\lsrupm01.tga");
     RepairPorts[2] = NewArtPort("logart\\lsrupm04.tga");
@@ -641,27 +698,63 @@ auto MCLogistics::Start() -> void
                 NewArtPort(std::vformat(buttonNames[button], std::make_format_args(buttonStates[state])));
         }
     }
+}
 
-    ReadGameSystemValues();
+auto MCLogistics::TakeBackArt() -> bool
+{
+    const std::shared_ptr<MCLogisticsArt> art = std::exchange(_ReusedArt, nullptr);
 
-    ReadyRoomTicks = 0;
-
-    if (LaunchedFromLobby == 0 || MultiPlayer() == nullptr || Turn != 0)
+    if (art == nullptr || art->Key != _ArtKey)
     {
-        LogisticsState = 1;
-        SetCurrentScreen(MainScreen);
-    }
-    else
-    {
-        // Started from a lobby: straight to the ready room, whose cancel button quits the game. Port-only (the personal
-        // build): it shows while the lobby's join goes on; joined (or hosting), the session screen opens (MCMission).
-        SetCurrentScreen(ConnectScreen);
-        LogisticsState = 0xe;
-        ScreenElement<MCLogButton>(*ConnectScreen, 1)->Callback().SetExec([] { KillTheGame(); });
+        return false;
     }
 
-    ShowLogScreen(false, false);
-    MakeAhead();
+    static_cast<MCLogisticsArtFiles&>(*this) = std::move(art->Files);
+    ReuseLogArt(std::move(art->Loaded));
+    return true;
+}
+
+auto MCLogistics::TakeArt() -> std::shared_ptr<MCLogisticsArt>
+{
+    if (!_Started)
+    {
+        return nullptr;
+    }
+
+    auto art = std::make_shared<MCLogisticsArt>();
+    art->Key = _ArtKey;
+    art->Files = std::move(static_cast<MCLogisticsArtFiles&>(*this));
+    art->Loaded = TakeLogArt();
+    return art;
+}
+
+auto MCLogistics::ReuseArt(std::shared_ptr<MCLogisticsArt> art) -> void
+{
+    _ReusedArt = std::move(art);
+}
+
+auto MCLogistics::SetCurrentScreen(std::weak_ptr<MCLogObject> screen) -> void
+{
+    const std::shared_ptr<MCLogObject> before = _CurrentScreen.lock();
+    const std::shared_ptr<MCLogObject> after = screen.lock();
+    _CurrentScreen = std::move(screen);
+
+    if (_Starting || before == nullptr || after == nullptr || before == after || MCScreenChange::InPiece() ||
+        MCScreenChange::Dark() || !HasGuiSystem() || !GuiSystem().CanChangeScreen())
+    {
+        return;
+    }
+
+    // The campaign's screens slide between each other.
+    const auto campaign = [this](const std::shared_ptr<MCLogObject>& shown)
+    { return BriefingScreen.Is(*shown) || PurchaseScreen.Is(*shown) || RepairScreen.Is(*shown); };
+
+    if (campaign(before) && campaign(after))
+    {
+        return;
+    }
+
+    MCScreenFlow::NoteUnrouted(std::format("logistics state {}", LogisticsState));
 }
 
 namespace
@@ -1653,17 +1746,20 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
 auto MCLogistics::SetUpSessionScreen() -> int32_t
 {
-    NoteScreen("session");
+    ShowSessionScreen();
+    ReadySessionScreen();
+    return 0;
+}
 
+auto MCLogistics::ReadySessionScreen() -> void
+{
+    // Before the room's set-up, as the original went: the last session's lists go, and the chat's handler is set again
+    // by the set-up.
     if (MultiplayerInitialized)
     {
         DestroyMultiplayer();
     }
 
-    CurrentScreen()->ShowGuiWindow(false);
-    SetCurrentScreen(SessionScreen);
-    ShowLogScreen(true, true);
-    LogisticsState = 8;
     SessionScreen->Activate(false);
 
     // Port (Redux HD): an internet game's host passes its code on to its players.
@@ -1674,8 +1770,15 @@ auto MCLogistics::SetUpSessionScreen() -> int32_t
             Chat->AddLine(std::format(InternetCodeFormat, *code));
         }
     }
+}
 
-    return 0;
+auto MCLogistics::ShowSessionScreen() -> void
+{
+    NoteScreen("session");
+    CurrentScreen()->ShowGuiWindow(false);
+    SetCurrentScreen(SessionScreen);
+    ShowLogScreen(true, true);
+    LogisticsState = 8;
 }
 
 auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t

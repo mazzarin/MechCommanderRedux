@@ -122,23 +122,26 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     // 0xf143dbb4, 0x1a793ae4, 0xa6d18671, 0x4adcfb49, 0x74b8c0d0, 0x2d2edef8, 0x983fc7f9). Port-only (the personal
     // build): the room shows from hosting, with no GO (6 Nov 2026): only the clock's seconds differ from the frames
     // before (the tests' clock moves with each screen wipe's frames, and GO's wipe is gone: 0x0cc42d9a, 0x034cda12,
-    // 0xb3ef257d, 0x3b17d20d, 0xbcc94190, 0xec4846b8, 0x19fd5db9, 0x7342d1b5, 0xdfb618bc).
+    // 0xb3ef257d, 0x3b17d20d, 0xbcc94190, 0xec4846b8, 0x19fd5db9, 0x7342d1b5, 0xdfb618bc). Port-only (SPEC-menus.md's
+    // stage 2, 23 Nov 2026): the room shows through the flow's change of screen, its fade on frames of its own: only the
+    // clock's seconds differ from the frames before (0x1ec2ad5c, 0x835f1a11, 0x6a7049b5, 0xa372a3c5, 0x051c73ce,
+    // 0x18b1b165, 0x0f8826b3, 0x8ec3c175, 0x8bc88c88).
     const Step steps[] = {
-        {"session", [] {}, 0x1ec2ad5cu},
-        {"first name to team 1", [] { Drag(0x15, 0x16a, 0x100, 0x13a); }, 0x835f1a11u},
+        {"session", [] {}, 0xa081b283u},
+        {"first name to team 1", [] { Drag(0x15, 0x16a, 0x100, 0x13a); }, 0xdeffc2e8u},
         {"next name to team 2", [] { Drag(0x15, 0x16a, 0x1c4, 0x13a); }, 0x6a7049b5u},
         {"team 1 points up", [] { Click(0x106, 0x186); }, 0xa372a3c5u},
-        {"team 2 Inner Sphere", [] { Click(0x225, 0x112); }, 0x051c73ceu},
-        {"hover a light", [] { SendMouse(7, 0xdc, 5, false); }, 0x18b1b165u},
+        {"team 2 Inner Sphere", [] { Click(0x225, 0x112); }, 0x825d1740u},
+        {"hover a light", [] { SendMouse(7, 0xdc, 5, false); }, 0x2b2ce4ceu},
         {"chat typed",
          []
          {
              Click(0x40, 0x130);
              Type("hello there");
          },
-         0x0f8826b3u},
-        {"chat sent", [] { SendKey(0xd); }, 0x8ec3c175u},
-        {"name back off the team", [] { Drag(0x105, 0x13a, 0x40, 0x1c0); }, 0x8bc88c88u},
+         0x54a64500u},
+        {"chat sent", [] { SendKey(0xd); }, 0x49ead7a5u},
+        {"name back off the team", [] { Drag(0x105, 0x13a, 0x40, 0x1c0); }, 0x5fb91fd0u},
     };
 
     int32_t index = 0;
@@ -156,8 +159,9 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     MCTestGame::OnPresent = nullptr;
     // 0xa176a052 before the OB-129 fix (the first step's frames), 0x87982e74 before the control audit (2026-10-04: the
     // steps are unchanged; between them presses end at the release, and the ready lights' backing and the clock show
-    // at once; 0x8a6bba0e before the MATCH OPTIONS tab; 0xc78ee09f before the room showed from hosting, the clock's).
-    CHECK_EQ(presents, 0x5e48015bu);
+    // at once; 0x8a6bba0e before the MATCH OPTIONS tab; 0xc78ee09f before the room showed from hosting, the clock's;
+    // 0x5e48015b before the room showed through the flow's change).
+    CHECK_EQ(presents, 0xd7cf0a76u);
 }
 
 namespace

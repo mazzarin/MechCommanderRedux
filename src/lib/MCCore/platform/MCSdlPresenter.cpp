@@ -193,6 +193,10 @@ std::expected<void, std::string> MCSdlPresenter::Upload(const MCFrame& frame)
 
 std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
 {
+    // The frame log's parts: the frame, the menus over it and the show (with the log open, the renderer's queue is run
+    // at each part's end, so each part's draws count in it, not in the show).
+    std::optional<MCFrameLog::Scope> part(std::in_place, "present.frame");
+
     if (auto uploaded = Upload(frame); !uploaded)
     {
         return uploaded;
@@ -222,10 +226,28 @@ std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
         SDL_RenderTexture(_Renderer.get(), _Texture.get(), &view, nullptr);
     }
 
+    RunQueueForLog();
+
+    if (frame.Overlay != nullptr && !frame.Overlay->Draws.empty())
+    {
+        part.emplace("present.menus");
+
+        if (auto drawn = DrawOverlay(frame.Overlay, MCUiShown(frame.Fade)); !drawn)
+        {
+            return drawn;
+        }
+
+        RunQueueForLog();
+    }
+
+    part.emplace("present.show");
+
     if (!SDL_RenderPresent(_Renderer.get()))
     {
         return std::unexpected(SdlError("SDL_RenderPresent"));
     }
+
+    part.reset();
 
     // The frame handed to the screen: the frame log's time between these is the screen's (a benchmark's hitches).
     MCFrameLog::Presented();
@@ -281,6 +303,119 @@ std::expected<std::vector<SDL_Color>, std::string> MCSdlPresenter::ReadFrame(con
     }
 
     SDL_DestroySurface(rgba);
+    return pixels;
+}
+
+std::expected<void, std::string> MCSdlPresenter::DrawOverlay(const std::shared_ptr<const MCUiDraws>& overlay,
+                                                             float shown)
+{
+    // The menus' picture is drawn by the CPU where it changed and uploaded there; else the one kept is shown again.
+    if (overlay != _OverlayDrawn || _Overlay == nullptr)
+    {
+        MCFrameLog::Scope part("present.menus.draw");
+
+        if (auto drawn = _Ui.Draw(*overlay); !drawn)
+        {
+            return drawn;
+        }
+
+        _OverlayStale.insert(_OverlayStale.end(), _Ui.Changed().begin(), _Ui.Changed().end());
+
+        if (auto uploaded = UploadOverlay(); !uploaded)
+        {
+            return uploaded;
+        }
+
+        _OverlayDrawn = overlay;
+        ++_OverlayUploads;
+    }
+
+    // Over the whole window, one picture pixel a window pixel, its colours faded with the frame (premultiplied: the
+    // colour scaled, the coverage kept).
+    constexpr float Full = 255.0f;
+    const auto kept = static_cast<uint8_t>(std::lround(std::clamp(shown, 0.0f, 1.0f) * Full));
+    SDL_SetTextureColorMod(_Overlay.get(), kept, kept, kept);
+    SDL_SetRenderLogicalPresentation(_Renderer.get(), 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    const SDL_FRect whole{0.0f, 0.0f, static_cast<float>(_Overlay->w), static_cast<float>(_Overlay->h)};
+    SDL_RenderTexture(_Renderer.get(), _Overlay.get(), nullptr, &whole);
+    ApplyPresentation(_View);
+    return {};
+}
+
+std::expected<void, std::string> MCSdlPresenter::UploadOverlay()
+{
+    const SDL_Surface& picture = *_Ui.Picture();
+
+    if (_Overlay == nullptr || _Overlay->w != picture.w || _Overlay->h != picture.h)
+    {
+        _Overlay.reset(SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
+                                         picture.w, picture.h));
+
+        if (_Overlay == nullptr)
+        {
+            return std::unexpected(SdlError(std::format("SDL_CreateTexture(the menus, {}x{})", picture.w, picture.h)));
+        }
+
+        SDL_SetTextureBlendMode(_Overlay.get(), SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+        SDL_SetTextureScaleMode(_Overlay.get(), SDL_SCALEMODE_NEAREST);
+        _OverlayWhole = true;
+    }
+
+    if (_OverlayWhole)
+    {
+        _OverlayStale.assign(1, SDL_Rect{0, 0, picture.w, picture.h});
+    }
+
+    for (const SDL_Rect& box : _OverlayStale)
+    {
+        const auto* from = static_cast<const uint8_t*>(picture.pixels) + static_cast<ptrdiff_t>(box.y) * picture.pitch +
+                           static_cast<ptrdiff_t>(box.x) * SDL_BYTESPERPIXEL(picture.format);
+
+        if (!SDL_UpdateTexture(_Overlay.get(), &box, from, picture.pitch))
+        {
+            return std::unexpected(
+                SdlError(std::format("SDL_UpdateTexture(the menus, {},{} {}x{})", box.x, box.y, box.w, box.h)));
+        }
+    }
+
+    _OverlayStale.clear();
+    _OverlayWhole = false;
+    return {};
+}
+
+void MCSdlPresenter::RunQueueForLog()
+{
+    if (MCFrameLog::Enabled() && !SDL_FlushRenderer(_Renderer.get()))
+    {
+        SDL_Log("MCSdlPresenter: the frame log's flush of the renderer's queue failed: %s", SDL_GetError());
+    }
+}
+
+std::expected<std::vector<SDL_Color>, std::string> MCSdlPresenter::ReadOverlay(const MCUiDraws& overlay)
+{
+    if (auto drawn = _Ui.Draw(overlay); !drawn)
+    {
+        return std::unexpected(drawn.error());
+    }
+
+    // What it drew is uploaded with the next frame's menus (the overlay drawn last is drawn again then).
+    _OverlayStale.insert(_OverlayStale.end(), _Ui.Changed().begin(), _Ui.Changed().end());
+
+    if (!_Ui.Changed().empty())
+    {
+        _OverlayDrawn.reset();
+    }
+
+    const SDL_Surface& picture = *_Ui.Picture();
+    std::vector<SDL_Color> pixels(static_cast<size_t>(picture.w) * static_cast<size_t>(picture.h));
+
+    for (int y = 0; y < picture.h; ++y)
+    {
+        std::memcpy(pixels.data() + static_cast<size_t>(y) * static_cast<size_t>(picture.w),
+                    static_cast<const uint8_t*>(picture.pixels) + static_cast<ptrdiff_t>(y) * picture.pitch,
+                    static_cast<size_t>(picture.w) * sizeof(SDL_Color));
+    }
+
     return pixels;
 }
 

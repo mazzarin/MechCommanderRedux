@@ -153,9 +153,16 @@ auto MCReusableDialog::HandleEvent(MCGuiEvent& event) -> void
             OkButton->RunCallback();
             Deactivate(TwoButton ? -1 : 0);
         }
+        else if (event.Key == 0x1b && TwoButton)
+        {
+            // OB-074 (fixed): Escape answers a question with CANCEL (the original ran OK's callback, so Escape on "Are you
+            // sure you want to exit?" left the game).
+            CancelButton->RunCallback();
+            Deactivate(0);
+        }
         else if (event.Key == 0x1b)
         {
-            // Original behaviour (OB-074): Escape runs the OK button's callback too.
+            // Original behaviour (OB-074): Escape runs a message's one button (OK) too.
             OkButton->RunCallback();
             Deactivate(0);
         }

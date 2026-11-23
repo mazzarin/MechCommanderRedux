@@ -1,0 +1,286 @@
+#include "stdafx.h"
+#include "ui/MCRmlMenus.h"
+#include "logistics/MCLogObject.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
+#include "platform/MCUtf8Path.h"
+#include "ui/MCRmlArt.h"
+#include "ui/MCRmlRecorder.h"
+#include "ui/MCRmlSystem.h"
+
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
+
+namespace
+{
+    /// <summary>The contexts' names (RmlUi keeps them by name).</summary>
+    constexpr const char* MenusContext = "menus";
+    constexpr const char* MissionContext = "mission";
+
+    /// <summary>Whether RmlUi is started (it is one per program).</summary>
+    bool RmlStarted = false;
+
+    /// <summary>The game's own (Start), on the game's thread.</summary>
+    std::unique_ptr<MCRmlMenus>& GameMenus()
+    {
+        static std::unique_ptr<MCRmlMenus> menus;
+        return menus;
+    }
+
+    /// <summary>The face's three files under the <c>ui</c> folder, and the weight each is (SPEC-menus.md, "Letters").</summary>
+    struct MCFaceFile
+    {
+        std::string_view File;
+        Rml::Style::FontWeight Weight;
+    };
+
+    constexpr int MediumWeight = 500;
+    constexpr int SemiBoldWeight = 600;
+    constexpr std::array<MCFaceFile, 3> FaceFiles = {{
+        {"fonts/SairaSemiCondensed-Medium.ttf", Rml::Style::FontWeight(MediumWeight)},
+        {"fonts/SairaSemiCondensed-SemiBold.ttf", Rml::Style::FontWeight(SemiBoldWeight)},
+        {"fonts/SairaSemiCondensed-Bold.ttf", Rml::Style::FontWeight::Bold},
+    }};
+}
+
+MCRmlMenus::MCRmlMenus(Key)
+{
+}
+
+MCRmlMenus::~MCRmlMenus()
+{
+    Shutdown();
+}
+
+void MCRmlMenus::Shutdown()
+{
+    if (_Started)
+    {
+        // The screens first, while their documents and RmlUi are here; then RmlUi lets go of its contexts, textures
+        // and font faces, while the interfaces are still here.
+        _Menus.reset();
+        _Mission.reset();
+        Rml::Shutdown();
+        _Started = false;
+        RmlStarted = false;
+    }
+}
+
+std::expected<std::unique_ptr<MCRmlMenus>, std::string> MCRmlMenus::Create(const MCOptions& options)
+{
+    if (RmlStarted)
+    {
+        return std::unexpected("the menus' RmlUi is started already");
+    }
+
+    auto menus = std::make_unique<MCRmlMenus>(Key{});
+    MCRmlMenus& made = *menus;
+    made._Hd = options.Hd;
+    made._System = std::make_unique<MCRmlSystem>(options.Window);
+    made._Files = std::make_unique<MCRmlFiles>(options.Folder.empty() ? MCRmlFiles::AppFolder() : options.Folder);
+    made._Recorder = std::make_unique<MCRmlRecorder>([&made](std::string_view source)
+                                                     { return MCRmlArt::Load(source, made._Hd, *made._Files); });
+    made._Kit = std::make_unique<MCRmlKit>(options.Sound ? options.Sound : MCRmlKit::MCSound(PlayLogSound));
+    Rml::SetSystemInterface(made._System.get());
+    Rml::SetFileInterface(made._Files.get());
+    Rml::SetRenderInterface(made._Recorder.get());
+
+    if (!Rml::Initialise())
+    {
+        return std::unexpected("RmlUi didn't start (its log says why)");
+    }
+
+    made._Started = true;
+    RmlStarted = true;
+
+    for (const MCFaceFile& face : FaceFiles)
+    {
+        if (!Rml::LoadFontFace(std::string(face.File), std::string(FaceFamily), Rml::Style::FontStyle::Normal,
+                               face.Weight))
+        {
+            return std::unexpected(std::format("the menus' face {} can't be read from {} (the log says why)", face.File,
+                                               MCFileSystem::ToUtf8(made._Files->Folder())));
+        }
+    }
+
+    made._Width = std::max(options.Width, 1);
+    made._Height = std::max(options.Height, 1);
+    const Rml::Vector2i size(made._Width, made._Height);
+    // The mission's first, so the menus' draws go over it.
+    Rml::Context* mission = Rml::CreateContext(MissionContext, size);
+    Rml::Context* menusContext = Rml::CreateContext(MenusContext, size);
+
+    if (mission == nullptr || menusContext == nullptr)
+    {
+        return std::unexpected("RmlUi made no context");
+    }
+
+    made._Mission =
+        MCRmlLayer::Make(*mission, MCRmlLayer::MCKind::Mission,
+                         options.MissionUnit ? options.MissionUnit : MCRmlLayer::MCUnit(MissionUnit), *made._Kit);
+    made._Menus = MCRmlLayer::Make(*menusContext, MCRmlLayer::MCKind::Menus, MenusUnit, *made._Kit);
+    made._Mission->SetWindow(made._Width, made._Height);
+    made._Menus->SetWindow(made._Width, made._Height);
+    return menus;
+}
+
+std::expected<std::reference_wrapper<MCRmlMenus>, std::string> MCRmlMenus::Start(const MCOptions& options)
+{
+    std::unique_ptr<MCRmlMenus>& menus = GameMenus();
+
+    if (menus == nullptr)
+    {
+        auto made = Create(options);
+
+        if (!made)
+        {
+            return std::unexpected(made.error());
+        }
+
+        menus = std::move(*made);
+        // While one of the menus' screens shows, the window's mouse, keys and text are theirs.
+        MCInput::SetEventLayer([](const SDL_Event& event)
+                               { return GameMenus() != nullptr && GameMenus()->HandleEvent(event); });
+
+        // Their draws over the game's picture, recorded as each frame is presented.
+        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+        {
+            display->SetOverlaySource(
+                [](int width, int height)
+                { return GameMenus() != nullptr ? GameMenus()->FrameFor(width, height) : nullptr; });
+        }
+    }
+
+    return std::ref(*menus);
+}
+
+MCOptionalRef<MCRmlMenus> MCRmlMenus::Running()
+{
+    return GameMenus() != nullptr ? MCOptionalRef<MCRmlMenus>(*GameMenus()) : std::nullopt;
+}
+
+void MCRmlMenus::Stop()
+{
+    if (GameMenus() != nullptr)
+    {
+        MCInput::SetEventLayer(nullptr);
+
+        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+        {
+            display->SetOverlaySource(nullptr);
+        }
+
+        GameMenus().reset();
+    }
+}
+
+float MCRmlMenus::MenusUnit(int32_t width, int32_t height)
+{
+    return std::min(static_cast<float>(std::max(width, 1)) / static_cast<float>(ScreenWidth),
+                    static_cast<float>(std::max(height, 1)) / static_cast<float>(ScreenHeight));
+}
+
+float MCRmlMenus::MissionUnit(int32_t width, int32_t height)
+{
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+
+    if (display == nullptr)
+    {
+        return MenusUnit(width, height);
+    }
+
+    // The mission's screen at INTERFACE SIZE for this window, as the display sizes it: a unit is one of its lines.
+    const SDL_Point screen = display->ScreenSizeFor(width, height);
+    return screen.y > 0 ? static_cast<float>(height) / static_cast<float>(screen.y) : MenusUnit(width, height);
+}
+
+void MCRmlMenus::SetWindow(int32_t width, int32_t height)
+{
+    _Width = std::max(width, 1);
+    _Height = std::max(height, 1);
+    _Mission->SetWindow(_Width, _Height);
+    _Menus->SetWindow(_Width, _Height);
+}
+
+void MCRmlMenus::SetHd(bool hd)
+{
+    if (hd == _Hd)
+    {
+        return;
+    }
+
+    _Hd = hd;
+    // The pictures are read again as they're next drawn.
+    Rml::ReleaseTextures();
+    _Last.reset();
+}
+
+void MCRmlMenus::SetClock(std::function<double()> clock)
+{
+    _System->SetClock(std::move(clock));
+}
+
+bool MCRmlMenus::HandleEvent(const SDL_Event& event)
+{
+    if (_Menus->Showing())
+    {
+        return _Menus->HandleEvent(event);
+    }
+
+    return _Mission->HandleEvent(event);
+}
+
+std::shared_ptr<const MCUiDraws> MCRmlMenus::FrameFor(int32_t width, int32_t height)
+{
+    if (width != _Width || height != _Height)
+    {
+        SetWindow(width, height);
+    }
+
+    return Frame();
+}
+
+std::shared_ptr<const MCUiDraws> MCRmlMenus::Frame()
+{
+    // Nothing shown: nothing drawn over the game's picture.
+    if (!Showing())
+    {
+        _Last.reset();
+        return nullptr;
+    }
+
+    _Mission->Update();
+    _Menus->Update();
+    _Recorder->Begin(_Width, _Height);
+
+    if (_Mission->Showing())
+    {
+        _Mission->Context().Render();
+    }
+
+    if (_Menus->Showing())
+    {
+        _Menus->Context().Render();
+    }
+
+    std::shared_ptr<const MCUiDraws> frame = _Recorder->Finish();
+
+    // Nothing changed: the last frame's draws again, so the presenters see the same picture and keep theirs.
+    if (_Last != nullptr && MCUiSameDraws(*_Last, *frame))
+    {
+        return _Last;
+    }
+
+    _Last = frame;
+    return frame;
+}
+
+size_t MCRmlMenus::TexturesKept() const
+{
+    return _Recorder->TexturesKept();
+}
+
+size_t MCRmlMenus::GeometryKept() const
+{
+    return _Recorder->GeometryKept();
+}

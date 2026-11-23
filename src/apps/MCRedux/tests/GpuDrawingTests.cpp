@@ -1024,6 +1024,7 @@ TEST_CASE_ISOLATED("game: the GPU draws damaged mechs' diagrams as the software 
     }
 
     NewCampaign();
+    REQUIRE(MCTestGame::FinishChanges());
     REQUIRE(DamageEveryMech() > 0);
     const auto run = []
     {
@@ -1065,6 +1066,7 @@ TEST_CASE_ISOLATED("game: settled logistics screens send the GPU no colour table
     }
 
     NewCampaign();
+    REQUIRE(MCTestGame::FinishChanges());
     REQUIRE(DamageEveryMech() > 0);
 
     // The rows the last 10 of 30 frames gave tables, once the screen's own tables went up.
@@ -1113,6 +1115,7 @@ TEST_CASE_ISOLATED("game: a movie's frames go straight to the GPU, once each")
 
     // The operation movie starts after a delay.
     NewCampaign();
+    REQUIRE(MCTestGame::FinishChanges());
     MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
 
     for (int32_t frame = 0;

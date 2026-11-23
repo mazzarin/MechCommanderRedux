@@ -26,6 +26,10 @@
     <MCDxcSha256>AD31B1FC8443175D204F77A611FDB3EF2EC42759BDC2F1167368DE24A4A7E7F1</MCDxcSha256>
     <MCDxcDir>$(MSBuildThisFileDirectory)build\tools\dxc-$(MCDxcVersion)\</MCDxcDir>
     <MCDxc>$(MCDxcDir)bin\x64\dxc.exe</MCDxc>
+    <!-- Port-only: the shaders as HLSL 2018, whose && || and ?: evaluate both sides. HLSL 2021 (dxc's default) compiles
+         them as branches, and AMD's driver (26.10, RDNA 3) gets that valid SPIR-V wrong: HD pictures drawn through a
+         colour table came out black (the HUD's mech icons, dimmed menu art). The Mac's glslang never branches there. -->
+    <MCDxcLanguage>-HV 2018</MCDxcLanguage>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -37,12 +41,13 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <!-- /bigobj: some reconstructed files (the ABL library, the logistics screens) are large. /utf-8: sources are UTF-8. -->
       <AdditionalOptions>/bigobj /utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(MCLibDir)SDL-release-3.4.12\include;$(MCLibDir)mimalloc-3.3.1\include;$(MCLibDir)bc7enc_rdo;$(MCLibDir)smol-atlas-77a4e174;$(MCLibDir)libdeflate-1.26;$(MCLibDir)zstd-1.5.7\lib;$(MCLibDir)dr_flac;$(MCLibDir)dav1d-1.5.5\include;$(MCLibDir)xxHash-0.8.4;$(MCLibDir)HDiffPatch-5.1.3;$(MCLibDir)libsodium-1.0.22\src\libsodium\include;$(MCLibDir)nlohmann-json-3.12.0\single_include;$(MCLibDir)miniz-3.0.2;$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;$(MCLibDir)MCCore;$(MCGeneratedDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MCLibDir)SDL-release-3.4.12\include;$(MCLibDir)mimalloc-3.3.1\include;$(MCLibDir)bc7enc_rdo;$(MCLibDir)smol-atlas-77a4e174;$(MCLibDir)libdeflate-1.26;$(MCLibDir)zstd-1.5.7\lib;$(MCLibDir)dr_flac;$(MCLibDir)dav1d-1.5.5\include;$(MCLibDir)xxHash-0.8.4;$(MCLibDir)HDiffPatch-5.1.3;$(MCLibDir)libsodium-1.0.22\src\libsodium\include;$(MCLibDir)nlohmann-json-3.12.0\single_include;$(MCLibDir)miniz-3.0.2;$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;$(MCLibDir)RmlUi-6.3\Include;$(MCLibDir)MCCore;$(MCGeneratedDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <!-- libdatachannel's headers read RTC_STATIC and its RTC_ENABLE_ flags, and every unit including Mbed TLS's
-           reads the game's additions to its configuration (src\lib\mbedtls-3.6.7\mc), so all see one layout. -->
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_WARNINGS;RTC_STATIC;RTC_ENABLE_MEDIA=0;RTC_ENABLE_WEBSOCKET=1;MBEDTLS_USER_CONFIG_FILE=&lt;mc_mbedtls_config.h&gt;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+           reads the game's additions to its configuration (src\lib\mbedtls-3.6.7\mc), so all see one layout; RmlUi's
+           read RMLUI_STATIC_LIB (no DLL imports). -->
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_WARNINGS;RTC_STATIC;RTC_ENABLE_MEDIA=0;RTC_ENABLE_WEBSOCKET=1;MBEDTLS_USER_CONFIG_FILE=&lt;mc_mbedtls_config.h&gt;;RMLUI_STATIC_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(MCVersionDir);$(MCGeneratedDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -142,5 +147,19 @@
     <Unzip SourceFiles="$(_MCDxcZip)" DestinationFolder="$(MCDxcDir)" />
     <Delete Files="$(_MCDxcZip)" />
     <Error Condition="!Exists('$(MCDxc)')" Text="dxc $(MCDxcVersion): $(MCDxc) isn't in the zip." />
+  </Target>
+
+  <!-- Port-only: every shader is compiled as HLSL 2018 (MCDxcLanguage, above), or AMD's driver draws HD art black. The
+       build stops if the flag is empty, or if a dxc command doesn't pass it: a new shader's, or one a merge from
+       upstream (which lacks the flag) brought back. -->
+  <Target Name="MCCheckDxcLanguage" BeforeTargets="CustomBuild" Condition="'@(CustomBuild)'!=''">
+    <Error Condition="'$(MCDxcLanguage)'==''"
+           Text="MCDxcLanguage is empty: the shaders must build as HLSL 2018 (MechCommander.props)." />
+    <ItemGroup>
+      <_MCDxcWithoutLanguage Include="@(CustomBuild)"
+          Condition="$([System.String]::Copy('%(CustomBuild.Command)').Contains('$(MCDxc)')) and !$([System.String]::Copy('%(CustomBuild.Command)').Contains('$(MCDxcLanguage)'))" />
+    </ItemGroup>
+    <Error Condition="'@(_MCDxcWithoutLanguage)'!=''"
+           Text="These shaders' dxc commands don't pass %24(MCDxcLanguage) ($(MCDxcLanguage)): @(_MCDxcWithoutLanguage, ', ')." />
   </Target>
 </Project>

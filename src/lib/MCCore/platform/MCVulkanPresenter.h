@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/MCPresenter.h"
+#include "platform/MCUiGpu.h"
 #include "platform/MCVulkanRenderer.h"
 
 #include <condition_variable>
@@ -112,6 +113,7 @@ public:
     void SetVSync(bool on) override;
     std::expected<void, std::string> Present(const MCFrame& frame) override;
     std::expected<std::vector<SDL_Color>, std::string> ReadFrame(const MCFrame& frame) override;
+    std::expected<std::vector<SDL_Color>, std::string> ReadOverlay(const MCUiDraws& overlay) override;
     std::expected<std::vector<uint8_t>, std::string> ReadScreen(const MCFrame& frame) override;
     std::expected<void, std::string> Discard(const MCFrame& frame) override;
     std::expected<void, std::string> RunRecorded(std::span<const MCUnderlay> underlays) override;
@@ -186,6 +188,10 @@ private:
         SDL_Color Surround{0, 0, 0, SDL_ALPHA_OPAQUE};
         /// <summary>Port-only: the frame's present (<see cref="MCFrame::Number"/>).</summary>
         uint64_t Number = 0;
+        /// <summary>Port-only: the menus' draws over the window (<see cref="MCFrame::Overlay"/>).</summary>
+        std::shared_ptr<const MCUiDraws> Overlay;
+        /// <summary>Port-only: how much of the menus' colours the frame's fade leaves (MCUiShown).</summary>
+        float OverlayShown = 1.0f;
 
         /// <summary>Whether it's composited at the output's size (<see cref="MCFrame::ScaledOutput"/>).</summary>
         bool Scaled() const { return OutputWidth > 0 && OutputHeight > 0; }
@@ -204,6 +210,8 @@ private:
     /// uploads, the composite into _Frame. On the render thread, or on the game's with none running.
     /// </summary>
     std::expected<void, std::string> RunPlanned(SDL_GPUCommandBuffer& commands, PlannedFrame& planned);
+    /// <summary>Port-only: the menus' drawing, made the first time it's needed.</summary>
+    std::expected<std::reference_wrapper<MCUiGpu>, std::string> Ui();
     /// <summary>Port-only: the render thread's job: <paramref name="planned"/> run and submitted on a command buffer of its own.</summary>
     void RunAhead(PlannedFrame& planned);
     /// <summary>Port-only: gives <paramref name="planned"/>'s renderer frame back to the renderer, once it has run.</summary>
@@ -223,6 +231,13 @@ private:
     /// </summary>
     void BlitShown(SDL_GPUCommandBuffer& commands, const ShownLayout& layout, SDL_GPUTexture& target, uint32_t width,
                    uint32_t height) const;
+    /// <summary>
+    /// Port-only (SPEC-menus.md): the frame's menus' draws (<see cref="ShownLayout::Overlay"/>) over
+    /// <paramref name="target"/>, the whole window's picture; nothing when it has none.
+    /// </summary>
+    std::expected<void, std::string> DrawMenus(SDL_GPUCommandBuffer& commands, SDL_GPUTexture& target,
+                                               SDL_GPUTextureFormat format, uint32_t width, uint32_t height,
+                                               const ShownLayout& layout);
     /// <summary>
     /// Port-only (<see cref="RecordWindow"/>): the window as shown blitted into _Recorded, and its download begun on
     /// <paramref name="commands"/>: the transfer buffer it lands in once they're done (the caller releases it).
@@ -406,6 +421,8 @@ private:
     MCGpuHandle<SDL_GPUSampler> _Nearest;
     /// <summary>Port-only (HD lighting): linear between texels and mips, for the bloom.</summary>
     MCGpuHandle<SDL_GPUSampler> _Linear;
+    /// <summary>Port-only (SPEC-menus.md): the menus' drawing, made as they're first drawn.</summary>
+    std::unique_ptr<MCUiGpu> _Ui;
     Texture _Screen;
     Texture _Ops;
     Texture _Tables;

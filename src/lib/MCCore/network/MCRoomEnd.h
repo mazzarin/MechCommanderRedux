@@ -54,9 +54,10 @@ namespace MCRoomEnd
 
     /// <summary>
     /// Shows <paramref name="games"/> (the LAN games, or INTERNET CONNECTION), a multiplayer game made for it if there is
-    /// none, and says <paramref name="line"/> over it (nothing when empty).
+    /// none, and says <paramref name="line"/> over it (nothing when empty); <paramref name="then"/> runs once they show
+    /// (the change of screen's work).
     /// </summary>
-    void ShowGames(MCGames games, std::string_view line);
+    void ShowGames(MCGames games, std::string_view line, std::function<void()> then = {});
 
     /// <summary>
     /// The host's EXIT from its room (logistics/MCConnectMenu.h's LeaveRoom): with guests whose builds take its word, it
@@ -64,6 +65,12 @@ namespace MCRoomEnd
     /// </summary>
     /// <returns>Whether it took the EXIT (the leave comes later); false: the EXIT goes on now.</returns>
     bool CloseRoom();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): whether the host's room is ending (closed, or gone for its rematch) and
+    /// waits for its guests to leave: nothing more to press on it, though it's shown again (a guest's join).
+    /// </summary>
+    bool WaitsForGuests();
 
     /// <summary>
     /// The host's MCMPMessageType::RoomEnds from player <paramref name="fromId"/>, saying <paramref name="how"/>.
@@ -78,6 +85,13 @@ namespace MCRoomEnd
     /// </summary>
     /// <returns>Whether it took it; false: the original's way (the main menu and its message).</returns>
     bool SessionLost();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): what a guest says as its room ends under it ("BOB CLOSED THE GAME.", or
+    /// "LOST THE CONNECTION TO BOB'S GAME."): for a launcher's guest, whose room is the stack's end, the original's
+    /// message's text, its OK ending the game. Asked before <see cref="SessionLost"/>, which takes the host's word.
+    /// </summary>
+    std::string GuestLine();
 
     /// <summary>
     /// Leaves the room this game is in as its EXIT does, its screens' own cleared, and shows the games screen it came

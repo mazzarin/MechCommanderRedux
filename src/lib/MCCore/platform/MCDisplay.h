@@ -147,6 +147,11 @@ public:
     /// <see cref="MCDisplayOptions::Height"/>). A minimised window keeps the current size.
     /// </summary>
     void WindowScreenSize(int& width, int& height) const;
+    /// <summary>
+    /// Port-only: the screen <see cref="WindowScreenSize"/> gives a window of <paramref name="pixelWidth"/> x
+    /// <paramref name="pixelHeight"/> pixels on this display with its limits now (the mission's INTERFACE SIZE among them).
+    /// </summary>
+    SDL_Point ScreenSizeFor(int pixelWidth, int pixelHeight) const;
 
     /// <summary>
     /// The pure form of <see cref="WindowScreenSize"/>: the screen a window <paramref name="pixelWidth"/> x
@@ -405,6 +410,47 @@ public:
     std::expected<MCShownScreen, std::string> ReadShownScreen();
 
     /// <summary>
+    /// Port-only (SPEC-menus.md): the remade menus' draws, drawn over the whole window from the next frame on
+    /// (<see cref="MCFrame::Overlay"/>); none: nothing over the game's picture.
+    /// </summary>
+    void SetOverlay(std::shared_ptr<const MCUiDraws> overlay) { _Overlay = std::move(overlay); }
+
+    /// <summary>Port-only: what records the menus' draws for a window of so many pixels (MCRmlMenus::Frame).</summary>
+    using MCOverlaySource = std::function<std::shared_ptr<const MCUiDraws>(int pixelWidth, int pixelHeight)>;
+
+    /// <summary>
+    /// Port-only: the menus' draws asked of <paramref name="source"/> as each frame is presented, for the window's pixels
+    /// then, in place of <see cref="SetOverlay"/>'s (none: <see cref="SetOverlay"/>'s again, nothing until it's set).
+    /// </summary>
+    void SetOverlaySource(MCOverlaySource source)
+    {
+        _OverlaySource = std::move(source);
+        _Overlay.reset();
+    }
+
+    /// <summary>
+    /// Port-only: the whole window's picture at its pixels: <see cref="ReadShownScreen"/>'s where the view lands (its
+    /// nearest pixel), black around it, and the menus' draws over it all (<see cref="SetOverlay"/>, as the presenter
+    /// draws them: MCPresenter::ReadOverlay). An error when the window has no pixels (minimised).
+    /// </summary>
+    std::expected<MCShownScreen, std::string> ReadWindow();
+
+    /// <summary>
+    /// Port-only: the menus' draws <paramref name="overlay"/> alone, as the presenter draws them over the window, over a
+    /// transparent one (MCPresenter::ReadOverlay: premultiplied RGBA, the draws' window's size).
+    /// </summary>
+    std::expected<std::vector<SDL_Color>, std::string> ReadOverlay(const MCUiDraws& overlay)
+    {
+        return _Presenter->ReadOverlay(overlay);
+    }
+
+    /// <summary>Port-only, for the tests: the presenter's <see cref="MCPresenter::OverlayRedraws"/>.</summary>
+    uint64_t OverlayRedraws() const { return _Presenter->OverlayRedraws(); }
+
+    /// <summary>Port-only: writes <see cref="ReadWindow"/>'s picture as an RGBA PNG.</summary>
+    std::expected<void, std::string> SaveWindowScreenshot(const std::filesystem::path& path);
+
+    /// <summary>
     /// The whole screen as the player sees it, at the screen's size: its pixels with the underlays' pixels in place of
     /// the key, as <see cref="Present"/> shows them (nearest). When the GPU draws the frame, read back from it (what was
     /// drawn so far is run first).
@@ -553,4 +599,8 @@ private:
     SDL_Color _Surround{0, 0, 0, SDL_ALPHA_OPAQUE};
     /// <summary>The frames presented (<see cref="Presents"/>).</summary>
     uint64_t _Presents = 0;
+    /// <summary>Port-only: the menus' draws over the window (<see cref="SetOverlay"/>).</summary>
+    std::shared_ptr<const MCUiDraws> _Overlay;
+    /// <summary>Port-only: what gives the menus' draws each frame (<see cref="SetOverlaySource"/>).</summary>
+    MCOverlaySource _OverlaySource;
 };

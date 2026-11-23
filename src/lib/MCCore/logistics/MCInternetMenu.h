@@ -34,6 +34,15 @@ void ShowOriginalAccessButtons();
 void ShowInternetScreen();
 
 /// <summary>
+/// Port-only (SPEC-menus.md's stage 2): INTERNET CONNECTION's way back (CANCEL, Escape): from the host block back to the
+/// games, at once; from the games back to MULTIPLAYER ACCESS, as a change of screen.
+/// </summary>
+void InternetBack();
+
+/// <summary>Port-only, for the tests: the change of screen a join or a host runs in while it connects.</summary>
+inline constexpr std::string_view JoiningChange = "joining";
+
+/// <summary>
 /// Sets up INTERNET CONNECTION (made from the LAN screen's lanscreen.fit): its panel retitled, its list of the service's
 /// games, its counts' line, the CODE box, the PRIVATE check box in the host block, and its buttons' callbacks.
 /// </summary>

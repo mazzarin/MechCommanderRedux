@@ -232,6 +232,9 @@
     <ClCompile Include="tests\MemoryRoomTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\MenuUiTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\MissionTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -278,6 +281,9 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\ScreenChangeTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\ScreenFlowTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\ScreenInput.cpp">

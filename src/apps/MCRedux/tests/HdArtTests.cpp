@@ -95,6 +95,8 @@
 #include "sprite/MCElementalTree.h"
 #include "sprite/MCGVAppearanceType.h"
 #include "sprite/MCHdArt.h"
+#include "ui/MCRmlMenus.h"
+#include "ui/MCRmlProbe.h"
 #include "sprite/MCPackRecords.h"
 #include "sprite/MCHdMovie.h"
 #include "sprite/MCMechActor.h"
@@ -13191,6 +13193,41 @@ namespace
     /// has one, the results and debriefing, and logistics after the mission.
     /// </summary>
     void TourScreens(const std::function<void(const std::string&)>& shoot, AuditDetail& detail);
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md, stage 2): the remade menus' probe screen over the screen shown, on the game's own
+    /// menus' RmlUi (HD art as <paramref name="original"/> says), its whole window saved into <paramref name="folder"/>
+    /// as <c>probe_&lt;sharp|original&gt;_window.png</c>; RmlUi stopped after.
+    /// </summary>
+    void ShootProbe(const std::filesystem::path& folder, bool original)
+    {
+        constexpr int32_t SettleFrames = 3;
+        constexpr float FrameSeconds = 1.0f / 15.0f;
+        int width = 0;
+        int height = 0;
+        SDL_GetWindowSizeInPixels(&MCInput::Display()->Window(), &width, &height);
+        auto started = MCRmlMenus::Start(MCRmlMenus::MCOptions{.Width = width, .Height = height, .Hd = !original});
+        REQUIRE(started.has_value());
+        MCGuiHandle<MCRmlProbe> probe = started->get().Menus().CreateChild<MCRmlProbe>([](MCRmlProbe&) {});
+        const auto opened = probe->Open();
+
+        if (!opened)
+        {
+            MCRmlMenus::Stop();
+            FAIL(opened.error());
+        }
+
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const std::filesystem::path path = folder / std::format("probe_{}_window.png", original ? "original" : "sharp");
+        const bool saved = MCTestGame::SaveWholeWindow(path);
+        MCRmlMenus::Stop();
+        REQUIRE(saved);
+        std::cout << std::format("  probe: {}\n", path.string());
+    }
 }
 
 namespace
@@ -13339,8 +13376,8 @@ TEST_CASE_ISOLATED("game: HD art's ground fades from tile to tile across their s
 /// Retina MacBook's screen (<c>--window WxH</c>, default 3024x1890) with HD art on (a sharp screen: text redrawn sharp,
 /// and the pack's menu art with <c>--hd-pack &lt;pack&gt;</c>), and saves each as shown into the folder; with
 /// <c>--hd-original 1</c>, as the game shows them without. With <c>--hd-audit-menus 1</c> every draw is audited as
-/// --hd-audit's are (into the folder's audit/), and with it or <c>--sharp-menus-tour 1</c> every other screen is shown
-/// too (TourScreens: the multiplayer screens, a mission from its loading screen to its results, and more). With
+/// --hd-audit's are (into the folder's audit/), and with it or <c>--sharp-menus-tour 1</c> the remade menus' probe
+/// screen (its whole window, <c>probe_*_window.png</c>) and every other screen are shown too (TourScreens: the multiplayer screens, a mission from its loading screen to its results, and more). With
 /// <c>--sharp-menus-window 1</c> each is saved as the whole window too (<c>_window.png</c>: what shows round the view).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off")
@@ -13454,6 +13491,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     Cancel();
     AuditLabel = "to briefing";
     NewCampaign();
+    REQUIRE(MCTestGame::FinishChanges());
     shoot("briefing");
     GlobalLog()->BriefingScreen->SetUpMission();
     shoot("briefing_mission");
@@ -13507,9 +13545,10 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     shoot("briefing_again");
     MCTestGame::OnPresent = nullptr;
 
-    // With --hd-audit-menus or --sharp-menus-tour 1, every other screen too.
+    // With --hd-audit-menus or --sharp-menus-tour 1, the remade menus' probe screen and every other screen too.
     if (audit || MCTest::Option("sharp-menus-tour").has_value())
     {
+        ShootProbe(folder, original);
         TourScreens(shoot, detail);
     }
 
@@ -15826,6 +15865,7 @@ namespace
 #endif
         TourMultiplayer(shoot);
         NewMcxCampaign();
+        REQUIRE(MCTestGame::FinishChanges());
         shoot("briefing_expansion");
 
         if (!LaunchFromBriefing(detail))
@@ -19155,6 +19195,7 @@ namespace
         REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
         SDL_SyncWindow(&MCInput::Display()->Window());
         NewCampaign();
+        REQUIRE(MCTestGame::FinishChanges());
         return std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
     }
 

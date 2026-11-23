@@ -37,10 +37,10 @@
 // Options: --record-window-size <w>x<h> (the window in pixels; 1920x1080), --record-window-ui <lines> (UI RESOLUTION;
 // 1080), --record-window-pack <folder> (HD art on, from that pack, as a player's app has it), --record-window-battle
 // <seconds> (the battlefield recorded after its fade-in; 3), --record-window-hz <n> (the frames' pace; the display's
-// refresh), --record-window-video 0 (no frames read back, for the frame log's times as in play),
-// --record-window-framelog <file> (the frame log, as the
-// app's -framelog writes it: each change's line, the parts' times). Each frame waits for the GPU's copy, so frames take a few
-// milliseconds longer than in play: time the changes with -framelog in the app.
+// refresh), --record-window-video 0 (no frames read back, for the frame log's times as in play; any renderer),
+// --record-window-framelog <file> (the frame log, as the app's -framelog writes it: each change's line, the parts'
+// times). Each frame recorded waits for the GPU's copy, so frames take a few milliseconds longer than in play: time
+// the changes with --record-window-video 0.
 
 namespace
 {

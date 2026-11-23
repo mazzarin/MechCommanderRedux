@@ -16,7 +16,7 @@ class MCRmlLayer;
 /// <summary>A key the hint line names, with what it does on the screen (SPEC-menus.md, "Titles and bars").</summary>
 struct MCRmlKeyHint
 {
-    /// <summary>The key's name as boxed (<c>ESC</c>, <c>Q E</c>, <c>ENTER</c>).</summary>
+    /// <summary>The key's name as boxed (<c>ESC</c>, <c>Q E</c>, <c>ENTER</c>; arrows each boxed: <c>↑ ↓</c>).</summary>
     std::string Key;
     /// <summary>What it does, in Fine capitals (<c>BACK</c>, <c>CHANGE TAB</c>).</summary>
     std::string Does;

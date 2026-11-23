@@ -288,8 +288,12 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
             }
 
             // RmlUi's first (a text box's typing, the focus's moves, Enter's press, a control's Left and Right); what
-            // it leaves, the layer's and the screen's: not a letter typed in a text box, but its Escape.
-            if (_Context.ProcessKeyDown(key, held) && (!typing || key == Rml::Input::KI_ESCAPE))
+            // it leaves, the layer's and the screen's: not a letter typed in a text box. Escape is always the layer's:
+            // RmlUi does nothing with it, and its text box stops every key it doesn't move out of (SPEC-menus.md's
+            // stage 3: Escape closes HOST GAME's window from its name).
+            const bool left = _Context.ProcessKeyDown(key, held);
+
+            if (key == Rml::Input::KI_ESCAPE || (left && !typing))
             {
                 TakeKey(key, held);
             }

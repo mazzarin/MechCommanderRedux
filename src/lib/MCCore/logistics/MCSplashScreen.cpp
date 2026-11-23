@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCMenuScreens.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
@@ -38,20 +39,19 @@ namespace
             case 13:
                 return MCScreenFlow::Via("serial", ShowSerialScreen);
             case 14:
-                return MCScreenFlow::Via("lan", ShowLanScreen);
+                // Port-only (SPEC-menus.md's stage 3): the remade LAN screen.
+                return [] { MCScreenFlow::Open(MCMenuScreens::Lan()); };
             case 15:
-                // Port (Redux HD): the INTERNET screen (the original asked about the lobbies of 1999).
-                return MCScreenFlow::Via("internet", ShowInternetScreen);
+                // Port (Redux HD): the INTERNET screen (the original asked about the lobbies of 1999), remade.
+                return [] { MCScreenFlow::Open(MCMenuScreens::Internet()); };
             case 16:
                 return back;
             case 17:
-                return MCScreenFlow::Via("lan games", CancelToLan);
             case 18:
-                return HostGame;
             case 19:
-                return JoinGame;
             case 20:
-                return CreateSession;
+                // The 1998 LAN screen's (lanscreen.fit), which isn't made since its remake (SPEC-menus.md's stage 3).
+                return [] {};
             case 21:
                 return Go;
             case 22:
@@ -340,10 +340,6 @@ auto MCSplashScreen::ShowGuiWindow(bool show) -> void
     {
         AccessScreenHidden();
     }
-    else if (!show && GlobalLog()->InternetScreen.Is(*this))
-    {
-        InternetScreenHidden();
-    }
 
     // The connection screens poll while shown: the connect screen through its element 3. Port: a poll doesn't wait for
     // answers (they're listed by the next), so the first question goes as the screen shows and the first poll lists its
@@ -364,18 +360,6 @@ auto MCSplashScreen::ShowGuiWindow(bool show) -> void
         }
 
         GuiSystem().RemoveTimer(*Element<MCGuiObject>(3), PollTimer);
-    }
-    else if (GlobalLog()->LanScreen.Is(*this))
-    {
-        if (show)
-        {
-            MCGameList::AskForSessions();
-            GuiSystem().AddTimer(weak_from_this(), PollTimer, PollInterval, 0, 0, false);
-            MCGenericScreen::ShowGuiWindow(show);
-            return;
-        }
-
-        GuiSystem().RemoveTimer(*this, PollTimer);
     }
 
     MCGenericScreen::ShowGuiWindow(show);

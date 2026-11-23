@@ -1,0 +1,35 @@
+/* Port-only (SPEC-menus.md's stage 3): INTERNET and LAN, over the look (look.rcss): a panel over the painting, the
+   games in a list with columns, the picked game's players beside it, the player's name and the ways in along the foot. */
+
+/* The panel under the painting's name, over its window (91-434), the list taking the width up to 16:9. */
+#frame { padding-top: 90dp; }
+#net { height: 346dp; display: flex; flex-direction: column; }
+#net > * { flex: 0 0 auto; }
+#net > .grow { flex: 1 1 0; }
+#games { flex: 2 1 0; }
+#games > * { flex: 0 0 auto; }
+#games > .scroll-box { flex: 1 1 0; }
+#games > .empty { flex: 1 1 0; }  /* nothing in the list: its line in the list's room */
+#pick { flex: 1 1 0; padding-left: 12dp; border-left: 1dp #2a3742; }
+#pick > * { flex: 0 0 auto; }
+.c-players { flex: 0 0 52dp; }
+.c-where { flex: 0 0 88dp; }
+.c-now { flex: 0 0 136dp; }
+.cell.flush { padding-left: 0; }
+#pick .list-head { margin-top: 12dp; }
+#foot { padding-top: 8dp; border-top: 1dp #2a3742; }
+#foot > * { flex: 0 0 auto; }
+#foot > .grow { flex: 1 1 0; }
+#foot input.text.field { display: inline-block; }
+/* The player's name gives way first where the foot is short of room (4:3). */
+#name { width: 128dp; }
+#foot > #name { flex: 0 1 128dp; min-width: 72dp; }
+#code { width: 48dp; }
+.label { font-size: 9.51dp; line-height: 20dp; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #7cd4ec; white-space: nowrap; }
+.host { font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; color: #7cd4ec; }
+/* MCO's rooms' place (SPEC-mco-rooms.md), kept in the layout from the first frame and not shown until they're built. */
+
+#hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 40dp; }
+#hintbar .content { padding-top: 14dp; }
+#hintbar .hints { margin-top: 0; }
+.unbuilt { visibility: hidden; tab-index: none; nav: none; }

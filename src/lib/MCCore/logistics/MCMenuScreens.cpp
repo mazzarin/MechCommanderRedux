@@ -5,6 +5,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCFileScrollPane.h"
+#include "logistics/MCGamesScreen.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogDialogButton.h"
@@ -15,9 +16,11 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdatePage.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
+#include "ui/MCRmlFlow.h"
 
 namespace
 {
@@ -37,8 +40,11 @@ namespace
             return false;
         }
 
+        // Port-only (SPEC-menus.md's stage 3): not while a remade screen shows over it, hidden (ui/MCRmlFlow), though it
+        // stays logistics' screen.
         const std::shared_ptr<MCLogObject> shown = logistics->CurrentScreen();
-        return shown != nullptr && (logistics.get()->*screen).Is(*shown);
+        return shown != nullptr && (shown->ShowWindow || !MCRmlFlow::Showing()) &&
+               (logistics.get()->*screen).Is(*shown);
     }
 
     /// <summary>Whether the load screen shows in mode <paramref name="multiplayer"/>, <paramref name="solo"/>.</summary>
@@ -132,6 +138,7 @@ namespace
         MCScreenId Campaign = MCScreenFlow::NoScreen;
         MCScreenId Connection = MCScreenFlow::NoScreen;
         MCScreenId ReadyRoom = MCScreenFlow::NoScreen;
+        MCScreenId Update = MCScreenFlow::NoScreen;
     };
 
     MCIds Ids;
@@ -163,10 +170,9 @@ auto MCMenuScreens::Register() -> void
         OldScreen("main", [] { return Showing(&MCLogistics::MainScreen); }, ShowMainMenu, AskQuit));
     Ids.Multiplayer = MCScreenFlow::Register(
         OldScreen("multiplayer", [] { return Showing(&MCLogistics::MultiplayerScreen); }, ConnectScreen));
-    Ids.Lan = MCScreenFlow::Register(OldScreen(
-        "lan", [] { return Showing(&MCLogistics::LanScreen); }, ShowLanScreen, Back("lan back", CancelToConnect)));
-    Ids.Internet = MCScreenFlow::Register(
-        OldScreen("internet", [] { return Showing(&MCLogistics::InternetScreen); }, ShowInternetScreen, InternetBack));
+    // Port-only (SPEC-menus.md's stage 3): LAN and INTERNET remade (logistics/MCGamesScreen).
+    Ids.Lan = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Lan));
+    Ids.Internet = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Internet));
     Ids.Room = MCScreenFlow::Register(OldScreen(
         "room", [] { return Showing(&MCLogistics::SessionScreen); }, [] { GlobalLog()->SetUpSessionScreen(); },
         []
@@ -205,6 +211,23 @@ auto MCMenuScreens::Register() -> void
         ConnectScreen, Back("connection back", CancelToConnect)));
     Ids.ReadyRoom = MCScreenFlow::Register(
         OldScreen("ready room", [] { return Showing(&MCLogistics::ConnectScreen); }, [] {}, [] { KillTheGame(); }));
+    // UPDATE from INTERNET (a newer game, "Update to play online."): the main menu's page over it until stage 6
+    // remakes UPDATE; its DONE and Escape go back to INTERNET.
+    Ids.Update = MCScreenFlow::Register(
+        MCScreenKind{.Name = "update",
+                     .Show =
+                         []
+                     {
+                         ShowMainMenu();
+                         ShowUpdatePage();
+                     },
+                     .Hide =
+                         []
+                     {
+                         HideUpdatePageViews();
+                         HideShown();
+                     },
+                     .Shows = [] { return Showing(&MCLogistics::MainScreen) && UpdatePageShown(); }});
 }
 
 auto MCMenuScreens::Main() -> MCScreenId
@@ -270,6 +293,11 @@ auto MCMenuScreens::Connection() -> MCScreenId
 auto MCMenuScreens::ReadyRoom() -> MCScreenId
 {
     return TheIds().ReadyRoom;
+}
+
+auto MCMenuScreens::Update() -> MCScreenId
+{
+    return TheIds().Update;
 }
 
 auto MCMenuScreens::GamesStack(bool internet, bool room) -> std::vector<MCScreenId>

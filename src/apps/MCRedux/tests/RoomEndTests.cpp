@@ -31,12 +31,14 @@
 // (tests/MCTestGuest.h) on the loopback. --shots saves each step's screen.
 
 using namespace MCScreenInput;
+using MCTestGuest::DialogText;
 using MCTestGuest::Guest;
 using MCTestGuest::Host;
 using MCTestGuest::InSession;
 using MCTestGuest::JoinFromLan;
-using MCTestGuest::LanPlayerName;
+using MCTestGuest::OnLan;
 using MCTestGuest::OnScreen;
+using MCTestGuest::PressDialogOk;
 using MCTestGuest::Settle;
 using MCTestGuest::SettleUntil;
 
@@ -53,23 +55,10 @@ namespace
         Settle();
     }
 
-    /// <summary>The message dialog's text, when it shows.</summary>
-    std::string DialogText()
-    {
-        const MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-        return dialog.ShowWindow ? dialog.Text : std::string();
-    }
-
     /// <summary>From the LAN games, hosts a room on <paramref name="port"/> as COMMANDER: the room opens.</summary>
     void HostFromLan(std::string_view port)
     {
-        REQUIRE(OnScreen(GlobalLog()->LanScreen));
-        MultiPlayer()->SessionManager->ConnectTcp(std::format("127.0.0.1:{}", port));
-        MCSplashScreen& lan = *GlobalLog()->LanScreen;
-        lan.Element<MCLogTextObject>(LanPlayerName)->SetStringBuffer("COMMANDER");
-        lan.Element<MCLogTextObject>(LanGameName)->SetStringBuffer("COMMANDER'S GAME");
-        lan.Element<MCLogTextObject>(LanPlayers)->SetStringBuffer("4");
-        CreateSession();
+        MCTestGuest::HostFromLan(std::format("127.0.0.1:{}", port), "COMMANDER", "COMMANDER'S GAME", 4);
         Settle();
         REQUIRE(OnScreen(GlobalLog()->SessionScreen));
     }
@@ -102,8 +91,8 @@ namespace
 
 /// <summary>
 /// A guest the LAN games took to its room, whose host's game goes (whatever the cause, nobody taking over): back to the
-/// LAN games, never the main menu, saying why: the host's game lost ("LOST THE CONNECTION TO BOB'S GAME."), or closed
-/// by its host, who said so as it left ("BOB CLOSED THE GAME.").
+/// LAN games, never the main menu, saying why over them: the host's game lost ("Lost the connection to BOB's game."),
+/// or closed by its host, who said so as it left ("BOB closed the game.").
 /// </summary>
 TEST_CASE_ISOLATED("game: a LAN guest whose room ends goes back to the LAN games, saying why")
 {
@@ -123,15 +112,15 @@ TEST_CASE_ISOLATED("game: a LAN guest whose room ends goes back to the LAN games
     JoinFromLan(Port, "ANN");
     bob->Close();
     bob.reset();
-    REQUIRE(SettleUntil([] { return OnScreen(GlobalLog()->LanScreen); }));
+    REQUIRE(SettleUntil([] { return OnLan(); }));
     Settle();
     CHECK(!InSession());
-    CHECK_EQ(DialogText(), std::string("LOST THE CONNECTION TO BOB'S GAME."));
+    CHECK_EQ(DialogText(), std::string("Lost the connection to BOB's game."));
     SaveShot("room end 0 host lost", ScreenHash());
-    ClickButton(*GlobalLog()->MessageDialog->OkButton);
+    PressDialogOk();
     Settle();
     CHECK(DialogText().empty());
-    CHECK(OnScreen(GlobalLog()->LanScreen));
+    CHECK(OnLan());
 
     // BOB hosts again, and closes his room, saying so first: this game leaves on his word.
     Host again;
@@ -140,8 +129,8 @@ TEST_CASE_ISOLATED("game: a LAN guest whose room ends goes back to the LAN games
     again.SendRoomEnds(MultiPlayer()->SessionManager->MyPlayerID, std::to_underlying(MCRoomEnd::MCHow::Closed));
     REQUIRE(SettleUntil([] { return !InSession(); }));
     Settle();
-    CHECK(OnScreen(GlobalLog()->LanScreen));
-    CHECK_EQ(DialogText(), std::string("BOB CLOSED THE GAME."));
+    CHECK(OnLan());
+    CHECK_EQ(DialogText(), std::string("BOB closed the game."));
     SaveShot("room end 1 host closed", ScreenHash());
     again.Close();
 }
@@ -210,8 +199,8 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host starts a mission it can't load 
     }
 
     Settle();
-    CHECK(OnScreen(GlobalLog()->LanScreen));
-    CHECK_EQ(DialogText(), std::string("COULDN'T LOAD THE HOST'S MISSION."));
+    CHECK(OnLan());
+    CHECK_EQ(DialogText(), std::string("Couldn't load the host's mission."));
     SaveShot("room end 2 mission unloaded", ScreenHash());
     bob.Close();
 }
@@ -242,7 +231,7 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     REQUIRE(eve.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", RollingPort)));
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(eve.Id()); }));
     ClickButton(*GlobalLog()->SessionScreen->ExitButton);
-    REQUIRE(SettleUntil([] { return OnScreen(GlobalLog()->LanScreen); }));
+    REQUIRE(SettleUntil([] { return OnLan(); }));
     CHECK(!InSession());
     CHECK(eve.RoomEnds().empty());
     eve.Leave();
@@ -268,7 +257,7 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
 
     // She leaves: the host goes back to the LAN games.
     ann.Leave();
-    REQUIRE(SettleUntil([] { return OnScreen(GlobalLog()->LanScreen); }));
+    REQUIRE(SettleUntil([] { return OnLan(); }));
     CHECK(!InSession());
     CHECK(DialogText().empty());
 
@@ -284,7 +273,7 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     Settle();
     CHECK(OnScreen(GlobalLog()->SessionScreen));
     clock.Advance(MCRoomEnd::LeaveWait);
-    REQUIRE(SettleUntil([] { return OnScreen(GlobalLog()->LanScreen); }));
+    REQUIRE(SettleUntil([] { return OnLan(); }));
     CHECK(!InSession());
 }
 
@@ -329,7 +318,7 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     room.AssignPlayer(ann.Id(), 2, 1, false);
     room.SetTeamTechBase(2, 1);
     room.LoadMission(Mission);
-    REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && !GlobalLog()->MessageDialog->ShowWindow; }));
+    REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && DialogText().empty(); }));
     room.SetTeam1RP(Team1Points);
     room.SetTeam2RP(Team2Points);
     Settle();
@@ -441,8 +430,8 @@ TEST_CASE_ISOLATED("game: a host's REMATCH from its match's results hosts the ro
 }
 
 /// <summary>
-/// A guest whose host has a rematch: its game leaves the session at once, waits over the LAN games ("REJOINING BOB'S GAME
-/// FOR A REMATCH...") and joins the room the host hosts again; a room that doesn't come back in time is said over the
+/// A guest whose host has a rematch: its game leaves the session at once, waits over the LAN games ("Rejoining BOB's game
+/// for a rematch...") and joins the room the host hosts again; a room that doesn't come back in time is said over the
 /// games.
 /// </summary>
 TEST_CASE_ISOLATED("game: a LAN guest whose host has a rematch joins its room again")
@@ -466,8 +455,8 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host has a rematch joins its room ag
     bob->SendRoomEnds(MultiPlayer()->SessionManager->MyPlayerID, std::to_underlying(MCRoomEnd::MCHow::Rematch));
     REQUIRE(SettleUntil([] { return !InSession(); }));
     Settle();
-    CHECK(OnScreen(GlobalLog()->LanScreen));
-    CHECK_EQ(DialogText(), std::string("REJOINING BOB'S GAME FOR A REMATCH..."));
+    CHECK(OnLan());
+    CHECK_EQ(DialogText(), std::string("Rejoining BOB's game for a rematch..."));
     SaveShot("rematch 2 guest waiting", ScreenHash());
 
     // BOB's game hosts the room again: this game joins it, straight into the room.
@@ -488,14 +477,14 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host has a rematch joins its room ag
     REQUIRE(SettleUntil([] { return !InSession(); }));
     again.Close();
     Settle();
-    CHECK_EQ(DialogText(), std::string("REJOINING BOB'S GAME FOR A REMATCH..."));
+    CHECK_EQ(DialogText(), std::string("Rejoining BOB's game for a rematch..."));
     clock.Advance(MCLobbyUpdate::RejoinWait);
     REQUIRE(SettleUntil([] { return DialogText() == "Couldn't join the room again: it has closed."; }));
-    CHECK(OnScreen(GlobalLog()->LanScreen));
+    CHECK(OnLan());
     CHECK(!InSession());
 
     // Its OK, which the waiting message had hidden, closes it with a click.
-    ClickButton(*GlobalLog()->MessageDialog->OkButton);
+    PressDialogOk();
     CHECK(DialogText().empty());
 }
 

@@ -2,6 +2,8 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/DataModelHandle.h>
+#include <RmlUi/Core/DataTypeRegister.h>
+#include <RmlUi/Core/DataVariable.h>
 
 /// <summary>
 /// Port-only (SPEC-menus.md, "Models and views"): the one way a remade screen shows a model, as RmlUi's data bindings:
@@ -52,6 +54,10 @@ public:
     /// The list <paramref name="rows"/> bound as <paramref name="name"/>, each row's <paramref name="fields"/> named for
     /// the document (<c>{"name", &amp;MCGame::Name}</c>).
     /// </summary>
+    /// <remarks>
+    /// RmlUi keeps one register of types for a context, shared by its models: a row type another list or screen has
+    /// declared (LAN's games and INTERNET's) is used as declared then, its fields named the same.
+    /// </remarks>
     template <typename Row, typename... Fields>
     bool List(const std::string& name, std::vector<Row>& rows, std::pair<const char*, Fields Row::*>... fields)
     {
@@ -60,12 +66,27 @@ public:
             return false;
         }
 
-        if (Rml::StructHandle<Row> row = _Constructor.RegisterStruct<Row>(); row)
+        // RmlUi's API takes the register and definitions by pointer.
+        Rml::DataTypeRegister& types = *_Constructor.GetDataTypeRegister();
+        auto declared = Rml::MakeUnique<Rml::StructDefinition>();
+        Rml::StructDefinition& row = *declared;
+
+        if (types.RegisterDefinition(Rml::Family<Row>::Id(), std::move(declared)))
         {
-            (row.RegisterMember(fields.first, fields.second), ...);
+            Rml::StructHandle<Row> members(&types, &row);
+            (members.RegisterMember(fields.first, fields.second), ...);
         }
 
-        return _Constructor.RegisterArray<std::vector<Row>>() && _Constructor.Bind(name, &rows);
+        Rml::VariableDefinition* const rowType = types.GetDefinition<Row>();
+
+        if (rowType == nullptr)
+        {
+            return false;
+        }
+
+        types.RegisterDefinition(Rml::Family<std::vector<Row>>::Id(),
+                                 Rml::MakeUnique<Rml::ArrayDefinition<std::vector<Row>>>(rowType));
+        return _Constructor.Bind(name, &rows);
     }
 
     /// <summary>The action <paramref name="name"/>, called with the document's arguments (a row's index, say).</summary>

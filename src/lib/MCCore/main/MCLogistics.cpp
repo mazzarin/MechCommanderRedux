@@ -400,42 +400,9 @@ auto MCLogistics::Start() -> void
         const std::optional<std::string> userName = MyGetUserName();
         MakeScreen(MultiplayerScreen, "mpscreen", " No Connection Screen FIT File ",
                    " Unable to start connect screen ");
-        // Port (Redux HD): MULTIPLAYER ACCESS's LAN and INTERNET, and the INTERNET screen in the LAN screen's layout.
+        // Port (Redux HD): MULTIPLAYER ACCESS's LAN and INTERNET. Port-only (SPEC-menus.md's stage 3): the LAN and
+        // INTERNET screens are remade (logistics/MCGamesScreen); the 1998 LAN screen (lanscreen.fit) isn't made.
         SetUpAccessScreen(*MultiplayerScreen);
-        MakeScreen(InternetScreen, "lanscreen", " No LAN Screen FIT File ", " Unable to start internet screen ");
-        SetUpInternetScreen(*InternetScreen);
-
-        {
-            MakeScreen(LanScreen, "lanscreen", " No LAN Screen FIT File ", " Unable to start lanScreen screen ");
-            MCSplashScreen& screen = *LanScreen;
-            screen.SetEventRoutine(LanScreenHandleEvent);
-            auto players = ScreenElement<MCLogScrollTextObject>(screen, 3);
-            players->SetEventRoutine(PlayerListHandleEvent);
-            players->FontIndex = 1;
-            ScreenElement<MCGameList>(screen, 2)->FontIndex = 1;
-            const std::shared_ptr<MCLogTextObject> nameField = SetUpTextField(screen, 4);
-            const std::shared_ptr<MCLogTextObject> gameField = SetUpTextField(screen, 10);
-            const std::shared_ptr<MCLogTextObject> playersField = SetUpTextField(screen, 11);
-            nameField->InitBuffer(0x10, MCLogInputType::Text);
-            gameField->InitBuffer(0x18, MCLogInputType::Text);
-            nameField->SetStringBuffer(userName.value_or("Player"));
-
-            // The game's name: "<player>'s game" from the string table, or "Game" without a user name.
-            if (userName.has_value())
-            {
-                gameField->InitBuffer(0x18, MCLogInputType::Text);
-                gameField->SetStringBuffer(MCFormatPrintf(LoadGameString(0x377, 0xfe).c_str(), userName->c_str()));
-            }
-            else
-            {
-                gameField->SetStringBuffer("Game");
-            }
-
-            playersField->InitBuffer(2, MCLogInputType::Port);
-            playersField->SetStringBuffer("6");
-            ScreenElement<MCLogButton>(screen, 6)->Disabled = true;
-            screen.ShowBlock(0);
-        }
 
         {
             MakeScreen(ModemScreen, "modem", " No modem Screen FIT File ", " Unable to start modemScreen screen ");
@@ -1129,8 +1096,6 @@ MCLogistics::~MCLogistics()
     MainScreen.reset();
     CloseGuiObject(MultiplayerScreen);
     MultiplayerScreen.reset();
-    CloseGuiObject(LanScreen);
-    LanScreen.reset();
     CloseGuiObject(ModemScreen);
     ModemScreen.reset();
     CloseGuiObject(SerialScreen);

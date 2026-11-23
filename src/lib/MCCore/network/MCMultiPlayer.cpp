@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "main/MCMissionGlobals.h"
 #include "network/MCMultiPlayer.h"
+#include "ui/MCRmlDialog.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMechHandover.h"
 #include "network/MCMultiPlayerHandlers.h"
@@ -1279,6 +1280,13 @@ void ShowOkDialog(MCReusableDialog& dialog, std::string_view text, std::function
 void ShowWaitingDialog(std::string_view text)
 {
     if (GlobalLog() == nullptr)
+    {
+        return;
+    }
+
+    // Port-only (SPEC-menus.md's stage 3): over a remade screen, the remade dialog's wait (the 1998 one would show under
+    // it); the 1998 dialog's Deactivate ends it.
+    if (MCRmlDialogs::Waiting(text))
     {
         return;
     }

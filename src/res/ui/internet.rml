@@ -1,0 +1,83 @@
+<rml>
+<head>
+    <title>Internet</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="net.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md's stage 3, "LAN and INTERNET"): the service's public games in a list with columns, as tall
+     as the panel; beside it the picked game's players and its lines; PLAYER NAME, CODE, HOST GAME and JOIN GAME along
+     the foot. MCO's rooms (SPEC-mco-rooms.md) keep their button's place, not shown until they're built. -->
+<body class="painting" data-model="internet">
+    <div class="stage16">
+        <div id="frame" class="content">
+            <div id="net" class="panel glass">
+                <div class="titlebar row bottom">
+                    <div class="grow">
+                        <div class="eyebrow">Multiplayer</div>
+                        <div class="title caps">Internet</div>
+                    </div>
+                    <div class="data grey caps nowrap" id="counts">{{counts}}</div>
+                </div>
+                <div class="row gap12 grow" style="align-items: stretch;">
+                    <div id="games" class="column">
+                        <div class="list-head row">
+                            <div class="cell grow">Game</div>
+                            <div class="cell c-players">Players</div>
+                            <div class="cell c-where">Hosted in</div>
+                            <div class="cell c-now">Now</div>
+                        </div>
+                        <div class="scroll-box" id="list-box" data-if="games.size > 0">
+                            <div class="scroller" id="list">
+                                <div class="list-row row" data-for="game, i : games" data-class-picked="i == picked"
+                                     data-class-off="game.off" data-event-click="pick(i)" data-event-focus="pick(i)" data-hint="Pick">
+                                    <div class="cell grow">{{game.name}}</div>
+                                    <div class="cell c-players" data-class-grey="i != picked &amp;&amp; !game.off">{{game.players}}</div>
+                                    <div class="cell c-where" data-class-grey="i != picked &amp;&amp; !game.off">{{game.where}}</div>
+                                    <div class="cell c-now" data-class-grey="i != picked &amp;&amp; !game.off &amp;&amp; !game.needs"
+                                         data-class-orange="game.needs &amp;&amp; i != picked">{{game.now}}</div>
+                                </div>
+                            </div>
+                            <div class="fade"></div>
+                        </div>
+                        <div class="empty" id="empty" data-if="games.size == 0">
+                            <div class="text">{{empty}}</div>
+                            <div class="button small" id="retry" data-if="retry" data-event-click="retry()">Retry</div>
+                            <div class="button small" data-if="update" data-event-click="update()">Update</div>
+                        </div>
+                    </div>
+                    <div id="pick" class="column">
+                        <div data-if="picked >= 0">
+                            <div class="heading caps nowrap">{{pick_name}}</div>
+                            <div class="data grey caps" data-for="line : pick_lines">{{line.text}}</div>
+                            <div class="list-head row">
+                                <div class="cell grow flush">Players</div>
+                                <div class="cell">{{pick_count}}</div>
+                            </div>
+                            <div class="list-row row" data-for="player, j : pick_players">
+                                <div class="cell grow flush">{{player.text}}</div>
+                                <div class="cell host" data-if="j == 0">HOST</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="foot" class="row gap8">
+                    <div class="button" id="back" data-hint="Back">Back</div>
+                    <div class="grow"></div>
+                    <div class="label">Player name</div>
+                    <input type="text" class="field" id="name" data-value="player_name" maxlength="16"/>
+                    <div class="label" style="margin-left: 4dp;">Code</div>
+                    <input type="text" class="field" id="code" data-value="code" maxlength="4"/>
+                    <div class="button unbuilt" id="mco" style="margin-left: 4dp;">MCO</div>
+                    <div class="button" id="host" data-class-off="!can_host" style="margin-left: 8dp;" data-hint="Host">Host game</div>
+                    <div class="button main" id="join" data-class-off="!can_join" data-hint="Join">Join game</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar" class="bar glass">
+        <div class="stage16">
+            <div class="content"><div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div></div>
+        </div>
+    </div>
+</body>
+</rml>

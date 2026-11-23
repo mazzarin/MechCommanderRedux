@@ -11,6 +11,7 @@
 #include "sprite/MCHdArt.h"
 #include "ui/MCRmlArt.h"
 #include "ui/MCRmlChecks.h"
+#include "ui/MCRmlFlow.h"
 #include "ui/MCRmlKit.h"
 #include "ui/MCRmlMenus.h"
 #include "ui/MCRmlProbe.h"
@@ -1226,6 +1227,65 @@ TEST_CASE("menus: the app's art reads as RGB, its HD copy in its place at the 19
     CHECK_EQ(plain->Texture->Width, Width);
     CHECK(!MCRmlArt::Load("art/missing.png", true, files).has_value());
     CHECK(!MCRmlArt::Load("../painting.png", false, files).has_value());
+}
+
+/// <summary>
+/// The app's menus' files are checked at the game's start (Main.cpp, before anything opens): a copy whose ui folder is
+/// gone, or lacks or has a damaged face or look, says the menus' files are missing, the reason naming the file, and
+/// leaves no menus started (it shows no screen: there are none to fall back to); the app's own folder loads.
+/// </summary>
+TEST_CASE_ISOLATED("menus: a start whose menus' files don't load says so, naming the file, and opens no menu")
+{
+    const MCScratchFolder scratch("mc_menu_ui_tests", "files-at-start");
+    const std::filesystem::path app = MCRmlFiles::AppFolder();
+    REQUIRE(std::filesystem::is_directory(app));
+    const std::string bold = "fonts/SairaSemiCondensed-Bold.ttf";
+    std::vector<std::string> told;
+    const auto tell = [&told](std::string_view words) { told.emplace_back(words); };
+
+    // A copy of the app's folder, changed by <c>change</c>; the reason it doesn't load, or empty when it does.
+    int copies = 0;
+    const auto reason = [&](const std::function<void(const std::filesystem::path&)>& change)
+    {
+        const std::filesystem::path folder = scratch.Path() / std::to_string(++copies);
+        std::filesystem::copy(app, folder, std::filesystem::copy_options::recursive);
+        change(folder);
+        const auto checked = MCRmlMenus::CheckFiles(folder);
+        // Shut down again whatever the outcome: the game's own may start after.
+        CHECK(!MCRmlMenus::Running().has_value());
+        CHECK(MCRmlMenus::Create(MCRmlMenus::MCOptions{.Folder = app}).has_value());
+        return checked ? std::string() : checked.error();
+    };
+
+    const auto write = [](const std::filesystem::path& file, std::string_view bytes)
+    {
+        std::ofstream stream(file, std::ios::binary | std::ios::trunc);
+        stream << bytes;
+    };
+
+    CHECK_EQ(reason([](const std::filesystem::path&) {}), std::string());
+    CHECK(MCRmlFlow::FilesLoad(app, tell));
+    CHECK(told.empty());
+
+    const std::filesystem::path gone = scratch.Path() / "gone";
+    CHECK(!MCRmlFlow::FilesLoad(gone, tell));
+    CHECK(told == std::vector<std::string>{std::string(MCRmlFlow::FilesMissing)});
+    CHECK_EQ(told.front(), "Redux HD's menu files are missing.");
+    CHECK(!MCRmlMenus::Running().has_value());
+    CHECK(!MCRmlFlow::Showing());
+    const auto none = MCRmlMenus::CheckFiles(gone);
+    REQUIRE(!none.has_value());
+    CHECK(none.error().find("isn't there") != std::string::npos);
+
+    CHECK(reason([&](const std::filesystem::path& folder) { std::filesystem::remove(folder / bold); }).find(bold) !=
+          std::string::npos);
+    CHECK(reason([&](const std::filesystem::path& folder) { write(folder / bold, "not a face"); }).find(bold) !=
+          std::string::npos);
+    const std::string look(MCRmlMenus::LookFile);
+    CHECK(reason([&](const std::filesystem::path& folder) { std::filesystem::remove(folder / look); }).find(look) !=
+          std::string::npos);
+    CHECK(reason([&](const std::filesystem::path& folder) { write(folder / look, ""); }).find("empty") !=
+          std::string::npos);
 }
 
 namespace

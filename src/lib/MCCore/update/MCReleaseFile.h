@@ -56,7 +56,7 @@ namespace MCReleaseFile
     constexpr size_t EdSignatureBytes = 64;
     using MCEdSignature = std::array<uint8_t, EdSignatureBytes>;
 
-    /// <summary>One of the Windows program's files, by its name at the top of the game folder.</summary>
+    /// <summary>One of the Windows program's files, by its path in the game folder (<see cref="ProgramFileProblem"/>).</summary>
     struct MCProgramFile
     {
         std::string Name;
@@ -72,8 +72,22 @@ namespace MCReleaseFile
         MCSha256::MCDigest Sha256{};
     };
 
-    /// <summary>The most files a program may name (Windows' has five).</summary>
+    /// <summary>The most files a program may name in <c>files</c> (Windows' had five).</summary>
     constexpr size_t MaxProgramFiles = 32;
+    /// <summary>The most it may name in <c>programFiles</c>, its folder's among them (the menus' documents and art).</summary>
+    constexpr size_t MaxProgramFolderFiles = 1024;
+    /// <summary>
+    /// The program's own folder in the game folder, beside its programs: the remade menus' files (SPEC-menus.md), which
+    /// the game won't start without.
+    /// </summary>
+    constexpr std::string_view ProgramFolder = "ui";
+
+    /// <summary>
+    /// Why <paramref name="name"/> isn't a program file's (empty when it is): a name at the top of the game folder, or,
+    /// with <paramref name="inFolder"/>, a path in the program's folder (<c>ui/</c>), by the content's rules for a path
+    /// (MCContentList::PathProblem: one Windows holds, ASCII).
+    /// </summary>
+    std::string ProgramFileProblem(std::string_view name, bool inFolder);
 
     /// <summary>A platform's program in a release.</summary>
     struct MCProgram
@@ -94,10 +108,13 @@ namespace MCReleaseFile
         /// </summary>
         std::vector<MCEdSignature> EdSignatures;
         /// <summary>
-        /// Windows': the program's files (<see cref="MaxProgramFiles"/> at most, each a plain name), one stored zip
-        /// holding them, and the setup's level, which rises whenever the setup's own work changes. A copy whose setup
-        /// was at that level puts the files in itself (update/MCProgramSwap.h); any other runs the setup. None given (a
-        /// release from before), the setup always runs.
+        /// Windows': the program's files, one stored zip holding them, and the setup's level, which rises whenever the
+        /// setup's own work changes. A copy whose setup was at that level puts the files in itself
+        /// (update/MCProgramSwap.h); any other runs the setup. None given (a release from before), the setup always
+        /// runs. Each a plain name in <c>files</c> (<see cref="MaxProgramFiles"/> at most); a program with files in its
+        /// folder (<see cref="ProgramFolder"/>) lists them all in <c>programFiles</c> instead (<see
+        /// cref="MaxProgramFolderFiles"/> at most), and gives no <c>files</c>: a game before it, which reads only
+        /// <c>files</c> and refuses a name in a folder, then runs the setup, which puts the folder in.
         /// </summary>
         std::vector<MCProgramFile> Files;
         std::optional<MCHostedFile> Zip;

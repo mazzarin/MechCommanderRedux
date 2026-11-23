@@ -289,12 +289,13 @@ namespace
                                                                      .Sha256 = MCUpdateJson::Digest(old, Sha256Key)})});
                         }
 
-                        // Only the program's plain names, in the game folder itself (MCReleaseFile's rule), and as
-                        // the game's other names only MCX.EXE and the resolutions', none a file's.
+                        // Only the program's names, at the game folder's top or in the program's folder
+                        // (MCReleaseFile's rule), and as the game's other names only MCX.EXE and the resolutions'
+                        // (plain names), none a file's.
+                        const auto programFile = [](std::string_view name)
+                        { return MCReleaseFile::ProgramFileProblem(name, true).empty(); };
                         const auto plain = [](std::string_view name)
-                        {
-                            return MCContentList::PathProblem(name).empty() && name.find('/') == std::string_view::npos;
-                        };
+                        { return MCReleaseFile::ProgramFileProblem(name, false).empty(); };
 
                         const auto otherName = [&](const std::string& name)
                         {
@@ -304,10 +305,10 @@ namespace
                                                         { return MCContentList::FoldedPath(file.Name) == folded; });
                         };
 
-                        if (!std::ranges::all_of(journal.Files, plain, &MCJournalFile::Name) ||
+                        if (!std::ranges::all_of(journal.Files, programFile, &MCJournalFile::Name) ||
                             !std::ranges::all_of(journal.Names, plain))
                         {
-                            MCUpdateJson::Fail("it names a file outside the game folder's top");
+                            MCUpdateJson::Fail("it names a file that isn't one of the program's");
                         }
 
                         if (!std::ranges::all_of(journal.Names, otherName))
@@ -374,6 +375,41 @@ namespace
                 .Staged = ForBuild(gameFolder, MCProgramSwap::StagedFolder, build) / file};
     }
 
+    /// <summary>
+    /// The folders on the way to <paramref name="path"/>, the place of the file <paramref name="name"/>, made when it's in
+    /// the program's folder (a copy without it yet, a folder new in this release, the old files' folder).
+    /// </summary>
+    bool FoldersFor(MCUpdateDisk& disk, std::string_view name, const std::filesystem::path& path)
+    {
+        return name.find('/') == std::string_view::npos || disk.MakeFolders(path.parent_path());
+    }
+
+    /// <summary>
+    /// The folders <paramref name="files"/> are in, relative to where they go: the top (empty) first, then each in the
+    /// program's folder, once.
+    /// </summary>
+    template <typename T> std::vector<std::filesystem::path> FoldersOf(const std::vector<T>& files)
+    {
+        std::vector<std::filesystem::path> folders{std::filesystem::path()};
+
+        for (const T& file : files)
+        {
+            if (const std::filesystem::path folder = MCFileSystem::FromUtf8(file.Name).parent_path();
+                !std::ranges::contains(folders, folder))
+            {
+                folders.push_back(folder);
+            }
+        }
+
+        return folders;
+    }
+
+    /// <summary><paramref name="root"/>'s folder <paramref name="folder"/> (relative: empty for the root itself).</summary>
+    std::filesystem::path Under(const std::filesystem::path& root, const std::filesystem::path& folder)
+    {
+        return folder.empty() ? root : root / folder;
+    }
+
     /// <summary>Nothing, or why <paramref name="path"/> isn't a file the swap may move: a folder (the player's own).</summary>
     std::expected<void, std::string> NotAFolder(MCUpdateDisk& disk, const std::filesystem::path& path,
                                                 std::string_view name)
@@ -405,12 +441,15 @@ namespace
         }
 
         disk.Remove(gone);
-        return MoveTrying(disk, path, gone);
+        return disk.MakeFolders(gone.parent_path()) && MoveTrying(disk, path, gone);
     }
 
-    std::filesystem::path GonePath(const std::filesystem::path& old, std::string_view name)
+    /// <summary>Where a new file is renamed aside beside <paramref name="old"/>, its old one's place.</summary>
+    std::filesystem::path GonePath(const std::filesystem::path& old)
     {
-        return old.parent_path() / MCFileSystem::FromUtf8(std::string(name) + std::string(GoneSuffix));
+        std::filesystem::path gone = old;
+        gone += MCFileSystem::FromUtf8(GoneSuffix);
+        return gone;
     }
 
     /// <summary>
@@ -455,6 +494,11 @@ namespace
             return notFolder;
         }
 
+        if (!FoldersFor(disk, file.Name, places.Old) || !FoldersFor(disk, file.Name, places.At))
+        {
+            return std::unexpected(std::format("the folders for {} can't be made", file.Name));
+        }
+
         if (*atThere && !MoveTrying(disk, places.At, places.Old))
         {
             return std::unexpected(std::format("{} is in use", file.Name));
@@ -477,7 +521,7 @@ namespace
                                               const MCJournalFile& file)
     {
         const MCPlaces places = PlacesOf(gameFolder, build, file.Name);
-        const std::filesystem::path gone = GonePath(places.Old, file.Name);
+        const std::filesystem::path gone = GonePath(places.Old);
 
         for (const std::filesystem::path& path : {places.At, places.Old, places.Staged, gone})
         {
@@ -505,7 +549,8 @@ namespace
         if (*atThere)
         {
             const bool aside =
-                *stagedThere ? TakeOut(disk, places.At, gone) : MoveTrying(disk, places.At, places.Staged);
+                *stagedThere ? TakeOut(disk, places.At, gone)
+                             : FoldersFor(disk, file.Name, places.Staged) && MoveTrying(disk, places.At, places.Staged);
 
             if (!aside)
             {
@@ -602,7 +647,7 @@ namespace
         const MCPlaces places = PlacesOf(gameFolder, build, name);
         const std::filesystem::path made =
             places.Old.parent_path() / MCFileSystem::FromUtf8(name + std::string(MadeSuffix));
-        const std::filesystem::path gone = GonePath(places.Old, name);
+        const std::filesystem::path gone = GonePath(places.Old);
 
         for (const std::filesystem::path& path : {places.At, places.Old, made, gone})
         {
@@ -638,13 +683,30 @@ namespace
         return {};
     }
 
-    /// <summary>The folders the swap changed flushed: the game folder's and the old files'.</summary>
-    bool FlushSwapped(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, uint64_t build)
+    /// <summary>
+    /// The folders the swap changed flushed: the game folder's, the old files' and the staged ones', each with the
+    /// journal's folders in the program's folder (those there: the game folder's top always is).
+    /// </summary>
+    bool FlushSwapped(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCJournal& journal)
     {
-        const std::filesystem::path old = ForBuild(gameFolder, MCProgramSwap::OldFolder, build);
-        return disk.FlushFolder(gameFolder) && (!disk.Stat(old).Exists || disk.FlushFolder(old)) &&
-               (!disk.Stat(ForBuild(gameFolder, MCProgramSwap::StagedFolder, build)).Exists ||
-                disk.FlushFolder(ForBuild(gameFolder, MCProgramSwap::StagedFolder, build)));
+        const std::vector<std::filesystem::path> folders = FoldersOf(journal.Files);
+
+        for (const std::filesystem::path& root :
+             {gameFolder, ForBuild(gameFolder, MCProgramSwap::OldFolder, journal.Build),
+              ForBuild(gameFolder, MCProgramSwap::StagedFolder, journal.Build)})
+        {
+            for (const std::filesystem::path& folder : folders)
+            {
+                const std::filesystem::path path = Under(root, folder);
+
+                if ((path == gameFolder || disk.Stat(path).Exists) && !disk.FlushFolder(path))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /// <summary>The journal deleted, its folder flushed: what it recorded is done (or undone).</summary>
@@ -679,7 +741,7 @@ namespace
             }
         }
 
-        if (!FlushSwapped(disk, gameFolder, journal.Build) || !EndJournal(disk, gameFolder))
+        if (!FlushSwapped(disk, gameFolder, journal) || !EndJournal(disk, gameFolder))
         {
             return "the old files can't be flushed";
         }
@@ -723,7 +785,7 @@ namespace
             }
         }
 
-        if (!FlushSwapped(disk, gameFolder, journal.Build))
+        if (!FlushSwapped(disk, gameFolder, journal))
         {
             return std::unexpected("the new files can't be flushed");
         }
@@ -987,9 +1049,13 @@ std::expected<void, std::string> MCProgramSwap::Stage(MCUpdateDisk& disk, MCCont
         }
     }
 
-    if (!disk.FlushFolder(staged))
+    // Their folders too, those in the program's folder after the top.
+    for (const std::filesystem::path& folder : FoldersOf(program.Files))
     {
-        return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(staged)));
+        if (const std::filesystem::path path = Under(staged, folder); !disk.FlushFolder(path))
+        {
+            return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(path)));
+        }
     }
 
     return {};

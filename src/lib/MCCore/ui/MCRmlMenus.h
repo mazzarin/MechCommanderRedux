@@ -36,6 +36,8 @@ public:
 
     /// <summary>The face's family, as the look's style sheet names it, and its files under the <c>ui</c> folder.</summary>
     static constexpr std::string_view FaceFamily = "Saira";
+    /// <summary>The look's style sheet under the <c>ui</c> folder, which every document links.</summary>
+    static constexpr std::string_view LookFile = "look.rcss";
 
     /// <summary>What a menus' RmlUi starts with.</summary>
     struct MCOptions
@@ -61,6 +63,13 @@ public:
 
     /// <summary>RmlUi started as <paramref name="options"/> say; why not when it can't be (or one is already).</summary>
     static std::expected<std::unique_ptr<MCRmlMenus>, std::string> Create(const MCOptions& options);
+
+    /// <summary>
+    /// Whether the menus' files under <paramref name="folder"/> load, as the game's start checks them before anything
+    /// opens: RmlUi started on the folder with the face's three files and the look read, then shut down again; or which
+    /// doesn't, and why. Only while no menus' RmlUi is started (it is one per program).
+    /// </summary>
+    static std::expected<void, std::string> CheckFiles(const std::filesystem::path& folder);
 
     /// <summary>
     /// The game's own menus' RmlUi, started (made once, the first time a remade screen is wanted) or why not, over the

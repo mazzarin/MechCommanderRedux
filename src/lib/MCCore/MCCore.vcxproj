@@ -248,7 +248,6 @@
     <ClCompile Include="logistics\MCPurVehicleList.cpp" />
     <ClCompile Include="logistics\MCQuestionWindow.cpp" />
     <ClCompile Include="logistics\MCRegistrySettings.cpp" />
-    <ClCompile Include="logistics\MCRemadeScreens.cpp" />
     <ClCompile Include="logistics\MCRepairScreen.cpp" />
     <ClCompile Include="logistics\MCReportsNotice.cpp" />
     <ClCompile Include="logistics\MCReusableDialog.cpp" />
@@ -534,6 +533,7 @@
     <ClCompile Include="terrain\MCVideoWindow.cpp" />
     <ClCompile Include="ui\MCRmlArt.cpp" />
     <ClCompile Include="ui\MCRmlChecks.cpp" />
+    <ClCompile Include="ui\MCRmlFlow.cpp" />
     <ClCompile Include="ui\MCRmlKit.cpp" />
     <ClCompile Include="ui\MCRmlLayer.cpp" />
     <ClCompile Include="ui\MCRmlMenus.cpp" />
@@ -787,7 +787,6 @@
     <ClInclude Include="logistics\MCPurVehicleList.h" />
     <ClInclude Include="logistics\MCQuestionWindow.h" />
     <ClInclude Include="logistics\MCRegistrySettings.h" />
-    <ClInclude Include="logistics\MCRemadeScreens.h" />
     <ClInclude Include="logistics\MCRepairScreen.h" />
     <ClInclude Include="logistics\MCReportsNotice.h" />
     <ClInclude Include="logistics\MCReusableDialog.h" />
@@ -1065,6 +1064,7 @@
     <ClInclude Include="terrain\MCVideoWindow.h" />
     <ClInclude Include="ui\MCRmlArt.h" />
     <ClInclude Include="ui\MCRmlChecks.h" />
+    <ClInclude Include="ui\MCRmlFlow.h" />
     <ClInclude Include="ui\MCRmlKit.h" />
     <ClInclude Include="ui\MCRmlLayer.h" />
     <ClInclude Include="ui\MCRmlMenus.h" />

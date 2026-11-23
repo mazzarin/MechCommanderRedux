@@ -6,7 +6,7 @@
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
-#include "logistics/MCRemadeScreens.h"
+#include "ui/MCRmlFlow.h"
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
 #include "ui/MCRmlLayer.h"
@@ -114,7 +114,7 @@ namespace
     /// <summary>The question asked as the remade dialog; false when the menus' RmlUi can't start or its document can't be read.</summary>
     bool AskRemade()
     {
-        const MCOptionalRef<MCRmlMenus> menus = MCRemadeScreens::Menus();
+        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
 
         if (!menus.has_value())
         {

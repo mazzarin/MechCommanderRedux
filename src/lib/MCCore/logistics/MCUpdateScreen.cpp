@@ -2,7 +2,7 @@
 #include "logistics/MCUpdateScreen.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCRemadeScreens.h"
+#include "ui/MCRmlFlow.h"
 #include "logistics/MCUpdatePage.h"
 #include "network/MCLobbyUpdate.h"
 
@@ -212,7 +212,7 @@ void MCUpdateScreen::OpenFromMenus()
 
 bool MCUpdateScreen::Open(std::optional<MCLobbyUpdate::MCJoinAfter> join)
 {
-    if (!MCRemadeScreens::Menus().has_value())
+    if (!MCRmlFlow::Menus().has_value())
     {
         return false;
     }

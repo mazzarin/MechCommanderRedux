@@ -359,25 +359,33 @@ bool MCRmlLayer::Typing() const
 
 void MCRmlLayer::Update()
 {
-    // The screens shown first, each pinned: what one does in its frame can close it, or open another.
-    std::vector<std::shared_ptr<MCRmlScreen>> shown;
+    _Kit.Update(_Context);
+    _Context.Update();
+}
 
-    for (const MCGuiRef<MCRmlScreen>& screen : _Screens)
-    {
-        if (std::shared_ptr<MCRmlScreen> pinned = screen.Pin(); pinned != nullptr && pinned->Shown())
-        {
-            shown.push_back(std::move(pinned));
-        }
-    }
+void MCRmlLayer::Tend()
+{
+    // Copies: a screen's frame may show or hide screens (a window over it, the next screen).
+    const std::vector<MCGuiHandle<MCRmlScreen>> shown = _ShownOrder;
 
-    for (const std::shared_ptr<MCRmlScreen>& screen : shown)
+    for (const MCGuiHandle<MCRmlScreen>& handle : shown)
     {
-        if (!screen->WasDestroyed() && screen->Shown())
+        if (const std::shared_ptr<MCRmlScreen> screen = handle.Lock(); screen != nullptr && screen->Shown())
         {
             screen->OnFrame();
         }
     }
+}
 
-    _Kit.Update(_Context);
-    _Context.Update();
+void MCRmlLayer::HideAll()
+{
+    const std::vector<MCGuiHandle<MCRmlScreen>> shown = _ShownOrder;
+
+    for (auto at = shown.rbegin(); at != shown.rend(); ++at)
+    {
+        if (const std::shared_ptr<MCRmlScreen> screen = at->Lock(); screen != nullptr)
+        {
+            screen->Hide();
+        }
+    }
 }

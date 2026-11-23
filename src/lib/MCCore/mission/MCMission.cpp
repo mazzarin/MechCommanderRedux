@@ -1,11 +1,11 @@
 #include "stdafx.h"
 #include "gui/MCScreenFlow.h"
+#include "ui/MCRmlFlow.h"
 #include "network/MCIntroNote.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "mission/MCMission.h"
 #include "logistics/MCPauseScreen.h"
-#include "logistics/MCRemadeScreens.h"
 #include "lib/MCReleaseData.h"
 #include "ai/MCMoveGeometry.h"
 #include "lib/MCFatal.h"
@@ -720,8 +720,8 @@ auto MCMission::Run() -> int32_t
         }
         case MCMissionState::Logistics:
         {
-            // Port-only (SPEC-menus.md's stage 6): not while a remade screen shows over it (logistics/MCRemadeScreens).
-            if (Logistics != nullptr && Logistics->CurrentScreen()->IsShowing() == 0 && !MCRemadeScreens::Showing())
+            // Port-only (SPEC-menus.md, the remade screens): not while a remade screen shows over it (ui/MCRmlFlow).
+            if (Logistics != nullptr && Logistics->CurrentScreen()->IsShowing() == 0 && !MCRmlFlow::Showing())
             {
                 Logistics->ShowLogScreen(true, false);
             }

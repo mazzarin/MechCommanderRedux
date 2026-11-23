@@ -17,6 +17,24 @@ namespace
     constexpr const char* MenusContext = "menus";
     constexpr const char* MissionContext = "mission";
 
+    /// <summary>
+    /// Whether <paramref name="event"/> is the player pressing something (a key, a character, a button, the wheel), which
+    /// a change of screen holds; a key or a button let go, and the mouse's moves, pass.
+    /// </summary>
+    bool IsPress(const SDL_Event& event)
+    {
+        switch (event.type)
+        {
+            case SDL_EVENT_KEY_DOWN:
+            case SDL_EVENT_TEXT_INPUT:
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_WHEEL:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     /// <summary>Whether RmlUi is started (it is one per program).</summary>
     bool RmlStarted = false;
 
@@ -220,8 +238,18 @@ void MCRmlMenus::SetClock(std::function<double()> clock)
     _System->SetClock(std::move(clock));
 }
 
+void MCRmlMenus::HoldInput(std::function<bool()> held)
+{
+    _InputHeld = std::move(held);
+}
+
 bool MCRmlMenus::HandleEvent(const SDL_Event& event)
 {
+    if (Showing() && _InputHeld != nullptr && IsPress(event) && _InputHeld())
+    {
+        return true;
+    }
+
     if (_Menus->Showing())
     {
         return _Menus->HandleEvent(event);

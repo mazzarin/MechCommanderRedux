@@ -675,9 +675,6 @@
     <ClCompile Include="logistics\MCRegistrySettings.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
-    <ClCompile Include="logistics\MCRemadeScreens.cpp">
-      <Filter>logistics</Filter>
-    </ClCompile>
     <ClCompile Include="logistics\MCRepairScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -1487,6 +1484,9 @@
     <ClCompile Include="ui\MCRmlChecks.cpp">
       <Filter>ui</Filter>
     </ClCompile>
+    <ClCompile Include="ui\MCRmlFlow.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
     <ClCompile Include="ui\MCRmlKit.cpp">
       <Filter>ui</Filter>
     </ClCompile>
@@ -2210,9 +2210,6 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCRegistrySettings.h">
-      <Filter>logistics</Filter>
-    </ClInclude>
-    <ClInclude Include="logistics\MCRemadeScreens.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCRepairScreen.h">
@@ -3036,6 +3033,9 @@
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlChecks.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlFlow.h">
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlKit.h">

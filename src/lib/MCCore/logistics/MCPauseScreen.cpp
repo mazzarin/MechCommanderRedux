@@ -2,7 +2,7 @@
 #include "logistics/MCPauseScreen.h"
 #include "gui/MCGuiGlobals.h"
 #include "iface/MCTacticalInterface.h"
-#include "logistics/MCRemadeScreens.h"
+#include "ui/MCRmlFlow.h"
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "platform/MCInput.h"
@@ -82,7 +82,7 @@ bool MCPauseScreen::OpenOverMission()
         return true;
     }
 
-    const MCOptionalRef<MCRmlMenus> menus = MCRemadeScreens::Menus();
+    const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
 
     if (!menus.has_value())
     {

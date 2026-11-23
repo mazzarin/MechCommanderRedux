@@ -71,6 +71,12 @@ public:
     virtual void Leave() {}
 
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 3): the screen's work for a frame while it shows (a list kept up, a job moved
+    /// along), on the game's frame (ui/MCRmlFlow's Tend); nothing here.
+    /// </summary>
+    virtual void OnFrame() {}
+
+    /// <summary>
     /// What Escape and the screen's way-back button do (the screen flow's Back, set by whoever opens the screen); with
     /// none set, the screen hides.
     /// </summary>
@@ -117,9 +123,6 @@ public:
     virtual bool TakesKeys() const { return false; }
     /// <summary>A key pressed or let go while the screen <see cref="TakesKeys"/>; whether it used it (else RmlUi has it).</summary>
     virtual bool OnRawKey(const SDL_KeyboardEvent& /*key*/) { return false; }
-
-    /// <summary>Each frame while the screen shows, before its layer lays out (a download's progress, a state's news).</summary>
-    virtual void OnFrame() {}
 
 protected:
     /// <summary>The screen's models, made in its layer's context before its document is read (RmlUi binds them then).</summary>

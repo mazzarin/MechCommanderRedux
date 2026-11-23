@@ -13,7 +13,6 @@
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
-#include "logistics/MCRemadeScreens.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -23,6 +22,7 @@
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
+#include "ui/MCRmlFlow.h"
 
 namespace
 {
@@ -196,23 +196,31 @@ auto MCMenuScreens::Register() -> void
     Ids.Save = MCScreenFlow::Register(
         OldScreen("save", [] { return Showing(&MCLogistics::SaveScreen); }, SaveScreen, {}, true));
     // Port-only (SPEC-menus.md, stage 6): Preferences remade (logistics/MCPrefsScreen.h), made afresh at each press so it
-    // reads the settings as they are then; ACCEPT and CANCEL both show the screen below.
-    Ids.Preferences = MCScreenFlow::Register(
-        MCRemadeScreens::Kind("preferences",
-                              [](MCRmlMenus& menus)
-                              {
-                                  return MCGuiHandle<MCRmlScreen>(menus.Menus().CreateChild<MCPrefsScreen>(
-                                      [](MCPrefsScreen& made) { made.Accepted = [] { MCScreenFlow::ShowBelow(); }; }));
-                              }));
+    // reads the settings as they are then; ACCEPT shows the screen below, CANCEL and Escape go back (its Leave puts the
+    // settings back).
+    Ids.Preferences = MCScreenFlow::Register(MCRmlFlow::Kind(
+        "preferences",
+        [](MCRmlLayer& layer)
+        {
+            return MCGuiHandle<MCRmlScreen>(layer.CreateChild<MCPrefsScreen>(
+                [](MCPrefsScreen& made)
+                {
+                    made.Accepted = [] { MCScreenFlow::ShowBelow(); };
+                    made.Back = [] { MCScreenFlow::Back(); };
+                }));
+        },
+        MCRmlFlow::MCKeep::Afresh));
     // Port-only (stage 6): UPDATE remade (logistics/MCUpdateScreen.h), from the main menu's UPDATE and INTERNET's newer
     // game, made afresh at each press, named by where it opened; BACK shows that screen again.
-    Ids.Update = MCScreenFlow::Register(
-        MCRemadeScreens::Kind("update",
-                              [](MCRmlMenus& menus)
-                              {
-                                  return MCGuiHandle<MCRmlScreen>(menus.Menus().CreateChild<MCUpdateScreen>(
-                                      [](MCUpdateScreen&) {}, MCUpdateScreen::PlaceOfShown()));
-                              }));
+    Ids.Update = MCScreenFlow::Register(MCRmlFlow::Kind(
+        "update",
+        [](MCRmlLayer& layer)
+        {
+            return MCGuiHandle<MCRmlScreen>(layer.CreateChild<MCUpdateScreen>(
+                [](MCUpdateScreen& made) { made.Back = [] { MCScreenFlow::Back(); }; },
+                MCUpdateScreen::PlaceOfShown()));
+        },
+        MCRmlFlow::MCKeep::Afresh));
     Ids.Campaign = MCScreenFlow::Register(OldScreen(
         "campaign",
         []

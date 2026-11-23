@@ -13,7 +13,7 @@
 #include "logistics/MCPauseScreen.h"
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCQuestionWindow.h"
-#include "logistics/MCRemadeScreens.h"
+#include "ui/MCRmlFlow.h"
 #include "logistics/MCSettingsModel.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
@@ -588,7 +588,7 @@ TEST_CASE_ISOLATED("game: a match's pause: the battle goes on, and LEAVE MATCH a
     const MCTestGame::KeepPrefs keptPrefs;
     const MCTestGame::SaveGameCleanup saves;
     StartBattle();
-    const MCOptionalRef<MCRmlMenus> menus = MCRemadeScreens::Menus();
+    const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
     REQUIRE(menus.has_value());
     const MCGuiHandle<MCPauseScreen> pause = menus->get().Mission().CreateChild<MCPauseScreen>(
         [](MCPauseScreen& made) { made.Back = [&made] { made.Resume(); }; }, true);
@@ -647,7 +647,7 @@ TEST_CASE_ISOLATED("game: a match that ends under its pause keeps the pause's ch
     const MCTestGame::KeepPrefs keptPrefs;
     const MCTestGame::SaveGameCleanup saves;
     StartBattle();
-    const MCOptionalRef<MCRmlMenus> menus = MCRemadeScreens::Menus();
+    const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
     REQUIRE(menus.has_value());
     const auto openMatchPause = [&menus]
     {

@@ -150,8 +150,15 @@ namespace
         }
 
         std::string text(file.FileSize(), '\0');
-        file.Read(std::span(reinterpret_cast<uint8_t*>(text.data()), text.size()));
+        const int32_t read = file.Read(std::span(reinterpret_cast<uint8_t*>(text.data()), text.size()));
         file.Close();
+
+        if (read < 0 || static_cast<size_t>(read) != text.size())
+        {
+            SDL_Log("MCSaves: %s read short (%d of %zu bytes)", gamePath.c_str(), read, text.size());
+            return std::nullopt;
+        }
+
         return text;
     }
 
@@ -436,7 +443,7 @@ bool MCSaves::HasRoom() const
     return space.available >= RoomForASave;
 }
 
-MCSaves::MCWritten MCSaves::Write(std::string_view name, MCOld old)
+MCSaves::MCWritten MCSaves::Write(std::string_view name)
 {
     if (!CanName(name))
     {
@@ -444,16 +451,10 @@ MCSaves::MCWritten MCSaves::Write(std::string_view name, MCOld old)
         return MCWritten::Failed;
     }
 
-    // Checked before an old save is deleted, so a full disk keeps it.
     if (!HasRoom())
     {
         SDL_Log("MCSaves: no room on the disk to save %.*s", static_cast<int>(name.size()), name.data());
         return MCWritten::DiskFull;
-    }
-
-    if (old == MCOld::DeletedFirst && Find(name).has_value())
-    {
-        Delete(name);
     }
 
     const int32_t result = MCLogistics::SaveCampaign(name);

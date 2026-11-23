@@ -85,20 +85,13 @@ public:
     /// <returns>Whether it's gone.</returns>
     bool Delete(std::string_view name);
 
-    /// <summary>What <see cref="Write"/> does with a save of the name already there.</summary>
-    enum class MCOld : uint8_t
-    {
-        /// <summary>Written over, as the game writes its own.</summary>
-        WrittenOver,
-        /// <summary>Deleted first, then the new one written (SAVE GAME's OVERWRITE, as 1998's).</summary>
-        DeletedFirst,
-    };
-
     /// <summary>
-    /// The campaign saved now as <paramref name="name"/>, and the list read again. A name no file can have, and a disk
-    /// without room for a save, are refused before anything is written or deleted.
+    /// The campaign saved now as <paramref name="name"/>, over a save of that name as the game writes its own, and the
+    /// list read again. A name no file can have, and a disk without room for a save, are refused before anything is
+    /// written; a save that fails keeps the old one (1998's OVERWRITE deleted it first, to clear a CD install's
+    /// read-only flag, so a failed save lost it; the port's saves are written in the user folder).
     /// </summary>
-    MCWritten Write(std::string_view name, MCOld old = MCOld::WrittenOver);
+    MCWritten Write(std::string_view name);
 
     /// <summary>The first default name with no save (the game's "savegame%03i", from 0, as today); none past 999.</summary>
     static std::optional<std::string> FreeName();

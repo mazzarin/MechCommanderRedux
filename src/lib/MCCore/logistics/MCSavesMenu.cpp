@@ -610,7 +610,7 @@ void MCSavesScreen::PressMain()
             .Second = WhenSentence(save),
             .Answer = "Overwrite",
             .Asks = true,
-            .Answered = [this, name] { Save(name, MCSaves::MCOld::DeletedFirst); },
+            .Answered = [this, name] { Save(name); },
         });
         return;
     }
@@ -708,10 +708,10 @@ void MCSavesScreen::Load(const std::string& name)
         });
 }
 
-void MCSavesScreen::Save(const std::string& name, MCSaves::MCOld old)
+void MCSavesScreen::Save(const std::string& name)
 {
     SoundSystem()->StopDigitalMusic();
-    const MCSaves::MCWritten written = MCSaves::Game().Write(name, old);
+    const MCSaves::MCWritten written = MCSaves::Game().Write(name);
     SoundSystem()->PlayDigitalMusic(LogisticsMusic, true);
 
     if (written == MCSaves::MCWritten::Saved)

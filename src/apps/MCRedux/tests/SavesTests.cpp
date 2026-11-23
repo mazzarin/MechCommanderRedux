@@ -657,7 +657,7 @@ TEST_CASE_ISOLATED("game: SAVE GAME saves under the name typed, asks before writ
     MCSaves::Game().SetRoom({});
     screen.Dialog()->Answer();
     CHECK(screen.Shown());
-    // The disk refused before the old save was deleted: it's kept.
+    // The disk refused before anything was written: the old save is kept.
     CHECK_EQ(screen.Saves().size(), size_t{1});
     CHECK(FileExists(GamePath(SavePath, first, ".sav")));
     // Escape with the focus in NAME: the main menu again.

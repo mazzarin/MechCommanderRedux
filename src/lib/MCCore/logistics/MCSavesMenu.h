@@ -137,7 +137,7 @@ private:
     /// <summary>The window, made on first use, saying <paramref name="say"/>.</summary>
     void Say(MCSavesDialog::MCSay say);
     void Load(const std::string& name);
-    void Save(const std::string& name, MCSaves::MCOld old = MCSaves::MCOld::WrittenOver);
+    void Save(const std::string& name);
     /// <summary>SAVE GAME's way out once saved: the campaign screen it was left from.</summary>
     static void BackToCampaign();
 
